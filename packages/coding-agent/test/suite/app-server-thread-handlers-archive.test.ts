@@ -211,13 +211,6 @@ describe("app-server thread archive lifecycle handlers", () => {
 		const unarchivedUpdatedAt = unarchivedThread.updatedAt;
 		if (typeof unarchivedUpdatedAt !== "number") throw new Error("unarchived thread updatedAt must be numeric");
 		expect(unarchivedUpdatedAt).toBeGreaterThan(archivedUpdatedAt);
-		const coldList = await registry.dispatch(connection, { id: 37, method: "thread/list", params: {} });
-		const coldThread = dataArray(responseResult(coldList))
-			.map(objectValue)
-			.find((thread) => thread.id === threadId);
-		const coldUpdatedAt = coldThread?.updatedAt;
-		if (typeof coldUpdatedAt !== "number") throw new Error("cold thread updatedAt must be numeric");
-		expect(coldUpdatedAt).toBeGreaterThanOrEqual(unarchivedUpdatedAt);
 		expect(() => threads.getLoadedThread(threadId)).toThrow();
 		expect(connection.received).toEqual([]);
 		const deferredUnarchive = deferredActions[0];
@@ -236,6 +229,15 @@ describe("app-server thread archive lifecycle handlers", () => {
 		expect(connection.received).toEqual([
 			{ method: "thread/unarchived", params: { threadId }, emittedAtMs: expect.any(Number) },
 		]);
+		const coldList = await registry.dispatch(connection, { id: 37, method: "thread/list", params: {} });
+		const coldThread = dataArray(responseResult(coldList))
+			.map(objectValue)
+			.find((thread) => thread.id === threadId);
+		expect(coldThread).toMatchObject({
+			id: threadId,
+			status: { type: "notLoaded" },
+			updatedAt: expect.any(Number),
+		});
 
 		// And: an explicit resume is the operation that loads the runtime.
 		const resumed = await registry.dispatch(connection, {

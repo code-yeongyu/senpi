@@ -1,5 +1,13 @@
 # goal Extension Changes
 
+## [Unreleased]
+
+- Provider context retains only the latest current Goal continuation and drops stale continuation after newer user input.
+- Persisted hard maximum 8 applies across immediate/restart/monitor paths; admission persists before queue.
+- Direct user input pauses immediately; length/provider error stops auto-continuation; `/goal resume` is explicit.
+- Legacy recovery persists max(stored,derived) without JSONL rewrite.
+- Open todo items block completion until resolved.
+
 ## Stale-goal system reminder on todo add operations (2026-07-29)
 
 ### What changed
@@ -98,9 +106,9 @@
 - `prompt.ts` generalizes the stall notice from monitor-only to goal-wide: the same
   continuation block now covers toolless continuation streaks from the 3rd consecutive turn,
   uses `<goal_stall_check>` for the renamed block, keeps the monitor-flavored bullets when
-  monitors are active, and emits generic recovery bullets otherwise. The user-prompt grace
-  delay remains 60s, truncation recovery remains one minimal prompt, and terminal provider
-  errors now block the goal when `AgentEndEvent.willRetry` is false.
+  monitors are active, and emits generic recovery bullets otherwise. Direct user input pauses
+  continuation immediately; length/truncation errors stop auto-continuation; terminal provider
+  errors block the goal when `AgentEndEvent.willRetry` is false.
 - `monitor-continuation.ts`, `lifecycle-helpers.ts`, and `index.ts` route immediate,
   monitor-delayed, and session-start continuation entry points through the verdict engine;
   user prompts reset the streak state, and the session-start admission path suppresses

@@ -72,7 +72,9 @@ async function runContinuationCycle(
 
 async function runMonitorContinuationCycle(harness: GoalHarness, ctx: ExtensionContext): Promise<void> {
 	await runContinuationCycle(harness, ctx);
+	const resumed = harness.events.waitFor("goal_continuation_resumed");
 	await vi.advanceTimersByTimeAsync(240_000);
+	await resumed;
 }
 
 function stallEvents(harness: GoalHarness): unknown[] {
@@ -161,18 +163,24 @@ describe("goal monitor continuation stall check", () => {
 		expect(stallEvents(harness)).toHaveLength(0);
 	});
 
-	it("resets the streak when a real user prompt starts a turn", async () => {
+	it("pauses immediately and clears the streak when a real user prompt starts a turn", async () => {
 		vi.useFakeTimers();
 		const { harness, ctx } = await createStallHarness("thread-stall-user-reset");
 
 		await runMonitorContinuationCycle(harness, ctx);
 		await runMonitorContinuationCycle(harness, ctx);
 
-		await runGoalHandlers(harness.handlers, "before_agent_start", { type: "before_agent_start" }, ctx);
+		const paused = harness.events.waitFor("goal_pause_triggered");
+		await runGoalHandlers(
+			harness.handlers,
+			"input",
+			{ type: "input", text: "answer the user", source: "interactive" },
+			ctx,
+		);
+		expect(await paused).toMatchObject({ reason: "user-input" });
 
-		await runMonitorContinuationCycle(harness, ctx);
-		expect(harness.sent).toHaveLength(3);
-		expect(harness.sent[2]?.message.content).not.toContain(STALL_MARKER);
+		await runContinuationCycle(harness, ctx);
+		expect(harness.sent).toHaveLength(2);
 		expect(stallEvents(harness)).toHaveLength(0);
 	});
 

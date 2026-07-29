@@ -134,7 +134,7 @@ describe("goal continuation gating", () => {
 		).toBe(false);
 	});
 
-	it("applies the persisted cap on immediate and session-start paths but not monitor-delayed paths", () => {
+	it("applies the persisted cap to immediate, session-start, and monitor-delayed paths", () => {
 		const input = {
 			goal: makeGoal({ consecutiveContinuations: 8 }),
 			isIdle: true,
@@ -153,9 +153,8 @@ describe("goal continuation gating", () => {
 		expect(evaluateGoalContinuation({ ...input, path: "immediate" })).toEqual({ kind: "deny", reason: "cap" });
 		expect(evaluateGoalContinuation({ ...input, path: "sessionStart" })).toEqual({ kind: "deny", reason: "cap" });
 		expect(evaluateGoalContinuation({ ...input, path: "monitorDelayed" })).toEqual({
-			kind: "continue",
-			prompt: "full",
-			stallNotice: false,
+			kind: "deny",
+			reason: "cap",
 		});
 	});
 });

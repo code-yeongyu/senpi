@@ -51,7 +51,9 @@ describe("goal monitor continuation lifecycle", () => {
 
 		expect(harness.sent).toHaveLength(0);
 		expect(notices).toHaveLength(1);
+		const resumed = harness.events.waitFor("goal_continuation_resumed");
 		await vi.advanceTimersByTimeAsync(240_000);
+		await resumed;
 		expect(harness.sent).toHaveLength(1);
 	});
 

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
+import { MonitorAwareGoalContinuation } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
+import * as persistence from "../../src/core/extensions/builtin/goal/persistence.ts";
 import { goalFilePath, readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
@@ -105,6 +107,7 @@ function storeRefFor(ctx: ExtensionContext) {
 
 describe("goal extension contract (budget-free)", () => {
 	afterEach(async () => {
+		vi.restoreAllMocks();
 		await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 	});
 
@@ -331,7 +334,7 @@ describe("goal extension contract (budget-free)", () => {
 		expect(sent).toHaveLength(0);
 	});
 
-	it("blocks a goal when a provider error ends after retries are exhausted", async () => {
+	it("pauses a goal when a provider error ends after retries are exhausted", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const notices: string[] = [];
 		const ctx = await makeNotifyingCtx(notices, "thread-terminal-provider-error");
@@ -348,11 +351,136 @@ describe("goal extension contract (budget-free)", () => {
 		);
 
 		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
-			status: "blocked",
-			blockedReason: "provider error ended the turn (retries exhausted)",
+			status: "paused",
+			blockedReason: "terminal provider error",
+			blockedAt: expect.any(Number),
 		});
-		expect(notices).toContainEqual(expect.stringContaining("provider error ended the turn (retries exhausted)"));
+		expect(notices).toEqual([]);
 		expect(sent).toHaveLength(0);
+	});
+
+	it("persists a direct-user pause before agent start and keeps it across rejection and restart", async () => {
+		const first = createGoalHarness();
+		const ctx = await makeCtx("thread-immediate-user-pause");
+		await first.tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Stay stopped after direct input" }, undefined, undefined, ctx);
+		const writeSpy = vi.spyOn(persistence, "writeGoalFile");
+
+		await runHandlers(
+			first.handlers,
+			"input",
+			{ type: "input", text: "Answer this instead", source: "interactive" },
+			ctx,
+		);
+
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
+			status: "paused",
+			blockedReason: "user-input",
+		});
+		expect(writeSpy).toHaveBeenCalledTimes(1);
+
+		// Final provider admission can reject after this hook, so no agent_start follows.
+		await runHandlers(first.handlers, "before_agent_start", { type: "before_agent_start" }, ctx);
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({ status: "paused", blockedReason: "user-input" });
+		expect(writeSpy).toHaveBeenCalledTimes(1);
+
+		const restarted = createGoalHarness();
+		await runHandlers(restarted.handlers, "session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		expect(restarted.sent).toHaveLength(0);
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({ status: "paused", blockedReason: "user-input" });
+		expect(writeSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("blocks delivery of a queued continuation when direct user input arrives after agent_end", async () => {
+		const harness = createGoalHarness();
+		const ctx = await makeCtx("thread-continuation-race");
+		await harness.tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Prevent continuation after user input" }, undefined, undefined, ctx);
+
+		// Spy on MonitorAwareGoalContinuation.prototype.noteContinuationStarted to verify it is not called
+		// after user input pauses the goal.
+		const noteContinuationStartedSpy = vi.spyOn(MonitorAwareGoalContinuation.prototype, "noteContinuationStarted");
+
+		// Agent starts and ends cleanly, queueing a continuation.
+		await runHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runHandlers(
+			harness.handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [assistantMessageWithStopReason("stop")] },
+			ctx,
+		);
+
+		// At this point, a continuation has been queued (sent to the UI/API).
+		expect(harness.sent).toHaveLength(1);
+		expect(harness.sent[0]?.message.customType).toBe("goal-continuation");
+		const callsAfterQueue = noteContinuationStartedSpy.mock.calls.length;
+
+		// Now user sends direct input BEFORE the queued continuation can start.
+		await runHandlers(
+			harness.handlers,
+			"input",
+			{ type: "input", text: "Do this instead", source: "interactive" },
+			ctx,
+		);
+
+		// Goal should now be paused.
+		const pausedGoal = await readGoal(storeRefFor(ctx));
+		expect(pausedGoal).toMatchObject({
+			status: "paused",
+			blockedReason: "user-input",
+		});
+
+		try {
+			// If agent_start fires (e.g., provider accepts the queued continuation before seeing the pause),
+			// it should NOT call noteContinuationStarted() because continuationPending was cleared by the input handler.
+			await runHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
+
+			// Verify noteContinuationStarted was never called after the input paused the goal.
+			expect(noteContinuationStartedSpy.mock.calls.length).toBe(callsAfterQueue);
+
+			// Goal must remain paused.
+			expect(await readGoal(storeRefFor(ctx))).toMatchObject({
+				status: "paused",
+				blockedReason: "user-input",
+			});
+		} finally {
+			noteContinuationStartedSpy.mockRestore();
+		}
+	});
+
+	it("reactivates a user-paused goal only through explicit /goal resume", async () => {
+		const { tools, commands, handlers, sent } = createGoalHarness();
+		const ctx = await makeCtx("thread-explicit-resume");
+		await tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Wait for explicit resume" }, undefined, undefined, ctx);
+
+		await runHandlers(
+			handlers,
+			"input",
+			{ type: "input", text: "Answer this direct question", source: "interactive" },
+			ctx,
+		);
+		await runHandlers(handlers, "before_agent_start", { type: "before_agent_start" }, ctx);
+		await runHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runHandlers(
+			handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [assistantMessageWithStopReason("stop")] },
+			ctx,
+		);
+
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({ status: "paused" });
+		expect(sent).toHaveLength(0);
+
+		await commands.get("goal")?.handler("resume", ctx);
+
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({ status: "active" });
+		expect(sent).toHaveLength(1);
+		expect(sent[0]?.message.customType).toBe("goal-continuation");
 	});
 
 	it("keeps a goal active while a provider-error retry is pending", async () => {
@@ -401,7 +529,7 @@ describe("goal extension contract (budget-free)", () => {
 		});
 	});
 
-	it("blocks a non-user aborted turn after retries are exhausted", async () => {
+	it("pauses a non-user aborted turn after retries are exhausted", async () => {
 		const { tools, handlers } = createGoalHarness();
 		const ctx = await makeCtx("thread-system-abort-provider-guard");
 		await tools
@@ -423,9 +551,92 @@ describe("goal extension contract (budget-free)", () => {
 		);
 
 		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
-			status: "blocked",
-			blockedReason: "provider error ended the turn (retries exhausted)",
+			status: "paused",
+			blockedReason: "system abort",
+			blockedAt: expect.any(Number),
 		});
+	});
+
+	it("finalizes active terminal and user-abort paths with one Goal-file write", async () => {
+		const scenarios = [
+			{
+				name: "length",
+				message: assistantMessageWithStopReason("length"),
+				endState: { willRetry: false },
+				expected: { status: "paused", blockedReason: "output length" },
+			},
+			{
+				name: "terminal provider error",
+				message: assistantMessageWithStopReason("error"),
+				endState: { willRetry: false },
+				expected: { status: "paused", blockedReason: "terminal provider error" },
+			},
+			{
+				name: "system abort",
+				message: assistantMessageWithStopReason("aborted"),
+				endState: { aborted: true, abortSource: "system" as const, willRetry: false },
+				expected: { status: "paused", blockedReason: "system abort" },
+			},
+			{
+				name: "user abort",
+				message: assistantMessageWithStopReason("aborted"),
+				endState: { aborted: true, abortSource: "user" as const, willRetry: false },
+				expected: { status: "blocked", blockedReason: "user interrupted the turn" },
+			},
+		];
+
+		for (const scenario of scenarios) {
+			const { tools, handlers } = createGoalHarness();
+			const ctx = await makeCtx(`thread-one-write-${scenario.name}`);
+			await tools
+				.get("create_goal")
+				?.execute("c1", { objective: `Finalize ${scenario.name}` }, undefined, undefined, ctx);
+			await runHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+			const writeSpy = vi.spyOn(persistence, "writeGoalFile");
+
+			await runHandlers(
+				handlers,
+				"agent_end",
+				{ type: "agent_end", messages: [scenario.message], ...scenario.endState },
+				ctx,
+			);
+
+			expect(writeSpy, scenario.name).toHaveBeenCalledTimes(1);
+			expect(await readGoal(storeRefFor(ctx))).toMatchObject(scenario.expected);
+			writeSpy.mockRestore();
+		}
+	});
+
+	it("keeps a continued clean agent_end within two writes and a goal-less end at zero", async () => {
+		const active = createGoalHarness();
+		const activeCtx = await makeCtx("thread-write-budget-continued");
+		await active.tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Continue within budget" }, undefined, undefined, activeCtx);
+		await runHandlers(active.handlers, "agent_start", { type: "agent_start" }, activeCtx);
+		const writeSpy = vi.spyOn(persistence, "writeGoalFile");
+
+		await runHandlers(
+			active.handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [assistantMessageWithStopReason("stop")] },
+			activeCtx,
+		);
+
+		expect(writeSpy.mock.calls.length).toBeLessThanOrEqual(2);
+		writeSpy.mockClear();
+
+		const goalLess = createGoalHarness();
+		const goalLessCtx = await makeCtx("thread-write-budget-goalless");
+		await runHandlers(goalLess.handlers, "agent_start", { type: "agent_start" }, goalLessCtx);
+		await runHandlers(
+			goalLess.handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [assistantMessageWithStopReason("stop")] },
+			goalLessCtx,
+		);
+
+		expect(writeSpy).not.toHaveBeenCalled();
 	});
 
 	it("rejects update_goal complete while todo tasks remain open, naming them", async () => {
@@ -559,7 +770,7 @@ describe("goal extension reload does not auto-start a stopped agent", () => {
 });
 
 describe("goal extension session_start migration-lite admission", () => {
-	it("suppresses auto-continuation and notifies when a resumed session ends in a continuation flood", async () => {
+	it("pauses and notifies when a resumed session ends in a continuation flood", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const notices: string[] = [];
 		const ctx = await makeNotifyingCtx(notices, "thread-flooded-resume", [
@@ -572,10 +783,9 @@ describe("goal extension session_start migration-lite admission", () => {
 
 		expect(sent).toHaveLength(0);
 		expect(notices).toContainEqual(
-			"Goal auto-continuation suppressed for this resumed session (300 historical continuations). Send a message to resume.",
+			"Goal paused after recovering 300 historical continuations. Run /goal resume to continue.",
 		);
-		// Migration-lite is load-time admission only: the stored goal keeps its status untouched.
-		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("active");
+		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("paused");
 	});
 
 	it("queues a continuation normally when only a few trailing continuations exist", async () => {
@@ -594,7 +804,7 @@ describe("goal extension session_start migration-lite admission", () => {
 		expect(notices).toEqual([]);
 	});
 
-	it("queues a continuation normally when historical continuations are followed by a real user message", async () => {
+	it("restores current-segment continuations even when a real user message follows them", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const notices: string[] = [];
 		const ctx = await makeNotifyingCtx(notices, "thread-flood-then-user", [
@@ -605,13 +815,17 @@ describe("goal extension session_start migration-lite admission", () => {
 
 		await runHandlers(handlers, "session_start", { type: "session_start", reason: "resume" }, ctx);
 
-		expect(sent).toHaveLength(1);
-		expect(sent[0]?.message.customType).toBe("goal-continuation");
-		expect(notices).toEqual([]);
+		expect(sent).toHaveLength(0);
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
+			status: "paused",
+			consecutiveContinuations: 300,
+		});
+		expect(notices).toContainEqual(
+			"Goal paused after recovering 300 historical continuations. Run /goal resume to continue.",
+		);
 	});
 
-	it("resumes normally on the next clean turn after a real user prompt follows a suppressed load", async () => {
-		vi.useFakeTimers();
+	it("stays paused after a real user prompt follows a suppressed load", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const notices: string[] = [];
 		const ctx = await makeNotifyingCtx(notices, "thread-suppressed-then-prompt", [
@@ -630,13 +844,8 @@ describe("goal extension session_start migration-lite admission", () => {
 			{ type: "agent_end", messages: [assistantMessageWithStopReason("stop")] },
 			ctx,
 		);
-		// A user-initiated turn end triggers the 60s grace delay (todo 6), so nothing
-		// is queued immediately. The continuation fires after the grace window.
 		expect(sent).toHaveLength(0);
-		await vi.advanceTimersByTimeAsync(60_000);
-		expect(sent).toHaveLength(1);
-		expect(sent[0]?.message.customType).toBe("goal-continuation");
-		vi.useRealTimers();
+		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("paused");
 	});
 
 	it("keeps reload sessions inert even with a flooded branch (no queue, no suppression notice)", async () => {
@@ -736,7 +945,7 @@ async function runHandlers(
 	}
 }
 
-function assistantMessageWithStopReason(stopReason: "aborted" | "error" | "stop"): AgentMessage {
+function assistantMessageWithStopReason(stopReason: "aborted" | "error" | "length" | "stop"): AgentMessage {
 	return {
 		role: "assistant",
 		content: [{ type: "text", text: "" }],

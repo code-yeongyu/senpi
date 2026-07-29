@@ -2,6 +2,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import WebSocket, { WebSocketServer } from "ws";
 import {
 	cleanupAllAndWait,
@@ -16,7 +17,7 @@ import {
 } from "./lib/env.mjs";
 import { fail, httpStatus, initialize, pass, WebSocketRpcClient } from "./lib/rpc.mjs";
 
-const clientPath = "/Users/yeongyu/.agents/skills/use-codex-appserver/scripts/codex-query.ts";
+const clientPath = fileURLToPath(new URL("./lib/local-client.mjs", import.meta.url));
 const outApiMethods = Object.freeze([
 	"config/value/write",
 	"plugin/list",
@@ -35,7 +36,6 @@ let proxy;
 installCleanupHooks();
 
 try {
-	if (!existsSync(clientPath)) throw new Error(`missing required real client: ${clientPath}`);
 	const setup = await bootSweepDaemon();
 	if (baselineRed) {
 		await runBaselineRed(setup);
@@ -173,19 +173,27 @@ async function runSweep({ scratch, daemonPort, token, clientEnv }) {
 
 	await observer.request("thread/resume", { threadId }, 30000);
 	const turnStartedMark = observer.mark();
+	const requestMark = fake.requests.length;
+	const holdMark = fake.holds.length;
+	const heldPrompt = fake.waitForHold((record) => record.requestIndex === requestMark, holdMark, 30000);
 	const background = spawnClient("msg-interrupted", ["msg", threadId, "hold until interrupted", "--timeout", "60"], clientEnv, scratch.cwd);
-	await observer.waitForMessageEvent(
+	const backgroundExit = waitChild(background, 30000);
+	const started = await observer.waitForMessageEvent(
 		(message) => message.method === "turn/started" && message.params?.threadId === threadId,
 		turnStartedMark,
 		30000,
 	);
-	transcript.push(`[observer assert] turn/started thread=${threadId} before steer/interrupt`);
+	const turnId = started.params?.turn?.id;
+	if (typeof turnId !== "string" || turnId.length === 0) throw new Error("turn/started did not include a turn id");
+	await heldPrompt;
+	transcript.push(`[observer assert] turn/started thread=${threadId} turn=${turnId} with held model request before steer/interrupt`);
 
 	await runClientCommand("steer", ["steer", threadId, "please stop after this"], clientEnv, scratch.cwd, 0);
 	const interruptMark = observer.mark();
 	await runClientCommand("interrupt", ["interrupt", threadId], clientEnv, scratch.cwd, 0);
 	const interrupted = await observer.waitForMessageEvent(
-		(message) => message.method === "turn/completed" && message.params?.threadId === threadId,
+		(message) =>
+			message.method === "turn/completed" && message.params?.threadId === threadId && message.params?.turn?.id === turnId,
 		interruptMark,
 		30000,
 	);
@@ -193,7 +201,7 @@ async function runSweep({ scratch, daemonPort, token, clientEnv }) {
 		throw new Error(`interrupt terminal status was ${interrupted.params?.turn?.status ?? "missing"}`);
 	}
 	fake.releaseHolds();
-	const backgroundResult = await waitChild(background, 30000);
+	const backgroundResult = await backgroundExit;
 	recordOutcome("msg-interrupted", 1, backgroundResult.code);
 	if (backgroundResult.code !== 1 || !backgroundResult.stdout.includes("finished: interrupted")) {
 		throw new Error(`interrupted background msg result was ${JSON.stringify(backgroundResult)}`);
@@ -239,7 +247,7 @@ function runClientCommand(label, args, env, cwd, expectedCode, assertResult) {
 		if (expectedCode !== undefined) {
 			recordOutcome(label, expectedCode, result.code);
 			if (result.code !== expectedCode) {
-				throw new Error(`codex-query ${args.join(" ")} exited ${result.code}, expected ${expectedCode}\n${result.stderr}`);
+				throw new Error(`local client ${args.join(" ")} exited ${result.code}, expected ${expectedCode}\n${result.stderr}`);
 			}
 		}
 		assertResult?.(result);
@@ -268,7 +276,7 @@ function waitChild(child, timeoutMs) {
 	return new Promise((resolveWait, rejectWait) => {
 		const timeout = setTimeout(() => {
 			child.kill("SIGKILL");
-			rejectWait(new Error(`codex-query timed out after ${timeoutMs}ms`));
+			rejectWait(new Error(`local client timed out after ${timeoutMs}ms`));
 		}, timeoutMs);
 		child.once("close", (code) => {
 			clearTimeout(timeout);
@@ -287,15 +295,15 @@ function waitChild(child, timeoutMs) {
 
 function assertSafeClientEnv(env) {
 	if (typeof env.HOST !== "string" || env.HOST.length === 0) {
-		throw new Error("refusing to spawn codex-query without HOST");
+		throw new Error("refusing to spawn local client without HOST");
 	}
 	const host = new URL(env.HOST);
 	const port = Number(host.port);
 	if (host.protocol !== "ws:" || host.hostname !== "127.0.0.1" || !Number.isInteger(port) || port < 18990 || port > 18999) {
-		throw new Error(`refusing to spawn codex-query outside QA port range: ${env.HOST}`);
+		throw new Error(`refusing to spawn local client outside QA port range: ${env.HOST}`);
 	}
 	if (typeof env.CODEX_WS_TOKEN !== "string" || env.CODEX_WS_TOKEN.length === 0) {
-		throw new Error("refusing to spawn codex-query without CODEX_WS_TOKEN");
+		throw new Error("refusing to spawn local client without CODEX_WS_TOKEN");
 	}
 }
 

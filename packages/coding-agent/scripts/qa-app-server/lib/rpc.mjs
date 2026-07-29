@@ -153,6 +153,13 @@ export class WebSocketRpcClient {
 	}
 }
 
+export async function requestAndWaitForMessageEvent(client, method, params, predicate, timeoutMs = 20000) {
+	const fromIndex = client.mark();
+	const messagePromise = client.waitForMessageEvent(predicate, fromIndex, timeoutMs);
+	const [result, message] = await Promise.all([client.request(method, params, timeoutMs), messagePromise]);
+	return { result, message };
+}
+
 export async function initialize(client, name) {
 	const response = await client.request("initialize", {
 		clientInfo: { name, title: name, version: "0.0.0" },

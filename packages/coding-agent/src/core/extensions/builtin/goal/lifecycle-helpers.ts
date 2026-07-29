@@ -53,14 +53,20 @@ export async function admitAndQueueGoalContinuation(
 	const verdict = evaluateGoalContinuation({ goal, ...options.input });
 	if (verdict.kind === "deny") return handleDeniedContinuation(pi, ctx, goal, options.input, verdict.reason);
 
+	if (options.input.currentSignature === undefined) {
+		throw new Error("cannot queue goal continuation without a delivery signature");
+	}
+	const deliveredGoal = await recordContinuationDelivered(
+		goalStoreRef(ctx.sessionManager, ctx.cwd),
+		options.input.currentSignature,
+	);
+	if (deliveredGoal === null) {
+		throw new Error("cannot queue goal continuation because the persisted goal no longer exists");
+	}
+
 	options.markContinuationPending();
 	queueHiddenGoalPrompt(pi, options.content(verdict));
-	if (options.input.path === "monitorDelayed" || options.input.currentSignature === undefined) return goal;
-
-	return (
-		(await recordContinuationDelivered(goalStoreRef(ctx.sessionManager, ctx.cwd), options.input.currentSignature)) ??
-		goal
-	);
+	return deliveredGoal;
 }
 
 /** Routes startup and resume continuations through the same verdict and delivery accounting as agent-end paths. */
@@ -139,18 +145,26 @@ async function handleDeniedContinuation(
 	const blockedReason = blockedReasonForContinuationGuard(reason);
 	if (blockedReason === undefined) return goal;
 
-	const blocked = await updateGoal(
+	const capReached = reason === "cap";
+	const denied = await updateGoal(
 		goalStoreRef(ctx.sessionManager, ctx.cwd),
-		{ status: "blocked", reason: blockedReason },
-		"model",
+		{ status: capReached ? "paused" : "blocked", reason: blockedReason },
+		capReached ? "system" : "model",
 	);
-	if (ctx.hasUI) ctx.ui.notify(`Goal continuation blocked: ${blockedReason}`, "warning");
+	if (ctx.hasUI) {
+		ctx.ui.notify(
+			capReached
+				? `Goal paused: ${blockedReason}. Run /goal resume to continue.`
+				: `Goal continuation blocked: ${blockedReason}`,
+			"warning",
+		);
+	}
 	pi.events?.emit("goal_continuation_guard_tripped", {
 		goalId: goal.id,
 		reason,
 		count: input.consecutiveContinuations,
 	});
-	return blocked;
+	return denied;
 }
 
 function blockedReasonForContinuationGuard(

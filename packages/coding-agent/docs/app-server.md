@@ -547,3 +547,9 @@ classify the difference as `known-gap` or `allowlisted-delta` (or the explicit h
 Unclassified differences fail the run. Audience, frame-order, array-order, sequence, and invalid-record differences are
 never allowlistable. A rule that no longer matches is a harness defect and fails the run, so resolved gaps must be
 removed instead of retained indefinitely.
+
+## Goal Continuation Release Safety Gate
+
+The release workflow requires the seven-scenario Goal safety probe before publishing. Run it from
+`packages/coding-agent` with `npm run qa:goal-continuation-safety`. It requires Darwin Seatbelt isolation and
+intentionally fails rather than skipping on unsupported hosts.

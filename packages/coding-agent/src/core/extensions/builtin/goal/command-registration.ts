@@ -15,7 +15,7 @@ export type GoalCommandRegistrationDeps = {
 	readonly beginAgentGoalAccounting: (goal: Goal) => void;
 	readonly stopAgentGoalAccounting: (goalId: string) => void;
 	readonly clearAgentGoalAccounting: () => void;
-	readonly queueGoalContinuation: (pi: ExtensionAPI, ctx: ExtensionContext, goal: Goal) => void;
+	readonly queueGoalContinuation: (pi: ExtensionAPI, ctx: ExtensionContext, goal: Goal) => Promise<void>;
 	readonly refreshGoalUi: (ctx: ExtensionContext, goal: Goal | null) => void;
 };
 
@@ -51,7 +51,7 @@ export function registerGoalCommand(pi: ExtensionAPI, deps: GoalCommandRegistrat
 						}
 						deps.refreshGoalUi(ctx, goal);
 						ctx.ui.notify(`Goal ${goalStatusLabel(goal.status)}\n${formatGoalForTool(goal)}`, "info");
-						deps.queueGoalContinuation(pi, ctx, goal);
+						await deps.queueGoalContinuation(pi, ctx, goal);
 						return;
 					}
 					case "clear": {
@@ -93,7 +93,7 @@ async function setGoalObjective(
 	if (goal.status === "active") deps.beginAgentGoalAccounting(goal);
 	deps.refreshGoalUi(ctx, goal);
 	ctx.ui.notify(`Goal ${goalStatusLabel(goal.status)}\n${formatGoalForTool(goal)}`, "info");
-	deps.queueGoalContinuation(pi, ctx, goal);
+	await deps.queueGoalContinuation(pi, ctx, goal);
 }
 
 async function confirmReplaceGoal(ctx: ExtensionContext, objective: string): Promise<boolean> {

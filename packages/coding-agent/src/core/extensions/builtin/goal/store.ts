@@ -7,6 +7,7 @@ import { transitionGoalStatus } from "./transitions.ts";
 import type {
 	Goal,
 	GoalAccountingMode,
+	GoalStatus,
 	GoalStoreRef,
 	GoalUpdate,
 	GoalUpdateSource,
@@ -101,17 +102,13 @@ export async function updateGoal(
 		return next;
 	}
 
-	const next = transitionGoalStatus(
+	const next = applyGoalStatusUpdate(
 		{ ...current, objective },
 		requestedStatus ?? current.status,
 		source,
 		update.reason,
 		now,
 	);
-	if (next.status !== current.status) {
-		next.consecutiveContinuations = 0;
-		delete next.lastContinuationSignature;
-	}
 	if (tokenBudget === undefined) delete next.tokenBudget;
 	else next.tokenBudget = tokenBudget;
 	if (validatedObjective?.truncated) await writeFullObjectiveText(ref, update.objective ?? "");
@@ -148,12 +145,68 @@ export async function accountGoalUsage(
 	if (!goal || (expectedGoalId !== undefined && goal.id !== expectedGoalId) || !canAccountGoalUsage(goal, mode)) {
 		return goal;
 	}
-	const next: Goal = {
-		...goal,
-		tokensUsed: goal.tokensUsed + Math.max(0, usage.input) + Math.max(0, usage.output),
-		timeUsedSeconds: goal.timeUsedSeconds + Math.max(0, Math.trunc(elapsedSeconds)),
-		updatedAt: nextUpdatedAt(goal.updatedAt),
-	};
+	const next = applyGoalUsage(goal, usage, elapsedSeconds, nextUpdatedAt(goal.updatedAt));
+	await writeGoal(ref, next);
+	return next;
+}
+
+export type GoalTurnTransition = {
+	readonly status: GoalStatus;
+	readonly source: GoalUpdateSource;
+	readonly reason?: string;
+	readonly when: (goal: Goal) => boolean;
+};
+
+export type GoalTurnFinalization = {
+	readonly usage?: TokenUsageSnapshot;
+	readonly elapsedSeconds: number;
+	readonly mode: GoalAccountingMode;
+	readonly expectedGoalId?: string;
+	readonly transition?: GoalTurnTransition;
+};
+
+/** Accounts usage and applies an optional lifecycle transition with at most one Goal-file write. */
+export async function finalizeGoalTurn(ref: GoalStoreRef, finalization: GoalTurnFinalization): Promise<Goal | null> {
+	const goal = await readGoal(ref);
+	if (!goal || (finalization.expectedGoalId !== undefined && goal.id !== finalization.expectedGoalId)) return goal;
+
+	const shouldAccount = finalization.usage !== undefined && canAccountGoalUsage(goal, finalization.mode);
+	const shouldTransition = finalization.transition?.when(goal) ?? false;
+	if (!shouldAccount && !shouldTransition) return goal;
+
+	const now = nextUpdatedAt(goal.updatedAt);
+	let next =
+		shouldAccount && finalization.usage !== undefined
+			? applyGoalUsage(goal, finalization.usage, finalization.elapsedSeconds, now)
+			: goal;
+	if (shouldTransition && finalization.transition !== undefined) {
+		next = applyGoalStatusUpdate(
+			next,
+			finalization.transition.status,
+			finalization.transition.source,
+			finalization.transition.reason,
+			now,
+		);
+	}
+	await writeGoal(ref, next);
+	return next;
+}
+
+/** Restores a loaded Goal's historical continuation count without another Goal-file read. */
+export async function restoreContinuationStreak(
+	ref: GoalStoreRef,
+	goal: Goal,
+	derivedCount: number,
+	continuationCap: number,
+): Promise<Goal> {
+	const effectiveCount = Math.max(goal.consecutiveContinuations ?? 0, derivedCount);
+	const needsCountWrite = goal.consecutiveContinuations !== effectiveCount;
+	if (effectiveCount < continuationCap && !needsCountWrite) return goal;
+
+	let next: Goal = { ...goal, consecutiveContinuations: effectiveCount };
+	if (effectiveCount >= continuationCap && goal.status === "active") {
+		next = applyGoalStatusUpdate(next, "paused", "system", "continuation cap reached", nextUpdatedAt(goal.updatedAt));
+	}
 	await writeGoal(ref, next);
 	return next;
 }
@@ -172,17 +225,44 @@ export async function recordContinuationDelivered(ref: GoalStoreRef, signature: 
 
 export async function resetContinuationStreak(ref: GoalStoreRef): Promise<Goal | null> {
 	const goal = await readGoal(ref);
-	if (!goal) return goal;
+	if (!goal || ((goal.consecutiveContinuations ?? 0) === 0 && goal.lastContinuationSignature === undefined)) {
+		return goal;
+	}
 	const next: Goal = { ...goal, consecutiveContinuations: 0 };
 	delete next.lastContinuationSignature;
 	await writeGoal(ref, next);
 	return next;
 }
 
+function applyGoalUsage(goal: Goal, usage: TokenUsageSnapshot, elapsedSeconds: number, updatedAt: number): Goal {
+	return {
+		...goal,
+		tokensUsed: goal.tokensUsed + Math.max(0, usage.input) + Math.max(0, usage.output),
+		timeUsedSeconds: goal.timeUsedSeconds + Math.max(0, Math.trunc(elapsedSeconds)),
+		updatedAt,
+	};
+}
+
+function applyGoalStatusUpdate(
+	current: Goal,
+	status: GoalStatus,
+	source: GoalUpdateSource,
+	reason: string | undefined,
+	updatedAt: number,
+): Goal {
+	const next = transitionGoalStatus(current, status, source, reason, updatedAt);
+	if (next.status !== current.status && source !== "system") {
+		next.consecutiveContinuations = 0;
+		delete next.lastContinuationSignature;
+	}
+	return next;
+}
+
 function canAccountGoalUsage(goal: Goal, mode: GoalAccountingMode): boolean {
 	if (mode === "active") return goal.status === "active";
 	if (mode === "activeOrBlocked") return goal.status === "active" || goal.status === "blocked";
-	return goal.status === "active" || goal.status === "complete";
+	if (mode === "activeOrComplete") return goal.status === "active" || goal.status === "complete";
+	return goal.status === "active" || (goal.status === "paused" && goal.blockedReason === "user-input");
 }
 
 function nextUpdatedAt(previousUpdatedAt: number): number {

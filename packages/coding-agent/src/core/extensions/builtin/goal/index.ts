@@ -6,10 +6,10 @@ import { renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
 import { registerGoalCommand } from "./command-registration.ts";
 import { GOAL_CONTINUATION_CAP } from "./continuation.ts";
 import { GoalElapsedTicker } from "./elapsed-ticker.ts";
-import { formatGoalForTool, goalStatusLabel } from "./format.ts";
-import { isResumeOfPausedGoal, queueGoalContinuation } from "./lifecycle-helpers.ts";
+import { queueGoalContinuation } from "./lifecycle-helpers.ts";
 import { MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
-import { accountGoalUsage, readGoal, resetContinuationStreak, updateGoal } from "./store.ts";
+import type { GoalTurnTransition } from "./store.ts";
+import { finalizeGoalTurn, readGoal, restoreContinuationStreak, updateGoal } from "./store.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
 import { staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
 import { registerGoalTools } from "./tool-registration.ts";
@@ -17,13 +17,15 @@ import { TurnUsageTracker } from "./turn-usage.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
 import { updateGoalUi } from "./ui.ts";
 
-const RESUME_GOAL_CHOICE = "Resume goal";
-const LEAVE_GOAL_PAUSED_CHOICE = "Leave paused";
 const STALE_EXTENSION_CONTEXT_ERROR_PREFIX = "This extension ctx is stale after session replacement or reload.";
 
 type AgentGoalAccounting = {
 	goalId: string;
 	measuredFromMilliseconds: number;
+};
+
+type AgentGoalTransition = GoalTurnTransition & {
+	readonly goalId?: string;
 };
 
 export default function goalExtension(pi: ExtensionAPI): void {
@@ -68,55 +70,89 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		beginAgentGoalAccounting,
 		stopAgentGoalAccounting,
 		clearAgentGoalAccounting,
-		queueGoalContinuation: (extensionApi, commandCtx, goal) => {
-			void queueGoalContinuationForCurrentSession(extensionApi, commandCtx, goal);
-		},
+		queueGoalContinuation: (extensionApi, commandCtx, goal) =>
+			queueGoalContinuationForCurrentSession(extensionApi, commandCtx, goal),
 		refreshGoalUi,
 	});
 
 	pi.on("session_start", async (event, ctx) => {
 		monitorContinuation.start(ctx);
-		const goal = await readGoal(goalStoreRef(ctx));
+		let goal = await readGoal(goalStoreRef(ctx));
+		// Restore the persisted continuation budget from the already-materialized
+		// branch before any startup continuation can be admitted.
+		if (goal?.status === "active" && event.reason !== "reload") {
+			const derivedCount = countGoalContinuationEntriesSince(ctx.sessionManager.getBranch(), goal.lastStartedAt);
+			const recovered = await restoreContinuationStreak(
+				goalStoreRef(ctx),
+				goal,
+				derivedCount,
+				GOAL_CONTINUATION_CAP,
+			);
+			if (recovered.status === "paused") {
+				pi.events?.emit("goal_continuation_guard_tripped", {
+					goalId: recovered.id,
+					reason: "cap",
+					count: recovered.consecutiveContinuations ?? 0,
+				});
+				ctx.ui.notify(
+					`Goal paused after recovering ${recovered.consecutiveContinuations ?? 0} historical continuations. Run /goal resume to continue.`,
+					"info",
+				);
+			}
+			goal = recovered;
+		}
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);
 		} else {
 			clearAgentGoalAccounting();
 		}
 		refreshGoalUi(ctx, goal);
-		if (await maybePromptResumePausedGoal(pi, ctx, event.reason, goal)) {
-			return;
-		}
 		// A config reload must not auto-start an agent that was stopped. Only a fresh
-		// startup or explicit resume may re-engage an active goal via a continuation.
-		if (goal && event.reason !== "reload") {
-			// Migration-lite admission: a resumed session carrying a trailing flood of
-			// historical continuations must not reignite on load. Skip the auto-queue,
-			// leave the goal active (no status rewrite), and tell the user how to resume.
-			const trailingContinuations = countTrailingGoalContinuationEntries(ctx.sessionManager.getBranch());
-			if (trailingContinuations >= GOAL_CONTINUATION_CAP) {
-				ctx.ui.notify(
-					`Goal auto-continuation suppressed for this resumed session (${trailingContinuations} historical continuations). Send a message to resume.`,
-					"info",
-				);
-			} else {
-				await queueGoalContinuationForCurrentSession(pi, ctx, goal);
-			}
+		// startup or explicit /goal resume may re-engage an active goal.
+		if (goal?.status === "active" && event.reason !== "reload") {
+			await queueGoalContinuationForCurrentSession(pi, ctx, goal);
 		}
 	});
 
+	pi.on("input", async (event, ctx) => {
+		if (event.source === "extension") return { action: "continue" };
+		continuationPending = false;
+		monitorContinuation.noteUserPrompt();
+		const goal = await readGoal(goalStoreRef(ctx));
+		if (goal?.status !== "active") return { action: "continue" };
+
+		continuationPending = false;
+		const paused = await accountCurrentAgentTurn(ctx, "active", undefined, {
+			goalId: goal.id,
+			status: "paused",
+			source: "system",
+			reason: "user-input",
+			when: (candidate) => candidate.status === "active",
+		});
+		clearAgentGoalAccounting();
+		refreshGoalUi(ctx, paused);
+		emitGoalPauseTriggered(paused);
+		return { action: "continue" };
+	});
+
 	pi.on("before_agent_start", async (_event, ctx) => {
-		// before_agent_start fires only for real user prompts and BEFORE the host's final
-		// provider admission check (which can reject the run so no agent_start follows).
-		// Resuming a blocked goal here, instead of deferring to agent_start via a sticky
-		// flag, means a rejected run cannot leak a stale resume signal to a later
-		// continuation-style turn that starts the agent without a preceding user prompt.
 		monitorContinuation.noteUserPrompt();
 		const ref = goalStoreRef(ctx);
-		let goal = await resetContinuationStreak(ref);
+		let goal = await readGoal(ref);
 		if (goal?.status === "blocked") {
 			goal = await updateGoal(ref, { status: "active" }, "user");
+		} else if (goal?.status === "active") {
+			goal = await accountCurrentAgentTurn(ctx, "active", undefined, {
+				goalId: goal.id,
+				status: "paused",
+				source: "system",
+				reason: "user-input",
+				when: (candidate) => candidate.status === "active",
+			});
+			clearAgentGoalAccounting();
 		}
 		if (goal !== null) refreshGoalUi(ctx, goal);
+		emitGoalPauseTriggered(goal);
 	});
 
 	pi.on("turn_start", async () => {
@@ -144,7 +180,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		completedThisTurnGoalId = null;
 		turnUsage.reset();
 		const goal = await readGoal(goalStoreRef(ctx));
-		if (goal?.status === "active") {
+		if (goal !== null && isGoalAccountableDuringAgentTurn(goal)) {
 			beginAgentGoalAccounting(goal);
 		} else {
 			agentGoalAccounting = null;
@@ -156,30 +192,37 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_end", async (event, ctx) => {
+		const userAborted = event.aborted === true && event.abortSource === "user";
+		const terminalPauseReason = reasonForTerminalPause(event);
 		const mode: GoalAccountingMode =
 			blockedThisTurnGoalId !== null
 				? "activeOrBlocked"
 				: completedThisTurnGoalId === null
-					? "active"
+					? "activeOrUserPaused"
 					: "activeOrComplete";
-		let goal = await accountCurrentAgentTurn(ctx, mode, event.messages);
+		const transition: AgentGoalTransition | undefined = userAborted
+			? {
+					status: "blocked",
+					source: "model",
+					reason: "user interrupted the turn",
+					when: (candidate) =>
+						candidate.status === "active" ||
+						(candidate.status === "paused" && candidate.blockedReason === "user-input"),
+				}
+			: terminalPauseReason === undefined
+				? undefined
+				: {
+						status: "paused",
+						source: "system",
+						reason: terminalPauseReason,
+						when: (candidate) =>
+							candidate.status === "active" ||
+							(candidate.status === "paused" && candidate.blockedReason === "user-input"),
+					};
+		let goal = await accountCurrentAgentTurn(ctx, mode, event.messages, transition);
 		agentTurnInProgress = false;
 		blockedThisTurnGoalId = null;
 		completedThisTurnGoalId = null;
-		if (event.aborted === true && event.abortSource === "user" && goal?.status === "active") {
-			goal = await updateGoal(
-				goalStoreRef(ctx),
-				{ status: "blocked", reason: "user interrupted the turn" },
-				"model",
-			);
-		} else if (didTerminalProviderErrorEndTurn(event) && goal?.status === "active") {
-			goal = await updateGoal(
-				goalStoreRef(ctx),
-				{ status: "blocked", reason: "provider error ended the turn (retries exhausted)" },
-				"model",
-			);
-			if (ctx.hasUI) ctx.ui.notify(`Goal ${goalStatusLabel(goal.status)}\n${formatGoalForTool(goal)}`, "warning");
-		}
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);
 		} else {
@@ -200,51 +243,30 @@ export default function goalExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_abort", async (_event, ctx) => {
 		const goal = await readGoal(goalStoreRef(ctx));
-		if (goal?.status !== "active") return;
-		const accounted = await accountCurrentAgentTurn(ctx, "active");
-		if (accounted?.status === "active") {
-			const blocked = await updateGoal(
-				goalStoreRef(ctx),
-				{ status: "blocked", reason: "user interrupted the turn" },
-				"model",
-			);
-			clearAgentGoalAccounting();
-			refreshGoalUiBestEffort(ctx, blocked);
+		if (goal?.status !== "active" && !(goal?.status === "paused" && goal.blockedReason === "user-input")) {
+			return;
 		}
+		const blocked = await accountCurrentAgentTurn(ctx, "active", undefined, {
+			goalId: goal.id,
+			status: "blocked",
+			source: "model",
+			reason: "user interrupted the turn",
+			when: (candidate) =>
+				candidate.status === "active" ||
+				(candidate.status === "paused" && candidate.blockedReason === "user-input"),
+		});
+		clearAgentGoalAccounting();
+		refreshGoalUiBestEffort(ctx, blocked);
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		if (agentGoalAccounting !== null) {
-			await accountCurrentAgentTurn(ctx, "active");
+			await accountCurrentAgentTurn(ctx, "activeOrUserPaused");
 		}
 		clearAgentGoalAccounting();
 		goalTicker.stop();
 		monitorContinuation.dispose();
 	});
-
-	async function maybePromptResumePausedGoal(
-		pi: ExtensionAPI,
-		ctx: ExtensionContext,
-		sessionStartReason: string,
-		goal: Goal | null,
-	): Promise<boolean> {
-		if (!isResumeOfPausedGoal(ctx, sessionStartReason, goal)) {
-			return false;
-		}
-
-		const choice = await ctx.ui.select(`Resume paused goal?\nGoal: ${goal.objective}`, [
-			RESUME_GOAL_CHOICE,
-			LEAVE_GOAL_PAUSED_CHOICE,
-		]);
-		if (choice !== RESUME_GOAL_CHOICE) return true;
-
-		const resumed = await updateGoal(goalStoreRef(ctx), { status: "active" }, "user");
-		beginAgentGoalAccounting(resumed);
-		refreshGoalUi(ctx, resumed);
-		ctx.ui.notify(`Goal ${goalStatusLabel(resumed.status)}\n${formatGoalForTool(resumed)}`, "info");
-		await queueGoalContinuationForCurrentSession(pi, ctx, resumed);
-		return true;
-	}
 
 	async function queueGoalContinuationForCurrentSession(
 		extensionApi: ExtensionAPI,
@@ -264,10 +286,15 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	}
 
 	function beginAgentGoalAccounting(goal: Goal): void {
-		if (goal.status !== "active") return;
+		if (!isGoalAccountableDuringAgentTurn(goal)) return;
 		if (agentGoalAccounting?.goalId === goal.id) return;
 		turnUsage.discardPending();
 		agentGoalAccounting = { goalId: goal.id, measuredFromMilliseconds: Date.now() };
+	}
+
+	function emitGoalPauseTriggered(goal: Goal | null): void {
+		if (goal?.status !== "paused" || goal.blockedReason !== "user-input") return;
+		pi.events?.emit("goal_pause_triggered", { goalId: goal.id, reason: "user-input" });
 	}
 
 	function markGoalBlockedThisTurn(goal: Goal): void {
@@ -324,49 +351,71 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 		mode: GoalAccountingMode,
 		agentRunMessages?: unknown[],
+		transition?: AgentGoalTransition,
 	): Promise<Goal | null> {
 		const accounting = agentGoalAccounting;
 		const ref = goalStoreRef(ctx);
-		if (accounting === null) return readGoal(ref);
+		if (accounting === null && transition === undefined) return readGoal(ref);
 
 		const usage =
-			agentRunMessages === undefined ? turnUsage.takePending() : turnUsage.takeRemaining(agentRunMessages);
+			accounting === null
+				? undefined
+				: agentRunMessages === undefined
+					? turnUsage.takePending()
+					: turnUsage.takeRemaining(agentRunMessages);
 		const now = Date.now();
-		const elapsedSeconds = Math.max(0, Math.round((now - accounting.measuredFromMilliseconds) / 1000));
-		const goal = await accountGoalUsage(ref, usage, elapsedSeconds, mode, accounting.goalId);
-		if (goal?.id === accounting.goalId) {
-			agentGoalAccounting = { goalId: accounting.goalId, measuredFromMilliseconds: now };
-		} else {
-			clearAgentGoalAccounting();
+		const elapsedSeconds =
+			accounting === null ? 0 : Math.max(0, Math.round((now - accounting.measuredFromMilliseconds) / 1000));
+		const goal = await finalizeGoalTurn(ref, {
+			usage,
+			elapsedSeconds,
+			mode,
+			expectedGoalId: transition?.goalId ?? accounting?.goalId,
+			transition,
+		});
+		if (accounting !== null) {
+			if (goal?.id === accounting.goalId) {
+				agentGoalAccounting = { goalId: accounting.goalId, measuredFromMilliseconds: now };
+			} else {
+				clearAgentGoalAccounting();
+			}
 		}
 		return goal;
 	}
 }
 
-/**
- * Counts goal-continuation entries queued since the most recent real user message
- * in the current branch (mirrors the todo-gate / todo-bridge backward branch read).
- * A real user message is the only reset: the assistant turns in between are exactly
- * the unattended loop this admission guard exists to stop.
- */
-function countTrailingGoalContinuationEntries(entries: readonly SessionEntry[]): number {
+/** Counts current-segment continuations in one pass over the caller's in-memory branch. */
+function countGoalContinuationEntriesSince(
+	entries: readonly SessionEntry[],
+	lastStartedAt: number | undefined,
+): number {
+	const sinceMilliseconds = lastStartedAt === undefined ? undefined : lastStartedAt * 1000;
 	let count = 0;
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index];
-		if (entry?.type === "message" && entry.message.role === "user") break;
-		if (entry?.type === "custom_message" && entry.customType === GOAL_CONTINUATION_MESSAGE_TYPE) count += 1;
+	for (const entry of entries) {
+		if (entry.type !== "custom_message" || entry.customType !== GOAL_CONTINUATION_MESSAGE_TYPE) continue;
+		if (sinceMilliseconds !== undefined) {
+			const entryMilliseconds = Date.parse(entry.timestamp);
+			if (!Number.isNaN(entryMilliseconds) && entryMilliseconds < sinceMilliseconds) continue;
+		}
+		count += 1;
 	}
 	return count;
 }
 
-function didTerminalProviderErrorEndTurn(event: AgentEndEvent): boolean {
-	if (event.willRetry !== false) return false;
+function isGoalAccountableDuringAgentTurn(goal: Goal): boolean {
+	return goal.status === "active" || (goal.status === "paused" && goal.blockedReason === "user-input");
+}
+
+function reasonForTerminalPause(event: AgentEndEvent): string | undefined {
+	if (event.aborted === true && event.abortSource !== "user" && event.willRetry === false) return "system abort";
 	for (let index = event.messages.length - 1; index >= 0; index--) {
 		const message = event.messages[index];
 		if (message?.role !== "assistant") continue;
-		return message.stopReason === "error" || (message.stopReason === "aborted" && event.abortSource !== "user");
+		if (message.stopReason === "length") return "output length";
+		if (message.stopReason === "error" && event.willRetry === false) return "terminal provider error";
+		return undefined;
 	}
-	return false;
+	return undefined;
 }
 
 function goalStoreRef(ctx: ExtensionContext): GoalStoreRef {

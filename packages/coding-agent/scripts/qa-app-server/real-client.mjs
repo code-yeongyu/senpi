@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import {
 	cleanupAllAndWait,
 	findQaPort,
@@ -14,17 +15,17 @@ import {
 } from "./lib/env.mjs";
 import { fail, httpStatus, initialize, pass, WebSocketRpcClient } from "./lib/rpc.mjs";
 
-const clientPath = "/Users/yeongyu/.agents/skills/use-codex-appserver/scripts/codex-query.ts";
+const clientPath = fileURLToPath(new URL("./lib/local-client.mjs", import.meta.url));
 const transcript = [];
 const clientChildren = new Set();
 const outPath = flag("--out");
+let fake;
 let observer;
 installCleanupHooks();
 
 try {
-	if (!existsSync(clientPath)) throw new Error(`missing required real client: ${clientPath}`);
 	const scratch = makeScratch("app-server-real-client");
-	const fake = await startFakeModelServer([
+	fake = await startFakeModelServer([
 		{ text: "real-client-fast" },
 		{ hold: true },
 	]);
@@ -58,18 +59,26 @@ try {
 	await initialize(observer, "qa-real-client-observer");
 	await observer.request("thread/resume", { threadId }, 30000);
 	const observerMark = observer.mark();
+	const requestMark = fake.requests.length;
+	const holdMark = fake.holds.length;
+	const heldPrompt = fake.waitForHold((record) => record.requestIndex === requestMark, holdMark, 30000);
 	const background = spawnClient(["msg", threadId, "slow prompt", "--timeout", "60"], clientEnv, scratch.cwd);
-	await observer.waitForMessageEvent(
+	const backgroundExit = waitChild(background, 70000);
+	const started = await observer.waitForMessageEvent(
 		(message) => message.method === "turn/started" && message.params?.threadId === threadId,
 		observerMark,
 		30000,
 	);
-	transcript.push(`[observer assert] turn/started thread=${threadId} before steer/interrupt`);
+	const turnId = started.params?.turn?.id;
+	if (typeof turnId !== "string" || turnId.length === 0) throw new Error("turn/started did not include a turn id");
+	await heldPrompt;
+	transcript.push(`[observer assert] turn/started thread=${threadId} turn=${turnId} with held model request before steer/interrupt`);
 	await runClient(["steer", threadId, "please stop after this"], clientEnv, scratch.cwd, 30000, true);
 	const interruptMark = observer.mark();
 	await runClient(["interrupt", threadId], clientEnv, scratch.cwd, 30000, true);
 	const interrupted = await observer.waitForMessageEvent(
-		(message) => message.method === "turn/completed" && message.params?.threadId === threadId,
+		(message) =>
+			message.method === "turn/completed" && message.params?.threadId === threadId && message.params?.turn?.id === turnId,
 		interruptMark,
 		30000,
 	);
@@ -77,14 +86,16 @@ try {
 		throw new Error(`interrupt terminal status was ${interrupted.params?.turn?.status ?? "missing"}`);
 	}
 	fake.releaseHolds();
-	const backgroundResult = await waitChild(background, 70000);
+	const backgroundResult = await backgroundExit;
+	if (backgroundResult.code !== 1 || !backgroundResult.stdout.includes("finished: interrupted")) {
+		throw new Error(`interrupted background msg result was ${JSON.stringify(backgroundResult)}`);
+	}
 	transcript.push(`[client bg exit] ${backgroundResult.code}`);
 	const finalRead = await runClient(["read", threadId, "--full"], clientEnv, scratch.cwd, 30000, true);
 	if (!finalRead.stdout.includes("status:interrupted")) {
 		throw new Error("final read did not show interrupted turn");
 	}
 
-	await fake.stop();
 	pass(transcript, "real-client");
 } catch (error) {
 	fail(transcript, "real-client", error);
@@ -94,6 +105,7 @@ try {
 	for (const child of clientChildren) {
 		if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 	}
+	await fake?.stop();
 	await cleanupAllAndWait();
 	if (outPath) writeFileSync(outPath, `${transcript.join("\n")}\n`);
 	if (transcript.length > 0) process.stdout.write(`${transcript.join("\n")}\n`);
@@ -103,7 +115,7 @@ try {
 function runClient(args, env, cwd, timeoutMs, assertZero) {
 	return waitChild(spawnClient(args, env, cwd), timeoutMs).then((result) => {
 		if (assertZero && result.code !== 0) {
-			throw new Error(`codex-query ${args.join(" ")} exited ${result.code}\n${result.stderr}`);
+			throw new Error(`local client ${args.join(" ")} exited ${result.code}\n${result.stderr}`);
 		}
 		return result;
 	});
@@ -128,7 +140,7 @@ function waitChild(child, timeoutMs) {
 	return new Promise((resolveWait, rejectWait) => {
 		const timeout = setTimeout(() => {
 			child.kill("SIGKILL");
-			rejectWait(new Error(`codex-query timed out after ${timeoutMs}ms`));
+			rejectWait(new Error(`local client timed out after ${timeoutMs}ms`));
 		}, timeoutMs);
 		child.once("close", (code) => {
 			clearTimeout(timeout);

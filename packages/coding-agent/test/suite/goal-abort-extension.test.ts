@@ -91,7 +91,7 @@ describe("goal abort lifecycle through the agent session", () => {
 		]);
 		await harness.session.prompt("continue after interruption");
 
-		expect(statusesAtAgentStart).toEqual(["active", "active"]);
+		expect(statusesAtAgentStart).toEqual(["paused", "active"]);
 		expect((await readGoal(ref))?.status).toBe("complete");
 	});
 

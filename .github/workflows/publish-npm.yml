@@ -28,7 +28,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  goal-continuation-safety:
+    name: Goal continuation safety (Darwin Seatbelt)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run Goal continuation safety (requires macOS Seatbelt)
+        run: npm run qa:goal-continuation-safety --workspace=@code-yeongyu/senpi
+
   release:
+    needs: goal-continuation-safety
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

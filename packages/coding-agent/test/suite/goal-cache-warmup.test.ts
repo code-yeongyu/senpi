@@ -96,7 +96,9 @@ describe("goal cache-warm continuation story", () => {
 		vi.useFakeTimers();
 		const { harness, notices } = await setupWarmHarness("thread-cache-warm-resumed");
 
+		const resumedEvent = harness.events.waitFor("goal_continuation_resumed");
 		await vi.advanceTimersByTimeAsync(240_000);
+		await resumedEvent;
 
 		expect(harness.sent).toHaveLength(1);
 		expect(harness.sent[0]?.message.customType).toBe("goal-continuation");

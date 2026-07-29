@@ -12,8 +12,9 @@ export function transitionGoalStatus(
 		throw new Error("reason must not be provided when status is complete");
 
 	const next: Goal = { ...current, status, updatedAt };
-	if (status === "blocked") applyBlockedFields(next, current, reason, updatedAt);
-	else {
+	if (status === "blocked" || (status === "paused" && reason !== undefined)) {
+		applyBlockedFields(next, current, reason, updatedAt);
+	} else {
 		delete next.blockedReason;
 		delete next.blockedAt;
 	}
@@ -33,9 +34,11 @@ function isAllowedTransition(current: GoalStatus, next: GoalStatus, source: Goal
 	if (source === "model") {
 		return (
 			(current === "active" && (next === "blocked" || next === "complete")) ||
+			(current === "paused" && next === "blocked") ||
 			(current === "blocked" && next === "complete")
 		);
 	}
+	if (source === "system") return current === "active" && next === "paused";
 	return (
 		(current === "active" && next === "paused") ||
 		(current === "paused" && next === "active") ||

@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { clearTimeout as clearRealTimeout, setTimeout as setRealTimeout } from "node:timers";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
@@ -34,6 +35,21 @@ export class TestEventBus {
 			const index = handlers.indexOf(handler);
 			if (index >= 0) handlers.splice(index, 1);
 		};
+	}
+
+	waitFor(channel: string): Promise<unknown> {
+		return new Promise((resolve, reject) => {
+			let unsubscribe: (() => void) | undefined;
+			const timeout = setRealTimeout(() => complete(new Error(`Timed out waiting for ${channel}`)), 5_000);
+			unsubscribe = this.on(channel, (data) => complete(undefined, data));
+
+			function complete(error: Error | undefined, data?: unknown): void {
+				clearRealTimeout(timeout);
+				unsubscribe?.();
+				if (error === undefined) resolve(data);
+				else reject(error);
+			}
+		});
 	}
 
 	async flush(): Promise<void> {

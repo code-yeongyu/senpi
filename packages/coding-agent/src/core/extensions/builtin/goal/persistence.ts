@@ -124,7 +124,7 @@ function isGoal(value: unknown): value is Goal {
 }
 
 function hasValidBlockedFields(value: Record<string, unknown>, status: GoalStatus): boolean {
-	if (status === "blocked") {
+	if (status === "blocked" || (status === "paused" && value.blockedReason !== undefined)) {
 		return (
 			typeof value.blockedReason === "string" &&
 			value.blockedReason.trim().length > 0 &&

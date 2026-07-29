@@ -89,7 +89,7 @@ export function evaluateGoalContinuation(input: GoalContinuationInput): GoalCont
 	if (input.continuationPending) return { kind: "deny", reason: "single-flight" };
 	if (hasRepeatedNormalizedOutputHash(input.recentNormalizedOutputHashes))
 		return { kind: "deny", reason: "repetition" };
-	if (isContinuationCapPath(input.path) && input.consecutiveContinuations >= GOAL_CONTINUATION_CAP) {
+	if (input.consecutiveContinuations >= GOAL_CONTINUATION_CAP) {
 		return { kind: "deny", reason: "cap" };
 	}
 	if (
@@ -144,10 +144,6 @@ function isEligibleForGoalContinuation(input: GoalContinuationInput): boolean {
 		return input.lastStopReason !== undefined && isContinuableStopReason(input.lastStopReason);
 	}
 	return input.isIdle;
-}
-
-function isContinuationCapPath(path: GoalContinuationPath): boolean {
-	return path === "immediate" || path === "userGrace" || path === "sessionStart";
 }
 
 function hasRepeatedNormalizedOutputHash(hashes: readonly string[]): boolean {

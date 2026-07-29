@@ -1,7 +1,8 @@
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as persistence from "../../src/core/extensions/builtin/goal/persistence.ts";
 import {
 	accountGoalUsage,
 	clearGoal,
@@ -29,6 +30,7 @@ async function writeRawGoalFile(ref: GoalStoreRef, contents: string): Promise<vo
 }
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -441,6 +443,17 @@ describe("goal continuation streak persistence", () => {
 		const persisted = await readGoal(ref);
 		expect(persisted?.consecutiveContinuations).toBe(0);
 		expect(persisted?.lastContinuationSignature).toBeUndefined();
+	});
+
+	it("does not rewrite an already-clean continuation streak", async () => {
+		const ref = await tempStore("thread-streak-clean-noop");
+		const goal = await createGoal(ref, "Keep clean state stable");
+		const writeSpy = vi.spyOn(persistence, "writeGoalFile");
+
+		const reset = await resetContinuationStreak(ref);
+
+		expect(reset).toEqual(goal);
+		expect(writeSpy).not.toHaveBeenCalled();
 	});
 
 	it("returns null from streak helpers when no goal exists", async () => {

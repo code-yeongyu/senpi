@@ -53,9 +53,13 @@ function continuationContents(messages: AgentMessage[]): string[] {
 
 describe("goal-continuation context exclusion", () => {
 	test.each([
-		{ name: "zero", messages: [] as AgentMessage[], expected: [] as string[] },
 		{
-			name: "one",
+			name: "zero",
+			messages: [customMessage("non-goal custom", 1)] as AgentMessage[],
+			expected: [] as string[],
+		},
+		{
+			name: "one still-current",
 			messages: [goalContinuation("live continuation", 1)] as AgentMessage[],
 			expected: ["live continuation"],
 		},
@@ -68,24 +72,31 @@ describe("goal-continuation context exclusion", () => {
 			] as AgentMessage[],
 			expected: ["live continuation"],
 		},
-	])("keeps only the last continuation when the array has $name", ({ messages, expected }) => {
-		expect(continuationContents(filterContextExcludedMessages(messages))).toEqual(expected);
-		expect(convertToLlm(messages).map(llmText)).toEqual(expected);
+	])("keeps only the last continuation when the array has $name", ({ name, messages, expected }) => {
+		const filtered = filterContextExcludedMessages(messages);
+
+		expect(continuationContents(filtered)).toEqual(expected);
+		expect(convertToLlm(messages).map(llmText)).toEqual(name === "zero" ? ["non-goal custom"] : expected);
+		if (name === "many") {
+			expect(filtered).not.toBe(messages);
+		} else {
+			expect(filtered).toBe(messages);
+		}
 	});
 
-	test("keeps non-goal messages and their ordering unchanged", () => {
+	test("removes every continuation superseded by a direct user message", () => {
 		const messages: AgentMessage[] = [
 			{ role: "user", content: "before", timestamp: 1 },
 			goalContinuation("stale continuation", 2),
 			customMessage("non-goal custom", 3),
-			goalContinuation("live continuation", 4),
+			goalContinuation("formerly live continuation", 4),
 			{ role: "user", content: "after", timestamp: 5 },
 		];
 
 		const filtered = filterContextExcludedMessages(messages);
 
-		expect(filtered).toEqual([messages[0], messages[2], messages[3], messages[4]]);
-		expect(convertToLlm(messages).map(llmText)).toEqual(["before", "non-goal custom", "live continuation", "after"]);
+		expect(filtered).toEqual([messages[0], messages[2], messages[4]]);
+		expect(convertToLlm(messages).map(llmText)).toEqual(["before", "non-goal custom", "after"]);
 	});
 
 	test("is idempotent across filtering and conversion", () => {

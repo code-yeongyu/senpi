@@ -43,12 +43,10 @@ a stale-signature check on immediate re-entry, and a single-flight latch so only
 hidden continuation can be queued at a time. The stall notice is goal-wide: from the
 3rd consecutive toolless continuation turn it prefixes the prompt with `<goal_stall_check>`
 and switches between monitor-flavored bullets while monitors are active and generic
-recovery bullets otherwise. A real user prompt imposes a 60s grace window before
-resuming, a `length` stop gets exactly one minimal truncation recovery before the goal
-blocks on repetition, terminal provider errors block the goal only when `AgentEndEvent.willRetry`
-is false, and resumed sessions with 8+ trailing historical continuation entries suppress
-session-start auto-resume. `tokenBudget` remains inert compatibility metadata only; this
-policy is budget-free by design.
+recovery bullets otherwise. Direct user input pauses continuation immediately without a grace period,
+length and truncation errors stop automatic continuation without additional recovery attempts,
+terminal provider errors block the goal only when `AgentEndEvent.willRetry` is false, and resumed sessions with 8+ trailing historical continuation entries suppress session-start auto-resume.
+Explicit `/goal resume` is required to continue a paused or blocked goal. `tokenBudget` remains inert compatibility metadata only; this policy is budget-free by design.
 
 ## PERSISTENCE
 

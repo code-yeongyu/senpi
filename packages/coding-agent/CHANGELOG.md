@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### New Features
+- **Goal continuation safety guardrails** — Provider context retains only the latest continuation and drops stale ones after new user input; persisted hard maximum 8 applies across immediate/restart/monitor paths with admission persisting before queue; direct user input pauses immediately, length/provider errors stop auto-continuation, and `/goal resume` is explicit; legacy recovery persists max(stored,derived) without JSONL rewrite; open todo items block completion until resolved.
 
 ### Breaking Changes
 

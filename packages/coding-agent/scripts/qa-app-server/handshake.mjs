@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { writeFileSync } from "node:fs";
 import { cleanupAllAndWait, installCleanupHooks, makeScratch, makeThreadStartParams, spawnCli, startFakeModelServer, writeMockModelsJson } from "./lib/env.mjs";
-import { fail, initialize, pass, requiredThreadId, StdioRpcClient } from "./lib/rpc.mjs";
+import { fail, initialize, pass, requestAndWaitForMessageEvent, requiredThreadId, StdioRpcClient } from "./lib/rpc.mjs";
 
 const transcript = [];
 const outPath = flag("--out");
@@ -15,8 +15,17 @@ try {
 	const client = new StdioRpcClient(child, transcript, "stdio");
 	const init = await initialize(client, "qa-handshake");
 	if (typeof init?.userAgent !== "string") throw new Error(`initialize result missing userAgent: ${JSON.stringify(init)}`);
-	const thread = await client.request("thread/start", makeThreadStartParams(scratch.cwd));
-	transcript.push(`threadId=${requiredThreadId(thread)}`);
+	const { result: thread, message: threadStarted } = await requestAndWaitForMessageEvent(
+		client,
+		"thread/start",
+		makeThreadStartParams(scratch.cwd),
+		(message) => message.method === "thread/started",
+		20000,
+	);
+	const threadId = requiredThreadId(thread);
+	const startedThreadId = requiredThreadId({ thread: threadStarted.params?.thread });
+	if (startedThreadId !== threadId) throw new Error(`thread/started id ${startedThreadId} did not match response ${threadId}`);
+	transcript.push(`threadId=${threadId}`);
 	client.assertServerEnvelopes();
 	client.close();
 	await fake.stop();

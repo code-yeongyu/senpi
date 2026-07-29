@@ -36,23 +36,32 @@ export function isContextExcludedCustomMessage(_customType: string): boolean {
 }
 
 function keepLatestGoalContinuationMessage(messages: AgentMessage[]): AgentMessage[] {
-	let lastGoalContinuationIndex = -1;
+	let hasNewerDirectUserMessage = false;
+	let foundCurrentGoalContinuation = false;
+	let keptSuffix: AgentMessage[] | undefined;
+	let keptPrefixReversed: AgentMessage[] | undefined;
 
-	for (let index = 0; index < messages.length; index++) {
+	for (let index = messages.length - 1; index >= 0; index--) {
 		const message = messages[index];
-		if (message.role === "custom" && message.customType === GOAL_CONTINUATION_MESSAGE_TYPE) {
-			lastGoalContinuationIndex = index;
+		if (message.role === "user") {
+			hasNewerDirectUserMessage = true;
+		} else if (message.role === "custom" && message.customType === GOAL_CONTINUATION_MESSAGE_TYPE) {
+			if (hasNewerDirectUserMessage || foundCurrentGoalContinuation) {
+				// The first excluded message splits an entirely kept suffix from the
+				// remaining reverse traversal. Do not allocate before this point.
+				keptSuffix ??= messages.slice(index + 1);
+				keptPrefixReversed ??= [];
+				continue;
+			}
+			foundCurrentGoalContinuation = true;
 		}
+
+		keptPrefixReversed?.push(message);
 	}
 
-	if (lastGoalContinuationIndex === -1) return messages;
-
-	return messages.filter(
-		(message, index) =>
-			index === lastGoalContinuationIndex ||
-			message.role !== "custom" ||
-			message.customType !== GOAL_CONTINUATION_MESSAGE_TYPE,
-	);
+	if (keptSuffix === undefined) return messages;
+	if (keptPrefixReversed === undefined || keptPrefixReversed.length === 0) return keptSuffix;
+	return keptPrefixReversed.reverse().concat(keptSuffix);
 }
 
 export function filterContextExcludedMessages(messages: AgentMessage[]): AgentMessage[] {
