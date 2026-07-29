@@ -1,5 +1,12 @@
 # Local fork changes
 
+## 2026-07-29 — Two-line footer extension example
+
+- Changed: added a public-API-only `examples/extensions/two-line-footer/` example with compact path, token, cache, context, model, and generic extension-status rendering. Long paths elide from the head before session metadata yields, built-in anchor indicators remain visible, one built-in context counter stays with the left-side metrics, and other extension statuses are sorted by key and reserved at the right edge.
+- Why: users can opt into a denser two-row footer without adding core behavior or coupling status-producing extensions to a specific footer implementation.
+- Extension boundary: the example uses `ctx.ui.setFooter()` and public `footerData` accessors exclusively; no core footer source changes are required.
+- Merge-conflict risk: low. The change adds an isolated example directory, one test, one catalog row, and this record.
+
 ## 2026-07-28 — Billing-class provider errors always pin the session model swap
 
 - Changed: billing-class failures (credit balance, insufficient quota) engage the fallback chain with the pinned `"billing"` reason unconditionally — the candidate becomes the session model for the rest of the session and never auto-reverts. Files: `src/core/retry-fallback/billing.ts` (classifier), `src/core/retry-fallback/controller.ts` (billing reason pins and notes the cooldown), `src/core/agent-session.ts` (classifies hard-error-eligible failures). Non-billing hard errors keep the temporary, revertable switch. Supersedes the opt-in `retry.billingErrorPolicy` variant of the same change; the setting no longer exists.
