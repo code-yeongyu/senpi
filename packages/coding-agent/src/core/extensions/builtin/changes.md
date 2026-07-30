@@ -1,5 +1,15 @@
 # Builtin extensions changes
 
+## service-tier: mirror the Codex fast toggle into the session indicator (2026-07-31)
+
+- The session toggle added on 2026-07-31 lived only inside this extension, so no host surface could
+  tell that fast mode was on. It now calls `pi.setSessionFastMode()` on every toggle and clears the
+  flag on `session_start`, which is what lights the TUI footer's lightning indicator.
+- `test/suite/service-tier-extension.test.ts` asserts `session.isFastModeActive()` across the
+  toggle and the `session_start` reset.
+- Expected merge conflict zones: LOW in `service-tier.ts` around the no-variant toggle branch and
+  the `session_start` handler.
+
 ## service-tier: `/fast` toggles a session priority tier on subscription Codex models (2026-07-31)
 
 - Fixes issue #545 and reverses the conclusion of the 2026-07-30 entry below. `/fast`

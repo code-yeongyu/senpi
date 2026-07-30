@@ -1,5 +1,22 @@
 # changes
 
+## Footer marks fast mode on the model label (2026-07-31)
+
+### What changed
+
+- `components/footer.ts` prefixes the right-hand model label with a lightning bolt whenever
+  `session.isFastModeActive()` is true, so a priority-tier session is visible without running
+  `/fast` again to check. The glyph is part of the `FooterSegment` plain text, so the width ladder
+  in `footer-layout.ts` accounts for it instead of overflowing narrow terminals, and
+  `colorRightSide()` paints it `warning` while the model keeps `accent` and `:thinking` keeps `dim`.
+- Coverage: `test/footer-fast-mode-icon.test.ts` pins the indicator, its absence when fast mode is
+  off, and width safety with a wide CJK model id at width 60.
+
+### Why
+
+- Both fast paths (an `openai` `-fast` catalog variant and the Codex session toggle) were invisible
+  in the footer, which is the only always-on surface showing the active model.
+
 ## Failed compaction restores queued input (2026-07-30)
 
 ### What changed

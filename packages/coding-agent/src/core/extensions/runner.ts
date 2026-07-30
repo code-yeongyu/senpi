@@ -474,6 +474,7 @@ export class ExtensionRunner {
 		this.runtime.setThinkingLevel = actions.setThinkingLevel;
 		this.runtime.setSessionModel = actions.setSessionModel;
 		this.runtime.setSessionThinkingLevel = actions.setSessionThinkingLevel;
+		this.runtime.setSessionFastMode = actions.setSessionFastMode;
 
 		// Context actions (required)
 		this.getModel = contextActions.getModel;

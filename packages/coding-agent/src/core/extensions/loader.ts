@@ -270,6 +270,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		setThinkingLevel: notInitialized,
 		setSessionModel: () => Promise.reject(new Error("Extension runtime not initialized")),
 		setSessionThinkingLevel: notInitialized,
+		setSessionFastMode: notInitialized,
 		flagValues: new Map(),
 		pendingProviderRegistrations: [],
 		pendingNativeProviderRegistrations: [],
@@ -521,6 +522,11 @@ function createExtensionAPI(
 		setSessionThinkingLevel(level) {
 			runtime.assertActive();
 			runtime.setSessionThinkingLevel(level);
+		},
+
+		setSessionFastMode(enabled) {
+			runtime.assertActive();
+			runtime.setSessionFastMode(enabled);
 		},
 
 		registerProvider(providerOrName: Provider | string, config?: ProviderConfig) {

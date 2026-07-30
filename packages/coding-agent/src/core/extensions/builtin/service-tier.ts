@@ -85,6 +85,7 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		const settingsManager = SettingsManager.create(ctx.cwd);
 		settingsServiceTier = settingsManager.getOpenAIServiceTier();
 		sessionFastMode = false;
+		pi.setSessionFastMode(false);
 
 		const model = ctx.model;
 		if (model?.provider !== OPENAI_CODEX_PROVIDER) {
@@ -110,6 +111,7 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 			const targetModel = baseModel ?? findFastModel(ctx.modelRegistry, model);
 			if (!targetModel) {
 				sessionFastMode = !sessionFastMode;
+				pi.setSessionFastMode(sessionFastMode);
 				ctx.ui.notify(`Fast mode ${sessionFastMode ? "enabled" : "disabled"}: ${model.id}`, "info");
 				return;
 			}

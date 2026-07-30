@@ -67,6 +67,7 @@ describe("service-tier builtin extension", () => {
 		harnesses.push(harness);
 		const runner = harness.getExtensionRunner();
 		expect(harness.session.model?.id).toBe(FAST_MODEL_ID);
+		expect(harness.session.isFastModeActive()).toBe(true);
 
 		// when
 		await harness.session.bindExtensions({});
@@ -74,6 +75,7 @@ describe("service-tier builtin extension", () => {
 		// then
 		expect(harness.session.model?.id).toBe(BASE_MODEL_ID);
 		expect(harness.session.serviceTier).toBeUndefined();
+		expect(harness.session.isFastModeActive()).toBe(false);
 		expect(harness.settingsManager.getDefaultProvider()).toBe(CODEX_PROVIDER);
 		expect(harness.settingsManager.getDefaultModel()).toBe(BASE_MODEL_ID);
 
@@ -148,6 +150,7 @@ describe("service-tier builtin extension", () => {
 		// then
 		expect(harness.session.model).toBe(initialModel);
 		expect(notify).toHaveBeenCalledWith(`Fast mode enabled: ${BASE_MODEL_ID}`, "info");
+		expect(harness.session.isFastModeActive()).toBe(true);
 		expect(await runner.emitBeforeProviderRequest({ model: BASE_MODEL_ID })).toEqual({
 			model: BASE_MODEL_ID,
 			service_tier: "priority",
@@ -158,6 +161,7 @@ describe("service-tier builtin extension", () => {
 
 		// then
 		expect(notify).toHaveBeenCalledWith(`Fast mode disabled: ${BASE_MODEL_ID}`, "info");
+		expect(harness.session.isFastModeActive()).toBe(false);
 		const defaultPayload = { model: BASE_MODEL_ID };
 		expect(await runner.emitBeforeProviderRequest(defaultPayload)).toBe(defaultPayload);
 	});

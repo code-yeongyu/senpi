@@ -1642,6 +1642,16 @@ export interface ExtensionAPI {
 	/** Set thinking level for this session only (clamped), leaving the persisted default untouched. */
 	setSessionThinkingLevel(level: ThinkingLevel): void;
 
+	/**
+	 * Mark this session as running in fast mode so the host can surface it (the TUI
+	 * footer stamps a ⚡ on the model label). Session-scoped and never persisted.
+	 *
+	 * Purely an indicator: it does not add `service_tier` to any request. An extension
+	 * that wants the priority tier on the wire still returns it from
+	 * `before_provider_request`.
+	 */
+	setSessionFastMode(enabled: boolean): void;
+
 	// =========================================================================
 	// Provider Registration
 	// =========================================================================
@@ -1920,6 +1930,8 @@ export type GetThinkingLevelHandler = () => ThinkingLevel;
 
 export type SetThinkingLevelHandler = (level: ThinkingLevel) => void;
 
+export type SetSessionFastModeHandler = (enabled: boolean) => void;
+
 export type SetLabelHandler = (entryId: string, label: string | undefined) => void;
 
 /**
@@ -1999,6 +2011,7 @@ export interface ExtensionActions {
 	setThinkingLevel: SetThinkingLevelHandler;
 	setSessionModel: SetModelHandler;
 	setSessionThinkingLevel: SetThinkingLevelHandler;
+	setSessionFastMode: SetSessionFastModeHandler;
 }
 
 /**

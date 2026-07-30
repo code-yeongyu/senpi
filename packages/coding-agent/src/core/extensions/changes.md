@@ -1,5 +1,26 @@
 # Core Extensions Changes
 
+## 2026-07-31 - `pi.setSessionFastMode()` for the fast-mode indicator
+
+### What changed and why
+
+- `ExtensionAPI` gains `setSessionFastMode(enabled: boolean)` (with the matching
+  `SetSessionFastModeHandler` type and `ExtensionActions.setSessionFastMode`). It flips a
+  session-scoped, never-persisted flag on `AgentSession` that hosts can surface; the TUI footer
+  stamps a lightning bolt on the model label while it is set.
+- The flag is display-only and deliberately separate from `serviceTier`. `serviceTier` feeds
+  request composition (`service-tier.ts` for non-Codex apis, `compaction/openai-remote.ts`), so
+  folding a provider-scoped fast toggle into it would inject `service_tier: "priority"` into
+  API-key-billed `openai-responses` traffic. `AgentSession.isFastModeActive()` ORs the flag with
+  `serviceTier === "priority"`, so a configured `-fast` catalog variant lights the indicator too.
+- The `service-tier` builtin mirrors its Codex session toggle through the new API and clears it on
+  `session_start`.
+
+### Expected merge conflict zones
+
+- MEDIUM: `types.ts` around the `setSession*` block in `ExtensionAPI` and `ExtensionActions`.
+- LOW: `loader.ts` stub table and `pi` implementation, `runner.ts` `bindCore` assignment.
+
 ## 2026-07-30 - Linux recursive config watches leave the interactive main thread
 
 ### What changed and why

@@ -5,6 +5,8 @@ import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provi
 import { theme } from "../theme/theme.ts";
 import { type FooterSegment, planFooterLayout } from "./footer-layout.ts";
 
+const FAST_MODE_INDICATOR = "\u26a1 ";
+
 /**
  * Sanitize text for display in a single-line status.
  * Removes newlines, tabs, carriage returns, and other control characters.
@@ -59,11 +61,13 @@ export function formatCwdForFooter(cwd: string, home: string | undefined): strin
 function colorRightSide(text: string): string {
 	if (!text) return "";
 	const providerMatch = text.match(/^\(([^)]+)\) (.*)$/);
-	const body = providerMatch ? providerMatch[2] : text;
+	const afterProvider = providerMatch ? providerMatch[2] : text;
 	const providerPrefix = providerMatch ? theme.fg("muted", `(${providerMatch[1]}) `) : "";
+	const fastPrefix = afterProvider.startsWith(FAST_MODE_INDICATOR) ? theme.fg("warning", FAST_MODE_INDICATOR) : "";
+	const body = fastPrefix ? afterProvider.slice(FAST_MODE_INDICATOR.length) : afterProvider;
 	const thinkingMatch = body.match(/^(.+):([^:]+)$/);
-	if (!thinkingMatch) return providerPrefix + theme.fg("accent", body);
-	return `${providerPrefix}${theme.fg("accent", thinkingMatch[1])}${theme.fg("dim", `:${thinkingMatch[2]}`)}`;
+	if (!thinkingMatch) return providerPrefix + fastPrefix + theme.fg("accent", body);
+	return `${providerPrefix}${fastPrefix}${theme.fg("accent", thinkingMatch[1])}${theme.fg("dim", `:${thinkingMatch[2]}`)}`;
 }
 
 /**
@@ -181,10 +185,11 @@ export class FooterComponent implements Component {
 		// Model label pinned to the right edge; the provider prefix stays only when
 		// the full line fits.
 		const modelName = state.model?.id || "no-model";
-		let minimalRight = modelName;
+		const fastIndicator = this.session.isFastModeActive() ? FAST_MODE_INDICATOR : "";
+		let minimalRight = `${fastIndicator}${modelName}`;
 		if (state.model?.reasoning) {
 			const thinkingLevel = state.thinkingLevel || "off";
-			minimalRight = thinkingLevel === "off" ? `${modelName}:off` : `${modelName}:${thinkingLevel}`;
+			minimalRight = thinkingLevel === "off" ? `${minimalRight}:off` : `${minimalRight}:${thinkingLevel}`;
 		}
 		const minimal: FooterSegment = { plain: minimalRight, colored: colorRightSide(minimalRight) };
 		const providerPrefix =

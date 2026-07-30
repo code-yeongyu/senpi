@@ -1767,6 +1767,16 @@ const current = pi.getThinkingLevel();  // "off" | "minimal" | "low" | "medium" 
 pi.setThinkingLevel("high");
 ```
 
+### pi.setSessionFastMode(enabled)
+
+Mark the session as running in fast mode so host surfaces can show it — the TUI footer stamps a ⚡ on the model label. Session-scoped and never persisted; it is also true on its own whenever the active model is configured for the priority tier (an `openai` `-fast` catalog variant, a scoped `provider/id:priority`).
+
+This is only an indicator. It does not add `service_tier` to any request, so an extension that wants the priority tier on the wire still returns it from `before_provider_request`.
+
+```typescript
+pi.setSessionFastMode(true);
+```
+
 ### pi.events
 
 Shared event bus for communication between extensions:

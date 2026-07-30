@@ -20,6 +20,7 @@ export type FooterSessionOptions = {
 	provider?: string;
 	reasoning?: boolean;
 	thinkingLevel?: string;
+	fastModeActive?: boolean;
 	usage?: AssistantUsage;
 	branchUsage?: AssistantUsage;
 	compactionUsage?: AssistantUsage;
@@ -82,6 +83,7 @@ export function createFooterSession(options: FooterSessionOptions): AgentSession
 			getCwd: () => options.cwd ?? "/tmp/project",
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		isFastModeActive: () => options.fastModeActive ?? false,
 		modelRuntime: { isUsingOAuth: () => false },
 	} as unknown as AgentSession;
 }

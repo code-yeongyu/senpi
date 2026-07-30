@@ -649,6 +649,7 @@ export class AgentSession {
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
 	private _currentServiceTier: ServiceTier | undefined = undefined;
+	private _sessionFastMode = false;
 	private _lastHighReasoningWarningKey: string | undefined = undefined;
 	private _baseSystemPromptOptions!: BuildDynamicSystemPromptOptions;
 	private _systemPromptOverride?: string;
@@ -1885,6 +1886,24 @@ export class AgentSession {
 
 	get serviceTier(): ServiceTier | undefined {
 		return this._currentServiceTier;
+	}
+
+	/**
+	 * True when the active model is served at the priority ("fast") tier: either the model
+	 * itself is configured for it (an `openai` `-fast` catalog variant, a scoped
+	 * `provider/id:priority`) or an extension turned fast mode on for this session.
+	 *
+	 * Display-only: it never feeds request composition, so an extension toggling fast mode
+	 * for one provider cannot leak `service_tier` into another provider's payload.
+	 * `serviceTier` stays the single request-side source.
+	 */
+	isFastModeActive(): boolean {
+		return this._sessionFastMode || this._currentServiceTier === "priority";
+	}
+
+	/** Session-scoped fast-mode indicator; never persisted, reset on session start. */
+	setSessionFastMode(enabled: boolean): void {
+		this._sessionFastMode = enabled;
 	}
 
 	/**
@@ -4867,6 +4886,7 @@ export class AgentSession {
 					return true;
 				},
 				setSessionThinkingLevel: (level) => this.setSessionThinkingLevel(level),
+				setSessionFastMode: (enabled) => this.setSessionFastMode(enabled),
 			},
 			{
 				getModel: () => this.model,
