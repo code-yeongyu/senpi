@@ -101,7 +101,7 @@ function writeSandboxConfig(agentDir, server) {
 			providers: {
 				anthropic: {
 					baseUrl: server.origin,
-					apiKey: "sk-ant-mock-7f3a",
+					apiKey: "sk-mock-qa-7f3a",
 					api: "anthropic-messages",
 					models: [
 						{
