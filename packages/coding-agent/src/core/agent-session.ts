@@ -4173,6 +4173,7 @@ export class AgentSession {
 			const compacted = await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, inlineReason);
 			if (compacted) return true;
 		}
+		if (this._isCompactionOnCooldown()) return false;
 		throw new RequiredCompactionError();
 	}
 
@@ -4214,6 +4215,7 @@ export class AgentSession {
 		}
 
 		const compacted = await this._runPrePromptCompaction(lastAssistantMessage, false, "pre_prompt");
+		if (!compacted && !isOversized() && this._isCompactionOnCooldown()) return;
 		if (!compacted || isOversized()) {
 			throw new RequiredCompactionError();
 		}
@@ -4389,6 +4391,11 @@ export class AgentSession {
 		return false;
 	}
 
+	private _isCompactionOnCooldown(): boolean {
+		const state = this._compactionLifecycle.state;
+		return state.status === "failed" && state.rejectionCause === "circuit-breaker";
+	}
+
 	private async _runPrePromptCompaction(
 		lastAssistantMessage: AssistantMessage | undefined,
 		skipAbortedCheck: boolean,
@@ -4458,7 +4465,10 @@ export class AgentSession {
 		if (!shouldCompact(contextTokens, model.contextWindow, settings)) return;
 
 		const compacted = await this._runPrePromptCompaction(this._findLastAssistantMessage(), true, "pre_prompt");
-		if (!compacted) throw new RequiredCompactionError();
+		if (!compacted) {
+			if (this._isCompactionOnCooldown()) return;
+			throw new RequiredCompactionError();
+		}
 		this._scheduledContinuationRecompacted = true;
 	}
 
@@ -5581,7 +5591,8 @@ export class AgentSession {
 			model &&
 			shouldCompact(contextTokens, model.contextWindow, compactionSettings)
 		) {
-			if (!(await this._runPrePromptCompaction(message, true, "threshold", true, true))) {
+			const preRetryCompaction = await this._runPrePromptCompaction(message, true, "threshold", true, true);
+			if (!preRetryCompaction && !this._isCompactionOnCooldown()) {
 				const attempt = this._retryAttempt;
 				this._retryAttempt = 0;
 				this._emit({
