@@ -40,6 +40,7 @@ export type KnownProvider =
 	| "amazon-bedrock"
 	| "ant-ling"
 	| "anthropic"
+	| "cline-pass"
 	| "google"
 	| "google-vertex"
 	| "openai"

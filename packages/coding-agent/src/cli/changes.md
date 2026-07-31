@@ -1,5 +1,25 @@
 # changes
 
+## ClinePass key documented in `--help` (2026-07-31)
+
+### What changed
+
+- `args.ts`: added `CLINE_API_KEY` to the environment-variable table printed by `--help`, next to the
+  other provider key rows.
+
+### Why
+
+- The help output is the discoverable list of credentials the CLI reads. A provider whose key is
+  detected but undocumented is invisible to anyone not reading source.
+
+### Why extension system couldn't handle this
+
+- `--help` is rendered during argument parsing, before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: one added row in the help env-var block.
+
 ## `senpi --list-tips` prints the tip catalog as JSON (2026-07-29)
 
 ### What changed

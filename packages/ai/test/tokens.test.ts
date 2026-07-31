@@ -276,6 +276,14 @@ describe("Token Statistics on Abort", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.CLINE_API_KEY)("ClinePass Provider", () => {
+		const llm = getModel("cline-pass", "cline-pass/kimi-k3");
+
+		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			await testTokensOnAbort(llm);
+		});
+	});
+
 	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan Provider", () => {
 		const llm = getModel("alibaba-token-plan", "qwen3.7-max");
 

@@ -29,6 +29,9 @@
 		},
 		"ALIBABA_TOKEN_PLAN_API_KEY": {
 			"description": "(Optional) Alibaba Cloud Model Studio Token Plan API key (ap-southeast-1)."
+		},
+		"CLINE_API_KEY": {
+			"description": "(Optional) ClinePass API key (Cline's OpenAI-compatible subscription endpoint)."
 		}
 	},
 	"customizations": {

@@ -1,5 +1,29 @@
 # changes
 
+## ClinePass model selection defaults (2026-07-31)
+
+### What changed
+
+- `model-resolver.ts`: added the `cline-pass` entry to the provider default-model map, selecting
+  `cline-pass/kimi-k3`.
+- `provider-display-names.ts`: added the `cline-pass` -> `ClinePass` display name used by `/login`
+  and the model picker.
+
+### Why
+
+- Both maps are typed `Record<KnownProvider, string>`. Adding a provider to `KnownProvider` in
+  `packages/ai` without these entries is a compile error, so they are part of provider registration
+  rather than an optional nicety.
+
+### Why extension system couldn't handle this alone
+
+- Default-model resolution and display naming run inside the model runtime that extensions consume;
+  an extension observes the resolved model but cannot supply the default before resolution.
+
+### Expected merge conflict zones
+
+- LOW: one added line in each map, both alphabetically ordered.
+
 ## Codex fast-variant service-tier metadata lookup (2026-07-29)
 
 ### What changed

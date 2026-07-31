@@ -475,6 +475,16 @@ describe("Context overflow error handling", () => {
 		}, 120000);
 	});
 
+	describe.skipIf(!process.env.CLINE_API_KEY)("ClinePass", () => {
+		it("cline-pass/kimi-k3 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("cline-pass", "cline-pass/kimi-k3");
+			const result = await testContextOverflow(model, process.env.CLINE_API_KEY!);
+			logResult(result);
+
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
 	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan", () => {
 		it("qwen3.7-max - should detect overflow via isContextOverflow", async () => {
 			const model = getModel("alibaba-token-plan", "qwen3.7-max");

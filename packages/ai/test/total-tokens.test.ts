@@ -555,6 +555,26 @@ describe("totalTokens field", () => {
 	// Alibaba Token Plan
 	// =========================================================================
 
+	describe.skipIf(!process.env.CLINE_API_KEY)("ClinePass", () => {
+		it("cline-pass/kimi-k3 - should return totalTokens equal to sum of components", {
+			retry: 3,
+			timeout: 60000,
+		}, async () => {
+			const llm = getModel("cline-pass", "cline-pass/kimi-k3");
+
+			console.log(`\nClinePass / ${llm.id}:`);
+			const { first, second } = await testTotalTokensWithCache(llm, {
+				apiKey: process.env.CLINE_API_KEY,
+			});
+
+			logUsage("First request", first);
+			logUsage("Second request", second);
+
+			assertTotalTokensEqualsComponents(first);
+			assertTotalTokensEqualsComponents(second);
+		});
+	});
+
 	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan", () => {
 		it("qwen3.7-max - should return totalTokens equal to sum of components", {
 			retry: 3,

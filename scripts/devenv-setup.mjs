@@ -76,6 +76,7 @@ const PROVIDER_KEYS = [
 	"XAI_API_KEY",
 	"DEEPSEEK_API_KEY",
 	"ALIBABA_TOKEN_PLAN_API_KEY",
+	"CLINE_API_KEY",
 ];
 
 function hasCmd(cmd) {

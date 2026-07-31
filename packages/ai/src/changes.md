@@ -1,5 +1,35 @@
 # AI Source Changes
 
+## 2026-07-31 - Register the ClinePass provider
+
+### What changed and why
+
+- `types.ts`, `providers/all.ts`, and `providers/cline-pass.ts` (new) register `cline-pass`, an
+  OpenAI-compatible gateway at `https://api.cline.bot/api/v1`. Like OpenRouter it fronts many upstream
+  models behind one endpoint, keeps the `provider/model` id shape, and normalizes thinking through the
+  nested `reasoning` object rather than provider-specific parameters.
+- `env-api-keys.ts` detects `CLINE_API_KEY`. The name follows this client's existing
+  `<PROVIDER>_API_KEY` convention; ClinePass's published API documentation specifies only the
+  `Authorization: Bearer` header and does not name an environment variable.
+- `models.generated.ts`, `providers/cline-pass.models.ts`, `providers/data/cline-pass.json`, and
+  `providers/data/.manifest.json` are regenerated artifacts carrying the 11 tool-capable models
+  sourced from the models.dev `cline-pass` provider. They were produced by `npm run generate:models`
+  and `hydrate:model-data`, never hand-edited.
+
+### Why an extension couldn't handle this
+
+- Provider registration and browser-safe credential detection are composed inside this package before
+  any extension loads. An extension can add a model entry but cannot make a provider first-class in
+  `KnownProvider`, the generated catalog, or `env-api-keys.ts` credential probing.
+
+### Expected merge conflict zones
+
+- LOW: the `cline-pass` entries are single additive lines in `types.ts`, `providers/all.ts`, and
+  `env-api-keys.ts`, all in alphabetically-ordered lists.
+- MEDIUM: `models.generated.ts` and `providers/data/.manifest.json` are regenerated wholesale, so any
+  upstream catalog change touching the same regions conflicts. Resolve by regenerating rather than
+  merging by hand.
+
 ## 2026-07-30 - Recover Kimi XTML response channels from thinking
 
 ### What changed and why

@@ -266,6 +266,20 @@ const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 	max: "max",
 } as const;
 
+// ClinePass normalizes thinking through OpenRouter-style `reasoning.effort` and
+// verifies the same effort vocabulary for every model it fronts (models.dev
+// reasoning_options): none/low/medium/high/xhigh. Pi's `minimal` and `max` have
+// no ClinePass equivalent.
+const CLINE_PASS_THINKING_LEVEL_MAP = {
+	off: "none",
+	minimal: null,
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: "xhigh",
+	max: null,
+} as const;
+
 const KIMI_K3_THINKING_LEVEL_MAP = {
 	off: null,
 	minimal: null,
@@ -914,6 +928,11 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (model.provider === "ant-ling" && model.reasoning) {
 		// Ring reasons by default. Only high/xhigh have documented explicit effort controls.
 		mergeThinkingLevelMap(model, ANT_LING_RING_THINKING_LEVEL_MAP);
+	}
+	if (model.provider === "cline-pass" && model.reasoning) {
+		// Applied after the upstream-model rules (DeepSeek V4, Kimi, GLM) so the
+		// gateway's own verified effort vocabulary wins over direct-endpoint maps.
+		mergeThinkingLevelMap(model, CLINE_PASS_THINKING_LEVEL_MAP);
 	}
 	if (model.provider === "github-copilot") {
 		const override = GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES[model.id];
@@ -2139,6 +2158,39 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
+		// ClinePass (Cline's OpenAI-compatible subscription endpoint). Like
+		// OpenRouter it fronts many upstream models behind one gateway, keeps the
+		// `provider/model` id shape, and normalizes thinking through the nested
+		// `reasoning` object instead of provider-specific parameters.
+		const clinePassModels = data["cline-pass"]?.models;
+		if (clinePassModels) {
+			const clinePassCompat: OpenAICompletionsCompat = {
+				supportsStore: false,
+				supportsDeveloperRole: false,
+				maxTokensField: "max_tokens",
+				thinkingFormat: "openrouter",
+			};
+			for (const [modelId, model] of Object.entries(clinePassModels)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider: "cline-pass",
+					baseUrl: "https://api.cline.bot/api/v1",
+					compat: clinePassCompat,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: getModelsDevCost(m.cost),
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
+				recordModelsDevReasoningOptions("cline-pass", modelId, m);
+			}
+		}
+
 		console.log(`Loaded ${models.length} tool-capable models from models.dev`);
 		return models;
 	} catch (error) {
@@ -2577,7 +2629,12 @@ async function generateModels() {
 
 	for (const candidate of allModels) {
 		if (candidate.api === "openai-completions" && candidate.id.includes("deepseek-v4")) {
-			const preservesNativeReasoningEffort = candidate.provider === "openrouter" || candidate.provider === "opencode";
+			// Aggregators that normalize thinking themselves keep their own reasoning
+			// parameter shape; only direct DeepSeek-style endpoints need the native one.
+			const preservesNativeReasoningEffort =
+				candidate.provider === "openrouter" ||
+				candidate.provider === "opencode" ||
+				candidate.provider === "cline-pass";
 			candidate.compat = {
 				...candidate.compat,
 				...(preservesNativeReasoningEffort

@@ -383,6 +383,18 @@ describe("Tool Results with Images", () => {
 		},
 	);
 
+	describe.skipIf(!process.env.CLINE_API_KEY)("ClinePass Provider (kimi-k3)", () => {
+		const llm = getModel("cline-pass", "cline-pass/kimi-k3");
+
+		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithImageResult(llm);
+		});
+
+		it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithTextAndImageResult(llm);
+		});
+	});
+
 	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan Provider (qwen3.7-plus)", () => {
 		const llm = getModel("alibaba-token-plan", "qwen3.7-plus");
 
