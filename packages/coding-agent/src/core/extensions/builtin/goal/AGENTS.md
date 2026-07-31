@@ -23,6 +23,7 @@ goal/
 ├── cache-warm.ts     # Cache-warm metrics estimator + scheduled/resumed notices + goal-cache-warmup entry contract
 ├── cache-warm-renderer.ts # TUI entry renderer for goal-cache-warmup custom entries
 ├── elapsed-ticker.ts # GoalElapsedTicker + goalLiveElapsedSeconds (live footer refresh)
+├── wait-progress.ts  # renderGoalWaitBar + formatGoalWaitLabel (continuation-wait countdown render)
 ├── errors.ts         # Goal{AlreadyExists,NotFound}/store error classes
 └── changes.md        # Fork tracker (port + budget behavior removal + wire compatibility)
 ```
@@ -94,6 +95,6 @@ Do not return an `isError` property; it is ignored.
 ## NOTES
 
 - Tests: `test/suite/goal-store.test.ts`, `goal-modules.test.ts`,
-  `goal-extension.test.ts`, `goal-elapsed-ticker.test.ts` (faux/mocked `pi`, temp-file store, no real APIs).
+  `goal-extension.test.ts`, `goal-elapsed-ticker.test.ts`, `goal-wait-progress.test.ts` (faux/mocked `pi`, temp-file store, no real APIs).
 - Registered last in `builtin/index.ts` `builtinExtensions`; inert until a goal
   is created.
