@@ -4,6 +4,7 @@ export const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 	"ant-ling": "Ant Ling",
 	"azure-openai-responses": "Azure OpenAI Responses",
 	cerebras: "Cerebras",
+	"cline-pass": "ClinePass",
 	"cloudflare-ai-gateway": "Cloudflare AI Gateway",
 	"cloudflare-workers-ai": "Cloudflare Workers AI",
 	deepseek: "DeepSeek",

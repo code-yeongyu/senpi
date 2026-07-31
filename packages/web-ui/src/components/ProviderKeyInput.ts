@@ -18,6 +18,7 @@ const TEST_MODELS: Record<string, string> = {
 	openrouter: "z-ai/glm-4.6",
 	"vercel-ai-gateway": "anthropic/claude-opus-4.5",
 	cerebras: "gpt-oss-120b",
+	"cline-pass": "cline-pass/kimi-k3",
 	xai: "grok-4-fast-non-reasoning",
 	zai: "glm-4.5-air",
 };

@@ -22,6 +22,10 @@ export function shouldUseProxyForProvider(provider: string, apiKey: string): boo
 			// Z-AI always requires proxy
 			return true;
 
+		// api.cline.bot only allows Cline's own browser origin
+		case "cline-pass":
+			return true;
+
 		case "anthropic":
 			// Anthropic OAuth tokens (sk-ant-oat-*) require proxy
 			// Regular API keys (sk-ant-api-*) do NOT require proxy
