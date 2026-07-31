@@ -5,7 +5,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import type { InputEvent } from "../../src/core/extensions/index.ts";
+import type { InputDispositionEvent, InputEvent } from "../../src/core/extensions/index.ts";
 import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
 import { createTestResourceLoader } from "../utilities.ts";
@@ -320,6 +320,36 @@ describe("AgentSession prompt characterization", () => {
 
 		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 		expect(getMessageText(harness.session.messages[0]!)).toBe("from extension");
+	});
+
+	it("correlates each input with its started or handled disposition", async () => {
+		const inputs: InputEvent[] = [];
+		const dispositions: InputDispositionEvent[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", (event) => {
+						inputs.push(event);
+						return event.text === "handled" ? { action: "handled" } : undefined;
+					});
+					pi.on("input_disposition", (event) => {
+						dispositions.push(event);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("ok")]);
+
+		await harness.session.prompt("started");
+		await harness.session.prompt("handled");
+
+		expect(inputs.map((event) => event.inputId)).toHaveLength(2);
+		expect(new Set(inputs.map((event) => event.inputId)).size).toBe(2);
+		expect(dispositions).toEqual([
+			{ type: "input_disposition", inputId: inputs[0]?.inputId, disposition: "started" },
+			{ type: "input_disposition", inputId: inputs[1]?.inputId, disposition: "handled" },
+		]);
 	});
 
 	it("does not report streamingBehavior to input handlers while idle", async () => {

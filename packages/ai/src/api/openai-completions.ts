@@ -12,7 +12,7 @@ import type {
 	ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions.js";
 import type { FunctionParameters } from "openai/resources/shared.js";
-import { calculateCost, clampThinkingLevel, supportsXhigh } from "../models.ts";
+import { calculateCost, clampThinkingLevel, supportsMax, supportsXhigh } from "../models.ts";
 import type {
 	AssistantMessage,
 	CacheRetention,
@@ -848,7 +848,7 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 	const reasoningEffort =
 		clampedReasoning === "off"
 			? undefined
-			: clampedReasoning === "max" && thinkingLevelMap?.max !== undefined
+			: clampedReasoning === "max" && supportsMax(thinkingModel)
 				? "max"
 				: clampMaxForOpenAI(clampedReasoning, supportsXhigh(thinkingModel));
 	const toolChoice = (options as OpenAICompletionsOptions | undefined)?.toolChoice;

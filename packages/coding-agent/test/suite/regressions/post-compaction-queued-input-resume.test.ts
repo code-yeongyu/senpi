@@ -14,6 +14,7 @@ type Deferred<T> = {
 type QueuedMessage = {
 	readonly text: string;
 	readonly mode: "steer" | "followUp";
+	readonly enqueueOrder?: number;
 };
 
 const USER_MARKER = ". [TUI_QUEUED_DOT]";
@@ -166,7 +167,11 @@ function createTuiCompactionEventContext(harness: Harness) {
 
 async function submitLikeTui(harness: Harness, context: ReturnType<typeof createTuiQueueContext>, text: string) {
 	if (harness.session.isCompacting) {
-		context.compactionQueuedMessages.push({ text, mode: "steer" });
+		context.compactionQueuedMessages.push({
+			text,
+			mode: "steer",
+			enqueueOrder: harness.session.reserveQueuedInputOrder(),
+		});
 		return;
 	}
 	await harness.session.prompt(text, {
@@ -361,7 +366,11 @@ describe("post-compaction queued input recovery", () => {
 			await getQueueNativeMessage(harness, "Steer")(nativeSteer);
 			await getQueueNativeMessage(harness, "FollowUp")(nativeFollowUp);
 			const context = createTuiCompactionEventContext(harness);
-			context.compactionQueuedMessages.push({ text: marker, mode: "steer" });
+			context.compactionQueuedMessages.push({
+				text: marker,
+				mode: "steer",
+				enqueueOrder: harness.session.reserveQueuedInputOrder(),
+			});
 			harness.session.subscribe((event) => {
 				if (event.type === "compaction_end") {
 					void getHandleEvent()(context, event);
@@ -386,7 +395,7 @@ describe("post-compaction queued input recovery", () => {
 			// so every case here is terminal: the marker goes back to the composer and
 			// never reaches a native queue or the provider.
 			expect(context.compactionQueuedMessages).toEqual([]);
-			expect(context.restoredMessages).toEqual([[nativeSteer, marker, nativeFollowUp]]);
+			expect(context.restoredMessages).toEqual([[nativeSteer, nativeFollowUp, marker]]);
 			expect(context.compactionInFlightMessages).toEqual([]);
 			expect(harness.session.getSteeringMessages()).toEqual([]);
 			expect(harness.session.getFollowUpMessages()).toEqual([]);
@@ -423,7 +432,11 @@ describe("post-compaction queued input recovery", () => {
 		const compactionEnds: Array<Extract<(typeof harness.events)[number], { type: "compaction_end" }>> = [];
 		harness.session.subscribe((event) => {
 			if (event.type === "compaction_start" && event.reason === "overflow") {
-				context.compactionQueuedMessages.push({ text: marker, mode: "steer" });
+				context.compactionQueuedMessages.push({
+					text: marker,
+					mode: "steer",
+					enqueueOrder: harness.session.reserveQueuedInputOrder(),
+				});
 			}
 			if (event.type === "compaction_end" && event.reason === "overflow") {
 				compactionEnds.push(event);
@@ -462,7 +475,11 @@ describe("post-compaction queued input recovery", () => {
 		await harness.session.prompt("seed context ".repeat(40));
 		const providerCallsBeforeCompaction = harness.faux.state.callCount;
 		const context = createTuiCompactionEventContext(harness);
-		context.compactionQueuedMessages.push({ text: marker, mode: "steer" });
+		context.compactionQueuedMessages.push({
+			text: marker,
+			mode: "steer",
+			enqueueOrder: harness.session.reserveQueuedInputOrder(),
+		});
 
 		await getHandleEvent()(context, {
 			type: "compaction_end",
@@ -497,7 +514,11 @@ describe("post-compaction queued input recovery", () => {
 		harness.setResponses([fauxAssistantMessage("seed handled"), fauxAssistantMessage("queued marker handled")]);
 		await harness.session.prompt("seed context ".repeat(40));
 		const context = createTuiCompactionEventContext(harness);
-		context.compactionQueuedMessages.push({ text: marker, mode: "steer" });
+		context.compactionQueuedMessages.push({
+			text: marker,
+			mode: "steer",
+			enqueueOrder: harness.session.reserveQueuedInputOrder(),
+		});
 		harness.session.subscribe((event) => {
 			if (event.type === "compaction_end") {
 				void getHandleEvent()(context, event);

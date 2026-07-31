@@ -1635,6 +1635,7 @@ export class ExtensionRunner {
 		images: ImageContent[] | undefined,
 		source: InputSource,
 		streamingBehavior?: "steer" | "followUp",
+		inputId = "input",
 	): Promise<InputEventResult> {
 		let currentText = text;
 		let currentImages = images;
@@ -1644,6 +1645,7 @@ export class ExtensionRunner {
 				try {
 					const event: InputEvent = {
 						type: "input",
+						inputId,
 						text: currentText,
 						images: currentImages,
 						source,

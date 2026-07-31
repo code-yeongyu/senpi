@@ -9,6 +9,8 @@ import type {
 	ExtensionHandler,
 	ModelSelectEvent,
 	ModelSelectEventResult,
+	SessionBeforeCompactEvent,
+	SessionBeforeCompactResult,
 } from "../../src/core/extensions/index.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { createInMemoryExtensionSessionSettings } from "./extension-session-settings.ts";
@@ -16,12 +18,17 @@ import { createInMemoryExtensionSessionSettings } from "./extension-session-sett
 export interface CompactionHandlers {
 	beforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>;
 	modelSelect: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>;
+	sessionBeforeCompact: NonNullable<ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult>>;
 }
 
 export function createCompactionHandlers(): CompactionHandlers {
 	let beforeAgentStart: CompactionHandlers["beforeAgentStart"] | undefined;
 	let modelSelect: CompactionHandlers["modelSelect"] | undefined;
+	let sessionBeforeCompact: CompactionHandlers["sessionBeforeCompact"] | undefined;
 	const api = {
+		events: {
+			emit: () => undefined,
+		},
 		on: (event: string, handler: unknown) => {
 			if (event === "before_agent_start") {
 				beforeAgentStart = handler as CompactionHandlers["beforeAgentStart"];
@@ -29,19 +36,25 @@ export function createCompactionHandlers(): CompactionHandlers {
 			if (event === "model_select") {
 				modelSelect = handler as CompactionHandlers["modelSelect"];
 			}
+			if (event === "session_before_compact") {
+				sessionBeforeCompact = handler as CompactionHandlers["sessionBeforeCompact"];
+			}
 		},
-	} as ExtensionAPI;
+	} as unknown as ExtensionAPI;
 	compactionExtension(api);
 	expect(beforeAgentStart).toBeDefined();
 	expect(modelSelect).toBeDefined();
+	expect(sessionBeforeCompact).toBeDefined();
 	return {
 		beforeAgentStart: beforeAgentStart as CompactionHandlers["beforeAgentStart"],
 		modelSelect: modelSelect as CompactionHandlers["modelSelect"],
+		sessionBeforeCompact: sessionBeforeCompact as CompactionHandlers["sessionBeforeCompact"],
 	};
 }
 
 export interface BlockingHarness {
 	ctx: ExtensionContext;
+	sessionManager: SessionManager;
 	endCompaction: ReturnType<typeof vi.fn>;
 	getApiKeyAndHeaders: ReturnType<typeof vi.fn>;
 	registration: ReturnType<typeof registerFauxProvider>;
@@ -118,6 +131,7 @@ export function createBlockingContext(options: {
 	} as unknown as ExtensionContext;
 	return {
 		ctx,
+		sessionManager,
 		endCompaction,
 		getApiKeyAndHeaders,
 		registration,

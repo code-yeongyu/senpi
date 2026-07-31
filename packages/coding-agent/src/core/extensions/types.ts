@@ -1057,6 +1057,8 @@ export type InputSource = "interactive" | "rpc" | "extension";
 /** Fired when user input is received, before agent processing */
 export interface InputEvent {
 	type: "input";
+	/** Correlates this input with its eventual disposition within the session. */
+	inputId: string;
 	/** The input text */
 	text: string;
 	/** Attached images, if any */
@@ -1065,6 +1067,14 @@ export interface InputEvent {
 	source: InputSource;
 	/** How the input will be delivered during streaming, or undefined when idle */
 	streamingBehavior?: "steer" | "followUp";
+}
+
+/** Fired after interception and admission determine ownership of an input. */
+export interface InputDispositionEvent {
+	type: "input_disposition";
+	/** Matches the originating InputEvent. */
+	inputId: string;
+	disposition: "handled" | "queued" | "started" | "rejected";
 }
 
 /** Result from input event handler */
@@ -1283,6 +1293,7 @@ export type ExtensionEvent =
 	| ThinkingLevelSelectEvent
 	| UserBashEvent
 	| InputEvent
+	| InputDispositionEvent
 	| ToolCallEvent
 	| ToolResultEvent;
 
@@ -1496,6 +1507,7 @@ export interface ExtensionAPI {
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
 	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
+	on(event: "input_disposition", handler: ExtensionHandler<InputDispositionEvent>): void;
 
 	// =========================================================================
 	// Tool Registration

@@ -1,5 +1,113 @@
 # goal Extension Changes
 
+## Migrate legacy pi-goal state into the builtin goal store (2026-07-31)
+
+### What changed
+
+- Session startup now migrates a legacy sibling `pi-goal` file when the builtin `goal` store does not yet exist.
+- Legacy `budgetLimited` / `budget_limited` goals resume as active, and `tokenBudget` is stripped from runtime state while the original legacy file remains untouched.
+- Existing builtin goal files remain authoritative and are never overwritten by migration.
+
+### Why
+
+- Moving the extension store from `pi-goal` to `goal` otherwise made existing objectives appear lost, and legacy budget metadata is incompatible with the builtin goal extension's budget-free design.
+
+### Verification
+
+- Goal-store coverage pins migration, runtime budget stripping, destination persistence, source preservation, and the existing app-server wire contract.
+
+||||||| a2efa4076
+## Accepted direct input leaves an active Goal idle (2026-07-31)
+
+### What changed
+
+- Removed the 60-second user-grace continuation path. An accepted ordinary direct input disarms any pending continuation, and its completed user turn leaves an active Goal active but idle instead of auto-pausing or resurrecting it later.
+- Input candidates and reversible monitor-continuation holds remain keyed by `inputId`, so handled/rejected and overlapping prompts neither mutate Goal persistence nor lose an already armed monitor continuation. Extension input remains inert; admitted steer input gets the same recovery accounting as other direct input.
+- Accepted direct input, including admitted steering, reactivates only the mechanical block reasons owned by `continuation-recovery.ts`; provider, interruption, and model-authored blocks stay blocked.
+- Continuation-cap admission remains universal across immediate, monitor-delayed, and session-start delivery, and candidate goal-ID checks prevent input races from migrating state to another Goal.
+
+### Expected merge conflict zones
+
+- MEDIUM in `index.ts` lifecycle wiring and `monitor-continuation.ts` timer ownership.
+- LOW in the focused direct-input lifecycle module.
+||||||| de5de53a7
+## Achieved footer shows elapsed time and truncated objective (2026-07-31)
+
+### What changed
+
+- `ui.ts` `goalStatusText` renders the `complete` status as
+  `<truncated objective> · Goal achieved (<elapsed>)`, mirroring the elapsed
+  suffix that `Pursuing goal (…)` already shows while a goal is active. The
+  elapsed suffix is omitted only when `timeUsedSeconds` is 0.
+- New exported `truncateGoalObjective` normalizes whitespace and truncates the
+  objective to 32 characters with a trailing ellipsis for the footer preview.
+- `goal-modules.test.ts` pins the new achieved-footer format, including the
+  long-objective truncation case.
+
+### Why
+
+- The achieved footer previously dropped both the objective and the total time
+  spent, so a finished goal gave no at-a-glance context about what completed or
+  how long it took.
+
+### Expected merge conflict zones on the next sync
+
+- LOW in `ui.ts` around the `goalStatusText` switch.
+
+## Mechanically blocked goals resume on a prompt queued while streaming (2026-07-31)
+
+### What changed
+
+- `index.ts` adds an `input` handler that reactivates a mechanically blocked goal
+  (cap, repetition, truncation) from a direct prompt even when that prompt is
+  queued as steer/follow-up while the agent is streaming.
+- The idle path already unblocks in `before_agent_start`, but a queued prompt
+  returns from `prompt()` before that hook runs, so a message sent mid-turn left
+  the goal blocked. The new handler covers it; extension-sourced input is ignored.
+
+### Why
+
+- The recovery hint added in #562 tells the user "Send any message to resume",
+  but a message typed while the agent was streaming was queued and returned
+  before `before_agent_start`, so it did not resume. Users who act on the hint
+  at the most natural moment saw no recovery.
+
+### Expected merge conflict zones on the next sync
+
+- LOW in `index.ts` around the new `input` handler.
+- NONE in the verdict engine, goal store schema, persistence, or public extension API.
+
+## Tool-using turns clear the output-repetition window (2026-07-31)
+
+### What changed
+
+- `monitor-continuation.ts` computes `turnUsedTools` before recording assistant
+  output, and `#recordAssistantOutput` now clears
+  `#recentNormalizedOutputHashes` for a tool-using turn instead of appending its
+  final text hash. Only three consecutive **toolless** identical outputs can
+  trip the `repetition` verdict and block the goal with
+  "repeated assistant output".
+- Coverage adds the issue #566 regression: tool-using turns with identical
+  final text stay active, a mid-streak tool turn resets the window, and the
+  three-toolless-identical-outputs block is pinned unchanged.
+
+### Why
+
+- The repetition guard recorded the last assistant text hash on every
+  `agent_end`, so a goal doing real tool work each turn but ending turns with
+  an identical status line (the monitor-wait pattern) was blocked after three
+  turns — exactly the state a live resumption channel was about to wake. The
+  cap already treats tool use as progress (#539); the repetition window now
+  follows the same principle. The stale-signature guard still suppresses
+  continuation spam for identical no-progress turns without blocking.
+
+### Expected merge conflict zones on the next sync
+
+- LOW in `monitor-continuation.ts` around `afterAgentEnd` ordering and
+  `#recordAssistantOutput`.
+- NONE in `continuation.ts`, the goal store schema, or the public extension
+  API.
+
 ## Mechanical continuation blocks tell the user how to resume (2026-07-31)
 
 ### What changed
@@ -33,7 +141,6 @@
 
 - LOW in `lifecycle-helpers.ts` around the guard-reason switch and the notify call.
 - NONE in the verdict engine, goal store schema, persistence, or public extension API.
-
 ## Monitor-delayed continuations consume the persisted cap (2026-07-31)
 
 ### What changed
@@ -60,7 +167,6 @@
 - LOW in monitor continuation tests that observe delayed persistence.
 - NONE in the goal store schema, public extension API, or status transitions.
 
-||||||| parent of a687d47c6 (fix(coding-agent): tell users how to clear a mechanical goal block)
 ## Observable progress resets the persisted continuation cap streak (2026-07-30)
 
 ### What changed

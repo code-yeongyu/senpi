@@ -23,6 +23,8 @@ export interface MonitorSnapshotEntry {
 	readonly id: string;
 	readonly description: string;
 	readonly paused: boolean;
+	/** Epoch milliseconds when the watch registered; feeds the footer's live elapsed label. */
+	readonly startedAtMs: number;
 }
 
 export interface MonitorRegistryOptions {
@@ -40,6 +42,7 @@ export interface RegisterMonitorOptions {
 interface MonitorRecord {
 	readonly id: string;
 	readonly description: string;
+	readonly startedAtMs: number;
 	readonly runtime: TerminalRuntimeSession;
 	readonly filter: RegExp | undefined;
 	lineBuffer: string;
@@ -69,6 +72,7 @@ export class MonitorRegistry {
 			id: record.id,
 			description: record.description,
 			paused: record.paused,
+			startedAtMs: record.startedAtMs,
 		}));
 	}
 
@@ -76,6 +80,7 @@ export class MonitorRegistry {
 		const record: MonitorRecord = {
 			id: options.id,
 			description: options.description,
+			startedAtMs: Date.now(),
 			runtime: options.runtime,
 			filter: options.filter,
 			lineBuffer: "",

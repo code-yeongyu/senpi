@@ -12,9 +12,9 @@ concurrency:
 
 jobs:
   check:
-    name: Check and test
+    name: Static checks
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -41,9 +41,148 @@ jobs:
       - name: Build workspace package entries
         run: npm run build
 
-      - name: Test
-        timeout-minutes: 50
-        run: npm test
+      - name: Workflow summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Static checks"
+            echo "- Status: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The coding-agent vitest suite dominates CI wall time (748+ files; measured
+  # 1364s single-fork, ~60% per-file import cost). Sharding it across three
+  # runners divides that wall while each shard keeps the CI fork-pool settings
+  # from vitest.config.ts (forks pool, capped workers) that prevent the historical
+  # subprocess-suite pool hang.
+  test-coding-agent:
+    name: Test (coding-agent ${{ matrix.shard }}/3)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install system dependencies
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
+            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Test shard
+        timeout-minutes: 25
+        run: npx vitest run --shard=${{ matrix.shard }}/3
+        working-directory: packages/coding-agent
+
+      - name: Workflow summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Test (coding-agent ${{ matrix.shard }}/3)"
+            echo "- Status: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  test-workspaces:
+    name: Test (workspaces + scripts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install system dependencies
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
+            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Script tests
+        run: npm run test:scripts
+
+      - name: Workspace tests (all but coding-agent)
+        timeout-minutes: 25
+        run: >
+          npm run test
+          --workspace packages/agent
+          --workspace packages/ai
+          --workspace packages/pty
+          --workspace packages/senpi-codemode
+          --workspace packages/server
+          --workspace packages/tui
+          --if-present
+
+      - name: Workflow summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Test (workspaces + scripts)"
+            echo "- Status: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Fan-in gate carrying the exact context name branch protection requires
+  # ("Check and test"). It succeeds only when every check/test job above passed,
+  # so the required-status contract is unchanged while the work runs in parallel.
+  check-and-test:
+    name: Check and test
+    needs: [check, test-coding-agent, test-workspaces]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify all gates
+        shell: bash
+        run: |
+          results='${{ join(needs.*.result, ' ') }}'
+          echo "gate results: $results"
+          for r in $results; do
+            if [ "$r" != "success" ]; then
+              echo "::error::a required CI job finished with result '$r'"
+              exit 1
+            fi
+          done
+
+      - name: Workflow summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Check and test (fan-in)"
+            echo "- check: ${{ needs.check.result }}"
+            echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
+            echo "- test-workspaces: ${{ needs.test-workspaces.result }}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   terminal-cross-os:
     name: Terminal tools (${{ matrix.os }})

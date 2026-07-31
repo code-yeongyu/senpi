@@ -142,7 +142,7 @@ describe("detached eval cell footer status wiring", () => {
 		vi.useFakeTimers();
 		await detachOne(pi, kernel, ctx, "wiring-cell", "wiring probe");
 
-		expect(calls.at(-1)).toEqual({ key: "eval-cells", text: "↗ js · wiring probe" });
+		expect(calls.at(-1)).toEqual({ key: "eval-cells", text: "↗ js · wiring probe (0s)" });
 		expect(themeCalls).toContain("bg:selectedBg");
 		expect(themeCalls).toContain("fg:text");
 
@@ -165,10 +165,38 @@ describe("detached eval cell footer status wiring", () => {
 		vi.useFakeTimers();
 		await detachOne(pi, kernel, ctx, "rpc-cell", "rpc probe");
 
-		expect(calls.at(-1)).toEqual({ key: "eval-cells", text: "↗ js · rpc probe" });
+		expect(calls.at(-1)).toEqual({ key: "eval-cells", text: "↗ js · rpc probe (0s)" });
 		expect(themeCalls).toEqual([]);
 
 		kernel.completeDeferredRun(result("rpc-cell", "7"));
+		await vi.waitFor(() => expect(calls.at(-1)).toEqual({ key: "eval-cells", text: undefined }));
+
+		await pi.emit("session_shutdown", {}, ctx);
+	});
+
+	it("advances the elapsed label while the cell stays detached", async () => {
+		const cwd = await sessionCwd();
+		const pi = new WiringPi();
+		const kernel = new FakeKernel([]);
+		vi.useFakeTimers();
+		senpiCodemode(pi, { createSessionManager: () => new WiringSessionManager(kernel) });
+		const calls: StatusCall[] = [];
+		const themeCalls: string[] = [];
+		const ctx = wiringContext(cwd, "rpc", calls, themeCalls);
+
+		await pi.emit("session_start", { reason: "startup" }, ctx);
+		// detachOne advances the fake clock by the 1s cell timeout, so the first
+		// visible label is already one second in.
+		await detachOne(pi, kernel, ctx, "tick-cell", "ticking probe");
+		expect(calls.at(-1)).toEqual({ key: "eval-cells", text: "↗ js · ticking probe (1s)" });
+
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(calls.at(-1)).toEqual({ key: "eval-cells", text: "↗ js · ticking probe (2s)" });
+
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(calls.at(-1)).toEqual({ key: "eval-cells", text: "↗ js · ticking probe (3s)" });
+
+		kernel.completeDeferredRun(result("tick-cell", "9"));
 		await vi.waitFor(() => expect(calls.at(-1)).toEqual({ key: "eval-cells", text: undefined }));
 
 		await pi.emit("session_shutdown", {}, ctx);

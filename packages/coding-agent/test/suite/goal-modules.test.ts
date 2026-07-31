@@ -20,7 +20,12 @@ import {
 	buildTruncationRecoveryPrompt,
 } from "../../src/core/extensions/builtin/goal/prompt.ts";
 import type { Goal } from "../../src/core/extensions/builtin/goal/types.ts";
-import { goalStatusText, STATUS_KEY, updateGoalUi } from "../../src/core/extensions/builtin/goal/ui.ts";
+import {
+	goalStatusText,
+	STATUS_KEY,
+	truncateGoalObjective,
+	updateGoalUi,
+} from "../../src/core/extensions/builtin/goal/ui.ts";
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
 	return {
@@ -146,7 +151,6 @@ describe("goal continuation gating", () => {
 			consecutiveLengthRecoveries: 0,
 			recentNormalizedOutputHashes: [],
 			toollessContinuationStreak: 0,
-			endedTurnWasUserInitiated: false,
 			continuationPending: false,
 		} satisfies Omit<GoalContinuationInput, "path">;
 
@@ -297,14 +301,25 @@ describe("goal status UI", () => {
 		expect(goalStatusText(makeGoal({ status: "blocked", blockedReason: "Waiting for review", blockedAt: 1 }))).toBe(
 			"Goal blocked: Waiting for review",
 		);
-		expect(goalStatusText(makeGoal({ status: "complete" }))).toBe("Goal achieved");
+		expect(goalStatusText(makeGoal({ status: "complete" }))).toBe("Ship the feature \u00b7 Goal achieved");
+		expect(goalStatusText(makeGoal({ status: "complete", timeUsedSeconds: 125 }))).toBe(
+			"Ship the feature \u00b7 Goal achieved (2m)",
+		);
+	});
+
+	it("truncates a long objective in the achieved footer", () => {
+		const objective = "Refactor the entire session persistence layer to support branching";
+		const text = goalStatusText(makeGoal({ status: "complete", objective, timeUsedSeconds: 61 }));
+		expect(text).toBe(`${truncateGoalObjective(objective)} \u00b7 Goal achieved (1m)`);
+		expect(truncateGoalObjective(objective).length).toBeLessThanOrEqual(32);
+		expect(truncateGoalObjective(objective).endsWith("\u2026")).toBe(true);
 	});
 
 	it("renders live elapsed seconds for an active goal, ignoring it otherwise", () => {
 		expect(goalStatusText(makeGoal({ status: "active", timeUsedSeconds: 0 }), 0)).toBe("Pursuing goal (0s)");
 		expect(goalStatusText(makeGoal({ status: "active", timeUsedSeconds: 5 }), 42)).toBe("Pursuing goal (42s)");
 		expect(goalStatusText(makeGoal({ status: "paused" }), 99)).toBe("Goal paused (/goal resume)");
-		expect(goalStatusText(makeGoal({ status: "complete" }), 99)).toBe("Goal achieved");
+		expect(goalStatusText(makeGoal({ status: "complete" }), 99)).toBe("Ship the feature \u00b7 Goal achieved");
 	});
 
 	it("sets and clears the status segment, respecting hasUI", () => {

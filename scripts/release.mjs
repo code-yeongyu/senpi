@@ -43,6 +43,7 @@ import {
 	runShrinkwrap,
 } from "./release-artifacts.mjs";
 import { reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
+import { decideTestGate } from "./release-test-gate.mjs";
 import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
 
 const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
@@ -60,6 +61,8 @@ function printUsage() {
 		"  --dry-run       Preview every shell command and file write; modify nothing.",
 		"                  Read-only git/npm reads (status, branch, tag --list,",
 		"                  npm view) still execute so the plan is accurate.",
+		"  --force-tests   Run the CI=1 npm test gate even when HEAD already",
+		"                  carries a green \"Check and test\" CI run.",
 		"  --help, -h      Show this help and exit.",
 		"",
 		"Default flow: compute next version via scripts/calver.mjs, then release.",
@@ -68,11 +71,13 @@ function printUsage() {
 }
 
 function parseArgs(argv) {
-	const args = { dryRun: false, version: null, help: false };
+	const args = { dryRun: false, version: null, help: false, forceTests: false };
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--help" || arg === "-h") {
 			args.help = true;
+		} else if (arg === "--force-tests") {
+			args.forceTests = true;
 		} else if (arg === "--dry-run") {
 			args.dryRun = true;
 		} else if (arg === "--version") {
@@ -261,9 +266,43 @@ function runBuild(dryRun) {
 	runCommand("npm", ["run", "build"]);
 }
 
-function runTests(dryRun) {
+function lookupCiCheckRuns(sha) {
+	try {
+		const raw = execFileSync(
+			"gh",
+			["api", `repos/{owner}/{repo}/commits/${sha}/check-runs`, "--paginate", "--slurp"],
+			{ encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
+		);
+		const pages = JSON.parse(raw);
+		const runs = Array.isArray(pages)
+			? pages.flatMap((page) => (Array.isArray(page.check_runs) ? page.check_runs : []))
+			: Array.isArray(pages.check_runs)
+				? pages.check_runs
+				: [];
+		return runs.map((run) => ({
+			name: run.name,
+			status: run.status,
+			conclusion: run.conclusion,
+			head_sha: run.head_sha,
+		}));
+	} catch {
+		return null;
+	}
+}
+
+function runTests(dryRun, forceTests) {
 	if (dryRun) {
+		const sha = captureCommand("git", ["rev-parse", "HEAD"]).trim();
+		const checkRuns = lookupCiCheckRuns(sha);
+		const decision = decideTestGate({ forceTests, dryRun: true, sha, checkRuns });
+		dryRunLog(`test gate decision (preview): ${decision.reason}`);
 		dryRunLog("CI=1 npm test");
+		return;
+	}
+	const sha = captureCommand("git", ["rev-parse", "HEAD"]).trim();
+	const decision = decideTestGate({ forceTests, dryRun: false, sha, checkRuns: lookupCiCheckRuns(sha) });
+	log(`test gate: ${decision.reason}`);
+	if (decision.skip) {
 		return;
 	}
 	// Run the gate with CI=1 so packages reproduce their CI test behavior — notably
@@ -303,7 +342,7 @@ function main() {
 	stampChangelogs(version, date, args.dryRun, capturedChangelogSubsections, log, dryRunLog);
 	runCheck(args.dryRun);
 	runBuild(args.dryRun);
-	runTests(args.dryRun);
+	runTests(args.dryRun, args.forceTests);
 
 	stageChangedFiles(args.dryRun);
 	gitCommit(`release: v${version}`, args.dryRun);

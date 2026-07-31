@@ -16,14 +16,14 @@ describe("app-server thread goal handlers", () => {
 		await cleanupRoots();
 	});
 
-	it("round-trips a goal and preserves omitted, null, and numeric token budgets", async () => {
+	it("accepts a request budget without persisting limiter state", async () => {
 		// Given: a started persistent thread.
 		const { connection, registry, root } = await createHarness();
 		const threadId = threadIdFromResponse(
 			await registry.dispatch(connection, { id: 1, method: "thread/start", params: { cwd: root } }),
 		);
 
-		// When: a goal is created, updated without a budget, then explicitly cleared.
+		// When: a goal is created with a compatibility budget, then read through later updates.
 		const created = await registry.dispatch(connection, {
 			id: 2,
 			method: "thread/goal/set",
@@ -45,14 +45,14 @@ describe("app-server thread goal handlers", () => {
 			params: { threadId },
 		});
 
-		// Then: the goal shape and token-budget tri-state match the wire contract.
+		// Then: the create response preserves wire compatibility, but persisted Goal state is budgetless.
 		expect(objectAt(responseResult(created), "goal")).toMatchObject({
 			threadId,
 			objective: "Ship the parity lane",
 			status: "active",
 			tokenBudget: 4096,
 		});
-		expect(objectAt(responseResult(preserved), "goal").tokenBudget).toBe(4096);
+		expect(objectAt(responseResult(preserved), "goal").tokenBudget).toBeNull();
 		expect(objectAt(responseResult(cleared), "goal").tokenBudget).toBeNull();
 		expect(objectAt(responseResult(read), "goal").tokenBudget).toBeNull();
 	});

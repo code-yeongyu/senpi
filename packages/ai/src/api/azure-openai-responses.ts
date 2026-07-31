@@ -1,6 +1,6 @@
 import { AzureOpenAI } from "openai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
-import { clampThinkingLevel } from "../models.ts";
+import { clampThinkingLevel, supportsMax } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -170,7 +170,7 @@ export const streamSimple: StreamFunction<"azure-openai-responses", SimpleStream
 	const reasoningEffort =
 		clampedReasoning === "off"
 			? undefined
-			: clampedReasoning === "max" && model.thinkingLevelMap?.max !== undefined
+			: clampedReasoning === "max" && supportsMax(model)
 				? "max"
 				: clampedReasoning === "max"
 					? "high"

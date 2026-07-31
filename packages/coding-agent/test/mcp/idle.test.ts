@@ -146,7 +146,10 @@ describe("MCP idle lifecycle", () => {
 
 	it("keeps the idle timer paused while a renewal is in flight", async () => {
 		const root = mcpRoot("idle-renewal");
-		setConfig(root, { fx: { ...stdioServer(["--tools", "1"]), idleTimeoutMin: 0.001 } });
+		// 0.02min (1.2s) matches the sibling tests: 0.001min (60ms) leaves the
+		// connect→idle window narrower than a loaded-runner subprocess boot, so the
+		// idle timer can fire before the renewal below is ever observed (flake).
+		setConfig(root, { fx: { ...stdioServer(["--tools", "1"]), idleTimeoutMin: 0.02 } });
 		const pi = capturingPi();
 		await attach(root, pi);
 		await waitForCondition(() => getMcpService().getConnection("fx")?.state === "connected", 30_000);

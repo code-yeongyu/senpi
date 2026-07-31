@@ -71,12 +71,10 @@ describe("prompt preset model switching", () => {
 		const promptChange = await harness.session.setModel(getRequiredModel(harness, "claude-sonnet-4-5"));
 
 		// then
-		expect(promptChange?.systemPromptName).toBe("fallback (senpi-current)");
+		expect(promptChange?.systemPromptName).toBeUndefined();
 		expect(harness.session.systemPrompt).toContain("## Available Tools");
 		expect(harness.session.systemPrompt).not.toContain("full set rather than the first item");
-		expect(harness.eventsOfType("system_prompt_change").map((event) => event.systemPromptName)).toEqual([
-			"fallback (senpi-current)",
-		]);
+		expect(harness.eventsOfType("system_prompt_change").map((event) => event.systemPromptName)).toEqual([undefined]);
 	});
 
 	it("emits system_prompt_change when switching between Opus version presets", async () => {

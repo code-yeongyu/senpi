@@ -224,7 +224,8 @@ describe("websearch native entry label collapse", () => {
 		const text = formatSearchText(nativeDetails);
 
 		// then
-		expect(text).toContain("via openai/native (priority)");
+		expect(text).toContain("via openai/native");
+		expect(text).not.toContain("(priority)");
 		expect(text).not.toContain("native-openai-abc123");
 	});
 });

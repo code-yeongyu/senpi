@@ -106,10 +106,7 @@ export function renderSearchResult(
 	const provider = providerEntryLabel(details);
 	const summary =
 		theme.fg("success", `${count} result${count === 1 ? "" : "s"}`) +
-		theme.fg(
-			"muted",
-			` via ${provider}${details.strategy ? ` (${details.strategy})` : ""} in ${durationText(details.durationMs)}`,
-		) +
+		theme.fg("muted", ` via ${provider} in ${durationText(details.durationMs)}`) +
 		(details.truncated ? theme.fg("warning", " (truncated)") : "");
 
 	if (count === 0) return new Text(summary, 0, 0);

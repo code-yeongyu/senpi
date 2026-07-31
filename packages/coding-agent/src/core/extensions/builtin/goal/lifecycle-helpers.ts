@@ -96,7 +96,6 @@ export async function queueGoalContinuation(
 			consecutiveLengthRecoveries: 0,
 			recentNormalizedOutputHashes: [],
 			toollessContinuationStreak: 0,
-			endedTurnWasUserInitiated: false,
 			continuationPending: options.continuationPending,
 		},
 		content: () => buildContinuationPrompt(goal),
@@ -175,7 +174,6 @@ function blockedReasonForContinuationGuard(
 		case "not-eligible":
 		case "single-flight":
 		case "stale":
-		case "grace":
 			return undefined;
 	}
 }

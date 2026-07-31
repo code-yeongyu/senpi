@@ -94,6 +94,7 @@ export type {
 	FindToolCallEvent,
 	GrepToolCallEvent,
 	InlineExtension,
+	InputDispositionEvent,
 	InputEvent,
 	InputEventResult,
 	InputSource,

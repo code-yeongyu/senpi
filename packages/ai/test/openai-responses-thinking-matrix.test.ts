@@ -7,6 +7,7 @@ import {
 	stream as streamOpenAICodexResponses,
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
+import { streamSimple as streamSimpleOpenAICompletions } from "../src/api/openai-completions.ts";
 import {
 	stream as streamOpenAIResponses,
 	streamSimple as streamSimpleOpenAIResponses,
@@ -16,6 +17,7 @@ import { supportsXhigh } from "../src/models.ts";
 
 interface ReasoningPayload {
 	reasoning?: { effort?: string; summary?: string };
+	reasoning_effort?: string;
 }
 
 const context = {
@@ -50,6 +52,67 @@ describe("OpenAI Responses thinking matrix", () => {
 		);
 
 		expect(payload).toMatchObject({ reasoning: { effort: "max", summary: "auto" } });
+	});
+
+	it("preserves max effort for a map-less gpt-5.6-sol model", async () => {
+		const model = {
+			...getModel("openai", "gpt-5.6-sol"),
+			provider: "codex-lb",
+			thinkingLevelMap: undefined,
+		};
+		const payload = await capturePayload((onPayload) =>
+			streamSimpleOpenAIResponses(model, context, {
+				apiKey: "test-key",
+				reasoning: "max",
+				onPayload,
+			}),
+		);
+
+		expect(payload).toMatchObject({ reasoning: { effort: "max", summary: "auto" } });
+	});
+
+	it("preserves max effort for a map-less gpt-5.6-sol model on Azure Responses", async () => {
+		const model = {
+			...getModel("azure-openai-responses", "gpt-5.6-sol"),
+			baseUrl: "http://127.0.0.1:9",
+			thinkingLevelMap: undefined,
+		};
+		const payload = await capturePayload((onPayload) =>
+			streamSimpleAzureOpenAIResponses(model, context, { apiKey: "test-key", reasoning: "max", onPayload }),
+		);
+
+		expect(payload).toMatchObject({ reasoning: { effort: "max" } });
+	});
+
+	it("preserves max effort for a map-less gpt-5.6-sol model on Codex Responses", async () => {
+		const model = {
+			...getModel("openai-codex", "gpt-5.6-sol"),
+			thinkingLevelMap: undefined,
+		};
+		const payload = await capturePayload((onPayload) =>
+			streamSimpleOpenAICodexResponses(model, context, {
+				apiKey: "test-key",
+				transport: "sse",
+				reasoning: "max",
+				onPayload,
+			}),
+		);
+
+		expect(payload).toMatchObject({ reasoning: { effort: "max" } });
+	});
+
+	it("preserves max effort for a map-less gpt-5.6-sol model on Completions", async () => {
+		const model = {
+			...getModel("openai", "gpt-5.6-sol"),
+			api: "openai-completions" as const,
+			baseUrl: "http://127.0.0.1:9",
+			thinkingLevelMap: undefined,
+		};
+		const payload = await capturePayload((onPayload) =>
+			streamSimpleOpenAICompletions(model, context, { apiKey: "test-key", reasoning: "max", onPayload }),
+		);
+
+		expect(payload.reasoning_effort).toBe("max");
 	});
 
 	it("preserves Azure's explicit gpt-5.6 max effort mapping", async () => {

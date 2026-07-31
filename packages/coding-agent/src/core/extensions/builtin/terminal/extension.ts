@@ -4,7 +4,8 @@ import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
 import { TERMINAL_MONITOR_STATE_EVENT } from "../monitor-state-event.ts";
 import { MonitorNotifier } from "./monitor-notify.ts";
-import { formatMonitorStatus, MONITOR_STATUS_KEY } from "./monitor-status.ts";
+import { MONITOR_STATUS_KEY } from "./monitor-status.ts";
+import { MonitorStatusTicker } from "./monitor-status-ticker.ts";
 import { TerminalNotifier } from "./notify.ts";
 import { TERMINAL_PROMPT_SECTION } from "./prompt.ts";
 import type { TerminalRuntimeSession } from "./runtime-session.ts";
@@ -30,6 +31,7 @@ interface TerminalExtensionState {
 	settings: ResolvedTerminalSettings;
 	notifier: TerminalNotifier | null;
 	monitorNotifier: MonitorNotifier | null;
+	statusTicker: MonitorStatusTicker;
 	ctx: ExtensionContext | undefined;
 	shellPath: string | undefined;
 	steppedAside: boolean;
@@ -53,15 +55,16 @@ function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): TerminalE
 	return {
 		onMonitorEvent: (event) => state.monitorNotifier?.notifyEvent(event),
 		onMonitorState: (snapshot) => {
-			const ctx = state.ctx;
-			const status = formatMonitorStatus(snapshot);
-			ctx?.ui.setStatus(
-				MONITOR_STATUS_KEY,
-				status === undefined || ctx.mode !== "tui"
-					? status
-					: ctx.ui.theme.bg("selectedBg", ctx.ui.theme.fg("text", status)),
-			);
-			pi.events?.emit(TERMINAL_MONITOR_STATE_EVENT, { activeCount: snapshot.length });
+			state.statusTicker.sync(snapshot);
+			pi.events?.emit(TERMINAL_MONITOR_STATE_EVENT, {
+				activeCount: snapshot.length,
+				monitors: snapshot.map((entry) => ({
+					id: entry.id,
+					description: entry.description,
+					paused: entry.paused,
+					startedAtMs: entry.startedAtMs,
+				})),
+			});
 		},
 		onBackgroundExit: (id, runtime) => state.notifier?.notifyCompletion(id, runtime),
 	};
@@ -146,6 +149,17 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		settings: TERMINAL_SETTINGS_DEFAULTS,
 		notifier: null,
 		monitorNotifier: null,
+		statusTicker: new MonitorStatusTicker({
+			render: (status) => {
+				const ctx = state.ctx;
+				ctx?.ui.setStatus(
+					MONITOR_STATUS_KEY,
+					status === undefined || ctx.mode !== "tui"
+						? status
+						: ctx.ui.theme.bg("selectedBg", ctx.ui.theme.fg("text", status)),
+				);
+			},
+		}),
 		ctx: undefined,
 		shellPath: undefined,
 		steppedAside: false,
@@ -217,6 +231,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		state.monitorNotifier?.dispose();
 		state.monitorNotifier = null;
 		state.notifier = null;
+		state.statusTicker.stop();
 		const sessionKey = sessionKeyOf(ctx) ?? sessionKeyOf(state.ctx);
 		if (event.reason === "reload" && state.bundle && sessionKey !== undefined) {
 			// Keep state.bundle referenced: exit listeners captured by this instance's tool

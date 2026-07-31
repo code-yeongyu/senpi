@@ -5,7 +5,8 @@ import type { EvalSchemaToolInfo } from "./bridges/schema-bridge.ts";
 import { type CompletionRequest, type CompletionResult, createCompletionHandler } from "./completion/handler.ts";
 import { defaultCodemodeSettings } from "./config/settings.ts";
 import { EvalNotifier } from "./extension/eval-notifier.ts";
-import { EVAL_CELLS_STATUS_KEY, formatEvalCellStatus } from "./extension/eval-status.ts";
+import { EVAL_CELLS_STATUS_KEY } from "./extension/eval-status.ts";
+import { EvalStatusTicker } from "./extension/eval-status-ticker.ts";
 import {
 	createExecuteTool,
 	createRuntime,
@@ -44,6 +45,8 @@ export interface SenpiCodemodeOptions {
 		options: CreateCodemodeSessionManagerOptions,
 	) => CodemodeSessionManager | Promise<CodemodeSessionManager>;
 	readonly complete?: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
+	/** Injectable clock for detached-cell elapsed labels; defaults to Date.now. */
+	readonly now?: () => number;
 }
 
 export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCodemodeOptions = {}): void {
@@ -59,17 +62,22 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		getContext: () => activeContext,
 		getMode: () => "wake",
 	});
+	const statusTicker = new EvalStatusTicker({
+		...(options.now === undefined ? {} : { now: options.now }),
+		render: (status) => {
+			const ctx = activeContext;
+			if (ctx?.ui?.setStatus === undefined) return;
+			const theme = ctx.ui.theme;
+			ctx.ui.setStatus(
+				EVAL_CELLS_STATUS_KEY,
+				status === undefined || ctx.mode !== "tui" || theme === undefined
+					? status
+					: theme.bg("selectedBg", theme.fg("text", status)),
+			);
+		},
+	});
 	const showDetachedCells = (entries: readonly EvalDetachedCellStatusEntry[]): void => {
-		const ctx = activeContext;
-		if (ctx?.ui?.setStatus === undefined) return;
-		const status = formatEvalCellStatus(entries);
-		const theme = ctx.ui.theme;
-		ctx.ui.setStatus(
-			EVAL_CELLS_STATUS_KEY,
-			status === undefined || ctx.mode !== "tui" || theme === undefined
-				? status
-				: theme.bg("selectedBg", theme.fg("text", status)),
-		);
+		statusTicker.sync(entries);
 	};
 	const registerEvalForRuntime = (
 		runtime: SessionRuntime,
@@ -101,6 +109,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		activeRuntime = undefined;
 		activeModelId = undefined;
 		activeCells = undefined;
+		statusTicker.stop();
 		await cells?.dispose();
 		activeContext = undefined;
 		await manager.dispose();
@@ -114,7 +123,11 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			listTools: () => pi.getAllTools(),
 			complete,
 			settings: defaultCodemodeSettings,
-			cellManager: new EvalDetachedCellManager({ notifier, onStatusChange: showDetachedCells }),
+			cellManager: new EvalDetachedCellManager({
+				notifier,
+				onStatusChange: showDetachedCells,
+				...(options.now === undefined ? {} : { now: options.now }),
+			}),
 			executionTracker: manager,
 			renderers,
 			hostLine: hostLine(),
@@ -143,6 +156,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			artifactsDir: runtime.artifactsDir,
 			notifier,
 			onStatusChange: showDetachedCells,
+			...(options.now === undefined ? {} : { now: options.now }),
 		});
 		activeCells = cellManager;
 		activeRuntime = runtime;

@@ -1,5 +1,26 @@
 # prompt-preset Extension Changes
 
+## Preset messaging: optimized-prompt wording, silent fallback (2026-07-31)
+
+### What changed
+
+- `index.ts` startup/model-select header now renders `Optimized system prompt applied: <preset>` only when `resolvePresetName()` matches a real preset (including an explicit `promptPreset` settings override); when nothing matches, the header is cleared via `setHeader(undefined)` instead of showing `Prompt preset: fallback (senpi-current)`.
+- `index.ts` `model_select` result now returns `systemPromptName: preset?.name` (undefined on fallback) instead of the `"fallback (senpi-current)"` placeholder, so `agent-session._emitModelSelect` emits `system_prompt_change` without a name and the interactive status line stays silent for unmatched models.
+- `interactive-mode.ts` switch statuses (`cycleModel`, `selectModelFromUi`) reworded from `system prompt: <name>` to `optimized system prompt applied: <name>`.
+- Tests: `prompt-presets-startup-header.test.ts` pins the new wording plus header-clearing on fallback (session_start and model_select paths); `prompt-presets-model-switch.test.ts` now expects `systemPromptName` undefined when switching from a preset model to an unmatched one.
+
+### Why
+
+- User request: the header and switch messages should read as "a system prompt optimized for this model was applied", and models without a matching preset should show nothing at all. The fallback placeholder advertised an implementation detail (the senpi dynamic prompt) as if it were a model preset.
+
+### Why extension system couldn't handle this differently
+
+- The header and `model_select` result already live in this extension; only the two status-line format strings required touching upstream `interactive-mode.ts`.
+
+### Expected merge conflict zones on next upstream sync
+
+- `interactive-mode.ts` `cycleModel` / `selectModelFromUi` status string assembly — two single-line format expressions; re-apply the `optimized system prompt applied:` wording if upstream touches those lines.
+
 ## Kimi K3 ambiguity reflect-then-ask gate (2026-07-27)
 
 ### What changed

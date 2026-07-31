@@ -666,7 +666,12 @@ export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>)
 	return EXTENDED_THINKING_LEVELS.filter((level) => {
 		const mapped = model.thinkingLevelMap?.[level];
 		if (mapped === null) return false;
-		if (level === "xhigh" || level === "max") return mapped !== undefined;
+		if (level === "xhigh") {
+			return mapped !== undefined || (model.thinkingLevelMap === undefined && supportsXhighModelId(model.id));
+		}
+		if (level === "max") {
+			return mapped !== undefined || (model.thinkingLevelMap === undefined && supportsMaxModel(model));
+		}
 		return true;
 	});
 }
@@ -693,25 +698,68 @@ export function clampThinkingLevel<TApi extends Api>(
 }
 
 export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
-	if (getSupportedThinkingLevels(model).includes("xhigh")) return true;
-	return (
-		model.id.includes("gpt-5.2") ||
-		model.id.includes("gpt-5.3") ||
-		model.id.includes("gpt-5.4") ||
-		model.id.includes("gpt-5.5") ||
-		model.id.includes("gpt-5.6") ||
-		model.id.includes("deepseek-v4-pro") ||
-		model.id.includes("deepseek-v4-flash") ||
-		model.id.includes("opus-4-6") ||
-		model.id.includes("opus-4.6") ||
-		model.id.includes("opus-4-7") ||
-		model.id.includes("opus-4.7") ||
-		model.id.includes("opus-4-8") ||
-		model.id.includes("opus-4.8") ||
-		model.id.includes("opus-5") ||
-		model.id.includes("sonnet-5") ||
-		model.id.includes("fable-5")
-	);
+	const mapped = model.thinkingLevelMap?.xhigh;
+	if (mapped === null) return false;
+	if (mapped !== undefined) return true;
+	if (model.thinkingLevelMap !== undefined) return false;
+	return model.reasoning && supportsXhighModelId(model.id);
+}
+
+function supportsXhighModelId(modelId: string): boolean {
+	const xhighModelIds = [
+		"gpt-5.2",
+		"gpt-5.3",
+		"gpt-5.4",
+		"gpt-5.5",
+		"gpt-5.6",
+		"deepseek-v4-pro",
+		"deepseek-v4-flash",
+		"opus-4-6",
+		"opus-4.6",
+		"opus-4-7",
+		"opus-4.7",
+		"opus-4-8",
+		"opus-4.8",
+		"opus-5",
+		"sonnet-5",
+		"fable-5",
+	];
+	return xhighModelIds.some((id) => modelId.includes(id));
+}
+
+export function supportsMax<TApi extends Api>(model: Model<TApi>): boolean {
+	const mapped = model.thinkingLevelMap?.max;
+	if (mapped === null) return false;
+	if (mapped !== undefined) return true;
+	if (model.thinkingLevelMap !== undefined) return false;
+	return supportsMaxModel(model);
+}
+
+function supportsMaxModel<TApi extends Api>(model: Model<TApi>): boolean {
+	if (!model.reasoning) return false;
+
+	const openAiMaxApis: Api[] = [
+		"openai-responses",
+		"azure-openai-responses",
+		"openai-codex-responses",
+		"openai-completions",
+	];
+	if (openAiMaxApis.includes(model.api) && /(?:^|\/)gpt-5\.6-sol(?:$|-)/.test(model.id)) {
+		return true;
+	}
+
+	const maxModelIds = [
+		"opus-4-6",
+		"opus-4.6",
+		"opus-4-7",
+		"opus-4.7",
+		"opus-4-8",
+		"opus-4.8",
+		"opus-5",
+		"sonnet-5",
+		"fable-5",
+	];
+	return maxModelIds.some((id) => model.id.includes(id));
 }
 
 /**

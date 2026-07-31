@@ -338,7 +338,9 @@ describe("eval detached cell status emissions", () => {
 
 		await detachTitled(tool, kernel, "status-cell", "numpy feather rerun");
 
-		expect(status.emissions).toEqual([[{ cellId: "status-cell", language: "js", title: "numpy feather rerun" }]]);
+		expect(status.emissions).toEqual([
+			[{ cellId: "status-cell", language: "js", title: "numpy feather rerun", startedAtMs: expect.any(Number) }],
+		]);
 
 		kernel.completeDeferredRun(result("status-cell", "42"));
 		await manager.waitForTerminal("status-cell");
@@ -365,13 +367,15 @@ describe("eval detached cell status emissions", () => {
 		await detachTitled(tool, py, "py-cell", "strip repairs", "py");
 
 		expect(status.emissions.at(-1)).toEqual([
-			{ cellId: "js-cell", language: "js", title: "bundle build" },
-			{ cellId: "py-cell", language: "py", title: "strip repairs" },
+			{ cellId: "js-cell", language: "js", title: "bundle build", startedAtMs: expect.any(Number) },
+			{ cellId: "py-cell", language: "py", title: "strip repairs", startedAtMs: expect.any(Number) },
 		]);
 
 		await manager.stop("js-cell");
 
-		expect(status.emissions.at(-1)).toEqual([{ cellId: "py-cell", language: "py", title: "strip repairs" }]);
+		expect(status.emissions.at(-1)).toEqual([
+			{ cellId: "py-cell", language: "py", title: "strip repairs", startedAtMs: expect.any(Number) },
+		]);
 		await manager.stop("py-cell");
 		await manager.flushNotifications();
 	});
@@ -404,7 +408,9 @@ describe("eval detached cell status emissions", () => {
 		await vi.advanceTimersByTimeAsync(1_000);
 		await execution;
 
-		expect(status.emissions).toEqual([[{ cellId: "untitled-cell", language: "js" }]]);
+		expect(status.emissions).toEqual([
+			[{ cellId: "untitled-cell", language: "js", startedAtMs: expect.any(Number) }],
+		]);
 		await manager.stop("untitled-cell");
 		await manager.flushNotifications();
 	});

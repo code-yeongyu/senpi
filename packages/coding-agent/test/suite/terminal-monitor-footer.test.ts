@@ -25,42 +25,69 @@ function deferredCall<TArgs extends unknown[]>(predicate: (...args: TArgs) => bo
 }
 
 describe("formatMonitorStatus", () => {
-	const entry = (id: string, description: string, paused = false): MonitorSnapshotEntry => ({
+	const T0 = 1_000_000;
+	const entry = (id: string, description: string, paused = false, startedAtMs = T0): MonitorSnapshotEntry => ({
 		id,
 		description,
 		paused,
+		startedAtMs,
 	});
 
 	it("returns undefined when nothing is monitored so the footer status clears", () => {
-		expect(formatMonitorStatus([])).toBeUndefined();
+		expect(formatMonitorStatus([], T0)).toBeUndefined();
 	});
 
-	it("marks the single watched thing with the watch glyph and its full description", () => {
-		expect(formatMonitorStatus([entry("bash_1", "errors in deploy.log")])).toBe("◉ watching errors in deploy.log");
+	it("marks the single watched thing with the watch glyph, description, and elapsed time", () => {
+		expect(formatMonitorStatus([entry("bash_1", "errors in deploy.log")], T0 + 5_000)).toBe(
+			"◉ watching errors in deploy.log (5s)",
+		);
 	});
 
-	it("lists every description when they all fit", () => {
-		const text = formatMonitorStatus([entry("bash_1", "deploy errors"), entry("bash_2", "webpack rebuild")]);
-		expect(text).toBe("◉ watching 2: deploy errors, webpack rebuild");
+	it("formats longer watches with the goal-style compact elapsed label", () => {
+		expect(formatMonitorStatus([entry("bash_1", "errors in deploy.log")], T0 + 180_000)).toBe(
+			"◉ watching errors in deploy.log (3m)",
+		);
+		expect(formatMonitorStatus([entry("bash_1", "deploy errors")], T0 + (2 * 3600 + 30 * 60) * 1000)).toBe(
+			"◉ watching deploy errors (2h 30m)",
+		);
+	});
+
+	it("advances the elapsed label as time passes over the same snapshot", () => {
+		const snapshot = [entry("bash_1", "deploy errors")];
+		expect(formatMonitorStatus(snapshot, T0 + 5_000)).toBe("◉ watching deploy errors (5s)");
+		expect(formatMonitorStatus(snapshot, T0 + 6_000)).toBe("◉ watching deploy errors (6s)");
+	});
+
+	it("never shows negative elapsed when the clock moves backwards", () => {
+		expect(formatMonitorStatus([entry("bash_1", "deploy errors")], T0 - 5_000)).toBe("◉ watching deploy errors (0s)");
+	});
+
+	it("lists every description when they all fit and shows the oldest watch's elapsed time", () => {
+		const text = formatMonitorStatus(
+			[entry("bash_1", "deploy errors"), entry("bash_2", "webpack", false, T0 + 60_000)],
+			T0 + 180_000,
+		);
+		expect(text).toBe("◉ watching 2: deploy errors, webpack (3m)");
 	});
 
 	it("keeps whole names and folds the overflow into a +N more counter", () => {
-		const text = formatMonitorStatus([
-			entry("bash_1", "errors in deploy.log"),
-			entry("bash_2", "integration test output on ci runner four"),
-			entry("bash_3", "webpack rebuild"),
-		]);
-		expect(text).toBe("◉ watching 3: errors in deploy.log +2 more");
+		const text = formatMonitorStatus(
+			[
+				entry("bash_1", "errors in deploy.log"),
+				entry("bash_2", "integration test output on ci runner four"),
+				entry("bash_3", "webpack rebuild"),
+			],
+			T0,
+		);
+		expect(text).toBe("◉ watching 3: errors in deploy.log +2 more (0s)");
 		expect((text ?? "").length).toBeLessThanOrEqual(48);
 	});
 
 	it("never truncates away the count when the first name alone overflows", () => {
-		const text = formatMonitorStatus([
-			entry("bash_1", "a".repeat(60)),
-			entry("bash_2", "b"),
-			entry("bash_3", "c"),
-			entry("bash_4", "d"),
-		]);
+		const text = formatMonitorStatus(
+			[entry("bash_1", "a".repeat(60)), entry("bash_2", "b"), entry("bash_3", "c"), entry("bash_4", "d")],
+			T0,
+		);
 		expect(text).toContain("watching 4:");
 		expect(text).toContain("+3 more");
 		expect(text).toContain("…");
@@ -68,14 +95,17 @@ describe("formatMonitorStatus", () => {
 	});
 
 	it("marks paused watches and keeps the marker through truncation", () => {
-		const all = formatMonitorStatus([entry("bash_1", "a", true), entry("bash_2", "b", true)]);
-		expect(all).toBe("◉ watching 2: a, b (paused)");
-		const some = formatMonitorStatus([
-			entry("bash_1", "errors in deploy.log", true),
-			entry("bash_2", "integration test output on ci runner four"),
-			entry("bash_3", "webpack rebuild"),
-		]);
-		expect(some).toContain("(1 paused)");
+		const all = formatMonitorStatus([entry("bash_1", "a", true), entry("bash_2", "b", true)], T0 + 60_000);
+		expect(all).toBe("◉ watching 2: a, b (1m, paused)");
+		const some = formatMonitorStatus(
+			[
+				entry("bash_1", "errors in deploy.log", true),
+				entry("bash_2", "integration test output on ci runner four"),
+				entry("bash_3", "webpack rebuild"),
+			],
+			T0,
+		);
+		expect(some).toContain("1 paused");
 		expect((some ?? "").length).toBeLessThanOrEqual(48);
 	});
 });
@@ -117,7 +147,12 @@ describe("MonitorRegistry change notification", () => {
 		await tool.execute("call_1", input);
 
 		expect(snapshots[0]).toEqual([
-			{ id: expect.stringContaining("bash"), description: "quick echo watch", paused: false },
+			{
+				id: expect.stringContaining("bash"),
+				description: "quick echo watch",
+				paused: false,
+				startedAtMs: expect.any(Number),
+			},
 		]);
 		await settled.promise;
 		expect(snapshots.at(-1)).toEqual([]);
@@ -204,10 +239,10 @@ describe("terminal extension footer status wiring", () => {
 
 		const monitorTool = tools.get("monitor");
 		expect(monitorTool).toBeDefined();
-		const description = "PR 453 checks on new head f40d4d15c";
+		const description = "deploy check watch";
 		await monitorTool?.execute("call_1", { description, command: "printf 'line\\n'" });
 
-		const plainStatus = `◉ watching ${description}`;
+		const plainStatus = `◉ watching ${description} (0s)`;
 		expect(setStatus).toHaveBeenCalledWith("monitors", theme.bg("selectedBg", theme.fg("text", plainStatus)));
 		await cleared.promise;
 		expect(setStatus).toHaveBeenCalledWith("monitors", undefined);

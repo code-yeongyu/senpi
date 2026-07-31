@@ -35,7 +35,7 @@ describe("sanitizeAnthropicPayload", () => {
 		expect(result.messages).toHaveLength(0);
 	});
 
-	it("drops orphan-only user messages", () => {
+	it("synthesizes a missing result and drops an orphan result", () => {
 		const payload = {
 			messages: [
 				{ role: "assistant", content: [{ type: "tool_use", id: "toolu-1", name: "ls", input: {} }] },
@@ -43,10 +43,132 @@ describe("sanitizeAnthropicPayload", () => {
 			],
 		};
 
-		const result = sanitizeAnthropicPayload(payload) as { messages: Array<{ role: string }> };
+		const result = sanitizeAnthropicPayload(payload) as {
+			messages: Array<{ role: string; content: Array<Record<string, unknown>> }>;
+		};
 
-		expect(result.messages).toHaveLength(1);
-		expect(result.messages[0]?.role).toBe("assistant");
+		expect(result.messages).toHaveLength(2);
+		expect(result.messages[1]?.content).toEqual([
+			{
+				type: "tool_result",
+				tool_use_id: "toolu-1",
+				content: "Tool output unavailable (interrupted before result)",
+				is_error: true,
+			},
+		]);
+	});
+
+	it("repairs the kimi-to-opus bash_14 regression", () => {
+		const payload = {
+			messages: [
+				{
+					role: "assistant",
+					content: [
+						{ type: "text", text: "Running both tools." },
+						{ type: "tool_use", id: "mcp_aside_repl_13", name: "mcp_aside_repl", input: {} },
+						{ type: "tool_use", id: "bash_14", name: "bash", input: { command: "ls" } },
+					],
+				},
+				{
+					role: "user",
+					content: [
+						{ type: "tool_result", tool_use_id: "mcp_aside_repl_13", content: "opened" },
+						{ type: "text", text: "Follow-up context" },
+					],
+				},
+			],
+		};
+
+		const result = sanitizeAnthropicPayload(payload) as {
+			messages: Array<{ content: Array<Record<string, unknown>> }>;
+		};
+
+		expect(result.messages[1]?.content).toEqual([
+			{ type: "tool_result", tool_use_id: "mcp_aside_repl_13", content: "opened" },
+			{
+				type: "tool_result",
+				tool_use_id: "bash_14",
+				content: "Tool output unavailable (interrupted before result)",
+				is_error: true,
+			},
+			{ type: "text", text: "Follow-up context" },
+		]);
+	});
+
+	it("prepends a missing result to string user content", () => {
+		const payload = {
+			messages: [
+				{ role: "assistant", content: [{ type: "tool_use", id: "bash_14", name: "bash", input: {} }] },
+				{ role: "user", content: "Continue from here" },
+			],
+		};
+
+		const result = sanitizeAnthropicPayload(payload) as {
+			messages: Array<{ content: string | Array<Record<string, unknown>> }>;
+		};
+
+		expect(result.messages[1]?.content).toEqual([
+			{
+				type: "tool_result",
+				tool_use_id: "bash_14",
+				content: "Tool output unavailable (interrupted before result)",
+				is_error: true,
+			},
+			{ type: "text", text: "Continue from here" },
+		]);
+	});
+
+	it("inserts a missing result when the payload ends after tool_use", () => {
+		const payload = {
+			messages: [
+				{ role: "user", content: "Run it" },
+				{ role: "assistant", content: [{ type: "tool_use", id: "bash_14", name: "bash", input: {} }] },
+			],
+		};
+
+		const result = sanitizeAnthropicPayload(payload) as {
+			messages: Array<{ role: string; content: string | Array<Record<string, unknown>> }>;
+		};
+
+		expect(result.messages).toHaveLength(3);
+		expect(result.messages[2]).toEqual({
+			role: "user",
+			content: [
+				{
+					type: "tool_result",
+					tool_use_id: "bash_14",
+					content: "Tool output unavailable (interrupted before result)",
+					is_error: true,
+				},
+			],
+		});
+	});
+
+	it("keeps one immediate result and drops duplicate or misplaced copies", () => {
+		const payload = {
+			messages: [
+				{ role: "assistant", content: [{ type: "tool_use", id: "toolu-1", name: "ls", input: {} }] },
+				{
+					role: "user",
+					content: [
+						{ type: "text", text: "after result" },
+						{ type: "tool_result", tool_use_id: "toolu-1", content: "first" },
+						{ type: "tool_result", tool_use_id: "toolu-1", content: "duplicate" },
+					],
+				},
+				{ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu-1", content: "late" }] },
+			],
+		};
+
+		const result = sanitizeAnthropicPayload(payload) as {
+			messages: Array<{ content: Array<Record<string, unknown>> }>;
+		};
+
+		expect(result.messages).toHaveLength(2);
+		expect(result.messages[1]?.content).toEqual([
+			{ type: "tool_result", tool_use_id: "toolu-1", content: "first" },
+			{ type: "text", text: "after result" },
+		]);
 	});
 
 	it("keeps paired tool_result and removes orphan from same user message", () => {
@@ -81,10 +203,20 @@ describe("sanitizeAnthropicPayload", () => {
 			],
 		};
 
-		const result = sanitizeAnthropicPayload(payload) as { messages: Array<{ role: string }> };
+		const result = sanitizeAnthropicPayload(payload) as {
+			messages: Array<{ role: string; content: Array<Record<string, unknown>> }>;
+		};
 
 		expect(result.messages).toHaveLength(2);
 		expect(result.messages[1]?.role).toBe("user");
+		expect(result.messages[1]?.content).toEqual([
+			{
+				type: "tool_result",
+				tool_use_id: "toolu-1",
+				content: "Tool output unavailable (interrupted before result)",
+				is_error: true,
+			},
+		]);
 	});
 
 	it("drops tool_result blocks with missing or empty tool_use_id", () => {

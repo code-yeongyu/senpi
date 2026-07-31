@@ -4,6 +4,12 @@ import { createHarness, type Harness } from "./harness.ts";
 
 interface MonitorStateEvent {
 	readonly activeCount?: number;
+	readonly monitors?: Array<{
+		readonly id: string;
+		readonly description: string;
+		readonly paused: boolean;
+		readonly startedAtMs: number;
+	}>;
 }
 
 function resultText(result: { content?: Array<{ type: string; text?: string }> }): string {
@@ -31,7 +37,11 @@ describe("terminal monitor liveness event", () => {
 								"activeCount" in data &&
 								typeof data.activeCount === "number"
 							) {
-								states.push({ activeCount: data.activeCount });
+								const monitors =
+									"monitors" in data && Array.isArray(data.monitors)
+										? (data.monitors as MonitorStateEvent["monitors"])
+										: undefined;
+								states.push({ activeCount: data.activeCount, ...(monitors === undefined ? {} : { monitors }) });
 							}
 						});
 					});
@@ -49,10 +59,20 @@ describe("terminal monitor liveness event", () => {
 		if (!bashId) throw new Error("Monitor did not return a bash id");
 
 		try {
-			expect(states).toContainEqual({ activeCount: 1 });
+			expect(states).toContainEqual({
+				activeCount: 1,
+				monitors: [
+					{
+						id: bashId,
+						description: "liveness test",
+						paused: false,
+						startedAtMs: expect.any(Number),
+					},
+				],
+			});
 		} finally {
 			await harness.session.executeTool("kill_bash", { bash_id: bashId });
 		}
-		expect(states.at(-1)).toEqual({ activeCount: 0 });
+		expect(states.at(-1)).toEqual({ activeCount: 0, monitors: [] });
 	});
 });

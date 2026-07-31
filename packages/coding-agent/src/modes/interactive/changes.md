@@ -1,5 +1,26 @@
 # changes
 
+## Global queue chronology for compaction recovery (2026-07-31)
+
+- Queue submissions reserve one monotonic order across native steer/follow-up buckets and TUI-owned compaction input. Native delivery priority remains unchanged.
+- `AgentSession.clearQueue()` preserves its enumerable `{ steering, followUp }` shape and exposes global recovery chronology through a non-enumerable `ordered` side channel.
+- Retry handoff carries reserved order into native queues; legacy messages without order retain deterministic compatibility ordering. Matching records leave chronology when native delivery starts.
+- The existing `clearQueue({ abortWillFollow })` contract remains intact, so terminal restore does not leak abort state.
+- Coverage: `test/suite/regressions/compaction-terminal-queue-order.test.ts`, `535-terminal-compaction-abort-flag.test.ts`, and `post-compaction-queued-input-resume.test.ts`.
+
+### Expected merge conflict zones
+
+- MEDIUM: `core/agent-session.ts` queue bookkeeping and `interactive-mode.ts` compaction transfer/restoration.
+
+## Model-switch status uses optimized-prompt wording (2026-07-31)
+
+### What changed
+
+- `cycleModel` and `selectModelFromUi` status lines now read `optimized system prompt applied: <preset>` instead of `system prompt: <preset>`, and stay silent when the switch emits no preset name (unmatched models fall back to the senpi dynamic prompt without announcement). Behavior counterpart: `builtin/prompt-preset` (see its changes.md, 2026-07-31).
+
+### Why
+
+- User request: switch messages should convey that a model-optimized system prompt was applied, and say nothing for models without one.
 ## Queue restoration does not leak abort state (2026-07-31)
 
 ### What changed

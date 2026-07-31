@@ -1,3 +1,10 @@
+## Required-compaction recovery and queue chronology (2026-07-31)
+
+- Targeted required-compaction summarization failures can recover from a deterministic, suffix-safe local checkpoint without a second provider request; unfit recovery remains fail-closed and preserves the latest request.
+- Truncation recovery requires structured transient `SummaryRequestError` provenance; generic error text cannot authorize fallback.
+- Recovery retains task intent and UTF-8-safe bounded text while todo/checkpoint snapshots remain only in their separately persisted canonical entries, not duplicated in compaction details.
+- Terminal queue restoration now follows global submission chronology across native and compaction-owned input through a non-enumerable compatibility side channel, without changing native steer priority or abort-state semantics.
+
 ## Refusal fallback exhaustion resets retry state (2026-07-31)
 
 ### What changed

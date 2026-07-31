@@ -184,4 +184,14 @@ describe("supportsXhigh tier detection for map-less models", () => {
 	it("still reports no xhigh tier for a map-less Sonnet 4.5", () => {
 		expect(supportsXhigh(maplessWithId("claude-sonnet-4-5"))).toBe(false);
 	});
+
+	it("includes max for a map-less gpt-5.6-sol model", () => {
+		expect(getSupportedThinkingLevels({ ...maplessWithId("gpt-5.6-sol"), api: "openai-responses" })).toContain("max");
+	});
+
+	it("does not infer max for a map-less gpt-5.6-terra model", () => {
+		expect(getSupportedThinkingLevels({ ...maplessWithId("gpt-5.6-terra"), api: "openai-responses" })).not.toContain(
+			"max",
+		);
+	});
 });

@@ -1,5 +1,18 @@
 # changes.md — ai
 
+## Map-less GPT-5.6 Sol max reasoning (2026-07-30)
+
+### What changed
+
+- Runtime capability detection now recognizes `max` for map-less OpenAI-compatible `gpt-5.6-sol` models while
+  preserving explicit map omissions and `null` vetoes.
+- OpenAI-compatible request builders serialize the selected level as `reasoning.effort: "max"`.
+
+### Why
+
+- Custom providers such as `codex-lb` can supply Sol without generated model metadata. The UI and provider
+  payload must agree instead of displaying `max` while silently sending `high`.
+
 ## Browser-safe prompt-cache TTL resolver (2026-07-28)
 
 ### What changed

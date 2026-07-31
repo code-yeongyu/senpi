@@ -1,5 +1,44 @@
 # Core Extensions Changes
 
+## 2026-07-31 - Correlated input dispositions
+
+### What changed and why
+
+- `InputEvent` now carries a session-local `inputId`; the new `input_disposition` event repeats that ID with `handled`, `queued`, `started`, or `rejected` after interception and final admission resolve.
+- Goal lifecycle state can therefore wait for accepted input instead of mutating persistence from raw input, while concurrent prompts retain independent ownership.
+
+### Expected merge conflict zones
+
+- MEDIUM: additive input event types/exports and `AgentSession.prompt()` admission exits.
+- LOW: `ExtensionRunner.emitInput()` event assembly.
+
+## 2026-07-31 - Anthropic tool-pair guard repairs missing immediate results
+
+### What changed
+
+- `builtin/tool-pair-guard/sanitize-anthropic-payload.ts` now pairs client `tool_use` blocks only with
+  `tool_result` blocks in the immediately following user message, removes misplaced or duplicate results,
+  and synthesizes error results for calls whose outputs were interrupted or pruned.
+- Repaired result blocks are placed before ordinary user content, including when the following user message
+  originally used string content.
+- `test/tool-pair-guard/sanitize-anthropic-payload.test.ts` covers the observed Kimi-to-Opus `bash_14`
+  replay failure plus payload-end, partial-result, duplicate, misplaced, and string-content cases.
+
+### Why
+
+- Anthropic rejects a request when any client `tool_use` lacks a matching `tool_result` in the next user
+  message. A persisted session can be valid before context hooks run but lose one result during pruning or
+  payload transformation, so switching from a larger-context non-Anthropic model to Claude could wedge every
+  follow-up request with HTTP 400.
+- The provider-request hook is the final safe repair boundary after context reduction and wire conversion.
+  Repairing there preserves the durable transcript while guaranteeing the request sent to Anthropic is valid.
+
+### Expected merge conflict zones
+
+- LOW: `builtin/tool-pair-guard/sanitize-anthropic-payload.ts` if upstream adds equivalent Anthropic
+  tool-pair normalization.
+- LOW: `test/tool-pair-guard/sanitize-anthropic-payload.test.ts` if upstream expands the same sanitizer cases.
+
 ## 2026-07-31 - `pi.setSessionFastMode()` for the fast-mode indicator
 
 ### What changed and why

@@ -34,6 +34,7 @@ import { sanitizeAnthropicPayload } from "../tool-pair-guard/sanitize-anthropic-
 import { computeEffectiveKeepRecentTokens, computeEffectiveThreshold } from "./policy.ts";
 import { buildPrompt, type MergedCompactionPromptVariant } from "./prompts.ts";
 import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
+import { extractTaskIntent, resolveInheritedTaskIntent } from "./task-intent.ts";
 import * as truncation from "./tool-truncation.ts";
 import { computeStructuralYield } from "./yield.ts";
 
@@ -73,6 +74,7 @@ export interface SpeculativeCompactionSnapshot {
 	model: Model<any>;
 	contextWindow: number;
 	preparation: CompactionPreparation;
+	branchEntries?: ReturnType<ReadonlySessionManager["getBranch"]>;
 	promptVariant: MergedCompactionPromptVariant;
 	origin?: "speculative" | "blocking" | "core-route";
 	customInstructions?: string;
@@ -99,14 +101,25 @@ function approxTokens(text: string): number {
  * text happens to look retryable must still surface loudly; the message
  * string alone cannot encode that.
  */
+export type SummaryRequestFailureKind = "upstream-stream-truncated";
+
 export class SummaryRequestError extends Error {
 	readonly transient: boolean;
+	readonly failureKind?: SummaryRequestFailureKind;
 
-	constructor(message: string, transient: boolean) {
+	constructor(message: string, transient: boolean, failureKind?: SummaryRequestFailureKind) {
 		super(message);
 		this.name = "SummaryRequestError";
 		this.transient = transient;
+		this.failureKind = failureKind;
 	}
+}
+
+const UPSTREAM_STREAM_TRUNCATED_PATTERN = /(?:^|[^A-Za-z0-9_])upstream_stream_truncated(?:[^A-Za-z0-9_]|$)/;
+
+function summaryRequestFailureKind(response: AssistantMessage): SummaryRequestFailureKind | undefined {
+	if (response.stopDetails?.type === "refusal" || response.stopDetails?.type === "sensitive") return undefined;
+	return UPSTREAM_STREAM_TRUNCATED_PATTERN.test(response.errorMessage ?? "") ? "upstream-stream-truncated" : undefined;
 }
 
 export class SummaryGenerationError extends Error {
@@ -470,6 +483,7 @@ export function createSpeculativeCompactionSnapshot(
 		model,
 		contextWindow,
 		preparation,
+		branchEntries,
 		promptVariant: getPromptVariant({ reason: "extension", preparation }),
 		...(options.origin ? { origin: options.origin } : {}),
 		customInstructions: options.customInstructions,
@@ -512,6 +526,7 @@ export async function runExtensionCompaction(
 	const prompt = buildPrompt({
 		variant: snapshot.promptVariant,
 		previousSummary: snapshot.preparation.previousSummary,
+		taskIntent: resolveInheritedTaskIntent(snapshot.branchEntries ?? []),
 		customInstructions: snapshot.customInstructions,
 	});
 
@@ -548,10 +563,14 @@ export async function runExtensionCompaction(
 
 		if (isAssistantMessage(response) && response.stopReason === "error") {
 			// Surface the real provider failure instead of silently degrading
-			// into a generic "Compaction cancelled".
+			// into a generic "Compaction cancelled". Preserve the structured
+			// truncation class here so downstream recovery never trusts arbitrary
+			// thrown error text as authorization for destructive context reduction.
+			const failureKind = summaryRequestFailureKind(response);
 			throw new SummaryRequestError(
 				response.errorMessage || "Compaction summary request failed",
-				isRetryableAssistantError(response),
+				failureKind !== undefined || isRetryableAssistantError(response),
+				failureKind,
 			);
 		}
 
@@ -568,9 +587,11 @@ export async function runExtensionCompaction(
 		// still overflow (_wouldCompactionOverflow). Rejecting here based on the
 		// size of the *discarded* input made large sessions uncompactable.
 		const tokenEstimate = estimateContextTokens(convertToLlm(messages)).tokens + approxTokens(summary);
+		const parsedSummary = extractTaskIntent(summary);
+		const taskIntent = parsedSummary.taskIntent ?? resolveInheritedTaskIntent(snapshot.branchEntries ?? []);
 
 		return {
-			summary,
+			summary: parsedSummary.summaryText,
 			firstKeptEntryId: snapshot.preparation.firstKeptEntryId,
 			tokensBefore: snapshot.preparation.tokensBefore,
 			details: {
@@ -581,10 +602,11 @@ export async function runExtensionCompaction(
 					previousSummary: snapshot.preparation.previousSummary ?? "",
 					messagesToSummarize: snapshot.preparation.messagesToSummarize,
 					turnPrefixMessages: snapshot.preparation.turnPrefixMessages,
-					summary,
+					summary: parsedSummary.summaryText,
 					tokensBefore: snapshot.preparation.tokensBefore,
 				}),
 				...(snapshot.origin ? { origin: snapshot.origin } : {}),
+				...(taskIntent ? { taskIntent } : {}),
 			},
 		};
 	}

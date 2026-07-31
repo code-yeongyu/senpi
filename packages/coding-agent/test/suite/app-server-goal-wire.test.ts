@@ -67,19 +67,19 @@ describe("app-server goal wire adapter", () => {
 		expect(loaded).not.toHaveProperty("tokenBudget");
 	});
 
-	it("round-trips the additive budget field through the goal store", async () => {
-		// Given: a goal with a numeric budget persisted through the normal store writer.
+	it("normalizes legacy budget metadata out of runtime goal state", async () => {
+		// Given: a legacy-compatible goal object still carrying a numeric budget.
 		const baseDir = await mkdtemp(join(tmpdir(), "senpi-goal-wire-"));
 		tempDirs.push(baseDir);
 		const ref: GoalStoreRef = { baseDir, threadId: "thread-budget" };
 		const goal = makeGoal({ threadId: ref.threadId, tokenBudget: 8192 });
 
-		// When: the goal is written and then read back.
+		// When: the goal crosses the normal store writer and reader.
 		await writeGoal(ref, goal);
 		const loaded = await readGoal(ref);
 
-		// Then: the budget remains available to the wire adapter.
-		expect(loaded?.tokenBudget).toBe(8192);
+		// Then: the serialized compatibility field remains inert and never reactivates runtime budgeting.
+		expect(loaded).not.toHaveProperty("tokenBudget");
 		expect(JSON.parse(await readFile(goalFilePath(ref), "utf8"))).toMatchObject({
 			goal: { tokenBudget: 8192 },
 		});

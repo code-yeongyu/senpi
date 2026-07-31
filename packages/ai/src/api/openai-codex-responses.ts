@@ -21,7 +21,7 @@ function loadNodeOs(): typeof NodeOs | null {
 // NEVER convert to top-level runtime imports - breaks browser/Vite builds
 const _os: typeof NodeOs | null = loadNodeOs();
 
-import { clampThinkingLevel, supportsXhigh } from "../models.ts";
+import { clampThinkingLevel, supportsMax, supportsXhigh } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
 	Api,
@@ -517,7 +517,7 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 	const reasoningEffort =
 		clampedReasoning === "off"
 			? undefined
-			: clampedReasoning === "max" && model.thinkingLevelMap?.max !== undefined
+			: clampedReasoning === "max" && supportsMax(model)
 				? "max"
 				: clampMaxForOpenAI(clampedReasoning, supportsXhigh(model));
 

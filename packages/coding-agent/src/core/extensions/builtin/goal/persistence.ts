@@ -25,6 +25,27 @@ export async function readGoalFile(ref: GoalStoreRef): Promise<Goal | null> {
 	}
 }
 
+export async function migrateLegacyGoalFile(ref: GoalStoreRef): Promise<Goal | null> {
+	try {
+		await readFile(goalFilePath(ref), "utf8");
+		return null;
+	} catch (error) {
+		if (!isMissingFile(error)) throw error;
+	}
+
+	const legacyRef = { ...ref, baseDir: join(dirname(ref.baseDir), "pi-goal") };
+	let legacyGoal: Goal | null;
+	try {
+		legacyGoal = parseGoalFile(await readFile(goalFilePath(legacyRef), "utf8")).goal;
+	} catch (error) {
+		if (isMissingFile(error)) return null;
+		throw error;
+	}
+	if (legacyGoal === null) return null;
+	await writeGoalFile(ref, legacyGoal);
+	return legacyGoal;
+}
+
 export async function writeGoalFile(ref: GoalStoreRef, goal: Goal | null): Promise<void> {
 	const filePath = goalFilePath(ref);
 	await mkdir(dirname(filePath), { recursive: true });
@@ -50,6 +71,19 @@ async function writeGoalFileAtomic(filePath: string, contents: string): Promise<
 }
 
 function parseGoalFile(raw: string): GoalFile {
+	const parsed = parseGoalFileJson(raw);
+	if (!isRecord(parsed)) throw new InvalidGoalStoreError("goal store must be a JSON object");
+	if (parsed.version !== STORE_VERSION) throw new UnsupportedGoalStoreVersionError("unsupported goal store version");
+	const normalizedGoal = normalizeLegacyGoal(parsed.goal);
+	if (normalizedGoal !== null && !isGoal(normalizedGoal))
+		throw new InvalidGoalStoreError("goal store contains an invalid goal");
+	return {
+		version: STORE_VERSION,
+		goal: normalizedGoal === null ? null : sanitizeContinuationState(normalizedGoal),
+	};
+}
+
+function parseGoalFileJson(raw: string): unknown {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(raw);
@@ -63,11 +97,17 @@ function parseGoalFile(raw: string): GoalFile {
 			throw error;
 		}
 	}
-	if (!isRecord(parsed)) throw new InvalidGoalStoreError("goal store must be a JSON object");
-	if (parsed.version !== STORE_VERSION) throw new UnsupportedGoalStoreVersionError("unsupported goal store version");
-	if (parsed.goal !== null && !isGoal(parsed.goal))
-		throw new InvalidGoalStoreError("goal store contains an invalid goal");
-	return { version: STORE_VERSION, goal: parsed.goal === null ? null : sanitizeContinuationState(parsed.goal) };
+	return parsed;
+}
+
+function normalizeLegacyGoal(value: unknown): unknown {
+	if (!isRecord(value)) return value;
+	const normalized = { ...value };
+	delete normalized.tokenBudget;
+	if (normalized.status === "budgetLimited" || normalized.status === "budget_limited") {
+		normalized.status = "active";
+	}
+	return normalized;
 }
 
 function recoverGoalFileWithStaleClosingBraces(raw: string): string | undefined {

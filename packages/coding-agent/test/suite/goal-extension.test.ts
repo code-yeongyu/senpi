@@ -7,7 +7,6 @@ import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
 import { goalFilePath, readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
-import { waitForGoalContinuationCount } from "./goal-monitor-test-harness.ts";
 
 type AnyTool = ToolDefinition<any, any, any>;
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
@@ -625,7 +624,18 @@ describe("goal extension session_start migration-lite admission", () => {
 		await runHandlers(handlers, "session_start", { type: "session_start", reason: "startup" }, ctx);
 		expect(sent).toHaveLength(0);
 
-		await runHandlers(handlers, "before_agent_start", { type: "before_agent_start" }, ctx);
+		await runHandlers(
+			handlers,
+			"input",
+			{ type: "input", inputId: "suppressed-resume", text: "continue", source: "interactive" },
+			ctx,
+		);
+		await runHandlers(
+			handlers,
+			"input_disposition",
+			{ type: "input_disposition", inputId: "suppressed-resume", disposition: "started" },
+			ctx,
+		);
 		await runHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
 		await runHandlers(
 			handlers,
@@ -633,14 +643,12 @@ describe("goal extension session_start migration-lite admission", () => {
 			{ type: "agent_end", messages: [assistantMessageWithStopReason("stop")] },
 			ctx,
 		);
-		// A user-initiated turn end triggers the 60s grace delay (todo 6), so nothing
-		// is queued immediately. The continuation fires after the grace window.
+		// Accepted direct input consumes continuation eligibility for this turn. The
+		// Goal remains active, but no delayed continuation resurrects it afterward.
 		expect(sent).toHaveLength(0);
-		const graceDeliveryRecorded = waitForGoalContinuationCount(ctx, 1);
 		await vi.advanceTimersByTimeAsync(60_000);
-		await graceDeliveryRecorded;
-		expect(sent).toHaveLength(1);
-		expect(sent[0]?.message.customType).toBe("goal-continuation");
+		expect(sent).toHaveLength(0);
+		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("active");
 		vi.useRealTimers();
 	});
 

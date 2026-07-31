@@ -11,6 +11,7 @@ type ManagedCell = {
 	readonly cellId: string;
 	readonly input: EvalToolInput;
 	readonly spillPath: string | undefined;
+	readonly startedAtMs: number;
 	state: EvalDetachedCellState;
 	canDetach: boolean;
 	wasDetached: boolean;
@@ -46,6 +47,8 @@ export interface EvalDetachedCellStatusEntry {
 	readonly cellId: string;
 	readonly language: EvalLanguage;
 	readonly title?: string;
+	/** Epoch milliseconds when the cell was created; feeds the footer's live elapsed label. */
+	readonly startedAtMs: number;
 }
 
 export interface EvalDetachedCellManagerOptions {
@@ -53,6 +56,8 @@ export interface EvalDetachedCellManagerOptions {
 	readonly notifier?: EvalDetachedCellNotifier;
 	/** Called with every detached cell whenever that set changes; empty clears the status. */
 	readonly onStatusChange?: (entries: readonly EvalDetachedCellStatusEntry[]) => void;
+	/** Injectable clock for tests; defaults to Date.now. */
+	readonly now?: () => number;
 }
 
 /**
@@ -68,6 +73,7 @@ export class EvalDetachedCellManager {
 	readonly #onStatusChange: ((entries: readonly EvalDetachedCellStatusEntry[]) => void) | undefined;
 	readonly #cells = new Map<string, ManagedCell>();
 	readonly #detachedByLanguage = new Map<EvalLanguage, ManagedCell>();
+	readonly #now: () => number;
 	#notificationQueue: ManagedCell[] = [];
 	#notificationFlush: Promise<void> | undefined;
 
@@ -75,6 +81,7 @@ export class EvalDetachedCellManager {
 		this.#artifactsDir = options.artifactsDir;
 		this.#notifier = options.notifier;
 		this.#onStatusChange = options.onStatusChange;
+		this.#now = options.now ?? Date.now;
 	}
 
 	create(cellId: string, input: EvalToolInput): ManagedCell {
@@ -91,6 +98,7 @@ export class EvalDetachedCellManager {
 			cellId,
 			input,
 			spillPath,
+			startedAtMs: this.#now(),
 			state: "running",
 			canDetach: false,
 			wasDetached: false,
@@ -189,6 +197,7 @@ export class EvalDetachedCellManager {
 			[...this.#detachedByLanguage.values()].map((cell) => ({
 				cellId: cell.cellId,
 				language: cell.input.language,
+				startedAtMs: cell.startedAtMs,
 				...(cell.input.title === undefined ? {} : { title: cell.input.title }),
 			})),
 		);

@@ -7,7 +7,7 @@ function maplessModel(id: string): Model<Api> {
 	return {
 		id,
 		name: id,
-		api: "anthropic-messages",
+		api: "openai-responses",
 		provider: "custom-gateway",
 		baseUrl: "https://example.invalid",
 		reasoning: true,
@@ -27,10 +27,35 @@ describe("thinking level tier detection for map-less models", () => {
 		expect(getSupportedThinkingLevels(model)).toContain("max");
 	});
 
-	it("exposes xhigh for gpt-5.6 without claiming the max tier", () => {
+	it("exposes xhigh and max for gpt-5.6", () => {
 		const model = maplessModel("gpt-5.6-sol");
 		expect(supportsXhigh(model)).toBe(true);
+		expect(supportsMax(model)).toBe(true);
+		expect(getSupportedThinkingLevels(model)).toContain("xhigh");
+		expect(getSupportedThinkingLevels(model)).toContain("max");
+	});
+
+	it("does not infer max for a non-Sol gpt-5.6 model", () => {
+		const model = maplessModel("gpt-5.6-terra");
+		expect(supportsXhigh(model)).toBe(true);
 		expect(supportsMax(model)).toBe(false);
+		expect(getSupportedThinkingLevels(model)).not.toContain("max");
+	});
+
+	it("preserves an explicit max veto for gpt-5.6-sol", () => {
+		const model = maplessModel("gpt-5.6-sol");
+		model.thinkingLevelMap = { max: null };
+		expect(supportsMax(model)).toBe(false);
+		expect(getSupportedThinkingLevels(model)).not.toContain("max");
+	});
+
+	it("treats a map containing max but omitting xhigh as authoritative", () => {
+		const model = maplessModel("gpt-5.6-sol");
+		model.thinkingLevelMap = { max: "max" };
+		expect(supportsXhigh(model)).toBe(false);
+		expect(supportsMax(model)).toBe(true);
+		expect(getSupportedThinkingLevels(model)).not.toContain("xhigh");
+		expect(getSupportedThinkingLevels(model)).toContain("max");
 	});
 
 	it("exposes neither tier for Sonnet 4.5", () => {

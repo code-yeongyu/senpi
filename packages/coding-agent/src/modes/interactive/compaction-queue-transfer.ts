@@ -1,6 +1,8 @@
 export type CompactionQueuedMessage = {
 	readonly text: string;
 	readonly mode: "steer" | "followUp";
+	/** Global recovery order reserved when the TUI accepts the input. */
+	readonly enqueueOrder?: number;
 };
 
 export type PromptDisposition = "handled" | "queued" | "started";

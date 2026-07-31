@@ -3,6 +3,32 @@
 The persistent-terminal tool suite (`bash` swapped to PTY-backed + `bash_output`,
 `kill_bash`, `bash_input`, `bash_resize`). Backed by `@earendil-works/pi-pty`.
 
+## Live elapsed footer for monitors + enriched monitor state event (2026-07-31)
+
+### What changed
+
+- `monitor-registry.ts`: `MonitorSnapshotEntry` gains `startedAtMs` (epoch ms at registration).
+- `monitor-status.ts`: `formatMonitorStatus(snapshot, nowMs)` renders a goal-style compact
+  elapsed label (`5s`/`3m`/`2h 30m`) for the oldest live watch, merged with the paused suffix
+  as `(3m, paused)` / `(3m, 1 paused)`. 48-char budget and `+N more` packing unchanged.
+- `monitor-status-ticker.ts` (new): `MonitorStatusTicker` mirrors the goal builtin's
+  `GoalElapsedTicker` — 1s unref'd interval, renders only when the formatted label changes,
+  stops and clears the status when the last watch settles. The extension's `onMonitorState`
+  sink now drives the ticker instead of formatting inline; `session_shutdown` stops it.
+- `builtin/monitor-state-event.ts`: `TerminalMonitorStateEvent` gains an additive optional
+  `monitors` array (`{ id, description, paused, startedAtMs }`) so event-bus consumers (and
+  RPC clients, which already receive footer statuses through the `setStatus`
+  `extension_ui_request` bridge) can render their own elapsed views. `activeCount` and the
+  type guard are unchanged; old payloads still validate.
+
+### Tests
+
+- `test/suite/terminal-monitor-footer.test.ts`: elapsed rendering, oldest-watch selection,
+  clock-skew clamp, paused-suffix merge, budget preservation, `startedAtMs` in snapshots.
+- `test/suite/terminal-monitor-status-ticker.test.ts` (new): unref'd 1s interval, label
+  dedupe, stop-on-settle, re-sync without leaking intervals.
+- `test/suite/terminal-monitor-state-event.test.ts`: `monitors[]` payload assertions.
+
 ## Background sessions and monitors survive session reload (2026-07-29)
 
 ### What changed

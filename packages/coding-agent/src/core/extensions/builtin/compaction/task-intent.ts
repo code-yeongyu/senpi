@@ -6,12 +6,8 @@ const TASK_INTENT_BYTE_CAP = 4096;
 const REMOTE_SCHEMA = "senpi.compaction.openai-remote.v1";
 const SUMMARY_SCHEMA = "senpi.compaction.summary.v1";
 
-type BranchEntry = {
-	schema?: string;
-	details?: unknown;
-};
-
 type CompactionDetails = {
+	schema?: unknown;
 	taskIntent?: unknown;
 };
 
@@ -44,19 +40,21 @@ export function sanitizeTaskIntent(text: string): string {
 	return text.split(TASK_INTENT_CLOSE).join("[/task-intent]");
 }
 
-export function resolveInheritedTaskIntent(branchEntries: BranchEntry[]): string | undefined {
+export function resolveInheritedTaskIntent(branchEntries: ReadonlyArray<unknown>): string | undefined {
 	for (let index = branchEntries.length - 1; index >= 0; index -= 1) {
-		const entry = branchEntries[index];
-		if (!entry || entry.schema === REMOTE_SCHEMA) continue;
-		if (entry.schema !== SUMMARY_SCHEMA) continue;
+		const rawEntry = branchEntries[index];
+		if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) continue;
+		const entry = rawEntry as { schema?: string; details?: unknown };
 		const details = entry.details;
 		if (!details || typeof details !== "object" || Array.isArray(details)) continue;
-		const taskIntent = (details as CompactionDetails).taskIntent;
+		const typedDetails = details as CompactionDetails;
+		const schema = typeof typedDetails.schema === "string" ? typedDetails.schema : entry.schema;
+		if (schema === REMOTE_SCHEMA || schema !== SUMMARY_SCHEMA) continue;
+		const taskIntent = typedDetails.taskIntent;
 		if (typeof taskIntent !== "string") continue;
 		const trimmed = taskIntent.trim();
 		if (!trimmed) continue;
-		if (Buffer.byteLength(trimmed, "utf8") > TASK_INTENT_BYTE_CAP) continue;
-		return trimmed;
+		return capUtf8Bytes(trimmed, TASK_INTENT_BYTE_CAP);
 	}
 	return undefined;
 }
@@ -91,7 +89,7 @@ function collectWellFormedBlocks(
 	return blocks;
 }
 
-function capUtf8Bytes(text: string, maxBytes: number): string {
+export function capUtf8Bytes(text: string, maxBytes: number): string {
 	let bytes = 0;
 	let end = 0;
 	for (const char of text) {

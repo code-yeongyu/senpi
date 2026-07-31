@@ -32,18 +32,22 @@ function getSettings(ctx: ExtensionContext): ReturnType<typeof loadPromptPresetS
 	return loadPromptPresetSettings(SettingsManager.create(ctx.cwd));
 }
 
-function getPresetName(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "model">): string {
+function getPresetName(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "model">): string | undefined {
 	const model = event?.model ?? ctx.model;
 	if (!model) {
-		return "fallback (senpi-current)";
+		return undefined;
 	}
-	return resolvePresetName(model, getSettings(ctx)) ?? "fallback (senpi-current)";
+	return resolvePresetName(model, getSettings(ctx));
 }
 
 function refreshHeader(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "model">): void {
 	const presetName = getPresetName(ctx, event);
+	if (!presetName) {
+		ctx.ui.setHeader(undefined);
+		return;
+	}
 	ctx.ui.setHeader((_tui, theme) => ({
-		render: () => [theme.fg("accent", theme.bold(`Prompt preset: ${presetName}`))],
+		render: () => [theme.fg("accent", theme.bold(`Optimized system prompt applied: ${presetName}`))],
 		invalidate: () => {},
 	}));
 }
@@ -72,7 +76,7 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 		const preset = resolvePreset(event.model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx));
 		return {
 			systemPrompt: preset?.prompt ?? null,
-			systemPromptName: preset?.name ?? "fallback (senpi-current)",
+			systemPromptName: preset?.name,
 		};
 	});
 }

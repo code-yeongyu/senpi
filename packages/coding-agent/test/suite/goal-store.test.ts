@@ -2,6 +2,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "n
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { migrateLegacyGoalFile } from "../../src/core/extensions/builtin/goal/persistence.ts";
 import {
 	accountGoalUsage,
 	clearGoal,
@@ -202,6 +203,41 @@ describe("goal store atomic writes", () => {
 });
 
 describe("goal store (budget-free)", () => {
+	it("migrates a legacy budget-limited goal as active without a budget", async () => {
+		const ref = await tempStore("thread-legacy-budget");
+		const legacyRef = { ...ref, baseDir: join(ref.baseDir, "..", "pi-goal") };
+		const legacyGoal = {
+			id: "legacy-goal",
+			threadId: ref.threadId,
+			objective: "Finish the inherited work",
+			status: "budgetLimited",
+			tokenBudget: 512,
+			tokensUsed: 2_800_000,
+			timeUsedSeconds: 120,
+			createdAt: 100,
+			updatedAt: 200,
+		};
+		await mkdir(legacyRef.baseDir, { recursive: true });
+		await writeFile(
+			goalFilePath(legacyRef),
+			`${JSON.stringify({ version: 1, goal: legacyGoal }, null, 2)}\n`,
+			"utf8",
+		);
+
+		const migrated = await migrateLegacyGoalFile(ref);
+
+		expect(migrated).toMatchObject({
+			id: "legacy-goal",
+			objective: "Finish the inherited work",
+			status: "active",
+			tokensUsed: 2_800_000,
+		});
+		expect(migrated).not.toHaveProperty("tokenBudget");
+		expect(await readGoal(ref)).toEqual(migrated);
+		expect(await readFile(goalFilePath(ref), "utf8")).not.toContain("tokenBudget");
+		expect(await readFile(goalFilePath(legacyRef), "utf8")).toContain('"tokenBudget": 512');
+	});
+
 	it("creates a persisted active goal with no budget field", async () => {
 		const ref = await tempStore("thread-create");
 		const goal = await createGoal(ref, "  Ship the extension  ");

@@ -30,7 +30,7 @@ describe("goal abort lifecycle through the agent session", () => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
-	it("marks an ESC-aborted goal blocked only after usage accounting, suppresses continuation, and resumes for the next user run", async () => {
+	it("keeps an ESC interruption block through the next user run while allowing an explicit completion", async () => {
 		const streamStarted = deferred();
 		const agentEnds: AgentEndSnapshot[] = [];
 		const statusesAtAgentStart: GoalStatus[] = [];
@@ -91,7 +91,7 @@ describe("goal abort lifecycle through the agent session", () => {
 		]);
 		await harness.session.prompt("continue after interruption");
 
-		expect(statusesAtAgentStart).toEqual(["active", "active"]);
+		expect(statusesAtAgentStart).toEqual(["active", "blocked"]);
 		expect((await readGoal(ref))?.status).toBe("complete");
 	});
 
@@ -115,7 +115,7 @@ describe("goal abort lifecycle through the agent session", () => {
 		expect(observed).toEqual([{ aborted: undefined, abortSource: undefined }]);
 		expect(observed).toEqual([{ aborted: undefined, abortSource: undefined }]);
 	});
-	it("resumes a blocked goal at before_agent_start and never via a continuation-style agent_start", async () => {
+	it("keeps a model-authored block blocked on ordinary direct input", async () => {
 		const statusesAtBeforeAgentStart: GoalStatus[] = [];
 		const harness = await createHarness({
 			persistSession: true,
@@ -138,9 +138,7 @@ describe("goal abort lifecycle through the agent session", () => {
 		harness.setResponses([fauxAssistantMessage("resumed and done")]);
 		await harness.session.prompt("user returns");
 
-		// The observation extension's before_agent_start runs AFTER goalExtension's (registration order),
-		// so it sees the post-resume status.
-		expect(statusesAtBeforeAgentStart).toEqual(["active"]);
-		expect((await readGoal(ref))?.status).toBe("active");
+		expect(statusesAtBeforeAgentStart).toEqual(["blocked"]);
+		expect((await readGoal(ref))?.status).toBe("blocked");
 	});
 });

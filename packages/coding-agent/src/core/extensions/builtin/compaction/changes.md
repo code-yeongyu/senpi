@@ -1,5 +1,38 @@
 # Builtin compaction extension changes
 
+## Deterministic required-compaction recovery (2026-07-31)
+
+- Required threshold/overflow recovery may synthesize one local checkpoint after a summarization watchdog or a transient `SummaryRequestError` carrying the structured `upstream-stream-truncated` failure kind, without issuing another provider request. Generic thrown text is never fallback authorization, even when it contains truncation-like markers.
+- Recovery is accepted only with a real non-empty retained boundary whose fully reconstructed context fits `contextWindow - reserveTokens`, including the exact cap boundary. An absent or unfit suffix cancels without appending a compaction entry or dropping the latest request.
+- The checkpoint carries parsed or inherited task intent and a UTF-8-safe bounded prior summary. Todo and agent-checkpoint snapshots remain solely in their canonical custom entries persisted after acceptance, avoiding duplicate unbounded objects in compaction details. Manual, aborted, and unrelated failures remain fail-closed.
+- Local summaries now persist parsed task intent and inherit it through subsequent local compactions while ignoring remote checkpoint metadata.
+- Coverage: `test/compaction/required-compaction-deterministic-fallback.test.ts`, `test/compaction/task-intent-anchor.test.ts`, and the existing blocking/runtime-provider suites.
+
+### Expected merge conflict zones
+
+- MEDIUM: `index.ts` around `session_before_compact`; `speculative.ts` snapshot and summary result assembly.
+## Idle compaction warms without committing a transcript boundary (2026-07-31)
+
+### What changed
+
+- The `agent_end` idle trigger now starts speculative summary generation instead of applying compaction immediately.
+- The next `before_agent_start` consumes and applies the warmed result through the existing blocking-admission path.
+- Issue #561 regression coverage pins normal idle and queued-follow-up idle behavior, plus the disabled control.
+
+### Why
+
+- A durable compaction entry created at idle could become the branch leaf before the next user prompt. If the context
+  remained near the limit, the last-entry guard prevented normal pre-prompt compaction and later recovery could place
+  another compaction after the fresh prompt, corrupting the apparent boundary and risking duplicate or lost intent.
+- Summary generation remains off the user's critical path, while durable apply now happens only at the admission
+  boundary that includes the pending prompt and existing staleness/overflow checks.
+
+### Scope
+
+- The change is isolated to the builtin extension's idle trigger. Core compaction preparation, abort ordering,
+  queued-message ownership, and overflow recovery are unchanged.
+- Expected upstream conflict zone: `builtin/compaction/index.ts` around the `agent_end` idle trigger.
+
 ## Runtime provider dispatch for summarization (2026-07-31)
 
 ### What changed

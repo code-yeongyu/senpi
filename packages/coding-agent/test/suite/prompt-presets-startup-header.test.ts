@@ -78,7 +78,7 @@ describe("prompt preset startup header", () => {
 		await handlers.session_start[0]({ type: "session_start", reason: "startup" }, context);
 
 		// then
-		expect(getHeaderText()).toContain("Prompt preset: gpt-5.5");
+		expect(getHeaderText()).toContain("Optimized system prompt applied: gpt-5.5");
 	});
 
 	it("refreshes header text on model_select", async () => {
@@ -100,6 +100,43 @@ describe("prompt preset startup header", () => {
 		);
 
 		// then
-		expect(getHeaderText()).toContain("Prompt preset: claude-opus");
+		expect(getHeaderText()).toContain("Optimized system prompt applied: claude-opus-4-7");
+	});
+
+	it("clears the header when no preset matches the active model", async () => {
+		// given
+		const { api, handlers } = makeApiMock();
+		const { context, getHeaderText } = createHeaderContext("gpt-5.5");
+		promptPresetExtension(api as never);
+		await handlers.session_start[0]({ type: "session_start", reason: "startup" }, context);
+		expect(getHeaderText()).toContain("Optimized system prompt applied: gpt-5.5");
+
+		// when
+		const result = (await handlers.model_select[0](
+			{
+				type: "model_select",
+				model: { id: "claude-sonnet-4-5", provider: "anthropic", api: "anthropic-messages" },
+				previousModel: context.model,
+				source: "set",
+			},
+			context,
+		)) as { systemPromptName?: string };
+
+		// then
+		expect(getHeaderText()).toBe("");
+		expect(result.systemPromptName).toBeUndefined();
+	});
+
+	it("shows no startup header for a model without a matching preset", async () => {
+		// given
+		const { api, handlers } = makeApiMock();
+		const { context, getHeaderText } = createHeaderContext("claude-sonnet-4-5");
+		promptPresetExtension(api as never);
+
+		// when
+		await handlers.session_start[0]({ type: "session_start", reason: "startup" }, context);
+
+		// then
+		expect(getHeaderText()).toBe("");
 	});
 });

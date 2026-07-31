@@ -336,9 +336,7 @@ export function formatSearchText(details: SearchDetails): string {
 	if (details.error) return details.error;
 	if (details.results.length === 0) return `No web search results found for "${details.query}".`;
 
-	const route = details.strategy
-		? ` via ${providerEntryLabel(details)} (${details.strategy})`
-		: ` via ${details.provider}`;
+	const route = ` via ${providerEntryLabel(details)}`;
 	const lines = [`Web search results for "${details.query}"${route}:`, ""];
 	if (details.attempts && details.attempts.length > 0) {
 		lines.push(

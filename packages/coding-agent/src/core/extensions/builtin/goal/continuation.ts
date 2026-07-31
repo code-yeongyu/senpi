@@ -8,9 +8,8 @@ export const GOAL_CONTINUATION_CAP = 8;
 export const GOAL_STALL_TOOLLESS_THRESHOLD = 3;
 export const GOAL_REPETITION_HASH_STREAK = 3;
 export const GOAL_LENGTH_RECOVERY_LIMIT = 1;
-export const GOAL_USER_GRACE_DELAY_MS = 60_000;
 
-export type GoalContinuationPath = "immediate" | "monitorDelayed" | "userGrace" | "sessionStart";
+export type GoalContinuationPath = "immediate" | "monitorDelayed" | "sessionStart";
 
 export type GoalContinuationInput = {
 	readonly goal: Goal | null;
@@ -24,7 +23,6 @@ export type GoalContinuationInput = {
 	readonly consecutiveLengthRecoveries: number;
 	readonly recentNormalizedOutputHashes: readonly string[];
 	readonly toollessContinuationStreak: number;
-	readonly endedTurnWasUserInitiated: boolean;
 	readonly continuationPending: boolean;
 };
 
@@ -32,7 +30,7 @@ export type GoalContinuationVerdict =
 	| { kind: "continue"; prompt: "full" | "minimal"; stallNotice: boolean }
 	| {
 			kind: "deny";
-			reason: "not-eligible" | "single-flight" | "cap" | "stale" | "grace" | "repetition" | "length-exhausted";
+			reason: "not-eligible" | "single-flight" | "cap" | "stale" | "repetition" | "length-exhausted";
 	  };
 
 export function shouldQueueGoalContinuationWhenIdle(
@@ -93,13 +91,12 @@ export function evaluateGoalContinuation(input: GoalContinuationInput): GoalCont
 		return { kind: "deny", reason: "cap" };
 	}
 	if (
-		(input.path === "immediate" || input.path === "userGrace") &&
+		input.path === "immediate" &&
 		input.lastContinuationSignature !== undefined &&
 		input.lastContinuationSignature === input.currentSignature
 	) {
 		return { kind: "deny", reason: "stale" };
 	}
-	if (input.path === "immediate" && input.endedTurnWasUserInitiated) return { kind: "deny", reason: "grace" };
 	if (input.lastStopReason === "length") {
 		if (input.consecutiveLengthRecoveries >= GOAL_LENGTH_RECOVERY_LIMIT) {
 			return { kind: "deny", reason: "length-exhausted" };

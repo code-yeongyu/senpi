@@ -31,14 +31,47 @@ function labelOf(entry: EvalDetachedCellStatusEntry): string {
 	return entry.title === undefined || entry.title.length === 0 ? entry.cellId : entry.title;
 }
 
+/**
+ * Goal-style compact elapsed label (`5s`, `3m`, `2h 30m`, `1d 2h 3m`). Mirrors
+ * the monitor builtin's formatElapsedSeconds; kept local like the rest of the
+ * duplicated status-file helpers between the two packages.
+ */
+export function formatElapsedSeconds(value: number): string {
+	const seconds = Math.max(0, Math.trunc(value));
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.trunc(seconds / 60);
+	if (minutes < 60) return `${minutes}m`;
+	const hours = Math.trunc(minutes / 60);
+	const remainingMinutes = minutes % 60;
+	if (hours >= 24) {
+		const days = Math.trunc(hours / 24);
+		const remainingHours = hours % 24;
+		return `${days}d ${remainingHours}h ${remainingMinutes}m`;
+	}
+	if (remainingMinutes === 0) return `${hours}h`;
+	return `${hours}h ${remainingMinutes}m`;
+}
+
+/** Whole seconds since the oldest detached cell was created; never negative on clock skew. */
+export function evalCellElapsedSeconds(entries: readonly EvalDetachedCellStatusEntry[], nowMs: number): number {
+	let oldest = Number.POSITIVE_INFINITY;
+	for (const entry of entries) oldest = Math.min(oldest, entry.startedAtMs);
+	if (!Number.isFinite(oldest)) return 0;
+	return Math.max(0, Math.round((nowMs - oldest) / 1000));
+}
+
 /** Brief footer text for the cells still running detached; undefined clears the status. */
-export function formatEvalCellStatus(entries: readonly EvalDetachedCellStatusEntry[]): string | undefined {
+export function formatEvalCellStatus(
+	entries: readonly EvalDetachedCellStatusEntry[],
+	nowMs: number,
+): string | undefined {
 	const first = entries[0];
 	if (first === undefined) return undefined;
+	const suffix = ` (${formatElapsedSeconds(evalCellElapsedSeconds(entries, nowMs))})`;
 	if (entries.length === 1) {
 		const head = `${DETACHED_GLYPH} ${first.language} · `;
-		return head + truncateEnd(labelOf(first), MAX_STATUS_LENGTH - head.length);
+		return head + truncateEnd(labelOf(first), MAX_STATUS_LENGTH - head.length - suffix.length) + suffix;
 	}
 	const head = `${DETACHED_GLYPH} eval ${entries.length}: `;
-	return head + packLabels(entries.map(labelOf), MAX_STATUS_LENGTH - head.length);
+	return head + packLabels(entries.map(labelOf), MAX_STATUS_LENGTH - head.length - suffix.length) + suffix;
 }
