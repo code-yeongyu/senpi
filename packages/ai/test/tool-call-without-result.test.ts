@@ -254,6 +254,14 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.CLINE_API_KEY)("ClinePass Provider", () => {
+		const model = getModel("cline-pass", "cline-pass/kimi-k3");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
 	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan Provider", () => {
 		const model = getModel("alibaba-token-plan", "qwen3.7-max");
 

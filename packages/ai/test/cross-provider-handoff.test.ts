@@ -134,6 +134,10 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "alibaba-token-plan", model: "qwen3.7-max", label: "alibaba-token-plan-qwen3.7-max" },
 	{ provider: "alibaba-token-plan", model: "glm-5.2", label: "alibaba-token-plan-glm-5.2" },
 	{ provider: "alibaba-token-plan", model: "deepseek-v4-pro", label: "alibaba-token-plan-deepseek-v4-pro" },
+	// ClinePass (gateway fronting several upstream families behind `provider/model` ids)
+	{ provider: "cline-pass", model: "cline-pass/kimi-k3", label: "cline-pass-kimi-k3" },
+	{ provider: "cline-pass", model: "cline-pass/glm-5.2", label: "cline-pass-glm-5.2" },
+	{ provider: "cline-pass", model: "cline-pass/deepseek-v4-pro", label: "cline-pass-deepseek-v4-pro" },
 	// Qwen Token Plan
 	{ provider: "qwen-token-plan", model: "qwen3.7-max", label: "qwen-token-plan-qwen3.7-max" },
 	{ provider: "qwen-token-plan-cn", model: "qwen3.7-max", label: "qwen-token-plan-cn-qwen3.7-max" },

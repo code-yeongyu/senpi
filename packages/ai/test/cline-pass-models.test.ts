@@ -1,5 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { getModel, getModels } from "../src/compat.ts";
+import { findEnvKeys } from "../src/env-api-keys.ts";
+import { builtinProviders } from "../src/providers/all.ts";
+
+describe("ClinePass provider registration", () => {
+	it("registers cline-pass among the builtin providers", () => {
+		const ids = builtinProviders().map((provider) => provider.id);
+		expect(ids).toContain("cline-pass");
+	});
+});
+
+describe("ClinePass credentials", () => {
+	it("reads the API key from CLINE_API_KEY", () => {
+		expect(findEnvKeys("cline-pass", { CLINE_API_KEY: "sk-test" })).toEqual(["CLINE_API_KEY"]);
+	});
+
+	it("does not accept another provider's API key variable", () => {
+		expect(findEnvKeys("cline-pass", { OPENAI_API_KEY: "sk-test" })).toBeUndefined();
+	});
+});
 
 describe("ClinePass models", () => {
 	it("resolves the default ClinePass model", () => {
