@@ -1279,6 +1279,7 @@ The instrumented transitions (`_emit`, queue internals, `RequiredCompactionError
 - `main.ts` now forwards parsed `--system-prompt` and repeated `--append-system-prompt` values into both normal and list-models resource-loader construction.
 - `AgentSession` exposes those static replacement/append inputs in `systemPromptOptions` so per-model prompt presets can respect explicit caller intent.
 - The prompt-preset builtin skips replacement when an explicit custom prompt exists and preserves explicit suffixes after a selected preset.
+- Explicit empty prompt input now counts as a supplied replacement; this is an intentional bug fix to the existing replacement contract.
 - Regression coverage locks replacement precedence, append placement, and fast-path option forwarding.
 
 ### Why

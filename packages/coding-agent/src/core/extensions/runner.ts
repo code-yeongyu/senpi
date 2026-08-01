@@ -1092,7 +1092,15 @@ export class ExtensionRunner {
 			},
 			getSystemPromptOptions: () => {
 				runner.assertActive();
-				return runner.getSystemPromptOptionsFn();
+				const options = runner.getSystemPromptOptionsFn();
+				return {
+					...options,
+					selectedTools: [...(options.selectedTools ?? [])],
+					toolSnippets: { ...(options.toolSnippets ?? {}) },
+					promptGuidelines: [...(options.promptGuidelines ?? [])],
+					contextFiles: (options.contextFiles ?? []).map((file) => ({ ...file })),
+					skills: (options.skills ?? []).map((skill) => ({ ...skill, sourceInfo: { ...skill.sourceInfo } })),
+				};
 			},
 			getLoadedHookSources: () => {
 				runner.assertActive();

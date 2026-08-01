@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
+import { GROK45_WORKER_RULES } from "../../src/core/extensions/builtin/prompt-preset/grok-4.5.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -67,13 +68,13 @@ describe("Grok 4.5 prompt preset", () => {
 		expect(preset?.prompt).toMatch(/implement rather than propose/i);
 		expect(preset?.prompt).toMatch(/never spawn workers/i);
 		expect(preset?.prompt).toMatch(/one orchestration level/i);
-		expect(preset?.prompt).toMatch(/read-only workspace analysis/i);
+		expect(preset?.prompt).toMatch(/Search and read only/i);
 		expect(preset?.prompt).toMatch(/never edit, commit, deploy/i);
 		// Spawn surface
 		expect(preset?.prompt).toMatch(/spawn only through `bash` \+ `senpi --print`/i);
 		expect(preset?.prompt).toMatch(/senpi --print/i);
 		expect(preset?.prompt).toMatch(/ROLE, GOAL, SCOPE, CONSTRAINTS, DONE WHEN, and RETURN/);
-		expect(preset?.prompt).toMatch(/write separate role-system, task-brief/i);
+		expect(preset?.prompt).toMatch(/separate role-system, task-brief/i);
 		expect(preset?.prompt).toContain("--system-prompt");
 		expect(preset?.prompt).toContain("--no-session");
 		expect(preset?.prompt).toContain("--no-nested-agents");
@@ -87,7 +88,7 @@ describe("Grok 4.5 prompt preset", () => {
 		// No sole gpt-5.6 implement path; doctrine is model-independent
 		expect(preset?.prompt).not.toMatch(/--model gpt-5\.6/i);
 		expect(preset?.prompt).not.toMatch(/gpt-5\.6 prompting guide/i);
-		expect(preset?.prompt).toMatch(/never from the selected model preset/i);
+		expect(preset?.prompt).toMatch(/never the selected model preset/i);
 		// Shared sections reused
 		expect(preset?.prompt).toContain("apply_patch");
 		expect(preset?.prompt).toContain("### Test Discipline");
@@ -128,6 +129,15 @@ describe("Grok 4.5 prompt preset", () => {
 		expect(preset?.prompt).toMatch(/acting as CEO and orchestrator/i);
 		expect(preset?.prompt).toMatch(/\*\*Implementer\*\*/);
 		expect(preset?.prompt).toMatch(/spawn only through `bash` \+ `senpi --print`/i);
+	});
+
+	it("renders every worker rule exactly once in its owning Role section", () => {
+		const preset = resolvePreset(createModel("grok-4.5", "xai"), { promptPreset: "auto" });
+		const roleSection = preset?.prompt.split("## Role: CEO / Orchestrator")[1]?.split("### Test Discipline")[0] ?? "";
+
+		for (const rule of GROK45_WORKER_RULES) {
+			expect(roleSection.split(rule.directive)).toHaveLength(2);
+		}
 	});
 
 	it("returns grok-4.5 preset for every Grok 4.5 built-in catalog model", () => {

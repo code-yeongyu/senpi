@@ -451,7 +451,7 @@ export interface ExtensionContext {
 	applyCompaction(precomputed: CompactionResult, options: ApplyCompactionOptions): Promise<ApplyCompactionResult>;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
-	/** Get the current base system-prompt construction options, when exposed by the host. */
+	/** Get a defensive copy of the current base system-prompt construction options. */
 	getSystemPromptOptions?(): BuildSystemPromptOptions;
 	/** Get hook source paths currently visible to the builtin hooks extension. */
 	getLoadedHookSources?(): LoadedHookSources;
