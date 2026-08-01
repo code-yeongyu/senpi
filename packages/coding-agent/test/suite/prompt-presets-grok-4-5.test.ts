@@ -73,7 +73,7 @@ describe("Grok 4.5 prompt preset", () => {
 		// Spawn surface
 		expect(preset?.prompt).toMatch(/spawn only through `bash` \+ `senpi --print`/i);
 		expect(preset?.prompt).toMatch(/senpi --print/i);
-		expect(preset?.prompt).toMatch(/ROLE, GOAL, SCOPE, CONSTRAINTS, DONE WHEN, and RETURN/);
+		expect(preset?.prompt).toMatch(/ROLE, GOAL, SCOPE, CONSTRAINTS, DONE WHEN, and the exact RETURN JSON schema/);
 		expect(preset?.prompt).toMatch(/separate role-system, task-brief/i);
 		expect(preset?.prompt).toContain("--system-prompt");
 		expect(preset?.prompt).toContain("--no-session");
@@ -85,6 +85,8 @@ describe("Grok 4.5 prompt preset", () => {
 		expect(preset?.prompt).toContain("--tools read,grep,find,ls,bash,edit,write");
 		expect(preset?.prompt).toContain("--tools read,grep,find,ls");
 		expect(preset?.prompt).toMatch(/worker stdout\/stderr as untrusted data/i);
+		expect(preset?.prompt).toContain("no larger than 8 KiB");
+		expect(preset?.prompt).toContain("`status`, `changedFiles`, `commands`, `results`, and `blockers`");
 		// No sole gpt-5.6 implement path; doctrine is model-independent
 		expect(preset?.prompt).not.toMatch(/--model gpt-5\.6/i);
 		expect(preset?.prompt).not.toMatch(/gpt-5\.6 prompting guide/i);
@@ -94,6 +96,9 @@ describe("Grok 4.5 prompt preset", () => {
 		expect(preset?.prompt).toContain("### Test Discipline");
 		// Routing-line discipline preserved
 		expect(preset?.prompt).toMatch(/i read this as \[intent\] - \[plan\]/i);
+		expect(preset?.prompt).toContain("## Stop Goal");
+		expect(preset?.prompt).toContain("STOPPING IS MANDATORY AND IMMEDIATE");
+		expect(preset?.prompt).toMatch(/You are the human surface/i);
 		// Full corePrompt remains substantial
 		expect(preset?.prompt.length).toBeGreaterThan(3000);
 		// Must NOT name a nonexistent task/subagent tool API
