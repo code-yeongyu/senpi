@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { rebaseResolvedLockPath } from "./install-lock-utils.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -18,7 +19,7 @@ const manifestRelPath = "packages/coding-agent/publish-deps.lock.json";
 const shrinkwrapPath = join(repoRoot, manifestRelPath);
 const internalPackagePrefixes = ["@earendil-works/pi-", "@code-yeongyu/senpi-codemode"];
 const allowedInstallScriptPackages = new Map([
-	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
+	["@google/genai@2.13.0", "preinstall is a no-op in the published package"],
 	["protobufjs@7.6.5", "postinstall only warns about protobufjs version scheme mismatches"],
 ]);
 
@@ -210,22 +211,35 @@ function addInternalWorkspace(shrinkwrapPackages, addedPaths, queue, name, works
 	addedPaths.add(outputPath);
 
 	for (const dependencyName of Object.keys(packageDependencies(packageJson))) {
-		queue.push({ name: dependencyName, from: outputPath });
+		queue.push({
+			name: dependencyName,
+			from: outputPath,
+			resolveFrom: workspace.lockPath,
+			sourceBase: workspace.lockPath,
+			outputBase: outputPath,
+		});
 	}
 }
 
-function addExternalPackage(lockPackages, shrinkwrapPackages, addedPaths, queue, name, from) {
-	const lockPath = resolveExternalDependency(lockPackages, name, from);
-	if (addedPaths.has(lockPath)) {
+function addExternalPackage(lockPackages, shrinkwrapPackages, addedPaths, queue, item) {
+	const lockPath = resolveExternalDependency(lockPackages, item.name, item.resolveFrom);
+	const outputPath = rebaseResolvedLockPath(lockPath, item.sourceBase, item.outputBase);
+	if (addedPaths.has(outputPath)) {
 		return;
 	}
 
 	const entry = lockPackages[lockPath];
-	shrinkwrapPackages[lockPath] = copyLockEntry(entry);
-	addedPaths.add(lockPath);
+	shrinkwrapPackages[outputPath] = copyLockEntry(entry);
+	addedPaths.add(outputPath);
 
 	for (const dependencyName of Object.keys(packageDependencies(entry))) {
-		queue.push({ name: dependencyName, from: lockPath });
+		queue.push({
+			name: dependencyName,
+			from: outputPath,
+			resolveFrom: lockPath,
+			sourceBase: item.sourceBase,
+			outputBase: item.outputBase,
+		});
 	}
 }
 
@@ -309,7 +323,13 @@ function generateShrinkwrap() {
 	};
 	const addedPaths = new Set([""]);
 	const internalNames = new Set();
-	const queue = Object.keys(packageDependencies(codingAgentPackage)).map((name) => ({ name, from: "" }));
+	const queue = Object.keys(packageDependencies(codingAgentPackage)).map((name) => ({
+		name,
+		from: "",
+		resolveFrom: "packages/coding-agent",
+		sourceBase: "packages/coding-agent",
+		outputBase: "",
+	}));
 
 	while (queue.length > 0) {
 		const item = queue.shift();
@@ -327,7 +347,7 @@ function generateShrinkwrap() {
 			continue;
 		}
 
-		addExternalPackage(lockPackages, shrinkwrapPackages, addedPaths, queue, item.name, item.from);
+		addExternalPackage(lockPackages, shrinkwrapPackages, addedPaths, queue, item);
 	}
 
 	const shrinkwrap = {

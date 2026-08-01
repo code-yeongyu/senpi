@@ -157,12 +157,13 @@ export function resolveExternalDependency(lockPackages, packageName, fromLockPat
 }
 
 export function rebaseResolvedLockPath(lockPath, sourceBase, outputBase) {
-	if (!sourceBase || !outputBase) {
+	if (!sourceBase) {
 		return lockPath;
 	}
 	const nestedPrefix = `${sourceBase}/node_modules/`;
 	if (!lockPath.startsWith(nestedPrefix)) {
 		return lockPath;
 	}
-	return `${outputBase}/node_modules/${lockPath.slice(nestedPrefix.length)}`;
+	const outputPrefix = outputBase ? `${outputBase}/node_modules/` : "node_modules/";
+	return `${outputPrefix}${lockPath.slice(nestedPrefix.length)}`;
 }

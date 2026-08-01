@@ -24,6 +24,37 @@ export function rewriteOwnedRegistryAliases(manifest) {
 	return manifest;
 }
 
+function normalizeStagedClaudeAgentSdk(codingAgentNodeModules) {
+	const manifestPath = join(
+		codingAgentNodeModules,
+		"@anthropic-ai",
+		"claude-agent-sdk",
+		"package.json",
+	);
+	if (!existsSync(manifestPath)) {
+		return;
+	}
+
+	const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+	if (manifest.version !== "0.3.220") {
+		return;
+	}
+
+	// Senpi must retain sdk@0.91.1 for its browser bundle. Agent SDK 0.3.220
+	// runs against that API but advertises >=0.93.0, so waive only this reviewed
+	// staged peer; later Agent SDK releases must pass packaging without the waiver.
+	if (manifest.peerDependencies?.["@anthropic-ai/sdk"] !== undefined) {
+		delete manifest.peerDependencies["@anthropic-ai/sdk"];
+	}
+	if (manifest.peerDependenciesMeta?.["@anthropic-ai/sdk"] !== undefined) {
+		delete manifest.peerDependenciesMeta["@anthropic-ai/sdk"];
+		if (Object.keys(manifest.peerDependenciesMeta).length === 0) {
+			delete manifest.peerDependenciesMeta;
+		}
+	}
+	writeFileSync(manifestPath, `${JSON.stringify(manifest, null, "\t")}\n`);
+}
+
 export function listStagedPublishPackageNames(codingAgentNodeModules) {
 	const packageNames = [];
 	for (const entry of readdirSync(codingAgentNodeModules, { withFileTypes: true })) {
@@ -106,12 +137,12 @@ function promotePlatformOptionalDependencyFamilies(codingAgentNodeModules, packa
 }
 
 // The publish tarball must be fully self-contained: every runtime dependency edge in
-// the coding-agent manifest (registry deps AND the 5 vendored workspace packages) is
+// the coding-agent manifest (registry deps and vendored workspace packages) is
 // staged into packages/coding-agent/node_modules, and bundleDependencies lists every
 // portable staged package (platform-constrained natives are excluded — see
 // isPlatformConstrainedPackage). npm then needs no registry fetch for anything that
 // installs identically on every platform at install time. The historical
-// partial bundle (only the 5 workspace packages + their closure) forced npm to fetch
+// partial bundle (only the original workspace subset + its closure) forced npm to fetch
 // the other runtime deps from the registry, where arborist nondeterministically tried
 // to resolve the registry-absent `^2026.x` workspace specs (ETARGET) and aborted reify
 // mid-flight, leaving arbitrary deps (cross-spawn, which, @modelcontextprotocol/sdk)
@@ -144,6 +175,7 @@ export function stagePublishManifest(repoRoot) {
 		);
 	}
 
+	normalizeStagedClaudeAgentSdk(codingAgentNodeModules);
 	const bundlablePackageNames = bundlablePublishPackageNames(codingAgentNodeModules, stagedPackageNames);
 	manifest.optionalDependencies = {
 		...promotePlatformOptionalDependencyFamilies(codingAgentNodeModules, stagedPackageNames),

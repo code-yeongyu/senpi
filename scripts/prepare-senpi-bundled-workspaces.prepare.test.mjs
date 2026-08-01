@@ -36,6 +36,8 @@ function writeShrinkwrap(root, packages) {
 const BUNDLED_WORKSPACE_NAMES = [
 	"@earendil-works/pi-agent-core",
 	"@earendil-works/pi-ai",
+	"@earendil-works/pi-protocol",
+	"@earendil-works/pi-client",
 	"@earendil-works/pi-pty",
 	"@earendil-works/pi-tui",
 	"@code-yeongyu/senpi-codemode",
@@ -82,7 +84,7 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-workspaces-"));
 		writeShrinkwrap(tempDir, { "": { dependencies: {} } });
 		writeCodingAgentManifest(tempDir);
-		for (const workspace of ["agent", "ai", "pty", "tui", "senpi-codemode"]) {
+		for (const workspace of ["agent", "ai", "protocol", "client", "pty", "tui", "senpi-codemode"]) {
 			writeBundledWorkspace(tempDir, workspace);
 		}
 
@@ -112,7 +114,7 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-missing-pty-prebuild-"));
 		writeShrinkwrap(tempDir, { "": { dependencies: {} } });
 		writeCodingAgentManifest(tempDir);
-		for (const workspace of ["agent", "ai", "tui", "senpi-codemode"]) {
+		for (const workspace of ["agent", "ai", "protocol", "client", "tui", "senpi-codemode"]) {
 			writeBundledWorkspace(tempDir, workspace);
 		}
 		writeBundledWorkspace(tempDir, "pty");
@@ -154,11 +156,14 @@ describe("prepareSenpiBundledWorkspaces", () => {
 			"node_modules/which": { version: "2.0.2" },
 		});
 		writeCodingAgentManifest(tempDir);
-		for (const workspace of ["agent", "ai", "pty", "tui", "senpi-codemode"]) {
+		for (const workspace of ["agent", "ai", "protocol", "client", "pty", "tui", "senpi-codemode"]) {
 			writeBundledWorkspace(tempDir, workspace);
 		}
-		for (const name of ["cross-spawn", "which"]) {
-			writeJson(join(tempDir, "node_modules", name, "package.json"), { name, version: "1.0.0" });
+		for (const [name, version] of [
+			["cross-spawn", "7.0.6"],
+			["which", "2.0.2"],
+		]) {
+			writeJson(join(tempDir, "node_modules", name, "package.json"), { name, version });
 		}
 
 		// When
@@ -184,6 +189,8 @@ describe("prepareSenpiBundledWorkspaces", () => {
 			"@code-yeongyu/senpi-codemode": "^2026.7.22",
 			"@earendil-works/pi-agent-core": "npm:@code-yeongyu/senpi-agent-core@^2026.7.22",
 			"@earendil-works/pi-ai": "npm:@code-yeongyu/senpi-ai@^2026.7.22",
+			"@earendil-works/pi-client": "^2026.7.22",
+			"@earendil-works/pi-protocol": "^2026.7.22",
 			"@earendil-works/pi-pty": "npm:@code-yeongyu/senpi-pty@^2026.7.22",
 			"@earendil-works/pi-tui": "npm:@code-yeongyu/senpi-tui@^2026.7.22",
 		});
@@ -194,7 +201,7 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-missing-pty-loader-"));
 		writeShrinkwrap(tempDir, { "": { dependencies: {} } });
 		writeCodingAgentManifest(tempDir);
-		for (const workspace of ["agent", "ai", "tui"]) {
+		for (const workspace of ["agent", "ai", "protocol", "client", "tui"]) {
 			writeBundledWorkspace(tempDir, workspace);
 		}
 		writeBundledWorkspace(tempDir, "pty");
