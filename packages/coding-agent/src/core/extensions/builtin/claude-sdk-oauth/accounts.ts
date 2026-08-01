@@ -69,6 +69,12 @@ export function removeAccount(credential: ClaudeSdkOauthCredential, name: string
 	const accounts = storedSlots(credential).filter((slot) => slot.name !== name);
 	const next: ClaudeSdkOauthCredential = { ...credential, accounts };
 	if (credential.pinned === name) delete next.pinned;
+	if (credential.slotState?.[name]) {
+		const slotState = { ...credential.slotState };
+		delete slotState[name];
+		if (Object.keys(slotState).length === 0) delete next.slotState;
+		else next.slotState = slotState;
+	}
 	return next;
 }
 

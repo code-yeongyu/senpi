@@ -1,5 +1,6 @@
 import { type Credential, type CredentialStore, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
+import { subscribeProviderAccountEvents } from "../src/core/extensions/builtin/claude-sdk-oauth/account-events.ts";
 import {
 	addAccount,
 	assertSentinelInvariant,
@@ -45,6 +46,21 @@ const slotA = {
 };
 
 describe("account slots", () => {
+	it("bridges addon account-change notifications to stock listeners", () => {
+		const events: unknown[] = [];
+		const unsubscribe = subscribeProviderAccountEvents((event) => events.push(event));
+		try {
+			const bridge = (globalThis as Record<symbol, unknown>)[Symbol.for("senpi.provider-account-events.emit.v1")] as
+				| ((event: unknown) => void)
+				| undefined;
+			expect(bridge).toBeTypeOf("function");
+			bridge?.({ type: "accounts_changed", provider: "claude-sdk-oauth" });
+		} finally {
+			unsubscribe();
+		}
+		expect(events).toEqual([{ type: "accounts_changed", provider: "claude-sdk-oauth" }]);
+	});
+
 	it("creates an empty credential with sentinel top-level fields", () => {
 		const cred = emptyCredential();
 		expect(cred.type).toBe("oauth");
@@ -61,8 +77,16 @@ describe("account slots", () => {
 		expect(listAccounts(cred).map((a) => a.name)).toEqual(["default", "work"]);
 		cred = pinAccount(cred, "work");
 		expect(cred.pinned).toBe("work");
+		cred = {
+			...cred,
+			slotState: {
+				default: { blockedUntil: 123, blockReason: "rate_limit" },
+				work: { blockedUntil: 456, blockReason: "quota" },
+			},
+		};
 		cred = removeAccount(cred, "default");
 		expect(listAccounts(cred).map((a) => a.name)).toEqual(["work"]);
+		expect(cred.slotState).toEqual({ work: { blockedUntil: 456, blockReason: "quota" } });
 	});
 
 	it("rejects duplicate account names", () => {
