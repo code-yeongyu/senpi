@@ -137,6 +137,18 @@ interface SessionData {
 	renderedTools?: Record<string, RenderedToolHtml>;
 }
 
+function sanitizeEntriesForHtmlExport(entries: SessionEntry[]): SessionEntry[] {
+	return entries.map((entry) => {
+		if (entry.type === "custom") {
+			const { data: _data, ...sanitizedEntry } = entry;
+			return sanitizedEntry;
+		}
+		if (entry.type !== "custom_message" || entry.display) return entry;
+		const { content: _content, details: _details, ...sanitizedEntry } = entry;
+		return { ...sanitizedEntry, content: "" };
+	});
+}
+
 /**
  * Core HTML generation logic shared by both export functions.
  */
@@ -157,7 +169,9 @@ function generateHtml(sessionData: SessionData, themeName?: string): string {
 	const infoBg = themeExport.infoBg ?? derivedExportColors.infoBg;
 
 	// Base64 encode session data to avoid escaping issues
-	const sessionDataBase64 = Buffer.from(JSON.stringify(sessionData)).toString("base64");
+	const sessionDataBase64 = Buffer.from(
+		JSON.stringify({ ...sessionData, entries: sanitizeEntriesForHtmlExport(sessionData.entries) }),
+	).toString("base64");
 
 	// Build the CSS with theme variables injected
 	const css = templateCss
