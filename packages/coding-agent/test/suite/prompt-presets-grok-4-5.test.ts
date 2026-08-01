@@ -148,6 +148,8 @@ describe("Grok 4.5 prompt preset", () => {
 		}
 		expect(implementerSection).toMatch(/real surface when one exists/i);
 		expect(oracleSection).toMatch(/hard architecture\/debugging or high-risk final review/i);
+		expect(spawnSection).toMatch(/blocks discovered\/user extensions/i);
+		expect(spawnSection).toMatch(/builtin host controls may remain/i);
 	});
 
 	it("keeps worker tool allowlists compatible with no-extensions", () => {

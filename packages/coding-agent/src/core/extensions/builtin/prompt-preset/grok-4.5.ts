@@ -68,7 +68,7 @@ export const GROK45_WORKER_RULES = [
 		id: "runtime-isolation",
 		owner: "Spawn",
 		directive:
-			"Every worker uses `--no-session --no-extensions --no-skills --no-context-files --no-prompt-templates --no-nested-agents`.",
+			"Every worker uses `--no-session --no-extensions --no-skills --no-context-files --no-prompt-templates --no-nested-agents`; `--no-extensions` blocks discovered/user extensions, while builtin host controls may remain but receive only the explicit role system prompt and allowlisted tools.",
 	},
 	{
 		id: "tool-allowlists",
