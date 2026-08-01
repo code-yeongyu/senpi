@@ -1,5 +1,6 @@
 import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
+import { appendToSystemPrompt } from "../../../system-prompt.ts";
 import type { ExtensionAPI, ExtensionContext, ModelSelectEvent } from "../../types.ts";
 import { resolvePreset, resolvePresetName } from "./presets.ts";
 import { loadPromptPresetSettings } from "./settings.ts";
@@ -13,13 +14,6 @@ interface SystemPromptOptionsLike {
 	skills?: BuildDynamicSystemPromptOptions["skills"];
 	customPrompt?: string;
 	appendSystemPrompt?: string;
-}
-
-const SYSTEM_PROMPT_SEPARATOR = "\n\n";
-
-function appendSystemPrompt(base: string, suffix: string | undefined): string {
-	if (!suffix) return base;
-	return base ? `${base}${SYSTEM_PROMPT_SEPARATOR}${suffix}` : suffix;
 }
 
 function eventOptionsToBuilderInput(
@@ -82,7 +76,7 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 		}
 
 		const append = options?.appendSystemPrompt;
-		return { systemPrompt: appendSystemPrompt(preset.prompt, append) };
+		return { systemPrompt: appendToSystemPrompt(preset.prompt, append) };
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -98,13 +92,13 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 		const options = event.systemPromptOptions;
 		if (options?.customPrompt !== undefined) {
 			return {
-				systemPrompt: appendSystemPrompt(options.customPrompt, options.appendSystemPrompt),
+				systemPrompt: appendToSystemPrompt(options.customPrompt, options.appendSystemPrompt),
 			};
 		}
 		const preset = resolvePreset(event.model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx));
 		const append = options?.appendSystemPrompt;
 		return {
-			systemPrompt: preset ? appendSystemPrompt(preset.prompt, append) : null,
+			systemPrompt: preset ? appendToSystemPrompt(preset.prompt, append) : null,
 			systemPromptName: preset?.name,
 		};
 	});

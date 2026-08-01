@@ -145,7 +145,7 @@ import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
-import type { BuildSystemPromptOptions } from "./system-prompt.ts";
+import { appendToSystemPrompt, type BuildSystemPromptOptions } from "./system-prompt.ts";
 import { getSupportedThinkingLevels, supportsMax, supportsXhigh } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
@@ -2277,8 +2277,7 @@ export class AgentSession {
 		};
 		const basePrompt = loaderSystemPrompt ?? buildDynamicSystemPrompt(this._baseSystemPromptOptions);
 		const append = loaderAppendSystemPrompt.join("\n\n");
-		if (!append) return basePrompt;
-		return basePrompt ? `${basePrompt}\n\n${append}` : append;
+		return appendToSystemPrompt(basePrompt, append || undefined);
 	}
 
 	/**

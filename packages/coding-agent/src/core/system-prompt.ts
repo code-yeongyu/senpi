@@ -24,6 +24,11 @@ export interface BuildSystemPromptOptions {
 	skills?: Skill[];
 }
 
+export function appendToSystemPrompt(base: string, suffix: string | undefined): string {
+	if (!suffix) return base;
+	return base ? `${base}\n\n${suffix}` : suffix;
+}
+
 /** Build the system prompt with tools, guidelines, and context */
 export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const {
@@ -38,17 +43,11 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	} = options;
 	const promptCwd = cwd.replace(/\\/g, "/");
 
-	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
-
 	const contextFiles = providedContextFiles ?? [];
 	const skills = providedSkills ?? [];
 
 	if (customPrompt) {
-		let prompt = customPrompt;
-
-		if (appendSection) {
-			prompt += appendSection;
-		}
+		let prompt = appendToSystemPrompt(customPrompt, appendSystemPrompt);
 
 		// Append project context files
 		if (contextFiles.length > 0) {
@@ -137,9 +136,7 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 - When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
 - Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
 
-	if (appendSection) {
-		prompt += appendSection;
-	}
+	prompt = appendToSystemPrompt(prompt, appendSystemPrompt);
 
 	// Append project context files
 	if (contextFiles.length > 0) {
