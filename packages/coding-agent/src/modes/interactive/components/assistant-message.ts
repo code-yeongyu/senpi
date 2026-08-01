@@ -1,8 +1,10 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { type Component, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { formatDuration } from "../../../utils/duration.ts";
 import { formatProviderNativeBody, formatProviderNativeSummary } from "../../provider-native-rendering.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { createMarkdownTransform } from "./markdown-transform.ts";
 import { createBoundedRenderSignature } from "./render-signature.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -42,11 +44,13 @@ export class AssistantMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private hiddenThinkingLabel: string;
 	private outputPad: number;
+	private markdownTransformers: readonly MarkdownTransformer[];
 	private lastMessage?: AssistantMessage;
 	private lastMessageSignature?: string;
 	private renderDescriptors: readonly RenderDescriptor[] = [];
 	private hasToolCalls = false;
 	private expanded = false;
+	private isStreaming = false;
 
 	constructor(
 		message?: AssistantMessage,
@@ -54,6 +58,7 @@ export class AssistantMessageComponent extends Container {
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		hiddenThinkingLabel = "Thinking...",
 		outputPad = 1,
+		markdownTransformers: readonly MarkdownTransformer[] = [],
 	) {
 		super();
 
@@ -61,6 +66,7 @@ export class AssistantMessageComponent extends Container {
 		this.markdownTheme = markdownTheme;
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
 		this.outputPad = outputPad;
+		this.markdownTransformers = markdownTransformers;
 
 		// Container for text/thinking content
 		this.contentContainer = new Container();
@@ -118,15 +124,18 @@ export class AssistantMessageComponent extends Container {
 		return lines;
 	}
 
-	updateContent(message: AssistantMessage): void {
+	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
 		const previousMessage = this.lastMessage;
+		const streamingChanged = this.isStreaming !== isStreaming;
+		this.isStreaming = isStreaming;
 		this.lastMessage = message;
 		const messageSignature = this.createMessageSignature(message);
-		if (previousMessage === message && this.lastMessageSignature === messageSignature) {
+		if (!streamingChanged && previousMessage === message && this.lastMessageSignature === messageSignature) {
 			return;
 		}
 		this.lastMessageSignature = messageSignature;
 		this.renderCache = undefined;
+		if (streamingChanged) this.renderDescriptors = [];
 		this.hasToolCalls = message.content.some((content) => content.type === "toolCall");
 		const descriptors = this.createRenderDescriptors(message);
 		this.reconcileRenderDescriptors(descriptors);
@@ -233,6 +242,7 @@ export class AssistantMessageComponent extends Container {
 			case "error":
 				if (!this.hasToolCalls) addError(`Error: ${message.errorMessage || "Unknown error"}`);
 				break;
+			case "pending":
 			case "stop":
 			case "toolUse":
 				break;
@@ -268,12 +278,23 @@ export class AssistantMessageComponent extends Container {
 			case "spacer":
 				return new Spacer(1);
 			case "text-md":
-				return new Markdown(descriptor.text, this.outputPad, 0, this.markdownTheme);
-			case "thinking-md":
-				return new Markdown(descriptor.text, this.outputPad, 0, this.markdownTheme, {
-					color: (text: string) => theme.fg("thinkingText", text),
-					italic: true,
+				return new Markdown(descriptor.text, this.outputPad, 0, this.markdownTheme, undefined, {
+					transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers),
 				});
+			case "thinking-md":
+				return new Markdown(
+					descriptor.text,
+					this.outputPad,
+					0,
+					this.markdownTheme,
+					{
+						color: (text: string) => theme.fg("thinkingText", text),
+						italic: true,
+					},
+					{
+						transform: createMarkdownTransform("assistant-thinking", this.isStreaming, this.markdownTransformers),
+					},
+				);
 			case "thinking-label":
 			case "error-text":
 				return new Text(descriptor.text, this.outputPad, 0);

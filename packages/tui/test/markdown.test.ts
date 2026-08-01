@@ -4,6 +4,7 @@ import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Chalk } from "chalk";
 import { latexToUnicode } from "../src/components/latex.ts";
 import { Markdown } from "../src/components/markdown.ts";
+import { TuiMainScreen } from "../src/TuiMainScreen.ts";
 import { resetCapabilitiesCache, setCapabilities } from "../src/terminal-image.ts";
 import { type Component, TUI } from "../src/tui.ts";
 import { visibleWidth } from "../src/utils.ts";
@@ -47,6 +48,44 @@ function stripAnsi(line: string): string {
 }
 
 describe("Markdown component", () => {
+	describe("Transforms", () => {
+		it("caches transformed Markdown by source and available width", () => {
+			const calls: Array<{ source: string; availableWidth: number }> = [];
+			const markdown = new Markdown("source", 2, 0, defaultMarkdownTheme, undefined, {
+				transform: (source, availableWidth) => {
+					calls.push({ source, availableWidth });
+					return `${source} ${availableWidth}`;
+				},
+			});
+
+			assert.deepStrictEqual(
+				markdown.render(80).map((line) => stripAnsi(line).trim()),
+				["source 76"],
+			);
+			markdown.render(80);
+			assert.deepStrictEqual(
+				markdown.render(60).map((line) => stripAnsi(line).trim()),
+				["source 56"],
+			);
+			assert.deepStrictEqual(calls, [
+				{ source: "source", availableWidth: 76 },
+				{ source: "source", availableWidth: 56 },
+			]);
+
+			markdown.setText("updated");
+			assert.deepStrictEqual(
+				markdown.render(60).map((line) => stripAnsi(line).trim()),
+				["updated 56"],
+			);
+			assert.deepStrictEqual(calls.at(-1), { source: "updated", availableWidth: 56 });
+
+			markdown.invalidate();
+			markdown.render(60);
+			assert.deepStrictEqual(calls.at(-1), { source: "updated", availableWidth: 56 });
+			assert.strictEqual(calls.length, 4);
+		});
+	});
+
 	describe("Lists", () => {
 		it("should render simple nested list", () => {
 			const markdown = new Markdown(
@@ -766,7 +805,7 @@ describe("Markdown component", () => {
 			});
 
 			const terminal = new VirtualTerminal(80, 6);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const component = new MarkdownWithInput(markdown);
 			tui.addChild(component);
 			tui.start();
@@ -1207,7 +1246,7 @@ bar`,
 		it("should not leak h1 underline into padding when inline code is the last token", async () => {
 			const markdown = new Markdown("# Important distinction from `open()`", 0, 0, defaultMarkdownTheme);
 			const terminal = new VirtualTerminal(80, 4);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			tui.addChild(markdown);
 			tui.start();
 			await terminal.waitForRender();
@@ -1464,14 +1503,14 @@ bar`,
 			assert.ok(!rendered.includes("$"), rendered);
 		});
 
-		it("LaTeX renders Korean Japanese and Chinese formulas", () => {
+		it("LaTeX renders Chinese Japanese and CJK formulas", () => {
 			const markdown = new Markdown(
 				[
-					"한국어: $\\text{속도} = \\frac{\\text{거리}}{\\text{시간}}$",
+					"中文: $\\text{速度} = \\frac{\\text{距离}}{\\text{时间}}$",
 					"日本語: $\\text{面積} = \\pi \\times \\text{半径}^2$",
 					"中文: $\\text{能量} = \\text{质量} \\times \\text{光速}^2$",
 					"",
-					"Inline code: `$\\text{속도}$`.",
+					"Inline code: `$\\text{速度}$`.",
 					"",
 					"```tex",
 					"$\\text{面積}$",
@@ -1487,10 +1526,10 @@ bar`,
 			const lines = markdown.render(40).map((line) => stripAnsi(line).trimEnd());
 			const rendered = lines.join("\n");
 
-			assert.ok(rendered.includes("한국어: 속도 = (거리)⁄(시간)"), rendered);
+			assert.ok(rendered.includes("中文: 速度 = (距离)⁄(时间)"), rendered);
 			assert.ok(rendered.includes("日本語: 面積 = π × 半径²"), rendered);
 			assert.ok(rendered.includes("中文: 能量 = 质量 × 光速²"), rendered);
-			assert.ok(rendered.includes("$\\text{속도}$"), rendered);
+			assert.ok(rendered.includes("$\\text{速度}$"), rendered);
 			assert.ok(rendered.includes("$\\text{面積}$"), rendered);
 			assert.ok(rendered.includes("Unmatched: \\[未完"), rendered);
 			assert.ok(
@@ -1654,7 +1693,7 @@ bar`,
 		});
 
 		it("LaTeX converts nested structures and preserves command distinctions", () => {
-			assert.strictEqual(latexToUnicode("\\sqrt{\\frac{거리}{시간}}"), "√((거리)⁄(시간))");
+			assert.strictEqual(latexToUnicode("\\sqrt{\\frac{distance}{time}}"), "√((distance)⁄(time))");
 			assert.strictEqual(latexToUnicode("\\frac{1}{\\frac{2}{3}}"), "(1)⁄((2)⁄(3))");
 			assert.strictEqual(latexToUnicode("\\epsilon \\varepsilon \\phi \\varphi"), "ϵ ε ϕ φ");
 			assert.strictEqual(latexToUnicode("\\text{file\\_1 and x\\^2}"), "file_1 and x^2");
@@ -1665,7 +1704,7 @@ bar`,
 			assert.strictEqual(latexToUnicode("\\left\\{x\\right\\}"), "{x}");
 			assert.strictEqual(latexToUnicode("\\frac {a}{b}"), "(a)⁄(b)");
 			assert.strictEqual(latexToUnicode("\\sqrt {x}"), "√(x)");
-			assert.strictEqual(latexToUnicode("\\text {한}"), "한");
+			assert.strictEqual(latexToUnicode("\\text {中}"), "中");
 			assert.strictEqual(latexToUnicode("f\\!(x)"), "f(x)");
 			assert.strictEqual(latexToUnicode("A^\\mathrm{T}"), "A^T");
 			assert.strictEqual(latexToUnicode("a+{b}"), "a+b");
@@ -1715,14 +1754,14 @@ bar`,
 		});
 
 		it("LaTeX renders CJK math through headless terminal cells", async () => {
-			const markdown = new Markdown("한 $x^2$ 中", 0, 0, defaultMarkdownTheme);
+			const markdown = new Markdown("中 $x^2$ 日", 0, 0, defaultMarkdownTheme);
 			const terminal = new VirtualTerminal(40, 4);
 			const tui = new TUI(terminal);
 			tui.addChild(markdown);
 			tui.start();
 			await terminal.waitForRender();
 
-			assert.ok(terminal.getViewport()[0]?.includes("한 x² 中"));
+			assert.ok(terminal.getViewport()[0]?.includes("中 x² 日"));
 			assert.strictEqual(getCellWidth(terminal, 0, 0), 2);
 			assert.strictEqual(getCellWidth(terminal, 0, 1), 0);
 			assert.strictEqual(getCellWidth(terminal, 0, 6), 2);

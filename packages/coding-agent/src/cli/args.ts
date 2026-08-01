@@ -7,6 +7,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
+import type { UiMode } from "../core/settings-manager.ts";
 import { isGrokNeoEnabled } from "./grok-neo-gate.ts";
 
 export type Mode = "text" | "json" | "rpc";
@@ -48,6 +49,7 @@ export interface Args {
 	listModels?: string | true;
 	listTips?: boolean;
 	offline?: boolean;
+	uiMode?: UiMode;
 	verbose?: boolean;
 	projectTrustOverride?: boolean;
 	/** Launch the experimental grok interactive chrome. */
@@ -185,6 +187,22 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			}
 		} else if (arg === "--list-tips") {
 			result.listTips = true;
+		} else if (arg === "--ui-mode") {
+			const mode = args[i + 1];
+			if (mode === "regular" || mode === "fullscreen") {
+				result.uiMode = mode;
+				i++;
+			} else if (mode === undefined || mode.startsWith("-")) {
+				result.diagnostics.push({ type: "error", message: "--ui-mode requires regular or fullscreen" });
+			} else {
+				i++;
+				result.diagnostics.push({
+					type: "error",
+					message: `Invalid UI mode "${mode}". Valid values: regular, fullscreen`,
+				});
+			}
+		} else if (arg === "--alt") {
+			result.uiMode = "fullscreen";
 		} else if (arg === "--verbose") {
 			result.verbose = true;
 		} else if (arg === "--approve" || arg === "-a") {
@@ -295,6 +313,7 @@ ${chalk.bold("Options:")}
   --list-models [search]         List available models (with optional fuzzy search)
   --list-tips                    List all tips as JSON
   --verbose                      Force verbose startup (overrides quietStartup setting)
+  --ui-mode <mode>               UI mode: regular (default) or fullscreen
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
@@ -304,6 +323,12 @@ ${grokNeoOptionsText}  --help, -h                     Show this help
 Extensions can register additional flags (e.g., --plan from plan-mode extension).${extensionFlagsText}
 
 ${chalk.bold("Examples:")}
+  # Print a provider API key for an external client
+  ${APP_NAME} auth print-api-key --provider openai --model gpt-5.5
+
+  # Print an OAuth bearer token for an external client (refreshes if expired)
+  ${APP_NAME} auth print-bearer-token --provider openai-codex --model gpt-5.5
+
   # Interactive mode
   ${APP_NAME}
 

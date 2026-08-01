@@ -13,6 +13,9 @@ export default mergeConfig(
 			environment: "node",
 			testTimeout: 30000,
 			setupFiles: ["./test/setup.ts"],
+			// Tests run offline by default; opt in with allowNetwork() from test/test-network-env.ts.
+			env: { PI_OFFLINE: "1" },
+			unstubEnvs: true,
 			reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 			silent: "passed-only",
 			// Cap fork concurrency when CI is set. This suite's subprocess-lifecycle tests
@@ -47,6 +50,14 @@ export default mergeConfig(
 			alias: [
 				{ find: /^@earendil-works\/pi-ai\/node\/provider-scope$/, replacement: aiSrcProviderScope },
 				{ find: /^@earendil-works\/pi-pty$/, replacement: ptySrcIndex },
+				{
+					find: /^@earendil-works\/pi-client$/,
+					replacement: fileURLToPath(new URL("../client/src/index.ts", import.meta.url)),
+				},
+				{
+					find: /^@earendil-works\/pi-protocol$/,
+					replacement: fileURLToPath(new URL("../protocol/src/index.ts", import.meta.url)),
+				},
 				{ find: /^@mariozechner\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
 				{ find: /^@mariozechner\/pi-ai\/oauth$/, replacement: workspaceSourcePaths.aiOAuth },
 				{ find: /^@mariozechner\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },

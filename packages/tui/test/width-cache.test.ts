@@ -5,7 +5,7 @@ import * as utils from "../src/utils.ts";
 process.env.PI_TUI_TEST_SEAMS = "1";
 
 function styledKey(prefix: string, index: number): string {
-	return `\x1b[31m${prefix}-${index}-한글\x1b[0m`;
+	return `\x1b[31m${prefix}-${index}-汉字\x1b[0m`;
 }
 
 type WidthCacheStats = NonNullable<ReturnType<typeof utils.__widthCacheStats>>;
@@ -43,9 +43,9 @@ describe("visibleWidth width cache", () => {
 		// given
 		const corpus = [
 			...Array.from({ length: 10 }, (_, index) => `ascii-${index}-plain`),
-			...Array.from({ length: 10 }, (_, index) => `한글-${index}-中文`),
+			...Array.from({ length: 10 }, (_, index) => `汉字-${index}-中文`),
 			...Array.from({ length: 10 }, (_, index) => `emoji-${index}-👨‍💻-🏳️‍🌈`),
-			...Array.from({ length: 10 }, (_, index) => `\x1b[3${index % 8}mansi-${index}-한\x1b[0m`),
+			...Array.from({ length: 10 }, (_, index) => `\x1b[3${index % 8}mansi-${index}-中\x1b[0m`),
 			...Array.from(
 				{ length: 10 },
 				(_, index) => `\x1b]8;;https://example.com/${index}\x1b\\osc-${index}-界\x1b]8;;\x1b\\`,

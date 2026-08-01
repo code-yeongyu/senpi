@@ -60,13 +60,13 @@ describe("OpenAI Responses foreign thinking-signature replay", () => {
 
 	it("demotes a Kimi-style field-name signature to plain text instead of throwing", () => {
 		const assistant = sameModelAssistant(model, [
-			{ type: "thinking", thinking: "깊이 고민한 결과", thinkingSignature: "reasoning_content" },
+			{ type: "thinking", thinking: "deeply considered result", thinkingSignature: "reasoning_content" },
 			{ type: "text", text: "answer" },
 		]);
 
 		const input = convertResponsesMessages(model, makeContext(assistant), ALLOWED_TOOL_CALL_PROVIDERS);
 
-		expect(assistantTexts(input)).toContain("깊이 고민한 결과");
+		expect(assistantTexts(input)).toContain("deeply considered result");
 		expect(input.some((item) => item.type === "reasoning")).toBe(false);
 	});
 

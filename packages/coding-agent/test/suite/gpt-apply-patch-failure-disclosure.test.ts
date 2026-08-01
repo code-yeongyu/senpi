@@ -5,11 +5,31 @@ import {
 	applyPatchDetailed,
 	buildPartialFailureText,
 } from "../../src/core/extensions/builtin/gpt-apply-patch/apply.ts";
+import { registerApplyPatchExtension } from "../../src/core/extensions/builtin/gpt-apply-patch/extension.ts";
 import { createApplyPatchTool } from "../../src/core/extensions/builtin/gpt-apply-patch/tool.ts";
+import type { ApplyPatchExtensionAPI } from "../../src/core/extensions/builtin/gpt-apply-patch/types.ts";
+import type { ExtensionHandler, ToolResultEvent, ToolResultEventResult } from "../../src/core/extensions/types.ts";
 import type { Harness } from "./harness.ts";
 import { createHarness } from "./harness.ts";
 
 const harnesses: Harness[] = [];
+type ToolResultHandler = ExtensionHandler<ToolResultEvent, ToolResultEventResult>;
+
+function captureToolResultHandler(): ToolResultHandler {
+	let toolResultHandler: ToolResultHandler | undefined;
+	const api = {
+		registerTool: () => {},
+		on: (event: string, handler: unknown) => {
+			if (event === "tool_result") toolResultHandler = handler as ToolResultHandler;
+		},
+		getActiveTools: () => [],
+		getAllTools: () => [],
+		setActiveTools: () => {},
+	} as unknown as ApplyPatchExtensionAPI;
+	registerApplyPatchExtension(api);
+	if (!toolResultHandler) throw new Error("apply_patch did not register a tool_result handler");
+	return toolResultHandler;
+}
 
 afterEach(async () => {
 	await Promise.all(harnesses.splice(0).map((h) => h.cleanup()));
@@ -78,6 +98,69 @@ describe("gpt-apply-patch failure disclosure (#31)", () => {
 		const text = result.content.find((block) => block.type === "text")?.text ?? "";
 		expect(text).toContain("broken.txt");
 		expect(text).toMatch(/expected lines|context|find/i);
+	});
+
+	it("marks partial patch failures as errors for the model", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		await writeFile(path.join(harness.tempDir, "existing.txt"), "actual\n", "utf-8");
+		const patch = `*** Begin Patch
+*** Add File: created.txt
++created
+*** Update File: existing.txt
+@@
+-expected
++changed
+*** End Patch`;
+		const tool = createApplyPatchTool();
+		const result = await tool.execute("partial-failure", { input: patch }, undefined, undefined, {
+			cwd: harness.tempDir,
+		} as never);
+		const hookResult = await captureToolResultHandler()(
+			{
+				type: "tool_result",
+				toolName: "apply_patch",
+				toolCallId: "partial-failure",
+				input: { input: patch },
+				content: result.content,
+				details: result.details,
+				isError: false,
+			},
+			{} as never,
+		);
+
+		expect(hookResult).toEqual({ isError: true });
+	});
+
+	it("marks complete patch failures as errors for the model", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		await writeFile(path.join(harness.tempDir, "existing.txt"), "actual\n", "utf-8");
+		const patch = `*** Begin Patch
+*** Update File: existing.txt
+@@
+-expected
++changed
+*** End Patch`;
+		const tool = createApplyPatchTool();
+		const result = await tool.execute("complete-failure", { input: patch }, undefined, undefined, {
+			cwd: harness.tempDir,
+		} as never);
+
+		const hookResult = await captureToolResultHandler()(
+			{
+				type: "tool_result",
+				toolName: "apply_patch",
+				toolCallId: "complete-failure",
+				input: { input: patch },
+				content: result.content,
+				details: result.details,
+				isError: false,
+			},
+			{} as never,
+		);
+
+		expect(hookResult).toEqual({ isError: true });
 	});
 });
 

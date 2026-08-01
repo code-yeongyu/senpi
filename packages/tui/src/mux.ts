@@ -7,5 +7,5 @@ export function useLegacyMuxRender(): boolean {
 }
 
 export function viewportRenderEnabled(): boolean {
-	return process.env.PI_TUI_VIEWPORT_RENDER === "1";
+	return process.env.PI_TUI_VIEWPORT_RENDER !== "0";
 }

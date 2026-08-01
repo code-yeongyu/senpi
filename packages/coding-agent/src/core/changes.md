@@ -1,5 +1,89 @@
 # changes
 
+## Backfill: eval bridge deadlock prevention (2026-08-01)
+
+### What changed
+
+- Eval bridge requests no longer deadlock the session when completion and bridge delivery race.
+
+### Why
+
+- A blocked bridge stalls the entire agent turn and leaves no safe continuation path.
+
+### Why this cannot be expressed externally
+
+- The fix depends on internal agent-session bridge ordering and completion ownership.
+
+### Expected merge conflict zones
+
+- Agent-session eval bridge handlers, pending request state, and completion/error cleanup.
+
+## Deduplicate high-reasoning warnings per session model (2026-07-31)
+
+### What changed
+
+- `agent-session.ts` now remembers every sensitive provider/model identity that
+  already displayed the high-reasoning warning during the current session.
+- Moving between `xhigh`, `max`, lower reasoning levels, or another model no
+  longer re-arms the warning for an identity the user already saw.
+- A different sensitive provider/model identity still receives its own first
+  warning.
+
+### Why
+
+- The previous single last-key value was cleared whenever the active state was
+  not warnable and included the reasoning level in its key. Cycling reasoning
+  levels or switching away and back therefore appended the same large warning
+  box repeatedly.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` warning-dedup state and
+  `_emitHighReasoningWarningIfNeeded()`.
+
+## Preserve the user's reasoning preference across model switches (2026-07-31)
+
+### What changed
+
+- `agent-session.ts`: manual model selection and favorite-model cycling now
+  apply model-specific overrides and capability clamps as session-effective
+  levels without replacing `defaultThinkingLevel`.
+- Model switches without an explicit favorite tier restore the remembered
+  `defaultThinkingLevel` before clamping it to the selected model.
+
+### Why
+
+- Switching from a max-capable model to a basic reasoning model persisted the
+  clamped `high` tier, so switching back no longer restored the user's last
+  selected `max` tier. Explicit favorite tiers could likewise replace the
+  global preference even though they are model-specific overrides.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` around `_switchActiveModel()`,
+  `_cycleFavoriteModel()`, and `_getThinkingLevelForModelSwitch()`.
+
+## Thinking-level tier detection delegates to packages/ai (2026-07-30)
+
+### What changed
+
+- `thinking-levels.ts` no longer re-implements the `xhigh` / `max` model-id lists. `supportsXhigh`,
+  `supportsMax`, and `getSupportedThinkingLevels` now wrap the canonical `@earendil-works/pi-ai` helpers
+  and only keep the coding-agent's `ThinkingLevel` vocabulary plus the non-empty `["off"]` fallback.
+- The local `ModelWithThinkingLevelMap` cast is gone: `Model.thinkingLevelMap` is already part of the
+  public `pi-ai` model type.
+
+### Why
+
+- Tier rules belong to `packages/ai`; delegating removes the coding-agent's duplicate model-id lists and
+  precedence logic so future capability changes have one implementation. Generated catalog models retain
+  their explicit maps, so behavior for real catalog models is intentionally unchanged.
+
+### Why extension system couldn't handle this alone
+
+- Tier detection feeds session thinking-level clamping and the model/RPC surfaces inside core; it is not
+  reachable from an extension.
+
 ## Codex fast-variant service-tier metadata lookup (2026-07-29)
 
 ### What changed

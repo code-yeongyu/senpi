@@ -1,7 +1,7 @@
 import type { Model } from "@earendil-works/pi-ai";
 
 export const RISKY_MAIN_MODEL_WARNING =
-	"권장하지 않는 모델입니다. 사용자의 컴퓨터를 훼손할 수 있는 등 위험한 동작을 할 수 있고 테스트되지 않았습니다. 다른 모델을 사용해주세요.";
+	"Not a recommended model. It can perform dangerous actions such as harming your computer and has not been tested. Please use a different model.";
 
 const RISKY_MODEL_FAMILIES = ["minimax", "qwen"];
 

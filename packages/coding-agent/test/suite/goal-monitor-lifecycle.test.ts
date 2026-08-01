@@ -8,7 +8,7 @@ import {
 	type GoalHarness,
 	makeGoalContext,
 	runGoalHandlers,
-	waitForGoalContinuationCount,
+	waitForSentCount,
 } from "./goal-monitor-test-harness.ts";
 
 interface ActiveMonitorHarness {
@@ -52,7 +52,7 @@ describe("goal monitor continuation lifecycle", () => {
 
 		expect(harness.sent).toHaveLength(0);
 		expect(notices).toHaveLength(1);
-		const delayedDeliveryRecorded = waitForGoalContinuationCount(ctx, 1);
+		const delayedDeliveryRecorded = waitForSentCount(harness, 1);
 		await vi.advanceTimersByTimeAsync(240_000);
 		await delayedDeliveryRecorded;
 		expect(harness.sent).toHaveLength(1);

@@ -72,7 +72,7 @@ type TodoParams = Static<typeof TODO_PARAMS_SCHEMA>;
 type TodoAccessors = {
 	getCurrentPhases: () => TodoPhase[];
 	setCurrentPhases: (phases: TodoPhase[]) => void;
-	syncWidget: (ctx: ExtensionContext) => void;
+	syncWidget: (ctx: ExtensionContext, completedTasks?: readonly TodoCompletionTransition[]) => void;
 };
 
 function countInitItems(params: TodoParams): { phases: number; tasks: number } {
@@ -315,7 +315,7 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 					phases: clonePhases(applied.phases),
 				} satisfies TodoStateEntry);
 				accessors.setCurrentPhases(clonePhases(applied.phases));
-				accessors.syncWidget(ctx);
+				accessors.syncWidget(ctx, completedTasks);
 			}
 
 			const details: TodoToolDetails = {

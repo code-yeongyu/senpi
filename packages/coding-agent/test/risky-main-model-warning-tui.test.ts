@@ -50,7 +50,7 @@ describe("risky main-model warning", () => {
 	});
 
 	test.each([model({ id: "minimax-m2", name: "MiniMax M2" }), model({ id: "QWEN3-CODER", name: "Qwen 3 Coder" })])(
-		"renders the Korean warning in a prominent red box for $id",
+		"renders the risky-model warning in a prominent red box for $id",
 		(selectedModel) => {
 			const fakeThis = {
 				chatContainer: new Container(),
@@ -62,7 +62,7 @@ describe("risky main-model warning", () => {
 			const rendered = renderAll(fakeThis.chatContainer);
 			const plain = stripAnsi(rendered).replace(/\s+/g, " ");
 			expect(plain).toContain(RISKY_MAIN_MODEL_WARNING);
-			expect(plain).toContain("위험한 모델 경고");
+			expect(plain).toContain("Risky model warning");
 			expect(rendered).toContain(theme.getFgAnsi("error"));
 			expect(fakeThis.chatContainer.children).toHaveLength(4);
 			expect(fakeThis.ui.requestRender).toHaveBeenCalledExactlyOnceWith();

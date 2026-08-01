@@ -80,18 +80,14 @@ export function renderSearchResult(
 			if (details.currentProvider) {
 				const line = theme.fg(
 					"warning",
-					`Searching "${shorten(details.query, 80)}" via ${details.currentProvider} (max ${details.maxResults})`,
+					`Searching "${shorten(details.query, 80)}" via ${details.currentProvider}`,
 				);
 				const route = routeStateLabel(details);
 				const rows = options.expanded && route ? [line, theme.fg("muted", `route ${route}`)] : [line];
 				return new Text(rows.join("\n"), 0, 0);
 			}
 			const route = details.providerLabels.length > 0 ? details.providerLabels.join(" -> ") : "configured providers";
-			return new Text(
-				theme.fg("warning", `Searching "${shorten(details.query, 80)}" via ${route} (max ${details.maxResults})`),
-				0,
-				0,
-			);
+			return new Text(theme.fg("warning", `Searching "${shorten(details.query, 80)}" via ${route}`), 0, 0);
 		}
 		return new Text(theme.fg("warning", result.content[0]?.text ?? "Searching the web..."), 0, 0);
 	}

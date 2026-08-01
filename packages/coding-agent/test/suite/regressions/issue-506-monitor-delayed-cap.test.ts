@@ -12,10 +12,12 @@ import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extension
 import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
+	createSentMessageHarness,
 	createTestMessageDelivery,
 	makeGoalContext,
 	TestEventBus,
 	waitForGoalContinuationCount,
+	waitForSentCount,
 } from "../goal-monitor-test-harness.ts";
 
 function goalStoreRef(ctx: ExtensionContext) {
@@ -55,13 +57,10 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 		vi.useFakeTimers();
 		const notices: string[] = [];
 		const ctx = await makeGoalContext(notices, "issue-506-monitor-delayed-cap");
-		const sent: string[] = [];
+		const harness = createSentMessageHarness();
 		const events = new TestEventBus();
 		const pi = {
-			sendMessage: (message: { readonly content: string }) => {
-				sent.push(message.content);
-				return createTestMessageDelivery([]);
-			},
+			sendMessage: harness.sendMessage,
 			events,
 		} as unknown as ExtensionAPI;
 		const monitor = new MonitorAwareGoalContinuation(pi);
@@ -76,11 +75,11 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 			goal,
 			messages: [assistantStopWithText("still waiting")],
 		});
-		const delayedDeliveryRecorded = waitForGoalContinuationCount(ctx, 8);
+		const delayedDeliveryRecorded = waitForSentCount(harness, 1);
 		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_DELAY_MS);
 		await delayedDeliveryRecorded;
 
-		expect(sent).toHaveLength(1);
+		expect(harness.sent).toHaveLength(1);
 		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({
 			status: "active",
 			consecutiveContinuations: 8,
@@ -97,7 +96,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_DELAY_MS);
 		await blockedGoalRecorded;
 
-		expect(sent).toHaveLength(1);
+		expect(harness.sent).toHaveLength(1);
 		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({
 			status: "blocked",
 			blockedReason: "continuation cap reached",

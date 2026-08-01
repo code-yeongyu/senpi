@@ -6,12 +6,12 @@ afterEach(() => {
 });
 
 describe("recommended-models headless session scope", () => {
-	it("#given a headless session #when settings provenance starts #then it switches without persisting defaults", async () => {
+	it("#given a headless session #when an implicit-fallback provenance starts #then it switches without persisting defaults", async () => {
 		for (const mode of ["print", "rpc", "json"] as const) {
 			const kimi = model("kimi-k3", "kimi-coding");
 			const harness = createHarness({ active: model("off-list"), available: [kimi], mode });
 
-			await harness.start("settings");
+			await harness.start("first-available");
 
 			expect(harness.getActiveModel()).toBe(kimi);
 			expect(harness.getThinkingLevel()).toBe("max");
@@ -22,11 +22,11 @@ describe("recommended-models headless session scope", () => {
 		}
 	});
 
-	it("#given a tui session #when settings provenance starts #then it still persists the recommendation", async () => {
+	it("#given a tui session #when an implicit-fallback provenance starts #then it still persists the recommendation", async () => {
 		const kimi = model("kimi-k3", "kimi-coding");
 		const harness = createHarness({ active: model("off-list"), available: [kimi], mode: "tui" });
 
-		await harness.start("settings");
+		await harness.start("first-available");
 
 		expect(harness.getActiveModel()).toBe(kimi);
 		expect(harness.settings.getDefaultProvider()).toBe("kimi-coding");

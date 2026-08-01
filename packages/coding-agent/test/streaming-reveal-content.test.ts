@@ -13,7 +13,7 @@ function fullSlice(text: string, units: number): string {
 describe("BlockUnitCounter", () => {
 	test.each([
 		["ASCII", ["a", "ab", "abc"]],
-		["Korean", ["한", "한글", "한글날"]],
+		["CJK", ["中", "中文", "中文汉"]],
 		["emoji ZWJ", ["👨", "👨‍👩", "👨‍👩‍👧", "👨‍👩‍👧‍👦", "👨‍👩‍👧‍👦!"]],
 		["combining marks", ["e", "e\u0301", "e\u0301x", "e\u0301x\u0323"]],
 	] as const)(
@@ -42,7 +42,7 @@ describe("BlockUnitCounter", () => {
 describe("streaming reveal content helpers", () => {
 	test("#given mixed ordered blocks #when slicing visible units #then preserves raw thinking and passthrough blocks", () => {
 		const family = "👨‍👩‍👧‍👦";
-		const thinking = { type: "thinking" as const, thinking: "한글" };
+		const thinking = { type: "thinking" as const, thinking: "中文" };
 		const providerNative = { type: "providerNative" as const, subtype: "status", raw: { state: "running" } };
 		const toolCall = {
 			type: "toolCall" as const,
@@ -62,7 +62,7 @@ describe("streaming reveal content helpers", () => {
 		const hidden = buildDisplayMessage(target, 2, true);
 
 		expect(visibleUnits(target, false)).toBe(5);
-		expect(thinkingAt(visible, 1)).toBe("한글");
+		expect(thinkingAt(visible, 1)).toBe("中文");
 		expect(textAt(visible, 3)).toBe(family);
 		expect(visible.content[2]).toBe(providerNative);
 		expect(visible.content[4]).toBe(toolCall);

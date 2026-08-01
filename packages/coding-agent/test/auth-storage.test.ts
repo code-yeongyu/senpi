@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createModels, type Provider } from "@earendil-works/pi-ai";
+import { type CredentialStore, createModels, type Provider } from "@earendil-works/pi-ai";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { AuthStorage } from "../src/core/auth-storage.ts";
+import { AuthStorage, FileAuthStorageBackend } from "../src/core/auth-storage.ts";
 
 describe("AuthStorage", () => {
 	let tempDir: string;
@@ -68,6 +68,38 @@ describe("AuthStorage", () => {
 			key: "scoped-value",
 			env: { SCOPED_KEY: "scoped-value", REGION: "test-region" },
 		});
+	});
+
+	test("coalesces file reloads across concurrent readers and storage instances", async () => {
+		writeAuthJson({ anthropic: { type: "api_key", key: "old" } });
+		const first = AuthStorage.create(authJsonPath);
+		const second = AuthStorage.create(authJsonPath);
+		const lockSpy = vi.spyOn(lockfile, "lock");
+
+		writeAuthJson({
+			anthropic: { type: "api_key", key: "new" },
+			openai: { type: "api_key", key: "openai-key" },
+		});
+
+		const [anthropic, openai, credentials] = await Promise.all([
+			first.read("anthropic"),
+			second.read("openai"),
+			first.list(),
+		]);
+		expect(anthropic).toEqual({ type: "api_key", key: "new" });
+		expect(openai).toEqual({ type: "api_key", key: "openai-key" });
+		expect(credentials).toEqual([
+			{ providerId: "anthropic", type: "api_key" },
+			{ providerId: "openai", type: "api_key" },
+		]);
+		expect(lockSpy).toHaveBeenCalledTimes(1);
+
+		await expect(second.read("anthropic")).resolves.toEqual({ type: "api_key", key: "new" });
+		expect(lockSpy).toHaveBeenCalledTimes(1);
+
+		writeAuthJson({ anthropic: { type: "api_key", key: "newest" } });
+		await expect(first.read("anthropic")).resolves.toEqual({ type: "api_key", key: "newest" });
+		expect(lockSpy).toHaveBeenCalledTimes(2);
 	});
 
 	test("modify persists a credential while preserving unrelated external edits", async () => {
@@ -157,9 +189,26 @@ describe("AuthStorage", () => {
 		});
 	});
 
-	test("surfaces a compromised OAuth refresh lock and allows a later retry", async () => {
+	test("surfaces a compromised file storage lock", async () => {
+		writeAuthJson({ anthropic: { type: "api_key", key: "stored" } });
+		const backend = new FileAuthStorageBackend(authJsonPath);
+		const update = vi.fn(async () => ({ result: undefined, next: JSON.stringify({}) }));
+		const compromised = new Error("lock compromised");
+		vi.spyOn(lockfile, "lock").mockImplementation(async (_file, options) => {
+			options?.onCompromised?.(compromised);
+			return async () => {};
+		});
+
+		await expect(backend.withLockAsync(update)).rejects.toThrow(compromised);
+		expect(update).not.toHaveBeenCalled();
+		expect(JSON.parse(readFileSync(authJsonPath, "utf8"))).toEqual({
+			anthropic: { type: "api_key", key: "stored" },
+		});
+	});
+
+	test("translates a credential-store refresh failure and allows a later retry", async () => {
 		const providerId = "oauth-provider";
-		writeAuthJson({
+		const base = AuthStorage.inMemory({
 			[providerId]: {
 				type: "oauth",
 				access: "expired-access",
@@ -167,7 +216,19 @@ describe("AuthStorage", () => {
 				expires: 0,
 			},
 		});
-		const storage = AuthStorage.create(authJsonPath);
+		let failNextModify = true;
+		const credentials: CredentialStore = {
+			read: (id) => base.read(id),
+			list: () => base.list(),
+			modify: (id, fn) => {
+				if (failNextModify) {
+					failNextModify = false;
+					return Promise.reject(new Error("credential store unavailable"));
+				}
+				return base.modify(id, fn);
+			},
+			delete: (id) => base.delete(id),
+		};
 		const provider: Provider = {
 			id: providerId,
 			name: "OAuth Provider",
@@ -193,17 +254,10 @@ describe("AuthStorage", () => {
 				throw new Error("not used");
 			},
 		};
-		const models = createModels({ credentials: storage });
+		const models = createModels({ credentials });
 		models.setProvider(provider);
 
-		const realLock = lockfile.lock.bind(lockfile);
-		const lockSpy = vi.spyOn(lockfile, "lock").mockImplementationOnce(async (file, options) => {
-			options?.onCompromised?.(new Error("lock compromised"));
-			return realLock(file, options);
-		});
 		await expect(models.getAuth(providerId)).rejects.toMatchObject({ code: "auth" });
-
-		lockSpy.mockRestore();
 		await expect(models.getAuth(providerId)).resolves.toMatchObject({ auth: { apiKey: "refreshed-access" } });
 	});
 

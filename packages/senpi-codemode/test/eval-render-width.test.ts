@@ -18,18 +18,18 @@ function longWord(label: string): string {
 }
 
 describe.each(WIDTHS)("eval renderer width %i", (width) => {
-	it("Given Korean title output emoji ANSI and long words when rendered then every line fits", () => {
+	it("Given wide output title emoji ANSI and long words when rendered then every line fits", () => {
 		// Given
 		const givenCall = renderEvalCall(
 			{
 				language: "py",
-				title: "분석🙂",
+				title: "analysis🙂",
 				code: [
-					"print('안녕하세요🙂')",
+					"print('hello🙂')",
 					longWord("call"),
 					"for i in range(2):",
 					"    print(i)",
-					"print('마지막 줄')",
+					"print('last line')",
 				].join("\n"),
 			},
 			undefined,
@@ -38,12 +38,12 @@ describe.each(WIDTHS)("eval renderer width %i", (width) => {
 		const givenResult = evalResult(
 			{
 				language: "py",
-				title: "분석🙂",
+				title: "analysis🙂",
 				durationMs: 12,
-				toolCalls: [{ name: "검색도구", ok: true }],
+				toolCalls: [{ name: "searchTool", ok: true }],
 				truncated: false,
 			},
-			["\x1b[31m빨간 출력🙂\x1b[0m", "한국어 결과와 emoji 🚀", longWord("output")].join("\n"),
+			["\x1b[31mred output🙂\x1b[0m", "korean result with emoji 🚀", longWord("output")].join("\n"),
 		);
 
 		// When
@@ -55,7 +55,7 @@ describe.each(WIDTHS)("eval renderer width %i", (width) => {
 		];
 
 		// Then
-		expectLinesWithinWidth(lines, width, "korean ansi emoji");
+		expectLinesWithinWidth(lines, width, "wide ansi emoji");
 		expect(lines.join("\n")).toContain("\x1b[31m");
 	});
 
@@ -128,7 +128,7 @@ describe.each(WIDTHS)("eval renderer width %i", (width) => {
 
 	it("Given truncated multiline output when collapsed then preview hiding fits and hides early lines", () => {
 		// Given
-		const outputLines = Array.from({ length: 12 }, (_, index) => `숨김-output-${index + 1}-${longWord("chunk")}`);
+		const outputLines = Array.from({ length: 12 }, (_, index) => `hidden-output-${index + 1}-${longWord("chunk")}`);
 		const givenResult = evalResult(
 			{ language: "jl", durationMs: 3, toolCalls: [], truncated: true },
 			outputLines.join("\n"),
@@ -156,8 +156,8 @@ describe("eval renderer rerender width behavior", () => {
 		// Given
 		const component = renderEvalResult(
 			evalResult(
-				{ language: "rb", title: "리사이즈🙂", durationMs: 4, toolCalls: [], truncated: false },
-				[longWord("wide"), "second line", "세 번째 줄🙂"].join("\n"),
+				{ language: "rb", title: "resize🙂", durationMs: 4, toolCalls: [], truncated: false },
+				[longWord("wide"), "second line", "third line🙂"].join("\n"),
 			),
 			{ expanded: false, isPartial: false },
 			undefined,
@@ -207,16 +207,16 @@ describe("eval renderer cell detail width", () => {
 				cells: [
 					{
 						index: 0,
-						title: "실패 셀",
-						code: "print('한글출력테스트')",
+						title: "failed cell",
+						code: "print('korean-output-test')",
 						language: "py",
-						output: "한글출력테스트와 아주 긴 오류 설명이 폭에 맞게 줄바꿈되어야 합니다",
+						output: "korean-output-test and this very long error description must wrap to fit the width",
 						status: "error",
 						durationMs: 900,
 						statusEvents: [
-							{ op: "read", path: "/tmp/설정.json", chars: 12 },
-							{ op: "write", path: "/tmp/결과.json", chars: 8 },
-							{ op: "agent", id: "worker-한글", status: "completed", durationMs: 700 },
+							{ op: "read", path: "/tmp/settings.json", chars: 12 },
+							{ op: "write", path: "/tmp/result.json", chars: 8 },
+							{ op: "agent", id: "worker-cell", status: "completed", durationMs: 700 },
 						],
 					},
 				],
@@ -246,9 +246,9 @@ describe("eval renderer cell detail width", () => {
 
 		// Then
 		expectLinesWithinWidth(lines, width, "narrow detail render");
-		expect.soft(text).toContain("eval py 실패 셀 error");
+		expect.soft(text).toContain("eval py failed cell error");
 		expect.soft(text).toContain("read 12 chars");
-		expect.soft(text).toContain("worker-한글 done");
+		expect.soft(text).toContain("worker-cell done");
 		expect.soft(text).toContain("display[1]");
 		expect.soft(text).toContain("Showing lines 10-12 of 12");
 	});

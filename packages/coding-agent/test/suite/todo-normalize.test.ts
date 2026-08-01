@@ -217,33 +217,33 @@ describe("normalizeTodoParams", () => {
 			const raw = {
 				op: "init",
 				list: [
-					{ phase: "Dockerfile", items: ["Dockerfile secret 제거 + 가드 반전 GREEN"] },
+					{ phase: "Dockerfile", items: ["remove Dockerfile secret + invert the guard GREEN"] },
 					{
 						phase: "Ship",
 						items: [
-							"커밋 + push + PR 생성",
-							"CI green + 머지(사용자 사전 승인: 이 작업 병합)",
-							"deploy-dev 트리거 관찰: Build Succeeded?",
+							"commit + push + create PR",
+							"CI green + merge (user pre-approved: merge this work)",
+							"observe deploy-dev trigger: Build Succeeded?",
 						],
 						phase2: "Verify",
 					},
-					{ phase: "Dockerfile", items: ["dev uptime 리셋 + memory 활성화 확인"], items2: [] },
+					{ phase: "Dockerfile", items: ["reset dev uptime + verify memory activation"], items2: [] },
 				],
 			};
 			expect(normalizeTodoParams(raw, emptyPhases)).toEqual({
 				entry: {
 					op: "init",
 					list: [
-						{ phase: "Dockerfile", items: ["Dockerfile secret 제거 + 가드 반전 GREEN"] },
+						{ phase: "Dockerfile", items: ["remove Dockerfile secret + invert the guard GREEN"] },
 						{
 							phase: "Ship",
 							items: [
-								"커밋 + push + PR 생성",
-								"CI green + 머지(사용자 사전 승인: 이 작업 병합)",
-								"deploy-dev 트리거 관찰: Build Succeeded?",
+								"commit + push + create PR",
+								"CI green + merge (user pre-approved: merge this work)",
+								"observe deploy-dev trigger: Build Succeeded?",
 							],
 						},
-						{ phase: "Dockerfile", items: ["dev uptime 리셋 + memory 활성화 확인"] },
+						{ phase: "Dockerfile", items: ["reset dev uptime + verify memory activation"] },
 					],
 				},
 				corrections: [],

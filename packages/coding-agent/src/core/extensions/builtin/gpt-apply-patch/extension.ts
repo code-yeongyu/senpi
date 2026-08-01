@@ -50,6 +50,14 @@ function replaceEditToolsWithApplyPatch(toolNames: string[]): string[] {
 	return [...filteredToolNames.slice(0, at), APPLY_PATCH_NAME, ...filteredToolNames.slice(at)];
 }
 
+function hasApplyPatchFailures(details: unknown): boolean {
+	if (typeof details !== "object" || details === null) return false;
+	const result = Reflect.get(details, "result");
+	if (typeof result !== "object" || result === null) return false;
+	const failures = Reflect.get(result, "failures");
+	return Array.isArray(failures) && failures.length > 0;
+}
+
 function syncToolset(
 	pi: ApplyPatchExtensionAPI,
 	model: Model<string> | undefined,
@@ -87,6 +95,12 @@ export function registerApplyPatchExtension(pi: ApplyPatchExtensionAPI): void {
 	} as const;
 	state.activeVariant = "freeform";
 	pi.registerTool(variants.freeform);
+	pi.on("tool_result", async (event) => {
+		if (event.toolName !== APPLY_PATCH_NAME || event.isError || !hasApplyPatchFailures(event.details)) {
+			return undefined;
+		}
+		return { isError: true };
+	});
 	pi.on("session_start", async (_event, ctx) => {
 		syncToolset(pi, ctx.model, state, variants);
 	});

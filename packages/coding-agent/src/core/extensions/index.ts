@@ -106,6 +106,8 @@ export type {
 	LoadExtensionsResult,
 	LsToolCallEvent,
 	LsToolResultEvent,
+	MarkdownTransformContext,
+	MarkdownTransformer,
 	MessageDelivery,
 	// Events - Message
 	MessageEndEvent,

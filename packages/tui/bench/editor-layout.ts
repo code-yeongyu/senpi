@@ -7,7 +7,7 @@ import { forceGc, metadata, percentile, readIterations } from "./_meta.ts";
 const WIDTH = 120;
 const text = Array.from({ length: 180 }, (_, index) => {
 	const prefix = String(index).padStart(3, "0");
-	return `${prefix}: ${"abcdefghijklmnopqrstuvwxyz ".repeat(6)} 한글 カナ emoji`;
+	return `${prefix}: ${"abcdefghijklmnopqrstuvwxyz ".repeat(6)} 汉字 カナ emoji`;
 }).join("\n");
 
 function createEditor(): Editor {

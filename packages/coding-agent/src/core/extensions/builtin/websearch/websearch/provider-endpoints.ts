@@ -5,6 +5,7 @@ const DEFAULT_PROVIDER_URLS: Record<SearchProvider, string> = {
 	tavily: "https://api.tavily.com/search",
 	brave: "https://api.search.brave.com/res/v1/web/search",
 	"duckduckgo-html": "https://html.duckduckgo.com/html/",
+	deepseek: "https://api.deepseek.com/anthropic/v1/messages",
 	serper: "https://google.serper.dev/search",
 	"google-cse": "https://customsearch.googleapis.com/customsearch/v1",
 	"z-ai": "https://api.z.ai/api/paas/v4/web_search",

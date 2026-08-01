@@ -1,7 +1,58 @@
 # terminal builtin extension — fork surface
 
+## Backfill: Anthropic availability monitoring (2026-08-01)
+
+### What changed
+
+- Persistent terminal monitoring recognizes Anthropic availability and reports it through the existing observable-state channel.
+
+### Why
+
+- Agents must distinguish a provider becoming usable from arbitrary terminal output.
+
+### Why this cannot be expressed externally
+
+- The signal is produced inside the built-in monitor process and terminal event parser.
+
+### Expected merge conflict zones
+
+- Monitor event parsing, provider availability matching, and terminal status tests.
+
 The persistent-terminal tool suite (`bash` swapped to PTY-backed + `bash_output`,
 `kill_bash`, `bash_input`, `bash_resize`). Backed by `@earendil-works/pi-pty`.
+
+## Duplicate monitor batches no longer re-wake the session (2026-07-31)
+
+### What changed
+
+- `monitor-notify.ts`: `MonitorNotifier.#flush` now fingerprints each ready monitor's
+  line-only batch (joined sanitized bodies) and compares it with that monitor's previous
+  injection. A byte-identical batch is dropped silently: no injection, no wake, no
+  wake-budget tick, and `#lastInjectionAt` is left untouched so a real change delivers at
+  the next flush. Fingerprints are recorded per monitor on every actual injection,
+  cleared on `rearm` and `dispose`, and skipped entirely for batches containing a
+  summary (exit) event or overflow, which always deliver.
+- `tools/monitor.ts`: the tool description now tells the model that unchanged repeats
+  are dropped instead of re-waking the session.
+- `test/suite/terminal-monitor-notify-harness.ts` (new): the `FakeScheduler` +
+  `createNotifier` fixtures extracted from `terminal-monitor-notify.test.ts`, shared with
+  the new `terminal-monitor-dup-suppression.test.ts` describe cluster (dup drop, change
+  wake, multi-line batch, per-monitor independence, summary exemption, wake-budget
+  neutrality, rearm reset).
+
+### Why
+
+Observed live (session 019fb7da-e8a1, "watching PR 603 CI checks"): a
+`gh pr checks --watch --interval 10` monitor with a status filter reprinted the same
+summary every refresh, waking the idle session every ~10.5s for byte-identical content
+(29 injections, only 14 unique bodies; each wake replayed ~240K cached context). The
+wake budget paused the flood every 5 wakes, but each explicit rearm reset it and the
+cycle repeated. Waking a full-context session for zero new information is waste the
+harness can prevent deterministically.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: fork-owned `monitor-notify.ts` flush path and the monitor tool description.
 
 ## Live elapsed footer for monitors + enriched monitor state event (2026-07-31)
 

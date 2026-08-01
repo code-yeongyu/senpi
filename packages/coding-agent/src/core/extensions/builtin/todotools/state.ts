@@ -49,4 +49,9 @@ export {
 	type TodoStatus,
 	type TodoToolDetails,
 } from "./todo-types.ts";
-export { getTodoWidgetLines } from "./todo-widget.ts";
+export {
+	getTodoWidgetLines,
+	getTodoWidgetModel,
+	type TodoWidgetModel,
+	type TodoWidgetRow,
+} from "./todo-widget.ts";

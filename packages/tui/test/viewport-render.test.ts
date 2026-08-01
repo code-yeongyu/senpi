@@ -111,7 +111,7 @@ async function captureBytes(
 	enabled: boolean,
 	run: (tui: tuiModule.TUI, terminal: LoggingVirtualTerminal) => Promise<void>,
 ): Promise<string> {
-	return await withEnv({ [VIEWPORT_ENV]: enabled ? "1" : undefined, PI_TUI_TEST_SEAMS: "1" }, async () => {
+	return await withEnv({ [VIEWPORT_ENV]: enabled ? "1" : "0", PI_TUI_TEST_SEAMS: "1" }, async () => {
 		const terminal = new LoggingVirtualTerminal(72, 8);
 		const tui = new tuiModule.TUI(terminal);
 		await run(tui, terminal);
@@ -186,6 +186,22 @@ describe("viewport-bounded render", () => {
 		assert.strictEqual(await captureBytes(true, run), await captureBytes(false, run));
 	});
 
+	it("bounds normalization to the viewport by default when the flag is unset", async () => {
+		await withEnv({ [VIEWPORT_ENV]: undefined, PI_TUI_TEST_SEAMS: "1" }, async () => {
+			const terminal = new VirtualTerminal(80, 40);
+			const tui = new tuiModule.TUI(terminal);
+			const component = new LargeStatusComponent();
+			tui.addChild(component);
+
+			await driveRender(tui, terminal);
+			component.status = "status frame changed";
+			await driveRender(tui, terminal);
+
+			assert.ok(viewportStats().lastNormalizedLines <= terminal.rows + 2 * OVERSCAN + 1);
+			tui.stop();
+		});
+	});
+
 	it("normalizes only the viewport plus overscan when one status line changes", async () => {
 		await withEnv({ [VIEWPORT_ENV]: "1", PI_TUI_TEST_SEAMS: "1" }, async () => {
 			const terminal = new VirtualTerminal(80, 40);
@@ -203,18 +219,20 @@ describe("viewport-bounded render", () => {
 		});
 	});
 
-	it("normalizes every line when the flag is off", async () => {
-		await withEnv({ [VIEWPORT_ENV]: undefined, PI_TUI_TEST_SEAMS: "1" }, async () => {
+	it("memoizes unchanged lines so opted-out full passes renormalize only new content", async () => {
+		await withEnv({ [VIEWPORT_ENV]: "0", PI_TUI_TEST_SEAMS: "1" }, async () => {
 			const terminal = new VirtualTerminal(80, 40);
 			const tui = new tuiModule.TUI(terminal);
 			const component = new LargeStatusComponent();
 			tui.addChild(component);
 
 			await driveRender(tui, terminal);
+			assert.strictEqual(viewportStats().lastNormalizedLines, component.transcript.length + 1);
+
 			component.status = "status frame changed";
 			await driveRender(tui, terminal);
 
-			assert.strictEqual(viewportStats().lastNormalizedLines, component.transcript.length + 1);
+			assert.strictEqual(viewportStats().lastNormalizedLines, 1);
 			tui.stop();
 		});
 	});

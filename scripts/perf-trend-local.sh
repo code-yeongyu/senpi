@@ -71,8 +71,8 @@ run_bench() {
 	rm -f "$bench_output"
 }
 
-run_bench "frame-cost-n${frame_small_n}" frame-cost npx tsx bench/frame-cost.ts --n "$frame_small_n"
-run_bench "frame-cost-n${frame_large_n}" frame-cost npx tsx bench/frame-cost.ts --n "$frame_large_n"
+run_bench "frame-cost-n${frame_small_n}" frame-cost env PI_TUI_VIEWPORT_RENDER=0 npx tsx bench/frame-cost.ts --n "$frame_small_n"
+run_bench "frame-cost-n${frame_large_n}" frame-cost env PI_TUI_VIEWPORT_RENDER=0 npx tsx bench/frame-cost.ts --n "$frame_large_n"
 run_bench "frame-cost-n${frame_large_n}-viewport" frame-cost env PI_TUI_VIEWPORT_RENDER=1 npx tsx bench/frame-cost.ts --n "$frame_large_n"
 if [[ -n "${PERF_TREND_ITERATIONS:-}" ]]; then
 	run_bench "editor-layout" suite npx tsx bench/editor-layout.ts --iterations "$PERF_TREND_ITERATIONS"

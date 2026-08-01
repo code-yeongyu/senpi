@@ -1,17 +1,40 @@
 # changes.md — ai
 
-## Map-less GPT-5.6 Sol max reasoning (2026-07-30)
+## OpenAI compatibility resolver merge repair (2026-08-01)
 
 ### What changed
 
-- Runtime capability detection now recognizes `max` for map-less OpenAI-compatible `gpt-5.6-sol` models while
-  preserving explicit map omissions and `null` vetoes.
-- OpenAI-compatible request builders serialize the selected level as `reasoning.effort: "max"`.
+- Restored `getOpenAICompletionsCompat` as the single compatibility resolver used and exported by the OpenAI Completions adapter.
+- Ported upstream Z.AI `max_tokens` selection into the shared resolver.
+- Preserved both automatically detected and explicitly configured `toolSchemaFlavor` values, with focused Moonshot coverage.
 
 ### Why
 
-- Custom providers such as `codex-lb` can supply Sol without generated model metadata. The UI and provider
-  payload must agree instead of displaying `max` while silently sending `high`.
+- The merge restored an upstream-local adapter resolver beside the fork's shared browser-safe resolver. The duplicate omitted Moonshot schema flavor selection, so wire-bound tool schemas retained an unsupported root `anyOf` wrapper.
+- Keeping one resolver prevents API and browser-safe compatibility decisions from diverging again.
+
+### Why this cannot be expressed externally
+
+- Provider compatibility selection and final wire-payload schema normalization occur inside the provider adapter before extension hooks can safely compensate.
+
+### Expected merge conflict zones
+
+- `src/api/openai-completions.ts`, `src/utils/prompt-cache-ttl.ts`, OpenAI compatibility types, and tool-schema/prompt-cache tests.
+
+## Shared reasoning-tier capability detection (2026-07-30)
+
+### What changed
+
+- Shared `xhigh` / `max` model-family constants are hoisted in `models.ts`, and map-less inference now uses
+  one case-normalized, boundary-aware family matcher instead of unbounded substring checks.
+- `getSupportedThinkingLevels` delegates extended-tier precedence to the exported `supportsXhigh` and
+  `supportsMax` predicates rather than duplicating their map-omission and `null`-veto rules.
+
+### Why
+
+- Capability inference for custom map-less models should reject unrelated ids and case-normalize legitimate
+  aliases while keeping one precedence implementation. Generated catalog models retain their explicit maps,
+  so behavior for real catalog models is intentionally unchanged.
 
 ## Browser-safe prompt-cache TTL resolver (2026-07-28)
 

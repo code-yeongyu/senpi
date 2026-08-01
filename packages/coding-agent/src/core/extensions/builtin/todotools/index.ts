@@ -1,7 +1,14 @@
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { registerTodoCommand } from "./commands.ts";
 import { TASK_MANAGEMENT_SECTION } from "./prompt.ts";
-import { clonePhases, getLatestPhasesFromBranchEntries, getTodoWidgetLines, type TodoPhase } from "./state.ts";
+import {
+	clonePhases,
+	getLatestPhasesFromBranchEntries,
+	type TodoCompletionTransition,
+	type TodoPhase,
+} from "./state.ts";
+import { getTodoWidgetModel } from "./todo-widget.ts";
+import { TodoWidgetComponent } from "./todo-widget-component.ts";
 import { registerTodoTool } from "./tools/todo.ts";
 
 function getLatestPhases(ctx: ExtensionContext): TodoPhase[] {
@@ -17,8 +24,12 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 		currentPhases = clonePhases(phases);
 	};
 
-	const syncWidget = (ctx: ExtensionContext): void => {
-		ctx.ui.setWidget("todo-sidebar", getTodoWidgetLines(currentPhases));
+	const syncWidget = (ctx: ExtensionContext, completedTasks: readonly TodoCompletionTransition[] = []): void => {
+		const model = getTodoWidgetModel(currentPhases);
+		ctx.ui.setWidget(
+			"todo-sidebar",
+			model ? (tui, theme) => new TodoWidgetComponent(tui, theme, model, completedTasks) : undefined,
+		);
 	};
 
 	const syncFromSession = (ctx: ExtensionContext): void => {

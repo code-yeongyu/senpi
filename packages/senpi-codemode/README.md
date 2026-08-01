@@ -11,9 +11,12 @@ task-tool names are known.
 - Persistent JavaScript, Python, Ruby, and Julia cells. State survives later
   cells in the same language until reset, restart, or session disposal.
 - Timeout detachment for interactive `eval`: long pure-compute cells return a
-  handle and continue in their existing kernel. Completion is injected with the
-  final value/error and buffered output; use `eval({ action: "peek"|"stop",
-  cell_id })` to inspect or terminate a detached cell.
+	handle and continue in their existing kernel. Completion is injected with the
+	final value/error and buffered output; use `eval({ action: "peek"|"stop",
+	cell_id })` to inspect or terminate a detached cell. A running peek preserves
+	the original code and title together with current output, phase, status
+	events, tool-call summaries, elapsed duration, and structured display state;
+	a terminal peek preserves the exact final result.
 - Loopback, bearer-authenticated kernel bridge with bounded JSONL frames.
 - Structured status events for file operations, environment access, phases,
   bridge activity, and delegated task progress.

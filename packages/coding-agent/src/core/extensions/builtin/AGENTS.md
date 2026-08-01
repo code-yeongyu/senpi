@@ -9,7 +9,7 @@
 | 1 | `hooks` | `hooks/` | Settings-configured lifecycle command hooks (PreToolUse/PostToolUse-style) with trust hashing + live status |
 | 2 | `permission-system` | `permission-system/` | Full opencode-style permission port: rules, JSONL storage, prompts |
 | 3 | `gpt-apply-patch` | `gpt-apply-patch/` | Codex-style `apply_patch` tool with rich render + freeform grammar |
-| 4 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, kimi-k2-{6,7}, kimi-k3) |
+| 4 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, deepseek-v4-{flash,flash-0731,pro}, kimi-k2-{6,7}, kimi-k3) |
 | 5 | `todowrite` | `todotools/` | Op-based oh-my-pi todo port + `/todo` command; fully diverged from `../pi-extensions/pi-todotools` |
 | 6 | `redraws` | `redraws.ts` | Force-redraw event hooks for stable streaming visuals |
 | 7 | `anthropic-web-search` | `anthropic-web-search/` | Anthropic-native web search tool |
@@ -48,7 +48,7 @@ Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by
 
 - **Subdirectory extensions** ship multi-file: `index.ts` + supporting `.ts` (`registry.ts`, `types.ts`, `parsers.ts`, etc.).
 - **Single-file extensions** are kept flat (`diff.ts`, `files.ts`, `redraws.ts`, `service-tier.ts`, `tps.ts`, `prompt-url-widget.ts`).
-- **`prompt-preset/`** has per-model files (`gpt-5.5.ts`, `claude-opus-4-7.ts`, …) and a shared `file-operations.ts` tuning block. New model = new preset file + entry in `presets.ts`. Models covered: gpt-5.x, claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, kimi-k2-{6,7}, kimi-k3.
+- **`prompt-preset/`** has per-model files (`gpt-5.5.ts`, `claude-opus-4-7.ts`, …) and a shared `file-operations.ts` tuning block. New model = new preset file + entry in `presets.ts`. Models covered: gpt-5.x, claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, deepseek-v4-{flash,flash-0731,pro}, kimi-k2-{6,7}, kimi-k3.
 - **`permission-system/` is a full port** of opencode's permission flow.
 - **`compaction/`** is policy-rich (`policy.ts`, `speculative.ts`, `restoration-tracker.ts`, `circuit-breaker.ts`, `degradation-monitor.ts`, `per-turn-cap.ts`, `tool-truncation.ts`, `checkpoint-state.ts`, `context-reduction.ts`, `openai-remote.ts`, `repair-tool-pairs.ts`, `state.ts`, `todo-bridge.ts`, `prompts.ts`). Touch only with policy tests in lock-step.
 - **External versions**: `external-versions.json` pins versions of sibling `../pi-extensions` packages used as vendored builtins; refresh with `packages/coding-agent/scripts/sync-builtin-extensions.mjs`.

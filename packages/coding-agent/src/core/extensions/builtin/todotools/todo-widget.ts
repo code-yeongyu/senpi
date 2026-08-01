@@ -11,6 +11,21 @@ const TODO_WIDGET_MAX_LINES = 10;
 const TODO_WIDGET_HEADER_LINES = 2;
 const TODO_WIDGET_RECENT_TASKS = 2;
 
+export type TodoWidgetRow =
+	| {
+			readonly kind: "label";
+			readonly text: string;
+	  }
+	| {
+			readonly kind: "task";
+			readonly task: TodoItem;
+	  };
+
+export type TodoWidgetModel = {
+	readonly phaseName: string;
+	readonly rows: readonly TodoWidgetRow[];
+};
+
 function getActivePhase(phases: readonly TodoPhase[]): TodoPhase | undefined {
 	const activeTask = nextActionableTask(phases);
 	if (!activeTask) return undefined;
@@ -25,12 +40,25 @@ function formatTask(todo: TodoItem): string {
 	return `${getTodoMarker(todo.status)} ${sanitizeTodoText(todo.content)}`;
 }
 
-export function getTodoWidgetLines(phases: readonly TodoPhase[]): string[] | undefined {
+function label(text: string): TodoWidgetRow {
+	return { kind: "label", text };
+}
+
+function taskRow(task: TodoItem): TodoWidgetRow {
+	return { kind: "task", task };
+}
+
+export function getTodoWidgetModel(phases: readonly TodoPhase[]): TodoWidgetModel | undefined {
 	const activePhase = getActivePhase(phases);
 	if (!activePhase) return undefined;
-	const header = ["Todo", sanitizeTodoText(activePhase.name)];
-	const taskLines = activePhase.tasks.map(formatTask);
-	if (header.length + taskLines.length <= TODO_WIDGET_MAX_LINES) return [...header, ...taskLines];
+	const header = [label("Todo"), label(sanitizeTodoText(activePhase.name))];
+	const taskRows = activePhase.tasks.map(taskRow);
+	if (header.length + taskRows.length <= TODO_WIDGET_MAX_LINES) {
+		return {
+			phaseName: activePhase.name,
+			rows: [...header, ...taskRows],
+		};
+	}
 
 	const activeTask = nextActionableTask([activePhase]);
 	if (!activeTask) return undefined;
@@ -38,7 +66,7 @@ export function getTodoWidgetLines(phases: readonly TodoPhase[]): string[] | und
 	const firstVisibleTask = Math.max(0, activeIndex - TODO_WIDGET_RECENT_TASKS);
 	const earlierOmitted = firstVisibleTask;
 	const bodyBudget = TODO_WIDGET_MAX_LINES - TODO_WIDGET_HEADER_LINES;
-	const recentAndActive = taskLines.slice(firstVisibleTask, activeIndex + 1);
+	const recentAndActive = activePhase.tasks.slice(firstVisibleTask, activeIndex + 1).map(taskRow);
 	const earlierMarkerRows = earlierOmitted > 0 ? 1 : 0;
 	const pendingAfterActive = activePhase.tasks.slice(activeIndex + 1).filter((todo) => todo.status === "pending");
 	const upcomingBudget = bodyBudget - recentAndActive.length - earlierMarkerRows;
@@ -46,12 +74,20 @@ export function getTodoWidgetLines(phases: readonly TodoPhase[]): string[] | und
 		pendingAfterActive.length > upcomingBudget ? Math.max(0, upcomingBudget - 1) : pendingAfterActive.length;
 	const laterOmitted = pendingAfterActive.length - visibleUpcomingCount;
 
-	return [
-		"Todo",
-		sanitizeTodoText(activePhase.name),
-		...(earlierOmitted > 0 ? [formatOmittedTasks(earlierOmitted, "earlier")] : []),
-		...recentAndActive,
-		...pendingAfterActive.slice(0, visibleUpcomingCount).map(formatTask),
-		...(laterOmitted > 0 ? [formatOmittedTasks(laterOmitted, "later")] : []),
-	];
+	return {
+		phaseName: activePhase.name,
+		rows: [
+			...header,
+			...(earlierOmitted > 0 ? [label(formatOmittedTasks(earlierOmitted, "earlier"))] : []),
+			...recentAndActive,
+			...pendingAfterActive.slice(0, visibleUpcomingCount).map(taskRow),
+			...(laterOmitted > 0 ? [label(formatOmittedTasks(laterOmitted, "later"))] : []),
+		],
+	};
+}
+
+export function getTodoWidgetLines(phases: readonly TodoPhase[]): string[] | undefined {
+	const model = getTodoWidgetModel(phases);
+	if (!model) return undefined;
+	return model.rows.map((row) => (row.kind === "label" ? row.text : formatTask(row.task)));
 }

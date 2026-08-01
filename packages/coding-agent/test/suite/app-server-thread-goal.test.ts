@@ -45,14 +45,15 @@ describe("app-server thread goal handlers", () => {
 			params: { threadId },
 		});
 
-		// Then: the create response preserves wire compatibility, but persisted Goal state is budgetless.
+		// Then: the create response preserves wire compatibility, the compatibility field stays
+		// inert on reads until explicitly cleared, and no limiter state is persisted.
 		expect(objectAt(responseResult(created), "goal")).toMatchObject({
 			threadId,
 			objective: "Ship the parity lane",
 			status: "active",
 			tokenBudget: 4096,
 		});
-		expect(objectAt(responseResult(preserved), "goal").tokenBudget).toBeNull();
+		expect(objectAt(responseResult(preserved), "goal").tokenBudget).toBe(4096);
 		expect(objectAt(responseResult(cleared), "goal").tokenBudget).toBeNull();
 		expect(objectAt(responseResult(read), "goal").tokenBudget).toBeNull();
 	});

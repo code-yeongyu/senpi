@@ -1,5 +1,69 @@
 # AI Source Changes
 
+## 2026-07-31 - Recover Codex WebSocket fallback sessions
+
+### What changed and why
+
+- A transient pre-start Codex WebSocket failure no longer pins the session to
+  SSE for the rest of the process lifetime. The fallback circuit now keeps
+  immediate requests on SSE for 60 seconds, then lets the next fresh request
+  probe WebSocket again.
+- Recovery changes only a future request. The existing guard still propagates
+  transport failures after the response stream starts, so no already-started
+  or potentially billed response is retried through SSE.
+- Production session cleanup now removes both live WebSocket resources and
+  the session's fallback/debug state. Long-lived app-server processes no
+  longer retain degraded routing after a session is closed.
+- Fallback and debug-state ownership moved into
+  `api/openai-codex-responses/fallback-state.ts`, reducing the oversized
+  adapter while keeping the public debug API stable.
+
+### Coverage
+
+- `../test/openai-codex-fallback-recovery.test.ts` proves the immediate SSE
+  cooldown boundary, post-cooldown WebSocket recovery, and immediate recovery
+  after production cleanup.
+- Existing Codex stream tests retain the post-start no-fallback guard,
+  continuation recovery, connection-limit handling, and one-shot
+  `cacheRetention: "none"` behavior.
+
+### Expected merge conflict zones
+
+- MEDIUM: Codex WebSocket debug/fallback state and session cleanup.
+
+## 2026-07-31 - Align Codex prompt-cache affinity headers
+
+### What changed and why
+
+- Issue #589's donated 25-hour session contained an 8.5-minute HTTP/SSE
+  fallback burst where 18 requests reused only 22,016 cached tokens and resent
+  roughly 175k-180k uncached tokens, interleaved with 10 normal roughly
+  196k-199k cache hits. No model, thinking-level, compaction, or custom-message
+  transition occurred inside the burst.
+- The session had previously recorded Codex WebSocket transport failures and
+  fallen back to SSE. Senpi's Codex adapter sent the stable session ID as
+  `prompt_cache_key`, `session-id`, and `x-client-request-id`, but omitted the
+  official Codex `thread-id` affinity header on both SSE and WebSocket.
+- `api/openai-prompt-cache.ts` now applies the complete stable affinity tuple,
+  and both transports use it. Senpi has one durable conversation identifier at
+  this layer, so `session-id`, `thread-id`, and `x-client-request-id` all carry
+  the clamped Senpi session ID while `prompt_cache_key` remains unchanged.
+- `cacheRetention: "none"` keeps its existing no-affinity SSE behavior.
+- This fixes the client-controlled protocol divergence. Open upstream Codex
+  reports show that the provider cache can still miss intermittently with
+  byte-identical bodies and stable keys, so the change does not claim that a
+  best-effort upstream cache becomes deterministic.
+
+### Coverage
+
+- `../test/openai-codex-cache-affinity.test.ts` drives the real SSE and
+  WebSocket request builders, pins the complete header/body mapping, and
+  preserves the disabled-cache boundary.
+
+### Expected merge conflict zones
+
+- LOW: additive prompt-cache header helper and the two Codex header builders.
+
 ## 2026-07-31 - Reshape unavailable Anthropic tool transcript records
 
 ### What changed and why
@@ -20,10 +84,10 @@
 
 - OpenAI-compatible map-less `gpt-5.6-sol` models now expose `xhigh` and `max` without requiring a generated
   `thinkingLevelMap`.
-- Explicit maps remain authoritative: a missing level on an existing map stays unavailable, and `null` still
-  vetoes the heuristic.
-- OpenAI Responses, Azure Responses, Codex Responses, and Completions send `max` on the wire instead of
-  clamping a UI-selected map-less Sol level to `high`.
+- Explicit maps remain authoritative: a missing level on an existing map stays unavailable, and `null` vetoes the
+  heuristic. `supportsXhigh` and `supportsMax` share that precedence.
+- `supportsMax` is exported from `models.ts` so OpenAI Responses, Azure Responses, Codex Responses, and
+  Completions send `max` on the wire instead of clamping a UI-selected map-less Sol level to `high`.
 - Coverage pins capability, negative non-Sol boundaries, and captured request payloads without live tokens.
 
 ## 2026-07-30 - Recover Kimi XTML response channels from thinking

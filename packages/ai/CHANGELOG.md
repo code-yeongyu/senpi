@@ -10,6 +10,55 @@
 
 ### Fixed
 
+- Updated GPT-5.6 Terra and Luna pricing across OpenAI and passthrough model catalogs.
+- Fixed Fireworks Kimi K3 models to use the OpenAI-compatible API with native reasoning-effort levels and deferred tools ([#7199](https://github.com/earendil-works/pi/issues/7199), [#7230](https://github.com/earendil-works/pi/pull/7230) by [@XBeg9](https://github.com/XBeg9)).
+
+### Removed
+
+## [2026.8.1] - 2026-08-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Refresh generated provider catalogs from their live sources. OpenRouter now
+  removes 29 no-longer-advertised `:batch` variants plus retired
+  `mistralai/devstral-2512` and `openai/gpt-5.1-chat`, and adds
+  `thinkingmachines/inkling-small`; Vercel AI Gateway adds
+  `deepseek/deepseek-v4-flash-0731`; Z.AI and Z.AI Coding CN replace
+  `glm-4.5-air`, `glm-5.1`, and `glm-5v-turbo` with
+  `glm-5.2-highspeed[1m]`. Static provider tests now use the still-published
+  `glm-4.7` fixture or explicit compatibility overrides, and Z.AI defaults now
+  resolve to `glm-5.2`, so future catalog removals cannot leave release-time
+  type checking or default selection silently stale.
+
+### Fixed
+
+- Make explicit reasoning capability metadata authoritative across model
+  discovery and request construction: a present `thinkingLevelMap` now
+  supports only the listed levels, `null` remains an explicit veto, and
+  model-ID inference applies only to map-less models. This prevents the CLI
+  and provider payload from advertising `xhigh` or `max` when catalog metadata
+  intentionally omits them
+  ([#586](https://github.com/code-yeongyu/senpi/pull/586) by
+  [@realsigridjin](https://github.com/realsigridjin)).
+
+- Align Codex SSE and WebSocket prompt-cache affinity with the official client
+  by sending one stable session tuple across `prompt_cache_key`, `session-id`,
+  `thread-id`, and `x-client-request-id`. The no-affinity SSE boundary for
+  `cacheRetention: "none"` remains unchanged, while ordinary sessions avoid
+  repeatedly re-uploading large uncached prefixes
+  ([#597](https://github.com/code-yeongyu/senpi/pull/597)).
+
+- Recover Codex WebSocket sessions after transient transport degradation.
+  Immediate follow-up requests stay on SSE during a 60-second cooldown, the
+  next fresh request may probe WebSocket again, production cleanup clears the
+  degraded-route state, and the existing post-start billing guard still
+  prevents replaying a response that may already have started
+  ([#600](https://github.com/code-yeongyu/senpi/pull/600)).
+
 ### Removed
 
 ## [2026.7.31-2] - 2026-07-31
@@ -233,6 +282,34 @@
 ## [2026.7.25-2] - 2026-07-25
 
 ### Breaking Changes
+
+## [0.83.0] - 2026-07-29
+
+### Breaking Changes
+
+- Upgraded the exported TypeBox dependency to 1.3.7, removing deprecated APIs including `Type.Base`, `Type.Awaited`, `Type.Promise`, `Type.AsyncIterator`, `Type.Iterator`, `Type.Options`, and `Value.Mutate`, while fixing compiled validation of nullable array tool arguments. Consumers using removed APIs must migrate to supported TypeBox APIs ([#7243](https://github.com/earendil-works/pi/pull/7243) by [@petrroll](https://github.com/petrroll)).
+
+### Added
+
+- Added per-request `fetch` injection for supported text and image provider transports; Google adapters reject non-global implementations rather than silently bypassing them.
+- Added Claude Opus 5 support for the GitHub Copilot provider, routing through the Anthropic Messages API with adaptive thinking, 1M context, and the Copilot `minimal` thinking-level override ([#7158](https://github.com/earendil-works/pi/pull/7158) by [@jay-aye-see-kay](https://github.com/jay-aye-see-kay)).
+- Added the `"pending"` stop reason for partial streaming messages. See [Stop Reasons](README.md#stop-reasons) ([#7151](https://github.com/earendil-works/pi/pull/7151) by [@lucasmeijer](https://github.com/lucasmeijer)).
+- Added `AssistantMessage.rawStopReason` and populated it across Google, Anthropic, Amazon Bedrock, Mistral, and OpenAI streams; unmapped terminal reasons now surface as provider errors instead of successful stops ([#7272](https://github.com/earendil-works/pi/pull/7272)).
+- Added manual redirect URL and authorization-code entry to OpenRouter OAuth login for remote and headless environments ([#7114](https://github.com/earendil-works/pi/pull/7114) by [@rgarcia](https://github.com/rgarcia)).
+- Added `AuthResolutionOverrides.minOAuthValidityMs` so callers can require and refresh OAuth credentials with a minimum remaining validity ([#7168](https://github.com/earendil-works/pi/pull/7168)).
+
+### Changed
+
+- Changed stored OAuth credentials to refresh when less than five minutes of validity remain instead of waiting until expiration ([#7168](https://github.com/earendil-works/pi/pull/7168)).
+
+### Fixed
+
+- Fixed Qwen Token Plan reasoning models to send their service-specific thinking controls and supported reasoning-effort levels ([#6951](https://github.com/earendil-works/pi/issues/6951), [#6998](https://github.com/earendil-works/pi/issues/6998)).
+- Fixed Z.AI providers and compatible custom endpoints to send output limits through `max_tokens`, which those endpoints honor ([#7174](https://github.com/earendil-works/pi/pull/7174) by [@HyeokjaeLee](https://github.com/HyeokjaeLee)).
+- Fixed explicitly configured Amazon Bedrock profiles being overridden by ambient AWS access keys ([#7176](https://github.com/earendil-works/pi/pull/7176) by [@christianbasch](https://github.com/christianbasch)).
+- Fixed malformed OpenAI-compatible tool-call deltas with both a valid `function` payload and an empty `custom` object discarding the function arguments ([#7288](https://github.com/earendil-works/pi/pull/7288) by [@sunnyyoung](https://github.com/sunnyyoung)).
+
+## [0.82.1] - 2026-07-25
 
 ### Added
 

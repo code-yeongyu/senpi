@@ -23,6 +23,7 @@ interface NativeProviderMapping {
 	provider: SearchProvider;
 	resource: string;
 	routeLabel?: string;
+	endpointPath?: string;
 }
 
 interface NativeEntryOptions {
@@ -48,6 +49,15 @@ function nativeMapping(model: NativeModelInfo): NativeProviderMapping | null {
 	}
 	if (model.provider !== "anthropic" && model.api === "anthropic-messages" && /^claude-/.test(model.id)) {
 		return { provider: "anthropic", resource: "messages", routeLabel: model.provider };
+	}
+
+	if (model.provider === "deepseek" && /^deepseek-v4-/.test(model.id)) {
+		return {
+			provider: "deepseek",
+			resource: "messages",
+			routeLabel: "deepseek",
+			endpointPath: "/anthropic/v1/messages",
+		};
 	}
 
 	if (model.provider === "xai" && /^grok-/.test(model.id)) {
@@ -82,16 +92,20 @@ function shouldDiscoverNativeRoute(activeModel: NativeModelInfo | undefined, ava
 	const mapping = nativeMapping(availableModel);
 	if (!mapping) return false;
 	if (!activeModel) return true;
-	if (mapping.provider !== "openai" && mapping.provider !== "anthropic") return true;
 	return activeModel.provider === availableModel.provider;
 }
 
-function buildEndpointUrl(baseUrl: string, resource: string): string {
+function buildEndpointUrl(baseUrl: string, resource: string, endpointPath?: string): string {
 	let configured: URL;
 	try {
 		configured = new URL(baseUrl);
 	} catch {
 		return baseUrl;
+	}
+	if (endpointPath) {
+		configured.pathname = endpointPath;
+		configured.hash = "";
+		return configured.href;
 	}
 	const trimmedPath = configured.pathname.replace(/\/+$/, "");
 	const resourceSlash = `/${resource}`;
@@ -109,7 +123,7 @@ function buildEndpointUrl(baseUrl: string, resource: string): string {
 function nativeRouteKey(model: NativeModelInfo): string | null {
 	const mapping = nativeMapping(model);
 	if (!mapping) return null;
-	const baseUrl = buildEndpointUrl(model.baseUrl, mapping.resource);
+	const baseUrl = buildEndpointUrl(model.baseUrl, mapping.resource, mapping.endpointPath);
 	if (!isAllowedProviderBaseUrl(baseUrl)) return null;
 	const routeUrl = new URL(baseUrl);
 	routeUrl.hostname = routeUrl.hostname.replace(/\.$/, "");
@@ -132,7 +146,7 @@ async function buildNativeEntryForModel(
 	const mapping = nativeMapping(model);
 	if (!mapping) return null;
 	const entryId = id ?? (mapping.routeLabel ? `${mapping.routeLabel}/native` : "native");
-	const baseUrl = buildEndpointUrl(model.baseUrl, mapping.resource);
+	const baseUrl = buildEndpointUrl(model.baseUrl, mapping.resource, mapping.endpointPath);
 	if (!isAllowedProviderBaseUrl(baseUrl)) return null;
 
 	signal?.throwIfAborted();

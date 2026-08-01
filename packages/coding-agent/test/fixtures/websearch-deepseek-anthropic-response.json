@@ -1,0 +1,90 @@
+{
+ "id": "b9203de2-8144-477d-a718-4332bdfd7494",
+ "model": "deepseek-v4-pro",
+ "object": "message",
+ "content": [
+  {
+   "type": "web_search_tool_result",
+   "content": [
+    {
+     "type": "web_search_tool_result",
+     "title": "Cargo",
+     "url": "https://rust.googlesource.com/cargo/+/a7c4206e1719d57cb7af323904e139067b95b8fa",
+     "page_age": null,
+     "encrypted_content": ""
+    },
+    {
+     "type": "web_search_tool_result",
+     "title": "Content - a8616ec39f7c6c5116b7d1f76e2e11bad6e1da8a - 01cdc48/RELEASES.md",
+     "url": "https://archive.softwareheritage.org/browse/content/sha1_git:a8616ec39f7c6c5116b7d1f76e2e11bad6e1da8a/?path=RELEASES.md&release=1.80.1&snapshot_id=ab7bdd9263d0dfa5e75bfba61e2db70acc84f140",
+     "page_age": null,
+     "encrypted_content": ""
+    },
+    {
+     "type": "web_search_tool_result",
+     "title": "Announcing Rust 1.80.0 | Rust Blog",
+     "url": "https://blog.rust-lang.org/2024/07/25/Rust-1.80.0/",
+     "page_age": null,
+     "encrypted_content": ""
+    },
+    {
+     "type": "web_search_tool_result",
+     "title": "Rust 1.80 adds lazy types",
+     "url": "https://www.infoworld.com/article/3477620/rust-1-80-adds-lazy-types.html",
+     "page_age": null,
+     "encrypted_content": ""
+    },
+    {
+     "type": "web_search_tool_result",
+     "title": "Diff - 642ab11a489968591d922106dca63ead419e7c8a^! - rust-clippy",
+     "url": "https://rust.googlesource.com/rust-clippy/+/642ab11a489968591d922106dca63ead419e7c8a%5E%21/",
+     "page_age": null,
+     "encrypted_content": ""
+    },
+    {
+     "type": "web_search_tool_result",
+     "title": "459120d98364cfacae9812be38f2d6557ec70120 - rust",
+     "url": "https://rust.googlesource.com/rust/+/459120d98364cfacae9812be38f2d6557ec70120",
+     "page_age": null,
+     "encrypted_content": ""
+    },
+    {
+     "type": "web_search_tool_result",
+     "title": "Rust 1.80 Adds Support for Lazy Statics, Extends Ranges in Patterns, and More",
+     "url": "https://www.infoq.com:443/news/2024/08/rust-1-80-lazy-globals/?topicPageSponsorship=d44a6abf-cdfe-4f41-b43a-b99153ea03f1",
+     "page_age": null,
+     "encrypted_content": ""
+    },
+    {
+     "type": "web_search_tool_result",
+     "title": "Rust 语言 1.80 稳定版发布：新增 LazyCell / LazyLock 类型，可按需即时加载资源增强效率",
+     "url": "https://www.ithome.com/0/784/825.htm",
+     "page_age": null,
+     "encrypted_content": ""
+    },
+    {
+     "type": "web_search_tool_result",
+     "title": "chore(deps): Update Rust Stable to v1.80 (#47) · crate-ci/codegenrs@75e77ba",
+     "url": "https://github.com/crate-ci/codegenrs/commit/75e77ba94d4c7909395a86bef8437063384e82b3",
+     "page_age": null,
+     "encrypted_content": ""
+    },
+    {
+     "type": "web_search_tool_result",
+     "title": "[Bug 2076206] [NEW] Upgrade Rust to 1.80.0",
+     "url": "https://lists.ubuntu.com/archives/foundations-bugs/2024-August/520198.html",
+     "page_age": null,
+     "encrypted_content": ""
+    }
+   ]
+  },
+  {
+   "type": "text",
+   "text": "# Rust 1.80.0 Release Notes\n\n**Released:** July 25, 2024 | **Patch:** [1.80.1](https://github.com/rust-lang/rust/pull/128635) (August 8, 2024)\n\n---\n\n## 🔤 Language\n\n- **`LazyCell` & `LazyLock` stabilized** — delay data initialization until first access. `LazyLock` is thread-safe (usable in `static`), while `LazyCell` is for single-threaded contexts. This completes the integration of the popular `la"
+  }
+ ],
+ "usage": {
+  "input_tokens": 0,
+  "output_tokens": 0
+ }
+}

@@ -4,8 +4,9 @@ import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../types.ts";
 
 const FLAG_NAME = "no-recommended-models";
+// Only implicit fallbacks auto-switch. A `settings` provenance means the user explicitly
+// configured a system default model, which must be respected rather than overridden.
 const AUTO_SWITCH_PROVENANCE = new Set<NonNullable<SessionStartEvent["initialModelProvenance"]>>([
-	"settings",
 	"provider-default",
 	"first-available",
 ]);

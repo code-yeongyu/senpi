@@ -23,13 +23,15 @@ afterEach(() => {
 });
 
 describe("release package versioning", () => {
-	it("updates the pty workspace during lockstep releases", () => {
+	it("updates the pty, client, and protocol workspaces during lockstep releases", () => {
 		// Given
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-release-versioning-"));
 		for (const file of [
 			"packages/ai/package.json",
 			"packages/agent/package.json",
+			"packages/client/package.json",
 			"packages/coding-agent/package.json",
+			"packages/protocol/package.json",
 			"packages/server/package.json",
 			"packages/pty/package.json",
 			"packages/senpi-codemode/package.json",
@@ -53,8 +55,18 @@ describe("release package versioning", () => {
 		const ptyPackage = JSON.parse(
 			readFileSync(join(tempDir, "packages", "pty", "package.json"), "utf8"),
 		);
+		const clientPackage = JSON.parse(
+			readFileSync(join(tempDir, "packages", "client", "package.json"), "utf8"),
+		);
+		const protocolPackage = JSON.parse(
+			readFileSync(join(tempDir, "packages", "protocol", "package.json"), "utf8"),
+		);
 		assert.equal(ptyPackage.version, "2099.1.2");
+		assert.equal(clientPackage.version, "2099.1.2");
+		assert.equal(protocolPackage.version, "2099.1.2");
 		assert.ok(logs.includes("  packages/pty/package.json: 0.0.0 -> 2099.1.2"));
+		assert.ok(logs.includes("  packages/client/package.json: 0.0.0 -> 2099.1.2"));
+		assert.ok(logs.includes("  packages/protocol/package.json: 0.0.0 -> 2099.1.2"));
 	});
 });
 

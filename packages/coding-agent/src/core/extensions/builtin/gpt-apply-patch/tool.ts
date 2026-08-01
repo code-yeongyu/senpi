@@ -61,12 +61,42 @@ function renderTextResult(
 	theme: ApplyPatchTheme,
 ): Container {
 	const component = new Container();
-	const text = result.content
+	const text = resultText(result);
+	if (text) component.addChild(new Text(theme.fg("toolOutput", text), 0, 0));
+	return component;
+}
+
+function resultText(result: AgentToolResult<ApplyPatchToolDetails | undefined>): string {
+	return result.content
 		.filter((block) => block.type === "text")
 		.map((block) => block.text)
 		.filter((value) => typeof value === "string" && value.length > 0)
 		.join("\n");
-	if (text) component.addChild(new Text(theme.fg("toolOutput", text), 0, 0));
+}
+
+function renderFailureBox(
+	result: AgentToolResult<ApplyPatchToolDetails>,
+	cwd: string,
+	expanded: boolean,
+	theme: ApplyPatchTheme,
+): Container {
+	const patchResult = result.details?.result;
+	if (!patchResult) return renderTextResult(result, theme);
+	const component = new Container();
+	const appliedCount = patchResult.appliedFiles.length;
+	const title = appliedCount > 0 ? "Patch partially failed" : "Patch failed";
+	const box = new Box(1, 1, (text: string) => theme.bg("toolErrorBg", text));
+	box.addChild(new Text(theme.fg("toolTitle", theme.bold(title)), 0, 0));
+	if (result.details.preview) {
+		box.addChild(new Spacer(1));
+		box.addChild(new Text(renderPatchPreview(result.details.preview, cwd, theme, expanded), 0, 0));
+	}
+	const text = resultText(result);
+	if (text) {
+		box.addChild(new Spacer(1));
+		box.addChild(new Text(theme.fg("toolOutput", text), 0, 0));
+	}
+	component.addChild(box);
 	return component;
 }
 
@@ -129,6 +159,9 @@ export function createApplyPatchTool(variant: "freeform" | "json" = "freeform"):
 			return new Text(theme.fg("toolTitle", theme.bold(text)), 0, 0);
 		},
 		renderResult(result, options, theme, context) {
+			if (context.isError && result.details?.result?.failures.length) {
+				return renderFailureBox(result as AgentToolResult<ApplyPatchToolDetails>, context.cwd, true, theme);
+			}
 			if (result.details?.preview) {
 				const expanded = true;
 				return renderPreviewBox(

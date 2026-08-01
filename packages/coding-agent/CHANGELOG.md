@@ -14,6 +14,159 @@
 
 ### Removed
 
+## [2026.8.1] - 2026-08-01
+
+### New Features
+
+- Add model-optimized prompt presets for `deepseek-v4-flash`,
+  `deepseek-v4-flash-0731`, and `deepseek-v4-pro`. The presets use typed
+  family rules over the shared dynamic prompt core to preserve harness
+  authority, todo discipline, grounded missing-information handling, and the
+  distinct concise-versus-deliberative reasoning behavior expected from each
+  DeepSeek V4 variant
+  ([#593](https://github.com/code-yeongyu/senpi/pull/593)).
+
+- Add DeepSeek's official API as a first-party `web_search` provider and route
+  official `deepseek-v4-*` models to the native DeepSeek search tool only when
+  the active model provider is actually `deepseek`. The integration uses the
+  Anthropic-compatible Messages endpoint, normalizes native citations and
+  results into Senpi's common search format, and prevents proxied or foreign
+  models from accidentally binding the DeepSeek route
+  ([#595](https://github.com/code-yeongyu/senpi/pull/595)).
+
+- Animate visible todo rows when they complete inside the still-active phase.
+  The widget reuses the code-point-safe bounded strikethrough reveal, keeps the
+  next active task highlighted, skips restored and prior-phase completions,
+  and disposes its unreferenced timer after the short animation finishes
+  ([#602](https://github.com/code-yeongyu/senpi/pull/602)).
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Override the development/build-time PostCSS dependency to patched `8.5.18`,
+  removing the repository's high-severity
+  [GHSA-r28c-9q8g-f849](https://github.com/advisories/GHSA-r28c-9q8g-f849)
+  path-traversal advisory without changing runtime package behavior or adding
+  lifecycle scripts
+  ([#601](https://github.com/code-yeongyu/senpi/pull/601)).
+
+- Reduce large-session terminal rendering work by reusing normalized line
+  strings across frames and making viewport-bounded normalization and diffing
+  the default. The renderer retains full fallback passes for resize and
+  recovery paths, preserves image handling, bounds memoized state to the live
+  transcript, and keeps output behavior unchanged while restoring cheap
+  reference-equality comparisons
+  ([#604](https://github.com/code-yeongyu/senpi/pull/604)).
+
+- Translate the remaining user-visible risky-model warning and tracked Korean
+  fixtures to English while preserving wide-character, UTF-8 framing, IME,
+  Markdown, and terminal-width coverage with equivalent non-Korean CJK sample
+  data. No identifiers, settings keys, or runtime control flow changed
+  ([#613](https://github.com/code-yeongyu/senpi/pull/613)).
+
+- Refresh the model inventory surfaced by `senpi --list-models` and model
+  selection from the current OpenRouter, Vercel AI Gateway, Z.AI, and Z.AI
+  Coding CN catalogs. The update removes retired OpenRouter batch aliases and
+  three unavailable Z.AI model IDs, adds
+  `thinkingmachines/inkling-small`,
+  `deepseek/deepseek-v4-flash-0731`, and
+  `glm-5.2-highspeed[1m]`, moves both Z.AI provider defaults and browser key
+  validation to surviving `glm-5.2`, and adds a catalog-membership guard so
+  external removals cannot silently strand a provider default.
+
+### Fixed
+
+- Treat explicit model reasoning metadata as the single source of truth for
+  `xhigh` and `max` support. The model picker, favorite cycling, and provider
+  request path now agree that omitted mapped levels are unsupported, `null`
+  vetoes inference, and model-ID heuristics apply only when no map exists
+  ([#586](https://github.com/code-yeongyu/senpi/pull/586) by
+  [@realsigridjin](https://github.com/realsigridjin)).
+
+- Complete legacy goal-store migration without rewriting current-format goals
+  or overwriting an existing destination. Legacy normalization is restricted
+  to legacy reads, migration derives the correct legacy directory for session
+  and no-session layouts, publication is atomic, and inert wire-compatible
+  fields such as `tokenBudget` survive ordinary current-store round trips
+  ([#587](https://github.com/code-yeongyu/senpi/pull/587) by
+  [@realsigridjin](https://github.com/realsigridjin)).
+
+- Scope automatic native web-search route discovery to the active model's
+  provider for every provider family, preventing unrelated models from
+  inheriting routes such as `z-ai/native`. Search progress labels also stop
+  exposing the internal `(max N)` planning suffix while retaining result-count
+  progress and explicit user-configured routes
+  ([#592](https://github.com/code-yeongyu/senpi/pull/592)).
+
+- Preserve the user's preferred reasoning effort across `/model`, Ctrl+P, and
+  favorite-model switches. Senpi now separates the remembered global
+  preference from the effective level clamped for the current model, so
+  temporarily selecting a lower-capability model or a favorite override no
+  longer permanently replaces a preference such as `max`
+  ([#594](https://github.com/code-yeongyu/senpi/pull/594)).
+
+- Stabilize Codex prompt caching by applying the official stable affinity tuple
+  to both SSE and WebSocket requests. Long-running sessions retain one
+  `prompt_cache_key`, `session-id`, `thread-id`, and `x-client-request-id`
+  identity instead of intermittently re-sending large uncached histories;
+  explicit no-retention requests still disable affinity
+  ([#597](https://github.com/code-yeongyu/senpi/pull/597)).
+
+- Measure the builtin TPS indicator with a monotonic clock rather than wall
+  time. Backward system-clock adjustments can no longer produce a
+  non-positive interval that silently suppresses a valid throughput
+  notification, while stream-open timing and tool-wait exclusion remain
+  unchanged
+  ([#598](https://github.com/code-yeongyu/senpi/pull/598)).
+
+- Show the prominent high-reasoning warning only once per sensitive
+  provider/model identity during an `AgentSession`. Cycling among `xhigh`,
+  `max`, and lower efforts or switching away and back no longer re-arms the
+  same warning, while selecting a different sensitive model still produces its
+  own first warning
+  ([#599](https://github.com/code-yeongyu/senpi/pull/599)).
+
+- Let Codex sessions recover from transient WebSocket fallback instead of
+  remaining pinned to SSE for the rest of the process. Requests inside the
+  60-second degradation window continue safely on SSE, later fresh requests
+  can probe WebSocket, cleanup clears fallback state, and potentially billed
+  started responses are never replayed
+  ([#600](https://github.com/code-yeongyu/senpi/pull/600)).
+
+- Preserve rich detached `eval` peeks from the bundled codemode extension,
+  including the submitted code and title, live output, phase, structured
+  status events, nested tool-call summaries, elapsed duration, and structured
+  displays. Terminal settlement is first-writer-wins and an explicit
+  cancellation remains authoritative over a late kernel completion
+  ([#603](https://github.com/code-yeongyu/senpi/pull/603)).
+
+- Surface failed and partially failed `apply_patch` operations as actual tool
+  errors to both the model loop and interactive renderer. Complete failures no
+  longer remain styled as a successful or indefinitely applying patch, while
+  partial results retain successful diffs together with concrete recovery
+  guidance for the failed operations
+  ([#605](https://github.com/code-yeongyu/senpi/pull/605)).
+
+- Suppress byte-identical monitor notification batches before they wake an
+  idle session. Repeated status redraws from commands such as
+  `gh pr checks --watch` no longer replay the full agent context every refresh;
+  genuinely changed output still resets duplicate suppression, and explicit
+  `rearm` keeps its existing wake-budget semantics
+  ([#612](https://github.com/code-yeongyu/senpi/pull/612)).
+
+- Respect an explicitly saved system `defaultModel` when the
+  `recommended-models` builtin starts. Automatic recommendation switching now
+  applies only to implicit `provider-default` and `first-available` fallback
+  selections; models chosen through saved settings, CLI input, or scoped
+  configuration are kept without a notification or persistence write that
+  could overwrite the user's choice
+  ([#625](https://github.com/code-yeongyu/senpi/pull/625)).
+
+### Removed
+
 ## [2026.7.31-2] - 2026-07-31
 
 ### New Features

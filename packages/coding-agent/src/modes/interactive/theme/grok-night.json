@@ -39,6 +39,7 @@
 		"thinkingText": "label",
 
 		"selectedBg": "selected",
+		"scrollbarThumb": "#3a3a4a",
 		"userMessageBg": "altRow",
 		"userMessageText": "gnFg",
 		"customMessageBg": "highlight",

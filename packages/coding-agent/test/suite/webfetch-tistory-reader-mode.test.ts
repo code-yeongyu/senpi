@@ -45,38 +45,38 @@ function tistoryFixtureHtml(): string {
 	return `<!doctype html>
 		<html>
 			<head>
-				<title>관리자 메뉴가 제목을 이기면 안 됨</title>
-				<meta name="description" content="티스토리 블로그 홍보 문구">
+				<title>Admin menu must not beat the title</title>
+				<meta name="description" content="Tistory blog promotional tagline">
 			</head>
 			<body class="tt-body-page">
 				<header>
-					<a href="/manage">관리자</a>
-					<a href="/category">분류 전체보기</a>
+					<a href="/manage">Manage</a>
+					<a href="/category">View all categories</a>
 				</header>
 				<section class="sidebar">
-					<h2>최근 글</h2>
-					<p>관련 없는 사이드바 설명이 길게 들어가서 리더가 이 영역을 본문으로 착각하면 안 됩니다.</p>
+					<h2>Recent posts</h2>
+					<p>A long irrelevant sidebar description must not make the reader mistake this area for the body.</p>
 				</section>
 				<div id="content">
-					<h1 class="tit_post">티스토리 본문을 읽어야 합니다</h1>
+					<h1 class="tit_post">We must read the Tistory article body</h1>
 					<div class="entry-content contents_style">
 						<div class="article_view tt_article_useless_p_margin">
-							<p data-ke-size="size16">첫 번째 본문 문장은 짧은 티스토리 글에서도 반드시 남아야 합니다.</p>
-							<p data-ke-size="size16">두 번째 본문 문장은 카테고리나 관련 글보다 우선되어야 합니다.</p>
+							<p data-ke-size="size16">The first body sentence must remain even in a short Tistory post.</p>
+							<p data-ke-size="size16">The second body sentence must take precedence over categories or related posts.</p>
 							<figure data-ke-type="image">
-								<figcaption>본문 이미지 설명도 보존됩니다.</figcaption>
+								<figcaption>Body image captions are preserved too.</figcaption>
 							</figure>
 						</div>
 						<div class="another_category">
-							<h4>다른 글 보기</h4>
+							<h4>See other posts</h4>
 							<ul>
-								<li>관련 글 제목 하나</li>
-								<li>관련 글 제목 둘</li>
+								<li>Related post title one</li>
+								<li>Related post title two</li>
 							</ul>
 						</div>
 					</div>
 				</div>
-				<footer>구독하기 푸터와 방명록 링크</footer>
+				<footer>Subscribe footer and guestbook link</footer>
 				<script>window.tistoryTracker = true;</script>
 			</body>
 		</html>`;
@@ -86,39 +86,39 @@ function titlePriorityFixtureHtml(): string {
 	return `<!doctype html>
 		<html>
 			<head>
-				<title>관리자 메뉴가 제목을 이기면 안 됨</title>
-				<meta name="description" content="티스토리 블로그 홍보 문구">
+				<title>Admin menu must not beat the title</title>
+				<meta name="description" content="Tistory blog promotional tagline">
 			</head>
 			<body class="tt-body-page">
 				<header>
-					<h1>블로그 이름</h1>
-					<a href="/manage">관리자</a>
-					<a href="/category">분류 전체보기</a>
+					<h1>Blog name</h1>
+					<a href="/manage">Manage</a>
+					<a href="/category">View all categories</a>
 				</header>
 				<section class="sidebar">
-					<h2>최근 글</h2>
-					<p>관련 없는 사이드바 설명이 길게 들어가서 리더가 이 영역을 본문으로 착각하면 안 됩니다.</p>
+					<h2>Recent posts</h2>
+					<p>A long irrelevant sidebar description must not make the reader mistake this area for the body.</p>
 				</section>
 				<div id="content">
-					<h1 class="tit_post">티스토리 본문을 읽어야 합니다</h1>
+					<h1 class="tit_post">We must read the Tistory article body</h1>
 					<div class="entry-content contents_style">
 						<div class="article_view tt_article_useless_p_margin">
-							<p data-ke-size="size16">첫 번째 본문 문장은 짧은 티스토리 글에서도 반드시 남아야 합니다.</p>
-							<p data-ke-size="size16">두 번째 본문 문장은 카테고리나 관련 글보다 우선되어야 합니다.</p>
+							<p data-ke-size="size16">The first body sentence must remain even in a short Tistory post.</p>
+							<p data-ke-size="size16">The second body sentence must take precedence over categories or related posts.</p>
 							<figure data-ke-type="image">
-								<figcaption>본문 이미지 설명도 보존됩니다.</figcaption>
+								<figcaption>Body image captions are preserved too.</figcaption>
 							</figure>
 						</div>
 						<div class="another_category">
-							<h4>다른 글 보기</h4>
+							<h4>See other posts</h4>
 							<ul>
-								<li>관련 글 제목 하나</li>
-								<li>관련 글 제목 둘</li>
+								<li>Related post title one</li>
+								<li>Related post title two</li>
 							</ul>
 						</div>
 					</div>
 				</div>
-				<footer>구독하기 푸터와 방명록 링크</footer>
+				<footer>Subscribe footer and guestbook link</footer>
 			</body>
 		</html>`;
 }
@@ -128,15 +128,15 @@ function newlineFixtureHtml(): string {
 		<html>
 			<body>
 				<div class="article_view">
-					<h1>줄바꿈 보존</h1>
-					<p><span>첫 줄</span><br><span>둘째 줄</span></p>
-					<p><span>새 문단</span> <strong>강조</strong></p>
+					<h1>Preserve line breaks</h1>
+					<p><span>First line</span><br><span>Second line</span></p>
+					<p><span>New paragraph</span> <strong>emphasis</strong></p>
 					<ul>
-						<li><span>첫 항목</span></li>
-						<li><span>둘째 항목</span></li>
+						<li><span>First item</span></li>
+						<li><span>Second item</span></li>
 					</ul>
 					<table>
-						<tr><td>왼쪽 칸</td><td>오른쪽 칸</td></tr>
+						<tr><td>Left cell</td><td>Right cell</td></tr>
 					</table>
 				</div>
 			</body>
@@ -169,15 +169,15 @@ describe("webfetch Tistory reader-mode cleanup", () => {
 		const text = textContent(result);
 
 		// then
-		expect(text).toContain("# 티스토리 본문을 읽어야 합니다");
-		expect(text).toContain("첫 번째 본문 문장은");
-		expect(text).toContain("두 번째 본문 문장은");
-		expect(text).toContain("본문 이미지 설명도 보존됩니다");
-		expect(text).not.toContain("관리자 메뉴가 제목을 이기면 안 됨");
-		expect(text).not.toContain("분류 전체보기");
-		expect(text).not.toContain("최근 글");
-		expect(text).not.toContain("관련 글 제목");
-		expect(text).not.toContain("구독하기 푸터");
+		expect(text).toContain("# We must read the Tistory article body");
+		expect(text).toContain("The first body sentence must remain");
+		expect(text).toContain("The second body sentence must take precedence");
+		expect(text).toContain("Body image captions are preserved too");
+		expect(text).not.toContain("Admin menu must not beat the title");
+		expect(text).not.toContain("View all categories");
+		expect(text).not.toContain("Recent posts");
+		expect(text).not.toContain("Related post title");
+		expect(text).not.toContain("Subscribe footer");
 		expect(text).not.toContain("tistoryTracker");
 	});
 
@@ -193,11 +193,11 @@ describe("webfetch Tistory reader-mode cleanup", () => {
 		const text = textContent(result);
 
 		// then
-		expect(text).toContain("# 티스토리 본문을 읽어야 합니다");
-		expect(text).toContain("첫 번째 본문 문장은");
-		expect(text).toContain("두 번째 본문 문장은");
-		expect(text).not.toContain("블로그 이름");
-		expect(text).not.toContain("관련 없는 사이드바 설명");
+		expect(text).toContain("# We must read the Tistory article body");
+		expect(text).toContain("The first body sentence must remain");
+		expect(text).toContain("The second body sentence must take precedence");
+		expect(text).not.toContain("Blog name");
+		expect(text).not.toContain("irrelevant sidebar description");
 	});
 
 	it("#given Tistory title chrome #when fetching text #then prefers the article title over site chrome", async () => {
@@ -212,11 +212,11 @@ describe("webfetch Tistory reader-mode cleanup", () => {
 		const text = textContent(result);
 
 		// then
-		expect(text.startsWith("티스토리 본문을 읽어야 합니다")).toBe(true);
-		expect(text).toContain("첫 번째 본문 문장은");
-		expect(text).toContain("두 번째 본문 문장은");
-		expect(text).not.toContain("블로그 이름");
-		expect(text).not.toContain("관련 없는 사이드바 설명");
+		expect(text.startsWith("We must read the Tistory article body")).toBe(true);
+		expect(text).toContain("The first body sentence must remain");
+		expect(text).toContain("The second body sentence must take precedence");
+		expect(text).not.toContain("Blog name");
+		expect(text).not.toContain("irrelevant sidebar description");
 	});
 
 	it("#given Tistory text with inline spans and blocks #when fetching text #then preserves readable line breaks", async () => {
@@ -231,11 +231,11 @@ describe("webfetch Tistory reader-mode cleanup", () => {
 		const text = textContent(result);
 
 		// then
-		expect(text).toContain("줄바꿈 보존\n\n첫 줄\n둘째 줄\n\n새 문단 강조");
-		expect(text).toContain("첫 항목\n\n둘째 항목");
-		expect(text).toContain("왼쪽 칸\n오른쪽 칸");
+		expect(text).toContain("Preserve line breaks\n\nFirst line\nSecond line\n\nNew paragraph emphasis");
+		expect(text).toContain("First item\n\nSecond item");
+		expect(text).toContain("Left cell\nRight cell");
 		expect(text).not.toContain("\n\n\n");
-		expect(text).not.toContain("첫 줄둘째 줄");
+		expect(text).not.toContain("First lineSecond line");
 	});
 
 	it("#given literal HTML entity examples #when fetching markdown and text #then preserves one decoded layer only", async () => {

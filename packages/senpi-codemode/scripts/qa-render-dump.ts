@@ -88,8 +88,8 @@ if (fixture === undefined) throw new TypeError("--fixture is required");
 
 const input: EvalToolInput = {
 	language: "py",
-	code: fixture === "success" ? "config = read('/tmp/config.json')" : "print('한글출력테스트')",
-	title: fixture === "success" ? "load config" : "실패 셀",
+	code: fixture === "success" ? "config = read('/tmp/config.json')" : "print('korean-output-test')",
+	title: fixture === "success" ? "load config" : "failed cell",
 };
 const statusEvents =
 	fixture === "success"
@@ -99,8 +99,8 @@ const statusEvents =
 				{ op: "agent", id: "agent-success", status: "completed", durationMs: 1_200 },
 			]
 		: [
-				{ op: "read", path: "/tmp/설정.json", chars: 12 },
-				{ op: "write", path: "/tmp/결과.json", chars: 8 },
+				{ op: "read", path: "/tmp/settings.json", chars: 12 },
+				{ op: "write", path: "/tmp/result.json", chars: 8 },
 				{ op: "agent", id: "agent-error", status: "completed", durationMs: 700 },
 			];
 const details: EvalToolDetails = {
@@ -134,13 +134,13 @@ const details: EvalToolDetails = {
 	cells: [
 		{
 			index: 0,
-			title: fixture === "success" ? "load config" : "실패 셀",
+			title: fixture === "success" ? "load config" : "failed cell",
 			code: input.code,
 			language: "py",
 			output:
 				fixture === "success"
 					? "loaded configuration"
-					: "한글출력테스트와 아주 긴 오류 설명이 좁은 화면에서도 안전하게 줄바꿈되어야 합니다",
+					: "korean-output-test and this very long error description must wrap safely even on a narrow screen",
 			status: fixture === "success" ? "complete" : "error",
 			durationMs: fixture === "success" ? 1_250 : 900,
 			statusEvents,

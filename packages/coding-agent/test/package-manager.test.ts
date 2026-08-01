@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { PassThrough } from "node:stream";
@@ -774,6 +774,42 @@ Content`,
 			expect(runCommandSpy).toHaveBeenCalledWith("npm", ["install", "--omit=dev"], { cwd: targetDir });
 		});
 
+		it("should remove a newly created checkout when git clone fails", async () => {
+			const source = "git:github.com/user/repo";
+			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
+			vi.spyOn(packageManager as any, "runCommand").mockImplementation(async (...callArgs: unknown[]) => {
+				const [command, args] = callArgs as [string, string[]];
+				if (command === "git" && args[0] === "clone") {
+					mkdirSync(targetDir, { recursive: true });
+					throw new Error("simulated git clone failure");
+				}
+			});
+
+			await expect(packageManager.install(source)).rejects.toThrow("simulated git clone failure");
+
+			expect(existsSync(targetDir)).toBe(false);
+		});
+
+		it("should remove a newly cloned checkout when dependency installation fails", async () => {
+			const source = "git:github.com/user/repo";
+			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
+			vi.spyOn(packageManager as any, "runCommand").mockImplementation(async (...callArgs: unknown[]) => {
+				const [command, args] = callArgs as [string, string[]];
+				if (command === "git" && args[0] === "clone") {
+					mkdirSync(targetDir, { recursive: true });
+					writeFileSync(join(targetDir, "package.json"), JSON.stringify({ name: "repo", version: "1.0.0" }));
+					return;
+				}
+				if (command === "npm") {
+					throw new Error("simulated dependency install failure");
+				}
+			});
+
+			await expect(packageManager.install(source)).rejects.toThrow("simulated dependency install failure");
+
+			expect(existsSync(targetDir)).toBe(false);
+		});
+
 		it("should reconcile an existing git checkout to a pinned ref during install", async () => {
 			const source = "git:github.com/user/repo@v2";
 			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
@@ -1102,7 +1138,7 @@ Content`,
 			const events: ProgressEvent[] = [];
 			packageManager.setProgressCallback((event) => events.push(event));
 			const runCommand = vi
-				.spyOn(packageManager as any, "runCommand")
+				.spyOn(packageManager as unknown as PackageManagerInternals, "runCommand")
 				.mockRejectedValue(new Error("fixture npm install failed"));
 
 			await expect(packageManager.install("npm:fixture-package@1.0.0")).rejects.toThrow(
@@ -1118,18 +1154,14 @@ Content`,
 			const events: ProgressEvent[] = [];
 			packageManager.setProgressCallback((event) => events.push(event));
 			const runCommand = vi
-				.spyOn(packageManager as any, "runCommand")
+				.spyOn(packageManager as unknown as PackageManagerInternals, "runCommand")
 				.mockRejectedValue(new Error("fixture git clone failed"));
+			const source = "https://github.com/fixture/repository";
 
-			await expect(packageManager.install("https://github.com/fixture/repository")).rejects.toThrow(
-				"fixture git clone failed",
-			);
+			await expect(packageManager.install(source)).rejects.toThrow("fixture git clone failed");
 
+			expect(runCommand).toHaveBeenCalledWith("git", ["clone", source, expect.any(String)]);
 			expect(events.some((e) => e.type === "start" && e.action === "install")).toBe(true);
-			expect(runCommand).toHaveBeenCalledWith(
-				"git",
-				expect.arrayContaining(["clone", "https://github.com/fixture/repository"]),
-			);
 		});
 
 		it("should parse package source types from docs examples", () => {
@@ -1707,6 +1739,7 @@ Content`,
 		});
 
 		it("should resolve autoload-disabled package entries as positive-only without a global package", async () => {
+			vi.stubEnv("HOME", tempDir);
 			const pkgDir = join(tempDir, "positive-only-pkg");
 			mkdirSync(join(pkgDir, "extensions"), { recursive: true });
 			mkdirSync(join(pkgDir, "skills", "foo"), { recursive: true });

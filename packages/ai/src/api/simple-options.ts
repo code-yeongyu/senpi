@@ -147,6 +147,7 @@ export function buildBaseOptions(
 		signal: options?.signal,
 		abortServerSideFallback: options?.abortServerSideFallback,
 		apiKey: apiKey || options?.apiKey,
+		fetch: options?.fetch,
 		transport: options?.transport,
 		cacheRetention: options?.cacheRetention ?? model.cacheRetention,
 		sessionId: options?.sessionId,

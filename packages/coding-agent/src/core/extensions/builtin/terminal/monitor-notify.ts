@@ -83,6 +83,7 @@ export class MonitorNotifier {
 	#eventChars = 0;
 	#overflow = new Map<string, Overflow>();
 	#lastInjectionAt = new Map<string, number>();
+	#lastInjectedBatch = new Map<string, string>();
 	#timer: unknown;
 	#scheduledAt: number | undefined;
 	#consecutiveWakes = 0;
@@ -118,6 +119,7 @@ export class MonitorNotifier {
 		this.#wakeBudgetPaused = false;
 		this.#consecutiveWakes = 0;
 		this.#lastInjectionAt.delete(id);
+		this.#lastInjectedBatch.delete(id);
 	}
 
 	dispose(): void {
@@ -127,6 +129,7 @@ export class MonitorNotifier {
 		this.#events = [];
 		this.#eventChars = 0;
 		this.#overflow.clear();
+		this.#lastInjectedBatch.clear();
 	}
 
 	#recordOverflow(id: string): void {
@@ -171,23 +174,39 @@ export class MonitorNotifier {
 			return;
 		}
 
-		const selected = this.#events.filter((event) => ready.has(event.id));
+		const fingerprints = this.#batchFingerprints(ready);
+		const suppressedIds = new Set(
+			[...fingerprints]
+				.filter(([id, fingerprint]) => this.#lastInjectedBatch.get(id) === fingerprint)
+				.map(([id]) => id),
+		);
+		const injectedIds = new Set([...ready].filter((id) => !suppressedIds.has(id)));
+		const selected = this.#events.filter((event) => injectedIds.has(event.id));
 		const deferred = this.#events.filter((event) => !ready.has(event.id));
+		if (injectedIds.size === 0) {
+			this.#discardSuppressed(deferred, now, settings);
+			return;
+		}
 		const overflowCount = [...this.#overflow.values()]
-			.filter((overflow) => ready.has(overflow.id))
+			.filter((overflow) => injectedIds.has(overflow.id))
 			.reduce((total, overflow) => total + overflow.count, 0);
 		const reachesBudget = this.#consecutiveWakes + 1 >= settings.wakeBudget;
 		const pauseNotice = reachesBudget ? "Monitor paused - peek bash_output or re-arm this monitor." : "";
 		const content = this.#buildMessage(selected, overflowCount, pauseNotice, settings.maxCharsPerInjection);
 
 		delivery.send(content);
-		for (const id of ready) this.#lastInjectionAt.set(id, now);
+		for (const id of injectedIds) {
+			this.#lastInjectionAt.set(id, now);
+			this.#overflow.delete(id);
+			const fingerprint = fingerprints.get(id);
+			if (fingerprint === undefined) this.#lastInjectedBatch.delete(id);
+			else this.#lastInjectedBatch.set(id, fingerprint);
+		}
 		this.#events = deferred;
 		this.#eventChars = deferred.reduce(
 			(total, event) => total + `Monitor event(${event.description}): ${eventBody(event)}`.length,
 			0,
 		);
-		for (const id of ready) this.#overflow.delete(id);
 		this.#consecutiveWakes++;
 
 		if (reachesBudget) {
@@ -205,6 +224,28 @@ export class MonitorNotifier {
 	#scheduleNextRateLimit(ids: ReadonlySet<string>, now: number, settings: MonitorDeliverySettings): void {
 		const nextAt = Math.min(...[...ids].map((id) => (this.#lastInjectionAt.get(id) ?? now) + settings.rateLimitMs));
 		this.#schedule(Math.max(1, nextAt - now));
+	}
+
+	/** A ready monitor whose line-only batch matches its previous injection carries no new information. */
+	#batchFingerprints(ids: ReadonlySet<string>): Map<string, string> {
+		const fingerprints = new Map<string, string>();
+		for (const id of ids) {
+			if ((this.#overflow.get(id)?.count ?? 0) > 0) continue;
+			const batch = this.#events.filter((event) => event.id === id);
+			if (batch.length === 0 || batch.some((event) => event.type !== "line")) continue;
+			fingerprints.set(id, batch.map(eventBody).join("\n"));
+		}
+		return fingerprints;
+	}
+
+	#discardSuppressed(deferred: MonitorEvent[], now: number, settings: MonitorDeliverySettings): void {
+		this.#events = deferred;
+		this.#eventChars = deferred.reduce(
+			(total, event) => total + `Monitor event(${event.description}): ${eventBody(event)}`.length,
+			0,
+		);
+		const remainingIds = new Set([...deferred.map((event) => event.id), ...this.#overflow.keys()]);
+		if (remainingIds.size > 0) this.#scheduleNextRateLimit(remainingIds, now, settings);
 	}
 
 	#buildMessage(

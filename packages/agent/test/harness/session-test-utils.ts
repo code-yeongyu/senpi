@@ -3,6 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach } from "vitest";
+import { createInMemorySessionStore } from "../../src/harness/session/memory-store.ts";
+import { createSessionRepository } from "../../src/harness/session/repository.ts";
+import type { Session } from "../../src/harness/session/session.ts";
+
+export async function createInMemorySession(id?: string): Promise<Session> {
+	const store = createInMemorySessionStore();
+	return createSessionRepository({ store }).create({ id });
+}
 
 export function createUserMessage(text: string): AgentMessage {
 	return {
@@ -39,10 +47,6 @@ export function createTempDir(): string {
 	mkdirSync(dir, { recursive: true });
 	tempDirs.push(dir);
 	return dir;
-}
-
-export function getLatestTempDir(): string {
-	return tempDirs[tempDirs.length - 1]!;
 }
 
 afterEach(() => {

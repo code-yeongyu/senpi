@@ -1,5 +1,29 @@
 # changes
 
+## Failed apply_patch outcomes are explicit errors (2026-07-31)
+
+### What changed
+
+- `extension.ts`: completed `apply_patch` results with one or more failed operations now set the tool-result
+  `isError` flag, including partial successes where earlier file actions were already applied.
+- `tool.ts`: failed results render an error-background card titled `Patch failed` or
+  `Patch partially failed`, preserving both any successful diff preview and the recovery text.
+- Tests cover the model-facing error flag plus complete- and partial-failure TUI output.
+
+### Why
+
+- A failed operation was returned as a successful tool result, so the model did not receive an error signal.
+- The custom TUI renderer hid the failure text and could leave a completed failure labeled `Applying patch`.
+
+### Why extension system couldn't handle this
+
+- The error classification and renderer belong to the builtin `apply_patch` extension itself; no core agent-loop or
+  TUI change is required.
+
+### Expected merge conflict zones
+
+- LOW: `extension.ts` result-hook registration and `tool.ts` completed-result rendering.
+
 ## Source-backed apply_patch result patches (2026-07-21)
 
 ### What changed

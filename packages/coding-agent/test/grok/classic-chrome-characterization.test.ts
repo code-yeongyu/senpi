@@ -33,6 +33,7 @@ type HeaderFixture = {
 	headerContainer: Container;
 	loadedResourcesContainer: Container;
 	chatContainer: Container;
+	documentContainer: Container;
 	pendingMessagesContainer: Container;
 	statusContainer: Container;
 	hookStatusContainer: Container;
@@ -40,6 +41,7 @@ type HeaderFixture = {
 	editorContainer: Container;
 	widgetContainerBelow: Container;
 	footer: Container;
+	footerContainer: Container;
 	editor: Container;
 	renderWidgets(): void;
 	setupKeyHandlers(): void;
@@ -73,6 +75,13 @@ function createHeaderFixture(): HeaderFixture {
 	ui.setFocus = () => {};
 	ui.start = () => {};
 	ui.requestRender = () => {};
+	const headerContainer = new Container();
+	const loadedResourcesContainer = new Container();
+	const chatContainer = new Container();
+	const documentContainer = new Container();
+	documentContainer.addChild(headerContainer);
+	documentContainer.addChild(loadedResourcesContainer);
+	documentContainer.addChild(chatContainer);
 	return {
 		isInitialized: false,
 		registerSignalHandlers: () => {},
@@ -88,9 +97,10 @@ function createHeaderFixture(): HeaderFixture {
 		},
 		keybindings: {},
 		ui,
-		headerContainer: new Container(),
-		loadedResourcesContainer: new Container(),
-		chatContainer: new Container(),
+		headerContainer,
+		loadedResourcesContainer,
+		chatContainer,
+		documentContainer,
 		pendingMessagesContainer: new Container(),
 		statusContainer: new Container(),
 		hookStatusContainer: new Container(),
@@ -98,6 +108,7 @@ function createHeaderFixture(): HeaderFixture {
 		editorContainer: new Container(),
 		widgetContainerBelow: new Container(),
 		footer: new Container(),
+		footerContainer: new Container(),
 		editor: new Container(),
 		renderWidgets: () => {},
 		setupKeyHandlers: () => {},
@@ -127,6 +138,7 @@ function createClassicRuntime(): AgentSessionRuntime {
 				getOutputPad: () => 1,
 				getPackages: () => [],
 				getShowHardwareCursor: () => false,
+				getUiMode: () => "inline",
 				getSmoothStreaming: () => false,
 				getSmoothStreamingFps: () => 60,
 				getThemeSetting: () => "dark",
@@ -208,16 +220,14 @@ describe("classic chrome characterization", () => {
 		await init.call(fixture);
 
 		expect(fixture.ui.children).toEqual([
-			fixture.headerContainer,
-			fixture.loadedResourcesContainer,
-			fixture.chatContainer,
+			fixture.documentContainer,
 			fixture.pendingMessagesContainer,
 			fixture.statusContainer,
 			fixture.hookStatusContainer,
 			fixture.widgetContainerAbove,
 			fixture.editorContainer,
 			fixture.widgetContainerBelow,
-			fixture.footer,
+			fixture.footerContainer,
 		]);
 	});
 

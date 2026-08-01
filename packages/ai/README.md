@@ -874,7 +874,8 @@ for await (const event of s) {
 
 Every `AssistantMessage` includes a `stopReason` field that indicates how the generation ended:
 
-- `"stop"` - Normal completion, the model finished its response
+- `"pending"` - Only present in partial messages when we do not know what the stop reason will be
+- `"stop"` - This is the final message the model will produce this turn
 - `"length"` - Output hit the maximum token limit
 - `"toolUse"` - Model is calling tools and expects tool results
 - `"error"` - An error occurred during generation

@@ -9,6 +9,50 @@
 - Public `AgentSession.steer()` and `followUp()` now run the same correlated extension input/disposition admission as queued `prompt()` calls. Classic RPC and app-server steering preserve `source: "rpc"`, while compaction queue transfer reuses the same path without duplicate events.
 - `pi.sendMessage()` returns an identity-safe delivery receipt with cancellation and started/cancelled subscriptions. Queue clear, disposal, and dispatch failure revoke pending receipts without removing identical sibling messages.
 - Direct reload retires the old extension runner only after removed-extension notifications finish, so captured pre-reload APIs are usable during teardown and stale afterward.
+## Backfill: injected app-server turns (2026-08-01)
+
+### What changed
+
+- App-server clients can inject turns through the runtime and thread handlers while preserving the normal turn lifecycle.
+
+### Why
+
+- Remote session controllers need a first-class path that behaves like an ordinary user turn.
+
+### Why this cannot be expressed externally
+
+- Injection crosses app-server runtime, thread state, turn scheduling, and session event emission.
+
+### Expected merge conflict zones
+
+- `modes/app-server/runtime.ts`, `threads/handlers.ts`, and `threads/turn-runtime.ts`.
+
+## Supersede level-scoped high-reasoning warning deduplication (2026-07-31)
+
+### What changed
+
+- High-reasoning warnings are now deduplicated once per provider/model identity
+  for the lifetime of an `AgentSession`, rather than once per
+  provider/model/reasoning-level tuple.
+- Moving between `xhigh`, `max`, lower reasoning levels, or another model and
+  back does not append the same warning again.
+- A different sensitive provider/model identity still receives its own first
+  warning.
+
+### Why
+
+- The released provider/model/level behavior caused the large warning box to
+  reappear while the user was only changing reasoning effort. This follow-up
+  intentionally supersedes that earlier contract.
+
+### Why extension system couldn't handle this
+
+- Warning deduplication is session-owned state inside `AgentSession` and must
+  apply consistently before TUI and RPC consumers receive the event.
+
+### Expected merge conflict zones
+
+- LOW: `core/agent-session.ts` high-reasoning warning state and emission.
 
 ## Required-compaction recovery and queue chronology (2026-07-31)
 

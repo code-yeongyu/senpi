@@ -24,7 +24,10 @@ export default function (pi: ExtensionAPI) {
 	const finishActiveAssistantTiming = () => {
 		if (activeAssistantStartMs === null) return;
 
-		const elapsedMs = Date.now() - activeAssistantStartMs;
+		// Use the monotonic clock so a wall-clock jump backward (NTP skew or
+		// manual time change) between message_start and message_end cannot
+		// produce a non-positive interval that suppresses a valid TPS notice.
+		const elapsedMs = performance.now() - activeAssistantStartMs;
 		if (elapsedMs > 0) {
 			assistantElapsedMs += elapsedMs;
 		}
@@ -40,7 +43,7 @@ export default function (pi: ExtensionAPI) {
 		if (!isAssistantMessage(event.message)) return;
 
 		finishActiveAssistantTiming();
-		activeAssistantStartMs = Date.now();
+		activeAssistantStartMs = performance.now();
 	});
 
 	pi.on("message_end", (event) => {

@@ -411,6 +411,8 @@ export interface MarkdownOptions {
 	preserveOrderedListMarkers?: boolean;
 	/** Preserve source backslash escapes instead of normalizing escaped punctuation. */
 	preserveBackslashEscapes?: boolean;
+	/** Transform source Markdown before parsing, with the exact width available for content. */
+	transform?: (markdown: string, availableWidth: number) => string;
 }
 
 interface InlineStyleContext {
@@ -467,9 +469,10 @@ export class Markdown implements Component {
 
 		// Calculate available width for content (subtract horizontal padding)
 		const contentWidth = Math.max(1, width - this.paddingX * 2);
+		const text = this.options.transform?.(this.text, contentWidth) ?? this.text;
 
 		// Don't render anything if there's no actual text
-		if (!this.text || this.text.trim() === "") {
+		if (!text || text.trim() === "") {
 			const result: string[] = [];
 			// Update cache
 			this.cachedText = this.text;
@@ -479,7 +482,7 @@ export class Markdown implements Component {
 		}
 
 		// Replace tabs with 3 spaces for consistent rendering
-		const normalizedText = this.text.replace(/\t/g, "   ");
+		const normalizedText = text.replace(/\t/g, "   ");
 		const normalizedContentKey = contentKey(normalizedText);
 		const styleKey = this.defaultTextStyle ? objectId(this.defaultTextStyle) : -1;
 		const renderKey = [

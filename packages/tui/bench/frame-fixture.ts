@@ -1,5 +1,5 @@
 const ASCII_WORDS = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"] as const;
-const CJK_WORDS = ["漢字", "かな", "測定", "行", "東京", "서울"] as const;
+const CJK_WORDS = ["漢字", "かな", "測定", "行", "東京", "北京"] as const;
 
 export interface PercentileSummary {
 	readonly p50: number;

@@ -67,8 +67,8 @@ describe("app-server goal wire adapter", () => {
 		expect(loaded).not.toHaveProperty("tokenBudget");
 	});
 
-	it("normalizes legacy budget metadata out of runtime goal state", async () => {
-		// Given: a legacy-compatible goal object still carrying a numeric budget.
+	it("keeps an inert tokenBudget field in current-store reads", async () => {
+		// Given: a goal object still carrying a numeric compatibility budget.
 		const baseDir = await mkdtemp(join(tmpdir(), "senpi-goal-wire-"));
 		tempDirs.push(baseDir);
 		const ref: GoalStoreRef = { baseDir, threadId: "thread-budget" };
@@ -78,8 +78,9 @@ describe("app-server goal wire adapter", () => {
 		await writeGoal(ref, goal);
 		const loaded = await readGoal(ref);
 
-		// Then: the serialized compatibility field remains inert and never reactivates runtime budgeting.
-		expect(loaded).not.toHaveProperty("tokenBudget");
+		// Then: the compatibility field is preserved inert on current-store reads; legacy budget
+		// stripping happens only on the migration import path (covered by goal-store tests).
+		expect(loaded).toHaveProperty("tokenBudget", 8192);
 		expect(JSON.parse(await readFile(goalFilePath(ref), "utf8"))).toMatchObject({
 			goal: { tokenBudget: 8192 },
 		});

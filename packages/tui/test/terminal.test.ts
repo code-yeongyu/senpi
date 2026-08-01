@@ -207,15 +207,15 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		}
 	});
 
-	it("reassembles split Korean Buffer chunks before forwarding input", () => {
+	it("reassembles split multibyte Buffer chunks before forwarding input", () => {
 		const harness = setupNegotiation();
 		try {
-			harness.send(Buffer.from([0xed, 0x95]));
+			harness.send(Buffer.from([0xe4, 0xb8]));
 			assert.equal(harness.getInput(), undefined);
 
-			harness.send(Buffer.from([0x9c]));
+			harness.send(Buffer.from([0xad]));
 
-			assert.equal(harness.getInput(), "한");
+			assert.equal(harness.getInput(), "中");
 		} finally {
 			harness.cleanup();
 		}
@@ -282,9 +282,9 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 			assert.equal(harness.writes.includes("\x1b[>7u\x1b[?u\x1b[c"), false);
 			assert.equal(harness.writes.includes("\x1b[>4;2m"), false);
 
-			harness.send("한");
+			harness.send("中");
 
-			assert.equal(harness.getInput(), "한");
+			assert.equal(harness.getInput(), "中");
 
 			harness.cleanup();
 			assert.equal(harness.writes.includes("\x1b[<u"), false);

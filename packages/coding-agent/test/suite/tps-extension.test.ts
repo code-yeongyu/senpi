@@ -93,4 +93,30 @@ describe("tps builtin extension", () => {
 		expect(notifications[0]).toContain("3.0s");
 		expect(notifications[0]).not.toContain("21.4 tok/s");
 	});
+
+	it("reports TPS when wall clock jumps backward between message_start and message_end", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const notifications: string[] = [];
+		const ctx = createContext(notifications);
+		const harness = createHarness();
+		const message = createAssistantMessage(100);
+
+		await harness.emit("agent_start", { type: "agent_start" }, ctx);
+		vi.advanceTimersByTime(1_000);
+
+		await harness.emit("message_start", { type: "message_start", message }, ctx);
+		vi.advanceTimersByTime(1_000);
+		// Wall clock jumps backward (NTP adjustment / manual change) while
+		// monotonic time keeps moving forward.
+		vi.setSystemTime(0);
+		await harness.emit("message_end", { type: "message_end", message }, ctx);
+
+		await harness.emit("agent_end", { type: "agent_end", messages: [message] }, ctx);
+
+		expect(notifications).toHaveLength(1);
+		expect(notifications[0]).toContain("TPS 100.0 tok/s");
+		expect(notifications[0]).toContain("out 100");
+		expect(notifications[0]).toContain("1.0s");
+	});
 });

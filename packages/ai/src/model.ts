@@ -20,7 +20,8 @@ export interface Model<TApi extends Api> {
 	reasoning: boolean;
 	/**
 	 * Maps pi thinking levels to provider/model-specific values.
-	 * Missing keys use provider defaults. null marks a level as unsupported.
+	 * In a present map, omitting `xhigh` or `max` disables that extended tier; ordinary missing levels
+	 * use provider defaults. null marks any level as unsupported.
 	 */
 	thinkingLevelMap?: ThinkingLevelMap;
 	input: ("text" | "image" | "video")[];

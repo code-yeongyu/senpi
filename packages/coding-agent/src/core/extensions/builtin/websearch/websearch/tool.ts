@@ -51,10 +51,10 @@ async function configWithNativeRoute(
 
 function formatSearchProgressText(details: SearchProgressDetails): string {
 	if (details.currentProvider) {
-		return `Searching "${details.query}" via ${details.currentProvider} (max ${details.maxResults})`;
+		return `Searching "${details.query}" via ${details.currentProvider}`;
 	}
 	const route = details.providerLabels.length > 0 ? details.providerLabels.join(" -> ") : "configured providers";
-	return `Searching "${details.query}" via ${route} (max ${details.maxResults})`;
+	return `Searching "${details.query}" via ${route}`;
 }
 
 function searchErrorDetails(query: string, error: string, reason?: SearchErrorDetails["reason"]): SearchErrorDetails {

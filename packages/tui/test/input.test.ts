@@ -38,7 +38,7 @@ describe("Input component", () => {
 		it("does not overflow with wide CJK and fullwidth text", () => {
 			const width = 93;
 			const cases = [
-				"가나다라마바사아자차카타파하 한글 텍스트가 터미널 너비를 초과하면 크래시가 발생합니다 이것은 재현용 테스트입니다",
+				"中文汉字测试用于验证文本超出终端宽度时界面不会崩溃这是复现用的测试用例",
 				"これはテスト文章です。日本語のテキストが正しく表示されるかどうかを確認するためのサンプルテキストです。あいうえお",
 				"这是一段测试文本，用于验证中文字符在终端中的显示宽度是否被正确计算，如果不正确就会导致用户界面崩溃的问题",
 				"ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺ０１２３４５６７８９ａｂｃｄｅｆｇｈｉｊｋｌｍ",
@@ -71,7 +71,7 @@ describe("Input component", () => {
 		it("keeps the cursor visible when horizontally scrolling wide text", () => {
 			const input = new Input();
 			const width = 20;
-			const text = "가나다라마바사아자차카타파하";
+			const text = "中文汉字测试宽度文字";
 			input.setValue(text);
 			input.focused = true;
 			input.handleInput("\x01");

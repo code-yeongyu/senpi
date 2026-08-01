@@ -41,7 +41,7 @@
    ],
    "starting_state_reconstructed": true,
    "expected_behavior_after_fix": "throw: task not found; suggestion (did-you-mean) for the closest task; isError=true; state unchanged",
-   "observed_error_text_excerpt": "Errors: Task \"synthesize non-overlapping findings and current status\" not found\nRemaining items: none.\nOverall: 6/6 done, 0 open.\nActive phase 3/3 \"Report\" (1/1).\n  Acquire:\n    - [X] fetch 병현 stall-analysis markdown\n    - [X] locate sglang source repo/version used\n  Critical rev"
+   "observed_error_text_excerpt": "Errors: Task \"synthesize non-overlapping findings and current status\" not found\nRemaining items: none.\nOverall: 6/6 done, 0 open.\nActive phase 3/3 \"Report\" (1/1).\n  Acquire:\n    - [X] fetch Byeonghyeon stall-analysis markdown\n    - [X] locate sglang source repo/version used\n  Critical rev"
   },
   {
    "id": "fx02",
@@ -596,22 +596,22 @@
      {
       "phase": "Dockerfile",
       "items": [
-       "Dockerfile secret 제거 + 가드 반전 GREEN"
+       "remove Dockerfile secret + invert the guard GREEN"
       ]
      },
      {
       "phase": "Ship",
       "items": [
-       "커밋 + push + PR 생성",
-       "CI green + 머지(사용자 사전 승인: 이 작업 병합)",
-       "deploy-dev 트리거 관찰: Build Succeeded?"
+       "commit + push + create PR",
+       "CI green + merge (user pre-approved: merge this work)",
+       "observe deploy-dev trigger: Build Succeeded?"
       ],
       "phase2": "Verify"
      },
      {
       "phase": "Dockerfile",
       "items": [
-       "dev uptime 리셋 + memory 활성화 확인"
+       "reset dev uptime + verify memory activation"
       ],
       "items2": []
      }

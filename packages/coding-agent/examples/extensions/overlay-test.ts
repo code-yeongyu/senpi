@@ -103,7 +103,7 @@ class OverlayTestComponent implements Focusable {
 
 		// Edge cases - full width lines to test compositing at boundaries
 		lines.push(row(` ${th.fg("dim", "─── Edge Cases (borders should align) ───")}`));
-		lines.push(row(` Wide: ${th.fg("warning", "中文日本語한글テスト漢字繁體简体ひらがなカタカナ가나다라마바")}`));
+		lines.push(row(` Wide: ${th.fg("warning", "中文日本語汉字テスト漢字繁體简体ひらがなカタカナ中文汉字")}`));
 		lines.push(
 			row(
 				` Styled: ${th.fg("error", "RED")} ${th.fg("success", "GREEN")} ${th.fg("warning", "YELLOW")} ${th.fg("accent", "ACCENT")} ${th.fg("dim", "DIM")} ${th.fg("error", "more")} ${th.fg("success", "colors")}`,

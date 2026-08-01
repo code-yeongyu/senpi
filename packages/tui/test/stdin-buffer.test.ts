@@ -371,7 +371,7 @@ describe("StdinBuffer", () => {
 		});
 
 		it("should not emit an empty event when a Buffer chunk only contains a partial UTF-8 prefix", () => {
-			processInput(Buffer.from([0xed, 0x95]));
+			processInput(Buffer.from([0xe4, 0xb8]));
 			assert.deepStrictEqual(emittedSequences, []);
 		});
 
@@ -417,11 +417,11 @@ describe("StdinBuffer", () => {
 		});
 
 		it("should reset incomplete UTF-8 bytes on clear", () => {
-			processInput(Buffer.from([0xed, 0x95]));
+			processInput(Buffer.from([0xe4, 0xb8]));
 			buffer.clear();
-			processInput(Buffer.from([0x9c]));
+			processInput(Buffer.from([0xad]));
 
-			assert.notStrictEqual(emittedSequences.join(""), "한");
+			assert.notStrictEqual(emittedSequences.join(""), "中");
 		});
 	});
 
@@ -490,22 +490,22 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(emittedSequences, []);
 		});
 
-		it("should reassemble Korean paste content and an end marker split across Buffer chunks", () => {
-			const payload = Buffer.from("\x1b[200~한글\x1b[201~", "utf8");
+		it("should reassemble CJK paste content and an end marker split across Buffer chunks", () => {
+			const payload = Buffer.from("\x1b[200~中文\x1b[201~", "utf8");
 			processInput(payload.subarray(0, 9));
 			processInput(payload.subarray(9, payload.length - 3));
 			processInput(payload.subarray(payload.length - 3));
 
-			assert.deepStrictEqual(emittedPaste, ["한글"]);
+			assert.deepStrictEqual(emittedPaste, ["中文"]);
 			assert.ok(!emittedPaste.join("").includes("\uFFFD"));
 		});
 
-		it("should reassemble Hangul split across paste content Buffer chunks", () => {
+		it("should reassemble a CJK code point split across paste content Buffer chunks", () => {
 			processInput("\x1b[200~");
-			processInput(Buffer.from([0xed, 0x95]));
-			processInput(Buffer.concat([Buffer.from([0x9c]), Buffer.from("\x1b[201~")]));
+			processInput(Buffer.from([0xe4, 0xb8]));
+			processInput(Buffer.concat([Buffer.from([0xad]), Buffer.from("\x1b[201~")]));
 
-			assert.deepStrictEqual(emittedPaste, ["한"]);
+			assert.deepStrictEqual(emittedPaste, ["中"]);
 			assert.ok(!emittedPaste.join("").includes("\uFFFD"));
 		});
 
@@ -539,22 +539,22 @@ describe("StdinBuffer", () => {
 		});
 
 		it("should reset incomplete UTF-8 bytes on destroy", () => {
-			processInput(Buffer.from([0xed, 0x95]));
+			processInput(Buffer.from([0xe4, 0xb8]));
 			buffer.destroy();
-			processInput(Buffer.from([0x9c]));
+			processInput(Buffer.from([0xad]));
 
-			assert.notStrictEqual(emittedSequences.join(""), "한");
+			assert.notStrictEqual(emittedSequences.join(""), "中");
 		});
 	});
 
 	describe("UTF-8 Buffer Decoding", () => {
-		it("should reassemble a 3-byte Hangul syllable split across two Buffer chunks", () => {
-			processInput(Buffer.from([0xed, 0x95]));
+		it("should reassemble a 3-byte CJK code point split across two Buffer chunks", () => {
+			processInput(Buffer.from([0xe4, 0xb8]));
 			assert.deepStrictEqual(emittedSequences, []);
 
-			processInput(Buffer.from([0x9c]));
+			processInput(Buffer.from([0xad]));
 
-			assert.deepStrictEqual(emittedSequences, ["한"]);
+			assert.deepStrictEqual(emittedSequences, ["中"]);
 			assert.ok(!emittedSequences.join("").includes("\uFFFD"));
 		});
 
@@ -571,13 +571,13 @@ describe("StdinBuffer", () => {
 		});
 
 		it("should hold trailing incomplete UTF-8 bytes across flush until completion", () => {
-			processInput(Buffer.from([0xed, 0x95]));
+			processInput(Buffer.from([0xe4, 0xb8]));
 			assert.deepStrictEqual(emittedSequences, []);
 			assert.deepStrictEqual(buffer.flush(), []);
 
-			processInput(Buffer.from([0x9c]));
+			processInput(Buffer.from([0xad]));
 
-			assert.deepStrictEqual(emittedSequences, ["한"]);
+			assert.deepStrictEqual(emittedSequences, ["中"]);
 			assert.ok(!emittedSequences.join("").includes("\uFFFD"));
 		});
 

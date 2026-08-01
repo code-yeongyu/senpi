@@ -87,15 +87,21 @@ describe("useLegacyMuxRender", () => {
 });
 
 describe("viewportRenderEnabled", () => {
-	it("returns true only when the viewport render switch is exactly 1", () => {
+	it("defaults to enabled when the viewport render switch is unset", () => {
 		clearEnv();
-		process.env.PI_TUI_VIEWPORT_RENDER = "1";
-		assert.equal(viewportRenderEnabled(), true);
 
-		for (const value of ["", "0", "true", "yes"] as const) {
+		assert.equal(viewportRenderEnabled(), true);
+	});
+
+	it("disables only when the viewport render switch is exactly 0", () => {
+		clearEnv();
+		process.env.PI_TUI_VIEWPORT_RENDER = "0";
+		assert.equal(viewportRenderEnabled(), false);
+
+		for (const value of ["1", "", "true", "yes"] as const) {
 			process.env.PI_TUI_VIEWPORT_RENDER = value;
 
-			assert.equal(viewportRenderEnabled(), false, value);
+			assert.equal(viewportRenderEnabled(), true, value);
 		}
 	});
 });

@@ -74,6 +74,7 @@ function createMockContext(overrides: { hasUI?: boolean; ui?: ExtensionUIContext
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
 		model: undefined,
 		serviceTier: undefined,
+		scopedModels: [],
 		isIdle: vi.fn().mockReturnValue(true),
 		signal: undefined,
 		abort: vi.fn(),

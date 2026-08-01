@@ -1,9 +1,4 @@
-import {
-	type AgentToolResult,
-	type AgentToolUpdateCallback,
-	type ExtensionContext,
-	sanitizeTerminalLabel,
-} from "@code-yeongyu/senpi";
+import { type AgentToolResult, type ExtensionContext, sanitizeTerminalLabel } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
 import { isReservedToolName, runReservedTool } from "../bridges/reserved-dispatch.ts";
@@ -13,15 +8,12 @@ import type { CompletionRequest, CompletionResult } from "../completion/handler.
 import { handleCompletionToolCall } from "../completion/tool-bridge.ts";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
 import { boundToolCallArgs, capCodePoints, MAX_ENRICHED_TOOL_CALLS, toolCallResultPreview } from "./call-capture.ts";
-import {
-	type EvalImageResizer,
-	EvalOutputCollector,
-	type EvalOutputResult,
-	marshalToolResult,
-	toolResultIsError,
-} from "./image.ts";
+import { CellResultBuilder, type CellState } from "./cell-runtime.ts";
+import { type EvalImageResizer, marshalToolResult, toolResultIsError } from "./image.ts";
 import { upsertStatusEvent } from "./status-events.ts";
-import type { EvalKernel, EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
+import type { EvalKernel, EvalStatusEvent, EvalToolDetails } from "./types.ts";
+
+export type { CellState } from "./cell-runtime.ts";
 
 type ResolvedToolReply = {
 	readonly value: unknown;
@@ -37,22 +29,6 @@ type ToolCallEnrichment = {
 	readonly argsTruncated?: true;
 };
 
-const LIVE_OUTPUT_PREVIEW_LINES = 8;
-
-export interface CellState {
-	readonly input: EvalToolInput;
-	readonly signal: AbortSignal;
-	readonly onUpdate: AgentToolUpdateCallback<EvalToolDetails> | undefined;
-	readonly toolCalls: EvalToolDetails["toolCalls"] extends readonly (infer Item)[] ? Item[] : never;
-	readonly pendingBridgeCalls: Promise<void>[];
-	readonly statusEvents: EvalStatusEvent[];
-	active: boolean;
-	output: string;
-	phase: string | undefined;
-	durationMs: number;
-	status: "pending" | "running" | "complete" | "error";
-}
-
 export interface CellBridgeRuntime {
 	readonly executeTool: AgentExecuteTool;
 	readonly listTools?: () => readonly EvalSchemaToolInfo[];
@@ -67,46 +43,40 @@ export class CellHandler {
 	readonly #kernel: EvalKernel;
 	readonly #state: CellState;
 	readonly #runtime: CellBridgeRuntime;
-	readonly #output: EvalOutputCollector;
+	readonly #resultBuilder: CellResultBuilder;
 
 	constructor(kernel: EvalKernel, state: CellState, runtime: CellBridgeRuntime) {
 		this.#kernel = kernel;
 		this.#state = state;
 		this.#runtime = runtime;
 		const settings = runtime.settings.outputSink;
-		this.#output = new EvalOutputCollector({
+		this.#resultBuilder = new CellResultBuilder({
+			state,
 			headBytes: settings.headBytes,
 			maxColumns: settings.maxColumns,
 			model: runtime.ctx.model,
 			...(runtime.artifactPath === undefined ? {} : { artifactPath: runtime.artifactPath }),
 			...(runtime.imageResizer === undefined ? {} : { imageResizer: runtime.imageResizer }),
-			onChunk: (_aggregate, cell) => {
-				state.output = cell;
-				this.#emitUpdate(false);
-			},
 		});
-		state.status = "running";
-		this.#emitUpdate(false);
 	}
 
 	async handle(message: KernelToHostMessage): Promise<void> {
 		if (!this.#state.active) return;
 		switch (message.type) {
 			case "text":
-				this.#output.push(message.data);
+				this.#resultBuilder.push(message.data);
 				return;
 			case "phase":
-				this.#state.phase = message.title;
-				this.#emitUpdate(false);
+				this.#resultBuilder.setPhase(message.title);
 				return;
 			case "status":
 				this.#recordStatus(message.event);
 				return;
 			case "log":
-				this.#output.push(`${message.message}\n`);
+				this.#resultBuilder.push(`${message.message}\n`);
 				return;
 			case "display":
-				this.#output.display(message);
+				this.#resultBuilder.display(message);
 				return;
 			case "tool-call": {
 				const pending = this.#handleToolCall(message);
@@ -125,38 +95,19 @@ export class CellHandler {
 	}
 
 	async finalize(result: Extract<KernelToHostMessage, { type: "result" }>): Promise<AgentToolResult<EvalToolDetails>> {
-		this.#state.durationMs = result.durationMs;
-		if (result.ok) {
-			if (result.valueRepr) this.#output.push(`${result.valueRepr}\n`);
-			this.#state.status = "complete";
-		} else {
-			this.#output.push(`${result.error.message}\n`);
-			this.#state.status = "error";
-		}
-		return await this.#finish(!result.ok);
+		return await this.#resultBuilder.finalize(result);
 	}
 
 	async finalizeCancellation(error: Error): Promise<AgentToolResult<EvalToolDetails>> {
-		this.#output.push(`${error.message}\n`);
-		this.#state.status = "error";
-		return await this.#finish(true);
+		return await this.#resultBuilder.finalizeCancellation(error);
 	}
 
 	async flushOutput(): Promise<void> {
-		await this.#output.flush();
+		await this.#resultBuilder.flushOutput();
 	}
 
-	async #finish(isError: boolean): Promise<AgentToolResult<EvalToolDetails>> {
-		const output = await this.#output.finish();
-		this.#state.output = output.output;
-		const details = this.#details(output, isError);
-		this.#emitUpdate(isError);
-		const text =
-			output.output ||
-			(output.images.length > 0
-				? `(displayed ${output.images.length} image${output.images.length === 1 ? "" : "s"}; no text output)`
-				: "(no output)");
-		return { content: [{ type: "text", text }, ...output.images], details };
+	liveResult(): AgentToolResult<EvalToolDetails> {
+		return this.#resultBuilder.liveResult();
 	}
 
 	async #handleToolCall(message: Extract<KernelToHostMessage, { type: "tool-call" }>): Promise<void> {
@@ -202,7 +153,7 @@ export class CellHandler {
 					? { name: message.toolName, ok: true }
 					: { name: message.toolName, ok: false, error: result.error },
 			);
-			this.#emitUpdate(false);
+			this.#resultBuilder.emitUpdate(false);
 			return;
 		}
 		const capturedArgs = boundToolCallArgs(message.args);
@@ -268,7 +219,7 @@ export class CellHandler {
 				error: { message: text },
 			});
 		}
-		this.#emitUpdate(false);
+		this.#resultBuilder.emitUpdate(false);
 	}
 
 	#pushToolCall(
@@ -301,55 +252,6 @@ export class CellHandler {
 	#recordStatus(event: EvalStatusEvent): void {
 		if (!this.#runtime.settings.statusEvents) return;
 		upsertStatusEvent(this.#state.statusEvents, event);
-		this.#emitUpdate(false);
-	}
-
-	#details(output: EvalOutputResult | undefined, isError: boolean): EvalToolDetails {
-		const statusEvents = this.#state.statusEvents.length > 0 ? [...this.#state.statusEvents] : undefined;
-		return {
-			language: this.#state.input.language,
-			languages: [this.#state.input.language],
-			...(this.#state.input.title === undefined ? {} : { title: this.#state.input.title }),
-			durationMs: this.#state.durationMs,
-			toolCalls: [...this.#state.toolCalls],
-			truncated: output?.truncated ?? false,
-			...(isError ? { isError: true } : {}),
-			...(this.#state.phase === undefined ? {} : { phase: this.#state.phase }),
-			cells: [
-				{
-					index: 0,
-					...(this.#state.input.title === undefined ? {} : { title: this.#state.input.title }),
-					code: this.#state.input.code,
-					language: this.#state.input.language,
-					output: this.#state.output,
-					status: this.#state.status,
-					durationMs: this.#state.durationMs,
-					...(statusEvents === undefined ? {} : { statusEvents }),
-					...(output?.hasMarkdown ? { hasMarkdown: true } : {}),
-				},
-			],
-			...(statusEvents === undefined ? {} : { statusEvents }),
-			...(output === undefined || output.jsonOutputs.length === 0 ? {} : { jsonOutputs: output.jsonOutputs }),
-			...(output?.notice === undefined ? {} : { notice: output.notice }),
-			...(output?.meta === undefined ? {} : { meta: output.meta }),
-		};
-	}
-
-	#liveUpdateText(): string {
-		const title = this.#state.input.title === undefined ? "" : ` ${this.#state.input.title}`;
-		const aggregateOutput = this.#output.aggregateText();
-		const outputLines = aggregateOutput.split("\n");
-		const hasTrailingNewline = aggregateOutput.endsWith("\n");
-		if (hasTrailingNewline) outputLines.pop();
-		const output = `${outputLines.slice(-LIVE_OUTPUT_PREVIEW_LINES).join("\n")}${hasTrailingNewline ? "\n" : ""}`;
-		return `1/1 cells ${this.#state.status}\n[1] ${this.#state.input.language}${title} ${this.#state.status}${output.length === 0 ? "" : `\n${output}`}`;
-	}
-
-	#emitUpdate(isError: boolean): void {
-		if (!this.#state.active) return;
-		this.#state.onUpdate?.({
-			content: [{ type: "text", text: this.#liveUpdateText() }],
-			details: this.#details(undefined, isError),
-		});
+		this.#resultBuilder.emitUpdate(false);
 	}
 }

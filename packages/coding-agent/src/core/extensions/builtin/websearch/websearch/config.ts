@@ -24,6 +24,7 @@ const PROVIDERS: readonly SearchProvider[] = [
 	"tavily",
 	"brave",
 	"duckduckgo-html",
+	"deepseek",
 	"serper",
 	"google-cse",
 	"z-ai",

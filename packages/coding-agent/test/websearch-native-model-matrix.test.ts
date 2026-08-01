@@ -10,7 +10,7 @@ interface MatrixCase {
 	provider: string;
 	id: string;
 	baseUrl?: string;
-	expected: { provider: string; resource: string } | null;
+	expected: { provider: string; resource: string; baseUrl?: string } | null;
 }
 
 const registry: NativeModelRegistry = {
@@ -57,6 +57,30 @@ const MATRIX: readonly MatrixCase[] = [
 		baseUrl: "https://openrouter.example.com/v1",
 		expected: { provider: "anthropic", resource: "messages" },
 	},
+	// deepseek mapped -> deepseek/messages on the Anthropic-compatible route
+	{
+		provider: "deepseek",
+		id: "deepseek-v4-flash",
+		baseUrl: "https://api.deepseek.com",
+		expected: {
+			provider: "deepseek",
+			resource: "messages",
+			baseUrl: "https://api.deepseek.com/anthropic/v1/messages",
+		},
+	},
+	{
+		provider: "deepseek",
+		id: "deepseek-v4-pro",
+		baseUrl: "https://api.deepseek.com",
+		expected: {
+			provider: "deepseek",
+			resource: "messages",
+			baseUrl: "https://api.deepseek.com/anthropic/v1/messages",
+		},
+	},
+	// deepseek null (non-v4 ids)
+	{ provider: "deepseek", id: "deepseek-v3", baseUrl: "https://api.deepseek.com", expected: null },
+	{ provider: "deepseek", id: "deepseek-chat", baseUrl: "https://api.deepseek.com", expected: null },
 ];
 
 describe("vendored websearch native model matrix", () => {
@@ -79,7 +103,7 @@ describe("vendored websearch native model matrix", () => {
 			if (testCase.expected) {
 				expect(entry).not.toBeNull();
 				expect(entry?.provider).toBe(testCase.expected.provider);
-				expect(entry?.baseUrl).toBe(`${model.baseUrl}/${testCase.expected.resource}`);
+				expect(entry?.baseUrl).toBe(testCase.expected.baseUrl ?? `${model.baseUrl}/${testCase.expected.resource}`);
 				expect(entry?.model).toBe(testCase.id);
 				expect(entry?.apiKey).toBe("native-test");
 				expect(entry?.priority).toBe(-1);

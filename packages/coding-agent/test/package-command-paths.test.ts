@@ -7,6 +7,7 @@ import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
 import { handlePackageCommand } from "../src/package-manager-cli.ts";
+import { allowNetwork } from "./test-network-env.ts";
 
 describe("package manifest", () => {
 	it("copies runtime assets before publish so npm packages include themes and templates", () => {
@@ -43,6 +44,7 @@ describe("package commands", () => {
 	}
 
 	beforeEach(() => {
+		allowNetwork();
 		tempDir = join(tmpdir(), `pi-package-commands-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		agentDir = join(tempDir, "agent");
 		projectDir = join(tempDir, "project");

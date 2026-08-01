@@ -6,6 +6,9 @@ import { buildClaudeOpus46Prompt } from "./claude-opus-4-6.ts";
 import { buildClaudeOpus47Prompt } from "./claude-opus-4-7.ts";
 import { buildClaudeOpus48Prompt } from "./claude-opus-4-8.ts";
 import { buildClaudeOpus5Prompt } from "./claude-opus-5.ts";
+import { buildDeepseekV4FlashPrompt } from "./deepseek-v4-flash.ts";
+import { buildDeepseekV4Flash0731Prompt } from "./deepseek-v4-flash-0731.ts";
+import { buildDeepseekV4ProPrompt } from "./deepseek-v4-pro.ts";
 import { buildGlm52Prompt } from "./glm-5-2.ts";
 import { buildGpt52Prompt } from "./gpt-5.2.ts";
 import { buildGpt53CodexPrompt } from "./gpt-5.3-codex.ts";
@@ -81,6 +84,37 @@ function hasKimiK3Signal(value: string): boolean {
 
 function isKimiK3Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasKimiK3Signal(model.id) || (model.name !== undefined && hasKimiK3Signal(model.name));
+}
+
+// DeepSeek V4 id shapes verified against the OpenRouter live API, models.dev,
+// and senpi's generated provider catalogs (2026-07-31): deepseek-v4-flash,
+// deepseek/deepseek-v4-flash-0731, deepseek-ai/DeepSeek-V4-Pro,
+// accounts/fireworks/models/deepseek-v4-flash, aihubmix's alicloud-deepseek-v4-*,
+// and trailing tags (:free, -free, :thinking, -nothinking, -cheaper, -lightning, -el).
+function hasDeepseekV4Flash0731Signal(value: string): boolean {
+	return /(?:^|[/@:._-])deepseek[._-]v4[._-]flash[._-]0731(?:$|[/@:._-])/.test(normalizeModelId(value));
+}
+
+function isDeepseekV4Flash0731Model(model: ModelWithPromptPresetMetadata): boolean {
+	return (
+		hasDeepseekV4Flash0731Signal(model.id) || (model.name !== undefined && hasDeepseekV4Flash0731Signal(model.name))
+	);
+}
+
+function hasDeepseekV4FlashSignal(value: string): boolean {
+	return /(?:^|[/@:._-])deepseek[._-]v4[._-]flash(?:$|[/@:._-])/.test(normalizeModelId(value));
+}
+
+function isDeepseekV4FlashModel(model: ModelWithPromptPresetMetadata): boolean {
+	return hasDeepseekV4FlashSignal(model.id) || (model.name !== undefined && hasDeepseekV4FlashSignal(model.name));
+}
+
+function hasDeepseekV4ProSignal(value: string): boolean {
+	return /(?:^|[/@:._-])deepseek[._-]v4[._-]pro(?:$|[/@:._-])/.test(normalizeModelId(value));
+}
+
+function isDeepseekV4ProModel(model: ModelWithPromptPresetMetadata): boolean {
+	return hasDeepseekV4ProSignal(model.id) || (model.name !== undefined && hasDeepseekV4ProSignal(model.name));
 }
 
 function hasGlm52Signal(value: string): boolean {
@@ -167,6 +201,16 @@ export function resolvePresetName(
 	if (isGlm52Model(model)) {
 		return "glm-5.2";
 	}
+	// The dated snapshot must resolve before the generic flash alias.
+	if (isDeepseekV4Flash0731Model(model)) {
+		return "deepseek-v4-flash-0731";
+	}
+	if (isDeepseekV4FlashModel(model)) {
+		return "deepseek-v4-flash";
+	}
+	if (isDeepseekV4ProModel(model)) {
+		return "deepseek-v4-pro";
+	}
 	if (isGrok45Model(model)) {
 		return "grok-4.5";
 	}
@@ -189,6 +233,12 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildGpt5Prompt(options) };
 		case "glm-5.2":
 			return { name, prompt: buildGlm52Prompt(options) };
+		case "deepseek-v4-flash":
+			return { name, prompt: buildDeepseekV4FlashPrompt(options) };
+		case "deepseek-v4-flash-0731":
+			return { name, prompt: buildDeepseekV4Flash0731Prompt(options) };
+		case "deepseek-v4-pro":
+			return { name, prompt: buildDeepseekV4ProPrompt(options) };
 		case "grok-4.5":
 			return { name, prompt: buildGrok45Prompt(options) };
 		case "kimi-k3":

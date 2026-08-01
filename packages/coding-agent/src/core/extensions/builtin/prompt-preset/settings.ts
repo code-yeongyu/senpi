@@ -8,6 +8,9 @@ export type PromptPresetName =
 	| "claude-opus-4-7"
 	| "claude-opus-4-6"
 	| "claude-opus-4-5"
+	| "deepseek-v4-flash"
+	| "deepseek-v4-flash-0731"
+	| "deepseek-v4-pro"
 	| "glm-5.2"
 	| "grok-4.5"
 	| "kimi-k3"
@@ -34,6 +37,9 @@ const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"claude-opus-4-7",
 	"claude-opus-4-6",
 	"claude-opus-4-5",
+	"deepseek-v4-flash",
+	"deepseek-v4-flash-0731",
+	"deepseek-v4-pro",
 	"glm-5.2",
 	"grok-4.5",
 	"kimi-k3",

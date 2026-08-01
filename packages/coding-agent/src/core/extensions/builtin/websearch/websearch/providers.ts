@@ -1,5 +1,6 @@
 import { anthropicProvider } from "./providers/anthropic.ts";
 import { braveProvider } from "./providers/brave.ts";
+import { deepseekProvider } from "./providers/deepseek.ts";
 import { duckDuckGoHtmlProvider } from "./providers/duckduckgo-html.ts";
 import { exaProvider } from "./providers/exa.ts";
 import { googleCseProvider } from "./providers/google-cse.ts";
@@ -25,6 +26,7 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	tavily: tavilyProvider,
 	brave: braveProvider,
 	"duckduckgo-html": duckDuckGoHtmlProvider,
+	deepseek: deepseekProvider,
 	serper: serperProvider,
 	"google-cse": googleCseProvider,
 	"z-ai": zAiProvider,

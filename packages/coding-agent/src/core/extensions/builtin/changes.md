@@ -1,5 +1,24 @@
 # Builtin extensions changes
 
+## tps: monotonic elapsed-time source for assistant intervals (2026-07-31)
+
+- `tps.ts` now derives assistant-message elapsed time from the monotonic
+  `performance.now()` clock instead of wall-clock `Date.now()`. A wall-clock
+  jump backward (NTP skew or manual time change) between `message_start` and
+  `message_end` previously produced a non-positive `Date.now() - start`
+  interval, which the `> 0` guard dropped, suppressing a valid TPS notice.
+- Preserved: the stream-open start timestamp is still recorded at
+  `message_start`; `finishActiveAssistantTiming` still runs at every
+  `message_start`/`message_end`/`agent_end` so tool and permission waits stay
+  excluded; the output numerator, notification text, and the `agent_start`
+  reset behavior are unchanged.
+- Coverage: `test/suite/tps-extension.test.ts` adds a deterministic regression
+  where one second of fake monotonic time elapses but wall time is moved
+  backward between `message_start` and `message_end`; the existing lockstep
+  fake-timer case still pins TPS/token/elapsed text.
+- Expected merge conflict zones: LOW in `tps.ts` around the two
+  `performance.now()` call sites; NONE in the public extension API.
+
 ## loop-guard: tool-call loop detection with steered reminders (2026-07-31)
 
 - New builtin extension `loop-guard` (registered before `config-reload`; MCP stays last)

@@ -286,7 +286,7 @@ describe("required compaction deterministic fallback", () => {
 			{
 				...preparation!,
 				firstKeptEntryId: branchEntries.at(-1)?.id ?? "",
-				previousSummary: "진행상황 ".repeat(10_000),
+				previousSummary: "status ".repeat(10_000),
 			},
 			100_000,
 			"summarization-timeout",

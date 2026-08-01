@@ -9,7 +9,8 @@ import {
 	type GoalHarness,
 	makeGoalContext,
 	runGoalHandlers,
-	waitForGoalContinuationCount,
+	waitForEventCount,
+	waitForSentCount,
 } from "./goal-monitor-test-harness.ts";
 
 const ENTRY_TYPE = "goal-cache-warmup";
@@ -97,11 +98,12 @@ describe("goal cache-warm continuation story", () => {
 
 	it("celebrates the cache-warm wake when the deferred continuation fires", async () => {
 		vi.useFakeTimers();
-		const { harness, notices, ctx } = await setupWarmHarness("thread-cache-warm-resumed");
+		const { harness, notices } = await setupWarmHarness("thread-cache-warm-resumed");
 
-		const delayedDeliveryRecorded = waitForGoalContinuationCount(ctx, 1);
+		const delayedDeliveryRecorded = waitForSentCount(harness, 1);
+		const resumedEventRecorded = waitForEventCount(harness.events, "goal_continuation_resumed", 1);
 		await vi.advanceTimersByTimeAsync(240_000);
-		await delayedDeliveryRecorded;
+		await Promise.all([delayedDeliveryRecorded, resumedEventRecorded]);
 
 		expect(harness.sent).toHaveLength(1);
 		expect(harness.sent[0]?.message.customType).toBe("goal-continuation");

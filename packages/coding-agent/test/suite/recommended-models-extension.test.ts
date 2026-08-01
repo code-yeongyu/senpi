@@ -17,23 +17,23 @@ afterEach(() => {
 });
 
 describe("recommended-models builtin", () => {
-	it("#given an off-list saved default #when settings provenance starts #then it switches, persists, and notifies", async () => {
-		const kimi = model("kimi-k3", "kimi-coding");
-		const harness = createHarness({ active: model("off-list"), available: [kimi] });
+	it("#given an off-list saved default #when settings provenance starts #then it keeps the saved default without switching, persisting, or notifying", async () => {
+		const offList = model("off-list");
+		const harness = createHarness({ active: offList, available: [model("kimi-k3", "kimi-coding")] });
 
 		await harness.start("settings");
 
-		expect(harness.getActiveModel()).toBe(kimi);
-		expect(harness.settings.getDefaultProvider()).toBe("kimi-coding");
-		expect(harness.settings.getDefaultModel()).toBe("kimi-k3");
-		expect(harness.settings.getDefaultThinkingLevel()).toBe("max");
-		expect(harness.notices).toEqual([{ message: "Switched to recommended model 'kimi-k3'.", type: "info" }]);
+		expect(harness.getActiveModel()).toBe(offList);
+		expect(harness.settings.getDefaultProvider()).toBeUndefined();
+		expect(harness.settings.getDefaultModel()).toBeUndefined();
+		expect(harness.settings.getDefaultThinkingLevel()).toBeUndefined();
+		expect(harness.notices).toEqual([]);
 	});
 
-	it("#given no available recommendation #when settings provenance starts #then it warns once with the prescribed text", async () => {
+	it("#given no available recommendation #when an implicit-fallback provenance starts #then it warns once with the prescribed text", async () => {
 		const harness = createHarness({ active: model("off-list"), available: [] });
 
-		await harness.start("settings");
+		await harness.start("first-available");
 		await harness.select(model("another-off-list"), "fallback");
 
 		expect(harness.notices).toEqual([

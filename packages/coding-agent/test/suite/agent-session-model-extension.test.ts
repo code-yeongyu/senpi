@@ -214,6 +214,17 @@ describe("AgentSession model and extension characterization", () => {
 		expect(harness.session.cycleThinkingLevel()).toBe("off");
 	});
 
+	it("cycles a map-less gpt-5.6-sol model from xhigh to max", async () => {
+		const harness = await createHarness({ models: [{ id: "gpt-5.6-sol", reasoning: true }] });
+		harnesses.push(harness);
+		harness.getModel().api = "openai-responses";
+
+		harness.session.setThinkingLevel("xhigh");
+		expect(harness.session.cycleThinkingLevel()).toBe("max");
+		expect(harness.session.thinkingLevel).toBe("max");
+		expect(harness.session.cycleThinkingLevel()).toBe("off");
+	});
+
 	it("throws when setModel is called without configured auth", async () => {
 		const harness = await createHarness({
 			models: [

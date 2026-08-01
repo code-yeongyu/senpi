@@ -1,5 +1,26 @@
 # prompt-preset Extension Changes
 
+## DeepSeek V4 presets: flash, flash-0731, pro (2026-07-31)
+
+### What changed
+
+- New presets `deepseek-v4-flash`, `deepseek-v4-flash-0731`, and `deepseek-v4-pro`: thin `tuningSection` wrappers over the shared dynamic core (post-2026-04-30 architecture), with the family's shared behavior carried as typed rule data in `deepseek-v4.ts` (`DEEPSEEK_V4_RULES`, gpt-5.6 `GPT56_EXECUTION_RULES` precedent). Rules: `injected-directive-authority` + `todo-discipline` + `missing-info` (all three presets), `settled-reading` (flash line), `reasoning-aim` (pro). Workstation dialect: `claude`.
+- `presets.ts`: three matchers on normalized id OR display name with `[/@:._-]` boundaries, verified against the OpenRouter live API, models.dev, and senpi's generated catalogs (official `deepseek-v4-flash`/`deepseek-v4-pro`, OpenRouter `deepseek/deepseek-v4-flash-0731`, HF-style `deepseek-ai/DeepSeek-V4-*`, fireworks `accounts/fireworks/models/deepseek-v4-*`, aihubmix `alicloud-`/`deep-` prefixes, trailing `:free`/`-free`/`:thinking`/`-nothinking`/`-cheaper`/`-lightning`/`-el` tags). The dated 0731 snapshot resolves before the generic flash alias.
+- `settings.ts`: `PromptPresetName` + `VALID_PRESETS` gain the three names; `docs/settings.md` value list updated.
+- `test/suite/prompt-presets-deepseek-v4.test.ts` (new): table-driven matcher cases from the researched real-world ID shapes, a catalog sweep asserting zero misses across every built-in catalog model with a DeepSeek V4 signal, rule-data placement (each directive rendered exactly once per owning preset, zero leakage into kimi-k3 / gpt-5.6 / glm-5.2), and settings-override coverage.
+
+### Why
+
+- DeepSeek-V4-Flash-0731 running senpi's fallback prompt showed reproducible failure modes: it audits the provenance of harness-injected directives ("the user didn't say ulw-loop... probably residual context"), downsizes mandated workflows as too heavy, oscillates on settled readings ("Actually wait - let me reconsider"), and never updates the todo list. Each rule replaces one of those trained priors with a positive decision rule; the chat-deep.ai DeepSeek prompt guide's structure-compliance findings motivated keeping the presets as decision-rule tuning over the shared structured core rather than a full-core rewrite.
+
+### Why extension system couldn't handle this differently
+
+- Entirely inside the builtin `prompt-preset` extension; no core prompt code changed.
+
+### Expected merge conflict zones on next upstream sync
+
+- NONE expected: `deepseek-v4*.ts` and `prompt-presets-deepseek-v4.test.ts` are fork-only files. `presets.ts`/`settings.ts` additions sit in fork-owned lists that upstream does not carry.
+
 ## Preset messaging: optimized-prompt wording, silent fallback (2026-07-31)
 
 ### What changed

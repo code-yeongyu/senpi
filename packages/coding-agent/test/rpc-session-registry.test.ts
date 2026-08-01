@@ -243,6 +243,7 @@ describe("RPC session registry", () => {
 			({
 				sessionManager,
 				extensionRunner: { hasHandlers: () => false },
+				abort: async () => {},
 				dispose: () => {},
 			}) as never;
 		const factory: CreateAgentSessionRuntimeFactory = async (options) => {

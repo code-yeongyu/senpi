@@ -33,6 +33,7 @@ function sensitiveModel(id = "gpt-5.6-sol", provider = "anthropic"): Model<Api> 
 		api: "anthropic-messages",
 		contextWindow: 200_000,
 		maxTokens: 8192,
+		thinkingLevelMap: { xhigh: "xhigh", max: "max" },
 	} as unknown as Model<Api>;
 }
 
@@ -40,8 +41,10 @@ function plainModel(): Model<Api> {
 	return getModel("anthropic", "claude-sonnet-4-5")!;
 }
 
-function warningEvents(events: AgentSessionEvent[]): AgentSessionEvent[] {
-	return events.filter((e) => e.type === "high_reasoning_warning");
+type HighReasoningWarningEvent = Extract<AgentSessionEvent, { type: "high_reasoning_warning" }>;
+
+function warningEvents(events: AgentSessionEvent[]): HighReasoningWarningEvent[] {
+	return events.filter((event): event is HighReasoningWarningEvent => event.type === "high_reasoning_warning");
 }
 
 describe("AgentSession high_reasoning_warning event", () => {
@@ -146,6 +149,42 @@ describe("AgentSession high_reasoning_warning event", () => {
 		expect(warningEvents(events).length).toBe(1);
 	});
 
+	it("does not re-emit while revisiting high reasoning levels", async () => {
+		const { session, events } = await createSession();
+		session.agent.state.model = sensitiveModel();
+
+		session.setThinkingLevel("xhigh");
+		session.setThinkingLevel("high");
+		session.setThinkingLevel("xhigh");
+		session.setThinkingLevel("max");
+		session.setThinkingLevel("medium");
+		session.setThinkingLevel("max");
+
+		expect(warningEvents(events)).toHaveLength(1);
+	});
+
+	it("does not re-emit when moving directly from xhigh to max", async () => {
+		const { session, events } = await createSession();
+		session.agent.state.model = sensitiveModel();
+
+		session.setThinkingLevel("xhigh");
+		session.setThinkingLevel("max");
+
+		expect(warningEvents(events)).toHaveLength(1);
+	});
+
+	it("does not re-emit after leaving and returning to the same sensitive model", async () => {
+		const model = sensitiveModel();
+		const { session, events } = await createSession();
+		session.agent.state.model = model;
+		session.setThinkingLevel("xhigh");
+
+		await session.setModel(plainModel());
+		await session.setModel(model);
+
+		expect(warningEvents(events)).toHaveLength(1);
+	});
+
 	it("emits when switching to a different sol variant while already at xhigh", async () => {
 		const { session, events } = await createSession();
 		session.agent.state.model = sensitiveModel("gpt-5.6-sol");
@@ -153,6 +192,19 @@ describe("AgentSession high_reasoning_warning event", () => {
 		expect(warningEvents(events).length).toBe(1);
 		await session.setModel(sensitiveModel("openai/gpt-5.6-sol-pro"));
 		expect(warningEvents(events).length).toBe(2);
+	});
+
+	it("warns each sensitive model once across revisits", async () => {
+		const firstModel = sensitiveModel("gpt-5.6-sol");
+		const secondModel = sensitiveModel("openai/gpt-5.6-sol-pro");
+		const { session, events } = await createSession();
+		session.agent.state.model = firstModel;
+		session.setThinkingLevel("xhigh");
+
+		await session.setModel(secondModel);
+		await session.setModel(firstModel);
+
+		expect(warningEvents(events).map((event) => event.modelId)).toEqual(["gpt-5.6-sol", "openai/gpt-5.6-sol-pro"]);
 	});
 
 	it("does NOT emit for claude-fable-5 at xhigh (reported bug)", async () => {

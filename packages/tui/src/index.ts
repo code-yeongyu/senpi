@@ -1,5 +1,6 @@
 // Core TUI interfaces and classes
 
+export { Marked, type Token, type Tokens } from "marked";
 // Autocomplete support
 export {
 	type AutocompleteItem,
@@ -16,6 +17,7 @@ export {
 	type EditorOptions,
 	type EditorTheme,
 } from "./components/editor.ts";
+export { HStack } from "./components/h-stack.ts";
 export { Image, type ImageOptions, type ImageTheme } from "./components/image.ts";
 export { Input } from "./components/input.ts";
 export { Loader, type LoaderIndicatorOptions } from "./components/loader.ts";
@@ -28,6 +30,7 @@ export {
 	type MarkdownTheme,
 	resetMarkdownHighlightCallCount,
 } from "./components/markdown.ts";
+export { ScrollView, type ScrollViewOptions, type ScrollViewScrollbar } from "./components/scroll-view.ts";
 export {
 	type SelectItem,
 	SelectList,
@@ -41,6 +44,13 @@ export { type SettingItem, SettingsList, type SettingsListTheme } from "./compon
 export { Spacer } from "./components/spacer.ts";
 export { Text } from "./components/text.ts";
 export { TruncatedText } from "./components/truncated-text.ts";
+export {
+	type StackChild,
+	type StackEntry,
+	type StackEntryOptions,
+	type StackOptions,
+	VStack,
+} from "./components/v-stack.ts";
 // Editor component interface (for custom editors)
 export type { EditorComponent } from "./editor-component.ts";
 // Fuzzy matching
@@ -74,6 +84,8 @@ export {
 export { type EditorPasteState, expandPasteMarkers } from "./paste-markers.ts";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
+export { TuiAltScreen, type TuiAltScreenOptions } from "./TuiAltScreen.ts";
+export { TuiMainScreen } from "./TuiMainScreen.ts";
 // Terminal interface and implementations
 export { ProcessTerminal, type ProcessTerminalOptions, type Terminal } from "./terminal.ts";
 // Terminal colors
@@ -104,6 +116,7 @@ export {
 	type ImageDimensions,
 	type ImageProtocol,
 	type ImageRenderOptions,
+	imageFallback,
 	KITTY_PLACEHOLDER_MAX,
 	outerKittyGraphicsMode,
 	renderImage,
@@ -114,13 +127,15 @@ export {
 	type TmuxPassthroughState,
 	wrapTmuxPassthrough,
 } from "./terminal-image.ts";
-export { imageFallback, sanitizeTerminalLabel } from "./terminal-text.ts";
+export { sanitizeTerminalLabel, shortenImagePath } from "./terminal-text.ts";
 export {
 	type Component,
 	Container,
 	CURSOR_MARKER,
+	compositeTuiLine,
 	type Focusable,
 	isFocusable,
+	isViewportTUI,
 	type OverlayAnchor,
 	type OverlayHandle,
 	type OverlayMargin,
@@ -128,12 +143,17 @@ export {
 	type OverlayUnfocusOptions,
 	type SizeValue,
 	TUI,
+	type TuiInputListener,
+	type TuiInputListenerResult,
+	type ViewportTUI,
 } from "./tui.ts";
 // Utilities
 export {
 	getGraphemeSegmenter,
+	getOsc8LinkAtColumn,
 	getWordSegmenter,
 	sliceByColumn,
+	stripTerminalSequences,
 	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,

@@ -17,6 +17,7 @@ import {
 	clonePhases,
 	DEFAULT_INIT_PHASE,
 	TODO_STATE_ENTRY_TYPE,
+	type TodoCompletionTransition,
 	type TodoItem,
 	type TodoPhase,
 	type TodoStateEntry,
@@ -41,7 +42,7 @@ const VERBS = ["edit", "copy", "export", "import", "append", "start", "done", "d
 export type TodoCommandAccessors = {
 	getCurrentPhases: () => TodoPhase[];
 	setCurrentPhases: (phases: TodoPhase[]) => void;
-	syncWidget: (ctx: ExtensionContext) => void;
+	syncWidget: (ctx: ExtensionContext, completedTasks?: readonly TodoCompletionTransition[]) => void;
 };
 
 /** Tokenizer honoring double-quoted strings and backslash escapes. */

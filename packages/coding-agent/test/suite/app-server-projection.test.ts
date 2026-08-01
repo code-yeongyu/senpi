@@ -356,8 +356,8 @@ describe("app-server AgentEvent projector", () => {
 		// Given: bash streams output whose next character would cross the 256 KiB projection cap.
 		const cappedDelta = "d".repeat(256 * 1024 - 1),
 			cappedCompletedOutput = "c".repeat(256 * 1024 - 1);
-		const oversizedDelta = `${cappedDelta}한suffix`;
-		const oversizedCompletedOutput = `${cappedCompletedOutput}한suffix`;
+		const oversizedDelta = `${cappedDelta}中suffix`;
+		const oversizedCompletedOutput = `${cappedCompletedOutput}中suffix`;
 		const events: AgentSessionEvent[] = [
 			{
 				type: "tool_execution_start",

@@ -1,5 +1,24 @@
 # changes
 
+## Backfill: exit alias and footer provider priority (2026-08-01)
+
+### What changed
+
+- Interactive slash-command dispatch accepts the fork's exit-command alias.
+- Provider counts appear immediately and provider prefixes win the footer layout priority they need.
+
+### Why
+
+- Exit behavior must remain discoverable and the active provider must stay visible under constrained terminal width.
+
+### Why this cannot be expressed externally
+
+- Both behaviors depend on the built-in command registry and interactive footer layout scheduler.
+
+### Expected merge conflict zones
+
+- `interactive-mode.ts`, slash-command registration, and footer/status layout code.
+
 ## Global queue chronology for compaction recovery (2026-07-31)
 
 - Queue submissions reserve one monotonic order across native steer/follow-up buckets and TUI-owned compaction input. Native delivery priority remains unchanged.

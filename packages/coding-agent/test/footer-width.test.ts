@@ -24,7 +24,7 @@ describe("FooterComponent width handling", () => {
 
 	it("keeps all lines within width for wide session names", () => {
 		const width = 93;
-		const session = createFooterSession({ sessionName: "한글".repeat(30) });
+		const session = createFooterSession({ sessionName: "中文".repeat(30) });
 		const footer = new FooterComponent(session, createFooterData(1));
 
 		const lines = footer.render(width);
@@ -38,7 +38,7 @@ describe("FooterComponent width handling", () => {
 		const session = createFooterSession({
 			sessionName: "",
 			modelId: "模".repeat(30),
-			provider: "공급자",
+			provider: "供應商",
 			reasoning: true,
 			thinkingLevel: "high",
 			usage: { input: 12_345, output: 6_789, cacheRead: 0, cacheWrite: 0, cost: { total: 1.234 } },

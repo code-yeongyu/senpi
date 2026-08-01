@@ -1,5 +1,36 @@
 # todotools Fork Tracker
 
+## 2026-07-31 - Animate same-phase completions in the todo sidebar
+
+### What changed
+
+- The `todo-sidebar` now uses the extension widget factory form and a
+  disposable `TodoWidgetComponent` instead of static string rows.
+- Visible task rows share the inline todo result's status styling: completed
+  rows are dimmed and struck, the active row is accent/bold, abandoned rows are
+  dimmed, and pending rows remain plain.
+- Live `todo` tool mutations pass their exact `TodoCompletionTransition[]` into
+  widget sync. A newly completed row animates only when its transition belongs
+  to the still-active phase and the row remains inside the existing 10-line
+  window.
+- The component reuses the shipped two-frame hold, twelve-frame left-to-right
+  reveal, 65ms cadence, code-point-safe splitting, and themed strikethrough
+  callback. Its interval is unref'd, self-terminates, and is cleared when the
+  host replaces or disposes the widget.
+- Session start/tree rebuilds and `/todo` command updates pass no live
+  transitions, so restored and user-edited completed rows render fully settled
+  without replaying animation.
+- The existing active-phase selection, line budget, omission counts, and
+  all-completed widget hiding remain unchanged.
+
+### Expected merge conflict zones
+
+- MEDIUM: `todo-widget.ts` around the new row model that preserves the existing
+  window algorithm.
+- MEDIUM: `index.ts` and `tools/todo.ts` around widget sync and live completion
+  transition plumbing.
+- LOW: `todo-widget-component.ts` and its focused fake-timer tests (fork-only).
+
 ## 2026-07-30 - Bulk-clear rm when both targets arrive blank
 
 ### What changed

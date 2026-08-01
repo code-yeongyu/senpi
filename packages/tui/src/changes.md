@@ -1,5 +1,38 @@
 # TUI delta rendering fork changes
 
+## 2026-07-31: memoized line normalization and viewport-bounded rendering by default
+
+### What changed
+
+- `tui.ts` reuses `normalizeTerminalOutput` results across frames through a per-instance memo keyed by the raw
+  line string. Full normalization passes swap in a fresh map holding only the lines used by the current frame, so
+  the memo never outgrows the transcript it mirrors (whose normalized strings it shares by reference). Unchanged
+  lines now keep their string identity across frames, which also restores O(1) reference-equality diff compares
+  that fresh normalization allocations previously defeated. Image lines keep bypassing normalization unchanged.
+- `mux.ts` `viewportRenderEnabled()` now defaults on; `PI_TUI_VIEWPORT_RENDER=0` opts out of viewport-bounded
+  normalize+diff and `1` still forces it on. Output byte-equivalence between the bounded and full paths is pinned
+  by `test/viewport-render.test.ts` (streaming, offscreen line-count changes, offscreen in-place mutations).
+- `scripts/perf-trend-local.sh` pins the two baseline frame-cost lanes to `PI_TUI_VIEWPORT_RENDER=0` so their
+  historical meaning (unbounded full pass) survives the default flip.
+- `bench/frame-cost.ts` 300-frame p50 on Apple M5 Max, stable components: 100k-line transcript 16.20ms -> 1.97ms
+  (new default; 8.2x) and 16.20ms -> 12.34ms with bounding opted out (memo only); 30k lines 4.51ms -> 1.66ms;
+  10k lines 2.23ms -> 1.34ms. Emitted bytes per frame stay identical (131) across all lanes.
+- Coverage: `test/viewport-render.test.ts` proves the unset-flag default bounds normalization, the opted-out full
+  pass renormalizes only new content after the first frame, and byte-identical writes across both paths;
+  `test/mux.test.ts` pins the default-on/opt-out switch semantics.
+
+### Why this cannot be expressed externally
+
+The normalize/diff pipeline is private render state inside `TUI.doRender()` (`previousLines`, `previousRawLines`,
+viewport offsets). No component or extension seam can deduplicate normalization work or change the bounded-path
+default without owning that state.
+
+### Expected merge conflict zones
+
+- MEDIUM: `tui.ts` `normalizeLine()` / `applyLineResets()` bodies and the render-state field block.
+- LOW: `mux.ts` `viewportRenderEnabled()`, `test/mux.test.ts`, `test/viewport-render.test.ts`,
+  `scripts/perf-trend-local.sh` bench lanes.
+
 ## 2026-07-29: Native Unicode LaTeX in Markdown conversations
 
 ### What changed

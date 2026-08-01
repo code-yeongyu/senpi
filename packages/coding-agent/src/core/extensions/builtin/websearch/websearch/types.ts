@@ -3,6 +3,7 @@ export type SearchProvider =
 	| "tavily"
 	| "brave"
 	| "duckduckgo-html"
+	| "deepseek"
 	| "serper"
 	| "google-cse"
 	| "z-ai"
