@@ -5523,19 +5523,24 @@ export class AgentSession {
 				includeAllExtensionTools: true,
 			});
 		} finally {
-			// An extension removed by this reload must be told even if the rebuild throws
-			// (e.g. _refreshToolRegistry rejecting an extension's tool metadata): the new
-			// runner is already installed without it, so nothing else would dispose it.
-			const newExtensionResolvedPaths = new Set(
-				this._extensionRunner.getExtensionIdentities().map((extension) => extension.resolvedPath),
-			);
-			const removed = oldExtensionIdentities.filter(
-				(extension) => !newExtensionResolvedPaths.has(extension.resolvedPath),
-			);
-			if (removed.length > 0) {
-				await oldExtensionRunner.emit({ type: "session_extensions_removed", reason: "reload", removed });
+			const replacementInstalled = this._extensionRunner !== oldExtensionRunner;
+			try {
+				// An extension removed by this reload must be told even if the rebuild throws
+				// (e.g. _refreshToolRegistry rejecting an extension's tool metadata): the new
+				// runner is already installed without it, so nothing else would dispose it.
+				const newExtensionResolvedPaths = new Set(
+					this._extensionRunner.getExtensionIdentities().map((extension) => extension.resolvedPath),
+				);
+				const removed = oldExtensionIdentities.filter(
+					(extension) => !newExtensionResolvedPaths.has(extension.resolvedPath),
+				);
+				if (removed.length > 0) {
+					await oldExtensionRunner.emit({ type: "session_extensions_removed", reason: "reload", removed });
+				}
+			} finally {
+				if (replacementInstalled) oldExtensionRunner.invalidate();
+				time("runtime", "reload");
 			}
-			time("runtime", "reload");
 		}
 
 		const hasBindings =
