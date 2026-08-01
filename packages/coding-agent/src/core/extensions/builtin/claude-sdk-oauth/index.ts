@@ -48,6 +48,7 @@ export default function claudeSdkOauthExtension(pi: ExtensionAPI): void {
 		streamSimple: streamClaudeSdkOauth,
 		oauth: createOAuthConfig({
 			readCurrent: async () => readStoredCredential(CLAUDE_SDK_OAUTH_PROVIDER_ID),
+			readEnv: (name) => process.env[name],
 			readAnthropicCredential: async () => {
 				const credential = readStoredCredential("anthropic");
 				return credential && typeof credential.access === "string"

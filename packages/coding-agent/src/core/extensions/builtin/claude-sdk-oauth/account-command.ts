@@ -165,6 +165,13 @@ async function addAccount(ctx: ExtensionCommandContext): Promise<void> {
 		await ctx.modelRegistry.modelRuntime.login(CLAUDE_SDK_OAUTH_PROVIDER_ID, "oauth", {
 			signal: ctx.signal,
 			prompt: async (prompt) => {
+				if (prompt.type === "select") {
+					const labels = prompt.options.map((option) => option.label);
+					const selected = await ctx.ui.select(prompt.message, labels);
+					const id = prompt.options.find((option) => option.label === selected)?.id;
+					if (!id) throw new Error("Login cancelled");
+					return id;
+				}
 				const answer = await ctx.ui.input(prompt.message);
 				if (answer === undefined) throw new Error("Login cancelled");
 				return answer;

@@ -18,6 +18,21 @@ export type ProviderAccountEvent = ProviderAccountsChangedEvent | ProviderAccoun
 type ProviderAccountEventListener = (event: ProviderAccountEvent) => void;
 
 const listeners = new Set<ProviderAccountEventListener>();
+const PROVIDER_ACCOUNT_EVENT_BRIDGE = Symbol.for("senpi.provider-account-events.emit.v1");
+
+type ProviderAccountEventGlobal = typeof globalThis & {
+	[PROVIDER_ACCOUNT_EVENT_BRIDGE]?: (event: ProviderAccountEvent) => void;
+};
+
+const eventGlobal = globalThis as ProviderAccountEventGlobal;
+if (!eventGlobal[PROVIDER_ACCOUNT_EVENT_BRIDGE]) {
+	Object.defineProperty(eventGlobal, PROVIDER_ACCOUNT_EVENT_BRIDGE, {
+		value: (event: ProviderAccountEvent) => emit(event),
+		enumerable: false,
+		configurable: false,
+		writable: false,
+	});
+}
 
 export function subscribeProviderAccountEvents(listener: ProviderAccountEventListener): () => void {
 	listeners.add(listener);
