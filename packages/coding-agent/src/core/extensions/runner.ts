@@ -1095,11 +1095,11 @@ export class ExtensionRunner {
 				const options = runner.getSystemPromptOptionsFn();
 				return {
 					...options,
-					selectedTools: [...(options.selectedTools ?? [])],
-					toolSnippets: { ...(options.toolSnippets ?? {}) },
-					promptGuidelines: [...(options.promptGuidelines ?? [])],
-					contextFiles: (options.contextFiles ?? []).map((file) => ({ ...file })),
-					skills: (options.skills ?? []).map((skill) => ({ ...skill, sourceInfo: { ...skill.sourceInfo } })),
+					selectedTools: options.selectedTools ? [...options.selectedTools] : undefined,
+					toolSnippets: options.toolSnippets ? { ...options.toolSnippets } : undefined,
+					promptGuidelines: options.promptGuidelines ? [...options.promptGuidelines] : undefined,
+					contextFiles: options.contextFiles?.map((file) => ({ ...file })),
+					skills: options.skills?.map((skill) => ({ ...skill, sourceInfo: { ...skill.sourceInfo } })),
 				};
 			},
 			getLoadedHookSources: () => {

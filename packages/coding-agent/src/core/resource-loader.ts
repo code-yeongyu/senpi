@@ -81,6 +81,9 @@ function resolvePromptInput(input: string | undefined, description: string): str
 	if (input === undefined) {
 		return undefined;
 	}
+	if (input.trim().length === 0) {
+		return input.length === 0 ? "" : undefined;
+	}
 
 	if (existsSync(input)) {
 		try {

@@ -972,6 +972,20 @@ Content`,
 			expect(loader.getSystemPrompt()).toBe("CLI system prompt.");
 		});
 
+		it("should preserve an explicitly empty systemPrompt option", async () => {
+			const loader = new DefaultResourceLoader({ cwd, agentDir, systemPrompt: "" });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBe("");
+		});
+
+		it("should ignore a whitespace-only systemPrompt option", async () => {
+			const loader = new DefaultResourceLoader({ cwd, agentDir, systemPrompt: "   " });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBeUndefined();
+		});
+
 		it("should read the systemPrompt option from a file path", async () => {
 			const promptPath = join(tempDir, "system-prompt.md");
 			writeFileSync(promptPath, "Prompt from file.");

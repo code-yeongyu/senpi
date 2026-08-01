@@ -134,9 +134,17 @@ describe("Grok 4.5 prompt preset", () => {
 	it("renders every worker rule exactly once in its owning Role section", () => {
 		const preset = resolvePreset(createModel("grok-4.5", "xai"), { promptPreset: "auto" });
 		const roleSection = preset?.prompt.split("## Role: CEO / Orchestrator")[1]?.split("### Test Discipline")[0] ?? "";
+		const implementerSection = roleSection.split("- **Implementer**")[1]?.split("- **Oracle**")[0] ?? "";
+		const oracleSection = roleSection.split("- **Oracle**")[1]?.split("**Spawn only through")[0] ?? "";
+		const spawnSection = roleSection.split("**Spawn only through")[1] ?? "";
+		const ownerSections = { Implementer: implementerSection, Oracle: oracleSection, Spawn: spawnSection };
 
 		for (const rule of GROK45_WORKER_RULES) {
 			expect(roleSection.split(rule.directive)).toHaveLength(2);
+			expect(ownerSections[rule.owner]).toContain(rule.directive);
+			for (const [owner, section] of Object.entries(ownerSections)) {
+				if (owner !== rule.owner) expect(section).not.toContain(rule.directive);
+			}
 		}
 	});
 
