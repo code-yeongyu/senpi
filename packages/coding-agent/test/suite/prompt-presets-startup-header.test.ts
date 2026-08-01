@@ -159,7 +159,7 @@ describe("prompt preset startup header", () => {
 			{
 				type: "before_agent_start",
 				prompt: "ROLE: Implementer",
-				systemPrompt: "You are the Implementer worker.",
+				systemPrompt: "stale event prompt",
 				systemPromptOptions: {
 					cwd: "/repo",
 					selectedTools: [],
@@ -184,7 +184,7 @@ describe("prompt preset startup header", () => {
 			{
 				type: "before_agent_start",
 				prompt: "ROLE: Implementer",
-				systemPrompt: "",
+				systemPrompt: "stale event prompt",
 				systemPromptOptions: {
 					cwd: "/repo",
 					selectedTools: [],
@@ -265,7 +265,7 @@ describe("prompt preset startup header", () => {
 				model: { id: "grok-4.5", provider: "xai", api: "openai-responses" },
 				previousModel: context.model,
 				source: "fallback",
-				systemPrompt: "suffix",
+				systemPrompt: "stale event prompt",
 				systemPromptOptions: {
 					cwd: "/repo",
 					selectedTools: [],
