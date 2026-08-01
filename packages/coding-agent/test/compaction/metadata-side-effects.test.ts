@@ -61,6 +61,9 @@ function createExtensionContext(entries: SessionEntry[]): ExtensionContext {
 	const sessionManager = {
 		getEntries: () => entries,
 		getBranch: () => entries,
+		getSessionFile: () => `/tmp/senpi-metadata-side-effects-${process.pid}/session.jsonl`,
+		getSessionDir: () => `/tmp/senpi-metadata-side-effects-${process.pid}`,
+		getSessionId: () => `metadata-side-effects-${process.pid}`,
 	} as ExtensionContext["sessionManager"];
 
 	return {
@@ -132,6 +135,38 @@ function createCompactionEntry(id: string, firstKeptEntryId: string): Compaction
 }
 
 describe("compaction metadata side effects", () => {
+	it("warns once when an accepted automatic compaction used deterministic recovery", async () => {
+		const harness = createCompactionExtensionHarness();
+		const ctx = createExtensionContext([]);
+		const compactionEntry = {
+			...createCompactionEntry("fallback", "kept"),
+			details: {
+				schema: "senpi.compaction.deterministic-fallback.v1",
+				origin: "required-compaction-recovery",
+				failureKind: "summarization-timeout",
+			},
+		};
+
+		await harness.sessionCompact(
+			{
+				type: "session_compact",
+				reason: "overflow",
+				requestId: "fallback-request",
+				accepted: true,
+				compactionEntry,
+				fromExtension: true,
+				willRetry: true,
+			},
+			ctx,
+		);
+
+		expect(ctx.ui.notify).toHaveBeenCalledOnce();
+		expect(ctx.ui.notify).toHaveBeenCalledWith(
+			"Automatic compaction used a local recovery checkpoint because summarization did not finish; older context may be incomplete.",
+			"warning",
+		);
+	});
+
 	describe("Given a compaction request that has not been accepted yet", () => {
 		describe("When session_before_compact runs", () => {
 			it("Then checkpoint and todo metadata are not persisted until session_compact succeeds", async () => {

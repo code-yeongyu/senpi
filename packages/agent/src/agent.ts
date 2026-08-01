@@ -173,6 +173,13 @@ class PendingMessageQueue {
 		this.messages = [...messages, ...this.messages];
 	}
 
+	remove(message: AgentMessage): boolean {
+		const index = this.messages.indexOf(message);
+		if (index === -1) return false;
+		this.messages.splice(index, 1);
+		return true;
+	}
+
 	clear(): void {
 		this.messages = [];
 		this.clearGeneration++;
@@ -219,6 +226,7 @@ export class Agent {
 		context: PrepareNextTurnContext,
 		signal?: AbortSignal,
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+	private messageFilter?: (message: AgentMessage) => boolean;
 	private activeRun?: ActiveRun;
 	/** Session identifier forwarded to providers for cache-aware backends. */
 	public sessionId?: string;
@@ -331,6 +339,16 @@ export class Agent {
 	clearAllQueues(): void {
 		this.clearSteeringQueue();
 		this.clearFollowUpQueue();
+	}
+
+	/** Remove one exact queued message without disturbing identical siblings. */
+	removeQueuedMessage(message: AgentMessage): boolean {
+		return this.steeringQueue.remove(message) || this.followUpQueue.remove(message);
+	}
+
+	/** Install a last-moment admission check for prompt and drained queue messages. */
+	setMessageFilter(filter: ((message: AgentMessage) => boolean) | undefined): void {
+		this.messageFilter = filter;
 	}
 
 	/** Returns true when either queue still contains pending messages. */
@@ -546,6 +564,7 @@ export class Agent {
 		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
 		return {
 			model: this._state.model,
+			shouldDeliverMessage: this.messageFilter,
 			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
 			sessionId: this.sessionId,
 			onPayload: this.onPayload,

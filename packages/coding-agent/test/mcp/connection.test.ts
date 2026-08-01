@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -155,21 +155,21 @@ describe("ServerConnection state machine", () => {
 	it("fails fixture startup when the spawn counter cannot be read", async () => {
 		const root = await tmpRoot("counter-read-error");
 		const counterFile = join(root, "spawns.txt");
-		await writeFile(counterFile, "7\n", { mode: 0o200 });
-		await chmod(counterFile, 0o200);
+		await writeFile(counterFile, "7\n");
 		const connection = createConnection("counter-read-error", root, [
 			"--tools",
 			"1",
 			"--spawn-counter-file",
 			counterFile,
+			"--spawn-counter-read-error",
 		]);
 		connections.push(connection);
 
 		await expect(connection.connect()).rejects.toThrow(/failed during connect|closed/i);
-		await chmod(counterFile, 0o600);
 
 		expect(connection.state).toBe("degraded");
 		expect(connection.lastError).toBeInstanceOf(Error);
+		expect(connection.lastError?.message).toContain("fixture spawn counter read denied");
 		expect(await readCounter(counterFile)).toBe(7);
 	});
 

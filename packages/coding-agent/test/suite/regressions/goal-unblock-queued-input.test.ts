@@ -8,6 +8,34 @@ import { createHarness } from "../harness.ts";
 
 // A queued prompt returns before before_agent_start fires, so it must still unblock.
 describe("goal resumes on a prompt queued during streaming", () => {
+	it.each(["steer", "followUp"] as const)(
+		"reactivates a mechanically blocked goal from the direct %s API",
+		async (mode) => {
+			const harness = await createHarness({
+				persistSession: true,
+				extensionFactories: [goalExtension],
+			});
+			await harness.session.bindExtensions({});
+			const ref = goalStoreRef(harness.sessionManager, harness.tempDir);
+
+			await createGoal(ref, "Resume after the continuation cap");
+			await updateGoal(ref, { status: "blocked", reason: "continuation cap reached" }, "model");
+
+			if (mode === "steer") {
+				await harness.session.steer("resume from RPC steering", undefined, { source: "rpc" });
+			} else {
+				await harness.session.followUp("resume from RPC follow-up", undefined, { source: "rpc" });
+			}
+
+			expect(await readGoal(ref)).toMatchObject({
+				status: "active",
+				consecutiveContinuations: 0,
+			});
+			expect(harness.session.pendingMessageCount).toBe(1);
+			harness.session.clearQueue();
+		},
+	);
+
 	it("reactivates a blocked goal from a followUp prompt queued mid-turn", async () => {
 		let releaseToolExecution: (() => void) | undefined;
 		const toolRelease = new Promise<void>((resolve) => {

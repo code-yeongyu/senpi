@@ -218,8 +218,8 @@ class ModeTurnSession implements TurnEngineSession {
 		return this.session.prompt(text, options);
 	}
 
-	steer(text: string): Promise<void> {
-		return this.session.steer(text);
+	steer(text: string, options?: { readonly source?: "rpc" }): Promise<void> {
+		return this.session.steer(text, undefined, options);
 	}
 
 	abort(): Promise<void> {

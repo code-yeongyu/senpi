@@ -1137,16 +1137,17 @@ Content`,
 		it("should emit progress events on install attempt", async () => {
 			const events: ProgressEvent[] = [];
 			packageManager.setProgressCallback((event) => events.push(event));
-			vi.spyOn(packageManager as unknown as PackageManagerInternals, "runCommand").mockRejectedValue(
-				new Error("simulated npm install failure"),
-			);
+			const runCommand = vi
+				.spyOn(packageManager as unknown as PackageManagerInternals, "runCommand")
+				.mockRejectedValue(new Error("fixture npm install failed"));
 
-			await expect(packageManager.install("npm:nonexistent-package@1.0.0")).rejects.toThrow(
-				"simulated npm install failure",
+			await expect(packageManager.install("npm:fixture-package@1.0.0")).rejects.toThrow(
+				"fixture npm install failed",
 			);
 
 			expect(events.some((e) => e.type === "start" && e.action === "install")).toBe(true);
 			expect(events.some((e) => e.type === "error")).toBe(true);
+			expect(runCommand).toHaveBeenCalled();
 		});
 
 		it("should recognize github URLs without git: prefix", async () => {
@@ -1154,10 +1155,10 @@ Content`,
 			packageManager.setProgressCallback((event) => events.push(event));
 			const runCommand = vi
 				.spyOn(packageManager as unknown as PackageManagerInternals, "runCommand")
-				.mockRejectedValue(new Error("simulated git clone failure"));
-			const source = "https://github.com/nonexistent/repo";
+				.mockRejectedValue(new Error("fixture git clone failed"));
+			const source = "https://github.com/fixture/repository";
 
-			await expect(packageManager.install(source)).rejects.toThrow("simulated git clone failure");
+			await expect(packageManager.install(source)).rejects.toThrow("fixture git clone failed");
 
 			expect(runCommand).toHaveBeenCalledWith("git", ["clone", source, expect.any(String)]);
 			expect(events.some((e) => e.type === "start" && e.action === "install")).toBe(true);

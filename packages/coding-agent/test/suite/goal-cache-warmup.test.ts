@@ -107,6 +107,9 @@ describe("goal cache-warm continuation story", () => {
 
 		expect(harness.sent).toHaveLength(1);
 		expect(harness.sent[0]?.message.customType).toBe("goal-continuation");
+		const delivery = harness.sent[0]?.delivery;
+		if (delivery === undefined) throw new Error("Expected deferred Goal continuation delivery");
+		delivery.start();
 
 		expect(channelEvents(harness, "goal_continuation_resumed")).toEqual([
 			expect.objectContaining({

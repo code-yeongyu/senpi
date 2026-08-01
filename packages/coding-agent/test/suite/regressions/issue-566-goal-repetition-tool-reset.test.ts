@@ -8,6 +8,7 @@ import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extension
 import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
+	createTestMessageDelivery,
 	makeGoalContext,
 	TestEventBus,
 } from "../goal-monitor-test-harness.ts";
@@ -70,7 +71,10 @@ function createMonitorHarness(): {
 	const sent: string[] = [];
 	const events = new TestEventBus();
 	const pi = {
-		sendMessage: (message: { readonly content: string }) => sent.push(message.content),
+		sendMessage: (message: { readonly content: string }) => {
+			sent.push(message.content);
+			return createTestMessageDelivery([]);
+		},
 		events,
 	} as unknown as ExtensionAPI;
 	return { monitor: new MonitorAwareGoalContinuation(pi), sent, events };

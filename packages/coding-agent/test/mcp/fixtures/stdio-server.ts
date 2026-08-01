@@ -6,7 +6,7 @@ import { createFixtureServer } from "./sdk-server.ts";
 
 async function main(): Promise<void> {
 	const options = parseFixtureOptions(process.argv.slice(2));
-	recordSpawn(options.spawnCounterFile);
+	recordSpawn(options.spawnCounterFile, options.spawnCounterReadError);
 	recordPid(options.pidFile);
 	if (options.fatalMissingToken !== undefined) {
 		process.stderr.write(`FATAL: missing ${options.fatalMissingToken}\n`);
@@ -31,8 +31,13 @@ async function main(): Promise<void> {
 	process.stderr.write(`stdio fixture ready pid=${process.pid}\n`);
 }
 
-function recordSpawn(counterFile: string | undefined): void {
+function recordSpawn(counterFile: string | undefined, forceReadError: boolean): void {
 	if (counterFile === undefined) return;
+	if (forceReadError) {
+		const error = new Error("fixture spawn counter read denied") as NodeJS.ErrnoException;
+		error.code = "EACCES";
+		throw error;
+	}
 	let current = 0;
 	try {
 		current = Number(readFileSync(counterFile, "utf8").trim()) || 0;

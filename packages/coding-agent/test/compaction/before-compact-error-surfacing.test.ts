@@ -92,6 +92,9 @@ function createHarness(options?: { withAuth?: boolean }): Harness {
 		sessionManager: {
 			getEntries: () => [],
 			getBranch: () => [],
+			getSessionFile: () => `/tmp/senpi-before-compact-${process.pid}/session.jsonl`,
+			getSessionDir: () => `/tmp/senpi-before-compact-${process.pid}`,
+			getSessionId: () => `before-compact-${process.pid}`,
 		} as unknown as ExtensionContext["sessionManager"],
 		modelRegistry,
 		model,

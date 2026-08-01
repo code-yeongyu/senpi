@@ -13,9 +13,10 @@ import {
 	type StreamOptions,
 	unregisterApiProviders,
 } from "@earendil-works/pi-ai/compat";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
+import { StreamDurationBudgetError } from "../../src/core/compaction/stream-watchdog.ts";
 import compactionExtension from "../../src/core/extensions/builtin/compaction/index.ts";
 import { shouldStartSpeculativeCompaction } from "../../src/core/extensions/builtin/compaction/policy.ts";
 import {
@@ -38,6 +39,7 @@ type TestSpeculativeCompactionContext = SpeculativeCompactionContext & {
 };
 
 afterEach(() => {
+	vi.useRealTimers();
 	for (const registration of registrations.splice(0)) {
 		registration.unregister();
 	}
@@ -113,6 +115,22 @@ function createContext(options?: {
 }
 
 describe("speculative compaction", () => {
+	it("uses an injected watchdog budget without waiting in real time", async () => {
+		vi.useFakeTimers();
+		const context = createContext({ shrink: true });
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		expect(snapshot).toBeDefined();
+		context.registration.setResponses([() => new Promise<never>(() => {})]);
+
+		const outcome = runExtensionCompaction(context, snapshot!, undefined, undefined, {
+			idleTimeoutMs: 1_000,
+			maxDurationMs: 5,
+		}).catch((error: unknown) => error);
+		await vi.advanceTimersByTimeAsync(6);
+
+		await expect(outcome).resolves.toBeInstanceOf(StreamDurationBudgetError);
+	});
+
 	it("starts at the 37.5 percent default trigger for a 32k context window", () => {
 		// Given
 		const contextWindow = 32_000;

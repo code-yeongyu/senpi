@@ -24,7 +24,7 @@ export interface TurnEngineSession {
 		text: string,
 		options?: { readonly source?: "rpc"; readonly preflightResult?: (success: boolean) => void },
 	): Promise<void>;
-	steer(text: string): Promise<void>;
+	steer(text: string, options?: { readonly source?: "rpc" }): Promise<void>;
 	abort(): Promise<void>;
 	subscribe(listener: (event: TurnEngineSessionEvent) => void): () => void;
 }

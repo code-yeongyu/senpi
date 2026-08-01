@@ -190,9 +190,9 @@ describe("goal monitor continuation stall check", () => {
 			ctx,
 		);
 
-		await runMonitorContinuationCycle(harness, ctx);
-		expect(harness.sent).toHaveLength(3);
-		expect(harness.sent[2]?.message.content).not.toContain(STALL_MARKER);
+		await runContinuationCycle(harness, ctx);
+		await vi.advanceTimersByTimeAsync(240_000);
+		expect(harness.sent).toHaveLength(2);
 		expect(stallEvents(harness)).toHaveLength(0);
 	});
 

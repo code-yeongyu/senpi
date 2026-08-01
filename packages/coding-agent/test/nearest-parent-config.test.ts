@@ -1,14 +1,13 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONFIG_DIR_NAME, ENV_AGENT_DIR, getAgentDir, resolveAgentDir } from "../src/config.ts";
 import { FileSettingsStorage, getSettingsPath, SettingsManager } from "../src/core/settings-manager.ts";
 import { findNearestParentConfigDir, MAX_PARENT_CONFIG_SEARCH_DEPTH } from "../src/nearest-parent-config.ts";
 
 const tempDirs: string[] = [];
 const originalAgentDir = process.env[ENV_AGENT_DIR];
-const originalCwd = process.cwd();
 
 function createTempDir(): string {
 	const dir = mkdtempSync(join(tmpdir(), "senpi-nearest-parent-"));
@@ -23,7 +22,7 @@ function createAgentDir(root: string): string {
 }
 
 afterEach(() => {
-	process.chdir(originalCwd);
+	vi.restoreAllMocks();
 	if (originalAgentDir === undefined) {
 		delete process.env[ENV_AGENT_DIR];
 	} else {
@@ -43,7 +42,7 @@ describe("nearest parent config discovery", () => {
 		createAgentDir(project);
 		mkdirSync(cwd, { recursive: true });
 		process.env[ENV_AGENT_DIR] = override;
-		process.chdir(cwd);
+		vi.spyOn(process, "cwd").mockReturnValue(cwd);
 
 		expect(getAgentDir()).toBe(override);
 		expect(resolveAgentDir(cwd, join(root, "home"), override)).toBe(override);
@@ -144,10 +143,10 @@ describe("project settings discovery", () => {
 		mkdirSync(join(project, CONFIG_DIR_NAME), { recursive: true });
 		const manager = SettingsManager.fromStorage(new FileSettingsStorage(cwd, agentDir, home));
 
-		manager.setProjectPackages([{ source: "npm:test-pkg" }]);
+		manager.setProjectPackages([{ source: "file:./fixture-package" }]);
 		await manager.flush();
 
-		expect(readFileSync(projectSettingsPath, "utf-8")).toContain('"source": "npm:test-pkg"');
+		expect(readFileSync(projectSettingsPath, "utf-8")).toContain('"source": "file:./fixture-package"');
 		expect(existsSync(outerSettingsPath)).toBe(false);
 	});
 

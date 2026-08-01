@@ -89,4 +89,32 @@ describe("compaction logger", () => {
 		expect(entry).not.toHaveProperty("message");
 		expect(entry).not.toHaveProperty("summary");
 	});
+
+	it("Given deterministic fallback diagnostics When logging Then content is never persisted", () => {
+		const sink: string[] = [];
+		const logger = createCompactionLogger("/tmp/senpi-compaction-log-fallback", { sink: (line) => sink.push(line) });
+
+		logger.info("deterministic_fallback_applied", {
+			origin: "required-compaction-recovery",
+			failureKind: "summarization-timeout",
+			retainedEntryCount: 8,
+			todoItemCount: 2,
+			summaryBytes: 512,
+			hasTaskIntent: true,
+			summary: "private recovery content",
+			taskIntent: "private user task",
+		} as unknown as CompactionLoggerData);
+
+		const entry = JSON.parse(sink[0] as string) as Record<string, unknown>;
+		expect(entry).toMatchObject({
+			event: "deterministic_fallback_applied",
+			failureKind: "summarization-timeout",
+			retainedEntryCount: 8,
+			todoItemCount: 2,
+			summaryBytes: 512,
+			hasTaskIntent: true,
+		});
+		expect(entry).not.toHaveProperty("summary");
+		expect(entry).not.toHaveProperty("taskIntent");
+	});
 });

@@ -6,13 +6,14 @@ import {
 	GOAL_MONITOR_CONTINUATION_DELAY_MS,
 	MonitorAwareGoalContinuation,
 } from "../../../src/core/extensions/builtin/goal/monitor-continuation.ts";
-import { readGoal, writeGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
+import { readGoal, recordContinuationDelivered, writeGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
 import type { Goal } from "../../../src/core/extensions/builtin/goal/types.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extensions/types.ts";
 import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
 	createSentMessageHarness,
+	createTestMessageDelivery,
 	makeGoalContext,
 	TestEventBus,
 	waitForGoalContinuationCount,
@@ -40,10 +41,10 @@ function activeGoal(id: string): Goal {
 	};
 }
 
-function assistantStopWithText(text: string): AgentMessage {
+function assistantStopWithText(text: string, stopReason: "stop" | "length" = "stop"): AgentMessage {
 	const message = cleanAssistantStop();
 	if (message.role !== "assistant") throw new Error("Expected an assistant stop message");
-	return { ...message, content: [{ type: "text", text }] };
+	return { ...message, content: [{ type: "text", text }], stopReason };
 }
 
 describe("issue #506: monitor-delayed continuation cap", () => {
@@ -102,7 +103,50 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 		});
 	});
 
-	it("fails closed when delivery accounting cannot be persisted", async () => {
+	it("does not advance length recovery when continuation admission loses its CAS", async () => {
+		const notices: string[] = [];
+		const ctx = await makeGoalContext(notices, "issue-506-monitor-continuation-cas-rejection");
+		const sent: string[] = [];
+		const events = new TestEventBus();
+		const pi = {
+			sendMessage: (message: { readonly content: string }) => {
+				sent.push(message.content);
+				return createTestMessageDelivery([]);
+			},
+			events,
+		} as unknown as ExtensionAPI;
+		const monitor = new MonitorAwareGoalContinuation(pi);
+		const goal = { ...activeGoal("goal-issue-506-cas"), consecutiveContinuations: 0 };
+		await writeGoal(goalStoreRef(ctx), goal);
+		monitor.start(ctx);
+		await recordContinuationDelivered(goalStoreRef(ctx), "independent-continuation");
+
+		await monitor.afterAgentEnd({
+			ctx,
+			goal,
+			messages: [assistantStopWithText("first truncated response", "length")],
+		});
+		expect(sent).toHaveLength(0);
+
+		const refreshedGoal = await readGoal(goalStoreRef(ctx));
+		if (refreshedGoal === null) throw new Error("Expected concurrently updated goal");
+		await monitor.afterAgentEnd({
+			ctx,
+			goal: refreshedGoal,
+			messages: [assistantStopWithText("second truncated response", "length")],
+		});
+
+		expect(sent).toHaveLength(1);
+		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({ status: "active", consecutiveContinuations: 1 });
+		expect(events.emitted).not.toContainEqual(
+			expect.objectContaining({
+				channel: "goal_continuation_guard_tripped",
+				data: expect.objectContaining({ reason: "length-exhausted" }),
+			}),
+		);
+	});
+
+	it("fails closed without queueing when delivery accounting cannot be persisted", async () => {
 		const notices: string[] = [];
 		const ctx = await makeGoalContext(notices, "issue-506-persistence-failure");
 		const goal = activeGoal("goal-issue-506-missing-store");
@@ -135,7 +179,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 					markContinuationPending: () => {},
 				},
 			),
-		).rejects.toThrow("Cannot persist goal continuation delivery");
+		).resolves.toEqual({ goal, admitted: false });
 		expect(queued).toBe(false);
 	});
 });

@@ -2,6 +2,7 @@ export interface FixtureOptions {
 	toolCount: number;
 	slowStartMs: number;
 	spawnCounterFile: string | undefined;
+	spawnCounterReadError: boolean;
 	callCounterFile: string | undefined;
 	pidFile: string | undefined;
 	pingCounterFile: string | undefined;
@@ -30,6 +31,7 @@ export function parseFixtureOptions(argv: readonly string[]): FixtureOptions {
 		toolCount: readIntegerFlag(argv, "--tools", 1),
 		slowStartMs: readIntegerFlag(argv, "--slow-start", 0),
 		spawnCounterFile: readStringFlag(argv, "--spawn-counter-file"),
+		spawnCounterReadError: argv.includes("--spawn-counter-read-error"),
 		callCounterFile: readStringFlag(argv, "--call-counter-file"),
 		pidFile: readStringFlag(argv, "--pid-file"),
 		pingCounterFile: readStringFlag(argv, "--ping-counter-file"),
@@ -135,6 +137,7 @@ function validateArgs(argv: readonly string[], options: FixtureOptions): void {
 		"--expire-session",
 		"--always-expire-tool-calls",
 		"--spawn-grandchild",
+		"--spawn-counter-read-error",
 	]);
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index];

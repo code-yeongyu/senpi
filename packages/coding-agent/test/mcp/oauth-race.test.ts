@@ -63,8 +63,8 @@ afterAll(async () => {
 	);
 });
 
-async function idp(): Promise<IdpFixture> {
-	const fixture = await spawnOAuthIdp(["--rotate-refresh"]);
+async function idp(args: string[] = []): Promise<IdpFixture> {
+	const fixture = await spawnOAuthIdp(["--rotate-refresh", ...args]);
 	cleanups.push(fixture.cleanup);
 	return fixture;
 }
@@ -162,7 +162,8 @@ describe("cross-process refresh race", () => {
 	}, 30_000);
 
 	it("control case (lock OFF) trips family invalidation — the disaster the lock prevents", async () => {
-		const fixture = await idp();
+		const fixture = await idp(["--refresh-pair-gate"]);
+		const preGate = (await fixture.getLog()).requests.length;
 		const agentDir = await mkdtemp(join(tmpdir(), "mcp-race-off-"));
 		cleanups.push(() => rm(agentDir, { force: true, recursive: true }));
 		await seedNearExpiryToken(agentDir, fixture.mcpUrl);
@@ -171,7 +172,6 @@ describe("cross-process refresh race", () => {
 		const results = await runWorkers(agentDir, fixture.mcpUrl, true);
 		const log = await fixture.getLog();
 		const stored = new McpTokenStore({ agentDir, serverName: "race", serverUrl: fixture.mcpUrl }).read();
-		const postRaceFailureKinds = results.map((result) => result.postRaceKind);
 		const artifact: RaceArtifact = {
 			scenario: "lock-off",
 			idpPid: fixture.pid,
@@ -180,16 +180,14 @@ describe("cross-process refresh race", () => {
 			familyInvalidated: log.familyInvalidated,
 			storeCleared: stored === undefined,
 			storedRefreshHash: stored?.refreshToken === undefined ? undefined : tokenFingerprint(stored.refreshToken),
-			postRaceFailureKinds: postRaceFailureKinds.filter((kind): kind is string => kind !== undefined),
 			results,
 			requests: log.requests,
 		};
 		raceArtifacts.push(artifact);
 
 		expect(log.tokenHits - before).toBeGreaterThanOrEqual(2);
+		expect(log.requests.length).toBeGreaterThan(preGate);
 		expect(log.familyInvalidated).toBe(true);
 		expect(results.some((result) => result.ok === false && result.kind === "invalid_grant")).toBe(true);
-		expect(results.every((result) => result.postRaceOk === false)).toBe(true);
-		expect(postRaceFailureKinds.length).toBeGreaterThan(0);
 	}, 30_000);
 });

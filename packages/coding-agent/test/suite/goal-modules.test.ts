@@ -207,6 +207,16 @@ describe("goal continuation prompt (budget-free)", () => {
 		expect(prompt.toLowerCase()).not.toContain("budget_limited");
 	});
 
+	it("renders the resolved full objective instead of the persisted truncation marker", () => {
+		const prompt = buildContinuationPrompt(
+			makeGoal({ objective: "Display prefix… [truncated; full objective: thread.objective-full.txt]" }),
+			"Display prefix with TAIL <requirement> & exact details",
+		);
+
+		expect(prompt).toContain("TAIL &lt;requirement&gt; &amp; exact details");
+		expect(prompt).not.toContain("thread.objective-full.txt");
+	});
+
 	it("carries a decisive completion audit that must flip to update_goal complete", () => {
 		const prompt = buildContinuationPrompt(makeGoal());
 		expect(prompt).toMatch(/completion audit/i);

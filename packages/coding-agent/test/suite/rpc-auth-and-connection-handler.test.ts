@@ -8,11 +8,15 @@ import { AgentSession } from "../../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../../src/core/extensions/builtin/claude-sdk-oauth/index.ts";
+import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
+import { createGoal, readGoal, updateGoal } from "../../src/core/extensions/builtin/goal/store.ts";
+import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.ts";
+import type { InputDispositionEvent, InputEvent } from "../../src/core/extensions/types.ts";
 import { ModelRegistry } from "../../src/core/model-registry.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { createRpcConnectionHandler, type RpcConnectionSink } from "../../src/modes/rpc/connection-handler.ts";
-import { createTestResourceLoader } from "../utilities.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
 
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
 	constructor() {
@@ -54,7 +58,10 @@ interface Harness {
 	cleanup: () => void;
 }
 
-function makeHarness(tempDir: string): Harness {
+function makeHarness(
+	tempDir: string,
+	extensionsResult?: Awaited<ReturnType<typeof createTestExtensionsResult>>,
+): Harness {
 	const model = getModel("anthropic", "claude-sonnet-4-5");
 	if (!model) throw new Error("model not found");
 	const agent = new Agent({
@@ -81,7 +88,7 @@ function makeHarness(tempDir: string): Harness {
 		settingsManager,
 		cwd: tempDir,
 		modelRegistry,
-		resourceLoader: createTestResourceLoader(),
+		resourceLoader: createTestResourceLoader({ extensionsResult }),
 	});
 	const runtimeHost = {
 		session,
@@ -168,6 +175,63 @@ describe("RPC auth and connection handler contracts", () => {
 	afterEach(() => {
 		cleanup();
 		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("admits classic RPC steer and follow_up as rpc input and reactivates mechanical Goal blocks", async () => {
+		const inputEvents: InputEvent[] = [];
+		const dispositionEvents: InputDispositionEvent[] = [];
+		const extensionsResult = await createTestExtensionsResult(
+			[
+				goalExtension,
+				(pi) => {
+					pi.on("input", (event) => {
+						inputEvents.push(event);
+					});
+					pi.on("input_disposition", (event) => {
+						dispositionEvents.push(event);
+					});
+				},
+			],
+			tempDir,
+		);
+		const collected = makeSink();
+		const harness = makeHarness(tempDir, extensionsResult);
+		cleanup = harness.cleanup;
+		const session = harness.runtimeHost.session;
+		await session.bindExtensions({});
+		const ref = goalStoreRef(session.sessionManager, tempDir);
+		await createGoal(ref, "Resume from every accepted RPC queue command");
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+
+		await updateGoal(ref, { status: "blocked", reason: "continuation cap reached" }, "model");
+		await handler.handleInputLine(JSON.stringify({ id: "steer", type: "steer", message: "resume by steering" }));
+		expect(await collected.waitFor((message) => message.id === "steer")).toMatchObject({
+			type: "response",
+			command: "steer",
+			success: true,
+		});
+		expect(await readGoal(ref)).toMatchObject({ status: "active" });
+
+		await updateGoal(ref, { status: "blocked", reason: "continuation cap reached" }, "model");
+		await handler.handleInputLine(
+			JSON.stringify({ id: "follow", type: "follow_up", message: "resume by follow-up" }),
+		);
+		expect(await collected.waitFor((message) => message.id === "follow")).toMatchObject({
+			type: "response",
+			command: "follow_up",
+			success: true,
+		});
+		expect(await readGoal(ref)).toMatchObject({ status: "active" });
+
+		expect(inputEvents.map(({ source, streamingBehavior }) => ({ source, streamingBehavior }))).toEqual([
+			{ source: "rpc", streamingBehavior: "steer" },
+			{ source: "rpc", streamingBehavior: "followUp" },
+		]);
+		expect(new Set(inputEvents.map((event) => event.inputId)).size).toBe(2);
+		expect(dispositionEvents.map(({ inputId, disposition }) => ({ inputId, disposition }))).toEqual(
+			inputEvents.map(({ inputId }) => ({ inputId, disposition: "queued" })),
+		);
+		await handler.dispose();
 	});
 
 	it("lists authentication providers with their status", async () => {

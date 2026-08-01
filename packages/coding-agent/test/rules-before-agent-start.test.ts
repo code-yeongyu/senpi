@@ -38,7 +38,12 @@ describe("rules builtin - before_agent_start delivery", () => {
 
 	const extensionActions: ExtensionActions = {
 		registerLazyToolActivator: () => {},
-		sendMessage: () => {},
+		sendMessage: () => ({
+			id: "unused",
+			cancel: () => false,
+			onStarted: () => () => {},
+			onCancelled: () => () => {},
+		}),
 		sendUserMessage: () => {},
 		appendEntry: () => {},
 		setSessionName: () => {},

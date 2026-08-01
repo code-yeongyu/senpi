@@ -59,7 +59,11 @@ async function handle(
 	if (path === "/cimd") return writeReply(res, state.clientMetadataDocument());
 	if (path === "/authorize") return writeReply(res, state.authorize(url.searchParams));
 	if (path === "/register") return writeReply(res, state.register(await readJson(req)));
-	if (path === "/token") return writeReply(res, state.token(await readForm(req)));
+	if (path === "/token") {
+		const form = await readForm(req);
+		await state.waitForRefreshPair(form);
+		return writeReply(res, state.token(form));
+	}
 	if (path === "/__log") return writeReply(res, { status: 200, body: logSnapshot(state) });
 	if (path === "/mcp") return handleMcp(req, res, state, mcpSessions);
 	writeReply(res, { status: 404, body: { error: "not_found", path } });

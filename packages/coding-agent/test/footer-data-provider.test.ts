@@ -1,11 +1,27 @@
 import { execFile, spawnSync } from "child_process";
-import { existsSync, type FSWatcher, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { EventEmitter } from "events";
+import { existsSync, type FSWatcher, mkdirSync, mkdtempSync, rmSync, type WatchListener, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let resolvedBranch = "main";
 let branchResolutionDelivered: (() => void) | null = null;
+const watchMocks = vi.hoisted(() => ({ watchWithErrorHandler: vi.fn() }));
+
+class FakeFsWatcher extends EventEmitter {
+	close(): void {
+		this.removeAllListeners();
+	}
+}
+
+const watchersByPath = new Map<string, FakeFsWatcher[]>();
+
+function emitWatchEvent(path: string, filename: string | null = null): void {
+	for (const watcher of watchersByPath.get(path) ?? []) {
+		watcher.emit("change", "change", filename);
+	}
+}
 
 vi.mock("child_process", () => ({
 	execFile: vi.fn(
@@ -32,6 +48,11 @@ vi.mock("child_process", () => ({
 		return { status: 1, stdout: "", stderr: "" };
 	}),
 }));
+
+vi.mock("../src/utils/fs-watch.ts", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../src/utils/fs-watch.ts")>();
+	return { ...actual, watchWithErrorHandler: watchMocks.watchWithErrorHandler };
+});
 
 import { FooterDataProvider } from "../src/core/footer-data-provider.ts";
 
@@ -105,6 +126,19 @@ describe("FooterDataProvider reftable branch detection", () => {
 		branchResolutionDelivered = null;
 		vi.mocked(spawnSync).mockClear();
 		vi.mocked(execFile).mockClear();
+		watchersByPath.clear();
+		watchMocks.watchWithErrorHandler.mockReset();
+		watchMocks.watchWithErrorHandler.mockImplementation(
+			(path: string, listener: WatchListener<string>, onError: () => void) => {
+				const watcher = new FakeFsWatcher();
+				watcher.on("change", listener);
+				watcher.on("error", onError);
+				const watchers = watchersByPath.get(path) ?? [];
+				watchers.push(watcher);
+				watchersByPath.set(path, watchers);
+				return watcher as FSWatcher;
+			},
+		);
 	});
 
 	afterEach(() => {
@@ -201,6 +235,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 			const resolutionDelivered = awaitBranchResolution();
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
+			emitWatchEvent(join(reftableDir, "tables.list"), "tables.list");
 			await awaitWithTimeout(resolutionDelivered, "the reftable refresh to resolve the branch");
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
@@ -223,8 +258,11 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 			const resolutionDelivered = awaitBranchResolution();
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
+			emitWatchEvent(join(reftableDir, "tables.list"), "tables.list");
 			writeFileSync(join(reftableDir, "tables.list"), "2\n");
+			emitWatchEvent(join(reftableDir, "tables.list"), "tables.list");
 			writeFileSync(join(reftableDir, "tables.list"), "3\n");
+			emitWatchEvent(join(reftableDir, "tables.list"), "tables.list");
 			await awaitWithTimeout(resolutionDelivered, "the debounced reftable refresh to resolve the branch");
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
@@ -246,6 +284,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 			const resolutionDelivered = awaitBranchResolution();
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
+			emitWatchEvent(reftableDir, "tables.list");
 			await awaitWithTimeout(resolutionDelivered, "the reftable refresh to resolve the branch");
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);

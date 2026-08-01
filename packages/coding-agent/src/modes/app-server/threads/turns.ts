@@ -192,7 +192,7 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 			);
 		}
 		const parsedInput = parseInput(params.input);
-		await entry.session.steer(parsedInput.text);
+		await entry.session.steer(parsedInput.text, { source: "rpc" });
 		this.emitUserMessage(
 			params.threadId,
 			activeTurn.turnId,

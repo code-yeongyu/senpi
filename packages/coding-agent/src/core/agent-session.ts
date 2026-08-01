@@ -90,6 +90,7 @@ import {
 	type ExtensionToolHookLifecycleEvent,
 	type ExtensionUIContext,
 	type InputSource,
+	type MessageDelivery,
 	type MessageEndEvent,
 	type MessageStartEvent,
 	type MessageUpdateEvent,
@@ -448,6 +449,13 @@ export type QueuedInput = {
 	readonly enqueueOrder: number;
 };
 
+export type QueuedInputOptions = {
+	/** Source of input for extension input event handlers. Defaults to "interactive". */
+	readonly source?: InputSource;
+	/** Recovery-only global order retained across compaction queue transfers. */
+	readonly enqueueOrder?: number;
+};
+
 export type ClearedQueue = {
 	steering: string[];
 	followUp: string[];
@@ -476,6 +484,15 @@ export interface PromptOptions {
 	onSessionWorkReady?: () => void;
 	sessionTitlePrompt?: string | false;
 }
+
+type MessageDeliveryRecord = {
+	readonly id: string;
+	readonly message: CustomMessage;
+	readonly startedListeners: Set<() => void>;
+	readonly cancelledListeners: Set<() => void>;
+	state: "pending" | "started" | "cancelled";
+	readonly handle: MessageDelivery;
+};
 
 /** Result from cycleModel() */
 export interface ModelCycleResult {
@@ -580,6 +597,12 @@ export class AgentSession {
 	private _sessionLogger: SessionLogger;
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
+	private _messageDeliveries = new Map<CustomMessage, MessageDeliveryRecord>();
+	private _cancelledMessageDeliveries = new WeakSet<CustomMessage>();
+	private _claimedMessageDeliveries = new Map<
+		CustomMessage,
+		{ promptMessages: AgentMessage[]; sourceMessages: CustomMessage[] }
+	>();
 	// Queues held while the first post-compaction response is classified. Agent
 	// core otherwise drains steering immediately before AgentSession can consume
 	// the stale-usage exemption and schedule the continuation itself.
@@ -673,6 +696,12 @@ export class AgentSession {
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
+		this.agent.setMessageFilter((message) => {
+			if (message.role !== "custom") return true;
+			if (this._cancelledMessageDeliveries.has(message)) return false;
+			this._startMessageDelivery(message);
+			return true;
+		});
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
 		this.agent.abortServerSideFallback = this.settingsManager.getAbortServerSideFallback();
@@ -1193,6 +1222,14 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
+		// A queued custom message is no longer revocable once Agent core begins its
+		// exact message lifecycle. Mark it before deferring event processing so a
+		// synchronous core subscriber cannot claim cancellation after the message
+		// has been moved into the local provider batch.
+		if (event.type === "message_start" && event.message.role === "custom") {
+			this._startMessageDelivery(event.message);
+		}
+
 		// Agent core drains native steer/follow-up queues immediately after its
 		// final agent_end. This subscriber intentionally processes its own event
 		// queue asynchronously, so a later recovery rejection cannot abort that
@@ -1874,6 +1911,7 @@ export class AgentSession {
 			this.abortSessionTitleGeneration();
 			this.abortBash();
 			this.agent.abort();
+			this._cancelAllMessageDeliveries();
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
 		}
@@ -2542,6 +2580,10 @@ export class AgentSession {
 			this._pendingNextTurnMessages = [];
 			for (const msg of consumedNextTurnMessages) {
 				messages.push(msg);
+				this._claimedMessageDeliveries.set(msg, {
+					promptMessages: messages,
+					sourceMessages: consumedNextTurnMessages,
+				});
 			}
 
 			// Emit before_agent_start extension event
@@ -2584,6 +2626,7 @@ export class AgentSession {
 		} catch (error) {
 			await emitInputDisposition("rejected");
 			if (consumedNextTurnMessages && consumedNextTurnMessages.length > 0) {
+				for (const message of consumedNextTurnMessages) this._claimedMessageDeliveries.delete(message);
 				this._pendingNextTurnMessages = [...consumedNextTurnMessages, ...this._pendingNextTurnMessages];
 			}
 			preflightResult?.(false);
@@ -2722,17 +2765,8 @@ export class AgentSession {
 	 * @param images Optional image attachments to include with the message
 	 * @throws Error if text is an extension command
 	 */
-	async steer(text: string, images?: ImageContent[], recovery?: { enqueueOrder?: number }): Promise<void> {
-		// Check for extension commands (cannot be queued)
-		if (text.startsWith("/")) {
-			this._throwIfExtensionCommand(text);
-		}
-
-		// Expand skill commands and prompt templates
-		let expandedText = this._expandSkillCommand(text);
-		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
-
-		await this._queueSteer(expandedText, images, recovery?.enqueueOrder);
+	async steer(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+		await this._admitQueuedInput("steer", text, images, options);
 	}
 
 	/**
@@ -2742,17 +2776,61 @@ export class AgentSession {
 	 * @param images Optional image attachments to include with the message
 	 * @throws Error if text is an extension command
 	 */
-	async followUp(text: string, images?: ImageContent[], recovery?: { enqueueOrder?: number }): Promise<void> {
+	async followUp(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+		await this._admitQueuedInput("followUp", text, images, options);
+	}
+
+	private async _admitQueuedInput(
+		mode: "steer" | "followUp",
+		text: string,
+		images: ImageContent[] | undefined,
+		options: QueuedInputOptions | undefined,
+	): Promise<void> {
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
 		}
 
-		// Expand skill commands and prompt templates
-		let expandedText = this._expandSkillCommand(text);
-		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+		let inputId: string | undefined;
+		const emitDisposition = async (disposition: "handled" | "queued" | "rejected"): Promise<void> => {
+			if (inputId === undefined) return;
+			await this._extensionRunner.emit({ type: "input_disposition", inputId, disposition });
+		};
 
-		await this._queueFollowUp(expandedText, images, recovery?.enqueueOrder);
+		try {
+			let currentText = text;
+			let currentImages = images;
+			if (this._extensionRunner.hasHandlers("input")) {
+				inputId = `${this.sessionManager.getSessionId()}:${++this._nextInputId}`;
+				const inputResult = await this._extensionRunner.emitInput(
+					currentText,
+					currentImages,
+					options?.source ?? "interactive",
+					mode,
+					inputId,
+				);
+				if (inputResult.action === "handled") {
+					await emitDisposition("handled");
+					return;
+				}
+				if (inputResult.action === "transform") {
+					currentText = inputResult.text;
+					currentImages = inputResult.images ?? currentImages;
+				}
+			}
+
+			let expandedText = this._expandSkillCommand(currentText);
+			expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+			if (mode === "followUp") {
+				await this._queueFollowUp(expandedText, currentImages, options?.enqueueOrder);
+			} else {
+				await this._queueSteer(expandedText, currentImages, options?.enqueueOrder);
+			}
+			await emitDisposition("queued");
+		} catch (error) {
+			await emitDisposition("rejected");
+			throw error;
+		}
 	}
 
 	private _startSessionTitleGeneration(firstPrompt: string): void {
@@ -2912,7 +2990,14 @@ export class AgentSession {
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): Promise<void> {
-		const appMessage = {
+		const appMessage = this._createCustomMessage(message);
+		await this._deliverCustomMessage(appMessage, options);
+	}
+
+	private _createCustomMessage<T>(
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+	): CustomMessage<T> {
+		return {
 			role: "custom" as const,
 			customType: message.customType,
 			// Untyped extensions can pass null/missing content; normalize at ingestion.
@@ -2921,6 +3006,27 @@ export class AgentSession {
 			details: message.details,
 			timestamp: Date.now(),
 		} satisfies CustomMessage<T>;
+	}
+
+	private _sendExtensionMessage<T>(
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		options: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" } | undefined,
+		onError: (error: unknown) => void,
+	): MessageDelivery {
+		const appMessage = this._createCustomMessage(message);
+		const delivery = this._createMessageDelivery(appMessage);
+		queueMicrotask(() => {
+			void this._deliverCustomMessage(appMessage, options, delivery).catch(onError);
+		});
+		return delivery.handle;
+	}
+
+	private async _deliverCustomMessage(
+		appMessage: CustomMessage,
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		delivery?: MessageDeliveryRecord,
+	): Promise<void> {
+		if (this._isMessageDeliveryCancelled(delivery)) return;
 		const waitForExistingSessionWork =
 			options?.triggerTurn === true &&
 			options.deliverAs !== "nextTurn" &&
@@ -2933,6 +3039,7 @@ export class AgentSession {
 		try {
 			if (waitForExistingSessionWork) {
 				await this._waitForSettledSessionWork();
+				if (this._isMessageDeliveryCancelled(delivery)) return;
 				finishSessionWork = this._sessionWorkBarrier.begin();
 			}
 
@@ -2958,23 +3065,126 @@ export class AgentSession {
 				}
 			} else if (options?.triggerTurn) {
 				await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
+				if (this._isMessageDeliveryCancelled(delivery)) return;
 				await this._enforceFinalProviderAdmission([appMessage]);
+				if (this._isMessageDeliveryCancelled(delivery)) return;
+				if (delivery !== undefined) this._startMessageDelivery(appMessage);
 				await this._promptAgent(appMessage);
 			} else {
+				if (delivery !== undefined) this._startMessageDelivery(appMessage);
 				this.agent.state.messages.push(appMessage);
 				this.sessionManager.appendCustomMessageEntry(
-					message.customType,
-					message.content,
-					message.display,
-					message.details,
+					appMessage.customType,
+					appMessage.content,
+					appMessage.display,
+					appMessage.details,
 				);
 				this._incrementMessageRevision();
 				this._emit({ type: "message_start", message: appMessage });
 				this._emit({ type: "message_end", message: appMessage });
 			}
+		} catch (error) {
+			if (delivery !== undefined) this._cancelMessageDelivery(delivery);
+			throw error;
 		} finally {
 			finishSessionWork?.();
 		}
+	}
+
+	private _isMessageDeliveryCancelled(delivery: MessageDeliveryRecord | undefined): boolean {
+		return delivery?.state === "cancelled";
+	}
+
+	private _createMessageDelivery(message: CustomMessage): MessageDeliveryRecord {
+		const id = randomUUID();
+		let record: MessageDeliveryRecord;
+		const handle: MessageDelivery = {
+			id,
+			cancel: () => this._cancelMessageDelivery(record),
+			onStarted: (listener) => this._subscribeMessageDelivery(record, "started", listener),
+			onCancelled: (listener) => this._subscribeMessageDelivery(record, "cancelled", listener),
+		};
+		record = {
+			id,
+			message,
+			startedListeners: new Set<() => void>(),
+			cancelledListeners: new Set<() => void>(),
+			state: "pending",
+			handle,
+		};
+		this._messageDeliveries.set(message, record);
+		return record;
+	}
+
+	private _subscribeMessageDelivery(
+		record: MessageDeliveryRecord,
+		state: "started" | "cancelled",
+		listener: () => void,
+	): () => void {
+		if (record.state === state) {
+			listener();
+			return () => {};
+		}
+		if (record.state !== "pending") return () => {};
+		const listeners = state === "started" ? record.startedListeners : record.cancelledListeners;
+		listeners.add(listener);
+		return () => listeners.delete(listener);
+	}
+
+	private _startMessageDelivery(message: CustomMessage): void {
+		this._cancelledMessageDeliveries.delete(message);
+		this._claimedMessageDeliveries.delete(message);
+		const record = this._messageDeliveries.get(message);
+		if (record === undefined || record.state !== "pending") return;
+		record.state = "started";
+		this._messageDeliveries.delete(message);
+		this._notifyMessageDeliveryListeners(record, record.startedListeners, "started");
+	}
+
+	private _cancelMessageDelivery(record: MessageDeliveryRecord): boolean {
+		if (record.state !== "pending") return false;
+		const claimed = this._claimedMessageDeliveries.get(record.message);
+		if (claimed !== undefined) {
+			const promptIndex = claimed.promptMessages.indexOf(record.message);
+			if (promptIndex !== -1) claimed.promptMessages.splice(promptIndex, 1);
+			const sourceIndex = claimed.sourceMessages.indexOf(record.message);
+			if (sourceIndex !== -1) claimed.sourceMessages.splice(sourceIndex, 1);
+			this._claimedMessageDeliveries.delete(record.message);
+		}
+		record.state = "cancelled";
+		this._cancelledMessageDeliveries.add(record.message);
+		this._messageDeliveries.delete(record.message);
+		this.agent.removeQueuedMessage(record.message);
+		const nextTurnIndex = this._pendingNextTurnMessages.indexOf(record.message);
+		if (nextTurnIndex !== -1) this._pendingNextTurnMessages.splice(nextTurnIndex, 1);
+		this._notifyMessageDeliveryListeners(record, record.cancelledListeners, "cancelled");
+		return true;
+	}
+
+	private _cancelAllMessageDeliveries(): void {
+		for (const record of [...this._messageDeliveries.values()]) {
+			this._cancelMessageDelivery(record);
+		}
+	}
+
+	private _notifyMessageDeliveryListeners(
+		record: MessageDeliveryRecord,
+		listeners: Set<() => void>,
+		state: "started" | "cancelled",
+	): void {
+		for (const listener of [...listeners]) {
+			try {
+				listener();
+			} catch (error) {
+				this._sessionLogger.warn("extension_message_delivery_listener_failed", {
+					deliveryId: record.id,
+					state,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
+		record.startedListeners.clear();
+		record.cancelledListeners.clear();
 	}
 
 	/**
@@ -3097,6 +3307,7 @@ export class AgentSession {
 		this._queuedInputOrder = [];
 		this._postCompactionDeferredSteeringMessages = [];
 		this._postCompactionDeferredFollowUpMessages = [];
+		this._cancelAllMessageDeliveries();
 		this.agent.clearAllQueues();
 		this._emitQueueUpdate();
 		const cleared = { steering, followUp } as ClearedQueue;
@@ -4890,7 +5101,7 @@ export class AgentSession {
 		runner.bindCore(
 			{
 				sendMessage: (message, options) => {
-					this.sendCustomMessage(message, options).catch((err) => {
+					return this._sendExtensionMessage(message, options, (err) => {
 						runner.emitError({
 							extensionPath: RUNTIME_EXTENSION_PATH,
 							event: "send_message",
@@ -5303,19 +5514,24 @@ export class AgentSession {
 				includeAllExtensionTools: true,
 			});
 		} finally {
-			// An extension removed by this reload must be told even if the rebuild throws
-			// (e.g. _refreshToolRegistry rejecting an extension's tool metadata): the new
-			// runner is already installed without it, so nothing else would dispose it.
-			const newExtensionResolvedPaths = new Set(
-				this._extensionRunner.getExtensionIdentities().map((extension) => extension.resolvedPath),
-			);
-			const removed = oldExtensionIdentities.filter(
-				(extension) => !newExtensionResolvedPaths.has(extension.resolvedPath),
-			);
-			if (removed.length > 0) {
-				await oldExtensionRunner.emit({ type: "session_extensions_removed", reason: "reload", removed });
+			const replacementInstalled = this._extensionRunner !== oldExtensionRunner;
+			try {
+				// An extension removed by this reload must be told even if the rebuild throws
+				// (e.g. _refreshToolRegistry rejecting an extension's tool metadata): the new
+				// runner is already installed without it, so nothing else would dispose it.
+				const newExtensionResolvedPaths = new Set(
+					this._extensionRunner.getExtensionIdentities().map((extension) => extension.resolvedPath),
+				);
+				const removed = oldExtensionIdentities.filter(
+					(extension) => !newExtensionResolvedPaths.has(extension.resolvedPath),
+				);
+				if (removed.length > 0) {
+					await oldExtensionRunner.emit({ type: "session_extensions_removed", reason: "reload", removed });
+				}
+			} finally {
+				if (replacementInstalled) oldExtensionRunner.invalidate();
+				time("runtime", "reload");
 			}
-			time("runtime", "reload");
 		}
 
 		const hasBindings =

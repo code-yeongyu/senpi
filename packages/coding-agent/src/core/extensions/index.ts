@@ -108,6 +108,7 @@ export type {
 	LsToolResultEvent,
 	MarkdownTransformContext,
 	MarkdownTransformer,
+	MessageDelivery,
 	// Events - Message
 	MessageEndEvent,
 	MessageRenderer,

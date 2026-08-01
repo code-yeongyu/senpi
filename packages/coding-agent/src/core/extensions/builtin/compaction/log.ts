@@ -18,6 +18,11 @@ const ALLOWED_KEYS = new Set([
 	"remainingSec",
 	"count",
 	"durationMs",
+	"failureKind",
+	"retainedEntryCount",
+	"todoItemCount",
+	"summaryBytes",
+	"hasTaskIntent",
 ]);
 const DEBUG_PREFIX = "[senpi-compaction]";
 const EVENTS = new Set([
@@ -35,6 +40,7 @@ const EVENTS = new Set([
 	"emergency_prune",
 	"ineffective_counted",
 	"summary_failed",
+	"deterministic_fallback_applied",
 ]);
 
 export type CompactionLoggerEvent =
@@ -52,7 +58,8 @@ export type CompactionLoggerEvent =
 	| "emergency_prune"
 	| "ineffective_counted"
 	| "idle_trigger"
-	| "summary_failed";
+	| "summary_failed"
+	| "deterministic_fallback_applied";
 
 export interface CompactionLoggerData {
 	origin?: string;
@@ -70,6 +77,11 @@ export interface CompactionLoggerData {
 	remainingSec?: number;
 	count?: number;
 	durationMs?: number;
+	failureKind?: string;
+	retainedEntryCount?: number;
+	todoItemCount?: number;
+	summaryBytes?: number;
+	hasTaskIntent?: boolean;
 }
 
 export interface CompactionLogger {

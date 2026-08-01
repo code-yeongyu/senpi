@@ -7,6 +7,7 @@ import { CONFIG_DIR_NAME } from "../src/config.ts";
 import {
 	__resetSelfWriteTrackerForTests,
 	__setSelfWriteTrackerClockForTests,
+	FileSettingsStorage,
 	getInMemorySettingsPath,
 	getSettingsPath,
 	InMemorySettingsStorage,
@@ -465,7 +466,7 @@ describe("SettingsManager", () => {
 			rmSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
 
 			// Create SettingsManager (reads both global and project settings)
-			const manager = SettingsManager.create(projectDir, agentDir);
+			const manager = SettingsManager.fromStorage(new FileSettingsStorage(projectDir, agentDir, testDir));
 
 			// Project config folder should NOT have been created just from reading
 			expect(existsSync(join(projectDir, CONFIG_DIR_NAME))).toBe(false);
@@ -482,13 +483,13 @@ describe("SettingsManager", () => {
 			// Delete the project config folder that beforeEach created
 			rmSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
 
-			const manager = SettingsManager.create(projectDir, agentDir);
+			const manager = SettingsManager.fromStorage(new FileSettingsStorage(projectDir, agentDir, testDir));
 
 			// Project config folder should NOT exist yet
 			expect(existsSync(join(projectDir, CONFIG_DIR_NAME))).toBe(false);
 
 			// Write a project-specific setting
-			manager.setProjectPackages([{ source: "npm:test-pkg" }]);
+			manager.setProjectPackages([{ source: "file:./fixture-package" }]);
 			await manager.flush();
 
 			// Now project config folder should exist

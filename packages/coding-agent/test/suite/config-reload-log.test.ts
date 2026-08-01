@@ -70,12 +70,17 @@ describe("config reload logger", () => {
 		expect(readFileSync(logPath, "utf8")).toContain('"id":"second-registration"');
 	});
 
-	it("disables silently and returns status when its log directory is unwritable", () => {
+	it("disables silently and returns status when its log writer cannot open the file", () => {
 		const agentDir = createTempDir();
 		const logsDir = join(agentDir, "logs");
 		mkdirSync(logsDir);
-		chmodSync(logsDir, 0o500);
-		const logger = createConfigReloadLogger(agentDir);
+		const logger = createConfigReloadLogger(agentDir, {
+			writeLine: () => {
+				const error = new Error("permission denied") as NodeJS.ErrnoException;
+				error.code = "EACCES";
+				throw error;
+			},
+		});
 
 		expect(logger.warn("watcher_started", { targetCount: 1 })).toEqual({ written: false, disabled: true });
 		expect(logger.warn("watcher_started", { targetCount: 2 })).toEqual({ written: false, disabled: true });

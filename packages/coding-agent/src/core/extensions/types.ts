@@ -1593,7 +1593,7 @@ export interface ExtensionAPI {
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
-	): void;
+	): MessageDelivery;
 
 	/**
 	 * Send a user message to the agent. Always triggers a turn.
@@ -1874,10 +1874,17 @@ export interface ExtensionShortcut {
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
+export interface MessageDelivery {
+	readonly id: string;
+	cancel(): boolean;
+	onStarted(listener: () => void): () => void;
+	onCancelled(listener: () => void): () => void;
+}
+
 export type SendMessageHandler = <T = unknown>(
 	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
-) => void;
+) => MessageDelivery;
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],

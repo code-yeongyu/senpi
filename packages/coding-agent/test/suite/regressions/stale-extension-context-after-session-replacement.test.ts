@@ -1,10 +1,33 @@
 import { describe, expect, it } from "vitest";
-import type { ExtensionContext } from "../../../src/core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extensions/types.ts";
 import { createHarness } from "../harness.ts";
 
 const STALE_EXTENSION_CONTEXT_ERROR_PREFIX = "This extension ctx is stale after session replacement or reload.";
 
 describe("stale extension contexts after session replacement", () => {
+	it("invalidates the retired extension API after a direct reload", async () => {
+		let retiredApi: ExtensionAPI | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					retiredApi = pi;
+				},
+			],
+		});
+
+		try {
+			await harness.session.bindExtensions({});
+			const capturedApi = retiredApi;
+			if (!capturedApi) throw new Error("Expected the pre-reload extension API");
+
+			await harness.session.reload();
+
+			expect(() => capturedApi.getSessionName()).toThrow(STALE_EXTENSION_CONTEXT_ERROR_PREFIX);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("passes a provider payload through without spraying extension errors while preserving direct stale-context diagnostics", async () => {
 		let capturedContext: ExtensionContext | undefined;
 		const harness = await createHarness({

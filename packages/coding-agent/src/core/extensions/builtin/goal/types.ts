@@ -12,6 +12,15 @@ export type GoalStoreRef = {
 export type GoalAccountingMode = "active" | "activeOrBlocked" | "activeOrComplete";
 export type GoalUpdateSource = "model" | "user";
 
+export type GoalExpectation = Readonly<{
+	id: string;
+	status: GoalStatus;
+	continuation?: Readonly<{
+		consecutiveContinuations: number;
+		lastContinuationSignature: string | undefined;
+	}>;
+}>;
+
 export type Goal = {
 	id: string;
 	threadId: string;

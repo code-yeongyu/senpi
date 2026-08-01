@@ -1,5 +1,18 @@
 # goal Extension Changes
 
+## Serialized continuation admission and full-objective recovery (2026-07-31)
+
+### What changed
+
+- Every Goal store mutation is serialized by canonical goal-file path. Continuation delivery and guard denial use Goal ID, status, count, and signature expectations, preventing stale snapshots and concurrent writers from mutating or overwriting a replacement Goal.
+- Hidden continuations retain their exact `pi.sendMessage()` delivery receipt. Accepted newer direct input and queue clear cancel only that pending continuation; unrelated agent starts no longer consume a boolean latch.
+- Direct `steer`/`followUp`, classic RPC, app-server steering, and compaction-transferred queues now reach the same accepted-input Goal recovery lifecycle.
+- Long objectives remain truncated in persisted/UI Goal state, while validated matching sidecars are deterministically restored for startup and monitor continuation prompts after compaction.
+
+### Verification
+
+- Regression coverage pins direct RPC-style queue recovery, concurrent mutation preservation and CAS, exact delivery cancellation, reload invalidation, queue clear, and full-objective startup/monitor reinjection.
+
 ## Legacy `pi-goal` state is imported once at session start (2026-07-31)
 
 ### What changed
