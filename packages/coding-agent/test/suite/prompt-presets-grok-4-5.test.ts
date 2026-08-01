@@ -65,6 +65,8 @@ describe("Grok 4.5 prompt preset", () => {
 		expect(preset?.prompt).toMatch(/\*\*Implementer\*\*/);
 		expect(preset?.prompt).toMatch(/\*\*Oracle\*\*/);
 		expect(preset?.prompt).toMatch(/implement rather than propose/i);
+		expect(preset?.prompt).toMatch(/do not spawn further workers/i);
+		expect(preset?.prompt).toMatch(/single orchestration level/i);
 		expect(preset?.prompt).toMatch(/read-only workspace analysis/i);
 		expect(preset?.prompt).toMatch(/must not edit, commit, deploy/i);
 		// Spawn surface

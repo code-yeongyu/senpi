@@ -269,7 +269,7 @@
 #### What changed
 - `grok-4.5.ts` Role section: dropped the sole `--model gpt-5.6*` implementer path and the "gpt-5.6 prompting guide loads doctrine automatically" coupling.
 - Workers are **invocation profiles** expressed in the brief, not tools: **Implementer** (workspace-writing executor) and **Oracle** (read-only analysis/high-risk review). Critic/Planner/Explorer are not named agents — planning/recon stay with the CEO unless hard analysis needs Oracle.
-- Implementer doctrine is model-independent and must live in every brief: implement rather than propose; inspect/edit/scoped tests/Manual QA; preserve unrelated work; stop after three different failed approaches; return changed files, commands/results, blockers.
+- Implementer doctrine is model-independent and must live in every brief: implement rather than propose; inspect/edit/scoped tests/Manual QA; preserve unrelated work; do not spawn further workers / nested `senpi --print` sessions; stop after three different failed approaches; return changed files, commands/results, blockers.
 - Spawn remains only via `bash` + `senpi --print`. Brief transport guidance: write to a temp file and pass quoted contents; do not interpolate raw user/repo text into shell syntax. `--model` only when an exact available model ID is known.
 - Oracle wording: high-risk final review / hard debug — not "before deploying". One orchestration level; workers must not re-delegate.
 - Brief fields: ROLE, GOAL, SCOPE, CONSTRAINTS, DONE WHEN, RETURN.
