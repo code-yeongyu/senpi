@@ -68,6 +68,11 @@ export interface SpeculativeCompactionContext {
 	): Promise<ApplyCompactionResult>;
 }
 
+export interface SummarizationWatchdogBudget {
+	readonly idleTimeoutMs: number;
+	readonly maxDurationMs: number;
+}
+
 export interface SpeculativeCompactionSnapshot {
 	generation: number;
 	expectedRevision: number;
@@ -219,6 +224,7 @@ async function generateSummaryMessage(options: {
 		headers?: Record<string, string>;
 		extraBody?: Record<string, unknown>;
 	};
+	watchdogBudget?: SummarizationWatchdogBudget;
 }): Promise<Message | undefined> {
 	// Send the conversation as native LLM messages with the summarization
 	// instruction as a trailing user message, mirroring normal agent traffic.
@@ -264,18 +270,18 @@ async function generateSummaryMessage(options: {
 			signal: requestController.signal,
 			...summarizationReasoningOptions(options.snapshot.model),
 		});
-		await consumeStreamWithIdleTimeout(responseStream, {
-			idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
-			maxDurationMs: DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
+		return await consumeStreamWithIdleTimeout<AssistantMessageEventStream, AssistantMessage>(responseStream, {
+			idleTimeoutMs: options.watchdogBudget?.idleTimeoutMs ?? DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
+			maxDurationMs: options.watchdogBudget?.maxDurationMs ?? DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
 			abort: () => requestController.abort(),
 			signal: options.signal,
+			getResult: (stream) => stream.result(),
 			onEvent: (event) => {
 				if (event.type === "text_delta" && event.delta) {
 					options.onProgress?.(event.delta);
 				}
 			},
 		});
-		return await responseStream.result();
 	} finally {
 		if (options.signal) options.signal.removeEventListener("abort", onCallerAbort);
 	}
@@ -505,6 +511,7 @@ export async function runExtensionCompaction(
 	snapshot: SpeculativeCompactionSnapshot,
 	signal?: AbortSignal,
 	onProgress?: CompactionProgressCallback,
+	watchdogBudget?: SummarizationWatchdogBudget,
 ): Promise<CompactionResult | undefined> {
 	if (signal?.aborted) return undefined;
 	const auth = await context.modelRegistry?.getApiKeyAndHeaders(snapshot.model);
@@ -544,6 +551,7 @@ export async function runExtensionCompaction(
 				headers: auth.headers,
 				extraBody: auth.extraBody,
 			},
+			watchdogBudget,
 		});
 		if (!response) return undefined;
 

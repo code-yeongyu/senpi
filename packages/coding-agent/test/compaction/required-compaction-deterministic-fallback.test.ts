@@ -149,6 +149,124 @@ describe("required compaction deterministic fallback", () => {
 		).toBe("upstream-stream-truncated");
 	});
 
+	it("preserves current todo state when the first required automatic summary times out", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
+		expect(preparation).toBeDefined();
+
+		const result = createRequiredCompactionFallback(
+			{
+				...preparation!,
+				firstKeptEntryId: branchEntries.at(-1)?.id ?? "",
+			},
+			100_000,
+			"summarization-timeout",
+			{
+				todoSnapshot: {
+					schema: "senpi.compaction.todo-snapshot.v1",
+					todos: [
+						{
+							name: "Repair",
+							tasks: [
+								{ content: "Preserve automatic compaction task state", status: "in_progress" },
+								{ content: "Run automatic compaction regression", status: "pending" },
+							],
+						},
+					],
+					capturedAt: 0,
+				},
+			},
+			branchEntries,
+		);
+
+		expect(result).toBeDefined();
+		expect(result!.summary).toContain("Current todo state:");
+		expect(result!.summary).toContain("[in_progress] Preserve automatic compaction task state");
+		expect(result!.summary).toContain("[pending] Run automatic compaction regression");
+		expect(result!.details).not.toHaveProperty("todoSnapshot");
+	});
+
+	it("passes the latest todo snapshot through the required automatic fallback handler", async () => {
+		const handlers = createCompactionHandlers();
+		const harness = createBlockingContext({ usageTokens: 99_000, contextWindow: 100_000 });
+		harness.sessionManager.appendCustomEntry("senpi.todo-state", {
+			schema: "v2",
+			phases: [{ name: "Old", tasks: [{ content: "Do not restore obsolete work", status: "in_progress" }] }],
+		});
+		harness.sessionManager.appendCustomEntry("senpi.todo-state", {
+			schema: "v2",
+			phases: [
+				{
+					name: "Current",
+					tasks: [{ content: "Restore the current automatic compaction task", status: "in_progress" }],
+				},
+			],
+		});
+		harness.registration.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "upstream_stream_truncated: Responses stream ended before a terminal event",
+			}),
+		]);
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
+		expect(preparation).toBeDefined();
+
+		const result = await handlers.sessionBeforeCompact(
+			{
+				type: "session_before_compact",
+				reason: "threshold",
+				willRetry: false,
+				requestId: "automatic-fallback-with-current-todos",
+				preparation: preparation!,
+				branchEntries,
+				signal: new AbortController().signal,
+			},
+			harness.ctx,
+		);
+
+		expect(result).toHaveProperty("compaction");
+		expect(result?.compaction?.summary).toContain("[in_progress] Restore the current automatic compaction task");
+		expect(result?.compaction?.summary).not.toContain("Do not restore obsolete work");
+	});
+
+	it("preserves recent dropped user intent when automatic fallback has no todo state", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
+		expect(preparation).toBeDefined();
+		branchEntries.splice(-1, 0, {
+			type: "message",
+			id: "control-envelope",
+			parentId: branchEntries.at(-2)?.id ?? null,
+			timestamp: new Date(4).toISOString(),
+			message: {
+				role: "user",
+				content: [
+					{ type: "text", text: "<system-reminder>Do not preserve this control envelope</system-reminder>" },
+				],
+				timestamp: 4,
+			},
+		});
+
+		const result = createRequiredCompactionFallback(
+			{
+				...preparation!,
+				firstKeptEntryId: branchEntries.at(-1)?.id ?? "",
+			},
+			100_000,
+			"summarization-timeout",
+			{},
+			branchEntries,
+		);
+
+		expect(result).toBeDefined();
+		expect(result!.summary).toContain("Task intent:");
+		expect(result!.summary).toContain("Summarize old context");
+		expect(result!.summary).not.toContain("Do not preserve this control envelope");
+	});
+
 	it("requires a real retained suffix, keeps only canonical detail metadata, and uses UTF-8-safe bounds", () => {
 		const harness = createBlockingContext({ usageTokens: 9_900 });
 		const branchEntries = harness.ctx.sessionManager.getBranch();
@@ -173,7 +291,7 @@ describe("required compaction deterministic fallback", () => {
 			100_000,
 			"summarization-timeout",
 			{
-				taskIntent: "Finish the current repair",
+				taskIntent: `Finish the current repair\n${"😀".repeat(3_000)}PRIVATE_TAIL`,
 				todoSnapshot: { items: ["verify recovery"] },
 				checkpoint: { files: ["agent-session.ts"] },
 			},
@@ -182,10 +300,11 @@ describe("required compaction deterministic fallback", () => {
 
 		expect(result).toBeDefined();
 		expect(result!.summary).not.toContain("�");
+		expect(result!.summary).not.toContain("PRIVATE_TAIL");
 		expect(result!.details).toMatchObject({
-			taskIntent: "Finish the current repair",
 			retainedSuffix: "prepared",
 		});
+		expect(result!.details).not.toHaveProperty("taskIntent");
 		expect(result!.details).not.toHaveProperty("todoSnapshot");
 		expect(result!.details).not.toHaveProperty("checkpoint");
 		harness.sessionManager.appendCompaction(

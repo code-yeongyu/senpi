@@ -81,8 +81,27 @@ function readTodosFromEntry(entry: CustomEntry): TodoEntry[] {
 	return [];
 }
 
+function readTodoSnapshotItems(entry: SessionEntry | undefined): TodoSnapshotItems {
+	if (entry?.type !== "custom" || !isRecord(entry.data)) return [];
+	if (Array.isArray(entry.data.phases)) return entry.data.phases.filter(isTodoPhase);
+	if (Array.isArray(entry.data.todos)) return entry.data.todos.filter(isTodoEntry);
+	return [];
+}
+
+function hasTodoStateAfterLatestCompaction(ctx: ExtensionContext): boolean {
+	const entries = ctx.sessionManager.getBranch();
+	let searchFrom = 0;
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		if (entries[index]?.type === "compaction") {
+			searchFrom = index + 1;
+			break;
+		}
+	}
+	return entries.slice(searchFrom).some(isCustomTodoEntry);
+}
+
 function findLatestTodoSnapshot(ctx: ExtensionContext): TodoSnapshotPayload | null {
-	const entries = ctx.sessionManager.getEntries();
+	const entries = ctx.sessionManager.getBranch();
 	for (let index = entries.length - 1; index >= 0; index -= 1) {
 		const entry = entries[index];
 		if (entry.type !== "custom" || entry.customType !== TODO_SNAPSHOT_CUSTOM_TYPE) continue;
@@ -107,13 +126,14 @@ export function findTodoEntries(
 			.flatMap(readTodosFromEntry);
 	}
 
-	return ctxOrEntries.sessionManager.getEntries().filter(isCustomTodoEntry);
+	return ctxOrEntries.sessionManager.getBranch().filter(isCustomTodoEntry);
 }
 
 export function createTodoSnapshot(ctx: ExtensionContext): TodoSnapshotPayload {
+	const latestEntry = findTodoEntries(ctx).at(-1);
 	return {
 		schema: TODO_SNAPSHOT_SCHEMA,
-		todos: findTodoEntries(ctx),
+		todos: readTodoSnapshotItems(latestEntry),
 		capturedAt: Date.now(),
 	};
 }
@@ -162,7 +182,7 @@ export function restoreTodosIfMissing(
 
 	const pi = piOrSnapshot as SendMessageTarget;
 	const ctx = ctxOrCurrentTodos as ExtensionContext;
-	if (findTodoEntries(ctx).length > 0) return;
+	if (hasTodoStateAfterLatestCompaction(ctx)) return;
 
 	const snapshot = findLatestTodoSnapshot(ctx);
 	if (!snapshot || snapshot.todos.length === 0) return;

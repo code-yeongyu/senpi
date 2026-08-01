@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	consumeStreamWithIdleTimeout,
 	DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
+	StreamDurationBudgetError,
 	StreamIdleTimeoutError,
 } from "../../src/core/compaction/stream-watchdog.ts";
 
@@ -85,6 +86,49 @@ describe("consumeStreamWithIdleTimeout", () => {
 		await advance();
 		await done;
 		expect(seen).toEqual(["a", "b", "c"]);
+	});
+
+	it("keeps the duration budget active while the final result settles", async () => {
+		let aborted = false;
+		const stream = {
+			async *[Symbol.asyncIterator]() {},
+			result: () => new Promise<string>(() => {}),
+		};
+		const outcome = consumeStreamWithIdleTimeout(stream, {
+			idleTimeoutMs: 1_000,
+			maxDurationMs: 50,
+			abort: () => {
+				aborted = true;
+			},
+			getResult: (resolved) => resolved.result(),
+		}).catch((caught: unknown) => caught);
+
+		await vi.advanceTimersByTimeAsync(50);
+
+		await expect(outcome).resolves.toBeInstanceOf(StreamDurationBudgetError);
+		expect(aborted).toBe(true);
+	});
+
+	it("keeps the duration budget active when caller abort cannot settle the final result", async () => {
+		const caller = new AbortController();
+		const stream = {
+			async *[Symbol.asyncIterator]() {
+				await new Promise(() => {});
+			},
+			result: () => new Promise<string>(() => {}),
+		};
+		const outcome = consumeStreamWithIdleTimeout(stream, {
+			idleTimeoutMs: 1_000,
+			maxDurationMs: 50,
+			abort: () => {},
+			signal: caller.signal,
+			getResult: (resolved) => resolved.result(),
+		}).catch((caught: unknown) => caught);
+
+		caller.abort();
+		await vi.advanceTimersByTimeAsync(50);
+
+		await expect(outcome).resolves.toBeInstanceOf(StreamDurationBudgetError);
 	});
 
 	it("resets the idle timer on every event", async () => {

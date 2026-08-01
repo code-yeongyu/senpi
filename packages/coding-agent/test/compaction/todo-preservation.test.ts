@@ -4,11 +4,13 @@ import { registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
 	captureTodoSnapshot,
+	createTodoSnapshot,
 	findTodoEntries,
 	restoreTodosIfMissing,
 	type TodoEntry,
 } from "../../src/core/extensions/builtin/compaction/todo-bridge.ts";
 import type { TodoPhase } from "../../src/core/extensions/builtin/todotools/state.ts";
+import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 import {
 	type CustomEntry,
 	migrateSessionEntries,
@@ -274,6 +276,127 @@ describe("compaction todo preservation", () => {
 				expect(restored.map((todo) => todo.id)).toEqual(["todo-legacy", "todo-open"]);
 				expect(restored[0]?.status).toBe("blocked");
 			});
+		});
+	});
+
+	it("captures only the latest todo state for automatic compaction recovery", () => {
+		const oldEntry: CustomEntry = {
+			type: "custom",
+			id: "old-state",
+			parentId: null,
+			timestamp: "2025-01-15T17:01:00.000Z",
+			customType: "senpi.todo-state",
+			data: {
+				schema: "v2",
+				phases: [{ name: "Old", tasks: [{ content: "Obsolete task", status: "in_progress" }] }],
+			},
+		};
+		const latestPhases: TodoPhase[] = [
+			{
+				name: "Current",
+				tasks: [{ content: "Preserve latest automatic compaction state", status: "in_progress" }],
+			},
+		];
+		const latestEntry: CustomEntry = {
+			type: "custom",
+			id: "latest-state",
+			parentId: "old-state",
+			timestamp: "2025-01-15T17:02:00.000Z",
+			customType: "senpi.todo-state",
+			data: { schema: "v2", phases: latestPhases },
+		};
+		const ctx = {
+			sessionManager: { getBranch: () => [oldEntry, latestEntry] },
+		} as unknown as ExtensionContext;
+
+		expect(createTodoSnapshot(ctx).todos).toEqual(latestPhases);
+	});
+
+	it("captures todo state only from the active session branch", () => {
+		const activePhases: TodoPhase[] = [
+			{
+				name: "Active",
+				tasks: [{ content: "Keep active branch task", status: "in_progress" }],
+			},
+		];
+		const siblingPhases: TodoPhase[] = [
+			{
+				name: "Sibling",
+				tasks: [{ content: "Do not leak sibling task", status: "in_progress" }],
+			},
+		];
+		const activeEntry: CustomEntry = {
+			type: "custom",
+			id: "active-state",
+			parentId: null,
+			timestamp: "2025-01-15T17:01:00.000Z",
+			customType: "senpi.todo-state",
+			data: { schema: "v2", phases: activePhases },
+		};
+		const siblingEntry: CustomEntry = {
+			type: "custom",
+			id: "sibling-state",
+			parentId: null,
+			timestamp: "2025-01-15T17:02:00.000Z",
+			customType: "senpi.todo-state",
+			data: { schema: "v2", phases: siblingPhases },
+		};
+		const ctx = {
+			sessionManager: {
+				getEntries: () => [activeEntry, siblingEntry],
+				getBranch: () => [activeEntry],
+			},
+		} as unknown as ExtensionContext;
+
+		expect(createTodoSnapshot(ctx).todos).toEqual(activePhases);
+	});
+
+	it("restores the latest snapshot when all visible todo state predates compaction", () => {
+		const oldEntry: CustomEntry = {
+			type: "custom",
+			id: "old-state",
+			parentId: null,
+			timestamp: "2025-01-15T17:01:00.000Z",
+			customType: "senpi.todo-state",
+			data: { schema: "v2", phases: phasedTodos },
+		};
+		const compactionEntry: SessionEntry = {
+			type: "compaction",
+			id: "compaction",
+			parentId: "old-state",
+			timestamp: "2025-01-15T17:02:00.000Z",
+			summary: "summary",
+			firstKeptEntryId: "old-state",
+			tokensBefore: 10_000,
+		};
+		const snapshotEntry: CustomEntry = {
+			type: "custom",
+			id: "snapshot",
+			parentId: "compaction",
+			timestamp: "2025-01-15T17:02:01.000Z",
+			customType: TODO_SNAPSHOT_CUSTOM_TYPE,
+			data: {
+				schema: "senpi.compaction.todo-snapshot.v1",
+				todos: phasedTodos,
+				capturedAt: 0,
+			},
+		};
+		const sent: unknown[] = [];
+		const pi = {
+			sendMessage: (message: unknown) => {
+				sent.push(message);
+			},
+		} as unknown as ExtensionAPI;
+		const ctx = {
+			sessionManager: { getBranch: () => [oldEntry, compactionEntry, snapshotEntry] },
+		} as unknown as ExtensionContext;
+
+		restoreTodosIfMissing(pi, ctx);
+
+		expect(sent).toHaveLength(1);
+		expect(sent[0]).toMatchObject({
+			customType: "compaction.todo-restore-request",
+			details: { todos: phasedTodos },
 		});
 	});
 });

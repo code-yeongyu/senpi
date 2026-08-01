@@ -10,6 +10,8 @@ import type {
 	SessionBeforeCompactEvent,
 	SessionCompactEvent,
 } from "../../types.ts";
+import { readGoal } from "../goal/store.ts";
+import { goalStoreRef } from "../goal/store-ref.ts";
 import * as checkpointState from "./checkpoint-state.ts";
 import * as breaker from "./circuit-breaker.ts";
 import {
@@ -55,6 +57,7 @@ import {
 	runExtensionCompaction,
 	type SpeculativeCompactionResult,
 	type SpeculativeCompactionSnapshot,
+	type SummarizationWatchdogBudget,
 	SummaryGenerationError,
 } from "./speculative.ts";
 import { type CompactionExtensionState, createInitialState, resetTurnCounter } from "./state.ts";
@@ -64,6 +67,9 @@ import { isTransientSummarizationFailure } from "./transient-failure.ts";
 import { isIneffectiveCompaction } from "./yield.ts";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
+export interface CompactionExtensionDependencies extends OpenAiRemoteCompactionDependencies {
+	summarizationWatchdog?: SummarizationWatchdogBudget;
+}
 const EMERGENCY_COMPACTION_INSTRUCTIONS =
 	"EMERGENCY: hard context limit reached. Produce an aggressive recovery summary that preserves current goal, constraints, files touched, tool outcomes, and exact next steps. Prefer concise factual state over transcript detail.";
 const PROACTIVE_COMPACTION_INSTRUCTIONS = "Proactively compact before the next agent turn.";
@@ -74,6 +80,7 @@ const MAX_OUTPUT_RESERVE_RATIO = 0.5;
 interface PendingCompactionMetadata {
 	checkpoint: checkpointState.AgentCheckpoint;
 	todoSnapshot: todoBridge.TodoSnapshotPayload;
+	taskIntent?: string;
 }
 
 function approxTokens(text: string): number {
@@ -167,7 +174,7 @@ function createBlockingRemoteCompactionEvent(
 
 export default function compactionExtension(
 	pi: ExtensionAPI,
-	remoteCompactionDependencies: OpenAiRemoteCompactionDependencies = {},
+	remoteCompactionDependencies: CompactionExtensionDependencies = {},
 ): void {
 	let state: CompactionExtensionState = createInitialState();
 	const emergencyPruneLatch = createEmergencyPruneLatch();
@@ -189,7 +196,8 @@ export default function compactionExtension(
 	interface CompactionContext extends ExtensionContext {
 		agentDir?: string;
 	}
-	const getLogger = (ctx: CompactionContext): CompactionLogger => (logger ??= createCompactionLogger(ctx.agentDir));
+	const getLogger = (ctx: CompactionContext): CompactionLogger =>
+		(logger ??= createCompactionLogger(ctx.getLoadedHookSources?.().agentDir ?? ctx.agentDir));
 
 	function getSummarizationTools(): Tool[] {
 		if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function") return [];
@@ -224,7 +232,13 @@ export default function compactionExtension(
 		if (!snapshot) return;
 		getLogger(ctx).debug("speculative_started", { generation, origin: "speculative" });
 		const controller = new AbortController();
-		const settled = runExtensionCompaction(ctx, snapshot, controller.signal).then(
+		const settled = runExtensionCompaction(
+			ctx,
+			snapshot,
+			controller.signal,
+			undefined,
+			remoteCompactionDependencies.summarizationWatchdog,
+		).then(
 			(result) => ({ result, error: undefined }),
 			(error: unknown) => ({ result: undefined, error: error instanceof Error ? error : new Error(String(error)) }),
 		);
@@ -233,10 +247,14 @@ export default function compactionExtension(
 		speculativeJob = { generation, snapshot, controller, promise, failure };
 	}
 
-	function capturePendingMetadata(requestId: string, ctx: ExtensionContext): void {
+	async function capturePendingMetadata(requestId: string, ctx: ExtensionContext): Promise<void> {
+		const ref = goalStoreRef(ctx.sessionManager, ctx.cwd);
+		const goal = await readGoal(ref);
+		const taskIntent = goal === null || goal.status === "complete" ? undefined : goal.objective;
 		pendingMetadata.set(requestId, {
 			checkpoint: checkpointState.captureAgentCheckpoint(pi, ctx),
 			todoSnapshot: todoBridge.createTodoSnapshot(ctx),
+			...(taskIntent === undefined ? {} : { taskIntent }),
 		});
 		while (pendingMetadata.size > MAX_PENDING_METADATA) {
 			const oldestRequestId = pendingMetadata.keys().next().value;
@@ -372,12 +390,17 @@ export default function compactionExtension(
 			}
 			let compaction: CompactionResult | undefined;
 			try {
-				compaction = await runExtensionCompaction(ctx, snapshot, feedbackSignal, (delta) =>
-					ctx.updateCompaction?.({
-						reason: "extension",
-						signal: feedbackSignal,
-						delta,
-					}),
+				compaction = await runExtensionCompaction(
+					ctx,
+					snapshot,
+					feedbackSignal,
+					(delta) =>
+						ctx.updateCompaction?.({
+							reason: "extension",
+							signal: feedbackSignal,
+							delta,
+						}),
+					remoteCompactionDependencies.summarizationWatchdog,
 				);
 			} catch (error) {
 				if (!(error instanceof SummaryGenerationError)) throw error;
@@ -430,7 +453,7 @@ export default function compactionExtension(
 			};
 		}
 
-		capturePendingMetadata(event.requestId, ctx);
+		await capturePendingMetadata(event.requestId, ctx);
 
 		const model = ctx.model;
 		if (!model) return undefined;
@@ -460,18 +483,27 @@ export default function compactionExtension(
 		};
 		let compaction: CompactionResult | undefined;
 		try {
-			compaction = await runExtensionCompaction(ctx, snapshot, event.signal, (delta) =>
-				ctx.updateCompaction?.({ reason: event.reason, signal: event.signal, delta }),
+			compaction = await runExtensionCompaction(
+				ctx,
+				snapshot,
+				event.signal,
+				(delta) => ctx.updateCompaction?.({ reason: event.reason, signal: event.signal, delta }),
+				remoteCompactionDependencies.summarizationWatchdog,
 			);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			const failureKind = classifyRequiredCompactionFallbackFailure(error);
 			if (isRequiredCompactionFallbackReason(event.reason) && failureKind !== undefined && !event.signal.aborted) {
+				const recoveryMetadata = pendingMetadata.get(event.requestId);
 				const fallback = createRequiredCompactionFallback(
 					snapshot.preparation,
 					snapshot.contextWindow,
 					failureKind,
-					{ taskIntent: resolveInheritedTaskIntent(event.branchEntries) },
+					{
+						taskIntent: recoveryMetadata?.taskIntent ?? resolveInheritedTaskIntent(event.branchEntries),
+						todoSnapshot: recoveryMetadata?.todoSnapshot,
+						checkpoint: recoveryMetadata?.checkpoint,
+					},
 					event.branchEntries,
 				);
 				if (fallback) return { compaction: fallback };
@@ -539,8 +571,36 @@ export default function compactionExtension(
 			state = cap.incrementAccepted(state);
 			state = breaker.recordSuccess(state);
 			const details = compactEvent.compactionEntry.details as
-				| { structuralYield?: { savedTokens: number; savingsRatio: number } }
+				| {
+						schema?: string;
+						origin?: string;
+						failureKind?: string;
+						taskIntent?: string;
+						structuralYield?: { savedTokens: number; savingsRatio: number };
+				  }
 				| undefined;
+			if (
+				details?.schema === "senpi.compaction.deterministic-fallback.v1" &&
+				details.origin === "required-compaction-recovery"
+			) {
+				ctx.ui.notify(
+					"Automatic compaction used a local recovery checkpoint because summarization did not finish; older context may be incomplete.",
+					"warning",
+				);
+				getLogger(ctx).info("deterministic_fallback_applied", {
+					origin: details.origin,
+					route: "session_before_compact",
+					reason: compactEvent.reason,
+					requestId: compactEvent.requestId,
+					failureKind: details.failureKind,
+					contextWindow:
+						ctx.getContextUsage()?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+					tokensBefore: compactEvent.compactionEntry.tokensBefore,
+					retainedEntryCount: keptEntries.length,
+					summaryBytes: Buffer.byteLength(compactEvent.compactionEntry.summary),
+					hasTaskIntent: details.taskIntent !== undefined,
+				});
+			}
 			const sy = details?.structuralYield;
 			if (sy && typeof sy.savedTokens === "number" && typeof sy.savingsRatio === "number") {
 				state = {

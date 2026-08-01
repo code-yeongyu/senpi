@@ -67,6 +67,7 @@ function userMessage(text: string, timestamp: number): UserMessage {
 
 export function createBlockingContext(options: {
 	usageTokens: number;
+	contextWindow?: number;
 	withAuth?: boolean;
 	beginCompaction?: () => AbortSignal | undefined;
 }): BlockingHarness {
@@ -98,6 +99,7 @@ export function createBlockingContext(options: {
 	modelRegistry.getApiKeyAndHeaders = getApiKeyAndHeaders as ExtensionContext["modelRegistry"]["getApiKeyAndHeaders"];
 	const endCompaction = vi.fn();
 	let usageTokens = options.usageTokens;
+	const contextWindow = options.contextWindow ?? 10_000;
 	const ctx = {
 		hasUI: false,
 		mode: "print",
@@ -115,8 +117,8 @@ export function createBlockingContext(options: {
 		shutdown: vi.fn(),
 		getContextUsage: () => ({
 			tokens: usageTokens,
-			contextWindow: 10_000,
-			percent: (usageTokens / 10_000) * 100,
+			contextWindow,
+			percent: (usageTokens / contextWindow) * 100,
 		}),
 		getCompactionSettings: () => ({ enabled: true, reserveTokens: 100, keepRecentTokens: 2_000 }),
 		getLookAtSettings: () => ({ enabled: true, models: undefined }),
