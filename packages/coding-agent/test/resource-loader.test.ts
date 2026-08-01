@@ -1019,14 +1019,19 @@ Content`,
 		});
 
 		it("should discard empty appendSystemPrompt entries", async () => {
+			const emptyPath = join(cwd, "empty-append.txt");
+			const whitespacePath = join(cwd, "whitespace-append.txt");
+			writeFileSync(emptyPath, "");
+			writeFileSync(whitespacePath, "   ");
 			const loader = new DefaultResourceLoader({
 				cwd,
 				agentDir,
-				appendSystemPrompt: ["", "   ", "kept suffix"],
+				appendSystemPrompt: ["", "   ", emptyPath, whitespacePath, "kept suffix"],
 			});
 			await loader.reload();
 
 			expect(loader.getAppendSystemPrompt()).toEqual(["kept suffix"]);
+			expect(loader.getAppendSystemPromptSources()).toEqual([]);
 		});
 	});
 

@@ -154,8 +154,9 @@ describe("Grok 4.5 prompt preset", () => {
 
 	it("keeps worker tool allowlists compatible with no-extensions", () => {
 		const toolsRule = GROK45_WORKER_RULES.find((rule) => rule.id === "tool-allowlists");
+		const preset = resolvePreset(createModel("grok-4.5", "xai"), { promptPreset: "auto" });
 		expect(toolsRule?.directive).toContain("--tools read,grep,find,ls,bash,edit,write");
-		expect(toolsRule?.directive).toContain("--tools read,grep,find,ls");
+		expect(preset?.prompt).toMatch(/Oracle uses `--tools read,grep,find,ls`\./);
 		expect(toolsRule?.directive).not.toContain("apply_patch");
 		expect(toolsRule?.directive).not.toContain("todo");
 	});
