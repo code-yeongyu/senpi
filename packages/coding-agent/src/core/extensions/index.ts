@@ -106,6 +106,7 @@ export type {
 	LoadExtensionsResult,
 	LsToolCallEvent,
 	LsToolResultEvent,
+	MessageDelivery,
 	// Events - Message
 	MessageEndEvent,
 	MessageRenderer,

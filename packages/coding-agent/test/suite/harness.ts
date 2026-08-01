@@ -84,6 +84,7 @@ export interface HarnessOptions {
 	fallbackNow?: () => number;
 	transportImageBudget?: { budgetBytes: number; alwaysKeepNewest: number };
 	modelsJson?: Record<string, unknown>;
+	beforeSession?: (agent: Agent) => void;
 }
 
 export interface Harness {
@@ -204,6 +205,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		},
 		prepareNextTurnWithContext: options.prepareNextTurnWithContext,
 	});
+	options.beforeSession?.(agent);
 	const extensionsResult = options.extensionFactories
 		? await createTestExtensionsResult(options.extensionFactories, tempDir)
 		: undefined;

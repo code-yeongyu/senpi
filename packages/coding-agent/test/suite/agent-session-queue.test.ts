@@ -136,6 +136,372 @@ describe("AgentSession queue characterization", () => {
 		expect(getAssistantTexts(harness)).toContain("saw steer");
 	});
 
+	it("cancels one exact custom-message delivery without removing an identical sibling", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		const waiting = await createWaitingHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("finished initial work"),
+			fauxAssistantMessage("handled remaining custom follow-up"),
+		]);
+		await waitForToolStart;
+
+		const first = extensionApi?.sendMessage(
+			{ customType: "delivery-receipt", content: "identical", display: false, details: { sequence: 1 } },
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		const second = extensionApi?.sendMessage(
+			{ customType: "delivery-receipt", content: "identical", display: false, details: { sequence: 2 } },
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		const started: string[] = [];
+		second?.onStarted(() => {
+			started.push(second.id);
+		});
+
+		expect(first?.cancel()).toBe(true);
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(started).toEqual([second?.id]);
+		expect(
+			harness.session.messages.flatMap((message) =>
+				message.role === "custom" && message.customType === "delivery-receipt" ? [message.details] : [],
+			),
+		).toEqual([{ sequence: 2 }]);
+	});
+
+	it("cancels a drained follow-up after Agent ownership but before its exact start", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		let second: ReturnType<ExtensionAPI["sendMessage"]> | undefined;
+		let cancellationResult: boolean | undefined;
+		const waiting = await createWaitingHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.agent.subscribe((event) => {
+			if (
+				event.type === "message_start" &&
+				event.message.role === "custom" &&
+				event.message.customType === "first-drained-follow-up"
+			) {
+				cancellationResult = second?.cancel();
+			}
+		});
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("finished initial work"),
+			(context) => {
+				const sawCancelled = context.messages.some(
+					(message) => message.role === "user" && getMessageText(message) === "cancel drained second",
+				);
+				return fauxAssistantMessage(sawCancelled ? "unexpected drained follow-up" : "drained follow-up cancelled");
+			},
+		]);
+		await waitForToolStart;
+		if (extensionApi === undefined) throw new Error("Expected extension API");
+		extensionApi.sendMessage(
+			{ customType: "first-drained-follow-up", content: "keep drained first", display: false },
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		second = extensionApi.sendMessage(
+			{ customType: "second-drained-follow-up", content: "cancel drained second", display: false },
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(cancellationResult).toBe(true);
+		expect(getAssistantTexts(harness)).toContain("drained follow-up cancelled");
+		expect(
+			harness.session.messages.some(
+				(message) => message.role === "custom" && message.customType === "second-drained-follow-up",
+			),
+		).toBe(false);
+	});
+
+	it("does not start a provider turn when the sole drained follow-up is cancelled", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		let delivery: ReturnType<ExtensionAPI["sendMessage"]> | undefined;
+		let turnStarts = 0;
+		let cancellationResult: boolean | undefined;
+		const providerEntered = Promise.withResolvers<void>();
+		const releaseProvider = Promise.withResolvers<void>();
+		const harness = await createHarness({
+			beforeSession: (agent) => {
+				agent.subscribe((event) => {
+					if (event.type !== "turn_start") return;
+					turnStarts += 1;
+					if (turnStarts === 2) cancellationResult = delivery?.cancel();
+				});
+			},
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			async () => {
+				providerEntered.resolve();
+				await releaseProvider.promise;
+				return fauxAssistantMessage("initial response only");
+			},
+		]);
+
+		const prompt = harness.session.prompt("normal prompt");
+		await providerEntered.promise;
+		if (extensionApi === undefined) throw new Error("Expected extension API");
+		delivery = extensionApi.sendMessage(
+			{ customType: "sole-drained-follow-up", content: "must not open another provider turn", display: false },
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		await new Promise<void>(queueMicrotask);
+		releaseProvider.resolve();
+		await prompt;
+
+		expect(cancellationResult).toBe(true);
+		expect(getAssistantTexts(harness)).toEqual(["initial response only"]);
+		expect(harness.getPendingResponseCount()).toBe(0);
+	});
+
+	it("does not start a provider turn when a post-agent_end drain is fully cancelled", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		let delivery: ReturnType<ExtensionAPI["sendMessage"]> | undefined;
+		let queued = false;
+		let turnStarts = 0;
+		let cancellationResult: boolean | undefined;
+		const harness = await createHarness({
+			beforeSession: (agent) => {
+				agent.subscribe((event) => {
+					if (event.type !== "turn_start") return;
+					turnStarts += 1;
+					if (turnStarts === 2) cancellationResult = delivery?.cancel();
+				});
+			},
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+					pi.on("agent_end", () => {
+						if (queued) return;
+						queued = true;
+						delivery = pi.sendMessage(
+							{
+								customType: "post-agent-end-follow-up",
+								content: "must not open a post-agent_end provider turn",
+								display: false,
+							},
+							{ triggerTurn: true, deliverAs: "followUp" },
+						);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("initial response only")]);
+
+		await harness.session.prompt("normal prompt");
+
+		expect(extensionApi).toBeDefined();
+		expect(cancellationResult).toBe(true);
+		expect(getAssistantTexts(harness)).toEqual(["initial response only"]);
+		expect(harness.getPendingResponseCount()).toBe(0);
+	});
+
+	it("does not claim cancellation after the exact next-turn custom message_start", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		const releaseUserMessageStart = Promise.withResolvers<void>();
+		const customMessageStarted = Promise.withResolvers<void>();
+		let deliveryCancellationResult: boolean | undefined;
+		let delivery: ReturnType<ExtensionAPI["sendMessage"]> | undefined;
+		const harness = await createHarness({
+			beforeSession: (agent) => {
+				agent.subscribe((event) => {
+					if (
+						event.type === "message_start" &&
+						event.message.role === "custom" &&
+						event.message.customType === "next-turn-delivery"
+					) {
+						deliveryCancellationResult = delivery?.cancel();
+						customMessageStarted.resolve();
+					}
+				});
+			},
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+					pi.on("message_start", async (event) => {
+						if (event.message.role === "user" && getMessageText(event.message) === "normal prompt") {
+							await releaseUserMessageStart.promise;
+						}
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			(context) => {
+				const received = context.messages.some(
+					(message) => message.role === "user" && getMessageText(message) === "must reach the provider",
+				);
+				return fauxAssistantMessage(received ? "received next-turn delivery" : "missing next-turn delivery");
+			},
+		]);
+
+		if (extensionApi === undefined) throw new Error("Expected extension API");
+		delivery = extensionApi.sendMessage(
+			{ customType: "next-turn-delivery", content: "must reach the provider", display: false },
+			{ deliverAs: "nextTurn" },
+		);
+		await new Promise<void>(queueMicrotask);
+		const prompt = harness.session.prompt("normal prompt");
+		await customMessageStarted.promise;
+		releaseUserMessageStart.resolve();
+		await prompt;
+
+		expect(deliveryCancellationResult).toBe(false);
+		expect(getAssistantTexts(harness)).toContain("received next-turn delivery");
+	});
+
+	it("cancels a next-turn delivery after queue drain but before provider admission", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		const admissionEntered = Promise.withResolvers<void>();
+		const releaseAdmission = Promise.withResolvers<void>();
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+					pi.on("before_agent_start", async () => {
+						admissionEntered.resolve();
+						await releaseAdmission.promise;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			(context) => {
+				const received = context.messages.some(
+					(message) => message.role === "user" && getMessageText(message) === "cancel before admission",
+				);
+				return fauxAssistantMessage(received ? "unexpected cancelled delivery" : "cancelled before provider");
+			},
+		]);
+
+		if (extensionApi === undefined) throw new Error("Expected extension API");
+		const delivery = extensionApi.sendMessage(
+			{ customType: "next-turn-cancel-window", content: "cancel before admission", display: false },
+			{ deliverAs: "nextTurn" },
+		);
+		await new Promise<void>(queueMicrotask);
+		const prompt = harness.session.prompt("normal prompt");
+		await admissionEntered.promise;
+		expect(delivery.cancel()).toBe(true);
+		releaseAdmission.resolve();
+		await prompt;
+
+		expect(getAssistantTexts(harness)).toContain("cancelled before provider");
+		expect(
+			harness.session.messages.some(
+				(message) => message.role === "custom" && message.customType === "next-turn-cancel-window",
+			),
+		).toBe(false);
+	});
+
+	it("cancels an Agent-owned next-turn delivery before its exact message_start", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		let delivery: ReturnType<ExtensionAPI["sendMessage"]> | undefined;
+		let cancellationResult: boolean | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.agent.subscribe((event) => {
+			if (event.type === "message_start" && event.message.role === "user") {
+				cancellationResult = delivery?.cancel();
+			}
+		});
+		harness.setResponses([
+			(context) => {
+				const received = context.messages.some(
+					(message) => message.role === "user" && getMessageText(message) === "cancel after Agent ownership",
+				);
+				return fauxAssistantMessage(
+					received ? "unexpected Agent-owned delivery" : "Agent-owned delivery cancelled",
+				);
+			},
+		]);
+
+		if (extensionApi === undefined) throw new Error("Expected extension API");
+		delivery = extensionApi.sendMessage(
+			{ customType: "agent-owned-cancel-window", content: "cancel after Agent ownership", display: false },
+			{ deliverAs: "nextTurn" },
+		);
+		await new Promise<void>(queueMicrotask);
+		await harness.session.prompt("normal prompt");
+
+		expect(cancellationResult).toBe(true);
+		expect(getAssistantTexts(harness)).toContain("Agent-owned delivery cancelled");
+		expect(
+			harness.session.messages.some(
+				(message) => message.role === "custom" && message.customType === "agent-owned-cancel-window",
+			),
+		).toBe(false);
+	});
+
+	it("cancels pending custom-message deliveries when the queue is cleared", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		const waiting = await createWaitingHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("finished without the cancelled follow-up"),
+		]);
+		await waitForToolStart;
+
+		const delivery = extensionApi?.sendMessage(
+			{ customType: "clearable-delivery", content: "cancel me", display: false },
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		const cancelled: string[] = [];
+		delivery?.onCancelled(() => {
+			cancelled.push(delivery.id);
+		});
+
+		harness.session.clearQueue();
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(cancelled).toEqual([delivery?.id]);
+		expect(harness.session.messages.some((message) => message.role === "custom")).toBe(false);
+	});
+
 	it("waits for manual compaction before admitting a background extension prompt", async () => {
 		const marker = "background extension prompt";
 		const summary = "manual compaction summary before extension admission";

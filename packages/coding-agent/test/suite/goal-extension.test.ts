@@ -33,7 +33,15 @@ function createGoalHarness(): GoalHarness {
 			list.push(handler);
 			handlers.set(event, list);
 		},
-		sendMessage: (message: SentMessage["message"], options: unknown) => sent.push({ message, options }),
+		sendMessage: (message: SentMessage["message"], options: unknown) => {
+			sent.push({ message, options });
+			return {
+				id: `delivery-${sent.length}`,
+				cancel: () => false,
+				onStarted: () => () => {},
+				onCancelled: () => () => {},
+			};
+		},
 		registerEntryRenderer: () => {},
 		appendEntry: () => {},
 	} as unknown as ExtensionAPI;
