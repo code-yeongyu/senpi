@@ -1,5 +1,25 @@
 # Core Extensions Changes
 
+## Backfill: extension context and reload stability (2026-08-01)
+
+### What changed
+
+- Session replacement no longer leaves extensions holding stale `ExtensionContext` instances.
+- Config reload watches stay scoped to the intended config source instead of widening across unrelated paths.
+- Global/default compatibility shims no longer bounce state back and forth during reloads.
+
+### Why
+
+- These fixes keep long-lived extension processes aligned with the current session and configuration.
+
+### Why this cannot be expressed externally
+
+- The behavior lives inside extension runner lifecycle, SDK context replacement, and config-watch ownership.
+
+### Expected merge conflict zones
+
+- `runner.ts`, `sdk.ts`, extension config reload/watch wiring, and global/default shim normalization.
+
 ## 2026-08-01 - recommended-models respects an explicitly saved system default
 
 ### What changed and why

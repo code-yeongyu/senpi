@@ -1,5 +1,23 @@
 # Builtin compaction extension changes
 
+## Blocking compaction route guards (2026-08-01)
+
+### What changed
+
+- Blocking compaction routes reject unsupported states before attempting a compaction transition.
+
+### Why
+
+- Unsupported route/state combinations otherwise strand the session or apply compaction through the wrong lifecycle.
+
+### Why this cannot be expressed externally
+
+- The guards depend on built-in compaction state, route ownership, and session transition timing.
+
+### Expected merge conflict zones
+
+- `index.ts` blocking route selection and blocking-compaction route guard tests.
+
 ## Deterministic required-compaction recovery (2026-07-31)
 
 - Required threshold/overflow recovery may synthesize one local checkpoint after a summarization watchdog or a transient `SummaryRequestError` carrying the structured `upstream-stream-truncated` failure kind, without issuing another provider request. Generic thrown text is never fallback authorization, even when it contains truncation-like markers.

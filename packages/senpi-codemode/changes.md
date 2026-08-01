@@ -1,5 +1,25 @@
 # senpi-codemode fork changes
 
+## Backfill: persistent eval lifecycle and tool surface (2026-08-01)
+
+### What changed
+
+- Eval cells can detach, report state-aware timeouts, and reuse neither active nor completed detached cell IDs.
+- Eval now has one normalized tool surface with bounded current-main status history and rich detached-cell peeks.
+- Bridge aborts, reserved bridge routing, tool-schema feedback, and tool widgets are handled explicitly.
+
+### Why
+
+- Long-running eval work must remain observable, addressable, and safe across retries, timeouts, and UI rendering.
+
+### Why this cannot be expressed externally
+
+- The contracts span the persistent kernel manager, bridge routing, tool schema, detached notification state, and renderer.
+
+### Expected merge conflict zones
+
+- `src/tool/eval-tool.ts`, detached cell manager/state/notification files, bridge code, status events, and eval rendering/tests.
+
 ## Live elapsed footer for detached eval cells (2026-07-31)
 
 - `src/tool/detached-cell-manager.ts`: `ManagedCell` and `EvalDetachedCellStatusEntry` gain

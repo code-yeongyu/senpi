@@ -1,8 +1,11 @@
+import { isAbsolute } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
 	type DetectedTerminalCapabilities,
 	detectTerminalCapabilities,
 	type TerminalCapabilities,
 } from "./terminal-capabilities.ts";
+import { sanitizeTerminalLabel, shortenImagePath } from "./terminal-text.ts";
 
 export type { ImageProtocol, TerminalCapabilities } from "./terminal-capabilities.ts";
 export { outerKittyGraphicsMode } from "./terminal-capabilities.ts";
@@ -296,6 +299,44 @@ export interface ImageCellSize {
 	rows: number;
 }
 
+export interface KittyImageMetadata extends ImageCellSize {
+	imageId: number;
+	widthPx: number;
+	heightPx: number;
+}
+
+const kittyImageMetadata = new Map<number, KittyImageMetadata>();
+
+export function registerKittyImageMetadata(metadata: KittyImageMetadata): void {
+	kittyImageMetadata.delete(metadata.imageId);
+	kittyImageMetadata.set(metadata.imageId, metadata);
+	if (kittyImageMetadata.size > 1000) {
+		const oldestImageId = kittyImageMetadata.keys().next().value;
+		if (oldestImageId !== undefined) kittyImageMetadata.delete(oldestImageId);
+	}
+}
+
+export function getKittyImageMetadata(line: string): KittyImageMetadata | undefined {
+	const controls = /\x1b_G([^;]*);/.exec(line)?.[1];
+	if (!controls) return undefined;
+	const imageId = /(?:^|,)i=(\d+)(?:,|$)/.exec(controls)?.[1];
+	return imageId === undefined ? undefined : kittyImageMetadata.get(Number.parseInt(imageId, 10));
+}
+
+export function cropKittyImageLine(line: string, hiddenRows: number, visibleRows: number): string {
+	const metadata = getKittyImageMetadata(line);
+	const match = /\x1b_G([^;]*);/.exec(line);
+	if (!metadata || !match || hiddenRows < 0 || hiddenRows >= metadata.rows || visibleRows <= 0) return line;
+	const croppedRows = Math.min(visibleRows, metadata.rows - hiddenRows);
+	if (hiddenRows === 0 && croppedRows === metadata.rows) return line;
+	const sourceY = Math.floor((metadata.heightPx * hiddenRows) / metadata.rows);
+	const sourceEnd = Math.ceil((metadata.heightPx * (hiddenRows + croppedRows)) / metadata.rows);
+	const sourceHeight = Math.max(1, Math.min(metadata.heightPx, sourceEnd) - sourceY);
+	const controls = match[1].split(",").filter((control) => !/^[yhr]=/.test(control));
+	controls.push(`y=${sourceY}`, `h=${sourceHeight}`, `r=${croppedRows}`);
+	return `${line.slice(0, match.index)}\x1b_G${controls.join(",")};${line.slice(match.index + match[0].length)}`;
+}
+
 export function calculateImageCellSize(
 	imageDimensions: ImageDimensions,
 	maxWidthCells: number,
@@ -467,7 +508,7 @@ export function renderImage(
 	base64Data: string,
 	imageDimensions: ImageDimensions,
 	options: ImageRenderOptions = {},
-): { sequence: string; rows: number; imageId?: number; lines?: string[] } | null {
+): { sequence: string; columns: number; rows: number; imageId?: number; lines?: string[] } | null {
 	const caps = getCapabilities();
 
 	if (!caps.images) {
@@ -490,17 +531,26 @@ export function renderImage(
 			const placeholderRow = buildKittyPlaceholderRow(imageId, row, columns);
 			lines.push(row === 0 ? sequence + placeholderRow : placeholderRow);
 		}
-		return { sequence, rows, imageId, lines };
+		return { sequence, columns, rows, imageId, lines };
 	}
 
 	if (caps.images === "kitty") {
+		if (options.imageId !== undefined) {
+			registerKittyImageMetadata({
+				imageId: options.imageId,
+				columns: size.columns,
+				rows: size.rows,
+				widthPx: imageDimensions.widthPx,
+				heightPx: imageDimensions.heightPx,
+			});
+		}
 		const sequence = encodeKitty(base64Data, {
 			columns: size.columns,
 			rows: size.rows,
 			imageId: options.imageId,
 			moveCursor: options.moveCursor,
 		});
-		return { sequence, rows: size.rows, imageId: options.imageId };
+		return { sequence, columns: size.columns, rows: size.rows, imageId: options.imageId };
 	}
 
 	if (caps.images === "iterm2") {
@@ -509,7 +559,7 @@ export function renderImage(
 			height: "auto",
 			preserveAspectRatio: options.preserveAspectRatio ?? true,
 		});
-		return { sequence, rows: size.rows };
+		return { sequence, columns: size.columns, rows: size.rows };
 	}
 
 	return null;
@@ -527,4 +577,20 @@ export function renderImage(
  */
 export function hyperlink(text: string, url: string): string {
 	return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
+}
+
+export function imageFallback(mimeType: string, dimensions?: ImageDimensions, filename?: string): string {
+	const parts: string[] = [];
+	if (filename) {
+		const sanitized = sanitizeTerminalLabel(filename);
+		const display = shortenImagePath(sanitized);
+		parts.push(
+			getCapabilities().hyperlinks && isAbsolute(sanitized)
+				? hyperlink(display, pathToFileURL(sanitized).href)
+				: display,
+		);
+	}
+	parts.push(`[${sanitizeTerminalLabel(mimeType)}]`);
+	if (dimensions) parts.push(`${dimensions.widthPx}x${dimensions.heightPx}`);
+	return `[Image: ${parts.join(" ")}]`;
 }

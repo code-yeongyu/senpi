@@ -1,5 +1,23 @@
 # claude-sdk-oauth extension changes
 
+## 2026-08-01 - Subscription-limit failover classification
+
+### What changed
+
+- Claude subscription-limit responses are classified as account-failover conditions rather than terminal provider errors.
+
+### Why
+
+- Multi-account OAuth sessions should move to an available account when one subscription lane is exhausted.
+
+### Why this cannot be expressed externally
+
+- Classification feeds the built-in auth lane, account affinity, and stream-safe retry state.
+
+### Expected merge conflict zones
+
+- `auth-lane.ts`, provider error classification, and account failover tests.
+
 ## 2026-07-31 - Native system prompt, session reuse, env overrides, and transcript hardening
 
 - **System prompt modes (new default: `full`).** Added a `systemPromptMode` setting with three values. `full` (new default) sends senpi's own composed system prompt verbatim — previously the lane rebuilt a prompt from the SDK `claude_code` preset plus three extracted regions, so any region without a dedicated extractor was silently dropped (a persistent response-language instruction never reached the model). `preset-append` is the previous behaviour, now DEPRECATED and kept for one release; selecting it emits a one-time warning. `override` loads the system prompt verbatim from a file (`systemPromptFile`). The legacy `appendSystemPrompt` key still works and maps onto the modes: `false` → `preset-append`, `true`/unset → `full`. Setting both `appendSystemPrompt` and `systemPromptMode` makes `systemPromptMode` win and emits a warning.

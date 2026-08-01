@@ -238,6 +238,7 @@ export function fakeExtensionContext(): ExtensionContext {
 		modelRegistry: Object.create(null),
 		model: undefined,
 		serviceTier: undefined,
+		scopedModels: [],
 		isIdle: () => true,
 		isProjectTrusted: () => true,
 		signal: undefined,

@@ -1,4 +1,5 @@
-import type { Model } from "@earendil-works/pi-ai";
+import type { KnownProvider, Model } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 import { describe, expect, test, vi } from "vitest";
 import {
 	defaultModelPerProvider,
@@ -642,11 +643,22 @@ describe("default model selection", () => {
 	});
 
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {
-		expect(defaultModelPerProvider.zai).toBe("glm-5.1");
+		expect(defaultModelPerProvider.zai).toBe("glm-5.2");
+		expect(defaultModelPerProvider["zai-coding-cn"]).toBe("glm-5.2");
 		expect(defaultModelPerProvider.minimax).toBe("MiniMax-M2.7");
 		expect(defaultModelPerProvider["minimax-cn"]).toBe("MiniMax-M2.7");
 		expect(defaultModelPerProvider.cerebras).toBe("zai-glm-4.7");
 		expect(defaultModelPerProvider["ant-ling"]).toBe("Ring-2.6-1T");
+	});
+
+	test("every bundled provider default resolves in its catalog", () => {
+		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
+			if (provider === "radius") continue;
+			const defaultModelId = defaultModelPerProvider[provider];
+			const modelIds = getModels(provider).map((model) => model.id);
+			expect(modelIds.length, `${provider} should expose a bundled catalog`).toBeGreaterThan(0);
+			expect(modelIds, `${provider} should include its default ${defaultModelId}`).toContain(defaultModelId);
+		}
 	});
 
 	test("ai-gateway default tracks current model", () => {
@@ -696,6 +708,25 @@ describe("default model selection", () => {
 
 		expect(result.model?.provider).toBe("vercel-ai-gateway");
 		expect(result.model?.id).toBe("zai/glm-5.1");
+	});
+
+	test("findInitialModel selects the Z.AI provider default when available", async () => {
+		const zaiDefault = getModels("zai").find((model) => model.id === defaultModelPerProvider.zai);
+		expect(zaiDefault).toBeDefined();
+
+		const registry = {
+			getAvailable: async () => [zaiDefault!],
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+		const result = await findInitialModel({
+			scopedModels: [],
+			isContinuing: false,
+			modelRuntime: registry,
+		});
+
+		expect(result.provenance).toBe("provider-default");
+		expect(result.model?.provider).toBe("zai");
+		expect(result.model?.id).toBe("glm-5.2");
 	});
 
 	test("findInitialModel ignores an unauthenticated saved default", async () => {

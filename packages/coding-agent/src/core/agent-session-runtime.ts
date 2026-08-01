@@ -186,6 +186,9 @@ export class AgentSessionRuntime {
 	}
 
 	private async teardownCurrent(reason: SessionShutdownEvent["reason"], targetSessionFile?: string): Promise<void> {
+		// Settle the active response before replacement so the outgoing turn and
+		// any completed tool results are persisted to the old session.
+		await this.session.abort();
 		const oldRunner = this.session.extensionRunner;
 		// Test hosts and partial runner implementations may lack identity introspection;
 		// skip removal reporting there rather than break the replacement itself.

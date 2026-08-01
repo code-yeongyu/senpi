@@ -116,6 +116,7 @@ export type ProviderRequestMetadata = {
 	model: Model<Api>;
 	headers: ProviderHeaders;
 };
+export type FetchFunction = typeof globalThis.fetch;
 
 export interface ProviderResponse {
 	status: number;
@@ -147,6 +148,12 @@ export interface StreamOptions {
 	 * An absent value must be treated as auxiliary as a fail-safe.
 	 */
 	streamKind?: "main" | "auxiliary";
+	/**
+	 * Optional fetch implementation for provider HTTP requests.
+	 * Defaults to `globalThis.fetch`. Provider adapters that cannot inject a custom implementation may reject it.
+	 * This does not affect WebSocket transports.
+	 */
+	fetch?: FetchFunction;
 	/**
 	 * Preferred transport for providers that support multiple transports.
 	 * Providers that do not support this option ignore it.
@@ -289,6 +296,8 @@ export interface ProviderImages {
 export interface ImagesOptions {
 	signal?: AbortSignal;
 	apiKey?: string;
+	/** Optional fetch implementation for provider HTTP requests. Defaults to `globalThis.fetch`. */
+	fetch?: FetchFunction;
 	/**
 	 * Provider-scoped environment values. These take precedence over process.env for
 	 * provider configuration such as endpoint placeholders and proxy variables.
@@ -458,7 +467,7 @@ export interface Usage {
 	};
 }
 
-export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
+export type StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "aborted";
 
 export type AssistantStopDetails = { type: "refusal"; explanation?: string } | { type: "sensitive" };
 
@@ -481,6 +490,7 @@ export interface AssistantMessage {
 	stopReason: StopReason;
 	stopDetails?: AssistantStopDetails;
 	errorMessage?: string;
+	rawStopReason?: string;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
@@ -604,6 +614,8 @@ export interface OpenAICompletionsCompat {
 	supportsReasoningEffort?: boolean;
 	/** Whether the provider supports `stream_options: { include_usage: true }` for token usage in streaming responses. Default: true. */
 	supportsUsageInStreaming?: boolean;
+	/** Whether streamed responses include `finish_reason`. When false, pi infers `stop` or `toolUse` when the stream ends. Default: true. */
+	supportsFinishReason?: boolean;
 	/** Which field to use for max tokens. Default: auto-detected from URL. */
 	maxTokensField?: "max_completion_tokens" | "max_tokens";
 	/** Whether tool results require the `name` field. Default: auto-detected from URL. */

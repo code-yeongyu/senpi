@@ -23,6 +23,7 @@ function minimalToolContext(): ExtensionContext {
 		modelRegistry: ModelRegistry.inMemory(AuthStorage.inMemory()),
 		model: undefined,
 		serviceTier: undefined,
+		scopedModels: [],
 		isIdle: () => true,
 		isProjectTrusted: () => true,
 		signal: undefined,

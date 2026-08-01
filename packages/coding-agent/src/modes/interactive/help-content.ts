@@ -6,6 +6,7 @@ const KEYBINDING_GROUPS = [
 	{ prefix: "tui.editor.", heading: "Editor" },
 	{ prefix: "tui.input.", heading: "Input" },
 	{ prefix: "tui.select.", heading: "Selection" },
+	{ prefix: "tui.altScreen.", heading: "Alt Screen" },
 	{ prefix: "app.", heading: "Application" },
 ] as const;
 

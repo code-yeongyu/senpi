@@ -1,5 +1,23 @@
 # changes
 
+## Backfill: eval bridge deadlock prevention (2026-08-01)
+
+### What changed
+
+- Eval bridge requests no longer deadlock the session when completion and bridge delivery race.
+
+### Why
+
+- A blocked bridge stalls the entire agent turn and leaves no safe continuation path.
+
+### Why this cannot be expressed externally
+
+- The fix depends on internal agent-session bridge ordering and completion ownership.
+
+### Expected merge conflict zones
+
+- Agent-session eval bridge handlers, pending request state, and completion/error cleanup.
+
 ## Deduplicate high-reasoning warnings per session model (2026-07-31)
 
 ### What changed

@@ -1,5 +1,69 @@
 # Local fork changes
 
+## 2026-08-01 — Reconcile fork runtime contracts after the upstream merge
+
+### What changed
+
+- Updated Grok themes for the merged scrollbar color contract while preserving their non-palette inheritance.
+- Kept implicit legacy `SYSTEM.md` and `APPEND_SYSTEM.md` files excluded from both prompt content and source metadata.
+- Restored source-runtime extension aliases, Alt Screen help grouping, and package-declared hook discovery.
+- Added the merged protocol and client workspaces to the root build graph in dependency order so clean CI runners produce their declarations before dependent packages compile.
+- Updated deterministic test hosts for merged session abort, Markdown transformer, UI mode, fullscreen scrollbar, and offline-network contracts.
+- Made the `/btw` concurrent snapshot test wait for the exact side-provider entry signal instead of relying on provider-call timing.
+
+### Why
+
+- Upstream added runtime capabilities and lifecycle requirements on surfaces that also carry fork-only behavior. The merge preserved most production code but omitted three fork integration fields and left several fork tests modeling the pre-merge runtime shape.
+- The resulting full package suite had 25 coding-agent failures despite narrower focused suites being green, and clean CI builds could not resolve the newly merged client and protocol workspaces because local validation had pre-existing `dist` artifacts.
+
+### Why this cannot be expressed externally
+
+- These behaviors span package loading, built-in help, manifest parsing, session lifecycle, interactive rendering, and the repository's deterministic faux-provider tests before extension-level customization can repair them.
+
+### Expected merge conflict zones
+
+- `scripts/build-all.mjs`, `src/core/extensions/loader.ts`, `src/core/pi-manifest.ts`, `src/core/resource-loader.ts`, `src/modes/interactive/help-content.ts`, Grok theme JSON, `interactive-mode.ts` test hosts, session-runtime tests, model-network policy tests, and `/btw` concurrency coverage.
+
+## 2026-08-01 — Preserve the no-shipped-shrinkwrap install contract
+
+### What changed
+
+- Removed the upstream `packages/coding-agent/npm-shrinkwrap.json` that was reintroduced by the merge.
+- Updated the root supply-chain documentation to identify `publish-deps.lock.json` as the staging-only generated manifest and to state that `npm-shrinkwrap.json` must not ship.
+
+### Why
+
+- The fork deliberately removed the npm shrinkwrap because npm force-packs that filename and treats it as the complete locked bundled tree, skipping non-bundled direct dependencies and leaving installed CLIs broken with `ERR_MODULE_NOT_FOUND`.
+- Keeping the reintroduced file or the stale README claim would contradict the existing pack guard and misdirect the next release or upstream merge.
+
+### Why this cannot be expressed externally
+
+- Package tarball contents, publish staging metadata, and repository release documentation are owned before the Senpi runtime and extension system start.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/npm-shrinkwrap.json`, root `README.md` supply-chain documentation, `scripts/generate-coding-agent-shrinkwrap.mjs`, and publish pack guards.
+
+## 2026-08-01 — Backfill local release and publish hardening
+
+### What changed
+
+- Local release tests build packages first and run smoke tests serially.
+- Release output prints the exact npm publish command and permits authenticated local publishing.
+- Provenance metadata, publish roots, and publish directories now match the fork's declared package layout.
+
+### Why
+
+- Local release evidence must exercise built artifacts and produce commands that work from the actual fork package roots.
+
+### Why this cannot be expressed externally
+
+- The behavior is owned by repository release, publish, provenance, and smoke-test scripts.
+
+### Expected merge conflict zones
+
+- `scripts/local-release.mjs`, `scripts/publish.mjs`, release smoke helpers, and package publish metadata.
+
 ## 2026-07-31 — Claude SDK OAuth provider identity
 
 - Changed: renamed Senpi's SDK-backed Claude subscription provider and every active internal surface from `claude-agent-sdk` to `claude-sdk-oauth`, including auth storage, settings, commands, RPC/app-server account routing, tests, docs, and QA scenarios.

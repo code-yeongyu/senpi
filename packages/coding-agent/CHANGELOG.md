@@ -4,6 +4,20 @@
 
 ### New Features
 
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.1] - 2026-08-01
+
+### New Features
+
 - Add model-optimized prompt presets for `deepseek-v4-flash`,
   `deepseek-v4-flash-0731`, and `deepseek-v4-pro`. The presets use typed
   family rules over the shared dynamic prompt core to preserve harness
@@ -52,6 +66,16 @@
   Markdown, and terminal-width coverage with equivalent non-Korean CJK sample
   data. No identifiers, settings keys, or runtime control flow changed
   ([#613](https://github.com/code-yeongyu/senpi/pull/613)).
+
+- Refresh the model inventory surfaced by `senpi --list-models` and model
+  selection from the current OpenRouter, Vercel AI Gateway, Z.AI, and Z.AI
+  Coding CN catalogs. The update removes retired OpenRouter batch aliases and
+  three unavailable Z.AI model IDs, adds
+  `thinkingmachines/inkling-small`,
+  `deepseek/deepseek-v4-flash-0731`, and
+  `glm-5.2-highspeed[1m]`, moves both Z.AI provider defaults and browser key
+  validation to surviving `glm-5.2`, and adds a catalog-membership guard so
+  external removals cannot silently strand a provider default.
 
 ### Fixed
 

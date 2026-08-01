@@ -45,6 +45,7 @@ function toolContext(model: Model<Api> | undefined, modelRegistry: ModelRegistry
 		modelRegistry,
 		model,
 		serviceTier: undefined,
+		scopedModels: [],
 		isIdle: () => true,
 		isProjectTrusted: () => true,
 		signal: undefined,

@@ -33,6 +33,7 @@ import type {
 } from "../src/core/extensions/types.ts";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import type { ModelRegistry } from "../src/core/model-registry.ts";
+import type { ScopedModel } from "../src/core/model-resolver.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 
 describe("ExtensionRunner", () => {
@@ -143,6 +144,7 @@ describe("ExtensionRunner", () => {
 	const extensionContextActions: ExtensionContextActions = {
 		getModel: () => undefined,
 		getServiceTier: () => undefined,
+		getScopedModels: () => [],
 		isIdle: () => true,
 		isProjectTrusted: () => true,
 		getSignal: () => undefined,
@@ -279,6 +281,22 @@ describe("ExtensionRunner", () => {
 		}
 		return requireRecord(toolResult.details, "tool result details");
 	};
+
+	describe("scopedModels", () => {
+		it("reflects the getScopedModels context action on ctx.scopedModels", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			// Before bindCore the default is an empty list (never undefined).
+			expect(runner.createContext().scopedModels).toEqual([]);
+
+			// After bindCore wires a getScopedModels action, ctx.scopedModels
+			// returns it live (same reference, lazy getter).
+			const scoped = [{ model: { id: "scoped-test" }, thinkingLevel: "high" }] as unknown as ScopedModel[];
+			runner.bindCore(extensionActions, { ...extensionContextActions, getScopedModels: () => scoped });
+			expect(runner.createContext().scopedModels).toBe(scoped);
+		});
+	});
 
 	describe("project_trust", () => {
 		it("continues past undecided handlers and returns the first yes/no decision", async () => {
@@ -912,6 +930,21 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("message and entry renderers", () => {
+		it("gets Markdown transformers in extension load order", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.registerMarkdownTransformer((markdown) => markdown);
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "markdown-renderer-a.ts"), extCode);
+			fs.writeFileSync(path.join(extensionsDir, "markdown-renderer-b.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.getMarkdownTransformers()).toHaveLength(2);
+		});
+
 		it("gets message renderer by type", async () => {
 			const extCode = `
 				export default function(pi) {

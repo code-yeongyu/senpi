@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import type { ImageDimensions } from "./terminal-image.ts";
 
 const TERMINAL_ESCAPE_PATTERN =
@@ -11,9 +12,20 @@ export function sanitizeTerminalLabel(value: string): string {
 		.trim();
 }
 
+export function shortenImagePath(filename: string): string {
+	const home = homedir();
+	if (home && (filename === home || filename.startsWith(`${home}/`) || filename.startsWith(`${home}\\`))) {
+		return `~${filename.slice(home.length)}`;
+	}
+	return filename;
+}
+
 export function imageFallback(mimeType: string, dimensions?: ImageDimensions, filename?: string): string {
 	const parts: string[] = [];
-	if (filename) parts.push(sanitizeTerminalLabel(filename));
+	if (filename) {
+		const sanitized = sanitizeTerminalLabel(filename);
+		parts.push(shortenImagePath(sanitized));
+	}
 	parts.push(`[${sanitizeTerminalLabel(mimeType)}]`);
 	if (dimensions) parts.push(`${dimensions.widthPx}x${dimensions.heightPx}`);
 	return `[Image: ${parts.join(" ")}]`;

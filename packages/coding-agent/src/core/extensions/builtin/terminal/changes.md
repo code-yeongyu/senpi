@@ -1,5 +1,23 @@
 # terminal builtin extension — fork surface
 
+## Backfill: Anthropic availability monitoring (2026-08-01)
+
+### What changed
+
+- Persistent terminal monitoring recognizes Anthropic availability and reports it through the existing observable-state channel.
+
+### Why
+
+- Agents must distinguish a provider becoming usable from arbitrary terminal output.
+
+### Why this cannot be expressed externally
+
+- The signal is produced inside the built-in monitor process and terminal event parser.
+
+### Expected merge conflict zones
+
+- Monitor event parsing, provider availability matching, and terminal status tests.
+
 The persistent-terminal tool suite (`bash` swapped to PTY-backed + `bash_output`,
 `kill_bash`, `bash_input`, `bash_resize`). Backed by `@earendil-works/pi-pty`.
 

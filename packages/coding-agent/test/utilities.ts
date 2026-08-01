@@ -228,7 +228,9 @@ export function createTestResourceLoader(options: CreateTestResourceLoaderOption
 		getThemes: () => ({ themes: [], diagnostics: [] }),
 		getAgentsFiles: () => ({ agentsFiles: [] }),
 		getSystemPrompt: () => options.systemPrompt,
+		getSystemPromptSource: () => undefined,
 		getAppendSystemPrompt: () => options.appendSystemPrompt ?? [],
+		getAppendSystemPromptSources: () => [],
 		extendResources: () => {},
 		reload: async () => {},
 	};

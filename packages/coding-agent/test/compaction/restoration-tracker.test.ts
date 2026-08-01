@@ -84,6 +84,7 @@ function createGateExtensionContext(settings: CompactionSettings): ExtensionCont
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
 		model: undefined,
 		serviceTier: undefined,
+		scopedModels: [],
 		isIdle: () => true,
 		signal: undefined,
 		abort: vi.fn(),

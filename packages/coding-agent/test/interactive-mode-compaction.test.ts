@@ -68,6 +68,7 @@ function renderExpandedPersistedCompactionSummary(sessionManager: SessionManager
 		},
 		ui: { requestRender: () => {} },
 		getMarkdownThemeWithSettings: () => getMarkdownTheme(),
+		getMarkdownTransformers: () => [],
 		addMessageToChat: (..._args: unknown[]) => {},
 		renderSessionItems: (..._args: unknown[]) => {},
 		renderSessionEntries: (..._args: unknown[]) => {},

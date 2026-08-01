@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, it } from "node:test";
-import { getAuthPath, getServerDir, getSocketPath } from "../src/config.ts";
+import { afterEach, beforeEach, describe, it } from "vitest";
+import { getAuthPath, getServerDir, getSocketPath } from "../src/legacy/config.ts";
 
 const ENV_KEYS = ["SENPI_SERVER_DIR", "SENPI_CONFIG_DIR"] as const;
 

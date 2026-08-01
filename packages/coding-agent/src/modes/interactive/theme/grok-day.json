@@ -23,6 +23,7 @@
 		"thinkingText": "#6c6c6c",
 
 		"selectedBg": "#d0d0e0",
+		"scrollbarThumb": "#d0d0e0",
 		"userMessageBg": "#e8e8e8",
 		"userMessageText": "#1f2328",
 		"customMessageBg": "#ede7f6",

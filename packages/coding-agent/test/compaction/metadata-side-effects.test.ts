@@ -75,6 +75,7 @@ function createExtensionContext(entries: SessionEntry[]): ExtensionContext {
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
 		model: undefined,
 		serviceTier: undefined,
+		scopedModels: [],
 		isIdle: () => true,
 		signal: undefined,
 		abort: vi.fn(),

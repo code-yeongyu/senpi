@@ -4,18 +4,18 @@ import { createModels } from "@earendil-works/pi-ai";
 import { cloudflareAIGatewayProvider } from "@earendil-works/pi-ai/providers/cloudflare-ai-gateway";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
-import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.ts";
 import {
 	AgentHarness,
 	createBashTool,
 	createEditTool,
+	createInMemorySessionStore,
 	createReadTool,
+	createSessionRepository,
 	createWriteTool,
 	formatSkillsForSystemPrompt,
 	loadSourcedPromptTemplates,
 	loadSourcedSkills,
 	type PromptTemplate,
-	Session,
 	type Skill,
 } from "../../src/index.ts";
 
@@ -51,7 +51,8 @@ if (!model) {
 	process.exit(-1);
 }
 
-const session = new Session(new InMemorySessionStorage());
+await using store = createInMemorySessionStore();
+const session = await createSessionRepository({ store }).create({});
 const agent = new AgentHarness({
 	session,
 	models,
