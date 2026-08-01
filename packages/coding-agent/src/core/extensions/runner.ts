@@ -76,6 +76,17 @@ import type {
 	UserBashEventResult,
 } from "./types.ts";
 
+function cloneSystemPromptOptions(options: BuildSystemPromptOptions): BuildSystemPromptOptions {
+	return {
+		...options,
+		selectedTools: options.selectedTools ? [...options.selectedTools] : undefined,
+		toolSnippets: options.toolSnippets ? { ...options.toolSnippets } : undefined,
+		promptGuidelines: options.promptGuidelines ? [...options.promptGuidelines] : undefined,
+		contextFiles: options.contextFiles?.map((file) => ({ ...file })),
+		skills: options.skills?.map((skill) => ({ ...skill, sourceInfo: { ...skill.sourceInfo } })),
+	};
+}
+
 // Extension shortcuts compete with canonical keybinding ids from keybindings.json.
 // Only editor-global shortcuts are reserved here. Picker-specific bindings are not.
 const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
@@ -1092,15 +1103,7 @@ export class ExtensionRunner {
 			},
 			getSystemPromptOptions: () => {
 				runner.assertActive();
-				const options = runner.getSystemPromptOptionsFn();
-				return {
-					...options,
-					selectedTools: options.selectedTools ? [...options.selectedTools] : undefined,
-					toolSnippets: options.toolSnippets ? { ...options.toolSnippets } : undefined,
-					promptGuidelines: options.promptGuidelines ? [...options.promptGuidelines] : undefined,
-					contextFiles: options.contextFiles?.map((file) => ({ ...file })),
-					skills: options.skills?.map((skill) => ({ ...skill, sourceInfo: { ...skill.sourceInfo } })),
-				};
+				return cloneSystemPromptOptions(runner.getSystemPromptOptionsFn());
 			},
 			getLoadedHookSources: () => {
 				runner.assertActive();
@@ -1203,20 +1206,9 @@ export class ExtensionRunner {
 					// Re-read live prompt options per handler: an earlier handler that swaps
 					// the active toolset (gpt-apply-patch) must let later handlers
 					// (prompt-preset) rebuild from the post-swap tools in the same emission.
-					const options = this.getSystemPromptOptionsFn();
 					const liveEvent: ModelSelectEvent = {
 						...event,
-						systemPromptOptions: {
-							...options,
-							selectedTools: options.selectedTools ? [...options.selectedTools] : undefined,
-							toolSnippets: options.toolSnippets ? { ...options.toolSnippets } : undefined,
-							promptGuidelines: options.promptGuidelines ? [...options.promptGuidelines] : undefined,
-							contextFiles: options.contextFiles?.map((file) => ({ ...file })),
-							skills: options.skills?.map((skill) => ({
-								...skill,
-								sourceInfo: { ...skill.sourceInfo },
-							})),
-						},
+						systemPromptOptions: cloneSystemPromptOptions(this.getSystemPromptOptionsFn()),
 					};
 					const handlerResult = await handler(liveEvent, this.createContext(ext.path));
 					if (handlerResult) {

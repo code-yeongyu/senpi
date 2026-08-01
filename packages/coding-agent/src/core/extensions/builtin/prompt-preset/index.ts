@@ -15,6 +15,12 @@ interface SystemPromptOptionsLike {
 	appendSystemPrompt?: string;
 }
 
+const SYSTEM_PROMPT_SEPARATOR = "\n\n";
+
+function appendSystemPrompt(base: string, suffix: string | undefined): string {
+	return suffix ? `${base}${SYSTEM_PROMPT_SEPARATOR}${suffix}` : base;
+}
+
 function eventOptionsToBuilderInput(
 	event: { systemPromptOptions: SystemPromptOptionsLike | undefined },
 	ctx: Pick<ExtensionContext, "cwd">,
@@ -75,7 +81,7 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 		}
 
 		const append = options?.appendSystemPrompt;
-		return { systemPrompt: append ? `${preset.prompt}\n\n${append}` : preset.prompt };
+		return { systemPrompt: appendSystemPrompt(preset.prompt, append) };
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -91,15 +97,13 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 		const options = event.systemPromptOptions;
 		if (options?.customPrompt !== undefined) {
 			return {
-				systemPrompt: options.appendSystemPrompt
-					? `${options.customPrompt}\n\n${options.appendSystemPrompt}`
-					: options.customPrompt,
+				systemPrompt: appendSystemPrompt(options.customPrompt, options.appendSystemPrompt),
 			};
 		}
 		const preset = resolvePreset(event.model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx));
 		const append = options?.appendSystemPrompt;
 		return {
-			systemPrompt: preset ? (append ? `${preset.prompt}\n\n${append}` : preset.prompt) : null,
+			systemPrompt: preset ? appendSystemPrompt(preset.prompt, append) : null,
 			systemPromptName: preset?.name,
 		};
 	});
