@@ -264,6 +264,28 @@
 
 ## Grok 4.5 preset (unreleased — 2026-07-17)
 
+### Agent-first Implementer/Oracle profiles (2026-08-01)
+
+#### What changed
+- `grok-4.5.ts` Role section: dropped the sole `--model gpt-5.6*` implementer path and the "gpt-5.6 prompting guide loads doctrine automatically" coupling.
+- Workers are **invocation profiles** expressed in the brief, not tools: **Implementer** (workspace-writing executor) and **Oracle** (read-only analysis/high-risk review). Critic/Planner/Explorer are not named agents — planning/recon stay with the CEO unless hard analysis needs Oracle.
+- Implementer doctrine is model-independent and must live in every brief: implement rather than propose; inspect/edit/scoped tests/Manual QA; preserve unrelated work; stop after three different failed approaches; return changed files, commands/results, blockers.
+- Spawn remains only via `bash` + `senpi --print`. Brief transport guidance: write to a temp file and pass quoted contents; do not interpolate raw user/repo text into shell syntax. `--model` only when an exact available model ID is known.
+- Oracle wording: high-risk final review / hard debug — not "before deploying". One orchestration level; workers must not re-delegate.
+- Brief fields: ROLE, GOAL, SCOPE, CONSTRAINTS, DONE WHEN, RETURN.
+- `test/suite/prompt-presets-grok-4-5.test.ts`: pins agent-first invariants; removes gpt-5.6-only path pins; keeps id resolution, settings force, catalog sweep, no fake task-tool API.
+
+#### Why
+- User direction: prefer specifying worker **roles** over locking every implementation child to GPT. Model presets must not be the only carrier of execution doctrine under senpi's no-task-tool harness.
+- Oracle/Momus/Metis review of the multi-agent plan: five named agents overbuilt; 2 profiles max; doctrine cannot depend on gpt-5.6 preset; prompt-only scope (no CLI/spawn infrastructure).
+
+#### Why extension system couldn't handle this differently
+- Content-only change inside this builtin `corePrompt` override; no core prompt code or tools changed.
+
+#### Expected merge conflict zones on next upstream sync
+- LOW: `grok-4.5.ts` Role wording and Grok test phrase pins.
+
+
 Grok 4.5 has **not** been formally merged. Do not invent `v1`/`v2`/… edition labels for unreleased retunes — keep a single current section for this feature until it lands.
 
 ### What changed (current branch state)

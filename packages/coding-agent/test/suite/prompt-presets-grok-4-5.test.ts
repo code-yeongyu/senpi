@@ -57,30 +57,35 @@ describe("Grok 4.5 prompt preset", () => {
 
 		// then
 		expect(preset?.name).toBe("grok-4.5");
-		// CEO / orchestrator role signals (full corePrompt rewrite, like gpt-5.6).
+		// CEO / human-facing surface
 		expect(preset?.prompt).toMatch(/acting as CEO and orchestrator/i);
 		expect(preset?.prompt).toMatch(/single human-facing surface/i);
-		expect(preset?.prompt).toMatch(/delegate implementation via `bash`/i);
+		// Agent-first invocation profiles (not tools)
+		expect(preset?.prompt).toMatch(/invocation profiles/i);
+		expect(preset?.prompt).toMatch(/\*\*Implementer\*\*/);
+		expect(preset?.prompt).toMatch(/\*\*Oracle\*\*/);
+		expect(preset?.prompt).toMatch(/implement rather than propose/i);
+		expect(preset?.prompt).toMatch(/read-only workspace analysis/i);
+		expect(preset?.prompt).toMatch(/must not edit, commit, deploy/i);
+		// Spawn surface
+		expect(preset?.prompt).toMatch(/spawn only through `bash` \+ `senpi --print`/i);
 		expect(preset?.prompt).toMatch(/senpi --print/i);
-		// CEO passes the gpt-5.6 prompting guide to workers by spawning them
-		// with --model gpt-5.6*, not by restating the doctrine in the CEO
-		// prompt itself.
-		expect(preset?.prompt).toMatch(/--model gpt-5\.6/i);
-		expect(preset?.prompt).toMatch(/gpt-5\.6 prompting guide/i);
-		expect(preset?.prompt).toMatch(/consult oracle before deploying non-trivial work/i);
-		expect(preset?.prompt).toMatch(/review invocation/i);
-		expect(preset?.prompt).toMatch(/you are the human surface/i);
-		expect(preset?.prompt).toMatch(/stop goal/i);
-		expect(preset?.prompt).toMatch(/stopping is mandatory and immediate/i);
-		// Shared sections are reused, not duplicated.
+		expect(preset?.prompt).toMatch(/ROLE, GOAL, SCOPE, CONSTRAINTS, DONE WHEN, and RETURN/);
+		expect(preset?.prompt).toMatch(/write the brief to a temp file/i);
+		// No sole gpt-5.6 implement path; doctrine is model-independent
+		expect(preset?.prompt).not.toMatch(/--model gpt-5\.6/i);
+		expect(preset?.prompt).not.toMatch(/gpt-5\.6 prompting guide/i);
+		expect(preset?.prompt).toMatch(/must not depend on a model preset/i);
+		// Shared sections reused
 		expect(preset?.prompt).toContain("apply_patch");
 		expect(preset?.prompt).toContain("### Test Discipline");
-		// Routing-line discipline preserved.
+		// Routing-line discipline preserved
 		expect(preset?.prompt).toMatch(/i read this as \[intent\] - \[plan\]/i);
-		// The full corePrompt is substantially larger than the old tuningSection.
+		// Full corePrompt remains substantial
 		expect(preset?.prompt.length).toBeGreaterThan(3000);
-		// Must NOT name a nonexistent task/subagent tool (senpi has no such tool).
+		// Must NOT name a nonexistent task/subagent tool API
 		expect(preset?.prompt).not.toMatch(/`task` child|category: "deep"|category: "ultrabrain"|run_in_background/i);
+		expect(preset?.prompt).toMatch(/never invent a `task`/i);
 	});
 
 	it.each(["grok-4.3", "grok-4.20-0309-reasoning", "grok-3", "grok-code-fast-1", "some-grok-compatible-router"])(
@@ -109,7 +114,8 @@ describe("Grok 4.5 prompt preset", () => {
 		// then
 		expect(preset?.name).toBe("grok-4.5");
 		expect(preset?.prompt).toMatch(/acting as CEO and orchestrator/i);
-		expect(preset?.prompt).toMatch(/delegate implementation via `bash`/i);
+		expect(preset?.prompt).toMatch(/\*\*Implementer\*\*/);
+		expect(preset?.prompt).toMatch(/spawn only through `bash` \+ `senpi --print`/i);
 	});
 
 	it("returns grok-4.5 preset for every Grok 4.5 built-in catalog model", () => {
