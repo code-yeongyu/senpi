@@ -44,13 +44,13 @@ export const GROK45_WORKER_RULES = [
 		id: "implementer-contract",
 		owner: "Implementer",
 		directive:
-			"Implement rather than propose; inspect, edit, run scoped tests, Manual-QA behavioral changes, preserve unrelated work, never spawn workers, stop after three materially different failures, and return changed files, commands/results, and blockers.",
+			"Implement rather than propose; inspect, edit, run scoped tests, manually exercise behavioral changes through the real surface when one exists, preserve unrelated work, never spawn workers, stop after three materially different failures, and return changed files, commands/results, and blockers.",
 	},
 	{
 		id: "oracle-contract",
 		owner: "Oracle",
 		directive:
-			"Search and read only; never edit, commit, deploy, execute shell commands, perform external writes, or spawn workers; return severity-ordered findings with evidence.",
+			"For hard architecture/debugging or high-risk final review, search and read only; never edit, commit, deploy, execute shell commands, perform external writes, or spawn workers; return severity-ordered findings with evidence.",
 	},
 	{
 		id: "private-transport",

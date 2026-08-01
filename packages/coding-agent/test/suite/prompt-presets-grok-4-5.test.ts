@@ -146,6 +146,16 @@ describe("Grok 4.5 prompt preset", () => {
 				if (owner !== rule.owner) expect(section).not.toContain(rule.directive);
 			}
 		}
+		expect(implementerSection).toMatch(/real surface when one exists/i);
+		expect(oracleSection).toMatch(/hard architecture\/debugging or high-risk final review/i);
+	});
+
+	it("keeps worker tool allowlists compatible with no-extensions", () => {
+		const toolsRule = GROK45_WORKER_RULES.find((rule) => rule.id === "tool-allowlists");
+		expect(toolsRule?.directive).toContain("--tools read,grep,find,ls,bash,edit,write");
+		expect(toolsRule?.directive).toContain("--tools read,grep,find,ls");
+		expect(toolsRule?.directive).not.toContain("apply_patch");
+		expect(toolsRule?.directive).not.toContain("todo");
 	});
 
 	it("returns grok-4.5 preset for every Grok 4.5 built-in catalog model", () => {

@@ -1203,7 +1203,21 @@ export class ExtensionRunner {
 					// Re-read live prompt options per handler: an earlier handler that swaps
 					// the active toolset (gpt-apply-patch) must let later handlers
 					// (prompt-preset) rebuild from the post-swap tools in the same emission.
-					const liveEvent: ModelSelectEvent = { ...event, systemPromptOptions: this.getSystemPromptOptionsFn() };
+					const options = this.getSystemPromptOptionsFn();
+					const liveEvent: ModelSelectEvent = {
+						...event,
+						systemPromptOptions: {
+							...options,
+							selectedTools: options.selectedTools ? [...options.selectedTools] : undefined,
+							toolSnippets: options.toolSnippets ? { ...options.toolSnippets } : undefined,
+							promptGuidelines: options.promptGuidelines ? [...options.promptGuidelines] : undefined,
+							contextFiles: options.contextFiles?.map((file) => ({ ...file })),
+							skills: options.skills?.map((skill) => ({
+								...skill,
+								sourceInfo: { ...skill.sourceInfo },
+							})),
+						},
+					};
 					const handlerResult = await handler(liveEvent, this.createContext(ext.path));
 					if (handlerResult) {
 						const nextResult = handlerResult as ModelSelectEventResult;

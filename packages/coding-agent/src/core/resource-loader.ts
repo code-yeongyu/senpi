@@ -727,7 +727,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.systemPrompt = resolvePromptInput(this.systemPromptSource, "system prompt");
 		this.appendSystemPrompt = (this.appendSystemPromptSource ?? [])
 			.map((source) => resolvePromptInput(source, "append system prompt"))
-			.filter((source): source is string => source !== undefined);
+			.filter((source): source is string => source !== undefined && source.trim().length > 0);
 		this.systemPromptSourcePath =
 			this.systemPromptSource && existsSync(this.systemPromptSource)
 				? resolvePath(this.systemPromptSource)

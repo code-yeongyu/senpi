@@ -1017,6 +1017,17 @@ Content`,
 
 			expect(loader.getAppendSystemPrompt()).toEqual(["First addition.", "Second addition."]);
 		});
+
+		it("should discard empty appendSystemPrompt entries", async () => {
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				appendSystemPrompt: ["", "   ", "kept suffix"],
+			});
+			await loader.reload();
+
+			expect(loader.getAppendSystemPrompt()).toEqual(["kept suffix"]);
+		});
 	});
 
 	describe("extension conflict detection", () => {
