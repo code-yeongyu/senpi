@@ -94,4 +94,34 @@ describe("createAgentSessionServices provider registration order", () => {
 			"config:claude-sdk-oauth",
 		]);
 	});
+
+	it("skips the Claude SDK OAuth provider when its builtin is disabled", async () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "senpi-services-provider-disabled-"));
+		tempDirs.push(tempDir);
+		const agentDir = join(tempDir, "agent");
+		const projectDir = join(tempDir, "project");
+		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(projectDir, { recursive: true });
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			`${JSON.stringify({ disabledBuiltinExtensions: ["claude-sdk-oauth"] })}\n`,
+		);
+
+		const modelRuntime = getModelRuntime(await createInMemoryModelRegistry(AuthStorage.inMemory()));
+		const applied: string[] = [];
+		const registerProvider = modelRuntime.registerProvider.bind(modelRuntime);
+		modelRuntime.registerProvider = (name, config) => {
+			applied.push(name);
+			return registerProvider(name, config);
+		};
+
+		const services = await createAgentSessionServices({ cwd: projectDir, agentDir, modelRuntime });
+
+		expect(applied).not.toContain("claude-sdk-oauth");
+		expect(
+			services.resourceLoader
+				.getExtensions()
+				.extensions.some((extension) => extension.path === "<builtin:todowrite>"),
+		).toBe(true);
+	});
 });

@@ -1,5 +1,13 @@
 # claude-sdk-oauth extension changes
 
+## 2026-08-01 - Document the Claude Code opt-out
+
+- Documented `disabledBuiltinExtensions: ["claude-sdk-oauth"]` as the supported way to prevent the Claude SDK OAuth builtin from loading.
+- Clarified the global and project settings paths, project-over-global precedence, and the restart required after changing the setting.
+- Added a regression test that proves the disabled builtin does not register the provider while unrelated builtins remain loaded.
+- The runtime behavior is unchanged; this only documents and locks the existing opt-out.
+- Merge-conflict risk: low. Expected conflict zone is the top of this extension change log.
+
 ## 2026-07-31 - Native system prompt, session reuse, env overrides, and transcript hardening
 
 - **System prompt modes (new default: `full`).** Added a `systemPromptMode` setting with three values. `full` (new default) sends senpi's own composed system prompt verbatim — previously the lane rebuilt a prompt from the SDK `claude_code` preset plus three extracted regions, so any region without a dedicated extractor was silently dropped (a persistent response-language instruction never reached the model). `preset-append` is the previous behaviour, now DEPRECATED and kept for one release; selecting it emits a one-time warning. `override` loads the system prompt verbatim from a file (`systemPromptFile`). The legacy `appendSystemPrompt` key still works and maps onto the modes: `false` → `preset-append`, `true`/unset → `full`. Setting both `appendSystemPrompt` and `systemPromptMode` makes `systemPromptMode` win and emits a warning.

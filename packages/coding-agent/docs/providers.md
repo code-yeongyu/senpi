@@ -46,6 +46,13 @@ The `claude-sdk-oauth` provider routes LLM calls through the official [Claude Ag
   - `systemPromptMode` — controls how the system prompt is delivered. **`full`** (default) sends senpi's composed system prompt verbatim; the lane no longer rebuilds from the SDK `claude_code` preset, so all prompt regions (project rules, response-language instructions, etc.) reach the model. **`preset-append`** is the previous behaviour (deprecated, kept for one release; emits a one-time warning). **`override`** loads the system prompt from a file (`systemPromptFile`). The legacy `appendSystemPrompt` key still works: `false` → `preset-append`, `true`/unset → `full`; setting both keys makes `systemPromptMode` win and warns.
   - In `full` and `override` modes, `settingSources` defaults to `[]` on every lane because senpi's prompt already carries project context — loading the SDK's own CLAUDE.md would double-inject it. The CLI always prepends its own `"You are a Claude agent, built on Anthropic's Claude Agent SDK."` block, which senpi cannot suppress; `full` means the prompt is delivered intact, not that it is the only system-prompt text.
   - `settingSources` (filesystem settings load only in the ambient lane, so they cannot override your selected account), `strictMcpConfig`, `pinnedAccount`, `tokenInjection` (`oauth-slots` | `config-dir` | `ambient`), `resumeMode` (`auto` default | `off` restores per-turn sessions), `systemPromptFile`.
+- To prevent the Claude Code provider from loading on startup, disable the builtin by id in global `~/.senpi/agent/settings.json` or project `.senpi/settings.json`:
+  ```json
+  {
+    "disabledBuiltinExtensions": ["claude-sdk-oauth"]
+  }
+  ```
+  Restart senpi after changing this setting. Project settings override global settings, so a project-level `disabledBuiltinExtensions` list must also include `claude-sdk-oauth` to preserve a global opt-out. The setting prevents the provider extension from loading while leaving unrelated built-ins enabled. Remove the id (or remove the setting) to enable it again.
 - **Environment overrides** (precedence: `env > project settings > global settings > default`; no new CLI flags):
 
   | Variable | Purpose |
