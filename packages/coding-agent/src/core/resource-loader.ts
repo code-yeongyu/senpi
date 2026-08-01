@@ -75,7 +75,7 @@ export interface ResourceLoader {
 }
 
 function resolvePromptInput(input: string | undefined, description: string): string | undefined {
-	if (!input) {
+	if (input === undefined) {
 		return undefined;
 	}
 

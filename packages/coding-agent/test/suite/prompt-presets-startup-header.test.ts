@@ -15,6 +15,13 @@ interface HeaderContext {
 	ui: {
 		setHeader(factory: ((tui: never, theme: never) => Component & { dispose?(): void }) | undefined): void;
 	};
+	getSystemPromptOptions(): {
+		customPrompt?: string;
+	};
+}
+
+interface BeforeAgentStartResult {
+	systemPrompt?: string;
 }
 
 function makeApiMock(): ApiMock {
@@ -55,6 +62,7 @@ function createHeaderContext(modelId: string): { context: HeaderContext; getHead
 					headerFactory = factory;
 				},
 			},
+			getSystemPromptOptions: () => ({}),
 		},
 		getHeaderText() {
 			return renderHeaderText(headerFactory);
@@ -138,5 +146,135 @@ describe("prompt preset startup header", () => {
 
 		// then
 		expect(getHeaderText()).toBe("");
+	});
+
+	it("preserves an explicit system prompt instead of applying a model preset", async () => {
+		// given
+		const { api, handlers } = makeApiMock();
+		const { context } = createHeaderContext("gpt-5.5");
+		promptPresetExtension(api as never);
+
+		// when
+		const result = (await handlers.before_agent_start[0](
+			{
+				type: "before_agent_start",
+				prompt: "ROLE: Implementer",
+				systemPrompt: "You are the Implementer worker.",
+				systemPromptOptions: {
+					cwd: "/repo",
+					selectedTools: [],
+					customPrompt: "You are the Implementer worker.",
+				},
+			},
+			context,
+		)) as BeforeAgentStartResult | undefined;
+
+		// then
+		expect(result).toBeUndefined();
+	});
+
+	it("preserves an explicitly empty system prompt", async () => {
+		// given
+		const { api, handlers } = makeApiMock();
+		const { context } = createHeaderContext("gpt-5.5");
+		promptPresetExtension(api as never);
+
+		// when
+		const result = await handlers.before_agent_start[0](
+			{
+				type: "before_agent_start",
+				prompt: "ROLE: Implementer",
+				systemPrompt: "",
+				systemPromptOptions: {
+					cwd: "/repo",
+					selectedTools: [],
+					customPrompt: "",
+				},
+			},
+			context,
+		);
+
+		// then
+		expect(result).toBeUndefined();
+	});
+
+	it("keeps an explicit system prompt across model selection", async () => {
+		// given
+		const { api, handlers } = makeApiMock();
+		const { context } = createHeaderContext("gpt-5.5");
+		promptPresetExtension(api as never);
+
+		// when
+		const result = (await handlers.model_select[0](
+			{
+				type: "model_select",
+				model: { id: "grok-4.5", provider: "xai", api: "openai-responses" },
+				previousModel: context.model,
+				source: "fallback",
+				systemPrompt: "You are the Implementer worker.",
+				systemPromptOptions: {
+					cwd: "/repo",
+					selectedTools: [],
+					customPrompt: "You are the Implementer worker.",
+				},
+			},
+			context,
+		)) as BeforeAgentStartResult;
+
+		// then
+		expect(result.systemPrompt).toBe("You are the Implementer worker.");
+	});
+
+	it("keeps an explicitly empty system prompt across model selection", async () => {
+		// given
+		const { api, handlers } = makeApiMock();
+		const { context } = createHeaderContext("gpt-5.5");
+		promptPresetExtension(api as never);
+
+		// when
+		const result = (await handlers.model_select[0](
+			{
+				type: "model_select",
+				model: { id: "grok-4.5", provider: "xai", api: "openai-responses" },
+				previousModel: context.model,
+				source: "fallback",
+				systemPrompt: "",
+				systemPromptOptions: {
+					cwd: "/repo",
+					selectedTools: [],
+					customPrompt: "",
+				},
+			},
+			context,
+		)) as BeforeAgentStartResult;
+
+		// then
+		expect(result.systemPrompt).toBe("");
+	});
+
+	it("appends an explicit system prompt suffix after the model preset", async () => {
+		// given
+		const { api, handlers } = makeApiMock();
+		const { context } = createHeaderContext("gpt-5.5");
+		promptPresetExtension(api as never);
+
+		// when
+		const result = (await handlers.before_agent_start[0](
+			{
+				type: "before_agent_start",
+				prompt: "Implement the task",
+				systemPrompt: "base",
+				systemPromptOptions: {
+					cwd: "/repo",
+					selectedTools: [],
+					appendSystemPrompt: "Worker-specific suffix.",
+				},
+			},
+			context,
+		)) as BeforeAgentStartResult;
+
+		// then
+		expect(result.systemPrompt).toContain("You are senpi, a coding agent.");
+		expect(result.systemPrompt?.endsWith("Worker-specific suffix.")).toBe(true);
 	});
 });

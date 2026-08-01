@@ -145,6 +145,7 @@ import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
+import type { BuildSystemPromptOptions } from "./system-prompt.ts";
 import { getSupportedThinkingLevels, supportsMax, supportsXhigh } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
@@ -668,7 +669,8 @@ export class AgentSession {
 	private _currentServiceTier: ServiceTier | undefined = undefined;
 	private _sessionFastMode = false;
 	private readonly _shownHighReasoningWarningKeys = new Set<string>();
-	private _baseSystemPromptOptions!: BuildDynamicSystemPromptOptions;
+	private _baseSystemPromptOptions!: BuildDynamicSystemPromptOptions &
+		Pick<BuildSystemPromptOptions, "customPrompt" | "appendSystemPrompt">;
 	private _systemPromptOverride?: string;
 
 	constructor(config: AgentSessionConfig) {
@@ -2270,6 +2272,8 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
+			customPrompt: loaderSystemPrompt,
+			appendSystemPrompt: loaderAppendSystemPrompt.join("\n\n") || undefined,
 		};
 		const basePrompt = loaderSystemPrompt ?? buildDynamicSystemPrompt(this._baseSystemPromptOptions);
 		return loaderAppendSystemPrompt.length > 0

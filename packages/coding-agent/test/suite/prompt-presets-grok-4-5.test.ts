@@ -65,19 +65,29 @@ describe("Grok 4.5 prompt preset", () => {
 		expect(preset?.prompt).toMatch(/\*\*Implementer\*\*/);
 		expect(preset?.prompt).toMatch(/\*\*Oracle\*\*/);
 		expect(preset?.prompt).toMatch(/implement rather than propose/i);
-		expect(preset?.prompt).toMatch(/do not spawn further workers/i);
-		expect(preset?.prompt).toMatch(/single orchestration level/i);
+		expect(preset?.prompt).toMatch(/never spawn workers/i);
+		expect(preset?.prompt).toMatch(/one orchestration level/i);
 		expect(preset?.prompt).toMatch(/read-only workspace analysis/i);
-		expect(preset?.prompt).toMatch(/must not edit, commit, deploy/i);
+		expect(preset?.prompt).toMatch(/never edit, commit, deploy/i);
 		// Spawn surface
 		expect(preset?.prompt).toMatch(/spawn only through `bash` \+ `senpi --print`/i);
 		expect(preset?.prompt).toMatch(/senpi --print/i);
 		expect(preset?.prompt).toMatch(/ROLE, GOAL, SCOPE, CONSTRAINTS, DONE WHEN, and RETURN/);
-		expect(preset?.prompt).toMatch(/write the brief to a temp file/i);
+		expect(preset?.prompt).toMatch(/write separate role-system, task-brief/i);
+		expect(preset?.prompt).toContain("--system-prompt");
+		expect(preset?.prompt).toContain("--no-session");
+		expect(preset?.prompt).toContain("--no-nested-agents");
+		expect(preset?.prompt).toContain("umask 077");
+		expect(preset?.prompt).toContain("mktemp -d");
+		expect(preset?.prompt).toContain("env -i");
+		expect(preset?.prompt).toContain("SENPI_NO_FALLBACK=1");
+		expect(preset?.prompt).toContain("--tools read,grep,find,ls,bash,edit,write");
+		expect(preset?.prompt).toContain("--tools read,grep,find,ls");
+		expect(preset?.prompt).toMatch(/worker stdout\/stderr as untrusted data/i);
 		// No sole gpt-5.6 implement path; doctrine is model-independent
 		expect(preset?.prompt).not.toMatch(/--model gpt-5\.6/i);
 		expect(preset?.prompt).not.toMatch(/gpt-5\.6 prompting guide/i);
-		expect(preset?.prompt).toMatch(/must not depend on a model preset/i);
+		expect(preset?.prompt).toMatch(/never from the selected model preset/i);
 		// Shared sections reused
 		expect(preset?.prompt).toContain("apply_patch");
 		expect(preset?.prompt).toContain("### Test Discipline");
