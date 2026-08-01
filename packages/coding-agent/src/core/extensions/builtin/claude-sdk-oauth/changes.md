@@ -1,5 +1,12 @@
 # claude-sdk-oauth extension changes
 
+## 2026-08-01 - Fail closed after managed-account logout
+
+- Managed `oauth-slots` and `config-dir` modes now report that login is required when their account pool is empty instead of silently falling back to ambient Claude CLI credentials.
+- This makes `/logout` authoritative for the selected managed provider: a fallback attempt cannot reuse an unrelated local Claude login and appear to answer successfully.
+- Ambient mode remains unchanged and still intentionally inherits non-Senpi Claude authentication.
+- Merge-conflict risk: low. The only overlap surface is the empty-pool branch in `managedPool`.
+
 ## 2026-07-31 - Native system prompt, session reuse, env overrides, and transcript hardening
 
 - **System prompt modes (new default: `full`).** Added a `systemPromptMode` setting with three values. `full` (new default) sends senpi's own composed system prompt verbatim — previously the lane rebuilt a prompt from the SDK `claude_code` preset plus three extracted regions, so any region without a dedicated extractor was silently dropped (a persistent response-language instruction never reached the model). `preset-append` is the previous behaviour, now DEPRECATED and kept for one release; selecting it emits a one-time warning. `override` loads the system prompt verbatim from a file (`systemPromptFile`). The legacy `appendSystemPrompt` key still works and maps onto the modes: `false` → `preset-append`, `true`/unset → `full`. Setting both `appendSystemPrompt` and `systemPromptMode` makes `systemPromptMode` win and emits a warning.

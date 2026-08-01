@@ -148,7 +148,11 @@ async function managedPool(settings: ClaudeSdkOauthProviderSettings): Promise<Ma
 			(name) => environment[name],
 		);
 	}
-	if (accounts.length === 0) return undefined;
+	if (accounts.length === 0) {
+		throw new Error(
+			"authentication_failed: No Claude SDK OAuth accounts configured. Add one with /claude-account add.",
+		);
+	}
 	const stored = credential?.type === "oauth" ? (credential as ClaudeSdkOauthCredential) : undefined;
 	return { accounts, lane, pinnedAccount: settings.pinnedAccount ?? stored?.pinned, store };
 }
