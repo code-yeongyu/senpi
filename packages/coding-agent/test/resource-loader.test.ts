@@ -1021,12 +1021,14 @@ Content`,
 		it("should discard empty appendSystemPrompt entries", async () => {
 			const emptyPath = join(cwd, "empty-append.txt");
 			const whitespacePath = join(cwd, "whitespace-append.txt");
+			const newlinePath = join(cwd, "newline-append.txt");
 			writeFileSync(emptyPath, "");
 			writeFileSync(whitespacePath, "   ");
+			writeFileSync(newlinePath, "\n\t\n");
 			const loader = new DefaultResourceLoader({
 				cwd,
 				agentDir,
-				appendSystemPrompt: ["", "   ", emptyPath, whitespacePath, "kept suffix"],
+				appendSystemPrompt: ["", "   ", emptyPath, whitespacePath, newlinePath, "kept suffix"],
 			});
 			await loader.reload();
 

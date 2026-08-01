@@ -1,5 +1,20 @@
 # Core Extensions Changes
 
+## Defensive system-prompt option context getter (2026-08-01)
+
+### What changed
+
+- `ExtensionContext.getSystemPromptOptions()` exposes a defensive copy of the host's current base prompt-construction options to event handlers.
+- Arrays, tool snippets, context-file entries, skills, and skill source metadata are copied before returning so extensions cannot mutate live session state through the getter.
+
+### Why
+
+- The prompt-preset builtin needs explicit replacement/append provenance during `session_start`, `before_agent_start`, and `model_select` to preserve CLI system-prompt precedence.
+
+### Expected merge conflict zones
+
+- HIGH: `types.ts` public `ExtensionContext` surface and `runner.ts` context construction.
+
 ## Backfill: extension context and reload stability (2026-08-01)
 
 ### What changed
@@ -1315,17 +1330,3 @@ If upstream modifies compaction event definitions in `types.ts`, preserve the ad
 
 - `types.ts` around `ToolDefinition`
 - `builtin/index.ts` builtin registration ordering
-# Defensive system-prompt option context getter (2026-08-01)
-
-## What changed
-
-- `ExtensionContext.getSystemPromptOptions()` exposes a defensive copy of the host's current base prompt-construction options to event handlers.
-- Arrays, tool snippets, context-file entries, skills, and skill source metadata are copied before returning so extensions cannot mutate live session state through the getter.
-
-## Why
-
-- The prompt-preset builtin needs explicit replacement/append provenance during `session_start`, `before_agent_start`, and `model_select` to preserve CLI system-prompt precedence.
-
-## Expected merge conflict zones
-
-- HIGH: `types.ts` public `ExtensionContext` surface and `runner.ts` context construction.
