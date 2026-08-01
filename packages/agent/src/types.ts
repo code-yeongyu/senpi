@@ -145,6 +145,8 @@ export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {}
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
+	/** Last-moment admission check before a queued message enters loop-owned context. */
+	shouldDeliverMessage?: (message: AgentMessage) => boolean;
 
 	/**
 	 * Maximum time in milliseconds to wait for the FIRST provider stream event.

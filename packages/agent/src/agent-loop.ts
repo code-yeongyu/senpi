@@ -107,17 +107,24 @@ export async function runAgentLoop(
 	signal: AbortSignal | undefined,
 	streamFn: StreamFn,
 ): Promise<AgentMessage[]> {
-	const newMessages: AgentMessage[] = [...prompts];
+	const newMessages: AgentMessage[] = [];
 	const currentContext: AgentContext = {
 		...context,
-		messages: [...context.messages, ...prompts],
+		messages: [...context.messages],
 	};
 
 	await emit({ type: "agent_start" });
 	await emit({ type: "turn_start" });
 	for (const prompt of prompts) {
+		if (config.shouldDeliverMessage?.(prompt) === false) continue;
 		await emit({ type: "message_start", message: prompt });
 		await emit({ type: "message_end", message: prompt });
+		currentContext.messages.push(prompt);
+		newMessages.push(prompt);
+	}
+	if (newMessages.length === 0) {
+		await emit({ type: "agent_end", messages: newMessages });
+		return newMessages;
 	}
 
 	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
@@ -188,6 +195,7 @@ async function runLoop(
 	let config = initialConfig;
 	let firstTurn = true;
 	let firstProviderRequest = true;
+	let continuingFromTerminatingQueue = false;
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 	let drainedTerminatingQueue: "steering" | "followUp" | undefined;
@@ -204,7 +212,8 @@ async function runLoop(
 
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {
-		let hasMoreToolCalls = true;
+		let hasMoreToolCalls = !continuingFromTerminatingQueue;
+		continuingFromTerminatingQueue = false;
 
 		// Inner loop: process tool calls and steering messages
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
@@ -224,13 +233,18 @@ async function runLoop(
 
 			// Process pending messages (inject before next assistant response)
 			if (pendingMessages.length > 0) {
+				let deliveredPendingMessage = false;
 				for (const message of pendingMessages) {
+					if (config.shouldDeliverMessage?.(message) === false) continue;
+					deliveredPendingMessage = true;
 					await emit({ type: "message_start", message });
 					await emit({ type: "message_end", message });
 					currentContext.messages.push(message);
 					newMessages.push(message);
 				}
 				pendingMessages = [];
+				if (!deliveredPendingMessage && !hasMoreToolCalls) break;
+				if (deliveredPendingMessage) hasMoreToolCalls = true;
 			}
 
 			// Stream assistant response. Continuation-scoped overrides apply to one
@@ -381,6 +395,7 @@ async function runLoop(
 		if (followUpMessages.length > 0) {
 			// Set as pending so inner loop processes them
 			pendingMessages = followUpMessages;
+			continuingFromTerminatingQueue = true;
 			continue;
 		}
 
