@@ -74,4 +74,27 @@ describe("prompt preset explicit system prompt precedence", () => {
 		// then
 		expect(harness.faux.getCallLog()[0]?.context.systemPrompt).toBe("");
 	});
+
+	it("appends to an explicitly empty replacement without a leading separator", async () => {
+		// given
+		const suffix = "Worker suffix.";
+		const extensionsResult = await createTestExtensionsResult([promptPresetExtension]);
+		const resourceLoader = createTestResourceLoader({
+			extensionsResult,
+			systemPrompt: "",
+			appendSystemPrompt: [suffix],
+		});
+		const harness = await createHarness({
+			models: [{ id: "grok-4.5", name: "Grok 4.5", reasoning: true }],
+			resourceLoader,
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("done")]);
+
+		// when
+		await harness.session.prompt("Continue");
+
+		// then
+		expect(harness.faux.getCallLog()[0]?.context.systemPrompt).toBe(suffix);
+	});
 });

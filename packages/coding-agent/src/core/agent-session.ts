@@ -2276,9 +2276,9 @@ export class AgentSession {
 			appendSystemPrompt: loaderAppendSystemPrompt.join("\n\n") || undefined,
 		};
 		const basePrompt = loaderSystemPrompt ?? buildDynamicSystemPrompt(this._baseSystemPromptOptions);
-		return loaderAppendSystemPrompt.length > 0
-			? `${basePrompt}\n\n${loaderAppendSystemPrompt.join("\n\n")}`
-			: basePrompt;
+		const append = loaderAppendSystemPrompt.join("\n\n");
+		if (!append) return basePrompt;
+		return basePrompt ? `${basePrompt}\n\n${append}` : append;
 	}
 
 	/**
