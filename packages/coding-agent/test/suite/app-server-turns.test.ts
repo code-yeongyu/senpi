@@ -10,7 +10,7 @@ import {
 
 class ScriptedSession implements TurnEngineSession {
 	readonly promptCalls: Array<{ readonly text: string; readonly source: string | undefined }> = [];
-	readonly steerCalls: string[] = [];
+	readonly steerCalls: Array<{ readonly text: string; readonly source: "rpc" | undefined }> = [];
 	abortCalls = 0;
 	promptPreflightResult = true;
 	promptError: Error | null = null;
@@ -27,8 +27,8 @@ class ScriptedSession implements TurnEngineSession {
 		}
 	}
 
-	async steer(text: string): Promise<void> {
-		this.steerCalls.push(text);
+	async steer(text: string, options?: { readonly source?: "rpc" }): Promise<void> {
+		this.steerCalls.push({ text, source: options?.source });
 	}
 
 	async abort(): Promise<void> {
@@ -211,7 +211,7 @@ describe("app-server turn engine", () => {
 			}),
 		).resolves.toEqual({ turnId: started.turn.id });
 
-		expect(entry.session.steerCalls).toEqual(["steer"]);
+		expect(entry.session.steerCalls).toEqual([{ text: "steer", source: "rpc" }]);
 		expect(notifications.map((notification) => notification.method)).toEqual(["item/started", "item/completed"]);
 		expect(notifications[0]?.params).toMatchObject({
 			threadId: "thread-a",
