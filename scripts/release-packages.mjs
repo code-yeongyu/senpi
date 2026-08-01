@@ -3,7 +3,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 export const WORKSPACE_PACKAGES = [
 	"packages/ai/package.json",
 	"packages/agent/package.json",
+	"packages/client/package.json",
 	"packages/coding-agent/package.json",
+	"packages/protocol/package.json",
 	"packages/server/package.json",
 	"packages/pty/package.json",
 	"packages/senpi-codemode/package.json",

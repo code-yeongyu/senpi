@@ -216,9 +216,14 @@ describe("/btw extension command", () => {
 		const sideGate = new Promise<void>((resolve) => {
 			releaseSide = resolve;
 		});
+		let sideEntered!: () => void;
+		const sideInFlight = new Promise<void>((resolve) => {
+			sideEntered = resolve;
+		});
 		harness.setResponses([
 			fauxAssistantMessage("first answer"),
 			async () => {
+				sideEntered();
 				await sideGate;
 				return fauxAssistantMessage("side answer");
 			},
@@ -227,6 +232,7 @@ describe("/btw extension command", () => {
 
 		await harness.session.prompt("first question");
 		const sidePrompt = harness.session.prompt("/btw snapshot question");
+		await sideInFlight;
 		await harness.session.prompt("second question");
 		releaseSide();
 		await sidePrompt;

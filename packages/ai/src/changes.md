@@ -1,5 +1,24 @@
 # AI Source Changes
 
+## 2026-08-01 - Final Anthropic tool-pair normalization
+
+### What changed and why
+
+- `api/anthropic-tool-pairs.ts` owns the browser-safe wire sanitizer for Anthropic client `tool_use` /
+  `tool_result` adjacency, deduplication, orphan removal, and interrupted-result synthesis.
+- `api/anthropic-messages.ts` applies that sanitizer after `onPayload` and every built-in Anthropic request
+  rewrite, immediately before request metadata extraction and SDK submission.
+- The final boundary no longer depends on extension-runner liveness or hook registration order. A reload,
+  extension, or late payload transform can remove one result from a parallel tool-call turn without sending an
+  invalid request to Anthropic.
+- `test/anthropic-final-tool-pair-guard.test.ts` deterministically removes one result in the last payload hook
+  and asserts that the SDK receives both immediate result blocks, including a synthetic error result.
+
+### Expected merge conflict zones
+
+- MEDIUM: `api/anthropic-messages.ts` around the final request-sanitization pipeline.
+- LOW: `api/anthropic-tool-pairs.ts` if upstream adds equivalent Anthropic wire normalization.
+
 ## 2026-07-31 - Recover Codex WebSocket fallback sessions
 
 ### What changed and why

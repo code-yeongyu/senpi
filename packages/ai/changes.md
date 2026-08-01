@@ -1,5 +1,26 @@
 # changes.md — ai
 
+## OpenAI compatibility resolver merge repair (2026-08-01)
+
+### What changed
+
+- Restored `getOpenAICompletionsCompat` as the single compatibility resolver used and exported by the OpenAI Completions adapter.
+- Ported upstream Z.AI `max_tokens` selection into the shared resolver.
+- Preserved both automatically detected and explicitly configured `toolSchemaFlavor` values, with focused Moonshot coverage.
+
+### Why
+
+- The merge restored an upstream-local adapter resolver beside the fork's shared browser-safe resolver. The duplicate omitted Moonshot schema flavor selection, so wire-bound tool schemas retained an unsupported root `anyOf` wrapper.
+- Keeping one resolver prevents API and browser-safe compatibility decisions from diverging again.
+
+### Why this cannot be expressed externally
+
+- Provider compatibility selection and final wire-payload schema normalization occur inside the provider adapter before extension hooks can safely compensate.
+
+### Expected merge conflict zones
+
+- `src/api/openai-completions.ts`, `src/utils/prompt-cache-ttl.ts`, OpenAI compatibility types, and tool-schema/prompt-cache tests.
+
 ## Shared reasoning-tier capability detection (2026-07-30)
 
 ### What changed

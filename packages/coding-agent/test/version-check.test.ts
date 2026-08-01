@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	checkForNewPiVersion,
 	comparePackageVersions,
@@ -7,9 +7,13 @@ import {
 	getReleaseChangelogUrl,
 	isNewerPackageVersion,
 } from "../src/utils/version-check.ts";
+import { allowNetwork } from "./test-network-env.ts";
 
 const originalSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
-const originalOffline = process.env.PI_OFFLINE;
+
+beforeEach(() => {
+	allowNetwork();
+});
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -17,11 +21,6 @@ afterEach(() => {
 		delete process.env.PI_SKIP_VERSION_CHECK;
 	} else {
 		process.env.PI_SKIP_VERSION_CHECK = originalSkipVersionCheck;
-	}
-	if (originalOffline === undefined) {
-		delete process.env.PI_OFFLINE;
-	} else {
-		process.env.PI_OFFLINE = originalOffline;
 	}
 });
 

@@ -1,5 +1,13 @@
 import { join } from "node:path";
-import type { Api, AuthResult, Model, Provider } from "@earendil-works/pi-ai";
+import type {
+	Api,
+	AssistantMessage,
+	AuthResult,
+	Context,
+	Model,
+	ModelsApiStreamOptions,
+	Provider,
+} from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -149,6 +157,14 @@ export class ModelRegistry {
 
 	getProvider(provider: string): Provider | undefined {
 		return this.runtime.getProvider(provider);
+	}
+
+	complete<TApi extends Api>(
+		model: Model<TApi>,
+		context: Context,
+		options?: ModelsApiStreamOptions<TApi>,
+	): Promise<AssistantMessage> {
+		return this.runtime.complete(model, context, options);
 	}
 
 	getProviderDisplayName(provider: string): string {

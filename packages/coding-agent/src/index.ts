@@ -101,6 +101,8 @@ export type {
 	KeybindingsManager,
 	LoadExtensionsResult,
 	LsToolCallEvent,
+	MarkdownTransformContext,
+	MarkdownTransformer,
 	McpServerDeclaration,
 	MessageEndEvent,
 	MessageRenderer,
@@ -255,6 +257,7 @@ export {
 	type RetrySettings,
 	SettingsManager,
 	type SettingsManagerCreateOptions,
+	type UiMode,
 } from "./core/settings-manager.ts";
 // Skills
 export {

@@ -175,6 +175,8 @@ function createSettingsManagerStub() {
 		getQuietStartup: () => false,
 		getClearOnShrink: () => false,
 		getShowTerminalProgress: () => false,
+		getUiMode: () => "inline",
+		getFullscreenScrollbar: () => "auto",
 		getSmoothStreaming: () => false,
 		getSmoothStreamingFps: () => 30,
 		getWarnings: () => ({}),

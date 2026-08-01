@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking Changes
+
+- Changed `toProtocolToolResultMessage()` to require the original `ToolCall` and verify tool result association.
+
+### Changed
+
+### Fixed
+
+- Hardened protocol adapters against contradictory lifecycle states, invalid identifiers and timestamps, sparse execution arrays, and additive `pi-ai` contract drift.
+
 ## [2026.8.1] - 2026-08-01
 
 ### Changed

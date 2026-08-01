@@ -117,6 +117,7 @@ async function context(
 		modelRegistry,
 		model: undefined,
 		serviceTier: undefined,
+		scopedModels: [],
 		isIdle: () => true,
 		isProjectTrusted: () => true,
 		signal: undefined,

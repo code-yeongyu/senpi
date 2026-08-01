@@ -1,6 +1,7 @@
 import { type Api, InMemoryCredentialStore, type Model, type Provider } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
+import { allowNetwork } from "./test-network-env.ts";
 
 /** Refused immediately so built-in remote catalogs fail fast without external network. */
 const UNREACHABLE_CATALOG_BASE_URL = "http://127.0.0.1:1";
@@ -48,6 +49,7 @@ function createDynamicProvider(id: string) {
 
 describe("ModelRuntime post-startup provider registration", () => {
 	it("loads a registered native provider's catalog under the runtime network policy without a manual refresh", async () => {
+		allowNetwork();
 		const runtime = await ModelRuntime.create({
 			credentials: new InMemoryCredentialStore(),
 			modelsPath: null,

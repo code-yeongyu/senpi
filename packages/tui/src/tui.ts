@@ -43,17 +43,13 @@ function parseKittyImageHeader(line: string): KittyImageHeader | undefined {
 
 	const ids: number[] = [];
 	let rows = 1;
-	const params = line.slice(paramsStart, paramsEnd);
-	for (const param of params.split(",")) {
+	for (const param of line.slice(paramsStart, paramsEnd).split(",")) {
 		const [key, value] = param.split("=", 2);
 		if (value === undefined) continue;
 		const numberValue = Number(value);
 		if (!Number.isInteger(numberValue) || numberValue <= 0 || numberValue > 0xffffffff) continue;
-		if (key === "i") {
-			ids.push(numberValue);
-		} else if (key === "r") {
-			rows = numberValue;
-		}
+		if (key === "i") ids.push(numberValue);
+		else if (key === "r") rows = numberValue;
 	}
 	return { ids, rows };
 }
@@ -64,6 +60,10 @@ function extractKittyImageIds(line: string): number[] {
 
 function extractKittyImageRows(line: string): number {
 	return parseKittyImageHeader(line)?.rows ?? 1;
+}
+
+function isTermuxSession(): boolean {
+	return Boolean(process.env.TERMUX_VERSION);
 }
 
 /**
@@ -97,8 +97,8 @@ export interface Component {
 	dispose?(): void;
 }
 
-type InputListenerResult = { consume?: boolean; data?: string } | undefined;
-type InputListener = (data: string) => InputListenerResult;
+export type TuiInputListenerResult = { consume?: boolean; data?: string } | undefined;
+export type TuiInputListener = (data: string) => TuiInputListenerResult;
 type PendingOsc11BackgroundQuery = {
 	settled: boolean;
 	resolve: ((rgb: RgbColor | undefined) => void) | undefined;
@@ -323,10 +323,6 @@ function parseSizeValue(value: SizeValue | undefined, referenceSize: number): nu
 	return undefined;
 }
 
-function isTermuxSession(): boolean {
-	return Boolean(process.env.TERMUX_VERSION);
-}
-
 /**
  * Options for overlay positioning and sizing.
  * Values can be absolute numbers or percentage strings (e.g., "50%").
@@ -491,7 +487,56 @@ export class Container implements Component {
 /**
  * TUI - Main class for managing terminal UI with differential rendering
  */
-export class TUI extends Container {
+const SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
+
+/** Composite overlay content into a terminal line at a fixed column. */
+export function compositeTuiLine(
+	baseLine: string,
+	overlayLine: string,
+	startCol: number,
+	overlayWidth: number,
+	totalWidth: number,
+): string {
+	if (isImageLine(baseLine) && visibleWidth(baseLine) === 0) return baseLine;
+	const placeholderIndex = baseLine.indexOf("\u{10eeee}");
+	const protocolEnd = placeholderIndex === -1 ? -1 : baseLine.lastIndexOf("\x1b\\", placeholderIndex);
+	const protocolPrefix = protocolEnd === -1 ? "" : baseLine.slice(0, protocolEnd + 2);
+
+	const afterStart = startCol + overlayWidth;
+	const base = extractSegments(baseLine, startCol, afterStart, totalWidth - afterStart, true);
+	const overlay = sliceWithWidth(overlayLine, 0, overlayWidth, true);
+	const beforePad = Math.max(0, startCol - base.beforeWidth);
+	const overlayPad = Math.max(0, overlayWidth - overlay.width);
+	const actualBeforeWidth = Math.max(startCol, base.beforeWidth);
+	const actualOverlayWidth = Math.max(overlayWidth, overlay.width);
+	const afterTarget = Math.max(0, totalWidth - actualBeforeWidth - actualOverlayWidth);
+	const afterPad = Math.max(0, afterTarget - base.afterWidth);
+	const result =
+		base.before +
+		" ".repeat(beforePad) +
+		SEGMENT_RESET +
+		overlay.text +
+		" ".repeat(overlayPad) +
+		SEGMENT_RESET +
+		base.after +
+		" ".repeat(afterPad);
+
+	const composited = visibleWidth(result) <= totalWidth ? result : sliceByColumn(result, 0, totalWidth, true);
+	return protocolPrefix + composited;
+}
+
+export const VIEWPORT_TUI = Symbol.for("@earendil-works/pi-tui/viewport");
+
+export interface ViewportTUI extends TUI {
+	readonly [VIEWPORT_TUI]: true;
+	setLayoutRoot(component: Component | undefined): void;
+}
+
+export function isViewportTUI(tui: TUI): tui is ViewportTUI {
+	return (tui as Partial<ViewportTUI>)[VIEWPORT_TUI] === true;
+}
+
+export abstract class TuiBase extends Container {
 	public terminal: Terminal;
 	private previousLines: string[] = [];
 	private previousRawLines: string[] = [];
@@ -500,7 +545,7 @@ export class TUI extends Container {
 	private previousWidth = 0;
 	private previousHeight = 0;
 	private focusedComponent: Component | null = null;
-	private inputListeners = new Set<InputListener>();
+	private inputListeners = new Set<TuiInputListener>();
 
 	/** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */
 	public onDebug?: () => void;
@@ -516,32 +561,48 @@ export class TUI extends Container {
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
-	private fullRedrawCount = 0;
+	protected fullRedrawCount = 0;
 	private muxViewportRepaintCount = 0;
 	private overWideCrashDumpWritten = false;
-	private stopped = false;
+	protected stopped = false;
 	private pendingOsc11BackgroundReplies = 0;
 	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
 	#lastCursorVisibility: boolean | undefined;
+	protected readonly logDirectory: string;
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
 	private overlayStack: OverlayStackEntry[] = [];
+
+	protected get hasOverlayEntries(): boolean {
+		return this.overlayStack.length > 0;
+	}
 	private overlayFocusRestore: OverlayFocusRestoreState = { status: "inactive" };
 	#muxDetector: () => boolean;
 
-	constructor(terminal: Terminal, options?: boolean | TuiConstructorOptions) {
+	constructor(terminal: Terminal, options?: boolean | TuiConstructorOptions, logDirectory?: string) {
 		super();
 		this.terminal = terminal;
 		// Preserve existing positional boolean callers while allowing explicit render-policy overrides.
 		const normalizedOptions = typeof options === "boolean" ? { showHardwareCursor: options } : (options ?? {});
 		this.#muxDetector = normalizedOptions.muxDetector ?? isMultiplexerSession;
+		this.logDirectory = logDirectory ?? path.join(os.homedir(), ".senpi", "agent");
 		if (normalizedOptions.showHardwareCursor !== undefined) {
 			this.showHardwareCursor = normalizedOptions.showHardwareCursor;
 		}
 	}
+
+	protected resetRenderState(): void {}
+
+	protected beforeTerminalStart(): void {}
+
+	protected afterTerminalStart(): void {}
+
+	protected beforeTerminalStop(): void {}
+
+	protected afterTerminalStop(): void {}
 
 	get fullRedraws(): number {
 		return this.fullRedrawCount;
@@ -690,8 +751,12 @@ export class TUI extends Container {
 		}
 	}
 
+	protected getMountedRoots(): readonly Component[] {
+		return this.children;
+	}
+
 	private isComponentMounted(component: Component): boolean {
-		return this.children.some((child) => this.containsComponent(child, component));
+		return this.getMountedRoots().some((child) => this.containsComponent(child, component));
 	}
 
 	private containsComponent(root: Component, target: Component): boolean {
@@ -851,10 +916,12 @@ export class TUI extends Container {
 		this.renderRequested = false;
 		this.inputRenderPending = false;
 		this.#lastCursorVisibility = undefined;
+		this.beforeTerminalStart();
 		this.terminal.start(
-			(data) => this.handleInput(data),
+			(data) => this.handleTerminalInput(data),
 			() => this.requestRender(),
 		);
+		this.afterTerminalStart();
 		if (process.env.TMUX) this.terminal.write(ENABLE_FOCUS_REPORTING);
 		this.#setCursorVisibility(false);
 		if (this.terminalColorSchemeNotificationsEnabled) {
@@ -864,14 +931,14 @@ export class TUI extends Container {
 		this.requestRender();
 	}
 
-	addInputListener(listener: InputListener): () => void {
+	addInputListener(listener: TuiInputListener): () => void {
 		this.inputListeners.add(listener);
 		return () => {
 			this.inputListeners.delete(listener);
 		};
 	}
 
-	removeInputListener(listener: InputListener): void {
+	removeInputListener(listener: TuiInputListener): void {
 		this.inputListeners.delete(listener);
 	}
 
@@ -913,6 +980,7 @@ export class TUI extends Container {
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031l");
 		}
+		this.beforeTerminalStop();
 		// Move cursor to the end of the content to prevent overwriting/artifacts on exit
 		if (this.previousLines.length > 0) {
 			// Overwrite the inverted cursor with a normal space to clear the artifact
@@ -931,6 +999,8 @@ export class TUI extends Container {
 		this.#setCursorVisibility(true);
 		if (process.env.TMUX) this.terminal.write(DISABLE_FOCUS_REPORTING);
 		this.terminal.stop();
+		this.afterTerminalStop();
+		this.resetRenderState();
 		this.#lastCursorVisibility = undefined;
 		this.previousLines = [];
 		this.previousRawLines = [];
@@ -956,6 +1026,7 @@ export class TUI extends Container {
 	requestRender(force = false, source = "unknown"): void {
 		if (force) {
 			this.inputRenderPending = false;
+			this.resetRenderState();
 			this.previousLines = [];
 			this.previousRawLines = [];
 			this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
@@ -1037,7 +1108,7 @@ export class TUI extends Container {
 		this.doRender();
 	}
 
-	private handleInput(data: string): void {
+	private handleTerminalInput(data: string): void {
 		const focus = consumeTmuxFocusEvent(data);
 		if (focus.event !== null) {
 			resetCapabilitiesCache();
@@ -1316,7 +1387,7 @@ export class TUI extends Container {
 	}
 
 	/** Composite all overlays into content lines (sorted by focusOrder, higher = on top). */
-	private compositeOverlays(lines: string[], termWidth: number, termHeight: number): string[] {
+	protected compositeOverlays(lines: string[], termWidth: number, termHeight: number): string[] {
 		if (this.overlayStack.length === 0) return lines;
 		const result = [...lines];
 
@@ -1411,7 +1482,11 @@ export class TUI extends Container {
 		return { line: normalized, normalized: true };
 	}
 
-	private applyLineResets(lines: string[], mode: "escaped" | "full" = "full"): NormalizedLinesResult {
+	protected applyLineResets(lines: string[]): string[] {
+		return this.applyLineResetResult(lines).lines;
+	}
+
+	private applyLineResetResult(lines: string[], mode: "escaped" | "full" = "full"): NormalizedLinesResult {
 		const previousMemo = this.normalizeMemo;
 		const nextMemo = new Map<string, string>();
 		const normalizedLines: string[] = [];
@@ -1453,7 +1528,7 @@ export class TUI extends Container {
 			this.previousLines.length !== rawLines.length ||
 			this.previousRawLines.length !== rawLines.length
 		) {
-			return this.applyLineResets(rawLines);
+			return this.applyLineResetResult(rawLines);
 		}
 
 		const windowStart = Math.max(0, viewportTop - VIEWPORT_RENDER_OVERSCAN);
@@ -1467,7 +1542,7 @@ export class TUI extends Container {
 				firstRawChanged = i;
 			}
 			if (i < windowStart || i >= windowEnd) {
-				return this.applyLineResets(rawLines, "escaped");
+				return this.applyLineResetResult(rawLines, "escaped");
 			}
 		}
 
@@ -1834,7 +1909,7 @@ export class TUI extends Container {
 	 * @param height - Terminal height (visible viewport size)
 	 * @returns Cursor position { row, col } or null if no marker found
 	 */
-	private extractCursorPosition(lines: string[], height: number): { row: number; col: number } | null {
+	protected extractCursorPosition(lines: string[], height: number): { row: number; col: number } | null {
 		// Only scan the bottom `height` lines (visible viewport)
 		const viewportTop = Math.max(0, lines.length - height);
 		for (let row = lines.length - 1; row >= viewportTop; row--) {
@@ -1854,7 +1929,7 @@ export class TUI extends Container {
 		return null;
 	}
 
-	private doRender(): void {
+	protected doRender(): void {
 		if (this.stopped) return;
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
@@ -1943,8 +2018,9 @@ export class TUI extends Container {
 		const debugRedraw = process.env.PI_DEBUG_REDRAW === "1";
 		const logRedraw = (reason: string): void => {
 			if (!debugRedraw) return;
-			const logPath = path.join(os.homedir(), ".senpi", "agent", "senpi-debug.log");
+			const logPath = path.join(this.logDirectory, "pi-debug.log");
 			const msg = `[${new Date().toISOString()}] fullRender: ${reason} (prev=${this.previousLines.length}, new=${newLines.length}, height=${height})\n`;
+			fs.mkdirSync(path.dirname(logPath), { recursive: true });
 			fs.appendFileSync(logPath, msg, { encoding: "utf8", mode: DIAGNOSTIC_LOG_MODE });
 			chmodDiagnosticLogBestEffort(logPath);
 		};
@@ -2438,3 +2514,6 @@ export class TUI extends Container {
 		});
 	}
 }
+
+/** Legacy main-screen renderer export. */
+export class TUI extends TuiBase {}

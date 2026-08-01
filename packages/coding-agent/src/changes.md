@@ -1,3 +1,21 @@
+## Backfill: injected app-server turns (2026-08-01)
+
+### What changed
+
+- App-server clients can inject turns through the runtime and thread handlers while preserving the normal turn lifecycle.
+
+### Why
+
+- Remote session controllers need a first-class path that behaves like an ordinary user turn.
+
+### Why this cannot be expressed externally
+
+- Injection crosses app-server runtime, thread state, turn scheduling, and session event emission.
+
+### Expected merge conflict zones
+
+- `modes/app-server/runtime.ts`, `threads/handlers.ts`, and `threads/turn-runtime.ts`.
+
 ## Supersede level-scoped high-reasoning warning deduplication (2026-07-31)
 
 ### What changed

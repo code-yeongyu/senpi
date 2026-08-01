@@ -1,5 +1,42 @@
 # Core Extensions Changes
 
+## 2026-08-01 - Anthropic pair guards share the provider-final sanitizer
+
+### What changed and why
+
+- The `tool-pair-guard` request hook and direct compaction summarization now use the browser-safe
+  `sanitizeAnthropicToolPairs` export from `@earendil-works/pi-ai`.
+- The duplicate coding-agent sanitizer was removed so normal turns, extension hooks, and direct summarization
+  cannot drift across separate Anthropic repair implementations.
+- The coding-agent hook remains an early defensive repair, while the pi-ai Anthropic adapter owns the final
+  pre-SDK invariant after all payload mutations.
+
+### Expected merge conflict zones
+
+- LOW: `builtin/tool-pair-guard/index.ts` and `builtin/compaction/speculative.ts` if upstream changes direct
+  provider-request hooks.
+- LOW: `test/tool-pair-guard/sanitize-anthropic-payload.test.ts` if upstream relocates wire sanitizer coverage.
+
+## Backfill: extension context and reload stability (2026-08-01)
+
+### What changed
+
+- Session replacement no longer leaves extensions holding stale `ExtensionContext` instances.
+- Config reload watches stay scoped to the intended config source instead of widening across unrelated paths.
+- Global/default compatibility shims no longer bounce state back and forth during reloads.
+
+### Why
+
+- These fixes keep long-lived extension processes aligned with the current session and configuration.
+
+### Why this cannot be expressed externally
+
+- The behavior lives inside extension runner lifecycle, SDK context replacement, and config-watch ownership.
+
+### Expected merge conflict zones
+
+- `runner.ts`, `sdk.ts`, extension config reload/watch wiring, and global/default shim normalization.
+
 ## 2026-08-01 - recommended-models respects an explicitly saved system default
 
 ### What changed and why
@@ -33,7 +70,7 @@
 
 ### What changed
 
-- `builtin/tool-pair-guard/sanitize-anthropic-payload.ts` now pairs client `tool_use` blocks only with
+- The tool-pair guard sanitizer pairs client `tool_use` blocks only with
   `tool_result` blocks in the immediately following user message, removes misplaced or duplicate results,
   and synthesizes error results for calls whose outputs were interrupted or pruned.
 - Repaired result blocks are placed before ordinary user content, including when the following user message
@@ -47,13 +84,14 @@
   message. A persisted session can be valid before context hooks run but lose one result during pruning or
   payload transformation, so switching from a larger-context non-Anthropic model to Claude could wedge every
   follow-up request with HTTP 400.
-- The provider-request hook is the final safe repair boundary after context reduction and wire conversion.
-  Repairing there preserves the durable transcript while guaranteeing the request sent to Anthropic is valid.
+- The provider-request hook repairs after context reduction and wire conversion without changing the durable
+  transcript. The 2026-08-01 provider-final guard supersedes the earlier assumption that no later payload
+  mutation could invalidate the pair.
 
 ### Expected merge conflict zones
 
-- LOW: `builtin/tool-pair-guard/sanitize-anthropic-payload.ts` if upstream adds equivalent Anthropic
-  tool-pair normalization.
+- LOW: `@earendil-works/pi-ai` `sanitizeAnthropicToolPairs` if upstream adds equivalent Anthropic tool-pair
+  normalization.
 - LOW: `test/tool-pair-guard/sanitize-anthropic-payload.test.ts` if upstream expands the same sanitizer cases.
 
 ## 2026-07-31 - `pi.setSessionFastMode()` for the fast-mode indicator

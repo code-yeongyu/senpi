@@ -1,5 +1,5 @@
+import { sanitizeAnthropicToolPairs as sanitizeAnthropicPayload } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "../../types.ts";
-import { sanitizeAnthropicPayload } from "./sanitize-anthropic-payload.ts";
 import { sanitizeOpenAIChatCompletionsPayload } from "./sanitize-openai-chat-completions-payload.ts";
 import { sanitizeOpenAIResponsesPayload } from "./sanitize-openai-responses-payload.ts";
 

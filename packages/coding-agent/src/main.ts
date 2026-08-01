@@ -11,6 +11,15 @@ import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { handleAppServerCommand } from "./cli/app-server-command.ts";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
+import {
+	type CredentialPrintCommand,
+	CredentialPrintError,
+	isCredentialPrintHelp,
+	parseCredentialPrintCommand,
+	printCredentialPrintHelp,
+	resolveCredentialForPrint,
+	validateCredentialPrintArgs,
+} from "./cli/credential-print.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
@@ -40,7 +49,7 @@ import {
 	resolveModelScope,
 	type ScopedModel,
 } from "./core/model-resolver.ts";
-import type { ModelRuntime } from "./core/model-runtime.ts";
+import { ModelRuntime } from "./core/model-runtime.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
@@ -151,6 +160,45 @@ function isPlainRuntimeMetadataCommand(parsed: Args): boolean {
 		parsed.mode === undefined &&
 		(parsed.help === true || parsed.listModels !== undefined || parsed.listTips === true)
 	);
+}
+
+async function runCredentialPrintCommand(args: string[]): Promise<boolean> {
+	if (isCredentialPrintHelp(args)) {
+		printCredentialPrintHelp();
+		return true;
+	}
+
+	let command: CredentialPrintCommand | undefined;
+	try {
+		command = parseCredentialPrintCommand(args);
+	} catch (error) {
+		const message = error instanceof CredentialPrintError ? error.message : "Failed to parse auth command";
+		console.error(chalk.red(`Error: ${message}`));
+		process.exitCode = 1;
+		return true;
+	}
+	if (!command) return false;
+
+	const parsed = parseArgs(command.args);
+	if (parsed.diagnostics.length > 0) {
+		for (const diagnostic of parsed.diagnostics) {
+			console.error(chalk.red(`Error: ${diagnostic.message}`));
+		}
+		process.exitCode = 1;
+		return true;
+	}
+
+	try {
+		validateCredentialPrintArgs(parsed);
+		const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
+		const credential = await resolveCredentialForPrint(parsed, modelRuntime, command.kind, command.minExpiryMs);
+		process.stdout.write(`${credential}\n`);
+	} catch (error) {
+		const message = error instanceof CredentialPrintError ? error.message : "Failed to resolve credential";
+		console.error(chalk.red(`Error: ${message}`));
+		process.exitCode = 1;
+	}
+	return true;
 }
 
 async function prepareInitialMessage(
@@ -568,6 +616,10 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (await handleAppServerCommand(args)) {
+		return;
+	}
+
+	if (await runCredentialPrintCommand(args)) {
 		return;
 	}
 
@@ -991,6 +1043,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialMessages: parsed.messages,
 			verbose: parsed.verbose,
 			chrome: parsed.grokNeo ? "grok" : undefined,
+			uiMode: parsed.uiMode,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();

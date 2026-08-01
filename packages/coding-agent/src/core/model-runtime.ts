@@ -73,6 +73,8 @@ export interface CreateModelRuntimeOptions {
 export interface ModelRuntimeAuthOverrides {
 	apiKey?: string;
 	env?: Record<string, string>;
+	/** Require this much remaining OAuth-token validity; defaults to five minutes. */
+	minOAuthValidityMs?: number;
 }
 
 function mergeHeaders(

@@ -62,6 +62,7 @@ describe("rules builtin - before_agent_start delivery", () => {
 	const extensionContextActions: ExtensionContextActions = {
 		getModel: () => undefined,
 		getServiceTier: () => undefined,
+		getScopedModels: () => [],
 		isIdle: () => true,
 		isProjectTrusted: () => true,
 		getSignal: () => undefined,
