@@ -32,24 +32,25 @@ export async function spawnOAuthIdp(args: string[] = []): Promise<IdpFixture> {
 	child.stderr?.on("data", (chunk: Buffer) => {
 		stderr += chunk.toString("utf8");
 	});
-	const ready = await waitForReady(
-		child,
-		() => stdout,
-		() => stderr,
-	);
-	return {
-		baseUrl: ready.url,
-		mcpUrl: ready.mcpUrl,
-		pid: child.pid ?? ready.pid,
-		getLog: async () => (await fetch(`${ready.url}/__log`)).json() as Promise<IdpLog>,
-		cleanup: async () => {
-			if (child.exitCode === null) child.kill("SIGTERM");
-			await new Promise<void>((resolve) => {
-				if (child.exitCode !== null) return resolve();
-				child.once("exit", () => resolve());
-			});
-		},
-	};
+	try {
+		const ready = await waitForReady(
+			child,
+			() => stdout,
+			() => stderr,
+		);
+		return {
+			baseUrl: ready.url,
+			mcpUrl: ready.mcpUrl,
+			pid: child.pid ?? ready.pid,
+			getLog: async () => (await fetch(`${ready.url}/__log`)).json() as Promise<IdpLog>,
+			cleanup: async () => {
+				await terminateChild(child);
+			},
+		};
+	} catch (error) {
+		await terminateChild(child);
+		throw error;
+	}
 }
 
 interface ReadyLine {
@@ -73,7 +74,27 @@ function waitForReady(child: ChildProcess, getStdout: () => string, getStderr: (
 		child.stdout?.on("data", onData);
 		child.once("exit", (code) => {
 			clearTimeout(timeout);
+			child.stdout?.off("data", onData);
 			reject(new Error(`idp exited before readiness code=${code} stderr=${getStderr()}`));
 		});
 	});
+}
+
+async function terminateChild(child: ChildProcess): Promise<void> {
+	if (child.exitCode !== null) return;
+	child.kill("SIGTERM");
+	await Promise.race([waitForExit(child), delay(1000)]);
+	if (child.exitCode === null) {
+		child.kill("SIGKILL");
+		await waitForExit(child);
+	}
+}
+
+function waitForExit(child: ChildProcess): Promise<void> {
+	if (child.exitCode !== null) return Promise.resolve();
+	return new Promise((resolve) => child.once("exit", () => resolve()));
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }

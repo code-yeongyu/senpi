@@ -1,9 +1,7 @@
 // Test worker for the refresh-race proof. Two of these run as separate OS
-// processes against one shared token store + one fixture IdP. A file barrier
-// releases both at once so a concurrent refresh is forced.
+// processes against one shared token store + one fixture IdP. The IdP's
+// refresh-pair gate forces concurrency in the lock-off control.
 import { createHash } from "node:crypto";
-import { appendFileSync, readFileSync } from "node:fs";
-import { setTimeout as sleep } from "node:timers/promises";
 import { McpOAuthProvider } from "../../../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
 import { McpRefreshManager } from "../../../src/core/extensions/builtin/mcp/auth/oauth-refresh.ts";
 import { McpTokenStore } from "../../../src/core/extensions/builtin/mcp/auth/token-store.ts";
@@ -14,7 +12,7 @@ import type { McpConnectionEntry } from "../../../src/core/extensions/builtin/mc
 import { connectAndRefreshMcpCatalog } from "../../../src/core/extensions/builtin/mcp/startup-race.ts";
 
 async function main(): Promise<void> {
-	const [agentDir, mcpUrl, barrierFile, tag, disableLock] = process.argv.slice(2);
+	const [agentDir, mcpUrl, , tag, disableLock] = process.argv.slice(2);
 	const lockDisabled = disableLock === "1";
 	const store = new McpTokenStore({
 		agentDir,
@@ -29,64 +27,8 @@ async function main(): Promise<void> {
 		clientId: "race-client",
 	});
 
-	// Two-phase file barrier so both worker processes fire their refresh within the
-	// same scheduling window even on a busy host — otherwise the concurrent-refresh
-	// race the control case proves (and the contention the lock-ON case relies on)
-	// does not reliably reproduce. Phase 1: wait for both processes to arrive.
-	// Phase 2: both signal ready and busy-wait on a 1ms poll so the two attempts are
-	// released together, replacing a fixed 20ms sleep that left them skewed under load.
-	appendFileSync(barrierFile ?? "", `${tag}\n`);
-	for (let i = 0; i < 400; i++) {
-		if (
-			readFileSync(barrierFile ?? "", "utf8")
-				.split("\n")
-				.filter((line) => line.length > 0 && !line.includes(":")).length >= 2
-		)
-			break;
-		await sleep(5);
-	}
-	appendFileSync(barrierFile ?? "", `${tag}:ready\n`);
-	for (let i = 0; i < 400; i++) {
-		if (
-			readFileSync(barrierFile ?? "", "utf8")
-				.split("\n")
-				.filter((line) => line.endsWith(":ready")).length >= 2
-		)
-			break;
-		await sleep(1);
-	}
-
 	const first = await runtimeAttempt(agentDir ?? "", mcpUrl ?? "", provider, store);
-	if (!lockDisabled) {
-		process.stdout.write(`${JSON.stringify({ tag, ...first })}\n`);
-		return;
-	}
-
-	appendFileSync(barrierFile ?? "", `${tag}:after\n`);
-	for (let i = 0; i < 200; i++) {
-		if (
-			readFileSync(barrierFile ?? "", "utf8")
-				.trim()
-				.split("\n")
-				.filter((line) => line.endsWith(":after")).length >= 2
-		)
-			break;
-		await sleep(10);
-	}
-	await sleep(20);
-	await store.update((current) =>
-		current === undefined ? undefined : { ...current, expiresAt: Date.now() + 60_000 },
-	);
-	const postRace = await runtimeAttempt(agentDir ?? "", mcpUrl ?? "", provider, store);
-	process.stdout.write(
-		`${JSON.stringify({
-			tag,
-			...first,
-			postRaceOk: postRace.ok,
-			postRaceKind: postRace.kind,
-			postRaceRefreshHash: postRace.refreshHash,
-		})}\n`,
-	);
+	process.stdout.write(`${JSON.stringify({ tag, ...first })}\n`);
 }
 
 async function runtimeAttempt(

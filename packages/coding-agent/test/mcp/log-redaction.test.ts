@@ -198,7 +198,8 @@ https://example.invalid/path?client_secret=${token}`);
 			throw new Error("SENPI_CODING_AGENT_DIR was not initialized for log redaction test");
 		}
 		const logDir = join(agentDir, "logs", "mcp");
-		chmodSync(join(agentDir, ".."), 0o500);
+		mkdirSync(join(agentDir, "logs"), { recursive: true });
+		writeFileSync(logDir, "fixture file blocks the log directory");
 
 		const logger = createMcpLogger("unwritable", { logDir });
 

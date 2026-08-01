@@ -65,7 +65,7 @@ describe("MCP disk metadata cache", () => {
 
 		await attach(root, pi);
 		await awaitMcpToolRegistration("fx");
-		await awaitCacheTools(root, 2);
+		await awaitCacheTools(root, ["tool_1", "tool_2"]);
 
 		expect(dedupedRegisteredTools(pi)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
 		expect(await readCounter(counterFile)).toBe(1);
@@ -82,7 +82,7 @@ describe("MCP disk metadata cache", () => {
 
 		await attach(root, pi);
 		await awaitMcpToolRegistration("fx");
-		await awaitCacheTools(root, 1);
+		await awaitCacheTools(root, ["tool_1"]);
 
 		expect(dedupedRegisteredTools(pi)).toEqual(["mcp_fx_tool_1"]);
 		const cache = await readCache(root);
@@ -98,7 +98,7 @@ describe("MCP disk metadata cache", () => {
 
 		await attach(root, pi);
 		await awaitMcpToolRegistration("fx");
-		await awaitCacheTools(root, 1);
+		await awaitCacheTools(root, ["tool_1"]);
 
 		expect(dedupedRegisteredTools(pi)).toEqual(["mcp_fx_tool_1"]);
 		expect(withoutMcpUtilityTools(pi.registeredTools)).not.toContain("mcp_fx_fake_999");
@@ -185,10 +185,14 @@ function dedupedRegisteredTools(pi: ReturnType<typeof capturingPi>): string[] {
 
 /** The raced background continuation writes the disk cache after the in-memory
  * catalog is set; await the file landing before asserting its contents. */
-async function awaitCacheTools(root: TestRoot, count: number): Promise<void> {
+async function awaitCacheTools(root: TestRoot, expectedNames: readonly string[]): Promise<void> {
 	await waitForCondition(async () => {
 		try {
-			return (await readCache(root)).servers.fx.tools.length === count;
+			const server = (await readCache(root)).servers.fx;
+			return (
+				server.configHash === configHash(root, "fx") &&
+				server.tools.map((tool) => tool.name).join("\0") === expectedNames.join("\0")
+			);
 		} catch {
 			return false;
 		}

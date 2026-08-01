@@ -6,6 +6,7 @@ import { createHash, randomBytes } from "node:crypto";
 export interface IdpOptions {
 	noS256: boolean;
 	rotateRefresh: boolean;
+	refreshPairGate: boolean;
 	cimd: boolean;
 	oidcOnly: boolean;
 	expireAccessSec: number;
@@ -45,6 +46,7 @@ export interface RequestLogEntry {
 }
 
 const SENTINEL = "SENTINEL";
+export const REFRESH_PAIR_GATE_TIMEOUT_MS = 4000;
 
 export class IdpState {
 	readonly options: IdpOptions;
@@ -58,9 +60,39 @@ export class IdpState {
 	readonly #refresh = new Map<string, RefreshToken>();
 	readonly #revokedFamilies = new Set<string>();
 	readonly #accessTokens = new Map<string, number>();
+	#refreshGateArrivals = 0;
+	#refreshPairGateOpen = false;
+	#releaseRefreshGate: (() => void) | undefined;
 
 	constructor(options: IdpOptions) {
 		this.options = options;
+	}
+
+	async waitForRefreshPair(params: URLSearchParams): Promise<void> {
+		if (!this.options.refreshPairGate || params.get("grant_type") !== "refresh_token" || this.#refreshPairGateOpen)
+			return;
+		this.#refreshGateArrivals += 1;
+		if (this.#refreshGateArrivals >= 2) {
+			this.#openRefreshPairGate();
+			return;
+		}
+		await new Promise<void>((resolve) => {
+			const timeout = setTimeout(() => {
+				this.#openRefreshPairGate();
+				resolve();
+			}, REFRESH_PAIR_GATE_TIMEOUT_MS);
+			this.#releaseRefreshGate = () => {
+				clearTimeout(timeout);
+				resolve();
+			};
+		});
+	}
+
+	#openRefreshPairGate(): void {
+		if (this.#refreshPairGateOpen) return;
+		this.#refreshPairGateOpen = true;
+		this.#releaseRefreshGate?.();
+		this.#releaseRefreshGate = undefined;
 	}
 
 	log(entry: RequestLogEntry): void {
@@ -254,6 +286,7 @@ export function parseIdpOptions(argv: string[]): IdpOptions {
 	return {
 		noS256: argv.includes("--no-s256"),
 		rotateRefresh: argv.includes("--rotate-refresh"),
+		refreshPairGate: argv.includes("--refresh-pair-gate"),
 		cimd: argv.includes("--cimd"),
 		oidcOnly: argv.includes("--oidc-only"),
 		expireAccessSec: Number.isFinite(expireAccessSec) ? expireAccessSec : 3600,
