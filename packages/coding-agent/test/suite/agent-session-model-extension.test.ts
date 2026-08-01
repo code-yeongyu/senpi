@@ -483,7 +483,7 @@ describe("AgentSession model and extension characterization", () => {
 		expect(extensionApi).toBeDefined();
 	});
 
-	it("allows extension commands to inspect live system prompt options", async () => {
+	it("allows extension commands to inspect defensive system prompt option copies", async () => {
 		const seenOptions: BuildSystemPromptOptions[] = [];
 		const harness = await createHarness({
 			extensionFactories: [
@@ -493,7 +493,7 @@ describe("AgentSession model and extension characterization", () => {
 						handler: async (_args, ctx) => {
 							const options = ctx.getSystemPromptOptions();
 							seenOptions.push(options);
-							options.selectedTools?.push("mutated_tool");
+							if (seenOptions.length === 1) options.selectedTools?.push("mutated_tool");
 						},
 					});
 				},
@@ -505,10 +505,11 @@ describe("AgentSession model and extension characterization", () => {
 		await harness.session.prompt("/inspect-options");
 
 		expect(seenOptions).toHaveLength(2);
-		expect(seenOptions[0]).toBe(seenOptions[1]);
+		expect(seenOptions[0]).not.toBe(seenOptions[1]);
+		expect(seenOptions[0]?.selectedTools).not.toBe(seenOptions[1]?.selectedTools);
 		expect(seenOptions[0]?.cwd).toBe(harness.tempDir);
 		expect(seenOptions[0]?.selectedTools).toContain("read");
-		expect(seenOptions[1]?.selectedTools).toContain("mutated_tool");
+		expect(seenOptions[1]?.selectedTools).not.toContain("mutated_tool");
 	});
 
 	it.each([
