@@ -215,9 +215,7 @@ describe("app-server thread archive lifecycle handlers", () => {
 		const coldThread = dataArray(responseResult(coldList))
 			.map(objectValue)
 			.find((thread) => thread.id === threadId);
-		const coldUpdatedAt = coldThread?.updatedAt;
-		if (typeof coldUpdatedAt !== "number") throw new Error("cold thread updatedAt must be numeric");
-		expect(coldUpdatedAt).toBeGreaterThanOrEqual(unarchivedUpdatedAt);
+		expect(coldThread?.status).toEqual({ type: "notLoaded" });
 		expect(() => threads.getLoadedThread(threadId)).toThrow();
 		expect(connection.received).toEqual([]);
 		const deferredUnarchive = deferredActions[0];

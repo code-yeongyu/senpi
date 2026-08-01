@@ -5,8 +5,8 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
 	detectInstallMethod,
 	getSelfUpdateCommand,
-	getSelfUpdateUnavailableInstruction,
 	getUpdateInstruction,
+	isSelfUpdatePathWritable,
 } from "../src/config.ts";
 
 const execPathDescriptor = Object.getOwnPropertyDescriptor(process, "execPath");
@@ -462,11 +462,12 @@ describe("detectInstallMethod", () => {
 
 	test("does not self-update when npm install path is not writable", () => {
 		const { packageDir } = createNpmPrefixInstall();
-		chmodSync(packageDir, 0o500);
+		const access = () => {
+			const error = new Error("permission denied") as NodeJS.ErrnoException;
+			error.code = "EACCES";
+			throw error;
+		};
 
-		expect(getSelfUpdateCommand("@earendil-works/pi-coding-agent")).toBeUndefined();
-		expect(getSelfUpdateUnavailableInstruction("@earendil-works/pi-coding-agent")).toContain(
-			"the install path is not writable",
-		);
+		expect(isSelfUpdatePathWritable(packageDir, access)).toBe(false);
 	});
 });

@@ -428,10 +428,19 @@ describe("Coding Agent Tools", () => {
 		it("should include EACCES for read-only files", async () => {
 			const testFile = join(testDir, "edit-readonly.txt");
 			writeFileSync(testFile, "hello\n");
-			chmodSync(testFile, 0o444);
+			const accessError = Object.assign(new Error("permission denied"), { code: "EACCES" });
+			const readOnlyTool = createEditTool(testDir, {
+				operations: {
+					access: async () => {
+						throw accessError;
+					},
+					readFile: async () => Buffer.from("hello\n", "utf-8"),
+					writeFile: async () => {},
+				},
+			});
 
 			await expect(
-				editTool.execute("test-call-14", {
+				readOnlyTool.execute("test-call-14", {
 					path: testFile,
 					edits: [{ oldText: "hello", newText: "world" }],
 				}),
@@ -467,9 +476,14 @@ describe("Coding Agent Tools", () => {
 		it("should include EACCES in diff preview for unreadable files", async () => {
 			const unreadableFile = join(testDir, "unreadable-preview.txt");
 			writeFileSync(unreadableFile, "hello\n");
-			chmodSync(unreadableFile, 0o222);
+			const accessError = Object.assign(new Error("permission denied"), { code: "EACCES" });
 
-			const result = await computeEditsDiff(unreadableFile, [{ oldText: "hello", newText: "world" }], testDir);
+			const result = await computeEditsDiff(unreadableFile, [{ oldText: "hello", newText: "world" }], testDir, {
+				access: async () => {
+					throw accessError;
+				},
+				readFile: async () => "hello\n",
+			});
 
 			expect(result).toEqual({ error: `Could not edit file: ${unreadableFile}. Error code: EACCES.` });
 		});

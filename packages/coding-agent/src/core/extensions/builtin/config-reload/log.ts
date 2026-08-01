@@ -68,6 +68,7 @@ export interface ConfigReloadLogger {
 
 export interface ConfigReloadLoggerOptions {
 	maxBytes?: number;
+	writeLine?: (filePath: string, line: string, maxBytes: number) => void;
 }
 
 export function createConfigReloadLogger(
@@ -76,6 +77,7 @@ export function createConfigReloadLogger(
 ): ConfigReloadLogger {
 	const filePath = join(agentDir, "logs", "config-reload.log");
 	const maxBytes = validMaxBytes(options.maxBytes);
+	const write = options.writeLine ?? writeLine;
 	let disabled = false;
 
 	function log<Event extends ConfigReloadLogEvent>(
@@ -85,7 +87,7 @@ export function createConfigReloadLogger(
 	): ConfigReloadLogStatus {
 		if (disabled) return { written: false, disabled: true };
 		try {
-			writeLine(filePath, JSON.stringify(formatEntry(level, event, details)), maxBytes);
+			write(filePath, JSON.stringify(formatEntry(level, event, details)), maxBytes);
 			return { written: true, disabled: false };
 		} catch {
 			disabled = true;

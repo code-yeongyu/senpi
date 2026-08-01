@@ -304,11 +304,13 @@ function getEntrypointPackageDir(): string | undefined {
 	return undefined;
 }
 
-function isSelfUpdatePathWritable(): boolean {
-	const packageDir = getPackageDir();
+export function isSelfUpdatePathWritable(
+	packageDir = getPackageDir(),
+	access: (path: string, mode: number) => void = accessSync,
+): boolean {
 	try {
-		accessSync(packageDir, constants.W_OK);
-		accessSync(dirname(packageDir), constants.W_OK);
+		access(packageDir, constants.W_OK);
+		access(dirname(packageDir), constants.W_OK);
 		return true;
 	} catch {
 		return false;

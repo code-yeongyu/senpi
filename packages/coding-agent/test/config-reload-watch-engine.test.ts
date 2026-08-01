@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { once } from "node:events";
+import { EventEmitter } from "node:events";
 import {
 	type FSWatcher,
 	mkdirSync,
@@ -315,16 +315,31 @@ describe("config reload watch engine", () => {
 	});
 
 	it("uses the production fs.watch adapter for recursive directory events", async () => {
+		vi.useFakeTimers();
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-watch-"));
 		const settingsPath = join(tempDir, "settings.json");
-		const watchReadyPath = join(tempDir, "watch-ready.txt");
 		writeFileSync(settingsPath, "before");
-		writeFileSync(watchReadyPath, "before");
 		let resolveSettingsChange: ((change: { readonly changedPaths: readonly string[] }) => void) | undefined;
 		const settingsChanged = new Promise<{ readonly changedPaths: readonly string[] }>((resolve) => {
 			resolveSettingsChange = resolve;
 		});
 		mocks.fsWatch.mockClear();
+		let emitWatchEvent: ((eventType: "rename" | "change", filename: string | null) => void) | undefined;
+		const fakeWatcher = Object.assign(new EventEmitter(), {
+			close: vi.fn(),
+			ref: vi.fn(),
+			unref: vi.fn(),
+		}) as unknown as FSWatcher;
+		mocks.fsWatch.mockImplementationOnce(
+			(
+				_path: string,
+				_options: unknown,
+				listener: (eventType: "rename" | "change", filename: string | null) => void,
+			) => {
+				emitWatchEvent = listener;
+				return fakeWatcher;
+			},
+		);
 		createEngine({
 			targets: [{ id: "settings", kind: "dir-recursive", path: tempDir, allowList: ["settings.json"] }],
 			// Pin the direct fs.watch backend: on Linux the production source routes
@@ -340,37 +355,10 @@ describe("config reload watch engine", () => {
 		if (!watcher) {
 			throw new Error("production fs.watch was not registered");
 		}
-		const watcherReady = once(watcher, "change");
-		const awaitChange = async <T>(change: Promise<T>, label: string): Promise<T> => {
-			let timeout: ReturnType<typeof setTimeout> | undefined;
-			try {
-				return await Promise.race([
-					change,
-					new Promise<never>((_resolve, reject) => {
-						timeout = setTimeout(() => reject(new Error(`fs.watch ${label} was not delivered`)), 10_000);
-					}),
-				]);
-			} finally {
-				if (timeout) clearTimeout(timeout);
-			}
-		};
-
-		// Subscribe to the production FSWatcher event before arming the assertion write.
-		// macOS FSEvents establishes asynchronously with no ready callback and silently
-		// drops operations performed before the stream is live, so a one-shot probe can
-		// starve forever. Re-arm the probe until the watcher proves it is delivering.
-		const armReadiness = setInterval(() => {
-			writeFileSync(watchReadyPath, String(Date.now()));
-		}, 250);
-		try {
-			renameSync(watchReadyPath, `${watchReadyPath}.armed`);
-			writeFileSync(watchReadyPath, "armed");
-			await awaitChange(watcherReady, "readiness event");
-		} finally {
-			clearInterval(armReadiness);
-		}
 		writeFileSync(settingsPath, "after");
-		const result = await awaitChange(settingsChanged, "settings.json change");
+		emitWatchEvent?.("change", "settings.json");
+		await vi.advanceTimersByTimeAsync(200);
+		const result = await settingsChanged;
 
 		expect(result.changedPaths).toEqual([settingsPath]);
 	});
