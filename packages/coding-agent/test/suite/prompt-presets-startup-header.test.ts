@@ -252,6 +252,34 @@ describe("prompt preset startup header", () => {
 		expect(result.systemPrompt).toBe("");
 	});
 
+	it("appends to an explicitly empty prompt without a leading separator", async () => {
+		// given
+		const { api, handlers } = makeApiMock();
+		const { context } = createHeaderContext("gpt-5.5");
+		promptPresetExtension(api as never);
+
+		// when
+		const result = (await handlers.model_select[0](
+			{
+				type: "model_select",
+				model: { id: "grok-4.5", provider: "xai", api: "openai-responses" },
+				previousModel: context.model,
+				source: "fallback",
+				systemPrompt: "suffix",
+				systemPromptOptions: {
+					cwd: "/repo",
+					selectedTools: [],
+					customPrompt: "",
+					appendSystemPrompt: "suffix",
+				},
+			},
+			context,
+		)) as BeforeAgentStartResult;
+
+		// then
+		expect(result.systemPrompt).toBe("suffix");
+	});
+
 	it("appends an explicit system prompt suffix after the model preset", async () => {
 		// given
 		const { api, handlers } = makeApiMock();

@@ -18,7 +18,8 @@ interface SystemPromptOptionsLike {
 const SYSTEM_PROMPT_SEPARATOR = "\n\n";
 
 function appendSystemPrompt(base: string, suffix: string | undefined): string {
-	return suffix ? `${base}${SYSTEM_PROMPT_SEPARATOR}${suffix}` : base;
+	if (!suffix) return base;
+	return base ? `${base}${SYSTEM_PROMPT_SEPARATOR}${suffix}` : suffix;
 }
 
 function eventOptionsToBuilderInput(
