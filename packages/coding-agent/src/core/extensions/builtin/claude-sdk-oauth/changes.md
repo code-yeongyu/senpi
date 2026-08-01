@@ -1,5 +1,12 @@
 # claude-sdk-oauth extension changes
 
+## 2026-08-02 - Provider configuration account manager
+
+- Selecting a configured Claude SDK OAuth provider now opens account controls instead of immediately starting another OAuth login.
+- The provider menu supports add, per-account logout, full logout, pin, unpin, and unblock while preserving the existing `/claude-account` command surface.
+- Empty pools still enter OAuth directly, so first-time login behavior is unchanged.
+- Merge-conflict risk: low. The change is isolated to the provider OAuth login adapter and its focused tests.
+
 ## 2026-08-01 - Fail closed after managed-account logout
 
 - Managed `oauth-slots` and `config-dir` modes now report that login is required when their account pool is empty instead of silently falling back to ambient Claude CLI credentials.
