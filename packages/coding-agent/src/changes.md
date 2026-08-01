@@ -1,3 +1,15 @@
+## Automatic compaction timeout recovery preserves active work (2026-08-01)
+
+- First-pass automatic compaction timeouts no longer fall back to a context-free marker: the deterministic checkpoint includes bounded recent user intent and the latest active todo state.
+- Compaction todo recovery now snapshots only the latest state and correctly restores it when all surviving todo records predate the newest compaction boundary.
+- Regression coverage drives both the required automatic fallback handler and the post-compaction todo bridge.
+
+## Direct input admission and cancellable extension deliveries (2026-07-31)
+
+- Public `AgentSession.steer()` and `followUp()` now run the same correlated extension input/disposition admission as queued `prompt()` calls. Classic RPC and app-server steering preserve `source: "rpc"`, while compaction queue transfer reuses the same path without duplicate events.
+- `pi.sendMessage()` returns an identity-safe delivery receipt with cancellation and started/cancelled subscriptions. Queue clear, disposal, and dispatch failure revoke pending receipts without removing identical sibling messages.
+- Direct reload retires the old extension runner only after removed-extension notifications finish, so captured pre-reload APIs are usable during teardown and stale afterward.
+
 ## Required-compaction recovery and queue chronology (2026-07-31)
 
 - Targeted required-compaction summarization failures can recover from a deterministic, suffix-safe local checkpoint without a second provider request; unfit recovery remains fail-closed and preserves the latest request.

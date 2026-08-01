@@ -73,8 +73,8 @@ interface AgentSession {
   prompt(text: string, options?: PromptOptions): Promise<void>;
 
   // Queue messages during streaming
-  steer(text: string): Promise<void>;
-  followUp(text: string): Promise<void>;
+  steer(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void>;
+  followUp(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void>;
 
   // Subscribe to events (returns unsubscribe function)
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
@@ -232,6 +232,8 @@ await session.followUp("After you're done, also do this");
 ```
 
 Both `steer()` and `followUp()` expand file-based prompt templates but error on extension commands (extension commands cannot be queued).
+They also emit the same correlated extension input/disposition lifecycle as queued `prompt()` calls. SDK calls default to
+`source: "interactive"`; transport adapters pass `source: "rpc"` when the input came from RPC.
 
 ### Agent and AgentState
 

@@ -1,5 +1,13 @@
 # Builtin compaction extension changes
 
+## Automatic timeout recovery retains current task state (2026-08-01)
+
+- Required automatic compaction now carries bounded recent user intent plus the latest todo state into its deterministic checkpoint when provider summarization exceeds the wall-clock budget or terminates with a typed transient truncation.
+- User intent recovery skips Senpi control envelopes and persists the recovered intent in canonical checkpoint details so later compactions can inherit it.
+- Todo snapshots persist only the latest state instead of the full historical sequence, and post-compaction restore ignores todo records that exist only before the newest compaction boundary.
+- Compaction details remain canonical and bounded: todo/checkpoint objects stay out of durable detail metadata while the user-facing recovery summary contains only the formatted current work items.
+- Coverage: `test/compaction/required-compaction-deterministic-fallback.test.ts` and `test/compaction/todo-preservation.test.ts`.
+
 ## Deterministic required-compaction recovery (2026-07-31)
 
 - Required threshold/overflow recovery may synthesize one local checkpoint after a summarization watchdog or a transient `SummaryRequestError` carrying the structured `upstream-stream-truncated` failure kind, without issuing another provider request. Generic thrown text is never fallback authorization, even when it contains truncation-like markers.

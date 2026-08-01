@@ -1486,7 +1486,7 @@ extension-declared MCP servers.
 Inject a custom message into the session. Custom messages participate in LLM context. For durable TUI-only content that should not be sent to the LLM, use [`pi.appendEntry()`](#piappendentrycustomtype-data) with [`pi.registerEntryRenderer()`](#piregisterentryrenderercustomtype-renderer).
 
 ```typescript
-pi.sendMessage({
+const delivery = pi.sendMessage({
   customType: "my-extension",
   content: "Message text",
   display: true,
@@ -1495,6 +1495,13 @@ pi.sendMessage({
   triggerTurn: true,
   deliverAs: "steer",
 });
+
+delivery.onStarted(() => {
+  // This exact custom message began a model turn.
+});
+
+// Removes only this pending delivery; returns false after it started or was already cancelled.
+delivery.cancel();
 ```
 
 **Options:**
@@ -1503,6 +1510,10 @@ pi.sendMessage({
   - `"followUp"` - Waits for agent to finish. Delivered only when agent has no more tool calls.
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
 - `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`).
+
+The returned `MessageDelivery` has an opaque `id`, `cancel()`, `onStarted()`, and `onCancelled()`. Cancellation is
+identity-based, so equal-content sibling messages remain queued. Clearing the session queue or disposing the session
+also cancels pending receipts.
 
 ### pi.sendUserMessage(content, options?)
 

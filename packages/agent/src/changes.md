@@ -1,5 +1,12 @@
 # Changes
 
+## 2026-07-31 - Exact queued-message cancellation
+
+### What changed and why
+
+- `Agent.removeQueuedMessage()` removes one exact steering or follow-up message object without clearing identical siblings.
+- Coding-agent extension delivery receipts use this identity-safe primitive to revoke superseded hidden work while preserving unrelated queued user and extension messages.
+
 ## 2026-07-30 - Bound empty Kimi assistant responses
 
 ### What changed and why
