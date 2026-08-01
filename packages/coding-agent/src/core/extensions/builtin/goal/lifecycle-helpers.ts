@@ -1,7 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
-import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import type { ExtensionAPI, ExtensionContext, MessageDelivery } from "../../types.ts";
 import { getLatestPhasesFromBranchEntries } from "../todotools/state.ts";
 import {
 	buildGoalContinuationSignature,
@@ -17,22 +17,98 @@ import {
 	REPETITION_BLOCKED_REASON,
 } from "./continuation-recovery.ts";
 import { buildContinuationPrompt } from "./prompt.ts";
-import { recordContinuationDelivered, updateGoal } from "./store.ts";
+import {
+	readObjectiveForPrompt,
+	recordContinuationDelivered,
+	rollbackContinuationDelivered,
+	updateGoal,
+} from "./store.ts";
 import { goalStoreRef } from "./store-ref.ts";
 import { openTodoTaskContents } from "./todo-gate.ts";
 import type { Goal } from "./types.ts";
 
 type ContinuingGoalContinuationVerdict = Extract<GoalContinuationVerdict, { kind: "continue" }>;
 
+type ReservedMessageDelivery = MessageDelivery & {
+	readonly cancelled: boolean;
+	bind(delivery: MessageDelivery): boolean;
+};
+
+export type GoalContinuationDeliveryOutcome = {
+	readonly goal: Goal;
+	readonly admitted: boolean;
+	readonly delivery?: MessageDelivery;
+};
+
+type DeliveryState = "pending" | "started" | "cancelled";
+
+let nextReservationId = 0;
+
+function reserveMessageDelivery(): ReservedMessageDelivery {
+	let actual: MessageDelivery | undefined;
+	let state: DeliveryState = "pending";
+	const startedListeners = new Set<() => void>();
+	const cancelledListeners = new Set<() => void>();
+	const isCancelled = (): boolean => state === "cancelled";
+	const settle = (nextState: Exclude<DeliveryState, "pending">): void => {
+		if (state !== "pending") return;
+		state = nextState;
+		const listeners = nextState === "started" ? startedListeners : cancelledListeners;
+		for (const listener of listeners) listener();
+		startedListeners.clear();
+		cancelledListeners.clear();
+	};
+	return {
+		id: `goal-continuation-reservation-${++nextReservationId}`,
+		get cancelled() {
+			return isCancelled();
+		},
+		cancel() {
+			if (state !== "pending") return false;
+			if (actual !== undefined && !actual.cancel()) return false;
+			settle("cancelled");
+			return true;
+		},
+		onStarted(listener) {
+			if (state === "started") {
+				listener();
+				return () => {};
+			}
+			if (state !== "pending") return () => {};
+			startedListeners.add(listener);
+			return () => startedListeners.delete(listener);
+		},
+		onCancelled(listener) {
+			if (state === "cancelled") {
+				listener();
+				return () => {};
+			}
+			if (state !== "pending") return () => {};
+			cancelledListeners.add(listener);
+			return () => cancelledListeners.delete(listener);
+		},
+		bind(delivery) {
+			if (state !== "pending") {
+				delivery.cancel();
+				return false;
+			}
+			actual = delivery;
+			delivery.onStarted(() => settle("started"));
+			delivery.onCancelled(() => settle("cancelled"));
+			return !isCancelled();
+		},
+	};
+}
+
 type GoalContinuationDeliveryOptions = {
 	readonly input: Omit<GoalContinuationInput, "goal">;
-	readonly content: (verdict: ContinuingGoalContinuationVerdict) => string;
-	readonly markContinuationPending: () => void;
+	readonly content: (verdict: ContinuingGoalContinuationVerdict) => string | Promise<string>;
+	readonly markContinuationPending: (delivery: MessageDelivery) => void;
 };
 
 export type SessionStartContinuationOptions = {
 	readonly continuationPending: boolean;
-	readonly markContinuationPending: () => void;
+	readonly markContinuationPending: (delivery: MessageDelivery) => void;
 };
 
 export function isResumeOfPausedGoal(
@@ -55,21 +131,59 @@ export async function admitAndQueueGoalContinuation(
 	ctx: ExtensionContext,
 	goal: Goal,
 	options: GoalContinuationDeliveryOptions,
-): Promise<Goal> {
+): Promise<GoalContinuationDeliveryOutcome> {
 	const verdict = evaluateGoalContinuation({ goal, ...options.input });
-	if (verdict.kind === "deny") return handleDeniedContinuation(pi, ctx, goal, options.input, verdict.reason);
+	if (verdict.kind === "deny") {
+		return { goal: await handleDeniedContinuation(pi, ctx, goal, options.input, verdict.reason), admitted: false };
+	}
 
 	if (options.input.currentSignature === undefined) {
 		throw new Error("Cannot queue a goal continuation without a progress signature");
 	}
-	options.markContinuationPending();
-	const recordedGoal = await recordContinuationDelivered(
-		goalStoreRef(ctx.sessionManager, ctx.cwd),
-		options.input.currentSignature,
-	);
-	if (recordedGoal === null) throw new Error("Cannot persist goal continuation delivery without an active goal");
-	queueHiddenGoalPrompt(pi, options.content(verdict));
-	return recordedGoal;
+	const reservation = reserveMessageDelivery();
+	options.markContinuationPending(reservation);
+	try {
+		const content = await options.content(verdict);
+		if (reservation.cancelled) return { goal, admitted: false };
+		const recordedGoal = await recordContinuationDelivered(
+			goalStoreRef(ctx.sessionManager, ctx.cwd),
+			options.input.currentSignature,
+			goalContinuationExpectation(goal),
+		);
+		if (recordedGoal === null) {
+			reservation.cancel();
+			return { goal, admitted: false };
+		}
+		reservation.onCancelled(() => {
+			void rollbackContinuationDelivered(
+				goalStoreRef(ctx.sessionManager, ctx.cwd),
+				goal,
+				options.input.currentSignature ?? "",
+			).then(
+				(rolledBack) => {
+					if (rolledBack !== null) {
+						pi.events?.emit("goal_continuation_delivery_rolled_back", { goalId: goal.id });
+					}
+				},
+				(error) => {
+					pi.events?.emit("goal_continuation_delivery_rollback_failed", {
+						goalId: goal.id,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				},
+			);
+		});
+		if (reservation.cancelled) return { goal: recordedGoal, admitted: false };
+		const admitted = reservation.bind(queueHiddenGoalPrompt(pi, content));
+		return {
+			goal: recordedGoal,
+			admitted,
+			...(admitted ? { delivery: reservation } : {}),
+		};
+	} catch (error) {
+		reservation.cancel();
+		throw error;
+	}
 }
 
 /** Routes startup and resume continuations through the same verdict and delivery accounting as agent-end paths. */
@@ -79,12 +193,14 @@ export async function queueGoalContinuation(
 	goal: Goal,
 	options: SessionStartContinuationOptions,
 ): Promise<Goal> {
+	const ref = goalStoreRef(ctx.sessionManager, ctx.cwd);
+	const objective = await readObjectiveForPrompt(ref, goal);
 	const signature = buildCurrentGoalContinuationSignature(
 		ctx,
 		goal,
 		lastAssistantTextFromEntries(ctx.sessionManager.getBranch()),
 	);
-	return admitAndQueueGoalContinuation(pi, ctx, goal, {
+	const outcome = await admitAndQueueGoalContinuation(pi, ctx, goal, {
 		input: {
 			isIdle: ctx.isIdle(),
 			hasPendingMessages: ctx.hasPendingMessages(),
@@ -98,9 +214,10 @@ export async function queueGoalContinuation(
 			toollessContinuationStreak: 0,
 			continuationPending: options.continuationPending,
 		},
-		content: () => buildContinuationPrompt(goal),
+		content: () => buildContinuationPrompt(goal, objective),
 		markContinuationPending: options.markContinuationPending,
 	});
+	return outcome.goal;
 }
 
 export function buildCurrentGoalContinuationSignature(
@@ -151,7 +268,9 @@ async function handleDeniedContinuation(
 		goalStoreRef(ctx.sessionManager, ctx.cwd),
 		{ status: "blocked", reason: blockedReason },
 		"model",
+		goalContinuationExpectation(goal),
 	);
+	if (blocked === null) return goal;
 	if (ctx.hasUI) ctx.ui.notify(continuationCapRecoveryHint(blockedReason), "warning");
 	pi.events?.emit("goal_continuation_guard_tripped", {
 		goalId: goal.id,
@@ -178,8 +297,19 @@ function blockedReasonForContinuationGuard(
 	}
 }
 
-export function queueHiddenGoalPrompt(pi: ExtensionAPI, content: string): void {
-	pi.sendMessage(
+function goalContinuationExpectation(goal: Goal) {
+	return {
+		id: goal.id,
+		status: goal.status,
+		continuation: {
+			consecutiveContinuations: goal.consecutiveContinuations ?? 0,
+			lastContinuationSignature: goal.lastContinuationSignature,
+		},
+	} as const;
+}
+
+export function queueHiddenGoalPrompt(pi: ExtensionAPI, content: string): MessageDelivery {
+	return pi.sendMessage(
 		{ customType: GOAL_CONTINUATION_MESSAGE_TYPE, content, display: false },
 		{ triggerTurn: true, deliverAs: "followUp" },
 	);

@@ -1,6 +1,15 @@
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
+import goalExtension from "../src/core/extensions/builtin/goal/index.ts";
+import { createGoal, readGoal, updateGoal } from "../src/core/extensions/builtin/goal/store.ts";
+import { goalStoreRef } from "../src/core/extensions/builtin/goal/store-ref.ts";
+import type { InputDispositionEvent, InputEvent } from "../src/core/extensions/types.ts";
+import {
+	type CompactionQueuedMessage,
+	transferCompactionQueue,
+} from "../src/modes/interactive/compaction-queue-transfer.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { createHarness } from "./suite/harness.ts";
 
 type QueueMessage = {
 	readonly text: string;
@@ -21,6 +30,78 @@ function getFlushCompactionQueue() {
 }
 
 describe("InteractiveMode transactional compaction queue transfer", () => {
+	it.each([
+		{ name: "willRetry", options: { willRetry: true }, mode: "steer" as const },
+		{ name: "deferAdmission", options: { deferAdmission: true }, mode: "followUp" as const },
+	])(
+		"reactivates a mechanical Goal exactly once through public queue admission for $name",
+		async ({ options, mode }) => {
+			const inputEvents: InputEvent[] = [];
+			const dispositionEvents: InputDispositionEvent[] = [];
+			const harness = await createHarness({
+				persistSession: true,
+				extensionFactories: [
+					goalExtension,
+					(pi) => {
+						pi.on("input", (event) => {
+							inputEvents.push(event);
+						});
+						pi.on("input_disposition", (event) => {
+							dispositionEvents.push(event);
+						});
+					},
+				],
+			});
+
+			try {
+				await harness.session.bindExtensions({});
+				const ref = goalStoreRef(harness.sessionManager, harness.tempDir);
+				await createGoal(ref, "Resume after compaction transfers accepted input");
+				await updateGoal(ref, { status: "blocked", reason: "continuation cap reached" }, "model");
+				const message: CompactionQueuedMessage = { text: `resume through ${mode}`, mode, enqueueOrder: 17 };
+
+				await transferCompactionQueue(
+					{
+						takeBatch: () => [message],
+						commitAccepted: () => true,
+						restoreUndelivered: () => {
+							throw new Error("Accepted compaction input must not be restored");
+						},
+						isCommand: () => false,
+						deliverCommand: async () => {
+							throw new Error("Expected queued input, not an extension command");
+						},
+						deliverFirstPrompt: async () => {
+							throw new Error("Retry/deferred transfer must not start prompt admission");
+						},
+						deliverQueued: async (queued) => {
+							if (queued.mode === "steer") {
+								await harness.session.steer(queued.text, undefined, { enqueueOrder: queued.enqueueOrder });
+							} else {
+								await harness.session.followUp(queued.text, undefined, { enqueueOrder: queued.enqueueOrder });
+							}
+						},
+						reportFailure: (error) => {
+							throw error;
+						},
+					},
+					options,
+				);
+
+				expect(await readGoal(ref)).toMatchObject({ status: "active", consecutiveContinuations: 0 });
+				expect(inputEvents).toHaveLength(1);
+				expect(inputEvents[0]).toMatchObject({ source: "interactive", streamingBehavior: mode });
+				expect(dispositionEvents).toEqual([
+					{ type: "input_disposition", inputId: inputEvents[0]?.inputId, disposition: "queued" },
+				]);
+				expect(harness.session.clearQueue().ordered).toEqual([{ text: message.text, mode, enqueueOrder: 17 }]);
+			} finally {
+				harness.session.clearQueue();
+				harness.cleanup();
+			}
+		},
+	);
+
 	it("restores only the undelivered suffix before late arrivals without clearing native queues", async () => {
 		const first: QueueMessage = { text: "duplicate", mode: "steer" };
 		const failed: QueueMessage = { text: "duplicate", mode: "steer" };

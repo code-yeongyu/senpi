@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { withFileMutationQueue } from "../../../tools/file-mutation-queue.ts";
 import { InvalidGoalStoreError, UnsupportedGoalStoreVersionError } from "./errors.ts";
 import type { Goal, GoalFile, GoalStatus, GoalStoreRef } from "./types.ts";
 import { isRecord } from "./types.ts";
 import { isGoalStatus, isNonNegativeSafeInteger } from "./validation.ts";
 
 const STORE_VERSION = 1;
+const PRIVATE_FILE_MODE = 0o600;
+const goalWriteListeners = new Map<string, Set<() => void>>();
 
 export function encodedThreadId(ref: GoalStoreRef): string {
 	return encodeURIComponent(ref.threadId);
@@ -14,6 +17,10 @@ export function encodedThreadId(ref: GoalStoreRef): string {
 
 export function goalFilePath(ref: GoalStoreRef): string {
 	return join(ref.baseDir, `${encodedThreadId(ref)}.json`);
+}
+
+export function withGoalStoreMutation<T>(ref: GoalStoreRef, fn: () => Promise<T>): Promise<T> {
+	return withFileMutationQueue(goalFilePath(ref), fn);
 }
 
 export async function readGoalFile(ref: GoalStoreRef): Promise<Goal | null> {
@@ -26,6 +33,10 @@ export async function readGoalFile(ref: GoalStoreRef): Promise<Goal | null> {
 }
 
 export async function migrateLegacyGoalFile(ref: GoalStoreRef): Promise<Goal | null> {
+	return withGoalStoreMutation(ref, async () => migrateLegacyGoalFileUnlocked(ref));
+}
+
+async function migrateLegacyGoalFileUnlocked(ref: GoalStoreRef): Promise<Goal | null> {
 	try {
 		await readFile(goalFilePath(ref), "utf8");
 		return null;
@@ -48,14 +59,26 @@ export async function migrateLegacyGoalFile(ref: GoalStoreRef): Promise<Goal | n
 
 export async function writeGoalFile(ref: GoalStoreRef, goal: Goal | null): Promise<void> {
 	const filePath = goalFilePath(ref);
-	await mkdir(dirname(filePath), { recursive: true });
-	await writeGoalFileAtomic(filePath, `${JSON.stringify({ version: STORE_VERSION, goal }, null, 2)}\n`);
+	await writePrivateFileAtomic(filePath, `${JSON.stringify({ version: STORE_VERSION, goal }, null, 2)}\n`);
+	for (const listener of goalWriteListeners.get(filePath) ?? []) listener();
 }
 
-async function writeGoalFileAtomic(filePath: string, contents: string): Promise<void> {
+export function subscribeGoalFileWrites(ref: GoalStoreRef, listener: () => void): () => void {
+	const filePath = goalFilePath(ref);
+	const listeners = goalWriteListeners.get(filePath) ?? new Set<() => void>();
+	listeners.add(listener);
+	goalWriteListeners.set(filePath, listeners);
+	return () => {
+		listeners.delete(listener);
+		if (listeners.size === 0) goalWriteListeners.delete(filePath);
+	};
+}
+
+export async function writePrivateFileAtomic(filePath: string, contents: string): Promise<void> {
+	await mkdir(dirname(filePath), { recursive: true });
 	const tempPath = join(dirname(filePath), `.goal-${randomUUID()}.tmp`);
 	try {
-		await writeFile(tempPath, contents, { encoding: "utf8", mode: 0o600 });
+		await writeFile(tempPath, contents, { encoding: "utf8", mode: PRIVATE_FILE_MODE });
 		await rename(tempPath, filePath);
 	} catch (error) {
 		try {

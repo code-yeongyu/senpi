@@ -8,6 +8,7 @@ import {
 	MonitorAwareGoalContinuation,
 } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import {
+	createGoal,
 	goalFilePath,
 	readGoal,
 	recordContinuationDelivered,
@@ -15,11 +16,12 @@ import {
 	writeGoal,
 } from "../../src/core/extensions/builtin/goal/store.ts";
 import type { Goal } from "../../src/core/extensions/builtin/goal/types.ts";
-import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionContext, MessageDelivery } from "../../src/core/extensions/types.ts";
 import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
 	createGoalHarness,
+	createTestMessageDelivery,
 	type GoalHandler,
 	makeGoalContext,
 	runGoalHandlers,
@@ -89,7 +91,10 @@ function createDirectMonitorHarness(): { monitor: MonitorAwareGoalContinuation; 
 	const sent: string[] = [];
 	const events = new TestEventBus();
 	const pi = {
-		sendMessage: (message: { readonly content: string }) => sent.push(message.content),
+		sendMessage: (message: { readonly content: string }) => {
+			sent.push(message.content);
+			return createTestMessageDelivery([]);
+		},
 		events,
 	} as unknown as ExtensionAPI;
 	return { monitor: new MonitorAwareGoalContinuation(pi), sent, events };
@@ -177,6 +182,58 @@ describe("goal continuation while a monitor is active", () => {
 			status: "blocked",
 			blockedReason: "waiting on a user decision",
 		});
+	});
+
+	it("cancels a queued hidden continuation when newer direct input is accepted", async () => {
+		const notices: string[] = [];
+		const { tools, handlers, sent } = createGoalHarness();
+		const ctx = await makeGoalContext(notices, "thread-cancel-hidden-continuation");
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Prefer newer user input" }, undefined, undefined, ctx);
+
+		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runGoalHandlers(handlers, "agent_end", { type: "agent_end", messages: [cleanAssistantStop()] }, ctx);
+		expect(sent).toHaveLength(1);
+		expect(sent[0]?.delivery.state).toBe("pending");
+
+		await runGoalHandlers(
+			handlers,
+			"input",
+			{ type: "input", inputId: "newer-user-input", text: "do this instead", source: "interactive" },
+			ctx,
+		);
+		await runGoalHandlers(
+			handlers,
+			"input_disposition",
+			{ type: "input_disposition", inputId: "newer-user-input", disposition: "started" },
+			ctx,
+		);
+
+		expect(sent[0]?.delivery.state).toBe("cancelled");
+	});
+
+	it("reinjects the full objective tail for startup and monitor continuations", async () => {
+		const notices: string[] = [];
+		const { handlers, sent } = createGoalHarness();
+		const ctx = await makeGoalContext(notices, "thread-full-objective-continuation");
+		const fullObjective = `${"Preserve every detailed requirement. ".repeat(180)}TAIL_SENTINEL_AFTER_COMPACTION`;
+		await createGoal(goalStoreRef(ctx), fullObjective);
+
+		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "resume" }, ctx);
+		expect(sent).toHaveLength(1);
+		expect(sent[0]?.message.content).toContain("TAIL_SENTINEL_AFTER_COMPACTION");
+
+		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runGoalHandlers(
+			handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [cleanAssistantStopWithText("made measurable progress")] },
+			ctx,
+		);
+
+		expect(sent).toHaveLength(2);
+		expect(sent[1]?.message.content).toContain("TAIL_SENTINEL_AFTER_COMPACTION");
 	});
 
 	it.each(["handled", "rejected"] as const)("keeps a mechanical block inert when input is %s", async (disposition) => {
@@ -428,6 +485,35 @@ describe("goal continuation while a monitor is active", () => {
 		expect(notices).toHaveLength(0);
 	});
 
+	it("does not reset or continue a replacement Goal from a stale agent_end", async () => {
+		const notices: string[] = [];
+		const ctx = await makeGoalContext(notices, "thread-stale-agent-end");
+		const { monitor, sent } = createDirectMonitorHarness();
+		const staleGoal = {
+			...activeGoal("stale-goal"),
+			consecutiveContinuations: 2,
+			lastContinuationSignature: "stale-signature",
+		};
+		const replacementGoal = {
+			...activeGoal("replacement-goal"),
+			consecutiveContinuations: 4,
+			lastContinuationSignature: "replacement-signature",
+		};
+		await writeGoal(goalStoreRef(ctx), staleGoal);
+		monitor.start(ctx);
+		await writeGoal(goalStoreRef(ctx), replacementGoal);
+
+		const resolved = await monitor.afterAgentEnd({
+			ctx,
+			goal: staleGoal,
+			messages: [cleanAssistantStopWithText("output from the stale Goal")],
+		});
+
+		expect(resolved).toEqual(replacementGoal);
+		expect(await readGoal(goalStoreRef(ctx))).toEqual(replacementGoal);
+		expect(sent).toHaveLength(0);
+	});
+
 	it("leaves an accepted user turn active but idle without arming a continuation timer", async () => {
 		vi.useFakeTimers();
 		const notices: string[] = [];
@@ -456,9 +542,11 @@ describe("goal continuation while a monitor is active", () => {
 		await events.flush();
 
 		for (let turn = 1; turn <= 2; turn++) {
+			const currentGoal = await readGoal(goalStoreRef(ctx));
+			if (currentGoal === null) throw new Error("Expected persisted goal");
 			await monitor.afterAgentEnd({
 				ctx,
-				goal,
+				goal: currentGoal,
 				messages: [cleanAssistantStopWithText("unchanged monitor output")],
 			});
 			const delayedDeliveryRecorded = waitForGoalContinuationCount(ctx, turn);
@@ -794,5 +882,127 @@ describe("goal continuation while a monitor is active", () => {
 		expect(queued).toBe(false);
 		expect(continuationMarked).toBe(false);
 		expect((await readGoal(goalStoreRef(ctx)))?.consecutiveContinuations ?? 0).toBe(0);
+	});
+
+	it("lets accepted direct input cancel continuation work before prompt content resolves", async () => {
+		const notices: string[] = [];
+		const { tools } = createGoalHarness();
+		const ctx = await makeGoalContext(notices, "thread-pre-delivery-cancel");
+		await tools.get("create_goal")?.execute("create", { objective: "Cancel stale work" }, undefined, undefined, ctx);
+		const goal = await readGoal(goalStoreRef(ctx));
+		if (goal === null) throw new Error("Expected persisted goal");
+
+		const contentEntered = Promise.withResolvers<void>();
+		const contentGate = Promise.withResolvers<string>();
+		let pending: MessageDelivery | undefined;
+		let queued = false;
+		const delivery = admitAndQueueGoalContinuation(
+			{
+				sendMessage: () => {
+					queued = true;
+					return {
+						id: "late-delivery",
+						cancel: () => true,
+						onStarted: () => () => {},
+						onCancelled: () => () => {},
+					};
+				},
+			} as unknown as ExtensionAPI,
+			ctx,
+			goal,
+			{
+				input: {
+					isIdle: true,
+					hasPendingMessages: false,
+					path: "immediate",
+					lastStopReason: "stop",
+					consecutiveContinuations: 0,
+					lastContinuationSignature: undefined,
+					currentSignature: "pre-delivery-cancel-signature",
+					consecutiveLengthRecoveries: 0,
+					recentNormalizedOutputHashes: [],
+					toollessContinuationStreak: 0,
+					continuationPending: false,
+				},
+				content: () => {
+					contentEntered.resolve();
+					return contentGate.promise;
+				},
+				markContinuationPending: (messageDelivery) => {
+					pending = messageDelivery;
+				},
+			},
+		);
+
+		await contentEntered.promise;
+		expect(pending).toBeDefined();
+		pending?.cancel();
+		contentGate.resolve("Continue");
+		await delivery;
+
+		expect(queued).toBe(false);
+		expect((await readGoal(goalStoreRef(ctx)))?.consecutiveContinuations ?? 0).toBe(0);
+	});
+
+	it("rolls back continuation accounting when final admission cancels a pending delivery", async () => {
+		const notices: string[] = [];
+		const { tools } = createGoalHarness();
+		const ctx = await makeGoalContext(notices, "thread-final-admission-cancel");
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Rollback rejected work" }, undefined, undefined, ctx);
+		const goal = await readGoal(goalStoreRef(ctx));
+		if (goal === null) throw new Error("Expected persisted goal");
+
+		const cancelledListeners = new Set<() => void>();
+		const rollbackCompleted = Promise.withResolvers<void>();
+		const actualDelivery: MessageDelivery = {
+			id: "final-admission-delivery",
+			cancel: () => {
+				for (const listener of cancelledListeners) listener();
+				return true;
+			},
+			onStarted: () => () => {},
+			onCancelled: (listener) => {
+				cancelledListeners.add(listener);
+				return () => cancelledListeners.delete(listener);
+			},
+		};
+		const outcome = await admitAndQueueGoalContinuation(
+			{
+				sendMessage: () => actualDelivery,
+				events: {
+					emit: (channel: string) => {
+						if (channel === "goal_continuation_delivery_rolled_back") rollbackCompleted.resolve();
+					},
+				},
+			} as unknown as ExtensionAPI,
+			ctx,
+			goal,
+			{
+				input: {
+					isIdle: true,
+					hasPendingMessages: false,
+					path: "immediate",
+					lastStopReason: "stop",
+					consecutiveContinuations: 0,
+					lastContinuationSignature: undefined,
+					currentSignature: "final-admission-cancel-signature",
+					consecutiveLengthRecoveries: 0,
+					recentNormalizedOutputHashes: [],
+					toollessContinuationStreak: 0,
+					continuationPending: false,
+				},
+				content: () => "Continue",
+				markContinuationPending: () => {},
+			},
+		);
+
+		expect(outcome.admitted).toBe(true);
+		expect((await readGoal(goalStoreRef(ctx)))?.consecutiveContinuations).toBe(1);
+		actualDelivery.cancel();
+		await rollbackCompleted.promise;
+
+		expect((await readGoal(goalStoreRef(ctx)))?.consecutiveContinuations).toBe(0);
 	});
 });

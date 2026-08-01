@@ -1,4 +1,3 @@
-import { watch } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,8 +5,14 @@ import { clearTimeout as clearRealTimeout, setTimeout as setRealTimeout } from "
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
+import { subscribeGoalFileWrites } from "../../src/core/extensions/builtin/goal/persistence.ts";
 import { readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	MessageDelivery,
+	ToolDefinition,
+} from "../../src/core/extensions/types.ts";
 
 type AnyTool = ToolDefinition;
 type EventHandler = (data: unknown) => Promise<void> | void;
@@ -15,7 +20,15 @@ export type GoalHandler = (event: unknown, ctx: ExtensionContext) => Promise<unk
 export type SentGoalMessage = {
 	readonly message: { readonly customType: string; readonly content: string; readonly display: boolean };
 	readonly options: unknown;
+	readonly delivery: TestMessageDelivery;
 };
+
+export interface TestMessageDelivery extends MessageDelivery {
+	readonly state: "pending" | "started" | "cancelled";
+	start(): void;
+}
+
+let nextDeliveryId = 0;
 
 export class TestEventBus {
 	readonly emitted: Array<{ channel: string; data: unknown }> = [];
@@ -65,8 +78,14 @@ export function createGoalHarness(): GoalHarness {
 	const tools = new Map<string, AnyTool>();
 	const handlers = new Map<string, GoalHandler[]>();
 	const sent: SentGoalMessage[] = [];
+	const pendingDeliveries: TestMessageDelivery[] = [];
 	const events = new TestEventBus();
 	const entries: AppendedGoalEntry[] = [];
+	handlers.set("agent_start", [
+		() => {
+			pendingDeliveries.shift()?.start();
+		},
+	]);
 	const pi = {
 		registerTool: (tool: AnyTool) => tools.set(tool.name, tool),
 		registerCommand: () => {},
@@ -77,11 +96,50 @@ export function createGoalHarness(): GoalHarness {
 			registered.push(handler);
 			handlers.set(event, registered);
 		},
-		sendMessage: (message: SentGoalMessage["message"], options: unknown) => sent.push({ message, options }),
+		sendMessage: (message: SentGoalMessage["message"], options: unknown) => {
+			const delivery = createTestMessageDelivery(pendingDeliveries);
+			pendingDeliveries.push(delivery);
+			sent.push({ message, options, delivery });
+			return delivery;
+		},
 		events,
 	} as unknown as ExtensionAPI;
 	goalExtension(pi);
 	return { tools, handlers, sent, events, entries };
+}
+
+export function createTestMessageDelivery(pending: TestMessageDelivery[]): TestMessageDelivery {
+	const id = `delivery-${++nextDeliveryId}`;
+	const started = new Set<() => void>();
+	const cancelled = new Set<() => void>();
+	let state: TestMessageDelivery["state"] = "pending";
+	return {
+		id,
+		get state() {
+			return state;
+		},
+		cancel() {
+			if (state !== "pending") return false;
+			state = "cancelled";
+			const index = pending.indexOf(this);
+			if (index !== -1) pending.splice(index, 1);
+			for (const listener of cancelled) listener();
+			return true;
+		},
+		start() {
+			if (state !== "pending") return;
+			state = "started";
+			for (const listener of started) listener();
+		},
+		onStarted(listener) {
+			started.add(listener);
+			return () => started.delete(listener);
+		},
+		onCancelled(listener) {
+			cancelled.add(listener);
+			return () => cancelled.delete(listener);
+		},
+	};
 }
 
 const tempDirs: string[] = [];
@@ -120,27 +178,33 @@ export async function cleanupGoalMonitorTempDirs(): Promise<void> {
 export function waitForGoalContinuationCount(ctx: ExtensionContext, expectedCount: number): Promise<void> {
 	const baseDir = join(ctx.sessionManager.getSessionDir(), "extensions", "goal");
 	const threadId = ctx.sessionManager.getSessionId();
-	const goalFileName = `${encodeURIComponent(threadId)}.json`;
+	const ref = { baseDir, threadId };
 	return new Promise((resolve, reject) => {
 		let completed = false;
 		let timeout: ReturnType<typeof setRealTimeout> | undefined;
-		const watcher = watch(baseDir, { encoding: "utf8" }, (_eventType, changedFileName) => {
-			if (changedFileName !== goalFileName) return;
-			void readGoal({ baseDir, threadId }).then((goal) => {
-				if (goal?.consecutiveContinuations === expectedCount) complete();
-			}, complete);
+		const unsubscribe = subscribeGoalFileWrites(ref, () => {
+			void check();
 		});
 		timeout = setRealTimeout(
 			() => complete(new Error(`Timed out waiting for continuation count ${expectedCount}`)),
 			5_000,
 		);
-		watcher.once("error", complete);
+		void check();
+
+		async function check(): Promise<void> {
+			try {
+				const goal = await readGoal(ref);
+				if (goal?.consecutiveContinuations === expectedCount) complete();
+			} catch (error) {
+				complete(error instanceof Error ? error : new Error(String(error)));
+			}
+		}
 
 		function complete(error: Error | undefined = undefined): void {
 			if (completed) return;
 			completed = true;
 			if (timeout !== undefined) clearRealTimeout(timeout);
-			watcher.close();
+			unsubscribe();
 			if (error === undefined) resolve();
 			else reject(error);
 		}

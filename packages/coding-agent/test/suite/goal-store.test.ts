@@ -8,13 +8,16 @@ import {
 	clearGoal,
 	createGoal,
 	goalFilePath,
+	goalHistoryFilePath,
+	objectiveFullTextFilePath,
 	readGoal,
+	readObjectiveForPrompt,
 	recordContinuationDelivered,
 	resetContinuationStreak,
 	updateGoal,
 	writeGoal,
 } from "../../src/core/extensions/builtin/goal/store.ts";
-import type { GoalStoreRef } from "../../src/core/extensions/builtin/goal/types.ts";
+import type { GoalExpectation, GoalStoreRef } from "../../src/core/extensions/builtin/goal/types.ts";
 
 const tempDirs: string[] = [];
 
@@ -27,6 +30,14 @@ async function tempStore(threadId = "thread-test"): Promise<GoalStoreRef> {
 async function writeRawGoalFile(ref: GoalStoreRef, contents: string): Promise<void> {
 	await mkdir(ref.baseDir, { recursive: true });
 	await writeFile(goalFilePath(ref), contents, "utf8");
+}
+
+function oversizedObjective(tail: string): string {
+	return `${"Oversized objective requirement ".repeat(220)}${tail}`;
+}
+
+async function expectFileToBeMissing(filePath: string): Promise<void> {
+	await expect(stat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
 }
 
 afterEach(async () => {
@@ -357,6 +368,103 @@ describe("goal store (budget-free)", () => {
 	});
 });
 
+describe("goal full-objective sidecars", () => {
+	it.skipIf(process.platform === "win32")("writes full-objective sidecars and history with mode 0600", async () => {
+		// Given
+		const ref = await tempStore("thread-private-full-objective");
+		await createGoal(ref, oversizedObjective("PRIVATE_FULL_OBJECTIVE"));
+
+		// Then
+		expect((await stat(objectiveFullTextFilePath(ref))).mode & 0o777).toBe(0o600);
+
+		// When
+		await updateGoal(ref, { status: "complete" }, "model");
+		await createGoal(ref, "A new short objective");
+
+		// Then
+		expect((await stat(goalHistoryFilePath(ref))).mode & 0o777).toBe(0o600);
+	});
+
+	it.skipIf(process.platform === "win32")(
+		"repairs legacy sidecar and history permissions during a normal update",
+		async () => {
+			const ref = await tempStore("thread-legacy-private-files");
+			await createGoal(ref, oversizedObjective("LEGACY_PRIVATE_OBJECTIVE"));
+			const sidecarPath = objectiveFullTextFilePath(ref);
+			const historyPath = goalHistoryFilePath(ref);
+			await writeFile(historyPath, `${JSON.stringify({ legacy: true })}\n`, { mode: 0o644 });
+			await chmod(sidecarPath, 0o644);
+
+			await updateGoal(ref, { tokenBudget: 10_000 }, "model");
+
+			expect((await stat(sidecarPath)).mode & 0o777).toBe(0o600);
+			expect((await stat(historyPath)).mode & 0o777).toBe(0o600);
+
+			await chmod(sidecarPath, 0o644);
+			await chmod(historyPath, 0o644);
+			await readGoal(ref);
+
+			expect((await stat(sidecarPath)).mode & 0o777).toBe(0o600);
+			expect((await stat(historyPath)).mode & 0o777).toBe(0o600);
+		},
+	);
+
+	it("does not pair a stale Goal reference with a replacement sidecar", async () => {
+		// Given
+		const ref = await tempStore("thread-consistent-full-objective");
+		const sharedPrefix = "Oversized shared objective requirement ".repeat(220);
+		const originalObjective = `${sharedPrefix}ORIGINAL_FULL_OBJECTIVE`;
+		const replacementObjective = `${sharedPrefix}REPLACEMENT_FULL_OBJECTIVE`;
+		const original = await createGoal(ref, originalObjective);
+
+		// When
+		const replacement = await updateGoal(ref, { objective: replacementObjective }, "user");
+
+		// Then
+		expect(replacement.id).not.toBe(original.id);
+		expect(replacement.objective).toBe(original.objective);
+		expect(await readObjectiveForPrompt(ref, original)).toBe(original.objective);
+		expect(await readObjectiveForPrompt(ref, replacement)).toBe(replacementObjective);
+	});
+
+	it("removes the stale sidecar after a short objective replacement", async () => {
+		// Given
+		const ref = await tempStore("thread-cleanup-short-replacement");
+		await createGoal(ref, oversizedObjective("STALE_AFTER_REPLACEMENT"));
+
+		// When
+		await updateGoal(ref, { objective: "Current short objective" }, "user");
+
+		// Then
+		await expectFileToBeMissing(objectiveFullTextFilePath(ref));
+	});
+
+	it("removes the stale sidecar when clearing a goal", async () => {
+		// Given
+		const ref = await tempStore("thread-cleanup-clear");
+		await createGoal(ref, oversizedObjective("STALE_AFTER_CLEAR"));
+
+		// When
+		await clearGoal(ref);
+
+		// Then
+		await expectFileToBeMissing(objectiveFullTextFilePath(ref));
+	});
+
+	it("removes the completed goal sidecar before creating a new short goal", async () => {
+		// Given
+		const ref = await tempStore("thread-cleanup-new-short-goal");
+		await createGoal(ref, oversizedObjective("STALE_AFTER_NEW_SHORT_GOAL"));
+		await updateGoal(ref, { status: "complete" }, "model");
+
+		// When
+		await createGoal(ref, "New short objective");
+
+		// Then
+		await expectFileToBeMissing(objectiveFullTextFilePath(ref));
+	});
+});
+
 describe("goal continuation streak persistence", () => {
 	it("starts new goals at zero continuations with no signature", async () => {
 		const ref = await tempStore("thread-streak-new");
@@ -484,5 +592,95 @@ describe("goal continuation streak persistence", () => {
 
 		expect(await recordContinuationDelivered(ref, "sig")).toBeNull();
 		expect(await resetContinuationStreak(ref)).toBeNull();
+	});
+
+	it("resolves a validated full objective for model prompts without changing persisted display text", async () => {
+		const ref = await tempStore("thread-full-objective-prompt");
+		const fullObjective = `${"Long objective requirement ".repeat(220)}TAIL_REQUIREMENT_MUST_SURVIVE`;
+		const goal = await createGoal(ref, fullObjective);
+
+		expect(goal.objective).not.toContain("TAIL_REQUIREMENT_MUST_SURVIVE");
+		expect(await readObjectiveForPrompt(ref, goal)).toBe(fullObjective);
+		expect((await readGoal(ref))?.objective).toBe(goal.objective);
+	});
+
+	it("does not inject a stale full-objective sidecar after a short replacement", async () => {
+		const ref = await tempStore("thread-stale-objective-sidecar");
+		await createGoal(ref, `${"Old oversized requirement ".repeat(220)}STALE_TAIL`);
+		const replacement = await updateGoal(ref, { objective: "Current short objective" }, "user");
+
+		expect(await readObjectiveForPrompt(ref, replacement)).toBe("Current short objective");
+	});
+
+	it("serializes accounting, delivery, and reset without losing fields", async () => {
+		const ref = await tempStore("thread-serialized-mutations");
+		const goal = await createGoal(ref, "Preserve concurrent Goal mutations");
+
+		await Promise.all([
+			recordContinuationDelivered(ref, `${goal.id}:0/1:hash-serialized`),
+			accountGoalUsage(
+				ref,
+				{ input: 3, output: 4, cacheRead: 0, cacheWrite: 0, totalTokens: 7 },
+				5,
+				"active",
+				goal.id,
+			),
+			resetContinuationStreak(ref),
+		]);
+
+		expect(await readGoal(ref)).toMatchObject({
+			tokensUsed: 7,
+			timeUsedSeconds: 5,
+			consecutiveContinuations: 0,
+		});
+	});
+
+	it("preserves every concurrent continuation increment", async () => {
+		const ref = await tempStore("thread-concurrent-continuations");
+		const goal = await createGoal(ref, "Count every continuation delivery");
+
+		await Promise.all(
+			Array.from({ length: 20 }, (_, index) => recordContinuationDelivered(ref, `${goal.id}:0/1:hash-${index}`)),
+		);
+
+		expect((await readGoal(ref))?.consecutiveContinuations).toBe(20);
+	});
+
+	it("admits only one delivery from the same continuation snapshot", async () => {
+		const ref = await tempStore("thread-continuation-cas");
+		const goal = await createGoal(ref, "Queue one continuation");
+		const expected = {
+			id: goal.id,
+			status: "active",
+			continuation: {
+				consecutiveContinuations: 0,
+				lastContinuationSignature: undefined,
+			},
+		} satisfies GoalExpectation;
+
+		const results = await Promise.all([
+			recordContinuationDelivered(ref, `${goal.id}:0/1:hash-a`, expected),
+			recordContinuationDelivered(ref, `${goal.id}:0/1:hash-b`, expected),
+		]);
+
+		expect(results.filter((result) => result !== null)).toHaveLength(1);
+		expect((await readGoal(ref))?.consecutiveContinuations).toBe(1);
+	});
+
+	it("rejects a stale continuation mutation after Goal replacement", async () => {
+		const ref = await tempStore("thread-stale-continuation-cas");
+		const original = await createGoal(ref, "Original objective");
+		const expected = {
+			id: original.id,
+			status: "active",
+			continuation: {
+				consecutiveContinuations: 0,
+				lastContinuationSignature: undefined,
+			},
+		} satisfies GoalExpectation;
+		const replacement = await updateGoal(ref, { objective: "Replacement objective" }, "user");
+
+		expect(await recordContinuationDelivered(ref, `${original.id}:0/1:stale`, expected)).toBeNull();
+		expect(await readGoal(ref)).toEqual(replacement);
 	});
 });

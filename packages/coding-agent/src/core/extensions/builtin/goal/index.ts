@@ -1,6 +1,6 @@
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
-import type { AgentEndEvent, ExtensionAPI, ExtensionContext } from "../../types.ts";
+import type { AgentEndEvent, ExtensionAPI, ExtensionContext, MessageDelivery } from "../../types.ts";
 import { GOAL_CACHE_WARMUP_ENTRY_TYPE } from "./cache-warm.ts";
 import { renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
 import { registerGoalCommand } from "./command-registration.ts";
@@ -34,18 +34,31 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	let agentGoalAccounting: AgentGoalAccounting | null = null;
 	let blockedThisTurnGoalId: string | null = null;
 	let completedThisTurnGoalId: string | null = null;
-	let continuationPending = false;
+	let pendingContinuation: MessageDelivery | undefined;
 	const turnUsage = new TurnUsageTracker();
-	const monitorContinuation = new MonitorAwareGoalContinuation(
+	let monitorContinuation: MonitorAwareGoalContinuation;
+	const markContinuationPending = (delivery: MessageDelivery): void => {
+		pendingContinuation = delivery;
+		delivery.onStarted(() => {
+			if (pendingContinuation !== delivery) return;
+			pendingContinuation = undefined;
+			monitorContinuation.noteContinuationStarted();
+		});
+		delivery.onCancelled(() => {
+			if (pendingContinuation === delivery) pendingContinuation = undefined;
+		});
+	};
+	monitorContinuation = new MonitorAwareGoalContinuation(
 		pi,
-		() => continuationPending,
-		() => {
-			continuationPending = true;
-		},
+		() => pendingContinuation !== undefined,
+		markContinuationPending,
 	);
 	const directInputLifecycle = new GoalDirectInputLifecycle({
 		monitor: monitorContinuation,
 		goalStoreRef,
+		cancelPendingContinuation: () => {
+			pendingContinuation?.cancel();
+		},
 		beginAgentGoalAccounting,
 		refreshGoalUi: refreshGoalUiBestEffort,
 	});
@@ -143,9 +156,6 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_start", async (_event, ctx) => {
-		const continuationStarted = continuationPending;
-		continuationPending = false;
-		if (continuationStarted) monitorContinuation.noteContinuationStarted();
 		agentTurnInProgress = true;
 		blockedThisTurnGoalId = null;
 		completedThisTurnGoalId = null;
@@ -226,6 +236,8 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 		clearAgentGoalAccounting();
 		goalTicker.stop();
+		pendingContinuation?.cancel();
+		pendingContinuation = undefined;
 		monitorContinuation.dispose();
 	});
 
@@ -259,10 +271,8 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		goal: Goal,
 	): Promise<void> {
 		const continuedGoal = await queueGoalContinuation(extensionApi, ctx, goal, {
-			continuationPending,
-			markContinuationPending: () => {
-				continuationPending = true;
-			},
+			continuationPending: pendingContinuation !== undefined,
+			markContinuationPending,
 		});
 		if (continuedGoal.status === goal.status) return;
 		if (continuedGoal.status === "active") beginAgentGoalAccounting(continuedGoal);

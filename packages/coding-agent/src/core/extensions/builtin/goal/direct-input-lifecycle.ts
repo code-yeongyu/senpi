@@ -11,6 +11,7 @@ type DirectInputCandidate = {
 type DirectInputLifecycleDependencies = {
 	readonly monitor: MonitorAwareGoalContinuation;
 	readonly goalStoreRef: (ctx: ExtensionContext) => GoalStoreRef;
+	readonly cancelPendingContinuation: () => void;
 	readonly beginAgentGoalAccounting: (goal: Goal) => void;
 	readonly refreshGoalUi: (ctx: ExtensionContext, goal: Goal) => void;
 };
@@ -43,22 +44,27 @@ export class GoalDirectInputLifecycle {
 		this.#candidates.delete(event.inputId);
 		const accepted = event.disposition === "started" || event.disposition === "queued";
 		this.#dependencies.monitor.resolveDirectInput(event.inputId, accepted);
-		if (!accepted || candidate.goalId === null) return;
+		if (!accepted) return;
+		this.#dependencies.cancelPendingContinuation();
+		if (candidate.goalId === null) return;
 
 		const ref = this.#dependencies.goalStoreRef(ctx);
 		const currentGoal = await readGoal(ref);
 		if (currentGoal?.id !== candidate.goalId) return;
 
 		if (currentGoal.status === "blocked" && isMechanicalContinuationBlock(currentGoal.blockedReason)) {
-			await resetContinuationStreak(ref);
-			const reactivated = await updateGoal(ref, { status: "active" }, "user");
+			const reactivated = await updateGoal(ref, { status: "active" }, "user", {
+				id: currentGoal.id,
+				status: "blocked",
+			});
+			if (reactivated === null) return;
 			this.#dependencies.beginAgentGoalAccounting(reactivated);
 			this.#dependencies.refreshGoalUi(ctx, reactivated);
 			return;
 		}
 
 		if (currentGoal.status !== "active") return;
-		const reset = await resetContinuationStreak(ref);
+		const reset = await resetContinuationStreak(ref, { id: currentGoal.id, status: "active" });
 		if (reset !== null) this.#dependencies.refreshGoalUi(ctx, reset);
 	}
 }
