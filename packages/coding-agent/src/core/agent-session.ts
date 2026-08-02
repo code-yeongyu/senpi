@@ -3196,14 +3196,17 @@ export class AgentSession {
 
 		const previousSystemPrompt = this.agent.state.systemPrompt;
 		const systemPrompt = result.systemPrompt ?? this._baseSystemPrompt;
+		// The continuation snapshot and tool-set reconciliation both read
+		// `_systemPromptOverride`; without this the next tool continuation reverts to
+		// the previous model's prompt mid-turn. This runs before the no-visible-change
+		// return because a handler that resets to the base prompt must clear a prior
+		// override even when the visible prompt string is identical - otherwise the
+		// stale override outlives it and pins the prompt through the next rebuild.
+		this._systemPromptOverride = result.systemPrompt === null ? undefined : systemPrompt;
 		if (previousSystemPrompt === systemPrompt) {
 			return undefined;
 		}
 
-		// The continuation snapshot and tool-set reconciliation both read
-		// `_systemPromptOverride`; without this the next tool continuation reverts to
-		// the previous model's prompt mid-turn.
-		this._systemPromptOverride = result.systemPrompt === null ? undefined : systemPrompt;
 		this.agent.state.systemPrompt = systemPrompt;
 		const event: SystemPromptChangeEvent = {
 			type: "system_prompt_change",

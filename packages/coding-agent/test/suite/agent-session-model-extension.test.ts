@@ -562,6 +562,40 @@ describe("AgentSession model and extension characterization", () => {
 		expect(harness.session.systemPrompt).toBe(installed);
 	});
 
+	it("clears a stale prompt override when model_select resets to the base prompt", async () => {
+		// given — a conditional modifier that this turn leaves the prompt untouched, so the
+		// override is recorded as the base string itself
+		const harness = await createHarness({
+			models: [
+				{ id: "primary-model", name: "Primary", reasoning: false },
+				{ id: "secondary-model", name: "Secondary", reasoning: false },
+			],
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.on("before_agent_start", async (event) => ({ systemPrompt: event.systemPrompt }));
+					pi.on("model_select", async () => ({ systemPrompt: null }));
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("ok")]);
+		await harness.session.prompt("hello");
+
+		// when — model_select resets to base (no visible change), then tools are reconciled
+		const target = harness.getModel("secondary-model");
+		expect(target).toBeDefined();
+		if (!target) return;
+		await harness.session.setModel(target);
+		const afterSelect = harness.session.systemPrompt;
+		expect(afterSelect).toContain("write");
+		harness.session.setActiveToolsByName(["read", "bash"]);
+
+		// then — the reconciled prompt reflects the reduced tool set instead of the stale override
+		const afterReconcile = harness.session.systemPrompt;
+		expect(afterReconcile).not.toBe(afterSelect);
+		expect(afterReconcile).not.toContain("write");
+	});
+
 	it("returns deeply independent system prompt option copies", async () => {
 		// given — a command handler capturing two successive option copies
 		const seen: BuildSystemPromptOptions[] = [];

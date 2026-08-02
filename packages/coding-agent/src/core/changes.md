@@ -5,6 +5,7 @@
 ### What changed
 
 - `agent-session.ts`: `_emitModelSelect` now syncs `_systemPromptOverride` with the prompt an extension installs, clearing it when the handler returns `null`. The continuation snapshot and `setActiveToolsByName` both read that field, so a mid-turn model switch no longer reverts to the previous model's prompt on the next tool continuation or tool-set reconciliation.
+- `agent-session.ts` follow-up: the `_systemPromptOverride` update runs *before* the no-visible-change return in `_emitModelSelect`. A handler returning `null` resets to the base prompt, which can equal the currently visible string (a conditional `before_agent_start` modifier records the base itself as the override). Updating after the early return left that stale override alive, and the next `setActiveToolsByName` rebuild read `_systemPromptOverride ?? _baseSystemPrompt` and pinned the pre-reconciliation prompt - the reduced tool set never reached the model.
 - `system-prompt.ts`: `buildSystemPrompt` tests `customPrompt !== undefined` instead of truthiness, so an explicit empty replacement is honored instead of silently building the default identity. This matches the nullish precedence `AgentSession` already uses.
 
 ### Why
