@@ -11,9 +11,34 @@ import type { CompactionReason } from "../../src/core/extensions/types.ts";
 import { createBlockingContext, createCompactionHandlers } from "../helpers/blocking-compaction-harness.ts";
 
 describe("required compaction deterministic fallback", () => {
-	it("cancels when the prepared suffix cannot fit without dropping the latest request", async () => {
+	it("accepts a prepared suffix whose retained assistant usage describes pre-compaction context", async () => {
 		const handlers = createCompactionHandlers();
 		const harness = createBlockingContext({ usageTokens: 9_900 });
+		const model = harness.ctx.model!;
+		const firstKeptEntryId = harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "Retain from here" }],
+			timestamp: 4,
+		});
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("Short retained answer", { timestamp: 5 }),
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: 9_900,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 9_900,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "Keep latest request after stale usage" }],
+			timestamp: 6,
+		});
 		harness.registration.setResponses([
 			fauxAssistantMessage("", {
 				stopReason: "error",
@@ -21,7 +46,10 @@ describe("required compaction deterministic fallback", () => {
 			}),
 		]);
 		const branchEntries = harness.ctx.sessionManager.getBranch();
-		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
+		const preparation = {
+			...prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!,
+			firstKeptEntryId,
+		};
 		expect(preparation).toBeDefined();
 
 		const result = await handlers.sessionBeforeCompact(
@@ -38,11 +66,26 @@ describe("required compaction deterministic fallback", () => {
 		);
 
 		expect(result).toMatchObject({
-			cancel: true,
-			reason: "deterministic compaction fallback cannot retain the prepared suffix",
+			compaction: {
+				firstKeptEntryId,
+				details: {
+					origin: "required-compaction-recovery",
+					retainedSuffix: "prepared",
+				},
+			},
 		});
-		expect(result).not.toHaveProperty("compaction");
-		expect(JSON.stringify(harness.sessionManager.buildSessionContext().messages)).toContain("Keep latest request");
+		expect(result).not.toHaveProperty("cancel");
+		if (!result || !("compaction" in result) || !result.compaction) throw new Error("expected fallback compaction");
+		harness.sessionManager.appendCompaction(
+			result.compaction.summary,
+			result.compaction.firstKeptEntryId,
+			result.compaction.tokensBefore,
+			result.compaction.details,
+			true,
+		);
+		const compactedContext = JSON.stringify(harness.sessionManager.buildSessionContext().messages);
+		expect(compactedContext).toContain("Keep latest request after stale usage");
+		expect(compactedContext).not.toContain("Old assistant context");
 		expect(harness.registration.getCallLog()).toHaveLength(1);
 	});
 
@@ -83,8 +126,84 @@ describe("required compaction deterministic fallback", () => {
 		}
 	});
 
+	it("recovers pre-prompt compaction at the hard input cap", async () => {
+		const handlers = createCompactionHandlers();
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		harness.registration.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "upstream_stream_truncated: Responses stream ended before a terminal event",
+			}),
+		]);
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = {
+			...prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!,
+			firstKeptEntryId: branchEntries.at(-1)?.id ?? "",
+		};
+
+		const result = await handlers.sessionBeforeCompact(
+			{
+				type: "session_before_compact",
+				reason: "pre_prompt",
+				willRetry: false,
+				requestId: "required-pre-prompt-fallback",
+				preparation,
+				branchEntries,
+				signal: new AbortController().signal,
+			},
+			harness.ctx,
+		);
+
+		expect(result).toMatchObject({
+			compaction: {
+				firstKeptEntryId: preparation.firstKeptEntryId,
+				details: {
+					origin: "required-compaction-recovery",
+					retainedSuffix: "prepared",
+				},
+			},
+		});
+		expect(result).not.toHaveProperty("cancel");
+	});
+
+	it("keeps pre-prompt compaction fail-closed below the hard input cap", async () => {
+		const handlers = createCompactionHandlers();
+		const harness = createBlockingContext({ usageTokens: 9_899 });
+		harness.registration.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "upstream_stream_truncated: Responses stream ended before a terminal event",
+			}),
+		]);
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = {
+			...prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!,
+			firstKeptEntryId: branchEntries.at(-1)?.id ?? "",
+		};
+
+		const result = await handlers.sessionBeforeCompact(
+			{
+				type: "session_before_compact",
+				reason: "pre_prompt",
+				willRetry: false,
+				requestId: "optional-pre-prompt-fallback",
+				preparation,
+				branchEntries,
+				signal: new AbortController().signal,
+			},
+			harness.ctx,
+		);
+
+		expect(result).toMatchObject({
+			cancel: true,
+			reason:
+				"compaction generator failed: upstream_stream_truncated: Responses stream ended before a terminal event",
+		});
+		expect(result).not.toHaveProperty("compaction");
+	});
+
 	it("fails closed for every non-required reason even when typed truncation recovery would fit", async () => {
-		const nonRequiredReasons = ["manual", "pre_prompt", "branch", "extension"] satisfies CompactionReason[];
+		const nonRequiredReasons = ["manual", "branch", "extension"] satisfies CompactionReason[];
 		for (const reason of nonRequiredReasons) {
 			const handlers = createCompactionHandlers();
 			const harness = createBlockingContext({ usageTokens: 9_900 });

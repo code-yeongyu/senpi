@@ -118,8 +118,15 @@ function isAbortedAssistantMessage(event: { message: AgentMessage }): boolean {
 	return event.message.role === "assistant" && "stopReason" in event.message && event.message.stopReason === "aborted";
 }
 
-function isRequiredCompactionFallbackReason(reason: SessionBeforeCompactEvent["reason"]): boolean {
-	return reason === "threshold" || reason === "overflow";
+function requiresDeterministicCompactionFallback(event: SessionBeforeCompactEvent, ctx: ExtensionContext): boolean {
+	if (event.reason === "threshold" || event.reason === "overflow") return true;
+	if (event.reason !== "pre_prompt") return false;
+	const usage = ctx.getContextUsage();
+	return (
+		usage !== undefined &&
+		usage.tokens !== null &&
+		usage.tokens >= usage.contextWindow - event.preparation.settings.reserveTokens
+	);
 }
 
 function recentCheckpoint(ctx: ExtensionContext): checkpointState.AgentCheckpoint | null {
@@ -477,7 +484,11 @@ export default function compactionExtension(
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			const failureKind = classifyRequiredCompactionFallbackFailure(error);
-			if (isRequiredCompactionFallbackReason(event.reason) && failureKind !== undefined && !event.signal.aborted) {
+			if (
+				requiresDeterministicCompactionFallback(event, ctx) &&
+				failureKind !== undefined &&
+				!event.signal.aborted
+			) {
 				const fallback = createRequiredCompactionFallback(
 					snapshot.preparation,
 					snapshot.contextWindow,
