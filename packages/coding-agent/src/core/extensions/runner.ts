@@ -1567,7 +1567,7 @@ export class ExtensionRunner {
 						prompt,
 						images,
 						systemPrompt: currentSystemPrompt,
-						systemPromptOptions,
+						systemPromptOptions: cloneSystemPromptOptions(systemPromptOptions),
 					};
 					const handlerResult = await handler(event, ctx);
 

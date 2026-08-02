@@ -996,14 +996,14 @@ Content`,
 			expect(loader.getSystemPrompt()).toBe("Prompt from file.");
 		});
 
-		it("should ignore a whitespace-only systemPrompt file", async () => {
+		it("should resolve a whitespace-only systemPrompt file to empty string, not undefined (fail-safe)", async () => {
 			const promptPath = join(tempDir, "whitespace-system-prompt.md");
 			writeFileSync(promptPath, "\n\t\n");
 
 			const loader = new DefaultResourceLoader({ cwd, agentDir, systemPrompt: promptPath });
 			await loader.reload();
 
-			expect(loader.getSystemPrompt()).toBeUndefined();
+			expect(loader.getSystemPrompt()).toBe("");
 		});
 
 		it("should prefer the systemPrompt option over a legacy SYSTEM.md", async () => {

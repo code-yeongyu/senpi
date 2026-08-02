@@ -62,7 +62,7 @@ export const GROK45_WORKER_RULES = [
 		id: "environment-isolation",
 		owner: "Spawn",
 		directive:
-			"Run through `env -i` with only required HOME, PATH, Senpi directory variables, `SENPI_NO_FALLBACK=1`, and provider authentication; never forward the parent environment wholesale.",
+			"Run through `env -i` with only required HOME, PATH, Senpi directory variables, `SENPI_NO_FALLBACK=1`, and Senpi directory variables; rely on HOME to resolve credentials from the agent auth store. Never forward the parent environment wholesale.",
 	},
 	{
 		id: "runtime-isolation",
@@ -120,7 +120,7 @@ Workers are **invocation profiles**, not tools, services, or persistent agents. 
 ${buildWorkerProfile("Implementer")}
 ${buildWorkerProfile("Oracle")}
 
-**Spawn only through \`bash\` + \`senpi --print\`.** Write the quoted task brief through \`-p\` and never interpolate raw user or repository text into shell syntax.
+**Spawn only through \`bash\` + \`senpi --print\`.** Pass the task brief exclusively from the brief file via quoted command substitution; never interpolate raw user or repository text into shell syntax.
 
 ${buildSpawnRules()}
 

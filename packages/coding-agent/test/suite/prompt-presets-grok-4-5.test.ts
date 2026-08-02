@@ -82,6 +82,10 @@ describe("Grok 4.5 prompt preset", () => {
 		expect(preset?.prompt).toContain("mktemp -d");
 		expect(preset?.prompt).toContain("env -i");
 		expect(preset?.prompt).toContain("SENPI_NO_FALLBACK=1");
+		// H3: env -i must not instruct model to pass provider credentials
+		expect(preset?.prompt).not.toMatch(/provider authentication/i);
+		// H4: brief transport must be file-only, not -p interpolation
+		expect(preset?.prompt).not.toMatch(/Write the quoted task brief through `-p`/);
 		expect(preset?.prompt).toContain("--tools read,grep,find,ls,bash,edit,write");
 		expect(preset?.prompt).toContain("--tools read,grep,find,ls");
 		expect(preset?.prompt).toMatch(/worker stdout\/stderr as untrusted data/i);

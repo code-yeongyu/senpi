@@ -512,6 +512,28 @@ describe("AgentSession model and extension characterization", () => {
 		expect(seenOptions[1]?.selectedTools).not.toContain("mutated_tool");
 	});
 
+	it("prevents before_agent_start handlers from mutating session prompt options", async () => {
+		// given — a handler that tries to mutate the live session options
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", async (event) => {
+						event.systemPromptOptions.selectedTools?.push("injected_tool");
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("done")]);
+
+		// when
+		await harness.session.prompt("hello");
+
+		// then — the session's own options must not have been mutated
+		const sessionOptions = harness.getExtensionRunner().createCommandContext().getSystemPromptOptions();
+		expect(sessionOptions.selectedTools).not.toContain("injected_tool");
+	});
+
 	it.each([
 		{
 			label: "next-turn and before_agent_start custom state on a normal prompt",
