@@ -1,5 +1,25 @@
 # changes.md — compaction
 
+## Wall-clock budget includes final result settlement (2026-08-01)
+
+### What changed
+
+- Core and extension summarization keep `responseStream.result()` inside the same watched async iterator as stream
+  acquisition and event consumption.
+- A provider whose iterator closes while its final result promise remains pending now reaches the existing 120-second
+  `StreamDurationBudgetError` path instead of leaving the TUI on `Compacting...` indefinitely.
+
+### Why
+
+- The affected session showed a provider error and an ended event iterator, then remained in compaction for more than
+  seven minutes because final result settlement happened after the watchdog had cleared its timer.
+- The existing caller-abort and deterministic required-compaction fallback paths remain unchanged.
+
+### Expected merge conflict zones
+
+- LOW: `compaction.ts` around `completeSummarization()` stream consumption.
+- LOW: `extensions/builtin/compaction/speculative.ts` around `generateSummaryMessage()`.
+
 ## Wall-clock budget includes provider stream acquisition (2026-07-28)
 
 ### What changed

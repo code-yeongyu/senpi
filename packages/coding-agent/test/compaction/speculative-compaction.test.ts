@@ -13,9 +13,13 @@ import {
 	type StreamOptions,
 	unregisterApiProviders,
 } from "@earendil-works/pi-ai/compat";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
+import {
+	DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
+	StreamDurationBudgetError,
+} from "../../src/core/compaction/stream-watchdog.ts";
 import compactionExtension from "../../src/core/extensions/builtin/compaction/index.ts";
 import { shouldStartSpeculativeCompaction } from "../../src/core/extensions/builtin/compaction/policy.ts";
 import {
@@ -38,6 +42,8 @@ type TestSpeculativeCompactionContext = SpeculativeCompactionContext & {
 };
 
 afterEach(() => {
+	vi.useRealTimers();
+	vi.restoreAllMocks();
 	for (const registration of registrations.splice(0)) {
 		registration.unregister();
 	}
@@ -783,6 +789,23 @@ describe("speculative compaction", () => {
 
 		// Then
 		expect(result).toBeUndefined();
+	});
+
+	it("bounds credential resolution before stream setup", async () => {
+		vi.useFakeTimers();
+		const context = createContext();
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		if (!snapshot || !context.modelRegistry) throw new Error("expected snapshot and model registry");
+		vi.spyOn(context.modelRegistry, "getApiKeyAndHeaders").mockImplementation(
+			() => new Promise<never>(() => undefined),
+		);
+
+		const outcome = runExtensionCompaction(context, snapshot).catch((caught: unknown) => caught);
+		await vi.advanceTimersByTimeAsync(DEFAULT_SUMMARIZATION_MAX_DURATION_MS + 1);
+
+		const pending = Symbol("pending");
+		const observed = await Promise.race([outcome, Promise.resolve(pending)]);
+		expect(observed).toBeInstanceOf(StreamDurationBudgetError);
 	});
 });
 

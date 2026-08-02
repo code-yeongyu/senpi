@@ -1,3 +1,4 @@
+import type { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { completeSummarization } from "../../src/core/compaction/compaction.ts";
 import {
@@ -113,6 +114,30 @@ describe("consumeStreamWithIdleTimeout wall-clock budget", () => {
 			async (_model, _context, options) => {
 				requestSignal = options?.signal;
 				return await new Promise<never>(() => undefined);
+			},
+		).catch((caught: unknown) => caught);
+
+		await vi.advanceTimersByTimeAsync(DEFAULT_SUMMARIZATION_MAX_DURATION_MS + 1);
+
+		const pending = Symbol("pending");
+		const observed = await Promise.race([outcome, Promise.resolve(pending)]);
+		expect(observed).toBeInstanceOf(StreamDurationBudgetError);
+		expect(requestSignal?.aborted).toBe(true);
+	});
+
+	it("keeps the duration budget active while the final stream result settles", async () => {
+		let requestSignal: AbortSignal | undefined;
+		const stream = {
+			async *[Symbol.asyncIterator]() {},
+			result: () => new Promise<never>(() => undefined),
+		} as unknown as AssistantMessageEventStream;
+		const outcome = completeSummarization(
+			OPENAI_NATIVE_LEGACY_MODEL,
+			{ systemPrompt: "", messages: [] },
+			{ maxTokens: 32 },
+			(_model, _context, options) => {
+				requestSignal = options?.signal;
+				return stream;
 			},
 		).catch((caught: unknown) => caught);
 

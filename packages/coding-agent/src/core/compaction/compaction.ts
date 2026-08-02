@@ -657,7 +657,12 @@ export async function completeSummarization(
 			const responseStream = Promise.resolve(
 				streamFn ? streamFn(model, context, requestOptions) : streamSimple(model, context, requestOptions),
 			);
-			await consumeStreamWithIdleTimeout(responseStream, {
+			const watchedStream = (async function* () {
+				const resolvedStream = await responseStream;
+				yield* resolvedStream;
+				await resolvedStream.result();
+			})();
+			await consumeStreamWithIdleTimeout(watchedStream, {
 				idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
 				maxDurationMs: DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
 				abort: () => requestController.abort(),

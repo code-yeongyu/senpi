@@ -45,7 +45,9 @@
 
 ## Required-compaction recovery and queue chronology (2026-07-31)
 
-- Targeted required-compaction summarization failures can recover from a deterministic, suffix-safe local checkpoint without a second provider request; unfit recovery remains fail-closed and preserves the latest request.
+- Targeted required-compaction summarization failures can recover from a deterministic, suffix-safe local checkpoint without a second provider request; pre-prompt compaction joins that recovery only at the hard input cap. Reconstructed suffix fit is recomputed from retained content instead of stale pre-compaction assistant usage, while optional pre-prompt and genuinely unfit recovery remain fail-closed and preserve the latest request.
+- Compaction wall-clock budgets now include final provider result settlement after event iteration, preventing an ended stream with a pending result from leaving sessions on `Compacting...` indefinitely.
+- Extension compaction also applies that 120-second deadline to the complete operation, including credential and provider-request preparation before stream setup, while preserving caller-abort precedence.
 - Truncation recovery requires structured transient `SummaryRequestError` provenance; generic error text cannot authorize fallback.
 - Recovery retains task intent and UTF-8-safe bounded text while todo/checkpoint snapshots remain only in their separately persisted canonical entries, not duplicated in compaction details.
 - Terminal queue restoration now follows global submission chronology across native and compaction-owned input through a non-enumerable compatibility side channel, without changing native steer priority or abort-state semantics.
