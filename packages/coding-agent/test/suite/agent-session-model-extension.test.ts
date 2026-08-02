@@ -534,6 +534,72 @@ describe("AgentSession model and extension characterization", () => {
 		expect(sessionOptions.selectedTools).not.toContain("injected_tool");
 	});
 
+	it("keeps a model_select prompt durable across tool-set reconciliation", async () => {
+		// given — an extension that installs a distinct prompt on model_select
+		const installed = "MODEL SELECT PROMPT";
+		const harness = await createHarness({
+			models: [
+				{ id: "primary-model", name: "Primary", reasoning: false },
+				{ id: "secondary-model", name: "Secondary", reasoning: false },
+			],
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.on("model_select", async () => ({ systemPrompt: installed }));
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		// when — the model switch installs the prompt, then the tool set is reconciled
+		const target = harness.getModel("secondary-model");
+		expect(target).toBeDefined();
+		if (!target) return;
+		await harness.session.setModel(target);
+		expect(harness.session.systemPrompt).toBe(installed);
+		harness.session.setActiveToolsByName(harness.session.getActiveToolNames());
+
+		// then — the installed prompt survives, it does not revert to the base prompt
+		expect(harness.session.systemPrompt).toBe(installed);
+	});
+
+	it("returns deeply independent system prompt option copies", async () => {
+		// given — a command handler capturing two successive option copies
+		const seen: BuildSystemPromptOptions[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.registerCommand("capture-options", {
+						description: "capture prompt options",
+						handler: async (_args, ctx) => {
+							seen.push(ctx.getSystemPromptOptions());
+						},
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		// when — every nesting level of the first copy is mutated
+		await harness.session.prompt("/capture-options");
+		const first = seen[0];
+		expect(first).toBeDefined();
+		if (!first) return;
+		const pristine = JSON.stringify(first);
+		first.selectedTools?.push("mutated_tool");
+		if (first.toolSnippets) first.toolSnippets.mutated_key = "mutated";
+		first.promptGuidelines?.push("mutated guideline");
+		if (first.contextFiles?.[0]) first.contextFiles[0].content = "MUTATED";
+		if (first.skills?.[0]) first.skills[0].sourceInfo.source = "MUTATED";
+		// the mutation must have actually landed, otherwise the assertion below is vacuous
+		expect(JSON.stringify(first)).not.toBe(pristine);
+		await harness.session.prompt("/capture-options");
+
+		// then — the next copy still matches the pre-mutation shape at every level
+		const second = seen[1];
+		expect(second).toBeDefined();
+		expect(JSON.stringify(second)).toBe(pristine);
+	});
+
 	it.each([
 		{
 			label: "next-turn and before_agent_start custom state on a normal prompt",

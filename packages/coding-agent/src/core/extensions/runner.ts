@@ -76,7 +76,7 @@ import type {
 	UserBashEventResult,
 } from "./types.ts";
 
-function cloneSystemPromptOptions(options: BuildSystemPromptOptions): BuildSystemPromptOptions {
+export function cloneSystemPromptOptions(options: BuildSystemPromptOptions): BuildSystemPromptOptions {
 	return {
 		...options,
 		selectedTools: options.selectedTools ? [...options.selectedTools] : undefined,
@@ -1567,6 +1567,7 @@ export class ExtensionRunner {
 						prompt,
 						images,
 						systemPrompt: currentSystemPrompt,
+						baseSystemPrompt: systemPrompt,
 						systemPromptOptions: cloneSystemPromptOptions(systemPromptOptions),
 					};
 					const handlerResult = await handler(event, ctx);

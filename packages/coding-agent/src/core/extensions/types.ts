@@ -452,7 +452,7 @@ export interface ExtensionContext {
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
 	/** Get a defensive copy of the current base system-prompt construction options. */
-	getSystemPromptOptions?(): BuildSystemPromptOptions;
+	getSystemPromptOptions(): BuildSystemPromptOptions;
 	/** Get hook source paths currently visible to the builtin hooks extension. */
 	getLoadedHookSources?(): LoadedHookSources;
 	/** Get extension-declared MCP servers aggregated across all extensions (first-wins). */
@@ -478,9 +478,6 @@ export interface ProviderRequestPreparation {
  * Includes session control methods only safe in user-initiated commands.
  */
 export interface ExtensionCommandContext extends ExtensionContext {
-	/** Get the current base system-prompt construction options. */
-	getSystemPromptOptions(): BuildSystemPromptOptions;
-
 	/** Wait for the agent to finish streaming */
 	waitForIdle(): Promise<void>;
 
@@ -905,8 +902,10 @@ export interface BeforeAgentStartEvent {
 	prompt: string;
 	/** Images attached to the user prompt, if any. */
 	images?: ImageContent[];
-	/** The fully assembled system prompt string. */
+	/** The fully assembled system prompt string, including any replacement or append made by an earlier handler this turn. */
 	systemPrompt: string;
+	/** The system prompt as built by Pi, before any handler in this turn modified it. Handlers that replace the prompt should re-append `systemPrompt.slice(baseSystemPrompt.length)` so they do not discard an earlier handler's work. */
+	baseSystemPrompt: string;
 	/** Structured options used to build the system prompt. Extensions can inspect this to understand what Pi loaded without re-discovering resources. */
 	systemPromptOptions: BuildSystemPromptOptions;
 }

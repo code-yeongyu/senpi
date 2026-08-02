@@ -109,7 +109,7 @@ import {
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
-import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import { cloneSystemPromptOptions, emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type {
 	ApplyCompactionOptions,
 	ApplyCompactionResult,
@@ -1957,6 +1957,11 @@ export class AgentSession {
 		return this.agent.state.systemPrompt;
 	}
 
+	/** Defensive copy of the base system-prompt construction options, for hosts building an ExtensionContext by hand. */
+	get systemPromptOptions(): BuildSystemPromptOptions {
+		return cloneSystemPromptOptions(this._baseSystemPromptOptions);
+	}
+
 	/** Current retry attempt (0 if not retrying) */
 	get retryAttempt(): number {
 		return this._retryAttempt;
@@ -3195,6 +3200,10 @@ export class AgentSession {
 			return undefined;
 		}
 
+		// The continuation snapshot and tool-set reconciliation both read
+		// `_systemPromptOverride`; without this the next tool continuation reverts to
+		// the previous model's prompt mid-turn.
+		this._systemPromptOverride = result.systemPrompt === null ? undefined : systemPrompt;
 		this.agent.state.systemPrompt = systemPrompt;
 		const event: SystemPromptChangeEvent = {
 			type: "system_prompt_change",

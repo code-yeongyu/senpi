@@ -76,11 +76,18 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 		}
 
 		const append = options?.appendSystemPrompt;
-		return { systemPrompt: appendToSystemPrompt(preset.prompt, append) };
+		const replacement = appendToSystemPrompt(preset.prompt, append);
+		// An earlier handler may already have appended to the chained prompt (builtin
+		// hooks does this with a UserPromptSubmit systemMessage). Replacing outright
+		// would discard it, so carry that exact suffix across the replacement.
+		const upstream = event.systemPrompt.startsWith(event.baseSystemPrompt)
+			? event.systemPrompt.slice(event.baseSystemPrompt.length)
+			: "";
+		return { systemPrompt: `${replacement}${upstream}` };
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		if (ctx.getSystemPromptOptions?.().customPrompt !== undefined) {
+		if (ctx.getSystemPromptOptions().customPrompt !== undefined) {
 			ctx.ui.setHeader(undefined);
 			return;
 		}

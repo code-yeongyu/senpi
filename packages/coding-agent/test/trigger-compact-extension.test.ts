@@ -30,6 +30,7 @@ function createContext(tokens: number | null, compact = vi.fn()): ExtensionConte
 		getImageSettings: () => ({ autoResize: true, blockImages: false }),
 		sessionSettings: createInMemoryExtensionSessionSettings(),
 		getSystemPrompt: () => "",
+		getSystemPromptOptions: () => ({ cwd: "" }),
 	};
 }
 

@@ -1,5 +1,22 @@
 # changes
 
+## Model-select prompt durability + explicit empty replacement (2026-08-02)
+
+### What changed
+
+- `agent-session.ts`: `_emitModelSelect` now syncs `_systemPromptOverride` with the prompt an extension installs, clearing it when the handler returns `null`. The continuation snapshot and `setActiveToolsByName` both read that field, so a mid-turn model switch no longer reverts to the previous model's prompt on the next tool continuation or tool-set reconciliation.
+- `system-prompt.ts`: `buildSystemPrompt` tests `customPrompt !== undefined` instead of truthiness, so an explicit empty replacement is honored instead of silently building the default identity. This matches the nullish precedence `AgentSession` already uses.
+
+### Why
+
+- Review found split prompt state: `model_select` wrote only `agent.state.systemPrompt`, while continuations reconstructed from `_systemPromptOverride ?? _baseSystemPrompt`. A fallback-selected model could therefore change identity mid-turn, including away from a worker role contract.
+- The two prompt builders disagreed on `""`: the session path selected it, the generic builder discarded it. Delegated worker roles depend on explicit replacement being authoritative in both.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `_emitModelSelect` body.
+- LOW: `system-prompt.ts` custom-prompt branch guard.
+
 ## Backfill: eval bridge deadlock prevention (2026-08-01)
 
 ### What changed

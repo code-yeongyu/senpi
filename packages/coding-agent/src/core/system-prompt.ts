@@ -46,7 +46,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const contextFiles = providedContextFiles ?? [];
 	const skills = providedSkills ?? [];
 
-	if (customPrompt) {
+	if (customPrompt !== undefined) {
 		let prompt = appendToSystemPrompt(customPrompt, appendSystemPrompt);
 
 		// Append project context files

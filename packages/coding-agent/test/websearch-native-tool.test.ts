@@ -61,6 +61,7 @@ function toolContext(model: Model<Api> | undefined, modelRegistry: ModelRegistry
 		getMessageRevision: () => 0,
 		applyCompaction: async () => ({ applied: false, reason: "rejected" }),
 		getSystemPrompt: () => "",
+		getSystemPromptOptions: () => ({ cwd: "" }),
 	};
 }
 

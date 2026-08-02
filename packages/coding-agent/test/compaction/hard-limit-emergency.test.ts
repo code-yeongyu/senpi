@@ -116,6 +116,7 @@ function createContext(contextWindow: number, maxTokens = contextWindow, compact
 		getMessageRevision: () => 0,
 		applyCompaction: async () => ({ applied: false, reason: "rejected" }),
 		getSystemPrompt: () => "",
+		getSystemPromptOptions: () => ({ cwd: "" }),
 	} as ExtensionContext;
 }
 
@@ -169,6 +170,7 @@ function createCompactionContext(): ExtensionContext {
 		getMessageRevision: () => 1,
 		applyCompaction,
 		getSystemPrompt: () => "",
+		getSystemPromptOptions: () => ({ cwd: "" }),
 	};
 }
 
@@ -330,6 +332,7 @@ describe("compaction hard-limit emergency behavior", () => {
 					type: "before_agent_start",
 					prompt: "continue",
 					systemPrompt: "system",
+					baseSystemPrompt: "system",
 					systemPromptOptions: Object.create(null) as BeforeAgentStartEvent["systemPromptOptions"],
 				};
 

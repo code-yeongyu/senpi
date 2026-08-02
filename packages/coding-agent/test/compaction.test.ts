@@ -282,6 +282,7 @@ function createExtensionContext(overrides: Partial<ExtensionContext>): Extension
 		beginCompaction: () => undefined,
 		endCompaction: vi.fn(),
 		getSystemPrompt: () => "",
+		getSystemPromptOptions: () => ({ cwd: "" }),
 		...overrides,
 		scopedModels: overrides.scopedModels ?? [],
 		sessionSettings: overrides.sessionSettings ?? createInMemoryExtensionSessionSettings(),

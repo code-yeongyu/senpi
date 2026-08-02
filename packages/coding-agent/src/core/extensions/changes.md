@@ -1,5 +1,22 @@
 # Core Extensions Changes
 
+## Chained system-prompt preservation + required getSystemPromptOptions (2026-08-02)
+
+### What changed
+
+- `BeforeAgentStartEvent` gains `baseSystemPrompt`: the prompt as Pi built it, before any handler in this turn modified it. `runner.ts` threads the pre-loop value onto every event, so a handler that *replaces* the prompt can recover the exact suffix an earlier handler appended (`systemPrompt.slice(baseSystemPrompt.length)`) instead of discarding it.
+- `ExtensionContext.getSystemPromptOptions` is now required and `ExtensionCommandContext` no longer redeclares it. The runner already supplied it unconditionally, falling back to `() => ({ cwd })` when `ExtensionContextActions` omits it, so optional-on-base plus required-on-command described a capability difference that never existed. The single `?.()` call site is gone.
+
+### Why
+
+- `prompt-preset` runs after builtin `hooks` and replaced the chained prompt outright, silently dropping a `UserPromptSubmit` `systemMessage`. Reordering `builtinExtensions` would fix it at the cost of permission-hook ordering, which `builtin/AGENTS.md` names load-bearing; exposing the pre-chain base keeps the fix inside the replacing extension.
+- The optional base forced defensive `?.()` in code paths where the host always provides the method.
+
+### Expected merge conflict zones
+
+- MEDIUM: `types.ts` `BeforeAgentStartEvent` and `ExtensionContext` member lists.
+- LOW: `runner.ts` `emitBeforeAgentStart` event literal.
+
 ## Defensive system-prompt option context getter (2026-08-01)
 
 ### What changed

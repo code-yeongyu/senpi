@@ -82,6 +82,12 @@ describe("Grok 4.5 prompt preset", () => {
 		expect(preset?.prompt).toContain("mktemp -d");
 		expect(preset?.prompt).toContain("env -i");
 		expect(preset?.prompt).toContain("SENPI_NO_FALLBACK=1");
+		// REG-1: the environment directive must not duplicate its allowlist phrase
+		expect(preset?.prompt.match(/Senpi directory variables/g)?.length ?? 0).toBe(1);
+		// C-H3: env-only credentials must survive via shell expansion, never model-authored literals
+		expect(preset?.prompt).toMatch(/forward credential variables by name/i);
+		expect(preset?.prompt).toMatch(/\$XAI_API_KEY/);
+		expect(preset?.prompt).toMatch(/never write a credential value/i);
 		// H3: env -i must not instruct model to pass provider credentials
 		expect(preset?.prompt).not.toMatch(/provider authentication/i);
 		// H4: brief transport must be file-only, not -p interpolation
@@ -159,6 +165,10 @@ describe("Grok 4.5 prompt preset", () => {
 		expect(oracleSection).toMatch(/hard architecture\/debugging or high-risk final review/i);
 		expect(spawnSection).toMatch(/blocks discovered\/user extensions/i);
 		expect(spawnSection).toMatch(/builtin host controls may remain/i);
+		// H2: the contract must not claim tool allowlists enforce a privilege boundary
+		expect(spawnSection).toMatch(/prompt-level guidance, not an enforced privilege boundary/i);
+		// L6: the RETURN cap is guidance the CEO validates, not a runtime control
+		expect(spawnSection).toMatch(/no runtime validates/i);
 	});
 
 	it("keeps worker tool allowlists compatible with no-extensions", () => {

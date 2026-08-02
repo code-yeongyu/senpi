@@ -275,6 +275,10 @@
 - Oracle wording is high-risk final review / hard debug — not "before deploying". One orchestration level; workers must not re-delegate.
 - Brief fields: ROLE, GOAL, SCOPE, CONSTRAINTS, DONE WHEN, RETURN.
 - Tests pin effective prompt precedence, CLI option forwarding, worker spawn controls, id resolution, settings force, catalog sweep, and no fake task-tool API.
+- Review follow-up (2026-08-02): the environment directive no longer duplicates its allowlist phrase, and env-only authentication is preserved by forwarding credential variables *by name* through shell expansion (`env -i ... "XAI_API_KEY=$XAI_API_KEY"`) so no credential value is ever model-authored into a command, brief, or transcript.
+- Review follow-up (2026-08-02): the isolation and RETURN rules now state their real strength. Worker isolation is described as session and context isolation, not privilege isolation — an Implementer holding `bash` runs with the user's filesystem and credentials, so allowlists and no-spawn rules are prompt-level guidance. The 8 KiB RETURN schema is stated as CEO-parsed guidance with no runtime validator.
+- Review follow-up (2026-08-02): the file header now says role doctrine is delivered at system priority through the child's `--system-prompt`, replacing the stale claim that it lives in the user-level brief.
+- Review follow-up (2026-08-02): `before_agent_start` no longer discards work done by an earlier handler. The preset replacement now carries `event.systemPrompt.slice(event.baseSystemPrompt.length)` across, so a builtin-hooks `UserPromptSubmit` `systemMessage` survives preset selection. When an earlier handler replaced rather than appended, the slice guard yields an empty suffix and behavior is unchanged.
 
 #### Why
 - User direction: prefer specifying worker **roles** over locking every implementation child to GPT. Model presets must not be the only carrier of execution doctrine under senpi's no-task-tool harness.

@@ -1,6 +1,24 @@
 import { describe, expect, test } from "vitest";
 import { buildSystemPrompt } from "../src/core/system-prompt.ts";
 
+describe("buildSystemPrompt explicit empty replacement", () => {
+	test("honors an explicitly empty customPrompt instead of building the default prompt", () => {
+		// given — an explicit empty replacement, matching AgentSession nullish precedence
+		const prompt = buildSystemPrompt({ customPrompt: "", cwd: "/tmp/red" });
+
+		// then — the custom branch is taken: only its cwd footer, none of the default identity
+		expect(prompt).toBe("\nCurrent working directory: /tmp/red");
+	});
+
+	test("appends an explicit suffix to an empty replacement without a leading separator", () => {
+		// given
+		const prompt = buildSystemPrompt({ customPrompt: "", appendSystemPrompt: "SUFFIX", cwd: "/tmp/red" });
+
+		// then — no blank separator is inserted ahead of the suffix
+		expect(prompt).toBe("SUFFIX\nCurrent working directory: /tmp/red");
+	});
+});
+
 describe("buildSystemPrompt", () => {
 	describe("empty tools", () => {
 		test("shows (none) for empty tools list", () => {

@@ -2265,6 +2265,7 @@ export class InteractiveMode {
 			getMessageRevision: () => this.session.getMessageRevision(),
 			applyCompaction: (precomputed, options) => this.session.applyCompaction(precomputed, options),
 			getSystemPrompt: () => this.session.systemPrompt,
+			getSystemPromptOptions: () => this.session.systemPromptOptions,
 		});
 
 		// Set up the extension shortcut handler on the default editor

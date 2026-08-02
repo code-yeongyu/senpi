@@ -254,5 +254,6 @@ export function fakeExtensionContext(): ExtensionContext {
 		getMessageRevision: () => 0,
 		applyCompaction: async () => ({ applied: false, reason: "rejected" }),
 		getSystemPrompt: () => "",
+		getSystemPromptOptions: () => ({ cwd: "" }),
 	};
 }

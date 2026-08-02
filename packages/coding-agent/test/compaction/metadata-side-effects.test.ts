@@ -92,6 +92,7 @@ function createExtensionContext(entries: SessionEntry[]): ExtensionContext {
 		beginCompaction: () => undefined,
 		endCompaction: vi.fn(),
 		getSystemPrompt: () => "",
+		getSystemPromptOptions: () => ({ cwd: "" }),
 	} as ExtensionContext;
 }
 

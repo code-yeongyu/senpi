@@ -101,6 +101,7 @@ function createGateExtensionContext(settings: CompactionSettings): ExtensionCont
 		beginCompaction: () => undefined,
 		endCompaction: vi.fn(),
 		getSystemPrompt: () => "",
+		getSystemPromptOptions: () => ({ cwd: "" }),
 	} as ExtensionContext;
 }
 
@@ -129,6 +130,7 @@ function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
 		type: "before_agent_start",
 		prompt: "continue",
 		systemPrompt: "base prompt",
+		baseSystemPrompt: "base prompt",
 		systemPromptOptions: {} as BeforeAgentStartEvent["systemPromptOptions"],
 	};
 }

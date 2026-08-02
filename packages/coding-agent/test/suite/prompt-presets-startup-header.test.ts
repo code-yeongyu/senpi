@@ -160,6 +160,7 @@ describe("prompt preset startup header", () => {
 				type: "before_agent_start",
 				prompt: "ROLE: Implementer",
 				systemPrompt: "stale event prompt",
+				baseSystemPrompt: "stale event prompt",
 				systemPromptOptions: {
 					cwd: "/repo",
 					selectedTools: [],
@@ -185,6 +186,7 @@ describe("prompt preset startup header", () => {
 				type: "before_agent_start",
 				prompt: "ROLE: Implementer",
 				systemPrompt: "stale event prompt",
+				baseSystemPrompt: "stale event prompt",
 				systemPromptOptions: {
 					cwd: "/repo",
 					selectedTools: [],
@@ -292,6 +294,7 @@ describe("prompt preset startup header", () => {
 				type: "before_agent_start",
 				prompt: "Implement the task",
 				systemPrompt: "base",
+				baseSystemPrompt: "base",
 				systemPromptOptions: {
 					cwd: "/repo",
 					selectedTools: [],
