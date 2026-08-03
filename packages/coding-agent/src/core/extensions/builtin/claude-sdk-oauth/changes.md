@@ -1,5 +1,11 @@
 # claude-sdk-oauth extension changes
 
+## 2026-08-03 - Browser callback closes manual-code input
+
+- Forward each Anthropic OAuth prompt's `AbortSignal` through the extension OAuth callback adapter.
+- When the localhost browser callback wins, the still-pending manual-code input now closes before account naming starts instead of leaving duplicated, mirrored fields.
+- Coverage: `test/suite/regressions/lab-33-claude-oauth-prompt-abort.test.ts`.
+
 ## 2026-08-02 - Provider configuration account manager
 
 - Selecting a configured Claude SDK OAuth provider now opens account controls instead of immediately starting another OAuth login.

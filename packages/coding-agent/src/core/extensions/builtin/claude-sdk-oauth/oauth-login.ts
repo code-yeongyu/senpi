@@ -14,7 +14,7 @@ import {
 export type OAuthLoginCallbacks = {
 	signal?: AbortSignal;
 	onAuth?: (event: { url: string }) => void | Promise<void>;
-	onPrompt?: (prompt: { message: string; placeholder?: string }) => Promise<string>;
+	onPrompt?: (prompt: { message: string; placeholder?: string; signal?: AbortSignal }) => Promise<string>;
 	onSelect?: (prompt: { message: string; options: { id: string; label: string }[] }) => Promise<string | undefined>;
 	onManualCodeInput?: () => Promise<string>;
 	onProgress?: (message: string) => void;
@@ -195,7 +195,13 @@ export function createOAuthConfig(deps: {
 				signal: callbacks.signal,
 				prompt: async (prompt) => {
 					if (prompt.type === "select") return "";
-					return callbacks.onPrompt ? callbacks.onPrompt({ message: prompt.message }) : "";
+					return callbacks.onPrompt
+						? callbacks.onPrompt({
+								message: prompt.message,
+								placeholder: prompt.placeholder,
+								signal: prompt.signal,
+							})
+						: "";
 				},
 				notify: (event) => {
 					if (event.type === "auth_url" && callbacks.onAuth) void callbacks.onAuth({ url: event.url });
