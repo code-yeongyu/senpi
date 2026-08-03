@@ -41,6 +41,7 @@ function toolContext(model: Model<Api> | undefined, modelRegistry: ModelRegistry
 		mode: "print",
 		hasUI: false,
 		cwd: process.cwd(),
+		agentDir: "/tmp/senpi-test-agent",
 		sessionManager: Object.create(null) as ExtensionContext["sessionManager"],
 		modelRegistry,
 		model,

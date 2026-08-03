@@ -34,8 +34,8 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
-		"build": "tsgo -p tsconfig.build.json && npm run copy-assets && shx chmod +x dist/cli.js dist/rpc-entry.js && shx cp dist/cli.js dist/senpi && shx chmod +x dist/senpi",
+		"dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+		"build": "tsc -p tsconfig.build.json && npm run copy-assets && shx chmod +x dist/cli.js dist/rpc-entry.js && shx cp dist/cli.js dist/senpi && shx chmod +x dist/senpi",
 		"build:binary": "npm --prefix ../tui run build && npm --prefix ../ai run build && npm --prefix ../agent run build && npm --prefix ../protocol run build && npm --prefix ../client run build && npm run build && bun build --compile --compile-autoload-package-json --external=css-tree --no-compile-autoload-dotenv --minify --keep-names ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile dist/pi && npm run copy-binary-assets",
 		"copy-assets": "shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/ && shx mkdir -p dist/modes/interactive/assets && shx cp src/modes/interactive/assets/*.png dist/modes/interactive/assets/ && shx mkdir -p dist/core/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html/ && shx cp src/core/export-html/vendor/*.js dist/core/export-html/vendor/",
 		"copy-binary-assets": "shx cp package.json dist/ && shx cp README.md dist/ && shx cp CHANGELOG.md dist/ && shx mkdir -p dist/theme && shx cp src/modes/interactive/theme/*.json dist/theme/ && shx mkdir -p dist/assets && shx cp src/modes/interactive/assets/*.png dist/assets/ && shx mkdir -p dist/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/export-html/ && shx cp -r docs dist/ && shx cp -r examples dist/ && shx mkdir -p dist/node_modules && shx cp -r ../../node_modules/css-tree ../../node_modules/mdn-data ../../node_modules/source-map-js dist/node_modules/ && shx cp ../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm dist/ && shx mkdir -p dist/native/darwin dist/native/win32 && shx cp -r ../../packages/tui/native/darwin/prebuilds dist/native/darwin/ && shx cp -r ../../packages/tui/native/win32/prebuilds dist/native/win32/ && node ../../scripts/copy-pty-native.mjs",
@@ -119,7 +119,7 @@
 		"@types/turndown": "5.0.6",
 		"@types/ws": "8.18.1",
 		"shx": "0.4.0",
-		"typescript": "6.0.3",
+		"typescript": "7.0.2",
 		"vitest": "4.1.10"
 	},
 	"keywords": [

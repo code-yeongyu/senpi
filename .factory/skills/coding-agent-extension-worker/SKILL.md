@@ -20,7 +20,7 @@ You are implementing exactly ONE feature from `features.json` in the senpi-mono 
 
 ## Hard rules — never violate
 
-- **Fork strategy:** Every change is a builtin-extension change. You may not modify `packages/ai`, `packages/agent`, `packages/tui`, `packages/web-ui`, `packages/mom`, `packages/pods`, `packages/coding-agent/src/core/settings-manager.ts`, `packages/coding-agent/src/core/extensions/types.ts`, `runner.ts`, `loader.ts`, `wrapper.ts`, or any other builtin extension besides `todotools/` and `builtin/index.ts`.
+- **Fork strategy:** Every change is a builtin-extension change. You may not modify `packages/ai`, `packages/agent`, `packages/tui`, `packages/mom`, `packages/pods`, `packages/coding-agent/src/core/settings-manager.ts`, `packages/coding-agent/src/core/extensions/types.ts`, `runner.ts`, `loader.ts`, `wrapper.ts`, or any other builtin extension besides `todotools/` and `builtin/index.ts`.
 - **No type suppressions:** `any`, `as any`, `@ts-ignore`, `@ts-expect-error` are forbidden across all files in `builtin/todotools/`. Use explicit type guards instead.
 - **No inline imports:** top-level ES imports only. Never `await import()` or `import("pkg").Type`.
 - **No real LLM calls in tests:** always use the faux provider via `createHarness`.
@@ -28,7 +28,7 @@ You are implementing exactly ONE feature from `features.json` in the senpi-mono 
 - **Only commit files you touched in this session.** Inspect `git status` before staging.
 - **No emojis** in code, commits, test names, or PR comments.
 - **Biome enforced:** 3-space / tab indent matching the existing file style, 120-char line width.
-- **`tsgo` enforced:** all code compiles cleanly with no diagnostics.
+- **`tsc` enforced:** all code compiles cleanly with no diagnostics.
 
 ## Procedure
 

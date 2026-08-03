@@ -31,7 +31,7 @@ for file in $STAGED_FILES; do
       RUN_PM_VERIFY=1
       break
       ;;
-    scripts/build-all.mjs|scripts/run-web-ui-check.mjs|scripts/create-bin-stubs.mjs|scripts/verify-package-managers.mjs)
+    scripts/build-all.mjs|scripts/create-bin-stubs.mjs|scripts/verify-package-managers.mjs)
       RUN_PM_VERIFY=1
       break
       ;;
@@ -56,7 +56,7 @@ fi
 RUN_BROWSER_SMOKE=0
 for file in $STAGED_FILES; do
   case "$file" in
-    packages/ai/*|packages/web-ui/*|package.json|package-lock.json)
+    packages/ai/*|package.json|package-lock.json)
       RUN_BROWSER_SMOKE=1
       break
       ;;

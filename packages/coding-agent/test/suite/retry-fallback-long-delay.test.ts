@@ -80,7 +80,11 @@ describe("retry fallback for over-threshold provider delays", () => {
 		expect(harness.eventsOfType("retry_fallback_exhausted")).toEqual([]);
 		const ends = harness.eventsOfType("auto_retry_end");
 		expect(ends.map((event) => event.success)).toEqual([false]);
-		expect(ends[0]?.finalError).toContain("exceeding configured maximum");
+		// intentionally replaced by hint-aware tier routing (plan todo 6):
+		// overThreshold (3600s hint) classifies as tier3-fallback-only, so the
+		// finalError is the original error message, not the legacy
+		// "exceeding configured maximum" text from the over-budget gate.
+		expect(ends[0]?.finalError).toContain("rate_limit_exceeded");
 		expect(harness.faux.state.callCount).toBe(1);
 	});
 
@@ -97,7 +101,10 @@ describe("retry fallback for over-threshold provider delays", () => {
 		await harness.session.prompt("hello");
 
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
-		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toEqual([5]);
+		// intentionally replaced by hint-aware tier routing (plan todo 6):
+		// underThreshold (5ms hint) classifies as tier1-in-turn, so the first
+		// probe delay is ceil(hint/2) = ceil(5/2) = 3, not the full hint.
+		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toEqual([3]);
 		expect(harness.faux.state.callCount).toBe(2);
 	});
 

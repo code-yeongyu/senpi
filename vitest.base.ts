@@ -21,6 +21,10 @@ export default defineConfig({
 				find: /^@earendil-works\/pi-ai\/providers\/(.+)$/,
 				replacement: `${workspaceSourcePaths.aiProviders}/$1.ts`,
 			},
+			{
+				find: /^@earendil-works\/pi-ai\/utils\/(.+)$/,
+				replacement: fileURLToPath(new URL(`./packages/ai/src/utils/$1.ts`, import.meta.url)),
+			},
 			{ find: /^@earendil-works\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
 			{ find: /^@earendil-works\/pi-tui$/, replacement: workspaceSourcePaths.tuiIndex },
 		],

@@ -260,6 +260,7 @@ function createExtensionContext(overrides: Partial<ExtensionContext>): Extension
 		mode: "print",
 		ui: {} as ExtensionContext["ui"],
 		cwd: process.cwd(),
+		agentDir: "/tmp/senpi-test-agent",
 		isProjectTrusted: () => true,
 		sessionManager: Object.assign(Object.create(null), {
 			getEntries: () => [],

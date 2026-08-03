@@ -13,6 +13,7 @@ Senpi implements the [Agent Skills standard](https://agentskills.io/specificatio
 - [Skill Commands](#skill-commands)
 - [Skill Structure](#skill-structure)
 - [Frontmatter](#frontmatter)
+- [Carrying MCP Servers](#carrying-mcp-servers)
 - [Validation](#validation)
 - [Example](#example)
 - [Skill Repositories](#skill-repositories)
@@ -96,6 +97,7 @@ A skill is a directory with a `SKILL.md` file. Everything else is freeform.
 ```
 my-skill/
 ├── SKILL.md              # Required: frontmatter + instructions
+├── mcp.json              # Optional: MCP servers bundled with the skill
 ├── scripts/              # Helper scripts
 │   └── process.sh
 ├── references/           # Detailed docs loaded on-demand
@@ -172,6 +174,33 @@ Poor:
 ```yaml
 description: Helps with PDFs.
 ```
+
+## Carrying MCP Servers
+
+A skill can bundle the MCP servers it uses, shipping the workflow and its
+tools as one package. Servers declared by a skill register lazily with zero
+active tools — they cost no prompt tokens until the skill loads, and the
+tools matching the skill's `includeTools` globs activate for the session when
+it does.
+
+Declare servers in an `mcp.json` sidecar next to SKILL.md (or in a `mcp:`
+frontmatter block):
+
+```json
+{
+  "mcpServers": {
+    "exa": {
+      "command": "npx",
+      "args": ["-y", "exa-mcp-server"],
+      "env": { "EXA_API_KEY": "${EXA_API_KEY}" },
+      "includeTools": ["web_search*"]
+    }
+  }
+}
+```
+
+See [Skill-carried MCP servers](mcp.md#skill-carried-mcp-servers) for the
+full declaration forms, collision rules, and reveal semantics.
 
 ## Validation
 

@@ -39,6 +39,7 @@ import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts"
 import { getAnthropicCompat, isAnthropicApiBaseUrl } from "../utils/prompt-cache-ttl.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry-hint.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import {
 	applyServerFallbackAbort,
@@ -1143,7 +1144,12 @@ async function* iterateAnthropicEvents(
 
 	for await (const sse of iterateSseMessages(response.body, signal)) {
 		if (sse.event === "error") {
-			throw new Error(sse.data);
+			let errorText = sse.data;
+			const hintMs = extract429RetryAfterMs({ bodyText: sse.data });
+			if (hintMs !== undefined) {
+				errorText = appendRetryAfterMsMarker(errorText, hintMs);
+			}
+			throw new Error(errorText);
 		}
 
 		if (!ANTHROPIC_MESSAGE_EVENTS.has(sse.event ?? "")) {
@@ -1560,7 +1566,24 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				delete (block as { partialJson?: string }).partialJson;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			let errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			// When a 429 SDK error carries response headers, extract the server's
+			// retry-after hint and append the canonical marker so the orchestration
+			// layer can recover the full delay.
+			if (error instanceof Error && (error as { status?: unknown }).status === 429) {
+				const sdkHeaders = (error as { headers?: Headers }).headers;
+				if (sdkHeaders instanceof Headers) {
+					const hintMs = extract429RetryAfterMs({
+						status: 429,
+						headers: sdkHeaders,
+						bodyText: errorMessage,
+					});
+					if (hintMs !== undefined) {
+						errorMessage = appendRetryAfterMsMarker(errorMessage, hintMs);
+					}
+				}
+			}
+			output.errorMessage = errorMessage;
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

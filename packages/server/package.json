@@ -34,10 +34,10 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
-		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/legacy/cli.js",
+		"dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+		"build": "tsc -p tsconfig.build.json && shx chmod +x dist/legacy/cli.js",
 		"test": "vitest --run",
-		"typecheck": "tsgo -p tsconfig.test.json",
+		"typecheck": "tsc -p tsconfig.test.json",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"keywords": [

@@ -89,4 +89,20 @@ describe("compaction logger", () => {
 		expect(entry).not.toHaveProperty("message");
 		expect(entry).not.toHaveProperty("summary");
 	});
+
+	it("Given the idle warm-up trigger When logging Then the idle_trigger event is emitted", () => {
+		const dir = "/tmp/senpi-compaction-log-idle";
+		const sink: string[] = [];
+		const logger = createCompactionLogger(dir, { sink: (line) => sink.push(line), mirrorToStderr: false });
+
+		logger.debug("idle_trigger", { contextWindow: 100_000, tokens: 80_000 });
+
+		expect(sink).toHaveLength(1);
+		expect(JSON.parse(sink[0] as string)).toMatchObject({
+			event: "idle_trigger",
+			level: "debug",
+			contextWindow: 100_000,
+			tokens: 80_000,
+		});
+	});
 });

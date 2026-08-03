@@ -15,10 +15,12 @@
  */
 import { isRetryableErrorMessage } from "@earendil-works/pi-ai";
 import { StreamDurationBudgetError, StreamIdleTimeoutError } from "../../../compaction/stream-watchdog.ts";
+import { SummarizationOverflowExhaustedError } from "./overflow-retry.ts";
 import { SummaryRequestError } from "./speculative.ts";
 
 export function isTransientSummarizationFailure(error: unknown, message: string): boolean {
 	if (error instanceof StreamDurationBudgetError || error instanceof StreamIdleTimeoutError) return true;
 	if (error instanceof SummaryRequestError) return error.transient;
+	if (error instanceof SummarizationOverflowExhaustedError) return true;
 	return isRetryableErrorMessage(message);
 }

@@ -153,10 +153,8 @@ local `tool_search` for the session.
 | search (Tier-B) | `exposure:"search"` or `auto` above the threshold | Full catalog registered, ~135 tokens resident (`tool_search` only); matches promote next turn; promotions survive resume/compaction |
 | proxy (Tier-C) | `exposure:"proxy"` only — never `auto` | One `mcp_<server>` gateway tool (`search`/`describe`/`call` with JSON-string args); cheapest, but no provider-side argument validation |
 
-Skills can carry MCP servers too (an `mcp.json` sidecar next to SKILL.md, or a
-`mcp:` frontmatter block): those servers register with zero active tools and
-reveal their `includeTools` matches when the skill loads. A name collision
-with a configured server resolves in favor of your config.
+Skills can carry MCP servers too — see
+[Skill-carried MCP servers](#skill-carried-mcp-servers).
 
 ### Server sources
 
@@ -173,6 +171,67 @@ A name collision resolves as follows: trusted user config (including an
 `enabled: false` entry) wins over extension declarations; an extension
 declaration replaces an untrusted placeholder and records a diagnostic.
 Extension-declared servers use bare names (no prefix).
+
+## Skill-carried MCP servers
+
+A skill can bundle the MCP servers it needs, so the workflow and its tools
+travel as one package. Skill-declared servers register lazily with **zero
+active tools** — they cost no prompt tokens until the skill loads. Loading the
+skill (a `/skill:<name>` command, or the model reading its SKILL.md) reveals
+the tools matching its `includeTools` globs for the rest of the session.
+
+Two declaration forms exist; the sidecar wins when both are present.
+
+**`mcp.json` sidecar** (Amp-compatible) next to SKILL.md. Servers accept the
+same fields as [`mcpServers.<name>`](#server-fields-mcpserversname), plus
+`includeTools`:
+
+```json
+{
+  "mcpServers": {
+    "exa": {
+      "command": "npx",
+      "args": ["-y", "exa-mcp-server"],
+      "env": { "EXA_API_KEY": "${EXA_API_KEY}" },
+      "includeTools": ["web_search*"]
+    }
+  }
+}
+```
+
+The `mcpServers` wrapper is optional — a bare server-name map works too.
+
+**Frontmatter `mcp:` block** in SKILL.md:
+
+````markdown
+---
+name: exa-search
+description: Web search via Exa. Use for finding current documentation.
+mcp:
+  exa:
+    command: npx
+    args: ["-y", "exa-mcp-server"]
+    env:
+      EXA_API_KEY: ${EXA_API_KEY}
+    includeTools: ["web_search*"]
+---
+````
+
+Semantics:
+
+- `includeTools` is a glob allowlist (`*` wildcards) over server-side tool
+  names; default `["*"]` (every tool). Skill servers are forced into search
+  mode with no `directTools`, so nothing is active before the skill loads
+  regardless of any declared `exposure`.
+- Several skills declaring the same server name: the first configuration
+  wins; `includeTools` union-merges across the declaring skills, and loading
+  any one of them reveals the merged matches.
+- A name collision with a configured server resolves in favor of your config,
+  so a skill never overrides a server you already trust.
+- An unreadable sidecar or frontmatter `mcp:` block is skipped with a
+  warning; the skill itself still loads.
+- There is no unload signal: tools revealed by a skill stay active until the
+  session ends.
 
 ## Resources and prompts
 

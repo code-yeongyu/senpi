@@ -63,6 +63,34 @@ describe("session.log stuck-route instrumentation", () => {
 		});
 	});
 
+	it("logs compaction_start before the decision so a wedged compaction is visible (issue #650)", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 128_000, maxTokens: 64 }],
+			settings: { compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.on("session_before_compact", () => ({
+						cancel: true,
+						rejectionCause: "cancelled-by-extension",
+						reason: "test rejection",
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("seed handled")]);
+		await harness.session.prompt("seed context ".repeat(40));
+
+		await getRunAutoCompaction(harness)("threshold", false);
+		await harness.session.waitForSettledSessionWork();
+
+		const events = readSessionLog(harness).filter(
+			(line) => line.event === "compaction_start" || line.event === "compaction_decision",
+		);
+		expect(events[0]).toMatchObject({ event: "compaction_start", reason: "threshold" });
+		expect(events.at(-1)?.event).toBe("compaction_decision");
+	});
+
 	it("logs queue_enqueue for native steer and followUp queueing", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 128_000, maxTokens: 64 }],

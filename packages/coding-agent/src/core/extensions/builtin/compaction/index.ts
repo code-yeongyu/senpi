@@ -29,6 +29,7 @@ import {
 	createRequiredCompactionFallback,
 } from "./deterministic-fallback.ts";
 import * as idle from "./idle.ts";
+import * as idleRetry from "./idle-retry.ts";
 import {
 	CLAUDE_SDK_OAUTH_COMPACT_ENTRY_TYPE,
 	collectCompactBoundaryEntries,
@@ -194,10 +195,7 @@ export default function compactionExtension(
 		| undefined;
 	const pendingMetadata = new Map<string, PendingCompactionMetadata>();
 	let logger: CompactionLogger | undefined;
-	interface CompactionContext extends ExtensionContext {
-		agentDir?: string;
-	}
-	const getLogger = (ctx: CompactionContext): CompactionLogger => (logger ??= createCompactionLogger(ctx.agentDir));
+	const getLogger = (ctx: ExtensionContext): CompactionLogger => (logger ??= createCompactionLogger(ctx.agentDir));
 
 	function getSummarizationTools(): Tool[] {
 		if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function") return [];
@@ -210,6 +208,56 @@ export default function compactionExtension(
 		} catch {
 			return [];
 		}
+	}
+
+	let idleWarmupTimer: ReturnType<typeof setTimeout> | undefined;
+	let idleWarmupAttempt = 0;
+
+	function cancelIdleWarmupRetry(): void {
+		if (idleWarmupTimer === undefined) return;
+		clearTimeout(idleWarmupTimer);
+		idleWarmupTimer = undefined;
+	}
+
+	// Fenced on the observed job: a prompt, invalidation, or newer warm-up
+	// stands this watcher down before it can start a duplicate summarization.
+	function armIdleWarmupRetry(ctx: ExtensionContext): void {
+		const job = speculativeJob;
+		if (!job) return;
+		void job.failure.then((failure) => {
+			if (failure === undefined) {
+				idleWarmupAttempt = 0;
+				return;
+			}
+			if (speculativeJob !== job) return;
+			const usage = ctx.getContextUsage();
+			const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+			const retryDecision: idleRetry.IdleWarmupRetryDecision = {
+				attempt: idleWarmupAttempt,
+				transient: isTransientSummarizationFailure(failure, failure.message),
+				isIdle: ctx.isIdle(),
+				breakerTripped: breaker.isTripped(state, Date.now()),
+				stillOverThreshold:
+					usage !== undefined &&
+					policy.shouldTriggerCompaction(usage, contextWindow, ctx.getCompactionSettings(), state.lastYield ?? undefined),
+			};
+			if (!idleRetry.shouldRetryIdleWarmup(retryDecision)) return;
+			cancelIdleWarmupRetry();
+			idleWarmupTimer = setTimeout(() => {
+				idleWarmupTimer = undefined;
+				if (speculativeJob !== job) return;
+				if (!ctx.isIdle()) return;
+				idleWarmupAttempt += 1;
+				getLogger(ctx).debug("idle_trigger", {
+					contextWindow,
+					tokens: usage?.tokens ?? 0,
+					count: idleWarmupAttempt,
+				});
+				invalidateSpeculativeCompaction(ctx);
+				startSpeculativeCompaction(ctx, idle.IDLE_COMPACTION_INSTRUCTIONS);
+				armIdleWarmupRetry(ctx);
+			}, idleRetry.IDLE_WARMUP_RETRY_DELAY_MS);
+		});
 	}
 
 	function invalidateSpeculativeCompaction(ctx: ExtensionContext): void {
@@ -602,6 +650,7 @@ export default function compactionExtension(
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		cancelIdleWarmupRetry();
 		const message = checkpointState.attachRestorationDirective(
 			restorationDirectiveState,
 			recentCheckpoint(ctx),
@@ -740,7 +789,9 @@ export default function compactionExtension(
 			})
 		) {
 			getLogger(ctx).debug("idle_trigger", { contextWindow, tokens: usage?.tokens ?? 0 });
+			idleWarmupAttempt = 0;
 			startSpeculativeCompaction(ctx, idle.IDLE_COMPACTION_INSTRUCTIONS);
+			armIdleWarmupRetry(ctx);
 		}
 	});
 

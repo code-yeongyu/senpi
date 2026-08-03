@@ -20,6 +20,8 @@ export interface FixtureOptions {
 	instructions: string | undefined;
 	port: number;
 	expireSession: boolean;
+	expireFirstToolCall: boolean;
+	requireListBeforeToolCall: boolean;
 	alwaysExpireToolCalls: boolean;
 	bearerToken: string | undefined;
 	spawnGrandchild: boolean;
@@ -48,6 +50,8 @@ export function parseFixtureOptions(argv: readonly string[]): FixtureOptions {
 		instructions: readStringFlag(argv, "--instructions"),
 		port: readIntegerFlag(argv, "--port", 0),
 		expireSession: argv.includes("--expire-session"),
+		expireFirstToolCall: argv.includes("--expire-first-tool-call"),
+		requireListBeforeToolCall: argv.includes("--require-list-before-tool-call"),
 		alwaysExpireToolCalls: argv.includes("--always-expire-tool-calls"),
 		bearerToken: readStringFlag(argv, "--bearer"),
 		spawnGrandchild: argv.includes("--spawn-grandchild"),
@@ -133,6 +137,8 @@ function validateArgs(argv: readonly string[], options: FixtureOptions): void {
 		"--binary-output-tool",
 		"--emit-list-changed",
 		"--expire-session",
+		"--expire-first-tool-call",
+		"--require-list-before-tool-call",
 		"--always-expire-tool-calls",
 		"--spawn-grandchild",
 	]);

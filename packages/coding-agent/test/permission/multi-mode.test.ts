@@ -69,6 +69,7 @@ function createMockContext(overrides: { hasUI?: boolean; ui?: ExtensionUIContext
 		hasUI: overrides.hasUI ?? true,
 		mode: overrides.hasUI === false ? "print" : "tui",
 		cwd: "/tmp/test",
+		agentDir: "/tmp/test/agent",
 		isProjectTrusted: vi.fn().mockReturnValue(true),
 		sessionManager: {} as ExtensionContext["sessionManager"],
 		modelRegistry: {} as ExtensionContext["modelRegistry"],

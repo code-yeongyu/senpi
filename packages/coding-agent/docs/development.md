@@ -57,7 +57,7 @@ Never use `__dirname` directly for package assets.
 ```bash
 npm test            # Vitest across workspaces (skips live-API; default test runner)
 ./pi-test.sh        # Launch the CLI from source via tsx for manual testing (--no-env unsets API keys)
-npm run check       # Biome + tsgo + browser-smoke + web-ui check (pre-commit equivalent)
+npm run check       # Biome + tsc + browser-smoke check (pre-commit equivalent)
 ```
 
 Live-API tests are env-gated vitest tests. Set `PI_ENABLE_LIVE_API_TESTS=1` (or a per-provider flag from `packages/ai/test/live-api-gates.ts`) plus the provider API keys, then run `npm test`.
@@ -76,7 +76,6 @@ packages/
   agent/        # @earendil-works/pi-agent-core — Agent loop and message types
   tui/          # @earendil-works/pi-tui — Terminal UI components
   coding-agent/ # @code-yeongyu/senpi — CLI and interactive mode (this package)
-  web-ui/       # @earendil-works/pi-web-ui — Lit chat components
 ```
 
 See the monorepo root [AGENTS.md](../../../AGENTS.md) for the full task → location map.

@@ -19,7 +19,6 @@ Audit changelog entries for all commits since the last release.
    - packages/ai/CHANGELOG.md
    - packages/agent/CHANGELOG.md
    - packages/tui/CHANGELOG.md
-   - packages/web-ui/CHANGELOG.md
    - packages/coding-agent/CHANGELOG.md
 
 4. **For each commit, check:**

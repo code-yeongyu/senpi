@@ -1,7 +1,7 @@
 import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { AgentToolResult, ToolRenderContext } from "../../types.ts";
 import { defineTool } from "../../types.ts";
-import { applyPatchDetailed, buildPartialFailureText } from "./apply.ts";
+import { applyPatchDetailed, buildPartialFailureText, compactApplyPatchResult } from "./apply.ts";
 import {
 	APPLY_PATCH_FREEFORM_DESCRIPTION,
 	APPLY_PATCH_JSON_DESCRIPTION,
@@ -11,7 +11,7 @@ import {
 import { normalizeApplyPatchArguments } from "./params.ts";
 import { parsePatch } from "./parser.ts";
 import { createPendingPatchUpdate } from "./preview.ts";
-import { getApplyPatchRenderState, renderPatchPreview } from "./preview-format.ts";
+import { getApplyPatchRenderState, renderPatchPreview, truncatePreview } from "./preview-format.ts";
 import { renderStreamingPatchCall } from "./streaming-render.ts";
 import type {
 	ApplyPatchPreview,
@@ -23,10 +23,27 @@ import type {
 	FreeformToolFormat,
 } from "./types.ts";
 
+export const APPLY_PATCH_RESULT_PATCH_MAX_BYTES = 16 * 1024;
+
+function retainedPatch(patch: string | undefined): string | undefined {
+	if (patch === undefined || Buffer.byteLength(patch, "utf8") > APPLY_PATCH_RESULT_PATCH_MAX_BYTES) {
+		return undefined;
+	}
+	return patch;
+}
+
 function appliedPreview(result: ApplyPatchResult): ApplyPatchPreview | undefined {
 	const files = [...result.details.appliedOperations]
 		.sort((left, right) => left.operationIndex - right.operationIndex)
-		.map((operation) => operation.preview);
+		.map((operation) => {
+			const { diff, patch, ...metadata } = operation.preview;
+			const boundedPatch = retainedPatch(patch);
+			return {
+				...metadata,
+				diff: truncatePreview(diff),
+				...(boundedPatch === undefined ? {} : { patch: boundedPatch }),
+			};
+		});
 	if (files.length === 0) return undefined;
 	return {
 		files,
@@ -136,15 +153,18 @@ export function createApplyPatchTool(variant: "freeform" | "json" = "freeform"):
 				onUpdate?.({ content: [{ type: "text", text: progressUpdate.text }], details: progressUpdate.details });
 			});
 			const resultPreview = appliedPreview(result);
+			const persistedResult = compactApplyPatchResult(result);
 			if (result.failures.length > 0) {
 				return {
 					content: [{ type: "text", text: buildPartialFailureText(result) }],
-					details: resultPreview ? { preview: resultPreview, result } : { result },
+					details: resultPreview
+						? { preview: resultPreview, result: persistedResult }
+						: { result: persistedResult },
 				};
 			}
 			return {
 				content: [{ type: "text", text: result.summaries.join("\n") }],
-				details: resultPreview ? { preview: resultPreview, result } : { result },
+				details: resultPreview ? { preview: resultPreview, result: persistedResult } : { result: persistedResult },
 			};
 		},
 		renderCall(args, theme, context: ToolRenderContext<ApplyPatchRenderState, { input: string }>) {

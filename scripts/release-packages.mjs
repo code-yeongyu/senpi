@@ -10,7 +10,6 @@ export const WORKSPACE_PACKAGES = [
 	"packages/pty/package.json",
 	"packages/senpi-codemode/package.json",
 	"packages/tui/package.json",
-	"packages/web-ui/package.json",
 ];
 
 function writeWorkspaceVersion(file, version, dryRun, log, dryRunLog) {

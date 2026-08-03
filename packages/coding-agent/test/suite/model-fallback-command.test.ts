@@ -113,6 +113,7 @@ async function context(
 		mode: choices.length > 0 ? "tui" : "print",
 		hasUI: choices.length > 0,
 		cwd: dir,
+		agentDir: dir,
 		sessionManager: SessionManager.inMemory(),
 		modelRegistry,
 		model: undefined,

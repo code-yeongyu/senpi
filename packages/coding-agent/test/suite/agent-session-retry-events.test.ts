@@ -4,6 +4,10 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, getAssistantTexts, type Harness } from "./harness.ts";
 
+const probePrimary = "faux/faux-1";
+const probeFallback = "faux/faux-2";
+const hint1258ms = "HTTP 429: rate_limit_error (retry-after-ms: 1258)";
+
 function normalizeEventOrder(events: Harness["events"]): string[] {
 	const normalized: string[] = [];
 	for (const event of events) {
@@ -63,7 +67,9 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.session.isRetrying).toBe(false);
 	});
 
-	it("uses provider-supplied retry-after delay before retrying", async () => {
+	it("hinted 429 within tier1 cap uses half-hint as first probe delay", async () => {
+		// intentionally replaced by hint-aware tier routing (plan todo 6):
+		// hint 5ms <= 300_000 tier1 cap -> first auto_retry_start delayMs is ceil(5/2) = 3
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
 		harnesses.push(harness);
 		let retryStartDelayMs: number | undefined;
@@ -87,7 +93,7 @@ describe("AgentSession retry and event characterization", () => {
 		const promptPromise = harness.session.prompt("test");
 		await sawRetryStart;
 
-		expect(retryStartDelayMs).toBe(5);
+		expect(retryStartDelayMs).toBe(3); // ceil(5/2) Tier-1 half-probe
 		expect(harness.faux.state.callCount).toBe(1);
 
 		await promptPromise;
@@ -96,7 +102,10 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.session.isRetrying).toBe(false);
 	});
 
-	it("does not wait longer than the configured provider retry delay cap", async () => {
+	it("hinted 429 within tier1 cap waits in-turn past the legacy provider delay cap", async () => {
+		// intentionally replaced by hint-aware tier routing (plan todo 6):
+		// hint 75ms <= 300_000 tier1 cap -> in-turn retry with first probe ceil(75/2) = 38ms,
+		// the legacy provider.maxRetryDelayMs gate no longer applies to 429-class failures.
 		const harness = await createHarness({
 			settings: {
 				retry: { enabled: true, maxRetries: 3, baseDelayMs: 1, provider: { maxRetryDelayMs: 50 } },
@@ -108,14 +117,14 @@ describe("AgentSession retry and event characterization", () => {
 				stopReason: "error",
 				errorMessage: "rate_limit_exceeded: retry-after-ms: 75",
 			}),
-			fauxAssistantMessage("should not run"),
+			fauxAssistantMessage("recovered"),
 		]);
 
 		await harness.session.prompt("test");
 
-		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
-		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([false]);
-		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toEqual([38]); // ceil(75/2)
+		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
+		expect(harness.faux.state.callCount).toBe(2);
 		expect(harness.session.isRetrying).toBe(false);
 	});
 
@@ -524,6 +533,103 @@ describe("AgentSession retry and event characterization", () => {
 
 		expect(harness.eventsOfType("agent_end")).toHaveLength(1);
 		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_settled");
+	});
+
+	it("delivers retry_probe_scheduled to a subscribed listener with payload intact", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: {
+					enabled: true,
+					maxRetries: 3,
+					baseDelayMs: 1,
+					hintedWaitCapMs: 8,
+					probeBackMaxMs: 3_600_000,
+					fallbackChains: { [probePrimary]: [probeFallback] },
+				},
+			},
+		});
+		harnesses.push(harness);
+
+		const probeEvents: Array<{ type: string; selector: string; atMs?: number; probeIndex?: number; ok?: boolean }> =
+			[];
+		harness.session.subscribe((event) => {
+			if (event.type === "retry_probe_scheduled") {
+				probeEvents.push({
+					type: event.type,
+					selector: event.selector,
+					atMs: event.atMs,
+					probeIndex: event.probeIndex,
+				});
+			}
+		});
+
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: hint1258ms }),
+			fauxAssistantMessage("fallback answer"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		// retry_probe_scheduled must reach the subscriber with exact payload.
+		const scheduled = harness.eventsOfType("retry_probe_scheduled");
+		expect(scheduled.length).toBeGreaterThanOrEqual(1);
+		expect(scheduled[0]).toMatchObject({
+			type: "retry_probe_scheduled",
+			selector: probePrimary,
+			probeIndex: 1,
+		});
+		expect(typeof scheduled[0].atMs).toBe("number");
+		expect(probeEvents.length).toBeGreaterThanOrEqual(1);
+		expect(probeEvents[0]).toMatchObject({
+			type: "retry_probe_scheduled",
+			selector: probePrimary,
+			probeIndex: 1,
+		});
+	});
+
+	it("delivers retry_probe_result to a subscribed listener with payload intact", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: {
+					enabled: true,
+					maxRetries: 3,
+					baseDelayMs: 1,
+					hintedWaitCapMs: 8,
+					probeBackMaxMs: 3_600_000,
+					fallbackChains: { [probePrimary]: [probeFallback] },
+				},
+			},
+		});
+		harnesses.push(harness);
+
+		const sawResult = new Promise<void>((resolve) => {
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type === "retry_probe_result") {
+					unsubscribe();
+					resolve();
+				}
+			});
+		});
+
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: hint1258ms }),
+			fauxAssistantMessage("fallback answer"),
+			fauxAssistantMessage("probe ok"),
+		]);
+
+		await harness.session.prompt("hello");
+		// Wait for the probe timer to fire and deliver a result event.
+		await sawResult;
+
+		const results = harness.eventsOfType("retry_probe_result");
+		expect(results.length).toBeGreaterThanOrEqual(1);
+		expect(results[0]).toMatchObject({
+			type: "retry_probe_result",
+			selector: probePrimary,
+		});
+		expect(typeof results[0].ok).toBe("boolean");
 	});
 
 	it("emits agent_end for aborted runs and persists the aborted assistant message", async () => {

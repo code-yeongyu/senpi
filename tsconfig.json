@@ -78,12 +78,6 @@
 			"@earendil-works/pi-pty/*": [
 				"./packages/pty/src/*"
 			],
-			"@earendil-works/pi-web-ui": [
-				"./packages/web-ui/src/index.ts"
-			],
-			"@earendil-works/pi-web-ui/*": [
-				"./packages/web-ui/src/*"
-			],
 			"@earendil-works/pi-agent-old": [
 				"./packages/agent-old/src/index.ts"
 			],
@@ -109,7 +103,6 @@
 		"packages/coding-agent/examples/**/*"
 	],
 	"exclude": [
-		"packages/web-ui/**/*",
 		"**/dist/**",
 		"packages/coding-agent/examples/extensions/gondolin/**"
 	]

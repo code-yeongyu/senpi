@@ -20,9 +20,9 @@
 	"files": ["dist", "README.md", "CHANGELOG.md"],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "tsgo -p tsconfig.build.json",
+		"build": "tsc -p tsconfig.build.json",
 		"test": "vitest --run",
-		"typecheck": "tsgo -p tsconfig.test.json",
+		"typecheck": "tsc -p tsconfig.test.json",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"keywords": ["pi", "client", "protocol", "cbor", "binary"],

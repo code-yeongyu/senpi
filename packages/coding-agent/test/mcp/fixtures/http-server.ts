@@ -10,6 +10,7 @@ interface SessionEntry {
 	transport: StreamableHTTPServerTransport;
 	expired: boolean;
 	handledRequests: number;
+	listedTools: boolean;
 }
 
 async function main(): Promise<void> {
@@ -18,6 +19,7 @@ async function main(): Promise<void> {
 	await delaySlowStart(options);
 
 	const sessions = new Map<string, SessionEntry>();
+	let firstToolCallExpired = false;
 	const httpServer = createServer(async (req, res) => {
 		try {
 			if (options.bearerToken && req.headers.authorization !== `Bearer ${options.bearerToken}`) {
@@ -38,11 +40,20 @@ async function main(): Promise<void> {
 				writeJson(res, 404, { error: "fixture session expired" });
 				return;
 			}
-			if (options.alwaysExpireToolCalls && isToolCallRequest(body)) {
-				writeJson(res, 404, { error: "fixture tool call session expired" });
-				return;
+			if (isToolCallRequest(body)) {
+				const expiresFirstCall = options.expireFirstToolCall && !firstToolCallExpired;
+				if (expiresFirstCall) firstToolCallExpired = true;
+				if (
+					options.alwaysExpireToolCalls ||
+					expiresFirstCall ||
+					(options.requireListBeforeToolCall && !entry.listedTools)
+				) {
+					writeJson(res, 404, { error: "fixture tool call session expired" });
+					return;
+				}
 			}
 			await entry.transport.handleRequest(req, res, body);
+			if (isToolListRequest(body)) entry.listedTools = true;
 			const id = entry.transport.sessionId;
 			if (id && !entry.expired) sessions.set(id, entry);
 			if (isCountedSessionRequest(body)) entry.handledRequests++;
@@ -90,7 +101,7 @@ function createOrFindSession(
 	const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => `fx-${randomUUID()}` });
 	const server = createFixtureServer(parseFixtureOptions(process.argv.slice(2)));
 	void server.connect(transport);
-	const entry: SessionEntry = { server, transport, expired: false, handledRequests: 0 };
+	const entry: SessionEntry = { server, transport, expired: false, handledRequests: 0, listedTools: false };
 	const id = transport.sessionId;
 	if (id) sessions.set(id, entry);
 	return entry;
@@ -98,6 +109,10 @@ function createOrFindSession(
 
 function isToolCallRequest(body: unknown): boolean {
 	return typeof body === "object" && body !== null && "method" in body && body.method === "tools/call";
+}
+
+function isToolListRequest(body: unknown): boolean {
+	return typeof body === "object" && body !== null && "method" in body && body.method === "tools/list";
 }
 
 function isCountedSessionRequest(body: unknown): boolean {

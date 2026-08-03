@@ -62,7 +62,7 @@ The existing todowrite extension already handles branch-scoped todo state via `S
 ## Required testing tools
 
 - **Vitest** (unit + integration) — already installed.
-- **tsgo** — already installed as `@typescript/native-preview`.
+- **tsc** — stable native compiler from `typescript@7.0.2`.
 - **Biome** — already installed at 2.3.5.
 - **ripgrep** — needed for grep-check assertions. Install if missing (`brew install ripgrep` or system package manager).
 - **tmux** — needed for manual-tmux features only.

@@ -15,6 +15,7 @@ import {
 	runKimiThinkingRecoveryScenario,
 } from "./mock-loop-kimi-thinking-recovery.mjs";
 import { runAnthropicPolicyRefusalScenario } from "./mock-loop-policy-refusal.mjs";
+import { HINT_429_SCENARIOS, isHint429Scenario, runHint429Scenario } from "./mock-loop-hint-429.mjs";
 
 const OPENAI_SERVER_ERROR_MESSAGE =
 	"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID e4026cfc-c6b6-414a-8a21-c03a6adf0336 in your message.";
@@ -66,7 +67,12 @@ const STANDARD_RETRY_SCENARIOS = {
 const POLICY_REFUSAL_SCENARIO = "anthropic-policy-refusal-fallback";
 
 export function retryScenarioNames() {
-	return [...Object.keys(STANDARD_RETRY_SCENARIOS), POLICY_REFUSAL_SCENARIO, KIMI_THINKING_RECOVERY_SCENARIO];
+	return [
+		...Object.keys(STANDARD_RETRY_SCENARIOS),
+		POLICY_REFUSAL_SCENARIO,
+		KIMI_THINKING_RECOVERY_SCENARIO,
+		...HINT_429_SCENARIOS,
+	];
 }
 
 export function isRetryScenario(name) {
@@ -81,6 +87,10 @@ export async function checkStandardRetryScenarios(checks, driveTurn) {
 }
 
 export async function runRetryScenario(scenarioName, apiName, driveTurn, evidenceSlug) {
+	if (isHint429Scenario(scenarioName)) {
+		await runHint429Scenario({ scenarioName, apiName, evidenceSlug });
+		return;
+	}
 	if (scenarioName === KIMI_THINKING_RECOVERY_SCENARIO) {
 		if (apiName !== "openai-completions") {
 			throw new Error(`${KIMI_THINKING_RECOVERY_SCENARIO} requires --api openai-completions`);

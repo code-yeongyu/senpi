@@ -1,5 +1,30 @@
 # AI Source Changes
 
+## 2026-08-03 - Hint-aware 429 retry-after propagation
+
+### What changed and why
+
+- `utils/retry-hint.ts` (new) owns the strict 429 retry-hint extractor: `extract429RetryAfterMs` plus
+  canonical marker helpers. It parses `retry-after` / `retry-after-ms` headers, `x-ratelimit-reset*` epoch
+  headers, recursive JSON `retryDelay` fields (Google RPC style), body prose ("try again in N s", "resets at
+  <ISO8601>"), and SSE `event: error` payloads, normalizing every shape to a millisecond delay or a sentinel for
+  absent hint. Explicit-zero (retry immediately) is distinct from absent-hint (no guidance), so callers never
+  conflate “server said now” with “server said nothing.”
+- `utils/provider-retry.ts` propagates the extracted hint as a structured `ProviderRetryDelayError` carrying
+  the canonical marker, instead of leaving the delay embedded in an opaque error string. Non-429 retry-loop
+  behavior (forced-eligibility, backoff) is intentionally preserved — the hint path only augments 429-class
+  errors.
+- `api/anthropic-messages.ts` and `api/openai-codex-responses.ts` emit the canonical markers at both the
+  HTTP-status boundary and the SSE in-stream `event: error` boundary, so hints survive regardless of whether
+  the 429 arrives as a status response or a mid-stream error event.
+
+### Expected merge conflict zones
+
+- MEDIUM: `utils/provider-retry.ts` around the 429 hint propagation and `ProviderRetryDelayError`.
+- MEDIUM: `api/anthropic-messages.ts` and `api/openai-codex-responses.ts` at the status/SSE error
+  boundaries.
+- LOW: `utils/retry-hint.ts` (new file) and `package.json` `./utils/*` export.
+
 ## 2026-08-01 - Final Anthropic tool-pair normalization
 
 ### What changed and why

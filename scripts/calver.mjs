@@ -38,7 +38,6 @@ const DEFAULT_PACKAGES = [
 	"@earendil-works/pi-agent-core",
 	"@code-yeongyu/senpi-server",
 	"@earendil-works/pi-tui",
-	"@earendil-works/pi-web-ui",
 ];
 
 const REGISTRY_TIMEOUT_MS = 30000;

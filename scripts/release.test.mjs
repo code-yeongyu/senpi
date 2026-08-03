@@ -36,7 +36,6 @@ describe("release package versioning", () => {
 			"packages/pty/package.json",
 			"packages/senpi-codemode/package.json",
 			"packages/tui/package.json",
-			"packages/web-ui/package.json",
 		]) {
 			writeJson(join(tempDir, file), { name: file, version: "0.0.0" });
 		}

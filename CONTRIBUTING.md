@@ -31,7 +31,7 @@ senpi periodically rebases on `upstream/main` (i.e. `badlogic/pi-mono`). To keep
 ```bash
 node scripts/devenv-setup.mjs                 # default: npm prebuilds, no Rust toolchain required
 node scripts/devenv-setup.mjs --with-native   # optional: install pinned Rust toolchain and build native Rust workspace
-npm run check     # Biome + tsgo + browser-smoke + web-ui check (pre-commit equivalent)
+npm run check     # Biome + tsc + browser-smoke check (pre-commit equivalent)
 npm test          # Vitest across workspaces (skips live-API)
 ./pi-test.sh      # Optional: live-API integration suite (env-gated; requires API keys)
 ```

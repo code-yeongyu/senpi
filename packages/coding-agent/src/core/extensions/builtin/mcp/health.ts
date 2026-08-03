@@ -8,6 +8,7 @@ import {
 	isRetriableMcpError,
 	SessionExpiredError,
 } from "./errors.ts";
+import { reconnectMcpNow } from "./reconnect.ts";
 
 export const MCP_PING_STALE_MS = 30_000;
 export const MCP_PING_TIMEOUT_MS = 2_000;
@@ -66,7 +67,7 @@ export async function withMcpSessionExpiryRetry<T>(
 	} catch (error) {
 		if (!isMcpSessionExpiredError(error)) throw error;
 		connection.markDegraded(sessionExpiredError(connection, error, true));
-		await connection.renew();
+		await reconnectMcpNow(connection);
 		try {
 			return await operation();
 		} catch (retryError) {

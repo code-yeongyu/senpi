@@ -25,6 +25,7 @@ const EVENTS = new Set([
 	"speculative_applied",
 	"speculative_stale",
 	"speculative_invalidated",
+	"idle_trigger",
 	"blocking_started",
 	"warm_consumed",
 	"core_route_generated",

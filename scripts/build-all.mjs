@@ -23,7 +23,7 @@ const SUPPORTED_PMS = new Set(["npm", "bun", "pnpm"]);
 export const BUILD_PHASES = [
 	["packages/tui", "packages/pty", "packages/ai", "packages/protocol"],
 	["packages/agent", "packages/client"],
-	["packages/coding-agent", "packages/web-ui"],
+	["packages/coding-agent"],
 	["packages/server"],
 ];
 

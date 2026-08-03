@@ -26,6 +26,7 @@
  *    startup flag and would try to load the path as a dotenv file before the script runs)
  *   node mock-loop.mjs --with-mcp-tool mcp_fx_tool_1 --tool-args '{"value":"ok"}'
  *   node mock-loop.mjs --scenario transient-recover|budget-exhaust|server-error-fallback|long-retry-after|billing-swap|anthropic-policy-refusal-fallback|kimi-xtml-thinking-recover
+ *   node mock-loop.mjs --scenario hinted-429-in-turn|no-hint-429-fast-fallback|hinted-429-probe-back
  *   node mock-loop.mjs --run "prompt" [--api ...] [--evidence SLUG]
  */
 
@@ -59,6 +60,7 @@ import {
 } from "./lib/mock-loop-support.mjs";
 import { dispatchExitCode, flagValue, parseToolArgs, positionalAfter } from "./lib/mock-loop-cli.mjs";
 import { checkStandardRetryScenarios, isRetryScenario, retryScenarioNames, runRetryScenario } from "./lib/mock-loop-retry.mjs";
+import { isHint429Scenario } from "./lib/mock-loop-hint-429.mjs";
 import { isTtsrScenario, runTtsrScenario, TTSR_SCENARIOS } from "./lib/mock-loop-ttsr.mjs";
 import {
 	appendTextToolLeakChecks,
@@ -518,7 +520,15 @@ if (argv[0] === "--self-test") {
 		process.exit(1);
 	});
 } else if (scenario) {
-	runRetryScenario(scenario, api || (scenario === "anthropic-policy-refusal-fallback" ? "anthropic-messages" : "openai-completions"), driveTurn, flagValue(argv, "--evidence")).catch((e) => {
+	// The hint-aware 429 tiers need the Anthropic boundary: only that path turns a
+	// 429 response HEADER into the canonical (retry-after-ms: N) marker the tier
+	// router reads, so these scenarios default to anthropic-messages.
+	const scenarioApi =
+		api ||
+		(scenario === "anthropic-policy-refusal-fallback" || isHint429Scenario(scenario)
+			? "anthropic-messages"
+			: "openai-completions");
+	runRetryScenario(scenario, scenarioApi, driveTurn, flagValue(argv, "--evidence")).catch((e) => {
 		process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
 		process.exit(1);
 	});
@@ -601,6 +611,7 @@ if (argv[0] === "--self-test") {
 			"  node mock-loop.mjs --with-truncated-text-tool-leak --api <anthropic-messages|openai-completions>",
 			"  node mock-loop.mjs --with-mcp-tool <tool> [--tool-args JSON]",
 			"  node mock-loop.mjs --scenario <transient-recover|budget-exhaust|server-error-fallback|long-retry-after|billing-swap|anthropic-policy-refusal-fallback|kimi-xtml-thinking-recover|ttsr-collapse|ttsr-leak> [--api <name>]",
+			"  node mock-loop.mjs --scenario <hinted-429-in-turn|no-hint-429-fast-fallback|hinted-429-probe-back>",
 			"  node mock-loop.mjs --run <prompt> [--api <name>]",
 			`  APIs: ${ALL_APIS.join(", ")}`,
 			"",

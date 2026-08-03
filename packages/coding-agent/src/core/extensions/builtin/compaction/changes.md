@@ -1,5 +1,104 @@
 # Builtin compaction extension changes
 
+## Idle warm-up retries transient failures while the session stays idle (2026-08-03)
+
+### What changed
+
+- New `idle-retry.ts`: pure retry policy (`shouldRetryIdleWarmup`, `MAX_IDLE_WARMUP_RETRIES` = 2,
+  `IDLE_WARMUP_RETRY_DELAY_MS` = 15s). A retry requires: transient failure, session still idle, breaker
+  untripped, context still over the soft threshold, attempts under the cap.
+- `index.ts` `agent_end` idle trigger arms a watcher on the warm job's `failure` promise. On a transient
+  failure it schedules a delayed re-warm that invalidates the dead job and starts a fresh speculative
+  snapshot (fresh message revision), then re-arms. Every path is fenced on the observed job reference,
+  `ctx.isIdle()`, and a `before_agent_start` cancel, so a prompt or newer warm-up stands the watcher down.
+- Retries log `idle_trigger` with `count` = attempt number.
+
+### Why
+
+- Since #561 the idle trigger only warms (apply is deferred to the next prompt). A transient summarization
+  failure (stream stall, wall-clock budget, 429) left a dead warm job for the whole idle period, and the
+  next prompt paid a full blocking summarization - or an outright failed compaction - on the user's
+  critical path (2026-08-03 incident: visible "Compacting context..." stall at message time).
+
+### Why not an extension
+
+- This IS the builtin compaction extension.
+
+### Merge-conflict zones
+
+- `index.ts` around the `agent_end` idle trigger and the `before_agent_start` entry; `idle-retry.ts` is
+  fork-owned.
+
+## Compaction log actually writes; idle_trigger enters the allowlist (2026-08-03)
+
+### What changed
+
+- `getLogger` reads the typed `ctx.agentDir` that core now provides instead of casting for a property that
+  never existed, so `logs/compaction.log` is written for the first time since the logger shipped.
+- `log.ts` EVENTS allowlist gains `"idle_trigger"`; the type union already declared it, so every idle warm-up
+  decision was silently dropped by the `EVENTS.has(event)` guard even with a live logger.
+
+### Why
+
+- The 2026-08-03 incident (session 019fc4cb, gpt-5.6-sol-fast at 63% of a 372k window) could not be diagnosed
+  from logs: no compaction.log existed anywhere on the machine and the idle trigger had no logging path at all.
+
+### Why not an extension
+
+- This IS the builtin compaction extension; the missing context field was a core seam gap fixed via the
+  public `ExtensionContext` contract (see `../../changes.md`).
+
+### Merge-conflict zones
+
+- LOW: `index.ts` `getLogger` definition; `log.ts` EVENTS set.
+
+## Bounded summarization overflow retries (2026-08-03)
+
+### What changed
+
+- New `overflow-retry.ts`: the summarization overflow-retry policy extracted from `speculative.ts`.
+  `MAX_SUMMARIZATION_OVERFLOW_RETRIES` (3), `SUMMARIZATION_OVERFLOW_TOTAL_BUDGET_MS` (240s across
+  retries), `SUMMARIZATION_INPUT_BUDGET_RATIO` (0.6 of the window), `SummarizationOverflowExhaustedError`,
+  `boundSummarizationInput` (pre-sizes the summarization input, prompt-token aware), and
+  `shrinkSummarizationInputForOverflowRetry` (halves the estimated input per retry instead of dropping
+  one history item, keeping the drop-oldest fallback when every message sits at the turn boundary).
+  The old-message pruning helpers moved here unchanged.
+- `speculative.ts` `runExtensionCompaction`: pre-sizes the summarization input before the first billed
+  attempt and bounds the overflow-retry loop by attempt cap and cumulative wall-clock budget; exhaustion
+  throws the typed error instead of looping or falling through a generic `Error`.
+- `deterministic-fallback.ts` classifies the exhaustion as `summarization-overflow-exhausted`, so
+  required compaction degrades to the deterministic fallback; `transient-failure.ts` treats it as a
+  transient lane failure so the circuit breaker records it and the next run starts pre-sized.
+
+### Why
+
+- Issue #650: on openai-codex/gpt-5.6-sol a blocking compaction wedged for ~48 minutes on
+  "Compacting...". The retry loop removed exactly one history item per FULL billed summarization attempt
+  with no attempt cap, no cumulative budget, and no session.log evidence; the summarization input itself
+  was unbudgeted (only tool results were pruned), so a session whose provider-side input exceeded the real
+  window drew an overflow verdict on every completed attempt. Observed cost: ~13.5M tokens for a
+  compaction that never landed; ESC was the only exit.
+
+### Why not an extension
+
+- This IS the builtin compaction extension; the bound belongs in the retry policy itself.
+
+### Merge-conflict zones
+
+- LOW: `speculative.ts` around `runExtensionCompaction`; `overflow-retry.ts` is fork-owned.
+
+## Session-log visibility for compaction start (2026-08-03)
+
+### What changed
+
+- `core/agent-session.ts` `_logSessionEvent` mirrors `compaction_start` (reason only) into
+  `logs/session.log`; previously only `compaction_end` was mirrored, so a wedged compaction left zero
+  log evidence for its entire lifetime (issue #650).
+
+### Merge-conflict zones
+
+- LOW: `_logSessionEvent` early-return chain.
+
 ## Lane-policy hardening: prune stand-down, live resumeMode, boundary ledger (2026-08-01)
 
 ### What changed

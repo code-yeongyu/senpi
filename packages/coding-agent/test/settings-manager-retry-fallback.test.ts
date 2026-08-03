@@ -3,6 +3,11 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CONFIG_DIR_NAME } from "../src/config.ts";
+import {
+	DEFAULT_HINTED_WAIT_CAP_MS,
+	DEFAULT_PROBE_BACK_MAX_MS,
+	resolveHintPolicySettings,
+} from "../src/core/retry-fallback/settings.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 
 const tempDirs: string[] = [];
@@ -117,5 +122,80 @@ describe("SettingsManager retry fallback settings", () => {
 			revertPolicy: "never",
 		});
 		expect(readFileSync(join(projectSettingsDir, "settings.json"), "utf-8")).toContain("anthropic/project");
+	});
+
+	it("getHintPolicySettings returns defaults when unset", () => {
+		const { agentDir, projectDir } = createPaths();
+		expect(SettingsManager.create(projectDir, agentDir).getHintPolicySettings()).toEqual({
+			hintedWaitCapMs: DEFAULT_HINTED_WAIT_CAP_MS,
+			probeBackMaxMs: DEFAULT_PROBE_BACK_MAX_MS,
+		});
+	});
+
+	it("getHintPolicySettings returns overridden values when valid", () => {
+		const { agentDir, projectDir } = createPaths();
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ retry: { hintedWaitCapMs: 120_000, probeBackMaxMs: 7_200_000 } }),
+		);
+		expect(SettingsManager.create(projectDir, agentDir).getHintPolicySettings()).toEqual({
+			hintedWaitCapMs: 120_000,
+			probeBackMaxMs: 7_200_000,
+		});
+	});
+
+	it("file round-trip falls back to defaults for malformed (string/negative); resolver guard rejects NaN directly", () => {
+		// JSON.stringify(NaN) -> null, so the file round-trip cannot exercise the
+		// NaN guard in resolveHintPolicySettings. Test it directly:
+		expect(resolveHintPolicySettings({ hintedWaitCapMs: Number.NaN, probeBackMaxMs: Number.NaN })).toEqual({
+			hintedWaitCapMs: DEFAULT_HINTED_WAIT_CAP_MS,
+			probeBackMaxMs: DEFAULT_PROBE_BACK_MAX_MS,
+		});
+
+		const { agentDir, projectDir } = createPaths();
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({
+				retry: { hintedWaitCapMs: "large", probeBackMaxMs: Number.NaN },
+			}),
+		);
+		expect(SettingsManager.create(projectDir, agentDir).getHintPolicySettings()).toEqual({
+			hintedWaitCapMs: DEFAULT_HINTED_WAIT_CAP_MS,
+			probeBackMaxMs: DEFAULT_PROBE_BACK_MAX_MS,
+		});
+
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({
+				retry: { hintedWaitCapMs: -5, probeBackMaxMs: -1 },
+			}),
+		);
+		expect(SettingsManager.create(projectDir, agentDir).getHintPolicySettings()).toEqual({
+			hintedWaitCapMs: DEFAULT_HINTED_WAIT_CAP_MS,
+			probeBackMaxMs: DEFAULT_PROBE_BACK_MAX_MS,
+		});
+	});
+
+	it("getHintPolicySettings resets BOTH to defaults when probeBackMaxMs <= hintedWaitCapMs", () => {
+		const { agentDir, projectDir } = createPaths();
+		// equal values: probeBackMaxMs === hintedWaitCapMs -> both default
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ retry: { hintedWaitCapMs: 500_000, probeBackMaxMs: 500_000 } }),
+		);
+		expect(SettingsManager.create(projectDir, agentDir).getHintPolicySettings()).toEqual({
+			hintedWaitCapMs: DEFAULT_HINTED_WAIT_CAP_MS,
+			probeBackMaxMs: DEFAULT_PROBE_BACK_MAX_MS,
+		});
+
+		// probeBackMaxMs strictly less than hintedWaitCapMs -> both default
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ retry: { hintedWaitCapMs: 600_000, probeBackMaxMs: 300_000 } }),
+		);
+		expect(SettingsManager.create(projectDir, agentDir).getHintPolicySettings()).toEqual({
+			hintedWaitCapMs: DEFAULT_HINTED_WAIT_CAP_MS,
+			probeBackMaxMs: DEFAULT_PROBE_BACK_MAX_MS,
+		});
 	});
 });

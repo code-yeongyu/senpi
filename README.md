@@ -286,7 +286,6 @@ I regularly publish my own `pi-mono` work sessions here:
 | **[senpi](packages/coding-agent)** | Interactive coding agent CLI, rebranded as senpi |
 | **[@code-yeongyu/senpi-codemode](packages/senpi-codemode)** | Source-only codemode extension package with settings, kernel, bridge, and prelude building blocks |
 | **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
-| **[@earendil-works/pi-web-ui](packages/web-ui)** | Web UI components for AI chat interfaces (private, not published) |
 
 For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
 
@@ -314,8 +313,6 @@ npm test             # Run tests (skips LLM-dependent tests without API keys)
 ./pi-test.sh         # Live-API integration suite (env-gated; requires API keys)
 npm run publish      # Publish npm workspaces, including @code-yeongyu/senpi
 ```
-
-> `npm run check` requires `npm run build` first. The web-ui package uses `tsc` which needs compiled `.d.ts` files from dependencies.
 
 ## Supply-chain hardening
 

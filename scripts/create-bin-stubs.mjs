@@ -25,7 +25,6 @@ const WORKSPACE_PACKAGES = [
 	"packages/ai",
 	"packages/coding-agent",
 	"packages/tui",
-	"packages/web-ui",
 ];
 
 const STUB_CONTENT = `#!/usr/bin/env node

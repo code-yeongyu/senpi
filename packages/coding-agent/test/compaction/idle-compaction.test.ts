@@ -223,3 +223,105 @@ describe("proactive idle compaction (agent_end wiring)", () => {
 		expect(harness.beginCompaction).not.toHaveBeenCalled();
 	});
 });
+
+// Upper bound covering IDLE_WARMUP_RETRY_DELAY_MS; the retry must fire within this window.
+const RETRY_ADVANCE_MS = 60_000;
+
+function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
+	return {
+		type: "before_agent_start",
+		prompt: "next prompt",
+		systemPrompt: "TEST AGENT SYSTEM PROMPT",
+		baseSystemPrompt: "TEST AGENT SYSTEM PROMPT",
+		systemPromptOptions: { cwd: process.cwd() },
+	};
+}
+
+describe("idle warm-up retry", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("retries a transient idle warm-up failure while the session stays idle", async () => {
+		vi.useFakeTimers();
+		const harness = createIdleHarness({});
+		const firstRequested = createDeferred();
+		const secondRequested = createDeferred();
+		harness.registration.setResponses([
+			() => {
+				firstRequested.resolve();
+				return fauxAssistantMessage("summary failure", {
+					stopReason: "error",
+					errorMessage: "provider overloaded",
+				});
+			},
+			() => {
+				secondRequested.resolve();
+				return fauxAssistantMessage("warm summary after retry");
+			},
+		]);
+
+		await harness.agentEnd(createAgentEndEvent(), harness.ctx);
+		await firstRequested.promise;
+		await vi.advanceTimersByTimeAsync(0);
+		await vi.advanceTimersByTimeAsync(RETRY_ADVANCE_MS);
+		await secondRequested.promise;
+
+		expect(harness.registration.state.callCount).toBe(2);
+		expect(harness.applyCompaction).not.toHaveBeenCalled();
+
+		await harness.beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx);
+
+		expect(harness.applyCompaction).toHaveBeenCalledTimes(1);
+		expect(harness.registration.state.callCount).toBe(2);
+	});
+
+	it("cancels the pending idle retry when a prompt arrives first", async () => {
+		vi.useFakeTimers();
+		const harness = createIdleHarness({});
+		const firstRequested = createDeferred();
+		harness.registration.setResponses([
+			() => {
+				firstRequested.resolve();
+				return fauxAssistantMessage("summary failure", {
+					stopReason: "error",
+					errorMessage: "provider overloaded",
+				});
+			},
+			() => fauxAssistantMessage("should never be requested"),
+		]);
+
+		await harness.agentEnd(createAgentEndEvent(), harness.ctx);
+		await firstRequested.promise;
+		await vi.advanceTimersByTimeAsync(0);
+
+		await harness.beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx);
+		const callsAfterPrompt = harness.registration.state.callCount;
+
+		await vi.advanceTimersByTimeAsync(RETRY_ADVANCE_MS * 3);
+
+		expect(harness.registration.state.callCount).toBe(callsAfterPrompt);
+	});
+
+	it("does not retry a non-transient idle warm-up failure", async () => {
+		vi.useFakeTimers();
+		const harness = createIdleHarness({});
+		const firstRequested = createDeferred();
+		harness.registration.setResponses([
+			() => {
+				firstRequested.resolve();
+				return fauxAssistantMessage("summary failure", {
+					stopReason: "error",
+					errorMessage: "summarization request rejected: invalid schema",
+				});
+			},
+			() => fauxAssistantMessage("should never be requested"),
+		]);
+
+		await harness.agentEnd(createAgentEndEvent(), harness.ctx);
+		await firstRequested.promise;
+		await vi.advanceTimersByTimeAsync(RETRY_ADVANCE_MS * 3);
+
+		expect(harness.registration.state.callCount).toBe(1);
+	});
+});

@@ -1,5 +1,34 @@
 # mcp Extension Changes
 
+## Session-expiry retry uses the full service reconnect (2026-08-03)
+
+### What changed
+- `health.ts` now routes a session-expired tool call through
+  `reconnectMcpNow()` before retrying, instead of renewing only the transport.
+- The retry therefore reuses the same service callback as
+  `/mcp reconnect <server>`: reset reconnect state, refresh auth, invalidate
+  catalog readiness, renew the transport, recollect the catalog, update cache
+  metadata, and restore resource subscriptions.
+- The retry remains bounded to one attempt. A renewed session that also
+  expires is still marked suspended with the existing actionable reconnect
+  guidance.
+
+### Why
+- Some MCP servers require a fresh catalog/list handshake after a new transport
+  session is initialized. Thin `connection.renew()` skipped that handshake, so
+  the retry immediately expired again and left the server suspended even
+  though the explicit `/mcp reconnect` path could recover it.
+
+### Why extension system couldn't handle this alone
+- The recovery must invoke the process-owned MCP service's private reconnect
+  callback, which owns auth refresh, catalog cache state, and subscriptions.
+  An external extension can call the exposed tool but cannot replace the
+  builtin's guarded tool-call retry boundary.
+
+### Expected merge conflict zones
+- LOW: `health.ts` session-expiry retry branch.
+- LOW: HTTP MCP fixture options and session-expiry regression tests.
+
 ## Classic reload preserves unchanged MCP servers (2026-07-26)
 
 ### What changed

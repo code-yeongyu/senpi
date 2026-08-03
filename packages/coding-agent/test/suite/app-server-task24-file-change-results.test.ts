@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { parsePatch } from "diff";
 import { afterEach, describe, expect, it } from "vitest";
-import { createApplyPatchTool } from "../../src/core/extensions/builtin/gpt-apply-patch/tool.ts";
+import {
+	APPLY_PATCH_RESULT_PATCH_MAX_BYTES,
+	createApplyPatchTool,
+} from "../../src/core/extensions/builtin/gpt-apply-patch/index.ts";
 import { createEditTool } from "../../src/core/tools/edit.ts";
 import { createWriteTool } from "../../src/core/tools/write.ts";
 import { fileChangeProjection } from "../../src/modes/app-server/threads/projection-file-changes.ts";
@@ -123,6 +126,34 @@ describe("app-server task 24 real file-change result contracts", () => {
 			{ oldFileName: "one.txt", newFileName: "one.txt" },
 			{ oldFileName: "two.txt", newFileName: "two.txt" },
 		]);
+	});
+
+	it("omits oversized apply_patch diffs from app-server projection", async () => {
+		// Given: a real add patch whose unified diff exceeds the per-file retention budget.
+		const harness = await createApplyPatchHarness();
+		const addedLines = Array.from(
+			{ length: 300 },
+			(_, index) => `line ${index + 1} with padding that makes the retained unified patch exceed its byte budget`,
+		);
+		const input = `*** Begin Patch
+*** Add File: oversized.txt
+${addedLines.map((line) => `+${line}`).join("\n")}
+*** End Patch`;
+		expect(Buffer.byteLength(input, "utf8")).toBeGreaterThan(APPLY_PATCH_RESULT_PATCH_MAX_BYTES);
+
+		// When: the patch executes and its exact result is projected.
+		const result = await executeApplyPatch(harness, input);
+		const projection = fileChangeProjection({
+			id: "apply-call",
+			name: "apply_patch",
+			args: { input },
+			status: "completed",
+			result,
+		});
+
+		// Then: the oversized patch is omitted whole instead of emitting a malformed or truncated diff.
+		expect(projection.item).toMatchObject({ changes: [] });
+		expect(projection.diff).toBe("");
 	});
 
 	it("keeps only successful unified patches from a partial apply_patch result", async () => {

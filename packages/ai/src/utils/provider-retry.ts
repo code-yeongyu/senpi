@@ -1,5 +1,11 @@
+import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "./retry-hint.ts";
+
 const DEFAULT_MAX_RETRY_DELAY_MS = 60_000;
 const DIGITALOCEAN_STREAM_FAILURE_MESSAGE = "Upstream error from DigitalOcean: stream failed";
+
+export interface ProviderRetryDelayError extends Error {
+	readonly retryAfterMs: number;
+}
 
 interface ProviderRetryOptions {
 	maxRetries?: number;
@@ -44,25 +50,23 @@ function validateServerRetryDelayMs(
 ): number {
 	const maxDelayMs = maxRetryDelayMs ?? DEFAULT_MAX_RETRY_DELAY_MS;
 	if (maxDelayMs > 0 && delayMs > maxDelayMs) {
-		throw new Error(
-			`Server requested ${Math.ceil(delayMs / 1000)}s retry delay (max: ${Math.ceil(maxDelayMs / 1000)}s). ${providerErrorMessage}`,
-		);
+		const message = `Server requested ${Math.ceil(delayMs / 1000)}s retry delay (max: ${Math.ceil(maxDelayMs / 1000)}s). ${providerErrorMessage}`;
+		const error: ProviderRetryDelayError = Object.assign(new Error(appendRetryAfterMsMarker(message, delayMs)), {
+			retryAfterMs: delayMs,
+		});
+		throw error;
 	}
 	return delayMs;
 }
 
 function getRetryDelayMs(error: ProviderError, retryIndex: number, maxRetryDelayMs: number | undefined): number {
-	const retryAfterMs = error.headers?.get("retry-after-ms");
-	if (retryAfterMs) {
-		const value = Number.parseFloat(retryAfterMs);
-		if (!Number.isNaN(value)) return validateServerRetryDelayMs(value, maxRetryDelayMs, error.message);
-	}
-
-	const retryAfter = error.headers?.get("retry-after");
-	if (retryAfter) {
-		const seconds = Number.parseFloat(retryAfter);
-		const delayMs = Number.isNaN(seconds) ? Date.parse(retryAfter) - Date.now() : seconds * 1000;
-		return validateServerRetryDelayMs(delayMs, maxRetryDelayMs, error.message);
+	const hintMs = extract429RetryAfterMs({
+		status: 429,
+		headers: error.headers,
+		bodyText: "",
+	});
+	if (hintMs !== undefined) {
+		return validateServerRetryDelayMs(hintMs, maxRetryDelayMs, error.message);
 	}
 
 	const exponentialDelay = Math.min(0.5 * 2 ** retryIndex, 8) * 1000;

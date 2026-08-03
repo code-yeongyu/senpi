@@ -94,6 +94,7 @@ async function createMonitor(
 		cwd: execCtx?.cwd,
 		...(input.persistent ? {} : { timeoutMs: resolveTimeoutMs(input.timeout_ms) }),
 	});
+	ctx.onMonitorRearmed?.(id);
 	registry.register({ id, description: input.description, runtime, filter });
 	return textResult(`Monitor started with ID: ${id}`, { details: { bash_id: id, monitor: true } });
 }

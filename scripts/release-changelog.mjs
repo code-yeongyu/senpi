@@ -7,7 +7,6 @@ export const CHANGELOGS = [
 	"packages/senpi-codemode/CHANGELOG.md",
 	"packages/server/CHANGELOG.md",
 	"packages/tui/CHANGELOG.md",
-	"packages/web-ui/CHANGELOG.md",
 ];
 
 export const DEFAULT_UNRELEASED_SUBSECTIONS = [

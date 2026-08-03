@@ -1,10 +1,14 @@
 import { type CompactionPreparation, type CompactionResult, estimateContextTokens } from "../../../compaction/index.ts";
 import { StreamDurationBudgetError, StreamIdleTimeoutError } from "../../../compaction/stream-watchdog.ts";
 import { buildSessionContext, type CompactionEntry, type SessionEntry } from "../../../session-manager.ts";
+import { SummarizationOverflowExhaustedError } from "./overflow-retry.ts";
 import { SummaryRequestError } from "./speculative.ts";
 import { capUtf8Bytes } from "./task-intent.ts";
 
-export type RequiredCompactionFallbackFailure = "summarization-timeout" | "upstream-stream-truncated";
+export type RequiredCompactionFallbackFailure =
+	| "summarization-timeout"
+	| "upstream-stream-truncated"
+	| "summarization-overflow-exhausted";
 
 interface RecoveryMetadata {
 	taskIntent?: string;
@@ -27,6 +31,9 @@ export function classifyRequiredCompactionFallbackFailure(
 	}
 	if (error instanceof SummaryRequestError && error.transient && error.failureKind === "upstream-stream-truncated") {
 		return "upstream-stream-truncated";
+	}
+	if (error instanceof SummarizationOverflowExhaustedError) {
+		return "summarization-overflow-exhausted";
 	}
 	return undefined;
 }

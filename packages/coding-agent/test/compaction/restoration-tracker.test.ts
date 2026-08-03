@@ -79,6 +79,7 @@ function createGateExtensionContext(settings: CompactionSettings): ExtensionCont
 			notify: vi.fn(),
 		}) as ExtensionContext["ui"],
 		cwd: process.cwd(),
+		agentDir: "/tmp/senpi-test-agent",
 		isProjectTrusted: () => true,
 		sessionManager,
 		modelRegistry: {} as ExtensionContext["modelRegistry"],

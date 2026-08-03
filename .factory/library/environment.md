@@ -11,7 +11,7 @@ Environment variables, external dependencies, and platform notes for this missio
 
 - **Node.js:** >= 20.6.0 (required by `packages/coding-agent`).
 - **Package manager:** npm workspaces.
-- **TypeScript compiler:** `tsgo` (`@typescript/native-preview`), via `npm run build` / `npm run check`. The `coding-agent` package uses tsgo exclusively. Web-ui uses vanilla `tsc`, but it is not in this mission's scope.
+- **TypeScript compiler:** `tsc` (stable native compiler from `typescript@7.0.2`), via `npm run build` / `npm run check`. The `coding-agent` package uses tsc exclusively.
 - **Test runner:** Vitest, invoked via `npx tsx ../../node_modules/vitest/dist/cli.js --run` from package root.
 - **Lint/format:** Biome 2.3.5, configured in `biome.json` at the repo root. Enforces 3-space indent (tabs in source) and 120-char lines.
 
@@ -40,5 +40,5 @@ Environment variables, external dependencies, and platform notes for this missio
 - **`.pi/` directory:** the repo uses `.pi/` (not `.pi-agent/` or `.senpi/`) as the project config dir. Existing files there: `permissions-approved.jsonl`, `git/`, `npm/`, `prompts/`, `settings.json`.
 - **Fork remotes:** `origin = code-yeongyu/senpi-mono`, `upstream = badlogic/pi-mono`. Workers should only push to `origin` and must NEVER push to `upstream`.
 - **Lockstep versioning:** All packages share the same version. This mission does not bump versions — that's a release-time concern.
-- **`tsgo` is strict:** `any`, `@ts-ignore`, `@ts-expect-error` are forbidden. Narrow types explicitly via type guards instead.
+- **`tsc` is strict:** `any`, `@ts-ignore`, `@ts-expect-error` are forbidden. Narrow types explicitly via type guards instead.
 - **Build side effect:** `npm run build` regenerates `packages/ai/src/models.generated.ts` via `packages/ai/scripts/generate-models.ts`, so coding-agent-only validation can still dirty that unrelated tracked file. Restore it before committing if your feature did not intentionally change AI model metadata.

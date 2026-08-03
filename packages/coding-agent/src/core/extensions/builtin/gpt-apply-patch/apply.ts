@@ -44,6 +44,19 @@ function extractErrorCode(error: unknown): string | undefined {
 	return undefined;
 }
 
+export function compactApplyPatchResult(result: ApplyPatchResult): ApplyPatchResult {
+	return {
+		...result,
+		details: {
+			...result.details,
+			appliedOperations: result.details.appliedOperations.map(({ operationIndex, preview }) => {
+				const { diff: _diff, patch: _patch, ...metadata } = preview;
+				return { operationIndex, preview: { ...metadata, diff: "" } };
+			}),
+		},
+	};
+}
+
 async function writeFileAtomic(
 	absPath: string,
 	content: string,
@@ -224,7 +237,7 @@ export async function applyPatch(cwd: string, patchText: string): Promise<string
 				recoveryInstructions: createRecoveryInstructions({ appliedFiles, failures }),
 				details: { fuzz: 0, appliedOperations },
 			};
-			throw new ApplyPatchError(message, result);
+			throw new ApplyPatchError(message, compactApplyPatchResult(result));
 		}
 	}
 

@@ -6,9 +6,13 @@ type FallbackLifecycleFixture = {
 	isInitialized: true;
 	footer: { invalidate: () => void };
 	fallbackAppliedBeforeRetryStart: boolean;
+	activeStatusIndicatorKind: string | undefined;
+	ui: { requestRender: () => void };
 	showWarning: (message: string) => void;
 	showStatus: (message: string) => void;
 	showError: (message: string) => void;
+	showStatusIndicator: (indicator: { kind: string }) => void;
+	clearStatusIndicator: (kind: string) => void;
 	setExtensionStatus: (key: string, text: string | undefined) => void;
 };
 
@@ -21,9 +25,17 @@ function createFixture(): FallbackLifecycleFixture {
 		isInitialized: true,
 		footer: { invalidate: vi.fn() },
 		fallbackAppliedBeforeRetryStart: false,
+		activeStatusIndicatorKind: "working",
+		ui: { requestRender: vi.fn() },
 		showWarning: vi.fn(),
 		showStatus: vi.fn(),
 		showError: vi.fn(),
+		showStatusIndicator(indicator): void {
+			this.activeStatusIndicatorKind = indicator.kind;
+		},
+		clearStatusIndicator(kind): void {
+			if (this.activeStatusIndicatorKind === kind) this.activeStatusIndicatorKind = undefined;
+		},
 		setExtensionStatus: vi.fn(),
 	};
 }
@@ -53,6 +65,32 @@ describe("InteractiveMode fallback lifecycle", () => {
 		expect(withoutChain.showWarning).toHaveBeenCalledWith(
 			"Server fallback claude-opus-5 -> claude-opus-4-6 aborted; no chain configured (set one with /fallback)",
 		);
+	});
+
+	it("keeps the working indicator active while rendering background probe events", async () => {
+		const fixture = createFixture();
+		const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+
+		try {
+			await handleEvent.call(fixture, {
+				type: "retry_probe_scheduled",
+				selector: "faux/faux-1",
+				atMs: 6000,
+				probeIndex: 2,
+			});
+			expect(fixture.activeStatusIndicatorKind).toBe("working");
+			expect(fixture.showStatus).toHaveBeenCalledWith("Probing faux/faux-1 at +5s (#2)");
+
+			await handleEvent.call(fixture, {
+				type: "retry_probe_result",
+				selector: "faux/faux-1",
+				ok: true,
+			});
+			expect(fixture.activeStatusIndicatorKind).toBe("working");
+			expect(fixture.showStatus).toHaveBeenCalledWith("Recovered faux/faux-1 - will restore on next turn");
+		} finally {
+			now.mockRestore();
+		}
 	});
 
 	it("renders fallback notices and maintains the fallback footer status", async () => {
@@ -91,6 +129,53 @@ describe("InteractiveMode fallback lifecycle", () => {
 		expect(fixture.setExtensionStatus).toHaveBeenNthCalledWith(2, "fallback", undefined);
 		expect(fixture.setExtensionStatus).toHaveBeenNthCalledWith(3, "fallback", undefined);
 	});
+});
+
+it("renders a failure status line when retry_probe_result has ok === false", async () => {
+	const fixture = createFixture();
+	const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+
+	try {
+		await handleEvent.call(fixture, {
+			type: "retry_probe_scheduled",
+			selector: "faux/faux-1",
+			atMs: 6000,
+			probeIndex: 2,
+		});
+		await handleEvent.call(fixture, {
+			type: "retry_probe_result",
+			selector: "faux/faux-1",
+			ok: false,
+		});
+		expect(fixture.showStatus).toHaveBeenLastCalledWith("Probe for faux/faux-1 failed - staying on fallback");
+	} finally {
+		now.mockRestore();
+	}
+});
+
+it("renders an auth-unavailable skip line when errorMessage is auth-unavailable", async () => {
+	const fixture = createFixture();
+	const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+
+	try {
+		await handleEvent.call(fixture, {
+			type: "retry_probe_scheduled",
+			selector: "faux/faux-1",
+			atMs: 6000,
+			probeIndex: 2,
+		});
+		await handleEvent.call(fixture, {
+			type: "retry_probe_result",
+			selector: "faux/faux-1",
+			ok: false,
+			errorMessage: "auth-unavailable",
+		});
+		expect(fixture.showStatus).toHaveBeenLastCalledWith(
+			"Probe for faux/faux-1 skipped - auth unavailable, staying on fallback",
+		);
+	} finally {
+		now.mockRestore();
+	}
 });
 
 describe("shouldShowRetryIndicator", () => {

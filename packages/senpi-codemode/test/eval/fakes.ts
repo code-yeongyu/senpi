@@ -234,6 +234,7 @@ export function fakeExtensionContext(): ExtensionContext {
 		mode: "print",
 		hasUI: false,
 		cwd: process.cwd(),
+		agentDir: "/tmp/senpi-test-agent",
 		sessionManager: Object.create(null),
 		modelRegistry: Object.create(null),
 		model: undefined,

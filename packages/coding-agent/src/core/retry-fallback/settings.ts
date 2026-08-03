@@ -17,6 +17,8 @@ export interface RetrySettings {
 	fallbackChains?: Record<string, string[]>;
 	fallbackRevertPolicy?: "cooldown-expiry" | "never";
 	abortServerSideFallback?: boolean;
+	hintedWaitCapMs?: number;
+	probeBackMaxMs?: number;
 }
 
 export interface ResolvedRetryFallbackSettings {
@@ -71,4 +73,29 @@ export function resolveRetryFallbackSettings(settings: RetrySettings | undefined
 
 export function resolveAbortServerSideFallback(settings: RetrySettings | undefined): boolean {
 	return typeof settings?.abortServerSideFallback === "boolean" ? settings.abortServerSideFallback : true;
+}
+
+export const DEFAULT_HINTED_WAIT_CAP_MS = 300_000;
+export const DEFAULT_PROBE_BACK_MAX_MS = 3_600_000;
+
+export interface ResolvedHintPolicySettings {
+	hintedWaitCapMs: number;
+	probeBackMaxMs: number;
+}
+
+export function resolveHintPolicySettings(settings: RetrySettings | undefined): ResolvedHintPolicySettings {
+	const hintedWaitCapMs =
+		typeof settings?.hintedWaitCapMs === "number" && settings.hintedWaitCapMs >= 0
+			? settings.hintedWaitCapMs
+			: DEFAULT_HINTED_WAIT_CAP_MS;
+	const probeBackMaxMs =
+		typeof settings?.probeBackMaxMs === "number" && settings.probeBackMaxMs >= 0
+			? settings.probeBackMaxMs
+			: DEFAULT_PROBE_BACK_MAX_MS;
+
+	if (probeBackMaxMs <= hintedWaitCapMs) {
+		return { hintedWaitCapMs: DEFAULT_HINTED_WAIT_CAP_MS, probeBackMaxMs: DEFAULT_PROBE_BACK_MAX_MS };
+	}
+
+	return { hintedWaitCapMs, probeBackMaxMs };
 }

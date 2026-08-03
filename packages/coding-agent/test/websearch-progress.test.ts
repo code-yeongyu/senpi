@@ -19,6 +19,7 @@ function minimalToolContext(): ExtensionContext {
 		mode: "print",
 		hasUI: false,
 		cwd: process.cwd(),
+		agentDir: "/tmp/senpi-test-agent",
 		sessionManager: Object.create(null) as ExtensionContext["sessionManager"],
 		modelRegistry: ModelRegistry.inMemory(AuthStorage.inMemory()),
 		model: undefined,

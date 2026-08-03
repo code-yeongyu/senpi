@@ -6,10 +6,6 @@
 	},
 	"onCreateCommand": "bash -lc 'sudo apt-get update -y && sudo apt-get install -y tmux ripgrep jq || true'",
 	"postCreateCommand": "node scripts/devenv-setup.mjs && npm ls @modelcontextprotocol/sdk --workspace @code-yeongyu/senpi && printf '\\nOptional native Rust setup: node scripts/devenv-setup.mjs --with-native\\n'",
-	"forwardPorts": [5173],
-	"portsAttributes": {
-		"5173": { "label": "web-ui dev server", "onAutoForward": "notify" }
-	},
 	"remoteEnv": {
 		"NODE_ENV": "development",
 		"PI_TELEMETRY": "0"

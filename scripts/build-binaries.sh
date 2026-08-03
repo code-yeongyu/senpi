@@ -267,6 +267,53 @@ for platform in "${PLATFORMS[@]}"; do
     fi
 done
 
+# Host-platform runtime smoke test
+host_os=$(uname -s)
+host_arch=$(uname -m)
+host_target=""
+case "$host_os:$host_arch" in
+    Darwin:arm64) host_target="darwin-arm64" ;;
+    Darwin:x86_64) host_target="darwin-x64" ;;
+    Linux:x86_64) host_target="linux-x64" ;;
+    Linux:aarch64) host_target="linux-arm64" ;;
+    MINGW*:x86_64 | MSYS*:x86_64 | CYGWIN*:x86_64 | Windows_NT:x86_64) host_target="windows-x64" ;;
+    MINGW*:arm64 | MSYS*:arm64 | CYGWIN*:arm64 | Windows_NT:arm64) host_target="windows-arm64" ;;
+esac
+
+if [[ -n "$host_target" ]]; then
+    host_built=false
+    for platform in "${PLATFORMS[@]}"; do
+        if [[ "$platform" == "$host_target" ]]; then
+            host_built=true
+            break
+        fi
+    done
+
+    if [[ "$host_built" == true ]]; then
+        echo "==> Running binary smoke test for $host_target..."
+        if [[ "$host_target" == windows-* ]]; then
+            host_binary="$OUTPUT_DIR/$host_target/pi.exe"
+        else
+            host_binary="$OUTPUT_DIR/$host_target/pi"
+        fi
+        if [[ ! -x "$host_binary" ]]; then
+            echo "ERROR: host binary missing: $host_binary" >&2
+            exit 1
+        fi
+        set +e
+        smoke_output=$("$host_binary" --help)
+        smoke_exit=$?
+        set -e
+        if [[ $smoke_exit -ne 0 ]] || [[ -z "$smoke_output" ]]; then
+            echo "ERROR: binary smoke failed for $host_target" >&2
+            exit 1
+        fi
+        echo "binary smoke OK"
+    else
+        echo "binary smoke skipped (host $host_target not built)"
+    fi
+fi
+
 echo ""
 echo "==> Build complete!"
 echo "Archives available in $OUTPUT_DIR/"

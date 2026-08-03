@@ -11,9 +11,11 @@ import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import {
+	type ResolvedHintPolicySettings,
 	type ResolvedRetryFallbackSettings,
 	type RetrySettings as RetrySettingsConfig,
 	resolveAbortServerSideFallback,
+	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
 
@@ -1010,6 +1012,10 @@ export class SettingsManager {
 
 	getRetryFallbackSettings(): ResolvedRetryFallbackSettings {
 		return resolveRetryFallbackSettings(this.settings.retry);
+	}
+
+	getHintPolicySettings(): ResolvedHintPolicySettings {
+		return resolveHintPolicySettings(this.settings.retry);
 	}
 
 	setFallbackChain(key: string, entries: string[]): void {

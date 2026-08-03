@@ -19,7 +19,6 @@ import {
 	type CompactionResult,
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
-	estimateTokens,
 	prepareCompaction,
 } from "../../../compaction/index.ts";
 import {
@@ -31,6 +30,15 @@ import { convertToLlm } from "../../../messages.ts";
 import type { ModelRegistry } from "../../../model-registry.ts";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";
 import type { ApplyCompactionResult, ContextUsage, ProviderRequestPreparation } from "../../types.ts";
+import {
+	allowOverflowRetry,
+	boundSummarizationInput,
+	estimateTotalTokens,
+	pruneOldMessagesToBudget,
+	SUMMARIZATION_INPUT_BUDGET_RATIO,
+	SummarizationOverflowExhaustedError,
+	shrinkSummarizationInputForOverflowRetry,
+} from "./overflow-retry.ts";
 import { computeEffectiveKeepRecentTokens, computeEffectiveThreshold } from "./policy.ts";
 import { buildPrompt, type MergedCompactionPromptVariant } from "./prompts.ts";
 import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
@@ -39,7 +47,6 @@ import * as truncation from "./tool-truncation.ts";
 import { computeStructuralYield } from "./yield.ts";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
-const COMPACTION_BUDGET_RATIO = 0.6;
 const EMERGENCY_CONTEXT_TARGET_RATIO = 0.95;
 // Hysteresis: the emergency prune engages at EMERGENCY_CONTEXT_TARGET_RATIO but only
 // releases once the context falls below this lower ratio. A single threshold makes a
@@ -51,7 +58,6 @@ const SUMMARY_TOKEN_HEADROOM = 32_768;
 const SUMMARY_CONTEXT_WINDOW_RESERVE_RATIO = 0.5;
 const SUMMARY_SCHEMA = "senpi.compaction.summary.v1";
 type CompactionProgressCallback = (delta: string) => void;
-type PruneStep = { messages: AgentMessage[]; removedTokens: number };
 
 export interface SpeculativeCompactionContext {
 	model: Model<any> | undefined;
@@ -281,13 +287,13 @@ async function generateSummaryMessage(options: {
 	}
 }
 
-function pruneToolResults(messages: AgentMessage[], contextWindow: number): AgentMessage[] {
+function pruneToolResults(messages: AgentMessage[], contextWindow: number, budgetRatio: number): AgentMessage[] {
 	const toolResults = messages
 		.filter((message) => message.role === "toolResult")
 		.map((message) => ({ content: message.content, details: undefined }));
 	if (toolResults.length === 0) return messages;
 
-	const prunedResults = truncation.prePruneToolOutputsToBudget(toolResults, contextWindow * COMPACTION_BUDGET_RATIO);
+	const prunedResults = truncation.prePruneToolOutputsToBudget(toolResults, contextWindow * budgetRatio);
 	let resultIndex = 0;
 	return messages.map((message) => {
 		if (message.role !== "toolResult") return message;
@@ -311,93 +317,6 @@ export function truncateContextMessages(messages: AgentMessage[]): AgentMessage[
 		resultIndex++;
 		return truncated ? { ...message, content: truncated.content } : message;
 	});
-}
-
-function getToolCallIds(message: AgentMessage): Set<string> {
-	const ids = new Set<string>();
-	if (message.role !== "assistant") return ids;
-	for (const block of message.content) {
-		if (block.type === "toolCall") ids.add(block.id);
-	}
-	return ids;
-}
-
-function findLastUserLikeIndex(messages: AgentMessage[]): number {
-	for (let index = messages.length - 1; index >= 0; index--) {
-		const role = messages[index]?.role;
-		if (role === "user" || role === "bashExecution") return index;
-	}
-	return messages.length;
-}
-
-function removeAssistantToolPair(messages: AgentMessage[], assistantIndex: number): PruneStep {
-	const ids = getToolCallIds(messages[assistantIndex]);
-	let removedTokens = 0;
-	const pruned = messages.filter((message, index) => {
-		const remove = index === assistantIndex || (message.role === "toolResult" && ids.has(message.toolCallId));
-		if (remove) removedTokens += estimateTokens(message);
-		return !remove;
-	});
-	return { messages: pruned, removedTokens };
-}
-
-function removeFirstOldToolPair(messages: AgentMessage[], boundaryIndex: number): PruneStep | undefined {
-	for (let index = 0; index < boundaryIndex; index++) {
-		const message = messages[index];
-		if (!message) continue;
-		if (message.role === "assistant" && getToolCallIds(message).size > 0)
-			return removeAssistantToolPair(messages, index);
-		if (message.role === "toolResult") {
-			return {
-				messages: messages.filter((_message, candidateIndex) => candidateIndex !== index),
-				removedTokens: estimateTokens(message),
-			};
-		}
-	}
-	return undefined;
-}
-
-function removeFirstOldMessage(messages: AgentMessage[], boundaryIndex: number): PruneStep | undefined {
-	for (let index = 0; index < boundaryIndex; index++) {
-		const message = messages[index];
-		if (!message || message.role === "toolResult") continue;
-		if (message.role === "assistant" && getToolCallIds(message).size > 0)
-			return removeAssistantToolPair(messages, index);
-		return {
-			messages: messages.filter((_candidate, candidateIndex) => candidateIndex !== index),
-			removedTokens: estimateTokens(message),
-		};
-	}
-	return undefined;
-}
-
-function pruneOldMessagesToBudget(messages: AgentMessage[], targetTokens: number): AgentMessage[] {
-	let pruned = messages;
-	let total = estimateTotalTokens(pruned);
-	while (total > targetTokens) {
-		const boundaryIndex = findLastUserLikeIndex(pruned);
-		const next = removeFirstOldToolPair(pruned, boundaryIndex) ?? removeFirstOldMessage(pruned, boundaryIndex);
-		if (!next || next.messages.length === pruned.length) break;
-		pruned = next.messages;
-		total -= next.removedTokens;
-	}
-	return pruned;
-}
-
-function removeOldestHistoryItemForOverflowRetry(messages: AgentMessage[]): AgentMessage[] | undefined {
-	if (messages.length <= 1) return undefined;
-	const boundaryIndex = findLastUserLikeIndex(messages);
-	return (
-		removeFirstOldToolPair(messages, boundaryIndex)?.messages ??
-		removeFirstOldMessage(messages, boundaryIndex)?.messages ??
-		(messages.length > 1 ? messages.slice(1) : undefined)
-	);
-}
-
-function estimateTotalTokens(messages: AgentMessage[]): number {
-	let total = 0;
-	for (const message of messages) total += estimateTokens(message);
-	return total;
 }
 
 /**
@@ -434,7 +353,9 @@ export function hardLimitEmergencyPrune(
 	if (!engaged) {
 		return { messages, needsAggressiveCompaction: false };
 	}
-	const noLlmPruned = truncateContextMessages(pruneToolResults(messages, contextWindow));
+	const noLlmPruned = truncateContextMessages(
+		pruneToolResults(messages, contextWindow, SUMMARIZATION_INPUT_BUDGET_RATIO),
+	);
 	if (estimateTotalTokens(noLlmPruned) <= targetTokens) {
 		return { messages: noLlmPruned, needsAggressiveCompaction: false };
 	}
@@ -519,16 +440,24 @@ export async function runExtensionCompaction(
 		throw new SummaryGenerationError("auth", `summarization credentials unavailable: ${detail}`);
 	}
 
-	let messages = pruneToolResults(
-		[...snapshot.preparation.messagesToSummarize, ...snapshot.preparation.turnPrefixMessages],
-		snapshot.contextWindow,
-	);
 	const prompt = buildPrompt({
 		variant: snapshot.promptVariant,
 		previousSummary: snapshot.preparation.previousSummary,
 		taskIntent: resolveInheritedTaskIntent(snapshot.branchEntries ?? []),
 		customInstructions: snapshot.customInstructions,
 	});
+	const promptTokens = approxTokens(prompt.user);
+	let messages = boundSummarizationInput(
+		pruneToolResults(
+			[...snapshot.preparation.messagesToSummarize, ...snapshot.preparation.turnPrefixMessages],
+			snapshot.contextWindow,
+			SUMMARIZATION_INPUT_BUDGET_RATIO,
+		),
+		snapshot.contextWindow,
+		promptTokens,
+	);
+	const overflowRetryStartMs = Date.now();
+	let overflowAttempts = 0;
 
 	while (true) {
 		if (signal?.aborted) return undefined;
@@ -548,9 +477,13 @@ export async function runExtensionCompaction(
 		if (!response) return undefined;
 
 		if (isAssistantMessage(response) && isContextOverflow(response, snapshot.contextWindow)) {
-			const retryMessages = removeOldestHistoryItemForOverflowRetry(messages);
-			if (!retryMessages || retryMessages.length === messages.length) {
-				break;
+			overflowAttempts++;
+			const elapsedMs = Date.now() - overflowRetryStartMs;
+			const retryMessages = allowOverflowRetry(overflowAttempts, elapsedMs)
+				? shrinkSummarizationInputForOverflowRetry(messages, snapshot.contextWindow, promptTokens)
+				: undefined;
+			if (!retryMessages) {
+				throw new SummarizationOverflowExhaustedError(overflowAttempts, elapsedMs);
 			}
 			messages = retryMessages;
 			continue;
@@ -610,8 +543,6 @@ export async function runExtensionCompaction(
 			},
 		};
 	}
-
-	throw new Error("Compaction summary request exceeded the context window after retrying with a smaller input");
 }
 
 export async function applyGeneratedCompaction(

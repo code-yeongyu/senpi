@@ -480,7 +480,7 @@ describe("speculative compaction", () => {
 
 	it("retries a compaction summary request with a smaller input after a context-window failure", async () => {
 		// Given
-		const context = createContext();
+		const context = createContext({ shrink: true });
 		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
 		context.registration.setResponses([
 			fauxAssistantMessage("", {
@@ -501,8 +501,15 @@ describe("speculative compaction", () => {
 
 	it("keeps pruning and retrying after repeated compaction summary context-window failures", async () => {
 		// Given
-		const context = createContext();
+		const context = createContext({ shrink: true });
 		context.getCompactionSettings = () => ({ ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1 });
+		for (let index = 0; index < 6; index++) {
+			context.sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: `retry-marker-${index} ${"z".repeat(1_600)}` }],
+				timestamp: Date.now() - 900 + index,
+			});
+		}
 		context.sessionManager.appendMessage({
 			role: "user",
 			content: [{ type: "text", text: "kept recent user" }],
@@ -528,6 +535,8 @@ describe("speculative compaction", () => {
 
 		// Then
 		expect(result?.summary).toBe("eventually compacted");
+		const requestMessages = context.registration.getCallLog().map((entry) => entry.context.messages.length);
+		expect(requestMessages).toHaveLength(3);
 		const requestTexts = context.registration.getCallLog().map((entry) => {
 			const firstMessage = entry.context.messages[0];
 			if (!firstMessage) return "";
@@ -538,13 +547,15 @@ describe("speculative compaction", () => {
 				.map((part) => part.text)
 				.join("\n");
 		});
-		expect(requestTexts).toHaveLength(3);
 		expect(requestTexts[0]).toContain("first user");
 		expect(requestTexts[1]).not.toContain("first user");
-		expect(requestTexts[1]).toContain("first assistant");
-		expect(requestTexts[2]).not.toContain("first assistant");
-		expect(requestTexts[2]).toContain("second user");
-		expect(requestTexts[2]).not.toContain("kept recent user");
+		expect(requestTexts[1]).not.toContain("second user");
+		expect(requestTexts[1]).toContain("retry-marker-0");
+		expect(requestTexts[2]).not.toContain("retry-marker-0");
+		expect(requestMessages[1]).toBeLessThan(requestMessages[0] as number);
+		expect(requestMessages[2]).toBeLessThan(requestMessages[1] as number);
+		const lastRequestText = JSON.stringify(context.registration.getCallLog()[2]?.context.messages);
+		expect(lastRequestText).not.toContain("kept recent user");
 	});
 
 	it("sends the conversation as native messages with a trailing summarization instruction", async () => {

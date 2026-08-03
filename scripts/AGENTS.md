@@ -77,12 +77,6 @@ required `dependencies` in the registry manifest — so bundling the publish run
 (linux-x64, per `publish-npm.yml`) made `npm install @code-yeongyu/senpi` fail with
 EBADPLATFORM everywhere else. They remain optional registry deps, resolved per install target.
 
-## check-mcp-docs.test.mjs
-
-Reads `config-schema.ts` as raw text and extracts object-literal keys rather than importing
-TypeScript. Compares extracted field names against `### \`field\`` headings in `docs/mcp.md`.
-Schema drift fails CI with no TS toolchain dependency.
-
 ## Anti-patterns
 
 - Don't hardcode `npm` as the child process manager. Use the detected PM from `build-all.mjs`.

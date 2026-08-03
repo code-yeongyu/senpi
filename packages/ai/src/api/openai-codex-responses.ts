@@ -47,6 +47,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { extractOpenAiCodexAccountId } from "../utils/openai-codex-auth.ts";
+import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry-hint.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import {
@@ -157,33 +158,6 @@ function isRetryableError(status: number, errorText: string): boolean {
 		return true;
 	}
 	return /rate.?limit|overloaded|service.?unavailable|upstream.?connect|connection.?refused/i.test(errorText);
-}
-
-function getRetryAfterDelayMs(headers: Headers): number | undefined {
-	const retryAfterMs = headers.get("retry-after-ms");
-	if (retryAfterMs !== null) {
-		const millis = Number(retryAfterMs);
-		if (Number.isFinite(millis)) {
-			return Math.max(0, millis);
-		}
-	}
-
-	const retryAfter = headers.get("retry-after");
-	if (!retryAfter) {
-		return undefined;
-	}
-
-	const seconds = Number(retryAfter);
-	if (Number.isFinite(seconds)) {
-		return Math.max(0, seconds * 1000);
-	}
-
-	const date = Date.parse(retryAfter);
-	if (!Number.isNaN(date)) {
-		return Math.max(0, date - Date.now());
-	}
-
-	return undefined;
 }
 
 class RetryDelayExceededError extends Error {}
@@ -450,7 +424,14 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 
 					const errorText = await response.text();
 					if (attempt < maxRetries && isRetryableError(response.status, errorText)) {
-						const retryAfterDelayMs = getRetryAfterDelayMs(response.headers);
+						// Force 429 eligibility with empty body so the extractor checks
+						// only retry-after / retry-after-ms headers (matching the old
+						// getRetryAfterDelayMs behavior for all retryable statuses).
+						const retryAfterDelayMs = extract429RetryAfterMs({
+							status: 429,
+							headers: response.headers,
+							bodyText: "",
+						});
 						const delayMs =
 							retryAfterDelayMs === undefined
 								? BASE_DELAY_MS * 2 ** attempt
@@ -466,7 +447,18 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						statusText: response.statusText,
 					});
 					const info = await parseErrorResponse(fakeResponse);
-					throw new Error(info.friendlyMessage || info.message);
+					let errorMessage = info.friendlyMessage || info.message;
+					if (response.status === 429) {
+						const hintMs = extract429RetryAfterMs({
+							status: response.status,
+							headers: response.headers,
+							bodyText: errorText,
+						});
+						if (hintMs !== undefined) {
+							errorMessage = appendRetryAfterMsMarker(errorMessage, hintMs);
+						}
+					}
+					throw new Error(errorMessage);
 				} catch (error) {
 					if (error instanceof Error) {
 						if (error.name === "AbortError" || error.message === "Request was aborted") {
@@ -784,7 +776,12 @@ async function* mapCodexEvents(events: AsyncIterable<Record<string, unknown>>): 
 		if (type === "error") {
 			const code = getCodexEventErrorCode(event);
 			const message = getCodexEventErrorMessage(event);
-			throw new CodexApiError(`Codex error: ${message || code || JSON.stringify(event)}`, {
+			let errorText = `Codex error: ${message || code || JSON.stringify(event)}`;
+			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
+			if (hintMs !== undefined) {
+				errorText = appendRetryAfterMsMarker(errorText, hintMs);
+			}
+			throw new CodexApiError(errorText, {
 				code: code || undefined,
 				payload: event,
 			});
@@ -793,7 +790,12 @@ async function* mapCodexEvents(events: AsyncIterable<Record<string, unknown>>): 
 		if (type === "response.failed") {
 			const code = getCodexEventErrorCode(event);
 			const message = getCodexEventErrorMessage(event);
-			throw new CodexApiError(message || "Codex response failed", { code, payload: event });
+			let errorText = message || "Codex response failed";
+			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
+			if (hintMs !== undefined) {
+				errorText = appendRetryAfterMsMarker(errorText, hintMs);
+			}
+			throw new CodexApiError(errorText, { code, payload: event });
 		}
 
 		if (type === "response.done" || type === "response.completed" || type === "response.incomplete") {

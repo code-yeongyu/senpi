@@ -40,7 +40,6 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | `packages/agent/` | Browser-safe agent loop plus optional Node harness |
 | `packages/coding-agent/` | `senpi` CLI, sessions, extensions, RPC, interactive mode |
 | `packages/tui/` | Differential terminal renderer and editor primitives |
-| `packages/web-ui/` | Lit browser components, storage, sandboxed artifacts |
 | `packages/server/` | Experimental daemon, IPC, RPC-process supervision |
 | `packages/pty/` | TypeScript PTY loader, sessions, registry, pipe fallback |
 | `packages/senpi-codemode/` | Source-only persistent-kernel `eval` extension |
@@ -75,7 +74,7 @@ Agent state -> packages/agent/src/agent-loop.ts
                                          |
 CLI/session -> packages/coding-agent/src/core -> interactive | print | RPC
                                          |
-Terminal UI -> packages/tui     Browser UI -> packages/web-ui
+Terminal UI -> packages/tui
 Persistent terminals -> packages/pty -> crates/senpi-pty
 ```
 
@@ -128,6 +127,6 @@ Persistent terminals -> packages/pty -> crates/senpi-pty
 
 ## RELEASE NOTES
 
-- Releases use CalVer and lockstep-version ten packages listed in `scripts/release-packages.mjs`.
+- Releases use CalVer and lockstep-version nine packages listed in `scripts/release-packages.mjs`.
 - Release only from clean `main` after changelog audit and local release smoke tests. `scripts/release.mjs` owns versioning, generated artifacts, checks, commits, tag, and push.
 - Never rerun the release script after its tag is pushed; failed publishing is retried from the existing tag workflow.

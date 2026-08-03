@@ -22,7 +22,7 @@ function nextWorkspaceVersion(currentVersion, nextVersion) {
 function synchronizedDependencyVersion(dependencyName, currentSpecifier, versionMap) {
 	// Fork-specific: `file:`, `link:`, `workspace:` and `npm:` specifiers point at a
 	// location rather than a published version, so rewriting them to a bare version
-	// breaks local installs (for example `packages/web-ui/example`).
+	// breaks local installs.
 	if (currentSpecifier.includes(":")) return null;
 	const directVersion = versionMap.get(dependencyName);
 	return directVersion ? nextWorkspaceVersion(currentSpecifier, directVersion) : null;

@@ -1,5 +1,31 @@
 # terminal builtin extension — fork surface
 
+## Fresh monitors reset a spent wake budget (2026-08-03)
+
+### What changed
+
+- Creating a monitor now resets the session-global monitor notification pause before
+  the new runtime can emit output or its completion summary.
+- A regression drives a real monitor after a prior watch exhausts the wake budget and
+  proves the fresh monitor's completion still triggers a model-visible wake.
+
+### Why
+
+- The wake budget intentionally pauses noisy watches, but that pause previously leaked
+  into later monitors. A newly requested watch could run and disappear from the TUI
+  without delivering its completion, leaving deferred goal work looking stopped.
+
+### Why this cannot be expressed externally
+
+- The fix depends on the built-in monitor tool's ordering relative to the
+  session-scoped notifier and monitor registry.
+
+### Expected merge conflict zones
+
+- `tools/monitor.ts` around monitor creation and `tools/context.ts` around notifier
+  callbacks.
+- `test/suite/terminal-monitor-notify.test.ts` around wake-budget coverage.
+
 ## Backfill: Anthropic availability monitoring (2026-08-01)
 
 ### What changed

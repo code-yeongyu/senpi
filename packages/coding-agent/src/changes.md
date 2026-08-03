@@ -1,3 +1,24 @@
+## Compact completed apply_patch result details (2026-08-02)
+
+### What changed
+
+- Completed `apply_patch` previews retain the TUI's bounded diff and retain a complete unified patch only when it is at most 16 KiB per file; larger patch bodies are omitted rather than persisted or emitted as malformed truncated diffs.
+- Nested applied-operation previews are rebuilt as lightweight metadata without full diff or patch bodies, including the fail-fast `ApplyPatchError` recovery result.
+- App-server file-change projection keeps its complete unified-diff contract for retained patches within the 16 KiB budget; oversized patches do not produce a file-change diff from persisted result details.
+
+### Why
+
+- Full old/new file contents in unified patches dominated completed tool-result details after diff compaction, so large add, delete, and update operations still scaled with source size in session files and resident memory.
+- App-server projection and session persistence consume the same completed result object with no extension-scoped post-projection persistence seam. A fixed budget is therefore required to bound retention without storing a second live-only copy; omitting oversized patches avoids sending invalid partial unified diffs.
+
+### Why this cannot be expressed externally
+
+- The payload and its source-backed unified patches are constructed inside the builtin `apply_patch` tool before app-server projection and session persistence.
+
+### Expected merge conflict zones
+
+- LOW: `core/extensions/builtin/gpt-apply-patch/apply.ts` and `tool.ts` completed-result construction.
+
 ## Backfill: injected app-server turns (2026-08-01)
 
 ### What changed

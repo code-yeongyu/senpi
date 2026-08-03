@@ -37,7 +37,7 @@ Attach is **single-flight**: `attachPromise` memoizes the in-flight `attachSessi
 ## TESTS AND DOCS
 
 Tests: `packages/coding-agent/test/mcp/` (40+ test files by feature).
-Docs contract: `packages/coding-agent/docs/mcp.md` + `scripts/check-mcp-docs.test.mjs` (root scripts dir). The doc-check test fails if schema fields diverge from prose.
+Docs: `packages/coding-agent/docs/mcp.md` — keep prose aligned with `config-schema.ts` fields.
 
 ## ANTI-PATTERNS
 

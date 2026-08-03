@@ -18,9 +18,9 @@
 		"build:npm": "node scripts/build-all.mjs --pm npm",
 		"build:bun": "node scripts/build-all.mjs --pm bun",
 		"build:pnpm": "node scripts/build-all.mjs --pm pnpm",
-		"dev": "concurrently --names \"ai,agent,coding-agent,web-ui,tui\" --prefix-colors \"cyan,yellow,red,green,magenta\" \"cd packages/ai && npm run dev\" \"cd packages/agent && npm run dev\" \"cd packages/coding-agent && npm run dev\" \"cd packages/web-ui && npm run dev\" \"cd packages/tui && npm run dev\"",
-		"dev:tsc": "concurrently --names \"ai,web-ui\" --prefix-colors \"cyan,green\" \"cd packages/ai && npm run dev:tsc\" \"cd packages/web-ui && npm run dev:tsc\"",
-		"check": "biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && node scripts/check-browser-smoke.mjs && node scripts/run-web-ui-check.mjs",
+		"dev": "concurrently --names \"ai,agent,coding-agent,tui\" --prefix-colors \"cyan,yellow,red,magenta\" \"cd packages/ai && npm run dev\" \"cd packages/agent && npm run dev\" \"cd packages/coding-agent && npm run dev\" \"cd packages/tui && npm run dev\"",
+		"dev:tsc": "npm --prefix packages/ai run dev:tsc",
+		"check": "biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsc --noEmit && node scripts/check-browser-smoke.mjs",
 		"check:browser-smoke": "node scripts/check-browser-smoke.mjs",
 		"check:pinned-deps": "node scripts/check-pinned-deps.mjs",
 		"check:shrinkwrap": "node scripts/generate-coding-agent-shrinkwrap.mjs --check",
@@ -56,13 +56,14 @@
 		"@anthropic-ai/sandbox-runtime": "0.0.67",
 		"@biomejs/biome": "2.5.5",
 		"@types/node": "26.1.1",
-		"@typescript/native-preview": "7.0.0-dev.20260707.2",
+		"@typescript/native": "npm:typescript@7.0.2",
+		"@typescript/typescript6": "6.0.2",
 		"esbuild": "0.28.1",
 		"husky": "9.1.7",
 		"jiti": "2.7.0",
 		"shx": "0.4.0",
 		"tsx": "4.23.1",
-		"typescript": "6.0.3"
+		"typescript": "7.0.2"
 	},
 	"engines": {
 		"node": ">=24.0.0"

@@ -163,4 +163,48 @@ describe("RPC fallback events", () => {
 			lastError: "misleading_success_output",
 		});
 	});
+
+	it("forwards retry_probe_scheduled over RPC JSONL (opaque passthrough)", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: {
+					enabled: true,
+					maxRetries: 3,
+					baseDelayMs: 1,
+					hintedWaitCapMs: 8,
+					probeBackMaxMs: 3_600_000,
+					fallbackChains: { [primary]: [fallback] },
+				},
+			},
+		});
+		harnesses.push(harness);
+
+		const chunks: string[] = [];
+		const probeScheduled = eventSignal("retry_probe_scheduled");
+		const handler = createHandler(harness, chunks, probeScheduled);
+		handlers.push(handler);
+		await handler.ready;
+
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "HTTP 429: rate_limit_error (retry-after-ms: 1258)",
+			}),
+			fauxAssistantMessage("fallback answer"),
+		]);
+
+		await handler.handleInputLine(JSON.stringify({ id: "probe-scheduled", type: "prompt", message: "hello" }));
+		await probeScheduled.wait(5_000);
+
+		const events = jsonLines(chunks);
+		const scheduled = events.filter((e) => isEventType(e, "retry_probe_scheduled"));
+		expect(scheduled.length).toBeGreaterThanOrEqual(1);
+		expect(scheduled[0]).toMatchObject({
+			type: "retry_probe_scheduled",
+			selector: primary,
+			probeIndex: 1,
+		});
+		expect(typeof (scheduled[0] as Record<string, unknown>).atMs).toBe("number");
+	});
 });

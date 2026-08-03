@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { TerminalManager } from "../../src/core/extensions/builtin/terminal/manager.ts";
+import { MonitorRegistry } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
 import { TERMINAL_PROMPT_SECTION } from "../../src/core/extensions/builtin/terminal/prompt.ts";
 import type { TerminalToolContext } from "../../src/core/extensions/builtin/terminal/tools/context.ts";
 import { createMonitorTool } from "../../src/core/extensions/builtin/terminal/tools/monitor.ts";
@@ -86,6 +88,52 @@ describe("terminal monitor event delivery", () => {
 		scheduler.advanceBy(2000);
 		expect(sent).toHaveLength(6);
 		expect(sent[5]?.message.content).toContain("resumed");
+	});
+
+	it("delivers completion from a new monitor after the prior wake budget paused", async () => {
+		const { notifier, scheduler, sent } = createNotifier({ settings: { wakeBudget: 1 } });
+		notifier.notifyEvent(line("bash_prior", "prior", "budget exhausted"));
+		scheduler.advanceBy(2000);
+		expect(sent).toHaveLength(1);
+
+		const manager = new TerminalManager();
+		const savedForcePipe = process.env.SENPI_PTY_FORCE_PIPE;
+		process.env.SENPI_PTY_FORCE_PIPE = "1";
+		try {
+			let resolveSummary: (() => void) | undefined;
+			const summary = new Promise<void>((resolve) => {
+				resolveSummary = resolve;
+			});
+			const registry = new MonitorRegistry((event) => {
+				notifier.notifyEvent(event);
+				if (event.type === "summary") resolveSummary?.();
+			});
+			const ctx = {
+				manager,
+				monitorRegistry: registry,
+				onMonitorRearmed: (id: string) => notifier.rearm(id),
+				cwd: process.cwd(),
+				defaultCols: 120,
+				defaultRows: 40,
+				getEnv: () => ({ ...process.env }),
+			} satisfies TerminalToolContext;
+
+			await createMonitorTool(ctx).execute("fresh-monitor", {
+				description: "fresh completion",
+				command: "printf 'done\\n'",
+			});
+			await summary;
+			scheduler.advanceBy(2000);
+
+			expect(sent).toHaveLength(2);
+			expect(sent[1]?.message.content).toContain("Monitor event(fresh completion): done");
+			expect(sent[1]?.message.content).toContain("watcher completed (exit code 0)");
+			expect(sent[1]?.options).toMatchObject({ triggerTurn: true });
+		} finally {
+			await manager.teardown();
+			if (savedForcePipe === undefined) delete process.env.SENPI_PTY_FORCE_PIPE;
+			else process.env.SENPI_PTY_FORCE_PIPE = savedForcePipe;
+		}
 	});
 
 	it("never injects monitor events in off, print, or json modes", () => {

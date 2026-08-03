@@ -23,7 +23,7 @@ export {
 export { seekSequence } from "./seek-sequence.ts";
 export { StreamingPatchParser } from "./streaming-parser.ts";
 export { extractPatchedPaths, normalizePatchText, stripHeredoc } from "./text.ts";
-export { createApplyPatchTool } from "./tool.ts";
+export { APPLY_PATCH_RESULT_PATCH_MAX_BYTES, createApplyPatchTool } from "./tool.ts";
 export type {
 	ApplyPatchExtensionAPI,
 	ApplyPatchFailure,

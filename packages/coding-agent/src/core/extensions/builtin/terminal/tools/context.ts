@@ -26,7 +26,7 @@ export interface TerminalToolContext {
 	readonly monitorRegistry?: MonitorRegistry;
 	/** Receives filtered monitor line and terminal-summary events. */
 	readonly onMonitorEvent?: (event: MonitorEvent) => void;
-	/** Resets session-global wake-budget delivery after a monitor was explicitly rearmed. */
+	/** Resets session-global wake-budget delivery for a fresh or explicitly rearmed monitor. */
 	readonly onMonitorRearmed?: (id: string) => void;
 }
 

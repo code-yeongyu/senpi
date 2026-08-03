@@ -37,14 +37,12 @@ describe("build-all", () => {
 			"packages/agent",
 			"packages/client",
 			"packages/coding-agent",
-			"packages/web-ui",
 			"packages/server",
 		]);
 		assert.ok(index("packages/agent") > index("packages/ai"));
 		assert.ok(index("packages/client") > index("packages/protocol"));
 		assert.ok(index("packages/coding-agent") > index("packages/client"));
 		assert.ok(index("packages/coding-agent") > index("packages/agent"));
-		assert.ok(index("packages/web-ui") > index("packages/agent"));
 		assert.ok(index("packages/server") > index("packages/coding-agent"));
 	});
 
@@ -109,7 +107,7 @@ describe("build-all", () => {
 		// Then
 		assert.equal(scripts.prebuild, undefined);
 		assert.doesNotMatch(buildScript, /generate-models/);
-		assert.match(buildScript, /^tsgo -p tsconfig\.build\.json/);
+		assert.match(buildScript, /^tsc -p tsconfig\.build\.json/);
 		assert.match(buildScript, /shx chmod \+x dist\/cli\.js/);
 		assert.match(buildScript, /shx cp -r src\/providers\/data dist\/providers\/data$/);
 		assert.match(scripts["generate-models"], /generate-models\.ts/);

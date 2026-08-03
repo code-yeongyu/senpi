@@ -35,10 +35,6 @@ structures are asserted by tests; prose-only rewording can still break them.
 
 ## Validators
 
-- `scripts/check-mcp-docs.test.mjs`: Parses `config-schema.ts` key names as raw text and
-  checks that every field has a `### \`field\`` heading in `mcp.md`. Runs under
-  `npm run test:scripts`. Schema additions without a matching doc heading break CI.
-
 - `packages/coding-agent/test/qa/app-server/task20-doc-example-check.ts`: Spins up a live
   app-server process and validates that JSON examples in `app-server.md` match actual server
   behavior. Prose edits to `app-server.md` that change JSON shapes will fail this test.
@@ -64,7 +60,6 @@ Consistent names: CLI binary is `senpi`, config directory is `.senpi`, npm packa
 ## Anti-patterns
 
 - No new `.md` file without a `docs.json` entry.
-- Don't edit protocol page prose without checking whether `task20-doc-example-check.ts` or
-  `check-mcp-docs.test.mjs` would break.
+- Don't edit protocol page prose without checking whether `task20-doc-example-check.ts` would break.
 - Don't copy claims from upstream Pi docs without verifying they apply to the senpi fork.
 - Don't embed bearer tokens, session IDs, or raw API keys in example output.

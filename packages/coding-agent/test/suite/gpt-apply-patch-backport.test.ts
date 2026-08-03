@@ -57,8 +57,9 @@ describe("gpt-apply-patch backported behavior", () => {
 		harnesses.push(harness);
 		await writeFile(path.join(harness.tempDir, "ok.txt"), "before\n", "utf-8");
 
-		await expect(
-			applyPatch(
+		let caught: unknown;
+		try {
+			await applyPatch(
 				harness.tempDir,
 				`*** Begin Patch
 *** Update File: ok.txt
@@ -70,8 +71,25 @@ describe("gpt-apply-patch backported behavior", () => {
 -x
 +y
 *** End Patch`,
-			),
-		).rejects.toBeInstanceOf(ApplyPatchError);
+			);
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBeInstanceOf(ApplyPatchError);
+		if (!(caught instanceof ApplyPatchError)) throw new Error("Expected ApplyPatchError");
+		expect(caught.result.details.appliedOperations).toEqual([
+			{
+				operationIndex: 0,
+				preview: {
+					filePath: "ok.txt",
+					operation: "update",
+					diff: "",
+					added: 1,
+					removed: 1,
+				},
+			},
+		]);
 	});
 
 	it("tracks fuzz tiers in detailed result", async () => {
