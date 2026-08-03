@@ -1,5 +1,86 @@
 # Builtin compaction extension changes
 
+## Lane-policy hardening: prune stand-down, live resumeMode, boundary ledger (2026-08-01)
+
+### What changed
+
+- `hardLimitEmergencyPrune` now stands down when `lanePolicy.disablesSenpiCompaction(ctx)` is true, matching the
+  reduction-lane gate: destructively pruning the provider context near the hard limit would break the resident
+  claude-sdk-oauth session's continuity the same way the gated reduction lane would.
+- `disablesSenpiCompaction` keeps the per-cwd `resumeMode` cache (the intended contract pinned by
+  `lane-policy.test.ts`); a mid-session mode switch takes effect on the next cwd or session.
+- SDK `compact_boundary` messages are converted into ledger entries in the lane-policy collector so native
+  compactions are recorded instead of discarded.
+
+### Why
+
+Cubic review on PR #637: the prune path defeated the claude-sdk-oauth stand-down, and native compact_boundary
+events never reached the ledger. (The cached-resumeMode concern was assessed against the pinned per-cwd contract
+and left as intended.)
+
+### Why not an extension
+
+These are corrections to the lane-policy gate itself, not new behavior an extension could provide.
+
+### Merge-conflict zones
+
+- `index.ts` (prune gate), `lane-policy.ts` (resumeMode read, boundary collection).
+
+## SDK-native lane opt-out + one-shot checkpoint directive (2026-08-01)
+
+### What changed
+
+- New `lane-policy.ts`: provider-scoped opt-out for the `claude-sdk-oauth` main lane. When that provider is active and
+  its `resumeMode` is not the `off` escape hatch, senpi's auto-compaction and context reduction stand down: the
+  `before_agent_start` triggers (hard limit, threshold, speculative), the `agent_end` idle warm-up, the `turn_end`
+  degradation recovery, the `model_select` warm-up, the degradation monitor, and the `context` reduction pass all skip,
+  and a requested `session_before_compact` is cancelled with the reason "the Claude Agent SDK owns compaction for this
+  session". `index.ts` only gained call-site guards and `context-reduction.ts` was not touched at all: the lane verdict
+  feeds its existing `shouldApplyContextReduction({ isProviderNativeCompactionPath })` gate. All net-new logic lives in
+  `lane-policy.ts`.
+- `lane-policy.ts` also owns the mirrored SDK compaction boundary: a `compact_boundary` system message transported as the
+  `claude_sdk_oauth_compact_boundary` assistant-message diagnostic is appended to the senpi session as a
+  `claude-sdk-oauth-compact` custom entry (schema `senpi.claude-sdk-oauth.compact-boundary.v1`, storing the SDK
+  `compact_metadata` verbatim) from the `message_end` hook, so SDK-native compactions stay visible in UI/history.
+
+### INTENTIONAL cross-lane change: the checkpoint restoration directive is now one-shot
+
+- **Before**: `before_agent_start` appended the restoration directive to the *system prompt* on EVERY request while the
+  latest agent checkpoint was younger than 60s. N requests inside that window carried N copies, and the base system
+  prompt was not byte-identical while the window stayed open (prompt-cache churn, repeated directive).
+- **After**: the system prompt is never rewritten. The directive rides the existing one-shot hidden post-compact
+  restoration message (`compaction.post-compact-restoration`, `display: false`) exactly once per checkpoint; when no
+  restoration payload is pending, the directive is delivered as that message on its own. A checkpoint older than 60s
+  still delivers nothing.
+- This applies to ALL provider lanes, not just `claude-sdk-oauth`, and is a deliberate semantic change rather than a
+  behavior-preserving refactor. Both sides are pinned:
+  `test/compaction/checkpoint-directive-characterization.test.ts` states each pre-change behavior next to the assertion
+  that replaced it (the pre-change run was captured green before the change), and
+  `test/compaction-checkpoint-oneshot.test.ts` pins the one-shot delivery.
+
+### Why
+
+- The `claude-sdk-oauth` lane keeps one resident SDK session per senpi session and the Claude Agent SDK runs its own
+  native auto-compaction over that transcript. Senpi compacting on top of it would rewrite a history senpi no longer
+  owns. The opt-out is conditional on residency: with `resumeMode: "off"` senpi flattens its own history into every
+  request, so its compaction must stay fully active there.
+- Repeating the checkpoint directive on every request inside the 60s window bought nothing over delivering it once with
+  the restoration payload, and it mutated the system prompt (the most cache-sensitive prefix) for up to a minute.
+
+### Scope
+
+- Senpi compaction remains FULLY active for every non-`claude-sdk-oauth` provider; that is pinned by the
+  characterization block in `test/claude-sdk-oauth-compaction-alignment.test.ts`.
+- Coverage: `test/compaction/lane-policy.test.ts`, `test/claude-sdk-oauth-compaction-alignment.test.ts`,
+  `test/compaction-checkpoint-oneshot.test.ts`, `test/compaction/checkpoint-directive-characterization.test.ts`.
+
+### Expected merge conflict zones
+
+- MEDIUM: `index.ts` around the `before_agent_start`, `context`, `agent_end`, `turn_end`, `model_select`, `message_end`
+  and `session_before_compact` hooks (call-site guards only).
+- LOW: `checkpoint-state.ts` around `injectRestorationDirective` (kept for its legacy overloads) and the new
+  `attachRestorationDirective`.
+
 ## Blocking compaction route guards (2026-08-01)
 
 ### What changed

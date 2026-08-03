@@ -133,6 +133,7 @@ import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
+import { ContinuityNoticeTracker } from "./components/continuity-notice.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
@@ -496,6 +497,7 @@ export class InteractiveMode {
 	private lastEditorText = "";
 	private lastInputWasPaste = false;
 	private sessionLogger: SessionLogger | undefined;
+	private readonly continuityNotices = new ContinuityNoticeTracker();
 	private readonly turnWorkingTip = new WorkingTipCache();
 	private hookStatusContainer: Container;
 	private defaultEditor: CustomEditor;
@@ -3774,6 +3776,7 @@ export class InteractiveMode {
 						this.streamingMessage.errorMessage = errorMessage;
 					}
 					this.streamingComponent.updateContent(this.streamingMessage, false);
+					this.addContinuityNotice(this.streamingMessage);
 
 					if (this.streamingMessage.stopReason === "aborted" || this.streamingMessage.stopReason === "error") {
 						if (!errorMessage) {
@@ -4323,6 +4326,13 @@ export class InteractiveMode {
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.clearPendingTools();
+		// The rebuilt transcript re-derives continuity notices from persisted
+		// messages, so the tracker's suppression state must not survive the
+		// rebuild (or a session switch) — otherwise the first disabled notice
+		// would silently disappear from the rebuilt transcript.
+		// Optional-chained: renderSessionItems is exercised by tests with a
+		// minimal `this` that has no tracker instance.
+		this.continuityNotices?.reset?.();
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 		// Cache-miss notices are not persisted; re-derive them from the full entry
 		// list and re-inject them after the assistant messages that paid for them.
@@ -4369,6 +4379,10 @@ export class InteractiveMode {
 					const miss = cacheMisses.get(message);
 					if (miss) this.addCacheMissNotice(miss);
 				}
+				// Continuity notices are not persisted either; re-inject them while
+				// rendering persisted assistant messages the same way the live
+				// streaming path does. Optional-chained for minimal-`this` tests.
+				this.addContinuityNotice?.(message);
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
 				const component = renderedPendingTools.get(message.toolCallId);
@@ -4412,6 +4426,14 @@ export class InteractiveMode {
 	 * significant cache miss. Only states observable facts: the miss itself,
 	 * a model switch, or an idle gap past the cache TTL.
 	 */
+	/** Muted single-line notice for degraded session continuity; healthy turns stay silent. */
+	private addContinuityNotice(message: AssistantMessage): void {
+		const notice = this.continuityNotices.noticeFor(message);
+		if (!notice) return;
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(notice, 1, 0));
+	}
+
 	private maybeShowCacheMissNotice(message: AssistantMessage): void {
 		if (!this.settingsManager.getShowCacheMissNotices()) return;
 

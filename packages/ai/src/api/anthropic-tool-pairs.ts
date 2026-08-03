@@ -100,8 +100,8 @@ function removeOrphanResults(message: MessageParam & { role: "user"; content: Co
 	return { message: { ...message, content }, changed: true };
 }
 
-/** Repairs Anthropic client tool_use/tool_result adjacency at the final provider boundary. */
-export function sanitizeAnthropicPayload(payload: unknown): unknown {
+/** Repairs Anthropic client tool_use/tool_result adjacency without mutating the input payload. */
+export function sanitizeAnthropicToolPairs(payload: unknown): unknown {
 	if (!hasMessagesArray(payload)) return payload;
 
 	let changed = false;

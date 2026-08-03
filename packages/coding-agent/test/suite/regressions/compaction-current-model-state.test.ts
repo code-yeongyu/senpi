@@ -4,10 +4,20 @@ import { afterEach, describe, expect, it } from "vitest";
 import compactionExtension from "../../../src/core/extensions/builtin/compaction/index.ts";
 import { createHarness, getAssistantTexts, getMessageText, type Harness } from "../harness.ts";
 
+/**
+ * The compaction extension delivers its post-compact restoration payload as a
+ * hidden custom message, which reaches the provider as a trailing user message
+ * after the real prompt. Skip it so response routing still keys off the prompt.
+ */
+const HIDDEN_RESTORATION_PREFIX = "[restore checkpointed session agent configuration after compaction]";
+
 function lastUserText(context: Context): string {
 	for (let index = context.messages.length - 1; index >= 0; index--) {
 		const message = context.messages[index];
-		if (message?.role === "user") return getMessageText(message);
+		if (message?.role !== "user") continue;
+		const text = getMessageText(message);
+		if (text.startsWith(HIDDEN_RESTORATION_PREFIX)) continue;
+		return text;
 	}
 	return "";
 }

@@ -29,6 +29,12 @@ import {
 	createRequiredCompactionFallback,
 } from "./deterministic-fallback.ts";
 import * as idle from "./idle.ts";
+import {
+	CLAUDE_SDK_OAUTH_COMPACT_ENTRY_TYPE,
+	collectCompactBoundaryEntries,
+	createCompactionLanePolicy,
+	SDK_NATIVE_LANE_REJECTION_REASON,
+} from "./lane-policy.ts";
 import { type CompactionLogger, createCompactionLogger } from "./log.ts";
 import {
 	markOpenAiRemoteReplayBoundary,
@@ -170,6 +176,8 @@ export default function compactionExtension(
 	remoteCompactionDependencies: OpenAiRemoteCompactionDependencies = {},
 ): void {
 	let state: CompactionExtensionState = createInitialState();
+	const lanePolicy = createCompactionLanePolicy();
+	const restorationDirectiveState = checkpointState.createRestorationDirectiveState();
 	const emergencyPruneLatch = createEmergencyPruneLatch();
 	const degradationState = createDegradationMonitorState();
 	const restorationState = state.restoration ?? restoration.createRestorationTrackerState();
@@ -411,6 +419,9 @@ export default function compactionExtension(
 
 	pi.on("session_before_compact", async (event: SessionBeforeCompactEvent, ctx) => {
 		invalidateSpeculativeCompaction(ctx);
+		if (lanePolicy.disablesSenpiCompaction(ctx)) {
+			return { cancel: true, reason: SDK_NATIVE_LANE_REJECTION_REASON };
+		}
 		if (cap.shouldRejectByCap(state, { reason: event.reason }).cancel) {
 			getLogger(ctx).debug("skip_cap", { reason: event.reason, count: state.acceptedThisTurn });
 			return {
@@ -501,6 +512,10 @@ export default function compactionExtension(
 	});
 
 	pi.on("model_select", (event, ctx) => {
+		if (lanePolicy.disablesSenpiCompaction(ctx)) {
+			invalidateSpeculativeCompaction(ctx);
+			return;
+		}
 		const jobModel = speculativeJob?.snapshot.model;
 		const selectedModel = ctx.model;
 		const alreadySpeculatingForSelectedModel =
@@ -587,18 +602,26 @@ export default function compactionExtension(
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		let systemPrompt = event.systemPrompt;
-		const message = restoration.consumePendingPayload(restorationState);
-		const checkpoint = recentCheckpoint(ctx);
-		if (checkpoint) systemPrompt = checkpointState.injectRestorationDirective(systemPrompt, checkpoint);
+		const message = checkpointState.attachRestorationDirective(
+			restorationDirectiveState,
+			recentCheckpoint(ctx),
+			restoration.consumePendingPayload(restorationState),
+		);
 
 		const usage = ctx.getContextUsage();
 		const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
 		const settings = ctx.getCompactionSettings();
 		const pendingPromptTokens = estimatePendingPromptTokens(event);
 		const usageWithPendingPrompt = usage ? withAdditionalTokens(usage, pendingPromptTokens) : undefined;
-		const breakerCoolingDown = breaker.isTripped(state, Date.now());
-		if (usage && policy.isAtHardLimit(usage, contextWindow, settings.reserveTokens, pendingPromptTokens)) {
+		// The SDK owns this lane's context entirely, so even the hard-limit valve stands down;
+		// the circuit breaker never blocks that valve for senpi-owned lanes.
+		const laneOwnsCompaction = lanePolicy.disablesSenpiCompaction(ctx);
+		const breakerCoolingDown = breaker.isTripped(state, Date.now()) || laneOwnsCompaction;
+		if (
+			!laneOwnsCompaction &&
+			usage &&
+			policy.isAtHardLimit(usage, contextWindow, settings.reserveTokens, pendingPromptTokens)
+		) {
 			getLogger(ctx).debug("hard_limit_trigger", {
 				contextWindow,
 				tokens: usage.tokens ?? 0,
@@ -633,8 +656,7 @@ export default function compactionExtension(
 			startSpeculativeCompaction(ctx, PROACTIVE_COMPACTION_INSTRUCTIONS);
 		}
 
-		if (systemPrompt === event.systemPrompt && !message) return undefined;
-		return message ? { systemPrompt, message } : { systemPrompt };
+		return message ? { message } : undefined;
 	});
 
 	pi.on("context", (event, ctx) => {
@@ -644,11 +666,18 @@ export default function compactionExtension(
 		const sourceMessages = shouldApplyContextReduction({
 			usageTokens: usage?.tokens ?? null,
 			contextWindow,
-			isProviderNativeCompactionPath: isOpenAiRemoteCompactionModel(ctx.model),
+			isProviderNativeCompactionPath:
+				isOpenAiRemoteCompactionModel(ctx.model) || lanePolicy.disablesSenpiCompaction(ctx),
 		})
 			? reduceContextMessages(event.messages, BUILTIN_CONTEXT_REDUCTION_OPTIONS).messages
 			: event.messages;
-		const emergency = hardLimitEmergencyPrune(sourceMessages, promptContextWindow, emergencyPruneLatch);
+		// The claude-sdk-oauth lane stands down from senpi compaction entirely:
+		// destructively pruning the provider context near the hard limit would
+		// break the resident SDK session's continuity the same way the gated
+		// reduction lane would.
+		const emergency = lanePolicy.disablesSenpiCompaction(ctx)
+			? { messages: sourceMessages, needsAggressiveCompaction: false }
+			: hardLimitEmergencyPrune(sourceMessages, promptContextWindow, emergencyPruneLatch);
 		const marked = markOpenAiRemoteReplayBoundary(emergency.messages, {
 			model: ctx.model,
 			branchEntries: ctx.sessionManager.getBranch(),
@@ -684,6 +713,7 @@ export default function compactionExtension(
 	});
 
 	pi.on("turn_end", async (_event, ctx) => {
+		if (lanePolicy.disablesSenpiCompaction(ctx)) return;
 		handleTurnEnd(degradationState);
 		if (degradationState.recoveryTriggeredThisCycle) return;
 		if (state.lastYield && state.lastYield.savedTokens <= 0) {
@@ -693,6 +723,7 @@ export default function compactionExtension(
 
 	pi.on("agent_end", async (event, ctx) => {
 		state = resetTurnCounter(state, "");
+		if (lanePolicy.disablesSenpiCompaction(ctx)) return;
 		const usage = ctx.getContextUsage();
 		const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
 		const settings = ctx.getCompactionSettings();
@@ -714,10 +745,13 @@ export default function compactionExtension(
 	});
 
 	pi.on("message_end", async (event, ctx) => {
+		for (const entry of collectCompactBoundaryEntries(event.message)) {
+			pi.appendEntry(CLAUDE_SDK_OAUTH_COMPACT_ENTRY_TYPE, entry);
+		}
 		if (isAbortedAssistantMessage(event)) {
 			invalidateSpeculativeCompaction(ctx);
 		}
-		if (isMonitorableMessageEvent(event)) {
+		if (isMonitorableMessageEvent(event) && !lanePolicy.disablesSenpiCompaction(ctx)) {
 			await handleMessageEnd(degradationState, event, {
 				applyCompaction: async (options) => {
 					return await applyBlockingCompaction(ctx, options.customInstructions);

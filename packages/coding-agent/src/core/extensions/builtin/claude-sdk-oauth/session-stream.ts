@@ -1,87 +1,38 @@
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { type AuthenticatedAttemptInput, queryWithAuthLane } from "./auth-lane.ts";
+import { BoundedAsyncQueue, SESSION_STREAM_QUEUE_CAPACITY } from "./bounded-queue.ts";
 import { buildPromptBlocks } from "./prompt-bridge.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
 import { getSdkBoundary } from "./sdk-boundary.ts";
+import { type ContinuityDecision, decideNativeContinuity } from "./session-continuity.ts";
+import {
+	type ContinuityObservation,
+	consumePendingCloseCause,
+	emitContinuityObservation,
+	observeSessionSyncDecision,
+	sanitizeTerminalFailure,
+	stageContinuityDecision,
+} from "./session-observability.ts";
+import { bindingFromEntry, getBinding, reattachSession, rememberBinding } from "./session-reattach.ts";
 import {
 	type ClaudeSdkOauthSessionEntry,
 	closeSession,
 	getOrCreateSession,
 	getSession,
-	isBoundAccountTokenExpiring,
 	isCurrentGeneration,
+	isIdleExpired,
 	sessionRegistry,
 } from "./session-registry.ts";
 import { submitSessionTurn } from "./session-registry-pump.ts";
 import {
 	buildDeltaPromptBlocks,
 	configFingerprint,
-	decideSessionSync,
-	primeResumedEntry,
 	recordSyncedStream,
+	sentHashesForEntry,
 	sentMessageHashes,
 	sentMessages,
 } from "./session-sync.ts";
 import type { ClaudeSdkOauthProviderSettings } from "./settings.ts";
-
-const SESSION_STREAM_QUEUE_CAPACITY = 256;
-
-class BoundedAsyncQueue<T> implements AsyncIterableIterator<T> {
-	private readonly capacity: number;
-	private readonly values: T[] = [];
-	private reader: { resolve: (result: IteratorResult<T>) => void; reject: (error: unknown) => void } | undefined;
-	private closed = false;
-	private failed = false;
-	private failure: unknown;
-
-	constructor(capacity: number) {
-		this.capacity = capacity;
-	}
-
-	[Symbol.asyncIterator](): AsyncIterableIterator<T> {
-		return this;
-	}
-
-	next(): Promise<IteratorResult<T>> {
-		if (this.values.length > 0) return Promise.resolve({ value: this.values.shift()!, done: false });
-		if (this.failed) return Promise.reject(this.failure);
-		if (this.closed) return Promise.resolve({ value: undefined, done: true });
-		return new Promise((resolve, reject) => {
-			this.reader = { resolve, reject };
-		});
-	}
-
-	push(value: T): void {
-		if (this.closed || this.failed) return;
-		const reader = this.reader;
-		if (reader) {
-			this.reader = undefined;
-			reader.resolve({ value, done: false });
-			return;
-		}
-		if (this.values.length >= this.capacity) {
-			throw new Error(`Claude SDK OAuth session stream queue exceeded ${this.capacity} messages`);
-		}
-		this.values.push(value);
-	}
-
-	close(): void {
-		if (this.closed || this.failed) return;
-		this.closed = true;
-		const reader = this.reader;
-		this.reader = undefined;
-		reader?.resolve({ value: undefined, done: true });
-	}
-
-	fail(error: unknown): void {
-		if (this.closed || this.failed) return;
-		this.failed = true;
-		this.failure = error;
-		const reader = this.reader;
-		this.reader = undefined;
-		reader?.reject(error);
-	}
-}
 
 export type ResidentSessionStreamInput = {
 	model: Model<Api>;
@@ -93,6 +44,7 @@ export type ResidentSessionStreamInput = {
 	customToolNameToSdk: ReadonlyMap<string, string>;
 	toolWatchNote?: string;
 	onResumeFallback: (error: unknown) => void;
+	onContinuityDecision?: (observation: ContinuityObservation) => void;
 };
 
 function userMessage(content: SDKUserMessage["message"]["content"]): SDKUserMessage["message"] {
@@ -109,46 +61,12 @@ function recordAssistantUuid(entry: ClaudeSdkOauthSessionEntry, sentCount: numbe
 	}
 }
 
-async function initializeResumedEntry(
-	entry: ClaudeSdkOauthSessionEntry,
-	signal: AbortSignal | undefined,
-): Promise<void> {
-	const initialize = entry.query.initializationResult;
-	if (!initialize) throw new Error("Resumed Claude SDK query has no initialization result");
-	if (!signal) {
-		await initialize.call(entry.query);
-		return;
-	}
-	const abortError = new Error("Claude SDK OAuth resume initialization aborted");
-	if (signal.aborted) {
-		closeSession(entry.senpiSessionId, "resume_initialization_aborted");
-		throw abortError;
-	}
-	let aborted = false;
-	let rejectAbort!: (error: Error) => void;
-	const abortPromise = new Promise<never>((_resolve, reject) => {
-		rejectAbort = reject;
-	});
-	const onAbort = (): void => {
-		aborted = true;
-		closeSession(entry.senpiSessionId, "resume_initialization_aborted");
-		rejectAbort(abortError);
-	};
-	signal.addEventListener("abort", onAbort, { once: true });
-	if (signal.aborted) onAbort();
-	try {
-		await Promise.race([initialize.call(entry.query), abortPromise]);
-		if (aborted) throw abortError;
-	} finally {
-		signal.removeEventListener("abort", onAbort);
-	}
-}
-
 function turnAttempt(
 	entry: ClaudeSdkOauthSessionEntry,
 	message: SDKUserMessage["message"],
 	hashes: readonly string[],
 	signal: AbortSignal | undefined,
+	staged: ReturnType<typeof stageContinuityDecision>,
 ) {
 	const generation = entry.generation;
 	return {
@@ -166,14 +84,47 @@ function turnAttempt(
 				() => queue.close(),
 				(error: unknown) => queue.fail(error),
 			);
-			for await (const sdkMessage of queue) yield sdkMessage;
-			const turn = await completion;
-			if (!turn.aborted && successfulTurn(turn.messages)) recordSyncedStream(entry, hashes);
+			try {
+				for await (const sdkMessage of queue) yield sdkMessage;
+				const turn = await completion;
+				if (!turn.aborted && successfulTurn(turn.messages)) {
+					recordSyncedStream(entry, hashes);
+					rememberBinding(bindingFromEntry(entry, hashes));
+				}
+			} finally {
+				// Every admitted turn reports exactly one decision, including one that
+				// ended by abort or interrupt failure.
+				staged.emit();
+			}
 		})(),
 		discard: (): void => {
 			if (isCurrentGeneration(entry.senpiSessionId, generation))
 				closeSession(entry.senpiSessionId, "attempt_discarded");
 		},
+	};
+}
+
+const OBSERVED_KIND: Record<ContinuityDecision["kind"], "incremental" | "resume" | "cold-seed"> = {
+	delta: "incremental",
+	reattach: "resume",
+	fork: "resume",
+	flatten: "cold-seed",
+	bootstrap: "cold-seed",
+};
+
+function entrySnapshot(entry: ClaudeSdkOauthSessionEntry, hashes: readonly string[]) {
+	return {
+		sdkSessionId: entry.sdkSessionId,
+		accountName: entry.accountName,
+		modelId: entry.modelId,
+		systemPromptHash: entry.systemPromptHash,
+		toolsetHash: entry.toolsetHash,
+		sentCount: entry.sentCount,
+		sentHashes: hashes.slice(0, entry.sentCount),
+		lastAssistantUuid: entry.assistantUuidByIndex.get(entry.sentCount) ?? null,
+		assistantUuidByIndex: entry.assistantUuidByIndex,
+		pendingForkReason: entry.pendingForkReason,
+		taintedReason: entry.taintedReason,
 	};
 }
 
@@ -186,45 +137,54 @@ async function createResidentAttempt(
 	const hashes = sentMessageHashes(messages);
 	const existing = getSession(sessionId);
 	const fingerprint = configFingerprint(auth.options, input.context, auth.authLane, auth.accountName);
-	const decision = decideSessionSync({
-		entry: existing,
+	const residentHashes = existing ? (sentHashesForEntry(existing) ?? hashes) : hashes;
+	const decision = decideNativeContinuity({
+		entry: existing ? entrySnapshot(existing, residentHashes) : undefined,
+		binding: getBinding(sessionId),
 		currentHashes: hashes,
 		accountName: auth.accountName,
 		modelId: input.model.id,
 		fingerprint,
-		tokenExpiring: existing ? isBoundAccountTokenExpiring(existing, auth.accounts) : false,
+		transcriptAvailable: true,
+		idleExpired: existing ? isIdleExpired(existing) : false,
 	});
+	const firstTurn = existing === undefined && getBinding(sessionId) === undefined && hashes.length <= 1;
+	let observedReason =
+		"reason" in decision ? decision.reason : decision.kind === "bootstrap" ? "registry_miss" : undefined;
+	let observedKind: "incremental" | "resume" | "cold-seed" = OBSERVED_KIND[decision.kind];
 	let entry: ClaudeSdkOauthSessionEntry;
 	let from = 0;
-	let coldSeed = decision.kind === "cold-seed";
-	if (decision.kind === "incremental") {
-		entry = existing!;
+	let flatten = decision.kind === "flatten" || decision.kind === "bootstrap";
+
+	if (decision.kind === "delta" && existing) {
+		entry = existing;
 		from = decision.from;
-	} else if (decision.kind === "resume") {
-		const previous = existing!;
-		closeSession(sessionId, "branch_resume");
-		entry = getOrCreateSession({
-			senpiSessionId: sessionId,
-			accountName: auth.accountName,
-			modelId: input.model.id,
-			...fingerprint,
-			options: {
-				...auth.options,
-				resume: decision.previousSdkSessionId,
-				resumeSessionAt: decision.resumeSessionAt,
-				forkSession: true,
-			},
-		});
-		primeResumedEntry(entry, previous, decision.from);
+	} else if (decision.kind === "reattach" || decision.kind === "fork") {
+		const source = getBinding(sessionId) ?? (existing ? bindingFromEntry(existing, residentHashes) : undefined);
+		const binding = source
+			? {
+					...source,
+					sentCount: decision.from,
+					sentHashes: source.sentHashes.slice(0, decision.from),
+					assistantUuidByIndex: (source.assistantUuidByIndex ?? []).filter(([index]) => index <= decision.from),
+					...(decision.kind === "fork" ? { lastAssistantUuid: decision.atUuid } : {}),
+				}
+			: undefined;
 		try {
-			await initializeResumedEntry(entry, input.streamOptions.signal);
+			if (!binding) throw new Error("Claude SDK OAuth continuity binding is unavailable");
+			entry = await reattachSession({
+				binding,
+				options: auth.options,
+				...(decision.kind === "fork" ? { atUuid: decision.atUuid } : {}),
+				...(input.streamOptions.signal ? { signal: input.streamOptions.signal } : {}),
+			});
 			from = decision.from;
-			coldSeed = false;
 		} catch (error) {
-			closeSession(sessionId, "resume_initialization_failed");
 			if (input.streamOptions.signal?.aborted) throw error;
 			input.onResumeFallback(error);
-			coldSeed = true;
+			observedKind = "cold-seed";
+			observedReason = "resume_initialization_failed";
+			flatten = true;
 			entry = getOrCreateSession({
 				senpiSessionId: sessionId,
 				accountName: auth.accountName,
@@ -234,7 +194,7 @@ async function createResidentAttempt(
 			});
 		}
 	} else {
-		if (existing) closeSession(sessionId, decision.reason);
+		if (existing) closeSession(sessionId, observedReason ?? "registry_miss");
 		entry = getOrCreateSession({
 			senpiSessionId: sessionId,
 			accountName: auth.accountName,
@@ -243,13 +203,41 @@ async function createResidentAttempt(
 			options: auth.options,
 		});
 	}
-	const blocks = coldSeed
+
+	const blocks = flatten
 		? buildPromptBlocks(input.context, input.customToolNameToSdk, input.toolWatchNote)
 		: buildDeltaPromptBlocks(messages.slice(from), input.customToolNameToSdk);
-	return turnAttempt(entry, userMessage(blocks), hashes, input.streamOptions.signal);
+	const staged = stageContinuityDecision(
+		observeSessionSyncDecision({
+			kind: observedKind,
+			reason: observedReason,
+			deltaMessages: flatten ? hashes.length : hashes.length - from,
+			firstTurn,
+			senpiSessionId: sessionId,
+		}),
+		input.onContinuityDecision,
+		// The pending close cause is consumed only when the staged observation
+		// actually emits (attempt retained) — a discarded attempt leaves the
+		// cause pending for the next admission.
+		() => consumePendingCloseCause(sessionId),
+	);
+	return turnAttempt(entry, userMessage(blocks), hashes, input.streamOptions.signal, staged);
 }
 
-export function residentSessionMessages(input: ResidentSessionStreamInput): AsyncIterable<SDKMessage> {
+export async function* residentSessionMessages(input: ResidentSessionStreamInput): AsyncGenerator<SDKMessage> {
+	try {
+		yield* residentAuthLaneMessages(input);
+	} catch (error) {
+		// Every attempt failed: the turn yields exactly one terminal observation.
+		emitContinuityObservation(
+			{ kind: "flatten", reason: sanitizeTerminalFailure(error) },
+			input.onContinuityDecision,
+		);
+		throw error;
+	}
+}
+
+function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncIterable<SDKMessage> {
 	return queryWithAuthLane({
 		prompt: "",
 		query: getSdkBoundary().query,

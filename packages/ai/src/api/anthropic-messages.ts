@@ -49,7 +49,7 @@ import {
 import { normalizeToolCallId } from "../utils/tool-call-id.ts";
 import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../utils/tool-choice-fallback.ts";
 import { demotedToolCallText, demotedToolResultText } from "../utils/unavailable-tool-text.ts";
-
+import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
@@ -1258,7 +1258,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				}
 				params = sanitizeAdaptiveThinkingPayload(model, params, options);
 				params = sanitizeUnsupportedNativeTools(model, params);
-				params = demoteUnavailableToolReferences(params);
+				params = sanitizeAnthropicToolPairs(
+					demoteUnavailableToolReferences(params),
+				) as MessageCreateParamsStreaming;
 				const payloadRequestMetadata = extractPayloadRequestMetadata(params);
 				params = payloadRequestMetadata.params;
 				const requestOptions = {

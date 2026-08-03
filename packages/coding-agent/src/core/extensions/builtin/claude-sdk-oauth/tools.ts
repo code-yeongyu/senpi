@@ -20,6 +20,8 @@ export const PI_TO_SDK_TOOL_NAME: Readonly<Record<string, string>> = {
 	glob: "Glob",
 };
 
+export const HOST_TOOL_POLICY_FINGERPRINT = "host-tool-denial-v1";
+
 export const BUILTIN_SDK_TOOLS = ["Read", "Write", "Edit", "Bash", "Grep", "Glob"] as const;
 export const TOOL_EXECUTION_DENIED_MESSAGE = "Tool execution is unavailable in this environment.";
 export const HOST_TOOL_EXECUTION_DENIED_MESSAGE =

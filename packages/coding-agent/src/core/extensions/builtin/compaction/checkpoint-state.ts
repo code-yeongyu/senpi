@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import type { BeforeAgentStartEventResult, ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { POST_COMPACT_RESTORATION_CUSTOM_TYPE } from "./restoration-tracker.ts";
 
 const CHECKPOINT_CUSTOM_TYPE = "compaction.agent-checkpoint";
 const CHECKPOINT_SCHEMA = "senpi.compaction.agent-checkpoint.v1";
@@ -180,6 +181,56 @@ function buildRestorationHints(checkpoint: AgentCheckpoint): string {
 		`- Model: ${modelId ?? "unknown"}`,
 	];
 	return lines.join("\n");
+}
+
+/**
+ * One-shot delivery state for the checkpoint restoration directive.
+ *
+ * Before 2026-08-01 the directive was appended to the system prompt on every
+ * request inside the 60s checkpoint window; it now rides the hidden post-compact
+ * restoration message exactly once per checkpoint. See changes.md.
+ */
+export interface RestorationDirectiveState {
+	deliveredCheckpointTimestamp: number | null;
+}
+
+export function createRestorationDirectiveState(): RestorationDirectiveState {
+	return { deliveredCheckpointTimestamp: null };
+}
+
+function directiveMessage(checkpoint: AgentCheckpoint): NonNullable<BeforeAgentStartEventResult["message"]> {
+	return {
+		customType: POST_COMPACT_RESTORATION_CUSTOM_TYPE,
+		content: buildRestorationHints(checkpoint),
+		display: false,
+	};
+}
+
+function withDirective(
+	message: NonNullable<BeforeAgentStartEventResult["message"]>,
+	checkpoint: AgentCheckpoint,
+): NonNullable<BeforeAgentStartEventResult["message"]> {
+	const hints = buildRestorationHints(checkpoint);
+	const existing = typeof message.content === "string" ? message.content : undefined;
+	if (existing === undefined) return message;
+	return { ...message, content: `${hints}\n\n${existing}` };
+}
+
+/**
+ * Attach the restoration directive to the one-shot post-compact message, once
+ * per checkpoint. Returns the pending message unchanged when the checkpoint is
+ * stale or its directive was already delivered.
+ */
+export function attachRestorationDirective(
+	state: RestorationDirectiveState,
+	checkpoint: AgentCheckpoint | null,
+	message: BeforeAgentStartEventResult["message"] | undefined,
+): BeforeAgentStartEventResult["message"] | undefined {
+	if (!checkpoint) return message;
+	const timestamp = checkpoint.timestamp ?? null;
+	if (timestamp !== null && state.deliveredCheckpointTimestamp === timestamp) return message;
+	state.deliveredCheckpointTimestamp = timestamp;
+	return message ? withDirective(message, checkpoint) : directiveMessage(checkpoint);
 }
 
 export function injectRestorationDirective(systemPrompt: string, checkpoint: AgentCheckpoint): string;

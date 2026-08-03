@@ -5,7 +5,6 @@ import {
 	createAssistantMessageDiagnostic,
 	createAssistantMessageEventStream,
 	type Model,
-	parseStreamingJson,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { getSessionClaudeAccountPin } from "./account-command.ts";
@@ -15,23 +14,14 @@ import { defaultExecutableDeps, resolveClaudeCodeExecutable } from "./executable
 import { buildClaudeSdkOauthQueryOptions } from "./options.ts";
 import { buildPromptBlocks, buildPromptStream } from "./prompt-bridge.ts";
 import { getSdkBoundary, type SdkQueryHandle } from "./sdk-boundary.ts";
+import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
 import { residentSessionMessages } from "./session-stream.ts";
 import { loadClaudeSdkOauthProviderSettingsFromDisk } from "./settings.ts";
+import { applyStreamEvent } from "./stream-events.ts";
 import { withAuthGuidance } from "./stream-guidance.ts";
-import {
-	asRecord,
-	emptyOutput,
-	errorMessage,
-	mapStopReason,
-	mapToolArguments,
-	type StreamBlock,
-	type TextBlock,
-	type ThinkingBlock,
-	type ToolBlock,
-	updateUsage,
-} from "./stream-protocol.ts";
+import { emptyOutput, errorMessage, mapStopReason, type StreamBlock, updateUsage } from "./stream-protocol.ts";
 import { toolWatch } from "./tool-watch.ts";
-import { mapSdkToolNameToPi, resolveSdkTools } from "./tools.ts";
+import { resolveSdkTools } from "./tools.ts";
 
 export function streamClaudeSdkOauth(
 	model: Model<Api>,
@@ -95,8 +85,31 @@ export function streamClaudeSdkOauth(
 				if (mcpServers) queryOptions.mcpServers = mcpServers;
 				return queryOptions;
 			};
+			const recordContinuity = (observation: ContinuityObservation): void => {
+				// Not a failure: carry the observation as details only, with no synthesized error.
+				output.diagnostics = [
+					...(output.diagnostics ?? []),
+					{
+						type: "claude_sdk_oauth_session_continuity",
+						timestamp: Date.now(),
+						details: { ...observation },
+					},
+				];
+			};
 			const useResidentSession =
 				options?.streamKind === "main" && providerSettings.resumeMode !== "off" && options.sessionId !== undefined;
+			if (options?.streamKind === "main" && !useResidentSession) {
+				// The reason must reflect the ACTUAL cause: resume mode "off"
+				// disables the lane by setting, while any other mode simply has no
+				// resident session to reuse yet.
+				emitContinuityObservation(
+					{
+						kind: "disabled",
+						reason: providerSettings.resumeMode === "off" ? "resume_mode_off" : "registry_miss",
+					},
+					recordContinuity,
+				);
+			}
 			const messages = useResidentSession
 				? residentSessionMessages({
 						model,
@@ -107,6 +120,7 @@ export function streamClaudeSdkOauth(
 						buildOptions,
 						customToolNameToSdk: resolvedTools.customToolNameToSdk,
 						toolWatchNote,
+						onContinuityDecision: recordContinuity,
 						onResumeFallback: (error) => {
 							output.diagnostics = [
 								...(output.diagnostics ?? []),
@@ -136,84 +150,30 @@ export function streamClaudeSdkOauth(
 				}
 				if (message.type === "stream_event") {
 					sawStreamEvent = true;
-					const event = message.event;
-					if (event.type === "message_start") {
-						updateUsage(model, output, event.message.usage);
-					} else if (event.type === "content_block_start") {
-						if (event.content_block.type === "text") {
-							const block: TextBlock = { type: "text", text: "", index: event.index };
-							blocks.push(block);
-							output.content.push(block);
-							stream.push({ type: "text_start", contentIndex: output.content.length - 1, partial: output });
-						} else if (event.content_block.type === "thinking") {
-							const block: ThinkingBlock = {
-								type: "thinking",
-								thinking: "",
-								thinkingSignature: "",
-								index: event.index,
-							};
-							blocks.push(block);
-							output.content.push(block);
-							stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
-						} else if (event.content_block.type === "tool_use") {
-							const block: ToolBlock = {
-								type: "toolCall",
-								id: event.content_block.id,
-								name: mapSdkToolNameToPi(event.content_block.name, resolvedTools.customToolNameToPi),
-								arguments: asRecord(event.content_block.input),
-								partialJson: "",
-								index: event.index,
-							};
-							blocks.push(block);
-							output.content.push(block);
-							stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
-						}
-					} else if (event.type === "content_block_delta") {
-						const contentIndex = blocks.findIndex((block) => block.index === event.index);
-						const block = blocks[contentIndex];
-						if (event.delta.type === "text_delta" && block?.type === "text") {
-							block.text += event.delta.text;
-							stream.push({ type: "text_delta", contentIndex, delta: event.delta.text, partial: output });
-						} else if (event.delta.type === "thinking_delta" && block?.type === "thinking") {
-							block.thinking += event.delta.thinking;
-							stream.push({
-								type: "thinking_delta",
-								contentIndex,
-								delta: event.delta.thinking,
-								partial: output,
-							});
-						} else if (event.delta.type === "signature_delta" && block?.type === "thinking") {
-							block.thinkingSignature += event.delta.signature;
-						} else if (event.delta.type === "input_json_delta" && block?.type === "toolCall") {
-							block.partialJson = `${block.partialJson ?? ""}${event.delta.partial_json}`;
-							block.arguments = parseStreamingJson<Record<string, unknown>>(block.partialJson);
-							stream.push({
-								type: "toolcall_delta",
-								contentIndex,
-								delta: event.delta.partial_json,
-								partial: output,
-							});
-						}
-					} else if (event.type === "content_block_stop") {
-						const contentIndex = blocks.findIndex((block) => block.index === event.index);
-						const block = blocks[contentIndex];
-						if (block?.type === "text")
-							stream.push({ type: "text_end", contentIndex, content: block.text, partial: output });
-						else if (block?.type === "thinking")
-							stream.push({ type: "thinking_end", contentIndex, content: block.thinking, partial: output });
-						else if (block?.type === "toolCall") {
-							block.arguments = mapToolArguments(
-								block.name,
-								parseStreamingJson<Record<string, unknown>>(block.partialJson),
-							);
-							delete block.partialJson;
-							stream.push({ type: "toolcall_end", contentIndex, toolCall: block, partial: output });
-						}
-						if (block) delete block.index;
-					} else if (event.type === "message_delta") {
-						output.stopReason = mapStopReason(event.delta.stop_reason);
-						updateUsage(model, output, event.usage);
-					}
+					applyStreamEvent(
+						{ model, output, blocks, stream, customToolNameToPi: resolvedTools.customToolNameToPi },
+						message.event,
+					);
+				} else if (message.type === "system" && message.subtype === "compact_boundary") {
+					// Native compactions must reach the ledger: attach the boundary as a
+					// diagnostic so the lane-policy collector can build a ledger entry
+					// instead of the boundary being discarded in the stream.
+					output.diagnostics = [
+						...(output.diagnostics ?? []),
+						{
+							type: "claude_sdk_oauth_compact_boundary",
+							timestamp: Date.now(),
+							details: {
+								boundary: {
+									trigger: message.compact_metadata?.trigger ?? "unknown",
+									preTokens: message.compact_metadata?.pre_tokens ?? 0,
+									postTokens: message.compact_metadata?.post_tokens ?? 0,
+									lineageId: message.session_id ?? "",
+									observedAt: Date.now(),
+								},
+							},
+						},
+					];
 				} else if (message.type === "result" && message.subtype === "success") {
 					// Both fields are optional on the wire, so only adopt them when present.
 					// A terminal result must never downgrade a toolUse turn that the stream

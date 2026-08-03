@@ -1,114 +1,36 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "../../types.ts";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
+import { AssistantCommitBoundary, isResidentAssistant, isTerminalFailure } from "./session-commit-boundary.ts";
+import { bindingFromEntry, rememberBinding } from "./session-reattach.ts";
 import {
-	type ClaudeSdkOauthSessionEntry,
 	closeSession,
 	getSession,
-	markTainted,
 	recordBranchInfo,
+	recordPendingFork,
+	switchSessionModel,
 } from "./session-registry.ts";
-import {
-	installAssistantProvenanceHooks,
-	type SentMessage,
-	type SessionAssistantProvenanceHooks,
-	sessionSyncDigest,
-} from "./session-sync.ts";
 
-type AssistantProvenance = { afterSentCount: number; hash: string };
+const commitBoundary = new AssistantCommitBoundary();
 
-const provenanceByMessages = new WeakMap<readonly SentMessage[], AssistantProvenance[]>();
-const provenanceByHashes = new WeakMap<readonly string[], AssistantProvenance[]>();
-const provenanceByEntry = new WeakMap<ClaudeSdkOauthSessionEntry, AssistantProvenance[]>();
-const stagedHashByEntry = new WeakMap<ClaudeSdkOauthSessionEntry, string>();
-
-function assistantHash(message: AssistantMessage): string {
-	return sessionSyncDigest({
-		role: message.role,
-		api: message.api,
-		provider: message.provider,
-		model: message.model,
-		content: message.content,
-	});
+function keepBindingThenClose(sessionId: string, reason: string): void {
+	const entry = getSession(sessionId);
+	if (entry) rememberBinding(bindingFromEntry(entry, []));
+	closeSession(sessionId, reason);
 }
 
-const assistantProvenanceHooks: SessionAssistantProvenanceHooks = {
-	captureMessages(context, messages) {
-		let sentCount = 0;
-		const provenance: AssistantProvenance[] = [];
-		for (const message of context.messages) {
-			if (message.role === "assistant") {
-				provenance.push({ afterSentCount: sentCount, hash: assistantHash(message) });
-			} else {
-				sentCount++;
-			}
-		}
-		provenanceByMessages.set(messages, provenance);
-	},
-	captureHashes(messages, hashes) {
-		const provenance = provenanceByMessages.get(messages);
-		if (provenance) provenanceByHashes.set(hashes, provenance);
-	},
-	matches(entry, hashes, branchPrefix) {
-		const current = provenanceByHashes.get(hashes);
-		const resident = provenanceByEntry.get(entry) ?? [];
-		if (!current) return false;
-		const expected = branchPrefix ? resident.filter((item) => item.afterSentCount < hashes.length) : resident;
-		return (
-			current.length === expected.length &&
-			current.every(
-				(item, index) =>
-					item.afterSentCount === expected[index]?.afterSentCount && item.hash === expected[index]?.hash,
-			)
-		);
-	},
-	record(entry, hashes) {
-		const provenance = provenanceByHashes.get(hashes);
-		if (provenance)
-			provenanceByEntry.set(
-				entry,
-				provenance.map((item) => ({ ...item })),
-			);
-	},
-	prime(entry, previous, from) {
-		const provenance = (provenanceByEntry.get(previous) ?? []).filter((item) => item.afterSentCount <= from);
-		provenanceByEntry.set(entry, provenance);
-	},
-};
-
-function stageAssistantProvenance(entry: ClaudeSdkOauthSessionEntry, message: AssistantMessage): void {
-	stagedHashByEntry.set(entry, assistantHash(message));
-}
-
-function commitAssistantProvenance(entry: ClaudeSdkOauthSessionEntry, message: AssistantMessage): boolean {
-	const hash = assistantHash(message);
-	const stagedHash = stagedHashByEntry.get(entry);
-	stagedHashByEntry.delete(entry);
-	if (stagedHash !== hash) return false;
-	const provenance = provenanceByEntry.get(entry) ?? [];
-	const latest = provenance.at(-1);
-	if (latest?.afterSentCount === entry.sentCount) return latest.hash === hash;
-	provenanceByEntry.set(entry, [...provenance, { afterSentCount: entry.sentCount, hash }]);
-	return true;
-}
-
-function isResidentAssistant(message: AssistantMessage, modelId: string): boolean {
-	return (
-		message.api === CLAUDE_SDK_OAUTH_PROVIDER_ID &&
-		message.provider === CLAUDE_SDK_OAUTH_PROVIDER_ID &&
-		message.model === modelId &&
-		message.stopReason !== "error" &&
-		message.stopReason !== "aborted"
-	);
+function residentEntryFor(sessionId: string, message: AssistantMessage) {
+	const entry = getSession(sessionId);
+	if (!entry || !isResidentAssistant(message, entry.modelId)) return undefined;
+	return entry;
 }
 
 export function registerSessionRegistry(pi: Pick<ExtensionAPI, "on">): void {
-	installAssistantProvenanceHooks(assistantProvenanceHooks);
 	pi.on("session_compact", (_event, ctx) => {
-		markTainted(ctx.sessionManager.getSessionId(), "compaction");
+		recordPendingFork(ctx.sessionManager.getSessionId(), "compaction");
 	});
 	pi.on("session_before_fork", (_event, ctx) => {
-		markTainted(ctx.sessionManager.getSessionId(), "fork");
+		recordPendingFork(ctx.sessionManager.getSessionId(), "fork");
 	});
 	pi.on("session_tree", (event, ctx) => {
 		if (event.oldLeafId === null || event.newLeafId === null) return;
@@ -117,24 +39,24 @@ export function registerSessionRegistry(pi: Pick<ExtensionAPI, "on">): void {
 			newLeafId: event.newLeafId,
 		});
 	});
-	pi.on("model_select", (_event, ctx) => {
-		closeSession(ctx.sessionManager.getSessionId(), "model_selected");
+	pi.on("model_select", async (event, ctx) => {
+		const sessionId = ctx.sessionManager.getSessionId();
+		if (event.model?.provider !== CLAUDE_SDK_OAUTH_PROVIDER_ID) {
+			closeSession(sessionId, "model_selected");
+			return;
+		}
+		if (!(await switchSessionModel(sessionId, event.model.id))) {
+			keepBindingThenClose(sessionId, "model_selected");
+		}
 	});
 	pi.on("thinking_level_select", (_event, ctx) => {
-		closeSession(ctx.sessionManager.getSessionId(), "thinking_level_selected");
-	});
-	pi.on("message_start", (event, ctx) => {
-		if (event.message.role !== "assistant") return;
-		const entry = getSession(ctx.sessionManager.getSessionId());
-		if (entry && isResidentAssistant(event.message, entry.modelId)) {
-			stageAssistantProvenance(entry, event.message);
-		}
+		keepBindingThenClose(ctx.sessionManager.getSessionId(), "thinking_level_selected");
 	});
 	pi.on("message_update", (event, ctx) => {
 		if (event.message.role !== "assistant") return;
-		const entry = getSession(ctx.sessionManager.getSessionId());
-		if (entry && isResidentAssistant(event.message, entry.modelId)) {
-			stageAssistantProvenance(entry, event.message);
+		const sessionId = ctx.sessionManager.getSessionId();
+		if (residentEntryFor(sessionId, event.message)) {
+			commitBoundary.captureProviderFinal(sessionId, event.message);
 		}
 	});
 	pi.on("message_end", (event, ctx) => {
@@ -142,8 +64,12 @@ export function registerSessionRegistry(pi: Pick<ExtensionAPI, "on">): void {
 		const sessionId = ctx.sessionManager.getSessionId();
 		const entry = getSession(sessionId);
 		if (!entry) return;
-		if (!isResidentAssistant(event.message, entry.modelId) || !commitAssistantProvenance(entry, event.message)) {
-			markTainted(sessionId, "assistant_provenance_unverified");
+		if (isTerminalFailure(event.message)) {
+			commitBoundary.forget(sessionId);
+			return;
+		}
+		if (commitBoundary.commit(sessionId, event.message, entry.modelId) === "rewritten") {
+			recordPendingFork(sessionId, "assistant_rewritten");
 		}
 	});
 	pi.on("session_shutdown", (event, ctx) => {

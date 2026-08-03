@@ -3,6 +3,7 @@ import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import claudeSdkOauthExtension from "../src/core/extensions/builtin/claude-sdk-oauth/index.ts";
 import type { SdkQueryHandle } from "../src/core/extensions/builtin/claude-sdk-oauth/sdk-boundary.ts";
+import { decideNativeContinuity } from "../src/core/extensions/builtin/claude-sdk-oauth/session-continuity.ts";
 import {
 	closeSession,
 	getOrCreateSession,
@@ -13,7 +14,6 @@ import {
 import { registerSessionRegistry } from "../src/core/extensions/builtin/claude-sdk-oauth/session-registry-wiring.ts";
 import {
 	configFingerprint,
-	decideSessionSync,
 	recordSyncedStream,
 	sentMessageHashes,
 	sentMessages,
@@ -165,33 +165,29 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 				{ role: "user", content: "back on Claude", timestamp: 3 },
 			],
 		};
-		expect(
-			decideSessionSync({
-				entry: getSession("provider-switch"),
-				currentHashes: hashes(current),
-				accountName: "default",
-				modelId: "claude-test",
-				fingerprint: { toolsetHash: "tools-v1", systemPromptHash: "prompt-v1" },
-				tokenExpiring: false,
-			}),
-		).toMatchObject({ kind: "cold-seed" });
+		const decision = decideNativeContinuity({
+			entry: undefined,
+			binding: undefined,
+			currentHashes: hashes(current),
+			accountName: "default",
+			modelId: "claude-test",
+			fingerprint: { toolsetHash: "tools-v1", systemPromptHash: "prompt-v1" },
+			transcriptAvailable: true,
+		});
+
+		expect(getSession("provider-switch")).toBeUndefined();
+		expect(decision).toEqual({ kind: "bootstrap" });
+		expect(decision.kind).not.toBe("delta");
 		expect(closes).toBe(1);
 	});
 
-	it("does not continue incrementally after an assistant-only context transformation", async () => {
+	it("forks instead of continuing after an assistant-only context transformation", async () => {
 		const extension = fakeExtension();
 		registerSessionRegistry(extension.api);
 		const entry = createEntry("assistant-transform");
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
-		const user2 = { role: "user" as const, content: "two", timestamp: 3 };
 		const originalAssistant = assistant("the original full answer", 2);
 		recordSyncedStream(entry, hashes({ messages: [user1] }));
-		await emitOnce(
-			extension,
-			"message_start",
-			{ type: "message_start", message: originalAssistant },
-			entry.senpiSessionId,
-		);
 		await emitOnce(
 			extension,
 			"message_update",
@@ -201,35 +197,41 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 		await emitOnce(
 			extension,
 			"message_end",
-			{ type: "message_end", message: originalAssistant },
+			{
+				type: "message_end",
+				message: { ...originalAssistant, content: [{ type: "text", text: "the truncated answer" }] },
+			},
 			entry.senpiSessionId,
 		);
 
-		const baseInput = {
-			entry,
-			accountName: "default",
-			modelId: "claude-test",
-			fingerprint: { toolsetHash: "tools-v1", systemPromptHash: "prompt-v1" },
-			tokenExpiring: false,
-		};
-		expect(
-			decideSessionSync({
-				...baseInput,
-				currentHashes: hashes({ messages: [user1, originalAssistant, user2] }),
-			}),
-		).toMatchObject({ kind: "incremental" });
-		expect(
-			decideSessionSync({
-				...baseInput,
-				currentHashes: hashes({
-					messages: [
-						user1,
-						{ ...originalAssistant, content: [{ type: "text", text: "the truncated answer" }] },
-						user2,
-					],
-				}),
-			}),
-		).toMatchObject({ kind: "cold-seed" });
+		expect(getSession("assistant-transform")).toMatchObject({ pendingForkReason: "assistant_rewritten" });
+
+		const decision = decideNativeContinuity({
+			entry: {
+				sdkSessionId: entry.sdkSessionId,
+				accountName: entry.accountName,
+				modelId: entry.modelId,
+				systemPromptHash: entry.systemPromptHash,
+				toolsetHash: entry.toolsetHash,
+				sentCount: 2,
+				sentHashes: hashes({ messages: [user1, { role: "user", content: "two", timestamp: 3 }] }),
+				lastAssistantUuid: "uuid-boundary-2",
+				assistantUuidByIndex: new Map([
+					[1, "uuid-boundary"],
+					[2, "uuid-boundary-2"],
+				]),
+				pendingForkReason: entry.pendingForkReason,
+			},
+			binding: undefined,
+			currentHashes: hashes({ messages: [user1, { role: "user", content: "two", timestamp: 3 }] }),
+			accountName: entry.accountName,
+			modelId: entry.modelId,
+			fingerprint: { systemPromptHash: entry.systemPromptHash, toolsetHash: entry.toolsetHash },
+			transcriptAvailable: true,
+		});
+
+		expect(decision).toMatchObject({ kind: "fork", reason: "assistant_rewritten" });
+		expect(decision.kind).not.toBe("flatten");
 	});
 
 	it("does not continue incrementally after the reasoning configuration changes", () => {
@@ -238,38 +240,52 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 		const entry = createEntry("thinking-change", undefined, initialFingerprint);
 		recordSyncedStream(entry, hashes(resident));
 
-		const decision = decideSessionSync({
-			entry,
+		const decision = decideNativeContinuity({
+			entry: {
+				sdkSessionId: entry.sdkSessionId,
+				accountName: "default",
+				modelId: "claude-test",
+				systemPromptHash: initialFingerprint.systemPromptHash,
+				toolsetHash: initialFingerprint.toolsetHash,
+				sentCount: entry.sentCount,
+				sentHashes: hashes(resident),
+				lastAssistantUuid: null,
+				assistantUuidByIndex: entry.assistantUuidByIndex,
+				pendingForkReason: null,
+				taintedReason: null,
+			},
+			binding: undefined,
 			currentHashes: hashes({
 				messages: [resident.messages[0]!, { role: "user", content: "two", timestamp: 2 }],
 			}),
 			accountName: "default",
 			modelId: "claude-test",
 			fingerprint: configFingerprint({ maxThinkingTokens: 8_192 }, resident, "oauth-slots", "default"),
-			tokenExpiring: false,
+			transcriptAvailable: true,
 		});
 
-		expect(decision).toMatchObject({ kind: "cold-seed" });
+		expect(decision).toMatchObject({ kind: "reattach", reason: "options_changed" });
+		expect(decision.kind).not.toBe("flatten");
 	});
 
-	it("taints a compacted session idempotently", async () => {
+	it("records a compaction fork boundary idempotently", async () => {
 		const extension = fakeExtension();
 		registerSessionRegistry(extension.api);
 		createEntry("compact-session");
 
 		await emitTwice(extension, "session_compact", { type: "session_compact" }, "compact-session");
 
-		expect(getSession("compact-session")).toMatchObject({ state: "TAINTED", taintedReason: "compaction" });
+		expect(getSession("compact-session")).toMatchObject({ pendingForkReason: "compaction" });
 	});
 
-	it("taints a session before fork idempotently", async () => {
+	it("records a fork boundary before fork idempotently", async () => {
 		const extension = fakeExtension();
 		registerSessionRegistry(extension.api);
 		createEntry("fork-session");
 
 		await emitTwice(extension, "session_before_fork", { type: "session_before_fork" }, "fork-session");
 
-		expect(getSession("fork-session")).toMatchObject({ state: "TAINTED", taintedReason: "fork" });
+		expect(getSession("fork-session")).toMatchObject({ pendingForkReason: "fork" });
 	});
 
 	it("records tree branch boundaries without tainting", async () => {
@@ -333,7 +349,6 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 		expect(extension.handlers.get("session_tree")).toHaveLength(1);
 		expect(extension.handlers.get("model_select")).toHaveLength(1);
 		expect(extension.handlers.get("thinking_level_select")).toHaveLength(1);
-		expect(extension.handlers.get("message_start")).toHaveLength(1);
 		expect(extension.handlers.get("message_update")).toHaveLength(1);
 		expect(extension.handlers.get("message_end")).toHaveLength(1);
 		expect(extension.handlers.get("session_extensions_removed")).toHaveLength(1);

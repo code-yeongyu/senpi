@@ -1,5 +1,5 @@
-import { Buffer } from "node:buffer";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
+import { evaluateAbortOutcome } from "./session-reattach.ts";
 import {
 	type ClaudeSdkOauthSessionEntry,
 	type ClaudeSdkOauthSessionRegistry,
@@ -7,12 +7,17 @@ import {
 } from "./session-registry.ts";
 import {
 	transitionToIdleSynced,
-	transitionToTurnClaimed,
 	transitionToTurnResultSeen,
 	transitionToTurnSent,
 	transitionToTurnStreaming,
 	transitionToTurnWaiting,
 } from "./session-registry-state.ts";
+import { bufferBeforeReplay, claimTurn, deliver, isReplayFor, resultMatchesTurn } from "./session-turn-claim.ts";
+import type { ActiveTurn, PreReplayBufferLimits, SessionTurnResult } from "./session-turn-types.ts";
+
+export type { SessionTurnResult } from "./session-turn-types.ts";
+
+import { SessionTurnAttributionError } from "./session-turn-types.ts";
 
 export const DEFAULT_PRE_REPLAY_MAX_MESSAGES = 64;
 export const DEFAULT_PRE_REPLAY_MAX_BYTES = 256 * 1024;
@@ -25,34 +30,6 @@ export interface SessionTurnRequest {
 	scheduleAbort?: (callback: () => void, delayMs: number) => () => void;
 }
 
-export interface SessionTurnResult {
-	uuid: string;
-	messages: SDKMessage[];
-	aborted: boolean;
-}
-
-export interface PreReplayBufferLimits {
-	maxMessages: number;
-	maxBytes: number;
-}
-
-interface ActiveTurn {
-	uuid: string;
-	generation: number;
-	messages: SDKMessage[];
-	preReplay: SDKMessage[];
-	preReplayBytes: number;
-	claimed: boolean;
-	aborted: boolean;
-	onMessage?: (message: SDKMessage) => void;
-	signal?: AbortSignal;
-	onAbort: () => void;
-	cancelAbort?: () => void;
-	resolve: (result: SessionTurnResult) => void;
-	reject: (error: Error) => void;
-	limits: PreReplayBufferLimits;
-}
-
 export class ConcurrentSessionTurnAdmissionError extends Error {
 	readonly code = "claude_sdk_oauth_concurrent_turn_admission";
 
@@ -62,44 +39,8 @@ export class ConcurrentSessionTurnAdmissionError extends Error {
 	}
 }
 
-export class SessionTurnAttributionError extends Error {
-	readonly code = "claude_sdk_oauth_turn_attribution";
-
-	constructor(message: string) {
-		super(message);
-		this.name = "SessionTurnAttributionError";
-	}
-}
-
 function currentTurn(entry: ClaudeSdkOauthSessionEntry): ActiveTurn | null {
 	return entry.activeTurn as ActiveTurn | null;
-}
-
-function isReplayFor(message: SDKMessage, uuid: string): boolean {
-	return message.type === "user" && "isReplay" in message && message.isReplay === true && message.uuid === uuid;
-}
-
-function isAutonomousResult(message: Extract<SDKMessage, { type: "result" }>): boolean {
-	if (message.origin && message.origin.kind !== "human") return true;
-	const wire = message as SDKMessage & {
-		parent_tool_use_id?: unknown;
-		subagent_type?: unknown;
-		isSynthetic?: unknown;
-	};
-	return wire.parent_tool_use_id != null || wire.subagent_type != null || wire.isSynthetic === true;
-}
-
-function resultMatchesTurn(message: Extract<SDKMessage, { type: "result" }>, turn: ActiveTurn): boolean {
-	if ("user_message_uuid" in message && message.user_message_uuid !== undefined) {
-		return message.user_message_uuid === turn.uuid;
-	}
-	return turn.claimed && !isAutonomousResult(message);
-}
-
-function deliver(entry: ClaudeSdkOauthSessionEntry, turn: ActiveTurn, message: SDKMessage): void {
-	if (entry.state === "TURN_CLAIMED") transitionToTurnStreaming(entry);
-	turn.messages.push(message);
-	turn.onMessage?.(message);
 }
 
 function scheduleAbort(callback: () => void, delayMs: number): () => void {
@@ -126,37 +67,23 @@ function failTurn(registry: ClaudeSdkOauthSessionRegistry, entry: ClaudeSdkOauth
 	}
 }
 
+/**
+ * An interrupt that never produces a terminal result still ends the user's turn:
+ * settle it as aborted and close only the query, so the binding survives and the
+ * next turn reattaches. Rejecting here would drop the turn's continuity
+ * observation and hand the following turn two.
+ */
 function abortTurn(
 	registry: ClaudeSdkOauthSessionRegistry,
 	entry: ClaudeSdkOauthSessionEntry,
 	turn: ActiveTurn,
-	error: Error,
+	_error: Error,
 ): void {
-	if (currentTurn(entry) === turn && registry.isCurrentGeneration(entry.senpiSessionId, turn.generation)) {
-		failTurn(registry, entry, error);
-	}
-}
-
-function bufferBeforeReplay(
-	registry: ClaudeSdkOauthSessionRegistry,
-	entry: ClaudeSdkOauthSessionEntry,
-	turn: ActiveTurn,
-	message: SDKMessage,
-): void {
-	turn.preReplay.push(message);
-	turn.preReplayBytes += Buffer.byteLength(JSON.stringify(message));
-	if (turn.preReplay.length > turn.limits.maxMessages || turn.preReplayBytes > turn.limits.maxBytes) {
-		throw new SessionTurnAttributionError("Claude SDK OAuth pre-replay buffer overflow");
-	}
-	if (!registry.isCurrentGeneration(entry.senpiSessionId, turn.generation)) turn.preReplay.length = 0;
-}
-
-function claimTurn(entry: ClaudeSdkOauthSessionEntry, turn: ActiveTurn): void {
-	turn.claimed = true;
-	transitionToTurnClaimed(entry);
-	for (const buffered of turn.preReplay) deliver(entry, turn, buffered);
-	turn.preReplay.length = 0;
-	turn.preReplayBytes = 0;
+	if (currentTurn(entry) !== turn || !registry.isCurrentGeneration(entry.senpiSessionId, turn.generation)) return;
+	removeAbortListener(turn);
+	entry.activeTurn = null;
+	registry.closeSession(entry.senpiSessionId, "abort_uncertain");
+	turn.resolve({ uuid: turn.uuid, messages: turn.messages, aborted: true });
 }
 
 function finishTurn(
@@ -173,8 +100,8 @@ function finishTurn(
 	transitionToTurnResultSeen(entry);
 	removeAbortListener(turn);
 	entry.activeTurn = null;
-	if (turn.aborted) registry.markTainted(entry.senpiSessionId, "abort");
-	else transitionToIdleSynced(entry);
+	if (!turn.aborted || evaluateAbortOutcome(turn.interruptReceipt) === "keep") transitionToIdleSynced(entry);
+	else registry.closeSession(entry.senpiSessionId, "abort_uncertain");
 	turn.resolve({ uuid: turn.uuid, messages: turn.messages, aborted: turn.aborted });
 }
 
@@ -183,6 +110,13 @@ function handleMessage(
 	entry: ClaudeSdkOauthSessionEntry,
 	message: SDKMessage,
 ): void {
+	// A forked query mints a NEW session id (forkSession: true + resume): the
+	// init message carries it, and it must be persisted BEFORE any turn-state
+	// guard — otherwise subsequent reattach targets the original session and
+	// the fork's content is lost.
+	if (message.type === "system" && message.subtype === "init" && typeof message.session_id === "string") {
+		if (message.session_id !== entry.sdkSessionId) entry.sdkSessionId = message.session_id;
+	}
 	const turn = currentTurn(entry);
 	if (!turn || !registry.isCurrentGeneration(entry.senpiSessionId, turn.generation)) return;
 	if (!turn.claimed) {
@@ -236,10 +170,15 @@ export function submitSessionTurn(
 				() => abortTurn(registry, entry, turn, new Error("Claude SDK OAuth interrupted turn did not terminate")),
 				SESSION_TURN_ABORT_GRACE_MS,
 			);
-			void entry.query.interrupt().catch((error: unknown) => {
-				const detail = error instanceof Error ? error.message : String(error);
-				abortTurn(registry, entry, turn, new Error(`Claude SDK OAuth query interrupt failed: ${detail}`));
-			});
+			void entry.query
+				.interrupt()
+				.then((receipt: unknown) => {
+					turn.interruptReceipt = receipt;
+				})
+				.catch((error: unknown) => {
+					const detail = error instanceof Error ? error.message : String(error);
+					abortTurn(registry, entry, turn, new Error(`Claude SDK OAuth query interrupt failed: ${detail}`));
+				});
 		};
 		turn = {
 			uuid,

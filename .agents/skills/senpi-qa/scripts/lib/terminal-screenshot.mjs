@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { withTimeout } from "./with-timeout.mjs";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
@@ -48,8 +49,8 @@ export async function renderTerminalScreenshot(root, evidence, raw) {
 		const port = await devToolsPort(chrome);
 		const targets = await withTimeout(
 			fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json()),
-			10_000,
 			"Chrome target list",
+			10_000,
 		);
 		const page = targets.find((target) => target.type === "page");
 		if (!page?.webSocketDebuggerUrl) throw new Error("Chrome did not expose a page target");
@@ -97,8 +98,8 @@ function devToolsPort(chrome) {
 			});
 			chrome.once("exit", (code) => reject(new Error(`Chrome exited before DevTools startup (${code})`)));
 		}),
-		15_000,
 		"Chrome DevTools startup",
+		15_000,
 	);
 }
 
@@ -109,8 +110,8 @@ async function connectCdp(url) {
 			socket.addEventListener("open", resolve, { once: true });
 			socket.addEventListener("error", reject, { once: true });
 		}),
-		10_000,
 		"Chrome DevTools socket",
+		10_000,
 	);
 	let sequence = 0;
 	const pending = new Map();
@@ -131,8 +132,8 @@ async function connectCdp(url) {
 					pending.set(id, { resolve, reject });
 					socket.send(JSON.stringify({ id, method, params }));
 				}),
-				15_000,
 				`Chrome command ${method}`,
+				15_000,
 			);
 		},
 		close() {
@@ -146,25 +147,10 @@ async function stopProcess(child) {
 	const exited = new Promise((resolve) => child.once("exit", resolve));
 	child.kill("SIGTERM");
 	try {
-		await withTimeout(exited, 5_000, "Chrome shutdown");
+		await withTimeout(exited, "Chrome shutdown", 5_000);
 	} catch {
 		child.kill("SIGKILL");
-		await withTimeout(exited, 5_000, "Chrome forced shutdown");
+		await withTimeout(exited, "Chrome forced shutdown", 5_000);
 	}
 }
 
-function withTimeout(promise, timeoutMs, label) {
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => reject(new Error(`timed out waiting for ${label}`)), timeoutMs);
-		promise.then(
-			(value) => {
-				clearTimeout(timer);
-				resolve(value);
-			},
-			(error) => {
-				clearTimeout(timer);
-				reject(error);
-			},
-		);
-	});
-}

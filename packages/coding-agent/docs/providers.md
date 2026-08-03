@@ -61,6 +61,25 @@ The `claude-sdk-oauth` provider routes LLM calls through the official [Claude Ag
 - **Session reuse.** By default one long-lived SDK query spans the entire senpi session instead of a fresh one per turn, so conversations continue with only the new delta sent. Reuse fails closed to a fresh session on compaction, branch/fork navigation, account failover, an aborted turn, or any configuration change. Idle sessions retire after 30 minutes (max 32 resident); a session with an in-flight turn is never evicted. After a senpi process restart the lane always starts fresh. Set `resumeMode: "off"` (or `SENPI_CLAUDE_SDK_OAUTH_RESUME=off`) to restore the old per-turn behaviour. Accepted values are `"auto"` (default) and `"off"`; any other value is silently ignored.
 - Account state is exposed to desktop/automation clients: RPC `get_provider_accounts`, `account_pin`, `account_remove` and the `auth_accounts_changed` / `account_failover` events, mirrored through the app-server protocol. Token material is never included.
 
+#### Session continuity self-check
+
+Every main turn records one continuity decision. Healthy turns are silent in the transcript; degraded turns print a muted one-line notice. To watch the decisions directly, tail the session log and filter on the event prefix:
+
+```bash
+# Global agent dir (default):
+tail -f "${SENPI_CODING_AGENT_DIR:-$HOME/.senpi/agent}/logs/session.log" | rg claude_sdk_oauth_session_
+# Project-local agent dir (when the session uses one — getAgentDir prefers it):
+# tail -f .senpi/agent/logs/session.log | rg claude_sdk_oauth_session_
+```
+
+Each line is JSON with `kind` (`bootstrap`, `delta`, `reattach`, `fork`, `flatten`, `disabled`), a sanitized `reason`, and `count` (messages submitted this turn). A healthy conversation shows one `bootstrap` followed by `delta` lines; repeated `flatten` lines mean the lane is resending the whole conversation and losing prompt-cache hits. `SENPI_SESSION_DEBUG=1` mirrors the same lines to stderr.
+
+To confirm from the SDK side, list the transcript files Claude Code keeps per project - one long-lived session should keep appending to a single file rather than creating one per turn:
+
+```bash
+ls -lt ~/.claude/projects/*/ | head
+```
+
 ### GitHub Copilot
 
 - Press Enter for github.com, or enter your GitHub Enterprise Server domain

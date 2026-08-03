@@ -9,6 +9,7 @@ import {
 	type Message,
 	type Model,
 	type StreamOptions,
+	sanitizeAnthropicToolPairs as sanitizeAnthropicPayload,
 	type TextContent,
 	type Tool,
 } from "@earendil-works/pi-ai";
@@ -30,7 +31,6 @@ import { convertToLlm } from "../../../messages.ts";
 import type { ModelRegistry } from "../../../model-registry.ts";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";
 import type { ApplyCompactionResult, ContextUsage, ProviderRequestPreparation } from "../../types.ts";
-import { sanitizeAnthropicPayload } from "../tool-pair-guard/sanitize-anthropic-payload.ts";
 import { computeEffectiveKeepRecentTokens, computeEffectiveThreshold } from "./policy.ts";
 import { buildPrompt, type MergedCompactionPromptVariant } from "./prompts.ts";
 import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";

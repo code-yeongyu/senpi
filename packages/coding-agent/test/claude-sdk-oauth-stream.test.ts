@@ -608,7 +608,7 @@ describe("Claude SDK OAuth stream events", () => {
 		});
 	});
 
-	it("tears down a resident turn when interrupt rejects and keeps the session usable", async () => {
+	it("settles an aborted turn when interrupt rejects and keeps the session usable", async () => {
 		const scheduler = manuallyScheduledAborts();
 		const abort = new AbortController();
 		const { registry, entry, stalled } = stalledTurnFixture("reject");
@@ -632,7 +632,7 @@ describe("Claude SDK OAuth stream events", () => {
 			expect(stalled.closes).toBe(1);
 			expect(entry.activeTurn).toBeNull();
 			expect(registry.get(entry.senpiSessionId)).toBeUndefined();
-			expect(await turnOutcome).toMatchObject({ message: expect.stringContaining("interrupt rejected") });
+			expect(await turnOutcome).toMatchObject({ aborted: true });
 
 			const replacement = registry.getOrCreate(registryInput(entry.senpiSessionId));
 			const following = await submitSessionTurn(registry, replacement, {
@@ -645,7 +645,7 @@ describe("Claude SDK OAuth stream events", () => {
 		}
 	});
 
-	it("tears down a resident turn after the abort deadline when interrupt resolves without a result", async () => {
+	it("settles an aborted turn after the abort deadline when interrupt resolves without a result", async () => {
 		const scheduler = manuallyScheduledAborts();
 		const abort = new AbortController();
 		const { registry, entry, stalled } = stalledTurnFixture("resolve");
@@ -670,7 +670,7 @@ describe("Claude SDK OAuth stream events", () => {
 			expect(stalled.closes).toBe(1);
 			expect(entry.activeTurn).toBeNull();
 			expect(registry.get(entry.senpiSessionId)).toBeUndefined();
-			expect(await turnOutcome).toMatchObject({ message: expect.stringContaining("did not terminate") });
+			expect(await turnOutcome).toMatchObject({ aborted: true });
 
 			const replacement = registry.getOrCreate(registryInput(entry.senpiSessionId));
 			const following = await submitSessionTurn(registry, replacement, {
@@ -784,7 +784,7 @@ describe("Claude SDK OAuth stream events", () => {
 		expect(textFrom(queries[1]!.submitted[0]!)).toBe("two");
 	});
 
-	it("cold-seeds after tree navigation when the sent stream is not a prefix", async () => {
+	it("forks after tree navigation when the sent stream is not a prefix", async () => {
 		const queries = residentBoundary();
 		const sessionId = "resident-diverged-branch";
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
@@ -804,9 +804,9 @@ describe("Claude SDK OAuth stream events", () => {
 		).result();
 
 		expect(queries).toHaveLength(2);
-		expect(queries[1]?.options.resume).toBeUndefined();
-		expect(textFrom(queries[1]!.submitted[0]!)).toContain("one");
+		expect(queries[1]?.options).toMatchObject({ resume: expect.any(String), forkSession: true });
 		expect(textFrom(queries[1]!.submitted[0]!)).toContain("other");
+		expect(textFrom(queries[1]!.submitted[0]!)).not.toContain("<conversation_history>");
 	});
 
 	it("cold-seeds the next turn after compaction taints a resident query", async () => {
@@ -860,6 +860,10 @@ describe("Claude SDK OAuth stream events", () => {
 			expect.objectContaining({
 				type: "claude_sdk_oauth_resume_fallback",
 				error: expect.objectContaining({ message: "resume initialization failed" }),
+			}),
+			expect.objectContaining({
+				type: "claude_sdk_oauth_session_continuity",
+				details: expect.objectContaining({ kind: "flatten", reason: "resume_initialization_failed" }),
 			}),
 		]);
 	});
