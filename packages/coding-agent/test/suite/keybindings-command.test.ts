@@ -43,13 +43,22 @@ describe("seedKeybindingsFile", () => {
 describe("applyKeybindingsFileEdit", () => {
 	it("reloads the live manager so a rewritten binding takes effect without restart", () => {
 		const manager = new KeybindingsManager({}, configPath);
-		expect(manager.getKeys("app.thinking.cycle")).toEqual(["shift+tab"]);
+		expect(manager.getKeys("app.approval.cycle")).toEqual(["shift+tab"]);
+		expect(manager.getKeys("app.thinking.cycle")).toEqual([]);
 
-		writeFileSync(configPath, JSON.stringify({ "app.thinking.cycle": "ctrl+y" }), "utf-8");
+		writeFileSync(
+			configPath,
+			JSON.stringify({
+				"app.approval.cycle": [],
+				"app.thinking.cycle": "shift+tab",
+			}),
+			"utf-8",
+		);
 		const result = applyKeybindingsFileEdit(configPath, manager);
 
 		expect(result.status).toBe("reloaded");
-		expect(manager.getKeys("app.thinking.cycle")).toEqual(["ctrl+y"]);
+		expect(manager.getKeys("app.approval.cycle")).toEqual([]);
+		expect(manager.getKeys("app.thinking.cycle")).toEqual(["shift+tab"]);
 	});
 
 	it("refuses to reload invalid JSON and leaves the live bindings unchanged", () => {
@@ -59,7 +68,7 @@ describe("applyKeybindingsFileEdit", () => {
 		const result = applyKeybindingsFileEdit(configPath, manager);
 
 		expect(result.status).toBe("invalid");
-		expect(manager.getKeys("app.thinking.cycle")).toEqual(["shift+tab"]);
+		expect(manager.getKeys("app.thinking.cycle")).toEqual([]);
 		expect(readFileSync(configPath, "utf-8")).toBe("{ not valid json");
 	});
 });

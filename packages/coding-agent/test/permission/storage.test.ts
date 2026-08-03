@@ -65,6 +65,25 @@ describe("permission storage", () => {
 				{ permission: "write", pattern: "*.ts", action: "deny" },
 			]);
 		});
+
+		it("skips parsed JSON values that are not valid permission rules", () => {
+			const piDir = path.join(tempDir, CONFIG_DIR_NAME);
+			fs.mkdirSync(piDir, { recursive: true });
+			const filePath = path.join(piDir, "permissions-approved.jsonl");
+			fs.writeFileSync(
+				filePath,
+				[
+					"null",
+					"[]",
+					'{"permission":"bash","pattern":"*","action":"invalid"}',
+					'{"permission":"bash","action":"allow"}',
+					'{"permission":42,"pattern":"*","action":"allow"}',
+					'{"permission":"bash","pattern":"*","action":"allow"}',
+				].join("\n"),
+			);
+
+			expect(loadApproved(tempDir)).toEqual([{ permission: "bash", pattern: "*", action: "allow" }]);
+		});
 	});
 
 	describe("appendApproved", () => {

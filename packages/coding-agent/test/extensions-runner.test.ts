@@ -361,6 +361,32 @@ describe("ExtensionRunner", () => {
 			warnSpy.mockRestore();
 		});
 
+		it.each([
+			["default", "shift+tab"],
+			["rebound", "ctrl+y"],
+		] as const)("blocks an extension from taking the %s approval-cycle key", async (_scenario, key) => {
+			const extCode = `
+				export default function(pi) {
+					pi.registerShortcut("${key}", {
+						description: "Conflicts with approval mode",
+						handler: async () => {},
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "approval-conflict.ts"), extCode);
+
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const keybindings = { ...defaultKeybindings, "app.approval.cycle": key as KeyId };
+			const shortcuts = runner.getShortcuts(keybindings);
+
+			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("conflicts with built-in"));
+			expect(shortcuts.has(key)).toBe(false);
+
+			warnSpy.mockRestore();
+		});
+
 		it("allows a shortcut when the reserved set no longer contains the default key", async () => {
 			const extCode = `
 				export default function(pi) {

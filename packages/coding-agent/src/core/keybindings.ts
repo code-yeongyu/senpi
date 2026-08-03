@@ -15,6 +15,7 @@ export interface AppKeybindings {
 	"app.clear": true;
 	"app.exit": true;
 	"app.suspend": true;
+	"app.approval.cycle": true;
 	"app.thinking.cycle": true;
 	"app.model.cycleForward": true;
 	"app.model.cycleBackward": true;
@@ -72,8 +73,12 @@ export const KEYBINDINGS = {
 		defaultKeys: process.platform === "win32" ? [] : "ctrl+z",
 		description: "Suspend to background",
 	},
-	"app.thinking.cycle": {
+	"app.approval.cycle": {
 		defaultKeys: "shift+tab",
+		description: "Cycle approval mode",
+	},
+	"app.thinking.cycle": {
+		defaultKeys: [],
 		description: "Cycle thinking level",
 	},
 	"app.model.cycleForward": {

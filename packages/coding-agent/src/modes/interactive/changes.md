@@ -24,6 +24,18 @@
 ### Expected merge conflict zones
 
 - LOW: `interactive-stderr-guard.ts` and its focused regression test.
+## Configurable approval-mode surfaces (2026-08-03)
+
+- Removed stale thinking-cycle references from startup hints, the shortcut overlay, `/hotkeys`, and tips now that `app.thinking.cycle` has no default.
+- `app.approval.cycle` owns Shift+Tab by default and every interactive surface resolves its configured key dynamically.
+- The action is reserved from extension shortcut overrides at both its default and remapped key.
+- Thinking-level cycling remains available when users remap `app.thinking.cycle`.
+- The permission extension owns the live notification and footer segment, so custom footers consuming extension statuses receive the same mode state.
+
+### Expected merge conflict zones
+
+- `interactive-mode.ts` app-action dispatch, startup, and `/hotkeys` generation.
+- `components/shortcut-overlay.ts` and the model/settings tip catalogs.
 
 ## Backfill: exit alias and footer provider priority (2026-08-01)
 

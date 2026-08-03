@@ -32,6 +32,7 @@ describe("permission settings", () => {
 			// then
 			expect(evaluate("bash", "rm -rf node_modules", result.staticRuleset).action).toBe("allow");
 			expect(result.approved).toEqual([]);
+			expect(result.activePreset).toBe("full-access");
 		});
 	});
 
@@ -48,6 +49,7 @@ describe("permission settings", () => {
 
 			// then
 			expect(evaluate("bash", "ls", result.staticRuleset).action).toBe("ask");
+			expect(result.activePreset).toBe("ask");
 		});
 	});
 
@@ -66,6 +68,7 @@ describe("permission settings", () => {
 			// then
 			expect(evaluate("edit", "src/index.ts", result.staticRuleset).action).toBe("allow");
 			expect(evaluate("bash", "rm -rf node_modules", result.staticRuleset).action).toBe("deny");
+			expect(result.activePreset).toBe("workspace");
 		});
 	});
 

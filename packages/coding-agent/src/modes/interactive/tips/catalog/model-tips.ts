@@ -3,8 +3,8 @@ import type { TipDefinition } from "./types.ts";
 export const MODEL_TIPS = [
 	{
 		id: "thinking-level",
-		bindings: ["app.thinking.cycle"],
-		render: (keys) => `Use ${keys("app.thinking.cycle")} to cycle the model's thinking level.`,
+		bindings: [],
+		render: () => "Remap app.thinking.cycle in keybindings.json if you want a shortcut for thinking levels.",
 	},
 	{
 		id: "favorite-model-rotation",

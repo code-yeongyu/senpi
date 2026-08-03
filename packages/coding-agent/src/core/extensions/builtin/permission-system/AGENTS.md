@@ -45,11 +45,14 @@ permission-system/
 4. **Project preset** (`.senpi/settings.json` `permissionPreset`).
 5. **Project settings** (`.senpi/settings.json` `permission`).
 6. **CLI preset** (`--permission-preset`).
-7. **CLI flags** (`--permission`).
-8. **Session approvals** — in-memory "always allow" rules; new ones are appended to `<projectDir>/.senpi/permissions-approved.jsonl` on session shutdown.
-9. **No match** — interactive → ask; non-interactive → block (`non-interactive.ts`).
+7. **Session preset overlay** — after `app.approval.cycle` is invoked; replaces preset behavior for the current session only.
+8. **Global and project settings rules** — reapplied after a session preset so explicit configured rules remain authoritative.
+9. **Session approvals** — in-memory "always allow" rules; new ones are appended to `<projectDir>/.senpi/permissions-approved.jsonl` on session shutdown.
+10. **CLI flags** (`--permission`) — always final.
+11. **No match** — interactive → ask; non-interactive → block (`non-interactive.ts`).
 
 Presets other than `full-access` start with `*=ask` so they mask lower-precedence wildcard allows before adding their own allows.
+Without a session preset overlay, sources 1-6 keep their original order and settings rules are not duplicated.
 
 Pattern syntax: tool name + optional arg pattern, e.g. `bash:rm *`, `write:/etc/**`. Wildcard matching in `wildcard.ts`, rule lookup in `evaluate.ts`.
 

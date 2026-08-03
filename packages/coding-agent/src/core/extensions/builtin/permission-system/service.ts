@@ -7,6 +7,7 @@ import {
 	RejectedError,
 	type ReplyInput,
 	type Request,
+	type Rule,
 	type Ruleset,
 } from "./types.ts";
 
@@ -17,13 +18,29 @@ export class PermissionService {
 	private pending = new Map<string, PendingEntry>();
 	private approved: Ruleset;
 	private staticRuleset: Ruleset;
+	private sessionPresetRuleset: Ruleset = [];
+	private settingsRuleset: Ruleset;
+	private cliRuleset: Ruleset;
 	private emitter: PermissionEventEmitter;
 	private idCounter = 0;
 
-	constructor(staticRuleset: Ruleset, approved: Ruleset, emitter: PermissionEventEmitter = createLocalEventEmitter()) {
+	constructor(
+		staticRuleset: Ruleset,
+		approved: Ruleset,
+		emitter: PermissionEventEmitter = createLocalEventEmitter(),
+		cliRuleset: Ruleset = [],
+		settingsRuleset: Ruleset = [],
+	) {
 		this.staticRuleset = [...staticRuleset];
 		this.approved = [...approved];
+		this.cliRuleset = [...cliRuleset];
+		this.settingsRuleset = [...settingsRuleset];
 		this.emitter = emitter;
+	}
+
+	/** Replace the session-local preset overlay without disturbing remembered approvals. */
+	setSessionPreset(ruleset: Ruleset): void {
+		this.sessionPresetRuleset = [...ruleset];
 	}
 
 	/** Request permission for a tool call. Resolves if allowed, throws on denial. */
@@ -37,7 +54,7 @@ export class PermissionService {
 		let needsAsk = false;
 
 		for (const pattern of info.patterns) {
-			const rule = evaluate(info.permission, pattern, this.staticRuleset, this.approved);
+			const rule = this.evaluateRule(info.permission, pattern);
 
 			if (rule.action === "deny") {
 				deniedPatterns.push(pattern);
@@ -133,6 +150,19 @@ export class PermissionService {
 		return `permission-${this.idCounter}`;
 	}
 
+	private evaluateRule(permission: string, pattern: string): Rule {
+		const settingsOverlay = this.sessionPresetRuleset.length > 0 ? this.settingsRuleset : [];
+		return evaluate(
+			permission,
+			pattern,
+			this.staticRuleset,
+			this.sessionPresetRuleset,
+			settingsOverlay,
+			this.approved,
+			this.cliRuleset,
+		);
+	}
+
 	private rejectPendingInSession(sessionID: string): void {
 		for (const [requestID, entry] of Array.from(this.pending.entries())) {
 			if (entry.info.sessionID !== sessionID) {
@@ -152,7 +182,7 @@ export class PermissionService {
 			}
 
 			const isAllowed = entry.info.patterns.every((pattern) => {
-				return evaluate(entry.info.permission, pattern, this.staticRuleset, this.approved).action === "allow";
+				return this.evaluateRule(entry.info.permission, pattern).action === "allow";
 			});
 
 			if (!isAllowed) {

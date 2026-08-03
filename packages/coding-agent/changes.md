@@ -30,6 +30,24 @@
 - `scripts/publish.mjs` package publication list.
 - `scripts/prepare-senpi-bundled-workspaces.prepare.test.mjs`, `scripts/prepare-senpi-publish-optionals.test.mjs`, `scripts/publish-manifest.test.mjs`, and `scripts/publish-registry-dependencies.test.mjs` release coverage.
 
+## 2026-08-03 — Cycle session approval mode with a configurable action
+
+### What changed
+
+- Added the editor-global reserved `app.approval.cycle`, bound to Shift+Tab by default, and kept both approval and thinking actions remappable.
+- Added a session-local `workspace` → `read-only` → `ask` approval cycle, with `full-access` or unset entering `workspace`.
+- Preserved explicit settings rules and Allow-always approvals, and made explicit CLI permission rules the final precedence layer.
+- Ignored persisted approval JSONL entries unless they match the complete permission-rule schema.
+- Updated notifications, footer status, startup help, hotkeys, tips, and public documentation.
+
+### Why this lives in the fork
+
+- The behavior spans the fork's builtin permission extension and interactive extension-status UI; an external extension cannot safely replace the active builtin permission ruleset.
+
+### Expected upstream merge-conflict zones
+
+- `src/core/keybindings.ts`, `src/core/extensions/runner.ts` reserved-action ownership, the builtin permission service/lifecycle, interactive command dispatch, and help surfaces.
+
 ## 2026-08-03 — Make the editor prompt marker visually explicit
 
 ### What changed

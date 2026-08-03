@@ -4,6 +4,7 @@ import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
 import { createEventEmitter } from "./events.ts";
+import { ApprovalModeCycle } from "./mode-cycle.ts";
 import { handleNoUI } from "./non-interactive.ts";
 import { createBuiltinParserRegistry, type ParserRegistry } from "./parsers.ts";
 import { showPermissionPrompt } from "./prompt.ts";
@@ -60,6 +61,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	let cliRuleset: Ruleset = [];
 	let staticRuleset: Ruleset = [];
 	let initialApprovedCount = 0;
+	let approvalModeCycle: ApprovalModeCycle | null = null;
 
 	const nextRequestID = createRequestIDFactory();
 
@@ -70,6 +72,12 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	pi.registerFlag("permission-preset", {
 		description: "Set permission preset (full-access, workspace, read-only, or ask)",
 		type: "string",
+	});
+	pi.registerCommand("approval-mode-cycle", {
+		description: "Cycle approval mode",
+		handler: async () => {
+			approvalModeCycle?.next();
+		},
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -90,7 +98,14 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		staticRuleset = loadedSettings.staticRuleset;
 		const approved = loadedSettings.approved;
 		parserRegistry = createBuiltinParserRegistry();
-		service = new PermissionService(staticRuleset, approved, createEventEmitter(pi));
+		service = new PermissionService(
+			staticRuleset,
+			approved,
+			createEventEmitter(pi),
+			cliRuleset,
+			loadedSettings.settingsRuleset,
+		);
+		approvalModeCycle = new ApprovalModeCycle(service, loadedSettings.activePreset, ctx.ui);
 		initialApprovedCount = approved.length;
 
 		const allTools = pi.getAllTools().map((tool) => tool.name);
@@ -159,6 +174,8 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		if (!service) {
 			return;
 		}
+		approvalModeCycle = null;
+		if (ctx.hasUI) ctx.ui.setStatus("approval-mode", undefined);
 
 		const approved = service.getApproved().slice(initialApprovedCount);
 		if (approved.length > 0) {

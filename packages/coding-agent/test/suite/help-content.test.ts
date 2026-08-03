@@ -92,17 +92,20 @@ describe("buildHelpMarkdown", () => {
 	it("uses live remapped keys in keybinding rows and builtin command descriptions", () => {
 		setKeybindings(
 			new KeybindingsManager({
+				"app.approval.cycle": "ctrl+2",
 				"app.thinking.cycle": "ctrl+1",
 				"app.model.cycleForward": "ctrl+9",
 			}),
 		);
 
+		const remappedApprovalKey = keyDisplayText("app.approval.cycle");
 		const remappedThinkingKey = keyDisplayText("app.thinking.cycle");
 		const remappedModelKey = keyDisplayText("app.model.cycleForward");
 		const markdown = buildHelpMarkdown({ extensionCommands: [] });
 		const keybindings = section(markdown, "Keybindings");
 		const commands = section(markdown, "Commands");
 
+		expect(keybindings).toContain(`| \`${remappedApprovalKey}\` | Cycle approval mode |`);
 		expect(keybindings).toContain(`| \`${remappedThinkingKey}\` | Cycle thinking level |`);
 		expect(keybindings.toLowerCase()).not.toContain("shift+tab");
 		expect(commands).toContain(`/favorite-models — Manage favorite models for ${remappedModelKey} cycling`);
