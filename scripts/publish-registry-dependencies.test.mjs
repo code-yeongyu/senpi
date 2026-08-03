@@ -20,7 +20,6 @@ const OWNED_REGISTRY_ALIASES = [
 	"@code-yeongyu/senpi-codemode",
 	"@code-yeongyu/senpi",
 ];
-
 function readJson(path) {
 	return JSON.parse(readFileSync(path, "utf8"));
 }
@@ -38,5 +37,15 @@ describe("npm publish dependency graph", () => {
 		for (const packageName of OWNED_REGISTRY_ALIASES) {
 			assert.match(publishScript, new RegExp(`name: "${packageName}"`));
 		}
+	});
+
+	it("stages the coding-agent TypeBox version in the publish lock", () => {
+		const manifest = readJson(join(repoRoot, "packages", "coding-agent", "package.json"));
+		const publishLock = readJson(join(repoRoot, "packages", "coding-agent", "publish-deps.lock.json"));
+		assert.equal(
+			publishLock.packages["node_modules/typebox"]?.version,
+			manifest.dependencies.typebox,
+			"the staged TypeBox package must match the coding-agent manifest",
+		);
 	});
 });

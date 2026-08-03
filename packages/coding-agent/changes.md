@@ -1,5 +1,27 @@
 # Local fork changes
 
+## 2026-08-01 — Repair published dependency staging integrity
+
+### What changed
+
+- Rebased publish-lock dependency paths from the coding-agent workspace into the standalone package layout.
+- Aligned the protocol workspace on `typebox@1.3.8` and regenerated the publish/install dependency artifacts.
+- Added the client and protocol workspaces to the bundled package set and materialized lock-pinned dependencies beneath their owning workspaces.
+- Added a version-gated publish-stage normalization for `@anthropic-ai/claude-agent-sdk@0.3.220` that removes only its incompatible `@anthropic-ai/sdk >=0.93.0` peer while preserving the browser-safe Senpi SDK pin.
+- Added regressions for staged TypeBox integrity and the narrowed Agent SDK peer waiver.
+
+### Why
+
+The published package could bundle a stale TypeBox copy and expose an unsatisfiable Anthropic peer graph even though the source manifest declared the intended versions. Keeping source and output lock paths distinct preserves the browser build while making a default npm consumer install deterministic.
+
+### Extension Boundary
+
+No extension API or runtime hook contract changed. The compatibility fixture updates live in standalone extension repositories; Senpi changes are confined to publish staging, generated locks, and bundled workspace metadata.
+
+### Merge Conflict Signals
+
+When merging upstream packaging changes, preserve the source/output lock-path rebasing, exact-version source selection, nested workspace dependency staging, client/protocol bundle entries, and the `claude-agent-sdk@0.3.220`-only peer normalization. Re-run the full script suite and isolated packed install after resolving conflicts in these areas.
+
 ## 2026-08-01 — Reconcile fork runtime contracts after the upstream merge
 
 ### What changed

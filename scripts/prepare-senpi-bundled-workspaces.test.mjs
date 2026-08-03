@@ -158,6 +158,62 @@ describe("stagePublishManifest", () => {
 		return JSON.parse(readFileSync(join(root, "packages", "coding-agent", "package.json"), "utf8"));
 	}
 
+	it("removes only the incompatible Anthropic SDK peer from Agent SDK 0.3.220", () => {
+		// Given
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-stage-agent-sdk-peer-"));
+		writeCodingAgentManifest(tempDir, {
+			dependencies: {
+				"@anthropic-ai/claude-agent-sdk": "0.3.220",
+				"@anthropic-ai/sdk": "0.91.1",
+				"@earendil-works/pi-ai": "^2026.7.22",
+				"@modelcontextprotocol/sdk": "1.30.0",
+				"cross-spawn": "7.0.6",
+				zod: "4.4.3",
+			},
+		});
+		for (const packageName of [
+			"@anthropic-ai/sdk",
+			"@earendil-works/pi-ai",
+			"@modelcontextprotocol/sdk",
+			"@mariozechner/clipboard",
+			"cross-spawn",
+			"zod",
+		]) {
+			stagePackage(tempDir, packageName);
+		}
+		stagePackage(tempDir, "@anthropic-ai/claude-agent-sdk", {
+			version: "0.3.220",
+			peerDependencies: {
+				"@anthropic-ai/sdk": ">=0.93.0",
+				"@modelcontextprotocol/sdk": "^1.29.0",
+				zod: "^4.0.0",
+			},
+		});
+
+		// When
+		stagePublishManifest(tempDir);
+
+		// Then
+		const stagedAgentSdk = JSON.parse(
+			readFileSync(
+				join(
+					tempDir,
+					"packages",
+					"coding-agent",
+					"node_modules",
+					"@anthropic-ai",
+					"claude-agent-sdk",
+					"package.json",
+				),
+				"utf8",
+			),
+		);
+		assert.deepEqual(stagedAgentSdk.peerDependencies, {
+			"@modelcontextprotocol/sdk": "^1.29.0",
+			zod: "^4.0.0",
+		});
+	});
+
 	it("lists every staged runtime dependency and transitive in bundleDependencies", () => {
 		// Given: cross-spawn's transitive dep `which` is staged but only reachable via an edge.
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-stage-manifest-"));

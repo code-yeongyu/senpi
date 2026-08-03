@@ -19,10 +19,10 @@ function writeJson(path, value) {
 	writeFileSync(path, `${JSON.stringify(value, undefined, "\t")}\n`);
 }
 
-function writePackage(root, name) {
+function writePackage(root, name, version = "1.0.0") {
 	const packageDir = join(root, "node_modules", name);
 	mkdirSync(packageDir, { recursive: true });
-	writeJson(join(packageDir, "package.json"), { name, version: "1.0.0" });
+	writeJson(join(packageDir, "package.json"), { name, version });
 }
 
 function writeShrinkwrap(root, packages) {
@@ -38,18 +38,76 @@ function writeShrinkwrap(root, packages) {
 }
 
 describe("copyPublishDependencies", () => {
+	it("preserves an exact dependency already installed in the coding-agent workspace", () => {
+		// Given: npm nested the exact coding-agent dependency because the root has
+		// a different transitive version.
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-workspace-dep-"));
+		writePackage(tempDir, "typebox", "1.3.7");
+		writePackage(join(tempDir, "packages", "coding-agent"), "typebox", "1.3.8");
+		writeShrinkwrap(tempDir, {
+			"": { dependencies: { typebox: "1.3.8" } },
+			"node_modules/typebox": { version: "1.3.8" },
+		});
+
+		// When
+		copyPublishDependencies(tempDir);
+
+		// Then
+		assert.equal(
+			JSON.parse(
+				readFileSync(join(tempDir, "packages", "coding-agent", "node_modules", "typebox", "package.json"), "utf8"),
+			).version,
+			"1.3.8",
+		);
+	});
+
+	it("copies dependencies nested beneath an internal workspace", () => {
+		// Given
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-internal-dep-"));
+		writePackage(join(tempDir, "packages", "coding-agent"), "@earendil-works/pi-ai", "2026.8.1");
+		writePackage(join(tempDir, "packages", "ai"), "@google/genai", "2.13.0");
+		writeShrinkwrap(tempDir, {
+			"": { dependencies: { "@earendil-works/pi-ai": "^2026.8.1" } },
+			"node_modules/@earendil-works/pi-ai": { version: "2026.8.1" },
+			"node_modules/@earendil-works/pi-ai/node_modules/@google/genai": { version: "2.13.0" },
+		});
+
+		// When
+		copyPublishDependencies(tempDir);
+
+		// Then
+		assert.equal(
+			JSON.parse(
+				readFileSync(
+					join(
+						tempDir,
+						"packages",
+						"coding-agent",
+						"node_modules",
+						"@earendil-works",
+						"pi-ai",
+						"node_modules",
+						"@google",
+						"genai",
+						"package.json",
+					),
+					"utf8",
+				),
+			).version,
+			"2.13.0",
+		);
+	});
+
 	it("copies direct publish dependencies and skips internal workspaces and missing optional packages", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-deps-"));
 		writePackage(tempDir, "typebox");
 		writePackage(tempDir, "@scope/pkg");
-		writePackage(tempDir, "nested-only");
 		writeShrinkwrap(tempDir, {
 			"": { dependencies: { typebox: "1.0.0" } },
 			"node_modules/typebox": { version: "1.0.0" },
 			"node_modules/@scope/pkg": { version: "1.0.0" },
 			"node_modules/@earendil-works/pi-ai": { version: "1.0.0" },
 			"node_modules/missing-optional": { version: "1.0.0", optional: true },
-			"node_modules/typebox/node_modules/nested-only": { version: "1.0.0" },
 		});
 
 		copyPublishDependencies(tempDir);
@@ -78,14 +136,6 @@ describe("copyPublishDependencies", () => {
 			() =>
 				readFileSync(
 					join(tempDir, "packages", "coding-agent", "node_modules", "missing-optional", "package.json"),
-					"utf8",
-				),
-			/ENOENT/,
-		);
-		assert.throws(
-			() =>
-				readFileSync(
-					join(tempDir, "packages", "coding-agent", "node_modules", "typebox", "node_modules", "nested-only"),
 					"utf8",
 				),
 			/ENOENT/,
