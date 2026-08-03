@@ -1,4 +1,4 @@
-import { type CompactionPreparation, type CompactionResult, estimateContextTokens } from "../../../compaction/index.ts";
+import { type CompactionPreparation, type CompactionResult, estimateTokens } from "../../../compaction/index.ts";
 import { StreamDurationBudgetError, StreamIdleTimeoutError } from "../../../compaction/stream-watchdog.ts";
 import { buildSessionContext, type CompactionEntry, type SessionEntry } from "../../../session-manager.ts";
 import { SummarizationOverflowExhaustedError } from "./overflow-retry.ts";
@@ -92,9 +92,10 @@ export function createRequiredCompactionFallback(
 		details: result.details,
 		fromHook: true,
 	};
-	const retainedTokens = estimateContextTokens(
-		buildSessionContext([...branchEntries, syntheticCompaction]).messages,
-	).tokens;
+	const retainedTokens = buildSessionContext([...branchEntries, syntheticCompaction]).messages.reduce(
+		(tokens, message) => tokens + estimateTokens(message),
+		0,
+	);
 	if (retainedTokens > contextWindow - preparation.settings.reserveTokens) return undefined;
 	return {
 		...result,

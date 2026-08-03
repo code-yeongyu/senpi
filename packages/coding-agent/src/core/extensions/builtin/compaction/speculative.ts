@@ -25,6 +25,7 @@ import {
 	consumeStreamWithIdleTimeout,
 	DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
 	DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
+	StreamDurationBudgetError,
 } from "../../../compaction/stream-watchdog.ts";
 import { convertToLlm } from "../../../messages.ts";
 import type { ModelRegistry } from "../../../model-registry.ts";
@@ -270,7 +271,11 @@ async function generateSummaryMessage(options: {
 			signal: requestController.signal,
 			...summarizationReasoningOptions(options.snapshot.model),
 		});
-		await consumeStreamWithIdleTimeout(responseStream, {
+		const watchedStream = (async function* () {
+			yield* responseStream;
+			await responseStream.result();
+		})();
+		await consumeStreamWithIdleTimeout(watchedStream, {
 			idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
 			maxDurationMs: DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
 			abort: () => requestController.abort(),
@@ -422,6 +427,46 @@ export function createSpeculativeCompactionSnapshot(
  * misreports as an auth failure.
  */
 export async function runExtensionCompaction(
+	context: SpeculativeCompactionContext,
+	snapshot: SpeculativeCompactionSnapshot,
+	signal?: AbortSignal,
+	onProgress?: CompactionProgressCallback,
+): Promise<CompactionResult | undefined> {
+	if (signal?.aborted) return undefined;
+	const operationController = new AbortController();
+	let removeAbortListener: (() => void) | undefined;
+	let callerAbortPromise: Promise<undefined> | undefined;
+	if (signal) {
+		const { promise, resolve } = Promise.withResolvers<undefined>();
+		const onAbort = () => {
+			operationController.abort(signal.reason);
+			resolve(undefined);
+		};
+		signal.addEventListener("abort", onAbort, { once: true });
+		removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+		callerAbortPromise = promise;
+	}
+	let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+	const budgetPromise = new Promise<never>((_resolve, reject) => {
+		budgetTimer = setTimeout(() => {
+			const error = new StreamDurationBudgetError(DEFAULT_SUMMARIZATION_MAX_DURATION_MS);
+			operationController.abort(error);
+			reject(error);
+		}, DEFAULT_SUMMARIZATION_MAX_DURATION_MS);
+		budgetTimer.unref?.();
+	});
+	const operation = runExtensionCompactionOperation(context, snapshot, operationController.signal, onProgress);
+	try {
+		return await Promise.race(
+			callerAbortPromise ? [operation, budgetPromise, callerAbortPromise] : [operation, budgetPromise],
+		);
+	} finally {
+		removeAbortListener?.();
+		if (budgetTimer !== undefined) clearTimeout(budgetTimer);
+	}
+}
+
+async function runExtensionCompactionOperation(
 	context: SpeculativeCompactionContext,
 	snapshot: SpeculativeCompactionSnapshot,
 	signal?: AbortSignal,
