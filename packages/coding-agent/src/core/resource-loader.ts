@@ -78,13 +78,17 @@ export interface ResourceLoader {
 }
 
 function resolvePromptInput(input: string | undefined, description: string): string | undefined {
-	if (!input) {
+	if (input === undefined) {
 		return undefined;
+	}
+	if (input.trim().length === 0) {
+		return input.length === 0 ? "" : undefined;
 	}
 
 	if (existsSync(input)) {
 		try {
-			return readFileSync(input, "utf-8");
+			const content = readFileSync(input, "utf-8");
+			return content.trim().length > 0 ? content : "";
 		} catch (error) {
 			console.error(chalk.yellow(`Warning: Could not read ${description} file ${input}: ${error}`));
 			return input;
@@ -722,16 +726,20 @@ export class DefaultResourceLoader implements ResourceLoader {
 		// SYSTEM.md / APPEND_SYSTEM.md file discovery was intentionally removed; the explicit
 		// options are the only static prompt source (see packages/coding-agent/changes.md).
 		this.systemPrompt = resolvePromptInput(this.systemPromptSource, "system prompt");
-		this.appendSystemPrompt = (this.appendSystemPromptSource ?? [])
-			.map((source) => resolvePromptInput(source, "append system prompt"))
-			.filter((source): source is string => source !== undefined);
+		const resolvedAppendSystemPrompts = (this.appendSystemPromptSource ?? []).map((source) => ({
+			source,
+			content: resolvePromptInput(source, "append system prompt"),
+		}));
+		this.appendSystemPrompt = resolvedAppendSystemPrompts
+			.map(({ content }) => content)
+			.filter((content): content is string => content !== undefined && content.trim().length > 0);
 		this.systemPromptSourcePath =
 			this.systemPromptSource && existsSync(this.systemPromptSource)
 				? resolvePath(this.systemPromptSource)
 				: undefined;
-		this.appendSystemPromptSourcePaths = (this.appendSystemPromptSource ?? [])
-			.filter((source) => existsSync(source))
-			.map((source) => resolvePath(source));
+		this.appendSystemPromptSourcePaths = resolvedAppendSystemPrompts
+			.filter(({ source, content }) => existsSync(source) && content !== undefined && content.trim().length > 0)
+			.map(({ source }) => resolvePath(source));
 		this.loaded = true;
 	}
 

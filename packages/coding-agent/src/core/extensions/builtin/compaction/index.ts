@@ -239,7 +239,12 @@ export default function compactionExtension(
 				breakerTripped: breaker.isTripped(state, Date.now()),
 				stillOverThreshold:
 					usage !== undefined &&
-					policy.shouldTriggerCompaction(usage, contextWindow, ctx.getCompactionSettings(), state.lastYield ?? undefined),
+					policy.shouldTriggerCompaction(
+						usage,
+						contextWindow,
+						ctx.getCompactionSettings(),
+						state.lastYield ?? undefined,
+					),
 			};
 			if (!idleRetry.shouldRetryIdleWarmup(retryDecision)) return;
 			cancelIdleWarmupRetry();

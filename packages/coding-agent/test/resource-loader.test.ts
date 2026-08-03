@@ -972,6 +972,20 @@ Content`,
 			expect(loader.getSystemPrompt()).toBe("CLI system prompt.");
 		});
 
+		it("should preserve an explicitly empty systemPrompt option", async () => {
+			const loader = new DefaultResourceLoader({ cwd, agentDir, systemPrompt: "" });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBe("");
+		});
+
+		it("should ignore a whitespace-only systemPrompt option", async () => {
+			const loader = new DefaultResourceLoader({ cwd, agentDir, systemPrompt: "   " });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBeUndefined();
+		});
+
 		it("should read the systemPrompt option from a file path", async () => {
 			const promptPath = join(tempDir, "system-prompt.md");
 			writeFileSync(promptPath, "Prompt from file.");
@@ -980,6 +994,16 @@ Content`,
 			await loader.reload();
 
 			expect(loader.getSystemPrompt()).toBe("Prompt from file.");
+		});
+
+		it("should resolve a whitespace-only systemPrompt file to empty string, not undefined (fail-safe)", async () => {
+			const promptPath = join(tempDir, "whitespace-system-prompt.md");
+			writeFileSync(promptPath, "\n\t\n");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, systemPrompt: promptPath });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBe("");
 		});
 
 		it("should prefer the systemPrompt option over a legacy SYSTEM.md", async () => {
@@ -1002,6 +1026,24 @@ Content`,
 			await loader.reload();
 
 			expect(loader.getAppendSystemPrompt()).toEqual(["First addition.", "Second addition."]);
+		});
+
+		it("should discard empty appendSystemPrompt entries", async () => {
+			const emptyPath = join(cwd, "empty-append.txt");
+			const whitespacePath = join(cwd, "whitespace-append.txt");
+			const newlinePath = join(cwd, "newline-append.txt");
+			writeFileSync(emptyPath, "");
+			writeFileSync(whitespacePath, "   ");
+			writeFileSync(newlinePath, "\n\t\n");
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				appendSystemPrompt: ["", "   ", emptyPath, whitespacePath, newlinePath, "kept suffix"],
+			});
+			await loader.reload();
+
+			expect(loader.getAppendSystemPrompt()).toEqual(["kept suffix"]);
+			expect(loader.getAppendSystemPromptSources()).toEqual([]);
 		});
 	});
 

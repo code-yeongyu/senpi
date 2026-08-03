@@ -1,5 +1,6 @@
 import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
+import { appendToSystemPrompt } from "../../../system-prompt.ts";
 import type { ExtensionAPI, ExtensionContext, ModelSelectEvent } from "../../types.ts";
 import { resolvePreset, resolvePresetName } from "./presets.ts";
 import { loadPromptPresetSettings } from "./settings.ts";
@@ -11,6 +12,8 @@ interface SystemPromptOptionsLike {
 	promptGuidelines?: string[];
 	contextFiles?: Array<{ path: string; content: string }>;
 	skills?: BuildDynamicSystemPromptOptions["skills"];
+	customPrompt?: string;
+	appendSystemPrompt?: string;
 }
 
 function eventOptionsToBuilderInput(
@@ -40,7 +43,11 @@ function getPresetName(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "mo
 	return resolvePresetName(model, getSettings(ctx));
 }
 
-function refreshHeader(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "model">): void {
+function refreshHeader(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "model" | "systemPromptOptions">): void {
+	if (event?.systemPromptOptions?.customPrompt !== undefined) {
+		ctx.ui.setHeader(undefined);
+		return;
+	}
 	const presetName = getPresetName(ctx, event);
 	if (!presetName) {
 		ctx.ui.setHeader(undefined);
@@ -54,6 +61,10 @@ function refreshHeader(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "mo
 
 export default function promptPresetExtension(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", async (event, ctx) => {
+		const options = event.systemPromptOptions;
+		if (options?.customPrompt !== undefined) {
+			return undefined;
+		}
 		const model = ctx.model;
 		if (!model) {
 			return undefined;
@@ -64,18 +75,37 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
-		return { systemPrompt: preset.prompt };
+		const append = options?.appendSystemPrompt;
+		const replacement = appendToSystemPrompt(preset.prompt, append);
+		// An earlier handler may already have appended to the chained prompt (builtin
+		// hooks does this with a UserPromptSubmit systemMessage). Replacing outright
+		// would discard it, so carry that exact suffix across the replacement.
+		const upstream = event.systemPrompt.startsWith(event.baseSystemPrompt)
+			? event.systemPrompt.slice(event.baseSystemPrompt.length)
+			: "";
+		return { systemPrompt: `${replacement}${upstream}` };
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		if (ctx.getSystemPromptOptions().customPrompt !== undefined) {
+			ctx.ui.setHeader(undefined);
+			return;
+		}
 		refreshHeader(ctx);
 	});
 
 	pi.on("model_select", async (event, ctx) => {
 		refreshHeader(ctx, event);
+		const options = event.systemPromptOptions;
+		if (options?.customPrompt !== undefined) {
+			return {
+				systemPrompt: appendToSystemPrompt(options.customPrompt, options.appendSystemPrompt),
+			};
+		}
 		const preset = resolvePreset(event.model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx));
+		const append = options?.appendSystemPrompt;
 		return {
-			systemPrompt: preset?.prompt ?? null,
+			systemPrompt: preset ? appendToSystemPrompt(preset.prompt, append) : null,
 			systemPromptName: preset?.name,
 		};
 	});

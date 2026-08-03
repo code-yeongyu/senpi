@@ -483,7 +483,7 @@ describe("AgentSession model and extension characterization", () => {
 		expect(extensionApi).toBeDefined();
 	});
 
-	it("allows extension commands to inspect live system prompt options", async () => {
+	it("allows extension commands to inspect defensive system prompt option copies", async () => {
 		const seenOptions: BuildSystemPromptOptions[] = [];
 		const harness = await createHarness({
 			extensionFactories: [
@@ -493,7 +493,7 @@ describe("AgentSession model and extension characterization", () => {
 						handler: async (_args, ctx) => {
 							const options = ctx.getSystemPromptOptions();
 							seenOptions.push(options);
-							options.selectedTools?.push("mutated_tool");
+							if (seenOptions.length === 1) options.selectedTools?.push("mutated_tool");
 						},
 					});
 				},
@@ -505,10 +505,133 @@ describe("AgentSession model and extension characterization", () => {
 		await harness.session.prompt("/inspect-options");
 
 		expect(seenOptions).toHaveLength(2);
-		expect(seenOptions[0]).toBe(seenOptions[1]);
+		expect(seenOptions[0]).not.toBe(seenOptions[1]);
+		expect(seenOptions[0]?.selectedTools).not.toBe(seenOptions[1]?.selectedTools);
 		expect(seenOptions[0]?.cwd).toBe(harness.tempDir);
 		expect(seenOptions[0]?.selectedTools).toContain("read");
-		expect(seenOptions[1]?.selectedTools).toContain("mutated_tool");
+		expect(seenOptions[1]?.selectedTools).not.toContain("mutated_tool");
+	});
+
+	it("prevents before_agent_start handlers from mutating session prompt options", async () => {
+		// given — a handler that tries to mutate the live session options
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", async (event) => {
+						event.systemPromptOptions.selectedTools?.push("injected_tool");
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("done")]);
+
+		// when
+		await harness.session.prompt("hello");
+
+		// then — the session's own options must not have been mutated
+		const sessionOptions = harness.getExtensionRunner().createCommandContext().getSystemPromptOptions();
+		expect(sessionOptions.selectedTools).not.toContain("injected_tool");
+	});
+
+	it("keeps a model_select prompt durable across tool-set reconciliation", async () => {
+		// given — an extension that installs a distinct prompt on model_select
+		const installed = "MODEL SELECT PROMPT";
+		const harness = await createHarness({
+			models: [
+				{ id: "primary-model", name: "Primary", reasoning: false },
+				{ id: "secondary-model", name: "Secondary", reasoning: false },
+			],
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.on("model_select", async () => ({ systemPrompt: installed }));
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		// when — the model switch installs the prompt, then the tool set is reconciled
+		const target = harness.getModel("secondary-model");
+		expect(target).toBeDefined();
+		if (!target) return;
+		await harness.session.setModel(target);
+		expect(harness.session.systemPrompt).toBe(installed);
+		harness.session.setActiveToolsByName(harness.session.getActiveToolNames());
+
+		// then — the installed prompt survives, it does not revert to the base prompt
+		expect(harness.session.systemPrompt).toBe(installed);
+	});
+
+	it("clears a stale prompt override when model_select resets to the base prompt", async () => {
+		// given — a conditional modifier that this turn leaves the prompt untouched, so the
+		// override is recorded as the base string itself
+		const harness = await createHarness({
+			models: [
+				{ id: "primary-model", name: "Primary", reasoning: false },
+				{ id: "secondary-model", name: "Secondary", reasoning: false },
+			],
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.on("before_agent_start", async (event) => ({ systemPrompt: event.systemPrompt }));
+					pi.on("model_select", async () => ({ systemPrompt: null }));
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("ok")]);
+		await harness.session.prompt("hello");
+
+		// when — model_select resets to base (no visible change), then tools are reconciled
+		const target = harness.getModel("secondary-model");
+		expect(target).toBeDefined();
+		if (!target) return;
+		await harness.session.setModel(target);
+		const afterSelect = harness.session.systemPrompt;
+		expect(afterSelect).toContain("write");
+		harness.session.setActiveToolsByName(["read", "bash"]);
+
+		// then — the reconciled prompt reflects the reduced tool set instead of the stale override
+		const afterReconcile = harness.session.systemPrompt;
+		expect(afterReconcile).not.toBe(afterSelect);
+		expect(afterReconcile).not.toContain("write");
+	});
+
+	it("returns deeply independent system prompt option copies", async () => {
+		// given — a command handler capturing two successive option copies
+		const seen: BuildSystemPromptOptions[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.registerCommand("capture-options", {
+						description: "capture prompt options",
+						handler: async (_args, ctx) => {
+							seen.push(ctx.getSystemPromptOptions());
+						},
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		// when — every nesting level of the first copy is mutated
+		await harness.session.prompt("/capture-options");
+		const first = seen[0];
+		expect(first).toBeDefined();
+		if (!first) return;
+		const pristine = JSON.stringify(first);
+		first.selectedTools?.push("mutated_tool");
+		if (first.toolSnippets) first.toolSnippets.mutated_key = "mutated";
+		first.promptGuidelines?.push("mutated guideline");
+		if (first.contextFiles?.[0]) first.contextFiles[0].content = "MUTATED";
+		if (first.skills?.[0]) first.skills[0].sourceInfo.source = "MUTATED";
+		// the mutation must have actually landed, otherwise the assertion below is vacuous
+		expect(JSON.stringify(first)).not.toBe(pristine);
+		await harness.session.prompt("/capture-options");
+
+		// then — the next copy still matches the pre-mutation shape at every level
+		const second = seen[1];
+		expect(second).toBeDefined();
+		expect(JSON.stringify(second)).toBe(pristine);
 	});
 
 	it.each([

@@ -110,7 +110,7 @@ import {
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
-import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import { cloneSystemPromptOptions, emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type {
 	ApplyCompactionOptions,
 	ApplyCompactionResult,
@@ -154,6 +154,7 @@ import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
+import { appendToSystemPrompt, type BuildSystemPromptOptions } from "./system-prompt.ts";
 import { getSupportedThinkingLevels, supportsMax, supportsXhigh } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
@@ -686,7 +687,8 @@ export class AgentSession {
 	private _currentServiceTier: ServiceTier | undefined = undefined;
 	private _sessionFastMode = false;
 	private readonly _shownHighReasoningWarningKeys = new Set<string>();
-	private _baseSystemPromptOptions!: BuildDynamicSystemPromptOptions;
+	private _baseSystemPromptOptions!: BuildDynamicSystemPromptOptions &
+		Pick<BuildSystemPromptOptions, "customPrompt" | "appendSystemPrompt">;
 	private _systemPromptOverride?: string;
 
 	constructor(config: AgentSessionConfig) {
@@ -2064,6 +2066,11 @@ export class AgentSession {
 		return this.agent.state.systemPrompt;
 	}
 
+	/** Defensive copy of the base system-prompt construction options, for hosts building an ExtensionContext by hand. */
+	get systemPromptOptions(): BuildSystemPromptOptions {
+		return cloneSystemPromptOptions(this._baseSystemPromptOptions);
+	}
+
 	/** Current retry attempt (0 if not retrying) */
 	get retryAttempt(): number {
 		return this._retryAttempt;
@@ -2379,11 +2386,12 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
+			customPrompt: loaderSystemPrompt,
+			appendSystemPrompt: loaderAppendSystemPrompt.join("\n\n") || undefined,
 		};
 		const basePrompt = loaderSystemPrompt ?? buildDynamicSystemPrompt(this._baseSystemPromptOptions);
-		return loaderAppendSystemPrompt.length > 0
-			? `${basePrompt}\n\n${loaderAppendSystemPrompt.join("\n\n")}`
-			: basePrompt;
+		const append = loaderAppendSystemPrompt.join("\n\n");
+		return appendToSystemPrompt(basePrompt, append || undefined);
 	}
 
 	/**
@@ -3310,6 +3318,13 @@ export class AgentSession {
 
 		const previousSystemPrompt = this.agent.state.systemPrompt;
 		const systemPrompt = result.systemPrompt ?? this._baseSystemPrompt;
+		// The continuation snapshot and tool-set reconciliation both read
+		// `_systemPromptOverride`; without this the next tool continuation reverts to
+		// the previous model's prompt mid-turn. This runs before the no-visible-change
+		// return because a handler that resets to the base prompt must clear a prior
+		// override even when the visible prompt string is identical - otherwise the
+		// stale override outlives it and pins the prompt through the next rebuild.
+		this._systemPromptOverride = result.systemPrompt === null ? undefined : systemPrompt;
 		if (previousSystemPrompt === systemPrompt) {
 			return undefined;
 		}

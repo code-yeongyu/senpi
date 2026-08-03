@@ -237,8 +237,19 @@ describe("--list-models fast path", () => {
 			throw new ProcessExitError(code);
 		});
 
-		await expect(main(["--list-models", "mock"])).rejects.toMatchObject({ code: 0 });
+		await expect(
+			main([
+				"--list-models",
+				"mock",
+				"--system-prompt",
+				"You are the worker.",
+				"--append-system-prompt",
+				"Return evidence.",
+			]),
+		).rejects.toMatchObject({ code: 0 });
 		expect(capturedOptions?.resourceLoaderOptions).toMatchObject({
+			systemPrompt: "You are the worker.",
+			appendSystemPrompt: ["Return evidence."],
 			noSkills: true,
 			noPromptTemplates: true,
 			noThemes: true,

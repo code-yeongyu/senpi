@@ -158,6 +158,7 @@ describe("proactive idle compaction (agent_end wiring)", () => {
 				type: "before_agent_start",
 				prompt: "next prompt",
 				systemPrompt: "TEST AGENT SYSTEM PROMPT",
+				baseSystemPrompt: "TEST AGENT SYSTEM PROMPT",
 				systemPromptOptions: { cwd: process.cwd() },
 			},
 			harness.ctx,
@@ -231,6 +232,7 @@ function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
 		type: "before_agent_start",
 		prompt: "next prompt",
 		systemPrompt: "TEST AGENT SYSTEM PROMPT",
+		baseSystemPrompt: "TEST AGENT SYSTEM PROMPT",
 		systemPromptOptions: { cwd: process.cwd() },
 	};
 }

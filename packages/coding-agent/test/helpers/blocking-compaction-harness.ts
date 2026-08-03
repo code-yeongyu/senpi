@@ -146,6 +146,7 @@ export function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
 		type: "before_agent_start",
 		prompt: "continue",
 		systemPrompt: "system",
+		baseSystemPrompt: "system",
 		systemPromptOptions: Object.create(null) as BeforeAgentStartEvent["systemPromptOptions"],
 	};
 }

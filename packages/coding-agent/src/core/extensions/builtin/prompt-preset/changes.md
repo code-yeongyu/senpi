@@ -264,29 +264,36 @@
 
 ## Grok 4.5 preset (unreleased — 2026-07-17)
 
-Grok 4.5 has **not** been formally merged. Do not invent `v1`/`v2`/… edition labels for unreleased retunes — keep a single current section for this feature until it lands.
+### Agent-first Implementer/Oracle profiles (2026-08-01)
 
-### What changed (current branch state)
-- `grok-4.5.ts` (2026-07-28, diet): CEO core compressed from 4606 to 3832 template characters (~17% cut) with zero behavior removal, grounded in xAI Grok 4.5 guidance (docs.x.ai/developers/grok-4-5; the grok-code prompt-engineering guide): Grok 4.5 follows terse, structured instructions without repeated emphasis and is trained for tool-loop reliability, so triplicated rules were merged into single homes. Specifically: the audit rules (Role bullet + Operating Loop step 4 + Verification section) collapsed into one **Audit** bullet; the human-surface/report contract (intro + Role bullet + Output) into intro + **Output**; Intent-gate/ask-one-question (Intent Gate + Loop step 1) into **Intent Gate**; plan/todo (Loop step 2) and parallel delegation (Loop step 3) into the **Delegate** bullet; Oracle review (Role bullet + Loop step 5) into the **Consult Oracle** bullet. The `## Operating Loop` and `## Verification` headings are gone; every unique rule they carried survives. All preset-test anchors unchanged and green.
-- `grok-4.5.ts`: rewritten as a full-core preset via the `corePrompt` override (same shape as `gpt-5.5.ts` / `gpt-5.6.ts`). The role is now **CEO / orchestrator**, not a sibling tuningSection: Grok 4.5 acts as the single human-facing surface, delegates implementation work to background worker subprocesses spawned via `bash` as `senpi --print -p "..." --model <worker>` invocations (background `&` for parallel, output to temp files, `read` to collect), framed against GPT-5.6 prompting doctrine (implement-don't-propose, Manual QA Gate, binding stop contract). It consults a separate `senpi --print` review invocation before deploying non-trivial changes (the Oracle pattern), audits worker evidence rather than relaying self-report, and reports synthesized outcomes to the user. Trivial one-line fixes stay direct.
-- senpi does NOT expose a `task` / `subagent` / `spawn` tool to the model - the built-in tool surface is bash/edit/read/write/grep/ls/find. So the CEO delegates through the concrete primitive it has (`bash` spawning `senpi --print` subprocesses), mirroring the gpt-5.6.ts rule of never naming tools that do not exist here. An earlier draft of this preset referenced a `task` tool with `category: "deep"` / `"ultrabrain"` values; that was a defect (those are the *orchestrator-side* task tool's categories, not anything the senpi agent exposes to Grok), and the regression test now explicitly pins that those names do not appear in the preset.
-- Reuses `buildTestDisciplineSection()` and `buildFileOperationsTuning()` so shared rules stay single-sourced. Dynamic pieces (tool section, context files, skills, date, cwd) still come from `buildDynamicSystemPrompt`.
-- Prior tuningSection content (act-once-context-sufficient, claim-auditing, no-promise-endings, context-limit continuation) was superseded by the CEO core, which subsumes those rules into the CEO's audit + reporting duties and the binding Stop Goal. The Mario benchmark rationale is preserved below for history.
-- Benchmark evidence from the prior tuningSection version is under `local-ignore/qa-evidence/20260717-grok45-mario-benchmark/`.
-- `presets.ts`: `hasGrok45Signal` / `isGrok45Model` unchanged (match any Grok 4.5 id shape without catching `grok-4.3` / `grok-4.20-*` / `grok-3`).
-- `settings.ts`: `"grok-4.5"` joins `PromptPresetName` / `VALID_PRESETS` (unchanged).
-- `test/suite/prompt-presets-grok-4-5.test.ts`: id resolution, negative neighbors, settings force, and catalog coverage unchanged. The old tuning-string regex pins and the 900–1800 character tuning-size guard were replaced with CEO-signal assertions (acting as the CEO and orchestrator; delegate implementation to background workers via `bash`; `senpi --print`; GPT-5.6 prompting doctrine; implement-don't-propose; Manual QA Gate; consult Oracle before deploying; you are the human surface; Stop Goal; STOPPING IS MANDATORY AND IMMEDIATE; `apply_patch` and `### Test Discipline` present; routing-line preserved). Also pins that the preset does NOT name a nonexistent `task`/`category`/`run_in_background` tool.
+#### What changed
+- `grok-4.5.ts` Role section: dropped the sole `--model gpt-5.6*` implementer path and the "gpt-5.6 prompting guide loads doctrine automatically" coupling.
+- Workers are **invocation profiles** supplied through each child's explicit `--system-prompt`, not tools or user-message-only personas: **Implementer** (workspace-writing executor) and **Oracle** (read-only analysis/high-risk review). Critic/Planner/Explorer remain CEO responsibilities.
+- Implementer/Oracle doctrine is model-independent at system priority: both prohibit nested workers; Implementer owns edits/tests/Manual QA, while Oracle has a read-only tool allowlist and no shell.
+- Spawn remains `bash` + `senpi --print`, now with private `umask 077` / `mktemp -d` transport, cleanup traps, separate output/status files, `env -i` environment minimization, ephemeral `--no-session`, disabled discovered/user extensions plus skills/context/templates/nested-AGENTS/fallback, and per-role `--tools` allowlists. Builtin host controls may remain, but explicit replacement prompt precedence is proven through the actual resource-loader → session → preset hook path and provider-visible faux requests; role-system precedence and tool allowlists are the worker boundary.
+- CLI `--system-prompt` / `--append-system-prompt` values are forwarded in this PR through `main.ts` into the resource loader and `agent-session.ts`. An explicit replacement wins over model presets; explicit appends remain after the selected preset. Provider-visible coverage lives in `prompt-presets-explicit-system-prompt.test.ts`, with CLI forwarding covered by `list-models-fast-path.test.ts`. This closes the recursive-Grok child path discovered during review.
+- Oracle wording is high-risk final review / hard debug — not "before deploying". One orchestration level; workers must not re-delegate.
+- Brief fields: ROLE, GOAL, SCOPE, CONSTRAINTS, DONE WHEN, RETURN.
+- Tests pin effective prompt precedence, CLI option forwarding, worker spawn controls, id resolution, settings force, catalog sweep, and no fake task-tool API.
+- Review follow-up (2026-08-02): the environment directive no longer duplicates its allowlist phrase, and env-only authentication is preserved by forwarding credential variables *by name* through shell expansion (`env -i ... "XAI_API_KEY=$XAI_API_KEY"`) so no credential value is ever model-authored into a command, brief, or transcript.
+- Review follow-up (2026-08-02): the isolation and RETURN rules now state their real strength. Worker isolation is described as session and context isolation, not privilege isolation — an Implementer holding `bash` runs with the user's filesystem and credentials, so allowlists and no-spawn rules are prompt-level guidance. The 8 KiB RETURN schema is stated as CEO-parsed guidance with no runtime validator.
+- Review follow-up (2026-08-02): the file header now says role doctrine is delivered at system priority through the child's `--system-prompt`, replacing the stale claim that it lives in the user-level brief.
+- Review follow-up (2026-08-02): `before_agent_start` no longer discards work done by an earlier handler. The preset replacement now carries `event.systemPrompt.slice(event.baseSystemPrompt.length)` across, so a builtin-hooks `UserPromptSubmit` `systemMessage` survives preset selection. When an earlier handler replaced rather than appended, the slice guard yields an empty suffix and behavior is unchanged.
 
-### Why
-- The CEO role is not a small addendum on top of the default identity — it is a different operating posture (orchestrator + human surface, not implementer), which the `tuningSection` shape cannot express. The `corePrompt` override is the documented path for full-role rewrites (per `AGENTS.md` and the gpt-5.5/5.6 precedent). The Mario benchmark established that evidence-grounded continuation and claim-auditing are the right Grok 4.5 execution discipline; the CEO core subsumes those into the CEO's audit + reporting duties and the Stop Goal rather than duplicating them.
-- Delegation framing against GPT-5.6 doctrine is chosen because the gpt-5.6 preset already encodes that doctrine for the implementation-worker role; the CEO points its worker children at the same doctrine so worker behavior matches what gpt-5.6 would do in-session.
+#### Why
+- User direction: prefer specifying worker **roles** over locking every implementation child to GPT. Model presets must not be the only carrier of execution doctrine under senpi's no-task-tool harness.
+- Oracle/Momus/Metis review of the multi-agent plan: five named agents overbuilt; 2 profiles max; doctrine cannot depend on gpt-5.6 preset. Follow-up code review proved user-message briefs alone could not override child model presets, requiring the minimal CLI prompt-precedence support above.
 
-### Why extension system couldn't handle this differently
-- Preset selection and family tuning are owned by this builtin; no core prompt code changed.
+#### Why extension system couldn't handle this differently
+- The preset owns role selection, but explicit CLI prompt values were not forwarded and a per-turn preset otherwise replaced the loader prompt. The host must preserve the documented explicit prompt precedence before the preset can safely create role-specific child sessions.
 
-### Expected merge conflict zones on next upstream sync
-- LOW: `presets.ts` Grok matcher / `settings.ts` union if upstream adds its own Grok preset.
-- LOW: `grok-4.5.ts` wording and Grok test phrase pins.
+#### Expected merge conflict zones on next upstream sync
+- MEDIUM: `main.ts` resource-loader option forwarding and `agent-session.ts` prompt metadata.
+- LOW: prompt-preset precedence, Grok Role wording, and focused tests.
+
+Grok 4.5 has **not** been formally merged. Do not invent `v1`/`v2`/… edition labels for unreleased retunes — keep a single current section for this feature until it lands. The **Agent-first Implementer/Oracle profiles (2026-08-01)** subsection above is the current design. Historical notes below are retained only for provenance and are **superseded** by that retune (including Oracle wording: high-risk final review / hard debug, **not** "before deploying"; worker doctrine is model-independent, not gpt-5.6-only).
+
+Historical implementation details remain in Git history and the earlier evidence directories; this section documents only the current unreleased contract.
 
 ## Overview
 Per-model prompt preset extension. Selects a tuned system prompt based on the active model and exposes it through the dynamic prompt builder.

@@ -90,6 +90,7 @@ function createMockContext(overrides: { hasUI?: boolean; ui?: ExtensionUIContext
 		getImageSettings: vi.fn().mockReturnValue({ autoResize: true, blockImages: false }),
 		sessionSettings: createInMemoryExtensionSessionSettings(),
 		getSystemPrompt: vi.fn().mockReturnValue(""),
+		getSystemPromptOptions: vi.fn().mockReturnValue({ cwd: "" }),
 	};
 }
 

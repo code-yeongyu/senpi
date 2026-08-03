@@ -1293,3 +1293,26 @@ The retry budget, abortable retry sleep, provider continuation, and active model
 ### Why extension system couldn't handle this
 
 The instrumented transitions (`_emit`, queue internals, `RequiredCompactionError` admission, the TUI compaction queue, clipboard catch) are private `AgentSession`/`InteractiveMode` state with no extension-visible hook carrying the needed fields; field debugging of "stuck forever" sessions (Discord report 2026-07-30) requires a single post-hoc timeline in the logs directory.
+## Explicit CLI system prompts survive model presets (2026-08-01)
+
+### What changed
+
+- `main.ts` now forwards parsed `--system-prompt` and repeated `--append-system-prompt` values into both normal and list-models resource-loader construction.
+- `AgentSession` exposes those static replacement/append inputs in `systemPromptOptions` so per-model prompt presets can respect explicit caller intent.
+- The prompt-preset builtin skips replacement when an explicit custom prompt exists and preserves explicit suffixes after a selected preset.
+- Explicit empty prompt input now counts as a supplied replacement; this is an intentional bug fix to the existing replacement contract.
+- Regression coverage locks replacement precedence, append placement, and fast-path option forwarding.
+
+### Why
+
+- The CLI documented and parsed these options, but did not pass them to the loader. Even if supplied through SDK construction, the per-turn prompt-preset hook replaced the explicit prompt.
+- Grok worker profiles require role doctrine at system priority; user-message briefs cannot override a contradictory model preset.
+
+### Why extension system couldn't handle this alone
+
+- The preset can decide whether to yield, but only the host can forward CLI inputs and expose their provenance in per-turn prompt metadata.
+
+### Expected merge conflict zones
+
+- MEDIUM: `main.ts` resource-loader option construction and `core/agent-session.ts` system prompt rebuild metadata.
+- LOW: prompt-preset `before_agent_start` precedence tests.

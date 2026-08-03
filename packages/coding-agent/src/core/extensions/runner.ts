@@ -77,6 +77,17 @@ import type {
 	UserBashEventResult,
 } from "./types.ts";
 
+export function cloneSystemPromptOptions(options: BuildSystemPromptOptions): BuildSystemPromptOptions {
+	return {
+		...options,
+		selectedTools: options.selectedTools ? [...options.selectedTools] : undefined,
+		toolSnippets: options.toolSnippets ? { ...options.toolSnippets } : undefined,
+		promptGuidelines: options.promptGuidelines ? [...options.promptGuidelines] : undefined,
+		contextFiles: options.contextFiles?.map((file) => ({ ...file })),
+		skills: options.skills?.map((skill) => ({ ...skill, sourceInfo: { ...skill.sourceInfo } })),
+	};
+}
+
 // Extension shortcuts compete with canonical keybinding ids from keybindings.json.
 // Only editor-global shortcuts are reserved here. Picker-specific bindings are not.
 const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
@@ -1097,6 +1108,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
 			},
+			getSystemPromptOptions: () => {
+				runner.assertActive();
+				return cloneSystemPromptOptions(runner.getSystemPromptOptionsFn());
+			},
 			getLoadedHookSources: () => {
 				runner.assertActive();
 				return runner.getLoadedHookSourcesFn();
@@ -1116,10 +1131,6 @@ export class ExtensionRunner {
 			{},
 			Object.getOwnPropertyDescriptors(this.createContext()),
 		) as ExtensionCommandContext;
-		context.getSystemPromptOptions = () => {
-			this.assertActive();
-			return this.getSystemPromptOptionsFn();
-		};
 		context.waitForIdle = () => {
 			this.assertActive();
 			return this.waitForIdleFn();
@@ -1202,7 +1213,10 @@ export class ExtensionRunner {
 					// Re-read live prompt options per handler: an earlier handler that swaps
 					// the active toolset (gpt-apply-patch) must let later handlers
 					// (prompt-preset) rebuild from the post-swap tools in the same emission.
-					const liveEvent: ModelSelectEvent = { ...event, systemPromptOptions: this.getSystemPromptOptionsFn() };
+					const liveEvent: ModelSelectEvent = {
+						...event,
+						systemPromptOptions: cloneSystemPromptOptions(this.getSystemPromptOptionsFn()),
+					};
 					const handlerResult = await handler(liveEvent, this.createContext(ext.path));
 					if (handlerResult) {
 						const nextResult = handlerResult as ModelSelectEventResult;
@@ -1560,7 +1574,8 @@ export class ExtensionRunner {
 						prompt,
 						images,
 						systemPrompt: currentSystemPrompt,
-						systemPromptOptions,
+						baseSystemPrompt: systemPrompt,
+						systemPromptOptions: cloneSystemPromptOptions(systemPromptOptions),
 					};
 					const handlerResult = await handler(event, ctx);
 

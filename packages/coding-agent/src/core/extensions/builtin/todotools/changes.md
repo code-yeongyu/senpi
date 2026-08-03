@@ -1,5 +1,24 @@
 # todotools Fork Tracker
 
+## 2026-08-02 - Scope task-management injection to an active todo tool
+
+### What changed
+
+- `before_agent_start` no longer appends `TASK_MANAGEMENT_SECTION` unconditionally. When
+  `event.systemPromptOptions.selectedTools` is defined and does not include `todo`, the
+  handler returns `undefined` and leaves the chained prompt untouched. An undefined
+  allowlist keeps the previous always-inject behavior.
+
+### Why
+
+- A delegated `senpi --print` worker can run with an explicit `--tools` allowlist that
+  excludes `todo`. Injecting the doctrine there instructed the worker to call a tool it did
+  not have, wasting turns and contradicting its stated tool contract.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` handler body.
+
 ## 2026-07-31 - Animate same-phase completions in the todo sidebar
 
 ### What changed

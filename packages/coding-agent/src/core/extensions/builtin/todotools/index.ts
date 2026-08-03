@@ -46,6 +46,12 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event) => {
+		// A delegated worker can run with an explicit allowlist that excludes `todo`.
+		// Injecting the doctrine there tells it to call a tool it does not have.
+		const selectedTools = event.systemPromptOptions?.selectedTools;
+		if (selectedTools !== undefined && !selectedTools.includes("todo")) {
+			return undefined;
+		}
 		return {
 			systemPrompt: `${event.systemPrompt}\n${TASK_MANAGEMENT_SECTION}`,
 		};
