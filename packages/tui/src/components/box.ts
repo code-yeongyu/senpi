@@ -61,6 +61,8 @@ export class Box extends Container {
 
 		const contentWidth = Math.max(1, width - this.paddingX * 2);
 		const leftPad = " ".repeat(this.paddingX);
+		// Best-effort compatibility check for stateful background closures. Because the probe cannot detect
+		// text-dependent behavior, callers must use setBgFn() whenever the background semantics change.
 		const bgSample = this.bgFn ? this.bgFn("test") : undefined;
 		const revision = this.getRenderRevision();
 		if (

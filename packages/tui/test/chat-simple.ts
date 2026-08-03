@@ -56,23 +56,22 @@ editor.onSubmit = (value: string) => {
 
 	// Handle slash commands
 	if (trimmed === "/delete") {
-		const children = tui.children;
 		// Remove component before editor (if there are any besides the initial text)
-		if (children.length > 3) {
+		if (tui.children.length > 3) {
 			// children[0] = "Welcome to Simple Chat!"
 			// children[1] = "Type your messages below..."
 			// children[2...n-1] = messages
 			// children[n] = editor
-			children.splice(children.length - 2, 1);
+			const message = tui.children.at(-2);
+			if (message) tui.removeChild(message);
 		}
 		tui.requestRender();
 		return;
 	}
 
 	if (trimmed === "/clear") {
-		const children = tui.children;
 		// Remove all messages but keep the welcome text and editor
-		children.splice(2, children.length - 3);
+		for (const message of tui.children.slice(2, -1)) tui.removeChild(message);
 		tui.requestRender();
 		return;
 	}
@@ -83,8 +82,7 @@ editor.onSubmit = (value: string) => {
 
 		const userMessage = new Markdown(value, 1, 1, defaultMarkdownTheme);
 
-		const children = tui.children;
-		children.splice(children.length - 1, 0, userMessage);
+		tui.insertChild(tui.children.length - 1, userMessage);
 
 		const loader = new Loader(
 			tui,
@@ -92,7 +90,7 @@ editor.onSubmit = (value: string) => {
 			(s) => chalk.dim(s),
 			"Thinking...",
 		);
-		children.splice(children.length - 1, 0, loader);
+		tui.insertChild(tui.children.length - 1, loader);
 
 		tui.requestRender();
 
@@ -114,7 +112,7 @@ editor.onSubmit = (value: string) => {
 
 			// Add assistant message with no background (transparent)
 			const botMessage = new Markdown(randomResponse, 1, 1, defaultMarkdownTheme);
-			children.splice(children.length - 1, 0, botMessage);
+			tui.insertChild(tui.children.length - 1, botMessage);
 
 			// Re-enable submit
 			isResponding = false;

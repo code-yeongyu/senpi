@@ -439,8 +439,15 @@ type TuiConstructorOptions = {
 /**
  * Container - a component that contains other components
  */
+interface ComponentInvalidationSubscriptions {
+	callbacks: Map<Container, () => void>;
+	dispatch: () => void;
+}
+
+const componentInvalidationSubscriptions = new WeakMap<Component, ComponentInvalidationSubscriptions>();
+
 export class Container implements Component {
-	children: Component[] = [];
+	private readonly childComponents: Component[] = [];
 	private disposed = false;
 	private containerRenderCache?: {
 		width: number;
@@ -460,41 +467,47 @@ export class Container implements Component {
 	private readonly childRenderOffsets = new Map<Component, number>();
 	private untrackableChildCount = 0;
 
+	/** Read-only child view. Use the mutation methods so render invalidation stays connected. */
+	get children(): readonly Component[] {
+		return this.childComponents;
+	}
+
 	addChild(component: Component): void {
-		this.children.push(component);
 		this.bindChild(component);
+		this.childComponents.push(component);
 		this.markRenderInvalidated();
 	}
 
 	insertChild(index: number, component: Component): void {
-		const safeIndex = Math.max(0, Math.min(this.children.length, Math.trunc(index)));
-		this.children.splice(safeIndex, 0, component);
+		const safeIndex = Math.max(0, Math.min(this.childComponents.length, Math.trunc(index)));
 		this.bindChild(component);
+		this.childComponents.splice(safeIndex, 0, component);
 		this.markRenderInvalidated();
 	}
 
 	replaceChild(current: Component, replacement: Component): boolean {
-		const index = this.children.indexOf(current);
+		const index = this.childComponents.indexOf(current);
 		if (index === -1) return false;
-		this.unbindChild(current);
-		this.children[index] = replacement;
+		if (current === replacement) return true;
 		this.bindChild(replacement);
+		this.unbindChild(current);
+		this.childComponents[index] = replacement;
 		this.markRenderInvalidated();
 		return true;
 	}
 
 	detachChildrenFrom(index: number): Component[] {
-		const safeIndex = Math.max(0, Math.min(this.children.length, Math.trunc(index)));
-		const detached = this.children.splice(safeIndex);
+		const safeIndex = Math.max(0, Math.min(this.childComponents.length, Math.trunc(index)));
+		const detached = this.childComponents.splice(safeIndex);
 		for (const child of detached) this.unbindChild(child);
 		if (detached.length > 0) this.markRenderInvalidated();
 		return detached;
 	}
 
 	removeChild(component: Component): void {
-		const index = this.children.indexOf(component);
+		const index = this.childComponents.indexOf(component);
 		if (index !== -1) {
-			this.children.splice(index, 1);
+			this.childComponents.splice(index, 1);
 			this.unbindChild(component);
 			component.dispose?.();
 			this.markRenderInvalidated();
@@ -502,33 +515,33 @@ export class Container implements Component {
 	}
 
 	detachChild(component: Component): void {
-		const index = this.children.indexOf(component);
+		const index = this.childComponents.indexOf(component);
 		if (index !== -1) {
-			this.children.splice(index, 1);
+			this.childComponents.splice(index, 1);
 			this.unbindChild(component);
 			this.markRenderInvalidated();
 		}
 	}
 
 	clear(): void {
-		for (const child of this.children) {
+		for (const child of this.childComponents) {
 			this.unbindChild(child);
 			child.dispose?.();
 		}
-		if (this.children.length > 0) this.markRenderInvalidated();
-		this.children = [];
+		if (this.childComponents.length > 0) this.markRenderInvalidated();
+		this.childComponents.length = 0;
 	}
 
 	detachAll(): void {
-		for (const child of this.children) this.unbindChild(child);
-		if (this.children.length > 0) this.markRenderInvalidated();
-		this.children = [];
+		for (const child of this.childComponents) this.unbindChild(child);
+		if (this.childComponents.length > 0) this.markRenderInvalidated();
+		this.childComponents.length = 0;
 	}
 
 	dispose(): void {
 		if (this.disposed) return;
 		this.disposed = true;
-		for (const child of this.children) {
+		for (const child of this.childComponents) {
 			this.unbindChild(child);
 			child.dispose?.();
 		}
@@ -538,7 +551,7 @@ export class Container implements Component {
 		this.containerRenderCache = undefined;
 		this.suppressChildInvalidation = true;
 		try {
-			for (const child of this.children) {
+			for (const child of this.childComponents) {
 				child.invalidate?.();
 			}
 		} finally {
@@ -574,8 +587,8 @@ export class Container implements Component {
 		let nextOffset = 0;
 		this.childRenderOffsets.clear();
 
-		for (let index = 0; index < this.children.length; index++) {
-			const child = this.children[index]!;
+		for (let index = 0; index < this.childComponents.length; index++) {
+			const child = this.childComponents[index]!;
 			if (!this.childRenderOffsets.has(child)) this.childRenderOffsets.set(child, nextOffset);
 			const previousChild = cached.children[index];
 			const previousLines = cached.childLines[index];
@@ -609,18 +622,18 @@ export class Container implements Component {
 			nextOffset += childLines.length;
 		}
 
-		if (firstChangedIndex === -1 && cached.children.length !== this.children.length) {
-			firstChangedIndex = this.children.length;
+		if (firstChangedIndex === -1 && cached.children.length !== this.childComponents.length) {
+			firstChangedIndex = this.childComponents.length;
 			firstChangedGlobalLine = nextOffset;
 		}
 
-		cached.children.length = this.children.length;
-		cached.childLines.length = this.children.length;
-		cached.childRevisions.length = this.children.length;
-		cached.childTrackable.length = this.children.length;
+		cached.children.length = this.childComponents.length;
+		cached.childLines.length = this.childComponents.length;
+		cached.childRevisions.length = this.childComponents.length;
+		cached.childTrackable.length = this.childComponents.length;
 
 		if (firstChangedIndex === -1) {
-			this.markRenderCompleted(this.renderChangeStart);
+			this.markRenderCompleted(cached.lines.length);
 			return cached.lines;
 		}
 
@@ -638,7 +651,7 @@ export class Container implements Component {
 	}
 
 	private buildRenderCache(width: number): string[] {
-		const children = [...this.children];
+		const children = [...this.childComponents];
 		const childLines: string[][] = [];
 		const childRevisions: Array<number | undefined> = [];
 		const childTrackable: boolean[] = [];
@@ -674,6 +687,7 @@ export class Container implements Component {
 	}
 
 	private bindChild(child: Component): void {
+		if (child === this) throw new Error("A Container cannot contain itself");
 		const bindingCount = this.childBindingCounts.get(child) ?? 0;
 		this.childBindingCounts.set(child, bindingCount + 1);
 		if (bindingCount > 0) return;
@@ -693,11 +707,25 @@ export class Container implements Component {
 				this.markRenderInvalidated(childOffset + Math.max(0, child.getRenderChangeStart?.() ?? 0));
 			}
 		};
-		child.setRenderInvalidationCallback(callback);
+		const subscriptions = componentInvalidationSubscriptions.get(child);
+		if (subscriptions) {
+			subscriptions.callbacks.set(this, callback);
+			return;
+		}
+		const callbacks = new Map<Container, () => void>([[this, callback]]);
+		const nextSubscriptions: ComponentInvalidationSubscriptions = {
+			callbacks,
+			dispatch: () => {
+				for (const subscribedCallback of callbacks.values()) subscribedCallback();
+			},
+		};
+		child.setRenderInvalidationCallback(nextSubscriptions.dispatch);
+		componentInvalidationSubscriptions.set(child, nextSubscriptions);
 	}
 
 	private unbindChild(child: Component): void {
 		const bindingCount = this.childBindingCounts.get(child) ?? 0;
+		if (bindingCount === 0) return;
 		if (bindingCount > 1) {
 			this.childBindingCounts.set(child, bindingCount - 1);
 			return;
@@ -707,7 +735,12 @@ export class Container implements Component {
 		if (trackable === false) this.untrackableChildCount--;
 		this.childTrackability.delete(child);
 		this.childRenderOffsets.delete(child);
+		const subscriptions = componentInvalidationSubscriptions.get(child);
+		if (!subscriptions) return;
+		subscriptions.callbacks.delete(this);
+		if (subscriptions.callbacks.size > 0) return;
 		child.setRenderInvalidationCallback?.(undefined);
+		componentInvalidationSubscriptions.delete(child);
 	}
 
 	private isChildTrackable(child: Component): boolean {

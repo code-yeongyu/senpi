@@ -1,6 +1,41 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { Container, ScrollView, Text } from "../src/index.ts";
+import { type Component, Container, ScrollView, Text } from "../src/index.ts";
+
+class StableInvalidatingComponent implements Component {
+	private readonly lines = ["stable"];
+	private revision = 0;
+	private onInvalidated: (() => void) | undefined;
+
+	render(): string[] {
+		return this.lines;
+	}
+
+	getRenderRevision(): number {
+		return this.revision;
+	}
+
+	getRenderChangeStart(): number {
+		return 0;
+	}
+
+	setRenderInvalidationCallback(callback: (() => void) | undefined): void {
+		this.onInvalidated = callback;
+	}
+
+	isRenderCacheTrackable(): boolean {
+		return true;
+	}
+
+	invalidate(): void {
+		this.revision++;
+		this.onInvalidated?.();
+	}
+
+	notifyUnchanged(): void {
+		this.onInvalidated?.();
+	}
+}
 
 describe("Container render cache", () => {
 	it("reuses the flattened transcript while its children are unchanged", () => {
@@ -73,6 +108,41 @@ describe("Container render cache", () => {
 
 		assert.notStrictEqual(updated, once);
 		assert.deepEqual(updated, ["two       "]);
+	});
+
+	it("fans shared-child invalidation out to every containing parent", () => {
+		const firstParent = new Container();
+		const secondParent = new Container();
+		const child = new Text("one", 0, 0);
+		firstParent.addChild(child);
+		firstParent.render(10);
+		secondParent.addChild(child);
+		secondParent.render(10);
+
+		child.setText("two");
+		assert.deepEqual(firstParent.render(10), ["two       "]);
+		assert.deepEqual(secondParent.render(10), ["two       "]);
+
+		firstParent.detachChild(child);
+		const detachedRender = firstParent.render(10);
+		const detachedRevision = firstParent.getRenderRevision();
+		child.setText("three");
+		assert.equal(firstParent.getRenderRevision(), detachedRevision);
+		assert.strictEqual(firstParent.render(10), detachedRender);
+		assert.deepEqual(secondParent.render(10), ["three     "]);
+	});
+
+	it("closes a clean invalidation window at the end of the cached output", () => {
+		const container = new Container();
+		const child = new StableInvalidatingComponent();
+		container.addChild(child);
+		const firstRender = container.render(10);
+
+		child.notifyUnchanged();
+		const cleanRender = container.render(10);
+
+		assert.strictEqual(cleanRender, firstRender);
+		assert.equal(container.getRenderChangeStart(), cleanRender.length);
 	});
 
 	it("starts a new cache when the render width changes", () => {

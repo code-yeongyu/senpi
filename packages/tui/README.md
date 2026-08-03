@@ -78,6 +78,10 @@ tui.requestRender(); // Request a re-render
 tui.onDebug = () => console.log("Debug triggered");
 ```
 
+`children` is a read-only view. Use `addChild`, `insertChild`, `replaceChild`, `removeChild`, or the detach methods
+to preserve render invalidation. A component may occur more than once in one container or be projected by multiple
+containers; its invalidation is delivered to every containing parent.
+
 ### Alternate-screen viewport layouts
 
 `TuiAltScreen` can render an explicit terminal-height layout. `VStack` and `HStack` allocate constrained regions, while `ScrollView` owns scrolling for one region. These semantics are intentionally unavailable on `TuiMainScreen`, where the terminal owns scrollback.
