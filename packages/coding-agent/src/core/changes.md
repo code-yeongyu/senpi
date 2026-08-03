@@ -21,6 +21,32 @@
 
 - LOW: `agent-session.ts` compaction start/end logging correlation and `test/session-log-routes.test.ts` lifecycle telemetry coverage.
 
+## Required-compaction continuation recovery (2026-08-03)
+
+### What changed
+
+- `AgentSession` marks only provenance-confirmed required-compaction admission errors as retrying.
+- Accepted post-turn threshold compaction resumes the exact interrupted continuation, including queued
+  steering input, without fabricating a user `continue`.
+- A locally proven required-compaction error can use the persisted byte estimate when every provider
+  usage sample is missing or zero.
+- Rejected recovery stays terminal, provider errors with the same text do not gain retry provenance,
+  and one recovery sequence persists one threshold error.
+
+### Why
+
+- Required admission previously surfaced as a terminal provider failure before the recovery compaction
+  finished, leaving active work idle even after a successful compaction.
+
+### Why this cannot be expressed externally
+
+- Only the session runtime owns the interrupted continuation, compaction lifecycle, provider-admission
+  ordering, and queued-input precedence.
+
+### Expected merge conflict zones
+
+- `agent-session.ts` required-compaction provenance, `_runAutoCompaction()`, and upstream request-ID telemetry.
+
 ## Prefer configured client fallback chains over server substitutions (2026-08-03)
 
 ### What changed

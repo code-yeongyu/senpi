@@ -610,6 +610,10 @@ export class AgentSession {
 	private readonly _sessionWorkBarrier = new SessionWorkBarrier();
 	private _overflowRecoveryAttempted = false;
 	private _requiredCompactionAdmissionError: RequiredCompactionError | undefined;
+	// Preserve provenance across agent-core's conversion of our admission error
+	// into an assistant error message. Matching provider text alone is not proof
+	// that AgentSession initiated required-compaction recovery.
+	private _requiredCompactionTurnError: RequiredCompactionError | undefined;
 	// A retry continuation immediately follows an accepted compaction. Its first
 	// response must not retrigger threshold compaction from stale provider usage.
 	private _skipNextPostRetryCompactionCheck = false;
@@ -997,8 +1001,11 @@ export class AgentSession {
 				try {
 					return await this._enforceCompactionBeforeProvider(turn.message, true, "threshold");
 				} catch (error) {
-					if (error instanceof RequiredCompactionError && this.agent.hasQueuedMessages()) {
-						this._requiredCompactionAdmissionError = error;
+					if (error instanceof RequiredCompactionError) {
+						this._requiredCompactionTurnError = error;
+						if (this.agent.hasQueuedMessages()) {
+							this._requiredCompactionAdmissionError = error;
+						}
 					}
 					throw error;
 				}
@@ -1451,16 +1458,17 @@ export class AgentSession {
 			const messages = filterContextExcludedMessages(this.agent.state.messages);
 			const estimate = estimateContextTokens(messages);
 			if (estimate.lastUsageIndex === null) {
-				return undefined;
-			}
-			const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
-			const usageMessage = messages[estimate.lastUsageIndex];
-			if (
-				compactionEntry &&
-				usageMessage?.role === "assistant" &&
-				this._isAssistantFromBeforeLatestCompaction(usageMessage)
-			) {
-				return undefined;
+				if (!this._isRequiredCompactionError(message)) return undefined;
+			} else {
+				const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
+				const usageMessage = messages[estimate.lastUsageIndex];
+				if (
+					compactionEntry &&
+					usageMessage?.role === "assistant" &&
+					this._isAssistantFromBeforeLatestCompaction(usageMessage)
+				) {
+					return undefined;
+				}
 			}
 			contextTokens = estimate.tokens;
 		}
@@ -1528,13 +1536,19 @@ export class AgentSession {
 	}
 
 	private _willRetryAfterAgentEnd(messages: AgentMessage[]): boolean {
-		const settings = this.settingsManager.getRetrySettings();
-		if (!settings.enabled) {
-			return false;
-		}
-
 		const lastAssistant = this._lastAssistantMessage ?? this._findLastAssistantInMessages(messages);
 		if (!lastAssistant) {
+			return false;
+		}
+		if (
+			this._isRequiredCompactionError(lastAssistant) &&
+			this._getRequiredAutoCompactionReason(lastAssistant) !== undefined
+		) {
+			return true;
+		}
+
+		const settings = this.settingsManager.getRetrySettings();
+		if (!settings.enabled) {
 			return false;
 		}
 
@@ -1567,7 +1581,18 @@ export class AgentSession {
 		return this._retryFallback.canTryFallback();
 	}
 
+	private _isRequiredCompactionError(message: AssistantMessage): boolean {
+		return (
+			this._requiredCompactionTurnError !== undefined &&
+			message.stopReason === "error" &&
+			message.errorMessage === this._requiredCompactionTurnError.message
+		);
+	}
+
 	private async _processAgentEvent(event: AgentEvent, signal: AbortSignal): Promise<void> {
+		if (event.type === "agent_start") {
+			this._requiredCompactionTurnError = undefined;
+		}
 		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
 		// This ensures the UI sees the updated queue state
 		if (event.type === "message_start" && event.message.role === "user") {
@@ -1684,6 +1709,8 @@ export class AgentSession {
 			this._lastAssistantMessage = undefined;
 			this._skipNextPostRetryCompactionCheck = false;
 			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg);
+			const retryAfterRequiredCompaction =
+				requiredAutoCompaction !== undefined && this._isRequiredCompactionError(msg);
 
 			// Retry transient failures normally and eligible hard errors only through a fallback.
 			const retryableError = this._isRetryableError(msg);
@@ -1715,10 +1742,19 @@ export class AgentSession {
 			retryContinuationBlocked ||= retryOutcome === "blocked";
 			if (!retryContinuationBlocked) {
 				if (compactedBeforeRetry && this.agent.hasQueuedMessages()) {
+					// Accepted recovery supersedes the stored admission rejection: the
+					// queued continuation is about to run, so the originating prompt must
+					// not observe the stale RequiredCompactionError.
+					this._requiredCompactionAdmissionError = undefined;
 					this._scheduleContinuationAfterCurrentEvent();
 					launchedContinuation = true;
 				} else {
-					launchedContinuation = await this._checkCompaction(msg);
+					launchedContinuation = await this._checkCompaction(msg, true, undefined, retryAfterRequiredCompaction);
+					if (launchedContinuation && this.agent.hasQueuedMessages()) {
+						// Same supersession on the post-check path: an accepted recovery
+						// compaction owns the continuation now.
+						this._requiredCompactionAdmissionError = undefined;
+					}
 					allowsPostCompactionUsageExemptContinuation = this._postCompactionUsageExemptAssistants.has(msg);
 					if (allowsPostCompactionUsageExemptContinuation) {
 						this._flushPostCompactionDeferredMessages();
@@ -1746,6 +1782,9 @@ export class AgentSession {
 				(allowsQueuedContinuation || allowsPostCompactionUsageExemptContinuation) &&
 				this.agent.hasQueuedMessages()
 			) {
+				// A scheduled continuation owns the queue now; the stored admission
+				// rejection from a superseded required compaction must not surface.
+				this._requiredCompactionAdmissionError = undefined;
 				this._scheduleContinuationAfterCurrentEvent();
 				launchedContinuation = true;
 			}
@@ -4640,17 +4679,20 @@ export class AgentSession {
 			} else {
 				const messages = filterContextExcludedMessages(this.agent.state.messages);
 				const estimate = estimateContextTokens(messages);
-				if (estimate.lastUsageIndex === null) return false; // No usage data at all
-				// Verify the usage source is post-compaction. Kept pre-compaction messages
-				// have stale usage reflecting the old (larger) context and would falsely
-				// trigger compaction right after one just finished.
-				const usageMsg = messages[estimate.lastUsageIndex];
-				if (
-					compactionEntry &&
-					usageMsg.role === "assistant" &&
-					this._isAssistantFromBeforeLatestCompaction(usageMsg)
-				) {
-					return false;
+				if (estimate.lastUsageIndex === null) {
+					if (!this._isRequiredCompactionError(assistantMessage)) return false;
+				} else {
+					// Verify the usage source is post-compaction. Kept pre-compaction messages
+					// have stale usage reflecting the old (larger) context and would falsely
+					// trigger compaction right after one just finished.
+					const usageMsg = messages[estimate.lastUsageIndex];
+					if (
+						compactionEntry &&
+						usageMsg.role === "assistant" &&
+						this._isAssistantFromBeforeLatestCompaction(usageMsg)
+					) {
+						return false;
+					}
 				}
 				contextTokens = estimate.tokens;
 			}
@@ -4664,7 +4706,7 @@ export class AgentSession {
 					retryAfterCompaction,
 				);
 			} else {
-				const compacted = await this._runAutoCompaction("threshold", false);
+				const compacted = await this._runAutoCompaction("threshold", retryAfterCompaction);
 				if (
 					!compacted &&
 					this._compactionLifecycle.state.status === "failed" &&

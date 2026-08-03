@@ -15,6 +15,70 @@
 - `test/extensions-runner.test.ts` locks default/remapped approval reservation and default thinking reservation.
 - Real 80- and 120-column PTY sessions prove Shift+Tab changes only thinking while Alt+A cycles only approval mode.
 
+## Required-recovery admission supersession and bounded fallback sizing (2026-08-03)
+
+### What changed
+
+- An accepted required-compaction recovery now clears the stored admission rejection when its queued
+  continuation is scheduled, so the originating `prompt()` resolves after the queued steer/follow-up
+  completes instead of throwing the superseded `RequiredCompactionError`.
+- Deterministic recovery sizing no longer materializes `JSON.stringify` for every retained message
+  without a bound: the estimator fails closed on accessor-bearing, non-plain, cyclic, or callable
+  values and exits early once the remaining `contextWindow - reserveTokens` budget is exceeded.
+- Regression coverage pins the turn-end soft-cap reset across degradation-recovery early returns,
+  accepted-recovery queued-steer supersession, accessor-safe fallback rejection, and the three-call
+  continuation flow (previously ending in an unasserted faux queue-exhaustion error).
+
+### Why
+
+- Review of #679 reproduced a contradiction: queued continuation completed and both queues drained,
+  yet the originating prompt still rejected with the stale required-compaction error.
+- The same review measured ~207 MiB peak amplification from a 32 MiB retained message and observed
+  property getters executing on persisted tool-call arguments during recovery sizing.
+
+### Why this cannot be expressed externally
+
+- Supersession lives in `AgentSession`'s internal compaction admission/continuation ownership; the
+  sizing guard is a fail-closed property of the builtin deterministic-fallback estimator.
+
+### Expected merge conflict zones
+
+- `core/agent-session.ts` retry/continuation scheduling around `_checkCompaction` and `agent_end`.
+- `core/extensions/builtin/compaction/deterministic-fallback.ts` estimator and projection call site.
+
+## Keep long-running compaction recovery progressing (2026-08-03)
+
+### What changed
+
+- The automatic-compaction soft cap now resets after each provider turn instead of lasting for the
+  whole multi-tool agent run. The completed turn's zero-yield recovery still observes its original cap
+  before the reset, while the absolute session cap remains authoritative for every route.
+- Required-compaction failures now resume queued work after an accepted recovery compaction without a
+  synthetic `continue`, while rejected recovery remains terminal.
+- Provenance-confirmed required recovery uses the persisted byte-derived estimate when no valid
+  provider usage sample exists.
+- Deterministic recovery measures the reconstructed suffix instead of stale cumulative assistant usage.
+  It keeps the prepared boundary when safe and otherwise advances to the latest complete persisted user
+  turn, including expanded skill text and its chronological suffix, with strict retained-message schemas.
+
+### Why
+
+- Long `ulw` runs could complete three valid compactions and then reject every later threshold
+  compaction as if the whole agent run were one provider turn.
+- When summarization then failed, a fitting skill-bearing suffix could be rejected because provider
+  usage still described the discarded pre-compaction prefix. Repeated continuations surfaced the same
+  threshold error instead of recovering.
+
+### Why this cannot be expressed externally
+
+- The fix depends on internal provider-turn lifecycle state, exact session entry boundaries, compaction
+  admission, and continuation ownership.
+
+### Expected merge conflict zones
+
+- `src/core/agent-session.ts` compaction retry/continuation ownership and upstream telemetry lifecycle.
+- `src/core/extensions/builtin/compaction/` admission, fallback, and provider-turn accounting.
+
 ## Compact completed apply_patch result details (2026-08-02)
 
 ### What changed

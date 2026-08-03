@@ -17,7 +17,10 @@ interface FutureCapState {
 }
 
 type IncrementAcceptedFn = (state: FutureCapState) => FutureCapState;
-type ShouldRejectByCapFn = (state: FutureCapState, opts?: { manual?: boolean }) => { cancel: boolean };
+type ShouldRejectByCapFn = (
+	state: FutureCapState,
+	opts?: { manual?: boolean; reason?: "manual" | "extension" },
+) => { cancel: boolean };
 type ResetTurnCounterFn = (state: FutureCapState) => FutureCapState;
 
 const incrementAcceptedFuture = incrementAccepted as unknown as IncrementAcceptedFn;
@@ -120,6 +123,23 @@ describe("compaction per-turn cap", () => {
 				expect(manualDecision).toEqual({ cancel: false });
 				expect(stateAtSoftCap.acceptedAbsolute).toBeLessThan(EXPECTED_HARD_CAP);
 			});
+		});
+	});
+
+	describe("Given accepted compactions reach the absolute cap across provider turns", () => {
+		it("Then the next automatic compaction is rejected after each soft counter reset", () => {
+			let state = createInitialCapState();
+			for (let accepted = 0; accepted < EXPECTED_HARD_CAP; accepted++) {
+				state = incrementAcceptedFuture(state);
+				state = resetTurnCounterFuture(state);
+			}
+
+			expect(state.acceptedThisTurn).toBe(0);
+			expect(state.acceptedAbsolute).toBe(EXPECTED_HARD_CAP);
+			expect(shouldRejectByCapFuture(state)).toEqual({ cancel: true });
+			expect(shouldRejectByCapFuture(state, { manual: true })).toEqual({ cancel: true });
+			expect(shouldRejectByCapFuture(state, { reason: "manual" })).toEqual({ cancel: true });
+			expect(shouldRejectByCapFuture(state, { reason: "extension" })).toEqual({ cancel: true });
 		});
 	});
 

@@ -1,5 +1,38 @@
 # Builtin compaction extension changes
 
+## Reset the cap per provider turn and retain a safe deterministic suffix (2026-08-03)
+
+### What changed
+
+- `turn_end` now resets the soft compaction counters after the completed turn's degradation and
+  zero-yield recovery checks. `agent_end` keeps its existing final reset, and the absolute session cap
+  is checked before every manual, extension, or automatic route.
+- Deterministic required recovery projects the exact post-compaction context and ignores cumulative
+  assistant usage that refers to the discarded prefix.
+- The fallback prefers the prepared boundary, then tries the latest meaningful persisted user boundary
+  once and retains every following message in order.
+- Recovery remains fail-closed for oversized suffixes, images, provider-native blocks, opaque replay
+  signatures, branch summaries, malformed message envelopes or known block schemas, and empty or
+  default-ignorable user boundaries.
+
+### Why
+
+- The previous “per-turn” counter lasted for an entire multi-tool agent run, so the fourth valid
+  compaction was rejected even after three separate provider turns.
+- A loaded skill is ordinary user text, but stale assistant usage could make that small suffix appear
+  larger than the input cap, and the fallback had no later safe boundary to try.
+
+### Why this cannot be expressed externally
+
+- The behavior depends on builtin lifecycle state, canonical session reconstruction, and internal
+  replay-safety metadata.
+
+### Expected merge conflict zones
+
+- `index.ts` `turn_end`/`agent_end` lifecycle accounting and blocking-compaction admission.
+- `deterministic-fallback.ts` retained-suffix projection and metadata.
+- `retained-message-safety.ts` normalized replay-envelope and content validation.
+
 ## Idle warm-up retries transient failures while the session stays idle (2026-08-03)
 
 ### What changed

@@ -459,7 +459,7 @@ describe("goal continuation while a monitor is active", () => {
 
 		const countdownStarted = waitForGoalStatus(
 			status,
-			(update) => update.key === GOAL_WAIT_STATUS_KEY && update.text?.includes("goal resumes in 1m") === true,
+			(update) => update.key === GOAL_WAIT_STATUS_KEY && update.text?.includes("goal resumes in 10s") === true,
 		);
 		await runUserInitiatedTurn(handlers, ctx);
 		await countdownStarted;
@@ -467,7 +467,7 @@ describe("goal continuation while a monitor is active", () => {
 
 		const countdownAdvanced = waitForGoalStatus(
 			status,
-			(update) => update.key === GOAL_WAIT_STATUS_KEY && update.text?.includes("goal resumes in 30s") === true,
+			(update) => update.key === GOAL_WAIT_STATUS_KEY && update.text?.includes("goal resumes in 5s") === true,
 		);
 		await vi.advanceTimersByTimeAsync(GOAL_USER_GRACE_DELAY_MS / 2);
 		await countdownAdvanced;
@@ -499,7 +499,7 @@ describe("goal continuation while a monitor is active", () => {
 
 		const countdownStarted = waitForGoalStatus(
 			status,
-			(update) => update.key === GOAL_WAIT_STATUS_KEY && update.text?.includes("goal resumes in 1m") === true,
+			(update) => update.key === GOAL_WAIT_STATUS_KEY && update.text?.includes("goal resumes in 10s") === true,
 		);
 		await runUserInitiatedTurn(handlers, ctx);
 		await countdownStarted;

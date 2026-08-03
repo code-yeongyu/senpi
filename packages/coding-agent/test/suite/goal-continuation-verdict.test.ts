@@ -182,6 +182,6 @@ describe("goal continuation verdict", () => {
 		expect(GOAL_STALL_TOOLLESS_THRESHOLD).toBe(3);
 		expect(GOAL_REPETITION_HASH_STREAK).toBe(3);
 		expect(GOAL_LENGTH_RECOVERY_LIMIT).toBe(1);
-		expect(GOAL_USER_GRACE_DELAY_MS).toBe(60_000);
+		expect(GOAL_USER_GRACE_DELAY_MS).toBe(10_000);
 	});
 });

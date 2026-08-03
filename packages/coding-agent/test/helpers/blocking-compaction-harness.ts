@@ -101,7 +101,7 @@ export function createBlockingContext(options: {
 	const ctx = {
 		hasUI: false,
 		mode: "print",
-		ui: Object.create(null) as ExtensionContext["ui"],
+		ui: { notify: () => undefined } as unknown as ExtensionContext["ui"],
 		cwd: process.cwd(),
 		isProjectTrusted: () => true,
 		sessionManager,

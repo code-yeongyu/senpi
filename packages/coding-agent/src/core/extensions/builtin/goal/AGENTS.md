@@ -46,7 +46,7 @@ hidden continuation can be queued at a time. The stall notice is goal-wide: from
 3rd consecutive toolless continuation turn it prefixes the prompt with `<goal_stall_check>`
 and switches between monitor-flavored bullets while monitors are active and generic
 recovery bullets otherwise. Accepted direct input disarms a pending continuation,
-and a clean accepted user turn arms a visible 60-second grace countdown before the Goal
+and a clean accepted user turn arms a visible 10-second grace countdown before the Goal
 resumes; mechanically blocked Goals are reactivated on accepted input, including admitted
 steering. A `length` stop gets exactly one minimal truncation recovery before the goal
 blocks on repetition, terminal provider errors block the goal only when `AgentEndEvent.willRetry`

@@ -767,11 +767,15 @@ export default function compactionExtension(
 	});
 
 	pi.on("turn_end", async (_event, ctx) => {
-		if (lanePolicy.disablesSenpiCompaction(ctx)) return;
-		handleTurnEnd(degradationState);
-		if (degradationState.recoveryTriggeredThisCycle) return;
-		if (state.lastYield && state.lastYield.savedTokens <= 0) {
-			void applyBlockingCompaction(ctx, RECOVERY_INSTRUCTIONS).catch(() => {});
+		try {
+			if (lanePolicy.disablesSenpiCompaction(ctx)) return;
+			handleTurnEnd(degradationState);
+			if (degradationState.recoveryTriggeredThisCycle) return;
+			if (state.lastYield && state.lastYield.savedTokens <= 0) {
+				void applyBlockingCompaction(ctx, RECOVERY_INSTRUCTIONS).catch(() => {});
+			}
+		} finally {
+			state = resetTurnCounter(state, "");
 		}
 	});
 

@@ -8,7 +8,7 @@ export const GOAL_CONTINUATION_CAP = 8;
 export const GOAL_STALL_TOOLLESS_THRESHOLD = 3;
 export const GOAL_REPETITION_HASH_STREAK = 3;
 export const GOAL_LENGTH_RECOVERY_LIMIT = 1;
-export const GOAL_USER_GRACE_DELAY_MS = 60_000;
+export const GOAL_USER_GRACE_DELAY_MS = 10_000;
 
 export type GoalContinuationPath = "immediate" | "monitorDelayed" | "userGrace" | "sessionStart";
 

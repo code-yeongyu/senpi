@@ -36,9 +36,12 @@ export function shouldRejectByCap(
 	state: CompactionExtensionState,
 	opts?: ShouldRejectByCapOptions,
 ): { cancel: boolean } {
+	if (isOverHardCap(state)) {
+		return { cancel: true };
+	}
 	const bypass = opts?.manual === true || opts?.reason === "manual" || opts?.reason === "extension";
 	if (bypass) {
-		return { cancel: isOverHardCap(state) };
+		return { cancel: false };
 	}
 	if (isOverSoftCap(state)) {
 		return { cancel: true };
