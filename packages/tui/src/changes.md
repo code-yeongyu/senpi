@@ -1,5 +1,29 @@
 # TUI delta rendering fork changes
 
+## 2026-08-03: revision-driven container render caching with shared-child invalidation
+
+### What changed
+
+- `Container` caches each child's rendered lines and revision, reuses the stable prefix, and propagates the earliest
+  changed line through nested containers. `Box` and `ScrollView` keep their flattened render projections cached too.
+- Container children now have a read-only public view and must be changed through the binding-aware mutation methods.
+  A single installed dispatcher fans child invalidation out to every containing parent, while per-container binding
+  counts keep repeated references subscribed until their last occurrence is removed.
+- Coding-agent transcript paths use the container mutation methods, so streaming and transcript compaction invalidate
+  only the affected tail while unchanged history remains cached.
+- `test/container-render-cache.test.ts` covers stable reuse, nested tail changes, append/remove, repeated references,
+  shared-child invalidation fan-out, clean invalidation windows, width changes, and fullscreen scrollbar projection.
+
+### Why this cannot be expressed externally
+
+Child ownership, render revisions, invalidation callbacks, and cached line arrays are private component-tree state.
+Keeping callbacks connected and reusing unchanged descendant output therefore requires changes inside the TUI.
+
+### Expected merge conflict zones
+
+- MEDIUM: `tui.ts` `Container` child mutation and render methods.
+- LOW: `components/box.ts`, `components/scroll-view.ts`, and coding-agent transcript mutation call sites.
+
 ## 2026-07-31: memoized line normalization and viewport-bounded rendering by default
 
 ### What changed

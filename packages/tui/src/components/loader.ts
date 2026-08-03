@@ -39,6 +39,7 @@ export class Loader extends Text {
 	private messageColorFn: (str: string) => string;
 	private message: string = "Loading...";
 	private lastDisplayedText: string | undefined = undefined;
+	private renderedLines?: { width: number; textLines: string[]; lines: string[] };
 
 	constructor(
 		ui: TUI,
@@ -56,7 +57,13 @@ export class Loader extends Text {
 	}
 
 	render(width: number): string[] {
-		return ["", ...super.render(width)];
+		const textLines = super.render(width);
+		if (this.renderedLines?.width === width && this.renderedLines.textLines === textLines) {
+			return this.renderedLines.lines;
+		}
+		const lines = ["", ...textLines];
+		this.renderedLines = { width, textLines, lines };
+		return lines;
 	}
 
 	start(): void {

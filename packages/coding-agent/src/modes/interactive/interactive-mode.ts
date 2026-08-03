@@ -2791,10 +2791,10 @@ export class InteractiveMode {
 				this.customHeader.setExpanded(this.toolOutputExpanded);
 			}
 			if (index !== -1) {
-				this.headerContainer.children[index] = this.customHeader;
+				this.headerContainer.replaceChild(currentHeader, this.customHeader);
 			} else {
 				// If not found (e.g. builtInHeader was never added), add at the top
-				this.headerContainer.children.unshift(this.customHeader);
+				this.headerContainer.insertChild(0, this.customHeader);
 			}
 		} else {
 			// Restore built-in header
@@ -2803,7 +2803,7 @@ export class InteractiveMode {
 				this.builtInHeader.setExpanded(this.toolOutputExpanded);
 			}
 			if (index !== -1) {
-				this.headerContainer.children[index] = this.builtInHeader;
+				this.headerContainer.replaceChild(currentHeader, this.builtInHeader);
 			}
 		}
 
@@ -4197,7 +4197,7 @@ export class InteractiveMode {
 		if (this.streamingComponent) {
 			const streamingIndex = this.chatContainer.children.indexOf(this.streamingComponent);
 			if (streamingIndex >= 0) {
-				this.chatContainer.children.splice(streamingIndex, 0, component);
+				this.chatContainer.insertChild(streamingIndex, component);
 				return;
 			}
 		}

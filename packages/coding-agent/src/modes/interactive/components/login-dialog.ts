@@ -75,9 +75,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	}
 
 	private replaceInputWithSubmittedText(value: string): void {
-		this.contentContainer.children = this.contentContainer.children.map((child) =>
-			child === this.input ? new Text(`> ${value}`, 0, 0) : child,
-		);
+		this.contentContainer.replaceChild(this.input, new Text(`> ${value}`, 0, 0));
 	}
 
 	private cancel(): void {
