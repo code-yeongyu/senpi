@@ -6,6 +6,7 @@ import serviceTierExtension, {
 import { createHarness, type Harness } from "./harness.ts";
 
 const CODEX_PROVIDER = "openai-codex";
+const CODEX_POOL_PROVIDER = "codex-pool";
 const CODEX_API = "openai-codex-responses";
 const BASE_MODEL_ID = "gpt-5.6-sol";
 const FAST_MODEL_ID = `${BASE_MODEL_ID}-fast`;
@@ -164,6 +165,27 @@ describe("service-tier builtin extension", () => {
 		expect(harness.session.isFastModeActive()).toBe(false);
 		const defaultPayload = { model: BASE_MODEL_ID };
 		expect(await runner.emitBeforeProviderRequest(defaultPayload)).toBe(defaultPayload);
+	});
+
+	it("toggles the priority tier for extension providers using the Codex responses API", async () => {
+		const harness = await createHarness({
+			api: CODEX_API,
+			provider: CODEX_POOL_PROVIDER,
+			models: [{ id: BASE_MODEL_ID }],
+			extensionFactories: [serviceTierExtension],
+		});
+		harnesses.push(harness);
+		const runner = harness.getExtensionRunner();
+		const notify = vi.spyOn(runner.getUIContext(), "notify");
+
+		await harness.session.prompt("/fast");
+
+		expect(notify).toHaveBeenCalledWith(`Fast mode enabled: ${BASE_MODEL_ID}`, "info");
+		expect(harness.session.isFastModeActive()).toBe(true);
+		expect(await runner.emitBeforeProviderRequest({ model: BASE_MODEL_ID })).toEqual({
+			model: BASE_MODEL_ID,
+			service_tier: "priority",
+		});
 	});
 
 	it("keeps session fast mode on across a mid-session switch to another Codex model", async () => {

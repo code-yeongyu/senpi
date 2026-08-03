@@ -1,5 +1,18 @@
 # Builtin extensions changes
 
+## service-tier: enable fast mode for Codex API extension providers (2026-08-03)
+
+- `/fast` now checks the model's `openai-codex-responses` API capability instead
+  of requiring the built-in `openai-codex` provider id. Extension providers
+  such as `codex-pool` can therefore use the same session-level
+  `service_tier: "priority"` path without shadowing the stock command.
+- Non-Codex providers remain unchanged and still receive the existing warning.
+- Coverage: `test/suite/service-tier-extension.test.ts` registers a
+  `codex-pool` model on the Codex responses API, toggles `/fast`, and verifies
+  both the session indicator and request payload.
+- Expected merge conflict zones: LOW in `service-tier.ts` at the two Codex
+  eligibility guards; LOW in `service-tier-extension.test.ts`.
+
 ## tps: monotonic elapsed-time source for assistant intervals (2026-07-31)
 
 - `tps.ts` now derives assistant-message elapsed time from the monotonic

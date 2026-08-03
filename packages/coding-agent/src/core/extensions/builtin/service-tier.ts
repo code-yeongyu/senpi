@@ -7,7 +7,6 @@ export type { ServiceTier };
 
 type ProviderPayload = Record<string, unknown>;
 
-const OPENAI_CODEX_PROVIDER = "openai-codex";
 const OPENAI_CODEX_RESPONSES_API = "openai-codex-responses";
 const FAST_MODEL_SUFFIX = "-fast";
 const PRIORITY_TIER: ServiceTier = "priority";
@@ -88,7 +87,7 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		pi.setSessionFastMode(false);
 
 		const model = ctx.model;
-		if (model?.provider !== OPENAI_CODEX_PROVIDER) {
+		if (model?.api !== OPENAI_CODEX_RESPONSES_API) {
 			return;
 		}
 
@@ -102,7 +101,7 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		description: "Toggle OpenAI Codex fast mode for this session",
 		handler: async (_args, ctx) => {
 			const model = ctx.model;
-			if (model?.provider !== OPENAI_CODEX_PROVIDER) {
+			if (model?.api !== OPENAI_CODEX_RESPONSES_API) {
 				ctx.ui.notify("Fast mode is only available for OpenAI Codex models.", "warning");
 				return;
 			}
