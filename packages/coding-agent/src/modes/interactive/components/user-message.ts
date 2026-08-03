@@ -15,6 +15,7 @@ export class UserMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private outputPad: number;
 	private markdownTransformers: readonly MarkdownTransformer[];
+	private renderCache?: { width: number; lines: string[]; revision: number };
 
 	constructor(
 		text: string,
@@ -36,6 +37,7 @@ export class UserMessageComponent extends Container {
 	}
 
 	private rebuild(): void {
+		this.renderCache = undefined;
 		this.clear();
 		const contentBox = new Box(this.outputPad, 1, (content: string) => theme.bg("userMessageBg", content));
 		contentBox.addChild(
@@ -57,14 +59,25 @@ export class UserMessageComponent extends Container {
 		this.addChild(contentBox);
 	}
 
+	override invalidate(): void {
+		this.renderCache = undefined;
+		super.invalidate();
+	}
+
 	override render(width: number): string[] {
-		const lines = super.render(width);
+		const revision = this.getRenderRevision();
+		if (this.renderCache?.width === width && this.renderCache.revision === revision) {
+			return this.renderCache.lines;
+		}
+		const lines = [...super.render(width)];
 		if (lines.length === 0) {
+			this.renderCache = { width, lines, revision: this.getRenderRevision() };
 			return lines;
 		}
 
 		lines[0] = OSC133_ZONE_START + lines[0];
 		lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[lines.length - 1];
+		this.renderCache = { width, lines, revision: this.getRenderRevision() };
 		return lines;
 	}
 }

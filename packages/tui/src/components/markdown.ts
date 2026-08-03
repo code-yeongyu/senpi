@@ -433,6 +433,8 @@ export class Markdown implements Component {
 	private cachedText?: string;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
+	private renderRevision = 0;
+	private renderInvalidationCallback: (() => void) | undefined;
 
 	constructor(
 		text: string,
@@ -459,6 +461,24 @@ export class Markdown implements Component {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+		this.renderRevision++;
+		this.renderInvalidationCallback?.();
+	}
+
+	getRenderRevision(): number {
+		return this.renderRevision;
+	}
+
+	getRenderChangeStart(): number {
+		return 0;
+	}
+
+	setRenderInvalidationCallback(callback: (() => void) | undefined): void {
+		this.renderInvalidationCallback = callback;
+	}
+
+	isRenderCacheTrackable(): boolean {
+		return true;
 	}
 
 	render(width: number): string[] {

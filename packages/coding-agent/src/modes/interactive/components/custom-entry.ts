@@ -37,6 +37,13 @@ export class CustomEntryComponent extends Container {
 		this.rebuild();
 	}
 
+	override isRenderCacheTrackable(): boolean {
+		// Entry renderers are snapshots. Expansion and theme changes rebuild this
+		// boundary explicitly, so opaque extension children cannot force every
+		// transcript frame to revisit all historical entries.
+		return true;
+	}
+
 	private rebuild(): void {
 		this.clear();
 		this.customComponent = undefined;

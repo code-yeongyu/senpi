@@ -14,6 +14,8 @@ export class Text implements Component {
 	private cachedText?: string;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
+	private renderRevision = 0;
+	private renderInvalidationCallback: (() => void) | undefined;
 
 	constructor(text: string = "", paddingX: number = 1, paddingY: number = 1, customBgFn?: (text: string) => string) {
 		this.text = text;
@@ -24,22 +26,46 @@ export class Text implements Component {
 
 	setText(text: string): void {
 		this.text = text;
-		this.cachedText = undefined;
-		this.cachedWidth = undefined;
-		this.cachedLines = undefined;
+		this.invalidateRenderCache();
+		this.markRenderInvalidated();
 	}
 
 	setCustomBgFn(customBgFn?: (text: string) => string): void {
 		this.customBgFn = customBgFn;
+		this.invalidateRenderCache();
+		this.markRenderInvalidated();
+	}
+
+	invalidate(): void {
+		this.invalidateRenderCache();
+		this.markRenderInvalidated();
+	}
+
+	getRenderRevision(): number {
+		return this.renderRevision;
+	}
+
+	getRenderChangeStart(): number {
+		return 0;
+	}
+
+	setRenderInvalidationCallback(callback: (() => void) | undefined): void {
+		this.renderInvalidationCallback = callback;
+	}
+
+	isRenderCacheTrackable(): boolean {
+		return true;
+	}
+
+	private invalidateRenderCache(): void {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
 	}
 
-	invalidate(): void {
-		this.cachedText = undefined;
-		this.cachedWidth = undefined;
-		this.cachedLines = undefined;
+	private markRenderInvalidated(): void {
+		this.renderRevision++;
+		this.renderInvalidationCallback?.();
 	}
 
 	render(width: number): string[] {

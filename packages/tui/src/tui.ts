@@ -78,6 +78,29 @@ export interface Component {
 	render(width: number): string[];
 
 	/**
+	 * Optional monotonically increasing revision for components whose rendered
+	 * lines can change. Parents use this to retain their own flattened line
+	 * buffer without missing nested changes.
+	 */
+	getRenderRevision?(): number;
+
+	/**
+	 * First line changed by the latest render revision. The prefix before this
+	 * line must be identical to the previous revision.
+	 */
+	getRenderChangeStart?(): number;
+
+	/**
+	 * Register the parent callback used by revision-aware render caches. A
+	 * component must implement this together with `getRenderRevision()` and
+	 * `isRenderCacheTrackable()` before a parent may skip calling `render()`.
+	 */
+	setRenderInvalidationCallback?(callback: (() => void) | undefined): void;
+
+	/** Whether state changes are guaranteed to notify the registered parent. */
+	isRenderCacheTrackable?(): boolean;
+
+	/**
 	 * Optional handler for keyboard input when component has focus
 	 */
 	handleInput?(data: string): void;
@@ -419,16 +442,62 @@ type TuiConstructorOptions = {
 export class Container implements Component {
 	children: Component[] = [];
 	private disposed = false;
+	private containerRenderCache?: {
+		width: number;
+		children: Component[];
+		childLines: string[][];
+		childRevisions: Array<number | undefined>;
+		childTrackable: boolean[];
+		lines: string[];
+	};
+	private renderRevision = 0;
+	private renderChangeStart = 0;
+	private renderInvalidatedSinceRender = false;
+	private renderInvalidationCallback: (() => void) | undefined;
+	private suppressChildInvalidation = false;
+	private readonly childBindingCounts = new Map<Component, number>();
+	private readonly childTrackability = new Map<Component, boolean>();
+	private readonly childRenderOffsets = new Map<Component, number>();
+	private untrackableChildCount = 0;
 
 	addChild(component: Component): void {
 		this.children.push(component);
+		this.bindChild(component);
+		this.markRenderInvalidated();
+	}
+
+	insertChild(index: number, component: Component): void {
+		const safeIndex = Math.max(0, Math.min(this.children.length, Math.trunc(index)));
+		this.children.splice(safeIndex, 0, component);
+		this.bindChild(component);
+		this.markRenderInvalidated();
+	}
+
+	replaceChild(current: Component, replacement: Component): boolean {
+		const index = this.children.indexOf(current);
+		if (index === -1) return false;
+		this.unbindChild(current);
+		this.children[index] = replacement;
+		this.bindChild(replacement);
+		this.markRenderInvalidated();
+		return true;
+	}
+
+	detachChildrenFrom(index: number): Component[] {
+		const safeIndex = Math.max(0, Math.min(this.children.length, Math.trunc(index)));
+		const detached = this.children.splice(safeIndex);
+		for (const child of detached) this.unbindChild(child);
+		if (detached.length > 0) this.markRenderInvalidated();
+		return detached;
 	}
 
 	removeChild(component: Component): void {
 		const index = this.children.indexOf(component);
 		if (index !== -1) {
 			this.children.splice(index, 1);
+			this.unbindChild(component);
 			component.dispose?.();
+			this.markRenderInvalidated();
 		}
 	}
 
@@ -436,17 +505,23 @@ export class Container implements Component {
 		const index = this.children.indexOf(component);
 		if (index !== -1) {
 			this.children.splice(index, 1);
+			this.unbindChild(component);
+			this.markRenderInvalidated();
 		}
 	}
 
 	clear(): void {
 		for (const child of this.children) {
+			this.unbindChild(child);
 			child.dispose?.();
 		}
+		if (this.children.length > 0) this.markRenderInvalidated();
 		this.children = [];
 	}
 
 	detachAll(): void {
+		for (const child of this.children) this.unbindChild(child);
+		if (this.children.length > 0) this.markRenderInvalidated();
 		this.children = [];
 	}
 
@@ -454,33 +529,204 @@ export class Container implements Component {
 		if (this.disposed) return;
 		this.disposed = true;
 		for (const child of this.children) {
+			this.unbindChild(child);
 			child.dispose?.();
 		}
 	}
 
 	invalidate(): void {
-		for (const child of this.children) {
-			child.invalidate?.();
+		this.containerRenderCache = undefined;
+		this.suppressChildInvalidation = true;
+		try {
+			for (const child of this.children) {
+				child.invalidate?.();
+			}
+		} finally {
+			this.suppressChildInvalidation = false;
+			this.markRenderInvalidated();
 		}
 	}
 
+	getRenderRevision(): number {
+		return this.renderRevision;
+	}
+
+	getRenderChangeStart(): number {
+		return this.renderChangeStart;
+	}
+
+	setRenderInvalidationCallback(callback: (() => void) | undefined): void {
+		this.renderInvalidationCallback = callback;
+	}
+
+	isRenderCacheTrackable(): boolean {
+		return this.untrackableChildCount === 0;
+	}
+
 	render(width: number): string[] {
-		const lines: string[] = [];
-		for (const child of this.children) {
-			let childLines: string[];
-			try {
-				childLines = child.render(width);
-			} catch (error) {
-				logRenderErrorOnce(child, error);
-				const componentName = componentRenderErrorName(child);
-				// Focus ownership stays unchanged; render containment must not steal or clear focus implicitly.
-				childLines = [`[render error: ${componentName}]`];
+		const cached = this.containerRenderCache;
+		if (!cached || cached.width !== width) return this.buildRenderCache(width);
+		if (!this.renderInvalidatedSinceRender && this.isRenderCacheTrackable()) return cached.lines;
+
+		let firstChangedIndex = -1;
+		let firstChangedLocalLine = 0;
+		let firstChangedGlobalLine = 0;
+		let nextOffset = 0;
+		this.childRenderOffsets.clear();
+
+		for (let index = 0; index < this.children.length; index++) {
+			const child = this.children[index]!;
+			if (!this.childRenderOffsets.has(child)) this.childRenderOffsets.set(child, nextOffset);
+			const previousChild = cached.children[index];
+			const previousLines = cached.childLines[index];
+			const previousRevision = cached.childRevisions[index];
+			const previousTrackable = cached.childTrackable[index] ?? false;
+			const childTrackable = this.isChildTrackable(child);
+			const revisionBeforeRender = child.getRenderRevision?.();
+			const canReuse =
+				previousChild === child && previousTrackable && childTrackable && previousRevision === revisionBeforeRender;
+			const childLines = canReuse ? previousLines! : this.renderChild(child, width);
+			const childRevision = child.getRenderRevision?.();
+
+			if (
+				firstChangedIndex === -1 &&
+				(previousChild !== child || previousLines !== childLines || previousRevision !== childRevision)
+			) {
+				firstChangedIndex = index;
+				if (previousChild === child && previousRevision !== childRevision) {
+					firstChangedLocalLine = Math.max(
+						0,
+						Math.min(child.getRenderChangeStart?.() ?? 0, previousLines?.length ?? 0, childLines.length),
+					);
+				}
+				firstChangedGlobalLine = nextOffset + firstChangedLocalLine;
 			}
-			for (const line of childLines) {
-				lines.push(line);
+
+			cached.children[index] = child;
+			cached.childLines[index] = childLines;
+			cached.childRevisions[index] = childRevision;
+			cached.childTrackable[index] = childTrackable;
+			nextOffset += childLines.length;
+		}
+
+		if (firstChangedIndex === -1 && cached.children.length !== this.children.length) {
+			firstChangedIndex = this.children.length;
+			firstChangedGlobalLine = nextOffset;
+		}
+
+		cached.children.length = this.children.length;
+		cached.childLines.length = this.children.length;
+		cached.childRevisions.length = this.children.length;
+		cached.childTrackable.length = this.children.length;
+
+		if (firstChangedIndex === -1) {
+			this.markRenderCompleted(this.renderChangeStart);
+			return cached.lines;
+		}
+
+		const lines = cached.lines.slice(0, firstChangedGlobalLine);
+		for (let index = firstChangedIndex; index < cached.childLines.length; index++) {
+			const childLines = cached.childLines[index]!;
+			const start = index === firstChangedIndex ? firstChangedLocalLine : 0;
+			for (let lineIndex = start; lineIndex < childLines.length; lineIndex++) {
+				lines.push(childLines[lineIndex]!);
 			}
 		}
+		cached.lines = lines;
+		this.markRenderCompleted(firstChangedGlobalLine);
 		return lines;
+	}
+
+	private buildRenderCache(width: number): string[] {
+		const children = [...this.children];
+		const childLines: string[][] = [];
+		const childRevisions: Array<number | undefined> = [];
+		const childTrackable: boolean[] = [];
+		const lines: string[] = [];
+		this.childRenderOffsets.clear();
+		for (const child of children) {
+			if (!this.childRenderOffsets.has(child)) this.childRenderOffsets.set(child, lines.length);
+			const rendered = this.renderChild(child, width);
+			childLines.push(rendered);
+			childRevisions.push(child.getRenderRevision?.());
+			childTrackable.push(this.isChildTrackable(child));
+			for (const line of rendered) lines.push(line);
+		}
+		this.containerRenderCache = { width, children, childLines, childRevisions, childTrackable, lines };
+		this.markRenderCompleted(0);
+		return lines;
+	}
+
+	protected markRenderInvalidated(changeStart = 0): void {
+		this.renderRevision++;
+		const normalizedChangeStart = Math.max(0, Math.trunc(changeStart));
+		this.renderChangeStart = this.renderInvalidatedSinceRender
+			? Math.min(this.renderChangeStart, normalizedChangeStart)
+			: normalizedChangeStart;
+		this.renderInvalidatedSinceRender = true;
+		this.renderInvalidationCallback?.();
+	}
+
+	/** Record the first changed line and close the current invalidation window. */
+	protected markRenderCompleted(changeStart: number): void {
+		this.renderChangeStart = Math.max(0, Math.trunc(changeStart));
+		this.renderInvalidatedSinceRender = false;
+	}
+
+	private bindChild(child: Component): void {
+		const bindingCount = this.childBindingCounts.get(child) ?? 0;
+		this.childBindingCounts.set(child, bindingCount + 1);
+		if (bindingCount > 0) return;
+		const trackable = this.isChildTrackable(child);
+		this.childTrackability.set(child, trackable);
+		if (!trackable) this.untrackableChildCount++;
+		if (typeof child.setRenderInvalidationCallback !== "function") return;
+		const callback = () => {
+			const wasTrackable = this.childTrackability.get(child) ?? false;
+			const isTrackable = this.isChildTrackable(child);
+			if (wasTrackable !== isTrackable) {
+				this.childTrackability.set(child, isTrackable);
+				this.untrackableChildCount += isTrackable ? -1 : 1;
+			}
+			if (!this.suppressChildInvalidation) {
+				const childOffset = this.childRenderOffsets.get(child) ?? 0;
+				this.markRenderInvalidated(childOffset + Math.max(0, child.getRenderChangeStart?.() ?? 0));
+			}
+		};
+		child.setRenderInvalidationCallback(callback);
+	}
+
+	private unbindChild(child: Component): void {
+		const bindingCount = this.childBindingCounts.get(child) ?? 0;
+		if (bindingCount > 1) {
+			this.childBindingCounts.set(child, bindingCount - 1);
+			return;
+		}
+		this.childBindingCounts.delete(child);
+		const trackable = this.childTrackability.get(child);
+		if (trackable === false) this.untrackableChildCount--;
+		this.childTrackability.delete(child);
+		this.childRenderOffsets.delete(child);
+		child.setRenderInvalidationCallback?.(undefined);
+	}
+
+	private isChildTrackable(child: Component): boolean {
+		return (
+			typeof child.getRenderRevision === "function" &&
+			typeof child.setRenderInvalidationCallback === "function" &&
+			child.isRenderCacheTrackable?.() === true
+		);
+	}
+
+	private renderChild(child: Component, width: number): string[] {
+		try {
+			return child.render(width);
+		} catch (error) {
+			logRenderErrorOnce(child, error);
+			const componentName = componentRenderErrorName(child);
+			// Focus ownership stays unchanged; render containment must not steal or clear focus implicitly.
+			return [`[render error: ${componentName}]`];
+		}
 	}
 }
 

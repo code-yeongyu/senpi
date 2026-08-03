@@ -1,121 +1,89 @@
-import type { Component } from "../tui.ts";
+import { Container } from "../tui.ts";
 import { applyBackgroundToLine, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
 	childLines: string[];
 	width: number;
 	bgSample: string | undefined;
+	revision: number;
 	lines: string[];
 };
 
 /**
  * Box component - a container that applies padding and background to all children
  */
-export class Box implements Component {
-	children: Component[] = [];
+export class Box extends Container {
 	private paddingX: number;
 	private paddingY: number;
 	private bgFn?: (text: string) => string;
-	private disposed = false;
 
 	// Cache for rendered output
 	private cache?: RenderCache;
 
 	constructor(paddingX = 1, paddingY = 1, bgFn?: (text: string) => string) {
+		super();
 		this.paddingX = paddingX;
 		this.paddingY = paddingY;
 		this.bgFn = bgFn;
 	}
 
-	addChild(component: Component): void {
-		this.children.push(component);
-		this.invalidateCache();
-	}
-
-	removeChild(component: Component): void {
-		const index = this.children.indexOf(component);
-		if (index !== -1) {
-			this.children.splice(index, 1);
-			this.invalidateCache();
-			component.dispose?.();
-		}
-	}
-
-	clear(): void {
-		for (const child of this.children) {
-			child.dispose?.();
-		}
-		this.children = [];
-		this.invalidateCache();
-	}
-
-	detachAll(): void {
-		this.children = [];
-		this.invalidateCache();
-	}
-
-	dispose(): void {
-		if (this.disposed) return;
-		this.disposed = true;
-		for (const child of this.children) {
-			child.dispose?.();
-		}
-		this.invalidateCache();
-	}
-
 	setBgFn(bgFn?: (text: string) => string): void {
 		this.bgFn = bgFn;
-		// Don't invalidate here - we'll detect bgFn changes by sampling output
+		this.invalidateCache();
+		this.markRenderInvalidated();
 	}
 
 	private invalidateCache(): void {
 		this.cache = undefined;
 	}
 
-	private matchCache(width: number, childLines: string[], bgSample: string | undefined): boolean {
+	private matchCache(width: number, childLines: string[], bgSample: string | undefined, revision: number): boolean {
 		const cache = this.cache;
 		return (
 			!!cache &&
 			cache.width === width &&
 			cache.bgSample === bgSample &&
+			cache.revision === revision &&
 			cache.childLines.length === childLines.length &&
 			cache.childLines.every((line, i) => line === childLines[i])
 		);
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		this.invalidateCache();
-		for (const child of this.children) {
-			child.invalidate?.();
-		}
+		super.invalidate();
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		if (this.children.length === 0) {
 			return [];
 		}
 
 		const contentWidth = Math.max(1, width - this.paddingX * 2);
 		const leftPad = " ".repeat(this.paddingX);
+		const bgSample = this.bgFn ? this.bgFn("test") : undefined;
+		const revision = this.getRenderRevision();
+		if (
+			this.isRenderCacheTrackable() &&
+			this.cache?.width === width &&
+			this.cache.bgSample === bgSample &&
+			this.cache.revision === revision
+		) {
+			return this.cache.lines;
+		}
 
-		// Render all children
+		// Flatten children through Container so unchanged descendants are not rendered.
 		const childLines: string[] = [];
-		for (const child of this.children) {
-			const lines = child.render(contentWidth);
-			for (const line of lines) {
-				childLines.push(leftPad + line);
-			}
+		for (const line of super.render(contentWidth)) {
+			childLines.push(leftPad + line);
 		}
 
 		if (childLines.length === 0) {
 			return [];
 		}
 
-		// Check if bgFn output changed by sampling
-		const bgSample = this.bgFn ? this.bgFn("test") : undefined;
-
 		// Check cache validity
-		if (this.matchCache(width, childLines, bgSample)) {
+		if (this.matchCache(width, childLines, bgSample, revision)) {
 			return this.cache!.lines;
 		}
 
@@ -138,7 +106,7 @@ export class Box implements Component {
 		}
 
 		// Update cache
-		this.cache = { childLines, width, bgSample, lines: result };
+		this.cache = { childLines, width, bgSample, revision, lines: result };
 
 		return result;
 	}

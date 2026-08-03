@@ -57,6 +57,12 @@ export class CustomMessageComponent extends Container {
 		this.rebuild();
 	}
 
+	override isRenderCacheTrackable(): boolean {
+		// Message renderers are rebuilt only through this component's explicit
+		// state transitions, making this a revision boundary for opaque children.
+		return true;
+	}
+
 	private rebuild(): void {
 		// Remove previous content component
 		if (this.customComponent) {

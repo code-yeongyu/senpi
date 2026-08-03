@@ -29,6 +29,13 @@ export class ScrollView extends Container {
 	private transientScrollbarVisible = false;
 	private scrollbarActive = false;
 	private scrollbarHideTimer: NodeJS.Timeout | undefined;
+	private scrollRenderCache?: {
+		width: number;
+		contentWidth: number;
+		childLines: string[];
+		childRevision: number | undefined;
+		lines: string[];
+	};
 
 	constructor(component: Component, options: ScrollViewOptions = {}) {
 		super();
@@ -36,7 +43,7 @@ export class ScrollView extends Container {
 			throw new Error(`Unsupported ScrollView axis: ${options.axis}`);
 		}
 		this.child = component;
-		this.children.push(component);
+		super.addChild(component);
 		this.followEnd = (options.follow ?? "none") === "end";
 		this.followingEnd = this.followEnd;
 		this.primary = options.primary ?? false;
@@ -72,6 +79,8 @@ export class ScrollView extends Container {
 	setScrollbar(scrollbar: ScrollViewScrollbar): void {
 		if (scrollbar === this.currentScrollbar) return;
 		this.currentScrollbar = scrollbar;
+		this.scrollRenderCache = undefined;
+		this.markRenderInvalidated();
 		if (scrollbar !== "auto") this.hideTransientScrollbar();
 		else if (this.scrollbarActive) this.markScrollbarActivity();
 		this.requestRenderCallback?.();
@@ -183,10 +192,51 @@ export class ScrollView extends Container {
 		throw new Error("ScrollView child cannot be cleared");
 	}
 
+	override invalidate(): void {
+		this.scrollRenderCache = undefined;
+		super.invalidate();
+	}
+
 	override render(width: number): string[] {
 		const contentWidth = this.getContentWidth(width);
-		const lines = this.child.render(contentWidth);
-		return contentWidth === width ? lines : lines.map((line) => `${line} `);
+		const cached = this.scrollRenderCache;
+		const childRevisionBeforeRender = this.child.getRenderRevision?.();
+		const childTrackable =
+			typeof this.child.getRenderRevision === "function" &&
+			typeof this.child.setRenderInvalidationCallback === "function" &&
+			this.child.isRenderCacheTrackable?.() === true;
+		const canReuseChild =
+			cached?.contentWidth === contentWidth && childTrackable && cached.childRevision === childRevisionBeforeRender;
+		const childLines = canReuseChild ? cached.childLines : this.child.render(contentWidth);
+		const childRevision = this.child.getRenderRevision?.();
+		if (
+			cached?.width === width &&
+			cached.contentWidth === contentWidth &&
+			cached.childLines === childLines &&
+			cached.childRevision === childRevision
+		) {
+			this.markRenderCompleted(this.getRenderChangeStart());
+			return cached.lines;
+		}
+
+		const changeStart =
+			cached?.width === width && cached.contentWidth === contentWidth && cached.childRevision !== childRevision
+				? Math.max(0, Math.min(this.child.getRenderChangeStart?.() ?? 0, childLines.length))
+				: 0;
+		let lines: string[];
+		if (contentWidth === width) {
+			lines = childLines;
+		} else if (cached?.width === width && cached.contentWidth === contentWidth) {
+			lines = cached.lines.slice(0, changeStart);
+			for (let index = changeStart; index < childLines.length; index++) {
+				lines.push(`${childLines[index]} `);
+			}
+		} else {
+			lines = childLines.map((line) => `${line} `);
+		}
+		this.scrollRenderCache = { width, contentWidth, childLines, childRevision, lines };
+		this.markRenderCompleted(changeStart);
+		return lines;
 	}
 
 	[LAYOUT_NODE](): ScrollLayoutNode {

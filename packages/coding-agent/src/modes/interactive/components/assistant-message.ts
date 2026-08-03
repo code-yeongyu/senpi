@@ -38,7 +38,12 @@ function isVisibleContent(content: AssistantMessage["content"][number], provider
 }
 
 export class AssistantMessageComponent extends Container {
-	private renderCache?: { readonly lines: string[]; readonly signature: string; readonly width: number };
+	private renderCache?: {
+		readonly lines: string[];
+		readonly revision: number;
+		readonly signature: string;
+		readonly width: number;
+	};
 	private contentContainer: Container;
 	private hideThinkingBlock: boolean;
 	private markdownTheme: MarkdownTheme;
@@ -108,11 +113,16 @@ export class AssistantMessageComponent extends Container {
 
 	override render(width: number): string[] {
 		const signature = this.lastMessageSignature ?? "";
-		if (this.renderCache?.width === width && this.renderCache.signature === signature) {
-			return [...this.renderCache.lines];
+		const revision = this.getRenderRevision();
+		if (
+			this.renderCache?.width === width &&
+			this.renderCache.signature === signature &&
+			this.renderCache.revision === revision
+		) {
+			return this.renderCache.lines;
 		}
 
-		const lines = super.render(width);
+		const lines = [...super.render(width)];
 		if (this.hasToolCalls || lines.length === 0) {
 			this.cacheRender(width, signature, lines);
 			return lines;
@@ -135,6 +145,7 @@ export class AssistantMessageComponent extends Container {
 		}
 		this.lastMessageSignature = messageSignature;
 		this.renderCache = undefined;
+		this.markRenderInvalidated();
 		if (streamingChanged) this.renderDescriptors = [];
 		this.hasToolCalls = message.content.some((content) => content.type === "toolCall");
 		const descriptors = this.createRenderDescriptors(message);
@@ -267,7 +278,7 @@ export class AssistantMessageComponent extends Container {
 			}
 			divergentIndex++;
 		}
-		for (const child of this.contentContainer.children.splice(divergentIndex)) child.dispose?.();
+		for (const child of this.contentContainer.detachChildrenFrom(divergentIndex)) child.dispose?.();
 		for (const descriptor of descriptors.slice(divergentIndex))
 			this.contentContainer.addChild(this.createRenderChild(descriptor));
 		this.renderDescriptors = descriptors;
@@ -318,7 +329,7 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	private cacheRender(width: number, signature: string, lines: string[]): void {
-		this.renderCache = { lines: [...lines], signature, width };
+		this.renderCache = { lines, revision: this.getRenderRevision(), signature, width };
 	}
 
 	private refreshContent(): void {

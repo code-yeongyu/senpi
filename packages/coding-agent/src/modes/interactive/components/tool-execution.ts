@@ -37,6 +37,7 @@ export class ToolExecutionComponent extends Container {
 	private todoStrikeInterval?: NodeJS.Timeout;
 	private result?: ToolExecutionResult;
 	private cachedLines?: string[];
+	private cachedRevision?: number;
 	private cachedSignature?: string;
 	private cachedWidth?: number;
 	private lastDisplaySignature?: string;
@@ -143,7 +144,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override invalidate(): void {
-		this.invalidateRenderCache();
+		this.invalidateRenderCache(false);
 		super.invalidate();
 		this.lastDisplaySignature = undefined;
 		this.updateDisplay();
@@ -153,8 +154,14 @@ export class ToolExecutionComponent extends Container {
 		if (this.presentation === "grok") return super.render(width);
 
 		const signature = this.createRenderSignature();
-		if (this.cachedLines && this.cachedWidth === width && this.cachedSignature === signature) {
-			return [...this.cachedLines];
+		const revision = this.getRenderRevision();
+		if (
+			this.cachedLines &&
+			this.cachedWidth === width &&
+			this.cachedSignature === signature &&
+			this.cachedRevision === revision
+		) {
+			return this.cachedLines;
 		}
 
 		let lines: string[];
@@ -171,7 +178,8 @@ export class ToolExecutionComponent extends Container {
 
 		this.cachedWidth = width;
 		this.cachedSignature = signature;
-		this.cachedLines = [...lines];
+		this.cachedRevision = this.getRenderRevision();
+		this.cachedLines = lines;
 		return lines;
 	}
 
@@ -290,9 +298,18 @@ export class ToolExecutionComponent extends Container {
 		this.invalidateRenderCache();
 	}
 
-	private invalidateRenderCache(): void {
+	override isRenderCacheTrackable(): boolean {
+		// Renderer components receive state changes only through this shell. Async
+		// renderers use the supplied invalidate callback, so the shell is a safe
+		// revision boundary even when an extension component is not trackable.
+		return true;
+	}
+
+	private invalidateRenderCache(notifyParent = true): void {
 		this.cachedLines = undefined;
+		this.cachedRevision = undefined;
 		this.cachedSignature = undefined;
 		this.cachedWidth = undefined;
+		if (notifyParent) this.markRenderInvalidated();
 	}
 }
