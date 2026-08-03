@@ -217,7 +217,8 @@ See `/hotkeys` for the full list. Customize via `~/.pi/agent/keybindings.json`. 
 | Escape twice | Open `/tree` |
 | Ctrl+L | Open model selector |
 | Ctrl+P / Shift+Ctrl+P | Cycle scoped models forward/backward |
-| Shift+Tab (default) | Cycle approval mode: workspace → read-only → ask (`app.approval.cycle`) |
+| Shift+Tab | Cycle thinking level (`app.thinking.cycle`) |
+| Alt+A | Cycle approval mode: workspace → read-only → ask (`app.approval.cycle`) |
 | Ctrl+O | Collapse/expand tool output |
 | Ctrl+T | Collapse/expand thinking blocks |
 | Ctrl+X | Copy the last assistant message |

@@ -39,7 +39,7 @@ Presets:
 | `read-only` | Allow `read`, `list`, and `grep`; ask for `edit`, `bash`, and `external_directory` |
 | `ask` | Restore prompt-on-unknown behavior |
 
-In interactive mode, `app.approval.cycle` (Shift+Tab by default) changes the active preset for the current session only: `workspace` → `read-only` → `ask` → `workspace`. A session starting from `full-access` or no configured preset enters `workspace` on the first press. The footer and notification show the selected mode. Explicit global/project `permission` rules remain above the session preset, existing valid Allow-always approvals remain in memory, malformed approval JSONL entries are ignored, and explicit `--permission` rules retain highest precedence.
+In interactive mode, `app.approval.cycle` (Alt+A by default) changes the active preset for the current session only: `workspace` → `read-only` → `ask` → `workspace`. Shift+Tab remains assigned to `app.thinking.cycle`. A session starting from `full-access` or no configured preset enters `workspace` on the first approval press. The footer and notification show the selected mode. Explicit global/project `permission` rules remain above the session preset, existing valid Allow-always approvals remain in memory, malformed approval JSONL entries are ignored, and explicit `--permission` rules retain highest precedence.
 
 Example:
 

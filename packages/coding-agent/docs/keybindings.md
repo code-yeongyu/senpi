@@ -125,11 +125,11 @@ These actions apply when interactive mode uses `--ui-mode fullscreen` and target
 | `app.model.select` | `ctrl+l` | Open model selector |
 | `app.model.cycleForward` | `ctrl+p` | Cycle to next model |
 | `app.model.cycleBackward` | `shift+ctrl+p` | Cycle to previous model |
-| `app.approval.cycle` | `shift+tab` | Cycle session approval mode |
-| `app.thinking.cycle` | *(none)* | Cycle thinking level |
+| `app.approval.cycle` | `alt+a` | Cycle session approval mode |
+| `app.thinking.cycle` | `shift+tab` | Cycle thinking level |
 | `app.thinking.toggle` | `ctrl+t` | Collapse or expand thinking blocks |
 
-By default, Shift+Tab cycles the current session through `workspace` → `read-only` → `ask` → `workspace`. `full-access` or an unset policy enters `workspace` on the first press. Remap `app.approval.cycle` or `app.thinking.cycle` to any available key in `keybindings.json`. The approval action is editor-global and reserved from extension shortcut overrides at its configured key.
+By default, Alt+A cycles the current session through `workspace` → `read-only` → `ask` → `workspace`, while Shift+Tab continues to cycle thinking levels. `full-access` or an unset policy enters `workspace` on the first approval press. Remap `app.approval.cycle` or `app.thinking.cycle` to any available key in `keybindings.json`. The approval action is editor-global and reserved from extension shortcut overrides at its configured key.
 
 ### Display and Message Queue
 

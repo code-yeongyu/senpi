@@ -34,7 +34,7 @@
 
 ### What changed
 
-- Added the editor-global reserved `app.approval.cycle`, bound to Shift+Tab by default, and kept both approval and thinking actions remappable.
+- Added the editor-global reserved `app.approval.cycle`, bound to Alt+A by default, kept the established Shift+Tab thinking shortcut, and left both actions remappable.
 - Added a session-local `workspace` → `read-only` → `ask` approval cycle, with `full-access` or unset entering `workspace`.
 - Preserved explicit settings rules and Allow-always approvals, and made explicit CLI permission rules the final precedence layer.
 - Ignored persisted approval JSONL entries unless they match the complete permission-rule schema.

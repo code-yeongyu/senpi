@@ -74,11 +74,11 @@ export const KEYBINDINGS = {
 		description: "Suspend to background",
 	},
 	"app.approval.cycle": {
-		defaultKeys: "shift+tab",
+		defaultKeys: "alt+a",
 		description: "Cycle approval mode",
 	},
 	"app.thinking.cycle": {
-		defaultKeys: [],
+		defaultKeys: "shift+tab",
 		description: "Cycle thinking level",
 	},
 	"app.model.cycleForward": {

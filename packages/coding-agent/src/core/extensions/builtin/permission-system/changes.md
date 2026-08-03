@@ -3,7 +3,7 @@
 ## 2026-08-03 - session approval-mode cycle
 
 ### What changed and why
-- `app.approval.cycle` (Shift+Tab by default) invokes the builtin command that cycles the active session through `workspace`, `read-only`, and `ask`; `full-access` or unset enters `workspace` first.
+- `app.approval.cycle` (Alt+A by default) invokes the builtin command that cycles the active session through `workspace`, `read-only`, and `ask`; Shift+Tab remains the thinking-level shortcut, and `full-access` or unset enters `workspace` first.
 - The active preset is an in-memory overlay, so it does not rewrite settings or discard Allow-always approvals.
 - Explicit global and project permission rules are reapplied after the overlay and remain authoritative.
 - Explicit `--permission` rules are evaluated last and retain highest precedence over both the active preset and remembered approvals.

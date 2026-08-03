@@ -1,3 +1,20 @@
+## Keep thinking and approval shortcuts independent (2026-08-03)
+
+### What changed
+
+- Preserved Shift+Tab as the default `app.thinking.cycle` binding and moved the new `app.approval.cycle` default to Alt+A.
+- Kept both configured keys reserved from extension shortcut overrides and restored thinking-level startup/tip discovery.
+
+### Why
+
+- Reusing Shift+Tab for approval mode silently displaced an established thinking-level gesture. Alt+A is mnemonic, unclaimed by other default actions, and supported by both legacy Meta-key and enhanced terminal input parsing.
+
+### Coverage
+
+- `test/suite/keybindings-command.test.ts` locks the independent defaults and live remapping behavior.
+- `test/extensions-runner.test.ts` locks default/remapped approval reservation and default thinking reservation.
+- Real 80- and 120-column PTY sessions prove Shift+Tab changes only thinking while Alt+A cycles only approval mode.
+
 ## Compact completed apply_patch result details (2026-08-02)
 
 ### What changed

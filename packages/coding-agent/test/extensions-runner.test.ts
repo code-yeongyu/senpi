@@ -362,13 +362,14 @@ describe("ExtensionRunner", () => {
 		});
 
 		it.each([
-			["default", "shift+tab"],
-			["rebound", "ctrl+y"],
-		] as const)("blocks an extension from taking the %s approval-cycle key", async (_scenario, key) => {
+			["default approval-cycle", "app.approval.cycle", "alt+a"],
+			["rebound approval-cycle", "app.approval.cycle", "ctrl+y"],
+			["default thinking-cycle", "app.thinking.cycle", "shift+tab"],
+		] as const)("blocks an extension from taking the %s key", async (_scenario, action, key) => {
 			const extCode = `
 				export default function(pi) {
 					pi.registerShortcut("${key}", {
-						description: "Conflicts with approval mode",
+						description: "Conflicts with ${action}",
 						handler: async () => {},
 					});
 				}
@@ -378,7 +379,7 @@ describe("ExtensionRunner", () => {
 			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
-			const keybindings = { ...defaultKeybindings, "app.approval.cycle": key as KeyId };
+			const keybindings = { ...defaultKeybindings, [action]: key as KeyId };
 			const shortcuts = runner.getShortcuts(keybindings);
 
 			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("conflicts with built-in"));
