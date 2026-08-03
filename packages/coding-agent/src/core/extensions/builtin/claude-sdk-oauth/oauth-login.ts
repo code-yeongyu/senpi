@@ -78,13 +78,7 @@ export function createOAuthConfig(deps: {
 				signal: callbacks.signal,
 				prompt: async (prompt) => {
 					if (prompt.type === "select") return "";
-					return callbacks.onPrompt
-						? callbacks.onPrompt({
-								message: prompt.message,
-								placeholder: prompt.placeholder,
-								signal: prompt.signal,
-							})
-						: "";
+					return callbacks.onPrompt ? callbacks.onPrompt(prompt) : "";
 				},
 				notify: (event) => {
 					if (event.type === "auth_url" && callbacks.onAuth) void callbacks.onAuth({ url: event.url });
