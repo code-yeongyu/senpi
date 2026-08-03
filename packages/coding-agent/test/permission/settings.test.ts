@@ -36,6 +36,20 @@ describe("permission settings", () => {
 		});
 	});
 
+	it("loads auto as a classifier-backed ask baseline", () => {
+		return withTempDir((projectDir) => {
+			const agentDir = join(projectDir, "agent");
+			mkdirSync(agentDir, { recursive: true });
+			writeSettings(join(agentDir, "settings.json"), { permissionPreset: "auto" });
+			const settingsManager = SettingsManager.create(projectDir, agentDir);
+
+			const result = loadPermissionSettings(settingsManager, [], projectDir);
+
+			expect(result.activePreset).toBe("auto");
+			expect(evaluate("edit", "src/index.ts", result.staticRuleset).action).toBe("ask");
+		});
+	});
+
 	it("lets an explicit ask preset restore prompt-on-unknown behavior", () => {
 		return withTempDir((projectDir) => {
 			// given
@@ -116,7 +130,7 @@ describe("permission settings", () => {
 
 			// when/then
 			expect(() => loadPermissionSettings(settingsManager, [], projectDir)).toThrow(
-				'Invalid global permissionPreset "dangerous". Expected one of: full-access, workspace, read-only, ask.',
+				'Invalid global permissionPreset "dangerous". Expected one of: full-access, auto, workspace, read-only, ask.',
 			);
 		});
 	});
@@ -132,7 +146,7 @@ describe("permission settings", () => {
 
 			// when/then
 			expect(() => loadPermissionSettings(settingsManager, [], projectDir)).toThrow(
-				'Invalid project permissionPreset "dangerous". Expected one of: full-access, workspace, read-only, ask.',
+				'Invalid project permissionPreset "dangerous". Expected one of: full-access, auto, workspace, read-only, ask.',
 			);
 		});
 	});

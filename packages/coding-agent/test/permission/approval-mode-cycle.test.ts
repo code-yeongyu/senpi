@@ -22,13 +22,14 @@ function request(id: string, permission: string, pattern: string): Request {
 	};
 }
 
-describe("Shift+Tab approval mode cycle", () => {
+describe("approval mode cycle", () => {
 	it("is exposed as an internal command for the configurable app action", () => {
 		const registerCommand = vi.fn();
+		const on = vi.fn();
 		permissionSystemExtension({
 			registerFlag: vi.fn(),
 			registerCommand,
-			on: vi.fn(),
+			on,
 		} as unknown as ExtensionAPI);
 
 		expect(registerCommand).toHaveBeenCalledWith(
@@ -38,11 +39,12 @@ describe("Shift+Tab approval mode cycle", () => {
 	});
 
 	it.each([
-		[undefined, "workspace"],
-		["full-access", "workspace"],
+		[undefined, "auto"],
+		["full-access", "auto"],
+		["auto", "workspace"],
 		["workspace", "read-only"],
 		["read-only", "ask"],
-		["ask", "workspace"],
+		["ask", "auto"],
 	] as const)("cycles %s to %s for this session", (initialPreset, expectedPreset) => {
 		const service = new PermissionService(rulesForPreset("full-access"), []);
 		const setStatus = vi.fn();
@@ -131,5 +133,39 @@ describe("Shift+Tab approval mode cycle", () => {
 
 		service.reply({ requestID: "edit-ask", reply: "reject" });
 		await expect(editPending).rejects.toBeInstanceOf(RejectedError);
+	});
+});
+
+describe("automatic approval mode", () => {
+	it("uses ask rules until the classifier allows a tool proposal", async () => {
+		const service = new PermissionService(rulesForPreset("full-access"), []);
+		const setStatus = vi.fn();
+		const cycle = new ApprovalModeCycle(service, "full-access", { setStatus, notify: vi.fn() });
+
+		expect(cycle.next()).toBe("auto");
+		expect(cycle.isAuto()).toBe(true);
+		const pending = service.ask(request("auto-edit", "edit", "src/parser.ts"));
+		expect(service.list().map(({ id }) => id)).toEqual(["auto-edit"]);
+		service.reply({ requestID: "auto-edit", reply: "reject" });
+		await expect(pending).rejects.toBeInstanceOf(RejectedError);
+	});
+
+	it("keeps explicit settings and CLI asks above auto classification", () => {
+		const requestInfo = request("auto-edit", "edit", "src/parser.ts");
+		const defaultService = new PermissionService(rulesForPreset("full-access"), []);
+		const settingsAsk = new PermissionService(
+			rulesForPreset("full-access"),
+			[],
+			undefined,
+			[],
+			[{ permission: "edit", pattern: "*", action: "ask" }],
+		);
+		const cliAsk = new PermissionService(rulesForPreset("full-access"), [], undefined, [
+			{ permission: "edit", pattern: "*", action: "ask" },
+		]);
+
+		expect(defaultService.isAutoApprovalEligible(requestInfo)).toBe(true);
+		expect(settingsAsk.isAutoApprovalEligible(requestInfo)).toBe(false);
+		expect(cliAsk.isAutoApprovalEligible(requestInfo)).toBe(false);
 	});
 });

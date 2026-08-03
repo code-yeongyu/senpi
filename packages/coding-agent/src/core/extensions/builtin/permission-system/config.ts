@@ -7,6 +7,7 @@ export const DEFAULT_PERMISSION_PRESET: PermissionPresetName = "full-access";
 
 const PERMISSION_PRESET_RULES: Record<PermissionPresetName, Ruleset> = {
 	"full-access": [{ permission: "*", pattern: "*", action: "allow" }],
+	auto: [{ permission: "*", pattern: "*", action: "ask" }],
 	workspace: [
 		{ permission: "*", pattern: "*", action: "ask" },
 		{ permission: "read", pattern: "*", action: "allow" },

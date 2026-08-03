@@ -1,3 +1,4 @@
+import { rulesForPreset } from "./config.ts";
 import { evaluate } from "./evaluate.ts";
 import { createLocalEventEmitter, type PermissionEventEmitter } from "./events.ts";
 import {
@@ -41,6 +42,22 @@ export class PermissionService {
 	/** Replace the session-local preset overlay without disturbing remembered approvals. */
 	setSessionPreset(ruleset: Ruleset): void {
 		this.sessionPresetRuleset = [...ruleset];
+	}
+
+	/** Whether a pending request is gated only by the session's auto-mode overlay. */
+	isAutoApprovalEligible(request: Pick<Request, "permission" | "patterns">): boolean {
+		return request.patterns.every((pattern) => {
+			return (
+				evaluate(
+					request.permission,
+					pattern,
+					rulesForPreset("full-access"),
+					this.settingsRuleset,
+					this.approved,
+					this.cliRuleset,
+				).action === "allow"
+			);
+		});
 	}
 
 	/** Request permission for a tool call. Resolves if allowed, throws on denial. */

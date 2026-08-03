@@ -28,6 +28,7 @@
 
 - Preserved the established Shift+Tab thinking shortcut in startup hints, `/hotkeys`, and tips.
 - `app.approval.cycle` uses Alt+A by default, and every interactive surface resolves its configured key dynamically.
+- The cycle now enters model-classified `auto` before the three manual permission presets.
 - The action is reserved from extension shortcut overrides at both its default and remapped key.
 - Approval- and thinking-level cycling remain independently remappable.
 - The permission extension owns the live notification and footer segment, so custom footers consuming extension statuses receive the same mode state.

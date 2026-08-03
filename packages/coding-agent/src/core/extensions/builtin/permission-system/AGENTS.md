@@ -7,6 +7,7 @@ Builtin extension #1. Full port of opencode's permission flow. Loads preset/rule
 ```
 permission-system/
 ├── index.ts            # Extension entry — wires session_start / tool_call / session_shutdown + UI prompt
+├── auto-classifier.ts  # Reasoning-blind two-stage model gate for auto mode
 ├── service.ts          # Permission service core (ask/reply/list)
 ├── evaluate.ts         # Rule evaluator with wildcard matching
 ├── wildcard.ts         # Wildcard matcher
@@ -30,6 +31,7 @@ permission-system/
 |------|------|
 | Add a new tool-input parser (e.g. for a new edit tool) | `parsers.ts` |
 | Change wildcard rule matching | `evaluate.ts` |
+| Change auto-mode model policy or transcript projection | `auto-classifier.ts` |
 | Modify the TUI prompt | `prompt.ts` |
 | Migrate JSONL approval shape | `storage.ts` — and write a one-shot migrator |
 | Change "external write requires ask" policy | `external-dir.ts` |
@@ -61,6 +63,7 @@ Pattern syntax: tool name + optional arg pattern, e.g. `bash:rm *`, `write:/etc/
 - **JSONL storage is the contract**: `storage.ts` writes append-only newline-delimited JSON. Schema changes require a migration. Other tools (audit, replay) parse this format.
 - **Parsers are tool-aware**: `parsers.ts` extracts the *meaningful* arg per tool — file path for read/write/edit, command prefix for bash, file paths for `apply_patch` body (2026-04-13).
 - **`external-dir.ts` emits an extra permission** when target path is outside repo root. `workspace` and `read-only` ask for that permission unless a later explicit rule allows it.
+- **Auto classification is reasoning-blind**: only user-authored messages and the current tool proposal may enter classifier context. Every otherwise-pending proposal, including project edits, uses the two-stage gate.
 
 ## ANTI-PATTERNS
 
@@ -68,6 +71,8 @@ Pattern syntax: tool name + optional arg pattern, e.g. `bash:rm *`, `write:/etc/
 - Adding a new tool that mutates files without registering a parser in `parsers.ts` — falls back to wildcard, loses per-path granularity.
 - Bypassing the parser registry from a builtin tool's render path — render and approval must agree on the displayed action.
 - Adding a preset without a reset rule when it needs to override a lower-precedence wildcard allow.
+- Adding tool-name or prompt-keyword allowlists to auto mode — classifier policy, not lexical shortcuts, owns autonomous decisions.
+- Passing assistant messages or tool results into auto-classifier context.
 
 ## NOTES
 

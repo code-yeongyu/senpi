@@ -1,5 +1,18 @@
 # Local fork changes
 
+## 2026-08-03 — Add reasoning-blind auto approval classification
+
+### What changed
+
+- Added `auto` as a first-class permission preset for settings, `--permission-preset`, and the Alt+A session cycle.
+- Routed every otherwise-pending tool proposal, including in-project edits, through a fast model screen followed by a reasoning confirmation when review is needed.
+- Built classifier context from user-authored messages plus the current proposal only; assistant reasoning and tool outputs are excluded.
+- Preserved explicit settings/CLI rules above model decisions and fail closed to normal approval when classification blocks, fails, or returns malformed output.
+
+### Verification
+
+- Faux-provider tests cover both classifier stages, malformed output, reasoning-blind context, all core proposal classes, and a real AgentSession tool execution.
+
 ## 2026-08-03 — Keep Bun off unpublished workspace identities
 
 ### What changed

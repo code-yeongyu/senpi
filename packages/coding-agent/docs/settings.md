@@ -27,7 +27,7 @@ Senpi includes a built-in permission system for tool calls. It evaluates a prese
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `permissionPreset` | string | `"full-access"` | Permission preset: `"full-access"`, `"workspace"`, `"read-only"`, or `"ask"` |
+| `permissionPreset` | string | `"full-access"` | Permission preset: `"full-access"`, `"auto"`, `"workspace"`, `"read-only"`, or `"ask"` |
 | `permission` | object | - | Explicit permission rules that override the selected preset |
 
 Presets:
@@ -35,17 +35,22 @@ Presets:
 | Preset | Behavior |
 |--------|----------|
 | `full-access` | Allow all permission checks without prompting |
+| `auto` | Run each otherwise-pending tool proposal through a reasoning-blind two-stage model classifier; allow a clear decision and ask the user otherwise |
 | `workspace` | Allow `read`, `list`, `grep`, `edit`, and `bash`; ask for `external_directory` |
 | `read-only` | Allow `read`, `list`, and `grep`; ask for `edit`, `bash`, and `external_directory` |
 | `ask` | Restore prompt-on-unknown behavior |
 
-In interactive mode, `app.approval.cycle` (Alt+A by default) changes the active preset for the current session only: `workspace` → `read-only` → `ask` → `workspace`. Shift+Tab remains assigned to `app.thinking.cycle`. A session starting from `full-access` or no configured preset enters `workspace` on the first approval press. The footer and notification show the selected mode. Explicit global/project `permission` rules remain above the session preset, existing valid Allow-always approvals remain in memory, malformed approval JSONL entries are ignored, and explicit `--permission` rules retain highest precedence.
+In interactive mode, `app.approval.cycle` (Alt+A by default) changes the active preset for the current session only: `auto` → `workspace` → `read-only` → `ask` → `auto`. Shift+Tab remains assigned to `app.thinking.cycle`. A session starting from `full-access` or no configured preset enters `auto` on the first approval press. The footer and notification show the selected mode.
+
+Auto mode follows the reasoning-blind two-stage tool-call classifier architecture described by [Anthropic](https://www.anthropic.com/engineering/claude-code-auto-mode) and evaluated in [AmPermBench](https://arxiv.org/html/2604.04978v2). It sends only user-authored messages and the current tool proposal to the active model: a fast `ALLOW`/`REVIEW` screen handles clear calls, then a reasoning pass confirms reviewed calls. Unlike the Tier 2 bypass evaluated in the paper, Senpi applies this gate to in-project edits too. Classifier blocks, malformed output, unavailable credentials, and provider failures fall back to normal user approval. This adds one model call per clear proposal and a second call for reviewed proposals.
+
+Explicit global/project `permission` rules remain above the session preset, existing valid Allow-always approvals remain in memory, malformed approval JSONL entries are ignored, and explicit `--permission` rules retain highest precedence.
 
 Example:
 
 ```json
 {
-  "permissionPreset": "workspace",
+  "permissionPreset": "auto",
   "permission": {
     "bash": {
       "rm *": "deny"

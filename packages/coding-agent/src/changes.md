@@ -1,3 +1,16 @@
+## Reasoning-blind auto approval classifier (2026-08-03)
+
+### What changed
+
+- Added the `auto` permission preset and inserted it before workspace in the Alt+A approval cycle.
+- Evaluated pending tool proposals with a fast `ALLOW`/`REVIEW` model pass and a reasoning confirmation for reviewed calls.
+- Removed assistant text and tool results from classifier context, retained explicit settings/CLI precedence, and escalated any blocked or unavailable classifier decision to user approval.
+
+### Coverage
+
+- `test/permission/auto-classifier.test.ts` covers both stages and a real session tool call with a faux provider.
+- Permission CLI, settings, service, cycle, and shortcut regressions cover the new preset and preserved manual modes.
+
 ## Keep thinking and approval shortcuts independent (2026-08-03)
 
 ### What changed

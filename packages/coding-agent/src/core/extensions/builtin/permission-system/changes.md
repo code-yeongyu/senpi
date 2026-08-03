@@ -1,9 +1,11 @@
 # Permission System Builtin Extension
 
-## 2026-08-03 - session approval-mode cycle
+## 2026-08-03 - auto classifier and session approval-mode cycle
 
 ### What changed and why
-- `app.approval.cycle` (Alt+A by default) invokes the builtin command that cycles the active session through `workspace`, `read-only`, and `ask`; Shift+Tab remains the thinking-level shortcut, and `full-access` or unset enters `workspace` first.
+- Added `auto` as a settings/CLI preset and the first mode entered by `app.approval.cycle` (Alt+A by default); Shift+Tab remains the thinking-level shortcut.
+- Auto mode runs every otherwise-pending proposal, including in-project file edits, through a reasoning-blind fast screen and conditional reasoning pass using the active model.
+- Classifier context contains user messages and the current proposal only. Blocked, malformed, or unavailable decisions continue through the ordinary approval prompt instead of being silently allowed.
 - The active preset is an in-memory overlay, so it does not rewrite settings or discard Allow-always approvals.
 - Explicit global and project permission rules are reapplied after the overlay and remain authoritative.
 - Explicit `--permission` rules are evaluated last and retain highest precedence over both the active preset and remembered approvals.
@@ -12,6 +14,7 @@
 
 ### Expected merge conflict zones
 - `index.ts` command and lifecycle wiring.
+- `auto-classifier.ts` model policy and transcript projection.
 - `service.ts` rule evaluation order.
 - `settings.ts` effective starting-preset reporting.
 

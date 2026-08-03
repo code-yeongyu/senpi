@@ -1,6 +1,9 @@
+import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
+import { buildSessionContext } from "../../../session-manager.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
+import { type AutoClassifierDecision, runAutoClassifier } from "./auto-classifier.ts";
 import { parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
 import { createEventEmitter } from "./events.ts";
@@ -62,6 +65,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	let staticRuleset: Ruleset = [];
 	let initialApprovedCount = 0;
 	let approvalModeCycle: ApprovalModeCycle | null = null;
+	let classifierWarningShown = false;
 
 	const nextRequestID = createRequestIDFactory();
 
@@ -70,7 +74,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		type: "string",
 	});
 	pi.registerFlag("permission-preset", {
-		description: "Set permission preset (full-access, workspace, read-only, or ask)",
+		description: "Set permission preset (full-access, auto, workspace, read-only, or ask)",
 		type: "string",
 	});
 	pi.registerCommand("approval-mode-cycle", {
@@ -106,6 +110,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			loadedSettings.settingsRuleset,
 		);
 		approvalModeCycle = new ApprovalModeCycle(service, loadedSettings.activePreset, ctx.ui);
+		classifierWarningShown = false;
 		initialApprovedCount = approved.length;
 
 		const allTools = pi.getAllTools().map((tool) => tool.name);
@@ -121,6 +126,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 
 		const permissionRequests = parserRegistry.parse(event.toolName, event.input, ctx.cwd);
 		const sessionID = ctx.sessionManager.getSessionId();
+		let autoDecision: Promise<AutoClassifierDecision> | undefined;
 
 		for (const permissionRequest of permissionRequests) {
 			const request: Request = {
@@ -142,6 +148,37 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 					return { block: true, reason: getReason(error) };
 				}
 				continue;
+			}
+
+			if (approvalModeCycle?.isAuto() && service.isAutoApprovalEligible(request)) {
+				autoDecision ??= (async () => {
+					const model = ctx.model;
+					if (!model) return { action: "ask", stage: "screen", error: "no active model" };
+					const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+					if (!auth.ok) return { action: "ask", stage: "screen", error: auth.error };
+					const snapshot = buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId());
+					const history = convertToLlm(filterContextExcludedMessages(snapshot.messages));
+					return runAutoClassifier(
+						{
+							model,
+							auth: { apiKey: auth.apiKey, headers: auth.headers, extraBody: auth.extraBody },
+							sessionId: sessionID,
+							streamFn: (streamModel, streamContext, options) =>
+								ctx.modelRegistry.modelRuntime.streamSimple(streamModel, streamContext, options),
+						},
+						{ history, proposal: { toolName: event.toolName, input: event.input } },
+					);
+				})();
+				const decision = await autoDecision;
+				if (decision.action === "allow") {
+					service.reply({ requestID: request.id, reply: "once" });
+					await askPromise;
+					continue;
+				}
+				if (decision.error && ctx.hasUI && !classifierWarningShown) {
+					classifierWarningShown = true;
+					ctx.ui.notify(`Auto approval classifier unavailable: ${decision.error}`, "warning");
+				}
 			}
 
 			if (ctx.hasUI) {
