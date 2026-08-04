@@ -1,5 +1,11 @@
 # claude-sdk-oauth extension changes
 
+## 2026-08-03 - Browser callback closes manual-code input
+
+- Forward each Anthropic OAuth prompt's `AbortSignal` through the extension OAuth callback adapter.
+- When the localhost browser callback wins, the still-pending manual-code input now closes before account naming starts instead of leaving duplicated, mirrored fields.
+- Coverage: `test/suite/regressions/lab-33-claude-oauth-prompt-abort.test.ts`.
+
 ## 2026-08-01 - Resume-first session continuity (SDK ledger is authoritative)
 
 - **One SDK session lineage per senpi conversation.** A new `query()` is no longer a new session: every query replacement re-attaches with `resume: <sdkSessionId>`, so normal turns, model switches, thinking-level switches, ESC aborts, idle expiry, and shared-root account failover all continue the same lineage. Flattening the transcript into a `<conversation_history>` envelope is demoted to a last resort, reachable only when the SDK transcript is genuinely unusable.
