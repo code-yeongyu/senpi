@@ -1590,7 +1590,7 @@ function convertTools(
 			function: {
 				name: tool.name,
 				description: tool.description,
-				parameters: normalizedParameters as FunctionParameters,
+				parameters: ensureRootObjectType(normalizedParameters) as FunctionParameters,
 				// Only include strict if provider supports it. Some reject unknown fields.
 				...(compat.supportsStrictMode !== false && { strict: strict ?? false }),
 			},
@@ -1615,10 +1615,30 @@ function normalizeRequestToolSchemas(
 					: normalizeToolParametersForOpenAICompat(tool.function.parameters);
 			return {
 				...tool,
-				function: { ...tool.function, parameters },
+				function: { ...tool.function, parameters: ensureRootObjectType(parameters) },
 			};
 		}),
 	};
+}
+
+/**
+ * OpenAI Chat Completions requires every function's `parameters` to be a JSON
+ * Schema object rooted at `type: "object"`. Combiner normalization may move the
+ * root `type` into `anyOf` / `oneOf` / `allOf` branches (a shape some
+ * OpenAI-compatible gateways require), so restore the root marker at the wire
+ * boundary for every tool. `$ref`-rooted schemas are left untouched.
+ */
+function ensureRootObjectType(parameters: unknown): Record<string, unknown> {
+	if (parameters === null || typeof parameters !== "object" || Array.isArray(parameters)) {
+		return parameters as Record<string, unknown>;
+	}
+
+	const record = parameters as Record<string, unknown>;
+	if (record.type !== undefined || "$ref" in record) {
+		return record;
+	}
+
+	return { ...record, type: "object" };
 }
 
 function parseChunkUsage(

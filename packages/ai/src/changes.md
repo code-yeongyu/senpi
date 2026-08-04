@@ -1,5 +1,31 @@
 # AI Source Changes
 
+## 2026-08-04 - Preserve root object type in OpenAI-completions tool parameters
+
+### What changed and why
+
+- `api/openai-completions.ts` guarantees every function tool's `parameters`
+  root declares `type: "object"` at the wire boundary (`ensureRootObjectType`),
+  applied in both `convertTools` and `normalizeRequestToolSchemas`.
+- OpenAI-compatible gateways backed by Gemini-style validation (for example
+  OpenCode Go / Zen proxying to Console) reject function schemas whose root
+  `type` was dropped by combiner normalization (`anyOf` / `oneOf` / `allOf`),
+  returning `Invalid schema for function ...: schema must be a JSON Schema of
+  'type: "object"', got 'type: null'`. The normalizer intentionally moves the
+  root `type` into combiner branches for Moonshot-flavored backends, so the
+  root marker is restored at the API boundary instead of changing the
+  normalizer's provider-specific behavior.
+- `test/openai-completions-tool-schema-compat.test.ts` pins the wire shape for
+  both the initial conversion and the post-`onPayload` re-normalization paths
+  using a scan-style `oneOf` schema.
+
+### Expected merge conflict zones
+
+- LOW: `api/openai-completions.ts` around `convertTools` /
+  `normalizeRequestToolSchemas`.
+- LOW: `test/openai-completions-tool-schema-compat.test.ts` if upstream adds
+  parallel wire-shape tests.
+
 ## 2026-08-03 - Hint-aware 429 retry-after propagation
 
 ### What changed and why
