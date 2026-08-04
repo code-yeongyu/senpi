@@ -1,5 +1,25 @@
 # changes
 
+## Large array render signatures avoid recursive tail slicing (2026-08-04)
+
+### What changed
+
+- Render-signature hashing now processes omitted array items iteratively instead of recursively slicing another
+  tail array for every 40 items.
+- Coverage reproduces large-array hashing under a constrained JavaScript stack and verifies that changing an
+  omitted item still changes the signature.
+
+### Why
+
+- Tool results can contain large numeric arrays, including `Buffer.toJSON().data` from screenshot capture code.
+  Recursive tail hashing copied progressively smaller arrays and reset traversal state on every chunk, which could
+  overflow the JavaScript call stack while the TUI rendered the result.
+
+### Expected merge conflict zones
+
+- `components/render-signature.ts` if render-cache signature hashing changes.
+- `../../../test/render-signature.test.ts` if render-signature regression coverage changes.
+
 ## Bun console diagnostics stay behind the interactive terminal guard (2026-08-03)
 
 ### What changed
