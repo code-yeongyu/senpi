@@ -1772,8 +1772,6 @@ export abstract class TuiBase extends Container {
 		cursorPos: { row: number; col: number } | null,
 		width: number,
 		height: number,
-		prevViewportTop: number,
-		hardwareCursorRow: number,
 	): void {
 		let buffer = TUI.FRAME_BEGIN;
 		buffer += this.deleteKittyImages(this.previousKittyImageIds);
@@ -1781,10 +1779,9 @@ export abstract class TuiBase extends Container {
 			buffer += "\x1b[3J";
 		}
 
-		const currentScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
-		if (currentScreenRow > 0) {
-			buffer += `\x1b[${currentScreenRow}A`;
-		}
+		// The hardware cursor may be parked on the editor or an IME marker. Replay
+		// must anchor to the screen, not derive its start from that logical row.
+		buffer += "\x1b[1;1H";
 
 		const bufferLength = Math.max(height, newLines.length);
 		for (let row = 0; row < bufferLength; row++) {
@@ -2206,15 +2203,7 @@ export abstract class TuiBase extends Container {
 							fullRender(true, false);
 						}
 					} else {
-						this.renderScrollbackReplay(
-							newLines,
-							rawLines,
-							cursorPos,
-							width,
-							height,
-							prevViewportTop,
-							hardwareCursorRow,
-						);
+						this.renderScrollbackReplay(newLines, rawLines, cursorPos, width, height);
 					}
 					return;
 				}

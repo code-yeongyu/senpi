@@ -775,6 +775,7 @@ describe("TUI viewport remap for above-viewport growth", () => {
 		// then
 		const writes = terminal.getWrites();
 		assert.strictEqual(tui.fullRedraws, initialFullRedraws, "Collapse should not full-redraw the viewport");
+		assert.ok(writes.includes("\x1b[1;1H"), "Scrollback replay should start at the top-left screen cell");
 		assert.ok(!writes.includes("\x1b[2J"), "Collapse should not clear the viewport");
 		assert.ok(writes.includes("\x1b[3J"), "Collapse should reset stale scrollback");
 		assert.strictEqual(
@@ -782,11 +783,13 @@ describe("TUI viewport remap for above-viewport growth", () => {
 			countOccurrences(writes, "\x1b[?2026l"),
 			"Collapse should keep DECSET 2026 begin/end balanced",
 		);
+		const scrollback = terminal.getScrollBuffer();
 		assert.deepStrictEqual(
-			getScrollbackSuffix(terminal.getScrollBuffer(), 8),
+			getScrollbackSuffix(scrollback, 8),
 			["session title", "tools", "tail row 0", "tail row 1", "tail row 2", "tail row 3", "tail row 4", "tail row 5"],
 			"Latest canonical scrollback segment should be collapsed",
 		);
+		assert.ok(scrollback.includes("tools"), "Replayed scrollback should retain the transcript header");
 		assert.deepStrictEqual(terminal.getViewport(), [
 			"tail row 0",
 			"tail row 1",
