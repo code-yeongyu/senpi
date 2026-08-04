@@ -2,7 +2,16 @@ import assert from "node:assert";
 import { afterEach, describe, it } from "node:test";
 import { isMultiplexerSession, useLegacyMuxRender, viewportRenderEnabled } from "../src/mux.ts";
 
-const ENV_KEYS = ["TMUX", "TMUX_PANE", "STY", "ZELLIJ", "PI_TUI_LEGACY_MUX_RENDER", "PI_TUI_VIEWPORT_RENDER"] as const;
+const ENV_KEYS = [
+	"TMUX",
+	"TMUX_PANE",
+	"STY",
+	"ZELLIJ",
+	"HERDR_ENV",
+	"HERDR_PANE_ID",
+	"PI_TUI_LEGACY_MUX_RENDER",
+	"PI_TUI_VIEWPORT_RENDER",
+] as const;
 
 type EnvKey = (typeof ENV_KEYS)[number];
 
@@ -42,6 +51,24 @@ describe("isMultiplexerSession", () => {
 
 			assert.equal(isMultiplexerSession(), true, key);
 		}
+	});
+
+	it("returns true for a Herdr pane", () => {
+		clearEnv();
+		process.env.HERDR_ENV = "1";
+		process.env.HERDR_PANE_ID = "w13:p4";
+
+		assert.equal(isMultiplexerSession(), true);
+	});
+
+	it("requires both Herdr markers", () => {
+		clearEnv();
+		process.env.HERDR_ENV = "1";
+		assert.equal(isMultiplexerSession(), false);
+
+		delete process.env.HERDR_ENV;
+		process.env.HERDR_PANE_ID = "w13:p4";
+		assert.equal(isMultiplexerSession(), false);
 	});
 
 	it("returns false when multiplexer environment variables are unset", () => {

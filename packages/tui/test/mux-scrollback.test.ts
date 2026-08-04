@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
+import { isMultiplexerSession } from "../src/mux.ts";
 import { TUI } from "../src/tui.ts";
 import {
 	assertFrameBalanced,
@@ -20,6 +21,26 @@ import {
 } from "./mux-scrollback-harness.ts";
 
 describe("TUI multiplexer scrollback preservation", () => {
+	it("uses mux-safe viewport repaint for tool expansion inside Herdr", async () => {
+		await withEnv({ HERDR_ENV: "1", HERDR_PANE_ID: "w13:p4" }, async () => {
+			assert.strictEqual(isMultiplexerSession(), true, "Herdr panes must preserve multiplexer scrollback");
+			const { terminal, tui, writes } = await renderReplayTrigger(undefined);
+
+			assert.strictEqual(countOccurrences(writes, SCROLLBACK_CLEAR), 0);
+			assert.strictEqual(countOccurrences(writes, ROW_CLEAR), terminal.rows);
+			assert.strictEqual(tui.muxViewportRepaints, 1);
+			assert.deepStrictEqual(terminal.getViewport(), [
+				"tail row 0",
+				"tail row 1",
+				"tail row 2",
+				"tail row 3",
+				"tail row 4",
+				"tail row 5",
+			]);
+			tui.stop();
+		});
+	});
+
 	it("emits a screen clear without clearing scrollback when width changes inside a multiplexer", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 6);
 		const tui = new TUI(terminal, muxOptions());

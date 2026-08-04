@@ -2,10 +2,10 @@
 // before any TUI test runs.
 //
 // TUI multiplexer detection (`isMultiplexerSession` in `src/mux.ts`) reads
-// TMUX/TMUX_PANE/STY/ZELLIJ from `process.env` to decide whether to preserve
+// TMUX/TMUX_PANE/STY/ZELLIJ/HERDR_ENV/HERDR_PANE_ID from `process.env` to decide whether to preserve
 // pane scrollback, which suppresses the `ESC[3J` scrollback reset on the
 // default render path. Tests that assert that default, non-multiplexer path
-// would otherwise fail when the suite is run inside tmux/screen/zellij — even
+// would otherwise fail when the suite is run inside tmux/screen/zellij/Herdr — even
 // though CI (which has no multiplexer) passes — because they inherit the
 // ambient markers.
 //
@@ -20,6 +20,6 @@
 // baseline. Kept as plain `.mjs` so it loads without the tsx transform and is
 // not subject to the src-only build type-check.
 
-for (const key of ["TMUX", "TMUX_PANE", "STY", "ZELLIJ"]) {
+for (const key of ["TMUX", "TMUX_PANE", "STY", "ZELLIJ", "HERDR_ENV", "HERDR_PANE_ID"]) {
 	delete process.env[key];
 }

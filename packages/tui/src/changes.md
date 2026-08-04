@@ -1,5 +1,31 @@
 # TUI delta rendering fork changes
 
+## 2026-08-04: preserve scrollback inside Herdr panes
+
+### What changed
+
+- Multiplexer detection now recognizes Herdr when both `HERDR_ENV=1` and
+  `HERDR_PANE_ID` are present.
+- Herdr panes therefore use the bounded mux viewport repaint path instead of
+  clearing and replaying scrollback when completed tool results expand.
+
+### Why
+
+Herdr is a terminal multiplexer but does not expose the tmux, screen, or Zellij
+markers used by the existing detector. Expanding several completed tool results
+could consequently replay offscreen transcript content with terminal sequences
+that left stale or mismatched rows in cmux+Herdr panes.
+
+### Why this cannot be an extension
+
+Multiplexer detection selects the core TUI repaint strategy before extensions
+can participate in rendering.
+
+### Expected merge-conflict zones
+
+- `src/mux.ts`
+- `test/mux-scrollback.test.ts`
+
 ## 2026-07-31: atomic visible-cursor frames for IME and animations
 
 ### What changed
