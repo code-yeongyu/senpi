@@ -1,5 +1,18 @@
 # Local fork changes
 
+## 2026-08-03 — Add reasoning-blind auto approval classification
+
+### What changed
+
+- Added `auto` as a first-class permission preset for settings, `--permission-preset`, and the Alt+A session cycle.
+- Routed every otherwise-pending tool proposal, including in-project edits, through a fast model screen followed by a reasoning confirmation when review is needed.
+- Built classifier context from user-authored messages plus the current proposal only; assistant reasoning and tool outputs are excluded.
+- Preserved explicit settings/CLI rules above model decisions and fail closed to normal approval when classification blocks, fails, or returns malformed output.
+
+### Verification
+
+- Faux-provider tests cover both classifier stages, malformed output, reasoning-blind context, all core proposal classes, and a real AgentSession tool execution.
+
 ## 2026-08-03 — Keep Bun off unpublished workspace identities
 
 ### What changed
@@ -29,6 +42,24 @@
 - `scripts/publish-manifest.mjs` codemode peer pinning.
 - `scripts/publish.mjs` package publication list.
 - `scripts/prepare-senpi-bundled-workspaces.prepare.test.mjs`, `scripts/prepare-senpi-publish-optionals.test.mjs`, `scripts/publish-manifest.test.mjs`, and `scripts/publish-registry-dependencies.test.mjs` release coverage.
+
+## 2026-08-03 — Cycle session approval mode with a configurable action
+
+### What changed
+
+- Added the editor-global reserved `app.approval.cycle`, bound to Alt+A by default, kept the established Shift+Tab thinking shortcut, and left both actions remappable.
+- Added a session-local `workspace` → `read-only` → `ask` approval cycle, with `full-access` or unset entering `workspace`.
+- Preserved explicit settings rules and Allow-always approvals, and made explicit CLI permission rules the final precedence layer.
+- Ignored persisted approval JSONL entries unless they match the complete permission-rule schema.
+- Updated notifications, footer status, startup help, hotkeys, tips, and public documentation.
+
+### Why this lives in the fork
+
+- The behavior spans the fork's builtin permission extension and interactive extension-status UI; an external extension cannot safely replace the active builtin permission ruleset.
+
+### Expected upstream merge-conflict zones
+
+- `src/core/keybindings.ts`, `src/core/extensions/runner.ts` reserved-action ownership, the builtin permission service/lifecycle, interactive command dispatch, and help surfaces.
 
 ## 2026-08-03 — Make the editor prompt marker visually explicit
 

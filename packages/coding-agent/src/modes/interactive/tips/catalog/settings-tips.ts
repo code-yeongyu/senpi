@@ -9,9 +9,9 @@ export const SETTINGS_TIPS = [
 	},
 	{
 		id: "permission-preset",
-		bindings: [],
-		render: () =>
-			'Set permissionPreset to "workspace", "read-only", or "ask" to decide which tool calls need your approval.',
+		bindings: ["app.approval.cycle"],
+		render: (keys) =>
+			`Press ${keys("app.approval.cycle")} to cycle workspace, read-only, and ask for this session; permissionPreset chooses the starting policy.`,
 	},
 	{
 		id: "packages-setting",

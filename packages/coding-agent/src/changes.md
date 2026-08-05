@@ -1,3 +1,33 @@
+## Reasoning-blind auto approval classifier (2026-08-03)
+
+### What changed
+
+- Added the `auto` permission preset and inserted it before workspace in the Alt+A approval cycle.
+- Evaluated pending tool proposals with a fast `ALLOW`/`REVIEW` model pass and a reasoning confirmation for reviewed calls.
+- Removed assistant text and tool results from classifier context, retained explicit settings/CLI precedence, and escalated any blocked or unavailable classifier decision to user approval.
+
+### Coverage
+
+- `test/permission/auto-classifier.test.ts` covers both stages and a real session tool call with a faux provider.
+- Permission CLI, settings, service, cycle, and shortcut regressions cover the new preset and preserved manual modes.
+
+## Keep thinking and approval shortcuts independent (2026-08-03)
+
+### What changed
+
+- Preserved Shift+Tab as the default `app.thinking.cycle` binding and moved the new `app.approval.cycle` default to Alt+A.
+- Kept both configured keys reserved from extension shortcut overrides and restored thinking-level startup/tip discovery.
+
+### Why
+
+- Reusing Shift+Tab for approval mode silently displaced an established thinking-level gesture. Alt+A is mnemonic, unclaimed by other default actions, and supported by both legacy Meta-key and enhanced terminal input parsing.
+
+### Coverage
+
+- `test/suite/keybindings-command.test.ts` locks the independent defaults and live remapping behavior.
+- `test/extensions-runner.test.ts` locks default/remapped approval reservation and default thinking reservation.
+- Real 80- and 120-column PTY sessions prove Shift+Tab changes only thinking while Alt+A cycles only approval mode.
+
 ## Required-recovery admission supersession and bounded fallback sizing (2026-08-03)
 
 ### What changed

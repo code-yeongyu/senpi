@@ -17,6 +17,15 @@ afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
+describe("default app keybindings", () => {
+	it("keeps Shift+Tab for thinking and uses Alt+A for approval", () => {
+		const manager = new KeybindingsManager({}, configPath);
+
+		expect(manager.getKeys("app.thinking.cycle")).toEqual(["shift+tab"]);
+		expect(manager.getKeys("app.approval.cycle")).toEqual(["alt+a"]);
+	});
+});
+
 describe("seedKeybindingsFile", () => {
 	it("writes every keybinding id when the file is missing", () => {
 		const manager = new KeybindingsManager({}, configPath);
@@ -43,13 +52,22 @@ describe("seedKeybindingsFile", () => {
 describe("applyKeybindingsFileEdit", () => {
 	it("reloads the live manager so a rewritten binding takes effect without restart", () => {
 		const manager = new KeybindingsManager({}, configPath);
+		expect(manager.getKeys("app.approval.cycle")).toEqual(["alt+a"]);
 		expect(manager.getKeys("app.thinking.cycle")).toEqual(["shift+tab"]);
 
-		writeFileSync(configPath, JSON.stringify({ "app.thinking.cycle": "ctrl+y" }), "utf-8");
+		writeFileSync(
+			configPath,
+			JSON.stringify({
+				"app.approval.cycle": "ctrl+y",
+				"app.thinking.cycle": [],
+			}),
+			"utf-8",
+		);
 		const result = applyKeybindingsFileEdit(configPath, manager);
 
 		expect(result.status).toBe("reloaded");
-		expect(manager.getKeys("app.thinking.cycle")).toEqual(["ctrl+y"]);
+		expect(manager.getKeys("app.approval.cycle")).toEqual(["ctrl+y"]);
+		expect(manager.getKeys("app.thinking.cycle")).toEqual([]);
 	});
 
 	it("refuses to reload invalid JSON and leaves the live bindings unchanged", () => {
@@ -59,6 +77,7 @@ describe("applyKeybindingsFileEdit", () => {
 		const result = applyKeybindingsFileEdit(configPath, manager);
 
 		expect(result.status).toBe("invalid");
+		expect(manager.getKeys("app.approval.cycle")).toEqual(["alt+a"]);
 		expect(manager.getKeys("app.thinking.cycle")).toEqual(["shift+tab"]);
 		expect(readFileSync(configPath, "utf-8")).toBe("{ not valid json");
 	});

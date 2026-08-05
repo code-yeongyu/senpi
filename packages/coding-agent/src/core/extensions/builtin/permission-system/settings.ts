@@ -26,7 +26,12 @@ export function loadPermissionSettings(
 	cliOverride: Ruleset,
 	projectDir: string,
 	cliPresetOverride?: PermissionPresetName,
-): { staticRuleset: Ruleset; approved: Ruleset } {
+): {
+	staticRuleset: Ruleset;
+	settingsRuleset: Ruleset;
+	approved: Ruleset;
+	activePreset: PermissionPresetName;
+} {
 	const globalSettings = settingsManager.getGlobalSettings() as Settings & PermissionSettings;
 	const globalPreset = parseSettingsPreset(globalSettings.permissionPreset, "global");
 	const globalPresetRuleset = globalPreset ? rulesForPreset(globalPreset) : [];
@@ -38,6 +43,7 @@ export function loadPermissionSettings(
 	const projectRuleset = projectSettings.permission ? fromConfig(projectSettings.permission) : [];
 
 	const cliPresetRuleset = cliPresetOverride ? rulesForPreset(cliPresetOverride) : [];
+	const settingsRuleset = merge(globalRuleset, projectRuleset);
 	const staticRuleset = merge(
 		rulesForPreset(DEFAULT_PERMISSION_PRESET),
 		globalPresetRuleset,
@@ -48,8 +54,9 @@ export function loadPermissionSettings(
 		cliOverride,
 	);
 	const approved = loadApproved(projectDir);
+	const activePreset = cliPresetOverride ?? projectPreset ?? globalPreset ?? DEFAULT_PERMISSION_PRESET;
 
-	return { staticRuleset, approved };
+	return { staticRuleset, settingsRuleset, approved, activePreset };
 }
 
 function parseSettingsPreset(value: unknown, scope: "global" | "project"): PermissionPresetName | undefined {
@@ -63,7 +70,7 @@ function parseSettingsPreset(value: unknown, scope: "global" | "project"): Permi
 	const preset = parsePermissionPresetName(value);
 	if (!preset) {
 		throw new Error(
-			`Invalid ${scope} permissionPreset "${value}". Expected one of: full-access, workspace, read-only, ask.`,
+			`Invalid ${scope} permissionPreset "${value}". Expected one of: full-access, auto, workspace, read-only, ask.`,
 		);
 	}
 	return preset;

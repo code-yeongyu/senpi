@@ -8,7 +8,7 @@ const COLUMN_GAP = 4;
 function renderShortcutGrid(): string {
 	const rows: readonly (readonly [string, string])[] = [
 		[keyHint("app.interrupt", "interrupt"), keyHint("app.clear", "clear editor")],
-		[keyHint("app.exit", "exit"), keyHint("app.thinking.cycle", "thinking level")],
+		[keyHint("app.exit", "exit"), keyHint("app.approval.cycle", "approval mode")],
 		[keyHint("app.model.cycleForward", "next model"), keyHint("app.model.select", "select model")],
 		[keyHint("app.tools.expand", "expand tools"), keyHint("app.editor.external", "external editor")],
 		[keyHint("app.message.followUp", "queue follow-up"), keyHint("app.history.search", "search history")],

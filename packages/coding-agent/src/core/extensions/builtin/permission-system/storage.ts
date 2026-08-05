@@ -9,6 +9,16 @@ function getPermissionsPath(projectDir: string): string {
 	return path.join(projectDir, CONFIG_DIR_NAME, PERMISSIONS_FILE);
 }
 
+function isRule(value: unknown): value is Rule {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const candidate = value as Record<string, unknown>;
+	return (
+		typeof candidate.permission === "string" &&
+		typeof candidate.pattern === "string" &&
+		(candidate.action === "allow" || candidate.action === "deny" || candidate.action === "ask")
+	);
+}
+
 export function loadApproved(projectDir: string): Ruleset {
 	const filePath = getPermissionsPath(projectDir);
 
@@ -22,8 +32,8 @@ export function loadApproved(projectDir: string): Ruleset {
 	const rules: Rule[] = [];
 	for (const line of lines) {
 		try {
-			const rule = JSON.parse(line) as Rule;
-			rules.push(rule);
+			const rule: unknown = JSON.parse(line);
+			if (isRule(rule)) rules.push(rule);
 		} catch {}
 	}
 

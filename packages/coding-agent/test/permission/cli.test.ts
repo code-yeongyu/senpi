@@ -134,6 +134,7 @@ describe("permission-system cli", () => {
 		it("accepts built-in permission preset names", () => {
 			// when/then
 			expect(parsePermissionPresetFlag("full-access")).toBe("full-access");
+			expect(parsePermissionPresetFlag("auto")).toBe("auto");
 			expect(parsePermissionPresetFlag("workspace")).toBe("workspace");
 			expect(parsePermissionPresetFlag("read-only")).toBe("read-only");
 			expect(parsePermissionPresetFlag("ask")).toBe("ask");

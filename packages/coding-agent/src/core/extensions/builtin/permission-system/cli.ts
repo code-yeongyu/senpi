@@ -29,6 +29,7 @@ export function parsePermissionPresetFlag(value: string): PermissionPresetName |
 export function parsePermissionPresetName(value: string): PermissionPresetName | undefined {
 	switch (value) {
 		case "full-access":
+		case "auto":
 		case "workspace":
 		case "read-only":
 		case "ask":

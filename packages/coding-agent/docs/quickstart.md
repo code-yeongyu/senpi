@@ -128,7 +128,7 @@ The command output is sent to the model. Use `!!command` to run a command withou
 
 ### Switch models
 
-Use `/model` or Ctrl+L to choose a model. Use Shift+Tab to cycle thinking level. Use Ctrl+P / Shift+Ctrl+P to cycle through favorite models.
+Use `/model` or Ctrl+L to choose a model. Shift+Tab keeps cycling thinking levels, while Alt+A (`app.approval.cycle`) cycles the session's approval mode through auto, workspace, read-only, and ask. Auto mode evaluates each tool proposal with the active model before allowing it or asking you. Use Ctrl+P / Shift+Ctrl+P to cycle through favorite models.
 
 ### Continue later
 

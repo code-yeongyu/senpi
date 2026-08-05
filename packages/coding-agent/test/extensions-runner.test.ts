@@ -361,6 +361,33 @@ describe("ExtensionRunner", () => {
 			warnSpy.mockRestore();
 		});
 
+		it.each([
+			["default approval-cycle", "app.approval.cycle", "alt+a"],
+			["rebound approval-cycle", "app.approval.cycle", "ctrl+y"],
+			["default thinking-cycle", "app.thinking.cycle", "shift+tab"],
+		] as const)("blocks an extension from taking the %s key", async (_scenario, action, key) => {
+			const extCode = `
+				export default function(pi) {
+					pi.registerShortcut("${key}", {
+						description: "Conflicts with ${action}",
+						handler: async () => {},
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "approval-conflict.ts"), extCode);
+
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const keybindings = { ...defaultKeybindings, [action]: key as KeyId };
+			const shortcuts = runner.getShortcuts(keybindings);
+
+			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("conflicts with built-in"));
+			expect(shortcuts.has(key)).toBe(false);
+
+			warnSpy.mockRestore();
+		});
+
 		it("allows a shortcut when the reserved set no longer contains the default key", async () => {
 			const extCode = `
 				export default function(pi) {

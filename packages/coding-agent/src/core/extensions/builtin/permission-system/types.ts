@@ -14,7 +14,7 @@ export type Ruleset = Rule[];
 /** Configuration format for settings.json */
 export type PermissionConfig = Record<string, Action | Record<string, Action>>;
 
-export type PermissionPresetName = "full-access" | "workspace" | "read-only" | "ask";
+export type PermissionPresetName = "full-access" | "auto" | "workspace" | "read-only" | "ask";
 
 /** User reply to a permission request */
 export type Reply = "once" | "always" | "reject";
