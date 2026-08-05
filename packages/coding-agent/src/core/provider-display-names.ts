@@ -6,6 +6,7 @@ export const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 	cerebras: "Cerebras",
 	"cloudflare-ai-gateway": "Cloudflare AI Gateway",
 	"cloudflare-workers-ai": "Cloudflare Workers AI",
+	commandcode: "CommandCode",
 	deepseek: "DeepSeek",
 	fireworks: "Fireworks",
 	google: "Google Gemini",
