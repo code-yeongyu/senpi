@@ -128,10 +128,19 @@ type ActiveToolLifecyclePrototype = TerminalTitlePrototype & {
 	refreshWorkingLoaderMessage(this: ActiveToolLifecycleThis): void;
 };
 
+type ActiveToolComponent = {
+	dispose(): void;
+	markExecutionStarted(): void;
+	updateArgs(args: unknown): void;
+	updateResult(result: unknown): void;
+};
+
 type ActiveToolLifecycleThis = TerminalTitleThis & {
 	activeToolExecutionTerminalTitle: string | undefined;
 	activeToolExecutions: Map<string, string>;
+	captureToolCallTrust(toolName: string, toolCallId: string): void;
 	chatContainer: Container;
+	createToolExecutionComponent(toolName: string, toolCallId: string, args: unknown): ActiveToolComponent;
 	defaultWorkingMessage: string;
 	footer: {
 		invalidate(): void;
@@ -146,14 +155,7 @@ type ActiveToolLifecycleThis = TerminalTitleThis & {
 				setMessage(message: string): void;
 		  }
 		| undefined;
-	pendingTools: Map<
-		string,
-		{
-			markExecutionStarted(): void;
-			updateArgs(args: unknown): void;
-			updateResult(result: unknown): void;
-		}
-	>;
+	pendingTools: Map<string, ActiveToolComponent>;
 	refreshWorkingLoaderMessage(): void;
 	requestStreamingRender(): void;
 	session: {
@@ -224,6 +226,32 @@ describe("InteractiveMode.showStatus", () => {
 		expect(fakeThis.chatContainer.children).toHaveLength(5);
 		expect(renderLastLine(fakeThis.chatContainer)).toContain("STATUS_TWO");
 	});
+});
+
+test("clears pending reveal state before disposing rebuilt chat components", () => {
+	const order: string[] = [];
+	const fakeThis = {
+		loadedResourcesContainer: { clear: () => order.push("resources") },
+		chatContainer: { clear: () => order.push("chat") },
+		pendingMessagesContainer: { clear: () => order.push("pending-messages") },
+		compactionTransferAbortControllers: new Map(),
+		compactionQueueGeneration: 0,
+		compactionQueueFlushTail: undefined,
+		compactionQueuedMessages: [],
+		compactionInFlightMessages: [],
+		streamingReveal: { stop: () => {} },
+		toolResultReveal: { stop: () => {} },
+		clearPendingTools: () => order.push("reveal"),
+		clearToolHookStatuses: () => {},
+		renderInitialMessages: () => {},
+	};
+	const renderCurrentSessionState = Reflect.get(InteractiveMode.prototype, "renderCurrentSessionState") as (
+		this: typeof fakeThis,
+	) => void;
+
+	renderCurrentSessionState.call(fakeThis);
+
+	expect(order.indexOf("reveal")).toBeLessThan(order.indexOf("chat"));
 });
 
 describe("InteractiveMode terminal title state", () => {
@@ -342,7 +370,9 @@ describe("InteractiveMode terminal title state", () => {
 		const prototype = InteractiveMode.prototype as unknown as ActiveToolLifecyclePrototype;
 		const setTitle = vi.fn();
 		const setMessage = vi.fn();
+		const finishArgsReveal = vi.fn();
 		const toolComponent = {
+			dispose: vi.fn(),
 			markExecutionStarted: vi.fn(),
 			updateArgs: vi.fn(),
 			updateResult: vi.fn(),
@@ -381,7 +411,7 @@ describe("InteractiveMode terminal title state", () => {
 			stopToolHookStatusTimer: vi.fn(),
 			toolArgsReveal: {
 				flush: vi.fn(() => false),
-				finish: vi.fn(),
+				finish: finishArgsReveal,
 				flushAll: vi.fn(),
 			},
 			toolResultReveal: {
@@ -391,6 +421,8 @@ describe("InteractiveMode terminal title state", () => {
 				refresh: vi.fn(),
 			},
 			toolOutputExpanded: false,
+			captureToolCallTrust: vi.fn(),
+			createToolExecutionComponent: vi.fn(() => toolComponent),
 			workingMessage: "Thinking",
 			workingMessageBeforeActiveTool: undefined,
 			applyTerminalTitle: prototype.applyTerminalTitle,
@@ -419,6 +451,10 @@ describe("InteractiveMode terminal title state", () => {
 		await prototype.handleEvent.call(fakeThis, startEvent);
 
 		// Then
+		expect(finishArgsReveal).toHaveBeenCalledWith("call-1");
+		expect(finishArgsReveal.mock.invocationCallOrder[0]).toBeLessThan(
+			toolComponent.dispose.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+		);
 		expect(fakeThis.workingMessage).toBe("Running bash: npm run check -- --watch");
 		expect(setMessage).toHaveBeenLastCalledWith("Running bash: npm run check -- --watch");
 		expect(setTitle).toHaveBeenLastCalledWith(`${APP_TITLE} - Running bash: npm run check -- --watch`);
@@ -434,27 +470,16 @@ describe("InteractiveMode terminal title state", () => {
 });
 
 describe("InteractiveMode.setToolsExpanded", () => {
-	test("applies expansion state to the active header and chat entries", () => {
-		const header = { setExpanded: vi.fn() };
-		const loadedResourcesChild = { setExpanded: vi.fn() };
-		const chatChild = { setExpanded: vi.fn() };
-		const fakeThis: any = {
-			toolOutputExpanded: false,
-			customHeader: undefined,
-			builtInHeader: header,
-			loadedResourcesContainer: { children: [loadedResourcesChild] },
-			chatContainer: { children: [chatChild] },
-			ui: { requestRender: vi.fn() },
-			showStatus: vi.fn(),
+	test("maps the legacy boolean API to the three-state mode owner", () => {
+		const setToolOutputMode = vi.fn();
+		const fakeThis = {
+			setToolOutputMode,
 		};
 
 		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, true);
+		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, false);
 
-		expect(fakeThis.toolOutputExpanded).toBe(true);
-		expect(header.setExpanded).toHaveBeenCalledWith(true);
-		expect(loadedResourcesChild.setExpanded).toHaveBeenCalledWith(true);
-		expect(chatChild.setExpanded).toHaveBeenCalledWith(true);
-		expect(fakeThis.showStatus).toHaveBeenCalledWith("Tool output: expanded");
+		expect(setToolOutputMode.mock.calls).toEqual([["expanded"], ["collapsed"]]);
 	});
 });
 

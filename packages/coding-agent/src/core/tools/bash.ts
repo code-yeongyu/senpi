@@ -533,6 +533,10 @@ export function createBashToolDefinition(
 			component.invalidate();
 			return component;
 		},
+		disposeRenderState(state) {
+			if (state.interval) clearInterval(state.interval);
+			state.interval = undefined;
+		},
 	};
 }
 

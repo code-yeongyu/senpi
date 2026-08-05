@@ -10,7 +10,7 @@ function renderShortcutGrid(): string {
 		[keyHint("app.interrupt", "interrupt"), keyHint("app.clear", "clear editor")],
 		[keyHint("app.exit", "exit"), keyHint("app.thinking.cycle", "thinking level")],
 		[keyHint("app.model.cycleForward", "next model"), keyHint("app.model.select", "select model")],
-		[keyHint("app.tools.expand", "expand tools"), keyHint("app.editor.external", "external editor")],
+		[keyHint("app.tools.expand", "cycle tool output"), keyHint("app.editor.external", "external editor")],
 		[keyHint("app.message.followUp", "queue follow-up"), keyHint("app.history.search", "search history")],
 		[rawKeyHint("!", "bash"), rawKeyHint("/", "commands")],
 	];

@@ -2,19 +2,25 @@ import { Container, Spacer, type TUI } from "@earendil-works/pi-tui";
 import type { ToolDef } from "../../../core/tools/index.ts";
 import { GrokToolRow } from "../grok/tool-row.ts";
 import { readToolProgress } from "../tool-progress.ts";
-import { createBoundedRenderSignature } from "./render-signature.ts";
 import { hasCompletedTodoTasks, TODO_STRIKE_FRAME_INTERVAL_MS, TODO_STRIKE_TOTAL_FRAMES } from "./todo-strike.ts";
+import { ToolExecutionController, type ToolExecutionPresentation } from "./tool-execution-controller.ts";
 import { ToolExecutionImages } from "./tool-execution-images.ts";
 import { ToolExecutionRenderer } from "./tool-execution-renderer.ts";
-import type { ToolExecutionIdentity, ToolExecutionRenderState, ToolExecutionResult } from "./tool-execution-types.ts";
+import type {
+	ToolExecutionIdentity,
+	ToolExecutionRenderState,
+	ToolExecutionResult,
+	ToolOutputMode,
+} from "./tool-execution-types.ts";
+
+export type { ToolExecutionPresentation } from "./tool-execution-controller.ts";
 
 export interface ToolExecutionOptions {
 	showImages?: boolean;
 	imageWidthCells?: number;
+	outputMode?: ToolOutputMode;
+	trustedBuiltIn?: boolean;
 }
-
-/** Visual shell chosen by interactive chrome; classic remains the default. */
-export type ToolExecutionPresentation = "classic" | "grok";
 
 const PENDING_RENDER_FRAME_INTERVAL_MS = 80;
 
@@ -24,9 +30,8 @@ export class ToolExecutionComponent extends Container {
 	private readonly renderer: ToolExecutionRenderer | undefined;
 	private readonly images: ToolExecutionImages | undefined;
 	private readonly grokRow: GrokToolRow | undefined;
-	private readonly presentation: ToolExecutionPresentation;
+	private readonly controller: ToolExecutionController;
 	private args: unknown;
-	private expanded = false;
 	private showImages: boolean;
 	private imageWidthCells: number;
 	private isPartial = true;
@@ -36,10 +41,6 @@ export class ToolExecutionComponent extends Container {
 	private spinnerInterval?: NodeJS.Timeout;
 	private todoStrikeInterval?: NodeJS.Timeout;
 	private result?: ToolExecutionResult;
-	private cachedLines?: string[];
-	private cachedSignature?: string;
-	private cachedWidth?: number;
-	private lastDisplaySignature?: string;
 
 	constructor(
 		toolName: string,
@@ -52,14 +53,21 @@ export class ToolExecutionComponent extends Container {
 		presentation: ToolExecutionPresentation = "classic",
 	) {
 		super();
-		this.identity = { toolName, toolCallId, cwd, toolDefinition };
+		this.identity = {
+			toolName,
+			toolCallId,
+			cwd,
+			toolDefinition,
+			trustedBuiltIn: options.trustedBuiltIn ?? false,
+		};
 		this.args = args;
+		const outputMode = options.outputMode ?? "collapsed";
 		this.showImages = options.showImages ?? true;
 		this.imageWidthCells = options.imageWidthCells ?? 60;
 		this.ui = ui;
-		this.presentation = presentation;
-		const initialState = this.createRenderState();
-		if (this.presentation === "grok") {
+		const initialState = this.createRenderState(outputMode === "expanded");
+		this.controller = new ToolExecutionController(this.identity, initialState, outputMode, presentation);
+		if (presentation === "grok") {
 			this.grokRow = new GrokToolRow({
 				toolName: this.identity.toolName,
 				isPartial: initialState.isPartial,
@@ -73,7 +81,7 @@ export class ToolExecutionComponent extends Container {
 				this.ui.requestRender();
 			});
 			this.images = new ToolExecutionImages(() => {
-				this.invalidateRenderCache();
+				this.controller.invalidateRenderCache();
 				this.ui.requestRender();
 			});
 			this.addChild(new Spacer(1));
@@ -86,7 +94,7 @@ export class ToolExecutionComponent extends Container {
 
 	updateArgs(args: unknown): void {
 		this.args = args;
-		this.lastDisplaySignature = undefined;
+		this.controller.invalidateDisplay();
 		this.updateSpinnerAnimation();
 		this.updateDisplay();
 	}
@@ -109,12 +117,12 @@ export class ToolExecutionComponent extends Container {
 		this.result = result;
 		this.isPartial = isPartial;
 		if (!isPartial) this.argsComplete = true;
-		this.lastDisplaySignature = undefined;
+		this.controller.invalidateDisplay();
 		this.updateSpinnerAnimation();
 		this.updateTodoStrikeAnimation();
 		this.updateDisplay();
-		this.images?.updateResult(result);
-		this.invalidateRenderCache();
+		if (!this.controller.isAtomic) this.images?.updateResult(result);
+		this.controller.invalidateRenderCache();
 	}
 
 	stopAnimation(): void {
@@ -128,8 +136,16 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	setExpanded(expanded: boolean): void {
-		this.expanded = expanded;
+		this.setOutputMode(expanded ? "expanded" : "collapsed");
+	}
+
+	setOutputMode(outputMode: ToolOutputMode): void {
+		const transition = this.controller.setOutputMode(outputMode);
+		if (!transition.changed) return;
+		if (transition.leftAtomic && this.result) this.images?.updateResult(this.result);
+		this.updateSpinnerAnimation();
 		this.updateDisplay();
+		this.ui.requestRender();
 	}
 
 	setShowImages(show: boolean): void {
@@ -143,84 +159,50 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override invalidate(): void {
-		this.invalidateRenderCache();
+		this.controller.invalidateDisplay();
 		super.invalidate();
-		this.lastDisplaySignature = undefined;
 		this.updateDisplay();
 	}
 
 	override render(width: number): string[] {
-		if (this.presentation === "grok") return super.render(width);
-
-		const signature = this.createRenderSignature();
-		if (this.cachedLines && this.cachedWidth === width && this.cachedSignature === signature) {
-			return [...this.cachedLines];
-		}
-
-		let lines: string[];
-		const renderer = this.renderer!;
-		const images = this.images!;
-		if (renderer.hasRendererDefinition && renderer.renderShell === "self") {
-			const contentLines = renderer.render(width);
-			const imageLines = images.render(width);
-			if (contentLines.length === 0 && imageLines.length === 0) return [];
-			lines = contentLines.length > 0 ? ["", ...contentLines, ...imageLines] : imageLines;
-		} else {
-			lines = super.render(width);
-		}
-
-		this.cachedWidth = width;
-		this.cachedSignature = signature;
-		this.cachedLines = [...lines];
-		return lines;
-	}
-
-	private updateDisplay(): void {
-		const displaySignature = this.createRenderSignature();
-		if (this.lastDisplaySignature === displaySignature) return;
-		this.lastDisplaySignature = displaySignature;
-		this.invalidateRenderCache();
-		const state = this.createRenderState();
-		if (this.grokRow) {
-			this.grokRow.update({
-				toolName: this.identity.toolName,
-				isPartial: state.isPartial,
-				result: state.result,
-			});
-			return;
-		}
-		const renderer = this.renderer!;
-		this.renderer!.update(state);
-		this.images!.updateOptions({
-			showImages: state.showImages,
-			maxWidthCells: this.imageWidthCells,
-			showRendererFallback: renderer.hasResultRenderer,
+		return this.controller.render(width, this.createRenderState(), this.imageWidthCells, {
+			renderer: this.renderer,
+			images: this.images,
+			grokRow: this.grokRow,
+			renderContainer: (containerWidth) => super.render(containerWidth),
 		});
 	}
 
-	private createRenderState(): ToolExecutionRenderState {
+	private updateDisplay(): void {
+		this.controller.updateDisplay(this.createRenderState(), this.imageWidthCells, {
+			renderer: this.renderer,
+			images: this.images,
+			grokRow: this.grokRow,
+			renderContainer: (width) => super.render(width),
+		});
+	}
+
+	private createRenderState(expanded = this.controller.expanded): ToolExecutionRenderState {
 		return {
 			args: this.args,
 			executionStarted: this.executionStarted,
 			argsComplete: this.argsComplete,
 			isPartial: this.isPartial,
-			expanded: this.expanded,
+			expanded,
 			showImages: this.showImages,
 			spinnerFrame: this.spinnerFrame,
 			result: this.result,
 		};
 	}
 
-	private createRenderSignature(): string {
-		return createBoundedRenderSignature({
-			...this.createRenderState(),
-			imageWidthCells: this.imageWidthCells,
-			toolCallId: this.identity.toolCallId,
-			toolName: this.identity.toolName,
-		});
-	}
-
 	private updateSpinnerAnimation(): void {
+		const atomicPolicy = this.controller.atomicSpinnerPolicy(this.createRenderState());
+		if (atomicPolicy !== undefined) {
+			if (atomicPolicy) this.startSpinnerAnimation();
+			else this.stopSpinnerAnimation();
+			return;
+		}
+
 		const isStreamingArgs = !this.argsComplete && ["edit", "write", "apply_patch"].includes(this.identity.toolName);
 		const isPartialTask = this.isPartial && this.identity.toolName === "task" && this.result !== undefined;
 		const isPartialProgress =
@@ -231,6 +213,7 @@ export class ToolExecutionComponent extends Container {
 
 	private updateTodoStrikeAnimation(): void {
 		const shouldAnimate =
+			this.identity.trustedBuiltIn &&
 			this.identity.toolName === "todo" &&
 			this.executionStarted &&
 			!this.isPartial &&
@@ -251,7 +234,7 @@ export class ToolExecutionComponent extends Container {
 				return;
 			}
 			this.spinnerFrame = next;
-			this.invalidateRenderCache();
+			this.controller.invalidateRenderCache();
 			this.updateDisplay();
 			this.ui.requestRender();
 		}, TODO_STRIKE_FRAME_INTERVAL_MS);
@@ -265,7 +248,7 @@ export class ToolExecutionComponent extends Container {
 		}
 		if (!this.spinnerInterval && this.spinnerFrame !== undefined) {
 			this.spinnerFrame = undefined;
-			this.invalidateRenderCache();
+			this.controller.invalidateRenderCache();
 			this.updateDisplay();
 			this.ui.requestRender();
 		}
@@ -275,7 +258,7 @@ export class ToolExecutionComponent extends Container {
 		if (this.spinnerInterval) return;
 		this.spinnerInterval = setInterval(() => {
 			this.spinnerFrame = ((this.spinnerFrame ?? -1) + 1) % 10;
-			this.invalidateRenderCache();
+			this.controller.invalidateRenderCache();
 			this.updateDisplay();
 			this.ui.requestRender();
 		}, PENDING_RENDER_FRAME_INTERVAL_MS);
@@ -287,12 +270,6 @@ export class ToolExecutionComponent extends Container {
 		clearInterval(this.spinnerInterval);
 		this.spinnerInterval = undefined;
 		if (!this.todoStrikeInterval) this.spinnerFrame = undefined;
-		this.invalidateRenderCache();
-	}
-
-	private invalidateRenderCache(): void {
-		this.cachedLines = undefined;
-		this.cachedSignature = undefined;
-		this.cachedWidth = undefined;
+		this.controller.invalidateRenderCache();
 	}
 }

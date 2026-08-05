@@ -1,5 +1,44 @@
 # changes
 
+## Bundled extension tools retain built-in provenance (2026-08-05)
+
+### What changed
+
+- `resource-loader.ts` marks bundled built-in extension entry paths as `source: "builtin"` when applying extension,
+  command, and tool source information.
+
+### Why
+
+- Bundled codemode is loaded from its package path, but its Eval tool still needs the same trusted provenance as
+  factory-backed built-ins. Treating it as a user-local extension disabled trusted atomic metadata at runtime.
+
+### Why this cannot be expressed externally
+
+- Source provenance is assigned while the core resource loader constructs the authoritative extension registry.
+
+### Expected merge conflict zones
+
+- LOW: `resource-loader.ts` extension source-info assignment.
+
+## Tool output keybinding describes the three-state cycle (2026-08-05)
+
+### What changed
+
+- The `app.tools.expand` action description now names collapsed, expanded, and atomic output instead of describing a
+  boolean expansion toggle.
+
+### Why
+
+- Ctrl+O now cycles three output modes, so help and keybinding discovery must describe the action users actually get.
+
+### Why this cannot be expressed externally
+
+- The action description is owned by the core keybinding registry consumed by built-in help surfaces.
+
+### Expected merge conflict zones
+
+- LOW: `keybindings.ts` `app.tools.expand` description.
+
 ## Bound provider-timeout retry continuations (2026-08-05)
 
 ### What changed

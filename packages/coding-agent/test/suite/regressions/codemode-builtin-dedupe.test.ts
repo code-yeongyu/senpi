@@ -2,10 +2,12 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const CODEMODE_ENTRY = resolve(process.cwd(), "..", "senpi-codemode", "src", "index.ts");
+const CODING_AGENT_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+const REPOSITORY_ROOT = resolve(CODING_AGENT_ROOT, "../..");
+const CODEMODE_ENTRY = resolve(CODING_AGENT_ROOT, "..", "senpi-codemode", "src", "index.ts");
 const CODEMODE_PACKAGE_NAME = "@code-yeongyu/senpi-codemode";
 
 type ProbeResult = {
@@ -13,6 +15,7 @@ type ProbeResult = {
 	evalExtensions: Array<{
 		path: string;
 		sourceInfo: { source: string; scope: string; origin: string };
+		evalSourceInfo: { source: string; scope: string; origin: string } | undefined;
 		description: string | undefined;
 		sessionStartHandlers: number;
 	}>;
@@ -38,8 +41,8 @@ describe("bundled codemode identity and precedence", () => {
 
 	function runProbe(settings: Record<string, unknown>): ProbeResult {
 		const probePath = join(root, "codemode-builtin-probe.mts");
-		const resourceLoaderUrl = pathToFileURL(join(process.cwd(), "src", "core", "resource-loader.ts")).href;
-		const sessionManagerUrl = pathToFileURL(join(process.cwd(), "src", "core", "session-manager.ts")).href;
+		const resourceLoaderUrl = pathToFileURL(join(CODING_AGENT_ROOT, "src", "core", "resource-loader.ts")).href;
+		const sessionManagerUrl = pathToFileURL(join(CODING_AGENT_ROOT, "src", "core", "session-manager.ts")).href;
 		writeFileSync(
 			probePath,
 			`import { readdirSync, rmSync } from "node:fs";
@@ -88,6 +91,7 @@ process.stdout.write(JSON.stringify({
 	evalExtensions: evalExtensions.map((extension) => ({
 		path: extension.path,
 		sourceInfo: extension.sourceInfo,
+		evalSourceInfo: extension.tools.get("eval")?.sourceInfo,
 		description: extension.tools.get("eval")?.definition.description,
 		sessionStartHandlers: extension.handlers.get("session_start")?.length ?? 0,
 	})),
@@ -97,7 +101,7 @@ process.stdout.write(JSON.stringify({
 		);
 		writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify(settings)}\n`);
 		const output = execFileSync(process.execPath, ["--import", "tsx", probePath, agentDir, cwd], {
-			cwd: process.cwd(),
+			cwd: REPOSITORY_ROOT,
 			encoding: "utf8",
 			env: {
 				...process.env,
@@ -118,12 +122,13 @@ process.stdout.write(JSON.stringify({
 		expect(result.evalExtensions).toHaveLength(1);
 		expect(result.evalExtensions[0]).toMatchObject({
 			path: CODEMODE_ENTRY,
-			sourceInfo: { source: "local", scope: "temporary", origin: "top-level" },
+			sourceInfo: { source: "builtin", scope: "temporary", origin: "top-level" },
+			evalSourceInfo: { source: "builtin", scope: "temporary", origin: "top-level" },
 			description: expect.any(String),
 			sessionStartHandlers: 1,
 		});
 		expect(result.sessionStartRefreshes).toBe(1);
-	});
+	}, 30_000);
 
 	it("keeps exactly one eval registration when the npm package is configured by the user", () => {
 		const userPackageDir = join(agentDir, "npm", "node_modules", "@code-yeongyu", "senpi-codemode");
@@ -155,8 +160,9 @@ export default function(pi) {
 		expect(result.evalExtensions).toHaveLength(1);
 		expect(result.evalExtensions[0]).toMatchObject({
 			path: CODEMODE_ENTRY,
-			sourceInfo: { source: "local", scope: "temporary", origin: "top-level" },
+			sourceInfo: { source: "builtin", scope: "temporary", origin: "top-level" },
+			evalSourceInfo: { source: "builtin", scope: "temporary", origin: "top-level" },
 		});
 		expect(result.evalExtensions[0]?.description).not.toBe("user configured codemode");
-	});
+	}, 30_000);
 });

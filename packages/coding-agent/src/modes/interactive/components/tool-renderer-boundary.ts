@@ -15,11 +15,18 @@ export class ToolRendererBoundary implements Component {
 	private fallback?: Component;
 	private failed = false;
 	private onFailure: () => void;
+	private disposeOwnedComponent: () => void;
 
-	constructor(component: Component, fallback: Component | undefined, onFailure: () => void) {
+	constructor(
+		component: Component,
+		fallback: Component | undefined,
+		onFailure: () => void,
+		disposeComponent?: () => void,
+	) {
 		this.component = component;
 		this.fallback = fallback;
 		this.onFailure = onFailure;
+		this.disposeOwnedComponent = disposeComponent ?? (() => this.component.dispose?.());
 	}
 
 	render(width: number): string[] {
@@ -58,21 +65,25 @@ export class ToolRendererBoundary implements Component {
 
 	dispose(): void {
 		this.disposeComponent();
-		this.fallback?.dispose?.();
+		try {
+			this.fallback?.dispose?.();
+		} catch {}
 	}
 
 	private fail(): void {
 		if (this.failed) return;
 		this.failed = true;
-		this.onFailure();
 		this.disposeComponent();
+		try {
+			this.onFailure();
+		} catch {}
 	}
 
 	private disposeComponent(): void {
 		if (this.componentDisposed) return;
 		this.componentDisposed = true;
 		try {
-			this.component.dispose?.();
+			this.disposeOwnedComponent();
 		} catch {
 			return;
 		}

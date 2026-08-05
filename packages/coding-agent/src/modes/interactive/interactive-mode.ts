@@ -168,6 +168,7 @@ import {
 	WorkingStatusIndicator,
 } from "./components/status-indicator.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
+import { nextToolOutputMode, type ToolOutputMode } from "./components/tool-execution-types.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
@@ -204,6 +205,7 @@ import { resolveStartupTipLine } from "./tips/startup-tip.ts";
 import { resolveWorkingTipLine, WorkingTipCache, type WorkingTipLine } from "./tips/working-tip.ts";
 import { buildTmuxSetupWarning } from "./tmux-setup.ts";
 import { ToolArgsRevealController } from "./tool-args-reveal.ts";
+import { ToolCallProvenance } from "./tool-call-provenance.ts";
 import { readToolProgress } from "./tool-progress.ts";
 import { ToolResultRevealController } from "./tool-result-reveal.ts";
 import {
@@ -553,6 +555,7 @@ export class InteractiveMode {
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
+	private readonly toolCallProvenance = new ToolCallProvenance();
 	private requestStreamingRender(): void {
 		this.ui.requestRender();
 	}
@@ -563,8 +566,11 @@ export class InteractiveMode {
 		this.ui.setMaxRenderFps(fps);
 	}
 
-	// Tool output expansion state
-	private toolOutputExpanded = false;
+	// Tool output display state
+	private toolOutputMode: ToolOutputMode = "collapsed";
+	private get toolOutputExpanded(): boolean {
+		return this.toolOutputMode === "expanded";
+	}
 
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
@@ -2180,6 +2186,7 @@ export class InteractiveMode {
 	}
 
 	private renderCurrentSessionState(): void {
+		this.clearPendingTools();
 		this.loadedResourcesContainer.clear();
 		this.chatContainer.clear();
 		this.pendingMessagesContainer.clear();
@@ -2193,7 +2200,6 @@ export class InteractiveMode {
 		this.toolResultReveal.stop();
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
-		this.clearPendingTools();
 		this.clearToolHookStatuses();
 		this.renderInitialMessages();
 	}
@@ -2201,8 +2207,27 @@ export class InteractiveMode {
 	/**
 	 * Get a registered tool definition by name (for custom rendering).
 	 */
-	private getRegisteredToolDefinition(toolName: string) {
+	private getRegisteredToolDefinition(toolName: string, trustedBuiltIn: boolean) {
+		if (this.isRegisteredToolTrustedBuiltIn(toolName) !== trustedBuiltIn) {
+			return undefined;
+		}
 		return this.session.getToolDefinition(toolName);
+	}
+
+	private isRegisteredToolTrustedBuiltIn(toolName: string): boolean {
+		return this.session.getAllTools().some((tool) => tool.name === toolName && tool.sourceInfo.source === "builtin");
+	}
+
+	private captureToolCallTrust(toolName: string, toolCallId: string): boolean {
+		return this.toolCallProvenance.capture(
+			this.sessionManager.getSessionId(),
+			toolCallId,
+			this.isRegisteredToolTrustedBuiltIn(toolName),
+		);
+	}
+
+	private getCapturedToolCallTrust(toolCallId: string): boolean {
+		return this.toolCallProvenance.get(this.sessionManager.getSessionId(), toolCallId);
 	}
 
 	private getMarkdownTransformers(): MarkdownTransformer[] {
@@ -3741,7 +3766,6 @@ export class InteractiveMode {
 							let component = this.pendingTools.get(content.id);
 							if (!component) {
 								component = this.createToolExecutionComponent(content.name, content.id, content.arguments);
-								component.setExpanded(this.toolOutputExpanded);
 								this.chatContainer.addChild(component);
 								this.pendingTools.set(content.id, component);
 							}
@@ -3810,16 +3834,23 @@ export class InteractiveMode {
 
 			case "tool_execution_start": {
 				this.handleToolExecutionStart(event);
-				let component = this.pendingTools.get(event.toolCallId);
-				if (!component) {
-					component = this.createToolExecutionComponent(event.toolName, event.toolCallId, event.args);
-					component.setExpanded(this.toolOutputExpanded);
+				this.captureToolCallTrust(event.toolName, event.toolCallId);
+				this.toolArgsReveal.finish(event.toolCallId);
+				const previousComponent = this.pendingTools.get(event.toolCallId);
+				const component = this.createToolExecutionComponent(event.toolName, event.toolCallId, event.args);
+				if (previousComponent) {
+					const childIndex = this.chatContainer.children.indexOf(previousComponent);
+					if (childIndex >= 0) {
+						this.chatContainer.children[childIndex] = component;
+					} else {
+						this.chatContainer.addChild(component);
+					}
+					previousComponent.dispose();
+				} else {
 					this.chatContainer.addChild(component);
-					this.pendingTools.set(event.toolCallId, component);
 				}
-				if (!this.toolArgsReveal.flush(event.toolCallId, event.args)) {
-					component.updateArgs(event.args);
-				}
+				this.pendingTools.set(event.toolCallId, component);
+				component.updateArgs(event.args);
 				component.markExecutionStarted();
 				this.ui.requestRender();
 				break;
@@ -4334,33 +4365,23 @@ export class InteractiveMode {
 	}
 
 	private createToolExecutionComponent(toolName: string, toolCallId: string, args: unknown): ToolExecutionComponent {
-		if (this.chrome) {
-			return new ToolExecutionComponent(
-				toolName,
-				toolCallId,
-				args,
-				{
-					showImages: this.settingsManager.getShowImages(),
-					imageWidthCells: this.settingsManager.getImageWidthCells(),
-				},
-				this.getRegisteredToolDefinition(toolName),
-				this.ui,
-				this.sessionManager.getCwd(),
-				this.chrome.toolPresentation,
-			);
-		}
-		return new ToolExecutionComponent(
+		const trustedBuiltIn = this.getCapturedToolCallTrust(toolCallId);
+		const component = new ToolExecutionComponent(
 			toolName,
 			toolCallId,
 			args,
 			{
 				showImages: this.settingsManager.getShowImages(),
 				imageWidthCells: this.settingsManager.getImageWidthCells(),
+				outputMode: this.toolOutputMode,
+				trustedBuiltIn,
 			},
-			this.getRegisteredToolDefinition(toolName),
+			this.getRegisteredToolDefinition(toolName, trustedBuiltIn),
 			this.ui,
 			this.sessionManager.getCwd(),
+			this.chrome?.toolPresentation,
 		);
+		return component;
 	}
 
 	private renderSessionItems(
@@ -4401,7 +4422,6 @@ export class InteractiveMode {
 				for (const content of message.content) {
 					if (content.type === "toolCall") {
 						const component = this.createToolExecutionComponent(content.name, content.id, content.arguments);
-						component.setExpanded(this.toolOutputExpanded);
 						this.chatContainer.addChild(component);
 
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
@@ -4861,25 +4881,37 @@ export class InteractiveMode {
 	}
 
 	private toggleToolOutputExpansion(): void {
-		this.setToolsExpanded(!this.toolOutputExpanded);
+		this.setToolOutputMode(nextToolOutputMode(this.toolOutputMode));
 	}
 
 	private setToolsExpanded(expanded: boolean): void {
-		if (expanded === this.toolOutputExpanded) return;
+		this.setToolOutputMode(expanded ? "expanded" : "collapsed");
+	}
 
-		this.toolOutputExpanded = expanded;
-		const activeHeader = this.customHeader ?? this.builtInHeader;
-		if (isExpandable(activeHeader)) {
-			activeHeader.setExpanded(expanded);
-		}
-		for (const container of [this.loadedResourcesContainer, this.chatContainer]) {
-			for (const child of container.children) {
-				if (isExpandable(child)) {
-					child.setExpanded(expanded);
-				}
+	private setToolOutputMode(outputMode: ToolOutputMode): void {
+		if (outputMode === this.toolOutputMode) return;
+		this.toolOutputMode = outputMode;
+		const visited = new Set<Component>();
+		const applyMode = (component: Component, expandComponent: boolean): void => {
+			if (visited.has(component)) return;
+			visited.add(component);
+			if (component instanceof ToolExecutionComponent) {
+				component.setOutputMode(outputMode);
+				return;
 			}
+			if (expandComponent && isExpandable(component)) component.setExpanded(this.toolOutputExpanded);
+			if (component instanceof Container) {
+				for (const child of component.children) applyMode(child, false);
+			}
+		};
+
+		const activeHeader = this.customHeader ?? this.builtInHeader;
+		if (isExpandable(activeHeader)) activeHeader.setExpanded(this.toolOutputExpanded);
+		for (const container of [this.loadedResourcesContainer, this.chatContainer]) {
+			for (const child of container.children) applyMode(child, true);
 		}
-		this.showStatus(`Tool output: ${expanded ? "expanded" : "collapsed"}`);
+		for (const component of this.pendingTools.values()) applyMode(component, false);
+		this.showStatus(`Tool output: ${outputMode}`);
 	}
 
 	private toggleThinkingBlockVisibility(): void {
@@ -7053,7 +7085,7 @@ export class InteractiveMode {
 | \`${cycleThinkingLevel}\` | Cycle thinking level |
 | \`${cycleModelForward}\` / \`${cycleModelBackward}\` | Cycle models |
 | \`${selectModel}\` | Open model selector |
-| \`${expandTools}\` | Toggle tool output expansion |
+| \`${expandTools}\` | Cycle tool output: collapsed, expanded, atomic |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${copyMessage}\` | Copy last assistant message |

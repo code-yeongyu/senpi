@@ -53,7 +53,8 @@ export const INPUT_TIPS = [
 	{
 		id: "expand-tool-output",
 		bindings: ["app.tools.expand"],
-		render: (keys) => `Collapse or expand tool output with ${keys("app.tools.expand")}.`,
+		render: (keys) =>
+			`Cycle tool output through collapsed, expanded, and atomic modes with ${keys("app.tools.expand")}.`,
 	},
 	{
 		id: "thinking-blocks",

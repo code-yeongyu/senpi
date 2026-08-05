@@ -632,6 +632,9 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 		theme: Theme,
 		context: ToolRenderContext<TState, Static<TParams>>,
 	) => Component;
+
+	/** Release renderer-owned resources when the tool view is suspended or disposed. */
+	disposeRenderState?: (state: TState) => void;
 }
 
 type AnyToolDefinition = ToolDefinition<any, any, any>;

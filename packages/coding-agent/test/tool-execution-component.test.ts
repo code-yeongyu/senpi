@@ -182,6 +182,68 @@ describe("ToolExecutionComponent parity", () => {
 		expect(component.render(120)).toEqual([]);
 	});
 
+	test("restores classic, Grok, and self render selection after atomic mode", () => {
+		const result = { content: [{ type: "text" as const, text: "result body" }], details: {}, isError: false };
+		const classic = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-selection-classic",
+			{ target: "fixture" },
+			{},
+			createBaseToolDefinition(),
+			createFakeTui(),
+			process.cwd(),
+		);
+		classic.updateResult(result);
+		classic.setOutputMode("expanded");
+		const classicBefore = classic.render(72);
+		classic.setOutputMode("atomic");
+		expect(classic.render(72)).not.toEqual(classicBefore);
+		classic.setOutputMode("expanded");
+		expect(classic.render(72)).toEqual(classicBefore);
+
+		const grok = new ToolExecutionComponent(
+			"read",
+			"tool-selection-grok",
+			{ path: "fixture.ts" },
+			{},
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+			"grok",
+		);
+		grok.updateResult(result);
+		const grokBefore = grok.render(72);
+		grok.setOutputMode("atomic");
+		expect(grok.render(72)).not.toEqual(grokBefore);
+		grok.setOutputMode("collapsed");
+		expect(grok.render(72)).toEqual(grokBefore);
+
+		const disposeRenderState = vi.fn();
+		const renderCall = vi.fn(() => new Text("self call", 0, 0));
+		const selfDefinition: ToolDefinition = {
+			...createBaseToolDefinition(),
+			renderShell: "self",
+			renderCall,
+			disposeRenderState,
+		};
+		const self = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-selection-self",
+			{},
+			{},
+			selfDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+		const selfBefore = self.render(72);
+		self.setOutputMode("atomic");
+		expect(disposeRenderState).toHaveBeenCalledOnce();
+		expect(self.render(72)).not.toEqual(selfBefore);
+		self.setOutputMode("collapsed");
+		expect(renderCall).toHaveBeenCalledTimes(2);
+		expect(self.render(72)).toEqual(selfBefore);
+	});
+
 	test("advances pending render frames for self-rendered write calls while args stream", () => {
 		vi.useFakeTimers();
 		try {
@@ -231,7 +293,7 @@ describe("ToolExecutionComponent parity", () => {
 			"edit",
 			"tool-2",
 			{ path: "README.md", oldText: "before", newText: "after" },
-			{},
+			{ trustedBuiltIn: true },
 			overrideDefinition,
 			createFakeTui(),
 			process.cwd(),
@@ -415,7 +477,7 @@ describe("ToolExecutionComponent parity", () => {
 			"read",
 			"tool-4c",
 			{ path: "README.md" },
-			{},
+			{ trustedBuiltIn: true },
 			overrideDefinition,
 			createFakeTui(),
 			process.cwd(),
@@ -771,7 +833,7 @@ describe("ToolExecutionComponent parity", () => {
 				"todo",
 				"tool-todo-strike-happy",
 				{},
-				{},
+				{ trustedBuiltIn: true },
 				createBaseToolDefinition("todo"),
 				createFakeTuiWithRenderSpy(requestRender),
 				process.cwd(),
@@ -966,7 +1028,7 @@ describe("ToolExecutionComponent parity", () => {
 				"todo",
 				"tool-todo-strike-memo",
 				{},
-				{},
+				{ trustedBuiltIn: true },
 				toolDefinition,
 				createFakeTuiWithRenderSpy(vi.fn()),
 				process.cwd(),

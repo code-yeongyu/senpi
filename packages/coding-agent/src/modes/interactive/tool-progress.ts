@@ -1,6 +1,6 @@
 import { formatWorkingElapsedSeconds } from "./working-status.ts";
 
-const TOOL_PROGRESS_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+export const TOOL_PROGRESS_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
 
 export interface ToolProgressDetails {
 	readonly activity?: string;

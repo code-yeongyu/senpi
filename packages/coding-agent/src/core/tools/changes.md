@@ -1,5 +1,25 @@
 # core/tools changes
 
+## bash renderer cleanup on suspension (2026-08-05)
+
+### What changed
+
+- `bash.ts` implements the renderer-state disposal hook and clears its elapsed-time interval when the interactive
+  shell suspends or disposes the renderer.
+
+### Why
+
+- Atomic mode replaces the classic Bash view. Its hidden elapsed timer must not continue requesting renders while the
+  atomic row is active.
+
+### Why extension system couldn't handle this
+
+- The interval belongs to the built-in Bash renderer state and must be released by that definition's lifecycle hook.
+
+### Expected merge conflict zones
+
+- LOW: `bash.ts` renderer members in `createBashToolDefinition()`.
+
 ## source-backed write result patches (2026-07-21)
 
 ### What changed

@@ -1,5 +1,23 @@
 # Core Extensions Changes
 
+## 2026-08-05 - Tool renderers can release suspended state
+
+### What changed and why
+
+- `ToolDefinition` gains an optional `disposeRenderState(state)` lifecycle hook.
+- The interactive tool shell calls the hook when a renderer is suspended or disposed, so extensions can release
+  renderer-owned timers and resources instead of leaving invisible work active in atomic mode.
+
+### Why this cannot be expressed externally
+
+- Renderer state is created and retained by the built-in interactive shell; only the shared tool-definition contract
+  can provide a lifecycle boundary for every extension renderer.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `ToolDefinition` renderer members.
+- LOW: interactive `tool-execution-renderer.ts` suspension and disposal.
+
 ## 2026-08-03 - ExtensionContext exposes the resolved agent dir
 
 ### What changed and why
