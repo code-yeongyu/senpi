@@ -1,7 +1,6 @@
 import type { CompactionReason } from "../../types.ts";
 import type { CompactionExtensionState } from "./state.ts";
 
-export const softCap = 3;
 export const hardCap = 10;
 
 export interface ShouldRejectByCapOptions {
@@ -24,27 +23,13 @@ export function incrementIneffective(state: CompactionExtensionState): Compactio
 	};
 }
 
-export function isOverSoftCap(state: CompactionExtensionState): boolean {
-	return state.acceptedThisTurn + (state.ineffectiveAttemptsThisTurn ?? 0) >= softCap;
-}
-
 export function isOverHardCap(state: CompactionExtensionState): boolean {
 	return state.acceptedAbsolute >= hardCap;
 }
 
 export function shouldRejectByCap(
 	state: CompactionExtensionState,
-	opts?: ShouldRejectByCapOptions,
+	_opts?: ShouldRejectByCapOptions,
 ): { cancel: boolean } {
-	if (isOverHardCap(state)) {
-		return { cancel: true };
-	}
-	const bypass = opts?.manual === true || opts?.reason === "manual" || opts?.reason === "extension";
-	if (bypass) {
-		return { cancel: false };
-	}
-	if (isOverSoftCap(state)) {
-		return { cancel: true };
-	}
-	return { cancel: false };
+	return { cancel: isOverHardCap(state) };
 }

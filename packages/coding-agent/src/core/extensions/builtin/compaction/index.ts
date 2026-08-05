@@ -476,11 +476,11 @@ export default function compactionExtension(
 			return { cancel: true, reason: SDK_NATIVE_LANE_REJECTION_REASON };
 		}
 		if (cap.shouldRejectByCap(state, { reason: event.reason }).cancel) {
-			getLogger(ctx).debug("skip_cap", { reason: event.reason, count: state.acceptedThisTurn });
+			getLogger(ctx).debug("skip_cap", { reason: event.reason, count: state.acceptedAbsolute });
 			return {
 				cancel: true,
 				rejectionCause: "per-turn-cap",
-				reason: "per-turn compaction cap reached for this turn",
+				reason: "absolute compaction cap reached",
 			};
 		}
 		const now = Date.now();
