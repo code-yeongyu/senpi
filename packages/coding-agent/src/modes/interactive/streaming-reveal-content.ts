@@ -96,9 +96,9 @@ export function countVisibleUnits(message: AssistantMessage, hideThinking: boole
 	for (let index = 0; index < message.content.length; index++) {
 		const block = message.content[index];
 		if (block?.type === "text") {
-			total += countOf(index, block.text);
+			total += countOf(index, block.text ?? "");
 		} else if (block?.type === "thinking" && !hideThinking) {
-			total += countOf(index, block.thinking);
+			total += countOf(index, block.thinking ?? "");
 		}
 	}
 	return total;
@@ -121,27 +121,29 @@ export function buildDisplayMessage(
 		const block = target.content[index];
 		if (!block) continue;
 		if (block.type === "text") {
-			const units = countOf(index, block.text);
+			const text = block.text ?? "";
+			const units = countOf(index, text);
 			content.push(
 				remaining <= 0
-					? block.text.length === 0
+					? text.length === 0
 						? block
 						: { ...block, text: "" }
 					: remaining >= units
 						? block
-						: { ...block, text: sliceOf(index, block.text, remaining) },
+						: { ...block, text: sliceOf(index, text, remaining) },
 			);
 			remaining = Math.max(0, remaining - units);
 		} else if (block.type === "thinking" && !hideThinking) {
-			const units = countOf(index, block.thinking);
+			const thinking = block.thinking ?? "";
+			const units = countOf(index, thinking);
 			content.push(
 				remaining <= 0
-					? block.thinking.length === 0
+					? thinking.length === 0
 						? block
 						: { ...block, thinking: "" }
 					: remaining >= units
 						? block
-						: { ...block, thinking: sliceOf(index, block.thinking, remaining) },
+						: { ...block, thinking: sliceOf(index, thinking, remaining) },
 			);
 			remaining = Math.max(0, remaining - units);
 		} else {

@@ -28,9 +28,9 @@ function assertNever(value: never): never {
 function isVisibleContent(content: AssistantMessage["content"][number], providerNativeVisible: boolean): boolean {
 	switch (content.type) {
 		case "text":
-			return Boolean(content.text.trim());
+			return Boolean((content.text ?? "").trim());
 		case "thinking":
-			return Boolean(content.thinking.trim());
+			return Boolean((content.thinking ?? "").trim());
 		case "providerNative":
 			return providerNativeVisible;
 		case "toolCall":
@@ -50,7 +50,7 @@ export function createAssistantRenderDescriptors(
 		const content = message.content[i];
 		switch (content.type) {
 			case "text": {
-				const text = content.text.trim();
+				const text = (content.text ?? "").trim();
 				if (text) descriptors.push({ kind: "text-md", text });
 				break;
 			}
@@ -74,7 +74,7 @@ export function createAssistantRenderDescriptors(
 							maxEnd = Math.max(maxEnd, endedAt);
 						}
 					}
-					const thinking = thinkingContent.thinking.trim();
+					const thinking = (thinkingContent.thinking ?? "").trim();
 					if (thinking) thinkingBlocks.push(thinking);
 				}
 				i--;

@@ -1,5 +1,26 @@
 # changes
 
+## Malformed assistant blocks render as empty instead of crashing (2026-08-05)
+
+### What changed
+
+- `components/assistant-render-descriptors.ts` and `streaming-reveal-content.ts` now treat a missing `text`/`thinking`
+  payload on a content block as an empty string instead of reading `.length`/`.trim()` off `undefined`.
+- Previously a provider extension emitting a block in the wrong shape (e.g. `{ type: "thinking", text: ... }` instead
+  of `{ type: "thinking", thinking: ... }`, or a bare block with no payload) crashed the interactive TUI with
+  `TypeError: Cannot read properties of undefined (reading 'length')` during smooth streaming reveal, and could also
+  crash transcript rendering for already-stored messages (`content.thinking.trim()`).
+- This was changed in core UI because assistant content rendering and streaming reveal are private built-in TUI
+  behavior; an extension cannot harden the renderer from outside, and the crash otherwise terminates the whole TUI
+  process (uncaught exception) instead of degrading gracefully.
+- `test/streaming-reveal-content.test.ts` covers malformed thinking/text blocks end-to-end; the regression fails
+  with the exact production `TypeError` when the fix is reverted.
+
+### Expected merge conflict zones
+
+- LOW: `streaming-reveal-content.ts` `countVisibleUnits`/`buildDisplayMessage` and
+  `components/assistant-render-descriptors.ts` payload reads.
+
 ## Server fallback abort uses one TUI notice (2026-08-05)
 
 ### What changed
