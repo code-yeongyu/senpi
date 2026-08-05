@@ -68,6 +68,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Mistral**
 - **Groq**
 - **Cerebras**
+- **CommandCode**
 - **Cloudflare AI Gateway**
 - **Cloudflare Workers AI**
 - **xAI**
@@ -422,6 +423,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Mistral | `MISTRAL_API_KEY` |
 | Groq | `GROQ_API_KEY` |
 | Cerebras | `CEREBRAS_API_KEY` |
+| CommandCode | `COMMANDCODE_API_KEY` |
 | Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_GATEWAY_ID` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` |
 | xAI | `XAI_API_KEY` |
