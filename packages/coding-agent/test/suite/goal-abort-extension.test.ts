@@ -1,9 +1,10 @@
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
 import { createGoal, readGoal, updateGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.ts";
 import type { GoalStatus } from "../../src/core/extensions/builtin/goal/types.ts";
+import ttsrExtension from "../../src/core/extensions/builtin/ttsr/index.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 type AgentEndSnapshot = {
@@ -113,8 +114,49 @@ describe("goal abort lifecycle through the agent session", () => {
 		await harness.session.prompt("run normally");
 
 		expect(observed).toEqual([{ aborted: undefined, abortSource: undefined }]);
-		expect(observed).toEqual([{ aborted: undefined, abortSource: undefined }]);
 	});
+
+	it("keeps an active monitored Goal live across a TTSR system abort", async () => {
+		const abortSources: Array<string | undefined> = [];
+		let resolveScheduledContinuation: ((data: unknown) => void) | undefined;
+		const scheduledContinuation = new Promise<unknown>((resolve) => {
+			resolveScheduledContinuation = resolve;
+		});
+		const harness = await createHarness({
+			persistSession: true,
+			extensionFactories: [
+				goalExtension,
+				ttsrExtension,
+				(pi) => {
+					pi.on("session_start", () => {
+						pi.events?.emit("terminal_monitor_state", { activeCount: 1 });
+					});
+					pi.events?.on("goal_continuation_scheduled", (data) => resolveScheduledContinuation?.(data));
+					pi.on("agent_end", (event) => {
+						abortSources.push(event.abortSource);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		const ref = goalStoreRef(harness.sessionManager, harness.tempDir);
+		await createGoal(ref, "Keep waiting for the live monitor");
+		harness.setResponses([
+			fauxAssistantMessage([fauxText('<unavailable-tool-call name="read"> inert imitation')]),
+			fauxAssistantMessage("recovered after the stream rule"),
+		]);
+
+		await harness.session.prompt("continue monitoring");
+
+		expect(abortSources).toContain("system");
+		expect(abortSources).not.toContain("user");
+		expect(abortSources).toContain(undefined);
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+		expect(await readGoal(ref)).toMatchObject({ status: "active" });
+		expect(await scheduledContinuation).toEqual(expect.objectContaining({ delayMs: 240_000 }));
+	});
+
 	it("keeps a model-authored block blocked on ordinary direct input", async () => {
 		const statusesAtBeforeAgentStart: GoalStatus[] = [];
 		const harness = await createHarness({

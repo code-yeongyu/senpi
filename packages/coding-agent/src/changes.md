@@ -1,3 +1,47 @@
+## Joined user aborts override system provenance (2026-08-05)
+
+### What changed
+
+- `AgentSession` now promotes an in-flight system-owned abort to user-owned when
+  an explicit user abort joins the same operation.
+- Joining an existing abort awaits the shared promise without issuing a second
+  `agent.abort()` call, and a later system abort cannot downgrade user provenance.
+- A later recovery generation with no active provenance issues its own
+  `agent.abort()` and records a fresh source instead of incorrectly joining the
+  prior generation's completed abort.
+- User intent that arrives while `agent_end` handlers are dispatching promotes
+  the shared event in place. A late join that occurs after an earlier handler
+  already observed system provenance emits one `session_abort` before
+  `agent_settled`, so TTSR corrective follow-ups and provider retries admitted
+  before dispatch cannot outrun the user cancellation.
+- The same cancellation boundary remains open through the public `agent_end`
+  notification, covering Escape handlers that run after extension dispatch but
+  before retry and settlement processing.
+- The boundary now remains mutable through `agent_settled` dispatch as well.
+  Extension messages requested from that event are held by
+  `agent-settled-delivery.ts` until every handler and public listener completes;
+  a user abort drops the held actions before one can become a corrective
+  provider turn, without disturbing user-owned steering or follow-up queues.
+- System-owned aborts no longer set the user-only queued-continuation suppression
+  latch; a user join still sets it before awaiting the shared abort.
+
+### Why
+
+- TTSR can begin a corrective system abort immediately before the user presses
+  Escape. The old early-return path kept `"system"` provenance and invoked the
+  underlying abort twice, so Goal could ignore the user's durable stop intent.
+
+### Why this cannot be expressed externally
+
+- Abort provenance, shared-promise ownership, and queued-continuation suppression
+  are private `AgentSession` lifecycle state.
+
+### Expected merge conflict zones
+
+- `core/agent-abort-provenance.ts`, `core/agent-settled-delivery.ts`, and
+  `core/agent-session.ts` around `_emitExtensionEvent`, `_emitAgentSettled`,
+  `abort`, and `_abortActiveAgentAndRetry`.
+
 ## Required-recovery admission supersession and bounded fallback sizing (2026-08-03)
 
 ### What changed

@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fauxAssistantMessage, fauxText, fauxThinking } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-
 import {
 	claimAbort,
 	createGenerationState,
@@ -61,8 +60,8 @@ function readSessionEntries(harness: Harness): PersistedEntry[] {
 		});
 }
 
-function injectionRecords(entries: PersistedEntry[]): PersistedEntry[] {
-	return entries.filter((entry) => entry.type === "custom" && entry.customType === TTSR_INJECTION_CUSTOM_TYPE);
+function activationRecords(entries: PersistedEntry[]): PersistedEntry[] {
+	return entries.filter((entry) => entry.type === "custom" && entry.customType === "rule-activation");
 }
 
 function nudgeMessages(entries: PersistedEntry[]): PersistedEntry[] {
@@ -192,7 +191,7 @@ describe("coordinator races through the session wiring", () => {
 		expect(assistants[0]?.stopReason).toBe("error");
 		expect(assistants[0]?.errorMessage).toBe(LEAK_ERROR_MESSAGE);
 		expect(Array.isArray(assistants[0]?.content) ? assistants[0].content.length : -1).toBe(0);
-		const records = injectionRecords(entries);
+		const records = activationRecords(entries);
 		expect(records.length).toBe(1);
 		expect(records[0]?.data?.owner).toBe("control-token-leak");
 		expect(Array.isArray(records[0]?.data?.rules) ? records[0].data.rules : []).toEqual([
@@ -224,7 +223,7 @@ describe("coordinator races through the session wiring", () => {
 		await harness.session.waitForIdle();
 		const entries = readSessionEntries(harness);
 		expect(nudgeMessages(entries).length).toBe(1);
-		const records = injectionRecords(entries);
+		const records = activationRecords(entries);
 		expect(records.length).toBe(1);
 		expect(records[0]?.data?.owner).toBe("collapse-repetition");
 		expect(harness.faux.getCallLog().length).toBe(2);
@@ -269,7 +268,7 @@ describe("coordinator races through the session wiring", () => {
 		expect(assistants.length).toBe(1);
 		expect(assistants[0]?.stopReason).toBe("error");
 		expect(assistants[0]?.errorMessage).toBe(LEAK_ERROR_MESSAGE);
-		expect(injectionRecords(entries).length).toBe(1);
+		expect(activationRecords(entries).length).toBe(1);
 		expect(nudgeMessages(entries).length).toBe(0);
 	});
 
@@ -293,7 +292,7 @@ describe("coordinator races through the session wiring", () => {
 		expect(assistants.filter((m) => m.stopReason === "error" && m.errorMessage === LEAK_ERROR_MESSAGE).length).toBe(
 			2,
 		);
-		expect(injectionRecords(entries).length).toBe(2);
+		expect(activationRecords(entries).length).toBe(2);
 		expect(nudgeMessages(entries).length).toBe(0);
 		expect(assistants.map((message) => getMessageText(message)).join("\n")).toContain("clean answer");
 	});

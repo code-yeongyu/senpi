@@ -1,7 +1,8 @@
 import { getKeybindings } from "@earendil-works/pi-tui";
 
-import type { ExtensionAPI, ExtensionContext, MessageUpdateEvent } from "../../types.ts";
+import type { AgentEndEvent, ExtensionAPI, ExtensionContext, MessageUpdateEvent } from "../../types.ts";
 import { appendRuleActivation, registerRuleActivationRenderer } from "../rule-activation/index.ts";
+import { parseRuleActivationDetails, RULE_ACTIVATION_ENTRY_TYPE } from "../rule-activation/types.ts";
 import { BUILTIN_TTSR_RULES } from "./builtin-rules.ts";
 import { registerTtsrCommands, type TtsrPublicState } from "./commands.ts";
 import { claimAbort, createGenerationState, markUserCancelled } from "./coordinator.ts";
@@ -70,6 +71,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 	let pendingRemediation: PendingRemediation | null = null;
 	let pendingRuleNudge: PendingRuleNudge | null = null;
 	let pendingNudge: TtsrNudgeMessage | null = null;
+	let settlingAgentEnd: AgentEndEvent | null = null;
 	let disabled = false;
 	const repetitiveTurns = new RepetitiveTurnsLane();
 
@@ -83,28 +85,22 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		}
 	}
 
+	function resetGenerationState(): void {
+		generation += 1;
+		genState = createGenerationState();
+		pendingRemediation = null;
+		pendingRuleNudge = null;
+		repetitiveTurns.resetTurn();
+		watcher?.reset();
+	}
+
 	function recordInjection(owner: string, observed: readonly string[], retryMode: "nudge" | "provider-error"): void {
-		pi.appendEntry(TTSR_INJECTION_CUSTOM_TYPE, {
-			rules: observed,
-			owner,
-			remediation: retryMode,
-			at: Date.now(),
-		});
 		appendRuleActivation(pi, {
 			kind: "ttsr",
 			owner,
 			rules: observed,
 			remediation: retryMode,
 		});
-	}
-
-	function notify(ctx: ExtensionContext, owner: string): void {
-		if (ctx.mode !== "tui") return;
-		try {
-			ctx.ui.notify(`Stream rule triggered: ${owner}`, "warning");
-		} catch {
-			return;
-		}
 	}
 
 	function ensureInitialized(ctx: ExtensionContext): void {
@@ -114,15 +110,18 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		repetitiveTurns.configure(new Set(disabledRules));
 		const settings = { ...DEFAULT_TTSR_SETTINGS, enabled: !disabled, disabledRules };
 		manager = new TtsrManager(settings, (pattern) => compileRuleCondition(pattern).regex);
-		const injectedNames = ctx.sessionManager
-			.getEntries()
-			.filter((entry) => entry.type === "custom" && entry.customType === TTSR_INJECTION_CUSTOM_TYPE)
-			.flatMap((entry) => {
-				const data = entry.type === "custom" ? entry.data : undefined;
-				if (typeof data !== "object" || data === null || !("rules" in data)) return [];
-				const rules = (data as { rules?: unknown }).rules;
-				return Array.isArray(rules) ? rules.filter((rule): rule is string => typeof rule === "string") : [];
-			});
+		const injectedNames = ctx.sessionManager.getEntries().flatMap((entry) => {
+			if (entry.type !== "custom") return [];
+			if (entry.customType === RULE_ACTIVATION_ENTRY_TYPE) {
+				const details = parseRuleActivationDetails(entry.data);
+				return details?.kind === "ttsr" ? [...details.rules] : [];
+			}
+			if (entry.customType !== TTSR_INJECTION_CUSTOM_TYPE) return [];
+			const data = entry.data;
+			if (typeof data !== "object" || data === null || !("rules" in data)) return [];
+			const rules = (data as { rules?: unknown }).rules;
+			return Array.isArray(rules) ? rules.filter((rule): rule is string => typeof rule === "string") : [];
+		});
 		manager.restoreInjected(injectedNames);
 		for (const rule of BUILTIN_TTSR_RULES) {
 			manager.addRule(rule);
@@ -166,14 +165,18 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		cancelRemediation();
 	});
 
+	pi.on("agent_end", (event) => {
+		settlingAgentEnd = event;
+		if (event.abortSource === "user") {
+			cancelRemediation();
+			return;
+		}
+		if (event.willRetry === true) resetGenerationState();
+	});
+
 	pi.on("turn_start", (_event, ctx) => {
 		ensureInitialized(ctx);
-		generation += 1;
-		genState = createGenerationState();
-		pendingRemediation = null;
-		pendingRuleNudge = null;
-		repetitiveTurns.resetTurn();
-		watcher?.reset();
+		resetGenerationState();
 	});
 
 	pi.on("turn_end", () => {
@@ -190,8 +193,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		const outcome = watcher.handleDelta(source, streamKey, deltaEvent.delta, generation);
 		if (outcome.resolution !== null && claimAbort(genState, outcome.resolution)) {
 			pendingRemediation = { resolution: outcome.resolution, streamKind: source };
-			notify(ctx, outcome.resolution.owner);
-			ctx.abort();
+			ctx.abort("system");
 			return;
 		}
 		if (source === "text") {
@@ -200,8 +202,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 				genState.abortClaimed = true;
 				genState.abortOwner = "collapse-repetition";
 				genState.selfAbortAt = Date.now();
-				notify(ctx, REPETITIVE_TURNS_RULE_NAME);
-				ctx.abort();
+				ctx.abort("system");
 				return;
 			}
 		}
@@ -212,8 +213,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 			genState.abortOwner = "collapse-repetition";
 			genState.selfAbortAt = Date.now();
 			pendingRuleNudge = { rule };
-			notify(ctx, rule.name);
-			ctx.abort();
+			ctx.abort("system");
 		}
 	});
 
@@ -261,8 +261,9 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_settled", () => {
-		if (pendingNudge === null || genState.userCancelled) {
+		if (pendingNudge === null || genState.userCancelled || settlingAgentEnd?.abortSource === "user") {
 			pendingNudge = null;
+			settlingAgentEnd = null;
 			return;
 		}
 		const nudge = pendingNudge;

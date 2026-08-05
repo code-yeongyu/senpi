@@ -1,6 +1,7 @@
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
-import type { AgentEndEvent, ExtensionAPI, ExtensionContext } from "../../types.ts";
+import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { continueGoalAfterAgentEnd } from "./agent-end-continuation.ts";
 import { GOAL_CACHE_WARMUP_ENTRY_TYPE } from "./cache-warm.ts";
 import { renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
 import { registerGoalCommand } from "./command-registration.ts";
@@ -14,6 +15,7 @@ import { MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { migrateLegacyGoalFile } from "./persistence.ts";
 import { accountGoalUsage, readGoal, updateGoal } from "./store.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
+import { didTerminalProviderErrorEndTurn } from "./terminal-provider-error.ts";
 import { staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
 import { registerGoalTools } from "./tool-registration.ts";
 import { TurnUsageTracker } from "./turn-usage.ts";
@@ -211,19 +213,20 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			clearAgentGoalAccounting();
 		}
 		refreshGoalUiBestEffort(ctx, goal);
-		const continuationGoal = await monitorContinuation.afterAgentEnd({ ctx, goal, messages: event.messages });
+		const continuationGoal = await continueGoalAfterAgentEnd(monitorContinuation, { ctx, event, goal });
 		if (continuationGoal !== goal) {
 			goal = continuationGoal;
-			if (goal?.status === "active") {
-				beginAgentGoalAccounting(goal);
-			} else {
-				clearAgentGoalAccounting();
-			}
-			refreshGoalUiBestEffort(ctx, goal);
+			syncContinuationGoal(ctx, goal);
 		}
 	});
 
+	pi.on("agent_settled", async (_event, ctx) => {
+		const goal = await monitorContinuation.afterAgentSettled();
+		if (goal !== undefined) syncContinuationGoal(ctx, goal);
+	});
+
 	pi.on("session_abort", async (_event, ctx) => {
+		continuationPending = false;
 		const goal = await readGoal(goalStoreRef(ctx));
 		if (goal?.status !== "active") return;
 		const accounted = await accountCurrentAgentTurn(ctx, "active");
@@ -323,6 +326,12 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		completedThisTurnGoalId = null;
 	}
 
+	function syncContinuationGoal(ctx: ExtensionContext, goal: Goal | null): void {
+		if (goal?.status === "active") beginAgentGoalAccounting(goal);
+		else clearAgentGoalAccounting();
+		refreshGoalUiBestEffort(ctx, goal);
+	}
+
 	function refreshGoalUi(ctx: ExtensionContext, goal: Goal | null): void {
 		monitorContinuation.syncGoal(goal);
 		const accounting = agentGoalAccounting;
@@ -382,16 +391,6 @@ function countTrailingGoalContinuationEntries(entries: readonly SessionEntry[]):
 		if (entry?.type === "custom_message" && entry.customType === GOAL_CONTINUATION_MESSAGE_TYPE) count += 1;
 	}
 	return count;
-}
-
-function didTerminalProviderErrorEndTurn(event: AgentEndEvent): boolean {
-	if (event.willRetry !== false) return false;
-	for (let index = event.messages.length - 1; index >= 0; index--) {
-		const message = event.messages[index];
-		if (message?.role !== "assistant") continue;
-		return message.stopReason === "error" || (message.stopReason === "aborted" && event.abortSource !== "user");
-	}
-	return false;
 }
 
 function goalStoreRef(ctx: ExtensionContext): GoalStoreRef {

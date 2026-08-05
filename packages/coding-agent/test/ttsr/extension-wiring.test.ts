@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import ttsrExtension from "../../src/core/extensions/builtin/ttsr/index.ts";
 import { LEAK_ERROR_MESSAGE } from "../../src/core/extensions/builtin/ttsr/prompts.ts";
 import { TTSR_INJECTION_CUSTOM_TYPE } from "../../src/core/extensions/builtin/ttsr/types.ts";
+import type { ExtensionUIContext } from "../../src/core/extensions/types.ts";
+import { theme } from "../../src/modes/interactive/theme/theme.ts";
 import { createHarness, getMessageText, type Harness } from "../suite/harness.ts";
 
 const RULE_ACTIVATION_ENTRY_TYPE = "rule-activation";
@@ -45,11 +47,49 @@ function thinkingTextOf(message: PersistedMessage | undefined): string {
 		.join("");
 }
 
+function createUi(notices: string[]): ExtensionUIContext {
+	return {
+		select: async () => undefined,
+		confirm: async () => false,
+		input: async () => undefined,
+		notify: (message) => notices.push(message),
+		onTerminalInput: () => () => {},
+		setStatus: () => {},
+		setWorkingMessage: () => {},
+		setWorkingVisible: () => {},
+		setWorkingIndicator: () => {},
+		setHiddenThinkingLabel: () => {},
+		setWidget: () => {},
+		setFooter: () => {},
+		setHeader: () => {},
+		setTitle: () => {},
+		custom: async <T>(): Promise<T> => {
+			throw new Error("TTSR wiring tests do not render custom UI");
+		},
+		pasteToEditor: () => {},
+		setEditorText: () => {},
+		getEditorText: () => "",
+		editor: async () => undefined,
+		addAutocompleteProvider: () => {},
+		setEditorComponent: () => {},
+		getEditorComponent: () => undefined,
+		theme,
+		getAllThemes: () => [],
+		getTheme: () => undefined,
+		setTheme: () => ({ success: false, error: "UI not available" }),
+		getToolsExpanded: () => false,
+		setToolsExpanded: () => {},
+	};
+}
+
 describe("ttsr extension wiring", () => {
 	let harness: Harness;
+	let notices: string[];
 
 	beforeEach(async () => {
+		notices = [];
 		harness = await createHarness({ extensionFactories: [ttsrExtension], persistSession: true });
+		await harness.session.bindExtensions({ mode: "tui", uiContext: createUi(notices) });
 	});
 
 	afterEach(() => {
@@ -72,14 +112,16 @@ describe("ttsr extension wiring", () => {
 		expect(thinking.startsWith("analyzing the problem")).toBe(true);
 		expect(thinking.length).toBeLessThan(40);
 		expect("!".repeat(100).length).toBeLessThan(600);
+		expect(notices).toEqual([]);
 
 		const injections = entries.filter((e) => e.type === "custom" && e.customType === TTSR_INJECTION_CUSTOM_TYPE);
-		expect(injections.length).toBeGreaterThan(0);
+		expect(injections).toHaveLength(0);
 
 		const nudges = entries.filter((e) => e.type === "custom_message" && e.customType === TTSR_INJECTION_CUSTOM_TYPE);
 		expect(nudges.length).toBeGreaterThan(0);
 
 		const activations = entries.filter((e) => e.type === "custom" && e.customType === RULE_ACTIVATION_ENTRY_TYPE);
+		expect(activations).toHaveLength(1);
 		expect(activations).toContainEqual(
 			expect.objectContaining({
 				data: {
@@ -113,9 +155,10 @@ describe("ttsr extension wiring", () => {
 		expect(Array.isArray(shelled?.content) ? shelled.content : [1]).toHaveLength(0);
 
 		const injections = entries.filter((e) => e.type === "custom" && e.customType === TTSR_INJECTION_CUSTOM_TYPE);
-		expect(injections.length).toBeGreaterThan(0);
+		expect(injections).toHaveLength(0);
 
 		const activations = entries.filter((e) => e.type === "custom" && e.customType === RULE_ACTIVATION_ENTRY_TYPE);
+		expect(activations).toHaveLength(1);
 		expect(activations).toContainEqual(
 			expect.objectContaining({
 				data: {

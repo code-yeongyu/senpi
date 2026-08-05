@@ -15,6 +15,7 @@ interface RpcRecord {
 	readonly method?: string;
 	readonly message?: string;
 	readonly notifyType?: string;
+	readonly entry?: { readonly customType?: string; readonly data?: { readonly phase?: string } };
 }
 
 function createRuntimeHost(session: AgentSession): AgentSessionRuntime {
@@ -46,7 +47,7 @@ describe("goal monitor scheduling notice over RPC", () => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
-	it("emits a pi scheduling event and an RPC notify request", async () => {
+	it("emits a scheduling event and one durable RPC entry", async () => {
 		vi.useFakeTimers();
 		const scheduleEvents: unknown[] = [];
 		const harness = await createHarness({
@@ -76,13 +77,16 @@ describe("goal monitor scheduling notice over RPC", () => {
 		await runner.emit({ type: "agent_end", messages: [fauxAssistantMessage("clean stop")] });
 
 		expect(scheduleEvents).toEqual([expect.objectContaining({ delayMs: 240_000 })]);
-		expect(rpcRecords(chunks)).toContainEqual(
+		const records = rpcRecords(chunks);
+		expect(records).toContainEqual(
 			expect.objectContaining({
-				type: "extension_ui_request",
-				method: "notify",
-				message: expect.stringMatching(/4 minutes/i),
-				notifyType: "info",
+				type: "entry_appended",
+				entry: expect.objectContaining({
+					customType: "goal-cache-warmup",
+					data: expect.objectContaining({ phase: "scheduled" }),
+				}),
 			}),
 		);
+		expect(records.some((record) => record.method === "notify")).toBe(false);
 	});
 });

@@ -1,5 +1,76 @@
 # goal Extension Changes
 
+## System-owned aborts stay active through Goal recovery (2026-08-05)
+
+### What changed
+
+- Explicit `abortSource: "system"` terminal abort events no longer enter Goal's
+  retries-exhausted provider-error blocking branch, including TTSR's
+  provider-error shell with `stopReason: "error"`.
+- A system-owned aborted `agent_end` is treated as the start of extension-owned
+  recovery rather than as a clean user turn: it preserves any existing timer,
+  avoids arming user grace, and lets the recovery end arm the live monitor wait.
+  If no automatic retry remains, an active monitor wait is armed immediately so
+  the Goal still has a live resumption channel.
+- If a system-owned provider error has neither an automatic retry nor an active
+  monitor, Goal stages its hidden `systemRecovery` continuation until
+  `agent_settled`. This launches recovery from the idle-compatible path instead
+  of leaving a native follow-up stranded behind the error stop, while a user
+  abort during `agent_end` or settlement cancels the staged delivery and clears
+  its single-flight latch, so an explicit `/goal resume` can admit a fresh
+  continuation. The path bypasses only idle/terminal-stop eligibility and
+  retains the persisted cap, repetition, pending-message, and single-flight
+  guards.
+- If one of those guards blocks recovery during `agent_settled`, the returned
+  Goal status now flows through the same accounting and TUI refresh path as an
+  `agent_end` continuation decision; the footer no longer remains
+  `Pursuing goal` after persistence has changed the Goal to blocked.
+- Provenance-free terminal aborted responses still block as provider failures,
+  while explicit user aborts retain the dedicated `user interrupted the turn`
+  block.
+- Production-shaped coverage includes `willRetry: false`, an aborted assistant
+  message, active monitor state, and the combined TTSR recovery continuation.
+
+### Why
+
+- TTSR owns a corrective recovery turn after its system abort. Treating that
+  abort as a provider failure transiently blocked the Goal, disarmed monitor
+  continuation ownership, and contradicted the internal-interruption contract.
+- Restricting the exemption to explicit system provenance preserves existing
+  protection for provider-originated terminal aborts with no source.
+
+### Why an extension couldn't do it
+
+- The classification and resulting Goal status transition are private to this
+  builtin's `agent_end` handler.
+
+### Expected merge conflict zones
+
+- `agent-end-continuation.ts`, `continuation.ts`, and
+  `monitor-continuation.ts` around system-abort staging and settlement routing.
+
+## Cache-warm waits are widget-owned (2026-08-05)
+
+### What changed
+
+- Monitor-delayed Goal continuations no longer emit transient scheduled/resumed
+  `ctx.ui.notify` messages.
+- The now-dead notice builders and their prose-only tests were removed.
+- The durable `goal-cache-warmup` entry remains the single notice box for the
+  cache-warm story, while the `goal-wait` status ticker remains the live
+  countdown surface.
+
+### Why
+
+- The transient notifications repeated the same scheduled/resumed event already
+  rendered by the durable entry. One event now has one display owner without
+  changing the continuation timer, prompt-cache metrics, wake event, or hidden
+  Goal continuation message.
+
+### Expected merge conflict zones
+
+- LOW in `monitor-continuation.ts` around monitor schedule and resume reporting.
+
 ## Cache-warm entry renderer delegates to the shared notice kit (2026-08-04)
 
 ### What changed
@@ -426,7 +497,7 @@ surface; no core extension API change is required.
 ### What changed
 
 - `monitor-continuation.ts` counts consecutive monitor-wait continuations per goal
-  (`GOAL_MONITOR_STALL_THRESHOLD = 3`). From the third consecutive delayed continuation
+  (`GOAL_STALL_TOOLLESS_THRESHOLD = 3`). From the third consecutive delayed continuation
   fired while monitors stayed active, the hidden continuation prompt is prefixed with a
   `<goal_monitor_stall_check>` block (`buildMonitorStallNotice` in `prompt.ts`) telling
   the agent the repeated wait looks abnormal and to actively inspect the monitored state

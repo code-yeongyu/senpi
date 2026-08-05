@@ -61,6 +61,8 @@ import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
+import { AgentAbortProvenance } from "./agent-abort-provenance.ts";
+import { AgentSettledDelivery, type DeferredAgentSettledAction } from "./agent-settled-delivery.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
@@ -644,8 +646,10 @@ export class AgentSession {
 	private _retryPromise: Promise<void> | undefined = undefined;
 	private _retryResolve: (() => void) | undefined = undefined;
 	private _userAbortPromise: Promise<void> | undefined = undefined;
-	private _agentAbortSource: "user" | "system" | undefined = undefined;
+	private readonly _abortProvenance = new AgentAbortProvenance();
+	private readonly _agentSettledDelivery = new AgentSettledDelivery();
 	private _suppressQueuedContinuationAfterUserAbort = false;
+	private _userAbortGeneration = 0;
 	/** Set when clearQueue({ abortWillFollow: true }) drains queues immediately before abort(). */
 	private _hadClearedQueuedMessages = false;
 	private _extensionEventSignal: AbortSignal | undefined = undefined;
@@ -1247,16 +1251,24 @@ export class AgentSession {
 			await this.agent.waitForIdle();
 		}
 		if (!this._isAgentRunActive) {
+			this._abortProvenance.closeAgentEndBoundary();
 			this._resolveIdleWaitIfIdle();
 			return;
 		}
 		this._isAgentRunActive = false;
+		let deferredActions: DeferredAgentSettledAction[] = [];
+		this._agentSettledDelivery.begin(this._userAbortGeneration);
 		try {
 			await this._extensionRunner.emit({ type: "agent_settled" });
 			this._emit({ type: "agent_settled" });
+			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
+			deferredActions = this._agentSettledDelivery.finish(this._userAbortGeneration);
 		} finally {
+			this._agentSettledDelivery.cancel();
+			this._abortProvenance.closeAgentEndBoundary();
 			this._resolveIdleWaitIfIdle();
 		}
+		for (const action of deferredActions) action();
 	}
 
 	private async _promptAgent(messages: AgentMessage | AgentMessage[]): Promise<void> {
@@ -1634,9 +1646,13 @@ export class AgentSession {
 		} finally {
 			this._extensionEventSignal = undefined;
 		}
+		if (event.type === "agent_end" && this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 
 		// Notify all listeners
 		this._emit(event.type === "agent_end" ? { ...event, willRetry: agentEndWillRetry } : event);
+		if (event.type === "agent_end") {
+			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
+		}
 
 		// Handle session persistence
 		if (event.type === "message_end") {
@@ -1722,7 +1738,9 @@ export class AgentSession {
 			const retryableError = this._isRetryableError(msg);
 			const hardErrorFallbackEligible = this._isHardErrorFallbackEligible(msg);
 			const retryCanAdmitProvider =
-				this.settingsManager.getRetrySettings().enabled && (retryableError || hardErrorFallbackEligible);
+				!userAbortSuppressedQueuedContinuation &&
+				this.settingsManager.getRetrySettings().enabled &&
+				(retryableError || hardErrorFallbackEligible);
 			let compactedBeforeRetry = false;
 			if (
 				retryCanAdmitProvider &&
@@ -1735,18 +1753,21 @@ export class AgentSession {
 			}
 
 			let retryOutcome: "continued" | "blocked" | "not-handled" = "not-handled";
-			if (!retryContinuationBlocked) {
+			if (!retryContinuationBlocked && !userAbortSuppressedQueuedContinuation) {
 				if (retryableError) {
 					retryOutcome = await this._handleRetryableError(msg);
 				} else if (hardErrorFallbackEligible) {
 					retryOutcome = await this._handleRetryableError(msg, { hardErrorFallback: true });
 				}
 			}
-			if (retryOutcome === "continued") return;
+			if (retryOutcome === "continued") {
+				this._abortProvenance.closeAgentEndBoundary();
+				return;
+			}
 
 			this._resolveRetry();
 			retryContinuationBlocked ||= retryOutcome === "blocked";
-			if (!retryContinuationBlocked) {
+			if (!retryContinuationBlocked && !userAbortSuppressedQueuedContinuation) {
 				if (compactedBeforeRetry && this.agent.hasQueuedMessages()) {
 					// Accepted recovery supersedes the stored admission rejection: the
 					// queued continuation is about to run, so the originating prompt must
@@ -1796,6 +1817,8 @@ export class AgentSession {
 			}
 			if (!launchedContinuation) {
 				await this._emitAgentSettled();
+			} else {
+				this._abortProvenance.closeAgentEndBoundary();
 			}
 		}
 	}
@@ -1813,6 +1836,11 @@ export class AgentSession {
 		this._probePhase = "idle";
 		this._hintDeadlineMs = undefined;
 		this._cumulativeHintedWaitMs = 0;
+	}
+
+	private async _emitSessionAbort(): Promise<void> {
+		await this._extensionRunner.emit({ type: "session_abort" });
+		this._emit({ type: "session_abort" });
 	}
 
 	/**
@@ -1959,19 +1987,15 @@ export class AgentSession {
 			this._turnIndex = 0;
 			await this._extensionRunner.emit({ type: "agent_start" });
 		} else if (event.type === "agent_end") {
-			const abortSource = this._agentAbortSource;
-			const aborted =
-				abortSource !== undefined || this._findLastAssistantInMessages(event.messages)?.stopReason === "aborted";
+			const extensionEvent = this._abortProvenance.beginAgentEnd(
+				event.messages,
+				agentEndWillRetry,
+				this._findLastAssistantInMessages(event.messages)?.stopReason === "aborted",
+			);
 			try {
-				await this._extensionRunner.emit({
-					type: "agent_end",
-					messages: event.messages,
-					willRetry: agentEndWillRetry,
-					...(aborted ? { aborted: true } : {}),
-					...(abortSource === undefined ? {} : { abortSource }),
-				});
+				await this._extensionRunner.emit(extensionEvent);
 			} finally {
-				this._agentAbortSource = undefined;
+				this._abortProvenance.endAgentEnd(extensionEvent);
 			}
 		} else if (event.type === "turn_start") {
 			const extensionEvent: TurnStartEvent = {
@@ -3139,6 +3163,7 @@ export class AgentSession {
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): Promise<void> {
+		const userAbortGeneration = this._userAbortGeneration;
 		const appMessage = {
 			role: "custom" as const,
 			customType: message.customType,
@@ -3160,6 +3185,7 @@ export class AgentSession {
 		try {
 			if (waitForExistingSessionWork) {
 				await this._waitForSettledSessionWork();
+				if (userAbortGeneration !== this._userAbortGeneration) return;
 				finishSessionWork = this._sessionWorkBarrier.begin();
 			}
 
@@ -3367,30 +3393,20 @@ export class AgentSession {
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(): Promise<void> {
-		// Capture gap-state BEFORE _abortActiveAgentAndRetry resets retry/compaction state.
-		// A mid-run abort (actively streaming with no pending retry) is delivered via
-		// agent_end (abortSource "user") — no session_abort needed. The gap case is when
-		// no agent_end will fire to carry the abort signal:
-		//   - retry backoff (_retryAbortController defined — the error agent_end already
-		//     fired, agent.abort() during backoff is a no-op, no new agent_end)
-		//   - compaction (!isStreaming && isCompacting)
-		//   - queued continuation that was already cleared by the caller (TUI clears queues
-		//     before calling abort, so pendingMessageCount is 0 but _hadClearedQueuedMessages
-		//     records that messages were present)
-		// Purely-idle defensive aborts (e.g. RPC session close on an idle session) must not
-		// fire session_abort.
+		// Streaming aborts are carried by agent_end provenance; only gaps need session_abort.
 		const wasMidRun = this.isStreaming && this._retryAbortController === undefined;
 		const hadRetryBackoff = this._retryAbortController !== undefined;
 		const hadCompactionOrPending = !this.isStreaming && (this.isCompacting || this.pendingMessageCount > 0);
 		const hadClearedQueues = this._hadClearedQueuedMessages;
+		const joinedAgentEndBoundary = this._abortProvenance.hasOpenAgentEndBoundary;
 		this._hadClearedQueuedMessages = false;
-		const shouldEmitAbort = !wasMidRun && (hadRetryBackoff || hadCompactionOrPending || hadClearedQueues);
+		const shouldEmitAbort =
+			!joinedAgentEndBoundary && !wasMidRun && (hadRetryBackoff || hadCompactionOrPending || hadClearedQueues);
 		this.abortCompaction();
 		await this._abortActiveAgentAndRetry("user");
 		if (!shouldEmitAbort) return;
 		try {
-			await this._extensionRunner.emit({ type: "session_abort" });
-			this._emit({ type: "session_abort" });
+			await this._emitSessionAbort();
 		} catch {
 			// Extension runner may be torn down during RPC close — best-effort.
 		}
@@ -3852,18 +3868,29 @@ export class AgentSession {
 		admission.finishSessionWork();
 	}
 
+	private _recordUserAbort(): void {
+		this._suppressQueuedContinuationAfterUserAbort = true;
+		this._userAbortGeneration += 1;
+	}
+
 	private async _abortActiveAgentAndRetry(source: "user" | "system"): Promise<void> {
 		this.abortRetry();
 		this.abortBranchSummary();
+		if (this._userAbortPromise === undefined) {
+			const boundaryJoin = this._abortProvenance.joinOpenBoundary(source);
+			if (boundaryJoin !== undefined) {
+				if (boundaryJoin.userOwned) this._recordUserAbort();
+				return;
+			}
+		}
 		if (this._userAbortPromise) {
-			this.agent.abort();
+			const joined = this._abortProvenance.join(source, this.isStreaming);
+			if (joined.userOwned) this._recordUserAbort();
+			if (joined.abortCurrentAgent) this.agent.abort();
 			await this._userAbortPromise;
 			return;
 		}
-		if (this.isStreaming) {
-			this._suppressQueuedContinuationAfterUserAbort = true;
-			this._agentAbortSource = source;
-		}
+		if (this.isStreaming && this._abortProvenance.begin(source)) this._recordUserAbort();
 
 		const abortPromise = (async () => {
 			this.agent.abort();
@@ -5186,13 +5213,16 @@ export class AgentSession {
 		runner.bindCore(
 			{
 				sendMessage: (message, options) => {
-					this.sendCustomMessage(message, options).catch((err) => {
-						runner.emitError({
-							extensionPath: RUNTIME_EXTENSION_PATH,
-							event: "send_message",
-							error: err instanceof Error ? err.message : String(err),
+					const send = () =>
+						this.sendCustomMessage(message, options).catch((err) => {
+							runner.emitError({
+								extensionPath: RUNTIME_EXTENSION_PATH,
+								event: "send_message",
+								error: err instanceof Error ? err.message : String(err),
+							});
 						});
-					});
+					if (this._agentSettledDelivery.defer(send)) return;
+					send();
 				},
 				sendUserMessage: (content, options) => {
 					this.sendUserMessage(content, options).catch((err) => {
@@ -5254,11 +5284,9 @@ export class AgentSession {
 				getAgentDir: () => this._agentDir,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 				getSignal: () => this._extensionEventSignal ?? this.agent.signal,
-				abort: () => {
-					if (this._extensionAbortHandler) {
-						this._extensionAbortHandler();
-						return;
-					}
+				abort: (source = "user") => {
+					if (source === "system") return void this._abortActiveAgentAndRetry("system");
+					if (this._extensionAbortHandler) return this._extensionAbortHandler();
 					void this.abort();
 				},
 				hasPendingMessages: () => this.pendingMessageCount > 0,

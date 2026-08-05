@@ -1,10 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import {
-	buildCacheWarmResumedNotice,
-	buildCacheWarmScheduledNotice,
-	estimateCacheWarmMetrics,
-} from "../../src/core/extensions/builtin/goal/cache-warm.ts";
+import { estimateCacheWarmMetrics } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
 
 function anthropicModel(costOverrides: Partial<Model<Api>["cost"]> = {}): Model<Api> {
 	return {
@@ -56,44 +52,5 @@ describe("goal cache-warm metrics", () => {
 			{ cacheRead: 1000, cacheWrite: 0 },
 		);
 		expect(inverted?.estimatedSavedUsd).toBe(0);
-	});
-});
-
-describe("goal cache-warm notices", () => {
-	it("explains the deferred continuation with cache context", () => {
-		const notice = buildCacheWarmScheduledNotice(240_000, 1, {
-			ttlSeconds: 300,
-			cachedTokens: 120_000,
-			estimatedSavedUsd: 0.324,
-		});
-		expect(notice).toContain("1 monitor on duty");
-		expect(notice).toMatch(/4 minutes/i);
-		expect(notice).toContain("~120K tokens");
-		expect(notice).toContain("5m prompt-cache TTL");
-	});
-
-	it("falls back to a monitor-only explanation without cache metrics", () => {
-		const notice = buildCacheWarmScheduledNotice(240_000, 2, undefined);
-		expect(notice).toContain("2 monitors on duty");
-		expect(notice).toMatch(/4 minutes/i);
-		expect(notice).not.toContain("tokens");
-	});
-
-	it("celebrates the cache-warm wake with savings", () => {
-		const notice = buildCacheWarmResumedNotice(240_000, 1, {
-			ttlSeconds: 300,
-			cachedTokens: 120_000,
-			estimatedSavedUsd: 0.324,
-		});
-		expect(notice).toContain("Cache-warm wake after 4m");
-		expect(notice).toContain("~120K tokens stayed warm");
-		expect(notice).toContain("est. $0.324 saved");
-	});
-
-	it("stays graceful when the wake has no cache story", () => {
-		const notice = buildCacheWarmResumedNotice(45_000, 1, undefined);
-		expect(notice).toContain("Cache-warm wake after 45s");
-		expect(notice).toContain("Continuing the goal");
-		expect(notice).not.toContain("tokens");
 	});
 });

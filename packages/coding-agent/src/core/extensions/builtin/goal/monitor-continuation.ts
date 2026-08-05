@@ -2,8 +2,6 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isTerminalMonitorStateEvent, TERMINAL_MONITOR_STATE_EVENT } from "../monitor-state-event.ts";
 import {
-	buildCacheWarmResumedNotice,
-	buildCacheWarmScheduledNotice,
 	estimateCacheWarmMetrics,
 	GOAL_CACHE_WARMUP_ENTRY_TYPE,
 	type GoalCacheWarmMetrics,
@@ -12,48 +10,37 @@ import {
 import {
 	continuationTurnUsedTools,
 	evaluateGoalContinuation,
-	GOAL_STALL_TOOLLESS_THRESHOLD,
 	GOAL_USER_GRACE_DELAY_MS,
 	type GoalContinuationInput,
 	type GoalContinuationPath,
-	type GoalContinuationVerdict,
 	hasGoalContinuationProgress,
 	hashAssistantText,
 	normalizeAssistantText,
 } from "./continuation.ts";
+import { lastAssistantMessage } from "./last-assistant-message.ts";
 import {
 	admitAndQueueGoalContinuation,
 	buildCurrentGoalContinuationSignature,
 	lastAssistantText,
 } from "./lifecycle-helpers.ts";
+import type {
+	AgentEndOptions,
+	ContinuingGoalContinuationVerdict,
+	DelayedContinuationKind,
+	GoalContinuationAdmission,
+	SystemAbortOptions,
+} from "./monitor-continuation-types.ts";
 import { buildContinuationPrompt, buildGoalStallNotice, buildTruncationRecoveryPrompt } from "./prompt.ts";
 import { resetContinuationStreak } from "./store.ts";
 import { goalStoreRef } from "./store-ref.ts";
 import { collectAssistantUsage } from "./turn-usage.ts";
 import type { Goal, TokenUsageSnapshot } from "./types.ts";
-import type { GoalWaitKind } from "./wait-progress.ts";
 import type { GoalWaitTicker } from "./wait-ticker.ts";
 
 export const GOAL_MONITOR_CONTINUATION_DELAY_MS = 240_000;
 export const GOAL_CONTINUATION_SCHEDULED_EVENT = "goal_continuation_scheduled";
 export const GOAL_CONTINUATION_RESUMED_EVENT = "goal_continuation_resumed";
-export const GOAL_MONITOR_CONTINUATION_NOTICE = "Goal continuation scheduled in 4 minutes while a monitor is active.";
-export const GOAL_MONITOR_STALL_THRESHOLD = GOAL_STALL_TOOLLESS_THRESHOLD;
 export const GOAL_MONITOR_STALL_EVENT = "goal_monitor_continuation_stall";
-
-interface AgentEndOptions {
-	readonly ctx: ExtensionContext;
-	readonly goal: Goal | null;
-	readonly messages: readonly AgentMessage[];
-}
-
-type ContinuingGoalContinuationVerdict = Extract<GoalContinuationVerdict, { kind: "continue" }>;
-type DelayedContinuationKind = GoalWaitKind;
-
-type GoalContinuationAdmission = {
-	readonly goal: Goal;
-	readonly admitted: boolean;
-};
 
 export class MonitorAwareGoalContinuation {
 	readonly #pi: ExtensionAPI;
@@ -78,6 +65,7 @@ export class MonitorAwareGoalContinuation {
 	#scheduledCache: GoalCacheWarmMetrics | undefined;
 	#heldTimer: { kind: DelayedContinuationKind; remainingMs: number } | undefined;
 	#directInputHolds = new Set<string>();
+	#pendingSystemRecovery: SystemAbortOptions | undefined;
 
 	constructor(
 		pi: ExtensionAPI,
@@ -172,6 +160,28 @@ export class MonitorAwareGoalContinuation {
 		return goal;
 	}
 
+	async afterSystemAbort(options: SystemAbortOptions): Promise<Goal | null> {
+		this.noteContinuationStarted();
+		this.#pendingSystemRecovery = undefined;
+		this.#ctx = options.ctx;
+		this.#goal = options.goal;
+		this.#lastAgentEndMessages = options.messages;
+		this.#lastTurnUsage = collectAssistantUsage([...options.messages]);
+		if (options.willRetry || options.goal?.status !== "active") return options.goal;
+		if (this.#activeMonitorCount > 0) this.#schedule(options.goal, "monitor");
+		else if (lastAssistantMessage(options.messages)?.stopReason === "error") {
+			this.#pendingSystemRecovery = options;
+		}
+		return options.goal;
+	}
+
+	async afterAgentSettled(): Promise<Goal | null | undefined> {
+		const pending = this.#pendingSystemRecovery;
+		this.#pendingSystemRecovery = undefined;
+		if (pending === undefined || pending.goal === null || pending.event.abortSource === "user") return undefined;
+		return (await this.#admitAndQueue(pending.ctx, pending.goal, "systemRecovery", pending.messages)).goal;
+	}
+
 	syncGoal(goal: Goal | null): void {
 		if (goal?.id !== this.#goal?.id) this.#resetContinuationState();
 		this.#goal = goal;
@@ -223,7 +233,7 @@ export class MonitorAwareGoalContinuation {
 		this.#resetContinuationState();
 	}
 
-	/** A queued hidden continuation has started, so the next end is not user-initiated. */
+	/** A hidden continuation or system recovery has started, so the next end is not user-initiated. */
 	noteContinuationStarted(): void {
 		this.#endedTurnWasUserInitiated = false;
 	}
@@ -247,9 +257,6 @@ export class MonitorAwareGoalContinuation {
 			const cache = estimateCacheWarmMetrics(this.#ctx?.model, process.env, this.#lastTurnUsage);
 			this.#scheduledCache = cache;
 			this.#scheduledAtMs = Date.now();
-			if (this.#ctx?.hasUI) {
-				this.#ctx.ui.notify(buildCacheWarmScheduledNotice(delayMs, this.#activeMonitorCount, cache), "info");
-			}
 			this.#pi.events?.emit(GOAL_CONTINUATION_SCHEDULED_EVENT, {
 				goalId: goal.id,
 				delayMs,
@@ -332,9 +339,6 @@ export class MonitorAwareGoalContinuation {
 			activeMonitorCount: this.#activeMonitorCount,
 			...(cache !== undefined ? { cache } : {}),
 		});
-		if (ctx.hasUI) {
-			ctx.ui.notify(buildCacheWarmResumedNotice(waitedMs, this.#activeMonitorCount, cache), "info");
-		}
 	}
 
 	async #admitAndQueue(
@@ -371,7 +375,7 @@ export class MonitorAwareGoalContinuation {
 		path: GoalContinuationPath,
 		messages: readonly AgentMessage[],
 	): Omit<GoalContinuationInput, "goal"> {
-		const lastAssistant = findLastAssistantMessage(messages);
+		const lastAssistant = lastAssistantMessage(messages);
 		return {
 			isIdle: ctx.isIdle(),
 			hasPendingMessages: ctx.hasPendingMessages(),
@@ -433,11 +437,12 @@ export class MonitorAwareGoalContinuation {
 	}
 
 	#resetLengthRecoveryAfterCleanStop(goal: Goal | null, messages: readonly AgentMessage[]): void {
-		if (goal === null || findLastAssistantMessage(messages)?.stopReason !== "stop") return;
+		if (goal === null || lastAssistantMessage(messages)?.stopReason !== "stop") return;
 		this.#consecutiveLengthRecoveries.delete(goal.id);
 	}
 
 	#resetContinuationState(): void {
+		this.#pendingSystemRecovery = undefined;
 		this.#consecutiveLengthRecoveries.clear();
 		this.#recentNormalizedOutputHashes = [];
 		this.#resetToollessContinuationStreak();
@@ -458,14 +463,4 @@ export class MonitorAwareGoalContinuation {
 		this.#scheduledContinuationKind = undefined;
 		this.#waitTicker?.stop();
 	}
-}
-
-function findLastAssistantMessage(
-	messages: readonly AgentMessage[],
-): Extract<AgentMessage, { role: "assistant" }> | undefined {
-	for (let index = messages.length - 1; index >= 0; index--) {
-		const message = messages[index];
-		if (message?.role === "assistant") return message;
-	}
-	return undefined;
 }

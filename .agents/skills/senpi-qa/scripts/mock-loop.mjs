@@ -149,7 +149,7 @@ async function driveTurn({
 			followArgs.push(followUp);
 			const next = await runCli(followArgs, { env: hermeticEnv(box.env), cwd: box.cwd, timeoutMs });
 			combined = {
-				code: next.code,
+				code: combined.code === 0 ? next.code : combined.code,
 				stdout: `${combined.stdout}\n${next.stdout}`,
 				stderr: `${combined.stderr}\n${next.stderr}`,
 				timedOut: combined.timedOut || next.timedOut,

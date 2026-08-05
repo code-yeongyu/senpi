@@ -70,9 +70,7 @@ describe("goal cache-warm continuation story", () => {
 		vi.useFakeTimers();
 		const { harness, notices } = await setupWarmHarness("thread-cache-warm-scheduled");
 
-		expect(notices).toHaveLength(1);
-		expect(notices[0]).toMatch(/4 minutes/i);
-		expect(notices[0]).toContain("~120K tokens");
+		expect(notices).toEqual([]);
 
 		expect(channelEvents(harness, "goal_continuation_scheduled")).toEqual([
 			expect.objectContaining({
@@ -133,7 +131,7 @@ describe("goal cache-warm continuation story", () => {
 			}),
 		);
 
-		expect(notices.some((notice) => /cache-warm wake/i.test(notice) && notice.includes("$0.324"))).toBe(true);
+		expect(notices).toEqual([]);
 	});
 
 	it("keeps a plain explanation when no cache context exists", async () => {
@@ -155,8 +153,7 @@ describe("goal cache-warm continuation story", () => {
 			ctx,
 		);
 
-		expect(notices[0]).toMatch(/4 minutes/i);
-		expect(notices[0]).not.toContain("tokens");
+		expect(notices).toEqual([]);
 
 		const scheduled = warmupEntryData(harness);
 		expect(scheduled).toHaveLength(1);

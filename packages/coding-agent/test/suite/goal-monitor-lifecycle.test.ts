@@ -57,7 +57,7 @@ describe("goal monitor continuation lifecycle", () => {
 		await endCleanTurn(harness, ctx);
 
 		expect(harness.sent).toHaveLength(0);
-		expect(notices).toHaveLength(1);
+		expect(notices).toHaveLength(0);
 		const delayedDeliveryRecorded = waitForSentCount(harness, 1);
 		await vi.advanceTimersByTimeAsync(240_000);
 		await delayedDeliveryRecorded;
