@@ -1,4 +1,11 @@
-import { type CompactionPreparation, type CompactionResult, estimateTokens } from "../../../compaction/index.ts";
+import {
+	type CompactionPreparation,
+	type CompactionResult,
+	contextMessagesForCompactionEntry,
+	estimateTokens,
+	isCutPointMessage,
+	isTurnStartMessage,
+} from "../../../compaction/index.ts";
 import { StreamDurationBudgetError, StreamIdleTimeoutError } from "../../../compaction/stream-watchdog.ts";
 import { filterContextExcludedMessages } from "../../../messages.ts";
 import { buildSessionContext, type CompactionEntry, type SessionEntry } from "../../../session-manager.ts";
@@ -23,7 +30,7 @@ interface DeterministicFallbackDetails {
 	origin: "required-compaction-recovery";
 	failureKind: RequiredCompactionFallbackFailure;
 	taskIntent?: string;
-	retainedSuffix?: "prepared" | "latest-user-turn";
+	retainedSuffix?: "prepared" | "latest-user-turn" | "latest-turn-start" | "latest-cut-point";
 }
 
 const NON_VISIBLE_USER_TEXT = /[\p{White_Space}\p{Default_Ignorable_Code_Point}]/gu;
@@ -32,14 +39,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-function hasMeaningfulUserText(entry: SessionEntry): boolean {
-	if (entry.type !== "message" || !isRecord(entry.message) || entry.message.role !== "user") return false;
-	const content = entry.message.content;
-	const hasVisibleText = (text: unknown): boolean =>
-		typeof text === "string" && text.normalize("NFKC").replace(NON_VISIBLE_USER_TEXT, "").length > 0;
+function hasVisibleText(text: unknown): boolean {
+	return typeof text === "string" && text.normalize("NFKC").replace(NON_VISIBLE_USER_TEXT, "").length > 0;
+}
+
+function hasVisibleTextContent(content: unknown): boolean {
 	if (typeof content === "string") return hasVisibleText(content);
 	if (!Array.isArray(content)) return false;
 	return content.some((block) => isRecord(block) && block.type === "text" && hasVisibleText(block.text));
+}
+
+function hasMeaningfulUserText(entry: SessionEntry): boolean {
+	return contextMessagesForCompactionEntry(entry).some(
+		(message) => message.role === "user" && hasVisibleTextContent(message.content),
+	);
+}
+
+function hasMeaningfulNonUserTurnStart(entry: SessionEntry): boolean {
+	return contextMessagesForCompactionEntry(entry).some(
+		(message) =>
+			isTurnStartMessage(message) &&
+			(message.role === "bashExecution" || (message.role === "custom" && hasVisibleTextContent(message.content))),
+	);
+}
+
+function hasValidCutPoint(entry: SessionEntry): boolean {
+	return contextMessagesForCompactionEntry(entry).some(isCutPointMessage);
 }
 
 /**
@@ -71,9 +96,10 @@ function isSafeBoundedValue(value: unknown, seen = new Set<object>(), depth = 0)
 }
 
 /**
- * Conservative retained-context size. Fails closed (Infinity) on any unsafe or
- * un-serializable value, and exits early once `budget` is exceeded so an
- * oversized retained message cannot force an allocation-heavy full scan.
+ * Conservative retained-context size. Serialized bytes/3 is a conservative
+ * token floor that stays safe for CJK (about one token per three UTF-8 bytes)
+ * without the previous bytes-equal-tokens 3-4x overcount. Fails closed
+ * (Infinity) on unsafe or un-serializable values and exits early over budget.
  */
 function estimateConservativeTokens(
 	messages: ReturnType<typeof filterContextExcludedMessages>,
@@ -89,7 +115,7 @@ function estimateConservativeTokens(
 			return Number.POSITIVE_INFINITY;
 		}
 		if (serialized === undefined) return Number.POSITIVE_INFINITY;
-		total += Math.max(estimateTokens(message), Buffer.byteLength(serialized));
+		total += Math.max(estimateTokens(message), Math.ceil(Buffer.byteLength(serialized) / 3));
 		if (total > budget) return total;
 	}
 	return total;
@@ -185,13 +211,41 @@ export function createRequiredCompactionFallback(
 		return { ...result, estimatedTokensAfter: retainedTokens };
 	};
 
-	const prepared = projectCandidate(preparation.firstKeptEntryId, "prepared");
+	const projectedEntryIds = new Set<string>();
+	const projectOnce = (
+		entryId: string,
+		retainedSuffix: NonNullable<DeterministicFallbackDetails["retainedSuffix"]>,
+	): CompactionResult<DeterministicFallbackDetails> | undefined => {
+		if (projectedEntryIds.has(entryId)) return undefined;
+		projectedEntryIds.add(entryId);
+		return projectCandidate(entryId, retainedSuffix);
+	};
+	const projectLatestBoundary = (
+		predicate: (entry: SessionEntry) => boolean,
+		retainedSuffix: NonNullable<DeterministicFallbackDetails["retainedSuffix"]>,
+	): CompactionResult<DeterministicFallbackDetails> | undefined => {
+		for (let index = branchEntries.length - 1; index > preparedBoundaryIndex; index--) {
+			const entry = branchEntries[index];
+			let matches = false;
+			try {
+				matches = predicate(entry);
+			} catch {
+				continue;
+			}
+			if (!matches) continue;
+			return projectOnce(entry.id, retainedSuffix);
+		}
+		return undefined;
+	};
+
+	const prepared = projectOnce(preparation.firstKeptEntryId, "prepared");
 	if (prepared) return prepared;
 
-	for (let index = branchEntries.length - 1; index > preparedBoundaryIndex; index--) {
-		const entry = branchEntries[index];
-		if (!hasMeaningfulUserText(entry)) continue;
-		return projectCandidate(entry.id, "latest-user-turn");
-	}
-	return undefined;
+	const latestUserTurn = projectLatestBoundary(hasMeaningfulUserText, "latest-user-turn");
+	if (latestUserTurn) return latestUserTurn;
+
+	const latestTurnStart = projectLatestBoundary(hasMeaningfulNonUserTurnStart, "latest-turn-start");
+	if (latestTurnStart) return latestTurnStart;
+
+	return projectLatestBoundary(hasValidCutPoint, "latest-cut-point");
 }

@@ -96,7 +96,7 @@ function extractFileOperations(
  * Extract AgentMessage from an entry if it produces one.
  * Returns undefined for entries that don't contribute to LLM context.
  */
-function contextMessagesForCompactionEntry(entry: SessionEntry): AgentMessage[] {
+export function contextMessagesForCompactionEntry(entry: SessionEntry): AgentMessage[] {
 	if (entry.type === "compaction") {
 		return [];
 	}
@@ -362,7 +362,7 @@ export function estimateTokens(message: AgentMessage): number {
 	}
 }
 
-function isCutPointMessage(message: AgentMessage): boolean {
+export function isCutPointMessage(message: AgentMessage): boolean {
 	switch (message.role) {
 		case "user":
 		case "assistant":
@@ -377,7 +377,7 @@ function isCutPointMessage(message: AgentMessage): boolean {
 	return false;
 }
 
-function isTurnStartMessage(message: AgentMessage): boolean {
+export function isTurnStartMessage(message: AgentMessage): boolean {
 	switch (message.role) {
 		case "user":
 		case "bashExecution":

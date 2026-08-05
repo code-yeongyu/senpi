@@ -34,7 +34,12 @@ function hasSafeAssistantContent(content: unknown): boolean {
 		if (!isRecord(block) || typeof block.type !== "string") return false;
 		switch (block.type) {
 			case "text":
-				if (typeof block.text !== "string" || block.textSignature !== undefined) return false;
+				if (
+					typeof block.text !== "string" ||
+					(block.textSignature !== undefined && typeof block.textSignature !== "string")
+				) {
+					return false;
+				}
 				break;
 			case "thinking":
 				if (
@@ -42,8 +47,9 @@ function hasSafeAssistantContent(content: unknown): boolean {
 					(block.startedAt !== undefined && !isFiniteNumber(block.startedAt)) ||
 					(block.endedAt !== undefined && !isFiniteNumber(block.endedAt)) ||
 					(block.redacted !== undefined && typeof block.redacted !== "boolean") ||
-					block.redacted === true ||
-					block.thinkingSignature !== undefined
+					(block.redacted === true &&
+						(typeof block.thinkingSignature !== "string" || block.thinkingSignature.length === 0)) ||
+					(block.thinkingSignature !== undefined && typeof block.thinkingSignature !== "string")
 				) {
 					return false;
 				}
@@ -55,7 +61,7 @@ function hasSafeAssistantContent(content: unknown): boolean {
 					!isRecord(block.arguments) ||
 					(block.incomplete !== undefined && block.incomplete !== true) ||
 					(block.errorMessage !== undefined && typeof block.errorMessage !== "string") ||
-					block.thoughtSignature !== undefined
+					(block.thoughtSignature !== undefined && typeof block.thoughtSignature !== "string")
 				) {
 					return false;
 				}
