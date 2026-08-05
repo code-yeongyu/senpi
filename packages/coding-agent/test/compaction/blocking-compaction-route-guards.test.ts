@@ -2,13 +2,15 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FAILURE_TRIP_THRESHOLD } from "../../src/core/extensions/builtin/compaction/circuit-breaker.ts";
 import compactionExtension from "../../src/core/extensions/builtin/compaction/index.ts";
-import { softCap } from "../../src/core/extensions/builtin/compaction/per-turn-cap.ts";
+import { hardCap } from "../../src/core/extensions/builtin/compaction/per-turn-cap.ts";
 import type { ExtensionHandler } from "../../src/core/extensions/index.ts";
 import {
 	connectionErrorResponse,
 	createBeforeAgentStartEvent,
 	createBlockingContext,
 } from "../helpers/blocking-compaction-harness.ts";
+
+const FORMER_SOFT_CAP = 3;
 
 const registrations: Array<{ unregister: () => void }> = [];
 
@@ -64,7 +66,7 @@ describe("blocking compaction route guards (issue #527)", () => {
 		expect(harness.registration.state.callCount).toBe(FAILURE_TRIP_THRESHOLD);
 	});
 
-	it("bounds successful hard-limit blocking compactions by the soft cap", async () => {
+	it("bounds successful hard-limit blocking compactions by the absolute session cap", async () => {
 		const handlers = captureHandlers();
 		const beforeAgentStart = handlers.get("before_agent_start");
 		const sessionCompact = handlers.get("session_compact");
@@ -72,7 +74,7 @@ describe("blocking compaction route guards (issue #527)", () => {
 		expect(sessionCompact).toBeDefined();
 		const harness = createBlockingContext({ usageTokens: 9_950 });
 		registrations.push(harness.registration);
-		const attempts = softCap * 4;
+		const attempts = hardCap + 2;
 		harness.registration.setResponses(
 			Array.from({ length: attempts }, () => fauxAssistantMessage("## Goal\ncompact summary")),
 		);
@@ -86,34 +88,31 @@ describe("blocking compaction route guards (issue #527)", () => {
 			}
 		}
 
-		expect((harness.ctx.applyCompaction as ReturnType<typeof vi.fn>).mock.calls.length).toBe(softCap);
+		expect((harness.ctx.applyCompaction as ReturnType<typeof vi.fn>).mock.calls.length).toBe(hardCap);
 	});
 
-	it("admits compaction again after the provider turn ends", async () => {
+	it("admits a compaction past the former soft cap within the same provider turn", async () => {
 		const handlers = captureHandlers();
 		const beforeAgentStart = handlers.get("before_agent_start");
 		const sessionCompact = handlers.get("session_compact");
-		const turnEnd = handlers.get("turn_end");
 		expect(beforeAgentStart).toBeDefined();
 		expect(sessionCompact).toBeDefined();
-		expect(turnEnd).toBeDefined();
 		const harness = createBlockingContext({ usageTokens: 9_950 });
 		registrations.push(harness.registration);
 		harness.registration.setResponses(
-			Array.from({ length: softCap + 1 }, () => fauxAssistantMessage("## Goal\ncompact summary")),
+			Array.from({ length: FORMER_SOFT_CAP + 1 }, () => fauxAssistantMessage("## Goal\ncompact summary")),
 		);
 
-		for (let round = 0; round < softCap; round++) {
+		for (let round = 0; round < FORMER_SOFT_CAP; round++) {
 			await beforeAgentStart?.(createBeforeAgentStartEvent() as never, harness.ctx);
 			await sessionCompact?.(acceptedCompactionEvent(round, 8_000) as never, harness.ctx);
 		}
-		await turnEnd?.({ type: "turn_end" } as never, harness.ctx);
 		await beforeAgentStart?.(createBeforeAgentStartEvent() as never, harness.ctx);
 
-		expect((harness.ctx.applyCompaction as ReturnType<typeof vi.fn>).mock.calls.length).toBe(softCap + 1);
+		expect((harness.ctx.applyCompaction as ReturnType<typeof vi.fn>).mock.calls.length).toBe(FORMER_SOFT_CAP + 1);
 	});
 
-	it("resets the soft cap on turn_end even after degradation recovery fires", async () => {
+	it("keeps admission open across turn_end even after degradation recovery fires", async () => {
 		const handlers = captureHandlers();
 		const beforeAgentStart = handlers.get("before_agent_start");
 		const sessionCompact = handlers.get("session_compact");
@@ -126,11 +125,11 @@ describe("blocking compaction route guards (issue #527)", () => {
 		const harness = createBlockingContext({ usageTokens: 9_950 });
 		registrations.push(harness.registration);
 		harness.registration.setResponses(
-			Array.from({ length: softCap + 2 }, () => fauxAssistantMessage("## Goal\ncompact summary")),
+			Array.from({ length: FORMER_SOFT_CAP + 2 }, () => fauxAssistantMessage("## Goal\ncompact summary")),
 		);
 
-		// Fill the soft cap with accepted compactions this provider turn.
-		for (let round = 0; round < softCap; round++) {
+		// Fill the former soft cap with accepted compactions this provider turn.
+		for (let round = 0; round < FORMER_SOFT_CAP; round++) {
 			await beforeAgentStart?.(createBeforeAgentStartEvent() as never, harness.ctx);
 			await sessionCompact?.(acceptedCompactionEvent(round, 8_000) as never, harness.ctx);
 		}
@@ -150,12 +149,12 @@ describe("blocking compaction route guards (issue #527)", () => {
 		}
 		await turnEnd?.({ type: "turn_end" } as never, harness.ctx);
 
-		// The next provider turn must open at a fresh soft counter and admit.
+		// The next provider turn must still admit below the absolute cap.
 		await beforeAgentStart?.(createBeforeAgentStartEvent() as never, harness.ctx);
 		expect((harness.ctx.applyCompaction as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(appliedAtCap);
 	});
 
-	it("counts zero-yield attempts before admitting turn-end recovery", async () => {
+	it("admits turn-end recovery after zero-yield attempts", async () => {
 		const handlers = captureHandlers();
 		const turnEnd = handlers.get("turn_end");
 		const sessionCompact = handlers.get("session_compact");
@@ -172,6 +171,6 @@ describe("blocking compaction route guards (issue #527)", () => {
 		await sessionCompact?.(acceptedCompactionEvent(1, 0) as never, harness.ctx);
 		await turnEnd?.({ type: "turn_end" } as never, harness.ctx);
 
-		expect(beginCompaction).not.toHaveBeenCalled();
+		expect(beginCompaction).toHaveBeenCalledTimes(1);
 	});
 });

@@ -374,7 +374,9 @@ function describeCompactionRejection(cause: CompactionRejectionCause): string {
 		case "circuit-breaker":
 			return "Compaction rejected: the compaction circuit breaker is open after repeated failures. Wait for the cooldown and retry.";
 		case "per-turn-cap":
-			return "Compaction rejected: per-turn compaction cap reached for this turn.";
+			// Historical cause identifier kept for extension-API stability; since the
+			// per-turn soft cap was removed it fires only at the absolute session cap.
+			return "Compaction rejected: absolute compaction cap reached for this session.";
 		case "stale-revision":
 			return "Compaction rejected: the session changed while the summary was being prepared. Retry compaction against the latest context.";
 	}

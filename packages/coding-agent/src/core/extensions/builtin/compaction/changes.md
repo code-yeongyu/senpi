@@ -1,5 +1,40 @@
 # Builtin compaction extension changes
 
+## Remove the fatal per-turn compaction soft cap (2026-08-05)
+
+### What changed
+
+- `per-turn-cap.ts` no longer exports `softCap`/`isOverSoftCap`; `shouldRejectByCap()` takes only the
+  state and rejects solely on the absolute session cap (`hardCap = 10` accepted compactions).
+- The manual/extension bypass options were removed together with the soft cap: below the absolute cap
+  there is nothing left to bypass, and the absolute cap already bound every route since 2026-08-03.
+- The `session_before_compact` cap rejection keeps the historical `rejectionCause: "per-turn-cap"`
+  identifier for extension-API stability but now reports `absolute compaction cap reached for this
+  session` and logs `acceptedAbsolute` instead of the per-turn counter.
+- Turn-end zero-yield recovery is admitted again after ineffective attempts (bounded by the absolute cap
+  and the circuit breaker) instead of being starved by the combined per-turn counter.
+- `acceptedThisTurn`/`ineffectiveAttemptsThisTurn` remain in state as per-turn observability counters and
+  still reset on `turn_end`/`agent_end`.
+
+### Why
+
+- The soft cap counted accepted + ineffective compactions per turn and rejected required
+  (overflow/blocking) compactions once it reached 3. A long tool-heavy turn that legitimately needed a
+  fourth compaction had its required compaction rejected, fatally ending the turn. First reported and
+  attempted in [#728](https://github.com/code-yeongyu/senpi/pull/728) by @realsigridjin; this entry lands
+  the same intent with the changelog/docs/QA gates satisfied.
+- Runaway protection is preserved by the absolute session cap (10) and the failure circuit breaker.
+
+### Why an extension could not do this
+
+- Cap admission runs inside the builtin compaction extension's own `session_before_compact` and blocking
+  routes; an external extension cannot override another extension's cancel decision.
+
+### Expected merge-conflict zones
+
+- `per-turn-cap.ts` (whole file), `index.ts` around the `session_before_compact` cap check, and the cap
+  tests under `test/compaction/`.
+
 ## Treat caller-aborted summary stream failures as cancellation (2026-08-03)
 
 ### What changed

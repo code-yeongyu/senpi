@@ -12,6 +12,10 @@
 
 ### Fixed
 
+- Fixed required compaction fatally ending a turn once the per-turn soft cap (3 accepted or ineffective
+  compactions) was reached. Compaction admission is now bounded only by the absolute session cap (10) and the
+  failure circuit breaker, so long turns that legitimately need more than three compactions keep running
+  (supersedes [#728](https://github.com/code-yeongyu/senpi/pull/728)).
 - Fixed interactive shutdown crashing with `setRawMode failed with errno: 5` when an SSH or PTY peer disappears before
   terminal raw-mode restoration. Senpi now completes the requested exit for dead terminals without hiding unexpected
   restoration failures ([#726](https://github.com/code-yeongyu/senpi/pull/726)).

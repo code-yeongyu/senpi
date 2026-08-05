@@ -1,6 +1,6 @@
 import { registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { incrementAccepted, isOverSoftCap } from "../../src/core/extensions/builtin/compaction/per-turn-cap.ts";
+import { incrementAccepted, shouldRejectByCap } from "../../src/core/extensions/builtin/compaction/per-turn-cap.ts";
 import { createInitialState, resetTurnCounter } from "../../src/core/extensions/builtin/compaction/state.ts";
 import { computeStructuralYield, isIneffectiveCompaction } from "../../src/core/extensions/builtin/compaction/yield.ts";
 
@@ -79,14 +79,14 @@ describe("compaction ineffective cap", () => {
 	});
 
 	describe("Given a turn with two accepted compactions and one ineffective attempt", () => {
-		it("Then the 4th auto compaction is rejected by the cap", () => {
+		it("Then the next auto compaction stays admitted and turn counters still reset", () => {
 			registerFauxProvider();
 			let state = createInitialState();
 			state = acceptN(state, 2);
 			state = { ...state, ineffectiveAttemptsThisTurn: 1 };
-			expect(isOverSoftCap(state)).toBe(true);
+			expect(shouldRejectByCap(state)).toEqual({ cancel: false });
 			state = incrementAccepted(state);
-			expect(isOverSoftCap(state)).toBe(true);
+			expect(shouldRejectByCap(state)).toEqual({ cancel: false });
 			state = resetTurnCounter(state, "turn-1");
 			expect(state.acceptedThisTurn).toBe(0);
 			expect(state.ineffectiveAttemptsThisTurn).toBe(0);

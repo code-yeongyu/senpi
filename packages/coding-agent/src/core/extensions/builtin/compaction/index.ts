@@ -475,12 +475,12 @@ export default function compactionExtension(
 		if (lanePolicy.disablesSenpiCompaction(ctx)) {
 			return { cancel: true, reason: SDK_NATIVE_LANE_REJECTION_REASON };
 		}
-		if (cap.shouldRejectByCap(state, { reason: event.reason }).cancel) {
-			getLogger(ctx).debug("skip_cap", { reason: event.reason, count: state.acceptedThisTurn });
+		if (cap.shouldRejectByCap(state).cancel) {
+			getLogger(ctx).debug("skip_cap", { reason: event.reason, count: state.acceptedAbsolute });
 			return {
 				cancel: true,
 				rejectionCause: "per-turn-cap",
-				reason: "per-turn compaction cap reached for this turn",
+				reason: "absolute compaction cap reached for this session",
 			};
 		}
 		const now = Date.now();
