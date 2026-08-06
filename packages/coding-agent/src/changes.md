@@ -1,3 +1,24 @@
+## Clean up Windows update-worker and test temp state (2026-08-06)
+
+### What changed
+
+- The detached OMO local-plugin update worker now keeps its log file handle alive until asynchronous close completes, and the dispatcher awaits worker startup.
+- Vitest worker quarantine directories are grouped under a per-run `mkdtempSync` root that global teardown removes after the worker pool stops; standalone setup imports retain a process-exit cleanup fallback.
+- Regression coverage pins worker log-handle ordering and verifies both global teardown and naturally exiting standalone-worker cleanup.
+
+### Why
+
+- On Windows, synchronously closing the numeric log descriptor immediately after `spawn()` and `unref()` could race detached-child handle setup and trigger `UV_HANDLE_CLOSING` during process teardown.
+- `test/setup.ts` created a unique `senpi-vitest-*` directory for each test worker but never removed it, so normal repeated test runs accumulated stale temp directories.
+
+### Why this cannot be expressed externally
+
+- Descriptor ownership belongs to the internal OMO update dispatcher, and the quarantine directory is owned by the Vitest process bootstrap.
+
+### Expected merge conflict zones
+
+- LOW: `src/beta/omo-local-update-worker.ts`, the dispatch branch in `src/beta/omo-local-update.ts`, `vitest.config.ts`, and the test setup files.
+
 ## Required-recovery admission supersession and bounded fallback sizing (2026-08-03)
 
 ### What changed

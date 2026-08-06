@@ -9,7 +9,7 @@
  * tools (e.g. tokscale) then mis-count them as real usage.
  */
 
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,11 +19,17 @@ for (const key of ["PI_RULES_DISABLED", "PI_RULES_MAX_RULE_CHARS", "PI_RULES_MAX
 
 // Guarded so an explicit `SENPI_CODING_AGENT_DIR=...` env (CI / opt-in) wins.
 if (!process.env.SENPI_CODING_AGENT_DIR) {
-	const quarantineDir = join(
-		tmpdir(),
-		`senpi-vitest-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-		"agent",
-	);
+	const sharedQuarantineRoot = process.env.SENPI_VITEST_QUARANTINE_ROOT;
+	const quarantineRoot = sharedQuarantineRoot ?? mkdtempSync(join(tmpdir(), "senpi-vitest-"));
+	const workerRoot = sharedQuarantineRoot
+		? mkdtempSync(join(sharedQuarantineRoot, `worker-${process.pid}-`))
+		: quarantineRoot;
+	const quarantineDir = join(workerRoot, "agent");
 	mkdirSync(quarantineDir, { recursive: true });
 	process.env.SENPI_CODING_AGENT_DIR = quarantineDir;
+	if (!sharedQuarantineRoot) {
+		process.once("exit", () => {
+			rmSync(quarantineRoot, { recursive: true, force: true });
+		});
+	}
 }

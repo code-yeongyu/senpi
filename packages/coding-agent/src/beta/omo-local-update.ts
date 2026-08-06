@@ -781,7 +781,7 @@ export async function runOmoLocalUpdateBeta(options: RunOmoLocalUpdateBetaOption
 			if (dispatchRequested) {
 				releaseOmoLocalLock(lock);
 				const spawnWorker = options.spawnWorker ?? defaultSpawnWorker;
-				const spawned = spawnWorker({ agentDir: options.agentDir, force: options.force ?? false });
+				const spawned = await spawnWorker({ agentDir: options.agentDir, force: options.force ?? false });
 				if (spawned.ok) {
 					log(
 						chalk.dim(
