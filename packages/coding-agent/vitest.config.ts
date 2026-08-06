@@ -12,6 +12,7 @@ export default mergeConfig(
 			globals: true,
 			environment: "node",
 			testTimeout: 30000,
+			globalSetup: ["./test/global-setup.ts"],
 			setupFiles: ["./test/setup.ts"],
 			// Tests run offline by default; opt in with allowNetwork() from test/test-network-env.ts.
 			env: { PI_OFFLINE: "1" },
