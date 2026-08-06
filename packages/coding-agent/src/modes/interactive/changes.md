@@ -1,5 +1,35 @@
 # changes
 
+## Server fallback abort uses one TUI notice (2026-08-05)
+
+### What changed
+
+- `components/assistant-render-descriptors.ts` now owns assistant transcript descriptor construction and no longer
+  emits the provider's refusal-shaped `Error:` row when the message carries the `server_fallback_aborted` diagnostic.
+  The dedicated interactive warning widget remains the single visible explanation and still reports the server
+  transition plus configured-chain behavior.
+- `components/assistant-message.ts` delegates descriptor construction to that focused module, keeping both renderer
+  files below the repository's 250 pure-LOC ceiling.
+- Assistant render signatures now include diagnostics, so a diagnostic added to the active message removes any stale
+  error descriptor during incremental rendering.
+- `../../../test/assistant-message-incremental-render.test.ts` covers both initial diagnosed rendering and same-message
+  diagnostic updates.
+
+### Why
+
+- The provider error and the dedicated fallback widget described the same client-policy abort back to back, making one
+  fallback transition look like two separate failures.
+
+### Why extension system couldn't handle this
+
+- Assistant stop-reason descriptors and their incremental render cache are private built-in TUI behavior. An extension
+  cannot suppress one diagnostic-specific error row while preserving the session message and dedicated warning event.
+
+### Expected merge conflict zones
+
+- LOW: `components/assistant-message.ts` descriptor integration and `components/assistant-render-descriptors.ts`
+  error-tail construction.
+
 ## Fallback transitions render as shared notice boxes (2026-08-04)
 
 ### What changed

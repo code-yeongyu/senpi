@@ -8,6 +8,8 @@
 src/cli.ts, cli-main.ts, main.ts   Bootstrap, args, mode dispatch
 src/package-manager-cli.ts         install/update/config subcommands (incl. `senpi update --models`)
 src/core/agent-session.ts          Session lifecycle and runtime
+src/core/agent-abort-provenance.ts Abort ownership across retries and event dispatch
+src/core/agent-settled-delivery.ts Cancellable extension messages after settlement
 src/core/dynamic-prompt/           Dynamic system-prompt assembly + workstation facts
 src/core/model-runtime.ts          Model runtime bootstrap
 src/core/model-config.ts           Per-model config resolution

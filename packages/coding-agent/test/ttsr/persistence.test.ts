@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import { fauxAssistantMessage, fauxText, fauxThinking } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+	parseRuleActivationDetails,
+	RULE_ACTIVATION_ENTRY_TYPE,
+} from "../../src/core/extensions/builtin/rule-activation/types.ts";
 import ttsrExtension from "../../src/core/extensions/builtin/ttsr/index.ts";
 import { TtsrManager, type TtsrMatchContext } from "../../src/core/extensions/builtin/ttsr/manager.ts";
 import { COLLAPSE_RULE_NAME } from "../../src/core/extensions/builtin/ttsr/prompts.ts";
@@ -65,7 +69,13 @@ function readPersistedEntries(file: string): PersistedEntry[] {
 function injectedNamesFrom(entries: readonly SessionEntry[]): string[] {
 	const names: string[] = [];
 	for (const entry of entries) {
-		if (entry.type !== "custom" || entry.customType !== TTSR_INJECTION_CUSTOM_TYPE) continue;
+		if (entry.type !== "custom") continue;
+		if (entry.customType === RULE_ACTIVATION_ENTRY_TYPE) {
+			const details = parseRuleActivationDetails(entry.data);
+			if (details?.kind === "ttsr") names.push(...details.rules);
+			continue;
+		}
+		if (entry.customType !== TTSR_INJECTION_CUSTOM_TYPE) continue;
 		const data: unknown = entry.data;
 		if (typeof data !== "object" || data === null || !("rules" in data)) continue;
 		const rules = data.rules;
@@ -118,14 +128,14 @@ describe("ttsr persistence", () => {
 		const file = sessionFileOf(harness);
 		const persisted = readPersistedEntries(file);
 		const persistedRecords = persisted.filter(
-			(entry) => entry.type === "custom" && entry.customType === TTSR_INJECTION_CUSTOM_TYPE,
+			(entry) => entry.type === "custom" && entry.customType === RULE_ACTIVATION_ENTRY_TYPE,
 		);
 		expect(persistedRecords.length).toBeGreaterThan(0);
 
 		const reopened = SessionManager.open(file);
 		const reopenedRecords = reopened
 			.getEntries()
-			.filter((entry) => entry.type === "custom" && entry.customType === TTSR_INJECTION_CUSTOM_TYPE);
+			.filter((entry) => entry.type === "custom" && entry.customType === RULE_ACTIVATION_ENTRY_TYPE);
 		expect(reopenedRecords.length).toBe(persistedRecords.length);
 		const names = injectedNamesFrom(reopened.getEntries());
 		expect(names).toContain(COLLAPSE_RULE_NAME);
@@ -166,7 +176,7 @@ describe("ttsr persistence", () => {
 
 		const persisted = readPersistedEntries(sessionFileOf(harness));
 		expect(
-			persisted.filter((entry) => entry.type === "custom" && entry.customType === TTSR_INJECTION_CUSTOM_TYPE).length,
+			persisted.filter((entry) => entry.type === "custom" && entry.customType === RULE_ACTIVATION_ENTRY_TYPE).length,
 		).toBeGreaterThan(0);
 		expect(
 			persisted.filter((entry) => entry.type === "custom_message" && entry.customType === TTSR_INJECTION_CUSTOM_TYPE)

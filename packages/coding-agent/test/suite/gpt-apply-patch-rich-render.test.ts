@@ -124,6 +124,178 @@ describe("gpt apply_patch rich TUI rendering", () => {
 		expect(rendered).toContain("+1 after");
 	});
 
+	it("renders binary deletions without raw byte previews", async () => {
+		initTheme("dark");
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const targetPath = path.join(harness.tempDir, "--full-page");
+		await writeFile(
+			targetPath,
+			Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x80, 0x41]),
+		);
+		const args = {
+			input: `*** Begin Patch
+*** Delete File: --full-page
+*** End Patch`,
+		};
+		const tool = createApplyPatchTool();
+		let pendingRendered = "";
+
+		const result = await tool.execute(
+			"call-binary-delete",
+			args,
+			undefined,
+			(update) => {
+				const component = tool.renderResult?.(
+					update,
+					{ expanded: true, isPartial: true },
+					theme,
+					createRenderContext(harness.tempDir, args, {
+						executionStarted: true,
+						argsComplete: true,
+						isPartial: true,
+					}),
+				);
+				pendingRendered = stripAnsi(component?.render(120).join("\n") ?? "");
+			},
+			{ cwd: harness.tempDir } as Parameters<ApplyPatchTool["execute"]>[4],
+		);
+		const component = tool.renderResult?.(
+			result,
+			{ expanded: true, isPartial: false },
+			theme,
+			createRenderContext(harness.tempDir, args, { executionStarted: true, argsComplete: true, isPartial: false }),
+		);
+		const completedRendered = stripAnsi(component?.render(120).join("\n") ?? "");
+
+		await expect(readFile(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+		expect(result.details?.preview?.files[0]).toMatchObject({
+			filePath: "--full-page",
+			operation: "delete",
+			binary: true,
+			diff: "",
+			added: 0,
+			removed: 0,
+		});
+		for (const rendered of [pendingRendered, completedRendered]) {
+			expect(rendered).toContain("--full-page (binary)");
+			expect(rendered).not.toContain("PNG");
+			expect(rendered).not.toContain("\uFFFD");
+			expect(rendered).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u);
+		}
+	});
+
+	it("moves binary files without decoding bytes into previews", async () => {
+		initTheme("dark");
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const sourcePath = path.join(harness.tempDir, "source.png");
+		const destinationPath = path.join(harness.tempDir, "moved.png");
+		const binary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x80, 0x41]);
+		await writeFile(sourcePath, binary);
+		const args = {
+			input: `*** Begin Patch
+*** Update File: source.png
+*** Move to: moved.png
+*** End Patch`,
+		};
+		const tool = createApplyPatchTool();
+		let pendingPreview: unknown;
+		let pendingRendered = "";
+
+		const result = await tool.execute(
+			"call-binary-move",
+			args,
+			undefined,
+			(update) => {
+				pendingPreview = update.details?.preview?.files[0];
+				const component = tool.renderResult?.(
+					update,
+					{ expanded: true, isPartial: true },
+					theme,
+					createRenderContext(harness.tempDir, args, {
+						executionStarted: true,
+						argsComplete: true,
+						isPartial: true,
+					}),
+				);
+				pendingRendered = stripAnsi(component?.render(120).join("\n") ?? "");
+			},
+			{ cwd: harness.tempDir } as Parameters<ApplyPatchTool["execute"]>[4],
+		);
+		const component = tool.renderResult?.(
+			result,
+			{ expanded: true, isPartial: false },
+			theme,
+			createRenderContext(harness.tempDir, args, { executionStarted: true, argsComplete: true, isPartial: false }),
+		);
+		const completedRendered = stripAnsi(component?.render(120).join("\n") ?? "");
+
+		await expect(readFile(sourcePath)).rejects.toMatchObject({ code: "ENOENT" });
+		expect(await readFile(destinationPath)).toEqual(binary);
+		expect(pendingPreview).toMatchObject({
+			filePath: "source.png",
+			movePath: "moved.png",
+			operation: "update",
+			binary: true,
+			diff: "",
+			added: 0,
+			removed: 0,
+		});
+		expect(pendingPreview).not.toHaveProperty("patch");
+		expect(result.details?.preview?.files[0]).toMatchObject({
+			filePath: "source.png",
+			movePath: "moved.png",
+			operation: "update",
+			binary: true,
+			diff: "",
+			added: 0,
+			removed: 0,
+		});
+		expect(result.details?.preview?.files[0]).not.toHaveProperty("patch");
+		for (const rendered of [pendingRendered, completedRendered]) {
+			expect(rendered).toContain("source.png");
+			expect(rendered).toContain("moved.png");
+			expect(rendered).toContain("(binary)");
+			expect(rendered).not.toContain("PNG");
+			expect(rendered).not.toContain("\uFFFD");
+		}
+	});
+
+	it("rejects text hunks against binary files without mutating bytes", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const sourcePath = path.join(harness.tempDir, "source.png");
+		const destinationPath = path.join(harness.tempDir, "moved.png");
+		const binary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x80, 0x41]);
+		await writeFile(sourcePath, binary);
+		const tool = createApplyPatchTool();
+
+		const result = await tool.execute(
+			"call-binary-text-hunk",
+			{
+				input: `*** Begin Patch
+*** Update File: source.png
+*** Move to: moved.png
+@@
+-old
++new
+*** End Patch`,
+			},
+			undefined,
+			undefined,
+			{ cwd: harness.tempDir } as Parameters<ApplyPatchTool["execute"]>[4],
+		);
+
+		expect(await readFile(sourcePath)).toEqual(binary);
+		await expect(readFile(destinationPath)).rejects.toMatchObject({ code: "ENOENT" });
+		expect(result.details?.result?.failures).toHaveLength(1);
+		expect(result.details?.result?.failures[0]?.message).toContain(
+			"apply_patch cannot apply text hunks to binary file: source.png",
+		);
+		expect(result.details?.result?.appliedFiles).toEqual([]);
+	});
+
 	it("keeps the changed hunk visible when the applied diff is large", async () => {
 		initTheme("dark");
 		const harness = await createHarness();

@@ -5,39 +5,31 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
 	hardCap,
 	incrementAccepted,
+	incrementIneffective,
 	shouldRejectByCap,
 } from "../../src/core/extensions/builtin/compaction/per-turn-cap.ts";
-import { resetTurnCounter } from "../../src/core/extensions/builtin/compaction/state.ts";
+import {
+	type CompactionExtensionState,
+	createInitialState,
+	resetTurnCounter,
+} from "../../src/core/extensions/builtin/compaction/state.ts";
 import { migrateSessionEntries, parseSessionEntries, type SessionEntry } from "../../src/core/session-manager.ts";
 
-interface FutureCapState {
-	acceptedThisTurn: number;
-	ineffectiveAttemptsThisTurn?: number;
-	acceptedAbsolute: number;
-}
-
-type IncrementAcceptedFn = (state: FutureCapState) => FutureCapState;
-type ShouldRejectByCapFn = (
-	state: FutureCapState,
-	opts?: { manual?: boolean; reason?: "manual" | "extension" },
-) => { cancel: boolean };
-type ResetTurnCounterFn = (state: FutureCapState) => FutureCapState;
-
-const incrementAcceptedFuture = incrementAccepted as unknown as IncrementAcceptedFn;
-const shouldRejectByCapFuture = shouldRejectByCap as unknown as ShouldRejectByCapFn;
-const resetTurnCounterFuture = resetTurnCounter as unknown as ResetTurnCounterFn;
-
-const REQUIRED_COMPACTIONS_BEFORE_NEXT_ADMISSION = 3;
+const FORMER_SOFT_CAP = 3;
 const EXPECTED_HARD_CAP = 10;
 
-function createInitialCapState(): FutureCapState {
-	return { acceptedThisTurn: 0, acceptedAbsolute: 0 };
-}
-
-function acceptN(state: FutureCapState, n: number): FutureCapState {
+function acceptN(state: CompactionExtensionState, n: number): CompactionExtensionState {
 	let next = state;
 	for (let i = 0; i < n; i++) {
-		next = incrementAcceptedFuture(next);
+		next = incrementAccepted(next);
+	}
+	return next;
+}
+
+function ineffectiveN(state: CompactionExtensionState, n: number): CompactionExtensionState {
+	let next = state;
+	for (let i = 0; i < n; i++) {
+		next = incrementIneffective(next);
 	}
 	return next;
 }
@@ -67,110 +59,82 @@ beforeAll(() => {
 	perTurnFixtureEntries = entries.filter((entry): entry is SessionEntry => entry.type !== "session");
 });
 
-describe("compaction admission cap", () => {
-	describe("Given three accepted compactions below the absolute hard cap", () => {
-		describe("When a fourth required compaction is checked", () => {
-			it("Then it is accepted instead of terminating the turn", () => {
+describe("compaction absolute cap", () => {
+	describe("Given the former per-turn soft cap of 3 accepted compactions this turn", () => {
+		describe("When a 4th required compaction is checked in the same turn", () => {
+			it("Then it is admitted instead of fatally ending the turn", () => {
 				const registration = registerFauxProvider();
 				registrations.push(registration);
 
 				const compactionEntries = perTurnFixtureEntries.filter((entry) => entry.type === "compaction");
-				expect(compactionEntries.length).toBeGreaterThanOrEqual(REQUIRED_COMPACTIONS_BEFORE_NEXT_ADMISSION + 1);
+				expect(compactionEntries.length).toBeGreaterThanOrEqual(FORMER_SOFT_CAP + 1);
 
-				const stateAfterThree = acceptN(createInitialCapState(), REQUIRED_COMPACTIONS_BEFORE_NEXT_ADMISSION);
-				const decision = shouldRejectByCapFuture(stateAfterThree);
+				const stateAfterThree = acceptN(createInitialState(), FORMER_SOFT_CAP);
 
-				expect(stateAfterThree.acceptedThisTurn).toBe(REQUIRED_COMPACTIONS_BEFORE_NEXT_ADMISSION);
-				expect(stateAfterThree.acceptedAbsolute).toBe(REQUIRED_COMPACTIONS_BEFORE_NEXT_ADMISSION);
-				expect(decision).toEqual({ cancel: false });
+				expect(stateAfterThree.acceptedThisTurn).toBe(FORMER_SOFT_CAP);
+				expect(stateAfterThree.acceptedAbsolute).toBe(FORMER_SOFT_CAP);
+				expect(shouldRejectByCap(stateAfterThree)).toEqual({ cancel: false });
 			});
 		});
 	});
 
-	describe("Given three ineffective compaction attempts below the absolute hard cap", () => {
+	describe("Given 3 ineffective compaction attempts this turn", () => {
 		describe("When the next required compaction is checked", () => {
-			it("Then it is accepted instead of terminating the turn", () => {
-				const stateAfterIneffectiveAttempts: FutureCapState = {
-					acceptedThisTurn: 0,
-					ineffectiveAttemptsThisTurn: REQUIRED_COMPACTIONS_BEFORE_NEXT_ADMISSION,
-					acceptedAbsolute: 0,
-				};
+			it("Then it is admitted instead of fatally ending the turn", () => {
+				const stateAfterIneffective = ineffectiveN(createInitialState(), FORMER_SOFT_CAP);
 
-				expect(shouldRejectByCapFuture(stateAfterIneffectiveAttempts)).toEqual({ cancel: false });
+				expect(stateAfterIneffective.ineffectiveAttemptsThisTurn).toBe(FORMER_SOFT_CAP);
+				expect(shouldRejectByCap(stateAfterIneffective)).toEqual({ cancel: false });
 			});
 		});
 	});
 
-	describe("Given accepted compactions were recorded this turn", () => {
+	describe("Given accepted compactions below the absolute cap", () => {
 		describe("When the turn ends and resetTurnCounter is applied", () => {
-			it("Then the per-turn counter resets to 0 and the next compaction is accepted", () => {
+			it("Then admission is open before and after the reset", () => {
 				const registration = registerFauxProvider();
 				registrations.push(registration);
 
-				const stateAtCap = acceptN(createInitialCapState(), REQUIRED_COMPACTIONS_BEFORE_NEXT_ADMISSION);
-				expect(shouldRejectByCapFuture(stateAtCap)).toEqual({ cancel: false });
+				const stateBeforeReset = acceptN(createInitialState(), FORMER_SOFT_CAP);
+				expect(shouldRejectByCap(stateBeforeReset)).toEqual({ cancel: false });
 
-				const stateAfterTurnEnd = resetTurnCounterFuture(stateAtCap);
+				const stateAfterTurnEnd = resetTurnCounter(stateBeforeReset, "turn-1");
 
 				expect(stateAfterTurnEnd.acceptedThisTurn).toBe(0);
-				expect(shouldRejectByCapFuture(stateAfterTurnEnd)).toEqual({ cancel: false });
-			});
-		});
-	});
-
-	describe("Given accepted compactions are below the absolute hard cap", () => {
-		describe("When a manual /compact is checked with manual: true", () => {
-			it("Then the manual compaction is accepted", () => {
-				const registration = registerFauxProvider();
-				registrations.push(registration);
-
-				expect(hardCap).toBe(EXPECTED_HARD_CAP);
-
-				const stateBelowHardCap: FutureCapState = {
-					acceptedThisTurn: REQUIRED_COMPACTIONS_BEFORE_NEXT_ADMISSION,
-					acceptedAbsolute: REQUIRED_COMPACTIONS_BEFORE_NEXT_ADMISSION,
-				};
-				expect(shouldRejectByCapFuture(stateBelowHardCap)).toEqual({ cancel: false });
-
-				const manualDecision = shouldRejectByCapFuture(stateBelowHardCap, { manual: true });
-
-				expect(manualDecision).toEqual({ cancel: false });
-				expect(stateBelowHardCap.acceptedAbsolute).toBeLessThan(EXPECTED_HARD_CAP);
+				expect(stateAfterTurnEnd.acceptedAbsolute).toBe(FORMER_SOFT_CAP);
+				expect(shouldRejectByCap(stateAfterTurnEnd)).toEqual({ cancel: false });
 			});
 		});
 	});
 
 	describe("Given accepted compactions reach the absolute cap across provider turns", () => {
-		it("Then the next automatic compaction is rejected after each soft counter reset", () => {
-			let state = createInitialCapState();
+		it("Then every further compaction is rejected, even after a turn reset", () => {
+			expect(hardCap).toBe(EXPECTED_HARD_CAP);
+
+			let state = createInitialState();
 			for (let accepted = 0; accepted < EXPECTED_HARD_CAP; accepted++) {
-				state = incrementAcceptedFuture(state);
-				state = resetTurnCounterFuture(state);
+				state = incrementAccepted(state);
+				state = resetTurnCounter(state, `turn-${accepted}`);
 			}
 
 			expect(state.acceptedThisTurn).toBe(0);
 			expect(state.acceptedAbsolute).toBe(EXPECTED_HARD_CAP);
-			expect(shouldRejectByCapFuture(state)).toEqual({ cancel: true });
-			expect(shouldRejectByCapFuture(state, { manual: true })).toEqual({ cancel: true });
-			expect(shouldRejectByCapFuture(state, { reason: "manual" })).toEqual({ cancel: true });
-			expect(shouldRejectByCapFuture(state, { reason: "extension" })).toEqual({ cancel: true });
+			expect(shouldRejectByCap(state)).toEqual({ cancel: true });
+			expect(shouldRejectByCap(resetTurnCounter(state, "turn-final"))).toEqual({ cancel: true });
 		});
 	});
 
-	describe("Given compactions were recorded and the session is reloaded with fresh in-memory state", () => {
-		describe("When the per-turn counter is read on the reloaded state", () => {
-			it("Then the counter is 0 and the next compaction is accepted", () => {
+	describe("Given the session is reloaded with fresh in-memory state", () => {
+		describe("When admission is checked on the reloaded state", () => {
+			it("Then the counters are 0 and the next compaction is accepted", () => {
 				const registration = registerFauxProvider();
 				registrations.push(registration);
 
-				const preReloadState = acceptN(createInitialCapState(), REQUIRED_COMPACTIONS_BEFORE_NEXT_ADMISSION);
-				expect(preReloadState.acceptedThisTurn).toBe(REQUIRED_COMPACTIONS_BEFORE_NEXT_ADMISSION);
-
-				const reloadedState = createInitialCapState();
+				const reloadedState = createInitialState();
 
 				expect(reloadedState.acceptedThisTurn).toBe(0);
 				expect(reloadedState.acceptedAbsolute).toBe(0);
-				expect(shouldRejectByCapFuture(reloadedState)).toEqual({ cancel: false });
+				expect(shouldRejectByCap(reloadedState)).toEqual({ cancel: false });
 			});
 		});
 	});

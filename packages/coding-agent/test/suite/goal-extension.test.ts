@@ -459,7 +459,7 @@ describe("goal extension contract (budget-free)", () => {
 		});
 	});
 
-	it("blocks a non-user aborted turn after retries are exhausted", async () => {
+	it("blocks a provenance-free aborted turn after retries are exhausted", async () => {
 		const { tools, handlers } = createGoalHarness();
 		const ctx = await makeCtx("thread-system-abort-provider-guard");
 		await tools
@@ -474,7 +474,6 @@ describe("goal extension contract (budget-free)", () => {
 				type: "agent_end",
 				messages: [assistantMessageWithStopReason("aborted")],
 				aborted: true,
-				abortSource: "system",
 				willRetry: false,
 			},
 			ctx,

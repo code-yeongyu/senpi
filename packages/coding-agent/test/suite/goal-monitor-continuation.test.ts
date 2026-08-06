@@ -390,7 +390,7 @@ describe("goal continuation while a monitor is active", () => {
 		expect(sent).toHaveLength(1);
 	});
 
-	it("waits four minutes before continuing and announces the schedule", async () => {
+	it("waits four minutes before continuing and persists the schedule", async () => {
 		vi.useFakeTimers();
 		const notices: string[] = [];
 		const harness = createGoalHarness();
@@ -405,7 +405,7 @@ describe("goal continuation while a monitor is active", () => {
 		await runGoalHandlers(handlers, "agent_end", { type: "agent_end", messages: [cleanAssistantStop()] }, ctx);
 
 		expect(sent).toHaveLength(0);
-		expect(notices).toEqual([expect.stringMatching(/4 minutes/i)]);
+		expect(notices).toEqual([]);
 		expect(events.emitted).toContainEqual({
 			channel: "goal_continuation_scheduled",
 			data: expect.objectContaining({ delayMs: 240_000 }),

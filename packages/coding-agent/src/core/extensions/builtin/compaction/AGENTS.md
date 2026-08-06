@@ -1,6 +1,6 @@
 # builtin/compaction
 
-Builtin extension #23 (last). Owns senpi's compaction pipeline: speculative compaction running in parallel with the next turn, blocking compaction at the hard context limit, proactive compaction near the soft limit, degradation monitoring, circuit breaker, per-turn cap, todo bridging, checkpoint state, restoration tracker, and tool-result truncation. Policy-rich; touch with policy tests in lock-step. See `changes.md` for the restoration tracker rationale.
+Builtin extension #23 (last). Owns senpi's compaction pipeline: speculative compaction running in parallel with the next turn, blocking compaction at the hard context limit, proactive compaction near the soft limit, degradation monitoring, circuit breaker, absolute session cap, todo bridging, checkpoint state, restoration tracker, and tool-result truncation. Policy-rich; touch with policy tests in lock-step. See `changes.md` for the restoration tracker rationale.
 
 ## FILES
 
@@ -19,7 +19,7 @@ compaction/
 ├── circuit-breaker.ts        # N consecutive failures → halt automatic compaction
 ├── degradation-monitor.ts    # Detects post-compact assistant degradation (all-tool, no-text turns)
 ├── log.ts                    # Always-on compaction logging + debug stderr mirror
-├── per-turn-cap.ts           # Max compactions per turn rate-limiter
+├── per-turn-cap.ts           # Absolute session compaction cap (per-turn soft cap removed 2026-08-05)
 ├── task-intent.ts            # Extracts/persists/reinjects task-intent anchors across compaction
 ├── tool-truncation.ts        # Emergency/compaction-budget truncation for oversized bash/read results
 ├── yield.ts                  # Structural yield capture and ineffective-compaction accounting

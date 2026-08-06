@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { withFileMutationQueue } from "../../../tools/file-mutation-queue.ts";
 import { ApplyPatchError } from "./errors.ts";
@@ -73,6 +73,18 @@ async function writeFileAtomic(
 	}
 }
 
+async function writeBinaryFileAtomic(absPath: string, content: Uint8Array): Promise<void> {
+	const tempPath = `${absPath}.tmp.${process.pid}.${Math.random().toString(16).slice(2)}`;
+	await writeFile(tempPath, content);
+	try {
+		await rename(tempPath, absPath);
+	} catch (error) {
+		if (!hasErrorCode(error, "EEXIST")) throw error;
+		await unlink(absPath);
+		await rename(tempPath, absPath);
+	}
+}
+
 export async function __testWriteFileAtomic(
 	absPath: string,
 	content: string,
@@ -103,29 +115,60 @@ async function applySingleHunk(
 		}
 
 		if (hunk.type === "delete") {
-			const oldContent = await readFile(absolutePath, "utf-8");
+			const source = await readPatchFileSnapshot(absolutePath);
 			const preview = buildPatchPreviewFile({
 				hunk,
-				source: { exists: true, content: oldContent },
+				source,
 				newContent: "",
 			});
 			await rm(absolutePath);
 			return { summary: `delete: ${hunk.filePath}`, appliedFile: hunk.filePath, fuzz: 0, preview };
 		}
 
-		const currentContent = await readFile(absolutePath, "utf-8");
-		const chunkResult =
-			hunk.chunks.length === 0
-				? { content: currentContent, fuzz: 0 }
-				: replaceChunks(currentContent, hunk.filePath, hunk.chunks);
-
-		if (hunk.movePath) {
-			const absoluteMovePath = resolvePatchPath(cwd, hunk.movePath);
-			const moveDestination =
-				absoluteMovePath === absolutePath ? undefined : await readPatchFileSnapshot(absoluteMovePath);
+		const source = await readPatchFileSnapshot(absolutePath);
+		if (!source.exists) {
+			const error = new Error(`ENOENT: no such file or directory, open '${absolutePath}'`) as NodeJS.ErrnoException;
+			error.code = "ENOENT";
+			throw error;
+		}
+		const absoluteMovePath = hunk.movePath ? resolvePatchPath(cwd, hunk.movePath) : undefined;
+		const moveDestination =
+			absoluteMovePath && absoluteMovePath !== absolutePath
+				? await readPatchFileSnapshot(absoluteMovePath)
+				: undefined;
+		if (source.binary) {
+			if (hunk.chunks.length > 0) {
+				throw new Error(`apply_patch cannot apply text hunks to binary file: ${hunk.filePath}`);
+			}
+			if (!hunk.movePath || !absoluteMovePath || !source.bytes) {
+				throw new Error(`apply_patch cannot update binary file without a move destination: ${hunk.filePath}`);
+			}
 			const preview = buildPatchPreviewFile({
 				hunk,
-				source: { exists: true, content: currentContent },
+				source,
+				newContent: "",
+				...(moveDestination ? { moveDestination } : {}),
+			});
+			await mkdir(path.dirname(absoluteMovePath), { recursive: true });
+			await writeBinaryFileAtomic(absoluteMovePath, source.bytes);
+			if (absoluteMovePath !== absolutePath) await rm(absolutePath);
+			return {
+				summary: `move: ${hunk.filePath} -> ${hunk.movePath}`,
+				appliedFile: hunk.movePath,
+				fuzz: 0,
+				preview,
+			};
+		}
+
+		const chunkResult =
+			hunk.chunks.length === 0
+				? { content: source.content, fuzz: 0 }
+				: replaceChunks(source.content, hunk.filePath, hunk.chunks);
+
+		if (hunk.movePath && absoluteMovePath) {
+			const preview = buildPatchPreviewFile({
+				hunk,
+				source,
 				newContent: chunkResult.content,
 				...(moveDestination ? { moveDestination } : {}),
 			});
@@ -142,7 +185,7 @@ async function applySingleHunk(
 
 		const preview = buildPatchPreviewFile({
 			hunk,
-			source: { exists: true, content: currentContent },
+			source,
 			newContent: chunkResult.content,
 		});
 		await writeFileAtomic(absolutePath, chunkResult.content);

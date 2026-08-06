@@ -16,11 +16,22 @@ import { resolvePatchPath } from "./workspace.ts";
 export type PatchFileSnapshot = {
 	readonly exists: boolean;
 	readonly content: string;
+	readonly binary?: true;
+	readonly bytes?: Uint8Array;
 };
 
 export async function readPatchFileSnapshot(absolutePath: string): Promise<PatchFileSnapshot> {
 	try {
-		return { exists: true, content: await readFile(absolutePath, "utf-8") };
+		const bytes = await readFile(absolutePath);
+		if (bytes.includes(0)) return { exists: true, content: "", binary: true, bytes };
+		try {
+			return {
+				exists: true,
+				content: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+			};
+		} catch {
+			return { exists: true, content: "", binary: true, bytes };
+		}
 	} catch (error) {
 		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
 			return { exists: false, content: "" };
@@ -57,6 +68,17 @@ export function buildPatchPreviewFile(input: {
 	readonly moveDestination?: PatchFileSnapshot;
 }): ApplyPatchPreviewFile {
 	const { hunk, source, newContent, moveDestination } = input;
+	if (source.binary || moveDestination?.binary) {
+		return {
+			filePath: hunk.filePath,
+			...(hunk.type === "update" && hunk.movePath ? { movePath: hunk.movePath } : {}),
+			operation: hunk.type === "add" && source.exists ? "update" : hunk.type,
+			binary: true,
+			diff: "",
+			added: 0,
+			removed: 0,
+		};
+	}
 	switch (hunk.type) {
 		case "add": {
 			const operation = source.exists ? "update" : "add";
@@ -102,24 +124,34 @@ async function createPatchPreviewFile(cwd: string, hunk: ParsedPatch): Promise<A
 			return buildPatchPreviewFile({ hunk, source, newContent: hunk.content });
 		}
 		case "delete": {
-			const oldContent = await readFile(absolutePath, "utf-8");
+			const source = await readPatchFileSnapshot(absolutePath);
 			return buildPatchPreviewFile({
 				hunk,
-				source: { exists: true, content: oldContent },
+				source,
 				newContent: "",
 			});
 		}
 		case "update": {
-			const oldContent = await readFile(absolutePath, "utf-8");
-			const newContent =
-				hunk.chunks.length === 0 ? oldContent : replaceChunks(oldContent, hunk.filePath, hunk.chunks).content;
+			const source = await readPatchFileSnapshot(absolutePath);
 			const moveDestination =
 				hunk.movePath && hunk.movePath !== hunk.filePath
 					? await readPatchFileSnapshot(resolvePatchPath(cwd, hunk.movePath))
 					: undefined;
+			if (source.binary || moveDestination?.binary) {
+				return buildPatchPreviewFile({
+					hunk,
+					source,
+					newContent: "",
+					...(moveDestination ? { moveDestination } : {}),
+				});
+			}
+			const newContent =
+				hunk.chunks.length === 0
+					? source.content
+					: replaceChunks(source.content, hunk.filePath, hunk.chunks).content;
 			return buildPatchPreviewFile({
 				hunk,
-				source: { exists: true, content: oldContent },
+				source,
 				newContent,
 				...(moveDestination ? { moveDestination } : {}),
 			});
@@ -132,7 +164,9 @@ async function createPatchPreviewFile(cwd: string, hunk: ParsedPatch): Promise<A
 }
 
 function hasPreviewChange(file: ApplyPatchPreviewFile): boolean {
-	return file.operation !== "update" || file.movePath !== undefined || file.diff.trim().length > 0;
+	return (
+		file.binary === true || file.operation !== "update" || file.movePath !== undefined || file.diff.trim().length > 0
+	);
 }
 
 export async function createPatchPreview(cwd: string, hunks: ParsedPatch[]): Promise<ApplyPatchPreview> {

@@ -1,5 +1,12 @@
 # changes
 
+## Absolute-cap compaction rejection message (2026-08-05)
+
+- `describeCompactionRejection()` for `"per-turn-cap"` now reads "absolute compaction cap reached for
+  this session." The cause identifier is unchanged for extension-API stability; only the per-turn soft
+  cap was removed (see `extensions/builtin/compaction/changes.md`).
+- Expected merge-conflict zone: `agent-session.ts` around `describeCompactionRejection`.
+
 ## Bound provider-timeout retry continuations (2026-08-05)
 
 ### What changed

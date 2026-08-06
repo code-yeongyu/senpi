@@ -13,6 +13,7 @@ const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
 const TERMINAL_PROGRESS_CLEAR_SEQUENCE = "\x1b]9;4;0;\x07";
 const APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE = "\x1b[13;2u";
 const DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS = 7;
+const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
 const KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS = 150;
 const KITTY_KEYBOARD_PROTOCOL_QUERY = `\x1b[>${DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1b[?u\x1b[c`;
 
@@ -50,6 +51,15 @@ export function keyboardEnhancementEnabled(): boolean {
 	const value = process.env.PI_TUI_KEYBOARD_PROTOCOL;
 	if (value === undefined) return true;
 	return !["0", "false", "no", "off"].includes(value.toLowerCase());
+}
+
+function isDeadTerminalError(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		"code" in error &&
+		typeof error.code === "string" &&
+		DEAD_TERMINAL_ERROR_CODES.has(error.code)
+	);
 }
 
 /**
@@ -529,7 +539,11 @@ export class ProcessTerminal implements Terminal {
 
 		// Restore raw mode state
 		if (process.stdin.setRawMode) {
-			process.stdin.setRawMode(this.wasRaw);
+			try {
+				process.stdin.setRawMode(this.wasRaw);
+			} catch (error) {
+				if (!isDeadTerminalError(error)) throw error;
+			}
 		}
 
 		this.removeExternalStdoutGuard();

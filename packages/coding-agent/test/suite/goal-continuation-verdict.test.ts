@@ -124,6 +124,9 @@ describe("goal continuation verdict", () => {
 		expect(evaluateGoalContinuation(makeInput({ path: "sessionStart", lastStopReason: "error" }))).toMatchObject({
 			kind: "continue",
 		});
+		expect(
+			evaluateGoalContinuation(makeInput({ path: "systemRecovery", isIdle: false, lastStopReason: "error" })),
+		).toMatchObject({ kind: "continue" });
 	});
 
 	it("applies the cap to every remaining automatic continuation path", () => {
@@ -132,7 +135,7 @@ describe("goal continuation verdict", () => {
 			lastContinuationSignature: "goal-1:1/2:abc123",
 		});
 
-		for (const path of ["immediate", "monitorDelayed", "userGrace", "sessionStart"] as const) {
+		for (const path of ["immediate", "monitorDelayed", "userGrace", "sessionStart", "systemRecovery"] as const) {
 			expect(evaluateGoalContinuation({ ...capped, path })).toEqual({ kind: "deny", reason: "cap" });
 		}
 		expect(
@@ -149,6 +152,18 @@ describe("goal continuation verdict", () => {
 				consecutiveContinuations: GOAL_CONTINUATION_CAP - 1,
 			}),
 		).toMatchObject({ kind: "continue" });
+	});
+
+	it.each([
+		["single-flight", { continuationPending: true }],
+		["cap", { consecutiveContinuations: GOAL_CONTINUATION_CAP }],
+		["repetition", { recentNormalizedOutputHashes: ["same", "same", "same"] }],
+	] as const)("keeps the %s guard on system recovery", (reason, overrides) => {
+		expect(
+			evaluateGoalContinuation(
+				makeInput({ path: "systemRecovery", isIdle: false, lastStopReason: "error", ...overrides }),
+			),
+		).toEqual({ kind: "deny", reason });
 	});
 
 	it.each([

@@ -1,5 +1,35 @@
 # changes
 
+## Binary-safe patch previews (2026-08-05)
+
+### What changed
+
+- `preview.ts`: reads source and move-destination snapshots as bytes, classifies NUL-containing or invalid-UTF-8 files
+  as binary before constructing any line or unified diff, and carries that typed marker through pending and completed
+  previews.
+- `apply.ts`: deletion and update/move results reuse the same byte-aware snapshot. Move-only binary patches preserve
+  the original bytes atomically, while text hunks against binary sources fail instead of decoding and rewriting them.
+- `preview-format.ts` / `types.ts`: binary files render as a concise `(binary)` summary with no diff, patch payload, or
+  synthetic line counts.
+
+### Why
+
+Deleting an accidental PNG with `apply_patch` decoded the image as UTF-8, built a normal line diff containing `�PNG`,
+NUL/control bytes, `IHDR`, and `IDAT`, then rendered that payload inside the live TUI card. Character/line truncation
+bounded the size but did not make binary content safe.
+
+### Why this belongs in the extension
+
+The builtin owns the source snapshot, preview metadata, persisted result details, and custom renderer. Fixing the
+shared differential renderer would only hide one consumer while leaving poisoned binary diffs in session and
+app-server result data.
+
+### Expected upstream conflict zones
+
+- LOW: `preview.ts` snapshot decoding and binary preview construction.
+- LOW: `apply.ts` delete-source snapshot reuse.
+- LOW: `preview-format.ts` per-file summary formatting and `types.ts` preview metadata.
+
 ## Codemode lazy activation (2026-08-04)
 
 ### What changed

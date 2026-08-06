@@ -10,7 +10,7 @@ export const GOAL_REPETITION_HASH_STREAK = 3;
 export const GOAL_LENGTH_RECOVERY_LIMIT = 1;
 export const GOAL_USER_GRACE_DELAY_MS = 10_000;
 
-export type GoalContinuationPath = "immediate" | "monitorDelayed" | "userGrace" | "sessionStart";
+export type GoalContinuationPath = "immediate" | "monitorDelayed" | "userGrace" | "sessionStart" | "systemRecovery";
 
 export type GoalContinuationInput = {
 	readonly goal: Goal | null;
@@ -155,6 +155,7 @@ export function continuationTurnUsedTools(messages: readonly AgentMessage[]): bo
 
 function isEligibleForGoalContinuation(input: GoalContinuationInput): boolean {
 	if (input.goal?.status !== "active" || input.hasPendingMessages) return false;
+	if (input.path === "systemRecovery") return true;
 	if (input.path === "immediate") {
 		return input.lastStopReason !== undefined && isContinuableStopReason(input.lastStopReason);
 	}

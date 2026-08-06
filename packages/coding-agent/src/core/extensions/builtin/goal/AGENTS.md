@@ -12,19 +12,23 @@ hidden continuation prompts.
 ```
 goal/
 ├── index.ts          # Extension entry — tools + /goal command + session/agent lifecycle + usage accounting
+├── agent-end-continuation.ts # Agent-end routing into Goal continuation ownership
 ├── store.ts          # File persistence: read/write/create/update/clear/accountGoalUsage
 ├── types.ts          # Goal (+ inert tokenBudget compatibility metadata), GoalStatus, GoalFile, refs, snapshots
 ├── validation.ts     # validateObjective (trim + max length)
 ├── continuation.ts   # shouldQueueGoalContinuation* gating predicates
+├── monitor-continuation-types.ts # Monitor scheduler lifecycle contracts
+├── last-assistant-message.ts # Shared last-assistant lookup for terminal classification
 ├── prompt.ts         # buildContinuationPrompt (untrusted-objective + completion audit)
 ├── format.ts         # Tool/UI formatting + goalToolResponse snapshot
 ├── command.ts        # parseGoalCommand (show|pause|resume|clear|setObjective)
 ├── ui.ts             # ctx.ui.setStatus footer segment for the active goal
-├── cache-warm.ts     # Cache-warm metrics estimator + scheduled/resumed notices + goal-cache-warmup entry contract
-├── cache-warm-renderer.ts # TUI entry renderer for goal-cache-warmup custom entries
+├── cache-warm.ts     # Cache-warm metrics/formatting + goal-cache-warmup entry contract
+├── cache-warm-renderer.ts # Scheduled/resumed TUI renderer for goal-cache-warmup entries
 ├── elapsed-ticker.ts # GoalElapsedTicker + goalLiveElapsedSeconds (live footer refresh)
 ├── wait-progress.ts  # Pure continuation-wait progress bar + label formatting
 ├── wait-ticker.ts    # GoalWaitTicker (live footer countdown lifecycle)
+├── terminal-provider-error.ts # Terminal provider-failure classification
 ├── errors.ts         # Goal{AlreadyExists,NotFound}/store error classes
 └── changes.md        # Fork tracker (port + budget behavior removal + wire compatibility)
 ```
@@ -49,12 +53,20 @@ recovery bullets otherwise. Accepted direct input disarms a pending continuation
 and a clean accepted user turn arms a visible 10-second grace countdown before the Goal
 resumes; mechanically blocked Goals are reactivated on accepted input, including admitted
 steering. A `length` stop gets exactly one minimal truncation recovery before the goal
-blocks on repetition, terminal provider errors block the goal only when `AgentEndEvent.willRetry`
-is false and count as mechanical (a new user message resumes the goal, and the blocked notice
-says so), while intentional blocks — a user interrupt or a model-declared `update_goal` block —
-stay non-recoverable. Resumed sessions with 8+ trailing historical continuation entries suppress
-session-start auto-resume. `tokenBudget` remains inert compatibility metadata only; this
-policy is budget-free by design.
+blocks on repetition. Terminal provider errors block the goal only when
+`AgentEndEvent.willRetry` is false and the abort is not explicitly system-owned; those
+blocks count as mechanical, so a new user message resumes the goal and the blocked notice
+says so. A terminal system error instead preserves the active Goal: it schedules the live
+monitor wait when one exists, or queues a guarded hidden `systemRecovery` continuation
+after `agent_settled` when no monitor or retry can resume the run. Staging recovery until
+settlement makes an error-compatible idle turn while preserving late user cancellation;
+canceling the staged delivery also releases the single-flight latch so `/goal resume`
+can start fresh recovery.
+Intentional blocks — a user interrupt or a model-declared `update_goal` block — stay
+non-recoverable. Resumed sessions with 8+
+trailing historical continuation entries suppress session-start auto-resume.
+`tokenBudget` remains inert compatibility metadata only; this policy is budget-free by
+design.
 
 ## RESTART RESUME PROMPT
 

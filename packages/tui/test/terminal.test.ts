@@ -47,6 +47,33 @@ function resetFakeTimers(): void {
 	mock.timers.reset();
 }
 
+type TerminalStopHarness = {
+	terminal: ProcessTerminal;
+	cleanup(): void;
+};
+
+function setupTerminalStopHarness(wasRaw: boolean, restoreRawMode: (mode: boolean) => void): TerminalStopHarness {
+	const terminal = new ProcessTerminal();
+	const previousPause = process.stdin.pause;
+	const previousSetRawMode = process.stdin.setRawMode;
+
+	Reflect.set(terminal, "wasRaw", wasRaw);
+	Reflect.set(terminal, "rawStdoutWrite", (_data: string) => {});
+	Reflect.set(process.stdin, "pause", () => process.stdin);
+	Reflect.set(process.stdin, "setRawMode", (mode: boolean) => {
+		restoreRawMode(mode);
+		return process.stdin;
+	});
+
+	return {
+		terminal,
+		cleanup(): void {
+			Reflect.set(process.stdin, "pause", previousPause);
+			Reflect.set(process.stdin, "setRawMode", previousSetRawMode);
+		},
+	};
+}
+
 describe("normalizeAppleTerminalInput", () => {
 	it("rewrites Apple Terminal Return to CSI-u Shift+Enter when Shift is pressed", () => {
 		assert.equal(normalizeAppleTerminalInput("\r", true, true), "\x1b[13;2u");
@@ -289,6 +316,59 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 			harness.cleanup();
 			assert.equal(harness.writes.includes("\x1b[<u"), false);
 			assert.equal(harness.writes.includes("\x1b[>4;0m"), false);
+		} finally {
+			harness.cleanup();
+		}
+	});
+});
+
+describe("ProcessTerminal stop", () => {
+	it("restores the previous raw mode during stop", () => {
+		// Given
+		const restoredModes: boolean[] = [];
+		const harness = setupTerminalStopHarness(true, (mode) => {
+			restoredModes.push(mode);
+		});
+
+		try {
+			// When
+			harness.terminal.stop();
+
+			// Then
+			assert.deepEqual(restoredModes, [true]);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("does not throw when raw-mode restoration fails during stop", () => {
+		// Given
+		const eio = Object.assign(new Error("setRawMode failed"), { code: "EIO" });
+		const harness = setupTerminalStopHarness(false, () => {
+			throw eio;
+		});
+
+		try {
+			// When / Then
+			assert.doesNotThrow(() => harness.terminal.stop());
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("rethrows unexpected raw-mode restoration failures", () => {
+		// Given
+		const invalidArgument = Object.assign(new Error("unexpected setRawMode failure"), { code: "EINVAL" });
+		const harness = setupTerminalStopHarness(false, () => {
+			throw invalidArgument;
+		});
+
+		try {
+			// When / Then
+			assert.throws(
+				() => harness.terminal.stop(),
+				(error: unknown) => error === invalidArgument,
+			);
 		} finally {
 			harness.cleanup();
 		}

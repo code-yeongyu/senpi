@@ -20,7 +20,7 @@ type RenderParityCase = {
 
 function createAssistantMessage(
 	content: AssistantMessage["content"],
-	overrides: Partial<Pick<AssistantMessage, "errorMessage" | "stopReason">> = {},
+	overrides: Partial<Pick<AssistantMessage, "diagnostics" | "errorMessage" | "stopReason">> = {},
 ): AssistantMessage {
 	return {
 		role: "assistant",
@@ -37,6 +37,7 @@ function createAssistantMessage(
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
 		stopReason: overrides.stopReason ?? "stop",
+		diagnostics: overrides.diagnostics,
 		errorMessage: overrides.errorMessage,
 		timestamp: 0,
 	};
@@ -227,5 +228,37 @@ describe("AssistantMessageComponent incremental rendering", () => {
 		expect(getRequiredChild(component, 1)).toBe(initialPrefix);
 		expect(getRequiredChild(component, 2)).not.toBe(initialTail);
 		expect(getContentChildren(component).length).toBeGreaterThan(initialLength);
+	});
+
+	test("#given a diagnosed server fallback abort #when rendered #then leaves the notice to the fallback widget", () => {
+		const component = createComponent(
+			createAssistantMessage([], {
+				stopReason: "error",
+				errorMessage: "Server-side fallback (claude-fable-5 -> claude-opus-5) aborted by client policy",
+				diagnostics: [
+					{
+						type: "server_fallback_aborted",
+						timestamp: 0,
+						details: { from: "claude-fable-5", to: "claude-opus-5" },
+					},
+				],
+			}),
+		);
+
+		expect(component.render(100).join("\n")).not.toContain("Error: Server-side fallback");
+	});
+
+	test("#given diagnostics added to the active message #when rerendered #then removes the stale fallback error", () => {
+		const message = createAssistantMessage([], {
+			stopReason: "error",
+			errorMessage: "Server-side fallback (claude-fable-5 -> claude-opus-5) aborted by client policy",
+		});
+		const component = createComponent(message);
+		expect(component.render(100).join("\n")).toContain("Error: Server-side fallback");
+
+		message.diagnostics = [{ type: "server_fallback_aborted", timestamp: 0 }];
+		component.updateContent(message);
+
+		expect(component.render(100).join("\n")).not.toContain("Error: Server-side fallback");
 	});
 });

@@ -1,5 +1,29 @@
 # Core Extensions Changes
 
+## 2026-08-05 - Extension abort provenance
+
+### What changed
+
+- `ExtensionContext.abort(source?)` and its host action now accept `"user" | "system"`.
+- The default remains `"user"` for compatibility. A system-owned abort bypasses
+  the interactive user-abort handler and reaches the agent as
+  `agent_end.abortSource === "system"`.
+
+### Why
+
+- Builtin stream remediation previously called the same user-abort path as Escape,
+  so the Goal extension persisted `blocked("user interrupted the turn")` even
+  though TTSR, not the user, stopped the generation.
+- Abort provenance belongs at the initiating extension boundary. Consumers such
+  as Goal can retain their existing source-based policy without detector coupling.
+
+### Expected merge conflict zones
+
+- LOW in `types.ts` around `ExtensionContext.abort` and
+  `ExtensionContextActions.abort`.
+- LOW in `runner.ts` and `agent-session.ts` around extension context forwarding
+  and binding.
+
 ## 2026-08-03 - ExtensionContext exposes the resolved agent dir
 
 ### What changed and why

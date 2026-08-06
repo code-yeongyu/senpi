@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed terminal shutdown crashing with `setRawMode failed with errno: 5` when an SSH or PTY peer disappears before
+  raw-mode restoration. Dead-terminal restoration errors are now best-effort while unexpected errors remain visible
+  ([#726](https://github.com/code-yeongyu/senpi/pull/726)).
+
+### Removed
+
 ## [2026.8.5-2] - 2026-08-05
 
 ### Breaking Changes

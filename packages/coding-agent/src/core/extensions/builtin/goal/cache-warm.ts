@@ -54,38 +54,6 @@ export function estimateCacheWarmMetrics(
 	};
 }
 
-export function buildCacheWarmScheduledNotice(
-	delayMs: number,
-	activeMonitorCount: number,
-	cache: GoalCacheWarmMetrics | undefined,
-): string {
-	const base = `${monitorsOnDuty(activeMonitorCount)} - goal continuation deferred ${formatDeferredDelay(delayMs)}`;
-	if (cache === undefined || cache.cachedTokens <= 0) {
-		return `${base} so the monitor can wake us the moment decisive output lands.`;
-	}
-	const warmTokens = `~${formatWarmTokenCount(cache.cachedTokens)} tokens`;
-	if (cache.ttlSeconds === undefined) {
-		return `${base}. The timed wake keeps ${warmTokens} warm instead of re-paying a cold read.`;
-	}
-	return `${base}. The timed wake stays inside the ${formatCacheTtl(cache.ttlSeconds)} prompt-cache TTL, keeping ${warmTokens} warm instead of re-paying a cold read.`;
-}
-
-export function buildCacheWarmResumedNotice(
-	waitedMs: number,
-	activeMonitorCount: number,
-	cache: GoalCacheWarmMetrics | undefined,
-): string {
-	const stillOnDuty =
-		activeMonitorCount === 1 ? "1 monitor still on duty" : `${activeMonitorCount} monitors still on duty`;
-	const head = `Cache-warm wake after ${formatWakeDuration(waitedMs)} - ${stillOnDuty}.`;
-	if (cache === undefined || cache.cachedTokens <= 0) return `${head} Continuing the goal.`;
-	const savings =
-		cache.estimatedSavedUsd !== undefined && cache.estimatedSavedUsd > 0
-			? ` (est. ${formatSavedUsd(cache.estimatedSavedUsd)} saved vs a cold re-read)`
-			: "";
-	return `${head} ~${formatWarmTokenCount(cache.cachedTokens)} tokens stayed warm in the prompt cache${savings}. Continuing the goal.`;
-}
-
 export function formatWarmTokenCount(tokens: number): string {
 	if (tokens >= 1_000_000) return `${trimTrailingZero((tokens / 1_000_000).toFixed(1))}M`;
 	if (tokens >= 1000) return `${trimTrailingZero((tokens / 1000).toFixed(1))}K`;
@@ -113,19 +81,6 @@ export function formatSavedUsd(value: number): string {
 	if (value < 0.0005) return "<$0.001";
 	if (value < 1) return `$${value.toFixed(3)}`;
 	return `$${value.toFixed(2)}`;
-}
-
-function monitorsOnDuty(count: number): string {
-	return count === 1 ? "1 monitor on duty" : `${count} monitors on duty`;
-}
-
-function formatDeferredDelay(delayMs: number): string {
-	const seconds = Math.round(delayMs / 1000);
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	const restSeconds = seconds % 60;
-	if (restSeconds === 0) return minutes === 1 ? "1 minute" : `${minutes} minutes`;
-	return `${minutes}m ${restSeconds}s`;
 }
 
 function trimTrailingZero(value: string): string {

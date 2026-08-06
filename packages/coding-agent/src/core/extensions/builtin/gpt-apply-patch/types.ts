@@ -38,6 +38,7 @@ export type ApplyPatchPreviewFile = {
 	filePath: string;
 	movePath?: string;
 	operation: ApplyPatchOperation;
+	binary?: true;
 	diff: string;
 	patch?: string;
 	added: number;

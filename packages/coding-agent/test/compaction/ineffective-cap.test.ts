@@ -79,7 +79,7 @@ describe("compaction ineffective cap", () => {
 	});
 
 	describe("Given a turn with two accepted compactions and one ineffective attempt", () => {
-		it("Then the next auto compaction remains admitted below the absolute cap", () => {
+		it("Then the next auto compaction stays admitted and turn counters still reset", () => {
 			registerFauxProvider();
 			let state = createInitialState();
 			state = acceptN(state, 2);

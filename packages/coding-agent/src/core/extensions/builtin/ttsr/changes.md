@@ -1,5 +1,66 @@
 # TTSR Fork Tracker
 
+## 2026-08-05 - One activation, one visible record
+
+### What changed and why
+
+- TTSR now persists only the shared `rule-activation` entry for each remediation.
+- The old private `ttsr-injection` custom entry is no longer written, and the
+  transient `ctx.ui.notify("Stream rule triggered…")` warning is removed.
+- The hidden `ttsr-injection` custom message remains because it is the
+  model-facing corrective nudge, not a user-facing duplicate.
+- Session rehydration reads typed TTSR `rule-activation` entries while retaining
+  read compatibility with legacy private entries already stored in old sessions.
+
+### Ownership contract
+
+- One logical stream-rule activation has one persisted display owner:
+  `rule-activation`.
+- The renderer owns the single TUI notice box. Presentation must not also flow
+  through a transient notify or a second display-only custom entry.
+
+### Coverage and expected conflict zones
+
+- `test/ttsr/extension-wiring.test.ts` pins one activation entry, zero private
+  entries, zero transient notices, and a preserved hidden nudge.
+- Persistence, coordinator-race, and cross-turn tests now assert against the
+  shared activation record while retaining legacy rehydration coverage.
+- MEDIUM in `index.ts` around `recordInjection` and session rehydration.
+
+## 2026-08-05 - System-owned remediation aborts
+
+### What changed and why
+
+- All TTSR remediation aborts now call `ctx.abort("system")`.
+- The host reports those turns as `agent_end.abortSource === "system"` instead
+  of `"user"`, so an active Goal remains active while the hidden corrective
+  nudge and any live monitor/background completion channel resume the run.
+- Explicit user interrupts still use the default user source and keep the
+  existing intentional Goal block.
+- If a user interrupt joins an in-flight TTSR system abort, the resulting
+  user-owned settlement mutates the retained `agent_end` through the end of
+  `agent_settled`. TTSR checks that shared event before requesting its nudge,
+  while the host defers earlier settlement requests until every handler
+  completes, so neither handler order can run a corrective turn after Escape.
+- An automatic provider retry starts a fresh TTSR detection generation even
+  though agent-core does not emit a new `turn_start`, so consecutive leaking
+  generations each receive their own system abort and provenance.
+
+### Coverage and expected conflict zones
+
+- `test/suite/goal-abort-extension.test.ts` combines Goal + TTSR + an active
+  monitor and pins system attribution, active Goal state, and user-abort
+  regression behavior.
+- `test/suite/goal-ttsr-user-abort-race.test.ts` pins the joined-abort ordering,
+  one underlying abort, user provenance, durable Goal block, and no corrective
+  follow-up turn.
+- `test/suite/goal-ttsr-settlement-race.test.ts` pins both `agent_settled`
+  handler orders, Goal recovery launch after a terminal system error, and stale
+  recovery removal on public-boundary cancellation.
+- `test/suite/goal-system-abort-monitor.test.ts` pins the Goal-side system-abort
+  policy independently of the detector.
+- LOW in `index.ts` at the three `ctx.abort("system")` call sites.
+
 ## 2026-08-04 - Cross-turn repetitive-turns detection
 
 ### What changed and why

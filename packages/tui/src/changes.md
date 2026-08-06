@@ -1,5 +1,32 @@
 # TUI delta rendering fork changes
 
+## 2026-08-05: dead-terminal raw-mode restoration is best-effort during shutdown
+
+### What changed
+
+- `ProcessTerminal.stop()` still restores the raw-mode state captured by `start()`, but now treats `EIO`, `EPIPE`,
+  and `ENOTCONN` from the teardown-time `setRawMode()` call as a dead terminal instead of crashing the exiting CLI.
+- Unexpected raw-mode restoration errors still propagate so shutdown does not hide unrelated defects.
+- `test/terminal.test.ts` covers successful restoration, the dead-terminal `EIO` regression, and unexpected-error
+  propagation.
+
+### Why
+
+- An SSH or PTY peer can disappear after input draining but before raw-mode restoration. Node/Bun then throws a
+  synchronous stdin ioctl error, which bypasses the coding-agent's stdout/stderr error handlers and replaces the
+  requested exit with an uncaught `setRawMode failed with errno: 5` stack.
+
+### Why this cannot be expressed externally
+
+- Raw-mode ownership and restoration are private `ProcessTerminal` lifecycle responsibilities. Extensions receive
+  neither the saved raw-mode state nor a teardown hook around the stdin ioctl.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/terminal.ts` around the terminal error classifier and `ProcessTerminal.stop()` raw-mode
+  restoration.
+- LOW: `packages/tui/test/terminal.test.ts` around lifecycle coverage.
+
 ## 2026-07-31: atomic visible-cursor frames for IME and animations
 
 ### What changed

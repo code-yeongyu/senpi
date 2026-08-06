@@ -398,7 +398,7 @@ export interface ExtensionContext {
 	/** The current abort signal, or undefined when the agent is not streaming. */
 	signal: AbortSignal | undefined;
 	/** Abort the current agent operation */
-	abort(): void;
+	abort(source?: "user" | "system"): void;
 	/** Whether there are queued messages waiting */
 	hasPendingMessages(): boolean;
 	/**
@@ -2053,7 +2053,7 @@ export interface ExtensionContextActions {
 	isIdle: () => boolean;
 	isProjectTrusted: () => boolean;
 	getSignal: () => AbortSignal | undefined;
-	abort: () => void;
+	abort: (source?: "user" | "system") => void;
 	hasPendingMessages: () => boolean;
 	isCompacting: () => boolean;
 	checkReloadVeto?: () => Promise<ReloadVetoDecision>;

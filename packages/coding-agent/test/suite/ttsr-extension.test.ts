@@ -149,7 +149,7 @@ describe("collapse remediation persistence", () => {
 		const lines = readSessionLines(harness);
 		const entries = readSessionEntries(harness);
 		expect(lines.length).toBe(entries.length);
-		expect(lines.length).toBe(7);
+		expect(lines.length).toBe(6);
 		expectTtsrActivation(entries, {
 			owner: "collapse-repetition",
 			rules: ["collapse-repetition"],
@@ -211,7 +211,7 @@ describe("leakage remediation retry", () => {
 
 		const lines = readSessionLines(harness);
 		const entries = readSessionEntries(harness);
-		expect(lines.length).toBe(6);
+		expect(lines.length).toBe(5);
 		expectTtsrActivation(entries, {
 			owner: "control-token-leak",
 			rules: ["control-token-leak"],
@@ -326,8 +326,8 @@ describe("repetitive turns remediation", () => {
 		expect(getMessageText(harness.session.messages.at(-1))).toContain("breaking the loop");
 
 		const entries = readSessionEntries(harness);
-		const injectionEntries = entries.filter((e) => e.type === "custom" && e.customType === "ttsr-injection");
-		expect(injectionEntries.length).toBe(nudges.length);
+		const activationEntries = entries.filter((e) => e.type === "custom" && e.customType === "rule-activation");
+		expect(activationEntries.length).toBe(nudges.length);
 	});
 
 	it("detects repetition generically, not a baked-in phrase", async () => {

@@ -68,6 +68,10 @@ function formatLineCountSummary(added: number, removed: number): string {
 	return `(+${added} -${removed})`;
 }
 
+function formatPatchFileSummary(file: ApplyPatchPreviewFile): string {
+	return file.binary ? "(binary)" : formatLineCountSummary(file.added, file.removed);
+}
+
 function countLines(text: string): number {
 	if (text.length === 0) return 0;
 	let lines = 1;
@@ -127,7 +131,7 @@ export function formatPatchPreview(
 		const file = preview.files[0];
 		if (file) {
 			lines.push(
-				`• ${formatPatchOperation(file.operation)} ${formatPatchFilePath(file, cwd)} ${formatLineCountSummary(file.added, file.removed)}`,
+				`• ${formatPatchOperation(file.operation)} ${formatPatchFilePath(file, cwd)} ${formatPatchFileSummary(file)}`,
 			);
 			if (expanded && file.diff)
 				lines.push(
@@ -142,7 +146,7 @@ export function formatPatchPreview(
 	const noun = preview.files.length === 1 ? "file" : "files";
 	lines.push(`• Edited ${preview.files.length} ${noun} ${formatLineCountSummary(preview.added, preview.removed)}`);
 	for (const file of preview.files) {
-		lines.push(`  └ ${formatPatchFilePath(file, cwd)} ${formatLineCountSummary(file.added, file.removed)}`);
+		lines.push(`  └ ${formatPatchFilePath(file, cwd)} ${formatPatchFileSummary(file)}`);
 		if (expanded && file.diff)
 			lines.push(
 				...truncatePreview(file.diff)
@@ -205,10 +209,10 @@ export function renderPatchPreview(
 	if (expanded) {
 		try {
 			const renderFile = (file: ApplyPatchPreviewFile, headerPrefix: string): string => {
-				const header = `• ${formatPatchOperation(file.operation)} ${formatPatchFilePath(file, cwd)} ${formatLineCountSummary(file.added, file.removed)}`;
+				const header = `• ${formatPatchOperation(file.operation)} ${formatPatchFilePath(file, cwd)} ${formatPatchFileSummary(file)}`;
 				if (!file.diff) {
 					return headerPrefix.length > 0
-						? `${headerPrefix}${formatPatchFilePath(file, cwd)} ${formatLineCountSummary(file.added, file.removed)}`
+						? `${headerPrefix}${formatPatchFilePath(file, cwd)} ${formatPatchFileSummary(file)}`
 						: header;
 				}
 
@@ -217,7 +221,7 @@ export function renderPatchPreview(
 					theme,
 				});
 				if (headerPrefix.length > 0) {
-					const nestedHeader = `${headerPrefix}${formatPatchFilePath(file, cwd)} ${formatLineCountSummary(file.added, file.removed)}`;
+					const nestedHeader = `${headerPrefix}${formatPatchFilePath(file, cwd)} ${formatPatchFileSummary(file)}`;
 					return `${nestedHeader}\n${renderedDiff
 						.split("\n")
 						.map((line) => `    ${line}`)
