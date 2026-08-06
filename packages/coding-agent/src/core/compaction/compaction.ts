@@ -161,6 +161,8 @@ export interface CompactionSettings {
 	restorationMaxTotalTokens?: number;
 	restorationContextRatio?: number;
 	idleCompactionEnabled?: boolean;
+	/** Optional "provider/model" override for the compaction summarization model. */
+	model?: string;
 }
 
 export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
