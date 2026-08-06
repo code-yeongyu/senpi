@@ -1,5 +1,38 @@
 # Builtin compaction extension changes
 
+## Deterministic fallback recovers reasoning sessions (2026-08-05)
+
+### What changed
+
+- Deterministic required-compaction recovery now accepts provider replay signatures on assistant text,
+  thinking, and tool-call blocks when the signature is an opaque string, and accepts redacted thinking.
+  Non-string signature fields still fail closed.
+- After the prepared and latest meaningful user boundaries, the bounded degradation ladder can retain
+  from the latest context-visible autonomous turn start (`custom` text or bash execution), then from
+  the latest valid cut point. Boundaries reuse core compaction semantics and are deduplicated, keeping
+  projection attempts bounded to four.
+- Retained-context sizing now uses serialized UTF-8 bytes divided by three as its conservative floor,
+  preserving CJK safety without treating every byte as a token.
+
+### Why
+
+- A real reasoning-model session wedged because replay signatures appeared on nearly every assistant
+  message, making deterministic recovery dead code even though the normal provider path already
+  replays those opaque strings.
+- Autonomous goal-driven stretches can have no user boundary after the prepared suffix, so the old
+  two-rung ladder had nowhere to shrink. The failed required compaction then left the session
+  permanently stuck on `RequiredCompactionError`.
+- Counting serialized bytes as tokens overestimated otherwise fitting suffixes by roughly 3-4x.
+
+### Why this cannot be expressed externally
+
+- Recovery runs inside the builtin compaction lifecycle and must project canonical session
+  reconstruction with the same context visibility and cut-point semantics as core compaction.
+
+### Expected merge-conflict zones
+
+- `deterministic-fallback.ts` around retained-suffix sizing and the degradation ladder.
+- `retained-message-safety.ts` around assistant block validation.
 ## Remove the fatal per-turn compaction soft cap (2026-08-05)
 
 ### What changed

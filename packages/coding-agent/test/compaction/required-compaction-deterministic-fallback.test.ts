@@ -109,6 +109,205 @@ describe("required compaction deterministic fallback", () => {
 		});
 	});
 
+	it("retains a signature-bearing prepared suffix", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		const preparedBoundaryId = harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("", { timestamp: 4, stopReason: "toolUse" }),
+			content: [
+				{ type: "thinking", thinking: "reasoning", thinkingSignature: "sig" },
+				{ type: "text", text: "calling a tool", textSignature: "sig" },
+				{
+					type: "toolCall",
+					id: "signed-tool",
+					name: "read",
+					arguments: { path: "README.md" },
+					thoughtSignature: "sig",
+				},
+			],
+		} as never);
+		harness.sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "signed-tool",
+			toolName: "read",
+			content: [{ type: "text", text: "signed result" }],
+			isError: false,
+			timestamp: 5,
+		});
+		const branchEntries = harness.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!;
+
+		const result = createRequiredCompactionFallback(
+			{ ...preparation, firstKeptEntryId: preparedBoundaryId },
+			100_000,
+			"summarization-timeout",
+			{},
+			branchEntries,
+		);
+
+		expect(result).toMatchObject({
+			firstKeptEntryId: preparedBoundaryId,
+			details: { retainedSuffix: "prepared" },
+		});
+	});
+
+	it("accepts redacted thinking in the prepared suffix", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		const preparedBoundaryId = harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("", { timestamp: 4 }),
+			content: [{ type: "thinking", thinking: "", redacted: true, thinkingSignature: "opaque" }],
+		} as never);
+		const branchEntries = harness.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!;
+
+		const result = createRequiredCompactionFallback(
+			{ ...preparation, firstKeptEntryId: preparedBoundaryId },
+			100_000,
+			"summarization-timeout",
+			{},
+			branchEntries,
+		);
+
+		expect(result).toMatchObject({
+			firstKeptEntryId: preparedBoundaryId,
+			details: { retainedSuffix: "prepared" },
+		});
+	});
+
+	it("rejects redacted thinking without a non-empty encrypted payload", () => {
+		for (const content of [
+			[{ type: "thinking", thinking: "", redacted: true }],
+			[{ type: "thinking", thinking: "", redacted: true, thinkingSignature: "" }],
+		]) {
+			const harness = createBlockingContext({ usageTokens: 9_900 });
+			const malformedBoundaryId = harness.sessionManager.appendMessage({
+				...fauxAssistantMessage("", { timestamp: 4 }),
+				content,
+			} as never);
+			const branchEntries = harness.sessionManager.getBranch();
+			const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!;
+
+			expect(
+				createRequiredCompactionFallback(
+					{ ...preparation, firstKeptEntryId: malformedBoundaryId },
+					100_000,
+					"summarization-timeout",
+					{},
+					branchEntries,
+				),
+			).toBeUndefined();
+		}
+	});
+
+	it("rejects non-string replay signatures", () => {
+		for (const content of [
+			[{ type: "thinking", thinking: "reasoning", thinkingSignature: 42 }],
+			[{ type: "text", text: "answer", textSignature: 42 }],
+		]) {
+			const harness = createBlockingContext({ usageTokens: 9_900 });
+			const malformedBoundaryId = harness.sessionManager.appendMessage({
+				...fauxAssistantMessage("", { timestamp: 4 }),
+				content,
+			} as never);
+			const branchEntries = harness.sessionManager.getBranch();
+			const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!;
+
+			expect(
+				createRequiredCompactionFallback(
+					{ ...preparation, firstKeptEntryId: malformedBoundaryId },
+					100_000,
+					"summarization-timeout",
+					{},
+					branchEntries,
+				),
+			).toBeUndefined();
+		}
+	});
+
+	it("recovers an autonomous tail through the latest custom turn boundary", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		const preparedBoundaryId = harness.sessionManager.appendMessage(
+			fauxAssistantMessage("oversized prepared suffix ".repeat(2_000), { timestamp: 4 }),
+		);
+		harness.sessionManager.appendCustomMessageEntry("goal-progress", "first autonomous turn", false);
+		harness.sessionManager.appendMessage(fauxAssistantMessage("intermediate work", { timestamp: 5 }));
+		const latestCustomId = harness.sessionManager.appendCustomMessageEntry(
+			"goal-continuation",
+			"continue autonomous goal",
+			false,
+		);
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("", { timestamp: 6, stopReason: "toolUse" }),
+			content: [{ type: "toolCall", id: "autonomous-tool", name: "read", arguments: { path: "TODO.md" } }],
+		});
+		harness.sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "autonomous-tool",
+			toolName: "read",
+			content: [{ type: "text", text: "autonomous result" }],
+			isError: false,
+			timestamp: 7,
+		});
+		const branchEntries = harness.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!;
+
+		const result = createRequiredCompactionFallback(
+			{ ...preparation, firstKeptEntryId: preparedBoundaryId },
+			4_000,
+			"summarization-timeout",
+			{},
+			branchEntries,
+		);
+
+		expect(result).toMatchObject({
+			firstKeptEntryId: latestCustomId,
+			details: { retainedSuffix: "latest-turn-start" },
+		});
+	});
+
+	it("degrades to the latest assistant cut point and retains its tool results", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		const preparedBoundaryId = harness.sessionManager.appendMessage(
+			fauxAssistantMessage("oversized prepared suffix ".repeat(2_000), { timestamp: 4 }),
+		);
+		const assistantBoundaryId = harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("", { timestamp: 5, stopReason: "toolUse" }),
+			content: [{ type: "toolCall", id: "tail-tool", name: "read", arguments: { path: "README.md" } }],
+		});
+		const toolResultId = harness.sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "tail-tool",
+			toolName: "read",
+			content: [{ type: "text", text: "trailing tool result" }],
+			isError: false,
+			timestamp: 6,
+		});
+		const branchEntries = harness.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!;
+
+		const result = createRequiredCompactionFallback(
+			{ ...preparation, firstKeptEntryId: preparedBoundaryId },
+			4_000,
+			"summarization-timeout",
+			{},
+			branchEntries,
+		);
+
+		expect(result).toMatchObject({
+			firstKeptEntryId: assistantBoundaryId,
+			details: { retainedSuffix: "latest-cut-point" },
+		});
+		expect(result?.firstKeptEntryId).not.toBe(toolResultId);
+		if (!result) throw new Error("Expected deterministic cut-point recovery");
+		harness.sessionManager.appendCompaction(
+			result.summary,
+			result.firstKeptEntryId,
+			result.tokensBefore,
+			result.details,
+			true,
+		);
+		expect(JSON.stringify(harness.sessionManager.buildSessionContext().messages)).toContain("trailing tool result");
+	});
+
 	it("does not recover manual, aborted, or unrelated failures", async () => {
 		for (const testCase of [
 			{ reason: "manual" as const, message: "upstream_stream_truncated", aborted: false, refusal: false },
@@ -344,7 +543,7 @@ describe("required compaction deterministic fallback", () => {
 		expect(result!).toBeUndefined();
 	});
 
-	it("projects only the prepared and latest meaningful user fallback candidates", () => {
+	it("deduplicates overlapping fallback ladder boundaries", () => {
 		const harness = createBlockingContext({ usageTokens: 9_900 });
 		for (let index = 0; index < 4; index++) {
 			harness.sessionManager.appendMessage({

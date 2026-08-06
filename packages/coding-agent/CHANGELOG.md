@@ -12,6 +12,10 @@
 
 ### Fixed
 
+- Fixed required compaction recovery failing in reasoning sessions when opaque provider signatures or redacted
+  thinking appeared in retained assistant messages. Deterministic fallback now preserves valid replay metadata and
+  uses bounded turn/cut-point fallbacks with safer context sizing
+  ([#736](https://github.com/code-yeongyu/senpi/pull/736)).
 - Fixed system-owned TTSR interruptions being recorded as user interruptions, which could block an active Goal even
   while a background child or monitor could still resume the run. System-owned provider-error shells and consecutive
   remediation generations now retain system provenance, while a late Escape cancels corrective and provider-retry
