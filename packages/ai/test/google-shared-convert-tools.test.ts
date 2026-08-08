@@ -160,6 +160,32 @@ describe("google-shared convertTools", () => {
 		});
 	});
 
+	it("strips non-standard 'optional' keyword from parametersJsonSchema when useParameters=false", () => {
+		const tools = [
+			makeTool({
+				$schema: "http://json-schema.org/draft-07/schema#",
+				type: "object",
+				properties: {
+					command: { type: "string", optional: true },
+				},
+				required: ["command"],
+			}),
+		];
+
+		const result = convertTools(tools, false);
+		const decl = result?.[0]?.functionDeclarations?.[0];
+
+		expect(decl).toBeDefined();
+		expect(decl?.parametersJsonSchema).toEqual({
+			$schema: "http://json-schema.org/draft-07/schema#",
+			type: "object",
+			properties: {
+				command: { type: "string" },
+			},
+			required: ["command"],
+		});
+	});
+
 	it("handles tools without $schema gracefully", () => {
 		const tools = [
 			makeTool({

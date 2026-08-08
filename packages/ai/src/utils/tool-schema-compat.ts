@@ -167,6 +167,8 @@ function normalizeNode(node: unknown, isRoot = false): unknown {
 		return node;
 	}
 
+	delete node.optional;
+
 	const hasCombiner = COMBINER_KEYS.some((key) => Array.isArray(node[key]));
 	// The root of a tool's parameters must keep `type: "object"`; hoisting it into
 	// the branches leaves a typeless root that gateways reject outright.
