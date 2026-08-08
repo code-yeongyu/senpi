@@ -1,6 +1,12 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { getGraphemeSegmenter } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
-import { BlockUnitCounter, buildDisplayMessage, visibleUnits } from "../src/modes/interactive/streaming-reveal.ts";
+import {
+	BlockUnitCounter,
+	buildDisplayMessage,
+	countVisibleUnits,
+	visibleUnits,
+} from "../src/modes/interactive/streaming-reveal.ts";
 import { makeMessage, textAt, thinkingAt } from "./helpers/streaming-reveal.ts";
 
 function fullSlice(text: string, units: number): string {
@@ -82,5 +88,21 @@ describe("streaming reveal content helpers", () => {
 		expect(block.thinking).toBe("rea");
 		expect(block.startedAt).toBe(1_000);
 		expect(block.endedAt).toBe(4_200);
+	});
+
+	test("#given a block missing its payload key #when revealing #then treats it as empty instead of crashing", () => {
+		const malformedContent = [
+			// Real-world corrupt shape: a provider extension emitting `text` instead of `thinking`.
+			{ type: "thinking", text: "reasoning" },
+			// Bare block with no payload at all.
+			{ type: "thinking" },
+			{ type: "text" },
+		] as unknown as AssistantMessage["content"];
+		const target = makeMessage(malformedContent);
+
+		expect(() => countVisibleUnits(target, false, (_index, text) => text.length)).not.toThrow();
+		expect(() => buildDisplayMessage(target, 0, false)).not.toThrow();
+		expect(() => buildDisplayMessage(target, 5, false)).not.toThrow();
+		expect(visibleUnits(target, false)).toBe(0);
 	});
 });
