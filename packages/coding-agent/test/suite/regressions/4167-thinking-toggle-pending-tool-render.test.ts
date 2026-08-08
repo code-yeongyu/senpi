@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 import type { ToolExecutionComponent } from "../../../src/modes/interactive/components/tool-execution.ts";
+import type { ToolOutputMode } from "../../../src/modes/interactive/components/tool-execution-types.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
@@ -53,11 +54,14 @@ type RenderSessionContextThis = {
 	};
 	sessionManager: { getCwd(): string; getEntries(): SessionEntry[] };
 	session: { retryAttempt: number; modelRegistry: { find(provider: string, modelId: string): undefined } };
+	toolOutputMode: ToolOutputMode;
 	toolOutputExpanded: boolean;
 	isInitialized: boolean;
 	chrome: undefined;
 	updateEditorBorderColor(): void;
-	getRegisteredToolDefinition(toolName: string): undefined;
+	getRegisteredToolDefinition(toolName: string, trustedBuiltIn: boolean): undefined;
+	isRegisteredToolTrustedBuiltIn(toolName: string): boolean;
+	getCapturedToolCallTrust(toolCallId: string): boolean;
 	createToolExecutionComponent(toolName: string, toolCallId: string, args: unknown): ToolExecutionComponent;
 	clearPendingTools(): void;
 	handleToolExecutionEnd(event: Extract<AgentSessionEvent, { type: "tool_execution_end" }>): void;
@@ -90,13 +94,16 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		},
 		sessionManager: { getCwd: () => process.cwd(), getEntries: () => [] },
 		session: { retryAttempt: 0, modelRegistry: { find: () => undefined } },
+		toolOutputMode: "collapsed",
 		toolOutputExpanded: false,
 		isInitialized: true,
 		// Classic chrome: renderSessionItems builds tool components through the
 		// real factory, which consults this field to pick the presentation.
 		chrome: undefined,
 		updateEditorBorderColor: vi.fn(),
-		getRegisteredToolDefinition: (_toolName: string) => undefined,
+		getRegisteredToolDefinition: (_toolName: string, _trustedBuiltIn: boolean) => undefined,
+		isRegisteredToolTrustedBuiltIn: (_toolName: string) => false,
+		getCapturedToolCallTrust: (_toolCallId: string) => false,
 		createToolExecutionComponent: Reflect.get(InteractiveMode.prototype, "createToolExecutionComponent"),
 		clearPendingTools: Reflect.get(InteractiveMode.prototype, "clearPendingTools"),
 		handleToolExecutionEnd: Reflect.get(InteractiveMode.prototype, "handleToolExecutionEnd"),

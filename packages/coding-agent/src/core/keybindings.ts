@@ -86,7 +86,10 @@ export const KEYBINDINGS = {
 	},
 	"app.model.select": { defaultKeys: "ctrl+l", description: "Open model selector" },
 	"app.history.search": { defaultKeys: "ctrl+r", description: "Search prompt history across sessions" },
-	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
+	"app.tools.expand": {
+		defaultKeys: "ctrl+o",
+		description: "Cycle collapsed, expanded, and atomic tool output",
+	},
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
 		description: "Toggle thinking blocks",

@@ -6,11 +6,25 @@ export type ToolExecutionResult = Omit<AgentToolResult<unknown>, "details"> & {
 	readonly isError: boolean;
 };
 
+export type ToolOutputMode = "collapsed" | "expanded" | "atomic";
+
+export function nextToolOutputMode(mode: ToolOutputMode): ToolOutputMode {
+	switch (mode) {
+		case "collapsed":
+			return "expanded";
+		case "expanded":
+			return "atomic";
+		case "atomic":
+			return "collapsed";
+	}
+}
+
 export type ToolExecutionIdentity = {
 	readonly toolName: string;
 	readonly toolCallId: string;
 	readonly cwd: string;
 	readonly toolDefinition: ToolDef | undefined;
+	readonly trustedBuiltIn: boolean;
 };
 
 export type ToolExecutionRenderState = {

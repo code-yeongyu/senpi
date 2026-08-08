@@ -39,7 +39,7 @@ import { loadPromptTemplates } from "./prompt-templates.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import type { Skill } from "./skills.ts";
 import { loadSkills } from "./skills.ts";
-import { createSourceInfo, type SourceInfo } from "./source-info.ts";
+import { createSourceInfo, createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { resetTimings, time } from "./timings.ts";
 
 export interface ResourceExtensionPaths {
@@ -997,10 +997,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private applyExtensionSourceInfo(extensions: Extension[], metadataByPath: Map<string, PathMetadata>): void {
+		const bundledExtensionPaths = this.getBundledExtensionEntryPaths();
 		for (const extension of extensions) {
-			extension.sourceInfo =
-				this.findSourceInfoForPath(extension.path, undefined, metadataByPath) ??
-				this.getDefaultSourceInfoForPath(extension.path);
+			extension.sourceInfo = bundledExtensionPaths.has(extension.resolvedPath)
+				? createSyntheticSourceInfo(extension.path, {
+						source: "builtin",
+						baseDir: dirname(extension.resolvedPath),
+					})
+				: (this.findSourceInfoForPath(extension.path, undefined, metadataByPath) ??
+					this.getDefaultSourceInfoForPath(extension.path));
 			for (const command of extension.commands.values()) {
 				command.sourceInfo = extension.sourceInfo;
 			}

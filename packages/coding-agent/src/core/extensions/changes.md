@@ -1,28 +1,22 @@
 # Core Extensions Changes
 
-## 2026-08-05 - Extension abort provenance
+## 2026-08-05 - Tool renderers can release suspended state
 
-### What changed
+### What changed and why
 
-- `ExtensionContext.abort(source?)` and its host action now accept `"user" | "system"`.
-- The default remains `"user"` for compatibility. A system-owned abort bypasses
-  the interactive user-abort handler and reaches the agent as
-  `agent_end.abortSource === "system"`.
+- `ToolDefinition` gains an optional `disposeRenderState(state)` lifecycle hook.
+- The interactive tool shell calls the hook when a renderer is suspended or disposed, so extensions can release
+  renderer-owned timers and resources instead of leaving invisible work active in atomic mode.
 
-### Why
+### Why this cannot be expressed externally
 
-- Builtin stream remediation previously called the same user-abort path as Escape,
-  so the Goal extension persisted `blocked("user interrupted the turn")` even
-  though TTSR, not the user, stopped the generation.
-- Abort provenance belongs at the initiating extension boundary. Consumers such
-  as Goal can retain their existing source-based policy without detector coupling.
+- Renderer state is created and retained by the built-in interactive shell; only the shared tool-definition contract
+  can provide a lifecycle boundary for every extension renderer.
 
 ### Expected merge conflict zones
 
-- LOW in `types.ts` around `ExtensionContext.abort` and
-  `ExtensionContextActions.abort`.
-- LOW in `runner.ts` and `agent-session.ts` around extension context forwarding
-  and binding.
+- LOW: `types.ts` `ToolDefinition` renderer members.
+- LOW: interactive `tool-execution-renderer.ts` suspension and disposal.
 
 ## 2026-08-03 - ExtensionContext exposes the resolved agent dir
 

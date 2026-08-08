@@ -22,8 +22,10 @@ export class ToolExecutionRenderer extends Container {
 	private readonly contentText: Text;
 	private readonly selfRenderContainer = new Container();
 	private readonly rendererState: Record<string, unknown> = {};
+	private readonly disposedRendererComponents = new WeakSet<Component>();
 	private readonly onInvalidate: () => void;
 	private state: ToolExecutionRenderState;
+	private suspended = false;
 	private callRendererComponent?: Component;
 	private resultRendererComponent?: Component;
 
@@ -32,7 +34,9 @@ export class ToolExecutionRenderer extends Container {
 		this.identity = identity;
 		this.state = state;
 		this.onInvalidate = onInvalidate;
-		this.builtInDefinition = createAllToolDefinitions(identity.cwd)[identity.toolName as ToolName];
+		this.builtInDefinition = identity.trustedBuiltIn
+			? createAllToolDefinitions(identity.cwd)[identity.toolName as ToolName]
+			: undefined;
 		this.contentBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
 		this.contentText = new Text("", 1, 1, (text: string) => theme.bg("toolPendingBg", text));
 		this.addChild(
@@ -58,6 +62,7 @@ export class ToolExecutionRenderer extends Container {
 	}
 
 	update(state: ToolExecutionRenderState): void {
+		this.suspended = false;
 		this.state = state;
 		const background = state.isPartial
 			? (text: string) => theme.bg("toolPendingBg", text)
@@ -81,6 +86,26 @@ export class ToolExecutionRenderer extends Container {
 		if (state.result) this.renderResult(container, state.result);
 		if (progress)
 			container.addChild(new Text(formatToolProgressLine(progress, Date.now(), state.spinnerFrame), 0, 0));
+	}
+
+	suspend(): void {
+		if (this.suspended) return;
+		this.suspended = true;
+		const components = new Set([this.callRendererComponent, this.resultRendererComponent]);
+		this.callRendererComponent = undefined;
+		this.resultRendererComponent = undefined;
+		this.selfRenderContainer.detachAll();
+		this.contentBox.detachAll();
+		this.disposeRenderState(this.identity.toolDefinition);
+		if (this.builtInDefinition !== this.identity.toolDefinition) {
+			this.disposeRenderState(this.builtInDefinition);
+		}
+		for (const component of components) this.disposeRendererComponent(component);
+	}
+
+	override dispose(): void {
+		this.suspend();
+		super.dispose();
 	}
 
 	private getCallRenderer(): ToolDef["renderCall"] | undefined {
@@ -122,7 +147,7 @@ export class ToolExecutionRenderer extends Container {
 			const component = renderer(this.state.args, theme, this.getRenderContext(this.callRendererComponent));
 			this.addRendererComponent(container, "call", component, fallback);
 		} catch {
-			this.callRendererComponent = undefined;
+			this.setRendererComponent("call", undefined);
 			container.addChild(fallback);
 		}
 	}
@@ -144,7 +169,7 @@ export class ToolExecutionRenderer extends Container {
 			);
 			this.addRendererComponent(container, "result", component, fallback);
 		} catch {
-			this.resultRendererComponent = undefined;
+			this.setRendererComponent("result", undefined);
 			if (fallback) container.addChild(fallback);
 		}
 	}
@@ -162,9 +187,15 @@ export class ToolExecutionRenderer extends Container {
 		}
 		this.setRendererComponent(slot, value);
 		container.addChild(
-			new ToolRendererBoundary(value, fallback, () => {
-				if (this.getRendererComponent(slot) === value) this.setRendererComponent(slot, undefined);
-			}),
+			new ToolRendererBoundary(
+				value,
+				fallback,
+				() => {
+					if (this.callRendererComponent === value) this.callRendererComponent = undefined;
+					if (this.resultRendererComponent === value) this.resultRendererComponent = undefined;
+				},
+				() => this.disposeRendererComponent(value),
+			),
 		);
 	}
 
@@ -173,7 +204,25 @@ export class ToolExecutionRenderer extends Container {
 	}
 
 	private setRendererComponent(slot: RendererSlot, component: Component | undefined): void {
+		const previous = this.getRendererComponent(slot);
+		const other = slot === "call" ? this.resultRendererComponent : this.callRendererComponent;
 		if (slot === "call") this.callRendererComponent = component;
 		else this.resultRendererComponent = component;
+		if (previous && previous !== component && previous !== other) this.disposeRendererComponent(previous);
+	}
+
+	private disposeRenderState(definition: ToolDef | undefined): void {
+		try {
+			definition?.disposeRenderState?.(this.rendererState);
+		} catch {}
+	}
+
+	private disposeRendererComponent(component: Component | undefined): void {
+		if (!component || this.disposedRendererComponents.has(component)) return;
+		this.disposedRendererComponents.add(component);
+		try {
+			const dispose = Reflect.get(component, "dispose");
+			if (typeof dispose === "function") Reflect.apply(dispose, component, []);
+		} catch {}
 	}
 }

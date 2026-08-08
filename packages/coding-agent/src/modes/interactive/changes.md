@@ -1,5 +1,38 @@
 # changes
 
+## Atomic one-line tool output mode (2026-08-05)
+
+### What changed
+
+- `app.tools.expand` now cycles collapsed, expanded, and atomic tool output.
+- Atomic mode renders ordinary tools as adjacent full-width one-line rows with zero horizontal container padding or hard-coded leading spaces, exact bold tool names, shallow known-tool metadata, and original spinner placement.
+- Bash places its active spinner immediately after the tool name; Eval follows its native reading order: `eval`, target, active spinner, then call count.
+- Ctrl+O reaches direct, nested, and still-pending tool components while preserving top-level expansion ownership for non-tool components.
+- Monitor, Todo, and Goal tools retain their dedicated renderers, and classic, Grok, and extension self-renderers restore when leaving atomic mode.
+- Metadata observation is bounded, strips terminal and bidirectional control characters, accepts only safe-integer
+  counts, and separates Eval targets from trusted facts with the reserved delimiter.
+- Built-in metadata and passthrough behavior require registered built-in provenance, so same-name extension overrides remain untrusted.
+- Live tool trust is captured by session and tool-call ID; transcript rebuilds reuse captured execution-time provenance,
+  while historical calls without it default to untrusted.
+- Entering atomic mode suspends hidden renderers and releases renderer-owned resources through an explicit lifecycle hook.
+- `components/tool-execution-controller.ts` owns mode selection, atomic eligibility, render caching, suspension/resume,
+  and spinner policy so the high-frequency component remains below the repository size ceiling.
+
+### Why
+
+- Dense tool activity needs a compact scan mode without losing the command target, progress, or useful result counts.
+
+### Why this cannot be expressed externally
+
+- Atomic spacing, renderer restoration, and mode propagation depend on the built-in tool component tree and global interactive keybinding state.
+
+### Integration boundary
+
+- This change does not alter TUI scrollback replay.
+- Expected merge conflict zones for future upstream ports are `interactive-mode.ts`, `components/tool-execution.ts`,
+  `components/tool-execution-controller.ts`, `components/tool-execution-renderer.ts`, `tool-call-provenance.ts`,
+  keybinding/help copy, and this record.
+
 ## Server fallback abort uses one TUI notice (2026-08-05)
 
 ### What changed
