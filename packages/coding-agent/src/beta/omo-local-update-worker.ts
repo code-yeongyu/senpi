@@ -9,7 +9,8 @@
 // serializes against concurrent updates through the existing pid lock.
 
 import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectInstallMethod } from "../config.ts";
@@ -23,7 +24,9 @@ export type OmoLocalWorkerSpawnOutcome =
 	| { ok: true; pid: number | undefined; logPath: string }
 	| { ok: false; message: string };
 
-export type OmoLocalSpawnWorker = (request: OmoLocalWorkerSpawnRequest) => OmoLocalWorkerSpawnOutcome;
+export type OmoLocalSpawnWorker = (
+	request: OmoLocalWorkerSpawnRequest,
+) => OmoLocalWorkerSpawnOutcome | Promise<OmoLocalWorkerSpawnOutcome>;
 
 export function omoLocalUpdateWorkerLogPath(agentDir: string): string {
 	return join(agentDir, "omo-local-update", "worker.log");
@@ -40,21 +43,21 @@ function workerCommandArgs(force: boolean): string[] {
 	return [...process.execArgv, cliMainPath, ...updateArgs];
 }
 
-export const defaultSpawnWorker: OmoLocalSpawnWorker = (request) => {
+export const defaultSpawnWorker: OmoLocalSpawnWorker = async (request) => {
 	const logPath = omoLocalUpdateWorkerLogPath(request.agentDir);
 	try {
 		mkdirSync(dirname(logPath), { recursive: true });
-		const logFd = openSync(logPath, "w");
+		const logFile = await open(logPath, "w");
 		try {
 			const child = spawn(process.execPath, workerCommandArgs(request.force), {
 				detached: true,
 				env: process.env,
-				stdio: ["ignore", logFd, logFd],
+				stdio: ["ignore", logFile.fd, logFile.fd],
 			});
 			child.unref();
 			return { ok: true, pid: child.pid, logPath };
 		} finally {
-			closeSync(logFd);
+			await logFile.close();
 		}
 	} catch (error) {
 		return { ok: false, message: error instanceof Error ? error.message : String(error) };
