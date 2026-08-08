@@ -1,6 +1,9 @@
 import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
 import { buildSessionContext } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { BTW_HISTORY_ENTRY_TYPE, buildBtwHistoryMessages, readBtwHistory } from "./history.ts";
+import { BTW_HISTORY_OVERLAY_OPTIONS, BtwHistoryPanel } from "./history-panel.ts";
+import type { BtwHistoryViewEntry } from "./history-view-model.ts";
 import { BtwPanel } from "./panel.ts";
 import { buildSideQueryContext, runSideQuery } from "./side-query.ts";
 
@@ -48,7 +51,27 @@ export default function btwExtension(pi: ExtensionAPI) {
 		handler: async (args, ctx) => {
 			const question = args.trim();
 			if (!question) {
-				ctx.ui.notify("Usage: /btw <question>", "warning");
+				const entries: BtwHistoryViewEntry[] = readBtwHistory(ctx.sessionManager.getEntries()).map((entry) => ({
+					question: entry.question,
+					answer: entry.answer,
+				}));
+				if (entries.length === 0) {
+					ctx.ui.notify("No side questions yet in this session.", "info");
+					return;
+				}
+				if (ctx.mode === "tui" && ctx.hasUI) {
+					await ctx.ui.custom<undefined>(
+						(tui, theme, _keybindings, done) => new BtwHistoryPanel(entries, tui, theme, done),
+						{ overlay: true, overlayOptions: BTW_HISTORY_OVERLAY_OPTIONS },
+					);
+					return;
+				}
+				ctx.ui.notify(
+					entries
+						.map((entry, index) => `${index + 1}. Question: ${entry.question}\nAnswer: ${entry.answer}`)
+						.join("\n\n"),
+					"info",
+				);
 				return;
 			}
 			const model = ctx.model;
@@ -58,11 +81,12 @@ export default function btwExtension(pi: ExtensionAPI) {
 			}
 
 			const snapshot = buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId());
+			const priorBtw = buildBtwHistoryMessages(readBtwHistory(ctx.sessionManager.getEntries()));
 			const history = convertToLlm(filterContextExcludedMessages(snapshot.messages));
 			const systemPrompt = ctx.getSystemPrompt();
 			const thinkingLevel = pi.getThinkingLevel();
 			const sessionId = ctx.sessionManager.getSessionId();
-			const context = buildSideQueryContext({ systemPrompt, history, question });
+			const context = buildSideQueryContext({ systemPrompt, history, question, priorBtw });
 
 			dismiss(ctx, { abort: true });
 			const controller = new AbortController();
@@ -110,6 +134,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 				);
 				if (active !== entry) return;
 				entry.settled = true;
+				pi.appendEntry(BTW_HISTORY_ENTRY_TYPE, { question, answer: replyText, timestamp: Date.now() });
 				if (entry.panel) {
 					entry.panel.markDone();
 				} else {
