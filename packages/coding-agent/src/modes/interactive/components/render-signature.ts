@@ -41,16 +41,42 @@ function sampleSignatureString(text: string): string {
 }
 
 function hashSignatureString(source: string): string {
-	let hash = 0x811c9dc5;
+	return formatSignatureHash(updateSignatureHash(0x811c9dc5, source));
+}
+
+function updateSignatureHash(hash: number, source: string): number {
 	for (let index = 0; index < source.length; index++) {
 		hash ^= source.charCodeAt(index);
 		hash = Math.imul(hash, 0x01000193);
 	}
+	return hash;
+}
+
+function formatSignatureHash(hash: number): string {
 	return (hash >>> 0).toString(36);
 }
 
 function hashSignatureValue(value: unknown): string {
 	return hashSignatureString(JSON.stringify(summarizeSignatureValue(value)));
+}
+
+function hashSignatureArrayTail(
+	value: readonly unknown[],
+	start: number,
+	depth: number,
+	seen: WeakSet<object>,
+): string {
+	let hash = 0x811c9dc5;
+	for (let index = start; index < value.length; index++) {
+		hash = updateSignatureHash(hash, String(index));
+		hash = updateSignatureHash(hash, "\u0000");
+		hash = updateSignatureHash(
+			hash,
+			JSON.stringify(summarizeSignatureValue(value[index], String(index), depth + 1, seen)),
+		);
+		hash = updateSignatureHash(hash, "\u0000");
+	}
+	return formatSignatureHash(hash);
 }
 
 function summarizeSignatureValue(
@@ -97,7 +123,7 @@ function summarizeSignatureValue(
 			.slice(0, SIGNATURE_ARRAY_ITEM_LIMIT)
 			.map((item, index) => summarizeSignatureValue(item, String(index), depth + 1, seen));
 		if (value.length > SIGNATURE_ARRAY_ITEM_LIMIT) {
-			const tailHash = hashSignatureValue(value.slice(SIGNATURE_ARRAY_ITEM_LIMIT));
+			const tailHash = hashSignatureArrayTail(value, SIGNATURE_ARRAY_ITEM_LIMIT, depth, seen);
 			seen.delete(value);
 			return [...summarized, `[+${value.length - SIGNATURE_ARRAY_ITEM_LIMIT} items hash=${tailHash}]`];
 		}
