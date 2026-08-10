@@ -11,6 +11,7 @@ const FORBIDDEN_PRODUCTION_TOKENS = [
 	"@oh-my-opencode/senpi-task",
 	"runOmoLocalUpdateBeta",
 	"--omo-local-update-worker",
+	"omo-local-update",
 	"SENPI_OMO_LOCAL_UPDATE",
 	"origin/dev:packages/omo-senpi",
 ] as const;
