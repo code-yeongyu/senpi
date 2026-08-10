@@ -1,5 +1,29 @@
 # changes
 
+## Refresh server-fallback policy for active-turn model changes (2026-08-10)
+
+### What changed
+
+- `AgentSession` now recomputes `abortServerSideFallback` in its next-turn refresh snapshot from the live retry
+  settings and the newly active model's configured fallback chain.
+- Favorite-model cycling during tool execution previously changed the next request's model but left the agent loop's
+  run-start server-fallback option unchanged. A Fable request entered from an unchained model could therefore accept
+  and persist Anthropic's provider-native Fable-to-Opus fallback instead of routing the refusal through Senpi's
+  configured chain.
+- The explicit `retry.abortServerSideFallback: false` opt-out remains false after the same in-turn model cycle.
+- Coverage reproduces the real request order with a faux tool: unchained model request, favorite cycle during tool
+  execution, then a chained-model continuation.
+
+### Why this cannot be expressed externally
+
+- Extensions can trigger or observe model selection, but the live provider option is assembled by agent-core from the
+  session's next-turn snapshot before the continuation request is sent.
+
+### Expected merge conflict zones
+
+- LOW: `_installAgentNextTurnRefresh()` next-turn snapshot fields in `agent-session.ts`.
+- LOW: `server-fallback-abort-option.test.ts` continuation-policy coverage.
+
 ## Extension filesystem policy binding (2026-08-09)
 
 ### What changed

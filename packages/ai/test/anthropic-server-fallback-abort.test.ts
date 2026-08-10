@@ -155,6 +155,41 @@ describe("Anthropic server-side fallback receipt abort", () => {
 		expect(JSON.stringify(result.content)).toContain(SUBSTITUTE_TEXT);
 	});
 
+	it("keeps a malformed fallback receipt when the client abort policy is on", async () => {
+		const model = getModel("anthropic", "claude-fable-5");
+		const malformedReceipt: SseEvent = {
+			event: "content_block_start",
+			data: JSON.stringify({
+				type: "content_block_start",
+				index: 0,
+				content_block: {
+					type: "fallback",
+					from: { model: "claude-fable-5" },
+				},
+			}),
+		};
+		const body = createChunkedSseResponse([
+			messageStart("claude-fable-5"),
+			malformedReceipt,
+			...substituteOutputEvents,
+		]);
+
+		const result = await streamAnthropic(model, context, {
+			abortServerSideFallback: true,
+			client: createFakeAnthropicClient(body.response),
+		}).result();
+
+		expect(result.stopReason).toBe("stop");
+		const receipt = result.content.find(
+			(block): block is ProviderNativeContent => block.type === "providerNative" && block.subtype === "fallback",
+		);
+		expect(receipt?.raw).toEqual({
+			type: "fallback",
+			from: { model: "claude-fable-5" },
+		});
+		expect(JSON.stringify(result.content)).toContain(SUBSTITUTE_TEXT);
+	});
+
 	it("aborts at the receipt and classifies the turn as a classifier refusal", async () => {
 		const model = getModel("anthropic", "claude-fable-5");
 		let transportSignal: AbortSignal | undefined;

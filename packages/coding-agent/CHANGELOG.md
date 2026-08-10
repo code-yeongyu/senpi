@@ -15,6 +15,10 @@
 - Fixed interactive render signature hashing to process omitted array items and object keys iteratively, preventing stack
   overflows on very large tool and assistant values while retaining tail-change cache invalidation
   ([#782](https://github.com/code-yeongyu/senpi/pull/782) by [@achieve0410](https://github.com/achieve0410)).
+- Route Anthropic provider-native refusal fallbacks through the configured Senpi chain after an active-turn model
+  change, instead of persisting the server-selected substitute because the run retained the previous model's policy
+  ([#796](https://github.com/code-yeongyu/senpi/pull/796)).
+
 ### Removed
 
 ## [2026.8.11-2] - 2026-08-10

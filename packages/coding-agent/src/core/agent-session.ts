@@ -1072,6 +1072,8 @@ export class AgentSession {
 				},
 				model: this.agent.state.model,
 				thinkingLevel: this.agent.state.thinkingLevel,
+				abortServerSideFallback:
+					this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain(),
 			};
 		};
 	}

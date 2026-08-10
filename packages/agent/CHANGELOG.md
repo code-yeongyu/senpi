@@ -10,6 +10,10 @@
 
 ### Fixed
 
+- Refresh `abortServerSideFallback` from the host's next-turn snapshot so an active agent run cannot carry a prior
+  model's server-fallback policy into the next provider request
+  ([#796](https://github.com/code-yeongyu/senpi/pull/796)).
+
 ### Removed
 
 ## [2026.8.11-2] - 2026-08-10

@@ -139,6 +139,8 @@ export interface AgentLoopTurnUpdate {
 	model?: Model<any>;
 	/** Thinking level for the next provider request. */
 	thinkingLevel?: ThinkingLevel;
+	/** Whether the next provider request should abort a server-selected fallback. */
+	abortServerSideFallback?: boolean;
 }
 
 export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {}
