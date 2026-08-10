@@ -438,6 +438,17 @@ describe("package commands", () => {
 		}
 	});
 
+	it("rejects the removed OMO local-update worker option", async () => {
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(main(["update", "--omo-local-update-worker"])).resolves.toBeUndefined();
+
+		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+			'Unknown option --omo-local-update-worker for "update".',
+		);
+		expect(process.exitCode).toBe(1);
+	});
+
 	it("shows a friendly error for missing install source", async () => {
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 

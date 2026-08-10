@@ -87,11 +87,9 @@ export function makeSandbox(label = "senpi-qa") {
 		// Keep QA hermetic and quiet: no startup network, no telemetry.
 		PI_OFFLINE: "1",
 		PI_TELEMETRY: "0",
-		// HOME-derived senpi paths (package discovery, omo-native detection, omo-local-update)
-		// must resolve inside the sandbox, and the local-update path swap must stay disarmed.
+		// HOME-derived package discovery must stay inside the sandbox.
 		HOME: dir,
 		USERPROFILE: dir,
-		SENPI_OMO_LOCAL_UPDATE: "0",
 		// Never let an interactive pager/editor hang a captured run.
 		PAGER: "cat",
 		GIT_PAGER: "cat",
@@ -344,8 +342,7 @@ async function selfCheck() {
 			box.env[ENV_SESSION_DIR] === box.sessionDir &&
 			box.env.PI_OFFLINE === "1" &&
 			box.env.HOME === box.dir &&
-			box.env.USERPROFILE === box.dir &&
-			box.env.SENPI_OMO_LOCAL_UPDATE === "0",
+			box.env.USERPROFILE === box.dir,
 		box.dir,
 	);
 
