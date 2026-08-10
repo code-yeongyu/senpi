@@ -12,6 +12,7 @@ import {
 import { createBuiltinParserRegistry } from "../src/core/extensions/builtin/permission-system/parsers.ts";
 import { PermissionService } from "../src/core/extensions/builtin/permission-system/service.ts";
 import { DeniedError } from "../src/core/extensions/builtin/permission-system/types.ts";
+import { permissionMetadataAgentScript, streamingAgentScript } from "./helpers/native-agent-sdk.ts";
 
 describe("native agent ACP boundary", () => {
 	it("passes only runtime and provider-specific credential variables", () => {
@@ -125,84 +126,7 @@ describe("native agent ACP boundary", () => {
 	it("uses streamed tool metadata when ACP permission requests omit kind and raw input", async () => {
 		const cwd = mkdtempSync(join(tmpdir(), "senpi-acp-permission-"));
 		const rejectionMarker = join(cwd, "rejected");
-		const fakeAgent = `
-			import { writeFileSync } from "node:fs";
-			import { createInterface } from "node:readline";
-			const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
-			let promptId;
-			const lines = createInterface({ input: process.stdin });
-			lines.on("line", (line) => {
-				const message = JSON.parse(line);
-				if (message.method === "initialize") {
-					send({
-						jsonrpc: "2.0",
-						id: message.id,
-						result: {
-							protocolVersion: 1,
-							agentCapabilities: { loadSession: false },
-							authMethods: [],
-						},
-					});
-					return;
-				}
-				if (message.method === "session/new") {
-					send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "permission-session" } });
-					return;
-				}
-				if (message.method === "session/prompt") {
-					promptId = message.id;
-					send({
-						jsonrpc: "2.0",
-						method: "session/update",
-						params: {
-							sessionId: "permission-session",
-							update: {
-								sessionUpdate: "tool_call",
-								toolCallId: "tool-1",
-								title: "Write",
-								kind: "edit",
-								status: "pending",
-							},
-						},
-					});
-					send({
-						jsonrpc: "2.0",
-						method: "session/update",
-						params: {
-							sessionId: "permission-session",
-							update: {
-								sessionUpdate: "tool_call_update",
-								toolCallId: "tool-1",
-								content: [{
-									type: "content",
-									content: { type: "text", text: "{\\"path\\":\\"proof.txt\\",\\"content\\":\\"blocked\\"}" },
-								}],
-							},
-						},
-					});
-					send({
-						jsonrpc: "2.0",
-						id: 99,
-						method: "session/request_permission",
-						params: {
-							sessionId: "permission-session",
-							options: [
-								{ optionId: "allow", name: "Allow", kind: "allow_once" },
-								{ optionId: "reject", name: "Reject", kind: "reject_once" },
-							],
-							toolCall: { toolCallId: "tool-1", title: "Write" },
-						},
-					});
-					return;
-				}
-				if (message.id === 99) {
-					if (message.result?.outcome?.optionId === "reject") {
-						writeFileSync(${JSON.stringify(rejectionMarker)}, "rejected");
-					}
-					send({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn" } });
-				}
-			});
-		`;
+		const fakeAgent = permissionMetadataAgentScript(rejectionMarker);
 		let capturedRequest: unknown;
 		const unregister = registerNativeAgentPermissionHandler("senpi-session", async (request) => {
 			capturedRequest = request;
@@ -240,59 +164,7 @@ describe("native agent ACP boundary", () => {
 	it("forwards ACP text chunks before the prompt turn completes", async () => {
 		const cwd = mkdtempSync(join(tmpdir(), "senpi-acp-stream-"));
 		const completionMarker = join(cwd, "completed");
-		const fakeAgent = `
-			import { writeFileSync } from "node:fs";
-			import { createInterface } from "node:readline";
-			const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
-			const lines = createInterface({ input: process.stdin });
-			lines.on("line", (line) => {
-				const message = JSON.parse(line);
-				if (message.method === "initialize") {
-					send({
-						jsonrpc: "2.0",
-						id: message.id,
-						result: {
-							protocolVersion: 1,
-							agentCapabilities: { loadSession: false },
-							authMethods: [],
-						},
-					});
-					return;
-				}
-				if (message.method === "session/new") {
-					send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "stream-session" } });
-					return;
-				}
-				if (message.method === "session/prompt") {
-					send({
-						jsonrpc: "2.0",
-						method: "session/update",
-						params: {
-							sessionId: "stream-session",
-							update: {
-								sessionUpdate: "agent_message_chunk",
-								content: { type: "text", text: "first" },
-							},
-						},
-					});
-					setTimeout(() => {
-						writeFileSync(${JSON.stringify(completionMarker)}, "done");
-						send({
-							jsonrpc: "2.0",
-							method: "session/update",
-							params: {
-								sessionId: "stream-session",
-								update: {
-									sessionUpdate: "agent_message_chunk",
-									content: { type: "text", text: "second" },
-								},
-							},
-						});
-						send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
-					}, 100);
-				}
-			});
-		`;
+		const fakeAgent = streamingAgentScript(completionMarker);
 
 		try {
 			const iterator = runAcpAgent(
