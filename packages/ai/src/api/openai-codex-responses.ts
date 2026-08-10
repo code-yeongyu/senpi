@@ -6,6 +6,7 @@ import type {
 	ResponseInput,
 	ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
+import { getWireIdentity } from "../wire-identity.ts";
 
 type ProcessWithOsBuiltinModule = typeof process & {
 	getBuiltinModule?: (id: "node:os") => typeof NodeOs;
@@ -1650,8 +1651,9 @@ function buildBaseCodexHeaders(
 	} else {
 		headers.delete("chatgpt-account-id");
 	}
-	headers.set("originator", "senpi");
-	const userAgent = _os ? `senpi (${_os.platform()} ${_os.release()}; ${_os.arch()})` : "senpi (browser)";
+	const identity = getWireIdentity();
+	headers.set("originator", identity);
+	const userAgent = _os ? `${identity} (${_os.platform()} ${_os.release()}; ${_os.arch()})` : `${identity} (browser)`;
 	headers.set("User-Agent", userAgent);
 	return headers;
 }

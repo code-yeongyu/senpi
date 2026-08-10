@@ -5,6 +5,7 @@
 import chalk from "chalk";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
+import { migrateEngineStateForBrand } from "./brand-dir-migration.ts";
 import { getAgentDir, getBinDir } from "./config.ts";
 import { migrateKeybindingsConfig } from "./core/keybindings.ts";
 import { migrateExtensionSystem } from "./extension-system-migration.ts";
@@ -228,6 +229,9 @@ export function runMigrations(cwd: string): {
 	migratedAuthProviders: string[];
 	deprecationWarnings: string[];
 } {
+	// Runs first: everything below resolves paths through the agent directory, which the
+	// branded install only populates once this copy-forward has happened.
+	migrateEngineStateForBrand();
 	const migratedAuthProviders = migrateAuthToAuthJson();
 	migrateLegacySenpiDirs(cwd);
 	migrateSessionsFromAgentRoot();

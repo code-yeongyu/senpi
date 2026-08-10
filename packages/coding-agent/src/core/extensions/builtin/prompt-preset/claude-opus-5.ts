@@ -25,6 +25,7 @@
 // search line, workstationDialect "claude"; dynamic pieces (context files,
 // skills, date, cwd) still come from buildDynamicSystemPrompt.
 
+import { APP_NAME } from "../../../../config.ts";
 import type { DynamicPromptCoreContext } from "../../../dynamic-prompt/build.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
 import { getToolsPromptDisplay } from "../../../dynamic-prompt/tool-categorization.ts";
@@ -39,7 +40,7 @@ function buildSearchLine(context: DynamicPromptCoreContext): string {
 }
 
 function buildClaudeOpus5Core(context: DynamicPromptCoreContext): string {
-	return `You are senpi, a coding agent. Your work should be indistinguishable from a careful senior engineer's.
+	return `You are ${APP_NAME}, a coding agent. Your work should be indistinguishable from a careful senior engineer's.
 
 ## Intent Gate
 

@@ -1,3 +1,4 @@
+import { APP_NAME, agentDirLabel } from "../../../../config.ts";
 import type { TipDefinition } from "./types.ts";
 
 export const WORKSPACE_TIPS = [
@@ -16,13 +17,13 @@ export const WORKSPACE_TIPS = [
 		id: "agents-md-context",
 		bindings: [],
 		render: () =>
-			"senpi loads AGENTS.md from your home directory, every parent folder, and the current folder as project instructions.",
+			`${APP_NAME} loads AGENTS.md from your home directory, every parent folder, and the current folder as project instructions.`,
 	},
 	{
 		id: "skills-and-prompts",
 		bindings: [],
 		render: () =>
-			"Skills run as /skill:name, and prompt templates in ~/.senpi/agent/prompts expand as /templatename.",
+			`Skills run as /skill:name, and prompt templates in ${agentDirLabel()}/prompts expand as /templatename.`,
 	},
 	{
 		id: "files-command",
@@ -46,7 +47,7 @@ export const WORKSPACE_TIPS = [
 		id: "goal-command",
 		bindings: [],
 		requiresCommand: "goal",
-		render: () => "Use /goal to set a persistent goal senpi keeps pursuing, then pause, resume, or clear it.",
+		render: () => `Use /goal to set a persistent goal ${APP_NAME} keeps pursuing, then pause, resume, or clear it.`,
 	},
 	{
 		id: "btw-command",

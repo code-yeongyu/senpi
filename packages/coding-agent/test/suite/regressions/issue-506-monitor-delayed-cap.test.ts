@@ -102,7 +102,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 		});
 	});
 
-	it("fails closed when delivery accounting cannot be persisted", async () => {
+	it("cancels when delivery accounting no longer has a current goal", async () => {
 		const notices: string[] = [];
 		const ctx = await makeGoalContext(notices, "issue-506-persistence-failure");
 		const goal = activeGoal("goal-issue-506-missing-store");
@@ -135,7 +135,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 					markContinuationPending: () => {},
 				},
 			),
-		).rejects.toThrow("Cannot persist goal continuation delivery");
+		).resolves.toBeNull();
 		expect(queued).toBe(false);
 	});
 });

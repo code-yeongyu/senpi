@@ -911,4 +911,15 @@ describe("goal continuation streak persistence", () => {
 		expect(await recordContinuationDelivered(ref, "sig")).toBeNull();
 		expect(await resetContinuationStreak(ref)).toBeNull();
 	});
+
+	it("does not record a continuation admitted for a replaced goal", async () => {
+		const ref = await tempStore("thread-streak-replaced-goal");
+		const original = await createGoal(ref, "Original goal");
+		const replacement = await updateGoal(ref, { objective: "Replacement goal" }, "user");
+
+		const recorded = await recordContinuationDelivered(ref, "stale-signature", original.id);
+
+		expect(recorded).toBeNull();
+		expect(await readGoal(ref)).toEqual(replacement);
+	});
 });

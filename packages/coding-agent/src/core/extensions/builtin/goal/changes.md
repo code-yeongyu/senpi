@@ -1,5 +1,27 @@
 # goal Extension Changes
 
+## Serialized goal mutations and stale-continuation cancellation (2026-08-10)
+
+### What changed
+
+- Goal read/modify/write operations now serialize per persisted goal file while unrelated threads remain parallel.
+- Continuation delivery records only when the admitted goal id is still current; a clear or replacement cancels stale delivery before any hidden prompt is queued.
+- App-server clear no longer races asynchronous `goal_store_changed` continuation accounting and cannot resurrect a cleared goal.
+
+### Why
+
+`goal_store_changed` listeners are asynchronous and fire outside the app-server thread task queue. A continuation could read an active goal, then overwrite a later clear with its stale snapshot. Store-level serialization is required because commands, tools, lifecycle callbacks, monitors, and RPC handlers all mutate the same persisted goal outside one shared handler queue.
+
+### Why this is not extension-only
+
+The race is inside the builtin goal persistence contract and app-server event path. An external extension cannot make core store mutations linearizable or prevent the builtin continuation listener from committing a stale read.
+
+### Merge-conflict zones
+
+- `store.ts`: per-goal mutation queue and serialized mutation functions.
+- `lifecycle-helpers.ts`: expected goal-id fence and stale cancellation.
+- `index.ts`, `monitor-continuation.ts`: nullable stale-admission handling.
+
 ## Unified wake-source continuation gating (2026-08-09)
 
 ### What changed

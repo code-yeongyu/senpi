@@ -85,3 +85,4 @@ export * from "./utils/typebox-helpers.ts";
 export { uuidv7 } from "./utils/uuid.ts";
 export * from "./utils/validation.ts";
 export * from "./utils/visible-text.ts";
+export { getWireIdentity, setWireIdentity } from "./wire-identity.ts";

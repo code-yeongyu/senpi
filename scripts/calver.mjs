@@ -12,6 +12,9 @@
  * - Subsequent same-day releases increment the suffix: `-2`, `-3`, ...
  *   The suffix is `max(existing N values) + 1`, where same-day `YYYY.M.D`
  *   (no suffix) is treated as N = 1 for the purposes of "next" computation.
+ * - Automatic computation is globally monotonic. If an explicit prior release
+ *   used a later date than today, the next version increments that latest
+ *   release's suffix instead of returning a lower calendar version.
  *
  * Tolerance:
  * - Registry/git failures (404, network, timeout, ENOTFOUND, etc.) are
@@ -41,6 +44,7 @@ const DEFAULT_PACKAGES = [
 ];
 
 const REGISTRY_TIMEOUT_MS = 30000;
+const CALVER_RE = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-(\d+))?$/;
 
 /**
  * Compute today's CalVer date stamp in `YYYY.M.D`.
@@ -85,15 +89,14 @@ function fetchRegistryVersions(pkg) {
 }
 
 /**
- * Fetch git tags matching `v<today>*` and strip the leading `"v"`.
+ * Fetch CalVer-shaped git tags and strip the leading `"v"`.
  * Returns an empty array on any failure (not a git repo, git missing, etc.).
  *
- * @param {string} today `YYYY.M.D` prefix.
  * @returns {string[]}
  */
-function fetchGitTagVersions(today) {
+function fetchGitTagVersions() {
 	try {
-		const stdout = execFileSync("git", ["tag", "--list", `v${today}*`], {
+		const stdout = execFileSync("git", ["tag", "--list", "v[0-9]*"], {
 			encoding: "utf-8",
 			stdio: ["ignore", "pipe", "pipe"],
 			timeout: REGISTRY_TIMEOUT_MS,
@@ -105,9 +108,32 @@ function fetchGitTagVersions(today) {
 			.map((line) => line.slice(1));
 	} catch (err) {
 		const message = err && typeof err === "object" && "message" in err ? err.message : String(err);
-		process.stderr.write(`[calver] warn: failed to list git tags for v${today}*: ${message}\n`);
+		process.stderr.write(`[calver] warn: failed to list CalVer git tags: ${message}\n`);
 		return [];
 	}
+}
+
+function parseCalver(version) {
+	const match = CALVER_RE.exec(version);
+	if (!match) {
+		return undefined;
+	}
+	return {
+		version,
+		year: Number(match[1]),
+		month: Number(match[2]),
+		day: Number(match[3]),
+		suffix: Number(match[4] ?? 1),
+	};
+}
+
+function compareCalver(left, right) {
+	return (
+		left.year - right.year ||
+		left.month - right.month ||
+		left.day - right.day ||
+		left.suffix - right.suffix
+	);
 }
 
 /**
@@ -128,16 +154,12 @@ export function computeNextVersion(opts = {}) {
 			all.add(v);
 		}
 	}
-	for (const v of fetchGitTagVersions(today)) {
+	for (const v of fetchGitTagVersions()) {
 		all.add(v);
 	}
 
 	const prefix = `${today}-`;
 	const sameDay = [...all].filter((v) => v === today || v.startsWith(prefix));
-	if (sameDay.length === 0) {
-		return today;
-	}
-
 	const suffixes = [];
 	for (const v of sameDay) {
 		if (v === today) {
@@ -151,11 +173,19 @@ export function computeNextVersion(opts = {}) {
 		}
 	}
 
-	if (suffixes.length === 0) {
-		return today;
+	const candidate = suffixes.length === 0 ? today : `${today}-${Math.max(...suffixes) + 1}`;
+	const parsedCandidate = parseCalver(candidate);
+	const latest = [...all]
+		.map(parseCalver)
+		.filter((version) => version !== undefined)
+		.sort(compareCalver)
+		.at(-1);
+
+	if (!latest || compareCalver(parsedCandidate, latest) > 0) {
+		return candidate;
 	}
 
-	return `${today}-${Math.max(...suffixes) + 1}`;
+	return `${latest.year}.${latest.month}.${latest.day}-${latest.suffix + 1}`;
 }
 
 /**
@@ -174,7 +204,7 @@ function gatherReport(opts = {}) {
 			all.add(v);
 		}
 	}
-	for (const v of fetchGitTagVersions(today)) {
+	for (const v of fetchGitTagVersions()) {
 		all.add(v);
 	}
 

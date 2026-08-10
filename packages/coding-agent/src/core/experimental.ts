@@ -1,3 +1,4 @@
+import { envValue } from "./brand.ts";
 export function areExperimentalFeaturesEnabled(): boolean {
-	return process.env.PI_EXPERIMENTAL === "1";
+	return envValue("EXPERIMENTAL") === "1";
 }

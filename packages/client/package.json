@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-client",
-	"version": "2026.8.11",
+	"version": "2026.8.11-2",
 	"description": "Transport-neutral client for remote pi sessions over framed CBOR bytes",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -47,7 +47,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-protocol": "2026.8.11"
+		"@earendil-works/pi-protocol": "2026.8.11-2"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",

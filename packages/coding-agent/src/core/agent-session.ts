@@ -65,6 +65,7 @@ import { AgentAbortProvenance } from "./agent-abort-provenance.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction } from "./agent-settled-delivery.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
+import { envValue } from "./brand.ts";
 import {
 	type CompactionResult,
 	calculateContextTokens,
@@ -714,7 +715,7 @@ export class AgentSession {
 		this.settingsManager = config.settingsManager;
 		const noModelFallback =
 			config.resourceLoader.getExtensions().runtime.flagValues.get("no-model-fallback") === true ||
-			process.env.SENPI_NO_FALLBACK === "1";
+			envValue("NO_FALLBACK") === "1";
 		if (noModelFallback) {
 			this.settingsManager.applyOverrides({ retry: { modelFallback: false } });
 		}

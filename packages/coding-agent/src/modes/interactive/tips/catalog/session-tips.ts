@@ -1,3 +1,4 @@
+import { APP_NAME } from "../../../../config.ts";
 import type { TipDefinition } from "./types.ts";
 
 export const SESSION_TIPS = [
@@ -24,7 +25,7 @@ export const SESSION_TIPS = [
 	{
 		id: "continue-session",
 		bindings: [],
-		render: () => "senpi -c continues your most recent session; senpi -r opens the session picker.",
+		render: () => `${APP_NAME} -c continues your most recent session; ${APP_NAME} -r opens the session picker.`,
 	},
 	{
 		id: "session-name",

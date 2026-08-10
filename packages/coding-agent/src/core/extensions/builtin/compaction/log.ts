@@ -1,5 +1,6 @@
 import { closeSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { envValue } from "../../../brand.ts";
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const ALLOWED_KEYS = new Set([
@@ -100,7 +101,7 @@ export function createCompactionLogger(
 			if (!EVENTS.has(event)) return;
 			const line = formatLine(level, event, data);
 			writeLine(filePath, line, maxBytes, options.sink);
-			if (options.mirrorToStderr ?? process.env.SENPI_COMPACTION_DEBUG === "1") {
+			if (options.mirrorToStderr ?? envValue("COMPACTION_DEBUG") === "1") {
 				console.error(DEBUG_PREFIX, line);
 			}
 		} catch (error) {
