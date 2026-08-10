@@ -67,6 +67,7 @@
  */
 
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import { envValue } from "../../core/brand.ts";
 import {
 	flushRawStdout,
 	takeOverStdout,
@@ -103,7 +104,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	// SENPI_RPC_CLIENT_CAPABILITIES env var (comma-separated). A launcher can set
 	// it from a client handshake; a plain stdio client that sets nothing gets
 	// byte-identical default behavior.
-	const capabilities = parseClientCapabilities(process.env.SENPI_RPC_CLIENT_CAPABILITIES);
+	const capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES"));
 	const handler = createRpcConnectionHandler(runtimeHost, sink, { capabilities });
 
 	let shuttingDown = false;

@@ -1437,6 +1437,82 @@ pi.registerTool({
 });
 ```
 
+### pi.registerFilesystemPolicy(policy)
+
+Register a filesystem access policy for Senpi's built-in `read`, `write`,
+`edit`, `ls`, `find`, and `grep` tools. This is a **factory-time only** API: call
+it directly from the extension factory so the checker is compiled before the
+built-in tools are constructed.
+
+The policy receives a canonical absolute target:
+
+```typescript
+interface FilesystemPolicyRequest {
+  operation: "read" | "enumerate" | "write";
+  canonicalPath: string;
+  toolName: string;
+}
+```
+
+Operation mapping:
+
+| Operation | Built-in tools |
+|---|---|
+| `read` | `read` |
+| `write` | `write`, `edit` |
+| `enumerate` | `ls`, `find`, `grep` |
+
+Existing targets are resolved through filesystem symlinks. A missing write
+target is resolved through its nearest existing real parent, then its missing
+suffix is reattached. The policy runs after that resolution and immediately
+before the tool's target I/O. A denial is returned as a normal tool error with
+the policy's reason.
+
+```typescript
+import { isAbsolute, relative, resolve, sep } from "node:path";
+import type { ExtensionAPI } from "@code-yeongyu/senpi";
+
+function isContained(root: string, candidate: string): boolean {
+  const pathFromRoot = relative(root, candidate);
+  return pathFromRoot === "" || (
+    pathFromRoot !== ".." &&
+    !pathFromRoot.startsWith(`..${sep}`) &&
+    !isAbsolute(pathFromRoot)
+  );
+}
+
+export default function (pi: ExtensionAPI) {
+  const writableRoot = resolve(process.cwd());
+
+  pi.registerFilesystemPolicy({
+    check({ operation, canonicalPath }) {
+      if (operation !== "write" || isContained(writableRoot, canonicalPath)) {
+        return { allow: true };
+      }
+      return {
+        allow: false,
+        reason: `Writes are limited to ${writableRoot}`,
+      };
+    },
+  });
+}
+```
+
+Policies run in extension load and registration order. Every policy must allow a
+request; the first denial wins. A thrown policy error also stops the tool before
+its target I/O.
+
+An optional `deniedRoots: readonly string[]` field exposes metadata for future
+inherited process sandbox support. Use canonical absolute roots. The current
+runtime does not interpret this metadata and does not apply filesystem policies
+to `bash` or descendants; command-string rewriting is not a filesystem security
+boundary.
+
+This enforcement is separate from `tool_call` permission and approval hooks.
+An unrestricted approval mode, or a hook that returns `{ block: false }`, cannot
+bypass the built-in executor check. Custom extension tools are not covered
+automatically and must call their own policy if they access the filesystem.
+
 ### pi.registerMcpServer(name, config)
 
 Register an MCP server that the agent can use. This is a **factory-time only**

@@ -1,5 +1,26 @@
 # Changes
 
+## 2026-08-10 - Refresh server-fallback policy between tool turns
+
+### What changed and why
+
+- `AgentLoopTurnUpdate` can now replace `abortServerSideFallback` together with the model and thinking level before
+  the next provider request in an active run.
+- `agent-loop.ts` applies the refreshed value when rebuilding its request config after tool execution. Previously the
+  loop snapshotted the option at run start, so a host that changed models mid-turn could send the next request with
+  the prior model's server-fallback policy.
+- An explicit `false` remains authoritative because the update uses nullish fallback rather than truthiness.
+
+### Why the extension system could not handle this
+
+- The provider options object is owned and snapshotted inside agent-core before extensions observe the next request;
+  only the loop can replace request policy between tool turns.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `types.ts` `AgentLoopTurnUpdate`.
+- LOW: `agent-loop.ts` next-turn config replacement.
+
 ## 2026-08-09 - Recover invisible text-protocol assistant stops
 
 ### What changed and why

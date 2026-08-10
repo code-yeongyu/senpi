@@ -5,9 +5,10 @@ import { dirname } from "path";
 import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";
-import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import type { FilesystemPolicyChecker, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { renderToolDiff } from "./diff-render.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
+import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { normalizeDisplayText, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -44,6 +45,8 @@ const defaultWriteOperations: WriteOperations = {
 export interface WriteToolOptions {
 	/** Custom operations for file writing. Default: local filesystem */
 	operations?: WriteOperations;
+	/** Extension-registered filesystem policy checker. */
+	filesystemPolicy?: FilesystemPolicyChecker;
 }
 
 type WriteHighlightCache = {
@@ -197,6 +200,7 @@ export function createWriteToolDefinition(
 ): ToolDefinition<typeof writeSchema, WriteToolDetails | undefined> {
 	const ops = options?.operations ?? defaultWriteOperations;
 	const readBaseline = options?.operations ? undefined : readLocalWriteBaseline;
+	const filesystemPolicy = options?.filesystemPolicy;
 	return {
 		name: "write",
 		label: "write",
@@ -224,6 +228,15 @@ export function createWriteToolDefinition(
 				};
 
 				throwIfAborted();
+				if (filesystemPolicy) {
+					const decision = await filesystemPolicy({
+						operation: "write",
+						canonicalPath: await canonicalizeFilesystemPath(absolutePath),
+						toolName: "write",
+					});
+					if (!decision.allow) throw new Error(decision.reason);
+					throwIfAborted();
+				}
 				const baseline = readBaseline ? await readBaseline(absolutePath) : ({ kind: "unavailable" } as const);
 				throwIfAborted();
 				// Create parent directories if needed.

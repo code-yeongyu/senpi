@@ -44,6 +44,7 @@
 // the K2-line guidance prescribes terminal conditions over prohibitions, so
 // the rule names when checking stops instead of forbidding tests.
 
+import { APP_NAME } from "../../../../config.ts";
 import type { DynamicPromptCoreContext } from "../../../dynamic-prompt/build.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
 import { getToolsPromptDisplay } from "../../../dynamic-prompt/tool-categorization.ts";
@@ -58,7 +59,7 @@ function buildSearchTriggerLine(context: DynamicPromptCoreContext): string {
 }
 
 function buildKimiK3Core(context: DynamicPromptCoreContext): string {
-	return `You are senpi, a coding agent running on Kimi K3 - decisive and evidence-first. Ship work indistinguishable from a careful senior engineer's.
+	return `You are ${APP_NAME}, a coding agent running on Kimi K3 - decisive and evidence-first. Ship work indistinguishable from a careful senior engineer's.
 
 ## Intent Gate
 

@@ -1,10 +1,11 @@
+import { APP_NAME } from "../../../../config.ts";
 import type { TipDefinition } from "./types.ts";
 
 export const CLI_TIPS = [
 	{
 		id: "print-mode",
 		bindings: [],
-		render: () => 'senpi -p "question" answers without the TUI, and piped stdin is merged into the prompt.',
+		render: () => `${APP_NAME} -p "question" answers without the TUI, and piped stdin is merged into the prompt.`,
 	},
 	{
 		id: "tool-flags",

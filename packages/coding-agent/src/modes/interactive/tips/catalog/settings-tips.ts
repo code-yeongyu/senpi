@@ -1,3 +1,4 @@
+import { agentDirLabel, CONFIG_DIR_NAME } from "../../../../config.ts";
 import type { TipDefinition } from "./types.ts";
 
 export const SETTINGS_TIPS = [
@@ -5,7 +6,7 @@ export const SETTINGS_TIPS = [
 		id: "settings-locations",
 		bindings: [],
 		render: () =>
-			"Use /settings for common options; the rest live in settings.json, with .senpi/settings.json overriding per project.",
+			`Use /settings for common options; the rest live in settings.json, with ${CONFIG_DIR_NAME}/settings.json overriding per project.`,
 	},
 	{
 		id: "permission-preset",
@@ -21,7 +22,7 @@ export const SETTINGS_TIPS = [
 	{
 		id: "custom-themes",
 		bindings: [],
-		render: () => "Switch themes from /settings, and drop custom theme files in ~/.senpi/agent/themes.",
+		render: () => `Switch themes from /settings, and drop custom theme files in ${agentDirLabel()}/themes.`,
 	},
 	{
 		id: "reload-resources",

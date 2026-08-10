@@ -1,3 +1,4 @@
+import { APP_NAME } from "../../../../config.ts";
 import type { TipDefinition } from "./types.ts";
 
 export const MODEL_TIPS = [
@@ -27,7 +28,7 @@ export const MODEL_TIPS = [
 		id: "model-cycling-scope",
 		bindings: ["app.model.cycleForward"],
 		render: (keys) =>
-			`Start senpi with --models "anthropic/*,gpt-5*" to limit which models ${keys("app.model.cycleForward")} cycles through.`,
+			`Start ${APP_NAME} with --models "anthropic/*,gpt-5*" to limit which models ${keys("app.model.cycleForward")} cycles through.`,
 	},
 	{
 		id: "thinking-budgets",

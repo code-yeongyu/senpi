@@ -28,11 +28,13 @@ import {
 	type ProviderHeaders,
 	type SimpleStreamOptions,
 	type StreamOptions,
+	setWireIdentity,
 	wrapStreamWithModelRecovery,
 } from "@earendil-works/pi-ai";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
-import { getAgentDir } from "../config.ts";
+import { APP_NAME, BRAND, getAgentDir } from "../config.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
+import { envValue } from "./brand.ts";
 import { ModelConfig } from "./model-config.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
 import {
@@ -47,6 +49,10 @@ import {
 } from "./provider-composer.ts";
 import { withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
+
+// The product's identity must ride outgoing requests. This lives here because the AI package
+// is already part of this module's graph; the CLI bootstrap deliberately does not import it.
+setWireIdentity(BRAND?.userAgent ?? APP_NAME);
 
 interface ModelRuntimeSnapshot {
 	all: readonly Model<Api>[];
@@ -170,7 +176,7 @@ export class ModelRuntime implements Models {
 			modelsPath,
 			modelsStore,
 			providers,
-			process.env.PI_OFFLINE === undefined && options.allowModelNetwork === true,
+			envValue("OFFLINE") === undefined && options.allowModelNetwork === true,
 			options.modelRefreshTimeoutMs ?? 15_000,
 		);
 		runtime.configureRadiusProviders();

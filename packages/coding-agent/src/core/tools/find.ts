@@ -7,7 +7,8 @@ import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
-import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import type { FilesystemPolicyChecker, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -54,6 +55,8 @@ const defaultFindOperations: FindOperations = {
 export interface FindToolOptions {
 	/** Custom operations for find. Default: local filesystem plus fd */
 	operations?: FindOperations;
+	/** Extension-registered filesystem policy checker. */
+	filesystemPolicy?: FilesystemPolicyChecker;
 }
 
 function formatFindCall(args: { pattern: string; path?: string; limit?: number } | undefined, theme: Theme): string {
@@ -111,6 +114,7 @@ export function createFindToolDefinition(
 	options?: FindToolOptions,
 ): ToolDefinition<typeof findSchema, FindToolDetails | undefined> {
 	const customOps = options?.operations;
+	const filesystemPolicy = options?.filesystemPolicy;
 	return {
 		name: "find",
 		label: "find",
@@ -150,6 +154,18 @@ export function createFindToolDefinition(
 						const searchPath = resolveToCwd(searchDir || ".", cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
 						const ops = customOps ?? defaultFindOperations;
+						if (filesystemPolicy) {
+							const decision = await filesystemPolicy({
+								operation: "enumerate",
+								canonicalPath: await canonicalizeFilesystemPath(searchPath),
+								toolName: "find",
+							});
+							if (!decision.allow) throw new Error(decision.reason);
+							if (signal?.aborted) {
+								settle(() => reject(new Error("Operation aborted")));
+								return;
+							}
+						}
 
 						// If custom operations provide glob(), use that instead of fd.
 						if (customOps?.glob) {

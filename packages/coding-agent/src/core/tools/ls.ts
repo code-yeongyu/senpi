@@ -5,7 +5,8 @@ import nodePath from "path";
 import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
-import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import type { FilesystemPolicyChecker, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, renderToolPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -47,6 +48,8 @@ const defaultLsOperations: LsOperations = {
 export interface LsToolOptions {
 	/** Custom operations for directory listing. Default: local filesystem */
 	operations?: LsOperations;
+	/** Extension-registered filesystem policy checker. */
+	filesystemPolicy?: FilesystemPolicyChecker;
 }
 
 function formatLsCall(args: { path?: string; limit?: number } | undefined, theme: Theme, cwd: string): string {
@@ -97,6 +100,7 @@ export function createLsToolDefinition(
 	options?: LsToolOptions,
 ): ToolDefinition<typeof lsSchema, LsToolDetails | undefined> {
 	const ops = options?.operations ?? defaultLsOperations;
+	const filesystemPolicy = options?.filesystemPolicy;
 	return {
 		name: "ls",
 		label: "ls",
@@ -123,6 +127,14 @@ export function createLsToolDefinition(
 					try {
 						const dirPath = resolveToCwd(path || ".", cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
+						if (filesystemPolicy) {
+							const decision = await filesystemPolicy({
+								operation: "enumerate",
+								canonicalPath: await canonicalizeFilesystemPath(dirPath),
+								toolName: "ls",
+							});
+							if (!decision.allow) throw new Error(decision.reason);
+						}
 
 						// Check if path exists.
 						if (!(await ops.exists(dirPath))) {

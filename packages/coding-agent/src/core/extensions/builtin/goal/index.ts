@@ -317,6 +317,11 @@ export default function goalExtension(pi: ExtensionAPI): void {
 				continuationPending = true;
 			},
 		});
+		if (continuedGoal === null) {
+			clearAgentGoalAccounting();
+			refreshGoalUiBestEffort(ctx, null);
+			return;
+		}
 		if (continuedGoal.status === goal.status) return;
 		if (continuedGoal.status === "active") beginAgentGoalAccounting(continuedGoal);
 		else clearAgentGoalAccounting();

@@ -649,6 +649,13 @@ export class ExtensionRunner {
 		return Array.from(toolsByName.values());
 	}
 
+	/** Metadata-only denied roots declared by registered filesystem policies. */
+	getFilesystemPolicyDeniedRoots(): readonly string[] {
+		return this.extensions.flatMap((extension) =>
+			(extension.filesystemPolicies ?? []).flatMap((policy) => policy.deniedRoots ?? []),
+		);
+	}
+
 	/** Get extension-declared MCP servers (first declaration per name wins). */
 	getRegisteredMcpServers(): readonly RegisteredMcpServerDeclaration[] {
 		const serversByName = new Map<string, RegisteredMcpServerDeclaration>();

@@ -44,6 +44,7 @@
 // eligible surface, output, and what stays direct beats generic "use PTC
 // efficiently" wording, which does not route.
 
+import { APP_NAME } from "../../../../config.ts";
 import type { DynamicPromptCoreContext } from "../../../dynamic-prompt/build.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
 import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
@@ -120,7 +121,7 @@ export const GPT56_EXECUTION_RULES = [
 ] as const satisfies readonly Gpt56ExecutionRule[];
 
 function buildGpt56Core(context: DynamicPromptCoreContext): string {
-	return `You are senpi, a coding agent and autonomous deep worker: you receive goals, not step-by-step instructions, and execute them end-to-end.
+	return `You are ${APP_NAME}, a coding agent and autonomous deep worker: you receive goals, not step-by-step instructions, and execute them end-to-end.
 
 ## Intent Gate
 

@@ -399,6 +399,12 @@ export class MonitorAwareGoalContinuation {
 			content: (continuationVerdict) => this.#buildContinuationContent(ctx, goal, continuationVerdict),
 			markContinuationPending: this.#markContinuationPending,
 		});
+		if (admittedGoal === null) {
+			this.#goal = null;
+			this.#cancelTimer();
+			this.#resetToollessContinuationStreak();
+			return { goal, admitted: false };
+		}
 		if (verdict.kind === "continue" && input.lastStopReason === "length") {
 			this.#consecutiveLengthRecoveries.set(goal.id, input.consecutiveLengthRecoveries + 1);
 		}

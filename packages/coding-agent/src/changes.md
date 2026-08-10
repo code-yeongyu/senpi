@@ -1,3 +1,19 @@
+## Public filesystem policy exports (2026-08-09)
+
+### What changed
+
+- The package root now exports the filesystem policy request, operation, decision, policy, and composed-checker types
+  used by `pi.registerFilesystemPolicy()` consumers.
+
+### Why this cannot be expressed externally
+
+- Extension source compiles against the package's public type surface; an extension cannot export missing host API
+  declarations for itself.
+
+### Expected merge conflict zones
+
+- LOW: the extension type export lists in `src/index.ts` and `core/extensions/index.ts`.
+
 ## `--session` cross-project resume fails fast instead of hanging on non-interactive stdin (2026-08-07)
 
 ### What changed

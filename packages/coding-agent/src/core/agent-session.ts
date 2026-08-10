@@ -65,6 +65,7 @@ import { AgentAbortProvenance } from "./agent-abort-provenance.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction } from "./agent-settled-delivery.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
+import { envValue } from "./brand.ts";
 import {
 	type CompactionResult,
 	calculateContextTokens,
@@ -162,6 +163,7 @@ import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { getSupportedThinkingLevels, supportsMax, supportsXhigh } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
@@ -713,7 +715,7 @@ export class AgentSession {
 		this.settingsManager = config.settingsManager;
 		const noModelFallback =
 			config.resourceLoader.getExtensions().runtime.flagValues.get("no-model-fallback") === true ||
-			process.env.SENPI_NO_FALLBACK === "1";
+			envValue("NO_FALLBACK") === "1";
 		if (noModelFallback) {
 			this.settingsManager.applyOverrides({ retry: { modelFallback: false } });
 		}
@@ -1070,6 +1072,8 @@ export class AgentSession {
 				},
 				model: this.agent.state.model,
 				thinkingLevel: this.agent.state.thinkingLevel,
+				abortServerSideFallback:
+					this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain(),
 			};
 		};
 	}
@@ -5572,6 +5576,10 @@ export class AgentSession {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
+		const extensionsResult = this._resourceLoader.getExtensions();
+		const filesystemPolicy = composeFilesystemPolicies(
+			extensionsResult.extensions.flatMap((extension) => extension.filesystemPolicies ?? []),
+		);
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
@@ -5580,15 +5588,18 @@ export class AgentSession {
 					]),
 				)
 			: createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages },
+					read: { autoResizeImages, filesystemPolicy },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					write: { filesystemPolicy },
+					edit: { filesystemPolicy },
+					grep: { filesystemPolicy },
+					find: { filesystemPolicy },
+					ls: { filesystemPolicy },
 				});
 
 		this._baseToolDefinitions = new Map(
 			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
 		);
-
-		const extensionsResult = this._resourceLoader.getExtensions();
 		if (options.flagValues) {
 			for (const [name, value] of options.flagValues) {
 				extensionsResult.runtime.flagValues.set(name, value);

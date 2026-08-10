@@ -9,6 +9,7 @@ import {
 	PACKAGE_NAME,
 	VERSION,
 } from "./config.ts";
+import { brandProfile } from "./core/brand.ts";
 import { getLatestPiRelease, isNewerPackageVersion, type LatestPiRelease } from "./utils/version-check.ts";
 
 export interface SelfUpdateBootstrapCommand {
@@ -148,6 +149,12 @@ export async function handleBootstrapSelfUpdate(
 	const resolveSelfUpdateCommand = dependencies.getSelfUpdateCommand ?? getSelfUpdateCommand;
 	const resolveUnavailableInstruction = dependencies.getUnavailableInstruction ?? getSelfUpdateUnavailableInstruction;
 	const executeCommand = dependencies.runCommand ?? runCommand;
+
+	const brandUpdate = brandProfile()?.update;
+	if (brandUpdate) {
+		writeStdout(`${APP_NAME} ships inside ${brandUpdate.packageName}. Update it with: ${brandUpdate.command}`);
+		return true;
+	}
 	const loadLatestRelease = dependencies.getLatestRelease ?? getLatestPiRelease;
 
 	let latestRelease: LatestPiRelease | undefined;

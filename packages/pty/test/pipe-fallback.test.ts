@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import type { NativePtyLoadResult } from "../src/native-loader.ts";
@@ -196,6 +197,46 @@ describe("PipeFallbackSession terminal detachment", () => {
 		},
 		5000,
 	);
+});
+
+describe("PipeFallbackSession Windows process-tree cleanup", () => {
+	it("does not crash when taskkill is unavailable during kill", () => {
+		const moduleUrl = new URL("../src/pipe-fallback.ts", import.meta.url).href;
+		const script = `
+			Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+			process.env.PATH = "";
+			const { PipeFallbackSession } = await import(${JSON.stringify(moduleUrl)});
+			const session = new PipeFallbackSession({
+				command: process.execPath,
+				args: ["-e", "setInterval(() => {}, 1000)"],
+			}).start();
+			const timeout = setTimeout(() => {
+				process.stderr.write("PIPE_FALLBACK_KILL_TIMEOUT\\n");
+				process.exit(2);
+			}, 2000);
+			session.kill("SIGTERM");
+			await session.waitExit();
+			clearTimeout(timeout);
+			process.stdout.write("DIRECT_FALLBACK_SETTLED\\n");
+		`;
+
+		const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+			encoding: "utf8",
+			timeout: 5000,
+		});
+
+		expect({
+			signal: result.signal,
+			status: result.status,
+			stderr: result.stderr,
+			stdout: result.stdout,
+		}).toEqual({
+			signal: null,
+			status: 0,
+			stderr: "",
+			stdout: "DIRECT_FALLBACK_SETTLED\n",
+		});
+	});
 });
 
 describe("terminateChildTree", () => {

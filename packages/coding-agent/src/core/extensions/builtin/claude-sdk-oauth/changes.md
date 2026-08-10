@@ -1,5 +1,18 @@
 # claude-sdk-oauth extension changes
 
+## 2026-08-07 - Ignore volatile thinking timing in continuity hashes
+
+- Removed `startedAt` and `endedAt` from thinking blocks before hashing the provider-final and committed assistant
+  messages. Agent-core adds those display-only fields after the final `message_update`, so hashing them falsely marked
+  otherwise identical turns as `assistant_rewritten` and forced full-history replay on the next turn.
+- This cannot be implemented by an external extension: the comparison happens inside the builtin provider's private
+  commit boundary before session-registry continuity is decided, and no extension hook can replace that digest.
+- Kept thinking text, signatures, and every non-thinking block in the hash so real assistant rewrites still trigger
+  continuity divergence handling.
+- Added a deterministic issue #691 regression covering both the timing-only and semantic-change cases.
+- Expected merge conflict zones: LOW in `session-commit-boundary.ts`; LOW in
+  `test/suite/regressions/691-claude-sdk-oauth-thinking-timing.test.ts`.
+
 ## 2026-08-04 - Surface flatten payload size and collapsed directive count in continuity observations
 
 - Extended `ContinuityObservation` (`session-observability.ts`) with optional `payloadBytes` and `collapsedDirectives` fields, surfaced only on `flatten` and `bootstrap` observations (not delta/fork/reattach).

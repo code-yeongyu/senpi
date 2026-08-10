@@ -1,5 +1,23 @@
 # Local fork changes
 
+## 2026-08-09 — General extension filesystem policy API
+
+### What changed
+
+- Documented `pi.registerFilesystemPolicy()` as a factory-time API for canonical read, enumerate, and write decisions.
+- Added deterministic coverage for registration, deny-wins composition, real/missing/symlink path canonicalization, all
+  six built-in file tools, denied-root metadata, approval-hook non-bypassability, and a general extension that limits
+  writes to its own workspace root.
+
+### Why this lives in the fork
+
+- The public extension contract and built-in executor tests are package-level surfaces. A consumer extension can use the
+  policy after it exists but cannot add or verify the host hook itself.
+
+### Expected merge conflict zones
+
+- LOW: `docs/extensions.md`, `test/filesystem-policy.test.ts`, and package type-export lists.
+
 ## 2026-08-03 — Keep Bun off unpublished workspace identities
 
 ### What changed

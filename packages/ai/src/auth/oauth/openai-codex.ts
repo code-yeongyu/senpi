@@ -19,6 +19,7 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 
 import { extractOpenAiCodexAccountId } from "../../utils/openai-codex-auth.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
+import { getWireIdentity } from "../../wire-identity.ts";
 import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
@@ -271,7 +272,7 @@ async function pollOpenAICodexDeviceAuth(device: DeviceAuthInfo, signal?: AbortS
 }
 
 async function createAuthorizationFlow(
-	originator: string = "senpi",
+	originator: string = getWireIdentity(),
 ): Promise<{ verifier: string; state: string; url: string }> {
 	const { verifier, challenge } = await generatePKCE();
 	const state = createState();

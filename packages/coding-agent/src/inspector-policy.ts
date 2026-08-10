@@ -1,11 +1,12 @@
 import { close as closeInspector, url as inspectorUrl } from "node:inspector";
+import { envValue } from "./core/brand.ts";
 
 type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
 
 const VM_DYNAMIC_IMPORT_CALLBACK_MISSING = "ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING";
 const INSPECTOR_IMPORT_FRAME = "at importModuleDynamicallyCallback (node:internal/modules/esm/";
 const INSPECTOR_TIMEOUT_FRAME = /\bat Timeout\._onTimeout \(<anonymous>:\d+:\d+\)/;
-const RECOVER_INSPECTOR_VM_IMPORT = process.env.SENPI_RECOVER_INSPECTOR_VM_IMPORT === "1";
+const RECOVER_INSPECTOR_VM_IMPORT = envValue("RECOVER_INSPECTOR_VM_IMPORT") === "1";
 
 export const INSPECTOR_VM_IMPORT_WARNING =
 	"Node Inspector dynamic import is unsupported; use require() or a target-side loader. Senpi kept running.";

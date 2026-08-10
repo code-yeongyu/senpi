@@ -1,9 +1,10 @@
 #!/usr/bin/env node
+import "./valid-cwd.js";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { APP_NAME, getPackageDir, VERSION } from "./config.js";
+import { APP_NAME, DISPLAY_VERSION, getPackageDir } from "./config.js";
 import { releaseInheritedInspectorForChild } from "./inspector-policy.js";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.js";
 process.title = APP_NAME;
@@ -50,7 +51,7 @@ async function runFullCli() {
     });
 }
 if (isRootCommand(args) && (args.includes("--version") || args.includes("-v"))) {
-    console.log(VERSION);
+    console.log(DISPLAY_VERSION);
     process.exit();
 }
 if (isMissingBundledWorkspaceDependencies(getPackageDir())) {

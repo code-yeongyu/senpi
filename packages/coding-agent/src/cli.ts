@@ -1,9 +1,10 @@
 #!/usr/bin/env node
+import "./valid-cwd.ts";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { APP_NAME, getPackageDir, VERSION } from "./config.ts";
+import { APP_NAME, DISPLAY_VERSION, getPackageDir } from "./config.ts";
 import { releaseInheritedInspectorForChild } from "./inspector-policy.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 
@@ -57,7 +58,7 @@ async function runFullCli(): Promise<number> {
 }
 
 if (isRootCommand(args) && (args.includes("--version") || args.includes("-v"))) {
-	console.log(VERSION);
+	console.log(DISPLAY_VERSION);
 	process.exit();
 }
 

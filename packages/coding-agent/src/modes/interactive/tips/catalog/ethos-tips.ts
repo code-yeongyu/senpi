@@ -1,3 +1,4 @@
+import { APP_NAME } from "../../../../config.ts";
 import type { TipDefinition } from "./types.ts";
 
 export const ETHOS_TIPS = [
@@ -66,13 +67,13 @@ export const ETHOS_TIPS = [
 		id: "ethos.multimodal-vision",
 		bindings: [],
 		render: () =>
-			"Drop a screenshot, a PDF, a crusty whiteboard photo... senpi actually sees it, reads it, reasons about it. Your agent has eyes now. *Yes, really.*",
+			`Drop a screenshot, a PDF, a crusty whiteboard photo... ${APP_NAME} actually sees it, reads it, reasons about it. Your agent has eyes now. *Yes, really.*`,
 	},
 	{
 		id: "ethos.oauth-multi-account",
 		bindings: [],
 		render: () =>
-			"Hit a rate limit, switch accounts. Wrong org, switch again. senpi treats your Claude logins like a roster, not a single lifeline. *Env vars could never.*",
+			`Hit a rate limit, switch accounts. Wrong org, switch again. ${APP_NAME} treats your Claude logins like a roster, not a single lifeline. *Env vars could never.*`,
 	},
 	{
 		id: "ethos.agent-sdk-foundation",
@@ -84,6 +85,6 @@ export const ETHOS_TIPS = [
 		id: "ethos.tool-call-repair",
 		bindings: [],
 		render: () =>
-			"senpi catches malformed tool calls on the wire, fixes them, and salvages the turn - claude's sloppy invokes, kimi k3's leaked XTML channels, all of it. Other harnesses retry the whole thing and bill you for the privilege. *table stakes, honestly*",
+			`${APP_NAME} catches malformed tool calls on the wire, fixes them, and salvages the turn - claude's sloppy invokes, kimi k3's leaked XTML channels, all of it. Other harnesses retry the whole thing and bill you for the privilege. *table stakes, honestly*`,
 	},
 ] satisfies readonly TipDefinition[];

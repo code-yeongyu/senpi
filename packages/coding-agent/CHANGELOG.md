@@ -2,11 +2,91 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A launch from a deleted working directory (for example a removed worktree) no longer crashes during
+  startup with `uv_cwd`; the CLI recovers into the home directory before any dependency evaluates
+  `process.cwd()`.
+
 ### New Features
 
 ### Breaking Changes
 
 ### Added
+
+### Changed
+
+### Fixed
+
+- Route Anthropic provider-native refusal fallbacks through the configured Senpi chain after an active-turn model
+  change, instead of persisting the server-selected substitute because the run retained the previous model's policy
+  ([#796](https://github.com/code-yeongyu/senpi/pull/796)).
+
+### Removed
+
+## [2026.8.11-2] - 2026-08-10
+
+### New Features
+
+### Breaking Changes
+
+### Added
+
+- Distributions repackaging senpi can set their own product identity through a `SENPI_BRAND` profile: name, display
+  version, config directory (optionally flat), environment prefix, wire identity and update channel. The profile is
+  consumed and scrubbed at startup, so nested senpi processes keep the engine identity. A standalone install is
+  unchanged ([#783](https://github.com/code-yeongyu/senpi/pull/783)).
+- Product settings are read across the brand prefix and the legacy `SENPI_`/`PI_` prefixes, so existing environments
+  keep working after a rebrand ([#783](https://github.com/code-yeongyu/senpi/pull/783)).
+- A branded install checks its own release channel for updates, and the update notice, changelog link and self-update
+  paths point at the distribution's own command instead of `senpi update`
+  ([#783](https://github.com/code-yeongyu/senpi/pull/783)).
+
+### Changed
+
+### Fixed
+
+- Windows pipe-fallback shutdown no longer crashes with an uncaught `spawn taskkill ENOENT` when the helper cannot
+  resolve. Senpi now invokes `taskkill.exe` explicitly and falls back to direct child termination if helper startup
+  fails ([#792](https://github.com/code-yeongyu/senpi/pull/792)).
+- A brand profile carrying an unsafe `configDir` (a path separator, `.` or `..`) is rejected instead of redirecting
+  agent state and its migration outside the intended directory
+  ([#787](https://github.com/code-yeongyu/senpi/pull/787)).
+- A branded install without an update channel no longer falls back to checking the engine's own releases, which it
+  cannot install ([#787](https://github.com/code-yeongyu/senpi/pull/787)).
+- Prevented an asynchronous goal continuation from restoring a goal after `thread/goal/clear` or recording delivery
+  against a replacement goal ([#788](https://github.com/code-yeongyu/senpi/pull/788)).
+- Prevented Claude Agent SDK OAuth sessions from scheduling `assistant_rewritten` forks when only host-side thinking
+  timing annotations changed, preserving resident-session and prompt-cache continuity for reasoning-heavy turns
+  ([#751](https://github.com/code-yeongyu/senpi/pull/751) by [@goldtg](https://github.com/goldtg)).
+
+### Removed
+
+## [2026.8.11] - 2026-08-10
+
+### New Features
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+- Removed the OmO-specific footer badge, its detection module, and the `isOmoNative` provider surface. Downstream packages contribute footer content through the supported `ctx.ui.setStatus` extension API instead, so no product-specific markers live in the coding agent.
+
+## [2026.8.10] - 2026-08-10
+
+### New Features
+
+### Breaking Changes
+
+### Added
+
+- Added `pi.registerFilesystemPolicy()` for extensions. Policies receive a canonicalized path plus operation (`read`, `enumerate`, or `write`) and tool name, compose deny-wins below permission hooks, and are enforced by the built-in `read`, `write`, `edit`, `ls`, `find`, and `grep` tools. Denials surface as ordinary tool errors carrying the policy reason, and hosts without any registered policy behave exactly as before. The runner also exposes aggregated denied-root metadata for future sandbox backends.
 
 ### Changed
 

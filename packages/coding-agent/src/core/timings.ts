@@ -1,9 +1,11 @@
+import { envValue } from "./brand.ts";
+
 /**
  * Central timing instrumentation for startup profiling.
  * Enable with PI_TIMING=1 environment variable.
  */
 
-const ENABLED = process.env.PI_TIMING === "1";
+const ENABLED = envValue("TIMING") === "1";
 export interface TimingEntry {
 	label: string;
 	ms: number;
