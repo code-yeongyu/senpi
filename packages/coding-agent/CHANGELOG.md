@@ -17,6 +17,8 @@
   ([#796](https://github.com/code-yeongyu/senpi/pull/796)).
 
 ### Removed
+- Removed the OMO-specific local plugin updater and hidden worker flag from the generic Senpi engine; OMO packaging
+  and updates now belong to the downstream OMO Native distribution ([#798](https://github.com/code-yeongyu/senpi/pull/798)).
 
 ## [2026.8.11-2] - 2026-08-10
 
