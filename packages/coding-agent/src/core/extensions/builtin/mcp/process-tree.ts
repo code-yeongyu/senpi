@@ -50,9 +50,20 @@ export function delay(ms: number): Promise<void> {
 }
 
 async function childPids(parentPid: number): Promise<number[]> {
-	if (!["darwin", "linux"].includes(process.platform)) return [];
 	try {
-		const { stdout } = await execFileAsync("pgrep", ["-P", String(parentPid)], { timeout: 1000 });
+		const { command, args } =
+			process.platform === "win32"
+				? {
+						command: "powershell.exe",
+						args: [
+							"-NoProfile",
+							"-NonInteractive",
+							"-Command",
+							`Get-CimInstance Win32_Process -Filter "ParentProcessId = ${parentPid}" | Select-Object -ExpandProperty ProcessId`,
+						],
+					}
+				: { command: "pgrep", args: ["-P", String(parentPid)] };
+		const { stdout } = await execFileAsync(command, args, { timeout: 1000 });
 		return stdout
 			.split(/\s+/)
 			.map(Number)
