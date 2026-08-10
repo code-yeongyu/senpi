@@ -13,9 +13,29 @@
 ### Fixed
 
 - Fixed interactive render signature hashing to process omitted array items and object keys iteratively, preventing stack
-  overflows on very large tool and assistant values while retaining tail-change cache invalidation.
+  overflows on very large tool and assistant values while retaining tail-change cache invalidation
+  ([#782](https://github.com/code-yeongyu/senpi/pull/782) by [@achieve0410](https://github.com/achieve0410)).
+- Prevented Claude Agent SDK OAuth sessions from scheduling `assistant_rewritten` forks when only host-side thinking
+  timing annotations changed, preserving resident-session and prompt-cache continuity for reasoning-heavy turns
+  ([#751](https://github.com/code-yeongyu/senpi/pull/751)).
 
 ### Removed
+
+## [2026.8.11] - 2026-08-10
+
+### New Features
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+- Removed the OmO-specific footer badge, its detection module, and the `isOmoNative` provider surface. Downstream packages contribute footer content through the supported `ctx.ui.setStatus` extension API instead, so no product-specific markers live in the coding agent.
 
 ## [2026.8.10] - 2026-08-10
 

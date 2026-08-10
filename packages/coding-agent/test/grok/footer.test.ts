@@ -13,7 +13,6 @@ const footerData = {
 	getGitBranch: () => null,
 	getExtensionStatuses: () => new Map(),
 	getAvailableProviderCount: () => 0,
-	isOmoNative: () => false,
 	onBranchChange: () => () => {},
 } as ReadonlyFooterDataProvider;
 

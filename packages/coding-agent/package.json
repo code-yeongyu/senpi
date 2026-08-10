@@ -1,6 +1,6 @@
 {
 	"name": "@code-yeongyu/senpi",
-	"version": "2026.8.10",
+	"version": "2026.8.11",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
@@ -47,13 +47,13 @@
 	"dependencies": {
 		"@anthropic-ai/sdk": "0.91.1",
 		"@aws-sdk/client-bedrock-runtime": "3.1095.0",
-		"@code-yeongyu/senpi-codemode": "^2026.8.10",
-		"@earendil-works/pi-agent-core": "^2026.8.10",
-		"@earendil-works/pi-ai": "^2026.8.10",
-		"@earendil-works/pi-client": "^2026.8.10",
-		"@earendil-works/pi-protocol": "^2026.8.10",
-		"@earendil-works/pi-pty": "^2026.8.10",
-		"@earendil-works/pi-tui": "^2026.8.10",
+		"@code-yeongyu/senpi-codemode": "^2026.8.11",
+		"@earendil-works/pi-agent-core": "^2026.8.11",
+		"@earendil-works/pi-ai": "^2026.8.11",
+		"@earendil-works/pi-client": "^2026.8.11",
+		"@earendil-works/pi-protocol": "^2026.8.11",
+		"@earendil-works/pi-pty": "^2026.8.11",
+		"@earendil-works/pi-tui": "^2026.8.11",
 		"@mistralai/mistralai": "2.5.0",
 		"@modelcontextprotocol/sdk": "1.30.0",
 		"@mozilla/readability": "0.6.0",

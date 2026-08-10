@@ -105,37 +105,6 @@ describe("FooterComponent width handling", () => {
 		expect(plain).not.toContain("/workspace/client");
 	});
 
-	it("elides the path instead of the OmO Native badge", () => {
-		const width = 130;
-		const session = createFooterSession({
-			sessionName: "",
-			modelId: "test-model",
-			provider: "test",
-			reasoning: true,
-			thinkingLevel: "high",
-			cwd: "/workspace/client/platform/services/senpi/packages/coding-agent",
-			usage: {
-				input: 100,
-				output: 10,
-				cacheRead: 50,
-				cacheWrite: 50,
-				cost: { total: 1.234 },
-			},
-		});
-		const footer = new FooterComponent(session, createFooterData(2, true));
-
-		const lines = footer.render(width);
-		const plain = lines.map((line) => stripAnsi(line)).join("\n");
-		for (const line of lines) {
-			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
-		}
-		expect(plain).toContain("(😺 OmO Native)");
-		expect(plain).toContain("coding-agent");
-		expect(plain).not.toContain("/workspace/client");
-		expect(plain).toContain("CH25.0%");
-		expect(plain).toContain("$1.234");
-	});
-
 	it("still renders the model label at very narrow widths", () => {
 		const width = 30;
 		const session = createFooterSession({
