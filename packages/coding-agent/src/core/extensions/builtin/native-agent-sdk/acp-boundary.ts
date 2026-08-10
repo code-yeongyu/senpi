@@ -30,6 +30,61 @@ const INHERITED_ENV_KEYS: readonly string[] = [
 	"SSL_CERT_DIR",
 ];
 
+class NativeAgentEventQueue implements AsyncIterableIterator<NativeAgentEvent> {
+	private readonly values: NativeAgentEvent[] = [];
+	private reader:
+		| {
+				readonly resolve: (result: IteratorResult<NativeAgentEvent>) => void;
+				readonly reject: (error: unknown) => void;
+		  }
+		| undefined;
+	private closed = false;
+	private failed = false;
+	private failure: unknown;
+
+	[Symbol.asyncIterator](): AsyncIterableIterator<NativeAgentEvent> {
+		return this;
+	}
+
+	next(): Promise<IteratorResult<NativeAgentEvent>> {
+		const value = this.values.shift();
+		if (value !== undefined) return Promise.resolve({ value, done: false });
+		if (this.failed) return Promise.reject(this.failure);
+		if (this.closed) return Promise.resolve({ value: undefined, done: true });
+		return new Promise((resolve, reject) => {
+			this.reader = { resolve, reject };
+		});
+	}
+
+	push(value: NativeAgentEvent): void {
+		if (this.closed || this.failed) return;
+		const reader = this.reader;
+		if (reader !== undefined) {
+			this.reader = undefined;
+			reader.resolve({ value, done: false });
+			return;
+		}
+		this.values.push(value);
+	}
+
+	close(): void {
+		if (this.closed || this.failed) return;
+		this.closed = true;
+		const reader = this.reader;
+		this.reader = undefined;
+		reader?.resolve({ value: undefined, done: true });
+	}
+
+	fail(error: unknown): void {
+		if (this.closed || this.failed) return;
+		this.failed = true;
+		this.failure = error;
+		const reader = this.reader;
+		this.reader = undefined;
+		reader?.reject(error);
+	}
+}
+
 export function nativeAgentEnvironment(
 	credentialEnvKeys: readonly string[],
 	source: NodeJS.ProcessEnv = process.env,
@@ -120,6 +175,8 @@ export async function* runAcpAgent(
 		void terminateOnce();
 	};
 	request.signal?.addEventListener("abort", onAbort, { once: true });
+	const events = new NativeAgentEventQueue();
+	let completed: Promise<void> | undefined;
 	try {
 		const stream = ndJsonStream(
 			writableFor(child.stdin),
@@ -155,9 +212,27 @@ export async function* runAcpAgent(
 							});
 						}
 						const promptPromise = session.prompt(request.prompt);
-						const responseText = await session.readText();
-						await promptPromise;
-						return responseText;
+						for (;;) {
+							const message = await session.nextUpdate();
+							switch (message.kind) {
+								case "session_update": {
+									const update = message.update;
+									if (
+										update.sessionUpdate === "agent_message_chunk" &&
+										update.content.type === "text" &&
+										update.content.text.length > 0
+									) {
+										events.push({ type: "text", text: update.content.text });
+									}
+									break;
+								}
+								case "stop":
+									await promptPromise;
+									return;
+								default:
+									return assertNever(message);
+							}
+						}
 					} finally {
 						if (initialized.agentCapabilities?.sessionCapabilities?.close != null) {
 							await context.request(methods.agent.session.close, { sessionId: session.sessionId });
@@ -165,10 +240,19 @@ export async function* runAcpAgent(
 					}
 				});
 			});
-		const text = await Promise.race([connection, childError]);
-		if (text.length > 0) yield { type: "text", text };
+		completed = Promise.race([connection, childError]).then(
+			() => events.close(),
+			(error: unknown) => events.fail(error),
+		);
+		for await (const event of events) yield event;
+		await completed;
 	} finally {
 		request.signal?.removeEventListener("abort", onAbort);
 		await terminateOnce();
+		await completed;
 	}
+}
+
+function assertNever(value: never): never {
+	throw new Error(`Unsupported ACP session message: ${String(value)}`);
 }

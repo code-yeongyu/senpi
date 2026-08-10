@@ -1,10 +1,17 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { kimiSessionConfigOptions } from "../src/core/extensions/builtin/kimi-sdk/sdk-boundary.ts";
 import { nativeAgentEnvironment, runAcpAgent } from "../src/core/extensions/builtin/native-agent-sdk/acp-boundary.ts";
 import {
+	nativeAgentPermissionTarget,
 	registerNativeAgentPermissionHandler,
 	requestNativeAgentPermission,
 } from "../src/core/extensions/builtin/native-agent-sdk/permission.ts";
+import { createBuiltinParserRegistry } from "../src/core/extensions/builtin/permission-system/parsers.ts";
+import { PermissionService } from "../src/core/extensions/builtin/permission-system/service.ts";
+import { DeniedError } from "../src/core/extensions/builtin/permission-system/types.ts";
 
 describe("native agent ACP boundary", () => {
 	it("passes only runtime and provider-specific credential variables", () => {
@@ -88,6 +95,112 @@ describe("native agent ACP boundary", () => {
 			).resolves.toBe(false);
 		} finally {
 			unregister();
+		}
+	});
+
+	it("maps ACP execute requests into the existing bash permission class", async () => {
+		const target = nativeAgentPermissionTarget({
+			provider: "grok-sdk",
+			kind: "execute",
+			title: "Delete generated files",
+			rawInput: { command: "rm -rf generated" },
+		});
+		const [permissionRequest] = createBuiltinParserRegistry().parse(target.toolName, target.input, process.cwd());
+		if (permissionRequest === undefined) throw new Error("Expected a native bash permission request");
+		const service = new PermissionService([{ permission: "bash", pattern: "*", action: "deny" }], []);
+
+		expect(target).toEqual({
+			toolName: "bash",
+			input: { command: "rm -rf generated" },
+		});
+		await expect(
+			service.ask({
+				sessionID: "session-1",
+				...permissionRequest,
+				metadata: target.input,
+			}),
+		).rejects.toEqual(new DeniedError(["rm"]));
+	});
+
+	it("forwards ACP text chunks before the prompt turn completes", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "senpi-acp-stream-"));
+		const completionMarker = join(cwd, "completed");
+		const fakeAgent = `
+			import { writeFileSync } from "node:fs";
+			import { createInterface } from "node:readline";
+			const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+			const lines = createInterface({ input: process.stdin });
+			lines.on("line", (line) => {
+				const message = JSON.parse(line);
+				if (message.method === "initialize") {
+					send({
+						jsonrpc: "2.0",
+						id: message.id,
+						result: {
+							protocolVersion: 1,
+							agentCapabilities: { loadSession: false },
+							authMethods: [],
+						},
+					});
+					return;
+				}
+				if (message.method === "session/new") {
+					send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "stream-session" } });
+					return;
+				}
+				if (message.method === "session/prompt") {
+					send({
+						jsonrpc: "2.0",
+						method: "session/update",
+						params: {
+							sessionId: "stream-session",
+							update: {
+								sessionUpdate: "agent_message_chunk",
+								content: { type: "text", text: "first" },
+							},
+						},
+					});
+					setTimeout(() => {
+						writeFileSync(${JSON.stringify(completionMarker)}, "done");
+						send({
+							jsonrpc: "2.0",
+							method: "session/update",
+							params: {
+								sessionId: "stream-session",
+								update: {
+									sessionUpdate: "agent_message_chunk",
+									content: { type: "text", text: "second" },
+								},
+							},
+						});
+						send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
+					}, 100);
+				}
+			});
+		`;
+
+		try {
+			const iterator = runAcpAgent(
+				{ provider: "test-sdk", model: "test-model", prompt: "test", cwd },
+				process.execPath,
+				["--input-type=module", "-e", fakeAgent],
+				"senpi-test",
+				[],
+			)[Symbol.asyncIterator]();
+
+			await expect(iterator.next()).resolves.toEqual({
+				value: { type: "text", text: "first" },
+				done: false,
+			});
+			expect(existsSync(completionMarker)).toBe(false);
+			await expect(iterator.next()).resolves.toEqual({
+				value: { type: "text", text: "second" },
+				done: false,
+			});
+			expect(existsSync(completionMarker)).toBe(true);
+			await expect(iterator.next()).resolves.toEqual({ value: undefined, done: true });
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
 		}
 	});
 

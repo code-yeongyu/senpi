@@ -16,6 +16,7 @@ function createRequest(overrides: Partial<Request> = {}): Request {
 		permission: overrides.permission ?? "bash",
 		patterns: overrides.patterns ?? ["git commit"],
 		always: overrides.always ?? ["git *"],
+		allowAlways: overrides.allowAlways,
 		metadata: overrides.metadata ?? { command: "git commit -m test" },
 		tool: overrides.tool,
 	};
@@ -266,6 +267,18 @@ describe("PermissionService", () => {
 				{ permission: "bash", pattern: "git *", action: "allow" },
 				{ permission: "bash", pattern: "gh *", action: "allow" },
 			]);
+		});
+
+		it("downgrades always to once when persistent approval is disabled", async () => {
+			const { service, repliedEvents } = createService([{ permission: "bash", pattern: "*", action: "ask" }]);
+			const request = createRequest({ allowAlways: false, always: [] });
+			const askPromise = service.ask(request);
+
+			service.reply({ requestID: request.id, reply: "always" });
+
+			await expect(askPromise).resolves.toBeUndefined();
+			expect(service.getApproved()).toEqual([]);
+			expect(repliedEvents).toEqual([{ requestID: request.id, sessionID: request.sessionID, reply: "once" }]);
 		});
 
 		it("auto-resolves other pending requests in the same session when always covers them", async () => {

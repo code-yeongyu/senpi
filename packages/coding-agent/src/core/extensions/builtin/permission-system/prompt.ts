@@ -7,7 +7,10 @@ export async function showPermissionPrompt(ctx: ExtensionContext, request: Reque
 
 	const displayTitle = `${title}\n\n${message}`;
 
-	const options = ["Allow once", "Allow always", "Deny", "Deny with feedback"];
+	const options =
+		request.allowAlways === false
+			? ["Allow once", "Deny", "Deny with feedback"]
+			: ["Allow once", "Allow always", "Deny", "Deny with feedback"];
 
 	const choice = await ctx.ui.select(displayTitle, options);
 
@@ -75,6 +78,12 @@ function formatRequestForDisplay(request: Request): string {
 
 	if (request.patterns && request.patterns.length > 0) {
 		parts.push(`\nPatterns:\n${request.patterns.map((p) => `  - ${p}`).join("\n")}`);
+	}
+
+	if (typeof meta.provider === "string") {
+		parts.push(`Provider: ${meta.provider}`);
+		if (typeof meta.title === "string") parts.push(`Request: ${meta.title}`);
+		if (meta.rawInput !== undefined) parts.push(`Input: ${JSON.stringify(meta.rawInput)}`);
 	}
 
 	return parts.join("\n");

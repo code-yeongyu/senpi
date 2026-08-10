@@ -86,10 +86,11 @@ export class PermissionService {
 			return;
 		}
 
+		const reply = input.reply === "always" && existing.info.allowAlways === false ? "once" : input.reply;
 		this.pending.delete(input.requestID);
-		this.emitter.emitReplied(existing.info.id, existing.info.sessionID, input.reply);
+		this.emitter.emitReplied(existing.info.id, existing.info.sessionID, reply);
 
-		if (input.reply === "reject") {
+		if (reply === "reject") {
 			existing.reject(input.message ? new CorrectedError(input.message) : new RejectedError());
 			this.rejectPendingInSession(existing.info.sessionID);
 			return;
@@ -97,7 +98,7 @@ export class PermissionService {
 
 		existing.resolve();
 
-		if (input.reply === "once") {
+		if (reply === "once") {
 			return;
 		}
 

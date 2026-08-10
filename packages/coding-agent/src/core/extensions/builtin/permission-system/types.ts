@@ -29,6 +29,7 @@ export type Request = {
 	permission: string;
 	patterns: string[];
 	always: string[];
+	allowAlways?: boolean;
 	metadata: Record<string, unknown>;
 	tool?: {
 		messageID: string;

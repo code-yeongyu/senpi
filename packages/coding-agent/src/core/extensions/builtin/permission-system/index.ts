@@ -1,7 +1,7 @@
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
-import { registerNativeAgentPermissionHandler } from "../native-agent-sdk/permission.ts";
+import { nativeAgentPermissionTarget, registerNativeAgentPermissionHandler } from "../native-agent-sdk/permission.ts";
 import { parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
 import { createEventEmitter } from "./events.ts";
@@ -123,24 +123,30 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		unregisterNativeAgentPermissionHandler = registerNativeAgentPermissionHandler(
 			sessionID,
 			async (nativeRequest) => {
-				const permission = `native_agent_${nativeRequest.kind ?? "other"}`;
-				const reason = await resolvePermission(
-					{
-						id: nextRequestID(),
-						sessionID,
-						permission,
-						patterns: [nativeRequest.title],
-						always: [nativeRequest.title],
-						metadata: {
-							provider: nativeRequest.provider,
-							kind: nativeRequest.kind,
-							title: nativeRequest.title,
-							rawInput: nativeRequest.rawInput,
+				if (!parserRegistry) return false;
+				const target = nativeAgentPermissionTarget(nativeRequest);
+				const permissionRequests = parserRegistry.parse(target.toolName, target.input, ctx.cwd);
+				for (const permissionRequest of permissionRequests) {
+					const reason = await resolvePermission(
+						{
+							id: nextRequestID(),
+							sessionID,
+							...permissionRequest,
+							always: [],
+							allowAlways: false,
+							metadata: {
+								...createRequestMetadata(target.toolName, target.input),
+								provider: nativeRequest.provider,
+								kind: nativeRequest.kind,
+								title: nativeRequest.title,
+								rawInput: nativeRequest.rawInput,
+							},
 						},
-					},
-					ctx,
-				);
-				return reason === undefined;
+						ctx,
+					);
+					if (reason !== undefined) return false;
+				}
+				return true;
 			},
 		);
 
