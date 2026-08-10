@@ -5,6 +5,10 @@
 - Deleted the beta OMO local-plugin updater, its hidden worker option, state machinery, and dedicated tests.
 - Bare `senpi update` now follows only the generic self/package/model update paths.
 - Added a production-source boundary regression that rejects OMO package-layout and updater knowledge in Senpi.
+- Replaced downstream-specific prompt markers, provenance comments, and task-extension paths with Senpi-owned or
+  implementation-neutral language.
+- Expanded the boundary regression across every package and crate source root while retaining generic brand profiles
+  and external `.omo` rules compatibility.
 
 ### Why this belongs outside the engine
 

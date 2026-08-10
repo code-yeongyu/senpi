@@ -9,6 +9,9 @@
 ### Added
 
 ### Changed
+- Generalized production prompt markers, provenance comments, and task-extension tips so Senpi no longer names a
+  downstream product's packages, repository paths, or configuration files; a repository-wide source guard prevents
+  those identifiers from returning ([#798](https://github.com/code-yeongyu/senpi/pull/798)).
 
 ### Fixed
 

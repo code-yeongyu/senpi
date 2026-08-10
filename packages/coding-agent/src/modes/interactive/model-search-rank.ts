@@ -1,7 +1,7 @@
 /**
  * Favorites-aware relevance ranking for model search.
  *
- * Implements .omo/drafts/model-selector-favorites-search-ux-ranking-spec.md:
+ * Implements the model-selector favorites-search UX ranking specification:
  * dual query token plans (compound keeps slashes, legacy splits them), a
  * per-token tier ladder over independently matched lowercased fields,
  * worst-tier-first aggregation, and a composite sort key whose canonical

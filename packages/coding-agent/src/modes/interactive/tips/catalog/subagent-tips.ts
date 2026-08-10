@@ -5,7 +5,7 @@ export const SUBAGENT_TIPS = [
 		id: "workflow-skills.plan",
 		bindings: [],
 		requiresCommand: "tasks",
-		render: () => 'Trigger "ulw plan" to get an explored, decision-complete plan under .omo/plans/.',
+		render: () => 'Trigger "ulw plan" to get an explored, decision-complete plan in the workflow extension.',
 	},
 	{
 		id: "workflow-skills.start-work",
@@ -87,7 +87,8 @@ export const SUBAGENT_TIPS = [
 		id: "subagent-config",
 		bindings: [],
 		requiresCommand: "tasks",
-		render: () => "~/.omo/omo.jsonc maps every subagent category to its model, reasoning effort, and fallback chain.",
+		render: () =>
+			"Task extension configuration maps every subagent category to its model, reasoning effort, and fallback chain.",
 	},
 	{
 		id: "subagent-team",

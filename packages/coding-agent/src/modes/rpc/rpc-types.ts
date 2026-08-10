@@ -89,8 +89,8 @@ type RpcSessionCommand =
 	| { id?: string; type: "login_api_key"; provider: string; key: string }
 	| { id?: string; type: "logout"; provider: string }
 
-	// Provider accounts (task 13) are additive. The desktop consumer contract
-	// lives in ../omo-desktop-app/packages/contracts/src/rpc.ts and is updated separately.
+	// Provider accounts (task 13) are additive. Consumer RPC contracts are
+	// maintained separately.
 	| { id?: string; type: "get_provider_accounts"; provider: string }
 	| { id?: string; type: "account_pin"; provider: string; name: string | null }
 	| { id?: string; type: "account_remove"; provider: string; name: string };

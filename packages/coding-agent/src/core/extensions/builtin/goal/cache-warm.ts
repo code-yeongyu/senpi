@@ -44,7 +44,7 @@ export type GoalCacheWarmupPhase = "scheduled" | "resumed";
 /**
  * Durable payload appended as a `goal-cache-warmup` custom entry and carried by
  * the `goal_continuation_scheduled` / `goal_continuation_resumed` pi-events, so
- * external consumers (for example omo-desktop-app) can render the story later.
+ * external consumers such as desktop clients can render the story later.
  */
 export interface GoalCacheWarmupEntryData {
 	readonly phase: GoalCacheWarmupPhase;

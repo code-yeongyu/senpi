@@ -6,16 +6,10 @@
  * model emits POST_COMPACTION_NO_TEXT_THRESHOLD consecutive assistant
  * messages with no text content (only step-start/step-finish parts).
  *
- * Algorithm ported from omo's preemptive-compaction-degradation-monitor:
- * `/Users/yeongyu/local-workspaces/omo/src/hooks/preemptive-compaction-degradation-monitor.ts`
- *
- * Pi extension surface differences vs omo:
- * - Recovery dispatch: speculative generation plus `ctx.applyCompaction(...)`
- *   instead of omo's `client.session.summarize(...)`. The "RECOVERY:" prefix
- *   in customInstructions is the disambiguator; CompactionReason stays
- *   "extension" (no new variant in v1).
- * - Notification: `ctx.notify(message)` instead of omo's
- *   `client.tui.showToast(...)`.
+ * Recovery dispatch uses speculative generation plus `ctx.applyCompaction(...)`.
+ * The "RECOVERY:" prefix in customInstructions is the disambiguator;
+ * CompactionReason stays "extension" (no new variant in v1). Notifications use
+ * `ctx.notify(message)`.
  *
  * Recovery cap: 1 per compaction cycle (gate via recoveryTriggeredThisCycle).
  * MAX_RECOVERY_ATTEMPTS = 3 is exported for future iteration but the v1 cycle
