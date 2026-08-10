@@ -43,7 +43,7 @@ function processGroupAlive(groupId: number): boolean {
 		process.kill(-groupId, 0);
 		return true;
 	} catch (error) {
-		if (isMissingProcess(error)) return false;
+		if (isUnavailableProcess(error)) return false;
 		throw error;
 	}
 }
@@ -52,10 +52,10 @@ function signalProcessGroup(groupId: number, signal: "SIGTERM" | "SIGKILL"): voi
 	try {
 		process.kill(-groupId, signal);
 	} catch (error) {
-		if (!isMissingProcess(error)) throw error;
+		if (!isUnavailableProcess(error)) throw error;
 	}
 }
 
-function isMissingProcess(error: unknown): boolean {
-	return error instanceof Error && "code" in error && error.code === "ESRCH";
+function isUnavailableProcess(error: unknown): boolean {
+	return error instanceof Error && "code" in error && (error.code === "ESRCH" || error.code === "EPERM");
 }

@@ -114,7 +114,7 @@ function writableFor(stdin: Writable): WritableStream<Uint8Array> {
 	});
 }
 
-function readableFor(stdout: Readable, terminate: () => void): ReadableStream<Uint8Array> {
+function readableFor(stdout: Readable, terminate: () => Promise<void>): ReadableStream<Uint8Array> {
 	let closed = false;
 	return new ReadableStream({
 		start(controller) {
@@ -136,7 +136,7 @@ function readableFor(stdout: Readable, terminate: () => void): ReadableStream<Ui
 		},
 		cancel() {
 			closed = true;
-			terminate();
+			void terminate().catch(() => {});
 		},
 	});
 }
@@ -165,17 +165,14 @@ export async function* runAcpAgent(
 		return termination;
 	};
 	const onAbort = (): void => {
-		void terminateOnce();
+		void terminateOnce().catch(() => {});
 	};
 	request.signal?.addEventListener("abort", onAbort, { once: true });
 	const events = new NativeAgentEventQueue();
 	const toolCalls = new Map<string, TrackedToolCall>();
 	let completed: Promise<void> | undefined;
 	try {
-		const stream = ndJsonStream(
-			writableFor(child.stdin),
-			readableFor(child.stdout, () => void terminateOnce()),
-		);
+		const stream = ndJsonStream(writableFor(child.stdin), readableFor(child.stdout, terminateOnce));
 		const connection = client({ name: clientName })
 			.onRequest(methods.client.session.requestPermission, async ({ params }) => {
 				const tracked = toolCalls.get(params.toolCall.toolCallId);
