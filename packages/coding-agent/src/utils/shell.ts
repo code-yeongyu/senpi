@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { delimiter } from "node:path";
+import { delimiter, join } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
 
@@ -267,10 +267,18 @@ export function killProcessTree(pid: number): void {
 	if (process.platform === "win32") {
 		// Use taskkill on Windows to kill process tree
 		try {
-			spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {
+			const taskkillPath = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
+			const taskkill = spawn(taskkillPath, ["/F", "/T", "/PID", String(pid)], {
 				stdio: "ignore",
 				detached: true,
 				windowsHide: true,
+			});
+			taskkill.once("error", () => {
+				try {
+					process.kill(pid, "SIGKILL");
+				} catch {
+					// Process already dead
+				}
 			});
 		} catch {
 			// Ignore errors if taskkill fails

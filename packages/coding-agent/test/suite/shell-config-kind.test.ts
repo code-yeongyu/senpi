@@ -1,6 +1,8 @@
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getShellConfig, resolveShellKind } from "../../src/utils/shell.ts";
 
@@ -12,6 +14,8 @@ import { getShellConfig, resolveShellKind } from "../../src/utils/shell.ts";
  * `getShellConfig` only inspects the supplied path string, not the host OS.
  */
 describe("shell config kind resolution", () => {
+	const windowsIt = it.skipIf(process.platform !== "win32");
+
 	let dir: string;
 	const savedEnv = process.env.SENPI_GIT_BASH_PATH;
 
@@ -65,5 +69,15 @@ describe("shell config kind resolution", () => {
 		const config = getShellConfig();
 		expect(config.shell).toBe(bash);
 		expect(config.kind).toBe("bash");
+	});
+
+	windowsIt("killProcessTree survives when taskkill is absent from PATH", () => {
+		const fixturePath = fileURLToPath(new URL("../fixtures/windows-taskkill-path.ts", import.meta.url));
+		const result = spawnSync(process.execPath, ["--import", "tsx", fixturePath], {
+			encoding: "utf8",
+			windowsHide: true,
+		});
+
+		expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
 	});
 });

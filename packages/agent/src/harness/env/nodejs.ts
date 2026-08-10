@@ -250,10 +250,18 @@ function getShellEnv(
 function killProcessTree(pid: number): void {
 	if (process.platform === "win32") {
 		try {
-			spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {
+			const taskkillPath = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
+			const taskkill = spawn(taskkillPath, ["/F", "/T", "/PID", String(pid)], {
 				stdio: "ignore",
 				detached: true,
 				windowsHide: true,
+			});
+			taskkill.once("error", () => {
+				try {
+					process.kill(pid, "SIGKILL");
+				} catch {
+					// Process already dead.
+				}
 			});
 		} catch {
 			// Ignore errors.

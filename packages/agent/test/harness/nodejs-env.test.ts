@@ -1,9 +1,9 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { access, chmod, realpath, symlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { FileError, getOrThrow } from "../../src/harness/types.ts";
@@ -394,6 +394,16 @@ describe("NodeExecutionEnv", () => {
 		const result = await env.exec("sleep 5", { timeout: 0.01 });
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.error).toMatchObject({ code: "timeout" });
+	});
+
+	it.skipIf(process.platform !== "win32")("does not crash when timeout cleanup cannot find taskkill on PATH", () => {
+		const fixturePath = fileURLToPath(new URL("../fixtures/windows-taskkill-path.ts", import.meta.url));
+		const result = spawnSync(process.execPath, ["--import", "tsx", fixturePath], {
+			encoding: "utf8",
+			windowsHide: true,
+		});
+
+		expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
 	});
 
 	it("returns callback errors from exec stream handlers", async () => {
