@@ -1,7 +1,7 @@
 /**
  * Brand profile resolution.
  *
- * A distribution that repackages this engine (for example the `omo-ai` package) injects a
+ * A distribution that repackages this engine (for example the `acme-agent` package) injects a
  * single JSON environment variable describing how the product presents itself. The engine
  * parses it once at startup and then REMOVES it from the environment, so nested processes
  * spawned by tools inherit a clean environment and keep the engine's own identity.
@@ -18,11 +18,11 @@ export const BRAND_ENV_VAR = "SENPI_BRAND";
  * its own package, which would advertise an update the branded product cannot install.
  */
 export interface BrandUpdateChannel {
-	/** Registry package that ships the branded product, e.g. `omo-ai`. */
+	/** Registry package that ships the branded product, e.g. `acme-agent`. */
 	readonly packageName: string;
 	/** Dist-tag the product publishes on, e.g. `beta`. */
 	readonly distTag: string;
-	/** Command shown to the user, e.g. `npm i -g omo-ai@beta`. */
+	/** Command shown to the user, e.g. `npm i -g acme-agent@beta`. */
 	readonly command: string;
 	/** Release notes URL; `{version}` is replaced with the available version. */
 	readonly changelogUrl?: string;
@@ -33,11 +33,11 @@ export interface BrandProfile {
 	readonly name: string;
 	/** Version shown in the header, terminal titles and `--version`. */
 	readonly displayVersion?: string;
-	/** Config directory name, e.g. `.omo`. */
+	/** Config directory name, e.g. `.acme-agent`. */
 	readonly configDir: string;
 	/** When true the agent state lives directly under the config directory, with no `agent` segment. */
 	readonly flatLayout: boolean;
-	/** Prefix for the product's environment variables, e.g. `OMO`. */
+	/** Prefix for the product's environment variables, e.g. `ACME_AGENT`. */
 	readonly envPrefix: string;
 	/** Product token used in the outgoing user agent. */
 	readonly userAgent: string;

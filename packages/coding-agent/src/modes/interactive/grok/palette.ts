@@ -1,8 +1,8 @@
 /**
  * Grok palette — typed constants for the `--grok-neo` mode (todo S2).
  *
- * Source of truth: `.omo/plans/grok-neo.md` §Palette (authoritative embedded
- * data). The values were hand-transcribed from real terminal SGR captures —
+ * Source of truth: the Grok Neo palette specification. The values were
+ * hand-transcribed from real terminal SGR captures —
  * they are measured colour data, not copied code. Per the project's binding
  * independent-reimplementation policy, this module was written without
  * opening or referencing any grok-build source.

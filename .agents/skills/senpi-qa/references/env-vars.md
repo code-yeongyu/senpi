@@ -5,8 +5,7 @@
 | Var | Purpose |
 |---|---|
 | `SENPI_CODING_AGENT_DIR` | Agent config dir (auth.json, models.json, settings, sessions). QA points it at a temp sandbox so the real `~/.senpi/agent` is untouched. |
-| `HOME` / `USERPROFILE` | Pointed at the sandbox root by `makeSandbox()` so HOME-derived senpi paths (package discovery, omo-native detection, omo-local-update) cannot reach the real user home. |
-| `SENPI_OMO_LOCAL_UPDATE` | Set to `0` in the sandbox env so the beta omo-local-update path swap stays disarmed during QA runs. |
+| `HOME` / `USERPROFILE` | Pointed at the sandbox root by `makeSandbox()` so HOME-derived package discovery cannot reach the real user home. |
 | `SENPI_CODING_AGENT_SESSION_DIR` | Session storage dir. QA points it at the sandbox. |
 | `PI_OFFLINE` | `1` disables startup network operations. QA always sets it. |
 | `PI_TELEMETRY` | `0` disables install telemetry. QA always sets it. |

@@ -1,4 +1,4 @@
-// Derived from .omo/ulw-research/20260702-114518/raw/methods-*.txt.
+// Derived from captured app-server method inventories.
 
 export const STABLE_CLIENT_REQUEST_METHODS = [
 	"account/login/cancel",

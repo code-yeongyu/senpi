@@ -1,3 +1,24 @@
+## OMO product update behavior removed from the Senpi engine (2026-08-10)
+
+### What changed
+
+- Deleted the beta OMO local-plugin updater, its hidden worker option, state machinery, and dedicated tests.
+- Bare `senpi update` now follows only the generic self/package/model update paths.
+- Added a production-source boundary regression that rejects OMO package-layout and updater knowledge in Senpi.
+- Replaced downstream-specific prompt markers, provenance comments, and task-extension paths with Senpi-owned or
+  implementation-neutral language.
+- Expanded the boundary regression across every package and crate source root while retaining generic brand profiles
+  and external `.omo` rules compatibility.
+
+### Why this belongs outside the engine
+
+- OMO Native owns OMO packaging and update behavior. Senpi exposes generic package and branded-update contracts without knowing a downstream product's repository, package names, or build layout.
+
+### Expected merge conflict zones
+
+- HIGH: `package-manager-cli.ts` and the deleted `src/beta/omo-local-update*` files.
+- MEDIUM: updater-specific QA sandbox variables and package-command parser coverage.
+
 ## Public filesystem policy exports (2026-08-09)
 
 ### What changed

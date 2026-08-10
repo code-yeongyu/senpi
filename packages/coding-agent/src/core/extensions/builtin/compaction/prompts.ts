@@ -28,7 +28,7 @@ const TASK_INTENT_UPDATE_ANCHOR_GPT = `<task-intent>
 Immutable provenance of the original task. Do not rewrite it. Newer explicit user steering overrides it.
 </task-intent>`;
 
-export const MERGED_COMPACTION_PROMPT_SYSTEM = `[SYSTEM DIRECTIVE: OH-MY-OPENCODE - COMPACTION CONTEXT]
+export const MERGED_COMPACTION_PROMPT_SYSTEM = `[SYSTEM DIRECTIVE: SENPI - COMPACTION CONTEXT]
 
 You are the COMPACTION ARCHIVIST. Create a structured handoff summary that lets the next agent continue this exact session without restarting, re-searching, or losing constraints.
 

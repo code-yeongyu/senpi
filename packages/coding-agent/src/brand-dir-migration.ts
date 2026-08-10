@@ -17,7 +17,7 @@ import { CONFIG_DIR_NAME, CONFIG_FLAT_LAYOUT, FLAT_LAYOUT_SENTINEL } from "./con
 export const MIGRATION_MARKER = ".migrated-from-senpi";
 
 /** Regenerable state: caches, logs and build worktrees are rebuilt on demand. */
-const SKIPPED_ENTRIES = new Set(["cache", "logs", "omo-local-update"]);
+const SKIPPED_ENTRIES = new Set(["cache", "logs"]);
 
 function isSkipped(entry: string): boolean {
 	return SKIPPED_ENTRIES.has(entry) || entry.endsWith(".log");

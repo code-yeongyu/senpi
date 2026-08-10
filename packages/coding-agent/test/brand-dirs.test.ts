@@ -20,11 +20,13 @@ function seedLegacyAgentDir(): string {
 	mkdirSync(join(legacy, "sessions", "project"), { recursive: true });
 	mkdirSync(join(legacy, "cache"), { recursive: true });
 	mkdirSync(join(legacy, "logs"), { recursive: true });
+	mkdirSync(join(legacy, "omo-local-update"), { recursive: true });
 	writeFileSync(join(legacy, "settings.json"), '{"theme":"dark"}');
 	writeFileSync(join(legacy, "auth.json"), '{"anthropic":{}}');
 	writeFileSync(join(legacy, "sessions", "project", "a.jsonl"), "{}");
 	writeFileSync(join(legacy, "cache", "blob"), "cache");
 	writeFileSync(join(legacy, "senpi-debug.log"), "log");
+	writeFileSync(join(legacy, "omo-local-update", "state.json"), "{}");
 	return legacy;
 }
 
@@ -62,6 +64,7 @@ describe("copy-forward migration", () => {
 		expect(readFileSync(join(brandDir, "settings.json"), "utf-8")).toBe('{"theme":"dark"}');
 		expect(existsSync(join(brandDir, "auth.json"))).toBe(true);
 		expect(existsSync(join(brandDir, "sessions", "project", "a.jsonl"))).toBe(true);
+		expect(existsSync(join(brandDir, "omo-local-update", "state.json"))).toBe(true);
 		expect(existsSync(join(brandDir, "cache"))).toBe(false);
 		expect(existsSync(join(brandDir, "logs"))).toBe(false);
 		expect(existsSync(join(brandDir, "senpi-debug.log"))).toBe(false);

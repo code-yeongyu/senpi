@@ -15,6 +15,9 @@
 ### Added
 
 ### Changed
+- Generalized production prompt markers, provenance comments, and task-extension tips so Senpi no longer names a
+  downstream product's packages, repository paths, or configuration files; a repository-wide source guard prevents
+  those identifiers from returning ([#798](https://github.com/code-yeongyu/senpi/pull/798)).
 
 ### Fixed
 
@@ -23,6 +26,8 @@
   ([#796](https://github.com/code-yeongyu/senpi/pull/796)).
 
 ### Removed
+- Removed the OMO-specific local plugin updater and hidden worker flag from the generic Senpi engine; OMO packaging
+  and updates now belong to the downstream OMO Native distribution ([#798](https://github.com/code-yeongyu/senpi/pull/798)).
 
 ## [2026.8.11-2] - 2026-08-10
 
