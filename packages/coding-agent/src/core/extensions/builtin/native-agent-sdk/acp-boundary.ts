@@ -1,7 +1,7 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { client, methods, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
-import { reapProcessTree } from "../mcp/process-tree.ts";
+import { ACP_PROCESS_GROUP, terminateAcpProcess } from "./acp-process.ts";
 import { contentInput, type TrackedToolCall, trackToolCall } from "./acp-tool-calls.ts";
 import { requestNativeAgentPermission } from "./permission.ts";
 import type { NativeAgentEvent, NativeAgentRequest } from "./stream.ts";
@@ -141,15 +141,6 @@ function readableFor(stdout: Readable, terminate: () => void): ReadableStream<Ui
 	});
 }
 
-async function terminate(child: ChildProcess): Promise<void> {
-	if (child.exitCode !== null || child.signalCode !== null) return;
-	const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
-	const pid = child.pid;
-	if (pid === undefined) child.kill();
-	else await reapProcessTree(pid, { termWaitMs: 500, killWaitMs: 500 });
-	await closed;
-}
-
 export async function* runAcpAgent(
 	request: NativeAgentRequest,
 	command: string,
@@ -161,6 +152,7 @@ export async function* runAcpAgent(
 	if (request.signal?.aborted === true) throw new Error("Operation aborted");
 	const child = spawn(command, [...args], {
 		cwd: request.cwd,
+		detached: ACP_PROCESS_GROUP,
 		env: nativeAgentEnvironment(credentialEnvKeys),
 		stdio: ["pipe", "pipe", "pipe"],
 	});
@@ -169,7 +161,7 @@ export async function* runAcpAgent(
 	const childError = new Promise<never>((_resolve, reject) => child.once("error", reject));
 	let termination: Promise<void> | undefined;
 	const terminateOnce = (): Promise<void> => {
-		termination ??= terminate(child);
+		termination ??= terminateAcpProcess(child);
 		return termination;
 	};
 	const onAbort = (): void => {

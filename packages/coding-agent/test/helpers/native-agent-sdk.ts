@@ -134,3 +134,41 @@ export function streamingAgentScript(completionMarker: string): string {
 		});
 	`;
 }
+
+export function naturalExitWithDescendantAgentScript(descendantPidMarker: string): string {
+	return `
+		import { spawn } from "node:child_process";
+		import { writeFileSync } from "node:fs";
+		import { createInterface } from "node:readline";
+		const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+		const lines = createInterface({ input: process.stdin });
+		lines.on("line", (line) => {
+			const message = JSON.parse(line);
+			if (message.method === "initialize") {
+				send({
+					jsonrpc: "2.0",
+					id: message.id,
+					result: {
+						protocolVersion: 1,
+						agentCapabilities: { loadSession: false },
+						authMethods: [],
+					},
+				});
+				return;
+			}
+			if (message.method === "session/new") {
+				send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "natural-exit-session" } });
+				return;
+			}
+			if (message.method === "session/prompt") {
+				const descendant = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+					stdio: "ignore",
+				});
+				descendant.unref();
+				writeFileSync(${JSON.stringify(descendantPidMarker)}, String(descendant.pid));
+				send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
+				setTimeout(() => process.exit(0), 0);
+			}
+		});
+	`;
+}

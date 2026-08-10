@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -12,7 +12,11 @@ import {
 import { createBuiltinParserRegistry } from "../src/core/extensions/builtin/permission-system/parsers.ts";
 import { PermissionService } from "../src/core/extensions/builtin/permission-system/service.ts";
 import { DeniedError } from "../src/core/extensions/builtin/permission-system/types.ts";
-import { permissionMetadataAgentScript, streamingAgentScript } from "./helpers/native-agent-sdk.ts";
+import {
+	naturalExitWithDescendantAgentScript,
+	permissionMetadataAgentScript,
+	streamingAgentScript,
+} from "./helpers/native-agent-sdk.ts";
 
 describe("native agent ACP boundary", () => {
 	it("passes only runtime and provider-specific credential variables", () => {
@@ -186,6 +190,26 @@ describe("native agent ACP boundary", () => {
 			});
 			expect(existsSync(completionMarker)).toBe(true);
 			await expect(iterator.next()).resolves.toEqual({ value: undefined, done: true });
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("reaps ACP descendants when the runtime exits after a completed turn", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "senpi-acp-natural-exit-"));
+		const descendantPidMarker = join(cwd, "descendant-pid");
+
+		try {
+			for await (const _event of runAcpAgent(
+				{ provider: "test-sdk", model: "test-model", prompt: "test", cwd },
+				process.execPath,
+				["--input-type=module", "-e", naturalExitWithDescendantAgentScript(descendantPidMarker)],
+				"senpi-test",
+				[],
+			)) {
+			}
+			const descendantPid = Number(readFileSync(descendantPidMarker, "utf8"));
+			expect(() => process.kill(descendantPid, 0)).toThrow();
 		} finally {
 			rmSync(cwd, { recursive: true, force: true });
 		}
