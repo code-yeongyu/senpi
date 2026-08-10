@@ -2,9 +2,10 @@ import { type ChildProcess, spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { client, methods, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 import { reapProcessTree } from "../mcp/process-tree.ts";
+import { requestNativeAgentPermission } from "./permission.ts";
 import type { NativeAgentEvent, NativeAgentRequest } from "./stream.ts";
 
-const INHERITED_ENV_KEYS = [
+const INHERITED_ENV_KEYS: readonly string[] = [
 	"PATH",
 	"HOME",
 	"USER",
@@ -22,13 +23,13 @@ const INHERITED_ENV_KEYS = [
 	"XDG_CACHE_HOME",
 	"SSL_CERT_FILE",
 	"SSL_CERT_DIR",
-] as const;
+];
 
 export function nativeAgentEnvironment(
 	credentialEnvKeys: readonly string[],
 	source: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv {
-	const environment: NodeJS.ProcessEnv = {};
+): Record<string, string> {
+	const environment: Record<string, string> = {};
 	for (const key of [...INHERITED_ENV_KEYS, ...credentialEnvKeys]) {
 		const value = source[key];
 		if (value !== undefined) environment[key] = value;
@@ -119,8 +120,16 @@ export async function* runAcpAgent(
 			readableFor(child.stdout, () => void terminateOnce()),
 		);
 		const connection = client({ name: clientName })
-			.onRequest(methods.client.session.requestPermission, ({ params }) => {
-				const option = params.options.find((candidate) => candidate.kind === "allow_once");
+			.onRequest(methods.client.session.requestPermission, async ({ params }) => {
+				const allowed = await requestNativeAgentPermission(request.sessionId, {
+					provider: request.provider,
+					kind: params.toolCall.kind ?? undefined,
+					title: params.toolCall.title ?? params.toolCall.kind ?? "Native agent tool request",
+					rawInput: params.toolCall.rawInput,
+				});
+				const option = params.options.find((candidate) =>
+					allowed ? candidate.kind === "allow_once" : candidate.kind === "reject_once",
+				);
 				return option
 					? { outcome: { outcome: "selected", optionId: option.optionId } }
 					: { outcome: { outcome: "cancelled" } };

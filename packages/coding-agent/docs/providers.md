@@ -39,7 +39,7 @@ Senpi exposes installed coding-agent CLIs as normal model providers. Authenticat
 
 `codex-sdk` uses the official Codex SDK. `kimi-sdk` and `grok-sdk` use the official Agent Client Protocol SDK against each CLI's ACP server. The selected Senpi model is forwarded to the native runtime.
 
-These providers hand the current conversation to the native agent for one turn. The native agent owns its internal tools; Senpi does not translate those tool calls into Senpi host tools. Codex is limited to its workspace-write sandbox. Kimi and Grok receive one-turn permission grants through ACP and cannot persist an always-allow choice. Their child processes receive a minimal runtime environment plus only their own provider credential variables, so unrelated Senpi/cloud credentials are not inherited. Native CLI credentials remain in each CLI's own configuration and are not copied into Senpi's `auth.json`.
+These providers hand the current conversation to the native agent for one turn. The native agent owns its internal tools; Senpi does not translate those tool calls into Senpi host tools. Native tool requests are mediated by Senpi's permission rules and prompt, and non-interactive requests are denied unless an existing rule or CLI override allows them. Codex runs with an isolated temporary home, workspace-write sandbox, untrusted approval policy, and network access disabled. Kimi and Grok cannot persist an always-allow choice. Child processes receive a minimal runtime environment plus only their own provider credential variables, so unrelated Senpi/cloud credentials are not inherited. Native CLI credentials remain in each CLI's own configuration and are not copied into Senpi's `auth.json`.
 
 ### OpenAI Codex
 

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { nativeAgentEnvironment, runAcpAgent } from "../src/core/extensions/builtin/native-agent-sdk/acp-boundary.ts";
+import {
+	registerNativeAgentPermissionHandler,
+	requestNativeAgentPermission,
+} from "../src/core/extensions/builtin/native-agent-sdk/permission.ts";
 
 describe("native agent ACP boundary", () => {
 	it("passes only runtime and provider-specific credential variables", () => {
@@ -21,7 +25,7 @@ describe("native agent ACP boundary", () => {
 	it("surfaces a missing ACP executable as a rejected turn", async () => {
 		const collect = async (): Promise<void> => {
 			for await (const _event of runAcpAgent(
-				{ model: "test-model", prompt: "test", cwd: process.cwd() },
+				{ provider: "test-sdk", model: "test-model", prompt: "test", cwd: process.cwd() },
 				"senpi-definitely-missing-acp-command",
 				[],
 				"senpi-test",
@@ -39,6 +43,7 @@ describe("native agent ACP boundary", () => {
 		const collect = async (): Promise<void> => {
 			for await (const _event of runAcpAgent(
 				{
+					provider: "test-sdk",
 					model: "test-model",
 					prompt: "test",
 					cwd: process.cwd(),
@@ -53,5 +58,35 @@ describe("native agent ACP boundary", () => {
 		};
 
 		await expect(collect()).rejects.toThrow("Operation aborted");
+	});
+
+	it("routes native tool approval through the registered Senpi session permission handler", async () => {
+		const unregister = registerNativeAgentPermissionHandler("session-1", async (request) => {
+			expect(request).toMatchObject({
+				provider: "grok-sdk",
+				kind: "execute",
+				title: "Run tests",
+			});
+			return true;
+		});
+
+		try {
+			await expect(
+				requestNativeAgentPermission("session-1", {
+					provider: "grok-sdk",
+					kind: "execute",
+					title: "Run tests",
+				}),
+			).resolves.toBe(true);
+			await expect(
+				requestNativeAgentPermission("missing-session", {
+					provider: "grok-sdk",
+					kind: "execute",
+					title: "Run tests",
+				}),
+			).resolves.toBe(false);
+		} finally {
+			unregister();
+		}
 	});
 });

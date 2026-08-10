@@ -1,6 +1,7 @@
 import { SettingsManager } from "../../../settings-manager.ts";
-import type { ExtensionAPI } from "../../types.ts";
+import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
+import { registerNativeAgentPermissionHandler } from "../native-agent-sdk/permission.ts";
 import { parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
 import { createEventEmitter } from "./events.ts";
@@ -60,8 +61,33 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	let cliRuleset: Ruleset = [];
 	let staticRuleset: Ruleset = [];
 	let initialApprovedCount = 0;
+	let unregisterNativeAgentPermissionHandler: (() => void) | undefined;
 
 	const nextRequestID = createRequestIDFactory();
+	const resolvePermission = async (request: Request, ctx: ExtensionContext): Promise<string | undefined> => {
+		if (!service) return "Permission service is unavailable.";
+		const askPromise = service.ask(request);
+		const isPending = service.list().some((pendingRequest) => pendingRequest.id === request.id);
+
+		if (isPending) {
+			if (ctx.hasUI) {
+				const reply = await showPermissionPrompt(ctx, request);
+				service.reply(reply);
+			} else {
+				const reply = handleNoUI(request, staticRuleset, cliRuleset, (eventName, data) => {
+					if (eventName !== "permission_asked") pi.events.emit(eventName, data);
+				});
+				if (reply) service.reply(reply);
+			}
+		}
+
+		try {
+			await askPromise;
+			return undefined;
+		} catch (error) {
+			return getReason(error);
+		}
+	};
 
 	pi.registerFlag("permission", {
 		description: "Set permission rules (format: tool=action or tool:pattern=action)",
@@ -92,6 +118,31 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		parserRegistry = createBuiltinParserRegistry();
 		service = new PermissionService(staticRuleset, approved, createEventEmitter(pi));
 		initialApprovedCount = approved.length;
+		const sessionID = ctx.sessionManager.getSessionId();
+		unregisterNativeAgentPermissionHandler?.();
+		unregisterNativeAgentPermissionHandler = registerNativeAgentPermissionHandler(
+			sessionID,
+			async (nativeRequest) => {
+				const permission = `native_agent_${nativeRequest.kind ?? "other"}`;
+				const reason = await resolvePermission(
+					{
+						id: nextRequestID(),
+						sessionID,
+						permission,
+						patterns: [nativeRequest.title],
+						always: [nativeRequest.title],
+						metadata: {
+							provider: nativeRequest.provider,
+							kind: nativeRequest.kind,
+							title: nativeRequest.title,
+							rawInput: nativeRequest.rawInput,
+						},
+					},
+					ctx,
+				);
+				return reason === undefined;
+			},
+		);
 
 		const allTools = pi.getAllTools().map((tool) => tool.name);
 		const disabledTools = disabled(allTools, staticRuleset);
@@ -116,38 +167,8 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				always: permissionRequest.always,
 				metadata: createRequestMetadata(event.toolName, event.input),
 			};
-
-			const askPromise = service.ask(request);
-			const isPending = service.list().some((pendingRequest) => pendingRequest.id === request.id);
-
-			if (!isPending) {
-				try {
-					await askPromise;
-				} catch (error) {
-					return { block: true, reason: getReason(error) };
-				}
-				continue;
-			}
-
-			if (ctx.hasUI) {
-				const reply = await showPermissionPrompt(ctx, request);
-				service.reply(reply);
-			} else {
-				const reply = handleNoUI(request, staticRuleset, cliRuleset, (eventName, data) => {
-					if (eventName !== "permission_asked") {
-						pi.events.emit(eventName, data);
-					}
-				});
-				if (reply) {
-					service.reply(reply);
-				}
-			}
-
-			try {
-				await askPromise;
-			} catch (error) {
-				return { block: true, reason: getReason(error) };
-			}
+			const reason = await resolvePermission(request, ctx);
+			if (reason !== undefined) return { block: true, reason };
 		}
 
 		return undefined;
@@ -155,6 +176,8 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", async (event, ctx) => {
 		void event;
+		unregisterNativeAgentPermissionHandler?.();
+		unregisterNativeAgentPermissionHandler = undefined;
 
 		if (!service) {
 			return;
