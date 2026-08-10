@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { kimiSessionConfigOptions } from "../src/core/extensions/builtin/kimi-sdk/sdk-boundary.ts";
 import { nativeAgentEnvironment, runAcpAgent } from "../src/core/extensions/builtin/native-agent-sdk/acp-boundary.ts";
 import {
 	registerNativeAgentPermissionHandler,
@@ -88,5 +89,25 @@ describe("native agent ACP boundary", () => {
 		} finally {
 			unregister();
 		}
+	});
+
+	it("maps Senpi reasoning levels to Kimi's ACP thinking option", () => {
+		const request = {
+			provider: "kimi-sdk",
+			model: "k3",
+			prompt: "test",
+			cwd: process.cwd(),
+		};
+
+		expect(kimiSessionConfigOptions(request)).toEqual([]);
+		expect(kimiSessionConfigOptions({ ...request, reasoning: "minimal" })).toEqual([
+			{ configId: "thinking", value: "low" },
+		]);
+		expect(kimiSessionConfigOptions({ ...request, reasoning: "high" })).toEqual([
+			{ configId: "thinking", value: "high" },
+		]);
+		expect(kimiSessionConfigOptions({ ...request, reasoning: "max" })).toEqual([
+			{ configId: "thinking", value: "max" },
+		]);
 	});
 });

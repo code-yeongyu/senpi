@@ -5,6 +5,11 @@ import { reapProcessTree } from "../mcp/process-tree.ts";
 import { requestNativeAgentPermission } from "./permission.ts";
 import type { NativeAgentEvent, NativeAgentRequest } from "./stream.ts";
 
+export type NativeAgentSessionConfigOption = {
+	readonly configId: string;
+	readonly value: string;
+};
+
 const INHERITED_ENV_KEYS: readonly string[] = [
 	"PATH",
 	"HOME",
@@ -95,6 +100,7 @@ export async function* runAcpAgent(
 	args: readonly string[],
 	clientName: string,
 	credentialEnvKeys: readonly string[],
+	sessionConfigOptions: readonly NativeAgentSessionConfigOption[] = [],
 ): AsyncIterable<NativeAgentEvent> {
 	if (request.signal?.aborted === true) throw new Error("Operation aborted");
 	const child = spawn(command, [...args], {
@@ -141,6 +147,13 @@ export async function* runAcpAgent(
 				});
 				return context.buildSession(request.cwd).withSession(async (session) => {
 					try {
+						for (const option of sessionConfigOptions) {
+							await context.request(methods.agent.session.setConfigOption, {
+								sessionId: session.sessionId,
+								configId: option.configId,
+								value: option.value,
+							});
+						}
 						const promptPromise = session.prompt(request.prompt);
 						const responseText = await session.readText();
 						await promptPromise;
