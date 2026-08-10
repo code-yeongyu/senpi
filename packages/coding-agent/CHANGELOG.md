@@ -12,6 +12,9 @@
 
 ### Fixed
 
+- Fixed interactive render signature hashing to process omitted array items and object keys iteratively, preventing stack
+  overflows on very large tool and assistant values while retaining tail-change cache invalidation.
+
 ### Removed
 
 ## [2026.8.10] - 2026-08-10
