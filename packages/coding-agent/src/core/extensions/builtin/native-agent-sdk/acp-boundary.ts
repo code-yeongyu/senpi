@@ -1,8 +1,16 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
-import { client, methods, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
+import {
+	client,
+	methods,
+	ndJsonStream,
+	PROTOCOL_VERSION,
+	type SessionUpdate,
+	type ToolCall,
+	type ToolCallUpdate,
+} from "@agentclientprotocol/sdk";
 import { reapProcessTree } from "../mcp/process-tree.ts";
-import { requestNativeAgentPermission } from "./permission.ts";
+import { type NativeAgentPermissionRequest, requestNativeAgentPermission } from "./permission.ts";
 import type { NativeAgentEvent, NativeAgentRequest } from "./stream.ts";
 
 export type NativeAgentSessionConfigOption = {
@@ -82,6 +90,44 @@ class NativeAgentEventQueue implements AsyncIterableIterator<NativeAgentEvent> {
 		const reader = this.reader;
 		this.reader = undefined;
 		reader?.reject(error);
+	}
+}
+
+type TrackedToolCall = Pick<NativeAgentPermissionRequest, "kind" | "title" | "rawInput">;
+
+function contentInput(content: ToolCall["content"] | ToolCallUpdate["content"]): unknown {
+	const text = content
+		?.flatMap((item) => (item.type === "content" && item.content.type === "text" ? [item.content.text] : []))
+		.join("");
+	if (!text) return undefined;
+	try {
+		return JSON.parse(text);
+	} catch (error) {
+		if (error instanceof SyntaxError) return undefined;
+		throw error;
+	}
+}
+
+function trackToolCall(update: SessionUpdate, toolCalls: Map<string, TrackedToolCall>): void {
+	switch (update.sessionUpdate) {
+		case "tool_call":
+			toolCalls.set(update.toolCallId, {
+				kind: update.kind,
+				title: update.title,
+				rawInput: update.rawInput ?? contentInput(update.content),
+			});
+			return;
+		case "tool_call_update": {
+			const previous = toolCalls.get(update.toolCallId);
+			toolCalls.set(update.toolCallId, {
+				kind: update.kind ?? previous?.kind,
+				title: update.title ?? previous?.title ?? "Native agent tool request",
+				rawInput: update.rawInput ?? contentInput(update.content) ?? previous?.rawInput,
+			});
+			return;
+		}
+		default:
+			return;
 	}
 }
 
@@ -176,6 +222,7 @@ export async function* runAcpAgent(
 	};
 	request.signal?.addEventListener("abort", onAbort, { once: true });
 	const events = new NativeAgentEventQueue();
+	const toolCalls = new Map<string, TrackedToolCall>();
 	let completed: Promise<void> | undefined;
 	try {
 		const stream = ndJsonStream(
@@ -184,11 +231,12 @@ export async function* runAcpAgent(
 		);
 		const connection = client({ name: clientName })
 			.onRequest(methods.client.session.requestPermission, async ({ params }) => {
+				const tracked = toolCalls.get(params.toolCall.toolCallId);
 				const allowed = await requestNativeAgentPermission(request.sessionId, {
 					provider: request.provider,
-					kind: params.toolCall.kind ?? undefined,
-					title: params.toolCall.title ?? params.toolCall.kind ?? "Native agent tool request",
-					rawInput: params.toolCall.rawInput,
+					kind: params.toolCall.kind ?? tracked?.kind,
+					title: params.toolCall.title ?? tracked?.title ?? params.toolCall.kind ?? "Native agent tool request",
+					rawInput: params.toolCall.rawInput ?? contentInput(params.toolCall.content) ?? tracked?.rawInput,
 				});
 				const option = params.options.find((candidate) =>
 					allowed ? candidate.kind === "allow_once" : candidate.kind === "reject_once",
@@ -217,6 +265,7 @@ export async function* runAcpAgent(
 							switch (message.kind) {
 								case "session_update": {
 									const update = message.update;
+									trackToolCall(update, toolCalls);
 									if (
 										update.sessionUpdate === "agent_message_chunk" &&
 										update.content.type === "text" &&
