@@ -1,4 +1,6 @@
+import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { NativePtyLoadResult } from "../src/native-loader.ts";
 import {
@@ -146,6 +148,27 @@ describe("PipeFallbackSession", () => {
 
 describe("PipeFallbackSession terminal detachment", () => {
 	const posixIt = it.skipIf(process.platform === "win32");
+	const windowsIt = it.skipIf(process.platform !== "win32");
+
+	windowsIt("kill() does not crash when taskkill is absent from PATH", async () => {
+		const fixturePath = fileURLToPath(new URL("./fixtures/windows-taskkill-path.ts", import.meta.url));
+		const fixture = spawn(process.execPath, ["--import", "tsx", fixturePath], {
+			stdio: ["ignore", "ignore", "pipe"],
+			windowsHide: true,
+		});
+		let stderr = "";
+		fixture.stderr.setEncoding("utf8");
+		fixture.stderr.on("data", (chunk: string) => {
+			stderr += chunk;
+		});
+
+		const exitCode = await new Promise<number | null>((resolve, reject) => {
+			fixture.once("error", reject);
+			fixture.once("close", resolve);
+		});
+
+		expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
+	});
 
 	posixIt("runs the child in its own process group so it cannot read senpi's controlling terminal", async () => {
 		// A child sharing senpi's session keeps the user's terminal as its

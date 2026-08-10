@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { join } from "node:path";
 import type { NativePtyLoadResult } from "./native-loader.ts";
 
 export interface PipeFallbackSessionOptions {
@@ -244,7 +245,13 @@ export class PipeFallbackSession {
 			// pipe open — so 'close' never fires and waitExit() hangs teardown. taskkill /T /F
 			// terminates the whole tree so the pipe EOFs and the session settles.
 			try {
-				spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+				const child = this.child;
+				const taskkillPath = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
+				const taskkill = spawn(taskkillPath, ["/pid", String(pid), "/T", "/F"], {
+					stdio: "ignore",
+					windowsHide: true,
+				});
+				taskkill.once("error", () => terminateChildTree(child, signal));
 				return { ok: true, note: `Terminated child_process pipe fallback process tree (pid ${pid}).` };
 			} catch {
 				// Fall through to the direct kill if taskkill is unavailable.
