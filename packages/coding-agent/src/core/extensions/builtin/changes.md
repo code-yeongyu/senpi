@@ -1,5 +1,14 @@
 # Builtin extensions changes
 
+## native SDK providers: Codex, Kimi, and Grok (2026-08-10)
+
+- Added `codex-sdk`, `kimi-sdk`, and `grok-sdk` built-ins that expose the installed native coding-agent runtimes through Senpi's normal provider/model selection surface.
+- The providers reuse the generated `openai-codex`, `kimi-coding`, and `xai` model catalogs, flatten the current Senpi conversation into a role-delimited prompt, and bridge native assistant text, usage, cancellation, and failures into `AssistantMessageEventStream`.
+- Codex uses `@openai/codex-sdk` in its workspace-write sandbox; Kimi and Grok use the official ACP SDK against `kimi --model <model> acp` and `grok agent --model <model> stdio`, with one-turn permission grants and a provider-specific child environment. Native agents own their internal tools rather than translating them into Senpi host tool calls.
+- Why built-ins are required: `streamSimple` provider registration is the extension seam that makes custom runtimes selectable without adding bespoke core routing or shadowing existing API-backed providers.
+- Coverage: `test/native-agent-sdk-stream.test.ts` and `test/suite/native-sdk-providers-extension.test.ts`; existing Claude SDK provider tests remain regression coverage.
+- Expected merge conflict zones: LOW in `builtin/index.ts` registration order and package dependency locks; the new provider directories are additive.
+
 ## import-repro: guard /ir against mid-run and mid-compaction dispatch (2026-08-09)
 
 - Extension commands now dispatch immediately inside `AgentSession.prompt()` (immediate-extension-commands plan), including while a run is streaming and while compaction is active. `/ir` replaces the live session through `ctx.switchSession()`, which aborts the in-flight turn without confirmation and — during compaction — fire-and-forget aborts the compaction task and disposes the session while that task is still unwinding (`agent-session-runtime.ts` `teardownCurrent` -> `abort()` -> `dispose()`).

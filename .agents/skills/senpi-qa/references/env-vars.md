@@ -35,6 +35,10 @@ The first present key wins; `devenv-setup.mjs` seeds `.env.local` from it.
 When you add a provider, add its key here AND to the `.devcontainer`
 `secrets` block AND keep `env-api-keys.ts` as the source of truth.
 
+## Native coding-agent runtime credentials
+
+The `codex-sdk`, `kimi-sdk`, and `grok-sdk` providers do not add Senpi API-key environment variables. They launch the installed Codex, Kimi Code, and Grok runtimes and use the credentials managed by those CLIs. QA may point `CODEX_HOME` at a temporary directory containing a copied Codex auth file so native Codex smoke tests do not load unrelated user skills; the original credential file must remain unchanged.
+
 ## Custom provider (mock loop)
 
 A custom provider lives in `models.json` under `SENPI_CODING_AGENT_DIR`, not an

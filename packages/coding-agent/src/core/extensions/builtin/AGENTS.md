@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/extensions/builtin
 
-32 in-tree extensions plus 4 global defaults. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
+35 in-tree extensions plus 4 global defaults. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
 
 ## INVENTORY (registration order from `builtin/index.ts`)
 
@@ -35,9 +35,12 @@
 | 27 | `ttsr` | `ttsr/` | Stream-rule detection (collapse + control-token-leak) with abort→remediate→retry; ported from oh-my-pi — see `ttsr/changes.md` |
 | 28 | `btw` | `btw/` | `/btw` side-question command that queries in parallel without touching the main session |
 | 29 | `claude-sdk-oauth` | `claude-sdk-oauth/` | Claude SDK OAuth provider: multi-account OAuth, resume-first session continuity, stream-safe failover — see `claude-sdk-oauth/AGENTS.md` + `changes.md` |
-| 30 | `loop-guard` | `loop-guard/` | Tool-call loop detection (identical / near-identical / cyclic) that steers a `<system-reminder>` into the running turn with a cache-warm-style TUI notice — see `loop-guard/changes.md`; pure observer, slots before config-reload |
-| 31 | `config-reload` | `config-reload/` | Hash-gated watcher for trusted global/project config surfaces that defers a full session reload until idle and exposes the `config-watch:*` event protocol; registered after settings-dependent builtins so a reload rebuilds their resolved settings, and before final MCP observation |
-| 32 | `mcp` | `mcp/` | Built-in MCP client: `mcpServers` config, stdio/http transports, `/mcp` commands, tool exposure policy — kept last so its provider-payload tap observes all co-resident builtin mutations; see `mcp/changes.md` |
+| 30 | `codex-sdk` | `codex-sdk/` | Native Codex SDK provider using the existing OpenAI Codex model catalog |
+| 31 | `kimi-sdk` | `kimi-sdk/` | Native Kimi ACP provider using the existing Kimi Coding model catalog |
+| 32 | `grok-sdk` | `grok-sdk/` | Native Grok ACP provider using the existing xAI Grok model catalog |
+| 33 | `loop-guard` | `loop-guard/` | Tool-call loop detection (identical / near-identical / cyclic) that steers a `<system-reminder>` into the running turn with a cache-warm-style TUI notice — see `loop-guard/changes.md`; pure observer, slots before config-reload |
+| 34 | `config-reload` | `config-reload/` | Hash-gated watcher for trusted global/project config surfaces that defers a full session reload until idle and exposes the `config-watch:*` event protocol; registered after settings-dependent builtins so a reload rebuilds their resolved settings, and before final MCP observation |
+| 35 | `mcp` | `mcp/` | Built-in MCP client: `mcpServers` config, stdio/http transports, `/mcp` commands, tool exposure policy — kept last so its provider-payload tap observes all co-resident builtin mutations; see `mcp/changes.md` |
 
 Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by resource-loader.ts) and 4 **global default extensions** (resolved fast-path): `diff`, `files`, `prompt-url-widget`, `tps` (in `globalDefaultExtensionFactories`).
 

@@ -138,7 +138,7 @@ Senpi has several extension surfaces. They must not be conflated.
 
 ### Ordered builtins
 
-The authoritative `builtinExtensions` registration order contains 31 extensions:
+The authoritative `builtinExtensions` registration order contains 35 extensions:
 
 1. `hooks`
 2. `permission-system`
@@ -169,8 +169,12 @@ The authoritative `builtinExtensions` registration order contains 31 extensions:
 27. `ttsr`
 28. `btw`
 29. `claude-sdk-oauth`
-30. `config-reload`
-31. `mcp`
+30. `codex-sdk`
+31. `kimi-sdk`
+32. `grok-sdk`
+33. `loop-guard`
+34. `config-reload`
+35. `mcp`
 
 `mcp` remains last because its load order is intentional and load-bearing.
 

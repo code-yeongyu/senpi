@@ -5,6 +5,7 @@ Pi supports subscription-based providers via OAuth and API key providers via env
 ## Table of Contents
 
 - [Subscriptions](#subscriptions)
+- [Native Coding-Agent Runtimes](#native-coding-agent-runtimes)
 - [API Keys](#api-keys)
 - [Auth File](#auth-file)
 - [Cloud Providers](#cloud-providers)
@@ -25,6 +26,20 @@ Use `/login` in interactive mode, then select a provider:
 - Radius
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically.
+
+## Native Coding-Agent Runtimes
+
+Senpi exposes installed coding-agent CLIs as normal model providers. Authenticate each CLI with its own login flow first, then select its Senpi provider:
+
+| Provider | Required runtime | Example |
+|----------|------------------|---------|
+| `codex-sdk` | Codex CLI authenticated with ChatGPT | `senpi --model codex-sdk/gpt-5.4-mini` |
+| `kimi-sdk` | Kimi Code CLI authenticated with Moonshot | `senpi --model kimi-sdk/k3` |
+| `grok-sdk` | Grok CLI authenticated with xAI | `senpi --model grok-sdk/grok-build-0.1` |
+
+`codex-sdk` uses the official Codex SDK. `kimi-sdk` and `grok-sdk` use the official Agent Client Protocol SDK against each CLI's ACP server. The selected Senpi model is forwarded to the native runtime.
+
+These providers hand the current conversation to the native agent for one turn. The native agent owns its internal tools; Senpi does not translate those tool calls into Senpi host tools. Codex is limited to its workspace-write sandbox. Kimi and Grok receive one-turn permission grants through ACP and cannot persist an always-allow choice. Their child processes receive a minimal runtime environment plus only their own provider credential variables, so unrelated Senpi/cloud credentials are not inherited. Native CLI credentials remain in each CLI's own configuration and are not copied into Senpi's `auth.json`.
 
 ### OpenAI Codex
 

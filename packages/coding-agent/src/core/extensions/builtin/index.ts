@@ -5,16 +5,19 @@ import bashTimeoutExtension from "./bash-timeout/index.ts";
 import btwExtension from "./btw/index.ts";
 import cacheKeepAliveExtension from "./cache-keepalive/index.ts";
 import claudeSdkOauthExtension from "./claude-sdk-oauth/index.ts";
+import codexSdkExtension from "./codex-sdk/index.ts";
 import compactionExtension from "./compaction/index.ts";
 import configReloadExtension from "./config-reload/index.ts";
 import diffExtension from "./diff.ts";
 import filesExtension from "./files.ts";
 import goalExtension from "./goal/index.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
+import grokSdkExtension from "./grok-sdk/index.ts";
 import helpExtension from "./help/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
 import importReproExtension from "./import-repro.ts";
+import kimiSdkExtension from "./kimi-sdk/index.ts";
 import lookAtExtension from "./look-at/index.ts";
 import loopGuardExtension from "./loop-guard/index.ts";
 import mcpExtension from "./mcp/index.ts";
@@ -84,6 +87,9 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
 	{ id: "claude-sdk-oauth", factory: claudeSdkOauthExtension },
+	{ id: "codex-sdk", factory: codexSdkExtension },
+	{ id: "kimi-sdk", factory: kimiSdkExtension },
+	{ id: "grok-sdk", factory: grokSdkExtension },
 	// Loop guard is a pure observer of tool_execution_start; it never mutates payloads, so it slots before config-reload and leaves MCP last.
 	{ id: "loop-guard", factory: loopGuardExtension },
 	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before MCP observes them.

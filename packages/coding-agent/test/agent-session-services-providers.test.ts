@@ -14,6 +14,12 @@ import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-te
  */
 describe("createAgentSessionServices provider registration order", () => {
 	const tempDirs: string[] = [];
+	const builtinSdkRegistrations = [
+		"config:claude-sdk-oauth",
+		"config:codex-sdk",
+		"config:kimi-sdk",
+		"config:grok-sdk",
+	] as const;
 
 	afterEach(() => {
 		for (const dir of tempDirs.splice(0)) {
@@ -77,7 +83,7 @@ describe("createAgentSessionServices provider registration order", () => {
 	it("flushes mixed pre-bind registrations in call order (native then legacy)", async () => {
 		const applied = await recordRegistrations(nativeRegistration("ord-native"), legacyRegistration("ord-legacy"));
 
-		expect(applied).toEqual(["native:ord-native", "config:ord-legacy", "config:claude-sdk-oauth"]);
+		expect(applied).toEqual(["native:ord-native", "config:ord-legacy", ...builtinSdkRegistrations]);
 	});
 
 	it("flushes mixed pre-bind registrations in call order (legacy then native)", async () => {
@@ -91,7 +97,7 @@ describe("createAgentSessionServices provider registration order", () => {
 			"config:ord-legacy-first",
 			"native:ord-native",
 			"config:ord-legacy-last",
-			"config:claude-sdk-oauth",
+			...builtinSdkRegistrations,
 		]);
 	});
 });
