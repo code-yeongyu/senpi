@@ -278,7 +278,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 	it("preserves the parent environment minus SENPI_* variables in ambient mode", async () => {
 		const captured: Options[] = [];
 		const { CLAUDE_CODE_OAUTH_TOKEN: _oauthToken, ...ambientEnvironment } = managedEnvironment();
-		configureAuth(new InMemoryCredentialStore(), ambientEnvironment);
+		configureAuth(new InMemoryCredentialStore(), ambientEnvironment, undefined, "ambient");
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
 		await streamClaudeSdkOauth(model, context).result();
@@ -349,7 +349,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 				lane === "ambient" ? new InMemoryCredentialStore() : await storeWith(slot("default", "slot-access"));
 			const captured: Options[] = [];
 			const { CLAUDE_CODE_OAUTH_TOKEN: _oauthToken, ...ambientEnvironment } = managedEnvironment();
-			configureAuth(store, ambientEnvironment, undefined, lane === "ambient" ? undefined : lane);
+			configureAuth(store, ambientEnvironment, undefined, lane);
 			overrideSdkBoundary({ query: queryCapturing(captured) });
 
 			await streamClaudeSdkOauth(model, context).result();

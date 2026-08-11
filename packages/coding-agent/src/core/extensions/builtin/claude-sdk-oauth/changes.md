@@ -1,5 +1,19 @@
 # claude-sdk-oauth extension changes
 
+## 2026-08-11 - Default stored OAuth accounts to managed slot injection
+
+- Changed the managed auth pool fallback from `ambient` to `oauth-slots`, matching the query-options default. A
+  successful `/login claude-sdk-oauth` now supplies its stored account token without requiring an explicit
+  `claudeSdkOauthProvider.tokenInjection` setting.
+- Explicit `tokenInjection: "ambient"` remains unchanged and continues to rely on upstream credential sources. The
+  existing empty-pool compatibility fallback to ambient authentication is also unchanged.
+- Added deterministic regression coverage for default stored-slot selection and explicit ambient preservation using
+  the real provider stream with in-memory credentials and a fake SDK query.
+- This cannot be implemented by an external extension: lane selection and credential preparation are private to the
+  builtin provider's stream path. Replacing the provider wholesale would also replace its account affinity, failover,
+  and session-continuity integration.
+- Expected conflict zones: `auth-lane.ts` managed-pool lane selection and Claude OAuth auth-lane regression tests.
+
 ## 2026-08-11 - Require a real OAuth login for runtime availability
 
 - Removed the literal `apiKey: "claude-sdk-oauth-managed"` registration placeholder. Provider composition treated

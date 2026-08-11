@@ -132,7 +132,7 @@ function writeConfigCredentials(directory: string, slot: AccountSlot, access: st
 }
 
 async function managedPool(settings: ClaudeSdkOauthProviderSettings): Promise<ManagedPool | undefined> {
-	const lane = settings.tokenInjection ?? "ambient";
+	const lane = settings.tokenInjection ?? "oauth-slots";
 	if (lane === "ambient") return undefined;
 	const store = activeBoundary.createStore();
 	let credential = await store.read(CLAUDE_SDK_OAUTH_PROVIDER_ID);
