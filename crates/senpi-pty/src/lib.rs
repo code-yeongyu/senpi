@@ -5,7 +5,7 @@ mod signals;
 pub use session::{PtyError, PtyExit, PtyResult, PtySession, PtySessionOptions};
 
 use napi::bindgen_prelude::{
-    AsyncTask, Buffer, Either3, Env, Function, Result as NapiResult, Status, Task, Uint8Array,
+    Buffer, Either3, Env, Function, JsValue, PromiseRaw, Result as NapiResult, Status, Uint8Array,
 };
 use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi::Error as NapiError;
@@ -13,7 +13,6 @@ use napi_derive::napi;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::thread::JoinHandle;
 use std::time::Duration;
 
 /// Native ABI version. This is INTENTIONALLY decoupled from the package/CalVer
@@ -82,14 +81,23 @@ impl NativePtySession {
     }
 
     #[napi(js_name = "waitExit")]
-    pub fn wait_exit(&mut self) -> NapiResult<AsyncTask<NativePtyWaitTask>> {
+    pub fn wait_exit<'env>(&mut self, env: &'env Env) -> NapiResult<PromiseRaw<'env, NativePtyExit>> {
         let waiter = self.open_session()?.wait_in_background().map_err(to_napi_error)?;
-        Ok(AsyncTask::new(NativePtyWaitTask { waiter: Some(waiter) }))
+        let (deferred, promise) = env.create_deferred::<NativePtyExit, _>()?;
+        std::thread::Builder::new()
+            .name("senpi-pty-reaper".to_string())
+            .spawn(move || match waiter.join() {
+                Ok(Ok(exit)) => deferred.resolve(move |_env| Ok(exit.into())),
+                Ok(Err(error)) => deferred.reject(to_napi_error(error)),
+                Err(_) => deferred.reject(NapiError::new(Status::GenericFailure, "pty wait thread panicked")),
+            })
+            .map_err(|error| NapiError::new(Status::GenericFailure, error.to_string()))?;
+        Ok(PromiseRaw::new(env.raw(), promise.raw()))
     }
 
     #[napi]
-    pub fn wait(&mut self) -> NapiResult<AsyncTask<NativePtyWaitTask>> {
-        self.wait_exit()
+    pub fn wait<'env>(&mut self, env: &'env Env) -> NapiResult<PromiseRaw<'env, NativePtyExit>> {
+        self.wait_exit(env)
     }
 }
 
@@ -216,28 +224,4 @@ impl From<PtyExit> for NativePtyExit {
 
 fn to_napi_error(error: PtyError) -> NapiError {
     NapiError::new(Status::GenericFailure, error.to_string())
-}
-
-pub struct NativePtyWaitTask {
-    waiter: Option<JoinHandle<PtyResult<PtyExit>>>,
-}
-
-impl Task for NativePtyWaitTask {
-    type Output = PtyExit;
-    type JsValue = NativePtyExit;
-
-    fn compute(&mut self) -> NapiResult<Self::Output> {
-        let waiter = self
-            .waiter
-            .take()
-            .ok_or_else(|| NapiError::new(Status::GenericFailure, "pty wait task already consumed"))?;
-        waiter
-            .join()
-            .map_err(|_| NapiError::new(Status::GenericFailure, "pty wait thread panicked"))?
-            .map_err(to_napi_error)
-    }
-
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> NapiResult<Self::JsValue> {
-        Ok(output.into())
-    }
 }

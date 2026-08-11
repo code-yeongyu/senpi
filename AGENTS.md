@@ -1,7 +1,7 @@
 # Senpi Repository Guide
 
-Generated: 2026-07-17
-Commit: `92fc96389`
+Generated: 2026-08-07
+Commit: `4f26b8282`
 Branch: `main`
 
 Metadata above records the source state used for this generation pass.
@@ -40,7 +40,11 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | `packages/agent/` | Browser-safe agent loop plus optional Node harness |
 | `packages/coding-agent/` | `senpi` CLI, sessions, extensions, RPC, interactive mode |
 | `packages/tui/` | Differential terminal renderer and editor primitives |
-| `packages/server/` | Experimental daemon, IPC, RPC-process supervision |
+| `packages/server/` | Composable protocol server; legacy daemon/IPC under `src/legacy/` |
+| `packages/protocol/` | Transport-neutral CBOR protocol for remote pi sessions |
+| `packages/client/` | Transport-neutral client for remote pi sessions (framed CBOR) |
+| `packages/storage/` | Storage backends; `sqlite-node/` Node sqlite session store |
+| `packages/evals/` | Behavioral, model-backed eval suites over real `AgentSession` |
 | `packages/pty/` | TypeScript PTY loader, sessions, registry, pipe fallback |
 | `packages/senpi-codemode/` | Source-only persistent-kernel `eval` extension |
 | `crates/senpi-pty/` | Rust/N-API native PTY implementation and ABI owner |
@@ -64,6 +68,7 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | Change eval prompt/rendering | `packages/senpi-codemode/src/prompt/` and `src/tool/` |
 | Audit changelogs | `.github/agent/commands/cl.md` |
 | Prepare a release | `scripts/release.mjs` and `scripts/release-packages.mjs` |
+| Regenerate model catalog data | `packages/ai/src/providers/data/` via root `npm run hydrate:model-data` / `check:model-data` |
 
 ## CODE MAP
 
@@ -97,6 +102,7 @@ Persistent terminals -> packages/pty -> crates/senpi-pty
 - Changing fork-specific source behavior means reading the nearest `changes.md` first and updating it in the same verified increment, not in a follow-up.
 - Each entry records what changed, why, why an extension couldn't do it, and the expected merge-conflict zones. Merges resolve these files to `ours`, so a stale entry misleads the next upstream sync.
 - Changelog edits are release/audit work only. Follow `.github/agent/commands/cl.md` and never edit released sections.
+- PRs must satisfy the changelog gate (`.github/workflows/changelog-gate.yml`, `scripts/check-pr-changelog.mjs`).
 
 ## QUALITY GATES
 

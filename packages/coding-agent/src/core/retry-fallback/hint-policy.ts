@@ -81,3 +81,25 @@ export function nextInTurnDelayMs(
 		demoteToProbeBack: false,
 	};
 }
+
+export type DegradedRateLimitAction = { kind: "in-turn"; delayMs: number } | { kind: "fail"; hintMs: number };
+
+/**
+ * Policy for a 429-class failure when no fallback candidate is usable: no-hint
+ * (and tier1) failures retry in-turn on the exponential schedule, tier2 hints
+ * retry in-turn with the wait clamped to the in-turn cap, and only tier3
+ * (probe-back-max or longer) hinted waits stay terminal.
+ */
+export function degradeWithoutFallback(
+	tier: HintTier,
+	hintMs: number | undefined,
+	attempt: number,
+	baseDelayMs: number,
+	hintedWaitCapMs: number,
+): DegradedRateLimitAction {
+	if (tier === "tier3-fallback-only") return { kind: "fail", hintMs: hintMs ?? 0 };
+	if (tier === "tier2-fallback-probe-back") {
+		return { kind: "in-turn", delayMs: Math.min(hintMs ?? hintedWaitCapMs, hintedWaitCapMs) };
+	}
+	return { kind: "in-turn", delayMs: baseDelayMs * 2 ** (attempt - 1) };
+}

@@ -56,6 +56,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import {
 	getBedrockModelMatchCandidates as getModelMatchCandidates,
+	supportsOneHourCacheTtl,
 	supportsPromptCaching,
 } from "../utils/prompt-cache-ttl.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
@@ -780,7 +781,10 @@ function buildSystemPrompt(
 	// Add cache point for supported Claude models when caching is enabled
 	if (cacheRetention !== "none" && supportsPromptCaching(model, env)) {
 		blocks.push({
-			cachePoint: { type: CachePointType.DEFAULT, ...(cacheRetention === "long" ? { ttl: CacheTTL.ONE_HOUR } : {}) },
+			cachePoint: {
+				type: CachePointType.DEFAULT,
+				...(cacheRetention === "long" && supportsOneHourCacheTtl(model) ? { ttl: CacheTTL.ONE_HOUR } : {}),
+			},
 		});
 	}
 
@@ -968,7 +972,7 @@ function convertMessages(
 			(lastMessage.content as ContentBlock[]).push({
 				cachePoint: {
 					type: CachePointType.DEFAULT,
-					...(cacheRetention === "long" ? { ttl: CacheTTL.ONE_HOUR } : {}),
+					...(cacheRetention === "long" && supportsOneHourCacheTtl(model) ? { ttl: CacheTTL.ONE_HOUR } : {}),
 				},
 			});
 		}

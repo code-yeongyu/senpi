@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GOAL_USER_GRACE_DELAY_MS } from "../../src/core/extensions/builtin/goal/continuation.ts";
 import { admitAndQueueGoalContinuation } from "../../src/core/extensions/builtin/goal/lifecycle-helpers.ts";
 import {
-	GOAL_MONITOR_CONTINUATION_DELAY_MS,
+	GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS,
 	MonitorAwareGoalContinuation,
 } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import {
@@ -308,6 +308,74 @@ describe("goal continuation while a monitor is active", () => {
 		expect((after?.tokensUsed ?? 0) - before.tokensUsed).toBe(150);
 	});
 
+	it("decays a held monitor timer by wall-clock time before restoring it", async () => {
+		vi.useFakeTimers();
+		const notices: string[] = [];
+		const harness = createGoalHarness();
+		const { tools, handlers, sent, events } = harness;
+		const ctx = await makeGoalContext(notices, "thread-held-timer-decay", {
+			pendingMessages: false,
+			cacheSafeWaitSeconds: 270,
+		});
+		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		events.emit("terminal_monitor_state", { activeCount: 1 });
+		await events.flush();
+		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runGoalHandlers(handlers, "agent_end", { type: "agent_end", messages: [cleanAssistantStop()] }, ctx);
+
+		await vi.advanceTimersByTimeAsync(100_000);
+		await runGoalHandlers(
+			handlers,
+			"input",
+			{ type: "input", inputId: "held", text: "candidate", source: "interactive" },
+			ctx,
+		);
+		await vi.advanceTimersByTimeAsync(30_000);
+		await runGoalHandlers(
+			handlers,
+			"input_disposition",
+			{ type: "input_disposition", inputId: "held", disposition: "rejected" },
+			ctx,
+		);
+
+		await vi.advanceTimersByTimeAsync(139_999);
+		expect(sent).toHaveLength(0);
+		const delivered = waitForSentCount(harness, 1);
+		await vi.advanceTimersByTimeAsync(1);
+		await delivered;
+		expect(sent).toHaveLength(1);
+	});
+
+	it("honors the configured goal backstop ceiling", async () => {
+		vi.useFakeTimers();
+		const notices: string[] = [];
+		const harness = createGoalHarness();
+		const { tools, handlers, sent, events } = harness;
+		const ctx = await makeGoalContext(notices, "thread-goal-backstop-ceiling", {
+			pendingMessages: false,
+			cacheSafeWaitSeconds: 3570,
+			goalBackstopMaxSeconds: 900,
+		});
+		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		events.emit("terminal_monitor_state", { activeCount: 1 });
+		await events.flush();
+		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runGoalHandlers(handlers, "agent_end", { type: "agent_end", messages: [cleanAssistantStop()] }, ctx);
+
+		expect(events.emitted).toContainEqual({
+			channel: "goal_continuation_scheduled",
+			data: expect.objectContaining({ delayMs: 900_000 }),
+		});
+		await vi.advanceTimersByTimeAsync(899_999);
+		expect(sent).toHaveLength(0);
+		const delivered = waitForSentCount(harness, 1);
+		await vi.advanceTimersByTimeAsync(1);
+		await delivered;
+		expect(sent).toHaveLength(1);
+	});
+
 	it("keeps overlapping rejected and handled inputs keyed while restoring the armed timer", async () => {
 		vi.useFakeTimers();
 		const notices: string[] = [];
@@ -335,7 +403,7 @@ describe("goal continuation while a monitor is active", () => {
 			{ type: "input_disposition", inputId: "first", disposition: "handled" },
 			ctx,
 		);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
 		expect(sent).toHaveLength(0);
 		const restoredDelivery = waitForSentCount(harness, 1);
 		await runGoalHandlers(
@@ -344,7 +412,7 @@ describe("goal continuation while a monitor is active", () => {
 			{ type: "input_disposition", inputId: "second", disposition: "rejected" },
 			ctx,
 		);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
 		await restoredDelivery;
 		expect(sent).toHaveLength(1);
 		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({ status: "active" });
@@ -385,7 +453,7 @@ describe("goal continuation while a monitor is active", () => {
 			{ type: "input_disposition", inputId: "read-failure", disposition: "rejected" },
 			ctx,
 		);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
 		await restoredDelivery;
 		expect(sent).toHaveLength(1);
 	});
@@ -547,7 +615,7 @@ describe("goal continuation while a monitor is active", () => {
 				messages: [cleanAssistantStopWithText("unchanged monitor output")],
 			});
 			const delayedDeliveryRecorded = waitForSentCount(harness, turn);
-			await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_DELAY_MS);
+			await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
 			await delayedDeliveryRecorded;
 		}
 
@@ -561,7 +629,7 @@ describe("goal continuation while a monitor is active", () => {
 			messages: [cleanAssistantStopWithText("unchanged monitor output")],
 		});
 		const resumedDeliveryRecorded = waitForSentCount(harness, 3);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
 		await resumedDeliveryRecorded;
 
 		expect(sent).toHaveLength(3);

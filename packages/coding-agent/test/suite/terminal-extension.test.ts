@@ -280,7 +280,7 @@ describe("terminal extension auto-detach wiring", () => {
 		vi.useRealTimers();
 	});
 
-	it("promotes READY at the live cache deadline, preserves delta continuity, and notifies exactly once on kill", async () => {
+	it("promotes READY at the foreground window, preserves delta continuity, and notifies exactly once on kill", async () => {
 		vi.useFakeTimers();
 		let output = "";
 		let consumed = 0;
@@ -376,7 +376,6 @@ describe("terminal extension auto-detach wiring", () => {
 			cwd: process.cwd(),
 			mode: "tui",
 			model: { id: "fixture", api: "anthropic-messages" },
-			getPromptCacheSafeWaitSeconds: () => 5,
 			ui: { notify: () => {}, setStatus: () => {} },
 		} as unknown as ExtensionContext;
 		for (const handler of handlers.get("session_start") ?? []) await handler({}, ctx);
@@ -390,11 +389,11 @@ describe("terminal extension auto-detach wiring", () => {
 		const kill = tools.get("kill_bash") as unknown as {
 			execute: (id: string, input: { bash_id: string }) => Promise<TerminalToolResult>;
 		};
-		const execution = bash.execute("foreground", { command: "fixture", timeout: 10 });
+		const execution = bash.execute("foreground", { command: "fixture", timeout: 900 });
 		await Promise.resolve();
 		await Promise.resolve();
 		emit("READY\n");
-		await vi.advanceTimersByTimeAsync(5_000);
+		await vi.advanceTimersByTimeAsync(60_000);
 
 		const detached = await execution;
 		expect(firstText(detached)).toContain("auto-detached to background with ID: bash_1");

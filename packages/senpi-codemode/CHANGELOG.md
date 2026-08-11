@@ -12,6 +12,92 @@
 
 ### Removed
 
+## [2026.8.11-2] - 2026-08-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11] - 2026-08-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.10] - 2026-08-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.9-2] - 2026-08-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Detached eval cells now emit the shared `wake_source_state` event under source `senpi-codemode` when they detach, complete, stop, or are disposed. The optional host event passthrough remains guarded, synchronous cells emit no lifecycle transition, and per-cell snapshot metadata is preserved.
+
+### Fixed
+
+### Removed
+
+## [2026.8.9] - 2026-08-09
+
+### Breaking Changes
+
+### Added
+
+- Detached eval cells now publish their liveness as a `resumption_channel_state` event (source `eval-detached`) on the
+  host event bus: a full per-source snapshot with `activeCount` and per-cell `id`/`description`/`startedAtMs` entries is
+  emitted whenever a cell detaches, settles, is stopped, or is disposed, and once on `session_start`. The goal builtin
+  consumes this to hold its hidden continuation while detached cells are still computing instead of nagging immediately
+  at turn end. Hosts without an event bus are unaffected (emission is a no-op), and the footer/status rendering is
+  unchanged.
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.7] - 2026-08-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Formatted completed eval durations in the simple-result transcript branch with the same compact human-readable units
+  used by detailed cell headers and nested tool widgets, so sub-second, seconds, minutes, and hours values render as
+  labels such as `<1s`, `12s`, `3m 5s`, or `1h 2m` instead of raw millisecond counts. Live footer, working-status, and
+  thinking-duration policies are unchanged ([#743](https://github.com/code-yeongyu/senpi/pull/743)).
+
+### Removed
+
 ## [2026.8.6] - 2026-08-06
 
 ### Breaking Changes

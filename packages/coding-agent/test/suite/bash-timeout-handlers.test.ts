@@ -5,7 +5,11 @@ import bashTimeoutExtension, {
 	type BashToolInputLike,
 } from "../../src/core/extensions/builtin/bash-timeout/index.ts";
 
-type Handler = (event: unknown) => Promise<unknown> | unknown;
+type Handler = (event: unknown, ctx?: unknown) => Promise<unknown> | unknown;
+
+function ctxWithApi(api: string): { model: { api: string } } {
+	return { model: { api } };
+}
 
 interface ApiMock {
 	api: { on(event: string, handler: Handler): void };
@@ -88,6 +92,8 @@ describe("bashTimeoutExtension factory wiring", () => {
 		expect(result.systemPrompt).toContain("Bash Tool Timeout Policy");
 		expect(result.systemPrompt).toContain(`Default timeout: ${BASH_DEFAULT_TIMEOUT_SECONDS}s`);
 		expect(result.systemPrompt).toContain(`Recommended maximum timeout: ${BASH_MAX_TIMEOUT_SECONDS}s`);
+		expect(result.systemPrompt).toContain("process kill deadline");
+		expect(result.systemPrompt.toLowerCase()).not.toContain("prompt cache");
 	});
 
 	it("respects PI_BASH_DEFAULT_TIMEOUT_SECONDS env override at factory load time", async () => {
@@ -109,6 +115,59 @@ describe("bashTimeoutExtension factory wiring", () => {
 		} finally {
 			if (original === undefined) delete process.env.PI_BASH_DEFAULT_TIMEOUT_SECONDS;
 			else process.env.PI_BASH_DEFAULT_TIMEOUT_SECONDS = original;
+		}
+	});
+
+	it("omits the auto-detach promise when native Anthropic bash makes the PTY tool step aside", async () => {
+		process.env.PI_ANTHROPIC_BASH = "1";
+		try {
+			const { api, handlers } = makeApiMock();
+			bashTimeoutExtension(api as never);
+
+			const result = (await handlers.before_agent_start[0](
+				{ systemPrompt: "BASE" },
+				ctxWithApi("anthropic-messages"),
+			)) as { systemPrompt: string };
+
+			expect(result.systemPrompt).toContain("Bash Tool Timeout Policy");
+			expect(result.systemPrompt).not.toContain("auto-detaches");
+			expect(result.systemPrompt).not.toContain("Foreground blocking stops");
+		} finally {
+			delete process.env.PI_ANTHROPIC_BASH;
+		}
+	});
+
+	it("keeps the auto-detach promise for a non-anthropic model while native bash is enabled", async () => {
+		process.env.PI_ANTHROPIC_BASH = "1";
+		try {
+			const { api, handlers } = makeApiMock();
+			bashTimeoutExtension(api as never);
+
+			const result = (await handlers.before_agent_start[0](
+				{ systemPrompt: "BASE" },
+				ctxWithApi("openai-completions"),
+			)) as { systemPrompt: string };
+
+			expect(result.systemPrompt).toContain("auto-detaches");
+		} finally {
+			delete process.env.PI_ANTHROPIC_BASH;
+		}
+	});
+
+	it("names the configured foreground window instead of a hardcoded 60s", async () => {
+		process.env.PI_BASH_FOREGROUND_SECONDS = "25";
+		try {
+			const { api, handlers } = makeApiMock();
+			bashTimeoutExtension(api as never);
+
+			const result = (await handlers.before_agent_start[0]({ systemPrompt: "BASE" })) as {
+				systemPrompt: string;
+			};
+
+			expect(result.systemPrompt).toContain("25s window");
+			expect(result.systemPrompt).not.toContain("60s window");
+		} finally {
+			delete process.env.PI_BASH_FOREGROUND_SECONDS;
 		}
 	});
 });

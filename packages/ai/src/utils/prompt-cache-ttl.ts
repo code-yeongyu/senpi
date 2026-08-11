@@ -70,9 +70,10 @@ export function getAnthropicCompat(
 
 export type ResolvedOpenAICompletionsCompat = Omit<
 	Required<OpenAICompletionsCompat>,
-	"cacheControlFormat" | "toolCallFormat" | "deferredToolsMode" | "toolSchemaFlavor"
+	"cacheControlFormat" | "toolCallFormat" | "deferredToolsMode" | "toolSchemaFlavor" | "supportsPromptCacheKey"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
+	supportsPromptCacheKey?: OpenAICompletionsCompat["supportsPromptCacheKey"];
 	toolCallFormat?: OpenAICompletionsCompat["toolCallFormat"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 	toolSchemaFlavor?: OpenAICompletionsCompat["toolSchemaFlavor"];
@@ -131,7 +132,12 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Reso
 	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
-	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
+	const openRouterCacheControlPrefixes = ["anthropic/", "qwen/", "google/"];
+	const cacheControlModelId = model.id.startsWith("~") ? model.id.slice(1) : model.id;
+	const supportsOpenRouterCacheControl = openRouterCacheControlPrefixes.some((prefix) =>
+		cacheControlModelId.startsWith(prefix),
+	);
+	const cacheControlFormat = provider === "openrouter" && supportsOpenRouterCacheControl ? "anthropic" : undefined;
 
 	return {
 		supportsStore: !isNonStandard,
@@ -166,9 +172,10 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Reso
 		toolCallFormat: undefined,
 		supportsOpenAIGrammarTools: false,
 		cacheControlFormat,
-		sendSessionAffinityHeaders: false,
+		sendSessionAffinityHeaders: isOpenRouter,
 		deferredToolsMode: undefined,
 		sessionAffinityFormat: isOpenRouter ? "openrouter" : "openai",
+		supportsPromptCacheKey: isMoonshot || baseUrl.includes("api.openai.com"),
 		supportsLongCacheRetention: !(
 			isTogether ||
 			isCloudflareWorkersAI ||
@@ -215,6 +222,7 @@ export function getOpenAICompletionsCompat(model: Model<"openai-completions">): 
 		sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,
 		deferredToolsMode: model.compat.deferredToolsMode ?? detected.deferredToolsMode,
 		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,
+		supportsPromptCacheKey: model.compat.supportsPromptCacheKey ?? detected.supportsPromptCacheKey,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
 	};
 }
@@ -225,6 +233,13 @@ export function getBedrockModelMatchCandidates(modelId: string, modelName?: stri
 		const lower = value.toLowerCase();
 		return [lower, lower.replace(/[\s_.:]+/g, "-")];
 	});
+}
+
+export function supportsOneHourCacheTtl(model: Model<"bedrock-converse-stream">): boolean {
+	const candidates = getBedrockModelMatchCandidates(model.id, model.name);
+	return candidates.some((candidate) =>
+		["opus-4-5", "sonnet-4-5", "haiku-4-5"].some((modelVersion) => candidate.includes(modelVersion)),
+	);
 }
 
 /**
@@ -309,6 +324,9 @@ function resolveOpenAIResponsesCacheRetention(cacheRetention?: CacheRetention, e
 
 export function resolvePromptCacheTtlSeconds(model: Model<Api>, env?: ProviderEnv): number | undefined {
 	switch (model.api) {
+		case "claude-sdk-oauth":
+			// The Claude SDK owns prompt caching for this lane and uses Anthropic's default 5m TTL.
+			return PROMPT_CACHE_TTL_SHORT_SECONDS;
 		case "anthropic-messages": {
 			const anthropicModel = model as Model<"anthropic-messages">;
 			const retention = resolveAnthropicCacheRetention(anthropicModel.cacheRetention, env, "long");
@@ -323,7 +341,9 @@ export function resolvePromptCacheTtlSeconds(model: Model<Api>, env?: ProviderEn
 			const bedrockModel = model as Model<"bedrock-converse-stream">;
 			const retention = resolveBedrockCacheRetention(bedrockModel.cacheRetention, env);
 			if (retention === "none" || !supportsPromptCaching(bedrockModel, env)) return undefined;
-			return retention === "long" ? PROMPT_CACHE_TTL_LONG_SECONDS : PROMPT_CACHE_TTL_SHORT_SECONDS;
+			return retention === "long" && supportsOneHourCacheTtl(bedrockModel)
+				? PROMPT_CACHE_TTL_LONG_SECONDS
+				: PROMPT_CACHE_TTL_SHORT_SECONDS;
 		}
 		case "openai-completions": {
 			const completionsModel = model as Model<"openai-completions">;

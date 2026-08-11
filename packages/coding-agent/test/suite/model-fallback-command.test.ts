@@ -20,7 +20,9 @@ const dirs: string[] = [];
 let previousAgentDir: string | undefined;
 const primary = model("anthropic", "claude-fable-5", true);
 const fallback = model("ccapi", "kimi-k3", true);
-const kimiK3 = model("apitopia", "kimi-k3-unlocked", true);
+const kimiK3 = model("kimi-coding", "k3", true);
+const sdkFable = model("claude-sdk-oauth", "claude-fable-5", true);
+const sdkOpus5 = model("claude-sdk-oauth", "claude-opus-5", true);
 const opus5 = model("anthropic", "claude-opus-5", true);
 const opus48 = model("anthropic", "claude-opus-4-8", true);
 
@@ -91,10 +93,13 @@ function createUi(notices: string[], choices: string[]): ExtensionUIContext {
 	};
 }
 
-function createModelRegistry(registeredModels: Model<Api>[] = [primary, fallback]): ModelRegistry {
+function createModelRegistry(
+	registeredModels: Model<Api>[] = [primary, fallback],
+	availableModels: Model<Api>[] = registeredModels,
+): ModelRegistry {
 	const modelRegistry = ModelRegistry.inMemory(AuthStorage.inMemory());
 	modelRegistry.getAll = () => registeredModels;
-	modelRegistry.getAvailable = () => registeredModels;
+	modelRegistry.getAvailable = () => availableModels;
 	modelRegistry.find = (provider: string, id: string) =>
 		registeredModels.find((registeredModel) => registeredModel.provider === provider && registeredModel.id === id);
 	return modelRegistry;
@@ -105,9 +110,10 @@ async function context(
 	notices: string[],
 	choices: string[] = [],
 	registeredModels?: Model<Api>[],
+	availableModels?: Model<Api>[],
 ): Promise<ExtensionCommandContext> {
 	const settings = SettingsManager.create(dir);
-	const modelRegistry = createModelRegistry(registeredModels);
+	const modelRegistry = createModelRegistry(registeredModels, availableModels ?? registeredModels);
 	return {
 		ui: createUi(notices, choices),
 		mode: choices.length > 0 ? "tui" : "print",
@@ -183,6 +189,28 @@ describe("model fallback builtin command", () => {
 		expect(command?.description).toContain("fallback");
 	});
 
+	it("lists a default chain only for models the user can actually select", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "senpi-fallback-command-"));
+		dirs.push(dir);
+		const notices: string[] = [];
+		const catalogOnly = model("github-copilot", "claude-fable-5", true);
+		// The builtin catalog publishes Fable 5 under many providers; only the SDK
+		// OAuth one is actually usable here, so only its chain belongs on screen.
+		const ctx = await context(
+			dir,
+			notices,
+			["Show chains & live state"],
+			[sdkFable, sdkOpus5, kimiK3, catalogOnly],
+			[sdkFable, sdkOpus5, kimiK3],
+		);
+
+		await (await harness()).get("fallback")?.handler("", ctx);
+
+		const rendered = notices.join("\n");
+		expect(rendered).toContain("claude-sdk-oauth/claude-fable-5 -> kimi-coding/k3:max");
+		expect(rendered).not.toContain("github-copilot/claude-fable-5 ->");
+	});
+
 	it("quick-set validates and persists a chain visible after a session-side reload", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "senpi-fallback-command-"));
 		dirs.push(dir);
@@ -191,9 +219,11 @@ describe("model fallback builtin command", () => {
 		const sessionSideSettings = SettingsManager.create(dir);
 		await command?.handler("anthropic/claude-fable-5 ccapi/kimi-k3:max", await context(dir, notices));
 		await sessionSideSettings.reload();
-		expect(sessionSideSettings.getRetryFallbackSettings().chains).toEqual({
-			"anthropic/claude-fable-5": ["ccapi/kimi-k3:max"],
-		});
+		// The user's canonical key wins for that provider; the bare shipped default
+		// stays in the raw map so other providers serving the family keep a chain.
+		expect(sessionSideSettings.getRetryFallbackSettings().chains["anthropic/claude-fable-5"]).toEqual([
+			"ccapi/kimi-k3:max",
+		]);
 		expect(notices).toContain("Fallback chain saved for anthropic/claude-fable-5.");
 	});
 
@@ -217,7 +247,12 @@ describe("model fallback builtin command", () => {
 			name: "all default models are available",
 			models: [primary, kimiK3, opus5, opus48],
 			expected:
-				"anthropic/claude-fable-5 -> apitopia/kimi-k3-unlocked:max, anthropic/claude-opus-5:xhigh, anthropic/claude-opus-4-8:xhigh",
+				"anthropic/claude-fable-5 -> kimi-coding/k3:max, anthropic/claude-opus-5:xhigh, anthropic/claude-opus-4-8:xhigh",
+		},
+		{
+			name: "Fable 5 is attached through the Claude SDK OAuth provider instead of anthropic",
+			models: [sdkFable, kimiK3, sdkOpus5],
+			expected: "claude-sdk-oauth/claude-fable-5 -> kimi-coding/k3:max, claude-sdk-oauth/claude-opus-5:xhigh",
 		},
 		{
 			name: "Kimi K3 is unavailable",

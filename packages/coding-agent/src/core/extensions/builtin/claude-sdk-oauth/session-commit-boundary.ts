@@ -10,7 +10,15 @@ export function assistantContentHash(message: AssistantMessage): string {
 		api: message.api,
 		provider: message.provider,
 		model: message.model,
-		content: message.content,
+		content: message.content.map((block) => {
+			if (block.type !== "thinking") return block;
+			// Agent-core stamps these display-only fields after the final
+			// message_update; every semantic thinking field stays fail-closed.
+			const stableBlock = { ...block };
+			delete stableBlock.startedAt;
+			delete stableBlock.endedAt;
+			return stableBlock;
+		}),
 	});
 }
 

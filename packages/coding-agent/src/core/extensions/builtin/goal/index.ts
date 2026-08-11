@@ -11,9 +11,10 @@ import { GoalDirectInputLifecycle } from "./direct-input-lifecycle.ts";
 import { GoalElapsedTicker } from "./elapsed-ticker.ts";
 import { formatGoalForTool, goalStatusLabel } from "./format.ts";
 import { isResumeOfStoppedGoal, queueGoalContinuation } from "./lifecycle-helpers.ts";
-import { MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
+import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { migrateLegacyGoalFile } from "./persistence.ts";
 import { accountGoalUsage, readGoal, updateGoal } from "./store.ts";
+import { GOAL_STORE_CHANGED_EVENT, isGoalStoreChangedEvent } from "./store-changed-event.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
 import { didTerminalProviderErrorEndTurn } from "./terminal-provider-error.ts";
 import { staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
@@ -39,6 +40,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	let blockedThisTurnGoalId: string | null = null;
 	let completedThisTurnGoalId: string | null = null;
 	let continuationPending = false;
+	let activeContext: ExtensionContext | undefined;
 	const turnUsage = new TurnUsageTracker();
 	const goalWaitTicker = new GoalWaitTicker({
 		render: (renderCtx, status) => {
@@ -100,7 +102,35 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		refreshGoalUi,
 	});
 
+	const unsubscribeGoalStoreChanged =
+		pi.events?.on(GOAL_STORE_CHANGED_EVENT, async (data) => {
+			if (!isGoalStoreChangedEvent(data)) return;
+			const ctx = data.ctx ?? activeContext;
+			if (
+				ctx === undefined ||
+				ctx.sessionManager.getSessionId() !== data.threadId ||
+				!ctx.isIdle() ||
+				ctx.hasPendingMessages()
+			) {
+				return;
+			}
+			const goal = await readGoal(goalStoreRef(ctx));
+			if (goal?.status !== "active") return;
+			monitorContinuation.syncGoal(goal);
+			beginAgentGoalAccounting(goal);
+			refreshGoalUiBestEffort(ctx, goal);
+			pi.events?.emit(GOAL_CONTINUATION_SCHEDULED_EVENT, {
+				goalId: goal.id,
+				delayMs: 0,
+				activeMonitorCount: 0,
+				wakeSources: {},
+				reason: GOAL_STORE_CHANGED_EVENT,
+			});
+			await queueGoalContinuationForCurrentSession(pi, ctx, goal);
+		}) ?? (() => {});
+
 	pi.on("session_start", async (event, ctx) => {
+		activeContext = ctx;
 		monitorContinuation.start(ctx);
 		directInputLifecycle.reset();
 		const ref = goalStoreRef(ctx);
@@ -242,6 +272,8 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		activeContext = undefined;
+		unsubscribeGoalStoreChanged();
 		if (agentGoalAccounting !== null) {
 			await accountCurrentAgentTurn(ctx, "active");
 		}
@@ -285,6 +317,11 @@ export default function goalExtension(pi: ExtensionAPI): void {
 				continuationPending = true;
 			},
 		});
+		if (continuedGoal === null) {
+			clearAgentGoalAccounting();
+			refreshGoalUiBestEffort(ctx, null);
+			return;
+		}
 		if (continuedGoal.status === goal.status) return;
 		if (continuedGoal.status === "active") beginAgentGoalAccounting(continuedGoal);
 		else clearAgentGoalAccounting();

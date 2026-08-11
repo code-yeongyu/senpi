@@ -1,5 +1,27 @@
 # Core Extensions Changes
 
+## 2026-08-09 - Extension-registered filesystem access policies
+
+### What changed
+
+- `ExtensionAPI` gained factory-time `registerFilesystemPolicy(policy)` with typed read, enumerate, and write requests,
+  explicit allow/deny decisions, and optional denied-root metadata for future process sandbox integration.
+- Loaded extensions retain policies in registration order. `ExtensionRunner` exposes the declared denied roots without
+  assigning them runtime semantics.
+- Multiple policies compose deterministically with the first denial winning; an absent policy set compiles to no
+  checker.
+
+### Why
+
+- `tool_call` hooks run before canonical path resolution and belong to the permission/approval pipeline, so they cannot
+  provide a non-bypassable filesystem boundary for unrestricted modes or symlink-resolved targets.
+- Policy decisions belong to extensions, while registration, lifetime, and composition require a typed core surface.
+
+### Expected merge conflict zones
+
+- MEDIUM: `types.ts` around `ExtensionAPI` registration methods and the `Extension` runtime record.
+- LOW: `loader.ts` registration storage, `runner.ts` denied-root metadata aggregation, and public type exports.
+
 ## 2026-08-05 - Extension abort provenance
 
 ### What changed

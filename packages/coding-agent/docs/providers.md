@@ -88,8 +88,18 @@ If your Claude Pro/Max subscription usage through `claude-sdk-oauth` feels unexp
 1. **Upgrade to v2026.8.3 or later.** Resume-first session continuity (#634-637) landed on 2026-08-03. On older builds, every turn after a divergence (compaction, abort, model switch, restart, failover) re-sends the entire conversation, which is the dominant token-burn mechanism.
 2. **Check which lane you are on.** The `ambient` lane (default) inherits the environment. `oauth-slots` and `config-dir` are managed lanes set via `SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION`. The `config-dir` lane keeps each account's credentials in its own `CLAUDE_CONFIG_DIR`; no official SDK API moves a transcript across roots, so account failover on that lane always flattens (re-sends the full history) — this is a declared residual, not a bug.
 3. **Read the continuity observations.** Tail the session log and filter for `flatten` — each `flatten` line means the lane re-sent the whole conversation and lost prompt-cache hits. A healthy conversation shows one `bootstrap` followed by `delta` lines. Common flatten reasons: `transcript_missing`, `registry_miss`, `resume_initialization_failed`, `cross_root_unsupported` (config-dir only).
-4. **Prompt-cache retention.** On the direct Anthropic API path (`anthropic` provider with an OAuth token), cache retention defaults to `long` with a 1-hour TTL on the native endpoint. Set `PI_CACHE_RETENTION=long` to ensure 1h caching. The SDK OAuth lane manages its own caching internally and senpi cannot add `cache_control` breakpoints to it.
-5. **Directive-block deduplication.** As of v2026.8.4, the flatten serialization collapses repeated `<ultrawork-mode>` directive blocks to a single copy, preventing the issue-#494 scenario where duplicated ~17KB directive blocks consumed up to 73% of the re-sent prompt. The continuity observation reports how many were collapsed and the payload size.
+4. **Prompt-cache retention.** Effective cache TTL depends on which lane you are on:
+
+   | Lane | Effective TTL | Who controls it | How to override |
+   | --- | --- | --- | --- |
+   | Claude SDK OAuth (subscription, `claude-sdk-oauth`) | 5 minutes | The Claude SDK owns `cache_control`; senpi cannot add breakpoints. senpi reports 300s for this lane so cache-aware budgets (tool waits, goal timing) size themselves correctly. | Not overridable |
+   | Direct Anthropic API (`api.anthropic.com`, API key or OAuth token) | 1 hour | senpi defaults retention to `long` on this lane. Note: Anthropic's own API default is 5 minutes; the 1h TTL is senpi's choice, and 1h cache writes cost 2x base input vs 1.25x for 5m ([Anthropic prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)). | `PI_CACHE_RETENTION`, `cacheRetention` |
+   | Anthropic-compatible providers (kimi-coding, fireworks, gateways) | 5 minutes | The 1h TTL is gated on the native `api.anthropic.com` base URL, so these lanes stay short. | `cacheRetention` |
+
+   Override precedence: `cacheRetention` in `models.json` / the model catalog wins over everything. `PI_CACHE_RETENTION=long` selects long; any other set value forces short; unset falls back to the lane default above.
+5. **Goal-monitor timing.** The goal monitor's continuation backstop is derived from the model's cache-safe wait (TTL minus `promptCache.safetyBufferSeconds`, default 30), capped by `promptCache.goalBackstopMaxSeconds` (default 3570), instead of a fixed 4 minutes. On 5m lanes that means wakes every ~4m30s; on the 1h direct-API lane, up to 59m30s. Cache-warm notices show which warm iteration you are on.
+6. **Wake sources that hold the goal backstop.** Anything that can wake a parked session publishes a `wake_source_state` event (`{source, activeCount}`): terminal monitors (`terminal-monitors`), background bash sessions including auto-detached and killed ones (`terminal-background-sessions`), detached `eval` cells (`senpi-codemode`), and omo-senpi background task children plus owned team members (`senpi-task`). The goal extension sums every source, so a goal waits inside the prompt-cache TTL while ANY of them is on duty instead of continuing immediately. The legacy `terminal_monitor_state` event is still emitted for external consumers and is folded onto the same `terminal-monitors` count.
+7. **Directive-block deduplication.** As of v2026.8.4, the flatten serialization collapses repeated `<ultrawork-mode>` directive blocks to a single copy, preventing the issue-#494 scenario where duplicated ~17KB directive blocks consumed up to 73% of the re-sent prompt. The continuity observation reports how many were collapsed and the payload size.
 
 ### GitHub Copilot
 
@@ -107,6 +117,16 @@ If your Claude Pro/Max subscription usage through `claude-sdk-oauth` feels unexp
 - The authorization creates a user-controlled OpenRouter API key billed from your OpenRouter credits
 - On remote/headless machines (e.g. over SSH) the browser cannot reach the loopback callback; paste the final redirect URL (or the authorization code) into the login prompt instead
 - `OPENROUTER_API_KEY` remains available through **Use an API key**
+
+#### OpenRouter prompt caching and sticky routing
+
+senpi pins every OpenRouter request to the same upstream from the first call by sending the session id both as the `x-session-id` header and as the request-body `session_id` field. OpenRouter's precedence is body > header > `prompt_cache_key`, with a 256-character limit on the value; specifying a manual `provider.order` disables sticky routing entirely ([OpenRouter prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching)).
+
+Upstreams that require explicit cache breakpoints get `cache_control` blocks through OpenRouter: model ids starting with `anthropic/`, `qwen/`, or `google/` (catalog ids carrying one leading `~` are matched after stripping it). Other upstreams (OpenAI, DeepSeek, Moonshot, Groq, Z.AI, Grok) cache automatically and need no markers.
+
+#### Moonshot / Kimi prompt caching
+
+senpi sends `prompt_cache_key` (set to the session id) on Moonshot requests. Kimi documents the field as required for the Kimi Code Plan and recommended for any multi-turn agent ([Kimi context caching](https://platform.kimi.ai/docs/guide/use-context-caching-feature-of-kimi-api)). Kimi reports cache hits as a flat `usage.cached_tokens` field, which senpi parses as cache-read tokens.
 
 ### Radius
 
@@ -296,7 +316,7 @@ Also supports ECS task roles (`AWS_CONTAINER_CREDENTIALS_*`) and IRSA (`AWS_WEB_
 pi --provider amazon-bedrock --model us.anthropic.claude-sonnet-4-20250514-v1:0
 ```
 
-Prompt caching is enabled automatically for Claude models whose ID contains a recognizable model name (base models and system-defined inference profiles). For application inference profiles (whose ARNs don't contain the model name), set `AWS_BEDROCK_FORCE_CACHE=1` to enable cache points:
+Prompt caching is enabled automatically for Claude models whose ID contains a recognizable model name (base models and system-defined inference profiles). With `PI_CACHE_RETENTION=long`, the 1-hour cache TTL is only requested for Claude Opus 4.5, Sonnet 4.5, and Haiku 4.5, the models AWS documents as supporting it ([Bedrock prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)); every other cacheable Bedrock Claude model uses 5 minutes on both the wire and the TTL estimate. For application inference profiles (whose ARNs don't contain the model name), set `AWS_BEDROCK_FORCE_CACHE=1` to enable cache points:
 
 ```bash
 export AWS_BEDROCK_FORCE_CACHE=1

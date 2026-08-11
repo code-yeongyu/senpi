@@ -1,6 +1,9 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { estimateCacheWarmMetrics } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
+import {
+	estimateCacheWarmMetrics,
+	resolveGoalMonitorContinuationDelayMs,
+} from "../../src/core/extensions/builtin/goal/cache-warm.ts";
 
 function anthropicModel(costOverrides: Partial<Model<Api>["cost"]> = {}): Model<Api> {
 	return {
@@ -16,6 +19,22 @@ function anthropicModel(costOverrides: Partial<Model<Api>["cost"]> = {}): Model<
 		maxTokens: 8192,
 	} as Model<Api>;
 }
+
+describe("goal monitor continuation delay", () => {
+	it.each([
+		[undefined, undefined, 240_000],
+		[270, undefined, 270_000],
+		[3570, undefined, 3_570_000],
+		[3570, 900, 900_000],
+		[5, undefined, 5_000],
+		[7200, undefined, 3_600_000],
+		[270, 0, 270_000],
+		[0, undefined, 240_000],
+		[Number.NaN, undefined, 240_000],
+	] as const)("resolves cache-safe wait %s with ceiling %s to %sms", (safeWait, ceiling, expected) => {
+		expect(resolveGoalMonitorContinuationDelayMs(safeWait, ceiling)).toBe(expected);
+	});
+});
 
 describe("goal cache-warm metrics", () => {
 	it("returns undefined when neither ttl nor cached tokens are knowable", () => {

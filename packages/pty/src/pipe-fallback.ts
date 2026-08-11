@@ -51,6 +51,32 @@ export function shouldUsePipeFallback(
 	return isPipeFallbackForced(env) || nativeLoadResult.native === null;
 }
 
+/**
+ * Terminate the child, preferring its whole process group on POSIX. The
+ * detached child is its own group leader and grandchildren inherit the stdio
+ * pipes, so leaving them alive keeps 'close' from ever firing (the POSIX twin
+ * of the Windows taskkill /T branch below). Every path that stops a child must
+ * go through here: when the group signal is unavailable (Windows, no pid) or
+ * the group is already gone, it still falls back to a direct kill, so the
+ * child is never left running.
+ */
+export function terminateChildTree(
+	child: Pick<ChildProcessHandle, "pid" | "kill">,
+	signal: NodeJS.Signals,
+): "group" | "direct" {
+	const pid = child.pid;
+	if (pid !== undefined && process.platform !== "win32") {
+		try {
+			process.kill(-pid, signal);
+			return "group";
+		} catch {
+			// Group already gone — fall through to the direct kill.
+		}
+	}
+	child.kill(signal);
+	return "direct";
+}
+
 function normalizeSpawnError(command: string, error: Error): PipeFallbackSessionError {
 	return {
 		code: "spawn_error",
@@ -104,6 +130,13 @@ export class PipeFallbackSession {
 				cwd: this.options.cwd,
 				env: this.options.env ? { ...process.env, ...this.options.env } : process.env,
 				stdio: ["pipe", "pipe", "pipe"],
+				// Detach on POSIX so the child leads its own session with no
+				// controlling terminal. Without this, a tty-reading program (e.g. a
+				// sudo password prompt) opens /dev/tty — the user's real terminal —
+				// and races the TUI's raw-mode stdin reader byte-by-byte, splitting
+				// keystrokes and Kitty escape sequences between the two readers.
+				// Detached, the /dev/tty open fails with a clear error instead.
+				detached: process.platform !== "win32",
 				windowsHide: true,
 			});
 			this.child = child;
@@ -124,7 +157,7 @@ export class PipeFallbackSession {
 			if (this.options.timeoutMs !== undefined) {
 				this.timeoutHandle = setTimeout(() => {
 					this.timedOut = true;
-					child.kill("SIGTERM");
+					terminateChildTree(child, "SIGTERM");
 				}, this.options.timeoutMs);
 			}
 		} catch (error) {
@@ -204,20 +237,30 @@ export class PipeFallbackSession {
 		if (this.child === null) {
 			return { ok: false, code: "not_started", note: "Cannot kill pipe fallback session: session has not started." };
 		}
-		const pid = this.child.pid;
+		const child = this.child;
+		const pid = child.pid;
 		if (process.platform === "win32" && pid !== undefined) {
 			// On Windows child.kill() TerminateProcess-es only the direct child, leaving
 			// grandchildren (e.g. `sleep` under `bash.exe -c`) alive and holding the stdout
 			// pipe open — so 'close' never fires and waitExit() hangs teardown. taskkill /T /F
 			// terminates the whole tree so the pipe EOFs and the session settles.
 			try {
-				spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+				const killer = spawn("taskkill.exe", ["/pid", String(pid), "/T", "/F"], {
+					stdio: "ignore",
+					windowsHide: true,
+				});
+				killer.once("error", () => {
+					terminateChildTree(child, signal);
+				});
 				return { ok: true, note: `Terminated child_process pipe fallback process tree (pid ${pid}).` };
 			} catch {
-				// Fall through to the direct kill if taskkill is unavailable.
+				terminateChildTree(child, signal);
+				return { ok: true, note: `Sent ${signal} to child_process pipe fallback session.` };
 			}
 		}
-		this.child.kill(signal);
+		if (terminateChildTree(this.child, signal) === "group") {
+			return { ok: true, note: `Sent ${signal} to child_process pipe fallback process group (pgid ${pid}).` };
+		}
 		return { ok: true, note: `Sent ${signal} to child_process pipe fallback session.` };
 	}
 

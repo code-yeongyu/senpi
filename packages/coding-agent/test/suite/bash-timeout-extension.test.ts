@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
-import bashTimeoutExtension from "../../src/core/extensions/builtin/bash-timeout/index.ts";
 import {
 	applyBashTimeout,
 	BASH_DEFAULT_TIMEOUT_SECONDS,
 	BASH_MAX_TIMEOUT_SECONDS,
 	buildBashTimeoutPrompt,
 	resolveBashTimeoutDefaults,
-	resolveEffectiveBashTimeouts,
 } from "../../src/core/extensions/builtin/bash-timeout/timeout.ts";
 
 describe("resolveBashTimeoutDefaults", () => {
+	it("ships a 1800s (30 min) default and maximum kill deadline", () => {
+		expect(BASH_DEFAULT_TIMEOUT_SECONDS).toBe(1800);
+		expect(BASH_MAX_TIMEOUT_SECONDS).toBe(1800);
+		expect(resolveBashTimeoutDefaults({})).toEqual({ defaultSeconds: 1800, maxSeconds: 1800 });
+	});
+
 	it("returns built-in defaults when env vars are absent", () => {
 		const result = resolveBashTimeoutDefaults({});
 
@@ -24,9 +28,9 @@ describe("resolveBashTimeoutDefaults", () => {
 	});
 
 	it("reads PI_BASH_MAX_TIMEOUT_SECONDS from env", () => {
-		const result = resolveBashTimeoutDefaults({ PI_BASH_MAX_TIMEOUT_SECONDS: "900" });
+		const result = resolveBashTimeoutDefaults({ PI_BASH_MAX_TIMEOUT_SECONDS: "3600" });
 
-		expect(result.maxSeconds).toBe(900);
+		expect(result.maxSeconds).toBe(3600);
 	});
 
 	it("ignores PI_BASH_DEFAULT_TIMEOUT_SECONDS when value is not a positive integer", () => {
@@ -59,14 +63,14 @@ describe("resolveBashTimeoutDefaults", () => {
 });
 
 describe("applyBashTimeout", () => {
-	const defaults = { defaultSeconds: 120, maxSeconds: 600 };
+	const defaults = { defaultSeconds: 1800, maxSeconds: 1800 };
 
 	it("injects the default timeout when none is provided", () => {
 		const input: { command: string; timeout?: number } = { command: "echo hi" };
 
 		const result = applyBashTimeout(input, defaults);
 
-		expect(result).toEqual({ command: "echo hi", timeout: 120 });
+		expect(result).toEqual({ command: "echo hi", timeout: 1800 });
 	});
 
 	it("preserves a user-supplied timeout below the maximum", () => {
@@ -98,8 +102,8 @@ describe("applyBashTimeout", () => {
 		const zero = applyBashTimeout({ command: "noop", timeout: 0 }, defaults);
 		const negative = applyBashTimeout({ command: "noop", timeout: -5 }, defaults);
 
-		expect(zero).toEqual({ command: "noop", timeout: 120 });
-		expect(negative).toEqual({ command: "noop", timeout: 120 });
+		expect(zero).toEqual({ command: "noop", timeout: 1800 });
+		expect(negative).toEqual({ command: "noop", timeout: 1800 });
 	});
 
 	it("does not mutate the original input object", () => {
@@ -112,11 +116,36 @@ describe("applyBashTimeout", () => {
 });
 
 describe("buildBashTimeoutPrompt", () => {
-	it("includes the resolved default and max in the prompt rider", () => {
-		const prompt = buildBashTimeoutPrompt({ defaultSeconds: 120, maxSeconds: 600 });
+	const SHIPPED_POLICY =
+		"\n## Bash Tool Timeout Policy\n\nThe `bash` tool's `timeout` parameter is the process kill deadline, not how long you wait for output: the command is killed when it reaches the deadline.\n\n- Default timeout: 1800s (30 min). Applied automatically when you do not set `timeout`.\n- Recommended maximum timeout: 1800s (30 min). Explicit `timeout` values are preserved because different hosts may use different timeout units.\n- Foreground blocking stops at the ~60s window. A command still running then auto-detaches alive to a background session with a `bash_id` and keeps running until it exits, hits the kill deadline, or is stopped with `kill_bash`.\n- Completion arrives automatically as a notification carrying the exit status and output tail, so end your turn rather than poll. Use `bash_output` only for a midpoint peek.\n- Waiting on an observable condition (a log line, a CI check, a server coming up) belongs to `monitor({command, filter})`, never a foreground `sleep` or poll loop.\n- Sessions started with `run_in_background: true` ignore `timeout` and live until exit or `kill_bash`.\n";
 
-		expect(prompt).toContain("Default timeout: 120s (2 min)");
-		expect(prompt).toContain("Recommended maximum timeout: 600s (10 min)");
+	it("is byte-identical to the shipped kill-deadline policy", () => {
+		expect(buildBashTimeoutPrompt({ defaultSeconds: 1800, maxSeconds: 1800 }, 60)).toBe(SHIPPED_POLICY);
+	});
+
+	it("states that timeout is the process kill deadline, not the wait budget", () => {
+		const prompt = buildBashTimeoutPrompt(resolveBashTimeoutDefaults({}), 60);
+
+		expect(prompt).toContain("## Bash Tool Timeout Policy");
+		expect(prompt).toContain("process kill deadline");
+		expect(prompt).toContain("not how long you wait");
+		expect(prompt).toContain("Default timeout: 1800s (30 min)");
+	});
+
+	it("contains the auto-detach and monitor guidance and never mentions the prompt cache", () => {
+		const prompt = buildBashTimeoutPrompt(resolveBashTimeoutDefaults({}), 60);
+
+		expect(prompt).toContain("~60s window");
+		expect(prompt).toContain("auto-detaches alive");
+		expect(prompt).toContain("bash_id");
+		expect(prompt).toContain("exit status and output tail");
+		expect(prompt).toContain("end your turn rather than poll");
+		expect(prompt).toContain("bash_output` only for a midpoint peek");
+		expect(prompt).toContain("monitor({command, filter})");
+		expect(prompt).toContain("run_in_background: true");
+		expect(prompt).toContain("kill_bash");
+		expect(prompt).not.toContain("tmux");
+		expect(prompt.toLowerCase()).not.toContain("prompt cache");
 	});
 
 	it("falls back to seconds for non-minute-aligned values", () => {
@@ -124,136 +153,5 @@ describe("buildBashTimeoutPrompt", () => {
 
 		expect(prompt).toContain("Default timeout: 45s (45s)");
 		expect(prompt).toContain("Recommended maximum timeout: 90s (90s)");
-	});
-
-	it("routes beyond-max workloads to background sessions and monitor, not tmux", () => {
-		const prompt = buildBashTimeoutPrompt({ defaultSeconds: 120, maxSeconds: 600 });
-
-		expect(prompt).toContain("run_in_background");
-		expect(prompt).toContain("monitor");
-		expect(prompt).not.toContain("tmux");
-	});
-});
-
-describe("resolveEffectiveBashTimeouts", () => {
-	const base = { defaultSeconds: 120, maxSeconds: 600 };
-
-	it("leaves the defaults untouched when no cache budget applies", () => {
-		const result = resolveEffectiveBashTimeouts(base, undefined);
-
-		expect(result).toEqual({ defaultSeconds: 120, maxSeconds: 600, cacheCapped: false });
-	});
-
-	it("caps the recommended maximum at a 270s cache budget while keeping the injected default", () => {
-		const result = resolveEffectiveBashTimeouts(base, 270);
-
-		expect(result).toEqual({ defaultSeconds: 120, maxSeconds: 270, cacheCapped: true });
-	});
-
-	it("does not cap when the cache budget exceeds the configured maximum", () => {
-		const result = resolveEffectiveBashTimeouts(base, 3570);
-
-		expect(result).toEqual({ defaultSeconds: 120, maxSeconds: 600, cacheCapped: false });
-	});
-
-	it("pulls the default down with the max when the budget is below it", () => {
-		expect(resolveEffectiveBashTimeouts(base, 60)).toEqual({
-			defaultSeconds: 60,
-			maxSeconds: 60,
-			cacheCapped: true,
-		});
-		expect(resolveEffectiveBashTimeouts(base, 20)).toEqual({
-			defaultSeconds: 20,
-			maxSeconds: 20,
-			cacheCapped: true,
-		});
-	});
-
-	it("respects env-derived bases as the pre-cap values", () => {
-		const envBase = resolveBashTimeoutDefaults({
-			PI_BASH_DEFAULT_TIMEOUT_SECONDS: "30",
-			PI_BASH_MAX_TIMEOUT_SECONDS: "900",
-		});
-
-		expect(resolveEffectiveBashTimeouts(envBase, 270)).toEqual({
-			defaultSeconds: 30,
-			maxSeconds: 270,
-			cacheCapped: true,
-		});
-	});
-});
-
-describe("buildBashTimeoutPrompt cache awareness", () => {
-	const LEGACY_PROMPT =
-		"\n## Bash Tool Timeout Policy\n\nThe `bash` tool enforces timeouts even when you omit the `timeout` parameter:\n\n- Default timeout: 120s (2 min). Applied automatically when you do not set `timeout`.\n- Recommended maximum timeout: 600s (10 min). Explicit `timeout` values are preserved because different hosts may use different timeout units.\n- For long-running commands (builds, installs, test suites), set an explicit `timeout` that fits the workload. Do not assume commands run forever.\n- For commands that legitimately need to run beyond the recommended maximum, start them with `run_in_background: true` and watch the decisive output with `monitor` instead of raising the timeout.\n";
-
-	it("is byte-identical to the legacy policy when no cache budget applies", () => {
-		expect(buildBashTimeoutPrompt({ defaultSeconds: 120, maxSeconds: 600, cacheCapped: false })).toBe(LEGACY_PROMPT);
-	});
-
-	it("names the cache-safe ceiling and the prompt-cache reason when capped", () => {
-		const prompt = buildBashTimeoutPrompt({ defaultSeconds: 120, maxSeconds: 270, cacheCapped: true });
-
-		expect(prompt).toContain("270s");
-		expect(prompt).toMatch(/prompt cache/i);
-		expect(prompt).toContain("run_in_background");
-		expect(prompt).toContain("monitor");
-	});
-
-	it("names a tiny ceiling when the budget collapses default and max together", () => {
-		const prompt = buildBashTimeoutPrompt({ defaultSeconds: 20, maxSeconds: 20, cacheCapped: true });
-
-		expect(prompt).toContain("20s");
-		expect(prompt).not.toContain("600s");
-	});
-
-	it("still accepts the legacy two-field defaults shape", () => {
-		expect(buildBashTimeoutPrompt({ defaultSeconds: 120, maxSeconds: 600 })).toBe(LEGACY_PROMPT);
-	});
-});
-
-describe("bashTimeoutExtension with native Anthropic bash active", () => {
-	it("keeps the legacy policy when the PTY bash tool has stepped aside", async () => {
-		const previous = process.env.PI_ANTHROPIC_BASH;
-		process.env.PI_ANTHROPIC_BASH = "1";
-		try {
-			const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
-			const pi = {
-				on: (name: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => {
-					handlers.set(name, handler);
-				},
-			};
-			bashTimeoutExtension(pi as never);
-
-			const ctx = {
-				model: { api: "anthropic-messages" },
-				getPromptCacheSafeWaitSeconds: () => 270,
-			};
-			const result = (await handlers.get("before_agent_start")?.({ systemPrompt: "BASE" }, ctx)) as {
-				systemPrompt: string;
-			};
-
-			expect(result.systemPrompt).toBe(`BASE${buildBashTimeoutPrompt({ defaultSeconds: 120, maxSeconds: 600 })}`);
-		} finally {
-			if (previous === undefined) delete process.env.PI_ANTHROPIC_BASH;
-			else process.env.PI_ANTHROPIC_BASH = previous;
-		}
-	});
-
-	it("still caps the ceiling when native Anthropic bash is not active", async () => {
-		const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
-		const pi = {
-			on: (name: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => {
-				handlers.set(name, handler);
-			},
-		};
-		bashTimeoutExtension(pi as never);
-
-		const ctx = { model: { api: "anthropic-messages" }, getPromptCacheSafeWaitSeconds: () => 270 };
-		const result = (await handlers.get("before_agent_start")?.({ systemPrompt: "BASE" }, ctx)) as {
-			systemPrompt: string;
-		};
-
-		expect(result.systemPrompt).toContain("270s");
 	});
 });

@@ -1,21 +1,35 @@
 # packages/tui
 
+Commit: `4f26b8282` (2026-08-07)
+
 `@earendil-works/pi-tui` is the standalone terminal renderer/editor library used by Senpi interactive mode. Rendering uses synchronized, differential frames and must preserve terminal ownership boundaries.
 
 ## STRUCTURE
 
 ```text
-src/tui.ts                  Render scheduler, viewport strategies, cursor state
+src/tui.ts                  TuiBase, Container, CURSOR_MARKER, ViewportTUI contract
+src/TuiMainScreen.ts        Main-screen/scrollback TUI (thin TuiBase subclass)
+src/TuiAltScreen.ts         Alt-screen TUI: layout frames, scroll routing, flash
+src/layout.ts               Layout frame rendering, rects, clipping, scrollbar geometry
+src/layout-node.ts          Per-component layout node attachment
 src/terminal.ts             Terminal capabilities and lifecycle
 src/editor-component.ts     Multiline editor primitive
 src/components/             Text, markdown, loader, selectors, image components
+src/components/stack.ts     Stack size allocation shared by v-stack/h-stack
+src/components/v-stack.ts   VStack; h-stack.ts HStack; spacer.ts Spacer
+src/components/scroll-view.ts  ScrollView with scrollbar options
 src/keybindings.ts          Configurable default bindings
 src/keys.ts                 Key parsing and matching
 src/stdin-buffer.ts         Paste/input framing
 src/terminal-image.ts       Kitty/iTerm image paths
 src/changes.md              Fork render behavior
 test/*.test.ts              Node test-runner coverage
+bench/frame-cost.ts         Frame cost benchmark (see test/frame-cost-harness.test.ts)
 ```
+
+Root `tui-plan.md` is the design doc for the alternate-screen layout system (landed 2026-07-31).
+
+Public exports include `VStack`, `HStack`, `ScrollView`, `Spacer`, `TuiAltScreen`, `TuiMainScreen`, `Container`, `CURSOR_MARKER`, `isViewportTUI`, and `ViewportTUI` (see `src/index.ts`).
 
 ## RENDERING CONTRACT
 
@@ -33,6 +47,10 @@ test/*.test.ts              Node test-runner coverage
 | Task | File |
 |---|---|
 | Flicker, cursor, viewport | `src/tui.ts` |
+| Alt-screen rendering, scroll wheel/keys routing | `src/TuiAltScreen.ts` |
+| Layout rects, clipping, scrollbar geometry | `src/layout.ts`, `src/layout-node.ts` |
+| Stack sizing, scrollable regions | `src/components/stack.ts`, `src/components/scroll-view.ts` |
+| Viewport contract checks | `src/tui.ts` (`isViewportTUI`, `VIEWPORT_TUI`) |
 | Terminal lifecycle/title | `src/terminal.ts` |
 | Child process terminal | `src/terminal.ts` (`ProcessTerminal`) |
 | Key parsing/defaults | `src/keys.ts`, `src/keybindings.ts` |
@@ -51,7 +69,8 @@ test/*.test.ts              Node test-runner coverage
 
 ## VALIDATION
 
-- Tests use `node --test --import tsx`, not Vitest. Run `npm test` from this package.
+- Tests use `node --test --import tsx`, not Vitest; the test script also imports `test/setup-multiplexer-env.mjs`. Run `npm test` from this package.
+- Alt-screen/layout changes: see `test/tui-alt-screen.test.ts`, `test/layout.test.ts`, `test/viewport-render.test.ts`.
 - Rendering changes must include focused headless-terminal assertions and preserve flicker budgets.
 - Runtime changes require root `npm run check`, `senpi-qa` TUI smoke evidence, and visual terminal QA.
 - Read `src/changes.md` before altering renderer or loader behavior.

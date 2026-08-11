@@ -1,5 +1,7 @@
 # packages/ai/src/providers
 
+Generated: 2026-08-07. Commit `4f26b8282`.
+
 This directory owns provider factories, catalogs, provider metadata, and the faux test provider. API wire implementations, option translation, and message transforms live in sibling `../api/`.
 
 ## FILE MAP
@@ -12,7 +14,16 @@ faux.ts                  Deterministic public test provider
 images/                  Image-provider metadata and factories
 radius.ts                Dynamic Radius provider with persisted model refresh
 radius-config.ts         Radius gateway/model catalog loading
+data/                    38 provider JSONs + .manifest.json — committed generated artifacts
+data-json.d.ts           Typed import shim for data/ JSON
+ollama.ts                Dynamic provider, no .models.ts; runtime catalog via /api/tags
+cloudflare-auth.ts       Cloudflare auth split out of the two Cloudflare providers
+cloudflare-stream.ts     Shared Cloudflare stream plumbing
+google-shared.ts         Shared google/google-vertex catalog logic
+openai-responses-shared.ts Shared openai/azure Responses catalog logic
 ```
+
+Newer providers on disk (each `<name>.ts` + `<name>.models.ts`): ant-ling, kimi-coding, opencode, opencode-go, vercel-ai-gateway, xiaomi + xiaomi-token-plan-{ams,cn,sgp}, zai, zai-coding-cn.
 
 ## ADD OR CHANGE A PROVIDER
 
@@ -33,6 +44,7 @@ radius-config.ts         Radius gateway/model catalog loading
 - Every API stream must preserve tool calls, thinking blocks, usage accounting, stop reasons, setup errors, and abort semantics.
 - Default tests run with zero credentials. Use the faux provider for deterministic event sequences.
 - Keep image providers structurally separate under `images/`.
+- `data/` is committed generated source; never hand-edit. Regenerate with `npm run hydrate-model-data`, validate with `npm run check:model-data`.
 
 ## ANTI-PATTERNS
 

@@ -128,6 +128,21 @@ describe("openai-completions cacheControlFormat", () => {
 		mockState.lastParams = undefined;
 	});
 
+	function createOpenRouterModel(id: string): Model<"openai-completions"> {
+		return {
+			id,
+			name: id,
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128000,
+			maxTokens: 32000,
+		};
+	}
+
 	it("applies Anthropic-style cache markers when model compat enables them", async () => {
 		const model: Model<"openai-completions"> = {
 			id: "custom-qwen",
@@ -154,10 +169,23 @@ describe("openai-completions cacheControlFormat", () => {
 		expectAnthropicCacheMarkers(params);
 	});
 
-	it("preserves Anthropic-style cache markers for OpenRouter Anthropic models", async () => {
-		const model = getModel("openrouter", "anthropic/claude-sonnet-4");
-		const params = await capturePayload(model);
+	it.each([
+		"anthropic/claude-sonnet-4",
+		"~anthropic/claude-opus-latest",
+		"qwen/qwen3-235b-a22b",
+		"google/gemini-2.5-pro",
+	])("applies Anthropic-style cache markers for allowlisted OpenRouter model %s", async (modelId) => {
+		const params = await capturePayload(createOpenRouterModel(modelId));
 		expectAnthropicCacheMarkers(params);
+	});
+
+	it("does not apply cache markers to OpenRouter models outside the prefix allowlist", async () => {
+		const params = await capturePayload(createOpenRouterModel("meta-llama/llama-3.3-70b-instruct"));
+		const instructionMessage = getInstructionMessage(params);
+
+		expect(Array.isArray(instructionMessage?.content)).toBe(false);
+		expect(params.tools?.[0]?.cache_control).toBeUndefined();
+		expect(typeof params.messages[params.messages.length - 1]?.content).toBe("string");
 	});
 
 	it("moves the conversation cache marker to a tool result", async () => {

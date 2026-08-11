@@ -251,6 +251,7 @@ export type ReadonlySessionManager = Pick<
 	| "getLabel"
 	| "getBranch"
 	| "buildContextEntries"
+	| "buildSessionContext"
 	| "getHeader"
 	| "getEntries"
 	| "getTree"

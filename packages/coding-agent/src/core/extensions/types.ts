@@ -363,6 +363,33 @@ export interface EndCompactionOptions {
 	errorMessage?: string;
 }
 
+/** Filesystem operation classes enforced by extension-registered policies. */
+export type FilesystemOperation = "read" | "enumerate" | "write";
+
+/** Canonical target presented to a filesystem policy immediately before tool I/O. */
+export interface FilesystemPolicyRequest {
+	operation: FilesystemOperation;
+	canonicalPath: string;
+	toolName: string;
+}
+
+/** A filesystem policy must explicitly allow or deny each request. */
+export type FilesystemPolicyDecision = { allow: true } | { allow: false; reason: string };
+
+/**
+ * Extension-owned filesystem access policy for Senpi's built-in file tools.
+ *
+ * `deniedRoots` is metadata for future inherited process sandbox support. The
+ * built-in file tools enforce `check`; they do not interpret the metadata.
+ */
+export interface FilesystemPolicy {
+	check(request: Readonly<FilesystemPolicyRequest>): FilesystemPolicyDecision | Promise<FilesystemPolicyDecision>;
+	deniedRoots?: readonly string[];
+}
+
+/** Composed deny-wins checker used by built-in tool executors. */
+export type FilesystemPolicyChecker = (request: Readonly<FilesystemPolicyRequest>) => Promise<FilesystemPolicyDecision>;
+
 /**
  * Context passed to extension event handlers.
  */
@@ -428,6 +455,15 @@ export interface ExtensionContext {
 	 * LIVE current model, so callers must not snapshot the value.
 	 */
 	getPromptCacheSafeWaitSeconds?(): number | undefined;
+	/** Maximum Goal monitor continuation backstop configured for prompt-cache waits. */
+	getPromptCacheGoalBackstopMaxSeconds?(): number;
+	/** Resolved opt-in prompt-cache keep-alive policy. */
+	getPromptCacheKeepAliveSettings?(): {
+		enabled: boolean;
+		maxRequestsPerSession: number;
+		maxCostUsdPerSession: number;
+		marginSeconds: number;
+	};
 	/** Get resolved look-at settings from global/project/user overrides. */
 	getLookAtSettings(): { enabled: boolean; models: string[] | undefined };
 	/** Get resolved image settings from global/project/user overrides. */
@@ -1542,6 +1578,12 @@ export interface ExtensionAPI {
 	 */
 	registerLazyToolActivator(activator: LazyToolActivator): void;
 
+	/**
+	 * Register a deny-wins filesystem policy for Senpi's built-in read, write,
+	 * edit, ls, find, and grep tools. Factory-time only.
+	 */
+	registerFilesystemPolicy(policy: FilesystemPolicy): void;
+
 	/** Register an MCP server that the agent can use. Factory-time only. */
 	registerMcpServer(name: string, config: McpServerDeclaration): void;
 
@@ -2061,6 +2103,13 @@ export interface ExtensionContextActions {
 	getContextUsage: () => ContextUsage | undefined;
 	getCompactionSettings: () => CompactionPreparation["settings"];
 	getPromptCacheSafeWaitSeconds?: () => number | undefined;
+	getPromptCacheGoalBackstopMaxSeconds?: () => number;
+	getPromptCacheKeepAliveSettings?: () => {
+		enabled: boolean;
+		maxRequestsPerSession: number;
+		maxCostUsdPerSession: number;
+		marginSeconds: number;
+	};
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
@@ -2138,6 +2187,8 @@ export interface Extension {
 	/** Optional for compatibility with extension records created before this additive registry. */
 	removedToolHints?: Map<string, string>;
 	lazyToolActivators?: LazyToolActivator[];
+	/** Optional for compatibility with extension records created before filesystem policies. */
+	filesystemPolicies?: FilesystemPolicy[];
 	messageRenderers: Map<string, MessageRenderer>;
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;

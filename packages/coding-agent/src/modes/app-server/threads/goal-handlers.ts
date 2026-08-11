@@ -1,4 +1,5 @@
 import { clearGoal, createGoal, readGoal, updateGoal } from "../../../core/extensions/builtin/goal/store.ts";
+import { GOAL_STORE_CHANGED_EVENT } from "../../../core/extensions/builtin/goal/store-changed-event.ts";
 import { goalStoreRef } from "../../../core/extensions/builtin/goal/store-ref.ts";
 import type { GoalStatus, GoalUpdate } from "../../../core/extensions/builtin/goal/types.ts";
 import type { ThreadGoalClearResponse, ThreadGoalGetResponse, ThreadGoalSetResponse } from "../protocol/index.ts";
@@ -82,6 +83,12 @@ class ThreadGoalHandlers {
 			};
 			return updateGoal(ref, update, status === "complete" ? "model" : "user");
 		});
+		if (goal.status === "active") {
+			entry.session.emitExtensionEvent(GOAL_STORE_CHANGED_EVENT, {
+				threadId,
+				ctx: entry.session.extensionRunner.createCommandContext(),
+			});
+		}
 		const response = { goal: toThreadGoal(goal) } satisfies ThreadGoalSetResponse;
 		const notify = (): void => {
 			this.notifications.broadcast({

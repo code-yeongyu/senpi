@@ -391,6 +391,9 @@ export class ExtensionRunner {
 		keepRecentTokens: 20000,
 	});
 	private getPromptCacheSafeWaitSecondsFn: () => number | undefined = () => undefined;
+	private getPromptCacheGoalBackstopMaxSecondsFn: () => number = () => 3570;
+	private getPromptCacheKeepAliveSettingsFn: NonNullable<ExtensionContextActions["getPromptCacheKeepAliveSettings"]> =
+		() => ({ enabled: false, maxRequestsPerSession: 3, maxCostUsdPerSession: 0.05, marginSeconds: 60 });
 	private getLookAtSettingsFn: ExtensionContextActions["getLookAtSettings"] = () => ({
 		enabled: true,
 		models: undefined,
@@ -496,8 +499,11 @@ export class ExtensionRunner {
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.getCompactionSettingsFn = contextActions.getCompactionSettings;
 		if (contextActions.getPromptCacheSafeWaitSeconds)
-			if (contextActions.getPromptCacheSafeWaitSeconds)
-				this.getPromptCacheSafeWaitSecondsFn = contextActions.getPromptCacheSafeWaitSeconds;
+			this.getPromptCacheSafeWaitSecondsFn = contextActions.getPromptCacheSafeWaitSeconds;
+		if (contextActions.getPromptCacheGoalBackstopMaxSeconds)
+			this.getPromptCacheGoalBackstopMaxSecondsFn = contextActions.getPromptCacheGoalBackstopMaxSeconds;
+		if (contextActions.getPromptCacheKeepAliveSettings)
+			this.getPromptCacheKeepAliveSettingsFn = contextActions.getPromptCacheKeepAliveSettings;
 		this.getLookAtSettingsFn = contextActions.getLookAtSettings;
 		this.getImageSettingsFn = contextActions.getImageSettings;
 		this.sessionSettingsFn = contextActions.sessionSettings;
@@ -641,6 +647,13 @@ export class ExtensionRunner {
 			}
 		}
 		return Array.from(toolsByName.values());
+	}
+
+	/** Metadata-only denied roots declared by registered filesystem policies. */
+	getFilesystemPolicyDeniedRoots(): readonly string[] {
+		return this.extensions.flatMap((extension) =>
+			(extension.filesystemPolicies ?? []).flatMap((policy) => policy.deniedRoots ?? []),
+		);
 	}
 
 	/** Get extension-declared MCP servers (first declaration per name wins). */
@@ -1051,6 +1064,14 @@ export class ExtensionRunner {
 			getPromptCacheSafeWaitSeconds: () => {
 				runner.assertActive();
 				return runner.getPromptCacheSafeWaitSecondsFn();
+			},
+			getPromptCacheGoalBackstopMaxSeconds: () => {
+				runner.assertActive();
+				return runner.getPromptCacheGoalBackstopMaxSecondsFn();
+			},
+			getPromptCacheKeepAliveSettings: () => {
+				runner.assertActive();
+				return runner.getPromptCacheKeepAliveSettingsFn();
 			},
 			getLookAtSettings: () => {
 				runner.assertActive();

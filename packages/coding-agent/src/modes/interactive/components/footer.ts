@@ -144,14 +144,9 @@ export class FooterComponent implements Component {
 		const branch = this.footerData.getGitBranch();
 		const sessionName = this.session.sessionManager.getSessionName();
 
-		const omoNativeBadge: FooterSegment | undefined = this.footerData.isOmoNative()
-			? { plain: "(🏴‍☠️ OmO Native)", colored: theme.fg("success", "(🏴‍☠️ OmO Native)") }
-			: undefined;
-
 		const anchor: [FooterSegment, ...FooterSegment[]] = [{ plain: pwdRaw, colored: theme.fg("accent", pwdRaw) }];
-		if (omoNativeBadge) anchor.unshift(omoNativeBadge);
 		if (branch) anchor.push({ plain: branch, colored: theme.fg("warning", branch) });
-		const pwdIndex = omoNativeBadge ? 1 : 0;
+		const pwdIndex = 0;
 
 		const dim = (plain: string): FooterSegment => ({ plain, colored: theme.fg("dim", plain) });
 		const middle: FooterSegment[] = [];

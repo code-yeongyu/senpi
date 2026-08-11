@@ -119,16 +119,18 @@ describe("fallback chain selectors", () => {
 });
 
 describe("resolveRetryFallbackSettings chain defaults", () => {
-	const fableKey = "anthropic/claude-fable-5";
+	const fableKey = "claude-fable-5";
 
 	it("keeps a shipped default chain when the user configures an unrelated model", () => {
 		const resolved = resolveRetryFallbackSettings({
-			fallbackChains: { "apitopia/kimi-k3-unlocked": ["apitopia/kimi-k3-ultrafast-unlocked:max"] },
+			fallbackChains: { "example-gateway/unrelated-model": ["example-gateway/unrelated-fallback:max"] },
 		});
 
-		expect(resolved.chains["apitopia/kimi-k3-unlocked"]).toEqual(["apitopia/kimi-k3-ultrafast-unlocked:max"]);
+		expect(resolved.chains["example-gateway/unrelated-model"]).toEqual(["example-gateway/unrelated-fallback:max"]);
 		expect(resolved.chains[fableKey]).toEqual(DEFAULT_FALLBACK_CHAINS[fableKey]);
 		expect(DEFAULT_FALLBACK_CHAINS[fableKey]).toHaveLength(3);
+		// The shipped default is provider-agnostic: bare ids only, expanded at canonicalization.
+		expect(Object.keys(DEFAULT_FALLBACK_CHAINS).every((key) => !key.includes("/"))).toBe(true);
 	});
 
 	it("replaces a colliding default outright and removes one set to an empty array", () => {
@@ -136,7 +138,9 @@ describe("resolveRetryFallbackSettings chain defaults", () => {
 			resolveRetryFallbackSettings({ fallbackChains: { [fableKey]: ["ccapi/kimi-k3:max"] } }).chains[fableKey],
 		).toEqual(["ccapi/kimi-k3:max"]);
 
-		expect(resolveRetryFallbackSettings({ fallbackChains: { [fableKey]: [] } }).chains).not.toHaveProperty(fableKey);
+		// An empty list survives resolution as a tombstone; canonicalization is what
+		// removes the expanded default (see retry-fallback-expansion.test.ts).
+		expect(resolveRetryFallbackSettings({ fallbackChains: { [fableKey]: [] } }).chains[fableKey]).toEqual([]);
 	});
 
 	it("falls back to the shipped defaults for a malformed chain map", () => {

@@ -13,6 +13,11 @@ compaction/        Compaction mechanics and policy
 session-manager/   Persistence, branching, context construction
 dynamic-prompt/    Dynamic system-prompt + workstation fact coverage
 tool-pair-guard/   Provider payload tool-pair sanitization tests
+client/            RPC/app-server client coverage
+extensions/        Extension loading and API behavior
+grok/              Grok provider coverage
+ttsr/              Stream-rule (ttsr) extension coverage
+support/           Shared test support modules
 helpers/           Shared subprocess/QA/fixture helpers
 manual-qa/         Explicit manual QA scripts (not part of default suite)
 qa/app-server/     Real app-server surface drivers
@@ -20,6 +25,9 @@ integration/       Explicitly gated real-provider tests
 fixtures/, goldens/ Shared deterministic inputs and snapshots
 model-runtime*.test.ts / models-store.test.ts / remote-catalog-provider.test.ts / runtime-credentials.test.ts
                    Model/catalog/auth runtime coverage
+claude-sdk-oauth-*.test.ts
+                   Flat cluster (33+ files) at test/ root covering the Claude SDK
+                   OAuth provider extension
 ```
 
 ## TEST RULES
@@ -45,3 +53,6 @@ model-runtime*.test.ts / models-store.test.ts / remote-catalog-provider.test.ts 
 - Run every added or changed test file directly until green.
 - Run the narrow owning directory or package suite when shared harnesses, fixtures, or lifecycle behavior change.
 - Root `npm run check` is static validation and does not replace tests.
+
+---
+Generated: 2026-08-07 | Commit: `4f26b8282`

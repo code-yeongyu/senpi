@@ -135,12 +135,14 @@ node .agents/skills/senpi-qa/scripts/mock-loop.mjs \
   --api openai-completions
 ```
 
-The complete mode emits a leaked `<invoke name="bash">` as assistant text,
-asserts that Bash executes exactly once, verifies the second model request
-contains the tool output without leaked XML, and completes on a scripted final
-turn. The truncated mode emits a started call without `</invoke>`, uses a
-sentinel-writing command, and proves that the sentinel is never created while
-the second request contains `Re-issue the tool call with complete arguments.`
+The complete mode emits the observed malformed
+`antml:invoke name="bash">... </invoke></function_results>` shape as assistant
+text, asserts that Bash executes exactly once, verifies both the second model
+request and user-visible CLI output contain no leaked tool-protocol markup, and
+completes on a scripted final turn. The truncated mode emits a started call
+without `</invoke>`, uses a sentinel-writing command, and proves that the
+sentinel is never created while the second request contains
+`Re-issue the tool call with complete arguments.`
 
 Each run hashes the real auth file before and after, uses only the isolated
 `models.json` mock credential, removes its sandbox, and writes a sanitized

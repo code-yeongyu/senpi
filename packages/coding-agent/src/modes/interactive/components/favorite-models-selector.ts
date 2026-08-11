@@ -2,7 +2,6 @@ import { type Model, modelsAreEqual } from "@earendil-works/pi-ai";
 import {
 	Container,
 	type Focusable,
-	fuzzyFilter,
 	getKeybindings,
 	Input,
 	Key,
@@ -10,7 +9,7 @@ import {
 	Spacer,
 	Text,
 } from "@earendil-works/pi-tui";
-import { getModelSearchText } from "../model-search.ts";
+import { rankModelSearchItems } from "../model-search-rank.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyText } from "./keybinding-hints.ts";
@@ -54,6 +53,8 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 	private modelsById: Map<string, Model<any>> = new Map();
 	private allIds: string[] = [];
 	private favoriteIds: FavoriteModelIds = null;
+	/** Row order frozen at construction; membership toggles never move rows, only reorder keys do. */
+	private displayIds: string[] = [];
 	private filteredItems: ModelItem[] = [];
 	private selectedIndex = 0;
 	private searchInput: Input;
@@ -87,6 +88,7 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 		}
 
 		this.favoriteIds = config.favoriteModelIds === null ? null : [...config.favoriteModelIds];
+		this.displayIds = getSortedFavoriteModelIds(this.favoriteIds, this.allIds);
 		this.filteredItems = this.buildItems();
 
 		// Header
@@ -126,9 +128,10 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 	}
 
 	private buildItems(): ModelItem[] {
-		// Filter out IDs that no longer have a corresponding model (e.g., after logout)
+		// Filter out IDs that no longer have a corresponding model (e.g., after logout).
+		// Iterates the frozen displayIds snapshot; the favorite flag reads live membership.
 		const items: ModelItem[] = [];
-		for (const id of getSortedFavoriteModelIds(this.favoriteIds, this.allIds)) {
+		for (const id of this.displayIds) {
 			const model = this.modelsById.get(id);
 			if (!model) continue;
 			items.push({
@@ -169,17 +172,30 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 		const query = this.searchInput.getValue();
 		const selectedId = preferredSelectedId ?? this.filteredItems[this.selectedIndex]?.fullId;
 		const items = this.buildItems();
-		this.filteredItems = query
-			? fuzzyFilter(items, query, (i) =>
-					getModelSearchText({ id: i.model.id, provider: i.model.provider, name: i.model.name }),
-				)
-			: items;
+		// Management surface: relevance ranking without a favorites partition (empty query keeps base order).
+		this.filteredItems = rankModelSearchItems(
+			items,
+			query,
+			(i) => ({ id: i.model.id, provider: i.model.provider, name: i.model.name }),
+			{ favoritesFirst: false, isFavorite: () => false },
+		);
 		const selectedIndex = selectedId ? this.filteredItems.findIndex((item) => item.fullId === selectedId) : -1;
 		this.selectedIndex =
 			selectedIndex >= 0 ? selectedIndex : Math.min(this.selectedIndex, Math.max(0, this.filteredItems.length - 1));
 		this.updateList();
 		this.footerText.setText(this.getFooterText());
 		this.secondaryFooterText.setText(this.getSecondaryFooterText());
+	}
+
+	/** Mirror a favoriteIds reorder swap onto the frozen display order so the row visibly moves. */
+	private swapDisplayIds(firstId: string, secondId: string): void {
+		const firstIndex = this.displayIds.indexOf(firstId);
+		const secondIndex = this.displayIds.indexOf(secondId);
+		if (firstIndex < 0 || secondIndex < 0) return;
+		[this.displayIds[firstIndex], this.displayIds[secondIndex]] = [
+			this.displayIds[secondIndex],
+			this.displayIds[firstIndex],
+		];
 	}
 
 	private notifyChange(): void {
@@ -259,7 +275,9 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 				const newIndex = currentIndex + delta;
 				// Only move if within bounds
 				if (newIndex >= 0 && newIndex < this.favoriteIds.length) {
+					const displacedId = this.favoriteIds[newIndex];
 					this.favoriteIds = moveFavoriteModel(this.favoriteIds, item.fullId, delta);
+					this.swapDisplayIds(item.fullId, displacedId);
 					this.isDirty = true;
 					this.selectedIndex += delta;
 					this.refresh(item.fullId);

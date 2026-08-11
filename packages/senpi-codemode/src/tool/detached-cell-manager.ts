@@ -1,4 +1,5 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
+import { SENPI_CODEMODE_WAKE_SOURCE, type WakeSourceState } from "../extension/wake-source-state.ts";
 import { detachedNotificationSpillPath } from "./detached-cell-notification.ts";
 import { currentDetachedResult, detachedErrorResult, snapshotDetachedCell } from "./detached-cell-snapshot.ts";
 import {
@@ -58,12 +59,15 @@ export interface EvalDetachedCellManagerOptions {
 	readonly artifactsDir?: string;
 	readonly notifier?: EvalDetachedCellNotifier;
 	readonly onStatusChange?: (entries: readonly EvalDetachedCellStatusEntry[]) => void;
+	/** Receives a full per-source liveness snapshot on every detached-cell transition; used by the goal builtin. */
+	readonly onWakeSourceState?: (state: WakeSourceState) => void;
 	readonly now?: () => number;
 }
 
 export class EvalDetachedCellManager {
 	readonly #artifactsDir: string | undefined;
 	readonly #onStatusChange: ((entries: readonly EvalDetachedCellStatusEntry[]) => void) | undefined;
+	readonly #onWakeSourceState: ((state: WakeSourceState) => void) | undefined;
 	readonly #cells = new Map<string, ManagedCell>();
 	readonly #detachedByLanguage = new Map<EvalLanguage, ManagedCell>();
 	readonly #notificationQueue: DetachedNotificationQueue;
@@ -72,6 +76,7 @@ export class EvalDetachedCellManager {
 	constructor(options: EvalDetachedCellManagerOptions = {}) {
 		this.#artifactsDir = options.artifactsDir;
 		this.#onStatusChange = options.onStatusChange;
+		this.#onWakeSourceState = options.onWakeSourceState;
 		this.#notificationQueue = new DetachedNotificationQueue(options.notifier, options.artifactsDir);
 		this.#now = options.now ?? Date.now;
 	}
@@ -155,11 +160,17 @@ export class EvalDetachedCellManager {
 		await Promise.allSettled(
 			detached.map(async (cell) => await this.stop(cell.cellId, "Session ended; detached eval cell cancelled")),
 		);
+		if (detached.length === 0) this.#emitWakeSourceState([]);
 		await this.#notificationQueue.flush();
 	}
 
 	async flushNotifications(): Promise<void> {
 		await this.#notificationQueue.flush();
+	}
+
+	/** Re-publish the current snapshot; consumers reset their per-source counts at session_start. */
+	publishWakeSourceState(): void {
+		this.#emitWakeSourceState([...this.#detachedByLanguage.values()]);
 	}
 
 	#settle(
@@ -188,14 +199,29 @@ export class EvalDetachedCellManager {
 	}
 
 	#emitStatus(): void {
+		const liveCells = [...this.#detachedByLanguage.values()];
 		this.#onStatusChange?.(
-			[...this.#detachedByLanguage.values()].map((cell) => ({
+			liveCells.map((cell) => ({
 				cellId: cell.cellId,
 				language: cell.input.language,
 				startedAtMs: cell.startedAtMs,
 				...(cell.input.summary === undefined ? {} : { summary: cell.input.summary }),
 			})),
 		);
+		this.#emitWakeSourceState(liveCells);
+	}
+
+	#emitWakeSourceState(liveCells: readonly ManagedCell[]): void {
+		this.#onWakeSourceState?.({
+			source: SENPI_CODEMODE_WAKE_SOURCE,
+			activeCount: liveCells.length,
+			items: liveCells.map((cell) => ({
+				id: cell.cellId,
+				description:
+					cell.input.summary === undefined || cell.input.summary.length === 0 ? cell.cellId : cell.input.summary,
+				startedAtMs: cell.startedAtMs,
+			})),
+		});
 	}
 
 	#snapshot(cell: ManagedCell): EvalDetachedCellSnapshot {

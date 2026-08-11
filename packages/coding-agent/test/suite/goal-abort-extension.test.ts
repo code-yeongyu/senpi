@@ -154,7 +154,7 @@ describe("goal abort lifecycle through the agent session", () => {
 		expect(abortSources).toContain(undefined);
 		expect(harness.faux.getCallLog()).toHaveLength(2);
 		expect(await readGoal(ref)).toMatchObject({ status: "active" });
-		expect(await scheduledContinuation).toEqual(expect.objectContaining({ delayMs: 240_000 }));
+		expect(await scheduledContinuation).toEqual(expect.objectContaining({ delayMs: 240_000, iteration: 1 }));
 	});
 
 	it("keeps a model-authored block blocked on ordinary direct input", async () => {

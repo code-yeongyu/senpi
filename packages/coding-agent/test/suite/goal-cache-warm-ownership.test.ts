@@ -3,7 +3,7 @@ import {
 	GOAL_CACHE_WARMUP_ENTRY_TYPE,
 	type GoalCacheWarmupEntryData,
 } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
-import { GOAL_MONITOR_CONTINUATION_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
+import { GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import {
 	type AppendedGoalEntry,
 	cleanAssistantStop,
@@ -34,20 +34,26 @@ describe("goal cache-warm rendering ownership", () => {
 		await runGoalHandlers(handlers, "agent_end", { type: "agent_end", messages: [cleanAssistantStop()] }, ctx);
 
 		expect(notices).toEqual([]);
-		expect(warmupPhases(entries)).toEqual(["scheduled"]);
+		expect(warmupPhases(entries)).toEqual([{ phase: "scheduled", iteration: 1 }]);
 
 		const delivered = waitForSentCount(harness, 1);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
 		await delivered;
 		await vi.advanceTimersByTimeAsync(0);
 		expect(notices).toEqual([]);
-		expect(warmupPhases(entries)).toEqual(["scheduled", "resumed"]);
+		expect(warmupPhases(entries)).toEqual([
+			{ phase: "scheduled", iteration: 1 },
+			{ phase: "resumed", iteration: 1 },
+		]);
 	});
 });
 
-function warmupPhases(entries: readonly AppendedGoalEntry[]): string[] {
+function warmupPhases(
+	entries: readonly AppendedGoalEntry[],
+): Array<Pick<GoalCacheWarmupEntryData, "phase" | "iteration">> {
 	return entries
 		.filter((entry) => entry.customType === GOAL_CACHE_WARMUP_ENTRY_TYPE)
-		.map((entry) => (entry.data as GoalCacheWarmupEntryData | undefined)?.phase)
-		.filter((phase): phase is GoalCacheWarmupEntryData["phase"] => phase !== undefined);
+		.map((entry) => entry.data as GoalCacheWarmupEntryData | undefined)
+		.filter((data): data is GoalCacheWarmupEntryData => data !== undefined)
+		.map(({ phase, iteration }) => ({ phase, iteration }));
 }

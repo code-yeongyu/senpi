@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { createChecks, evidenceDir, guardRealAuth, installCleanupHooks } from "./common.mjs";
 
 const REISSUE_GUIDANCE = "Re-issue the tool call with complete arguments.";
-const XML_PATTERN = /<\/?(?:antml:)?(?:invoke|parameter)/u;
+const LEAK_PATTERN = /antml:invoke|<\/?(?:antml:)?(?:invoke|parameter)|<\/?function_results/u;
 export const TEXT_LEAK_APIS = ["anthropic-messages", "openai-completions"];
 
 export function appendTextToolLeakChecks(checks, outcome) {
@@ -44,10 +44,11 @@ export async function runTextToolLeakScenario({ apiName, truncated, driveTurn, e
 			const command = truncated
 				? `printf '%s\\n' '${executionMarker}' >> ${shellQuote(sentinelPath)}`
 				: `printf '%s\\n' '${executionMarker}' >> ${shellQuote(sentinelPath)}; printf '%s\\n' '${executionMarker}'`;
-			const close = truncated ? "" : "</invoke>";
+			const open = truncated ? '<invoke name="bash">' : 'antml:invoke name="bash">';
+			const close = truncated ? "" : "</invoke></function_results>";
 			return [
 				{
-					text: `Preparing tool call.\n<invoke name="bash"><parameter name="command">${escapeXml(command)}</parameter>${close}`,
+					text: `Preparing tool call.\n${open}<parameter name="command">${escapeXml(command)}</parameter>${close}`,
 				},
 				{ text: finalMarker },
 			];
@@ -76,9 +77,14 @@ export async function runTextToolLeakScenario({ apiName, truncated, driveTurn, e
 			check(`${apiName}: ${mode} leak performs two turns`, requests.length === 2, `requests=${requests.length}`),
 			check(`${apiName}: ${mode} leak returns final text`, output.includes(finalMarker), `marker=${finalMarker}`),
 			check(
-				`${apiName}: ${mode} replay contains no leaked XML`,
-				!XML_PATTERN.test(replayBody),
-				`xmlPresent=${XML_PATTERN.test(replayBody)}`,
+				`${apiName}: ${mode} replay contains no leaked tool protocol`,
+				!LEAK_PATTERN.test(replayBody),
+				`protocolPresent=${LEAK_PATTERN.test(replayBody)}`,
+			),
+			check(
+				`${apiName}: ${mode} visible output contains no leaked tool protocol`,
+				!LEAK_PATTERN.test(output),
+				`protocolPresent=${LEAK_PATTERN.test(output)}`,
 			),
 			check(`${apiName}: ${mode} preserves real auth`, authUnchanged, guard.path),
 		];

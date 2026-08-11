@@ -1,5 +1,27 @@
 # Builtin compaction extension changes
 
+## Regenerate after a warm summary goes stale (2026-08-09)
+
+### What changed
+
+- `applyBlockingCompaction()` now discards a stale warmed speculative result and falls through to fresh core-route summary generation while retaining the active compaction feedback signal.
+- Applied warm results remain terminal, rejected results retain their existing feedback restart, and the `speculative_stale` debug event remains unchanged.
+- The separate OpenAI remote blocking generation-race branch is intentionally unchanged: that path owns and advances its generation directly, while this fix targets idle/speculative warm-summary consumption after an external message-revision bump.
+
+### Why
+
+- Idle warm-up snapshots pin the current message revision. A hidden extension message, bash update, model reselection, tool-set change, or other idle revision bump can make the completed warm summary stale before the next threshold-triggered blocking compaction.
+- Treating that stale result as terminal ended feedback as "Compaction did not apply" without reducing context, so repeated warm/stale cycles let the context keep growing. A blocking route is running because the current session requires compaction and must regenerate against current state.
+
+### Why an extension could not do this
+
+- This is the builtin compaction extension's private warm-job consumption and feedback lifecycle; an external extension cannot replace its in-flight speculative job or continue its blocking route.
+
+### Expected merge-conflict zones
+
+- `index.ts` inside `applyBlockingCompaction()` around pending speculative-job result handling.
+- `test/compaction/stale-warm-blocking-repro.test.ts` is focused regression coverage for this path.
+
 ## Remove the fatal per-turn compaction soft cap (2026-08-05)
 
 ### What changed

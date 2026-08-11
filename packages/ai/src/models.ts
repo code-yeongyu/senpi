@@ -366,7 +366,11 @@ class ModelsImpl implements MutableModels {
 		credential: Credential | undefined,
 	): Promise<AuthCheck | undefined> {
 		if (credential?.type === "oauth") {
-			return provider.auth.oauth ? { source: "OAuth", type: "oauth" } : undefined;
+			if (!provider.auth.oauth) return undefined;
+			if (provider.auth.oauth.check) {
+				return provider.auth.oauth.check({ ctx: this.authContext, credential });
+			}
+			return { source: "OAuth", type: "oauth" };
 		}
 		const apiKey = provider.auth.apiKey;
 		if (!apiKey) return undefined;

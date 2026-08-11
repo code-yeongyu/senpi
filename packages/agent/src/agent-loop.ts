@@ -341,6 +341,7 @@ async function runLoop(
 							: nextTurnSnapshot.thinkingLevel === "off"
 								? undefined
 								: nextTurnSnapshot.thinkingLevel,
+					abortServerSideFallback: nextTurnSnapshot.abortServerSideFallback ?? config.abortServerSideFallback,
 				};
 			}
 			if (signal?.aborted) {

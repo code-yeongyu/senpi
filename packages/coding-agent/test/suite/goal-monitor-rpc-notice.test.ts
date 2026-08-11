@@ -15,7 +15,10 @@ interface RpcRecord {
 	readonly method?: string;
 	readonly message?: string;
 	readonly notifyType?: string;
-	readonly entry?: { readonly customType?: string; readonly data?: { readonly phase?: string } };
+	readonly entry?: {
+		readonly customType?: string;
+		readonly data?: { readonly phase?: string; readonly iteration?: number };
+	};
 }
 
 function createRuntimeHost(session: AgentSession): AgentSessionRuntime {
@@ -83,7 +86,7 @@ describe("goal monitor scheduling notice over RPC", () => {
 				type: "entry_appended",
 				entry: expect.objectContaining({
 					customType: "goal-cache-warmup",
-					data: expect.objectContaining({ phase: "scheduled" }),
+					data: expect.objectContaining({ phase: "scheduled", iteration: 1 }),
 				}),
 			}),
 		);

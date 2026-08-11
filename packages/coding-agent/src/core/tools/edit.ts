@@ -4,7 +4,7 @@ import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
 import { type Static, Type } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
-import type { ToolDefinition } from "../extensions/types.ts";
+import type { FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
 import { renderToolDiff } from "./diff-render.ts";
 import {
 	applyEditsToNormalizedContent,
@@ -20,6 +20,7 @@ import {
 	stripBom,
 } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
+import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { renderToolPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -89,6 +90,8 @@ const defaultEditOperations: EditOperations = {
 export interface EditToolOptions {
 	/** Custom operations for file editing. Default: local filesystem */
 	operations?: EditOperations;
+	/** Extension-registered filesystem policy checker. */
+	filesystemPolicy?: FilesystemPolicyChecker;
 }
 
 function prepareEditArguments(input: unknown): EditToolInput {
@@ -294,6 +297,7 @@ export function createEditToolDefinition(
 	options?: EditToolOptions,
 ): ToolDefinition<typeof editSchema, EditToolDetails | undefined, EditRenderState> {
 	const ops = options?.operations ?? defaultEditOperations;
+	const filesystemPolicy = options?.filesystemPolicy;
 	return {
 		name: "edit",
 		label: "edit",
@@ -324,6 +328,15 @@ export function createEditToolDefinition(
 				};
 
 				throwIfAborted();
+				if (filesystemPolicy) {
+					const decision = await filesystemPolicy({
+						operation: "write",
+						canonicalPath: await canonicalizeFilesystemPath(absolutePath),
+						toolName: "edit",
+					});
+					if (!decision.allow) throw new Error(decision.reason);
+					throwIfAborted();
+				}
 
 				// Check if file exists.
 				try {

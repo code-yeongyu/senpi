@@ -8,6 +8,7 @@ import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
 	APP_NAME,
 	CONFIG_DIR_NAME,
+	DISPLAY_VERSION,
 	detectInstallMethod,
 	getAgentDir,
 	getPackageDir,
@@ -18,6 +19,7 @@ import {
 	type SelfUpdatePackageTarget,
 	VERSION,
 } from "./config.ts";
+import { brandProfile } from "./core/brand.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
@@ -488,6 +490,18 @@ interface SelfUpdatePlan {
 }
 
 async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
+	const brandUpdate = brandProfile()?.update;
+	if (brandUpdate) {
+		console.log(chalk.yellow(`${APP_NAME} ships inside ${brandUpdate.packageName}. Update it with:`));
+		console.log(chalk.cyan(`  ${brandUpdate.command}`));
+		return {
+			packageName: brandUpdate.packageName,
+			installSpec: brandUpdate.command,
+			version: DISPLAY_VERSION,
+			shouldRun: false,
+		};
+	}
+
 	let latestRelease: Awaited<ReturnType<typeof getLatestPiRelease>>;
 	try {
 		latestRelease = await getLatestPiRelease(VERSION);

@@ -1,3 +1,4 @@
+import type { WakeSourceStateItem } from "../monitor-state-event.ts";
 import { TerminalManager, type TerminalManagerOptions } from "./manager.ts";
 import { type MonitorEvent, MonitorRegistry, type MonitorSnapshotEntry } from "./monitor-registry.ts";
 import type { TerminalRuntimeSession } from "./runtime-session.ts";
@@ -5,6 +6,7 @@ import type { TerminalRuntimeSession } from "./runtime-session.ts";
 export interface TerminalEventSinks {
 	readonly onMonitorEvent: (event: MonitorEvent) => void;
 	readonly onMonitorState: (snapshot: readonly MonitorSnapshotEntry[]) => void;
+	readonly onBackgroundState: (snapshot: readonly WakeSourceStateItem[]) => void;
 	readonly onBackgroundExit: (id: string, runtime: TerminalRuntimeSession) => void;
 }
 
@@ -24,6 +26,7 @@ export class TerminalSessionBundle {
 	#sinks: TerminalEventSinks | null = null;
 	#parkedMonitorEvents: MonitorEvent[] = [];
 	#parkedExits = new Map<string, TerminalRuntimeSession>();
+	#backgrounds = new Map<string, WakeSourceStateItem>();
 	#torndown = false;
 
 	constructor(options: TerminalManagerOptions) {
@@ -33,7 +36,7 @@ export class TerminalSessionBundle {
 		});
 	}
 
-	/** Install live sinks, re-publish monitor state, and flush everything buffered while parked. */
+	/** Install live sinks, re-publish channel state, and flush everything buffered while parked. */
 	bind(sinks: TerminalEventSinks): void {
 		if (this.#torndown) return;
 		this.#sinks = sinks;
@@ -42,6 +45,7 @@ export class TerminalSessionBundle {
 		const parkedExits = [...this.#parkedExits];
 		this.#parkedExits.clear();
 		sinks.onMonitorState(this.monitors.snapshot());
+		sinks.onBackgroundState(this.backgroundSnapshot());
 		for (const event of parkedMonitorEvents) sinks.onMonitorEvent(event);
 		for (const [id, runtime] of parkedExits) sinks.onBackgroundExit(id, runtime);
 	}
@@ -50,8 +54,19 @@ export class TerminalSessionBundle {
 		this.#sinks = null;
 	}
 
+	backgroundSnapshot(): readonly WakeSourceStateItem[] {
+		return [...this.#backgrounds.values()];
+	}
+
+	notifyBackgroundStart(id: string, description: string, startedAtMs = Date.now()): void {
+		if (this.#torndown) return;
+		this.#backgrounds.set(id, { id, description, startedAtMs });
+		this.#sinks?.onBackgroundState(this.backgroundSnapshot());
+	}
+
 	notifyBackgroundExit(id: string, runtime: TerminalRuntimeSession): void {
 		if (this.#torndown) return;
+		if (this.#backgrounds.delete(id)) this.#sinks?.onBackgroundState(this.backgroundSnapshot());
 		if (this.#sinks) {
 			this.#sinks.onBackgroundExit(id, runtime);
 			return;
@@ -62,10 +77,14 @@ export class TerminalSessionBundle {
 
 	async teardown(): Promise<void> {
 		if (this.#torndown) return;
-		this.#torndown = true;
 		this.#parkedMonitorEvents = [];
 		this.#parkedExits.clear();
 		this.monitors.dispose();
+		if (this.#backgrounds.size > 0) {
+			this.#backgrounds.clear();
+			this.#sinks?.onBackgroundState([]);
+		}
+		this.#torndown = true;
 		this.#sinks = null;
 		await this.manager.teardown();
 	}

@@ -1,8 +1,9 @@
+import { APP_NAME } from "../../../../config.ts";
 import { buildHelpMarkdown } from "../../../../modes/interactive/help-content.ts";
 import type { ExtensionAPI } from "../../types.ts";
 import { HELP_OVERLAY_OPTIONS, HelpPanel } from "./panel.ts";
 
-const NON_TUI_HELP = "Interactive /help is available in TUI mode; run senpi --help for CLI usage.";
+const NON_TUI_HELP = `Interactive /help is available in TUI mode; run ${APP_NAME} --help for CLI usage.`;
 
 export default function helpExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("keybindings", {
@@ -10,7 +11,7 @@ export default function helpExtension(pi: ExtensionAPI): void {
 		handler: async (_args, ctx) => {
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify(
-					"Interactive /keybindings opens your config in $EDITOR and reloads it; run senpi in TUI mode to use it.",
+					`Interactive /keybindings opens your config in $EDITOR and reloads it; run ${APP_NAME} in TUI mode to use it.`,
 					"info",
 				);
 				return;

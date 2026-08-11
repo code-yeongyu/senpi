@@ -50,15 +50,40 @@ export function buildTruncationRecoveryPrompt(): string {
 	].join("\n");
 }
 
-export function buildGoalStallNotice(consecutiveToollessTurns: number, options: { monitorsActive: boolean }): string {
-	if (options.monitorsActive) {
+export function buildGoalStallNotice(
+	consecutiveToollessTurns: number,
+	options: { liveSources: readonly string[] },
+): string {
+	if (options.liveSources.length > 0) {
+		const sources = new Set(options.liveSources);
+		const advice: string[] = [];
+		if (sources.has("terminal-monitors") || sources.has("terminal-background-sessions")) {
+			advice.push(
+				"- Inspect the terminal sessions' output now (bash_output), verify the watched condition can still occur, and stop obsolete or hung sessions (kill_bash).",
+			);
+		}
+		if (sources.has("senpi-task")) {
+			advice.push(
+				"- Inspect each child task now (task_output); if it needs correction or cancellation, send it a concrete instruction (task_send).",
+			);
+		}
+		if (sources.has("senpi-codemode")) {
+			advice.push(
+				"- Inspect detached eval cells now (eval peek); stop cells that are stalled, obsolete, or waiting on impossible conditions (eval stop).",
+			);
+		}
+		for (const source of sources) {
+			if (["terminal-monitors", "terminal-background-sessions", "senpi-task", "senpi-codemode"].includes(source))
+				continue;
+			advice.push(
+				`- Inspect the live ${source} channel now and stop or replace it if it can no longer make progress.`,
+			);
+		}
 		return [
 			"<goal_stall_check>",
-			`System check: this is monitor-wait goal continuation #${consecutiveToollessTurns} in a row. The same monitor(s) stayed active across ${consecutiveToollessTurns} consecutive continuation turns with no new user input and no monitor completion. The current situation is likely abnormal - a stalled or dead wait.`,
-			"Before waiting on the monitors again, actively investigate:",
-			"- Inspect the monitored sessions' output now (bash_output) and verify the watched condition can still occur.",
-			"- Check whether the underlying process is hung, exited silently, or waiting on input; restart or replace it if so.",
-			"- If the wait target is wrong or no longer needed, kill the monitor (kill_bash) and pursue the goal another way.",
+			`System check: this is resumption-channel goal continuation #${consecutiveToollessTurns} in a row. Live channel kinds (${[...sources].join(", ")}) persisted across ${consecutiveToollessTurns} consecutive continuation turns with no new user input and no completion. The current situation is likely abnormal - a stalled or dead wait.`,
+			"Before waiting on these channels again, actively investigate:",
+			...advice,
 			"- If the goal truly cannot progress, run the blocked audit instead of waiting again.",
 			"Do not end this turn with only another passive wait.",
 			"</goal_stall_check>",
@@ -77,7 +102,7 @@ export function buildGoalStallNotice(consecutiveToollessTurns: number, options: 
 }
 
 export function buildMonitorStallNotice(consecutiveContinuations: number): string {
-	return buildGoalStallNotice(consecutiveContinuations, { monitorsActive: true });
+	return buildGoalStallNotice(consecutiveContinuations, { liveSources: ["terminal-monitors"] });
 }
 
 function escapeXmlText(value: string): string {

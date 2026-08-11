@@ -2,6 +2,8 @@
 
 Text-format tool-call protocols for providers that don't support native function calling. Wraps `openai-completions` streams and parses `<tool_call>` / XML / delimiter formats back into pi's canonical `toolCall` events. Fork-modified — see `changes.md`.
 
+Generated: 2026-08-07. Commit `4f26b8282`.
+
 ## FILES
 
 ```
@@ -10,6 +12,15 @@ tool-call-middleware/
 ├── types.ts                    # Protocol interface (parse, format, stream)
 ├── context-transformer.ts      # System-prompt + message rewriting per protocol
 ├── stream-wrapper.ts           # Wraps AssistantMessageEventStream → re-parses chunks
+├── stream-wrapper-shared.ts    # Shared wrapper plumbing (stream-wrapper + recovery wrapper)
+├── stream-message-metadata.ts  # Message metadata carried through wrapped streams
+├── stream-thinking-projection.ts # Thinking-block projection for wrapped streams
+├── recovery-*.ts               # Leaked-invoke recovery subsystem; entry: wrapStreamWithInvokeRecovery
+│                               #   (recovery-stream-wrapper), plus recovery-code-mask,
+│                               #   recovery-content-lifecycle, recovery-diagnostics,
+│                               #   recovery-event-stream, recovery-message-snapshot,
+│                               #   recovery-native-projection, recovery-stream-failure,
+│                               #   recovery-stream-terminal, recovery-text-projection
 ├── protocols/
 │   ├── hermes.ts               # Hermes <tool_call>{json}</tool_call> (Qwen, Mistral fine-tunes)
 │   ├── morph-xml.ts            # <fn><arg>val</arg></fn> XML (canonical "morph-xml"; "xml" deprecated alias)
@@ -17,6 +28,8 @@ tool-call-middleware/
 │   ├── gemma4.ts               # Gemma 4 delimiter format `<|tool_call>call:name{…}<tool_call|>`
 │   ├── json-mix.ts             # Shared JSON-mix helper (Hermes + delimited variants)
 │   ├── xml-tool-tag-scanner.ts # Streaming XML tag boundary scanner
+│   ├── kimi-xtml/              # Kimi K3 XTML channel format (format/parse/stream/markers,
+│   │                           #   recovery-stream.ts, thinking-recovery*.ts)
 │   ├── anthropic-xml/          # Legacy <invoke>/<parameter> parser, coercion, scanner, formatter, stream parser
 │   └── antml/                  # ANTML <function_calls>/<invoke> protocol with Claude-Code-style failure tolerance
 ├── TESTING.md                  # Manual test commands per protocol (OpenRouter live API)

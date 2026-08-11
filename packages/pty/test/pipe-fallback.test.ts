@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import type { NativePtyLoadResult } from "../src/native-loader.ts";
@@ -6,6 +7,7 @@ import {
 	isPipeFallbackForced,
 	PipeFallbackSession,
 	shouldUsePipeFallback,
+	terminateChildTree,
 } from "../src/pipe-fallback.ts";
 
 function nodeSession(script: string, options: { timeoutMs?: number } = {}): PipeFallbackSession {
@@ -140,5 +142,120 @@ describe("PipeFallbackSession", () => {
 		expect(exit.exitCode).toBeNull();
 		await delay(5);
 		expect(session.write("late").ok).toBe(false);
+	});
+});
+
+describe("PipeFallbackSession terminal detachment", () => {
+	const posixIt = it.skipIf(process.platform === "win32");
+
+	posixIt("runs the child in its own process group so it cannot read senpi's controlling terminal", async () => {
+		// A child sharing senpi's session keeps the user's terminal as its
+		// controlling tty, so a sudo-style /dev/tty read races the TUI's raw
+		// stdin reader and corrupts both inputs. Detached children lead their
+		// own session: pgid equals the child pid.
+		const session = new PipeFallbackSession({
+			command: "sh",
+			args: [
+				"-c",
+				'pgid=$(ps -o pgid= -p $$); pgid=$(echo $pgid); if [ "$pgid" = "$$" ]; then echo OWN_GROUP; else echo "SHARED_GROUP pgid=$pgid pid=$$"; fi',
+			],
+		});
+		session.start();
+
+		const result = await collectOutput(session);
+
+		expect(result.output).toContain("OWN_GROUP");
+		expect(result.exitCode).toBe(0);
+	});
+
+	posixIt(
+		"kill() terminates grandchildren so waitExit settles even when they hold the stdout pipe",
+		async () => {
+			// Without a group kill, SIGTERM reaches only the direct shell; the
+			// backgrounded grandchild keeps the stdout pipe open and 'close'
+			// never fires (the POSIX twin of the Windows taskkill /T branch).
+			const session = new PipeFallbackSession({
+				command: "sh",
+				args: ["-c", "sleep 300 & echo READY; wait"],
+			});
+			session.start();
+
+			await new Promise<void>((resolve) => {
+				let buffered = "";
+				session.onData((chunk) => {
+					buffered += chunk.toString("utf8");
+					if (buffered.includes("READY")) resolve();
+				});
+			});
+
+			const kill = session.kill("SIGTERM");
+			expect(kill.ok).toBe(true);
+
+			const exit = await session.waitExit();
+			expect(exit.signal).toBe("SIGTERM");
+			expect(exit.exitCode).toBeNull();
+		},
+		5000,
+	);
+});
+
+describe("PipeFallbackSession Windows process-tree cleanup", () => {
+	it("does not crash when taskkill is unavailable during kill", () => {
+		const moduleUrl = new URL("../src/pipe-fallback.ts", import.meta.url).href;
+		const script = `
+			Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+			process.env.PATH = "";
+			const { PipeFallbackSession } = await import(${JSON.stringify(moduleUrl)});
+			const session = new PipeFallbackSession({
+				command: process.execPath,
+				args: ["-e", "setInterval(() => {}, 1000)"],
+			}).start();
+			const timeout = setTimeout(() => {
+				process.stderr.write("PIPE_FALLBACK_KILL_TIMEOUT\\n");
+				process.exit(2);
+			}, 2000);
+			session.kill("SIGTERM");
+			await session.waitExit();
+			clearTimeout(timeout);
+			process.stdout.write("DIRECT_FALLBACK_SETTLED\\n");
+		`;
+
+		const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+			encoding: "utf8",
+			timeout: 5000,
+		});
+
+		expect({
+			signal: result.signal,
+			status: result.status,
+			stderr: result.stderr,
+			stdout: result.stdout,
+		}).toEqual({
+			signal: null,
+			status: 0,
+			stderr: "",
+			stdout: "DIRECT_FALLBACK_SETTLED\n",
+		});
+	});
+});
+
+describe("terminateChildTree", () => {
+	it("falls back to a direct kill when no process-group signal is available", () => {
+		// The branch Windows always takes (and POSIX takes once the group is
+		// gone). Every stop path routes through here, so losing the fallback
+		// would leave timed-out children running forever.
+		const signals: NodeJS.Signals[] = [];
+		const child = {
+			pid: undefined,
+			kill: (signal?: NodeJS.Signals) => {
+				signals.push(signal ?? "SIGTERM");
+				return true;
+			},
+		};
+
+		const route = terminateChildTree(child, "SIGTERM");
+
+		expect(route).toBe("direct");
+		expect(signals).toEqual(["SIGTERM"]);
 	});
 });

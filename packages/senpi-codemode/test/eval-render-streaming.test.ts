@@ -128,7 +128,7 @@ describe("eval renderer streaming reuse", () => {
 		const lines = renderLines(final);
 		const visibleText = lines.join("\n");
 		expect.soft(final).toBe(partial);
-		expect.soft(lines.slice(0, 5)).toEqual(["eval py done", "stream", "phase complete | took 9ms", "", "final-only"]);
+		expect.soft(lines.slice(0, 5)).toEqual(["eval py done", "stream", "phase complete | took <1s", "", "final-only"]);
 		expect.soft(visibleText).not.toContain("partial-two");
 		expect.soft(visibleText).not.toContain("running");
 		expect.soft(visibleText).not.toContain("tool.search");
@@ -174,7 +174,7 @@ describe("eval renderer streaming reuse", () => {
 		const lines = renderLines(error);
 		const visibleText = lines.join("\n");
 		expect.soft(error).toBe(partial);
-		expect.soft(lines.slice(0, 4)).toEqual(["eval rb error", "phase failed | took 5ms", "", "boom"]);
+		expect.soft(lines.slice(0, 4)).toEqual(["eval rb error", "phase failed | took <1s", "", "boom"]);
 		expect.soft(visibleText).not.toContain("still running");
 		expect.soft(visibleText).not.toContain("running script");
 	});
@@ -250,7 +250,7 @@ describe("eval renderer streaming reuse", () => {
 		expect.soft(final).not.toBe(call);
 		expect.soft(renderLines(call)).toEqual(callPreview);
 		expect.soft(renderLines(call)).toEqual(["eval js", "assign constant", "const value = 1"]);
-		expect.soft(renderLines(final).slice(0, 4)).toEqual(["eval js done", "phase complete | took 3ms", "", "final"]);
+		expect.soft(renderLines(final).slice(0, 4)).toEqual(["eval js done", "phase complete | took <1s", "", "final"]);
 	});
 
 	it("Given running completed and failed agent events when rendered then progress rows expose state detail and duration", () => {

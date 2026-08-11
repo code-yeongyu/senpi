@@ -22,7 +22,7 @@ export async function runKimiThinkingRecoveryScenario(driveTurn, evidenceSlug) {
 	const guard = guardRealAuth();
 	const { box, server, result } = await driveTurn({
 		apiName: "openai-completions",
-		turns: [{ reasoning: MALFORMED_THINKING }, { text: RECOVERED_MARKER }],
+		turns: [{ reasoning: MALFORMED_THINKING, text: "\u200b" }, { text: RECOVERED_MARKER }],
 		prompt: `Return ${RECOVERED_MARKER} after recovering from the malformed empty response.`,
 		extraArgs: ["--model", "kimi-k3-ultrafast"],
 		mockModels: [{ id: "kimi-k3-ultrafast", reasoning: true }],
@@ -36,10 +36,15 @@ export async function runKimiThinkingRecoveryScenario(driveTurn, evidenceSlug) {
 			.filter((entry) => entry.streamId === 0 && entry.kind === "reasoning_delta")
 			.map((entry) => entry.delta)
 			.join("");
+		const firstText = server.streamLog
+			.filter((entry) => entry.streamId === 0 && entry.kind === "text_delta")
+			.map((entry) => entry.delta)
+			.join("");
 		const replayBody = JSON.stringify(server.requests[1]?.body ?? {});
 		checks.ok("real CLI exits zero after one empty-response retry", result.code === 0 && !result.timedOut, `code=${result.code}`);
 		checks.ok("fake provider receives exactly two requests", server.requests.length === 2, `requests=${server.requests.length}`);
 		checks.ok("malformed reasoning payload reached the real provider parser", firstReasoning === MALFORMED_THINKING, `bytes=${firstReasoning.length}`);
+		checks.ok("production zero-width text block reached the real provider parser", firstText === "\u200b", `bytes=${firstText.length}`);
 		checks.ok("recovered answer is visible exactly once", markerCount === 1, `markerCount=${markerCount}`);
 		checks.ok("raw XTML markers never reach visible CLI output", !XTML_PATTERN.test(output), `markersVisible=${XTML_PATTERN.test(output)}`);
 		checks.ok("discarded empty attempt is not replayed into request two", !replayBody.includes("<|close|>"), `markerReplayed=${replayBody.includes("<|close|>")}`);
@@ -54,6 +59,7 @@ export async function runKimiThinkingRecoveryScenario(driveTurn, evidenceSlug) {
 					requestCount: server.requests.length,
 					markerCount,
 					firstReasoning,
+					firstText,
 					replayedMalformedAttempt: replayBody.includes("<|close|>"),
 					authPath: guard.path,
 					authHash: guard.before,

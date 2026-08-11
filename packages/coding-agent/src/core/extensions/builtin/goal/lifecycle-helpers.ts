@@ -68,19 +68,20 @@ export async function admitAndQueueGoalContinuation(
 	ctx: ExtensionContext,
 	goal: Goal,
 	options: GoalContinuationDeliveryOptions,
-): Promise<Goal> {
+): Promise<Goal | null> {
 	const verdict = evaluateGoalContinuation({ goal, ...options.input });
 	if (verdict.kind === "deny") return handleDeniedContinuation(pi, ctx, goal, options.input, verdict.reason);
 
 	if (options.input.currentSignature === undefined) {
 		throw new Error("Cannot queue a goal continuation without a progress signature");
 	}
-	options.markContinuationPending();
 	const recordedGoal = await recordContinuationDelivered(
 		goalStoreRef(ctx.sessionManager, ctx.cwd),
 		options.input.currentSignature,
+		goal.id,
 	);
-	if (recordedGoal === null) throw new Error("Cannot persist goal continuation delivery without an active goal");
+	if (recordedGoal === null) return null;
+	options.markContinuationPending();
 	queueHiddenGoalPrompt(pi, options.content(verdict));
 	return recordedGoal;
 }
@@ -91,7 +92,7 @@ export async function queueGoalContinuation(
 	ctx: ExtensionContext,
 	goal: Goal,
 	options: SessionStartContinuationOptions,
-): Promise<Goal> {
+): Promise<Goal | null> {
 	const signature = buildCurrentGoalContinuationSignature(
 		ctx,
 		goal,

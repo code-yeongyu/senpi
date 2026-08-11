@@ -12,6 +12,8 @@ import {
 } from "../shared.ts";
 import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
 import { createForegroundDetachGate } from "./foreground-detach.ts";
+import { resolveForegroundWindowSeconds, SLEEP_WAIT_WINDOW_SECONDS } from "./foreground-window.ts";
+import { classifySleepWait, type SleepWaitClassification } from "./sleep-wait.ts";
 import { describeExit, spawnCommandSession } from "./spawn.ts";
 
 export const ptyBashSchema = Type.Object({
@@ -19,7 +21,7 @@ export const ptyBashSchema = Type.Object({
 	timeout: Type.Optional(
 		Type.Number({
 			description:
-				"Foreground kill deadline in seconds. Ignored for run_in_background sessions (they live until exit or kill_bash).",
+				"Process kill deadline in seconds (default 1800). Foreground blocking stops at the ~60s window: a command still running then auto-detaches to a live background session instead of being killed. Ignored for run_in_background sessions (they live until exit or kill_bash).",
 		}),
 	),
 	description: Type.Optional(Type.String({ description: "Short human-readable label for this command." })),
@@ -172,13 +174,23 @@ function raceExitWithKillGrace(
 	});
 }
 
-function resolveAutoDetachDelayMs(ctx: TerminalToolContext, input: PtyBashInput): number | undefined {
+/**
+ * How long the model blocks before a still-running command is handed to a live
+ * background session. A sleep-wait detaches almost immediately: its remaining
+ * time is pure waiting, which the completion notification delivers for free.
+ */
+function resolveAutoDetachDelayMs(
+	ctx: TerminalToolContext,
+	input: PtyBashInput,
+	sleepWait: SleepWaitClassification | undefined,
+): number | undefined {
 	if (ctx.timeoutAction === "kill") return undefined;
-	const budgetSeconds = ctx.getSessionContext?.()?.getPromptCacheSafeWaitSeconds?.();
-	if (budgetSeconds === undefined || !Number.isFinite(budgetSeconds)) return undefined;
+	const windowSeconds = sleepWait
+		? Math.min(SLEEP_WAIT_WINDOW_SECONDS, resolveForegroundWindowSeconds(process.env))
+		: resolveForegroundWindowSeconds(process.env);
 	const timeoutSeconds = input.timeout !== undefined && Number.isFinite(input.timeout) ? input.timeout : Infinity;
-	if (timeoutSeconds <= budgetSeconds) return undefined;
-	return Math.max(0, Math.trunc(budgetSeconds * 1000));
+	if (timeoutSeconds <= windowSeconds) return undefined;
+	return Math.max(0, Math.trunc(windowSeconds * 1000));
 }
 
 function scheduleDetachedSweep(
@@ -242,7 +254,8 @@ async function runForeground(
 	onUpdate?.({ content: [], details: undefined });
 	const unsubscribeOutput = onUpdate ? runtime.onOutput(() => updateEmitter?.schedule()) : undefined;
 
-	const detachDelayMs = resolveAutoDetachDelayMs(ctx, input);
+	const sleepWait = classifySleepWait(input.command);
+	const detachDelayMs = resolveAutoDetachDelayMs(ctx, input, sleepWait);
 	let outcome: ForegroundWaitOutcome | "detached";
 	if (detachDelayMs === undefined) {
 		// Interrupt means "stop now": SIGKILL the whole process group in one shot.
@@ -293,6 +306,7 @@ async function runForeground(
 
 	if (outcome === "detached") {
 		scheduleDetachedSweep(ctx, id, runtime, timeoutMs, startedAt);
+		ctx.onBackgroundStart?.(id, input.description ?? input.command, startedAt);
 		if (ctx.onBackgroundExit) runtime.session.onExit(() => ctx.onBackgroundExit?.(id, runtime));
 		const delta = runtime.readDelta();
 		const partialOutput = formatTerminalToolOutput(delta.text).text || "(no output yet)";
@@ -300,13 +314,17 @@ async function runForeground(
 			input.timeout !== undefined && Number.isFinite(input.timeout)
 				? `not killed; the original ${input.timeout}s timeout still applies`
 				: "not killed; it will run until exit or kill_bash";
+		const guidance = sleepWait
+			? `This command is a wait (${sleepWait.seconds}s sleep), so it detached immediately; the wait continues in the background. Do nothing and end your turn — completion will be reported automatically with exit status and output tail. Do NOT poll bash_output({ bash_id: "${id}" }) for it. When you are waiting for a pattern in a command's output, launch it with monitor({ command, filter }) instead so matching lines arrive as events. Use kill_bash({ bash_id: "${id}" }) to stop this session.`
+			: `Continue other work; completion will be reported automatically with exit status and output tail. Use bash_output({ bash_id: "${id}" }) only to peek at new output. monitor cannot attach to this session; use it for future event-driven launches. Use kill_bash({ bash_id: "${id}" }) to stop this session.`;
 		return textResult(
-			`Command is still running; auto-detached to background with ID: ${id} (${timeoutNote}).\n\nPartial output:\n${partialOutput}\n\nContinue other work; completion will be reported automatically with exit status and output tail. Use bash_output({ bash_id: "${id}" }) only to peek at new output. monitor cannot attach to this session; use it for future event-driven launches. Use kill_bash({ bash_id: "${id}" }) to stop this session.`,
+			`Command is still running; auto-detached to background with ID: ${id} (${timeoutNote}).\n\nPartial output:\n${partialOutput}\n\n${guidance}`,
 			{
 				details: {
 					bash_id: id,
 					background: true,
 					auto_detached: true,
+					...(sleepWait ? { sleep_wait: true } : {}),
 					status: "running",
 					...(delta.droppedChars > 0 ? { droppedChars: delta.droppedChars } : {}),
 				},
@@ -360,6 +378,7 @@ async function runBackground(
 		cwd,
 		envOverrides: sessionEnvOverrides(ctx, execCtx),
 	});
+	ctx.onBackgroundStart?.(id, input.description ?? input.command, Date.now());
 	if (ctx.onBackgroundExit) runtime.session.onExit(() => ctx.onBackgroundExit?.(id, runtime));
 
 	// Capture any output the command emits within a short grace window (or its exit).
@@ -380,7 +399,7 @@ export function createPtyBashTool(ctx: TerminalToolContext) {
 		name: TERMINAL_BASH_TOOL,
 		label: "bash",
 		description:
-			"Execute a shell command in a persistent PTY-backed session. Set run_in_background:true for long-lived or interactive sessions; steer them with bash_input, snapshot with bash_output, tear down with kill_bash. To wait on observable state (a build finishing, a server coming up, a log line), never run sleep or poll loops — subscribe with the monitor tool instead. Foreground timeout is a kill deadline in seconds.",
+			"Execute a shell command in a persistent PTY-backed session. Set run_in_background:true for long-lived or interactive sessions; steer them with bash_input, snapshot with bash_output, tear down with kill_bash. To wait on observable state (a build finishing, a server coming up, a log line), never run sleep or poll loops — subscribe with the monitor tool instead. Foreground blocking stops at the ~60s window and a still-running command auto-detaches to a live background session; `timeout` is the process kill deadline in seconds.",
 		promptSnippet: "Run shell commands; run_in_background:true for long-lived/interactive PTY sessions",
 		promptGuidelines: ["Inspect PI_* environment variables for current model and session details."],
 		parameters: ptyBashSchema,

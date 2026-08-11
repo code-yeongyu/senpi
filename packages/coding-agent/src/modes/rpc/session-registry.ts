@@ -30,8 +30,8 @@ export interface RpcSessionEntry {
 export class RpcSessionRegistryError extends Error {
 	readonly code: "unknown_session" | "session_closing" | "session_path_in_use" | "invalid_path" | "open_failed";
 
-	constructor(code: RpcSessionRegistryError["code"]) {
-		super(code);
+	constructor(code: RpcSessionRegistryError["code"], reason?: string) {
+		super(code === "open_failed" && reason ? `${code}: ${reason}` : code);
 		this.code = code;
 		this.name = "RpcSessionRegistryError";
 	}
@@ -131,7 +131,7 @@ export class RpcSessionRegistry {
 				}
 			}
 			if (error instanceof RpcSessionRegistryError) throw error;
-			throw new RpcSessionRegistryError("open_failed");
+			throw new RpcSessionRegistryError("open_failed", error instanceof Error ? error.message : undefined);
 		}
 	}
 

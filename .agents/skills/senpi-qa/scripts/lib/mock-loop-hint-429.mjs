@@ -15,6 +15,10 @@
  *                           immediate fallback, bounded probe-back, probe ok
  *                           clears the cooldown and the next turn restores the
  *                           primary.
+ *   no-hint-429-no-chain    No hint AND no usable fallback chain: the turn
+ *                           degrades to bounded same-model in-turn retries on
+ *                           the exponential schedule instead of dying with
+ *                           "Retry failed after 0 attempts".
  *
  * Every wait is bounded by a scripted hint measured in seconds, and every
  * assertion waits on an EVENT (never a fixed sleep), so runs are deterministic.
@@ -36,8 +40,14 @@ const FALLBACK_MARKER = "SENPI-QA-HINT429-FALLBACK-6c1b";
 const IN_TURN_HINT_SECONDS = 8;
 const PROBE_BACK_HINT_MS = 4000;
 const PROBE_BACK_CAP_MS = 1000;
+const NO_CHAIN_BASE_DELAY_MS = 50;
 
-export const HINT_429_SCENARIOS = ["hinted-429-in-turn", "no-hint-429-fast-fallback", "hinted-429-probe-back"];
+export const HINT_429_SCENARIOS = [
+	"hinted-429-in-turn",
+	"no-hint-429-fast-fallback",
+	"hinted-429-probe-back",
+	"no-hint-429-no-chain",
+];
 
 export function isHint429Scenario(name) {
 	return HINT_429_SCENARIOS.includes(name);
@@ -251,15 +261,30 @@ export async function runHint429Scenario({ scenarioName, apiName, evidenceSlug }
 			? { primaryLimitedRequests: 2, rateLimitHeaders: { "retry-after": String(IN_TURN_HINT_SECONDS) }, rateLimitMessage: "primary rate limited" }
 			: scenarioName === "no-hint-429-fast-fallback"
 				? { primaryLimitedRequests: 4, rateLimitMessage: "All tokens rate limited" }
-				: { primaryLimitedRequests: 1, rateLimitHeaders: { "retry-after-ms": String(PROBE_BACK_HINT_MS) }, rateLimitMessage: "primary rate limited" };
+				: scenarioName === "no-hint-429-no-chain"
+					? { primaryLimitedRequests: 2, rateLimitMessage: "All tokens rate limited" }
+					: { primaryLimitedRequests: 1, rateLimitHeaders: { "retry-after-ms": String(PROBE_BACK_HINT_MS) }, rateLimitMessage: "primary rate limited" };
 	const server = await startHint429Server({ ...script, primaryMarker: PRIMARY_MARKER, fallbackMarker: FALLBACK_MARKER });
-	writeMockModelsJson(box.agentDir, server, API_NAME, {}, {
-		models: [{ id: HINT_429_FALLBACK_MODEL_ID }],
-		retry:
-			scenarioName === "hinted-429-probe-back"
-				? retrySettings({ hintedWaitCapMs: PROBE_BACK_CAP_MS, probeBackMaxMs: 3_600_000 })
-				: retrySettings(),
-	});
+	// The no-chain scenario registers NO fallback model and NO chain, so the
+	// shipped default chains cannot resolve for the mock primary either.
+	const mockExtras =
+		scenarioName === "no-hint-429-no-chain"
+			? {
+					retry: {
+						enabled: true,
+						maxRetries: 3,
+						baseDelayMs: NO_CHAIN_BASE_DELAY_MS,
+						provider: { maxRetries: 0, maxRetryDelayMs: 60000 },
+					},
+				}
+			: {
+					models: [{ id: HINT_429_FALLBACK_MODEL_ID }],
+					retry:
+						scenarioName === "hinted-429-probe-back"
+							? retrySettings({ hintedWaitCapMs: PROBE_BACK_CAP_MS, probeBackMaxMs: 3_600_000 })
+							: retrySettings(),
+				};
+	writeMockModelsJson(box.agentDir, server, API_NAME, {}, mockExtras);
 	const client = new HintRpcClient({
 		env: hermeticEnv(box.env),
 		cwd: box.cwd,
@@ -270,6 +295,7 @@ export async function runHint429Scenario({ scenarioName, apiName, evidenceSlug }
 		await client.send({ type: "get_state" }); // ensure the session booted
 		if (scenarioName === "hinted-429-in-turn") await assertInTurn(checks, client, server, texts);
 		else if (scenarioName === "no-hint-429-fast-fallback") await assertFastFallback(checks, client, server, texts);
+		else if (scenarioName === "no-hint-429-no-chain") await assertNoChainDegrade(checks, client, server, texts);
 		else await assertProbeBack(checks, client, server, texts);
 		process.stdout.write(`SENPI_QA_HINT429_TRANSCRIPT ${transcript(scenarioName, server, client)}\n`);
 		checkRealAuthUnchanged(checks, guard);
@@ -354,6 +380,33 @@ async function assertFastFallback(checks, client, server, texts) {
 		"no-hint-429-fast-fallback: the chain's next model serves the turn",
 		JSON.stringify(models) === JSON.stringify([HINT_429_PRIMARY_MODEL_ID, HINT_429_FALLBACK_MODEL_ID]) && texts[0].includes(FALLBACK_MARKER),
 		`sequence=${models.join(" -> ") || "none"} text=${texts[0].slice(0, 80)}`,
+	);
+}
+
+/** No hint AND no usable chain: bounded same-model in-turn retries instead of a dead turn. */
+async function assertNoChainDegrade(checks, client, server, texts) {
+	texts.push(await runOneTurn(client, `Return ${PRIMARY_MARKER} once the scripted rate limit clears.`));
+	const models = server.requests.map((request) => request.model);
+	checks.ok(
+		"no-hint-429-no-chain: all three attempts stay on the primary model",
+		models.length === 3 && models.every((model) => model === HINT_429_PRIMARY_MODEL_ID),
+		`sequence=${models.join(" -> ") || "none"}`,
+	);
+	checks.ok(
+		"no-hint-429-no-chain: zero fallback switches",
+		client.events.filter((event) => event.type === "retry_fallback_applied").length === 0,
+		`retry_fallback_applied=${client.events.filter((event) => event.type === "retry_fallback_applied").length}`,
+	);
+	const delays = client.events.filter((event) => event.type === "auto_retry_start").map((event) => event.delayMs);
+	checks.ok(
+		"no-hint-429-no-chain: two exponential in-turn waits are scheduled",
+		delays.length === 2 && delays[0] === NO_CHAIN_BASE_DELAY_MS && delays[1] === NO_CHAIN_BASE_DELAY_MS * 2,
+		`delayMs=${delays.join(",") || "none"} expected=${NO_CHAIN_BASE_DELAY_MS},${NO_CHAIN_BASE_DELAY_MS * 2}`,
+	);
+	checks.ok(
+		"no-hint-429-no-chain: the degraded retry recovers on the primary model",
+		texts[0].includes(PRIMARY_MARKER),
+		`text=${texts[0].slice(0, 80)}`,
 	);
 }
 

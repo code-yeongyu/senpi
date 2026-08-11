@@ -2,6 +2,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { isValidThinkingLevel } from "../../cli/args.ts";
 import { findExactModelReferenceMatch, parseModelPattern } from "../model-resolver.ts";
+import { type FallbackAuthTiers, MAX_PROVIDERS_PER_FAMILY, parseBareSelector, rankFamilyModels } from "./expansion.ts";
 
 export interface FallbackSelector {
 	raw: string;
@@ -12,10 +13,40 @@ export interface FallbackSelector {
 
 export type FallbackChains = Readonly<Record<string, readonly string[]>>;
 
-export type FallbackModelLookup = readonly Model<Api>[] | { getAll(): Model<Api>[] };
+export type FallbackModelLookup =
+	| readonly Model<Api>[]
+	| {
+			getAll(): Model<Api>[];
+			isUsingOAuth?(model: Model<Api>): boolean;
+			hasConfiguredAuth?(model: Model<Api>): boolean;
+	  };
 
 function availableModels(lookup: FallbackModelLookup): Model<Api>[] {
 	return "getAll" in lookup ? lookup.getAll() : [...lookup];
+}
+
+/**
+ * Auth tier is optional so array lookups and older callers keep working; without
+ * it every provider lands in the non-OAuth tier and the precedence table decides.
+ */
+function authTiers(lookup: FallbackModelLookup): FallbackAuthTiers {
+	if (Array.isArray(lookup)) return { isUsingOAuth: () => false };
+	const registry = lookup as {
+		isUsingOAuth?(model: Model<Api>): boolean;
+		hasConfiguredAuth?(model: Model<Api>): boolean;
+	};
+	return {
+		isUsingOAuth: (model) => registry.isUsingOAuth?.(model) === true,
+		hasConfiguredAuth:
+			typeof registry.hasConfiguredAuth === "function"
+				? (model) => registry.hasConfiguredAuth?.(model) === true
+				: undefined,
+	};
+}
+
+/** An empty entry list is the documented opt-out; it survives as a tombstone. */
+export function isChainTombstone(entries: readonly string[] | undefined): boolean {
+	return Array.isArray(entries) && entries.length === 0;
 }
 
 function selectorReference(raw: string): { reference: string; thinkingLevel?: ThinkingLevel } | undefined {
@@ -81,21 +112,72 @@ export function baseSelector(selector: Pick<FallbackSelector, "provider" | "id">
 	return `${selector.provider}/${selector.id}`;
 }
 
-/** Converts validated configuration to canonical selector strings for runtime lookup. */
+/**
+ * Converts validated configuration to canonical selector strings for runtime lookup.
+ *
+ * A bare key (no provider prefix) is a model-family policy: it expands to one
+ * canonical key per provider serving that family, so a chain shipped for
+ * `claude-fable-5` applies no matter which provider the user attached it through.
+ * Provider-qualified keys and entries keep exact semantics, and an explicit key
+ * always overrides the expansion it collides with.
+ */
 export function canonicalizeFallbackChains(chains: FallbackChains, lookup: FallbackModelLookup): FallbackChains {
+	const models = availableModels(lookup);
+	const tiers = authTiers(lookup);
 	const canonical: Record<string, readonly string[]> = {};
+	const explicitKeys = new Set<string>();
+	const tombstones = new Set<string>();
 
-	for (const [key, entries] of Object.entries(chains)) {
-		const parsedKey = parseFallbackSelector(key, lookup);
-		if (!parsedKey || !Array.isArray(entries)) continue;
-
-		const canonicalEntries = entries.flatMap((entry) => {
-			const parsedEntry = parseFallbackSelector(entry, lookup);
+	const expandEntries = (entries: readonly string[], keySelector: string): string[] =>
+		entries.flatMap((entry) => {
+			const bare = parseBareSelector(entry);
+			if (bare) {
+				return rankFamilyModels(models, bare.family, tiers, { limit: MAX_PROVIDERS_PER_FAMILY })
+					.map((model) =>
+						bare.thinkingLevel ? `${formatSelector(model)}:${bare.thinkingLevel}` : formatSelector(model),
+					)
+					.filter((selector) => normalizedBase(selector) !== normalizedBase(keySelector));
+			}
+			const parsedEntry = parseFallbackSelector(entry, models);
 			return parsedEntry ? [formatParsedSelector(parsedEntry)] : [];
 		});
-		if (canonicalEntries.length > 0) {
-			canonical[formatParsedSelector(parsedKey)] = canonicalEntries;
+
+	// Bare keys expand first so a same-named explicit key can overwrite them.
+	for (const [key, entries] of Object.entries(chains)) {
+		const bareKey = parseBareSelector(key);
+		if (!bareKey || !Array.isArray(entries)) continue;
+		if (isChainTombstone(entries)) {
+			for (const model of rankFamilyModels(models, bareKey.family, tiers)) {
+				tombstones.add(formatSelector(model).toLowerCase());
+			}
+			continue;
 		}
+		for (const model of rankFamilyModels(models, bareKey.family, tiers)) {
+			const keySelector = bareKey.thinkingLevel
+				? `${formatSelector(model)}:${bareKey.thinkingLevel}`
+				: formatSelector(model);
+			const canonicalEntries = expandEntries(entries, keySelector);
+			if (canonicalEntries.length > 0) canonical[keySelector] = canonicalEntries;
+		}
+	}
+
+	for (const [key, entries] of Object.entries(chains)) {
+		if (parseBareSelector(key)) continue;
+		const parsedKey = parseFallbackSelector(key, models);
+		if (!parsedKey || !Array.isArray(entries)) continue;
+		const keySelector = formatParsedSelector(parsedKey);
+		if (isChainTombstone(entries)) {
+			tombstones.add(normalizedBase(keySelector));
+			continue;
+		}
+		explicitKeys.add(keySelector.toLowerCase());
+		const canonicalEntries = expandEntries(entries, keySelector);
+		if (canonicalEntries.length > 0) canonical[keySelector] = canonicalEntries;
+	}
+
+	for (const key of Object.keys(canonical)) {
+		if (explicitKeys.has(key.toLowerCase())) continue;
+		if (tombstones.has(normalizedBase(key))) delete canonical[key];
 	}
 
 	return canonical;

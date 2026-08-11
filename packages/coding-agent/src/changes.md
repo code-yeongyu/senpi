@@ -1,3 +1,31 @@
+## Public filesystem policy exports (2026-08-09)
+
+### What changed
+
+- The package root now exports the filesystem policy request, operation, decision, policy, and composed-checker types
+  used by `pi.registerFilesystemPolicy()` consumers.
+
+### Why this cannot be expressed externally
+
+- Extension source compiles against the package's public type surface; an extension cannot export missing host API
+  declarations for itself.
+
+### Expected merge conflict zones
+
+- LOW: the extension type export lists in `src/index.ts` and `core/extensions/index.ts`.
+
+## `--session` cross-project resume fails fast instead of hanging on non-interactive stdin (2026-08-07)
+
+### What changed
+
+- `src/main.ts`: when `--session <id>` resolves to a session owned by a different project, the CLI previously always asked `Fork this session into current directory?` via readline. With piped, detached, or closed stdin (scripts, app-server spawns) the question never settles — readline does not answer on EOF — so the process hung forever with no output. `createSessionManager()` now receives the resolved `AppMode` and exits 1 with an actionable message (`--fork '<id>'` or re-run interactively from the owning project) for every non-interactive mode. Gating on `process.stdin.isTTY` alone was not enough: a `-p` one-shot launched from an ordinary terminal has TTY stdin, so it still reached the prompt and blocked.
+- `promptConfirm()` additionally resolves `false` on readline `close` (Ctrl+D / stdin EOF) so interactive sessions can no longer wedge on an ended input stream.
+- Coverage: `test/suite/regressions/756-session-cross-project-resume.test.ts` spawns the real CLI against a cross-project session fixture for both shapes — non-terminal stdin, and a `-p` run booted with the TTY flags a terminal sets — and asserts the fast, guided failure with bounded child teardown.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: additive branch and close-handler only, both inside fork-owned `main.ts` session wiring.
+
 ## Joined user aborts override system provenance (2026-08-05)
 
 ### What changed
@@ -421,6 +449,65 @@
 
 - LOW: additive `core/provider-header-auth.ts`, `core/provider-api-key-auth.ts`, and focused regression coverage.
 - MEDIUM: `core/provider-composer.ts` auth composition and status projection.
+
+## Provider-agnostic default fallback chain via bare model-id families (2026-08-09)
+
+### What changed
+
+- `core/retry-fallback/expansion.ts` (new): conservative model-family matching (`id === bare ||
+  id.startsWith(bare + "-")` after stripping a `.`/`/` namespace, never a substring `includes`), per-provider
+  variant selection (exact id > shortest > alphabetical), and provider ranking for bare selectors: providers
+  holding an OAuth credential first, then the fixed table `[claude-sdk-oauth, anthropic, kimi-coding]`, then
+  alphabetical. `openrouter` / `openrouter-images` are excluded from bare expansion.
+- `core/retry-fallback/settings.ts`: the shipped default is now declared with bare model ids -
+  `{"claude-fable-5": ["k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"]}`. The previous literal
+  `anthropic/claude-fable-5 -> apitopia/kimi-k3-unlocked:max, ...` is gone, including the `apitopia` gateway id.
+  An empty entry list is no longer deleted at resolve time; it is preserved as a tombstone.
+- `core/retry-fallback/chains.ts`: `canonicalizeFallbackChains` expands bare keys into one canonical
+  `<provider>/<id>` key per serving provider and bare entries into a ranked, model-major candidate list.
+  Explicit provider-qualified keys are applied after expansion so they override it, and tombstones are honored
+  at both bare-family and canonical-provider granularity.
+- `core/retry-fallback/controller.ts`: the registry dep accepts an optional `isUsingOAuth(model)` so runtime
+  candidate selection ranks the same way the `/fallback` display does.
+- `core/retry-fallback/validate.ts`: a bare key naming a registered family is valid configuration; a bare key
+  matching nothing keeps the original "roles are unsupported" guidance.
+- Bare candidates fan out to at most `MAX_PROVIDERS_PER_FAMILY` (2) providers, ranked by auth tier
+  (OAuth credential, then any configured credential, then the rest). Auth ranks candidates and never filters
+  them: the runtime already skips unauthenticated candidates, and filtering during canonicalization erased the
+  chain whenever an availability snapshot was not populated yet.
+- `core/extensions/builtin/model-fallback/settings.ts`: `/fallback` renders chains canonicalized against
+  `modelRegistry.getAvailable()` so the menu lists only models the user can select, while the runtime keeps
+  resolving against the full registry.
+
+### Why
+
+- The default chain was keyed on the literal provider id `anthropic`. Fable 5 attached through any other
+  provider - the builtin `claude-sdk-oauth` extension (which mirrors the whole Anthropic catalog via
+  `getModels("anthropic")`), a gateway, or Bedrock's namespaced ids - never matched the key, so
+  `canonicalizeFallbackChains` dropped the chain, `hasConfiguredChain()` went false, and the default
+  `abortServerSideFallback: true` left the session with provider-side fallback blocked and no client chain:
+  the exact dead end the 2026-07-29 default was introduced to remove.
+- Ranking by auth tier also fixes same-account thrash: when both `claude-sdk-oauth` and `anthropic` serve
+  `claude-opus-5`, both now appear as candidates, so a dead account is skipped by cooldown and the live one
+  is used instead of exhausting the chain inside one account.
+- `apitopia/kimi-k3-unlocked` is a personal gateway id that should never have shipped as a product default.
+
+### QA
+
+- Real-CLI QA (senpi-qa Channel 2, TUI in a pty, isolated sandbox, `PI_OFFLINE=1`): with Fable 5 served only by
+  `claude-sdk-oauth` and no `retry.fallbackChains` configured, `/fallback` renders
+  `claude-sdk-oauth/claude-fable-5 -> kimi-coding/k3:max, claude-sdk-oauth/claude-opus-5:xhigh,
+  claude-sdk-oauth/claude-opus-4-8:xhigh` where the previous default produced no chain at all. That QA run is
+  what surfaced both the fan-out cap and the display scoping above; neither was visible to unit fixtures.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `core/retry-fallback/expansion.ts` is additive and fork-local with no upstream counterpart.
+- LOW: the default chain literal in `core/retry-fallback/settings.ts`.
+- MEDIUM: `canonicalizeFallbackChains` in `core/retry-fallback/chains.ts` was restructured (two passes plus
+  tombstones) rather than edited in place.
+- LOW: the optional `isUsingOAuth` member on the controller registry dep.
+- LOW: the display-scoping helper in `core/extensions/builtin/model-fallback/settings.ts`.
 
 ## Anthropic credits_required 429 pins the billing fallback (2026-07-29)
 

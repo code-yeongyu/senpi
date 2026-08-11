@@ -46,7 +46,7 @@ describe("eval renderer state", () => {
 		expect.soft(metadataText).toContain("analysis");
 		expect.soft(metadataText).toContain("phase");
 		expect.soft(metadataText).toContain("summarizing");
-		expect.soft(metadataText).toContain("took 11ms");
+		expect.soft(metadataText).toContain("took <1s");
 	});
 
 	it("Given a final result that completed within one millisecond when rendered then zero duration is shown", () => {
@@ -62,7 +62,7 @@ describe("eval renderer state", () => {
 		);
 
 		// Then
-		expect(renderLines(component)).toContain("took 0ms");
+		expect(renderLines(component)).toContain("took <1s");
 	});
 
 	it("Given a partial result with elapsed duration when rendered then timing remains hidden", () => {
@@ -256,7 +256,7 @@ describe("eval renderer state", () => {
 		const header = lines[0] ?? "";
 		const metadataText = lines.join("\n");
 		expect.soft(header).toContain("error");
-		expect.soft(metadataText).toContain("took 5ms");
+		expect.soft(metadataText).toContain("took <1s");
 	});
 
 	it("Given call badges and cells in every lifecycle state when rendered then headers expose icons and formatted durations", () => {

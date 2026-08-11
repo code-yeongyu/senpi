@@ -1,8 +1,25 @@
 import { compare, valid } from "semver";
 import { PACKAGE_NAME } from "../config.ts";
+import { type BrandUpdateChannel, brandProfile, envValue } from "../core/brand.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
 
-const LATEST_VERSION_URL = `https://registry.npmjs.org/${encodeURIComponent(PACKAGE_NAME)}/latest`;
+const REGISTRY_BASE_URL = "https://registry.npmjs.org";
+const LATEST_VERSION_URL = `${REGISTRY_BASE_URL}/${encodeURIComponent(PACKAGE_NAME)}/latest`;
+
+/** Registry endpoint answering "what version does this product publish right now?". */
+function latestVersionUrl(channel: BrandUpdateChannel | undefined): string {
+	return channel
+		? `${REGISTRY_BASE_URL}/-/package/${encodeURIComponent(channel.packageName)}/dist-tags`
+		: LATEST_VERSION_URL;
+}
+
+/** Reads the available version out of whichever registry document was fetched. */
+export function readAvailableVersion(payload: unknown, channel: BrandUpdateChannel | undefined): string | undefined {
+	if (typeof payload !== "object" || payload === null) return undefined;
+	const source = payload as Record<string, unknown>;
+	const raw = channel ? source[channel.distTag] : source.version;
+	return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+}
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 const RELEASE_CHANGELOG_BASE_URL = "https://github.com/code-yeongyu/senpi/blob";
 const RELEASE_CHANGELOG_PATH = "packages/coding-agent/CHANGELOG.md";
@@ -54,6 +71,10 @@ export function isNewerPackageVersion(candidateVersion: string, currentVersion: 
 
 export function getReleaseChangelogUrl(version: string): string {
 	const trimmedVersion = version.trim();
+	const channel = brandProfile()?.update;
+	if (channel?.changelogUrl) {
+		return channel.changelogUrl.replace("{version}", trimmedVersion);
+	}
 	const tag = trimmedVersion.startsWith("v") ? trimmedVersion : `v${trimmedVersion}`;
 	return `${RELEASE_CHANGELOG_BASE_URL}/${tag}/${RELEASE_CHANGELOG_PATH}`;
 }
@@ -62,9 +83,16 @@ export async function getLatestPiRelease(
 	currentVersion: string,
 	options: { timeoutMs?: number } = {},
 ): Promise<LatestPiRelease | undefined> {
-	if (process.env.PI_OFFLINE) return undefined;
+	if (envValue("OFFLINE")) return undefined;
 
-	const response = await fetch(LATEST_VERSION_URL, {
+	const brand = brandProfile();
+	const channel = brand?.update;
+	if (brand && !channel) {
+		// The engine's own releases are not installable from inside a branded distribution, so
+		// advertising them would send the user after an update they cannot apply.
+		return undefined;
+	}
+	const response = await fetch(latestVersionUrl(channel), {
 		headers: {
 			"User-Agent": getPiUserAgent(currentVersion),
 			accept: "application/json",
@@ -74,13 +102,17 @@ export async function getLatestPiRelease(
 	if (!response.ok) return undefined;
 
 	const data = (await response.json()) as { packageName?: unknown; version?: unknown; note?: unknown };
-	if (typeof data.version !== "string" || !data.version.trim()) {
+	const availableVersion = readAvailableVersion(data, channel);
+	if (!availableVersion) {
 		return undefined;
+	}
+	if (channel) {
+		return { version: availableVersion, packageName: channel.packageName };
 	}
 	const packageName =
 		typeof data.packageName === "string" && data.packageName.trim() ? data.packageName.trim() : undefined;
 	const note = typeof data.note === "string" && data.note.trim() ? data.note.trim() : undefined;
-	return { version: data.version.trim(), packageName, note };
+	return { version: availableVersion, packageName, note };
 }
 
 export async function getLatestPiVersion(
@@ -91,7 +123,7 @@ export async function getLatestPiVersion(
 }
 
 export async function checkForNewPiVersion(currentVersion: string): Promise<LatestPiRelease | undefined> {
-	if (process.env.PI_SKIP_VERSION_CHECK) return undefined;
+	if (envValue("SKIP_VERSION_CHECK")) return undefined;
 
 	try {
 		const latestRelease = await getLatestPiRelease(currentVersion);

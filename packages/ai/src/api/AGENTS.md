@@ -1,5 +1,7 @@
 # packages/ai/src/api
 
+Generated: 2026-08-07. Commit `4f26b8282`.
+
 Provider wire protocol implementations and stream adapters. Each provider ships as a concrete module plus a `.lazy.ts` wrapper that uses `lazyApi()` from `lazy.ts`.
 
 ## MODULE PAIRS
@@ -18,7 +20,9 @@ Provider wire protocol implementations and stream adapters. Each provider ships 
 | `pi-messages.ts` | `pi-messages.lazy.ts` |
 | `openrouter-images.ts` | `openrouter-images.lazy.ts` |
 
-Utility modules with no lazy wrapper: `cloudflare.ts`, `github-copilot-headers.ts`, `openai-prompt-cache.ts`.
+Utility modules with no lazy wrapper: `cloudflare.ts`, `github-copilot-headers.ts`, `openai-prompt-cache.ts`, `anthropic-tool-pairs.ts` (browser-safe Anthropic tool_use/tool_result pair sanitizer; final pre-submit pass), `openai-client-auth.ts` (shared client-auth resolution from credential headers), `constrained-sampling.ts` (JSON-schema-driven constrained sampling helpers).
+
+`openai-codex-responses/` subdir: `fallback-state.ts` (WebSocket fallback state + cooldown), `reasoning.ts` (Codex reasoning summary normalizer).
 
 ## LAZY BOUNDARY
 

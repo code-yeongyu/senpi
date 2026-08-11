@@ -115,7 +115,7 @@ describe("user abort racing a TTSR system abort", () => {
 		expect(abortSpy).toHaveBeenCalledTimes(2);
 		expect(await readGoal(ref)).toMatchObject({ status: "active" });
 		expect(scheduledContinuations).toContainEqual(
-			expect.objectContaining({ activeMonitorCount: 1, delayMs: 240_000 }),
+			expect.objectContaining({ activeMonitorCount: 1, delayMs: 240_000, iteration: 1 }),
 		);
 	});
 });

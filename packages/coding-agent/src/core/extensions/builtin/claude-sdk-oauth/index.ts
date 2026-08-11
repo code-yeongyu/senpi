@@ -8,6 +8,7 @@ import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
 import type { ClaudeSdkOauthCredential } from "./accounts.ts";
 import { createOAuthConfig } from "./oauth-login.ts";
 import { registerSessionRegistry } from "./session-registry-wiring.ts";
+import { loadClaudeSdkOauthProviderSettingsFromDisk } from "./settings.ts";
 import { streamClaudeSdkOauth } from "./stream.ts";
 
 export { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
@@ -54,6 +55,7 @@ export default function claudeSdkOauthExtension(pi: ExtensionAPI): void {
 					? { access: credential.access, refresh: credential.refresh, expires: credential.expires }
 					: undefined;
 			},
+			readSettings: () => loadClaudeSdkOauthProviderSettingsFromDisk(process.cwd()),
 		}),
 	});
 }

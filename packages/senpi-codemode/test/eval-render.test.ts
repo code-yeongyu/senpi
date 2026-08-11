@@ -73,7 +73,7 @@ describe("eval renderer", () => {
 		expect(renderLines(component)).toEqual([
 			"eval js done",
 			"chart",
-			"took 11ms",
+			"took <1s",
 			"",
 			"stdout",
 			"value",
@@ -138,7 +138,7 @@ describe("eval renderer", () => {
 		);
 
 		// Then
-		expect(renderLines(component).slice(0, 2)).toEqual(["eval rb error", "took 5ms"]);
+		expect(renderLines(component).slice(0, 2)).toEqual(["eval rb error", "took <1s"]);
 	});
 
 	it("renders a running result header", () => {
@@ -266,7 +266,7 @@ describe("eval renderer", () => {
 
 		// Then
 		expect(final).toBe(partial);
-		expect(renderLines(final)).toEqual(["eval js done", "took 4ms", "", "complete"]);
+		expect(renderLines(final)).toEqual(["eval js done", "took <1s", "", "complete"]);
 	});
 
 	it("keeps call and result lanes distinct when the result lane starts without lastComponent", () => {
@@ -284,7 +284,7 @@ describe("eval renderer", () => {
 		// Then
 		expect(result).not.toBe(call);
 		expect(renderLines(call)).toEqual(["eval js", "quick math", "1 + 1"]);
-		expect(renderLines(result)).toEqual(["eval js done", "took 1ms", "", "2"]);
+		expect(renderLines(result)).toEqual(["eval js done", "took <1s", "", "2"]);
 	});
 
 	it("Given a streaming result exists when the framed call lane renders then it yields an empty component", () => {

@@ -1,5 +1,32 @@
 # Builtin extensions changes
 
+## import-repro: guard /ir against mid-run and mid-compaction dispatch (2026-08-09)
+
+- Extension commands now dispatch immediately inside `AgentSession.prompt()` (immediate-extension-commands plan), including while a run is streaming and while compaction is active. `/ir` replaces the live session through `ctx.switchSession()`, which aborts the in-flight turn without confirmation and — during compaction — fire-and-forget aborts the compaction task and disposes the session while that task is still unwinding (`agent-session-runtime.ts` `teardownCurrent` -> `abort()` -> `dispose()`).
+- The `/ir` handler now refuses with a warning notification (`/ir is unavailable while the agent is working`) when `ctx.isIdle()` is false or `ctx.isCompacting?.()` is true; idle behavior is unchanged, and the guard sits above argument validation so no fetch/write/switch work starts.
+- Why a per-handler guard instead of a core gate: the mid-turn audit of all builtin commands found only session-replacing `/ir` unsafe under immediate dispatch; the rest are read-only/UI, append-only (`appendCustomEntry` does not bump the message revision and survives compaction as a branch ancestor), host-guarded (`ctx.reload()` vetoes streaming and compaction), or defended by core design (model and tool-set changes invalidate/abort compaction deliberately). Verdict table: `.omo/evidence/task-3-immediate-extension-commands.md`.
+- Coverage: `test/suite/import-repro-builtin-extension.test.ts` asserts the notify+return path while streaming and while compacting, plus an idle passthrough control.
+- Expected merge conflict zones: LOW in `import-repro.ts` at the top of the `/ir` handler; LOW in `import-repro-builtin-extension.test.ts` around the new probe helpers.
+
+## tps: concise turn cache-hit notice (2026-08-06)
+
+- The turn-completion TPS notification now renders
+  `TPS <rate> tok/s. Cache hit <rate>%, <seconds>s` instead of repeating raw
+  output, input, cache-read/write, and total-token counters.
+- Cache hit is aggregated across every assistant message completed in the
+  agent turn, using the same denominator as the lower footer:
+  `cacheRead / (input + cacheRead + cacheWrite)`. A turn notice should describe
+  the whole turn, rather than only the last assistant message within it.
+- Why an extension change: `tps.ts` already owns the transient notification,
+  receives the complete turn's messages through `agent_end`, and can compute
+  the metric without widening the public extension context or changing the
+  persistent footer.
+- Coverage: `test/suite/tps-extension.test.ts` pins a multi-message 70.0% hit
+  rate, a zero-read 0.0% edge, monotonic elapsed time, and exclusion of
+  tool/permission waits.
+- Expected merge conflict zones: LOW in `tps.ts` around the usage aggregation
+  and notification string; LOW in `tps-extension.test.ts`.
+
 ## notice: shared transcript notice kit (2026-08-04)
 
 - New internal module `src/core/extensions/notice/` (`spec.ts`, `box.ts`, `adapters.ts`) owns the loop-guard visual family as a shared widget: a `NoticeSpec` contract (title/tone/why/extra/expandedLine), `buildNoticeBox`, and `noticeMessageRenderer`/`noticeEntryRenderer` adapters.
@@ -151,17 +178,14 @@
 - Expected merge conflict zones: MEDIUM in `service-tier.ts` around the command
   and `before_provider_request` handler.
 
-## terminal + goal: monitor liveness event contract (2026-07-28)
+## resumption channels + goal: source-keyed liveness contract (2026-08-08, supersedes 2026-07-28)
 
-- New `monitor-state-event.ts` defines the internal `terminal_monitor_state` pi-event
-  payload (`activeCount`).
-- The terminal extension publishes the live registry count on every existing
-  `MonitorRegistry.onChange` transition (register, pause/rearm snapshot change,
-  settle, dispose) while preserving the monitor footer update.
-- The goal builtin consumes this internal event to select immediate versus delayed
-  continuation policy; no public `ExtensionContext` or RPC protocol type changed.
-- Expected merge conflict zones: LOW in `terminal/extension.ts` around the monitor
-  registry `onChange` callback; NONE in `extensions/types.ts`.
+- New `resumption-channel-event.ts` defines the internal `resumption_channel_state` pi-event as a full snapshot for one open-set `source`: `{source, activeCount, channels?}`. Sources are strings rather than an enum so terminal monitors, background bash, detached evals, senpi tasks, and future producers can share the contract without central registration.
+- Goal stores one count per source and writes each incoming snapshot to that key. Legacy `terminal_monitor_state` and generalized `resumption_channel_state` emissions both write `"terminal-monitor"`, making dual emission idempotent: a count of two remains two and is never summed to four.
+- Immediate-versus-delayed continuation, system-abort recovery, timer eligibility, wait labels, and stall context use the total across source keys. Timer cancellation and toolless-streak reset occur only when that total transitions from positive to zero; one source draining while another remains live has no zero-transition side effect.
+- Goal subscribes at extension factory/construction scope rather than inside `session_start`, and keeps both subscriptions until disposal. `start()` clears prior-session counts. Every emitter must therefore publish transitions while live and re-emit its full current snapshot on `session_start` after Goal has reset, so the new session cannot inherit stale counts or miss live channels.
+- Scheduled/resumed pi-events and `goal-cache-warmup` entries retain backward-compatible `activeMonitorCount` (terminal monitors only) and add `channelCounts` for the source-keyed snapshot. No public `ExtensionContext` or RPC protocol type changed.
+- Expected merge conflict zones: emitters in sibling-owned terminal/task/eval modules; LOW in Goal continuation telemetry and wait presentation; NONE in `extensions/types.ts`.
 
 ## bash-timeout: beyond-max routing to run_in_background + monitor (2026-07-28)
 

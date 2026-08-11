@@ -617,6 +617,7 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	supportsStrictMode: true,
 	supportsOpenAIGrammarTools: false,
 	sendSessionAffinityHeaders: false,
+	supportsPromptCacheKey: false,
 	supportsLongCacheRetention: true,
 } satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat" | "deferredToolsMode">> & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
@@ -674,8 +675,12 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
-	const cacheControlFormat =
-		provider === "openrouter" && /^~?anthropic\//.test(model.id) ? "anthropic" : undefined;
+	const openRouterCacheControlPrefixes = ["anthropic/", "qwen/", "google/"];
+	const cacheControlModelId = model.id.startsWith("~") ? model.id.slice(1) : model.id;
+	const supportsOpenRouterCacheControl = openRouterCacheControlPrefixes.some((prefix) =>
+		cacheControlModelId.startsWith(prefix),
+	);
+	const cacheControlFormat = provider === "openrouter" && supportsOpenRouterCacheControl ? "anthropic" : undefined;
 
 	return {
 		supportsStore: !isNonStandard,
@@ -707,7 +712,8 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		supportsOpenAIGrammarTools: false,
 		...(cacheControlFormat ? { cacheControlFormat } : {}),
-		sendSessionAffinityHeaders: false,
+		sendSessionAffinityHeaders: isOpenRouter,
+		supportsPromptCacheKey: isMoonshot || baseUrl.includes("api.openai.com"),
 		supportsLongCacheRetention: !(
 			isTogether ||
 			isCloudflareWorkersAI ||

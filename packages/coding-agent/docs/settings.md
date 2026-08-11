@@ -247,7 +247,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 
 #### Model fallback chains
 
-`retry.fallbackChains` maps one exact primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix. For example, this switches Fable 5 to Kimi K3 at `max` thinking when an eligible failure occurs:
+`retry.fallbackChains` maps a primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix, or a bare `model` id that applies to every provider serving that model family. Bare selectors expand against the models you actually have: providers holding an OAuth credential are preferred, then a fixed precedence order, and OpenRouter is never chosen by expansion. Senpi ships a bare default chain for `claude-fable-5`, so Fable 5 keeps a fallback chain whichever provider serves it; set that key to `[]` to opt out entirely, or set one `provider/claude-fable-5` key to override just that provider. For example, this switches Fable 5 to Kimi K3 at `max` thinking when an eligible failure occurs:
 
 ```json
 {

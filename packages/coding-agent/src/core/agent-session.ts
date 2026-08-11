@@ -65,6 +65,7 @@ import { AgentAbortProvenance } from "./agent-abort-provenance.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction } from "./agent-settled-delivery.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
+import { envValue } from "./brand.ts";
 import {
 	type CompactionResult,
 	calculateContextTokens,
@@ -137,6 +138,8 @@ import { RetryFallbackController } from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
 import {
 	classifyRateLimitedWait,
+	degradeWithoutFallback,
+	type HintTier,
 	nextInTurnDelayMs,
 	type ProbePhase,
 	probeBackSchedule,
@@ -160,6 +163,7 @@ import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { getSupportedThinkingLevels, supportsMax, supportsXhigh } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
@@ -711,7 +715,7 @@ export class AgentSession {
 		this.settingsManager = config.settingsManager;
 		const noModelFallback =
 			config.resourceLoader.getExtensions().runtime.flagValues.get("no-model-fallback") === true ||
-			process.env.SENPI_NO_FALLBACK === "1";
+			envValue("NO_FALLBACK") === "1";
 		if (noModelFallback) {
 			this.settingsManager.applyOverrides({ retry: { modelFallback: false } });
 		}
@@ -1068,6 +1072,8 @@ export class AgentSession {
 				},
 				model: this.agent.state.model,
 				thinkingLevel: this.agent.state.thinkingLevel,
+				abortServerSideFallback:
+					this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain(),
 			};
 		};
 	}
@@ -2401,6 +2407,16 @@ export class AgentSession {
 		return this.sessionManager.getSessionId();
 	}
 
+	/** Subscribe to the internal event bus shared by this session's extensions. */
+	onExtensionEvent(channel: string, handler: (data: unknown) => void): () => void {
+		return this._resourceLoader.onExtensionEvent?.(channel, handler) ?? (() => {});
+	}
+
+	/** Publish on the internal event bus shared by this session's extensions. */
+	emitExtensionEvent(channel: string, data: unknown): void {
+		this._resourceLoader.emitExtensionEvent?.(channel, data);
+	}
+
 	/** Current session display name, if set */
 	get sessionName(): string | undefined {
 		return this.sessionManager.getSessionName();
@@ -2550,6 +2566,32 @@ export class AgentSession {
 			await userAbortPromise;
 			throwIfCancelled();
 		}
+
+		// Extension commands are UI actions, not prompts: dispatch them before the
+		// settled-session-work gate below. That gate makes a bare prompt() wait for
+		// _sessionWorkBarrier, which a scheduled continuation (goal chain, queued
+		// follow-up) holds for an entire run, so a command typed mid-turn used to run
+		// only after the turn ended. The registry lookup stays synchronous so ordinary
+		// text beginning with "/" gains no await before the prompt-start bookkeeping.
+		try {
+			if ((options?.expandPromptTemplates ?? true) && text.startsWith("/")) {
+				const spaceIndex = text.indexOf(" ");
+				const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+				if (this._extensionRunner.getCommand(commandName)) {
+					const handled = await this._tryExecuteExtensionCommand(text);
+					throwIfCancelled();
+					if (handled) {
+						options?.promptDisposition?.("handled");
+						options?.preflightResult?.(true);
+						return;
+					}
+				}
+			}
+		} catch (error) {
+			options?.preflightResult?.(false);
+			throw error;
+		}
+
 		const ownsPromptStart =
 			!this.isStreaming && !this._promptStartPending && options?.streamingBehavior === undefined;
 		if (ownsPromptStart) this._promptStartPending = true;
@@ -2610,19 +2652,6 @@ export class AgentSession {
 		};
 
 		try {
-			// Handle extension commands first (execute immediately, even during streaming)
-			// Extension commands manage their own LLM interaction via pi.sendMessage()
-			if (expandPromptTemplates && text.startsWith("/")) {
-				const handled = await this._tryExecuteExtensionCommand(text);
-				throwIfCancelled();
-				if (handled) {
-					// Extension command executed, no prompt to send
-					promptDisposition?.("handled");
-					preflightResult?.(true);
-					return;
-				}
-			}
-
 			// Emit input event for extension interception (before skill/template expansion)
 			let currentText = text;
 			let currentImages = options?.images;
@@ -5298,6 +5327,8 @@ export class AgentSession {
 				getContextUsage: () => this.getContextUsage(),
 				getCompactionSettings: () => this.settingsManager.getCompactionSettings(),
 				getPromptCacheSafeWaitSeconds: () => this.resolvePromptCacheSafeWaitSeconds(),
+				getPromptCacheGoalBackstopMaxSeconds: () => this.settingsManager.getPromptCacheGoalBackstopMaxSeconds(),
+				getPromptCacheKeepAliveSettings: () => this.settingsManager.getPromptCacheKeepAliveSettings(),
 				getLookAtSettings: () => {
 					const global = this.settingsManager.getGlobalSettings().lookAt;
 					const project = this.settingsManager.getProjectSettings().lookAt;
@@ -5545,6 +5576,10 @@ export class AgentSession {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
+		const extensionsResult = this._resourceLoader.getExtensions();
+		const filesystemPolicy = composeFilesystemPolicies(
+			extensionsResult.extensions.flatMap((extension) => extension.filesystemPolicies ?? []),
+		);
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
@@ -5553,15 +5588,18 @@ export class AgentSession {
 					]),
 				)
 			: createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages },
+					read: { autoResizeImages, filesystemPolicy },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					write: { filesystemPolicy },
+					edit: { filesystemPolicy },
+					grep: { filesystemPolicy },
+					find: { filesystemPolicy },
+					ls: { filesystemPolicy },
 				});
 
 		this._baseToolDefinitions = new Map(
 			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
 		);
-
-		const extensionsResult = this._resourceLoader.getExtensions();
 		if (options.flagValues) {
 			for (const [name, value] of options.flagValues) {
 				extensionsResult.runtime.flagValues.set(name, value);
@@ -5759,6 +5797,56 @@ export class AgentSession {
 	}
 
 	/**
+	 * A 429-class failure with no usable fallback candidate must not fail the
+	 * turn with zero attempts: a provider answering 429 is asking for a retry.
+	 * No-hint and tier2 waits degrade to same-model in-turn retries under the
+	 * normal retry budget (tier2 clamps the hinted wait to the in-turn cap);
+	 * only tier3 hour-plus waits stay terminal, with the requested wait named
+	 * in the final error. Returns the in-turn retry delay, or undefined after
+	 * emitting the terminal auto_retry_end.
+	 */
+	private _degradeRateLimitedWithoutFallback(
+		tier: HintTier,
+		hintMs: number | undefined,
+		message: AssistantMessage,
+		errorMessage: string,
+	): number | undefined {
+		const settings = this.settingsManager.getRetrySettings();
+		const hintSettings = this.settingsManager.getHintPolicySettings();
+		const finishTurn = (attempt: number, finalError: string | undefined) => {
+			const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
+			if (exhaustedChainKey) {
+				this._emit({ type: "retry_fallback_exhausted", chainKey: exhaustedChainKey, lastError: errorMessage });
+			}
+			this._emit({ type: "auto_retry_end", success: false, attempt, finalError });
+			this._retryAttempt = 0;
+			this._resetHintTierState();
+			this._resolveRetry();
+		};
+		const degraded = degradeWithoutFallback(
+			tier,
+			hintMs,
+			this._retryAttempt + 1,
+			settings.baseDelayMs,
+			hintSettings.hintedWaitCapMs,
+		);
+		if (degraded.kind === "fail") {
+			const waitSeconds = Math.ceil(degraded.hintMs / 1000);
+			finishTurn(
+				this._retryAttempt,
+				`Provider requested a ${waitSeconds}s wait before retrying and no usable fallback model is available. ${message.errorMessage ?? ""}`,
+			);
+			return undefined;
+		}
+		this._retryAttempt++;
+		if (this._retryAttempt > settings.maxRetries) {
+			finishTurn(this._retryAttempt - 1, message.errorMessage);
+			return undefined;
+		}
+		return degraded.delayMs;
+	}
+
+	/**
 	 * Handle retryable errors with exponential backoff.
 	 * @returns whether retry continuation started, was blocked by compaction, or was not handled
 	 */
@@ -5861,29 +5949,15 @@ export class AgentSession {
 				const tier = classifyRateLimitedWait(hintMs, hintSettings);
 				is429TierRouted = true;
 				if (tier === "no-hint-fast-fallback") {
-					// Skip same-model retries entirely; fall back immediately.
+					// Fall back immediately when a candidate exists; otherwise degrade
+					// to same-model in-turn retries instead of failing the turn.
 					switchedFallback = await this._retryFallback.tryFallback("transient", { errorMessage });
 					if (switchedFallback) {
 						this._retryAttempt = 1;
 					} else {
-						const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-						if (exhaustedChainKey) {
-							this._emit({
-								type: "retry_fallback_exhausted",
-								chainKey: exhaustedChainKey,
-								lastError: errorMessage,
-							});
-						}
-						this._emit({
-							type: "auto_retry_end",
-							success: false,
-							attempt: 0,
-							finalError: message.errorMessage,
-						});
-						this._retryAttempt = 0;
-						this._resetHintTierState();
-						this._resolveRetry();
-						return "not-handled";
+						const degradedDelayMs = this._degradeRateLimitedWithoutFallback(tier, hintMs, message, errorMessage);
+						if (degradedDelayMs === undefined) return "not-handled";
+						hintTierDelayMs = degradedDelayMs;
 					}
 				} else if (tier === "tier1-in-turn") {
 					this._retryAttempt++;
@@ -5978,24 +6052,9 @@ export class AgentSession {
 							this._armProbeBackForDemotedSelector(selector, remainingHintMs);
 						}
 					} else {
-						const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-						if (exhaustedChainKey) {
-							this._emit({
-								type: "retry_fallback_exhausted",
-								chainKey: exhaustedChainKey,
-								lastError: errorMessage,
-							});
-						}
-						this._emit({
-							type: "auto_retry_end",
-							success: false,
-							attempt: 0,
-							finalError: message.errorMessage,
-						});
-						this._retryAttempt = 0;
-						this._resetHintTierState();
-						this._resolveRetry();
-						return "not-handled";
+						const degradedDelayMs = this._degradeRateLimitedWithoutFallback(tier, hintMs, message, errorMessage);
+						if (degradedDelayMs === undefined) return "not-handled";
+						hintTierDelayMs = degradedDelayMs;
 					}
 				}
 			}

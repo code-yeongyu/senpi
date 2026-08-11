@@ -30,7 +30,12 @@ interface FallbackSettings {
 
 export interface RetryFallbackControllerDeps {
 	getSettings(): FallbackSettings;
-	registry: { find(provider: string, id: string): Model<Api> | undefined; getAll(): Model<Api>[] };
+	registry: {
+		find(provider: string, id: string): Model<Api> | undefined;
+		getAll(): Model<Api>[];
+		/** Ranks bare-selector expansion: OAuth-credential providers come first. */
+		isUsingOAuth?(model: Model<Api>): boolean;
+	};
 	cooldowns: SelectorCooldowns;
 	logger: FallbackLogger;
 	switchModel(model: Model<Api>, thinking: ThinkingLevel, reason: "fallback" | "fallback-revert"): Promise<void>;

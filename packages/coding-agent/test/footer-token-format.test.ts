@@ -62,7 +62,6 @@ function createFooterData(): unknown {
 		getExtensionStatuses: () => new Map<string, string>(),
 		getAvailableProviderCount: () => 1,
 		onBranchChange: () => () => {},
-		isOmoNative: () => false,
 	};
 }
 

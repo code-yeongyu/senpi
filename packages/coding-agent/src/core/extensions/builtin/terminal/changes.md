@@ -1,5 +1,136 @@
 # terminal builtin extension — fork surface
 
+## Terminal wake-source snapshots (2026-08-09)
+
+### What changed
+
+- Monitor snapshots now publish `wake_source_state` under `terminal-monitors` while permanently retaining the legacy `terminal_monitor_state` emission.
+- The bundle-owned active background-session set publishes `terminal-background-sessions` on explicit background launch, foreground detach, exit, kill, teardown, and session rebind.
+
+### Why
+
+Goal continuation must count every terminal activity that can wake or unblock the session, not only monitor watches, using the same source-keyed contract as other packages.
+
+### Why this cannot be expressed externally
+
+The authoritative monitor registry and background-session lifecycle are private to the terminal builtin and its reload-surviving session bundle.
+
+### Expected merge conflict zones
+
+- MEDIUM in `extension.ts` and `session-bundle.ts` around snapshot sinks and reload replay.
+
+## Native PTY waits no longer exhaust the libuv threadpool (2026-08-09)
+
+### What changed
+
+- `crates/senpi-pty/src/lib.rs`: `waitExit()` and `wait()` now obtain the existing waiter
+  synchronously, create a N-API deferred promise, and join the waiter on a named private Rust
+  reaper thread. The reaper resolves or rejects the deferred only after the waiter has completed
+  its existing child wait and reader-drain sequence.
+- Native lifecycle regressions start six pending waits with `UV_THREADPOOL_SIZE=1` and prove DNS,
+  filesystem, and PBKDF2 work still completes; a companion tears down a Worker environment while
+  its native wait is pending and proves the process exits naturally after the PTY child is killed.
+
+### Why
+
+The prior N-API `AsyncTask` ran `JoinHandle::join()` on a libuv worker for the PTY child's entire
+lifetime. Enough long-lived terminal sessions exhausted the shared pool and indefinitely queued
+unrelated DNS and filesystem work, which could leave provider requests and the terminal UI stuck.
+
+### Why this cannot be expressed externally
+
+The blocked worker was owned by the Rust-to-N-API promise implementation below the TypeScript PTY
+facade. An extension cannot move native wait completion off libuv or safely settle a promise after
+native reader teardown.
+
+### Expected merge conflict zones
+
+- `crates/senpi-pty/src/lib.rs` around `NativePtySession::waitExit` / `wait` and native promise
+  settlement.
+- `packages/pty/test/native-wait-threadpool.test.ts` and its native subprocess fixtures.
+
+
+## Terminal monitor and background-bash resumption channels (2026-08-08)
+
+### What changed
+
+- Monitor registry transitions still emit the byte-compatible `terminal_monitor_state` payload and
+  now also emit the shared `resumption_channel_state` snapshot under source
+  `"terminal-monitor"`, with matching counts and channel identity metadata.
+- `TerminalSessionBundle` now owns the live background-session snapshot. Explicit background bash
+  launches and foreground auto-detaches register a channel, while exit, `kill_bash`, and bundle
+  teardown remove it. Every transition emits the complete source snapshot under
+  `"terminal-bash"`.
+- Bundle binding re-publishes both monitor and background snapshots during `session_start`, including
+  after reload, so a goal consumer that clears session-scoped counts sees channels that remained
+  alive across the boundary.
+
+### Notification tradeoff
+
+Background sessions count as live resumption channels unconditionally, including non-interactive
+sessions and terminal `notify: "off"`. The notify setting controls whether completion injects a wake
+notification; it does not change whether work is still alive. A muted session can therefore delay a
+goal continuation even though its completion will not wake the agent, but the existing four-minute
+continuation backstop bounds that delay. Keeping liveness independent from notification policy avoids
+the measured 53ms premature continuation seen with `notify: "off"` (52ms with notifications enabled).
+
+## Fixed foreground window replaces cache budget; sleep-wait commands detach early (2026-08-07)
+
+### What changed
+
+- `tools/foreground-window.ts` (new): the foreground blocking window is a fixed value —
+  `PI_BASH_FOREGROUND_SECONDS`, default 60s (`DEFAULT_FOREGROUND_WINDOW_SECONDS`) — no longer
+  tied to the prompt-cache safe-wait budget. A classified sleep-wait uses a shorter 5s window
+  (`SLEEP_WAIT_WINDOW_SECONDS`) because its remaining time is pure waiting with nothing to show.
+  `resolveForegroundWindowSeconds(env)` parses the env override with a positive-finite guard,
+  falling back to the default.
+- `tools/sleep-wait.ts` (new): `classifySleepWait(command)` detects four wait-shaped patterns —
+  R1 bare `sleep N`, R2 leading `sleep N; cmd`, R3 polling loop (`while`/`until`/`for` containing
+  `sleep`), R4 trailing `cmd; sleep N` — after stripping `bash -lc` / `env A=1 sh -c` wrappers
+  (up to three levels deep via `unwrap()`). `longestSleepSeconds()` extracts the largest `sleep`
+  argument. A 10s threshold (`SLEEP_WAIT_THRESHOLD_SECONDS`) keeps short settle sleeps like
+  `pkill; sleep 1` foreground; inside a loop the threshold drops to 2s
+  (`SLEEP_WAIT_LOOP_THRESHOLD_SECONDS`). The `POWER_MANAGEMENT` guard (`pmset`/`caffeinate`/
+  `systemsetup`/`displaysleep`/`disksleep`) prevents power-management arguments from matching.
+- `tools/bash.ts`: `resolveAutoDetachDelayMs` takes a new `sleepWait: SleepWaitClassification |
+  undefined` parameter and returns the sleep-wait window (5s) when classified, otherwise the
+  foreground window (60s). The old `ctx.getSessionContext?.()?.getPromptCacheSafeWaitSeconds?.()`
+  budget call is removed. `runForeground` calls `classifySleepWait(input.command)` before resolving
+  the detach delay. A sleep-wait detach gets a dedicated `guidance` string that tells the model to
+  end its turn and wait for the completion notification — explicitly not to poll
+  `bash_output` — and recommends `monitor({command, filter})` for pattern waits. Non-sleep-wait
+  detaches keep the existing guidance. The tool result `details` gains `sleep_wait: true` for
+  classified commands. The `timeout` schema description and the bash tool `description` are
+  rewritten to describe the window + auto-detach + kill-deadline semantics.
+- Auto-detach mechanism is unchanged: `createForegroundDetachGate` + `scheduleDetachedSweep` move
+  a still-running process to a live background session, and `timeout` remains the process kill
+  deadline enforced after detach.
+
+### Why
+
+A census of real local coding-agent session stores found ~7,073 sleep-wait bash commands — poll
+loops, `sleep 45; gh pr view ...`, bare `sleep 30` — where agents burned foreground turn time on
+waiting. The runtime now hands such waits to the background instead of blocking or killing them:
+a sleep-wait detaches at 5s, an ordinary command still running at the 60s window detaches then.
+The completion notification delivers exit status and output tail, so polling `bash_output` is
+unnecessary.
+
+### Why this cannot be expressed externally
+
+- The foreground window replaces the session-context `getPromptCacheSafeWaitSeconds` hook that
+  only the built-in `bash` tool reads inside `runForeground`. An extension cannot intercept the
+  foreground wait lifecycle, inject a per-command classification before the detach gate commits,
+  or author the handoff `guidance` message that `runForeground` returns.
+
+### Expected merge conflict zones
+
+- `tools/bash.ts` `resolveAutoDetachDelayMs` (signature change, budget removal) and the
+  detached-result `guidance` block where the sleep-wait message branch lives.
+- `tools/foreground-window.ts` and `tools/sleep-wait.ts` (new fork-owned files; upstream has no
+  equivalent).
+- `test/suite/sleep-wait.test.ts` (new) and `test/suite/terminal-bash-auto-detach.test.ts`
+  (`setup()` drops `safeWaitSeconds`, describe block renamed to "foreground window auto-detach").
+
 ## Paused monitors still deliver completion (2026-08-04)
 
 ### What changed

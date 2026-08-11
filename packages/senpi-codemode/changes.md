@@ -1,5 +1,86 @@
 # senpi-codemode fork changes
 
+## Detached eval cell wake-source contract (2026-08-09)
+
+### What changed
+
+- The duplicated cross-package event literal is now `wake_source_state`, with source `senpi-codemode` and optional per-cell `items` metadata.
+- Detached-cell detach, completion, stop, and session-dispose transitions publish the current active count through the optional host `events` passthrough; synchronous cells do not emit a lifecycle transition.
+- The focused wiring suite pins event-bus delivery, completion-to-zero, bus-less compatibility, and the exact duplicated literal.
+
+### Why
+
+Goal continuation now aggregates every producer under one wake-source contract, so codemode must use the same event and a stable package-owned source key rather than the retired resumption-channel name.
+
+### Why this cannot be expressed externally
+
+Detach and settlement ownership lives inside `EvalDetachedCellManager`, and only the extension entry has access to the host event bus.
+
+### Expected merge conflict zones
+
+- MEDIUM in `src/index.ts` and `src/tool/detached-cell-manager.ts` around lifecycle snapshot wiring.
+- LOW in the duplicated event contract and focused tests.
+
+## Detached eval cell resumption-channel liveness (2026-08-08)
+
+### What changed
+
+- New `src/extension/resumption-channel.ts` duplicates the cross-package `resumption_channel_state` event literal and
+  payload type locally; senpi-codemode is a separate package and must not import from packages/coding-agent, so a
+  sentinel test pins the literal to catch drift.
+- `src/tool/detached-cell-manager.ts`: new optional `onChannelState` callback fires a full per-source snapshot
+  (`{ source: "eval-detached", activeCount, channels: [{ id, description, startedAtMs }] }`) on the same transitions as
+  the existing `#emitStatus` footer seam (detach / settle / stop / dispose). `description` mirrors the footer label
+  fallback (`summary` else cell id). A public `publishChannelState()` re-publishes the current snapshot.
+- `src/index.ts`: the local `CodemodeExtensionAPI` widens with an optional `events?: { emit(name, data) }`; emission
+  goes through `pi.events?.emit(...)` so hosts without an event bus are a harmless no-op. Both cell-manager
+  constructions wire the callback, and the `session_start` handler re-publishes the snapshot because the consuming
+  goal builtin clears its per-session counts there.
+- `test/eval-resumption-channel.test.ts`: pins the single-cell snapshot, the two-cells-settling count sequence, the
+  bus-less host no-op, the `session_start` re-emit plus bus transport, and the event-name sentinel.
+
+### Why
+
+- The goal builtin delays its hidden "keep going" continuation while a live resumption channel is on duty, but it only
+  ever learned about terminal monitors. Detached eval cells are a real live channel that reported nothing, so the goal
+  nagged itself immediately at turn end while a cell was still computing. This change makes codemode EMIT its liveness;
+  a sibling lane owns the consuming side in the goal builtin.
+- The legacy `terminal_monitor_state` event keeps its single-owner full-snapshot semantics; emitting it from a second
+  source would clobber the terminal's count, so only the new source-keyed event is used.
+
+### Why this cannot be expressed externally
+
+- The liveness transitions live inside the detached-cell manager and the extension entry; an external extension cannot
+  observe detach/settle/dispose without reimplementing the cell lifecycle.
+
+### Expected merge conflict zones
+
+- LOW: `src/index.ts` around the cell-manager constructions and the `session_start` handler.
+- LOW: `src/tool/detached-cell-manager.ts` around `#emitStatus`.
+- MEDIUM: `CHANGELOG.md` `[Unreleased]` when sibling lanes land entries; keep both bullets.
+
+## Compact elapsed labels for simple eval results (2026-08-06)
+
+### What changed
+
+- `src/tool/render.ts`: final eval results without detailed cell records now route `durationMs` through the same compact formatter already used by cell headers, agent progress, and nested tool-call widgets.
+- `test/eval-result-duration.test.ts`: focused coverage pins sub-second, seconds, minutes, and hours output plus the surrounding status/summary/phase/output frame.
+- Existing renderer-state expectations now preserve the compact `<1s` label for very short completed and failed evaluations.
+
+### Why
+
+- The simple-result branch was the only eval duration surface that interpolated raw milliseconds, producing labels such as `took 3720000ms` while the detailed branch rendered the same duration as `1h 2m`.
+- Consistent compact labels make completed tool-call timing readable without changing live footer, working-status, or thinking-duration policies.
+
+### Why this cannot be expressed externally
+
+- The inconsistency lives inside the eval tool's result renderer and must be corrected at the branch that builds transcript metadata.
+
+### Expected merge conflict zones
+
+- LOW: `src/tool/render.ts` around `resultMetadata()`.
+- LOW: `test/eval-render-state.test.ts` and `test/eval-result-duration.test.ts`.
+
 ## Eval `summary` replaces `title` (2026-08-04)
 
 ### What changed

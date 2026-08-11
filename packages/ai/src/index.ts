@@ -19,6 +19,12 @@ export type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 export type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
 export { convertResponsesMessages } from "./api/openai-responses-shared.ts";
 export type { PiMessagesEvent, PiMessagesOptions, PiMessagesRewriteImpact } from "./api/pi-messages.ts";
+export {
+	type WarmPromptCacheOptions,
+	type WarmPromptCacheResult,
+	type WarmPromptCacheUsage,
+	warmPromptCache,
+} from "./api/warm-prompt-cache.ts";
 export { getApiProvider } from "./api-registry.ts";
 export * from "./auth/context.ts";
 export * from "./auth/credential-store.ts";
@@ -65,6 +71,7 @@ export * from "./utils/json-parse.ts";
 export { extractOpenAiCodexAccountId } from "./utils/openai-codex-auth.ts";
 export * from "./utils/overflow.ts";
 export {
+	isAnthropicApiBaseUrl,
 	PROMPT_CACHE_TTL_LONG_SECONDS,
 	PROMPT_CACHE_TTL_SHORT_SECONDS,
 	resolvePromptCacheTtlSeconds,
@@ -77,3 +84,5 @@ export * from "./utils/tool-pair-repair.ts";
 export * from "./utils/typebox-helpers.ts";
 export { uuidv7 } from "./utils/uuid.ts";
 export * from "./utils/validation.ts";
+export * from "./utils/visible-text.ts";
+export { getWireIdentity, setWireIdentity } from "./wire-identity.ts";

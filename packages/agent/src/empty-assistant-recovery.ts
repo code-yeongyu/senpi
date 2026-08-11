@@ -4,8 +4,11 @@ import {
 	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
 	createAssistantMessageEventStream,
-	hasKimiTextToolCallRecovery,
+	getToolCallFormat,
+	hasVisibleAssistantContent,
+	hasVisibleText,
 	type Model,
+	shouldRecoverTextToolCalls,
 } from "@earendil-works/pi-ai";
 import type { StreamFn } from "./types.ts";
 
@@ -13,18 +16,12 @@ type StreamFactory = () => AssistantMessageEventStream | Promise<AssistantMessag
 
 const EMPTY_RESPONSE_ERROR = "Model returned an empty response twice";
 
-function hasVisibleContent(message: AssistantMessage): boolean {
-	return message.content.some(
-		(block) => block.type === "toolCall" || (block.type === "text" && block.text.trim().length > 0),
-	);
-}
-
 function isEmptyStop(message: AssistantMessage): boolean {
-	return message.stopReason === "stop" && !hasVisibleContent(message);
+	return message.stopReason === "stop" && !hasVisibleAssistantContent(message);
 }
 
 function eventStartsVisibleContent(event: AssistantMessageEvent): boolean {
-	return event.type === "toolcall_start" || (event.type === "text_delta" && event.delta.trim().length > 0);
+	return event.type === "toolcall_start" || (event.type === "text_delta" && hasVisibleText(event.delta));
 }
 
 function appendRetryDiagnostic(message: AssistantMessage): AssistantMessage {
@@ -115,7 +112,7 @@ function createRetryingStream(firstStream: AssistantMessageEventStream, createSt
 }
 
 export function withEmptyAssistantRecovery<TApi extends Api>(model: Model<TApi>, streamFunction: StreamFn): StreamFn {
-	if (!hasKimiTextToolCallRecovery(model)) return streamFunction;
+	if (!shouldRecoverTextToolCalls(model) && getToolCallFormat(model) === undefined) return streamFunction;
 	return async (requestedModel, context, options) => {
 		const createStream = (): ReturnType<StreamFn> => streamFunction(requestedModel, context, options);
 		return createRetryingStream(await createStream(), createStream);

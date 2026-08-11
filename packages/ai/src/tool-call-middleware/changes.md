@@ -2,6 +2,33 @@
 
 # Tool Call Middleware Changes
 
+## 2026-08-09 - Claude missing-angle ANTML invoke recovery
+
+### What changed and why
+
+- Claude normal-mode recovery now recognizes the observed transcript shape
+  `antml:invoke name="...">` when the opening `<` is missing, including openings
+  split at every internal stream boundary.
+- The tolerance is intentionally ANTML-specific, exact-case, and boundary-gated.
+  Unknown tools, malformed openings, code examples, and non-exact markers remain
+  literal text.
+- After a successfully recovered missing-angle call, the parser consumes the exact
+  stray `</function_results>` trailer observed in the leaked turn plus at most 127
+  interstitial whitespace characters. Longer whitespace runs are flushed as text,
+  and a standalone or mismatched trailer is preserved.
+
+### Why the extension system could not handle this
+
+- Recovery must transform raw assistant text into a canonical tool call before the
+  agent loop persists or renders the assistant message. Extensions only observe the
+  already-decoded stream, after this boundary.
+
+### Expected merge conflict zones
+
+- `protocols/antml/recovery-stream.ts`
+- `packages/ai/test/tool-call-middleware/claude-invoke-recovery.test.ts`
+- `.agents/skills/senpi-qa/scripts/lib/mock-loop-text-leak.mjs`
+
 ## 2026-07-30 - Kimi XTML unnamed channel recovery hardening
 
 ### What changed and why

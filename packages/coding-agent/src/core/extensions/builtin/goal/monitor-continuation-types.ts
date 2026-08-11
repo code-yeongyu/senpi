@@ -17,6 +17,7 @@ export interface SystemAbortOptions extends AgentEndOptions {
 
 export type ContinuingGoalContinuationVerdict = Extract<GoalContinuationVerdict, { kind: "continue" }>;
 export type DelayedContinuationKind = GoalWaitKind;
+export type ResumptionChannelCounts = Readonly<Record<string, number>>;
 
 export type GoalContinuationAdmission = {
 	readonly goal: Goal;

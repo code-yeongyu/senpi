@@ -257,6 +257,15 @@ function runCheck(dryRun) {
 	runCommand("npm", ["run", "check"]);
 }
 
+function runClean(dryRun) {
+	if (dryRun) {
+		dryRunLog("npm run clean");
+		return;
+	}
+	log("npm run clean");
+	runCommand("npm", ["run", "clean"]);
+}
+
 function runBuild(dryRun) {
 	if (dryRun) {
 		dryRunLog("npm run build");
@@ -341,6 +350,7 @@ function main() {
 	runInstallLock(args.dryRun, runCommand, log, dryRunLog);
 	stampChangelogs(version, date, args.dryRun, capturedChangelogSubsections, log, dryRunLog);
 	runCheck(args.dryRun);
+	runClean(args.dryRun);
 	runBuild(args.dryRun);
 	runTests(args.dryRun, args.forceTests);
 

@@ -1,5 +1,95 @@
 # AI Source Changes
 
+## 2026-08-11 - Optional availability `check` on `OAuthAuth`
+
+### What changed and why
+
+Added an optional `check?(input)` to `OAuthAuth` (`auth/types.ts`) and taught `checkProviderAuth` (`models.ts`) to consult it in the stored-OAuth-credential branch. Previously that branch was a pure structural short-circuit — `provider.auth.oauth ? {configured} : undefined` — so any stored OAuth credential, including an empty sentinel envelope with zero accounts, reported the provider as configured. The fallback engine reads configured-ness through `hasConfiguredAuth`, so such a provider was never skipped as `unauthenticated`. `ApiKeyAuth` already exposes an equivalent `check`; this makes the OAuth path symmetric. When `check` is absent, behavior is byte-identical to before, so every existing OAuth provider is unaffected. This cannot be extension-local: the short-circuit lives in `ModelsImpl.checkProviderAuth`, which no extension hook reaches, and `OAuthAuth` had no `check` to supply.
+
+### Expected merge-conflict zones
+
+LOW in `auth/types.ts` (additive optional field on `OAuthAuth`); LOW in `models.ts` `checkProviderAuth` (one stored-OAuth branch expanded, existing behavior preserved when `check` is undefined).
+
+## 2026-08-09 - Native Anthropic prompt-cache warming primitive
+
+### What changed and why
+
+- `api/warm-prompt-cache.ts` adds the non-streaming `warmPromptCache()` request primitive for direct Anthropic
+  Messages models. It sends the normal converted system, tools, and conversation cache breakpoints with
+  `max_tokens: 0`, strips streaming, thinking, and forced tool choice, disables SDK retries, and returns normalized
+  input/output/cache-read/cache-write usage alongside the raw provider usage.
+- `api/anthropic-messages.ts` exposes a focused warm-request builder so pre-warming and the normal stream share the
+  same message, tool, cache-control, and tool-pair conversion instead of maintaining a second wire transform.
+- The root package exports the primitive and its exact supported/unsupported result contract. Non-Anthropic APIs and
+  Anthropic-compatible gateways return unsupported before authentication or network work begins.
+
+### Why this cannot be expressed externally
+
+- Correct cache breakpoints depend on adapter-internal Anthropic message and tool conversion. Reconstructing the
+  request outside the package would drift from the normal provider path and could mutate history or send incompatible
+  streaming/thinking options.
+
+### Expected merge conflict zones
+
+- MEDIUM: `api/anthropic-messages.ts` near request construction and cache-control conversion.
+- LOW: additive `api/warm-prompt-cache.ts` and root `index.ts` export.
+
+## 2026-08-09 - Prompt-cache correctness across OpenAI-compatible and Bedrock lanes
+
+### What changed and why
+
+- `api/openai-completions.ts` `parseChunkUsage()` now reads Kimi's flat `usage.cached_tokens` only after the
+  existing nested OpenAI and `prompt_cache_hit_tokens` forms, preserving precedence while reporting cache reads and
+  uncached input correctly.
+- `types.ts` adds `OpenAICompletionsCompat.supportsPromptCacheKey`; `utils/prompt-cache-ttl.ts`
+  `detectOpenAICompletionsCompat()` enables it for Moonshot and direct OpenAI endpoints, and
+  `getOpenAICompletionsCompat()` preserves explicit overrides. `buildParams()` uses the resolved flag to emit a
+  clamped stable key without adding provider URL checks at the request boundary.
+- OpenRouter compatibility detection now defaults session affinity on, and `buildParams()` sends the same session ID
+  in both `x-session-id` and the body `session_id` from the first cache-enabled request.
+- Runtime and `scripts/generate-models.ts` detection share the literal `anthropic/`, `qwen/`, `google/` cache-control
+  prefix allowlist and strip one optional leading `~`. Hydrated Moonshot and OpenRouter catalogs bake the resolved
+  compatibility metadata.
+- `utils/prompt-cache-ttl.ts` `supportsOneHourCacheTtl()` is the single Bedrock Claude 4.5 allowlist used by both
+  `api/bedrock-converse-stream.ts` cache-point sites and `resolvePromptCacheTtlSeconds()`, preventing a one-hour
+  resolver estimate when the wire request can only use five minutes.
+- `resolvePromptCacheTtlSeconds()` reports 300 seconds for the actual `claude-sdk-oauth` model shape because the SDK
+  owns that lane's default ephemeral prompt caching.
+
+### Why this cannot be expressed externally
+
+- Usage parsing, provider request fields, cache-point TTLs, and cache lifetime estimates are adapter-internal wire
+  contracts resolved before an extension can observe a normalized assistant message or safely rewrite every request
+  path. Generated compatibility metadata must also stay aligned with runtime detection.
+
+### Expected merge conflict zones
+
+- HIGH: `utils/prompt-cache-ttl.ts` OpenAI-compatible detection/merge and cache TTL resolver switches.
+- HIGH: `api/openai-completions.ts` request construction and streamed usage parsing.
+- MEDIUM: `api/bedrock-converse-stream.ts` system and conversation cache-point construction.
+- MEDIUM: `scripts/generate-models.ts` compatibility detection and generated Moonshot/OpenRouter data.
+
+## 2026-08-09 - Shared visible assistant-content classification
+
+### What changed and why
+
+- `utils/visible-text.ts` defines the shared visibility boundary for assistant text: Unicode format characters
+  (`\p{Cf}`) are removed before whitespace trimming, so zero-width spaces, joiners, word joiners, byte-order marks,
+  and directional formatting marks cannot make an otherwise empty response appear user-visible.
+- `hasVisibleAssistantContent` treats a tool call or text containing a visible scalar as assistant output. Emoji ZWJ
+  sequences remain visible because removing the joiner leaves visible emoji scalars.
+- The browser-safe root exports both predicates so agent-core and other consumers use one classification instead of
+  duplicating JavaScript `trim()` checks that miss U+200B.
+
+### Why this cannot be expressed externally
+
+- Assistant response visibility is a shared message-level contract consumed before coding-agent extensions receive a
+  committed turn; external hooks cannot reliably repair divergent classifiers in each core consumer.
+
+### Expected merge conflict zones
+
+- LOW: additive `utils/visible-text.ts` module and root export in `index.ts`.
+
 ## 2026-08-05 - Root-object tool schemas and request-shape error classification
 
 ### What changed and why

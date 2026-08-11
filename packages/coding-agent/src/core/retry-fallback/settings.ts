@@ -27,12 +27,14 @@ export interface ResolvedRetryFallbackSettings {
 	revertPolicy: "cooldown-expiry" | "never";
 }
 
+/**
+ * Shipped defaults are declared as model families (bare ids, no provider prefix).
+ * `canonicalizeFallbackChains` expands them against the live registry, so the
+ * chain follows Fable 5 whichever provider serves it - the builtin Anthropic
+ * provider, the Claude SDK OAuth extension, a gateway, or Bedrock.
+ */
 export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {
-	"anthropic/claude-fable-5": [
-		"apitopia/kimi-k3-unlocked:max",
-		"anthropic/claude-opus-5:xhigh",
-		"anthropic/claude-opus-4-8:xhigh",
-	],
+	"claude-fable-5": ["k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
 };
 
 function cloneDefaultFallbackChains(): Record<string, readonly string[]> {
@@ -57,7 +59,8 @@ function isStringArray(value: unknown): value is string[] {
  * chain: that left the defaulted model with no client chain at all, which in
  * turn disabled the server-fallback abort and handed model choice back to the
  * provider. A same-named key still replaces that default outright (never a
- * union), and an explicit empty array removes a default the user does not want.
+ * union), and an explicit empty array removes a default the user does not want -
+ * as a tombstone honored at both bare-family and canonical-provider granularity.
  *
  * Cross-scope replacement (global vs project) stays wholesale and is handled by
  * `deepMergeSettings`; this only resolves defaults against the merged result.
@@ -69,10 +72,9 @@ function resolveFallbackChains(value: unknown): FallbackChains {
 	const chains: Record<string, readonly string[]> = cloneDefaultFallbackChains();
 	for (const [key, entries] of Object.entries(value)) {
 		if (!isStringArray(entries)) return cloneDefaultFallbackChains();
-		if (entries.length === 0) {
-			delete chains[key];
-			continue;
-		}
+		// An empty list stays in the map as a tombstone: canonicalization needs it to
+		// suppress the expanded default for that family or provider variant, and
+		// dropping it here would let the shipped default reappear after expansion.
 		chains[key] = [...entries];
 	}
 	return chains;

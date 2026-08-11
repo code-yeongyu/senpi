@@ -19,6 +19,7 @@ interface GoalHarness {
 	commands: Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>;
 	handlers: Map<string, Handler[]>;
 	sent: SentMessage[];
+	continuationQueued: Promise<void>;
 }
 
 function createGoalHarness(): GoalHarness {
@@ -26,6 +27,10 @@ function createGoalHarness(): GoalHarness {
 	const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
 	const handlers = new Map<string, Handler[]>();
 	const sent: SentMessage[] = [];
+	let markContinuationQueued: () => void = () => {};
+	const continuationQueued = new Promise<void>((resolve) => {
+		markContinuationQueued = resolve;
+	});
 	const pi = {
 		registerTool: (tool: AnyTool) => tools.set(tool.name, tool),
 		registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) =>
@@ -35,12 +40,15 @@ function createGoalHarness(): GoalHarness {
 			list.push(handler);
 			handlers.set(event, list);
 		},
-		sendMessage: (message: SentMessage["message"], options: unknown) => sent.push({ message, options }),
+		sendMessage: (message: SentMessage["message"], options: unknown) => {
+			sent.push({ message, options });
+			markContinuationQueued();
+		},
 		registerEntryRenderer: () => {},
 		appendEntry: () => {},
 	} as unknown as ExtensionAPI;
 	goalExtension(pi);
-	return { tools, commands, handlers, sent };
+	return { tools, commands, handlers, sent, continuationQueued };
 }
 
 const tempDirs: string[] = [];
@@ -557,6 +565,29 @@ describe("goal extension contract (budget-free)", () => {
 		await tools.get("create_goal")?.execute("c1", { objective: "Ship latest" }, undefined, undefined, ctx);
 		await tools.get("update_goal")?.execute("u1", { status: "complete" }, undefined, undefined, ctx);
 		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("complete");
+	});
+
+	it("resumes a completed goal through /goal and queues a continuation", async () => {
+		const notices: string[] = [];
+		const { tools, commands, sent, continuationQueued } = createGoalHarness();
+		const ctx = await makeNotifyingCtx(notices, "thread-command-resume-complete");
+		const ref = storeRefFor(ctx);
+		await tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Resume through the command" }, undefined, undefined, ctx);
+		await tools.get("update_goal")?.execute("u1", { status: "complete" }, undefined, undefined, ctx);
+		const completed = await readGoal(ref);
+
+		await commands.get("goal")?.handler("resume", ctx);
+
+		const resumed = await readGoal(ref);
+		expect(resumed).toMatchObject({ id: completed?.id, status: "active" });
+		expect(resumed?.completedAt).toBeUndefined();
+		expect(resumed?.lastStartedAt).toBeGreaterThan(completed?.updatedAt ?? 0);
+		await continuationQueued;
+		expect(await readGoal(ref)).toMatchObject({ status: "active", consecutiveContinuations: 1 });
+		expect(sent.map((entry) => entry.message.customType)).toEqual(["goal-continuation"]);
+		expect(notices).not.toContain("illegal goal transition: complete -> active");
 	});
 
 	it("renders a live elapsed footer segment while a goal is actively pursued", async () => {

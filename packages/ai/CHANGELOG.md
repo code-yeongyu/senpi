@@ -10,6 +10,110 @@
 
 ### Fixed
 
+- `OAuthAuth` accepts an optional availability `check` that `checkProviderAuth` consults in the stored-OAuth
+  branch, so a provider whose stored credential does not by itself imply usability (for example a zero-account
+  sentinel) is no longer reported as configured. When `check` is absent, behavior is unchanged
+  ([#804](https://github.com/code-yeongyu/senpi/pull/804)).
+
+### Removed
+
+## [2026.8.11-2] - 2026-08-10
+
+### Breaking Changes
+
+### Added
+
+- Added `getWireIdentity()` and `setWireIdentity()` for configuring the product token used on outgoing requests, so
+  distributions repackaging the engine can supply their own wire identity
+  ([#783](https://github.com/code-yeongyu/senpi/pull/783)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11] - 2026-08-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.10] - 2026-08-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.9-2] - 2026-08-09
+
+### Breaking Changes
+
+### Added
+
+- Added a native Anthropic `warmPromptCache` primitive for zero-output prompt-cache pre-warming with normalized cache usage accounting.
+- Added `prompt_cache_key` support for Moonshot/Kimi Chat Completions and first-request OpenRouter affinity through
+  both `x-session-id` and the request body's `session_id`.
+
+### Changed
+
+- Expanded explicit OpenRouter prompt-cache markers to Anthropic, Qwen, and Google model prefixes, including
+  catalog model IDs with one leading `~`.
+
+### Fixed
+
+- Fixed Kimi cache-read accounting for flat `usage.cached_tokens` responses.
+- Restricted Bedrock one-hour prompt-cache TTLs to Claude Opus 4.5, Sonnet 4.5, and Haiku 4.5; other cacheable
+  Bedrock Claude models now consistently use the five-minute wire and resolver TTL.
+- Reported the Claude SDK OAuth lane's SDK-managed prompt-cache TTL as five minutes.
+- Fixed `warmPromptCache` eagerly loading the Anthropic SDK and message implementation for models that cannot use
+  Anthropic prompt-cache warming. Capability checks now run first, so unsupported provider lanes avoid the optional
+  Anthropic dependency entirely while supported models preserve the same pre-warm request and usage accounting.
+
+- Recovered Claude tool calls that omit the opening `<` before a lowercase
+  `antml:invoke` and append a stray `</function_results>` trailer, dispatching
+  the validated tool call instead of exposing internal protocol markup.
+
+### Removed
+
+## [2026.8.9] - 2026-08-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Added shared assistant-content visibility classification that ignores Unicode format characters before checking
+  text, preventing zero-width-only output from being treated as a visible response while preserving emoji ZWJ
+  sequences and tool calls.
+
+### Removed
+
+## [2026.8.7] - 2026-08-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 ### Removed
 
 ## [2026.8.6] - 2026-08-06

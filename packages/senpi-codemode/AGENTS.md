@@ -8,6 +8,7 @@ the persistent-kernel `eval` tool for JavaScript, Python, Ruby, and Julia.
 ```text
 src/index.ts                     Extension factory: registers baseline eval, re-registers at session_start after runtime resolution, re-registers on model_select when active model changes
 src/prompt/                      Model-aware eval prompt templates and batching dialect selection
+src/interpreters/                Interpreter availability detection (detect.ts)
 src/config/                      Settings schema, defaults, env overrides
 src/extension/                   Session generations and kernel ownership
 src/tool/                        Eval schema, cell execution, status events, rendering
@@ -35,6 +36,8 @@ test/                            Vitest contracts and the omp parity ledger
   must not emit into a newer session.
 - Kernels persist state per language, while per-cell callbacks are rebound for
   each execution.
+- Eval runs require a `summary` written in the user's conversational language.
+  Detached cells are labeled with that summary; the old `title` field is dropped.
 - Every cell settles exactly once across success, error, timeout, abort, bridge
   failure, and kernel crash.
 - Timeout and abort cleanup retires child work before ownership is released.
@@ -61,6 +64,8 @@ test/                            Vitest contracts and the omp parity ledger
 | Prompt behavior | `src/prompt/eval-prompt.ts` |
 | Call/result rendering | `src/tool/render.ts` |
 | Cell settlement and output | `src/tool/cell-handler.ts`, `src/output/` |
+| Detached cells | `src/tool/detached-cell-manager.ts`, `detached-cell-notification.ts`, `detached-cell-snapshot.ts`, `detached-cell-state.ts`, `detached-eval-result.ts`, `detached-notification-queue.ts`, `cell-runtime.ts` |
+| Interpreter detection | `src/interpreters/detect.ts` |
 | Session and kernel ownership | `src/extension/session-manager.ts`, `src/index.ts` |
 | Bridge auth and protocol | `src/bridge/` |
 | Agent/output task composition | `src/bridges/` |
@@ -89,3 +94,6 @@ test/                            Vitest contracts and the omp parity ledger
   lockfile policy permits the intentional change.
 - Documentation must describe the current tool contract. Update README settings
   and helper tables with every user-visible surface change.
+
+---
+Generated: 2026-08-07 | Commit `4f26b8282`

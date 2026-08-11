@@ -10,6 +10,86 @@
 
 ### Fixed
 
+- Refresh `abortServerSideFallback` from the host's next-turn snapshot so an active agent run cannot carry a prior
+  model's server-fallback policy into the next provider request
+  ([#796](https://github.com/code-yeongyu/senpi/pull/796)).
+
+### Removed
+
+## [2026.8.11-2] - 2026-08-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11] - 2026-08-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.10] - 2026-08-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.9-2] - 2026-08-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.9] - 2026-08-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Retry one assistant `stop` response with no visible text or tool call for Claude, Kimi, and configured text-tool
+  protocols instead of only Kimi. Unicode format-only output such as zero-width spaces stays buffered with the
+  discarded attempt, and a second invisible response remains a bounded explicit error.
+
+### Removed
+
+## [2026.8.7] - 2026-08-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 ### Removed
 
 ## [2026.8.6] - 2026-08-06

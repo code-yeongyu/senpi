@@ -1,24 +1,48 @@
 # packages/ai
 
+Generated: 2026-08-07. Commit `4f26b8282`.
+
 `@earendil-works/pi-ai` is the provider-neutral streaming, model, auth, tool-call, and image API used across the monorepo. Its root surface must remain browser-safe.
 
 ## STRUCTURE
 
 ```text
 src/types.ts                    Core API/model/message contracts
+src/model.ts                    Model shape; now carries upstreamModelId + serviceTier ("auto"|"flex"|"priority", backs -fast priority variants)
 src/compat.ts                   Temporary legacy dispatch, registry, catalogs
+src/api-registry.ts             API registration/lookup
+src/model-catalog.ts            Catalog assembly over static + dynamic models
+src/models-store.ts             Persisted dynamic-model store
 src/api/                        Wire/API implementations and lazy wrappers
 src/providers/                  Provider factories, catalogs, shared transforms
+src/providers/data/             COMMITTED generated per-provider model JSON (see below)
 src/auth/                       Credential stores, contexts, auth helpers/types
+src/node/provider-scope.ts      Node-only subpath (provider scoping); not root-reachable
+src/oauth.ts                    OAuth surface re-exports
+src/openai-responses-compat.ts  Responses-API compat shims
+src/stream.ts                   Stream entry points
+src/session-resources.ts        Per-session resource plumbing
+src/context-provenance.ts       Context provenance tracking
+src/legacy-api-aliases.ts       Old API-id aliases
+src/compat/                     extension-oauth-types.ts
 src/models.ts                   Models/provider/auth/refresh runtime (owns provider registration, auth resolution, dynamic catalog refresh, stream delegation)
 src/models.generated.ts         Generated static catalog
+src/image-models.ts             Image model surface (+ image-models.generated.ts)
+src/images.ts                   Image generation API (+ images-api-registry.ts, images-models.ts)
 src/env-api-keys.ts             Browser-safe credential detection boundary
 src/tool-call-middleware/       Text-encoded tool protocols
-src/utils/tool-schema-compat.ts OpenAI/Moonshot tool JSON-Schema normalization
+src/utils/                      ~29 files; key: retry.ts, provider-retry.ts, retry-hint.ts, prompt-cache-ttl.ts, stop-details.ts, tool-call-id.ts, tool-schema-compat.ts
 scripts/generate-models.ts      Model catalog source of truth
 scripts/generate-image-models.ts Image catalog source of truth
 test/                           Faux-first and opt-in live tests
 ```
+
+## MODEL DATA GENERATION
+
+- `src/providers/data/` is committed generated source: 38 provider JSONs plus `.manifest.json` (schemaVersion 3, sha256 map per file + structureHash). Never hand-edit.
+- Ordinary build copies `data/` into `dist` (`build:offline` runs `check:model-data` first, then `shx cp -r src/providers/data dist/providers/data`). No network.
+- Networked regeneration is explicit: `npm run generate-models` (full) or `npm run hydrate-model-data` (`--data-only`).
+- Validators: `scripts/model-data.ts` (shared schema/load) and `scripts/check-model-data.ts` (`npm run check:model-data`).
 
 ## ARCHITECTURE
 

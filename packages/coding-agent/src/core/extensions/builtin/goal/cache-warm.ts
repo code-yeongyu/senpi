@@ -5,6 +5,30 @@ import type { TokenUsageSnapshot } from "./types.ts";
 /** Custom session-entry type carrying the cache-warm continuation story. */
 export const GOAL_CACHE_WARMUP_ENTRY_TYPE = "goal-cache-warmup";
 
+export const GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS = 240_000;
+const GOAL_MONITOR_CONTINUATION_MIN_DELAY_MS = 1_000;
+const GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS = 3_600_000;
+
+export function resolveGoalMonitorContinuationDelayMs(
+	cacheSafeWaitSeconds: number | undefined,
+	goalBackstopMaxSeconds?: number,
+): number {
+	if (
+		typeof cacheSafeWaitSeconds !== "number" ||
+		!Number.isFinite(cacheSafeWaitSeconds) ||
+		cacheSafeWaitSeconds <= 0
+	) {
+		return GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS;
+	}
+	const configuredCeilingMs =
+		typeof goalBackstopMaxSeconds === "number" &&
+		Number.isFinite(goalBackstopMaxSeconds) &&
+		goalBackstopMaxSeconds > 0
+			? Math.min(goalBackstopMaxSeconds * 1000, GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS)
+			: GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS;
+	return Math.max(GOAL_MONITOR_CONTINUATION_MIN_DELAY_MS, Math.min(cacheSafeWaitSeconds * 1000, configuredCeilingMs));
+}
+
 /** Cache context captured when a monitor-wait continuation is scheduled. */
 export interface GoalCacheWarmMetrics {
 	/** Prompt-cache TTL of the active model in seconds, when known. */
@@ -25,13 +49,21 @@ export type GoalCacheWarmupPhase = "scheduled" | "resumed";
 export interface GoalCacheWarmupEntryData {
 	readonly phase: GoalCacheWarmupPhase;
 	readonly goalId: string;
+	/** Display ordinal within the current in-memory Goal/wake epoch; absent on legacy persisted entries. */
+	readonly iteration?: number;
 	/** Planned continuation delay in milliseconds. */
 	readonly delayMs: number;
 	/** Actual wait in milliseconds; present on the `resumed` phase only. */
 	readonly waitedMs?: number;
+	/** Backward-compatible field containing the total active wake-source count. */
 	readonly activeMonitorCount: number;
+	/** Full source-keyed snapshot; absent on entries written before wake sources were generalized. */
+	readonly wakeSources?: Readonly<Record<string, number>>;
 	readonly cache?: GoalCacheWarmMetrics;
 }
+
+/** Live entries always carry an iteration; the ordinal is intentionally not persisted into Goal state. */
+export type LiveGoalCacheWarmupEntryData = GoalCacheWarmupEntryData & { readonly iteration: number };
 
 const TOKENS_PER_PRICE_UNIT = 1_000_000;
 

@@ -7,6 +7,8 @@ import type {
 	CreateAgentSessionRuntimeResult,
 } from "../src/core/agent-session-runtime.ts";
 import type { SessionManager } from "../src/core/session-manager.ts";
+import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
+import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import {
 	type RpcSessionLaunchProfile,
 	RpcSessionRegistry,
@@ -171,6 +173,31 @@ describe("open_session resume/create parity + close semantics", () => {
 
 		expect(calls).toHaveLength(0);
 		expect(registry.list()).toHaveLength(0);
+	});
+
+	test("missing cwd returns an open_failed wire error with the underlying reason", async () => {
+		const calls: CapturedFactoryCall[] = [];
+		const { dir, registry } = await makeRegistry(calls);
+		const missingCwd = join(dir, "missing-workspace");
+		const router = new SessionCommandRouter(registry, new SessionEventWriter(() => {}), { cwd: dir });
+
+		const response = await router.handle({
+			id: "missing-cwd",
+			type: "open_session",
+			cwd: missingCwd,
+			sessionPath: join(dir, "missing-cwd.jsonl"),
+			permissionPreset: "full",
+		});
+
+		expect(response).toMatchObject({
+			id: "missing-cwd",
+			type: "response",
+			command: "open_session",
+			success: false,
+			error: expect.stringMatching(/^open_failed: /),
+		});
+		expect(response && "error" in response ? response.error : "").toContain(missingCwd);
+		expect(calls).toHaveLength(0);
 	});
 
 	test("per-session cwd: each runtime receives its own cwd", async () => {

@@ -35,7 +35,11 @@ async function setupWarmHarness(
 ): Promise<{ harness: GoalHarness; notices: string[]; ctx: Awaited<ReturnType<typeof makeGoalContext>> }> {
 	const notices: string[] = [];
 	const harness = createGoalHarness();
-	const ctx = await makeGoalContext(notices, threadId, { pendingMessages: false, model: cacheModel() });
+	const ctx = await makeGoalContext(notices, threadId, {
+		pendingMessages: false,
+		model: cacheModel(),
+		cacheSafeWaitSeconds: 270,
+	});
 	await harness.tools.get("create_goal")?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
 	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 	harness.events.emit("terminal_monitor_state", { activeCount: 1 });
@@ -75,7 +79,8 @@ describe("goal cache-warm continuation story", () => {
 		expect(channelEvents(harness, "goal_continuation_scheduled")).toEqual([
 			expect.objectContaining({
 				goalId: expect.any(String),
-				delayMs: 240_000,
+				delayMs: 270_000,
+				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({ cachedTokens: 120_000, ttlSeconds: 300 }),
 			}),
@@ -87,7 +92,8 @@ describe("goal cache-warm continuation story", () => {
 			expect.objectContaining({
 				phase: "scheduled",
 				goalId: expect.any(String),
-				delayMs: 240_000,
+				delayMs: 270_000,
+				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({ cachedTokens: 120_000, ttlSeconds: 300 }),
 			}),
@@ -100,7 +106,7 @@ describe("goal cache-warm continuation story", () => {
 
 		const delayedDeliveryRecorded = waitForSentCount(harness, 1);
 		const resumedEventRecorded = waitForEventCount(harness.events, "goal_continuation_resumed", 1);
-		await vi.advanceTimersByTimeAsync(240_000);
+		await vi.advanceTimersByTimeAsync(270_000);
 		await Promise.all([delayedDeliveryRecorded, resumedEventRecorded]);
 
 		expect(harness.sent).toHaveLength(1);
@@ -109,8 +115,9 @@ describe("goal cache-warm continuation story", () => {
 		expect(channelEvents(harness, "goal_continuation_resumed")).toEqual([
 			expect.objectContaining({
 				goalId: expect.any(String),
-				delayMs: 240_000,
-				waitedMs: 240_000,
+				delayMs: 270_000,
+				waitedMs: 270_000,
+				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({
 					cachedTokens: 120_000,
@@ -125,13 +132,94 @@ describe("goal cache-warm continuation story", () => {
 		expect(resumed[0]).toEqual(
 			expect.objectContaining({
 				phase: "resumed",
-				waitedMs: 240_000,
+				waitedMs: 270_000,
+				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({ cachedTokens: 120_000 }),
 			}),
 		);
 
 		expect(notices).toEqual([]);
+	});
+
+	it("increments accepted monitor schedules and resets after the wake epoch drains", async () => {
+		vi.useFakeTimers();
+		const { harness, ctx } = await setupWarmHarness("thread-cache-warm-iterations");
+
+		for (let iteration = 1; iteration <= 2; iteration++) {
+			const delivered = waitForSentCount(harness, iteration);
+			const resumed = waitForEventCount(harness.events, "goal_continuation_resumed", iteration);
+			await vi.advanceTimersByTimeAsync(270_000);
+			await Promise.all([delivered, resumed]);
+			if (iteration < 2) {
+				await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
+				await runGoalHandlers(
+					harness.handlers,
+					"agent_end",
+					{ type: "agent_end", messages: [cleanAssistantStop()] },
+					ctx,
+				);
+			}
+		}
+
+		expect(warmupEntryData(harness).map(({ phase, iteration }) => ({ phase, iteration }))).toEqual([
+			{ phase: "scheduled", iteration: 1 },
+			{ phase: "resumed", iteration: 1 },
+			{ phase: "scheduled", iteration: 2 },
+			{ phase: "resumed", iteration: 2 },
+		]);
+
+		harness.events.emit("terminal_monitor_state", { activeCount: 0 });
+		await harness.events.flush();
+		harness.events.emit("terminal_monitor_state", { activeCount: 1 });
+		await harness.events.flush();
+		await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runGoalHandlers(
+			harness.handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [cleanAssistantStop()] },
+			ctx,
+		);
+
+		expect(warmupEntryData(harness).at(-1)).toEqual(expect.objectContaining({ phase: "scheduled", iteration: 1 }));
+	});
+
+	it("resets the warm iteration after an accepted user prompt", async () => {
+		vi.useFakeTimers();
+		const { harness, ctx } = await setupWarmHarness("thread-cache-warm-user-reset");
+		const firstResumed = waitForEventCount(harness.events, "goal_continuation_resumed", 1);
+		await vi.advanceTimersByTimeAsync(270_000);
+		await firstResumed;
+
+		await runGoalHandlers(
+			harness.handlers,
+			"input",
+			{ type: "input", inputId: "reset-iteration", text: "new direction", source: "interactive" },
+			ctx,
+		);
+		await runGoalHandlers(
+			harness.handlers,
+			"input_disposition",
+			{ type: "input_disposition", inputId: "reset-iteration", disposition: "started" },
+			ctx,
+		);
+		await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runGoalHandlers(
+			harness.handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [cleanAssistantStop()] },
+			ctx,
+		);
+		await vi.advanceTimersByTimeAsync(10_000);
+		await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runGoalHandlers(
+			harness.handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [cleanAssistantStop()] },
+			ctx,
+		);
+
+		expect(warmupEntryData(harness).at(-1)).toEqual(expect.objectContaining({ phase: "scheduled", iteration: 1 }));
 	});
 
 	it("keeps a plain explanation when no cache context exists", async () => {

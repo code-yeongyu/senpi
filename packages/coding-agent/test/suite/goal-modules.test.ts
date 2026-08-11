@@ -262,8 +262,8 @@ describe("goal truncation recovery prompt", () => {
 });
 
 describe("goal stall notice", () => {
-	it("emits generic toolless-stall bullets when no monitors are active", () => {
-		const notice = buildGoalStallNotice(3, { monitorsActive: false });
+	it("emits generic toolless-stall bullets when no channels are active", () => {
+		const notice = buildGoalStallNotice(3, { liveSources: [] });
 		expect(notice).toContain("<goal_stall_check>");
 		expect(notice).toContain("</goal_stall_check>");
 		expect(notice).toContain("3");
@@ -271,18 +271,25 @@ describe("goal stall notice", () => {
 		expect(notice).not.toContain("kill_bash");
 	});
 
-	it("keeps the monitor-investigation bullets while monitors are active", () => {
-		const notice = buildGoalStallNotice(4, { monitorsActive: true });
+	it("matches investigation advice to every live channel kind", () => {
+		const notice = buildGoalStallNotice(4, {
+			liveSources: ["terminal-monitors", "senpi-task", "senpi-codemode", "terminal-background-sessions"],
+		});
 		expect(notice).toContain("<goal_stall_check>");
 		expect(notice).toContain("bash_output");
 		expect(notice).toContain("kill_bash");
+		expect(notice).toContain("task_output");
+		expect(notice).toContain("task_send");
+		expect(notice).toContain("eval");
+		expect(notice).toContain("peek");
+		expect(notice).toContain("stop");
 		expect(notice).toContain("4");
 	});
 
 	it("keeps buildMonitorStallNotice as a legacy wrapper over the generalized notice", () => {
 		const legacy = buildMonitorStallNotice(5);
 		expect(legacy).toContain("<goal_stall_check>");
-		expect(legacy).toBe(buildGoalStallNotice(5, { monitorsActive: true }));
+		expect(legacy).toBe(buildGoalStallNotice(5, { liveSources: ["terminal-monitors"] }));
 	});
 });
 

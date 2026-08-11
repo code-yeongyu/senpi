@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	classifyRateLimitedWait,
+	degradeWithoutFallback,
 	nextInTurnDelayMs,
 	probeBackSchedule,
 } from "../../src/core/retry-fallback/hint-policy.ts";
@@ -432,5 +433,36 @@ describe("nextInTurnDelayMs", () => {
 		expect(result.delayMs).toBe(150_000);
 		expect(result.cumulativeHintedWaitMs).toBe(300_001);
 		expect(result.demoteToProbeBack).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// degradeWithoutFallback
+// ---------------------------------------------------------------------------
+
+describe("degradeWithoutFallback", () => {
+	it("returns exponential in-turn delays for a no-hint 429", () => {
+		expect(degradeWithoutFallback("no-hint-fast-fallback", undefined, 1, BASE, CAP)).toEqual({
+			kind: "in-turn",
+			delayMs: BASE,
+		});
+		expect(degradeWithoutFallback("no-hint-fast-fallback", undefined, 3, BASE, CAP)).toEqual({
+			kind: "in-turn",
+			delayMs: BASE * 4,
+		});
+	});
+
+	it("clamps tier2 hinted waits to the in-turn cap", () => {
+		expect(degradeWithoutFallback("tier2-fallback-probe-back", CAP + 60_000, 1, BASE, CAP)).toEqual({
+			kind: "in-turn",
+			delayMs: CAP,
+		});
+	});
+
+	it("stays terminal for tier3 waits and reports the hint", () => {
+		expect(degradeWithoutFallback("tier3-fallback-only", PROBE_MAX, 1, BASE, CAP)).toEqual({
+			kind: "fail",
+			hintMs: PROBE_MAX,
+		});
 	});
 });

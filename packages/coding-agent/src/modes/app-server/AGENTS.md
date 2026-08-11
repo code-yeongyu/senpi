@@ -7,12 +7,23 @@ Codex-compatible app-server mode. It exposes Senpi threads and turns over JSON-R
 ```text
 index.ts              Mode entry and listener selection
 cli-args.ts           app-server argument parsing
-daemon/               Background process probing and lifecycle
+runtime.ts            Wires FuzzyFileSearchService, skill methods, thread lifecycle
+daemon.ts, daemon/    Background process probing and lifecycle
 rpc/                  Envelopes, errors, NDJSON framing, method registry
 server/               Connection state, approvals, notifications, dispatch
-threads/              Session-backed thread registry, projection, turns
+threads/              Session-backed thread registry, projection, turns; split
+                      handler clusters (list-, metadata-, settings-handlers),
+                      projection-*.ts split projections, goal-handlers/goal-wire,
+                      turn runtime (turn-runtime.ts, turn-terminal.ts, turns.ts),
+                      thread-content search (search.ts, search-cache.ts,
+                      search-occurrences.ts, search-params.ts)
+search/               Fuzzy file search (fuzzy-files.ts, fuzzy-search-methods.ts,
+                      fuzzy-search-service.ts, gitignore.ts)
 transports/           stdio, Unix socket, WebSocket auth/backpressure
-protocol/             App-facing facade plus pinned generated Codex evidence
+protocol/             App-facing facade (account.ts, config.ts, thread.ts, turn.ts,
+                      collaboration-mode.ts, fuzzy-search.ts, terminal.ts, …) plus
+                      pinned generated Codex evidence; generated/v2/ is the
+                      second-generation tree (~527 files)
 turn-adapter.ts       Agent/session events to app-server turn events
 ```
 
@@ -52,3 +63,6 @@ turn-adapter.ts       Agent/session events to app-server turn events
 - Run the matching `packages/coding-agent/test/qa/app-server/` driver for focused Unix-socket, malformed-input, and lifecycle scenarios.
 - Protocol or documentation changes must keep `packages/coding-agent/docs/app-server.md` examples and `packages/coding-agent/test/qa/app-server/` checks aligned.
 - Runtime changes also require root `npm run check` and the applicable real CLI QA evidence gate.
+
+---
+Generated: 2026-08-07 | Commit: `4f26b8282`

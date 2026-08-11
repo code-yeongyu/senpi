@@ -15,7 +15,7 @@ extensions/
 │                        # exposes `bindCore()` to wire `pi.*` stubs to real implementations.
 ├── wrapper.ts           # 30-line wrapper utility used to track extension origin per UI message
 ├── index.ts             # Re-exports from runner/loader/types
-├── builtin/             # 23 builtin extensions + bundled codemode (`core/resource-loader.ts`) — see builtin/AGENTS.md
+├── builtin/             # 32 builtin extensions + 4 global defaults + bundled codemode (`core/resource-loader.ts`) — see builtin/AGENTS.md
 └── changes.md           # Fork tracker — DENSE. Every public-API change must add a section.
 ```
 
@@ -65,3 +65,6 @@ extensions/
 - The ~1844-line `types.ts` is "the API"; treat its diffs like a public package release.
 - `ToolRenderContext` now includes `imageProtocol` (terminal image protocol, or null when images can't render) and `hasResult` (lets a call renderer yield to the result renderer).
 - `changes.md` already documents major fork-introduced APIs: `ModelSelectEventResult`, `SystemPromptChangeEvent`, `getCompactionSettings`, lazy/shared jiti, default-extension factory resolver. Read it before extending.
+
+---
+Generated: 2026-08-07 | Commit: `4f26b8282`

@@ -1,5 +1,130 @@
 # changes
 
+## Refresh server-fallback policy for active-turn model changes (2026-08-10)
+
+### What changed
+
+- `AgentSession` now recomputes `abortServerSideFallback` in its next-turn refresh snapshot from the live retry
+  settings and the newly active model's configured fallback chain.
+- Favorite-model cycling during tool execution previously changed the next request's model but left the agent loop's
+  run-start server-fallback option unchanged. A Fable request entered from an unchained model could therefore accept
+  and persist Anthropic's provider-native Fable-to-Opus fallback instead of routing the refusal through Senpi's
+  configured chain.
+- The explicit `retry.abortServerSideFallback: false` opt-out remains false after the same in-turn model cycle.
+- Coverage reproduces the real request order with a faux tool: unchained model request, favorite cycle during tool
+  execution, then a chained-model continuation.
+
+### Why this cannot be expressed externally
+
+- Extensions can trigger or observe model selection, but the live provider option is assembled by agent-core from the
+  session's next-turn snapshot before the continuation request is sent.
+
+### Expected merge conflict zones
+
+- LOW: `_installAgentNextTurnRefresh()` next-turn snapshot fields in `agent-session.ts`.
+- LOW: `server-fallback-abort-option.test.ts` continuation-policy coverage.
+
+## Extension filesystem policy binding (2026-08-09)
+
+### What changed
+
+- `AgentSession._buildRuntime()` composes factory-registered filesystem policies once and injects the resulting optional
+  checker into Senpi's six built-in file tools.
+- Policy absence produces `undefined`, preserving the previous runtime path without per-call extension dispatch.
+
+### Why this cannot be expressed externally
+
+- Only the session runtime constructs the canonical built-in tool definitions and can install a checker below
+  permission/approval hooks while keeping extension-overridden custom tools separate.
+
+### Expected merge conflict zones
+
+- LOW: `_buildRuntime()` around extension result loading and `createAllToolDefinitions()` options.
+
+## Prompt-cache keep-alive and goal backstop settings (2026-08-09)
+
+### What changed
+
+- `settings-manager.ts` gained `promptCache.goalBackstopMaxSeconds` (default 3570) capping the
+  cache-derived goal continuation backstop, and `promptCache.keepAlive`
+  (`enabled` default false, `maxRequestsPerSession` 3, `maxCostUsdPerSession` 0.05,
+  `marginSeconds` 60) governing the opt-in `cache-keepalive` builtin extension.
+
+### Why not an extension
+
+- Both live on `Settings`, which is core-owned; extensions read them through
+  `ExtensionContext`, they cannot declare new persisted settings keys themselves.
+
+### Merge-conflict zones
+
+- `PromptCacheSettings` interface and the corresponding getters in `settings-manager.ts`.
+
+## Dispatch extension commands before settled session work (2026-08-09)
+
+### What changed
+
+- Registered extension slash commands now dispatch at the head of `AgentSession.prompt()`, after any
+  in-flight user-abort wait but before prompt-start ownership and the settled-session-work gate.
+- A synchronous command lookup avoids adding an await or widening prompt-start admission for unknown
+  leading-slash text. Handled commands preserve the existing `promptDisposition("handled")` and
+  `preflightResult(true)` callbacks; post-handler cancellation reports `preflightResult(false)` and
+  rethrows.
+
+### Why
+
+- Extension commands are UI actions, not prompts. Serializing them behind compaction or the
+  session-work barrier delayed command output until an active continuation run ended, even though
+  the same commands were intended to execute immediately.
+
+### Accepted behavior deltas
+
+- Idle extension commands now skip `_maybeRestoreFallbackPrimary()`. `/fast` and `/fallback` may
+  observe a fallback model whose cooldown has expired; the primary is still restored by the next
+  real prompt.
+- In print mode, a slash command in a scripted `-m` message list executes immediately rather than
+  after pending continuations.
+- App-server handled-command turn lifecycle behavior is unchanged, but command handling can now
+  complete earlier relative to its pre-existing started/user-message events.
+
+### Why this cannot be expressed externally
+
+- The settled-work admission gate and prompt-start bookkeeping live inside `AgentSession.prompt()`;
+  an extension command handler cannot run until core dispatch reaches it.
+- Expected merge-conflict zone: `agent-session.ts` at the head of `prompt()` around user-abort,
+  extension-command dispatch, prompt-start ownership, and settled-work admission.
+
+## Degrade fallback-unavailable 429s to in-turn retry (2026-08-06)
+
+### What changed
+
+- A 429-class failure whose hint tier routes to fallback (`no-hint-fast-fallback`, tier2, tier3) no
+  longer fails the turn with `auto_retry_end { attempt: 0 }` when no fallback candidate is usable
+  (no chain for the model, chain exhausted, candidates cooling, or unauthenticated).
+- No-hint failures degrade to same-model in-turn retries on the ordinary `settings.retry`
+  exponential schedule; tier2 hinted waits retry in-turn with the wait clamped to
+  `hintedWaitCapMs`; tier3 (>= `probeBackMaxMs`) waits stay terminal but the final error now names
+  the provider-requested wait in seconds.
+- The pure policy is `degradeWithoutFallback` in `retry-fallback/hint-policy.ts`;
+  `agent-session.ts` routes both former instant-death branches through
+  `_degradeRateLimitedWithoutFallback`, which also reports the TRUE attempt count on budget
+  exhaustion.
+
+### Why
+
+- Providers that send hint-less 429s (e.g. wafer `server_overloaded` bodies that literally say
+  "Please retry shortly") killed the turn on the FIRST 429 for any model without a usable fallback
+  chain, surfacing "Retry failed after 0 attempts". sst/opencode retries such failures in-turn
+  with a visible countdown and openai/codex replays the turn within its stream budget; failing
+  with zero attempts was strictly worse than both.
+
+### Why this cannot be expressed externally
+
+- Retry admission, the retry promise, `_retryAttempt` accounting, and the hint tier router live in
+  `AgentSession._handleRetryableError`; an extension cannot re-enter the continuation path after
+  the fallback controller declines a candidate.
+- Expected merge-conflict zone: `agent-session.ts` `_handleRetryableError` 429 tier routing and the
+  `retry-fallback/hint-policy.ts` tail.
+
 ## Absolute-cap compaction rejection message (2026-08-05)
 
 - `describeCompactionRejection()` for `"per-turn-cap"` now reads "absolute compaction cap reached for

@@ -86,7 +86,7 @@ describe("retention precedence stays pinned to the API adapters", () => {
 
 		expect(resolvePromptCacheTtlSeconds(anthropicModel, env)).toBe(3600);
 		expect(resolvePromptCacheTtlSeconds(anthropicCompletionsModel, env)).toBe(3600);
-		expect(resolvePromptCacheTtlSeconds(cacheableBedrockModel, env)).toBe(3600);
+		expect(resolvePromptCacheTtlSeconds(cacheableBedrockModel, env)).toBe(300);
 		expect(resolvePromptCacheTtlSeconds(openAIResponsesModel, env)).toBe(300);
 	});
 
@@ -139,25 +139,52 @@ describe("Anthropic Messages TTL", () => {
 });
 
 describe("OpenAI Completions TTL", () => {
-	it("uses resolved OpenRouter compat for anthropic-prefixed models", () => {
+	it.each([
+		"anthropic/claude-sonnet-4",
+		"~anthropic/claude-opus-latest",
+		"qwen/qwen3-235b-a22b",
+		"google/gemini-2.5-pro",
+	])("uses resolved OpenRouter cache control compat for %s", (modelId) => {
 		const openRouterModel = createModel("openai-completions", {
-			id: "anthropic/claude-sonnet-4",
+			id: modelId,
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
 			cacheRetention: "long",
 		});
 
 		expect(getOpenAICompletionsCompat(openRouterModel).cacheControlFormat).toBe("anthropic");
+		expect(getOpenAICompletionsCompat(openRouterModel).sendSessionAffinityHeaders).toBe(true);
 		expect(resolvePromptCacheTtlSeconds(openRouterModel)).toBe(3600);
 	});
 
-	it("selects Moonshot tool schema normalization automatically", () => {
+	it("does not enable cache control for other OpenRouter model prefixes", () => {
+		const openRouterModel = createModel("openai-completions", {
+			id: "meta-llama/llama-3.3-70b-instruct",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+		});
+
+		expect(getOpenAICompletionsCompat(openRouterModel).cacheControlFormat).toBeUndefined();
+	});
+
+	it("selects Moonshot tool schema normalization and prompt cache keys automatically", () => {
 		const moonshotModel = createModel("openai-completions", {
 			provider: "moonshotai",
 			baseUrl: "https://api.moonshot.ai/v1",
 		});
 
 		expect(getOpenAICompletionsCompat(moonshotModel).toolSchemaFlavor).toBe("moonshot-mfjs");
+		expect(getOpenAICompletionsCompat(moonshotModel).supportsPromptCacheKey).toBe(true);
+	});
+
+	it("preserves an explicit Moonshot prompt cache key override", () => {
+		const moonshotModel = createModel("openai-completions", {
+			provider: "moonshotai",
+			baseUrl: "https://api.moonshot.ai/v1",
+			compat: { supportsPromptCacheKey: false },
+		});
+
+		expect(getOpenAICompletionsCompat(moonshotModel).supportsPromptCacheKey).toBe(false);
 	});
 
 	it("preserves an explicit tool schema normalization override", () => {
@@ -202,8 +229,8 @@ describe("Bedrock Converse TTL", () => {
 		);
 	});
 
-	it("returns one hour for a cacheable Claude model with long retention", () => {
-		expect(resolvePromptCacheTtlSeconds({ ...cacheableBedrockModel, cacheRetention: "long" })).toBe(3600);
+	it("returns five minutes for a cacheable Claude 3.7 model with long retention", () => {
+		expect(resolvePromptCacheTtlSeconds({ ...cacheableBedrockModel, cacheRetention: "long" })).toBe(300);
 	});
 
 	it("returns undefined for a model without explicit prompt caching support", () => {
@@ -226,11 +253,20 @@ describe("Bedrock Converse TTL", () => {
 		const env = { AWS_BEDROCK_FORCE_CACHE: "1" };
 
 		expect(supportsPromptCaching(model, env)).toBe(true);
-		expect(resolvePromptCacheTtlSeconds(model, env)).toBe(3600);
+		expect(resolvePromptCacheTtlSeconds(model, env)).toBe(300);
 	});
 });
 
 describe("automatic and unknown cache backends", () => {
+	it("returns five minutes for the actual Claude SDK OAuth model shape", () => {
+		const model = createModel("claude-sdk-oauth", {
+			provider: "claude-sdk-oauth",
+			baseUrl: "claude-sdk-oauth",
+		});
+
+		expect(resolvePromptCacheTtlSeconds(model, { PI_CACHE_RETENTION: "long" })).toBe(300);
+	});
+
 	it.each(["openai-responses", "openai-codex-responses", "azure-openai-responses"] as const)(
 		"returns five minutes for %s",
 		(api) => {

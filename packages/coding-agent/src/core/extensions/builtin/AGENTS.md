@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/extensions/builtin
 
-27 in-tree extensions. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
+32 in-tree extensions plus 4 global defaults. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
 
 ## INVENTORY (registration order from `builtin/index.ts`)
 
@@ -16,25 +16,35 @@
 | 8 | `anthropic-bash` | `anthropic-bash/` | Anthropic-native bash tool variant |
 | 9 | `openai-web-search` | `openai-web-search/` | OpenAI-native web search |
 | 10 | `service-tier` | `service-tier.ts` | Per-model service-tier (e.g., priority-tier mapping) |
-| 11 | `bash-timeout` | `bash-timeout/` | Bash tool timeout + handlers |
-| 12 | `terminal` | `terminal/` | Persistent PTY-backed bash + bash_output/bash_input/bash_resize/kill_bash tools |
-| 13 | `tool-pair-guard` | `tool-pair-guard/` | Repairs orphaned tool_use/tool_result pairs (compaction safety) |
-| 14 | `compaction` | `compaction/` | Plugsuit-style speculative + emergency compaction with restoration |
-| 15 | `history-search` | `history-search/` | Cross-session transcript search overlay (indexes session files) |
-| 16 | `import-repro` | `import-repro.ts` | `/ir` command — import an issue-analysis CI session gist and switch to it |
-| 17 | `websearch` | `websearch/` | Provider-backed `web_search` tool + `/websearch` (providers incl. kimi); vendored from `../pi-extensions/pi-websearch` |
-| 18 | `webfetch` | `webfetch/` | `webfetch` tool (md/text/html, gated by `PI_WEBFETCH`); vendored from `../pi-extensions/pi-webfetch` |
-| 19 | `look-at` | `look-at/` | Vision-model delegation tool for media analysis when the active model cannot accept image input |
-| 20 | `nested-agents-md` | `nested-agents-md/` | Auto-injects nearby `AGENTS.md` + `/nested-agents`; vendored from `../pi-extensions/pi-nested-agents-md` |
-| 21 | `rules` | `rules/` | Rule-file discovery + `/rules`/`/reload-rules`; vendored from `../pi-extensions/pi-rules` |
-| 22 | `goal` | `goal/` | Budget-free goal tools + `/goal`; vendored from `../pi-extensions/pi-goal` |
-| 23 | `btw` | `btw/` | `/btw` side-question command that queries in parallel without touching the main session |
-| 24 | `config-reload` | `config-reload/` | Hash-gated watcher for trusted global/project config surfaces that defers a full session reload until idle and exposes the `config-watch:*` event protocol; registered after settings-dependent builtins so a reload rebuilds their resolved settings, and before final MCP observation |
-| 25 | `mcp` | `mcp/` | Built-in MCP client: `mcpServers` config, stdio/http transports, `/mcp` commands, tool exposure policy — see `mcp/changes.md` |
-| 26 | `ttsr` | `ttsr/` | Stream-rule detection (collapse + control-token-leak) with abort→remediate→retry; ported from oh-my-pi — see `ttsr/changes.md` |
-| 27 | `loop-guard` | `loop-guard/` | Tool-call loop detection (identical / near-identical / cyclic) that steers a `<system-reminder>` into the running turn with a cache-warm-style TUI notice — see `loop-guard/changes.md` |
+| 11 | `model-fallback` | `model-fallback/` | Fallback-chain validation + `/model-fallback` menu, `--no-model-fallback` flag (uses `core/retry-fallback/`) |
+| 12 | `recommended-models` | `recommended-models/` | Auto-switches implicit default models to recommended ones; respects explicit `settings` provenance; `--no-recommended-models` |
+| 13 | `bash-timeout` | `bash-timeout/` | Bash tool timeout + handlers |
+| 14 | `terminal` | `terminal/` | Persistent PTY-backed bash + bash_output/bash_input/bash_resize/kill_bash tools; follows bash-timeout (default reaches PTY bash) and anthropic-bash (mutual-exclusion step-aside) |
+| 15 | `tool-pair-guard` | `tool-pair-guard/` | Repairs orphaned tool_use/tool_result pairs (compaction safety) |
+| 16 | `compaction` | `compaction/` | Plugsuit-style speculative + emergency compaction with restoration |
+| 17 | `history-search` | `history-search/` | Cross-session transcript search overlay (indexes session files) |
+| 18 | `help` | `help/` | `/help` + `/keybindings` TUI overlay panel (renders `interactive/help-content.ts`) |
+| 19 | `import-repro` | `import-repro.ts` | `/ir` command — import an issue-analysis CI session gist and switch to it |
+| 20 | `websearch` | `websearch/` | Provider-backed `web_search` tool + `/websearch` (providers incl. kimi); vendored from `../pi-extensions/pi-websearch` |
+| 21 | `webfetch` | `webfetch/` | `webfetch` tool (md/text/html, gated by `PI_WEBFETCH`); vendored from `../pi-extensions/pi-webfetch` |
+| 22 | `video-in` | `video-in/` | Model-gated `read_video` tool (kimi-code ReadMediaFile parity); active only when the model declares the "video" input modality |
+| 23 | `look-at` | `look-at/` | Vision-model delegation tool for media analysis when the active model cannot accept image input |
+| 24 | `nested-agents-md` | `nested-agents-md/` | Auto-injects nearby `AGENTS.md` + `/nested-agents`; vendored from `../pi-extensions/pi-nested-agents-md` |
+| 25 | `rules` | `rules/` | Rule-file discovery + `/rules`/`/reload-rules`; vendored from `../pi-extensions/pi-rules` |
+| 26 | `goal` | `goal/` | Budget-free goal tools + `/goal`; vendored from `../pi-extensions/pi-goal` |
+| 27 | `ttsr` | `ttsr/` | Stream-rule detection (collapse + control-token-leak) with abort→remediate→retry; ported from oh-my-pi — see `ttsr/changes.md` |
+| 28 | `btw` | `btw/` | `/btw` side-question command that queries in parallel without touching the main session |
+| 29 | `claude-sdk-oauth` | `claude-sdk-oauth/` | Claude SDK OAuth provider: multi-account OAuth, resume-first session continuity, stream-safe failover — see `claude-sdk-oauth/AGENTS.md` + `changes.md` |
+| 30 | `loop-guard` | `loop-guard/` | Tool-call loop detection (identical / near-identical / cyclic) that steers a `<system-reminder>` into the running turn with a cache-warm-style TUI notice — see `loop-guard/changes.md`; pure observer, slots before config-reload |
+| 31 | `config-reload` | `config-reload/` | Hash-gated watcher for trusted global/project config surfaces that defers a full session reload until idle and exposes the `config-watch:*` event protocol; registered after settings-dependent builtins so a reload rebuilds their resolved settings, and before final MCP observation |
+| 32 | `mcp` | `mcp/` | Built-in MCP client: `mcpServers` config, stdio/http transports, `/mcp` commands, tool exposure policy — kept last so its provider-payload tap observes all co-resident builtin mutations; see `mcp/changes.md` |
 
 Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by resource-loader.ts) and 4 **global default extensions** (resolved fast-path): `diff`, `files`, `prompt-url-widget`, `tps` (in `globalDefaultExtensionFactories`).
+
+Shared non-factory modules in this directory:
+
+- `rule-activation/` — `appendRuleActivation` + renderer/types; consumed by `rules/` and `ttsr/`.
+- `monitor-state-event.ts` — `TerminalMonitorStateEvent` + guard; consumed by `goal/` and `terminal/`.
 
 ## ADDING A NEW BUILTIN EXTENSION
 
@@ -68,3 +78,6 @@ Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by
 - `goal/elapsed-ticker.ts` drives the live 'Pursuing goal...' footer refresh on a one-second cadence.
 - MCP search exposure tool is `tool_search` (mcp/expose/tool-search.ts). Do not reintroduce `mcp_search` references anywhere.
 - Prompt presets routinely append the shared `file-operations.ts` tuning block. Mirror this when adding GPT-5.x presets — see `prompt-preset/changes.md` 2026-05-07.
+
+---
+Generated: 2026-08-07 | Commit: `4f26b8282`

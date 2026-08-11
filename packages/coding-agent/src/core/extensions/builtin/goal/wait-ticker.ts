@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "../../types.ts";
+import type { ResumptionChannelCounts } from "./monitor-continuation-types.ts";
 import { formatGoalWaitLabel, type GoalWaitKind, type GoalWaitLabelInput } from "./wait-progress.ts";
 
 /** Footer countdown refresh cadence while a Goal continuation is delayed. */
@@ -27,7 +28,7 @@ export class GoalWaitTicker {
 	private kind: GoalWaitKind | undefined;
 	private dueAtMs = 0;
 	private totalMs = 0;
-	private activeMonitorCount = 0;
+	private channelCounts: ResumptionChannelCounts = {};
 	private lastRenderedStatus: string | undefined;
 
 	constructor(options: GoalWaitTickerOptions) {
@@ -45,7 +46,7 @@ export class GoalWaitTicker {
 		this.kind = input.kind;
 		this.dueAtMs = this.now() + Math.max(0, input.remainingMs);
 		this.totalMs = input.totalMs;
-		this.activeMonitorCount = input.activeMonitorCount;
+		this.channelCounts = { ...input.channelCounts };
 		this.lastRenderedStatus = undefined;
 		this.tick();
 		if (this.intervalId !== undefined) return;
@@ -54,10 +55,10 @@ export class GoalWaitTicker {
 		this.intervalId = handle;
 	}
 
-	/** Refresh monitor wording without changing the countdown deadline. */
-	setActiveMonitorCount(activeMonitorCount: number): void {
+	/** Refresh channel wording without changing the countdown deadline. */
+	setChannelCounts(channelCounts: ResumptionChannelCounts): void {
 		if (this.ctx === undefined || this.kind !== "monitor") return;
-		this.activeMonitorCount = activeMonitorCount;
+		this.channelCounts = { ...channelCounts };
 		this.tick();
 	}
 
@@ -80,7 +81,7 @@ export class GoalWaitTicker {
 			kind: this.kind,
 			remainingMs: Math.max(0, this.dueAtMs - this.now()),
 			totalMs: this.totalMs,
-			activeMonitorCount: this.activeMonitorCount,
+			channelCounts: this.channelCounts,
 		});
 		if (status === this.lastRenderedStatus) return;
 		this.lastRenderedStatus = status;

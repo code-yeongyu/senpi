@@ -1,5 +1,121 @@
 # goal Extension Changes
 
+## Explicit resume revives completed goals (2026-08-11)
+
+### What changed
+
+- User-originated status mutations may transition a completed goal back to `active`, so `/goal resume` and app-server `thread/goal/set {status:"active"}` revive the existing goal and queue the normal continuation path.
+- Resuming clears `completedAt`, stamps `lastStartedAt`, and resets persisted continuation streak state through the existing status-transition behavior.
+- Model-originated transitions remain unchanged, `complete -> paused` remains illegal, and restart-resume prompting still excludes completed goals.
+
+### Why
+
+Codex permits an explicit user action to reactivate a completed thread goal. Senpi parsed `/goal resume` and wired continuation delivery correctly, but its user transition guard rejected `complete -> active` before that path could run.
+
+### Why this is not extension-only
+
+The transition guard is private to the builtin goal store and controls both the command and app-server wire paths. An external extension cannot authorize a new persisted status edge.
+
+### Merge-conflict zones
+
+- LOW in `transitions.ts` around the user transition set.
+- LOW in goal store and command-path tests covering completed-goal resume.
+
+## Serialized goal mutations and stale-continuation cancellation (2026-08-10)
+
+### What changed
+
+- Goal read/modify/write operations now serialize per persisted goal file while unrelated threads remain parallel.
+- Continuation delivery records only when the admitted goal id is still current; a clear or replacement cancels stale delivery before any hidden prompt is queued.
+- App-server clear no longer races asynchronous `goal_store_changed` continuation accounting and cannot resurrect a cleared goal.
+
+### Why
+
+`goal_store_changed` listeners are asynchronous and fire outside the app-server thread task queue. A continuation could read an active goal, then overwrite a later clear with its stale snapshot. Store-level serialization is required because commands, tools, lifecycle callbacks, monitors, and RPC handlers all mutate the same persisted goal outside one shared handler queue.
+
+### Why this is not extension-only
+
+The race is inside the builtin goal persistence contract and app-server event path. An external extension cannot make core store mutations linearizable or prevent the builtin continuation listener from committing a stale read.
+
+### Merge-conflict zones
+
+- `store.ts`: per-goal mutation queue and serialized mutation functions.
+- `lifecycle-helpers.ts`: expected goal-id fence and stale cancellation.
+- `index.ts`, `monitor-continuation.ts`: nullable stale-admission handling.
+
+## Unified wake-source continuation gating (2026-08-09)
+
+### What changed
+
+- Goal dual-subscribes to `wake_source_state` and the permanent `terminal_monitor_state` alias, storing last-write-wins counts by source and gating on their sum.
+- Scheduled/resumed events and cache-warm entries retain `activeMonitorCount` as the aggregate compatibility field and add the complete `wakeSources` snapshot.
+- Draining the aggregate count to zero while a monitor wait is armed replaces the long backstop with a one-second drain fire that bypasses the zero-count guard; its resumed record keeps the pre-reset warm iteration.
+- App-server `thread/goal/set` publishes `goal_store_changed`, allowing the builtin to queue an active goal on an idle session.
+
+### Why
+
+Background work could remain live outside terminal monitors, and a final source drain previously cancelled the only continuation timer without delivering work. RPC-created goals also had no lifecycle edge to wake an idle agent.
+
+### Why an extension couldn't do it
+
+The continuation gate, iteration reset order, goal store, and app-server session event bus are fork-owned builtin/core surfaces.
+
+### Expected merge conflict zones
+
+- HIGH in `monitor-continuation.ts` around source snapshots, timer firing, and iteration reset order.
+- MEDIUM in `index.ts` and app-server goal handlers around the internal store-change event.
+
+## Cache-safe backstops and warm-iteration ordinals (2026-08-09)
+
+### What changed
+
+- Monitor continuation delays snapshot the active extension context's prompt-cache safe-wait budget and apply the configured `promptCache.goalBackstopMaxSeconds` ceiling, with the former four-minute value retained only as the unknown-budget fallback.
+- Direct-input holds now consume elapsed wall-clock time instead of restarting the held remainder, and wait progress keeps the originally scheduled total.
+- Cache-warm rendering stops claiming that tokens remained warm or produced savings when the planned or actual wait reaches the displayed cache TTL.
+- Cache-warm scheduled/resumed events and durable entries carry an optional per-epoch iteration ordinal; legacy entries omit the iteration wording.
+
+### Why
+
+- Provider lanes expose materially different cache-safe budgets. A fixed four-minute backstop wakes long-TTL lanes too often and ignores the existing provider-aware budget resolver.
+- Input admission time is still real cache age, so pausing the timer during admission could overrun the captured budget.
+- Iteration ordinals make repeated warm cycles understandable without persisting session-global state or mislabeling old entries.
+
+### Why an extension couldn't do it
+
+- The resolved prompt-cache budget and merged settings are owned by the session core and must cross the typed extension-context boundary.
+- Goal's monitor timer, durable entry payload, and renderer are private builtin implementation surfaces.
+
+### Expected merge conflict zones
+
+- MEDIUM in `monitor-continuation.ts`, `cache-warm.ts`, and `cache-warm-renderer.ts` around scheduling and entry payloads.
+- LOW in `settings-manager.ts`, extension context plumbing, and goal-monitor test harnesses.
+
+## Reload snapshots survive first session start (2026-08-09)
+
+### What changed
+
+- `MonitorAwareGoalContinuation` preserves source-keyed channel snapshots received
+  before its first `start()`, while a subsequent `start()` on the same instance
+  still clears counts from the replaced session.
+- Integration coverage runs Terminal before Goal on one event bus, parks live
+  monitor and background-bash state across a real reload lifecycle, and verifies
+  both replayed snapshots delay Goal continuation after the new runner starts.
+
+### Why
+
+- Builtin order is load-bearing: Terminal's reload `session_start` claims and binds
+  its parked bundle before Goal's handler runs. `bind()` immediately replays both
+  terminal snapshots to the newly constructed Goal instance, so clearing counts on
+  that instance's first `start()` discarded current-session liveness with no later
+  transition available to restore it.
+- Pre-first-start snapshots belong to the fresh runner generation. Only a later
+  same-instance `start()` represents a genuine session replacement whose old
+  snapshots must be discarded.
+
+### Expected merge conflict zones
+
+- LOW in `monitor-continuation.ts` around `start()` lifecycle reset behavior.
+
 ## System-owned aborts stay active through Goal recovery (2026-08-05)
 
 ### What changed

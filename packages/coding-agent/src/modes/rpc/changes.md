@@ -1,5 +1,27 @@
 # changes
 
+## Multi-session open failure details (2026-08-07)
+
+### What changed
+
+- Multi-session `open_session` failures retain the typed `open_failed` registry code while returning the underlying
+  error message on the wire as `open_failed: <reason>` when one is available.
+- All other stable RPC error codes remain exact strings without detail suffixes.
+
+### Why
+
+- The registry rollback path discarded the runtime/session construction error, leaving RPC clients with a bare
+  `open_failed` response that did not identify invalid workspace directories or other actionable causes.
+
+### Why extension system couldn't handle this
+
+- Multi-session lifecycle errors and JSONL response serialization are owned by the built-in RPC transport and are not
+  exposed through extension hooks.
+
+### Expected merge conflict zones
+
+- LOW: `session-registry.ts` error construction and `session-command-router.ts` registry-error serialization.
+
 ## high_reasoning_warning RPC event (2026-07-30)
 
 - New `RpcHighReasoningWarningEvent` contract (`{ type: "high_reasoning_warning"; modelId; provider; thinkingLevel }`), auto-published to RPC stdout via the existing `session.subscribe -> outputEvent` seam. No new wiring; the event is a session event forwarded like `thinking_level_changed`.

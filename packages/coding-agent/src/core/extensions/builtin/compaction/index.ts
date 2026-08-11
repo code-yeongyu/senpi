@@ -401,18 +401,18 @@ export default function compactionExtension(
 					compaction,
 					feedbackSignal,
 				);
-				if (result.applied || result.reason === "stale") {
+				if (result.applied) {
 					speculativeJob = undefined;
-					if (result.applied)
-						getLogger(ctx).debug("speculative_applied", {
-							generation: pendingJob.generation,
-							origin: "speculative",
-						});
-					else getLogger(ctx).debug("speculative_stale", { generation: pendingJob.generation });
+					getLogger(ctx).debug("speculative_applied", {
+						generation: pendingJob.generation,
+						origin: "speculative",
+					});
 					endCompactionFeedback(ctx, feedbackSignal, result);
 					return result;
 				}
-				if (result.reason === "rejected") {
+				if (result.reason === "stale") {
+					getLogger(ctx).debug("speculative_stale", { generation: pendingJob.generation });
+				} else if (result.reason === "rejected") {
 					feedbackSignal = ctx.beginCompaction?.({ reason: "extension" });
 				}
 				speculativeJob = undefined;

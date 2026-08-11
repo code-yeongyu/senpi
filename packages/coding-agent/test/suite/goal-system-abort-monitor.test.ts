@@ -47,7 +47,7 @@ describe("goal state after a system-owned abort", () => {
 			expect(sent).toHaveLength(0);
 			expect(events.emitted).toContainEqual({
 				channel: "goal_continuation_scheduled",
-				data: expect.objectContaining({ activeMonitorCount: 1, delayMs: 240_000 }),
+				data: expect.objectContaining({ activeMonitorCount: 1, delayMs: 240_000, iteration: 1 }),
 			});
 		},
 	);

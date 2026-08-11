@@ -3,6 +3,7 @@ import anthropicBashExtension from "./anthropic-bash/index.ts";
 import anthropicWebSearchExtension from "./anthropic-web-search/index.ts";
 import bashTimeoutExtension from "./bash-timeout/index.ts";
 import btwExtension from "./btw/index.ts";
+import cacheKeepAliveExtension from "./cache-keepalive/index.ts";
 import claudeSdkOauthExtension from "./claude-sdk-oauth/index.ts";
 import compactionExtension from "./compaction/index.ts";
 import configReloadExtension from "./config-reload/index.ts";
@@ -79,6 +80,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "nested-agents-md", factory: nestedAgentsMdExtension },
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },
+	{ id: "cache-keepalive", factory: cacheKeepAliveExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
 	{ id: "claude-sdk-oauth", factory: claudeSdkOauthExtension },

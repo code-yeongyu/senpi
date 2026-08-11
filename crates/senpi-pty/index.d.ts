@@ -5,8 +5,8 @@ export declare class PtySession {
   write(data: string | Buffer | Uint8Array): NapiResult<undefined>
   resize(cols: number, rows: number): NapiResult<undefined>
   kill(signal?: string | undefined | null): NapiResult<undefined>
-  waitExit(): NapiResult<Promise<unknown>>
-  wait(): NapiResult<Promise<unknown>>
+  waitExit(): NapiResult<Promise<NativePtyExit>>
+  wait(): NapiResult<Promise<NativePtyExit>>
 }
 export type NativePtySession = PtySession
 

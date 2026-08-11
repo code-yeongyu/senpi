@@ -30,11 +30,7 @@ afterEach(() => {
 
 describe("SettingsManager retry fallback settings", () => {
 	const defaultChains = {
-		"anthropic/claude-fable-5": [
-			"apitopia/kimi-k3-unlocked:max",
-			"anthropic/claude-opus-5:xhigh",
-			"anthropic/claude-opus-4-8:xhigh",
-		],
+		"claude-fable-5": ["k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
 	};
 
 	it("defaults abortServerSideFallback to true and round-trips an explicit false", () => {
@@ -79,13 +75,13 @@ describe("SettingsManager retry fallback settings", () => {
 		const manager = SettingsManager.create(projectDir, agentDir);
 		manager.setModelFallbackEnabled(false);
 		manager.setFallbackRevertPolicy("never");
-		manager.setFallbackChain("anthropic/claude-fable-5", ["ccapi/kimi-k3:max"]);
+		manager.setFallbackChain("claude-fable-5", ["ccapi/kimi-k3:max"]);
 		await manager.flush();
 
 		const reloaded = SettingsManager.create(projectDir, agentDir);
 		expect(reloaded.getRetryFallbackSettings()).toEqual({
 			modelFallback: false,
-			chains: { "anthropic/claude-fable-5": ["ccapi/kimi-k3:max"] },
+			chains: { "claude-fable-5": ["ccapi/kimi-k3:max"] },
 			revertPolicy: "never",
 		});
 
@@ -95,7 +91,7 @@ describe("SettingsManager retry fallback settings", () => {
 
 		// Removing the user's override restores the shipped default for that key
 		// rather than leaving the model with no chain at all.
-		reloaded.removeFallbackChain("anthropic/claude-fable-5");
+		reloaded.removeFallbackChain("claude-fable-5");
 		await reloaded.flush();
 		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains).toEqual(defaultChains);
 	});
@@ -107,7 +103,7 @@ describe("SettingsManager retry fallback settings", () => {
 
 		writeFileSync(
 			join(agentDir, "settings.json"),
-			JSON.stringify({ retry: { fallbackChains: { "anthropic/claude-fable-5": ["ccapi/kimi-k3:max"] } } }),
+			JSON.stringify({ retry: { fallbackChains: { "claude-fable-5": ["ccapi/kimi-k3:max"] } } }),
 		);
 		expect(SettingsManager.create(projectDir, agentDir).getFallbackChainsScope()).toBe("global");
 
@@ -134,7 +130,7 @@ describe("SettingsManager retry fallback settings", () => {
 			JSON.stringify({
 				retry: {
 					fallbackChains: {
-						"apitopia/kimi-k3-unlocked": ["apitopia/kimi-k3-ultrafast-unlocked:max"],
+						"example-gateway/unrelated-model": ["example-gateway/unrelated-fallback:max"],
 					},
 				},
 			}),
@@ -142,8 +138,8 @@ describe("SettingsManager retry fallback settings", () => {
 
 		const chains = SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains;
 
-		expect(chains["apitopia/kimi-k3-unlocked"]).toEqual(["apitopia/kimi-k3-ultrafast-unlocked:max"]);
-		expect(chains["anthropic/claude-fable-5"]).toEqual(defaultChains["anthropic/claude-fable-5"]);
+		expect(chains["example-gateway/unrelated-model"]).toEqual(["example-gateway/unrelated-fallback:max"]);
+		expect(chains["claude-fable-5"]).toEqual(defaultChains["claude-fable-5"]);
 	});
 
 	it("lets a user chain replace a default outright and an empty array delete it", () => {
@@ -151,19 +147,21 @@ describe("SettingsManager retry fallback settings", () => {
 		writeFileSync(
 			join(agentDir, "settings.json"),
 			JSON.stringify({
-				retry: { fallbackChains: { "anthropic/claude-fable-5": ["ccapi/kimi-k3:max"] } },
+				retry: { fallbackChains: { "claude-fable-5": ["ccapi/kimi-k3:max"] } },
 			}),
 		);
-		expect(
-			SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains["anthropic/claude-fable-5"],
-		).toEqual(["ccapi/kimi-k3:max"]);
+		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains["claude-fable-5"]).toEqual([
+			"ccapi/kimi-k3:max",
+		]);
 
 		writeFileSync(
 			join(agentDir, "settings.json"),
-			JSON.stringify({ retry: { fallbackChains: { "anthropic/claude-fable-5": [] } } }),
+			JSON.stringify({ retry: { fallbackChains: { "claude-fable-5": [] } } }),
 		);
-		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains).not.toHaveProperty(
-			"anthropic/claude-fable-5",
+		// Tombstone: the empty list is preserved through resolution and consumed by
+		// canonicalization, which drops every expanded provider variant of the family.
+		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains["claude-fable-5"]).toEqual(
+			[],
 		);
 	});
 

@@ -40,6 +40,7 @@ import type {
 	ExtensionAPI,
 	ExtensionFactory,
 	ExtensionRuntime,
+	FilesystemPolicy,
 	LazyToolActivator,
 	LoadExtensionsResult,
 	MarkdownTransformer,
@@ -379,6 +380,13 @@ function createExtensionAPI(
 			runtime.registerRemovedToolHint(name, hint);
 		},
 
+		registerFilesystemPolicy(policy: FilesystemPolicy): void {
+			runtime.assertActive();
+			const policies = extension.filesystemPolicies ?? [];
+			policies.push(policy);
+			extension.filesystemPolicies = policies;
+		},
+
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
 			runtime.assertActive();
 			extension.commands.set(name, {
@@ -619,6 +627,7 @@ function createExtension(extensionPath: string, resolvedPath: string, registrati
 		tools: new Map(),
 		removedToolHints: new Map(),
 		lazyToolActivators: [],
+		filesystemPolicies: [],
 		messageRenderers: new Map(),
 		entryRenderers: undefined,
 		commands: new Map(),

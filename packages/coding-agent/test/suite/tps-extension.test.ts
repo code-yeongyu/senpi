@@ -11,6 +11,13 @@ type ExtensionContextLike = {
 type Handler = (event: unknown, ctx: ExtensionContextLike) => unknown | Promise<unknown>;
 type TpsExtension = (pi: { on(event: string, handler: Handler): void }) => void;
 
+type UsageFixture = {
+	readonly input: number;
+	readonly output: number;
+	readonly cacheRead: number;
+	readonly cacheWrite: number;
+};
+
 function createHarness() {
 	const handlers = new Map<string, Handler[]>();
 	const pi = {
@@ -43,16 +50,13 @@ function createContext(notifications: string[]): ExtensionContextLike {
 	};
 }
 
-function createAssistantMessage(output: number): unknown {
+function createAssistantMessage(usage: UsageFixture): unknown {
 	return {
 		role: "assistant",
 		content: [{ type: "text", text: "done" }],
 		usage: {
-			input: 10,
-			output,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: output + 10,
+			...usage,
+			totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
 	};
@@ -63,14 +67,14 @@ describe("tps builtin extension", () => {
 		vi.useRealTimers();
 	});
 
-	it("calculates TPS from assistant response time and excludes tool or permission waits", async () => {
+	it("reports turn-level cache hit rate in the concise TPS notice", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(0);
 		const notifications: string[] = [];
 		const ctx = createContext(notifications);
 		const harness = createHarness();
-		const firstMessage = createAssistantMessage(100);
-		const secondMessage = createAssistantMessage(200);
+		const firstMessage = createAssistantMessage({ input: 10, output: 100, cacheRead: 30, cacheWrite: 0 });
+		const secondMessage = createAssistantMessage({ input: 20, output: 200, cacheRead: 40, cacheWrite: 0 });
 
 		await harness.emit("agent_start", { type: "agent_start" }, ctx);
 		vi.advanceTimersByTime(1_000);
@@ -87,11 +91,26 @@ describe("tps builtin extension", () => {
 
 		await harness.emit("agent_end", { type: "agent_end", messages: [firstMessage, secondMessage] }, ctx);
 
-		expect(notifications).toHaveLength(1);
-		expect(notifications[0]).toContain("TPS 100.0 tok/s");
-		expect(notifications[0]).toContain("out 300");
-		expect(notifications[0]).toContain("3.0s");
+		expect(notifications).toEqual(["TPS 100.0 tok/s. Cache hit 70.0%, 3.0s"]);
 		expect(notifications[0]).not.toContain("21.4 tok/s");
+	});
+
+	it("reports zero cache hit without raw token counters", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const notifications: string[] = [];
+		const ctx = createContext(notifications);
+		const harness = createHarness();
+		const message = createAssistantMessage({ input: 10, output: 100, cacheRead: 0, cacheWrite: 0 });
+
+		await harness.emit("agent_start", { type: "agent_start" }, ctx);
+		await harness.emit("message_start", { type: "message_start", message }, ctx);
+		vi.advanceTimersByTime(1_000);
+		await harness.emit("message_end", { type: "message_end", message }, ctx);
+		await harness.emit("agent_end", { type: "agent_end", messages: [message] }, ctx);
+
+		expect(notifications).toEqual(["TPS 100.0 tok/s. Cache hit 0.0%, 1.0s"]);
+		expect(notifications[0]).not.toMatch(/\bout |\bin |cache r\/w|total /);
 	});
 
 	it("reports TPS when wall clock jumps backward between message_start and message_end", async () => {
@@ -100,7 +119,7 @@ describe("tps builtin extension", () => {
 		const notifications: string[] = [];
 		const ctx = createContext(notifications);
 		const harness = createHarness();
-		const message = createAssistantMessage(100);
+		const message = createAssistantMessage({ input: 10, output: 100, cacheRead: 0, cacheWrite: 0 });
 
 		await harness.emit("agent_start", { type: "agent_start" }, ctx);
 		vi.advanceTimersByTime(1_000);
@@ -114,9 +133,6 @@ describe("tps builtin extension", () => {
 
 		await harness.emit("agent_end", { type: "agent_end", messages: [message] }, ctx);
 
-		expect(notifications).toHaveLength(1);
-		expect(notifications[0]).toContain("TPS 100.0 tok/s");
-		expect(notifications[0]).toContain("out 100");
-		expect(notifications[0]).toContain("1.0s");
+		expect(notifications).toEqual(["TPS 100.0 tok/s. Cache hit 0.0%, 1.0s"]);
 	});
 });

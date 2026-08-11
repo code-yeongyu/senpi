@@ -3,7 +3,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { admitAndQueueGoalContinuation } from "../../../src/core/extensions/builtin/goal/lifecycle-helpers.ts";
 import {
-	GOAL_MONITOR_CONTINUATION_DELAY_MS,
+	GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS,
 	MonitorAwareGoalContinuation,
 } from "../../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { readGoal, writeGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
@@ -75,7 +75,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 			messages: [assistantStopWithText("still waiting")],
 		});
 		const delayedDeliveryRecorded = waitForSentCount(harness, 1);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
 		await delayedDeliveryRecorded;
 
 		expect(harness.sent).toHaveLength(1);
@@ -92,7 +92,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 			messages: [assistantStopWithText("still waiting")],
 		});
 		const blockedGoalRecorded = waitForGoalContinuationCount(ctx, 0);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
 		await blockedGoalRecorded;
 
 		expect(harness.sent).toHaveLength(1);
@@ -102,7 +102,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 		});
 	});
 
-	it("fails closed when delivery accounting cannot be persisted", async () => {
+	it("cancels when delivery accounting no longer has a current goal", async () => {
 		const notices: string[] = [];
 		const ctx = await makeGoalContext(notices, "issue-506-persistence-failure");
 		const goal = activeGoal("goal-issue-506-missing-store");
@@ -135,7 +135,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 					markContinuationPending: () => {},
 				},
 			),
-		).rejects.toThrow("Cannot persist goal continuation delivery");
+		).resolves.toBeNull();
 		expect(queued).toBe(false);
 	});
 });

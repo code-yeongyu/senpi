@@ -50,7 +50,9 @@ import { spawn, spawnSync } from "child_process";
 import {
 	APP_NAME,
 	APP_TITLE,
+	BRAND,
 	CONFIG_DIR_NAME,
+	DISPLAY_VERSION,
 	expandTildePath,
 	getAgentDir,
 	getAuthPath,
@@ -62,6 +64,7 @@ import {
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { isApiKeyLoginProvider } from "../../core/auth-providers.ts";
+import { envValue } from "../../core/brand.ts";
 import {
 	CACHE_TTL_MS,
 	type CacheMiss,
@@ -95,7 +98,6 @@ import {
 	resolveModelScope,
 	type ScopedModel,
 } from "../../core/model-resolver.ts";
-import { detectOmoNativeInstall } from "../../core/omo-native-detect.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { createSessionLogger, type SessionLogger } from "../../core/session-log.ts";
@@ -657,7 +659,7 @@ export class InteractiveMode {
 		this.runtimeHost.setRebindSession(async () => {
 			await this.rebindCurrentSession({ renderBeforeBind: true });
 		});
-		this.version = VERSION;
+		this.version = DISPLAY_VERSION;
 		this.ui = createInteractiveTui({
 			uiMode,
 			showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
@@ -713,7 +715,6 @@ export class InteractiveMode {
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
-		this.footerDataProvider.setOmoNative(detectOmoNativeInstall(this.settingsManager.getPackages(), getAgentDir()));
 		this.footer = this.chrome
 			? this.chrome.createFooter(this.session, this.footerDataProvider)
 			: new FooterComponent(this.session, this.footerDataProvider);
@@ -1149,7 +1150,7 @@ export class InteractiveMode {
 	async run(): Promise<void> {
 		await this.init();
 
-		if (!process.env.PI_OFFLINE) {
+		if (!envValue("OFFLINE")) {
 			void this.session.modelRuntime
 				.refresh()
 				.then(() => {
@@ -1342,7 +1343,7 @@ export class InteractiveMode {
 	}
 
 	private reportInstallTelemetry(version: string): void {
-		if (process.env.PI_OFFLINE) {
+		if (envValue("OFFLINE")) {
 			return;
 		}
 
@@ -2242,6 +2243,7 @@ export class InteractiveMode {
 			getContextUsage: () => this.session.getContextUsage(),
 			getCompactionSettings: () => this.settingsManager.getCompactionSettings(),
 			getPromptCacheSafeWaitSeconds: () => this.session.resolvePromptCacheSafeWaitSeconds(),
+			getPromptCacheGoalBackstopMaxSeconds: () => this.settingsManager.getPromptCacheGoalBackstopMaxSeconds(),
 			getLookAtSettings: () => {
 				const global = this.settingsManager.getGlobalSettings().lookAt;
 				const project = this.settingsManager.getProjectSettings().lookAt;
@@ -3588,7 +3590,15 @@ export class InteractiveMode {
 				}
 			}
 
-			// Queue input during compaction (extension commands execute immediately)
+			// Queue non-command input during compaction.
+			// Extension commands short-circuit at the isExtensionCommand branch above and
+			// dispatch immediately inside AgentSession.prompt(), so the only text that
+			// reaches this compaction branch is non-command user input, which is queued
+			// for delivery after compaction settles.
+			//
+			// Note: the isExtensionCommand re-check below is already unreachable today
+			// (the branch above returns first) and stays harmless after the
+			// immediate-dispatch hoist in prompt().
 			if (this.session.isCompacting) {
 				if (this.isExtensionCommand(text)) {
 					this.editor.addToHistory?.(text);
@@ -3600,8 +3610,11 @@ export class InteractiveMode {
 				return;
 			}
 
-			// If streaming, use prompt() with steer behavior
-			// This handles extension commands (execute immediately), prompt template expansion, and queueing
+			// If streaming, use prompt() with steer behavior.
+			// Extension commands are dispatched immediately by AgentSession.prompt()
+			// (short-circuited at the isExtensionCommand branch above); the steer
+			// behavior here applies only to ordinary text, prompt template expansion,
+			// and queueing.
 			if (this.session.isStreaming) {
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
@@ -4771,7 +4784,12 @@ export class InteractiveMode {
 		const text = this.getExpandedEditorText().trim();
 		if (!text) return;
 
-		// Queue input during compaction (extension commands execute immediately)
+		// Queue non-command input during compaction; dispatch extension commands.
+		// This is the Alt+Enter path (bound directly to app.message.followUp), which
+		// does NOT pass through onSubmit, so the isExtensionCommand check below is the
+		// live dispatch point here: commands go straight to AgentSession.prompt(),
+		// which runs them immediately even while compaction is active, while ordinary
+		// text is queued for delivery after compaction settles.
 		if (this.session.isCompacting) {
 			if (this.isExtensionCommand(text)) {
 				this.editor.addToHistory?.(text);
@@ -4783,8 +4801,11 @@ export class InteractiveMode {
 			return;
 		}
 
-		// Alt+Enter queues a follow-up message (waits until agent finishes)
-		// This handles extension commands (execute immediately), prompt template expansion, and queueing
+		// Alt+Enter queues a follow-up message (waits until agent finishes).
+		// Extension commands never reach this branch: the compaction branch above
+		// dispatches them while compacting, and otherwise prompt() runs them
+		// immediately. The followUp behavior here applies only to ordinary text,
+		// prompt template expansion, and queueing.
 		if (this.session.isStreaming) {
 			this.editor.addToHistory?.(text);
 			this.editor.setText("");
@@ -4957,7 +4978,7 @@ export class InteractiveMode {
 	}
 
 	showNewVersionNotification(newVersion: string): void {
-		const action = theme.fg("accent", `${APP_NAME} update`);
+		const action = theme.fg("accent", BRAND?.update?.command ?? `${APP_NAME} update`);
 		const updateInstruction = theme.fg("muted", `New version ${newVersion} is available. Run `) + action;
 		const changelogUrl = getReleaseChangelogUrl(newVersion);
 		const changelogLink = getCapabilities().hyperlinks

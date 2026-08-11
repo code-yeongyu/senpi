@@ -2,6 +2,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "../thinking-levels.ts";
 import { baseSelector, parseFallbackSelector } from "./chains.ts";
+import { matchesFamily, parseBareSelector } from "./expansion.ts";
 
 export interface FallbackModelRegistry {
 	find(provider: string, id: string): Model<Api> | undefined;
@@ -55,7 +56,12 @@ export function validateFallbackChains(chains: unknown, registry: FallbackModelR
 	for (const [key, entries] of Object.entries(chains)) {
 		const hasProvider = key.includes("/");
 		const hasWildcard = key.includes("*");
-		if (!hasProvider) {
+		// A bare key names a model family and applies to every provider serving it.
+		const bareKey = hasWildcard ? undefined : parseBareSelector(key);
+		const bareKeyMatches = bareKey ? models.some((model) => matchesFamily(model, bareKey.family)) : false;
+		if (!hasProvider && !bareKeyMatches && !hasWildcard) {
+			// A bare key naming no registered model is indistinguishable from the old
+			// role syntax, so it keeps the message that tells the user what to write.
 			warnings.push(`Fallback chain key "${key}" must use a provider/model selector; roles are unsupported.`);
 		}
 		if (hasWildcard) warnings.push(`Fallback chain key "${key}" cannot contain wildcards.`);
@@ -80,6 +86,13 @@ export function validateFallbackChains(chains: unknown, registry: FallbackModelR
 		}
 
 		for (const entry of entries) {
+			const bareEntry = parseBareSelector(entry);
+			if (bareEntry) {
+				if (!models.some((model) => matchesFamily(model, bareEntry.family))) {
+					warnings.push(invalidSelectorWarning("entry", entry, key));
+				}
+				continue;
+			}
 			const parsedEntry = parseFallbackSelector(entry, models);
 			const entryModel = parsedEntry ? registry.find(parsedEntry.provider, parsedEntry.id) : undefined;
 			if (!parsedEntry || !entryModel) {

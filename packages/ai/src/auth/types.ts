@@ -202,6 +202,14 @@ export interface OAuthAuth {
 	refresh(credential: OAuthCredential, signal?: AbortSignal): Promise<OAuthCredential>;
 
 	/**
+	 * Optional side-effect-free availability check, mirroring `ApiKeyAuth.check`.
+	 * Supply this when a stored OAuth credential does not by itself imply the
+	 * provider is usable — for example a sentinel envelope that carries zero
+	 * accounts. When absent, any stored OAuth credential counts as configured.
+	 */
+	check?(input: { ctx: AuthContext; credential?: OAuthCredential }): Promise<AuthCheck | undefined>;
+
+	/**
 	 * Side-effect-free derivation of request auth from a valid credential.
 	 * Covers per-credential baseUrl (GitHub Copilot). Async so lazy wrappers
 	 * can load the implementation on first use.

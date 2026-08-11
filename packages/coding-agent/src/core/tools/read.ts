@@ -11,7 +11,8 @@ import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/inte
 import { processImage } from "../../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.ts";
-import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import type { FilesystemPolicyChecker, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
 import { resolveReadPathAsync, resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -60,6 +61,8 @@ export interface ReadToolOptions {
 	autoResizeImages?: boolean;
 	/** Custom operations for file reading. Default: local filesystem */
 	operations?: ReadOperations;
+	/** Extension-registered filesystem policy checker. */
+	filesystemPolicy?: FilesystemPolicyChecker;
 }
 
 type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
@@ -206,6 +209,7 @@ export function createReadToolDefinition(
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
 	const ops = options?.operations ?? defaultReadOperations;
+	const filesystemPolicy = options?.filesystemPolicy;
 	return {
 		name: "read",
 		label: "read",
@@ -237,6 +241,15 @@ export function createReadToolDefinition(
 						try {
 							const absolutePath = await resolveReadPathAsync(path, cwd);
 							if (aborted) return;
+							if (filesystemPolicy) {
+								const decision = await filesystemPolicy({
+									operation: "read",
+									canonicalPath: await canonicalizeFilesystemPath(absolutePath),
+									toolName: "read",
+								});
+								if (!decision.allow) throw new Error(decision.reason);
+								if (aborted) return;
+							}
 							// Check if file exists and is readable.
 							await ops.access(absolutePath);
 							if (aborted) return;

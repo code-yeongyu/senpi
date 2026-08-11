@@ -17,12 +17,19 @@ src/core/models-store.ts           Persisted model store
 src/core/provider-composer.ts      Provider payload composition
 src/core/remote-catalog-provider.ts Remote model-catalog fetch
 src/core/runtime-credentials.ts    Credential resolution and refresh
+src/core/auth-providers.ts         Provider auth registration
+src/core/provider-timeout-retry.ts Provider timeout/retry policy
+src/core/retry-fallback/           Model fallback chains + billing classification
+src/core/project-trust.ts, trust-manager.ts  Project trust decisions
+src/core/resource-loader.ts        Bundled extension/resource resolution
+src/core/session-resident-store.ts Session-resident state store
 src/core/extensions/               Public extension API and loader
 src/core/extensions/builtin/       In-tree fork extensions; bundled extensions (e.g. codemode) resolved via resource-loader.ts
 src/core/tools/                    Upstream-parity built-in tools
 src/core/compaction/               Core compaction mechanics
 src/modes/interactive/             TUI mode and components
-src/modes/app-server/              App-server transport and RPC registry
+src/modes/app-server/              App-server transport and RPC registry; runtime.ts
+                                   wiring, search/ fuzzy file search
 src/modes/rpc/                     JSONL RPC mode/client/types
 src/modes/print-mode.ts            One-shot mode
 test/suite/harness.ts              Preferred faux-provider harness
@@ -72,3 +79,6 @@ src/changes.md                     Root fork-change record
 - Interactive changes also follow `src/modes/interactive/AGENTS.md`; extension/tool changes follow their nearest child guide.
 - App-server, test, and example changes follow their local `AGENTS.md` files.
 - Keep `src/changes.md`, nested `changes.md`, public docs, and examples aligned with fork behavior.
+
+---
+Generated: 2026-08-07 | Commit: `4f26b8282`

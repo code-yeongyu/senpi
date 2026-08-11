@@ -175,7 +175,9 @@ export class SessionCommandRouter {
 	}
 
 	private code(cause: unknown): string {
-		if (cause instanceof RpcSessionRegistryError) return cause.code;
+		if (cause instanceof RpcSessionRegistryError) {
+			return cause.code === RPC_ERROR_OPEN_FAILED ? cause.message : cause.code;
+		}
 		if (cause instanceof Error && [RPC_ERROR_UNKNOWN_SESSION, RPC_ERROR_SESSION_CLOSING].includes(cause.message)) {
 			return cause.message;
 		}

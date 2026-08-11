@@ -76,8 +76,9 @@ unfinished — `paused` or `blocked`. `isResumeOfStoppedGoal` (lifecycle-helpers
 owns that admission and `maybePromptResumeStoppedGoal` (index.ts) renders it;
 the title names the actual status (`Resume blocked goal?`). Accepting flips the
 goal to `active` as a `"user"` mutation and queues a continuation; declining
-leaves the status untouched. `active` and `complete` goals never prompt. This
-mirrors codex `maybe_prompt_resume_paused_goal_after_resume`, minus its
+leaves the status untouched. `active` and `complete` goals never prompt; a completed
+goal is revived only by an explicit `/goal resume`. This mirrors codex
+`maybe_prompt_resume_paused_goal_after_resume`, minus its
 `UsageLimited` arm, which senpi has no counterpart for.
 
 ## PERSISTENCE

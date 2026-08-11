@@ -89,6 +89,8 @@ export interface GoalContextState {
 	pendingMessages: boolean;
 	model?: Model<Api>;
 	status?: GoalStatusHarness;
+	cacheSafeWaitSeconds?: number;
+	goalBackstopMaxSeconds?: number;
 }
 
 export function createSentMessageHarness(): SentMessageHarness {
@@ -154,6 +156,8 @@ export async function makeGoalContext(
 		model: state.model,
 		isIdle: () => true,
 		hasPendingMessages: () => state.pendingMessages,
+		getPromptCacheSafeWaitSeconds: () => state.cacheSafeWaitSeconds,
+		getPromptCacheGoalBackstopMaxSeconds: () => state.goalBackstopMaxSeconds ?? 3570,
 		ui: {
 			notify: (message: string) => notices.push(message),
 			select: async () => undefined,

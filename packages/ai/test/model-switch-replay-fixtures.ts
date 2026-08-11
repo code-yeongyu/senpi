@@ -77,6 +77,7 @@ export const COMPLETIONS_COMPAT = {
 	cacheControlFormat: "anthropic",
 	sendSessionAffinityHeaders: false,
 	sessionAffinityFormat: "openai",
+	supportsPromptCacheKey: false,
 	supportsLongCacheRetention: true,
 } satisfies Omit<
 	Required<OpenAICompletionsCompat>,

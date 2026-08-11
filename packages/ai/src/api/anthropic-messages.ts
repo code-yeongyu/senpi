@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type {
 	CacheControlEphemeral,
 	ContentBlockParam,
+	MessageCreateParamsNonStreaming,
 	MessageCreateParamsStreaming,
 	MessageParam,
 	RawMessageStreamEvent,
@@ -1856,6 +1857,30 @@ function createClient(
 	});
 
 	return { client, isOAuthToken: false };
+}
+
+export function buildAnthropicWarmPromptCacheParams(
+	model: Model<"anthropic-messages">,
+	context: Context,
+	options?: AnthropicOptions,
+): MessageCreateParamsNonStreaming {
+	const params = buildParams(model, context, false, {
+		...options,
+		maxTokens: 0,
+		thinkingEnabled: undefined,
+		toolChoice: undefined,
+	});
+	const {
+		stream: _stream,
+		thinking: _thinking,
+		output_config: _outputConfig,
+		tool_choice: _toolChoice,
+		...nonStreaming
+	} = params;
+	return sanitizeAnthropicToolPairs({
+		...nonStreaming,
+		max_tokens: 0,
+	}) as MessageCreateParamsNonStreaming;
 }
 
 function buildParams(

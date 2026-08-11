@@ -7,7 +7,6 @@ type AssistantMessageLike = {
 		output?: number;
 		cacheRead?: number;
 		cacheWrite?: number;
-		totalTokens?: number;
 	};
 };
 
@@ -66,7 +65,6 @@ export default function (pi: ExtensionAPI) {
 		let output = 0;
 		let cacheRead = 0;
 		let cacheWrite = 0;
-		let totalTokens = 0;
 
 		for (const message of event.messages) {
 			if (!isAssistantMessage(message)) continue;
@@ -74,14 +72,15 @@ export default function (pi: ExtensionAPI) {
 			output += message.usage?.output ?? 0;
 			cacheRead += message.usage?.cacheRead ?? 0;
 			cacheWrite += message.usage?.cacheWrite ?? 0;
-			totalTokens += message.usage?.totalTokens ?? 0;
 		}
 
 		if (output <= 0) return;
 
 		const elapsedSeconds = elapsedMs / 1000;
 		const tokensPerSecond = output / elapsedSeconds;
-		const message = `TPS ${tokensPerSecond.toFixed(1)} tok/s. out ${output.toLocaleString()}, in ${input.toLocaleString()}, cache r/w ${cacheRead.toLocaleString()}/${cacheWrite.toLocaleString()}, total ${totalTokens.toLocaleString()}, ${elapsedSeconds.toFixed(1)}s`;
+		const promptTokens = input + cacheRead + cacheWrite;
+		const cacheHitRate = promptTokens > 0 ? (cacheRead / promptTokens) * 100 : 0;
+		const message = `TPS ${tokensPerSecond.toFixed(1)} tok/s. Cache hit ${cacheHitRate.toFixed(1)}%, ${elapsedSeconds.toFixed(1)}s`;
 		ctx.ui.notify(message, "info");
 	});
 }

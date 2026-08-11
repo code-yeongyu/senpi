@@ -32,7 +32,7 @@ import {
 	shouldShowStartupLoadingIndicator,
 } from "./cli/startup-loading-indicator.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
-import { APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
+import { APP_NAME, DISPLAY_VERSION, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -40,6 +40,7 @@ import {
 	createAgentSessionServices,
 } from "./core/agent-session-services.ts";
 import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
+import { envValue } from "./core/brand.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
@@ -272,7 +273,11 @@ async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: 
 	return { type: "not_found", arg: sessionArg };
 }
 
-/** Prompt user for yes/no confirmation */
+/**
+ * Prompt user for yes/no confirmation.
+ * Resolves false on stdin EOF (Ctrl+D, closed pipe): without the close handler a
+ * readline question never settles once the input stream ends, hanging the process.
+ */
 async function promptConfirm(message: string): Promise<boolean> {
 	return new Promise((resolve) => {
 		const rl = createInterface({
@@ -283,6 +288,7 @@ async function promptConfirm(message: string): Promise<boolean> {
 			rl.close();
 			resolve(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
 		});
+		rl.on("close", () => resolve(false));
 	});
 }
 
@@ -350,6 +356,7 @@ async function createSessionManager(
 	cwd: string,
 	sessionDir: string | undefined,
 	settingsManager: SettingsManager,
+	appMode: AppMode,
 ): Promise<SessionManager> {
 	if (parsed.noSession || parsed.help || parsed.listModels !== undefined || parsed.listTips) {
 		return SessionManager.inMemory(cwd, parsed.sessionId !== undefined ? { id: parsed.sessionId } : undefined);
@@ -387,6 +394,20 @@ async function createSessionManager(
 				return openSessionOrExit(resolved.path, sessionDir);
 
 			case "global": {
+				if (appMode !== "interactive") {
+					// The fork confirmation below blocks on readline, which only an
+					// interactive session can answer. Print, JSON, RPC, and app-server runs
+					// reach here with a TTY attached too (`-p` from a terminal), where the
+					// question hangs the process or resolves as "no" on stdin EOF. Fail fast
+					// with an actionable message instead.
+					console.error(chalk.red(`Session found in different project: ${resolved.cwd}`));
+					console.error(
+						chalk.red(
+							`Cannot confirm forking without an interactive session. Use --fork '${parsed.session}' to fork it into the current directory, or re-run interactively from ${resolved.cwd}.`,
+						),
+					);
+					process.exit(1);
+				}
 				console.log(chalk.yellow(`Session found in different project: ${resolved.cwd}`));
 				const shouldFork = await promptConfirm("Fork this session into current directory?");
 				if (!shouldFork) {
@@ -578,7 +599,7 @@ export function applyGrokNeoThemeFallback(settingsManager: SettingsManager): voi
 export async function main(args: string[], options?: MainOptions) {
 	resetTimings();
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
-	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.PI_OFFLINE);
+	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
 	if (offlineMode) {
 		process.env.PI_OFFLINE = "1";
 		process.env.PI_SKIP_VERSION_CHECK = "1";
@@ -636,7 +657,7 @@ export async function main(args: string[], options?: MainOptions) {
 	time("parseArgs");
 
 	if (parsed.version) {
-		console.log(VERSION);
+		console.log(DISPLAY_VERSION);
 		process.exit(0);
 	}
 
@@ -735,7 +756,7 @@ export async function main(args: string[], options?: MainOptions) {
 		(parsed.sessionDir ? normalizePath(parsed.sessionDir) : undefined) ??
 		(envSessionDir ? expandTildePath(envSessionDir) : undefined) ??
 		startupSettingsManager.getSessionDir();
-	let sessionManager = await createSessionManager(parsed, cwd, sessionDir, startupSettingsManager);
+	let sessionManager = await createSessionManager(parsed, cwd, sessionDir, startupSettingsManager, appMode);
 	const missingSessionCwdIssue = getMissingSessionCwdIssue(sessionManager, cwd);
 	if (missingSessionCwdIssue) {
 		if (appMode === "interactive") {
@@ -1018,7 +1039,7 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
-	const startupBenchmark = isTruthyEnvFlag(process.env.PI_STARTUP_BENCHMARK);
+	const startupBenchmark = isTruthyEnvFlag(envValue("STARTUP_BENCHMARK"));
 	if (startupBenchmark && appMode !== "interactive") {
 		console.error(chalk.red("Error: PI_STARTUP_BENCHMARK only supports interactive mode"));
 		process.exit(1);

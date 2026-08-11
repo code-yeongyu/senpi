@@ -118,7 +118,7 @@ async function flushMicrotasks(): Promise<void> {
 	await Promise.resolve();
 }
 
-function setup(options: { safeWaitSeconds?: number; timeoutAction?: "background" | "kill" } = {}) {
+function setup(options: { timeoutAction?: "background" | "kill" } = {}) {
 	const runtime = new FakeRuntime();
 	const backgroundExit = vi.fn();
 	const manager = {
@@ -132,10 +132,7 @@ function setup(options: { safeWaitSeconds?: number; timeoutAction?: "background"
 		defaultRows: 40,
 		getEnv: () => ({}),
 		timeoutAction: options.timeoutAction ?? "background",
-		getSessionContext: () =>
-			({
-				getPromptCacheSafeWaitSeconds: () => options.safeWaitSeconds,
-			}) as ExtensionContext,
+		getSessionContext: () => ({}) as ExtensionContext,
 		onBackgroundExit: backgroundExit,
 	} as TerminalToolContext;
 	spawned.runtime = runtime;
@@ -155,8 +152,8 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-describe("terminal bash foreground cache-deadline auto-detach", () => {
-	it("keeps native foreground behavior when no cache-safe budget is available", async () => {
+describe("terminal bash foreground window auto-detach", () => {
+	it("keeps native foreground behavior when the command exits inside the window", async () => {
 		const { bash, runtime } = setup();
 		const execution = bash.execute("no-budget", { command: "echo done", timeout: 10 });
 		await flushMicrotasks();
@@ -170,25 +167,25 @@ describe("terminal bash foreground cache-deadline auto-detach", () => {
 	});
 
 	it("does not auto-detach when timeoutAction is kill", async () => {
-		const { bash, runtime } = setup({ safeWaitSeconds: 5, timeoutAction: "kill" });
-		const execution = bash.execute("kill-policy", { command: "sleep", timeout: 10 });
+		const { bash, runtime } = setup({ timeoutAction: "kill" });
+		const execution = bash.execute("kill-policy", { command: "wait for it", timeout: 900 });
 		await flushMicrotasks();
-		await vi.advanceTimersByTimeAsync(5_000);
+		await vi.advanceTimersByTimeAsync(60_000);
 		expect(runtime.exited).toBe(false);
 		expect(runtime.readDeltaCalls).toBe(0);
 
 		runtime.exit({ timedOut: true, exitCode: 124 });
 		const result = await execution;
 		expect(result.isError).toBe(true);
-		expect(firstText(result)).toBe("Command timed out after 10 seconds");
+		expect(firstText(result)).toBe("Command timed out after 900 seconds");
 		expect(result.details).toBeUndefined();
 	});
 
-	it("keeps native foreground behavior when the configured timeout equals the budget", async () => {
-		const { bash, runtime } = setup({ safeWaitSeconds: 5 });
-		const execution = bash.execute("equal-budget", { command: "echo exact", timeout: 5 });
+	it("keeps native foreground behavior when the timeout is shorter than the window", async () => {
+		const { bash, runtime } = setup();
+		const execution = bash.execute("short-timeout", { command: "echo exact", timeout: 30 });
 		await flushMicrotasks();
-		await vi.advanceTimersByTimeAsync(5_000);
+		await vi.advanceTimersByTimeAsync(29_000);
 		expect(runtime.readDeltaCalls).toBe(0);
 
 		runtime.emit("exact\n");
@@ -198,27 +195,27 @@ describe("terminal bash foreground cache-deadline auto-detach", () => {
 		expect(result.details).toEqual({ status: "completed" });
 	});
 
-	it("returns the exact completed result when a command exits before the budget", async () => {
-		const { bash, runtime } = setup({ safeWaitSeconds: 5 });
-		const execution = bash.execute("early-exit", { command: "echo early", timeout: 10 });
+	it("returns the exact completed result when a command exits before the window", async () => {
+		const { bash, runtime } = setup();
+		const execution = bash.execute("early-exit", { command: "echo early", timeout: 900 });
 		await flushMicrotasks();
 		runtime.emit("early\n");
 		runtime.exit();
 
 		const result = await execution;
-		await vi.advanceTimersByTimeAsync(5_000);
+		await vi.advanceTimersByTimeAsync(60_000);
 		expect(firstText(result)).toBe("early");
 		expect(result.details).toEqual({ status: "completed" });
 		expect(runtime.readDeltaCalls).toBe(0);
 	});
 
-	it("linearizes an exit exactly at D ahead of detachment", async () => {
-		spawned.exitAtMs = 5_000;
-		const { bash, runtime } = setup({ safeWaitSeconds: 5 });
-		const execution = bash.execute("exit-at-deadline", { command: "echo same-tick", timeout: 10 });
+	it("linearizes an exit exactly at the window ahead of detachment", async () => {
+		spawned.exitAtMs = 60_000;
+		const { bash, runtime } = setup();
+		const execution = bash.execute("exit-at-deadline", { command: "echo same-tick", timeout: 900 });
 		await flushMicrotasks();
 		runtime.emit("same-tick\n");
-		await vi.advanceTimersByTimeAsync(5_000);
+		await vi.advanceTimersByTimeAsync(60_000);
 
 		const result = await execution;
 		expect(firstText(result)).toBe("same-tick");
@@ -227,20 +224,20 @@ describe("terminal bash foreground cache-deadline auto-detach", () => {
 	});
 
 	it("auto-detaches a still-running finite-timeout command, preserves T, and sweeps after its native grace", async () => {
-		const { bash, runtime, manager, backgroundExit } = setup({ safeWaitSeconds: 5 });
-		const execution = bash.execute("detach", { command: "sleep", timeout: 10 });
+		const { bash, runtime, manager, backgroundExit } = setup();
+		const execution = bash.execute("detach", { command: "wait for it", timeout: 900 });
 		await flushMicrotasks();
 		runtime.emit("READY\n");
 		runtime.nextDeltaDroppedChars = 3;
-		await vi.advanceTimersByTimeAsync(5_000);
+		await vi.advanceTimersByTimeAsync(60_000);
 
 		const result = await execution;
-		expect(spawned.request).toMatchObject({ timeoutMs: 10_000 });
+		expect(spawned.request).toMatchObject({ timeoutMs: 900_000 });
 		expect(result).toEqual({
 			content: [
 				{
 					type: "text",
-					text: 'Command is still running; auto-detached to background with ID: bash_1 (not killed; the original 10s timeout still applies).\n\nPartial output:\nREADY\n\nContinue other work; completion will be reported automatically with exit status and output tail. Use bash_output({ bash_id: "bash_1" }) only to peek at new output. monitor cannot attach to this session; use it for future event-driven launches. Use kill_bash({ bash_id: "bash_1" }) to stop this session.',
+					text: 'Command is still running; auto-detached to background with ID: bash_1 (not killed; the original 900s timeout still applies).\n\nPartial output:\nREADY\n\nContinue other work; completion will be reported automatically with exit status and output tail. Use bash_output({ bash_id: "bash_1" }) only to peek at new output. monitor cannot attach to this session; use it for future event-driven launches. Use kill_bash({ bash_id: "bash_1" }) to stop this session.',
 				},
 			],
 			details: { bash_id: "bash_1", background: true, auto_detached: true, status: "running", droppedChars: 3 },
@@ -250,16 +247,16 @@ describe("terminal bash foreground cache-deadline auto-detach", () => {
 		expect(runtime.session.kill).not.toHaveBeenCalled();
 		expect(backgroundExit).not.toHaveBeenCalled();
 
-		await vi.advanceTimersByTimeAsync(10_000);
+		await vi.advanceTimersByTimeAsync(900_000);
 		expect(manager.stop).toHaveBeenCalledWith("bash_1");
 	});
 
 	it("uses the no-timeout parenthetical and keeps the delta cursor continuous after detachment", async () => {
-		const { bash, output, runtime } = setup({ safeWaitSeconds: 5 });
+		const { bash, output, runtime } = setup();
 		const execution = bash.execute("no-timeout", { command: "wait forever" });
 		await flushMicrotasks();
 		runtime.emit("BEFORE\n");
-		await vi.advanceTimersByTimeAsync(5_000);
+		await vi.advanceTimersByTimeAsync(60_000);
 
 		const detached = await execution;
 		expect(firstText(detached)).toBe(
@@ -277,10 +274,10 @@ describe("terminal bash foreground cache-deadline auto-detach", () => {
 
 	it("ignores an abort after the detach commit and notifies once when the detached session exits", async () => {
 		const controller = new AbortController();
-		const { bash, runtime, backgroundExit } = setup({ safeWaitSeconds: 5 });
-		const execution = bash.execute("abort-after-detach", { command: "sleep", timeout: 10 }, controller.signal);
+		const { bash, runtime, backgroundExit } = setup();
+		const execution = bash.execute("abort-after-detach", { command: "wait for it", timeout: 900 }, controller.signal);
 		await flushMicrotasks();
-		await vi.advanceTimersByTimeAsync(5_000);
+		await vi.advanceTimersByTimeAsync(60_000);
 		await execution;
 
 		controller.abort();
@@ -291,13 +288,13 @@ describe("terminal bash foreground cache-deadline auto-detach", () => {
 		expect(backgroundExit).toHaveBeenCalledWith("bash_1", runtime);
 	});
 
-	it("linearizes an abort exactly at D ahead of detachment", async () => {
+	it("linearizes an abort exactly at the window ahead of detachment", async () => {
 		const controller = new AbortController();
-		setTimeout(() => controller.abort(), 5_000);
-		const { bash, runtime } = setup({ safeWaitSeconds: 5 });
-		const execution = bash.execute("abort-at-deadline", { command: "sleep", timeout: 10 }, controller.signal);
+		setTimeout(() => controller.abort(), 60_000);
+		const { bash, runtime } = setup();
+		const execution = bash.execute("abort-at-deadline", { command: "wait for it", timeout: 900 }, controller.signal);
 		await flushMicrotasks();
-		await vi.advanceTimersByTimeAsync(5_000);
+		await vi.advanceTimersByTimeAsync(60_000);
 		expect(runtime.session.kill).toHaveBeenCalledWith("SIGKILL");
 		expect(runtime.readDeltaCalls).toBe(0);
 
@@ -305,5 +302,64 @@ describe("terminal bash foreground cache-deadline auto-detach", () => {
 		const result = await execution;
 		expect(result.isError).toBe(true);
 		expect(firstText(result)).toBe("Command aborted");
+	});
+
+	it("honors PI_BASH_FOREGROUND_SECONDS for the blocking window", async () => {
+		vi.stubEnv("PI_BASH_FOREGROUND_SECONDS", "20");
+		const { bash, runtime } = setup();
+		const execution = bash.execute("env-window", { command: "long build", timeout: 900 });
+		await flushMicrotasks();
+		runtime.emit("BUILDING\n");
+		await vi.advanceTimersByTimeAsync(20_000);
+
+		const result = await execution;
+		expect(firstText(result)).toContain("auto-detached to background with ID: bash_1");
+		expect(result.details).toMatchObject({ auto_detached: true, status: "running" });
+		vi.unstubAllEnvs();
+	});
+
+	it("detaches a sleep-wait command at the short sleep window instead of the full window", async () => {
+		const { bash, runtime } = setup();
+		const execution = bash.execute("sleep-wait", { command: "sleep 270; git log --oneline -2", timeout: 900 });
+		await flushMicrotasks();
+		await vi.advanceTimersByTimeAsync(5_000);
+
+		const result = await execution;
+		const text = firstText(result);
+		expect(text).toContain("auto-detached to background with ID: bash_1");
+		expect(text).toContain("end your turn");
+		expect(text).toContain("monitor(");
+		expect(result.details).toMatchObject({ auto_detached: true, sleep_wait: true, status: "running" });
+		expect(runtime.session.kill).not.toHaveBeenCalled();
+	});
+
+	it("keeps the full window for a settle sleep below the sleep-wait threshold", async () => {
+		const { bash, runtime } = setup();
+		const execution = bash.execute("settle", { command: "pkill -9 bun 2>/dev/null; sleep 1", timeout: 900 });
+		await flushMicrotasks();
+		await vi.advanceTimersByTimeAsync(5_000);
+		expect(runtime.readDeltaCalls).toBe(0);
+
+		runtime.emit("gone\n");
+		runtime.exit();
+		const result = await execution;
+		expect(firstText(result)).toBe("gone");
+		expect(result.details).toEqual({ status: "completed" });
+	});
+
+	it("never hands a process deadline to an explicit background session", async () => {
+		const { bash } = setup();
+
+		const execution = bash.execute("bg-unlimited", {
+			command: "tail -f /var/log/system.log",
+			run_in_background: true,
+			timeout: 1800,
+		});
+		await vi.advanceTimersByTimeAsync(500);
+		const started = await execution;
+
+		expect(firstText(started)).toContain("Command running in background with ID: bash_1");
+		expect(spawned.request).toMatchObject({ command: "tail -f /var/log/system.log" });
+		expect((spawned.request as { timeoutMs?: number }).timeoutMs).toBeUndefined();
 	});
 });
