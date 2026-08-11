@@ -1,9 +1,16 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "../../types.ts";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
+import {
+	BINDING_ENTRY_TYPE,
+	type BindingCheckpoint,
+	latestBindingOnBranch,
+	rememberCheckpoint,
+} from "./session-binding.ts";
 import { AssistantCommitBoundary, isResidentAssistant, isTerminalFailure } from "./session-commit-boundary.ts";
 import { bindingFromEntry, rememberBinding } from "./session-reattach.ts";
 import {
+	type ClaudeSdkOauthSessionEntry,
 	closeSession,
 	getSession,
 	recordBranchInfo,
@@ -25,7 +32,32 @@ function residentEntryFor(sessionId: string, message: AssistantMessage) {
 	return entry;
 }
 
-export function registerSessionRegistry(pi: Pick<ExtensionAPI, "on">): void {
+/**
+ * The compact form of the binding: one prefix digest instead of every sent hash.
+ * A full hash array would add tens of KB to the transcript on every turn, and the
+ * digest answers the only question a restart asks - is the prefix still the one
+ * the SDK session already received.
+ */
+export function checkpointFromEntry(entry: ClaudeSdkOauthSessionEntry): BindingCheckpoint | undefined {
+	if (!entry.syncedPrefixHash) return undefined;
+	return {
+		schemaVersion: 1,
+		sdkSessionId: entry.sdkSessionId,
+		sentCount: entry.sentCount,
+		sentPrefixHash: entry.syncedPrefixHash,
+		lastAssistantUuid: entry.assistantUuidByIndex.get(entry.sentCount) ?? null,
+		accountName: entry.accountName,
+		modelId: entry.modelId,
+		systemPromptHash: entry.systemPromptHash,
+		toolsetHash: entry.toolsetHash,
+	};
+}
+
+export function registerSessionRegistry(pi: Pick<ExtensionAPI, "on" | "appendEntry">): void {
+	pi.on("session_start", (_event, ctx) => {
+		const checkpoint = latestBindingOnBranch(ctx.sessionManager.getBranch());
+		if (checkpoint) rememberCheckpoint(ctx.sessionManager.getSessionId(), checkpoint);
+	});
 	pi.on("session_compact", (_event, ctx) => {
 		recordPendingFork(ctx.sessionManager.getSessionId(), "compaction");
 	});
@@ -70,7 +102,10 @@ export function registerSessionRegistry(pi: Pick<ExtensionAPI, "on">): void {
 		}
 		if (commitBoundary.commit(sessionId, event.message, entry.modelId) === "rewritten") {
 			recordPendingFork(sessionId, "assistant_rewritten");
+			return;
 		}
+		const checkpoint = checkpointFromEntry(entry);
+		if (checkpoint) pi.appendEntry<BindingCheckpoint>(BINDING_ENTRY_TYPE, checkpoint);
 	});
 	pi.on("session_shutdown", (event, ctx) => {
 		closeSession(ctx.sessionManager.getSessionId(), event.reason);

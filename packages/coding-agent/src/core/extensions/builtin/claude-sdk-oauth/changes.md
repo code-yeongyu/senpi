@@ -1,5 +1,40 @@
 # claude-sdk-oauth extension changes
 
+## 2026-08-11 - Persist the continuity binding so a restart resumes instead of re-sending
+
+- `session-binding.ts` has been present since `db8e8cfeb` ("persist continuity bindings for verified restart
+  resume") but was never wired: nothing called `latestBindingOnBranch()` and nothing ever wrote a
+  `claude-sdk-oauth-binding` entry. Its unit test was the only consumer, so the sole surviving binding store was the
+  process-memory `Map` in `session-reattach.ts`.
+- Consequence: after a restart both `getSession()` and `getBinding()` miss, `decideNativeContinuity` returns
+  `bootstrap`, and the lane flattens. `session-stream.ts` synthesizes the reason `registry_miss` because `bootstrap`
+  carries none, and `session-observability.ts` reports it as `flatten` once `firstTurn` is false. Observed on a
+  697-message session: 68.0KB and ~60K tokens re-sent on the first turn after every restart.
+- Write path: `session-registry-wiring.ts` appends a `BindingCheckpoint` via `pi.appendEntry` at the `message_end`
+  commit boundary, only after the boundary reports a non-rewritten commit. `registerSessionRegistry` therefore now
+  takes `Pick<ExtensionAPI, "on" | "appendEntry">`.
+- Read path: a new `session_start` handler lifts the newest checkpoint off `ctx.sessionManager.getBranch()` into a
+  module map. The decision needs the current sent-hash prefix, which only exists once the provider context is built,
+  so the checkpoint is held until `createResidentAttempt` can verify it.
+- Verification is fail-closed. `rehydrateBindingFromCheckpoint` rebuilds the binding from the CURRENT hashes and only
+  after `prefixDigest(hashes, sentCount)` equals the recorded `sentPrefixHash`, and only when account, model,
+  `systemPromptHash`, and `toolsetHash` all match. A live entry gets that drift check from `identityDrift`, which a
+  restarted process cannot run, so `BindingCheckpoint` gained optional `systemPromptHash`/`toolsetHash`; absent means
+  unknown and unknown never rehydrates. Every refusal falls through to today's cold path.
+- The checkpoint stays compact deliberately: `sentPrefixHash` is one sha256 over the prefix, where persisting the
+  full hash array would add tens of KB to the transcript on every turn. `claudeConfigDir` became optional because
+  nothing consumes it — a real transcript-existence probe would have to hard-code Claude Code's private
+  `projects/<mangled-cwd>/<id>.jsonl` layout, and this extension deliberately treats resume failure as that gate
+  (`session-stream.ts` catches it and falls back to `resume_initialization_failed`).
+- `verifyBindingAgainstTranscript` is left untouched and still unused; wiring it needs the transcript probe above.
+- This cannot be implemented by an external extension: the binding store, the continuity decision, and the commit
+  boundary are all private to the builtin provider, and no extension hook can reach them.
+- Added `test/suite/regressions/808-claude-sdk-oauth-binding-persistence.test.ts` covering checkpoint derivation, the
+  branch round-trip, a successful rehydrate, six refusal cases, and single-use consumption.
+- Expected merge conflict zones: LOW in `session-binding.ts` (appended store) and `session-sync.ts` (one `export`);
+  MEDIUM in `session-registry-wiring.ts` (imports, signature, `message_end` tail) and `session-stream.ts` (imports
+  and the pre-decision block in `createResidentAttempt`).
+
 ## 2026-08-11 - Require a real OAuth login for runtime availability
 
 - Removed the literal `apiKey: "claude-sdk-oauth-managed"` registration placeholder. Provider composition treated

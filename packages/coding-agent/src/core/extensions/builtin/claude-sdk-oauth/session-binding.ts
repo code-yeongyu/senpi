@@ -9,8 +9,16 @@ export type BindingCheckpoint = {
 	sentPrefixHash: string;
 	lastAssistantUuid: string | null;
 	accountName: string;
-	claudeConfigDir: string;
+	claudeConfigDir?: string;
 	modelId: string;
+	/**
+	 * Config identity at the time the checkpoint was written. A live entry has its
+	 * drift checked by `identityDrift`, which a restarted process cannot run because
+	 * the entry is gone. Absent (pre-existing checkpoints) means unknown, and unknown
+	 * never rehydrates.
+	 */
+	systemPromptHash?: string;
+	toolsetHash?: string;
 };
 
 export type BindingInvalidation = { schemaVersion: 1; invalidated: true; reason: string };
@@ -63,4 +71,24 @@ export function verifyBindingAgainstTranscript(input: BindingVerificationInput):
 		from: binding.sentCount,
 		reason: "sent_stream_diverged",
 	};
+}
+
+/**
+ * Checkpoints read off the branch at `session_start`, held until the turn that can
+ * verify them. The decision needs the current sent-hash prefix, which only exists
+ * once the provider context is built, so the read and the check happen in different
+ * places and this is the hand-off between them.
+ */
+const checkpoints = new Map<string, BindingCheckpoint>();
+
+export function rememberCheckpoint(senpiSessionId: string, checkpoint: BindingCheckpoint): void {
+	checkpoints.set(senpiSessionId, checkpoint);
+}
+
+export function getCheckpoint(senpiSessionId: string): BindingCheckpoint | undefined {
+	return checkpoints.get(senpiSessionId);
+}
+
+export function forgetCheckpoint(senpiSessionId: string): void {
+	checkpoints.delete(senpiSessionId);
 }

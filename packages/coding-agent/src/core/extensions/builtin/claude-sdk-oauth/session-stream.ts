@@ -5,6 +5,7 @@ import { buildPromptBlocks } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks, serializedPayloadBytes } from "./prompt-directive-dedupe.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
 import { getSdkBoundary } from "./sdk-boundary.ts";
+import { forgetCheckpoint, getCheckpoint } from "./session-binding.ts";
 import { type ContinuityDecision, decideNativeContinuity } from "./session-continuity.ts";
 import {
 	type ContinuityObservation,
@@ -28,6 +29,7 @@ import { submitSessionTurn } from "./session-registry-pump.ts";
 import {
 	buildDeltaPromptBlocks,
 	configFingerprint,
+	prefixDigest,
 	recordSyncedStream,
 	sentHashesForEntry,
 	sentMessageHashes,
@@ -129,6 +131,44 @@ function entrySnapshot(entry: ClaudeSdkOauthSessionEntry, hashes: readonly strin
 	};
 }
 
+/**
+ * A restart empties both the registry and the in-memory binding map, so an unchanged
+ * session would bootstrap and re-send its entire history. The branch checkpoint
+ * outlives the process, but it carries only a digest, so the binding is rebuilt from
+ * the CURRENT hashes and only once that digest proves the prefix is identical to what
+ * the SDK session already received. Anything unproven - a shorter history, a changed
+ * prefix, a different account/model, an unknown config identity - is left alone and
+ * takes the existing cold path.
+ */
+export function rehydrateBindingFromCheckpoint(
+	sessionId: string,
+	hashes: readonly string[],
+	fingerprint: { systemPromptHash: string; toolsetHash: string },
+	accountName: string,
+	modelId: string,
+): boolean {
+	const checkpoint = getCheckpoint(sessionId);
+	if (!checkpoint) return false;
+	forgetCheckpoint(sessionId);
+	if (checkpoint.accountName !== accountName || checkpoint.modelId !== modelId) return false;
+	if (checkpoint.systemPromptHash !== fingerprint.systemPromptHash) return false;
+	if (checkpoint.toolsetHash !== fingerprint.toolsetHash) return false;
+	if (checkpoint.sentCount < 1 || hashes.length < checkpoint.sentCount) return false;
+	if (prefixDigest(hashes, checkpoint.sentCount) !== checkpoint.sentPrefixHash) return false;
+	rememberBinding({
+		senpiSessionId: sessionId,
+		sdkSessionId: checkpoint.sdkSessionId,
+		sentCount: checkpoint.sentCount,
+		sentHashes: hashes.slice(0, checkpoint.sentCount),
+		lastAssistantUuid: checkpoint.lastAssistantUuid,
+		accountName: checkpoint.accountName,
+		modelId: checkpoint.modelId,
+		systemPromptHash: fingerprint.systemPromptHash,
+		toolsetHash: fingerprint.toolsetHash,
+	});
+	return true;
+}
+
 async function createResidentAttempt(
 	input: ResidentSessionStreamInput,
 	auth: AuthenticatedAttemptInput,
@@ -139,6 +179,9 @@ async function createResidentAttempt(
 	const existing = getSession(sessionId);
 	const fingerprint = configFingerprint(auth.options, input.context, auth.authLane, auth.accountName);
 	const residentHashes = existing ? (sentHashesForEntry(existing) ?? hashes) : hashes;
+	if (!existing && !getBinding(sessionId)) {
+		rehydrateBindingFromCheckpoint(sessionId, hashes, fingerprint, auth.accountName, input.model.id);
+	}
 	const decision = decideNativeContinuity({
 		entry: existing ? entrySnapshot(existing, residentHashes) : undefined,
 		binding: getBinding(sessionId),

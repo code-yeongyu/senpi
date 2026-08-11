@@ -65,7 +65,7 @@ export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
 	return hashes;
 }
 
-function prefixDigest(hashes: readonly string[], count = hashes.length): string {
+export function prefixDigest(hashes: readonly string[], count = hashes.length): string {
 	return digest(hashes.slice(0, count));
 }
 
