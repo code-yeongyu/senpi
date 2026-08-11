@@ -16,6 +16,11 @@
   authenticated ambient Claude CLI is usable. Empty sentinel credentials and logged-out local CLIs are skipped, and
   fallback responses carrying errors such as `Not logged in` cannot emit an immediate or delayed green
   `Fallback model responded` notice ([#803](https://github.com/code-yeongyu/senpi/pull/803)).
+- The `claude-sdk-oauth` continuity binding is persisted to the session branch and restored on the next start, so a
+  restart resumes the existing Claude session instead of re-sending the whole conversation as a `registry_miss`
+  flatten. The binding is only rebuilt when the current sent-prefix digest, account, model, system prompt and
+  toolset all still match; anything unproven keeps today's behavior
+  ([#809](https://github.com/code-yeongyu/senpi/pull/809)).
 
 ### New Features
 
