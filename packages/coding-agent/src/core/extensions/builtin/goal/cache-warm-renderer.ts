@@ -41,6 +41,9 @@ function whyLine(data: GoalCacheWarmupEntryData): string {
 	switch (data.phase) {
 		case "scheduled": {
 			const deferred = `Continuation deferred ${formatWakeDuration(data.delayMs)}`;
+			if (data.cache?.cacheLifetime === "automatic") {
+				return `${deferred} - provider caching is automatic; the timed wake only keeps the goal alive.`;
+			}
 			if (data.cache?.ttlSeconds === undefined) {
 				return `${deferred} - the monitor wakes the goal the moment decisive output lands.`;
 			}
@@ -57,6 +60,9 @@ function warmLine(data: GoalCacheWarmupEntryData): string | undefined {
 	const cache = data.cache;
 	if (cache === undefined || cache.cachedTokens <= 0) return undefined;
 	const tokens = `~${formatWarmTokenCount(cache.cachedTokens)} tokens`;
+	if (cache.cacheLifetime === "automatic") {
+		return `${tokens} cached after the prior turn`;
+	}
 	const ttlMayHaveElapsed =
 		cache.ttlSeconds !== undefined && (data.waitedMs ?? data.delayMs) >= cache.ttlSeconds * 1000;
 	if (ttlMayHaveElapsed) {
