@@ -7,6 +7,7 @@ import {
 	type Model,
 	PROMPT_CACHE_TTL_LONG_SECONDS,
 	PROMPT_CACHE_TTL_SHORT_SECONDS,
+	resolvePromptCacheLifetime,
 	resolvePromptCacheTtlSeconds,
 } from "../src/index.ts";
 import { supportsPromptCaching as supportsPromptCachingBrowserSafe } from "../src/utils/prompt-cache-ttl.ts";
@@ -48,6 +49,11 @@ const cacheableBedrockModel = createModel("bedrock-converse-stream", {
 const openAIResponsesModel = createModel("openai-responses", {
 	provider: "openai",
 	baseUrl: "https://api.openai.com/v1",
+});
+
+const deepseekModel = createModel("openai-completions", {
+	provider: "deepseek",
+	baseUrl: "https://api.deepseek.com",
 });
 
 const originalCacheRetention = process.env.PI_CACHE_RETENTION;
@@ -284,4 +290,54 @@ describe("automatic and unknown cache backends", () => {
 			expect(resolvePromptCacheTtlSeconds(createModel(api))).toBeUndefined();
 		},
 	);
+});
+
+describe("DeepSeek automatic cache lifetime (issue #831)", () => {
+	it("classifies direct DeepSeek as automatic, not a fixed 5m TTL", () => {
+		expect(resolvePromptCacheLifetime(deepseekModel)).toEqual({ kind: "automatic" });
+	});
+
+	it("detects DeepSeek through a deepseek.com base URL", () => {
+		const urlModel = createModel("openai-completions", {
+			provider: "custom-proxy",
+			baseUrl: "https://api.deepseek.com/v1",
+		});
+		expect(resolvePromptCacheLifetime(urlModel)).toEqual({ kind: "automatic" });
+	});
+
+	it("reports no fixed TTL for direct DeepSeek via the legacy wrapper", () => {
+		expect(resolvePromptCacheTtlSeconds(deepseekModel)).toBeUndefined();
+	});
+
+	it("keeps long retention from fabricating a fixed TTL for DeepSeek", () => {
+		expect(resolvePromptCacheLifetime(deepseekModel, { PI_CACHE_RETENTION: "long" })).toEqual({
+			kind: "automatic",
+		});
+		expect(resolvePromptCacheTtlSeconds(deepseekModel, { PI_CACHE_RETENTION: "long" })).toBeUndefined();
+	});
+});
+
+describe("prompt-cache lifetime classification", () => {
+	it("maps every other lane exactly as the legacy TTL resolver did", () => {
+		expect(resolvePromptCacheLifetime(anthropicModel)).toEqual({ kind: "fixed", ttlSeconds: 300 });
+		expect(resolvePromptCacheLifetime({ ...anthropicModel, cacheRetention: "long" })).toEqual({
+			kind: "fixed",
+			ttlSeconds: 3600,
+		});
+		expect(resolvePromptCacheLifetime({ ...anthropicModel, cacheRetention: "none" })).toEqual({ kind: "disabled" });
+		expect(resolvePromptCacheLifetime(anthropicCompletionsModel)).toEqual({ kind: "fixed", ttlSeconds: 300 });
+		expect(resolvePromptCacheLifetime(cacheableBedrockModel)).toEqual({ kind: "fixed", ttlSeconds: 300 });
+		expect(resolvePromptCacheLifetime(openAIResponsesModel)).toEqual({ kind: "fixed", ttlSeconds: 300 });
+		expect(resolvePromptCacheLifetime(createModel("openai-completions", { cacheRetention: "none" }))).toEqual({
+			kind: "disabled",
+		});
+		expect(resolvePromptCacheLifetime(createModel("google-generative-ai"))).toEqual({ kind: "unknown" });
+	});
+
+	it("keeps the legacy wrapper identical to the fixed lifetime", () => {
+		const lifetime = resolvePromptCacheLifetime(anthropicModel);
+		expect(resolvePromptCacheTtlSeconds(anthropicModel)).toBe(
+			lifetime.kind === "fixed" ? lifetime.ttlSeconds : undefined,
+		);
+	});
 });
