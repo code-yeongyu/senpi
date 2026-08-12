@@ -31,6 +31,7 @@ export class TerminalScreen {
 	private terminal: XtermTerminalType;
 	private readonly history: string[] = [];
 	private historyLength = 0;
+	private writeQueue: Promise<void> = Promise.resolve();
 	private readonly maxReplayHistoryLength: number;
 	private readonly scrollback: number;
 
@@ -46,19 +47,22 @@ export class TerminalScreen {
 		const payload = decodeInput(data);
 		const sanitizedPayload = sanitizeString(payload);
 		if (sanitizedPayload.length > 0) this.appendHistory(sanitizedPayload);
-		return this.write(payload);
+		return this.enqueueWrite(payload);
 	}
 
 	resize(cols: number, rows: number): Promise<void> {
 		const nextCols = normalizeDimension(cols, this.terminal.cols);
 		const nextRows = normalizeDimension(rows, this.terminal.rows);
-		this.terminal.dispose();
-		this.terminal = this.createTerminal(nextCols, nextRows);
-		return this.write(this.history.join(""));
+		const replay = this.history.join("");
+		return this.enqueue(async () => {
+			this.terminal.dispose();
+			this.terminal = this.createTerminal(nextCols, nextRows);
+			await this.write(replay);
+		});
 	}
 
 	flush(): Promise<void> {
-		return this.write("");
+		return this.enqueueWrite("");
 	}
 
 	snapshot(): TerminalScreenSnapshot {
@@ -100,6 +104,19 @@ export class TerminalScreen {
 			allowProposedApi: true,
 			logLevel: "off",
 		});
+	}
+
+	private enqueueWrite(payload: string): Promise<void> {
+		return this.enqueue(() => this.write(payload));
+	}
+
+	private enqueue(operation: () => Promise<void>): Promise<void> {
+		const result = this.writeQueue.then(operation);
+		this.writeQueue = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
 	}
 
 	private write(payload: string): Promise<void> {
