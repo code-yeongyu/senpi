@@ -1,6 +1,8 @@
 import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
 import { buildSessionContext } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { BTW_HISTORY_ENTRY_TYPE, buildBtwHistoryMessages, readBtwHistory } from "./history.ts";
+import { BTW_HISTORY_OVERLAY_OPTIONS, BtwHistoryPanel } from "./history-panel.ts";
 import { BtwPanel } from "./panel.ts";
 import { buildSideQueryContext, getSideQueryPromptContextWindow, runSideQuery } from "./side-query.ts";
 
@@ -48,7 +50,24 @@ export default function btwExtension(pi: ExtensionAPI) {
 		handler: async (args, ctx) => {
 			const question = args.trim();
 			if (!question) {
-				ctx.ui.notify("Usage: /btw <question>", "warning");
+				const entries = readBtwHistory(ctx.sessionManager.getBranch());
+				if (entries.length === 0) {
+					ctx.ui.notify("No side questions yet in this session.", "info");
+					return;
+				}
+				if (ctx.mode === "tui" && ctx.hasUI) {
+					await ctx.ui.custom<undefined>(
+						(tui, theme, _keybindings, done) => new BtwHistoryPanel(entries, tui, theme, done),
+						{ overlay: true, overlayOptions: BTW_HISTORY_OVERLAY_OPTIONS },
+					);
+					return;
+				}
+				ctx.ui.notify(
+					entries
+						.map((entry, index) => `${index + 1}. Question: ${entry.question}\nAnswer: ${entry.answer}`)
+						.join("\n\n"),
+					"info",
+				);
 				return;
 			}
 			const model = ctx.model;
@@ -58,6 +77,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 			}
 
 			const snapshot = buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId());
+			const priorBtw = buildBtwHistoryMessages(readBtwHistory(ctx.sessionManager.getBranch()));
 			const history = convertToLlm(filterContextExcludedMessages(snapshot.messages));
 			const systemPrompt = ctx.getSystemPrompt();
 			const thinkingLevel = pi.getThinkingLevel();
@@ -94,6 +114,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 					systemPrompt,
 					history,
 					question,
+					priorBtw,
 					promptContextWindow: getSideQueryPromptContextWindow(model),
 				});
 				const { replyText } = await runSideQuery(
@@ -119,6 +140,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 				);
 				if (active !== entry) return;
 				entry.settled = true;
+				pi.appendEntry(BTW_HISTORY_ENTRY_TYPE, { question, answer: replyText, timestamp: Date.now() });
 				if (entry.panel) {
 					entry.panel.markDone();
 				} else {

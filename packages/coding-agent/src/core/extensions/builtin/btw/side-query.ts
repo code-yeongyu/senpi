@@ -19,6 +19,7 @@ export const SIDE_QUERY_INSTRUCTION = [
 	"The user is asking a side question about the conversation so far, outside the main task.",
 	"Answer it directly and concisely from the context above.",
 	"Do not continue any task, do not modify anything, and do not treat this as new work.",
+	"Reply in the same language as the user's side question.",
 ].join(" ");
 
 export const DEFAULT_ESTABLISHMENT_TIMEOUT_MS = 30_000;
@@ -26,6 +27,7 @@ export const DEFAULT_ESTABLISHMENT_TIMEOUT_MS = 30_000;
 export interface SideQueryContextInput {
 	systemPrompt: string;
 	history: readonly Message[];
+	priorBtw?: readonly Message[];
 	question: string;
 	promptContextWindow?: number;
 }
@@ -71,7 +73,7 @@ export function getSideQueryPromptContextWindow(model: Pick<Model<string>, "cont
 export function buildSideQueryContext(input: SideQueryContextInput): Context {
 	const systemPrompt = `${input.systemPrompt}\n\n${SIDE_QUERY_INSTRUCTION}`;
 	const messages = boundSideQueryMessages(
-		[...input.history, { role: "user", content: input.question, timestamp: Date.now() }],
+		[...input.history, ...(input.priorBtw ?? []), { role: "user", content: input.question, timestamp: Date.now() }],
 		systemPrompt,
 		input.promptContextWindow,
 	);
