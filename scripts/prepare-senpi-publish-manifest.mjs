@@ -186,6 +186,19 @@ export function stagePublishManifest(repoRoot) {
 			rmSync(join(codingAgentNodeModules, packageName), { recursive: true, force: true });
 		}
 	}
+	manifest.dependencies ??= {};
+	const declaredPackageNames = new Set([
+		...Object.keys(manifest.dependencies),
+		...Object.keys(manifest.optionalDependencies ?? {}),
+	]);
+	for (const packageName of bundlablePackageNames) {
+		if (declaredPackageNames.has(packageName)) continue;
+		const stagedManifest = readPackageManifest(join(codingAgentNodeModules, packageName));
+		if (typeof stagedManifest?.version !== "string") {
+			throw new Error(`Staged package ${packageName} is missing an exact version for the publish manifest.`);
+		}
+		manifest.dependencies[packageName] = stagedManifest.version;
+	}
 	// Keep the original dependency keys so npm packs the modules at the import paths
 	// the compiled source uses. Resolve those keys through fork-owned aliases instead
 	// of attempting to fetch lockstep versions from the upstream-owned namespace.

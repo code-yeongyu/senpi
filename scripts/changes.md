@@ -251,4 +251,30 @@
 - `package-lock.json` entries for `@anthropic-ai/claude-agent-sdk-*`.
 - Root `package.json` static-check scripts.
 - Release/dependency lock tests under `scripts/`.
+# Complete the bundled publish manifest dependency closure
+
+## What changed
+
+- The Senpi publish manifest now declares every portable staged transitive package at its exact staged version,
+  in addition to listing it in `bundleDependencies`.
+- The focused bundled-workspace test now pins both halves of npm's contract: the transitive package must be
+  staged and bundled, and it must also have a manifest dependency edge so `npm pack` includes it.
+
+## Why
+
+- npm ignores a copied `node_modules/<package>` directory when the package appears only in
+  `bundleDependencies` and has no matching `dependencies` or `optionalDependencies` entry.
+- The `v2026.8.13` publish-only workflow therefore copied the full lock closure but packed only direct runtime
+  packages; tarball validation correctly rejected 33 missing Google auth/protobuf transitive dependencies.
+
+## Why not an extension
+
+- npm decides tarball membership before Senpi or an extension can execute. The staged publish manifest is the
+  only boundary that can make the copied closure part of the package.
+
+## Expected conflict zones
+
+- `prepare-senpi-publish-manifest.mjs` staged dependency generation.
+- `prepare-senpi-bundled-workspaces.prepare.test.mjs` publish-manifest expectations.
+
 

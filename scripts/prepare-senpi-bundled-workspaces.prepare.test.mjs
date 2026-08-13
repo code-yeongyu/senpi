@@ -261,6 +261,8 @@ describe("prepareSenpiBundledWorkspaces", () => {
 			"@earendil-works/pi-pty": "npm:@code-yeongyu/senpi-pty@2026.7.22",
 			"@earendil-works/pi-telemetry": "npm:@code-yeongyu/senpi-telemetry@2026.7.22",
 			"@earendil-works/pi-tui": "npm:@code-yeongyu/senpi-tui@2026.7.22",
+			"cross-spawn": "1.0.0",
+			which: "1.0.0",
 		});
 		const stagedAgentManifest = JSON.parse(
 			readFileSync(
