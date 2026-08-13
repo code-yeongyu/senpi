@@ -1,5 +1,30 @@
 # changes — btw
 
+## 2026-08-13 - Persist branch-local side-question history
+
+### What changed
+
+- Completed `/btw` questions and answers are stored as custom session entries, and bare `/btw` opens a keyboard-driven
+  history viewer without calling the provider.
+- Continuity includes only the newest ten `/btw` entries from the active branch. The full main conversation snapshot,
+  prior side answers, and current question still pass through the model-aware side-query context budget together.
+- Side-query answers are instructed to use the same language as the current side question.
+
+### Why
+
+- Side questions need durable continuity and review without polluting the main model conversation or leaking entries from
+  sibling branches.
+
+### Why an extension could not handle it
+
+- The builtin owns side-query dispatch, snapshot construction, provider streaming, and the focused TUI command surface.
+
+### Expected merge-conflict zones
+
+- `index.ts` command handling and side-query completion.
+- `side-query.ts` instruction and bounded message assembly.
+- `history.ts`, `history-view-model.ts`, and `history-panel.ts` are feature-owned additions.
+
 ## 2026-08-13 - Preserve provider-header deletion markers
 
 ### What changed
