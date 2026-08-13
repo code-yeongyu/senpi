@@ -40,6 +40,13 @@ export interface CompactionSettings {
 	restorationMaxTotalTokens?: number; // default: 50000
 	restorationContextRatio?: number; // default: 0.15
 	idleCompactionEnabled?: boolean; // default: true
+	/**
+	 * Optional compaction model override as "provider/model" (e.g. "deepseek/deepseek-chat").
+	 * When set, compaction summarization runs on this model instead of the session model,
+	 * and a configured override re-enables senpi compaction on SDK-owned lanes
+	 * (claude-sdk-oauth with a resident session) whose own compaction never fires.
+	 */
+	model?: string; // default: undefined (use session model)
 }
 
 export interface BranchSummarySettings {
@@ -976,6 +983,7 @@ export class SettingsManager {
 		restorationMaxTotalTokens: number;
 		restorationContextRatio: number;
 		idleCompactionEnabled: boolean;
+		model?: string;
 	} {
 		return {
 			enabled: this.getCompactionEnabled(),
@@ -990,6 +998,7 @@ export class SettingsManager {
 			restorationMaxTotalTokens: this.settings.compaction?.restorationMaxTotalTokens ?? 50_000,
 			restorationContextRatio: this.settings.compaction?.restorationContextRatio ?? 0.15,
 			idleCompactionEnabled: this.settings.compaction?.idleCompactionEnabled ?? true,
+			model: this.settings.compaction?.model,
 		};
 	}
 

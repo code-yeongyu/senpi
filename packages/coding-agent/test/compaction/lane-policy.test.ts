@@ -105,6 +105,41 @@ describe("compaction lane policy — instance policy", () => {
 
 		expect(policy.disablesSenpiCompaction({ cwd: "/repo", model: { provider: "claude-sdk-oauth" } })).toBe(false);
 	});
+
+	it("re-enables senpi compaction on the SDK-native lane when a compaction model override is set", () => {
+		const policy = createCompactionLanePolicy({
+			loadProviderSettings: () => ({ resumeMode: "auto" }),
+		});
+		const ctx = {
+			cwd: "/repo",
+			model: { provider: "claude-sdk-oauth" },
+			getCompactionSettings: () => ({ model: "deepseek/deepseek-chat" }),
+		};
+
+		// The override makes senpi own summarization, so the stand-down lifts.
+		expect(policy.disablesSenpiCompaction(ctx)).toBe(false);
+	});
+
+	it("still stands down on the SDK-native lane when the override resolves to no model", () => {
+		const policy = createCompactionLanePolicy({
+			loadProviderSettings: () => ({ resumeMode: "auto" }),
+		});
+
+		expect(
+			policy.disablesSenpiCompaction({
+				cwd: "/repo",
+				model: { provider: "claude-sdk-oauth" },
+				getCompactionSettings: () => ({ model: undefined }),
+			}),
+		).toBe(true);
+		expect(
+			policy.disablesSenpiCompaction({
+				cwd: "/repo",
+				model: { provider: "claude-sdk-oauth" },
+				getCompactionSettings: () => ({}),
+			}),
+		).toBe(true);
+	});
 });
 
 describe("compaction lane policy — compact_boundary mirroring", () => {
