@@ -8,6 +8,7 @@ import {
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type { Theme } from "../../../../modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../../../../utils/ansi.ts";
 import { type BtwHistoryViewEntry, BtwHistoryViewModel } from "./history-view-model.ts";
 
 const FOOTER_HINT = "left/right: question   up/down: scroll   esc: close";
@@ -40,8 +41,14 @@ export function fitBtwHistoryRow(text: string, width: number): string {
 	return visibleWidth(text) > safeWidth ? truncateToWidth(text, safeWidth, "") : text;
 }
 
+export function sanitizeBtwHistoryText(text: string): string {
+	return stripAnsi(text)
+		.replace(/\r\n?/g, "\n")
+		.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "");
+}
+
 function normalizeQuestion(question: string): string {
-	return question.replace(/[\r\n]+/g, " ").trim();
+	return sanitizeBtwHistoryText(question).replace(/\n+/g, " ").trim();
 }
 
 export class BtwHistoryPanel implements Component {
@@ -64,7 +71,9 @@ export class BtwHistoryPanel implements Component {
 		const selected = this.#model.selected;
 		if (!selected) return [this.#theme.fg("muted", fitBtwHistoryRow("No side questions yet.", safeWidth))];
 
-		const answerLines = wrapTextWithAnsi(selected.answer, safeWidth).map((line) => fitBtwHistoryRow(line, safeWidth));
+		const answerLines = wrapTextWithAnsi(sanitizeBtwHistoryText(selected.answer), safeWidth).map((line) =>
+			fitBtwHistoryRow(line, safeWidth),
+		);
 		const layout = computeBtwHistoryLayout({
 			terminalRows: this.#tui.terminal.rows,
 			entryCount: this.#model.entryCount,

@@ -313,6 +313,20 @@ describe("/btw extension command", () => {
 		expect(branchSpy).toHaveBeenCalled();
 	});
 
+	it("removes terminal control sequences from non-TUI history notifications", async () => {
+		const harness = await setup();
+		const notify = vi.spyOn(harness.getExtensionRunner().getUIContext(), "notify");
+		harness.sessionManager.appendCustomEntry("btw-history", {
+			question: "stored\x1b[2J question\x07",
+			answer: "answer \x1b]8;;https://evil.test\x1b\\link\x1b]8;;\x1b\\\x1b]52;c;AAAA\x07",
+			timestamp: 1,
+		});
+
+		await harness.session.prompt("/btw");
+
+		expect(notify).toHaveBeenCalledWith("1. Question: stored question\nAnswer: answer link", "info");
+	});
+
 	it("persists completed side questions and keeps sibling-branch history out of continuity", async () => {
 		const harness = await setup();
 		harness.setResponses([

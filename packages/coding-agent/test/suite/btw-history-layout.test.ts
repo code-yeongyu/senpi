@@ -5,6 +5,7 @@ import {
 	BTW_HISTORY_OVERLAY_HEIGHT_RATIO,
 	computeBtwHistoryLayout,
 	fitBtwHistoryRow,
+	sanitizeBtwHistoryText,
 } from "../../src/core/extensions/builtin/btw/history-panel.ts";
 
 function overlayBudget(terminalRows: number): number {
@@ -34,5 +35,12 @@ describe("btw history layout", () => {
 		const row = fitBtwHistoryRow("→ /btw 한국어 질문 with ASCII suffix", 18);
 
 		expect(visibleWidth(row)).toBeLessThanOrEqual(18);
+	});
+
+	it("removes terminal control sequences while preserving display whitespace", () => {
+		const text =
+			"question\x1b[2J\x1b]8;;https://evil.test\x1b\\link\x1b]8;;\x1b\\\x1b]52;c;AAAA\x07\x07\nanswer\ttext";
+
+		expect(sanitizeBtwHistoryText(text)).toBe("questionlink\nanswer\ttext");
 	});
 });

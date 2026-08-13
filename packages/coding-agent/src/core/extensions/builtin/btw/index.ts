@@ -2,7 +2,7 @@ import { convertToLlm, filterContextExcludedMessages } from "../../../messages.t
 import { buildSessionContext } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { BTW_HISTORY_ENTRY_TYPE, buildBtwHistoryMessages, readBtwHistory } from "./history.ts";
-import { BTW_HISTORY_OVERLAY_OPTIONS, BtwHistoryPanel } from "./history-panel.ts";
+import { BTW_HISTORY_OVERLAY_OPTIONS, BtwHistoryPanel, sanitizeBtwHistoryText } from "./history-panel.ts";
 import { BtwPanel } from "./panel.ts";
 import { buildSideQueryContext, getSideQueryPromptContextWindow, runSideQuery } from "./side-query.ts";
 
@@ -64,7 +64,10 @@ export default function btwExtension(pi: ExtensionAPI) {
 				}
 				ctx.ui.notify(
 					entries
-						.map((entry, index) => `${index + 1}. Question: ${entry.question}\nAnswer: ${entry.answer}`)
+						.map(
+							(entry, index) =>
+								`${index + 1}. Question: ${sanitizeBtwHistoryText(entry.question)}\nAnswer: ${sanitizeBtwHistoryText(entry.answer)}`,
+						)
 						.join("\n\n"),
 					"info",
 				);
