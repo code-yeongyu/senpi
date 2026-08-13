@@ -1,6 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { estimateTokens } from "../../src/core/compaction/index.ts";
 import btwExtension from "../../src/core/extensions/builtin/btw/index.ts";
 import {
@@ -34,6 +34,22 @@ describe("buildSideQueryContext", () => {
 		expect(context.messages).toHaveLength(2);
 		expect(context.messages[1]).toMatchObject({ role: "user" });
 		expect(getMessageText(context.messages[1])).toBe("what did I ask?");
+	});
+
+	it("orders main history, prior side answers, and the final question before applying the budget", () => {
+		const context = buildSideQueryContext({
+			systemPrompt: "BASE",
+			history: [{ role: "user", content: "main history", timestamp: 1 }],
+			priorBtw: [{ role: "user", content: "prior side answer", timestamp: 2 }],
+			question: "current question",
+			promptContextWindow: 10_000,
+		});
+
+		expect(context.messages.map((message) => getMessageText(message))).toEqual([
+			"main history",
+			"prior side answer",
+			"current question",
+		]);
 	});
 
 	it("does not mutate the caller's history array", () => {
@@ -281,13 +297,52 @@ describe("/btw extension command", () => {
 		expect(sideCall?.context.systemPrompt).toContain(SIDE_QUERY_INSTRUCTION);
 	});
 
-	it("shows usage feedback instead of calling the provider when the question is empty", async () => {
+	it("opens branch-local history instead of calling the provider when the question is empty", async () => {
 		const harness = await setup();
 		harness.setResponses([fauxAssistantMessage("unused")]);
+		harness.sessionManager.appendCustomEntry("btw-history", {
+			question: "stored question",
+			answer: "stored answer",
+			timestamp: 1,
+		});
+		const branchSpy = vi.spyOn(harness.sessionManager, "getBranch");
 
 		await harness.session.prompt("/btw");
 
 		expect(harness.faux.state.callCount).toBe(0);
+		expect(branchSpy).toHaveBeenCalled();
+	});
+
+	it("persists completed side questions and keeps sibling-branch history out of continuity", async () => {
+		const harness = await setup();
+		harness.setResponses([
+			fauxAssistantMessage("main answer"),
+			fauxAssistantMessage("sibling side answer"),
+			fauxAssistantMessage("active side answer"),
+		]);
+
+		await harness.session.prompt("main question");
+		const branchPoint = harness.sessionManager.getLeafId();
+		expect(branchPoint).not.toBeNull();
+		await harness.session.prompt("/btw sibling question");
+		if (branchPoint === null) throw new Error("Expected a branch point after the main response");
+		harness.sessionManager.branch(branchPoint);
+		await harness.session.prompt("/btw active question");
+
+		const activeCall = harness.faux.getCallLog().at(-1);
+		const activeTexts = (activeCall?.context.messages ?? []).map((message) => getMessageText(message));
+		expect(activeTexts).not.toContain(
+			"Earlier side question: sibling question\nYour earlier answer: sibling side answer",
+		);
+		expect(activeTexts.at(-1)).toBe("active question");
+		const stored = harness.sessionManager
+			.getBranch()
+			.filter(
+				(entry): entry is Extract<typeof entry, { type: "custom" }> =>
+					entry.type === "custom" && entry.customType === "btw-history",
+			);
+		expect(stored).toHaveLength(1);
+		expect(stored[0]?.data).toMatchObject({ question: "active question", answer: "active side answer" });
 	});
 
 	it("runs in parallel with an in-flight main turn", async () => {
