@@ -1,5 +1,5 @@
 import type { Api, Model, ProviderEnv } from "@earendil-works/pi-ai";
-import { resolvePromptCacheTtlSeconds } from "@earendil-works/pi-ai";
+import { type PromptCacheLifetime, resolvePromptCacheLifetime } from "@earendil-works/pi-ai";
 import type { TokenUsageSnapshot } from "./types.ts";
 
 /** Custom session-entry type carrying the cache-warm continuation story. */
@@ -9,10 +9,28 @@ export const GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS = 240_000;
 const GOAL_MONITOR_CONTINUATION_MIN_DELAY_MS = 1_000;
 const GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS = 3_600_000;
 
+/** Default liveness backstop for providers whose caching needs no client TTL wake. */
+export const GOAL_MONITOR_LIVENESS_BACKSTOP_DEFAULT_SECONDS = 3570;
+
+export function resolveGoalMonitorLivenessBackstopMs(goalBackstopMaxSeconds?: number): number {
+	const backstopSeconds =
+		typeof goalBackstopMaxSeconds === "number" &&
+		Number.isFinite(goalBackstopMaxSeconds) &&
+		goalBackstopMaxSeconds > 0
+			? goalBackstopMaxSeconds
+			: GOAL_MONITOR_LIVENESS_BACKSTOP_DEFAULT_SECONDS;
+	return Math.max(
+		GOAL_MONITOR_CONTINUATION_MIN_DELAY_MS,
+		Math.min(backstopSeconds * 1000, GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS),
+	);
+}
+
 export function resolveGoalMonitorContinuationDelayMs(
 	cacheSafeWaitSeconds: number | undefined,
 	goalBackstopMaxSeconds?: number,
+	lifetime?: PromptCacheLifetime,
 ): number {
+	if (lifetime?.kind === "automatic") return resolveGoalMonitorLivenessBackstopMs(goalBackstopMaxSeconds);
 	if (
 		typeof cacheSafeWaitSeconds !== "number" ||
 		!Number.isFinite(cacheSafeWaitSeconds) ||
@@ -33,6 +51,8 @@ export function resolveGoalMonitorContinuationDelayMs(
 export interface GoalCacheWarmMetrics {
 	/** Prompt-cache TTL of the active model in seconds, when known. */
 	readonly ttlSeconds?: number;
+	/** Lifetime classification of the active model's prompt cache, when known. */
+	readonly cacheLifetime?: "fixed" | "automatic";
 	/** Tokens sitting warm in the provider prompt cache after the last turn. */
 	readonly cachedTokens: number;
 	/** Estimated USD saved by re-reading those tokens from cache instead of paying a cold input read. */
@@ -97,17 +117,30 @@ export function estimateCacheWarmMetrics(
 	lastTurnUsage: Pick<TokenUsageSnapshot, "cacheRead" | "cacheWrite"> | undefined,
 ): GoalCacheWarmMetrics | undefined {
 	const cachedTokens = clampTokens(lastTurnUsage?.cacheRead) + clampTokens(lastTurnUsage?.cacheWrite);
-	const ttlSeconds = model === undefined ? undefined : resolvePromptCacheTtlSeconds(model, toProviderEnv(env));
-	if (ttlSeconds === undefined && cachedTokens === 0) return undefined;
+	if (model === undefined) return cachedTokens === 0 ? undefined : { cachedTokens };
+	const lifetime = resolvePromptCacheLifetime(model, toProviderEnv(env));
 	const estimatedSavedUsd =
-		model !== undefined && cachedTokens > 0
+		cachedTokens > 0
 			? (Math.max(0, model.cost.input - model.cost.cacheRead) * cachedTokens) / TOKENS_PER_PRICE_UNIT
 			: undefined;
-	return {
-		cachedTokens,
-		...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
-		...(estimatedSavedUsd !== undefined ? { estimatedSavedUsd } : {}),
-	};
+	switch (lifetime.kind) {
+		case "fixed":
+			return {
+				cachedTokens,
+				cacheLifetime: "fixed",
+				ttlSeconds: lifetime.ttlSeconds,
+				...(estimatedSavedUsd !== undefined ? { estimatedSavedUsd } : {}),
+			};
+		case "automatic":
+			// Automatic best-effort caching has no client-visible TTL and no
+			// timer-preservation rationale, so neither is reported.
+			return { cachedTokens, cacheLifetime: "automatic" };
+		case "disabled":
+		case "unknown":
+			return cachedTokens === 0
+				? undefined
+				: { cachedTokens, ...(estimatedSavedUsd !== undefined ? { estimatedSavedUsd } : {}) };
+	}
 }
 
 export function formatWarmTokenCount(tokens: number): string {
@@ -147,7 +180,7 @@ function clampTokens(value: number | undefined): number {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
 
-function toProviderEnv(env: NodeJS.ProcessEnv): ProviderEnv {
+export function toProviderEnv(env: NodeJS.ProcessEnv): ProviderEnv {
 	const resolved: Record<string, string> = {};
 	for (const [key, value] of Object.entries(env)) {
 		if (value !== undefined) resolved[key] = value;
