@@ -1,10 +1,10 @@
 import { type Component, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { formatKeyText } from "../../../../modes/interactive/components/keybinding-hints.ts";
 import type { Theme } from "../../../../modes/interactive/theme/theme.ts";
-import type { KeybindingsManager } from "../../../keybindings.ts";
+import type { Keybinding, KeybindingsManager } from "../../../keybindings.ts";
 import { formatBtwQuestion, sanitizeBtwDisplayText } from "./display-text.ts";
 import { type BtwHistoryViewEntry, BtwHistoryViewModel } from "./history-view-model.ts";
 
-const FOOTER_HINT = "left/right: question   up/down: scroll   esc: close";
 const FOOTER_LINE_COUNT = 1;
 
 export const BTW_HISTORY_OVERLAY_OPTIONS = { width: "90%", maxHeight: "80%", minWidth: 60, margin: 2 } as const;
@@ -45,6 +45,11 @@ export function fitBtwHistoryRow(text: string, width: number): string {
 	return visibleWidth(text) > safeWidth ? truncateToWidth(text, safeWidth, "") : text;
 }
 
+function formatFooterHint(keybindings: KeybindingsManager): string {
+	const keys = (binding: Keybinding): string => formatKeyText(keybindings.getKeys(binding).join("/"));
+	return `${keys("tui.editor.cursorLeft")}/${keys("tui.editor.cursorRight")}: question   ${keys("tui.select.up")}/${keys("tui.select.down")}: scroll   ${keys("tui.select.cancel")}: close`;
+}
+
 export class BtwHistoryPanel implements Component {
 	readonly #entries: readonly BtwHistoryViewEntry[];
 	readonly #model: BtwHistoryViewModel;
@@ -78,7 +83,7 @@ export class BtwHistoryPanel implements Component {
 		this.#model.setViewportHeight(layout.answerRows);
 		const lines = this.#renderQuestions(safeWidth, layout.questionRows);
 		lines.push(...answerLines.slice(this.#model.scrollOffset, this.#model.scrollOffset + layout.answerRows));
-		lines.push(this.#theme.fg("dim", fitBtwHistoryRow(FOOTER_HINT, safeWidth)));
+		lines.push(this.#theme.fg("dim", fitBtwHistoryRow(formatFooterHint(this.#keybindings), safeWidth)));
 		return lines;
 	}
 
