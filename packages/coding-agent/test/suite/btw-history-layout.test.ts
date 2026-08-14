@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { sanitizeBtwDisplayText } from "../../src/core/extensions/builtin/btw/display-text.ts";
@@ -88,5 +91,31 @@ describe("btw history layout", () => {
 		expect(stripAnsi(panel.render(80).join("\n"))).toContain("line 02");
 		panel.handleInput("\x18");
 		expect(done).toHaveBeenCalledOnce();
+	});
+
+	it("removes terminal controls from configured footer key labels", () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-btw-keybindings-"));
+		try {
+			writeFileSync(
+				join(agentDir, "keybindings.json"),
+				JSON.stringify({ "tui.select.cancel": "\x1b]52;c;AAAA\x07ctrl+x" }),
+			);
+			const panel = new BtwHistoryPanel({
+				entries: [{ question: "question", answer: "answer" }],
+				tui: { terminal: { rows: 8 }, requestRender: vi.fn() },
+				theme: testTheme,
+				keybindings: KeybindingsManager.create(agentDir),
+				done: vi.fn(),
+			});
+
+			const raw = panel.render(120).join("\n");
+			const rendered = stripAnsi(raw);
+
+			expect(rendered).toContain("ctrl+x: close");
+			expect(raw).not.toContain("\x1b]52");
+			expect(raw).not.toContain("\x07");
+		} finally {
+			rmSync(agentDir, { recursive: true, force: true });
+		}
 	});
 });
