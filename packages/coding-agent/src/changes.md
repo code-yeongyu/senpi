@@ -1,5 +1,9 @@
 # changes
 
+## Configurable default OpenAI Codex Fast mode
+
+`/settings` now exposes **Default Fast mode**, enabled by default. The preference is stored in global settings and applies when a new OpenAI Codex session starts; `/fast` remains a per-session override.
+
 The historical-image transport entry moved to `core/changes.md`, beside the
 other provider-bound image transport behavior that owns the same payload path.
 

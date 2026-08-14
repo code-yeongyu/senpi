@@ -3,6 +3,7 @@ import serviceTierExtension, {
 	addServiceTierToPayload,
 	type ServiceTier,
 } from "../../src/core/extensions/builtin/service-tier.ts";
+import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const CODEX_PROVIDER = "openai-codex";
@@ -67,7 +68,7 @@ describe("service-tier builtin extension", () => {
 		expect(result.service_tier).toBe("priority");
 	});
 
-	it("resets a fast model on session_start, then toggles the catalog variant within the session", async () => {
+	it("keeps a fast model on session_start, then toggles the catalog variant within the session", async () => {
 		// given
 		const harness = await createHarness({
 			api: CODEX_API,
@@ -90,11 +91,20 @@ describe("service-tier builtin extension", () => {
 		await harness.session.bindExtensions({});
 
 		// then
-		expect(harness.session.model?.id).toBe(BASE_MODEL_ID);
-		expect(harness.session.serviceTier).toBeUndefined();
-		expect(harness.session.isFastModeActive()).toBe(false);
+		expect(harness.session.model?.id).toBe(FAST_MODEL_ID);
+		expect(harness.session.serviceTier).toBe("priority");
+		expect(harness.session.isFastModeActive()).toBe(true);
 		expect(harness.settingsManager.getDefaultProvider()).toBe(CODEX_PROVIDER);
 		expect(harness.settingsManager.getDefaultModel()).toBe(BASE_MODEL_ID);
+
+		// when
+		await harness.session.prompt("/fast");
+
+		// then
+		expect(harness.session.model?.id).toBe(BASE_MODEL_ID);
+		expect(harness.session.serviceTier).toBeUndefined();
+		const defaultPayload = { model: BASE_MODEL_ID };
+		expect(await runner.emitBeforeProviderRequest(defaultPayload)).toBe(defaultPayload);
 
 		// when
 		await harness.session.prompt("/fast");
@@ -102,25 +112,15 @@ describe("service-tier builtin extension", () => {
 		// then
 		expect(harness.session.model?.id).toBe(FAST_MODEL_ID);
 		expect(harness.session.serviceTier).toBe("priority");
+		expect(harness.settingsManager.getDefaultProvider()).toBe(CODEX_PROVIDER);
+		expect(harness.settingsManager.getDefaultModel()).toBe(BASE_MODEL_ID);
 		const fastModel = harness.session.model;
 		expect(fastModel).toBeDefined();
 		const upstreamModelId = harness.modelRegistry.getUpstreamModelId(fastModel!) ?? fastModel!.id;
-		const priorityPayload = await runner.emitBeforeProviderRequest({ model: upstreamModelId });
-		expect(priorityPayload).toEqual({
+		expect(await runner.emitBeforeProviderRequest({ model: upstreamModelId })).toEqual({
 			model: BASE_MODEL_ID,
 			service_tier: "priority",
 		});
-
-		// when
-		await harness.session.prompt("/fast");
-
-		// then
-		expect(harness.session.model?.id).toBe(BASE_MODEL_ID);
-		expect(harness.session.serviceTier).toBeUndefined();
-		expect(harness.settingsManager.getDefaultProvider()).toBe(CODEX_PROVIDER);
-		expect(harness.settingsManager.getDefaultModel()).toBe(BASE_MODEL_ID);
-		const defaultPayload = { model: BASE_MODEL_ID };
-		expect(await runner.emitBeforeProviderRequest(defaultPayload)).toBe(defaultPayload);
 	});
 
 	it("is a clear no-op for non-Codex providers", async () => {
@@ -307,16 +307,17 @@ describe("service-tier builtin extension", () => {
 
 	it("drops session fast mode when a new session starts", async () => {
 		// given
-		// The toggle is session-scoped and never persisted, so a fresh session_start must not
-		// inherit a priority tier from the previous one.
+		// An explicit preference disables Fast mode for each new Codex session.
 		const harness = await createHarness({
 			api: CODEX_API,
 			provider: CODEX_PROVIDER,
 			models: [{ id: BASE_MODEL_ID }, { id: FAST_MODEL_ID }],
+			settings: { openai: { defaultFastMode: false } },
 			extensionFactories: [serviceTierExtension],
 		});
 		harnesses.push(harness);
 		const runner = harness.getExtensionRunner();
+		SettingsManager.create(harness.tempDir).setOpenAIDefaultFastMode(false);
 		await harness.session.prompt("/fast");
 		expect(await runner.emitBeforeProviderRequest({ model: BASE_MODEL_ID })).toEqual({
 			model: BASE_MODEL_ID,

@@ -27,4 +27,16 @@ describe("SettingsManager service tier settings", () => {
 		// then
 		expect(serviceTier).toBe("priority");
 	});
+
+	it("enables OpenAI Codex fast mode by default", () => {
+		expect(SettingsManager.inMemory().getOpenAIDefaultFastMode()).toBe(true);
+	});
+
+	it("persists an explicit OpenAI Codex fast mode preference", () => {
+		const manager = SettingsManager.inMemory();
+
+		manager.setOpenAIDefaultFastMode(false);
+
+		expect(manager.getOpenAIDefaultFastMode()).toBe(false);
+	});
 });
