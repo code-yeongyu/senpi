@@ -47,6 +47,8 @@
   the new `schedule_wakeup` tool. Loops coalesce missed fires into one catch-up tick, cap at 5 active per session,
   carry a 2000-tick budget and 7-day expiry, survive restarts (shutdown suspends, session resume re-arms), and show
   a live countdown in the footer. `/loop stop|status|pause|resume` manage them.
+- `/btw` now keeps branch-local side-question history. Bare `/btw` opens a keyboard-driven viewer, and follow-up side
+  questions can use the newest ten earlier side answers without adding them to the main model conversation.
 
 ### Changed
 - Upstream sync (`badlogic/pi-mono` main@`59a71b23`): adopted cache-friendly compaction primitives, centralized compaction summary requests, compaction routing sessions, compaction usage notices, tool disabling during summarization, extension loading in Node SEA hosts, and nested markdown skill discovery. The fork's compaction affinity/request-identity split, queued-input recovery, and interactive rendering are unchanged.
@@ -343,9 +345,6 @@
 ### Breaking Changes
 
 ### Added
-
-- `/btw` now keeps branch-local side-question history. Bare `/btw` opens a keyboard-driven viewer, and follow-up side
-  questions can use the newest ten earlier side answers without adding them to the main model conversation.
 
 ### Changed
 
