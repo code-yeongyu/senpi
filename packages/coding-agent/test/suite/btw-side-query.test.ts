@@ -340,6 +340,33 @@ describe("/btw extension command", () => {
 		expect(notify).toHaveBeenCalledWith("answer link", "info");
 	});
 
+	it("removes terminal control sequences from non-TUI provider errors", async () => {
+		const harness = await setup();
+		const notify = vi.spyOn(harness.getExtensionRunner().getUIContext(), "notify");
+		harness.setResponses([
+			async () => {
+				throw new Error("provider \x1b]52;c;AAAA\x07failure");
+			},
+		]);
+
+		await harness.session.prompt("/btw question");
+
+		expect(notify).toHaveBeenCalledWith("/btw failed: provider failure", "error");
+	});
+
+	it("removes terminal control sequences from authentication errors", async () => {
+		const harness = await setup();
+		const notify = vi.spyOn(harness.getExtensionRunner().getUIContext(), "notify");
+		vi.spyOn(harness.getExtensionRunner().getModelRegistry(), "getApiKeyAndHeaders").mockResolvedValue({
+			ok: false,
+			error: "auth \x1b]52;c;AAAA\x07failure",
+		});
+
+		await harness.session.prompt("/btw question");
+
+		expect(notify).toHaveBeenCalledWith("/btw: auth failure", "error");
+	});
+
 	it("persists completed side questions and keeps sibling-branch history out of continuity", async () => {
 		const harness = await setup();
 		harness.setResponses([

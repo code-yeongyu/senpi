@@ -113,7 +113,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 			if (!auth.ok) {
 				if (active !== entry) return;
 				dismiss(ctx, { abort: false });
-				ctx.ui.notify(`/btw: ${auth.error}`, "error");
+				ctx.ui.notify(`/btw: ${sanitizeBtwDisplayText(auth.error)}`, "error");
 				return;
 			}
 
@@ -165,7 +165,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 				if (entry.panel) {
 					entry.panel.markError(message);
 				} else {
-					ctx.ui.notify(`/btw failed: ${message}`, "error");
+					ctx.ui.notify(`/btw failed: ${sanitizeBtwDisplayText(message)}`, "error");
 				}
 			}
 		},
