@@ -6,8 +6,12 @@
 
 - Completed `/btw` questions and answers are stored as custom session entries, and bare `/btw` opens a keyboard-driven
   history viewer without calling the provider.
-- Persisted question and answer text is stripped of terminal escape and non-printing control sequences at the viewer and
-  notification display boundaries, while stored content and follow-up context remain unchanged.
+- Questions, streamed answers, errors, and persisted history are stripped of terminal escape and non-printing control
+  sequences at every `/btw` display boundary, while stored content and follow-up context remain unchanged.
+- The history overlay resolves selection, scrolling, and cancel input through the configured TUI keybindings while
+  retaining the default Left/Right, Up/Down, and Escape behavior.
+- In-flight side queries abort before session-tree navigation so a completed answer cannot persist onto the newly
+  selected leaf.
 - Continuity includes only the newest ten `/btw` entries from the active branch. The full main conversation snapshot,
   prior side answers, and current question still pass through the model-aware side-query context budget together.
 - Side-query answers are instructed to use the same language as the current side question.
@@ -24,7 +28,9 @@
 ### Expected merge-conflict zones
 
 - `index.ts` command handling and side-query completion.
-- `history-panel.ts` display sanitization and non-TUI notification formatting in `index.ts`.
+- `display-text.ts`, `panel.ts`, and `history-panel.ts` display sanitization, key handling, and non-TUI notification
+  formatting in `index.ts`.
+- `index.ts` session-navigation abort handlers.
 - `side-query.ts` instruction and bounded message assembly.
 - `history.ts`, `history-view-model.ts`, and `history-panel.ts` are feature-owned additions.
 
