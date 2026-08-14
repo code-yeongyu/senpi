@@ -98,7 +98,7 @@ describe("btw history layout", () => {
 		try {
 			writeFileSync(
 				join(agentDir, "keybindings.json"),
-				JSON.stringify({ "tui.select.cancel": "\x1b]52;c;AAAA\x07ctrl+x" }),
+				JSON.stringify({ "tui.select.cancel": "\x1b]52;c;AAAA\x07ctrl+x\nFORGED" }),
 			);
 			const panel = new BtwHistoryPanel({
 				entries: [{ question: "question", answer: "answer" }],
@@ -108,12 +108,13 @@ describe("btw history layout", () => {
 				done: vi.fn(),
 			});
 
-			const raw = panel.render(120).join("\n");
-			const rendered = stripAnsi(raw);
+			const footer = panel.render(120).at(-1) ?? "";
+			const rendered = stripAnsi(footer);
 
-			expect(rendered).toContain("ctrl+x: close");
-			expect(raw).not.toContain("\x1b]52");
-			expect(raw).not.toContain("\x07");
+			expect(rendered).toContain("ctrl+x FORGED: close");
+			expect(footer).not.toMatch(/[\r\n]/);
+			expect(footer).not.toContain("\x1b]52");
+			expect(footer).not.toContain("\x07");
 		} finally {
 			rmSync(agentDir, { recursive: true, force: true });
 		}

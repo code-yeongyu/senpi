@@ -47,7 +47,7 @@ export function fitBtwHistoryRow(text: string, width: number): string {
 
 function formatFooterHint(keybindings: KeybindingsManager): string {
 	const keys = (binding: Keybinding): string => formatKeyText(keybindings.getKeys(binding).join("/"));
-	return sanitizeBtwDisplayText(
+	return formatBtwQuestion(
 		`${keys("tui.editor.cursorLeft")}/${keys("tui.editor.cursorRight")}: question   ${keys("tui.select.up")}/${keys("tui.select.down")}: scroll   ${keys("tui.select.cancel")}: close`,
 	);
 }
