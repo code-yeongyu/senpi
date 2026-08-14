@@ -1,21 +1,26 @@
-import { Container, Text, type TUI } from "@earendil-works/pi-tui";
+import { Container, Text } from "@earendil-works/pi-tui";
 import { DynamicBorder } from "../../../../modes/interactive/components/dynamic-border.ts";
 import type { Theme } from "../../../../modes/interactive/theme/theme.ts";
+import { formatBtwQuestion, sanitizeBtwDisplayText } from "./display-text.ts";
 
 export type BtwPanelStatus = "streaming" | "done" | "error" | "aborted";
+
+interface BtwPanelTui {
+	requestRender(): void;
+}
 
 export class BtwPanel {
 	private readonly container: Container;
 	private readonly body: Text;
 	private readonly question: string;
-	private readonly tui: TUI;
+	private readonly tui: BtwPanelTui;
 	private readonly theme: Theme;
 	private answer = "";
 	private status: BtwPanelStatus = "streaming";
 	private detail = "";
 
-	constructor(question: string, tui: TUI, theme: Theme) {
-		this.question = question;
+	constructor(question: string, tui: BtwPanelTui, theme: Theme) {
+		this.question = formatBtwQuestion(question);
 		this.tui = tui;
 		this.theme = theme;
 		this.container = new Container();
@@ -54,7 +59,7 @@ export class BtwPanel {
 	private repaint(): void {
 		const thm = this.theme;
 		const header = thm.fg("accent", thm.bold("btw: ")) + thm.fg("text", this.question);
-		const answer = this.answer ? `\n${this.answer}` : "";
+		const answer = this.answer ? `\n${sanitizeBtwDisplayText(this.answer)}` : "";
 		let footer: string;
 		switch (this.status) {
 			case "streaming":
@@ -64,7 +69,7 @@ export class BtwPanel {
 				footer = thm.fg("dim", "\n(dismisses on next message)");
 				break;
 			case "error":
-				footer = thm.fg("error", `\nerror: ${this.detail}`);
+				footer = thm.fg("error", `\nerror: ${sanitizeBtwDisplayText(this.detail)}`);
 				break;
 			case "aborted":
 				footer = thm.fg("dim", "\n(dismissed)");
