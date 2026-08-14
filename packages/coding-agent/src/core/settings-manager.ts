@@ -106,6 +106,7 @@ export interface MarkdownSettings {
 
 export interface OpenAISettings {
 	serviceTier?: "auto" | "flex" | "priority";
+	defaultFastMode?: boolean; // default: true for OpenAI Codex sessions
 }
 
 export interface WarningSettings {
@@ -937,6 +938,19 @@ export class SettingsManager {
 
 	getOpenAIServiceTier(): OpenAISettings["serviceTier"] {
 		return this.settings.openai?.serviceTier;
+	}
+
+	getOpenAIDefaultFastMode(): boolean {
+		return this.settings.openai?.defaultFastMode ?? true;
+	}
+
+	setOpenAIDefaultFastMode(enabled: boolean): void {
+		if (!this.globalSettings.openai) {
+			this.globalSettings.openai = {};
+		}
+		this.globalSettings.openai.defaultFastMode = enabled;
+		this.markModified("openai", "defaultFastMode");
+		this.save();
 	}
 
 	setTransport(transport: TransportSetting): void {

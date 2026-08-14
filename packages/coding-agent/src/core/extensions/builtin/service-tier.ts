@@ -83,16 +83,21 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		const settingsManager = SettingsManager.create(ctx.cwd);
 		settingsServiceTier = settingsManager.getOpenAIServiceTier();
-		sessionFastMode = false;
-		pi.setSessionFastMode(false);
 
 		const model = ctx.model;
 		if (model?.api !== OPENAI_CODEX_RESPONSES_API) {
+			sessionFastMode = false;
+			pi.setSessionFastMode(false);
 			return;
 		}
 
 		const baseModel = findBaseModel(ctx.modelRegistry, model);
-		if (baseModel) {
+		const fastModel = findFastModel(ctx.modelRegistry, model);
+		sessionFastMode = settingsManager.getOpenAIDefaultFastMode();
+		pi.setSessionFastMode(sessionFastMode);
+		if (sessionFastMode && fastModel) {
+			await pi.setSessionModel(fastModel);
+		} else if (!sessionFastMode && baseModel) {
 			await pi.setSessionModel(baseModel);
 		}
 	});
@@ -106,10 +111,11 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
+			const enabled = !sessionFastMode;
 			const baseModel = findBaseModel(ctx.modelRegistry, model);
-			const targetModel = baseModel ?? findFastModel(ctx.modelRegistry, model);
+			const targetModel = enabled ? findFastModel(ctx.modelRegistry, model) : baseModel;
 			if (!targetModel) {
-				sessionFastMode = !sessionFastMode;
+				sessionFastMode = enabled;
 				pi.setSessionFastMode(sessionFastMode);
 				ctx.ui.notify(`Fast mode ${sessionFastMode ? "enabled" : "disabled"}: ${model.id}`, "info");
 				return;
@@ -120,7 +126,8 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const enabled = baseModel === undefined;
+			sessionFastMode = enabled;
+			pi.setSessionFastMode(sessionFastMode);
 			ctx.ui.notify(`Fast mode ${enabled ? "enabled" : "disabled"}: ${targetModel.id}`, "info");
 		},
 	});

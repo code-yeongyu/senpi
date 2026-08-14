@@ -19,6 +19,7 @@ describe("SettingsSelectorComponent", () => {
 		const selector = new SettingsSelectorComponent(
 			{
 				fullscreenScrollbar: "auto",
+				defaultFastMode: true,
 				warnings: {},
 				availableThinkingLevels: [],
 				availableThemes: [],
@@ -33,5 +34,24 @@ describe("SettingsSelectorComponent", () => {
 		settingsList.handleInput("\r");
 
 		expect(onChange.mock.calls.flat()).toEqual(["always", "hidden", "auto"]);
+	});
+
+	it("toggles the default Fast mode preference", () => {
+		const onChange = vi.fn();
+		const selector = new SettingsSelectorComponent(
+			{
+				defaultFastMode: true,
+				warnings: {},
+				availableThinkingLevels: [],
+				availableThemes: [],
+			} as unknown as SettingsConfig,
+			{ onDefaultFastModeChange: onChange } as unknown as SettingsCallbacks,
+		);
+		const settingsList = selector.getSettingsList();
+
+		for (const character of "Default Fast mode") settingsList.handleInput(character);
+		settingsList.handleInput("\r");
+
+		expect(onChange).toHaveBeenCalledWith(false);
 	});
 });
