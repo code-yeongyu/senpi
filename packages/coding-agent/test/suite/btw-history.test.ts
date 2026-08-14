@@ -27,9 +27,7 @@ function historyEntry(index: number): BtwHistoryEntry {
 	return { question: `question ${index}`, answer: `answer ${index}`, timestamp: index };
 }
 
-function historyMessageContent(entry: BtwHistoryEntry): string {
-	return `Earlier side question: ${entry.question}\nYour earlier answer: ${entry.answer}`;
-}
+const model = { api: "faux", provider: "faux", id: "faux-model" } as const;
 
 describe("readBtwHistory", () => {
 	it("returns valid btw custom entries oldest to newest while ignoring unrelated entries", () => {
@@ -62,26 +60,52 @@ describe("readBtwHistory", () => {
 });
 
 describe("buildBtwHistoryMessages", () => {
-	it("builds one user message per history pair", () => {
+	it("preserves user and assistant roles for each history pair", () => {
 		const entries = [historyEntry(1), historyEntry(2)];
 
-		expect(buildBtwHistoryMessages(entries)).toEqual([
-			{ role: "user", content: historyMessageContent(entries[0]), timestamp: 1 },
-			{ role: "user", content: historyMessageContent(entries[1]), timestamp: 2 },
+		expect(buildBtwHistoryMessages(entries, model)).toEqual([
+			{ role: "user", content: "Earlier side question: question 1", timestamp: 1 },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "Your earlier answer: answer 1" }],
+				api: "faux",
+				provider: "faux",
+				model: "faux-model",
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: 1,
+			},
+			{ role: "user", content: "Earlier side question: question 2", timestamp: 2 },
+			expect.objectContaining({
+				role: "assistant",
+				content: [{ type: "text", text: "Your earlier answer: answer 2" }],
+				timestamp: 2,
+			}),
 		]);
 	});
 
 	it("uses the newest ten entries by default", () => {
 		const entries = Array.from({ length: 12 }, (_, index) => historyEntry(index + 1));
 
-		const messages = buildBtwHistoryMessages(entries);
+		const messages = buildBtwHistoryMessages(entries, model);
 
-		expect(messages).toHaveLength(BTW_HISTORY_CONTEXT_LIMIT);
-		expect(messages[0]).toEqual({ role: "user", content: historyMessageContent(historyEntry(3)), timestamp: 3 });
-		expect(messages.at(-1)).toEqual({
-			role: "user",
-			content: historyMessageContent(historyEntry(12)),
-			timestamp: 12,
+		expect(messages).toHaveLength(BTW_HISTORY_CONTEXT_LIMIT * 2);
+		expect(messages[0]).toEqual({ role: "user", content: "Earlier side question: question 3", timestamp: 3 });
+		expect(messages[1]).toMatchObject({
+			role: "assistant",
+			content: [{ type: "text", text: "Your earlier answer: answer 3" }],
+		});
+		expect(messages.at(-2)).toEqual({ role: "user", content: "Earlier side question: question 12", timestamp: 12 });
+		expect(messages.at(-1)).toMatchObject({
+			role: "assistant",
+			content: [{ type: "text", text: "Your earlier answer: answer 12" }],
 		});
 	});
 });

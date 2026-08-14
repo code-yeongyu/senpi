@@ -85,7 +85,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 			}
 
 			const snapshot = buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId());
-			const priorBtw = buildBtwHistoryMessages(readBtwHistory(ctx.sessionManager.getBranch()));
+			const priorBtw = buildBtwHistoryMessages(readBtwHistory(ctx.sessionManager.getBranch()), model);
 			const history = convertToLlm(filterContextExcludedMessages(snapshot.messages));
 			const systemPrompt = ctx.getSystemPrompt();
 			const thinkingLevel = pi.getThinkingLevel();
