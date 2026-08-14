@@ -81,7 +81,7 @@ describe("context overflow recovery", () => {
 
 		await getCheckCompaction(harness.session)(overflowMessage);
 
-		expect(runAutoCompactionSpy).toHaveBeenCalledWith("overflow", true);
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("overflow", true, expect.any(Object));
 	});
 
 	it("does not auto-compact unrelated same-provider model overflow below the threshold", async () => {

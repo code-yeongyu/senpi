@@ -1,5 +1,31 @@
 # changes
 
+## Explain absolute compaction-cap recovery (2026-08-14)
+
+### What changed
+
+- Required pre-prompt compaction now preserves the actionable `per-turn-cap` rejection instead of replacing it with
+  the generic required-compaction error.
+- The absolute cap message identifies the runtime-scoped limit and tells users to restart the CLI to resume the
+  session or start a new session.
+- Coverage: `test/suite/regressions/pre-prompt-compaction-no-continue.test.ts`.
+
+### Why
+
+- Once a long-lived runtime accepted ten compactions, the next prompt was correctly blocked but only reported that
+  compaction did not complete. The real cap reason and recovery path were visible only in debug logs, so restarting
+  and typing into the resumed session looked like a hang while recovery work continued.
+
+### Why an extension could not implement this
+
+- The builtin extension can report why its compaction request was rejected, but only core owns the subsequent
+  provider-admission error. Core must carry the request-specific rejection cause into `RequiredCompactionError`
+  instead of replacing it after the extension returns.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` required-compaction error formatting and pre-prompt rejection handling.
+
 ## Admit provider-owned compaction lanes (2026-08-14)
 
 ### What changed

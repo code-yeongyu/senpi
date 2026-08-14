@@ -560,7 +560,8 @@ export default function compactionExtension(
 				return {
 					cancel: true,
 					rejectionCause: "per-turn-cap",
-					reason: "absolute compaction cap reached for this session",
+					reason:
+						"the absolute compaction cap was reached for this runtime. Restart the CLI to resume this session, or start a new session.",
 				};
 			}
 			const now = Date.now();
