@@ -3,12 +3,15 @@ import { TuiBase } from "./tui.ts";
 
 export interface TuiMainScreenRenderState {
 	previousLines: string[];
+	previousRawLines: string[];
 	previousWidth: number;
 	previousHeight: number;
 	cursorRow: number;
 	hardwareCursorRow: number;
 	maxLinesRendered: number;
 	previousViewportTop: number;
+	tailAnchorGap: number;
+	tailAnchorGapIndex: number;
 }
 
 /** TUI implementation that renders into the terminal's main screen and scrollback. */
@@ -18,17 +21,21 @@ export class TuiMainScreen extends TuiBase {
 	captureRenderState(): TuiMainScreenRenderState {
 		return {
 			previousLines: [...this.previousLines],
+			previousRawLines: [...this.previousRawLines],
 			previousWidth: this.previousWidth,
 			previousHeight: this.previousHeight,
 			cursorRow: this.cursorRow,
 			hardwareCursorRow: this.hardwareCursorRow,
 			maxLinesRendered: this.maxLinesRendered,
 			previousViewportTop: this.previousViewportTop,
+			tailAnchorGap: this.tailAnchorGap,
+			tailAnchorGapIndex: this.tailAnchorGapIndex,
 		};
 	}
 
 	restoreRenderState(state: TuiMainScreenRenderState): void {
 		this.previousLines = state.previousLines.map((line) => (isImageLine(line) ? "" : line));
+		this.previousRawLines = state.previousRawLines.map((line) => (isImageLine(line) ? "" : line));
 		this.previousKittyImageIds = new Set();
 		this.previousWidth = state.previousWidth;
 		this.previousHeight = state.previousHeight;
@@ -36,5 +43,7 @@ export class TuiMainScreen extends TuiBase {
 		this.hardwareCursorRow = state.hardwareCursorRow;
 		this.maxLinesRendered = state.maxLinesRendered;
 		this.previousViewportTop = state.previousViewportTop;
+		this.tailAnchorGap = state.tailAnchorGap;
+		this.tailAnchorGapIndex = state.tailAnchorGapIndex;
 	}
 }

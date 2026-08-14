@@ -557,7 +557,7 @@ export abstract class TuiBase extends Container {
 	abstract readonly mode: TuiMode;
 	public terminal: Terminal;
 	protected previousLines: string[] = [];
-	private previousRawLines: string[] = [];
+	protected previousRawLines: string[] = [];
 	private normalizeMemo = new Map<string, string>();
 	protected previousKittyImageIds = new Set<number>();
 	protected previousWidth = 0;
@@ -579,6 +579,9 @@ export abstract class TuiBase extends Container {
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
 	protected maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	protected previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
+	// Blank rows retained above a shrunken tail so the terminal buffer bottom does not move away from the UI.
+	protected tailAnchorGap = 0;
+	protected tailAnchorGapIndex = 0;
 	protected fullRedrawCount = 0;
 	private muxViewportRepaintCount = 0;
 	private overWideCrashDumpWritten = false;
@@ -1031,6 +1034,8 @@ export abstract class TuiBase extends Container {
 		this.hardwareCursorRow = 0;
 		this.maxLinesRendered = 0;
 		this.previousViewportTop = 0;
+		this.tailAnchorGap = 0;
+		this.tailAnchorGapIndex = 0;
 	}
 
 	renderNow(force = false): void {
@@ -1102,6 +1107,8 @@ export abstract class TuiBase extends Container {
 		this.hardwareCursorRow = 0;
 		this.maxLinesRendered = 0;
 		this.previousViewportTop = 0;
+		this.tailAnchorGap = 0;
+		this.tailAnchorGapIndex = 0;
 	}
 
 	private cancelRenderTimer(): void {
@@ -1506,6 +1513,104 @@ export abstract class TuiBase extends Container {
 		this.previousRawLines = rawLines;
 	}
 
+	private resetTailAnchorGap(): void {
+		this.tailAnchorGap = 0;
+		this.tailAnchorGapIndex = 0;
+	}
+
+	private getPreviousDocumentLength(): number {
+		return Math.max(0, this.previousRawLines.length - this.tailAnchorGap);
+	}
+
+	private getPreviousDocumentLine(index: number): string {
+		const rawIndex = index < this.tailAnchorGapIndex ? index : index + this.tailAnchorGap;
+		return this.previousRawLines[rawIndex] ?? "";
+	}
+
+	private findFirstDocumentChange(lines: string[]): number {
+		const previousLength = this.getPreviousDocumentLength();
+		const sharedLength = Math.min(previousLength, lines.length);
+		for (let index = 0; index < sharedLength; index++) {
+			if (this.getPreviousDocumentLine(index) !== lines[index]) {
+				return index;
+			}
+		}
+		return sharedLength;
+	}
+
+	private clampTailAnchorGapIndex(lines: string[], requestedIndex: number): number {
+		let gapIndex = Math.max(0, Math.min(requestedIndex, lines.length - 1));
+		for (let index = 0; index < gapIndex; index++) {
+			if (!isImageLine(lines[index] ?? "")) continue;
+			const imageEnd = index + this.getKittyImageReservedRows(lines, index);
+			if (gapIndex < imageEnd) {
+				gapIndex = index;
+				break;
+			}
+		}
+		return gapIndex;
+	}
+
+	/** Keep shrink/regrowth frames the same physical length while a bottom-anchored tail remains mounted. */
+	private applyTailAnchorGap(
+		lines: string[],
+		height: number,
+		stableDimensions: boolean,
+		muxSession: boolean,
+	): string[] {
+		if (
+			!stableDimensions ||
+			muxSession ||
+			this.clearOnShrink ||
+			this.previousRawLines.length === 0 ||
+			lines.length === 0
+		) {
+			this.resetTailAnchorGap();
+			return lines;
+		}
+
+		const previousDocumentLength = this.getPreviousDocumentLength();
+		const lineCountDelta = lines.length - previousDocumentLength;
+		const firstChanged = lineCountDelta === 0 ? -1 : this.findFirstDocumentChange(lines);
+		const previousTail = this.previousRawLines[this.previousRawLines.length - 1] ?? "";
+		const tailWasAnchored =
+			this.previousLines.length === this.previousViewportTop + height &&
+			(isImageLine(previousTail) || visibleWidth(previousTail) > 0);
+
+		let nextGap = this.tailAnchorGap;
+		let nextGapIndex = this.tailAnchorGapIndex;
+		if (lineCountDelta < 0) {
+			if (nextGap > 0) {
+				nextGap -= lineCountDelta;
+				if (firstChanged < nextGapIndex) {
+					nextGapIndex += lineCountDelta;
+				}
+			} else if (tailWasAnchored && firstChanged < lines.length) {
+				nextGap = -lineCountDelta;
+				nextGapIndex = firstChanged;
+			}
+		} else if (lineCountDelta > 0 && nextGap > 0) {
+			nextGap = Math.max(0, nextGap - lineCountDelta);
+			if (firstChanged < nextGapIndex) {
+				nextGapIndex += lineCountDelta;
+			}
+		}
+
+		if (nextGap === 0) {
+			this.resetTailAnchorGap();
+			return lines;
+		}
+
+		this.tailAnchorGap = nextGap;
+		this.tailAnchorGapIndex = this.clampTailAnchorGapIndex(lines, nextGapIndex);
+
+		return [
+			...lines.slice(0, this.tailAnchorGapIndex),
+			...Array.from({ length: this.tailAnchorGap }, () => ""),
+			...lines.slice(this.tailAnchorGapIndex),
+		];
+	}
+
 	private normalizeLine(line: string): { line: string; normalized: boolean } {
 		if (isImageLine(line)) {
 			return { line, normalized: false };
@@ -1701,8 +1806,8 @@ export abstract class TuiBase extends Container {
 		return Array.from({ length: height }, (_, row) => lines[viewportTop + row] ?? "");
 	}
 
-	private shouldPreserveMuxScrollback(): boolean {
-		return this.#muxDetector() && !useLegacyMuxRender();
+	private isMuxSession(): boolean {
+		return this.#muxDetector();
 	}
 
 	private createViewportInsertScrollPlan(
@@ -1811,7 +1916,7 @@ export abstract class TuiBase extends Container {
 	): void {
 		let buffer = TUI.FRAME_BEGIN;
 		buffer += this.deleteKittyImages(this.previousKittyImageIds);
-		if (!this.shouldPreserveMuxScrollback()) {
+		if (this.isMuxSession() && useLegacyMuxRender()) {
 			buffer += "\x1b[3J";
 		}
 
@@ -2001,7 +2106,13 @@ export abstract class TuiBase extends Container {
 		}
 
 		// Extract cursor position before applying line resets (marker must be found first)
-		const cursorPos = this.extractCursorPosition(newLines, height);
+		let cursorPos = this.extractCursorPosition(newLines, height);
+		const muxSession = this.isMuxSession();
+		const preserveMuxScrollback = muxSession && !useLegacyMuxRender();
+		newLines = this.applyTailAnchorGap(newLines, height, !widthChanged && !heightChanged, muxSession);
+		if (cursorPos && this.tailAnchorGap > 0 && cursorPos.row >= this.tailAnchorGapIndex) {
+			cursorPos = { row: cursorPos.row + this.tailAnchorGap, col: cursorPos.col };
+		}
 
 		const rawLines = newLines;
 		const normalizedLines = this.applyViewportLineResets(
@@ -2011,7 +2122,6 @@ export abstract class TuiBase extends Container {
 			!widthChanged && !heightChanged,
 		);
 		newLines = normalizedLines.lines;
-		const preserveMuxScrollback = this.shouldPreserveMuxScrollback();
 
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean, clearScrollback = clear): void => {
@@ -2149,7 +2259,9 @@ export abstract class TuiBase extends Container {
 		// No changes - but still need to update hardware cursor position if it moved
 		if (firstChanged === -1) {
 			this.positionHardwareCursor(cursorPos, newLines.length);
+			this.setPreviousLines(newLines, rawLines);
 			this.previousViewportTop = prevViewportTop;
+			this.previousWidth = width;
 			this.previousHeight = height;
 			return;
 		}

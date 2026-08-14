@@ -212,6 +212,11 @@ async function runStreamingFlickerBudget(): Promise<FlickerBudgetMetrics> {
 	return metrics;
 }
 
+async function renderImmediately(tui: TUI, terminal: VirtualTerminal): Promise<void> {
+	tui.renderNow();
+	await terminal.flush();
+}
+
 async function withEnv<T>(updates: Record<string, string | undefined>, run: () => Promise<T>): Promise<T> {
 	const previousValues = new Map<string, string | undefined>();
 	for (const [key, value] of Object.entries(updates)) {
@@ -753,7 +758,7 @@ describe("TUI viewport remap for above-viewport growth", () => {
 		tui.stop();
 	});
 
-	it("replays scrollback without viewport clear when collapse changes hidden rows", async () => {
+	it("keeps a hidden collapsed tail anchored without replay", async () => {
 		const terminal = new LoggingVirtualTerminal(72, 6);
 		const tui = new TUI(terminal);
 		const component = new ExpandableTranscriptComponent();
@@ -762,30 +767,28 @@ describe("TUI viewport remap for above-viewport growth", () => {
 		// given
 		component.setExpanded(true);
 		tui.start();
-		await terminal.waitForRender();
+		await renderImmediately(tui, terminal);
 		terminal.clearWrites();
 
 		const initialFullRedraws = tui.fullRedraws;
+		const initialBufferLength = terminal.getScrollBuffer().length;
 
 		// when
 		component.setExpanded(false);
-		tui.requestRender();
-		await terminal.waitForRender();
+		await renderImmediately(tui, terminal);
 
 		// then
 		const writes = terminal.getWrites();
 		assert.strictEqual(tui.fullRedraws, initialFullRedraws, "Collapse should not full-redraw the viewport");
 		assert.ok(!writes.includes("\x1b[2J"), "Collapse should not clear the viewport");
-		assert.ok(writes.includes("\x1b[3J"), "Collapse should reset stale scrollback");
+		assert.ok(!writes.includes("\x1b[3J"), "Collapse should not clear scrollback");
+		assert.strictEqual(writes, "", "A fully hidden shrink should not replay the document");
+		const scrollback = terminal.getScrollBuffer();
+		assert.strictEqual(scrollback.length, initialBufferLength, "Collapse should not extend the terminal buffer");
 		assert.strictEqual(
-			countOccurrences(writes, "\x1b[?2026h"),
-			countOccurrences(writes, "\x1b[?2026l"),
-			"Collapse should keep DECSET 2026 begin/end balanced",
-		);
-		assert.deepStrictEqual(
-			getScrollbackSuffix(terminal.getScrollBuffer(), 8),
-			["session title", "tools", "tail row 0", "tail row 1", "tail row 2", "tail row 3", "tail row 4", "tail row 5"],
-			"Latest canonical scrollback segment should be collapsed",
+			scrollback.filter((line) => line === "session title").length,
+			1,
+			"Collapse should not duplicate scrolled-out history",
 		);
 		assert.deepStrictEqual(terminal.getViewport(), [
 			"tail row 0",
@@ -799,7 +802,7 @@ describe("TUI viewport remap for above-viewport growth", () => {
 		tui.stop();
 	});
 
-	it("keeps viewport stable across flicker-free Ctrl+O replay toggles", async () => {
+	it("keeps viewport stable across gap-backed Ctrl+O toggles", async () => {
 		const terminal = new LoggingVirtualTerminal(72, 6);
 		const tui = new TUI(terminal);
 		const component = new ExpandableTranscriptComponent();
@@ -809,7 +812,7 @@ describe("TUI viewport remap for above-viewport growth", () => {
 		// given
 		component.setExpanded(false);
 		tui.start();
-		await terminal.waitForRender();
+		await renderImmediately(tui, terminal);
 		terminal.clearWrites();
 
 		const initialFullRedraws = tui.fullRedraws;
@@ -817,8 +820,7 @@ describe("TUI viewport remap for above-viewport growth", () => {
 		// when
 		for (const expanded of [true, false, true, false, true, false]) {
 			component.setExpanded(expanded);
-			tui.requestRender();
-			await terminal.waitForRender();
+			await renderImmediately(tui, terminal);
 			assert.deepStrictEqual(terminal.getViewport(), expectedViewport);
 		}
 
@@ -826,7 +828,12 @@ describe("TUI viewport remap for above-viewport growth", () => {
 		const writes = terminal.getWrites();
 		assert.strictEqual(tui.fullRedraws, initialFullRedraws, "Ctrl+O toggles should not full-redraw the viewport");
 		assert.ok(!writes.includes("\x1b[2J"), "Ctrl+O toggles should not clear the viewport");
-		assert.ok(writes.includes("\x1b[3J"), "Ctrl+O toggles should reset stale scrollback");
+		assert.ok(!writes.includes("\x1b[3J"), "Ctrl+O toggles should not clear scrollback");
+		assert.strictEqual(
+			terminal.getScrollBuffer().filter((line) => line === "session title").length,
+			1,
+			"Ctrl+O toggles should not replay scrolled-out history",
+		);
 		assert.strictEqual(
 			countOccurrences(writes, "\x1b[?2026h"),
 			countOccurrences(writes, "\x1b[?2026l"),
@@ -836,7 +843,7 @@ describe("TUI viewport remap for above-viewport growth", () => {
 		tui.stop();
 	});
 
-	it("does not append duplicate transcript copies during hidden Ctrl+O replay", async () => {
+	it("does not append duplicate transcript copies during hidden Ctrl+O toggles", async () => {
 		const terminal = new LoggingVirtualTerminal(72, 6);
 		const tui = new TUI(terminal);
 		const component = new ExpandableTranscriptComponent();
@@ -845,29 +852,30 @@ describe("TUI viewport remap for above-viewport growth", () => {
 
 		component.setExpanded(false);
 		tui.start();
-		await terminal.waitForRender();
+		await renderImmediately(tui, terminal);
 		terminal.clearWrites();
 
 		for (const expanded of [true, false, true, false, true, false]) {
 			component.setExpanded(expanded);
-			tui.requestRender();
-			await terminal.waitForRender();
+			await renderImmediately(tui, terminal);
 			assert.deepStrictEqual(terminal.getViewport(), expectedViewport);
 		}
 
 		const writes = terminal.getWrites();
 		const scrollback = terminal.getScrollBuffer();
-		assert.ok(!writes.includes("\x1b[2J"), "Hidden replay should not clear the visible viewport");
-		assert.ok(writes.includes("\x1b[3J"), "Hidden replay should reset stale scrollback before replaying");
+		assert.ok(!writes.includes("\x1b[2J"), "Hidden toggles should not clear the visible viewport");
+		assert.ok(!writes.includes("\x1b[3J"), "Hidden toggles should not clear scrollback");
 		assert.ok(
 			scrollback.length <= 24,
-			`Hidden replay should keep scrollback bounded to one transcript copy, got ${scrollback.length} rows`,
+			`Hidden toggles should keep scrollback bounded to one transcript copy, got ${scrollback.length} rows`,
 		);
-		assert.deepStrictEqual(
-			getScrollbackSuffix(scrollback, 8),
-			["session title", "tools", "tail row 0", "tail row 1", "tail row 2", "tail row 3", "tail row 4", "tail row 5"],
-			"Latest canonical scrollback segment should match the collapsed transcript",
-		);
+		for (const line of ["session title", "expanded tool detail 0", "tail row 5"]) {
+			assert.strictEqual(
+				scrollback.filter((bufferLine) => bufferLine === line).length,
+				1,
+				`Hidden toggles should not duplicate ${line}`,
+			);
+		}
 
 		tui.stop();
 	});
@@ -880,7 +888,7 @@ describe("TUI viewport remap for above-viewport growth", () => {
 
 		component.setExpanded(false);
 		tui.start();
-		await terminal.waitForRender();
+		await renderImmediately(tui, terminal);
 
 		assert.ok(
 			terminal.getScrollBuffer().includes("read collapsed lib.rs:210-329"),
@@ -895,8 +903,7 @@ describe("TUI viewport remap for above-viewport growth", () => {
 		const initialFullRedraws = tui.fullRedraws;
 
 		component.setExpanded(true);
-		tui.requestRender();
-		await terminal.waitForRender();
+		await renderImmediately(tui, terminal);
 
 		const scrollback = terminal.getScrollBuffer();
 		assert.strictEqual(
@@ -905,7 +912,7 @@ describe("TUI viewport remap for above-viewport growth", () => {
 			"Offscreen expansion should not full-redraw the viewport",
 		);
 		assert.ok(!terminal.getWrites().includes("\x1b[2J"), "Offscreen expansion should not clear the viewport");
-		assert.ok(terminal.getWrites().includes("\x1b[3J"), "Offscreen expansion should reset stale scrollback");
+		assert.ok(!terminal.getWrites().includes("\x1b[3J"), "Offscreen expansion should preserve scrollback");
 		assert.deepStrictEqual(
 			getScrollbackSuffix(scrollback, 20),
 			[
@@ -1315,7 +1322,7 @@ describe("TUI differential rendering", () => {
 		tui.stop();
 	});
 
-	it("clears stale content when maxLinesRendered was inflated by a transient component", async () => {
+	it("keeps stale content out when a second shrink enlarges the tail gap", async () => {
 		const terminal = new VirtualTerminal(40, 10);
 		const tui: TUI = new TuiMainScreen(terminal);
 		const chat = new TestComponent();
@@ -1331,20 +1338,17 @@ describe("TUI differential rendering", () => {
 		chat.lines = longChat;
 		editor.lines = editorLines;
 		tui.start();
-		await terminal.waitForRender();
+		await renderImmediately(tui, terminal);
 
 		editor.lines = selectorLines;
-		tui.requestRender();
-		await terminal.waitForRender();
+		await renderImmediately(tui, terminal);
 
 		editor.lines = editorLines;
-		tui.requestRender();
-		await terminal.waitForRender();
+		await renderImmediately(tui, terminal);
 
 		const redrawsBeforeSwitch = tui.fullRedraws;
 		chat.lines = shortChat;
-		tui.requestRender();
-		await terminal.waitForRender();
+		await renderImmediately(tui, terminal);
 
 		assert.strictEqual(tui.fullRedraws, redrawsBeforeSwitch, "Branch switch should stay on the differential path");
 
@@ -1356,18 +1360,7 @@ describe("TUI differential rendering", () => {
 			assert.ok(!line.includes("Chat 14"), `Stale "Chat 14" at viewport row ${i}`);
 		}
 
-		assert.deepStrictEqual(viewport, [
-			"Chat 5",
-			"Chat 6",
-			"Chat 7",
-			"Chat 8",
-			"Chat 9",
-			"Chat 10",
-			"Chat 11",
-			"Editor 0",
-			"Editor 1",
-			"Editor 2",
-		]);
+		assert.deepStrictEqual(viewport, ["", "", "", "", "", "", "", "Editor 0", "Editor 1", "Editor 2"]);
 
 		tui.stop();
 	});

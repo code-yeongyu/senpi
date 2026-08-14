@@ -1,5 +1,37 @@
 # TUI delta rendering fork changes
 
+## 2026-08-14: main-screen shrink keeps the document tail at the buffer bottom
+
+### What changed
+
+- Stable-size, non-multiplexer main-screen renders now retain a tracked blank gap at the first changed document row
+  when a mounted tail shrinks. The physical frame stays the same length, so the editor/status/footer remain on the
+  terminal's bottom row without clearing or replaying scrollback.
+- Later document growth consumes the gap before it can extend the terminal buffer. Cursor coordinates, memoized raw
+  lines, Kitty image row boundaries, lifecycle resets, and main-screen/fullscreen state transfers account for the gap.
+- Default scrollback replay no longer emits `ESC[3J`; the explicit legacy-mux renderer keeps its previous byte shape.
+- Headless-xterm regressions cover a selector-shaped grow/shrink/regrow cycle, bounded repaint work, cursor placement,
+  zero trailing blank rows, no screen/scrollback clears, and no duplicated history.
+
+### Why
+
+Inline selectors and autocomplete temporarily add rows above the editor tail. Removing those rows previously moved the
+rendered tail upward in place while the terminal buffer bottom stayed fixed, leaving a scrollable blank region below
+Senpi. Clearing the screen fixed the geometry only by destroying scrollback, while replaying the document duplicated
+history and made repaint cost scale with the transcript.
+
+### Why this cannot be expressed externally
+
+The fix depends on private renderer snapshots, viewport offsets, normalization memo state, hardware-cursor rows, and
+terminal diff planning. Components can change their rendered line count but cannot preserve the physical line-space
+mapping or safely alter the emitted cursor operations.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/tui/src/tui.ts` around main-screen render state, normalization input, scrollback replay, and
+  `doRender()` cursor extraction.
+- LOW: `packages/tui/src/tui-main-screen.ts` render-state transfer fields and shrink/render regression assertions.
+
 ## 2026-08-05: dead-terminal raw-mode restoration is best-effort during shutdown
 
 ### What changed
