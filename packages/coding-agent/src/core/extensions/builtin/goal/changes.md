@@ -1,5 +1,37 @@
 # goal Extension Changes
 
+## Automatic-cache providers use the Goal liveness backstop (2026-08-14)
+
+### What changed
+
+- Monitor continuation scheduling is now lifetime-aware: when the active model's prompt cache is
+  `automatic` (direct DeepSeek), the monitor wait uses the configured Goal liveness backstop
+  (`promptCache.goalBackstopMaxSeconds`, default 3570s, hard ceiling 1h) instead of the 270s
+  cache-safe-wait or the 240s unknown fallback. Fixed-TTL lanes keep their existing safe-wait
+  scheduling, and unknown/disabled lanes keep the 240s fallback.
+- Cache-warm metrics for automatic lifetimes carry `cacheLifetime: "automatic"` and omit
+  `ttlSeconds` and `estimatedSavedUsd`; the renderer explains the wait as a liveness backstop
+  ("provider caching is automatic; the timed wake only keeps the goal alive") and reports tokens
+  neutrally ("~X tokens cached after the prior turn") without "kept warm" or savings claims.
+  Fixed-TTL rendering is unchanged.
+
+### Why
+
+- DeepSeek's official context cache is automatic, best-effort, and exposes no 5-minute TTL;
+  waking every 4m30s to "preserve" it was scheduling under a fabricated contract (issue #831).
+
+### Why this is not extension-only
+
+- The continuation scheduler and cache-warm entry/renderer are private builtin goal surfaces, and
+  the lifetime classification comes from pi-ai's browser-safe resolver.
+
+### Merge-conflict zones
+
+- MEDIUM in `monitor-continuation.ts` around `#schedule` delay resolution.
+- MEDIUM in `cache-warm.ts` around `resolveGoalMonitorContinuationDelayMs()` and
+  `estimateCacheWarmMetrics()`.
+- LOW in `cache-warm-renderer.ts` automatic copy branch.
+
 ## Explicit resume revives completed goals (2026-08-11)
 
 ### What changed

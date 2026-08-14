@@ -329,12 +329,14 @@ When unset, senpi leaves provider payloads unchanged. This setting currently app
 
 Sizes how long foreground tools may block on the active model's prompt-cache lifetime, so a long
 `bash` call never straddles cache expiry and forces a full re-read. When the model's cache TTL is
-unknown (e.g. Google models) or caching is off, no budget applies and timeout behavior is unchanged.
+unknown (e.g. Google models), caching is off, or the provider caches automatically without a
+client-visible TTL (e.g. direct DeepSeek), no budget applies and timeout behavior is unchanged.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `promptCache.cacheAwareTimeouts` | boolean | `true` | Cap foreground tool waits at the model's prompt-cache TTL minus the safety buffer; `false` restores the fixed legacy ceilings |
 | `promptCache.safetyBufferSeconds` | number | `30` | Headroom subtracted from the cache TTL (a 5m TTL yields a 270s ceiling). If it consumes the whole TTL, no budget applies |
+| `promptCache.goalBackstopMaxSeconds` | number | `3570` | Maximum Goal monitor continuation backstop. Automatic-cache lanes (e.g. direct DeepSeek) schedule their liveness wake at this value instead of a TTL-derived delay |
 
 A foreground `bash` command still running at the budget is handed to a live background session
 instead of being killed; its explicit `timeout` remains the kill deadline. See

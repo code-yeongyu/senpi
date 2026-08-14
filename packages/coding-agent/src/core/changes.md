@@ -1,5 +1,24 @@
 # changes
 
+## Automatic prompt-cache lifetimes yield no cache-derived budget (2026-08-14)
+
+### What changed
+
+- `core/prompt-cache-budget.ts` now derives no budget for automatic-cache providers (direct
+  DeepSeek): `resolvePromptCacheSafeWaitSeconds()` returns `undefined` because pi-ai's TTL wrapper
+  reports no fixed TTL for `automatic` lifetimes. Cache-aware foreground tool waits fall back to
+  their legacy ceilings, and the advisory `PI_PROMPT_CACHE_SAFE_WAIT_SECONDS` env mirror is cleared.
+
+### Why
+
+- Providers like DeepSeek cache automatically and best-effort with no client-visible TTL, so a
+  TTL-derived wait budget would be fabricated. The resolver contract stays "fixed-TTL waits only"
+  (issue #831).
+
+### Expected merge conflict zones
+
+- LOW: `core/prompt-cache-budget.ts` docs/behavior note and its budget test suite.
+
 ## Admit provider-owned compaction lanes (2026-08-14)
 
 ### What changed
