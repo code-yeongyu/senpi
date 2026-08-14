@@ -114,4 +114,55 @@ describe("xAI Responses provider", () => {
 			]),
 		);
 	});
+
+	it("normalizes root-union function schemas for Grok 4.5", async () => {
+		const captured = await captureRequest(
+			XAI_MODELS["grok-4.5"],
+			{
+				messages: [{ role: "user", content: "scan the repository", timestamp: 1 }],
+				tools: [
+					{
+						name: "mcp__ast_grep_scan",
+						description: "Scan files with an ast-grep rule",
+						parameters: {
+							anyOf: [
+								{
+									type: "object",
+									properties: { ruleFile: { type: "string" } },
+									required: ["ruleFile"],
+								},
+								{
+									type: "object",
+									properties: { inlineRules: { type: "string" } },
+									required: ["inlineRules"],
+								},
+							],
+						},
+					},
+				],
+			},
+			{ apiKey: "xai-test-token" },
+		);
+
+		expect(captured.body.tools).toMatchObject([
+			{
+				type: "function",
+				name: "mcp__ast_grep_scan",
+				parameters: {
+					type: "object",
+					properties: {
+						ruleFile: { type: "string" },
+						inlineRules: { type: "string" },
+					},
+				},
+			},
+		]);
+		expect(captured.body.tools).not.toMatchObject([
+			{
+				parameters: {
+					anyOf: expect.anything(),
+				},
+			},
+		]);
+	});
 });

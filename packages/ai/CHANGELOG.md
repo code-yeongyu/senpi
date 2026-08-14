@@ -10,6 +10,10 @@
 
 ### Fixed
 
+- Fixed OpenAI Responses function tools forwarding unnormalized object-shaped
+  root unions, so MCP parameter schemas retain a required `type: "object"`
+  root (follow-up to [#718](https://github.com/code-yeongyu/senpi/pull/718)).
+
 ### Removed
 
 ## [2026.8.14] - 2026-08-14

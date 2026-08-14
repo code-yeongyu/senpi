@@ -40,6 +40,7 @@ import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { normalizeToolParametersForOpenAICompat } from "../utils/tool-schema-compat.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -526,6 +527,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 			} as OpenAITool;
 		}
 
+		const parameters = normalizeToolParametersForOpenAICompat(tool.parameters as Record<string, unknown>);
 		const constrainedStrict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
 		const functionTool: Omit<ResponseFunctionTool, "strict"> & {
 			strict?: ResponseFunctionTool["strict"];
@@ -533,7 +535,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 			type: "function",
 			name: tool.name,
 			description: tool.description,
-			parameters: tool.parameters as ResponseFunctionTool["parameters"], // TypeBox already generates JSON Schema
+			parameters: parameters as ResponseFunctionTool["parameters"],
 			...(options?.deferLoading ? { defer_loading: true } : {}),
 		};
 		if (supportsStrictMode) {
