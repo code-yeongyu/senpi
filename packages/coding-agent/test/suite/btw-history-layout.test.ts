@@ -77,6 +77,10 @@ describe("btw history layout", () => {
 			}),
 			done,
 		});
+		const initial = stripAnsi(panel.render(80).join("\n"));
+		expect(initial).toContain("ctrl+h/ctrl+l: question");
+		expect(initial).toContain("ctrl+k/ctrl+j: scroll");
+		expect(initial).toContain("ctrl+x: close");
 
 		panel.handleInput("\x0c");
 		expect(stripAnsi(panel.render(80).join("\n"))).toContain("→ /btw second");
