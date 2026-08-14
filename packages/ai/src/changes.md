@@ -1,5 +1,32 @@
 # AI Source Changes
 
+## 2026-08-14 - Distinguish automatic prompt-cache lifetimes (DeepSeek)
+
+### What changed and why
+
+- New browser-safe `PromptCacheLifetime` semantic and `resolvePromptCacheLifetime()`:
+  `fixed(ttlSeconds) | automatic | disabled | unknown`. `resolvePromptCacheTtlSeconds()` is now a
+  backwards-compatible wrapper over it, returning the TTL only for `fixed` lifetimes.
+- Direct DeepSeek (`provider: "deepseek"` or a `deepseek.com` base URL on the `openai-completions`
+  lane) classifies as `automatic`: DeepSeek's context cache is enabled by default, best-effort, and
+  exposes no client-visible deterministic TTL (api-docs.deepseek.com/guides/kv_cache). It no longer
+  reports a fabricated 300s TTL, and `PI_CACHE_RETENTION=long` no longer fabricates one either.
+- Every other lane keeps its exact previous classification (Anthropic 300/3600, Bedrock 300/3600,
+  OpenRouter cache-control 300/3600, conservative 300 for the remaining `openai-completions` lanes,
+  Responses lanes 300, unknown lanes `undefined`).
+
+### Why this cannot be expressed externally
+
+- The classification lives in the browser-safe TTL resolver that cache-aware tool waits and Goal
+  monitor scheduling consume. Extensions observe only higher-level requests and cannot rewrite the
+  provider-agnostic cache-lifetime contract consumed by runtime scheduling.
+
+### Expected merge conflict zones
+
+- MEDIUM: `utils/prompt-cache-ttl.ts` around `resolvePromptCacheTtlSeconds()` / the new
+  `resolvePromptCacheLifetime()`.
+- LOW: `index.ts` root export block.
+
 ## 2026-08-13 - Preserve explicit request compatibility fields
 
 ### What changed and why
