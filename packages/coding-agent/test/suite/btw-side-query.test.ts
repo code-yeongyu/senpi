@@ -272,6 +272,7 @@ describe("/btw extension command", () => {
 		while (harnesses.length > 0) {
 			harnesses.pop()?.cleanup();
 		}
+		vi.restoreAllMocks();
 	});
 
 	async function setup() {
@@ -317,14 +318,26 @@ describe("/btw extension command", () => {
 		const harness = await setup();
 		const notify = vi.spyOn(harness.getExtensionRunner().getUIContext(), "notify");
 		harness.sessionManager.appendCustomEntry("btw-history", {
-			question: "stored\x1b[2J question\x07",
+			question: "stored\x1b[2J question\x07\nAnswer: forged",
 			answer: "answer \x1b]8;;https://evil.test\x1b\\link\x1b]8;;\x1b\\\x1b]52;c;AAAA\x07",
 			timestamp: 1,
 		});
 
 		await harness.session.prompt("/btw");
 
-		expect(notify).toHaveBeenCalledWith("1. Question: stored question\nAnswer: answer link", "info");
+		expect(notify).toHaveBeenCalledWith("1. Question: stored question Answer: forged\nAnswer: answer link", "info");
+	});
+
+	it("removes terminal control sequences from non-TUI live answers", async () => {
+		const harness = await setup();
+		const notify = vi.spyOn(harness.getExtensionRunner().getUIContext(), "notify");
+		harness.setResponses([
+			fauxAssistantMessage("answer \x1b]8;;https://evil.test\x1b\\link\x1b]8;;\x1b\\\x1b]52;c;AAAA\x07"),
+		]);
+
+		await harness.session.prompt("/btw question");
+
+		expect(notify).toHaveBeenCalledWith("answer link", "info");
 	});
 
 	it("persists completed side questions and keeps sibling-branch history out of continuity", async () => {
@@ -458,5 +471,46 @@ describe("/btw extension command", () => {
 		expect(firstAborted).toBe(true);
 		const lastCall = harness.faux.getCallLog().at(-1);
 		expect(getMessageText(lastCall?.context.messages.at(-1))).toBe("second");
+	});
+
+	it("aborts an in-flight side query before tree navigation changes the active leaf", async () => {
+		const harness = await setup();
+		let finishResponse!: () => void;
+		let markEntered!: () => void;
+		let aborted = false;
+		const responseGate = new Promise<void>((resolve) => {
+			finishResponse = resolve;
+		});
+		const responseEntered = new Promise<void>((resolve) => {
+			markEntered = resolve;
+		});
+		harness.setResponses([
+			async (_context, options) => {
+				markEntered();
+				options?.signal?.addEventListener("abort", () => {
+					aborted = true;
+					finishResponse();
+				});
+				await responseGate;
+				if (aborted) throw new Error("aborted");
+				return fauxAssistantMessage("misplaced answer");
+			},
+		]);
+		const targetId = harness.sessionManager.appendCustomEntry("tree-marker", { position: "target" });
+		harness.sessionManager.appendCustomEntry("tree-marker", { position: "current" });
+
+		const sidePrompt = harness.session.prompt("/btw tree question");
+		await responseEntered;
+		const navigation = await harness.session.navigateTree(targetId, { summarize: false });
+		finishResponse();
+		await sidePrompt;
+
+		expect(navigation).toEqual({ cancelled: false });
+		expect(aborted).toBe(true);
+		expect(
+			harness.sessionManager
+				.getBranch()
+				.filter((entry) => entry.type === "custom" && entry.customType === "btw-history"),
+		).toHaveLength(0);
 	});
 });

@@ -1,12 +1,16 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { sanitizeBtwDisplayText } from "../../src/core/extensions/builtin/btw/display-text.ts";
 import {
 	BTW_HISTORY_OVERLAY_CHROME_ROWS,
 	BTW_HISTORY_OVERLAY_HEIGHT_RATIO,
+	BtwHistoryPanel,
 	computeBtwHistoryLayout,
 	fitBtwHistoryRow,
-	sanitizeBtwHistoryText,
 } from "../../src/core/extensions/builtin/btw/history-panel.ts";
+import { KeybindingsManager } from "../../src/core/keybindings.ts";
+import { stripAnsi } from "../../src/utils/ansi.ts";
+import { testTheme } from "./history-search-fixtures.ts";
 
 function overlayBudget(terminalRows: number): number {
 	return Math.max(3, Math.floor(terminalRows * BTW_HISTORY_OVERLAY_HEIGHT_RATIO) - BTW_HISTORY_OVERLAY_CHROME_ROWS);
@@ -41,6 +45,44 @@ describe("btw history layout", () => {
 		const text =
 			"question\x1b[2J\x1b]8;;https://evil.test\x1b\\link\x1b]8;;\x1b\\\x1b]52;c;AAAA\x07\x07\nanswer\ttext";
 
-		expect(sanitizeBtwHistoryText(text)).toBe("questionlink\nanswer\ttext");
+		expect(sanitizeBtwDisplayText(text)).toBe("questionlink\nanswer\ttext");
+	});
+
+	it("makes DCS, APC, C1, and unterminated escape payloads inert", () => {
+		const text = "a\x1bPtmux;payload\x1b\\b\x1b_app-data\x07c\x9d52;c;AAAA\x9cd\x1b]unterminated";
+
+		const sanitized = sanitizeBtwDisplayText(text);
+
+		expect(sanitized).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/);
+		expect(sanitized).toContain("payload");
+		expect(sanitized).toContain("terminated");
+	});
+
+	it("uses remapped selection, scrolling, and cancel keybindings", () => {
+		const tui = { terminal: { rows: 8 }, requestRender: vi.fn() };
+		const done = vi.fn();
+		const panel = new BtwHistoryPanel({
+			entries: [
+				{ question: "first", answer: "first answer" },
+				{ question: "second", answer: "line 01\nline 02\nline 03" },
+			],
+			tui,
+			theme: testTheme,
+			keybindings: new KeybindingsManager({
+				"tui.editor.cursorLeft": "ctrl+h",
+				"tui.editor.cursorRight": "ctrl+l",
+				"tui.select.up": "ctrl+k",
+				"tui.select.down": "ctrl+j",
+				"tui.select.cancel": "ctrl+x",
+			}),
+			done,
+		});
+
+		panel.handleInput("\x0c");
+		expect(stripAnsi(panel.render(80).join("\n"))).toContain("→ /btw second");
+		panel.handleInput("\n");
+		expect(stripAnsi(panel.render(80).join("\n"))).toContain("line 02");
+		panel.handleInput("\x18");
+		expect(done).toHaveBeenCalledOnce();
 	});
 });

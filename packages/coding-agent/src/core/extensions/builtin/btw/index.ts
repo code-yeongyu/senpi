@@ -1,8 +1,9 @@
 import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
 import { buildSessionContext } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { formatBtwQuestion, sanitizeBtwDisplayText } from "./display-text.ts";
 import { BTW_HISTORY_ENTRY_TYPE, buildBtwHistoryMessages, readBtwHistory } from "./history.ts";
-import { BTW_HISTORY_OVERLAY_OPTIONS, BtwHistoryPanel, sanitizeBtwHistoryText } from "./history-panel.ts";
+import { BTW_HISTORY_OVERLAY_OPTIONS, BtwHistoryPanel } from "./history-panel.ts";
 import { BtwPanel } from "./panel.ts";
 import { buildSideQueryContext, getSideQueryPromptContextWindow, runSideQuery } from "./side-query.ts";
 
@@ -36,6 +37,10 @@ export default function btwExtension(pi: ExtensionAPI) {
 		dismiss(ctx, { abort: true });
 	});
 
+	pi.on("session_before_tree", (_event, ctx) => {
+		dismiss(ctx, { abort: true });
+	});
+
 	pi.on("session_shutdown", (_event, ctx) => {
 		dismiss(ctx, { abort: true });
 	});
@@ -57,7 +62,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 				}
 				if (ctx.mode === "tui" && ctx.hasUI) {
 					await ctx.ui.custom<undefined>(
-						(tui, theme, _keybindings, done) => new BtwHistoryPanel(entries, tui, theme, done),
+						(tui, theme, keybindings, done) => new BtwHistoryPanel({ entries, tui, theme, keybindings, done }),
 						{ overlay: true, overlayOptions: BTW_HISTORY_OVERLAY_OPTIONS },
 					);
 					return;
@@ -66,7 +71,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 					entries
 						.map(
 							(entry, index) =>
-								`${index + 1}. Question: ${sanitizeBtwHistoryText(entry.question)}\nAnswer: ${sanitizeBtwHistoryText(entry.answer)}`,
+								`${index + 1}. Question: ${formatBtwQuestion(entry.question)}\nAnswer: ${sanitizeBtwDisplayText(entry.answer)}`,
 						)
 						.join("\n\n"),
 					"info",
@@ -147,7 +152,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 				if (entry.panel) {
 					entry.panel.markDone();
 				} else {
-					ctx.ui.notify(replyText, "info");
+					ctx.ui.notify(sanitizeBtwDisplayText(replyText), "info");
 				}
 			} catch (error) {
 				if (active !== entry) return;

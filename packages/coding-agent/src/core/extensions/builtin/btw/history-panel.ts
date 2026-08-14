@@ -1,14 +1,7 @@
-import {
-	type Component,
-	Key,
-	matchesKey,
-	type TUI,
-	truncateToWidth,
-	visibleWidth,
-	wrapTextWithAnsi,
-} from "@earendil-works/pi-tui";
+import { type Component, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Theme } from "../../../../modes/interactive/theme/theme.ts";
-import { stripAnsi } from "../../../../utils/ansi.ts";
+import type { KeybindingsManager } from "../../../keybindings.ts";
+import { formatBtwQuestion, sanitizeBtwDisplayText } from "./display-text.ts";
 import { type BtwHistoryViewEntry, BtwHistoryViewModel } from "./history-view-model.ts";
 
 const FOOTER_HINT = "left/right: question   up/down: scroll   esc: close";
@@ -21,6 +14,17 @@ export const BTW_HISTORY_OVERLAY_CHROME_ROWS = 4;
 export interface BtwHistoryLayout {
 	readonly questionRows: number;
 	readonly answerRows: number;
+}
+
+interface BtwHistoryPanelOptions {
+	readonly entries: readonly BtwHistoryViewEntry[];
+	readonly tui: {
+		readonly terminal: { readonly rows: number };
+		requestRender(): void;
+	};
+	readonly theme: Theme;
+	readonly keybindings: KeybindingsManager;
+	readonly done: (result: undefined) => void;
 }
 
 export function computeBtwHistoryLayout(input: {
@@ -41,29 +45,21 @@ export function fitBtwHistoryRow(text: string, width: number): string {
 	return visibleWidth(text) > safeWidth ? truncateToWidth(text, safeWidth, "") : text;
 }
 
-export function sanitizeBtwHistoryText(text: string): string {
-	return stripAnsi(text)
-		.replace(/\r\n?/g, "\n")
-		.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "");
-}
-
-function normalizeQuestion(question: string): string {
-	return sanitizeBtwHistoryText(question).replace(/\n+/g, " ").trim();
-}
-
 export class BtwHistoryPanel implements Component {
 	readonly #entries: readonly BtwHistoryViewEntry[];
 	readonly #model: BtwHistoryViewModel;
-	readonly #tui: TUI;
+	readonly #tui: BtwHistoryPanelOptions["tui"];
 	readonly #theme: Theme;
+	readonly #keybindings: KeybindingsManager;
 	readonly #done: (result: undefined) => void;
 
-	constructor(entries: readonly BtwHistoryViewEntry[], tui: TUI, theme: Theme, done: (result: undefined) => void) {
-		this.#entries = entries;
-		this.#model = new BtwHistoryViewModel(entries);
-		this.#tui = tui;
-		this.#theme = theme;
-		this.#done = done;
+	constructor(options: BtwHistoryPanelOptions) {
+		this.#entries = options.entries;
+		this.#model = new BtwHistoryViewModel(options.entries);
+		this.#tui = options.tui;
+		this.#theme = options.theme;
+		this.#keybindings = options.keybindings;
+		this.#done = options.done;
 	}
 
 	render(width: number): string[] {
@@ -71,7 +67,7 @@ export class BtwHistoryPanel implements Component {
 		const selected = this.#model.selected;
 		if (!selected) return [this.#theme.fg("muted", fitBtwHistoryRow("No side questions yet.", safeWidth))];
 
-		const answerLines = wrapTextWithAnsi(sanitizeBtwHistoryText(selected.answer), safeWidth).map((line) =>
+		const answerLines = wrapTextWithAnsi(sanitizeBtwDisplayText(selected.answer), safeWidth).map((line) =>
 			fitBtwHistoryRow(line, safeWidth),
 		);
 		const layout = computeBtwHistoryLayout({
@@ -87,17 +83,17 @@ export class BtwHistoryPanel implements Component {
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, Key.escape)) {
+		if (this.#keybindings.matches(data, "tui.select.cancel")) {
 			this.#done(undefined);
 			return;
 		}
-		const changed = matchesKey(data, Key.left)
+		const changed = this.#keybindings.matches(data, "tui.editor.cursorLeft")
 			? this.#model.selectPrevious()
-			: matchesKey(data, Key.right)
+			: this.#keybindings.matches(data, "tui.editor.cursorRight")
 				? this.#model.selectNext()
-				: matchesKey(data, Key.up)
+				: this.#keybindings.matches(data, "tui.select.up")
 					? this.#model.scrollUp()
-					: matchesKey(data, Key.down) && this.#model.scrollDown();
+					: this.#keybindings.matches(data, "tui.select.down") && this.#model.scrollDown();
 		if (changed) this.#tui.requestRender();
 	}
 
@@ -108,7 +104,7 @@ export class BtwHistoryPanel implements Component {
 		const start = rowCount > 0 ? Math.min(this.#model.selectedIndex, maxStart) : 0;
 		return this.#entries.slice(start, start + rowCount).map((entry, offset) => {
 			const selected = start + offset === this.#model.selectedIndex;
-			const row = fitBtwHistoryRow(`${selected ? "→" : " "} /btw ${normalizeQuestion(entry.question)}`, width);
+			const row = fitBtwHistoryRow(`${selected ? "→" : " "} /btw ${formatBtwQuestion(entry.question)}`, width);
 			return this.#theme.fg(selected ? "accent" : "muted", row);
 		});
 	}
