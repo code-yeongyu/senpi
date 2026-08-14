@@ -2,6 +2,9 @@ import { type AssistantMessage, fauxAssistantMessage } from "@earendil-works/pi-
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, getAssistantTexts, getUserTexts, type Harness } from "../harness.ts";
 
+const EXPECTED_CAP_RECOVERY =
+	"Compaction rejected: the absolute compaction cap was reached for this runtime. Restart the CLI to resume this session, or start a new session.";
+
 function createUsage(totalTokens: number) {
 	return {
 		input: totalTokens,
@@ -152,6 +155,73 @@ describe("pre-prompt compaction regression", () => {
 		);
 	});
 
+	it("explains how to recover when the runtime compaction cap blocks the next provider call", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 10_000, maxTokens: 1_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 1_000 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => ({
+						cancel: true,
+						rejectionCause: "per-turn-cap",
+						reason:
+							"the absolute compaction cap was reached for this runtime. Restart the CLI to resume this session, or start a new session.",
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const now = Date.now();
+		const model = harness.getModel();
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "earlier prompt" }],
+			timestamp: now - 3000,
+		});
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("earlier response", { timestamp: now - 2000 }),
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: createUsage(50),
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "previous prompt" }],
+			timestamp: now - 1000,
+		});
+		const overflowAssistant: AssistantMessage = {
+			...fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "context_length_exceeded",
+				timestamp: now - 500,
+			}),
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: createUsage(100),
+		};
+		harness.sessionManager.appendMessage(overflowAssistant);
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		harness.setResponses([fauxAssistantMessage("must not reach provider")]);
+
+		await expect(harness.session.prompt("next prompt")).rejects.toThrow(EXPECTED_CAP_RECOVERY);
+		await expect(harness.session.prompt("retry prompt")).rejects.toThrow(EXPECTED_CAP_RECOVERY);
+
+		expect(harness.faux.state.callCount).toBe(0);
+		expect(getUserTexts(harness)).not.toContain("next prompt");
+		expect(getUserTexts(harness)).not.toContain("retry prompt");
+		expect(harness.eventsOfType("compaction_end").filter((event) => event.accepted === false)).toHaveLength(2);
+		expect(harness.eventsOfType("compaction_end")).toContainEqual(
+			expect.objectContaining({
+				reason: "overflow",
+				accepted: false,
+				rejectionCause: "per-turn-cap",
+			}),
+		);
+	});
+
 	it("compacts upstream model alias overflow before a dot retry", async () => {
 		const harness = await createHarness({
 			api: "openai-responses",
@@ -281,8 +351,9 @@ describe("pre-prompt compaction regression", () => {
 				(pi) => {
 					pi.on("session_before_compact", async () => ({
 						cancel: true,
-						rejectionCause: "cancelled-by-extension",
-						reason: "required recovery rejected",
+						rejectionCause: "per-turn-cap",
+						reason:
+							"the absolute compaction cap was reached for this runtime. Restart the CLI to resume this session, or start a new session.",
 					}));
 				},
 			],
@@ -309,23 +380,19 @@ describe("pre-prompt compaction regression", () => {
 		await harness.session.followUp("retain native follow-up");
 		releaseProvider.resolve();
 
-		await expect(initialPrompt).rejects.toThrow(
-			"Context remains above the compaction threshold because compaction did not complete",
-		);
+		await expect(initialPrompt).rejects.toThrow(EXPECTED_CAP_RECOVERY);
 		expect(harness.faux.state.callCount).toBe(1);
 		expect(harness.session.getSteeringMessages()).toEqual(["retain native steer"]);
 		expect(harness.session.getFollowUpMessages()).toEqual(["retain native follow-up"]);
 		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
 
-		await expect(harness.session.prompt("later normal admission")).rejects.toThrow(
-			"Context remains above the compaction threshold because compaction did not complete",
-		);
+		await expect(harness.session.prompt("later normal admission")).rejects.toThrow(EXPECTED_CAP_RECOVERY);
 		await expect(
 			harness.session.sendCustomMessage(
 				{ customType: "extension-note", content: "later custom admission", display: true },
 				{ triggerTurn: true },
 			),
-		).rejects.toThrow("Context remains above the compaction threshold because compaction did not complete");
+		).rejects.toThrow(EXPECTED_CAP_RECOVERY);
 
 		expect(harness.faux.state.callCount).toBe(1);
 		expect(harness.session.getSteeringMessages()).toEqual(["retain native steer"]);
@@ -828,8 +895,9 @@ describe("pre-prompt compaction regression", () => {
 						compactionRequests++;
 						return {
 							cancel: true,
-							rejectionCause: "cancelled-by-extension",
-							reason: "reject follow-up compaction",
+							rejectionCause: "per-turn-cap",
+							reason:
+								"the absolute compaction cap was reached for this runtime. Restart the CLI to resume this session, or start a new session.",
 						};
 					});
 				},
@@ -894,13 +962,9 @@ describe("pre-prompt compaction regression", () => {
 			);
 
 		expect(normalError).toBeInstanceOf(Error);
-		expect((normalError as Error).message).toContain(
-			"Context remains above the compaction threshold because compaction did not complete",
-		);
+		expect((normalError as Error).message).toContain(EXPECTED_CAP_RECOVERY);
 		expect(customError).toBeInstanceOf(Error);
-		expect((customError as Error).message).toContain(
-			"Context remains above the compaction threshold because compaction did not complete",
-		);
+		expect((customError as Error).message).toContain(EXPECTED_CAP_RECOVERY);
 		expect(compactionRequests).toBe(2);
 		expect(harness.faux.state.callCount).toBe(0);
 		expect(harness.session.messages).toContainEqual(

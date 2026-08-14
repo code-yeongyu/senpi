@@ -1,5 +1,28 @@
 # Builtin compaction extension changes
 
+## Explain the runtime absolute-cap recovery path (2026-08-14)
+
+### What changed
+
+- The builtin `per-turn-cap` rejection now identifies the absolute cap as runtime-scoped and tells users to restart
+  the CLI before resuming the session or start a new session.
+- The real-CLI absolute-cap QA scenario now pins the same recovery text.
+
+### Why
+
+- `acceptedAbsolute` belongs to the builtin extension's in-memory state and is recreated when the CLI restarts. The
+  previous "for this session" wording hid the available recovery path and made a blocked resumed prompt look hung.
+
+### Why an extension could not do this
+
+- This extension owns the absolute-cap counter and therefore owns the accurate scope and recovery wording. Core
+  separately preserves its structured `per-turn-cap` cause for the provider-admission error.
+
+### Expected merge-conflict zones
+
+- LOW: `index.ts`, in the absolute-cap branch of `session_before_compact`.
+- LOW: `.agents/skills/senpi-qa/scripts/scenarios/compaction-absolute-cap-qa.mjs`, around the rejection needle.
+
 ## Report provider-owned compaction as delegated (2026-08-14)
 
 ### What changed

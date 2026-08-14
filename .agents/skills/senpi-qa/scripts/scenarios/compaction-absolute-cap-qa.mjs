@@ -5,8 +5,8 @@
  * Drives the real senpi CLI from source over RPC with a local fake Anthropic
  * server and proves the post-#728 admission policy end to end:
  *   - compactions past the former per-turn soft cap (3) are admitted and
- *     accepted up to the absolute session cap (10),
- *   - the 11th compaction is rejected with the absolute-session-cap message
+ *     accepted up to the absolute runtime cap (10),
+ *   - the 11th compaction is rejected with the absolute-runtime-cap message
  *     (not the misleading per-turn wording), and
  *   - the rejection is non-fatal: the session keeps serving prompts.
  *
@@ -29,7 +29,8 @@ import { checkRealAuthUnchanged, hermeticEnv } from "../lib/mock-loop-support.mj
 const SUMMARY_MARKER = "context summarization assistant";
 const ABSOLUTE_CAP = 10;
 const FORMER_SOFT_CAP = 3;
-const REJECTION_NEEDLE = "absolute compaction cap reached for this session";
+const REJECTION_NEEDLE =
+	"Compaction rejected: the absolute compaction cap was reached for this runtime. Restart the CLI to resume this session, or start a new session.";
 const CONTEXT_WINDOW = 128_000;
 
 function flag(name) {
@@ -249,7 +250,7 @@ async function main() {
 		observed.rejection = { success: rejected.success, error: rejected.error ?? null };
 		checks.ok("compaction past the absolute cap is rejected", rejected.success === false);
 		checks.ok(
-			"the rejection names the absolute session cap, not the per-turn cap",
+			"the rejection names the absolute runtime cap, not the per-turn cap",
 			String(rejected.error ?? "").includes(REJECTION_NEEDLE),
 			`error=${String(rejected.error ?? "").slice(0, 160)}`,
 		);

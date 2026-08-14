@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Required compaction now reports when the runtime's absolute compaction cap is exhausted and explains how to
+  recover by restarting the CLI before resuming the session or by starting a new session. Previously prompt
+  admission replaced that actionable rejection with the generic `compaction did not complete` error, while the
+  builtin extension described the in-memory cap as session-scoped.
+
 ### New Features
 
 ### Breaking Changes
