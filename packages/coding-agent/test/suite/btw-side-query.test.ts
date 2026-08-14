@@ -52,6 +52,27 @@ describe("buildSideQueryContext", () => {
 		]);
 	});
 
+	it("prunes prior side turns as complete pairs at the budget boundary", () => {
+		const priorQuestion = {
+			role: "user" as const,
+			content: `Earlier side question: ${"q".repeat(4_000)}`,
+			timestamp: 1,
+		};
+		const priorAnswer = fauxAssistantMessage("Your earlier answer: do not leave this orphaned", { timestamp: 1 });
+		const input = {
+			systemPrompt: "BASE",
+			history: [],
+			priorBtw: [priorQuestion, priorAnswer],
+			question: "current question",
+		};
+		const unbounded = buildSideQueryContext(input);
+		const promptContextWindow = estimatePromptTokens(unbounded) - estimateTokens(priorQuestion);
+
+		const bounded = buildSideQueryContext({ ...input, promptContextWindow });
+
+		expect(bounded.messages.map((message) => getMessageText(message))).toEqual(["current question"]);
+	});
+
 	it("does not mutate the caller's history array", () => {
 		const history = [{ role: "user", content: "earlier", timestamp: 1 }] as const;
 		const mutable = [...history];
@@ -385,9 +406,8 @@ describe("/btw extension command", () => {
 
 		const activeCall = harness.faux.getCallLog().at(-1);
 		const activeTexts = (activeCall?.context.messages ?? []).map((message) => getMessageText(message));
-		expect(activeTexts).not.toContain(
-			"Earlier side question: sibling question\nYour earlier answer: sibling side answer",
-		);
+		expect(activeTexts).not.toContain("Earlier side question: sibling question");
+		expect(activeTexts).not.toContain("Your earlier answer: sibling side answer");
 		expect(activeTexts.at(-1)).toBe("active question");
 		const stored = harness.sessionManager
 			.getBranch()

@@ -40,6 +40,11 @@ function estimateSystemPromptTokens(systemPrompt: string): number {
 	return estimateTokens({ role: "user", content: systemPrompt, timestamp: 0 });
 }
 
+function removeIncompleteLeadingTurn(messages: Message[]): Message[] {
+	const firstUserIndex = messages.findIndex((message) => message.role === "user");
+	return firstUserIndex > 0 ? messages.slice(firstUserIndex) : messages;
+}
+
 function boundSideQueryMessages(
 	messages: Message[],
 	systemPrompt: string,
@@ -59,7 +64,7 @@ function boundSideQueryMessages(
 	const reduced = convertToLlm(reduceContextMessages(messages, BUILTIN_CONTEXT_REDUCTION_OPTIONS).messages);
 	const repaired = repairOrphanedToolResults(reduced);
 	const pruned = convertToLlm(pruneOldMessagesToBudget(repaired, messageBudget));
-	const bounded = repairOrphanedToolResults(pruned);
+	const bounded = removeIncompleteLeadingTurn(repairOrphanedToolResults(pruned));
 	if (estimateMessagesTokens(bounded) > messageBudget) {
 		throw new Error("/btw context is too large for this model; run /compact first.");
 	}
