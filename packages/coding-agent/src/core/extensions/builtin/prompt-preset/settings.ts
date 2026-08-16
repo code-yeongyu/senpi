@@ -12,6 +12,7 @@ export type PromptPresetName =
 	| "deepseek-v4-flash"
 	| "deepseek-v4-flash-0731"
 	| "deepseek-v4-pro"
+	| "gemini"
 	| "glm-5.2"
 	| "glm-5.3"
 	| "grok-4.5"
@@ -19,6 +20,7 @@ export type PromptPresetName =
 	| "kimi-k3"
 	| "kimi-k2-7"
 	| "kimi-k2-6"
+	| "muse-spark"
 	| "gpt-5"
 	| "gpt-5.2"
 	| "gpt-5.3-codex"
@@ -45,6 +47,7 @@ const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"deepseek-v4-flash",
 	"deepseek-v4-flash-0731",
 	"deepseek-v4-pro",
+	"gemini",
 	"glm-5.2",
 	"glm-5.3",
 	"grok-4.5",
@@ -52,6 +55,7 @@ const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"kimi-k3",
 	"kimi-k2-7",
 	"kimi-k2-6",
+	"muse-spark",
 	"gpt-5",
 	"gpt-5.2",
 	"gpt-5.3-codex",
