@@ -1,5 +1,29 @@
 # Local fork changes
 
+## 2026-08-16 — Stabilize request-local context reduction
+
+### What changed
+
+- Context reduction now stays engaged after crossing the 50% usage gate until
+  an accepted persisted compaction changes the stored session history.
+- Provider-native compaction lanes still bypass Senpi context reduction.
+- Added a deterministic sanitized threshold-control regression covering 507
+  request-local evaluations and 319 threshold crossings against a
+  one-million-token window.
+- Added a separate payload-scale extension regression with 1,510 eligible tool
+  results and more than one megabyte of serialized history. It proves rejected
+  compaction preserves the latch and accepted compaction resets it.
+
+### Why
+
+- The builtin context hook rebuilds outgoing messages from unchanged stored
+  history on every request. A stateless gate alternated reduced and unreduced
+  payload shapes when reported usage moved across 50%, invalidating stable
+  prefix reuse.
+- Numeric release hysteresis cannot guarantee stability because a successful
+  request-local reduction can move the next reported usage below a release
+  band without changing stored history.
+
 ## 2026-08-14 — RPC stream regression suites for multi-session compaction
 
 ### What changed

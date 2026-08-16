@@ -15,7 +15,9 @@ import * as checkpointState from "./checkpoint-state.ts";
 import * as breaker from "./circuit-breaker.ts";
 import {
 	BUILTIN_CONTEXT_REDUCTION_OPTIONS,
+	createContextReductionLatch,
 	reduceContextMessages,
+	resetContextReductionLatch,
 	shouldApplyContextReduction,
 } from "./context-reduction.ts";
 import {
@@ -193,6 +195,7 @@ export default function compactionExtension(
 	const lanePolicy = createCompactionLanePolicy();
 	const restorationDirectiveState = checkpointState.createRestorationDirectiveState();
 	const emergencyPruneLatch = createEmergencyPruneLatch();
+	const contextReductionLatch = createContextReductionLatch();
 	const degradationState = createDegradationMonitorState();
 	const restorationState = state.restoration ?? restoration.createRestorationTrackerState();
 	state = { ...state, restoration: restorationState };
@@ -745,6 +748,7 @@ export default function compactionExtension(
 		const compactEvent = event;
 		invalidateSpeculativeCompaction(ctx);
 		if (compactEvent.accepted) {
+			resetContextReductionLatch(contextReductionLatch);
 			persistAcceptedMetadata(compactEvent.requestId);
 			const branchEntries = ctx.sessionManager.getBranch();
 			const firstKeptIndex = branchEntries.findIndex(
@@ -864,12 +868,15 @@ export default function compactionExtension(
 		const usage = ctx.getContextUsage();
 		const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
 		const promptContextWindow = getPromptContextWindow(contextWindow, ctx.model?.maxTokens);
-		const sourceMessages = shouldApplyContextReduction({
-			usageTokens: usage?.tokens ?? null,
-			contextWindow,
-			isProviderNativeCompactionPath:
-				isOpenAiRemoteCompactionModel(ctx.model) || lanePolicy.disablesSenpiCompaction(ctx),
-		})
+		const sourceMessages = shouldApplyContextReduction(
+			{
+				usageTokens: usage?.tokens ?? null,
+				contextWindow,
+				isProviderNativeCompactionPath:
+					isOpenAiRemoteCompactionModel(ctx.model) || lanePolicy.disablesSenpiCompaction(ctx),
+			},
+			contextReductionLatch,
+		)
 			? reduceContextMessages(event.messages, BUILTIN_CONTEXT_REDUCTION_OPTIONS).messages
 			: event.messages;
 		// The claude-sdk-oauth lane stands down from senpi compaction entirely:
