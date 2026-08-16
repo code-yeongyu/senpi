@@ -9,6 +9,7 @@ import { buildClaudeOpus5Prompt } from "./claude-opus-5.ts";
 import { buildDeepseekV4FlashPrompt } from "./deepseek-v4-flash.ts";
 import { buildDeepseekV4Flash0731Prompt } from "./deepseek-v4-flash-0731.ts";
 import { buildDeepseekV4ProPrompt } from "./deepseek-v4-pro.ts";
+import { buildGeminiPrompt } from "./gemini.ts";
 import { buildGlm52Prompt } from "./glm-5-2.ts";
 import { buildGlm53Prompt } from "./glm-5-3.ts";
 import { buildGpt52Prompt } from "./gpt-5.2.ts";
@@ -22,6 +23,7 @@ import { buildGrok46Prompt } from "./grok-4.6.ts";
 import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
 import { buildKimiK27Prompt } from "./kimi-k2-7.ts";
 import { buildKimiK3Prompt } from "./kimi-k3.ts";
+import { buildMuseSparkPrompt } from "./muse-spark.ts";
 import { type PromptPresetName, type PromptPresetSettings, parsePromptPreset } from "./settings.ts";
 
 export type { PromptPresetSettings } from "./settings.ts";
@@ -154,6 +156,35 @@ function isGrok46Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGrok46Signal(model.id) || (model.name !== undefined && hasGrok46Signal(model.name));
 }
 
+// Gemini 3.x Flash id shapes verified against senpi's generated provider
+// catalogs (2026-08-16): google/gemini-3.6-flash, google/gemini-3.1-flash-lite,
+// google/gemini-3.5-flash, google/gemini-3.5-flash-lite, google/gemini-3.7-flash
+// (openrouter/vercel-ai-gateway), plus the unprefixed google / google-vertex /
+// github-copilot / opencode shapes, :batch trailing tags, and -preview suffixes.
+// Truncated ids (google/gemini-3.6, bare "gemini") stay out, and -image variants
+// (Nano Banana image models) are a different modality and never route here.
+function hasGeminiSignal(value: string): boolean {
+	return /(?:^|[/@:._-])gemini[._-]3[._-](?:1[._-]flash[._-]lite|5[._-]flash(?:[._-]lite)?|6[._-]flash|7[._-]flash)(?:$|[/@:._-])(?!image(?:$|[/@:._-]))/.test(
+		normalizeModelId(value),
+	);
+}
+
+function isGeminiModel(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGeminiSignal(model.id) || (model.name !== undefined && hasGeminiSignal(model.name));
+}
+
+// Muse Spark id shapes verified against senpi's generated provider catalogs
+// (2026-08-16): meta/muse-spark-1.1, meta/muse-spark-1.2, and
+// meta/muse-spark-1.2-contributor (openrouter, vercel-ai-gateway). Truncated
+// ids (meta/muse-spark) and bare "spark" substrings stay out.
+function hasMuseSparkSignal(value: string): boolean {
+	return /(?:^|[/@:._-])muse[._-]spark[._-]1[._-][12](?:$|[/@:._-])/.test(normalizeModelId(value));
+}
+
+function isMuseSparkModel(model: ModelWithPromptPresetMetadata): boolean {
+	return hasMuseSparkSignal(model.id) || (model.name !== undefined && hasMuseSparkSignal(model.name));
+}
+
 function isClaudeFable5Model(modelId: string): boolean {
 	return normalizeModelId(modelId).includes("fable-5");
 }
@@ -239,6 +270,12 @@ export function resolvePresetName(
 	if (isGrok45Model(model)) {
 		return "grok-4.5";
 	}
+	if (isGeminiModel(model)) {
+		return "gemini";
+	}
+	if (isMuseSparkModel(model)) {
+		return "muse-spark";
+	}
 	return undefined;
 }
 
@@ -270,6 +307,10 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildGrok46Prompt(options) };
 		case "grok-4.5":
 			return { name, prompt: buildGrok45Prompt(options) };
+		case "gemini":
+			return { name, prompt: buildGeminiPrompt(options) };
+		case "muse-spark":
+			return { name, prompt: buildMuseSparkPrompt(options) };
 		case "kimi-k3":
 			return { name, prompt: buildKimiK3Prompt(options) };
 		case "kimi-k2-7":
