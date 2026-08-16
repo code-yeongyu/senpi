@@ -5,7 +5,8 @@
 ### What changed
 
 - Context reduction now stays engaged after crossing the 50% usage gate until
-  an accepted persisted compaction changes the stored session history.
+  an accepted persisted compaction or session-tree navigation changes the active
+  stored history.
 - Provider-native compaction lanes still bypass Senpi context reduction.
 - Added a deterministic sanitized threshold-control regression covering 507
   request-local evaluations and 319 threshold crossings against a

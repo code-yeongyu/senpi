@@ -171,6 +171,24 @@ async function contextHash(runner: ExtensionRunner, messages: AgentMessage[]): P
 }
 
 describe("request-local context reduction extension lifecycle", () => {
+	it("resets reduction when navigation replaces the active branch", async () => {
+		const messages = payloadScaleHistory();
+		const usageState = { tokens: 501_000 };
+		const runner = await createRunner(usageState);
+		const reducedHash = await contextHash(runner, messages);
+
+		usageState.tokens = 499_000;
+		expect(await contextHash(runner, messages)).toBe(reducedHash);
+
+		await runner.emit({
+			type: "session_tree",
+			oldLeafId: "long-branch-leaf",
+			newLeafId: "short-branch-leaf",
+		});
+
+		expect(await contextHash(runner, messages)).not.toBe(reducedHash);
+	});
+
 	it("holds a payload-scale reduction through rejection and resets only after accepted compaction", async () => {
 		const messages = payloadScaleHistory();
 		const serializedBytes = Buffer.byteLength(JSON.stringify(messages));

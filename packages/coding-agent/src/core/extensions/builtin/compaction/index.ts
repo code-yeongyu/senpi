@@ -744,6 +744,10 @@ export default function compactionExtension(
 		}
 	});
 
+	pi.on("session_tree", () => {
+		resetContextReductionLatch(contextReductionLatch);
+	});
+
 	pi.on("session_compact", async (event: SessionCompactEvent, ctx) => {
 		const compactEvent = event;
 		invalidateSpeculativeCompaction(ctx);
