@@ -1,5 +1,35 @@
 # changes.md — ai
 
+## Add GLM-5.3 to the Z.AI Coding Plan catalog (2026-08-15)
+
+### What changed
+
+- `scripts/generate-models.ts`: added reviewed `glm-5.3` fallback metadata that live `models.dev` values can override, including the official 1M-token context, 128K-token output limit, and low/high/max reasoning-effort mapping.
+- `src/providers/data/{zai,zai-coding-cn}.json`: regenerated the committed Z.AI snapshots and added `glm-5.3` to the global and China Coding Plan catalogs.
+- `test/openai-completions-tool-choice.test.ts`: covers the generated catalog values and the exact `reasoning_effort` payload mapping.
+
+### Why
+
+- Z.AI released GLM-5.3 to every Coding Plan tier before adding it to `models.dev`; without a stable fallback, strict generation omits a model that the provider endpoint already serves.
+- Z.AI documents the general GLM-5.3 API as coming soon. Coding Plan therefore retains zero metered cost metadata rather than borrowing unannounced API pricing.
+
+### Why this cannot be expressed as an extension
+
+- Built-in model IDs, provider request metadata, and their generated TypeScript types are fixed before coding-agent extensions load.
+
+### Modified upstream files
+
+- `scripts/generate-models.ts`
+- `src/providers/data/.manifest.json`
+- `src/providers/data/zai.json`
+- `src/providers/data/zai-coding-cn.json`
+- `test/openai-completions-tool-choice.test.ts`
+
+### Expected merge conflict zones
+
+- MEDIUM: the Z.AI branch in `loadModelsDevData()` when `models.dev` begins publishing GLM-5.3.
+- MEDIUM: generated Z.AI provider JSON whenever its live catalog changes.
+
 ## Follow Groq Qwen catalog replacement during generation (2026-08-04)
 
 ### What changed
@@ -153,7 +183,6 @@
   an import + re-export. If upstream edits those predicates, port the edit into
   `src/utils/prompt-cache-ttl.ts` so the resolver and the adapters stay in agreement.
 
-
 ## Cover Claude Opus 5 in Anthropic adaptive-thinking metadata (2026-07-25)
 
 ### What changed
@@ -164,7 +193,7 @@
   `mapThinkingLevelToEffort` maps Opus 5 `xhigh`/`max` to native efforts instead of collapsing them to `high`.
 - `src/providers/data/*.json`: regenerated so every provider that serves Opus 5 (anthropic, github-copilot,
   opencode, vercel-ai-gateway, openrouter, amazon-bedrock) carries `forceAdaptiveThinking`, `supportsTemperature:
-  false`, and the `xhigh`/`max` thinking level map.
+false`, and the `xhigh`/`max` thinking level map.
 
 ### Why
 

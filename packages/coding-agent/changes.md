@@ -1,5 +1,19 @@
 # Local fork changes
 
+## 2026-08-15 — Track GLM-5.3 as the Z.AI default
+
+### What changed
+
+- Updated the global and China Z.AI provider defaults from `glm-5.2` to the newly bundled `glm-5.3`.
+- Updated default-resolution coverage to require the selected model to exist in each generated catalog.
+
+### Why this lives in the fork
+
+- Senpi owns initial provider-model selection; the AI package only supplies the catalog.
+
+### Merge notes
+
+- LOW: `src/core/model-resolver.ts` conflicts only when upstream changes provider defaults.
 ## 2026-08-14 — RPC stream regression suites for multi-session compaction
 
 ### What changed

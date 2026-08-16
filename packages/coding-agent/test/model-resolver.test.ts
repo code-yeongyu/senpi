@@ -701,8 +701,8 @@ describe("default model selection", () => {
 	});
 
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {
-		expect(defaultModelPerProvider.zai).toBe("glm-5.2");
-		expect(defaultModelPerProvider["zai-coding-cn"]).toBe("glm-5.2");
+		expect(defaultModelPerProvider.zai).toBe("glm-5.3");
+		expect(defaultModelPerProvider["zai-coding-cn"]).toBe("glm-5.3");
 		expect(defaultModelPerProvider.minimax).toBe("MiniMax-M2.7");
 		expect(defaultModelPerProvider["minimax-cn"]).toBe("MiniMax-M2.7");
 		expect(defaultModelPerProvider.cerebras).toBe("zai-glm-4.7");
@@ -792,7 +792,7 @@ describe("default model selection", () => {
 
 		expect(result.provenance).toBe("provider-default");
 		expect(result.model?.provider).toBe("zai");
-		expect(result.model?.id).toBe("glm-5.2");
+		expect(result.model?.id).toBe("glm-5.3");
 	});
 
 	test("findInitialModel ignores an unauthenticated saved default", async () => {

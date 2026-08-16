@@ -240,11 +240,31 @@ const NVIDIA_NIM_UNSUPPORTED_MODELS = new Set([
 	"upstage/solar-10.7b-instruct",
 ]);
 const ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = new Set(["glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v"]);
+const ZAI_CODING_STABLE_MODELS = {
+	"glm-5.3": {
+		id: "glm-5.3",
+		name: "GLM-5.3",
+		tool_call: true,
+		reasoning: true,
+		reasoning_options: [{ type: "effort", values: ["low", "high", "max"] }],
+		limit: { context: 1_000_000, output: 131_072 },
+		modalities: { input: ["text"] },
+	},
+} satisfies Record<string, ModelsDevModel>;
 const ZAI_GLM52_THINKING_LEVEL_MAP = {
 	minimal: null,
 	low: "high",
 	medium: "high",
 	high: "high",
+	max: "max",
+} as const;
+const ZAI_GLM53_THINKING_LEVEL_MAP = {
+	off: "low",
+	minimal: "low",
+	low: "low",
+	medium: "high",
+	high: "high",
+	xhigh: "max",
 	max: "max",
 } as const;
 const OPENCODE_GO_GLM52_THINKING_LEVEL_MAP = {
@@ -1715,13 +1735,23 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		] as const;
 
 		if (data["zai-coding-plan"]?.models) {
+			const liveZaiModels = data["zai-coding-plan"].models as Record<string, ModelsDevModel>;
+			const zaiModels: Record<string, ModelsDevModel> = {
+				...ZAI_CODING_STABLE_MODELS,
+				...liveZaiModels,
+			};
 			for (const { provider, baseUrl } of zaiCodingPlanVariants) {
-				for (const [modelId, model] of Object.entries(data["zai-coding-plan"].models)) {
+				for (const [modelId, model] of Object.entries(zaiModels)) {
 					const m = model as ModelsDevModel;
 					if (m.tool_call !== true) continue;
 					const supportsImage = m.modalities?.input?.includes("image");
 
-					const isGlm52 = modelId === "glm-5.2";
+					const thinkingLevelMap =
+						modelId === "glm-5.2"
+							? ZAI_GLM52_THINKING_LEVEL_MAP
+							: modelId === "glm-5.3"
+								? ZAI_GLM53_THINKING_LEVEL_MAP
+								: undefined;
 
 					models.push({
 						id: modelId,
@@ -1730,7 +1760,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						provider,
 						baseUrl,
 						reasoning: m.reasoning === true,
-						...(isGlm52 ? { thinkingLevelMap: ZAI_GLM52_THINKING_LEVEL_MAP } : {}),
+						...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 						input: supportsImage ? ["text", "image"] : ["text"],
 						cost: {
 							input: m.cost?.input || 0,
@@ -1741,7 +1771,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						compat: {
 							supportsDeveloperRole: false,
 							thinkingFormat: "zai",
-							...(isGlm52 ? { supportsReasoningEffort: true } : {}),
+							...(thinkingLevelMap ? { supportsReasoningEffort: true } : {}),
 							...(!ZAI_TOOL_STREAM_UNSUPPORTED_MODELS.has(modelId) ? { zaiToolStream: true } : {}),
 						},
 						contextWindow: m.limit?.context || 4096,
