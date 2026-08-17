@@ -12,6 +12,12 @@
 
 ### Fixed
 
+- `/mcp auth <server>` now completes an interactive OAuth login instead of stalling forever. The command announced
+  `Opening browser to authorize <server>...` but never launched a browser, and the notification carrying the
+  authorization URL was emitted immediately before that announcement, so the TUI's consecutive-status coalescing
+  overwrote it. With no browser and no reachable URL, the flow waited on its loopback callback until the session
+  ended. The auth command bridge now calls the real browser launcher, and each branch emits a single notification
+  that includes the authorization URL as a fallback for when the launch fails.
 - Steering queued while a provider stream-start timeout retry is running now starts automatically when that managed
   retry exhausts its budget, instead of remaining parked until another user prompt. Generic terminal provider errors
   and user-aborted retries keep their existing queue-retention behavior

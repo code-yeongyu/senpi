@@ -54,11 +54,13 @@ async function agentDir(): Promise<string> {
 interface Harness {
 	deps: AuthCommandDeps;
 	browsered: URL[];
+	notified: string[];
 	store: McpTokenStore;
 }
 
 function makeHarness(dir: string, mcpUrl: string, overrides: Partial<McpServerConfig> = {}): Harness {
 	const browsered: URL[] = [];
+	const notified: string[] = [];
 	const config: McpServerConfig = {
 		type: "http",
 		url: mcpUrl,
@@ -78,14 +80,21 @@ function makeHarness(dir: string, mcpUrl: string, overrides: Partial<McpServerCo
 		config,
 		agentDir: dir,
 		hasUI: true,
-		notify: () => undefined,
+		notify: (message) => {
+			notified.push(message);
+		},
 		openBrowser: (url) => {
 			browsered.push(url);
 		},
 		onReconnect: () => Promise.resolve(),
 		pending: new Map<string, McpOAuthProvider>(),
 	};
-	return { deps, browsered, store: new McpTokenStore({ agentDir: dir, serverName: "fix", serverUrl: mcpUrl }) };
+	return {
+		deps,
+		browsered,
+		notified,
+		store: new McpTokenStore({ agentDir: dir, serverName: "fix", serverUrl: mcpUrl }),
+	};
 }
 
 async function followAuthorize(url: URL): Promise<Response> {
@@ -242,6 +251,26 @@ describe("LoopbackCallbackServer", () => {
 		expect(harness.browsered).toHaveLength(0);
 	});
 
+	// Regression: the authorization URL used to be announced in its own notification, immediately
+	// followed by a second status line. Consecutive status lines overwrite each other in the TUI, so
+	// the URL vanished and a failed browser launch left the flow waiting forever with no way out.
+	it("carries the authorization URL in the same single notification that announces the browser", async () => {
+		const fixture = await idp();
+		const dir = await agentDir();
+		const harness = makeHarness(dir, fixture.mcpUrl);
+
+		const auth = runAuth(harness.deps);
+		await vi.waitFor(() => expect(harness.browsered).toHaveLength(1));
+		const authorizationUrl = harness.browsered[0];
+		if (authorizationUrl === undefined) throw new Error("no authorization URL");
+		await vi.waitFor(() => expect(harness.notified).toHaveLength(1));
+		expect(harness.notified[0]).toContain(authorizationUrl.toString());
+
+		const callback = await followAuthorize(authorizationUrl);
+		expect(callback.status).toBe(200);
+		await auth;
+	});
+
 	it("runAuth with a callback URL override opens no listener and completes through pasted redirect", async () => {
 		const fixture = await idp();
 		const dir = await agentDir();
@@ -256,6 +285,9 @@ describe("LoopbackCallbackServer", () => {
 		expect(harness.deps.pending.has(harness.deps.serverName)).toBe(true);
 		const authorizationUrl = harness.browsered[0];
 		if (authorizationUrl === undefined) throw new Error("no authorization URL");
+		expect(harness.notified).toHaveLength(1);
+		expect(harness.notified[0]).toContain(authorizationUrl.toString());
+		expect(harness.notified[0]).toContain("/mcp auth-complete fix");
 		const redirect = await authorizeRedirectLocation(authorizationUrl);
 		await runAuthComplete(harness.deps, redirect);
 		expect(await portOpen(port)).toBe(false);

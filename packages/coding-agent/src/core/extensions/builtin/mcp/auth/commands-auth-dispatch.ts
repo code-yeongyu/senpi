@@ -1,3 +1,4 @@
+import { openBrowser as launchBrowser } from "../../../../../utils/open-browser.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../../types.ts";
 import { createMcpLogger } from "../log.ts";
 import type { McpService } from "../service.ts";
@@ -34,7 +35,9 @@ export async function handleMcpAuthCommand(
 			}
 			await service.attachSession({ type: "session_start", reason: "reload" }, ctx, pi).catch(() => undefined);
 		},
-		openBrowser: (url) => ctx.ui.notify(`Open this URL to authorize ${name}:\n${url.toString()}`),
+		// Actually launch the browser. The URL is surfaced by the auth flow itself in a single
+		// status line, because consecutive ui.notify() status lines overwrite each other in the TUI.
+		openBrowser: (url) => launchBrowser(url.toString()),
 		pending: service.getPendingAuth(),
 		interactiveGuard: {
 			begin: (serverName) => service.beginInteractiveAuth(serverName),
