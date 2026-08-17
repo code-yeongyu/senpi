@@ -176,6 +176,7 @@ async function spawnDaemon(paths: DaemonPaths, listen: AppServerListen): Promise
 			[...process.execArgv, resolveCliMainPath(), "app-server", "--listen", listen.url],
 			{
 				detached: true,
+				windowsHide: true,
 				env: process.env,
 				stdio: ["ignore", "ignore", stderr.fd],
 			},

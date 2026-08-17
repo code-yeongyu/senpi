@@ -48,6 +48,7 @@ export const defaultSpawnWorker: OmoLocalSpawnWorker = (request) => {
 		try {
 			const child = spawn(process.execPath, workerCommandArgs(request.force), {
 				detached: true,
+				windowsHide: true,
 				env: process.env,
 				stdio: ["ignore", logFd, logFd],
 			});

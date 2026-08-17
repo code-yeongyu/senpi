@@ -64,6 +64,7 @@ async function spawnFullCli(): Promise<number> {
 		const child = spawn(process.execPath, [...process.execArgv, fullCliPath, ...args], {
 			env: process.env,
 			stdio: "inherit",
+			windowsHide: true,
 		});
 		child.on("error", (error) => {
 			reject(error);
