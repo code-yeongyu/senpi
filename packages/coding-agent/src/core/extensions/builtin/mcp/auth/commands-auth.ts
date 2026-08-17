@@ -121,7 +121,8 @@ async function runInteractive(deps: AuthCommandDeps): Promise<void> {
 		const loopbackResult = channel.usesLoopback ? channel.waitForCode() : undefined;
 		provider = buildProvider(deps, channel.redirectUrl, (url) => deps.openBrowser?.(url));
 		const begin = await beginAuthorization(provider, deps.flow);
-		if (begin.authorizationUrl !== undefined) deps.notify(`Opening browser to authorize ${deps.serverName}...`);
+		// One notification per branch: consecutive status lines overwrite each other in the TUI, so a
+		// separate "opening browser" line would erase the URL the user needs when the launch fails.
 		if (!channel.usesLoopback) {
 			deps.pending.set(deps.serverName, provider);
 			if (begin.authorizationUrl === undefined) {
@@ -134,9 +135,14 @@ async function runInteractive(deps: AuthCommandDeps): Promise<void> {
 				);
 			}
 			deps.notify(
-				`Complete the browser flow, then run /mcp auth-complete ${deps.serverName} <redirect-url> with the final redirect URL.`,
+				`Opening browser to authorize ${deps.serverName}. If it does not open, visit:\n${begin.authorizationUrl.toString()}\nComplete the browser flow, then run /mcp auth-complete ${deps.serverName} <redirect-url> with the final redirect URL.`,
 			);
 			return;
+		}
+		if (begin.authorizationUrl !== undefined) {
+			deps.notify(
+				`Opening browser to authorize ${deps.serverName}. If it does not open, visit:\n${begin.authorizationUrl.toString()}`,
+			);
 		}
 		const { code } = await (loopbackResult ?? channel.waitForCode());
 		await finishAuthorization(provider, code, deps.flow);

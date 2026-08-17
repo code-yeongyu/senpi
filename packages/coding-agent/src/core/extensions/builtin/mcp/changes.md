@@ -1,5 +1,21 @@
 # mcp Extension Changes
 
+## Interactive OAuth actually opens a browser and keeps the URL visible (2026-08-17)
+
+### What changed
+- `auth/commands-auth-dispatch.ts` wires `openBrowser` to `utils/open-browser.ts` instead of emitting a notification; the launch now really happens.
+- `auth/commands-auth.ts` `runInteractive` emits exactly one notification per branch, carrying the authorization URL, instead of an announcement line that followed and erased the URL line.
+- `test/mcp/oauth-callback.test.ts` asserts the single announcement contains the authorization URL for both the loopback and the callback-override branch.
+
+### Why
+- `/mcp auth <server>` said "Opening browser..." but nothing ever spawned a browser, and the preceding URL notification was overwritten: consecutive `ui.notify` status lines coalesce in the TUI (`showStatus` replaces the trailing status text in place). The flow then blocked on the loopback callback with no reachable authorization URL, so interactive login could never complete.
+
+### Why extension system couldn't handle this alone
+- The auth command bridge owns the `AuthCommandDeps` wiring and the notification sequence of the built-in `/mcp` command namespace; no external extension can reorder them.
+
+### Expected merge conflict zones
+- LOW: `auth/commands-auth-dispatch.ts` deps literal; `auth/commands-auth.ts` `runInteractive` notification block.
+
 ## Explicit pgrep match-all pattern for process-tree collection (2026-08-12)
 
 ### What changed
