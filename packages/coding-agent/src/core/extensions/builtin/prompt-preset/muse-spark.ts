@@ -22,9 +22,10 @@ export type MuseSparkRuleId =
 	| "observation-summary"
 	| "chain-checkpoints"
 	| "injected-directive-authority"
-	| "korean-easy-report";
+	| "korean-easy-report"
+	| "load-matching-skills";
 
-export type MuseSparkConcern = "tool-orchestration" | "grounding" | "verification" | "deliberation" | "harness-contract" | "reporting";
+export type MuseSparkConcern = "tool-orchestration" | "grounding" | "verification" | "deliberation" | "harness-contract" | "reporting" | "skill-utilization";
 
 export interface MuseSparkRule {
 	readonly id: MuseSparkRuleId;
@@ -86,6 +87,12 @@ export const MUSE_SPARK_RULES: readonly MuseSparkRule[] = [
 		concern: "reporting",
 		directive:
 			"Follow the project reporting contract in ~/.omo/AGENTS.md: when no other language is requested, respond in the user's language (Korean default) with the 1/2/3 sections — 1 core outcome, 2 self-contained easy-Korean restatement with zero jargon (screen names, not file/component names), 3 next recommended action — keep section 2 independently readable. report-language: korean",
+	},
+	{
+		id: "load-matching-skills",
+		concern: "skill-utilization",
+		directive:
+			"Before the first non-discovery action, compare the task with every visible skill description. For each loose match, read that skill's listed `SKILL.md` and follow it; when matching work is delegated, include the skill name in `load_skills`. Proceed without a skill only after this scan finds no match - recognizing a match without loading it does not complete the gate.",
 	},
 ];
 

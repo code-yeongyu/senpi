@@ -18,9 +18,10 @@ export type GeminiRuleId =
 	| "lean-output"
 	| "long-context-anchoring"
 	| "behavior-requirements-binding"
-	| "action-budget";
+	| "action-budget"
+	| "load-matching-skills";
 
-export type GeminiConcern = "style" | "grounding" | "harness-contract" | "tool-orchestration";
+export type GeminiConcern = "style" | "grounding" | "harness-contract" | "tool-orchestration" | "skill-utilization";
 
 export interface GeminiRule {
 	readonly id: GeminiRuleId;
@@ -58,6 +59,12 @@ export const GEMINI_RULES: readonly GeminiRule[] = [
 		concern: "tool-orchestration",
 		directive:
 			"When a stated action budget or step limit applies, treat it as binding: plan tool calls to fit inside it instead of over-triggering, and when one more call would break the budget, consolidate the remaining work into fewer, denser calls or stop and report.",
+	},
+	{
+		id: "load-matching-skills",
+		concern: "skill-utilization",
+		directive:
+			"Before the first non-discovery action, compare the task with every visible skill description. For each loose match, read that skill's listed `SKILL.md` and follow it; when matching work is delegated, include the skill name in `load_skills`. Proceed without a skill only after this scan finds no match - recognizing a match without loading it does not complete the gate.",
 	},
 ];
 
