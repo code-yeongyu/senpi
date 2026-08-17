@@ -2,9 +2,9 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import type { BuildDynamicSystemPromptOptions } from "../../src/core/dynamic-prompt/build.ts";
+import { buildStyleSection } from "../../src/core/dynamic-prompt/style.ts";
 import { buildGeminiPrompt } from "../../src/core/extensions/builtin/prompt-preset/gemini.ts";
 import { buildMuseSparkPrompt, MUSE_SPARK_RULES } from "../../src/core/extensions/builtin/prompt-preset/muse-spark.ts";
-import { buildStyleSection } from "../../src/core/dynamic-prompt/style.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -262,9 +262,9 @@ describe("Gemini/Muse Spark preset settings and tokens", () => {
 });
 
 describe("Muse Spark hardened rules (ultrawork + Korean report)", () => {
-	it("exposes 9 typed rules including the two new harness/reporting rules", () => {
+	it("exposes 10 typed rules including the three new harness/reporting/skill rules", () => {
 		const ids = MUSE_SPARK_RULES.map((rule) => rule.id);
-		expect(MUSE_SPARK_RULES).toHaveLength(9);
+		expect(MUSE_SPARK_RULES).toHaveLength(10);
 		expect(ids).toEqual(
 			expect.arrayContaining([
 				"exposed-tools-only",
@@ -307,5 +307,31 @@ describe("Global style language default (2.b)", () => {
 		const style = buildStyleSection();
 		expect(style).toContain("Match the user's language");
 		expect(style).not.toContain("Default to ASCII");
+	});
+});
+
+describe("Thin skill gate (gemini + muse-spark)", () => {
+	it("renders load-matching-skills exactly once for gemini", () => {
+		const prompt = buildGeminiPrompt(OPTIONS);
+		expect(prompt).toContain("Before the first non-discovery action");
+		let c = 0,
+			i = prompt.indexOf("Before the first non-discovery action");
+		while (i !== -1) {
+			c++;
+			i = prompt.indexOf("Before the first non-discovery action", i + 1);
+		}
+		expect(c).toBe(1);
+	});
+	it("renders load-matching-skills exactly once for muse-spark (10 rules)", () => {
+		expect(MUSE_SPARK_RULES).toHaveLength(10);
+		const prompt = buildMuseSparkPrompt(OPTIONS);
+		expect(prompt).toContain("Before the first non-discovery action");
+		let c = 0,
+			i = prompt.indexOf("Before the first non-discovery action");
+		while (i !== -1) {
+			c++;
+			i = prompt.indexOf("Before the first non-discovery action", i + 1);
+		}
+		expect(c).toBe(1);
 	});
 });

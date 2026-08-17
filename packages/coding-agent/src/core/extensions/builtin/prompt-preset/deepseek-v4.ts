@@ -26,7 +26,13 @@ export type DeepseekV4RuleId =
 	| "delegate-separable-work"
 	| "load-matching-skills";
 
-export type DeepseekV4Concern = "harness-contract" | "todo" | "grounding" | "deliberation" | "subagent-delegation" | "skill-utilization";
+export type DeepseekV4Concern =
+	| "harness-contract"
+	| "todo"
+	| "grounding"
+	| "deliberation"
+	| "subagent-delegation"
+	| "skill-utilization";
 
 export type DeepseekV4PresetName = "deepseek-v4-flash" | "deepseek-v4-flash-0731" | "deepseek-v4-pro";
 

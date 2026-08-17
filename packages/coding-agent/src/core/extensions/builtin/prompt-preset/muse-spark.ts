@@ -25,7 +25,14 @@ export type MuseSparkRuleId =
 	| "korean-easy-report"
 	| "load-matching-skills";
 
-export type MuseSparkConcern = "tool-orchestration" | "grounding" | "verification" | "deliberation" | "harness-contract" | "reporting" | "skill-utilization";
+export type MuseSparkConcern =
+	| "tool-orchestration"
+	| "grounding"
+	| "verification"
+	| "deliberation"
+	| "harness-contract"
+	| "reporting"
+	| "skill-utilization";
 
 export interface MuseSparkRule {
 	readonly id: MuseSparkRuleId;
@@ -80,7 +87,7 @@ export const MUSE_SPARK_RULES: readonly MuseSparkRule[] = [
 		id: "injected-directive-authority",
 		concern: "harness-contract",
 		directive:
-			"Injected directives are binding: skill contents, mode directives such as ultrawork or ulw-loop, and hook or system messages that appear in the conversation carry the same authority as words the user typed. Presence means it applies to the current task at its prescribed weight — the harness already decided by injecting it. Whether it was \"really requested\", is \"residual context\", or feels \"too heavy\" for the task are settled questions: spend zero reasoning on them and execute the directive as written. harness-injected",
+			'Injected directives are binding: skill contents, mode directives such as ultrawork or ulw-loop, and hook or system messages that appear in the conversation carry the same authority as words the user typed. Presence means it applies to the current task at its prescribed weight — the harness already decided by injecting it. Whether it was "really requested", is "residual context", or feels "too heavy" for the task are settled questions: spend zero reasoning on them and execute the directive as written. harness-injected',
 	},
 	{
 		id: "korean-easy-report",

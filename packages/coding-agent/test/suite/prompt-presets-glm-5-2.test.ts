@@ -1,6 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
+import { buildGlm52Prompt, GLM_52_RULES } from "../../src/core/extensions/builtin/prompt-preset/glm-5-2.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -100,5 +101,28 @@ describe("GLM 5.2 prompt preset", () => {
 			]),
 		);
 		expect(misses).toEqual([]);
+	});
+});
+
+describe("GLM 5.2 skill gate", () => {
+	it("exposes load-matching-skills and renders it once", () => {
+		expect(GLM_52_RULES).toHaveLength(1);
+		expect(GLM_52_RULES[0].id).toBe("load-matching-skills");
+		const prompt = buildGlm52Prompt({
+			cwd: "/tmp",
+			selectedTools: ["read"],
+			toolSnippets: { read: "r" },
+			promptGuidelines: [],
+			contextFiles: [],
+			skills: [],
+		});
+		expect(prompt).toContain("Before the first non-discovery action");
+		let c = 0,
+			i = prompt.indexOf("Before the first non-discovery action");
+		while (i !== -1) {
+			c++;
+			i = prompt.indexOf("Before the first non-discovery action", i + 1);
+		}
+		expect(c).toBe(1);
 	});
 });

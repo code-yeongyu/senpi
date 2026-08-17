@@ -315,6 +315,8 @@
 
 ### Added
 
+- Skill gate for 7 presets -- `gemini`, `muse-spark`, `glm-5-2`, `glm-5-3` carry `load-matching-skills` typed rule, `grok-4.5`, `grok-4.6`, `gpt-5.5` expose a visible-skill terminal gate (`SKILL.md` + `load_skills`) mirroring the DeepSeek/K3 canary verbatim -- loose-match only, 0~3 loads, no always-5.
+
 ### Fixed
 
 - Goals no longer stall after a settings hot-reload: a reload `session_start` now re-engages an active goal (re-arming the monitor backstop while wake sources are live, or queueing a continuation through the existing sessionStart admission) instead of parking it until the next user message; stopped goals still never auto-start on reload ([#936](https://github.com/code-yeongyu/senpi/pull/936)).

@@ -288,10 +288,11 @@ describe("DeepSeek V4 rule data", () => {
 			resolvePreset(createModel("glm-5.2", "zai"), settings)?.prompt,
 		];
 
-		// then
+		// then — load-matching-skills is intentionally shared verbatim with glm-5.2/gemini/muse-spark (all-models-skill-gate), so exclude it from the leak check
+		const nonSharedRules = DEEPSEEK_V4_RULES.filter((rule) => rule.id !== "load-matching-skills");
 		for (const prompt of otherPrompts) {
 			expect(prompt).toBeDefined();
-			for (const rule of DEEPSEEK_V4_RULES) {
+			for (const rule of nonSharedRules) {
 				expect(prompt).not.toContain(rule.directive);
 			}
 		}
