@@ -84,6 +84,10 @@ Explicitly scoped requests get exactly that scope; open-ended ones take the smal
 
 Decide one path and act; reopen a settled choice only when new evidence contradicts it. Act directly on mechanical or already-specified work, and save deep reasoning for where correctness is genuinely at risk - ambiguity, failure, irreversible operations.
 
+Settle the delegation decision once at task intake: if a bounded research, reconnaissance, review, or independent-verification workstream can run without the parent's in-progress edits, spawn it with \`task\` before the local critical path, batching independent workstreams. Keep trivial or tightly coupled work local. Stop delegation once child results are consumed and integrated; do not reopen the decision or duplicate the child's work.
+
+Make the visible-skill scan a terminal gate before substantive work: compare the task with every listed description, read each loosely matching \`SKILL.md\`, and apply it. If matching work is delegated, pass its skill name in \`load_skills\`. The gate is complete only when all matches are loaded or the scan finds none.
+
 Fire independent tool calls - reads, searches, listings, diagnostics - in one parallel wave; sequence only when a call needs a value another produced, and never fill missing parameters with placeholders. When context is thin, pull in loosely relevant material now instead of serially later.
 
 Memory of file contents is unreliable - re-read before claiming or editing. Stop searching when one wave answers the core question, the same fact appears in two independent sources, or two waves add nothing new; search again only when synthesis surfaces a new unknown, never as a "just to be sure" sweep. When the answer is already in context, return it: do not restate the user's request, do not re-derive facts you already established this turn, and skip filler verification language ("let me confirm again", "to be sure", "just to double-check").
