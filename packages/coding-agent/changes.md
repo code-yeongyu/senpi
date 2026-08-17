@@ -1,5 +1,53 @@
 # Local fork changes
 
+## 2026-08-17 — Dollar invocation and RPC contract regression suites ([PR #909](https://github.com/code-yeongyu/senpi/pull/909))
+
+### What changed
+
+- Added focused RPC suites for ordered `commands_changed` snapshots, actual post-interception
+  `command_invocation` events, bounded prompt/steer/follow-up text, and `skill_invocation`
+  delivery without MCP inventory drift.
+- Added classic and multi-session malformed-command regressions plus JSONL record-cap,
+  discard-through-LF resynchronization, and worst-case escaped-message coverage.
+- Expanded the #308 skill-composition suite to cover dollar/slash ordering, unknown and
+  duplicate tokens, ordinary dollar text, indentation preservation, token-discovery bounds,
+  the five-skill expansion cap, and queued steering/follow-up behavior.
+- Added TUI autocomplete/editor regressions for mixed dollar candidates and real trigger input.
+
+### Why this lives in the fork
+
+Senpi owns the dollar composer syntax, typed JSONL event contract, and OmO Desktop compatibility
+surface. Upstream does not expose these exact candidate or invocation events, so a naive merge
+would otherwise drop the only regression coverage for the fork contract.
+
+### Expected merge-conflict zones
+
+- `test/rpc-command-invocation.test.ts`, `test/rpc-commands-changed.test.ts`,
+  `test/rpc-input-validation.test.ts`, `test/rpc-jsonl.test.ts`, `test/rpc-multi-session-input.test.ts`,
+  `test/rpc-loaded-surfaces.test.ts`, and `test/suite/regressions/5868-rpc-unknown-command-id.test.ts`
+  resolve to `ours`; port upstream additions into the retained suites.
+- `test/suite/regressions/308-skill-composition.test.ts` resolves case by case while preserving
+  every dollar/slash, indentation, cap, and queueing assertion.
+- TUI dollar autocomplete tests resolve to `ours` unless upstream adds equivalent `$` behavior.
+
+## 2026-08-16 — Dual JSONC/JSON settings coverage
+
+### What changed
+
+- Added deterministic settings-manager coverage for JSONC comments/trailing commas, JSONC-over-JSON precedence, JSON-only compatibility, write-target preservation, and reload reselection.
+- Added real connection-handler coverage for the `settings_source_selected` RPC record, focused interactive notice coverage, and config-reload coverage for valid JSONC edits.
+
+### Why this lives in the fork
+
+- The fork owns the source-selection event and interactive/config-reload integration around the upstream-derived settings manager.
+
+### Why an extension could not do this
+
+- The tests pin pre-extension settings parsing, persistence, host event delivery, and built-in reload behavior.
+
+### Expected merge-conflict zones
+
+- `test/settings-manager.test.ts`, `test/suite/harness.ts`, and `test/suite/config-reload-extension.test.ts`; the two focused source-event tests are additive files.
 ## 2026-08-16 — Stabilize request-local context reduction
 
 ### What changed

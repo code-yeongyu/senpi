@@ -97,6 +97,9 @@ This matters for clients:
 - Split records on `\n` only
 - Accept optional `\r\n` input by stripping a trailing `\r`
 - Do not use generic line readers that treat Unicode separators as newlines
+- Send JSON objects only; valid JSON primitives and arrays receive a parse-style error response
+- Keep each encoded input record at or below 16,777,216 characters. Oversized records receive one parse-style error,
+  are discarded through the next LF, and do not desynchronize following records
 
 In particular, Node `readline` is not protocol-compliant for RPC mode because it also splits on `U+2028` and `U+2029`, which are valid inside JSON strings.
 
@@ -136,7 +139,9 @@ Queued prompts cannot include `thinkingLevel`; wait for the current turn to comp
 
 **Extension commands**: If the message is an extension command (e.g., `/mycommand`), it executes immediately even during streaming. Extension commands manage their own LLM interaction via `pi.sendMessage()`.
 
-**Input expansion**: Skill commands (`/skill:name`) and prompt templates (`/template`) are expanded before sending/queueing.
+**Input expansion**: Leading skill tokens (`/skill:name`, `$name`, or `$skill:name`), inline explicit
+desktop skill tokens (`$skill:name`), and prompt templates (`/template`) are expanded before
+sending/queueing. Bare inline dollar text remains literal.
 
 Response:
 ```json
@@ -146,6 +151,8 @@ Response:
 `success: true` means the prompt was accepted, queued, or handled immediately. `success: false` means the prompt was rejected before acceptance. Failures after acceptance are reported through the normal event and message stream, not as a second `response` for the same request id.
 
 The `images` field is optional. Each image uses `ImageContent` format: `{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}`.
+The `message` field for `prompt`, `steer`, and `follow_up` is limited to 1,000,000 characters;
+image payloads are not counted toward this text limit.
 
 #### steer
 
@@ -940,7 +947,8 @@ The current session name is available via `get_state` in the `sessionName` field
 
 #### get_commands
 
-Get available commands (extension commands, prompt templates, and skills). These can be invoked via the `prompt` command by prefixing with `/`.
+Get the ordered command surface (extension commands, prompt templates, and skills). Extension and prompt rows are
+invoked through `prompt` with `/name`; skill rows use `$name` or the compatibility form `/skill:name`.
 
 ```json
 {"type": "get_commands"}
@@ -954,17 +962,18 @@ Response:
   "success": true,
   "data": {
     "commands": [
-      {"name": "session-name", "description": "Set or clear session name", "source": "extension", "sourceInfo": {"path": "/home/user/.senpi/agent/extensions/session.ts", "source": "auto", "scope": "user", "origin": "top-level"}},
-      {"name": "fix-tests", "description": "Fix failing tests", "source": "prompt", "sourceInfo": {"path": "/home/user/myproject/.senpi/prompts/fix-tests.md", "source": "auto", "scope": "project", "origin": "top-level"}},
-      {"name": "skill:brave-search", "description": "Web search via Brave API", "source": "skill", "sourceInfo": {"path": "/home/user/.senpi/agent/skills/brave-search/SKILL.md", "source": "auto", "scope": "user", "origin": "top-level"}}
+      {"name": "session-name", "description": "Set or clear session name", "source": "extension", "syntax": "slash", "sourceInfo": {"path": "/home/user/.senpi/agent/extensions/session.ts", "source": "auto", "scope": "user", "origin": "top-level"}},
+      {"name": "fix-tests", "description": "Fix failing tests", "source": "prompt", "syntax": "slash", "sourceInfo": {"path": "/home/user/myproject/.senpi/prompts/fix-tests.md", "source": "auto", "scope": "project", "origin": "top-level"}},
+      {"name": "skill:brave-search", "description": "Web search via Brave API", "source": "skill", "syntax": "dollar", "sourceInfo": {"path": "/home/user/.senpi/agent/skills/brave-search/SKILL.md", "source": "auto", "scope": "user", "origin": "top-level"}}
     ]
   }
 }
 ```
 
 Each command has:
-- `name`: Command name (invoke with `/name`)
+- `name`: Command identity without its leading invocation marker
 - `description`: Human-readable description (optional for extension commands)
+- `syntax`: Canonical marker clients should insert (`"slash"` for extension/prompt rows, `"dollar"` for skills)
 - `source`: What kind of command:
   - `"extension"`: Registered via `pi.registerCommand()` in an extension
   - `"prompt"`: Loaded from a prompt template `.md` file
@@ -1090,6 +1099,9 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `summarization_retry_finished` | Summarization retry loop completes |
 | `extension_error` | Extension threw an error |
 | `extension_event` | Capability-gated extension-owned event (`extension_events` clients only) |
+| `commands_changed` | Ordered command/skill candidate snapshot changed |
+| `command_invocation` | Accepted extension-command or prompt-template invocation metadata |
+| `skill_invocation` | Ordered explicit skill metadata after prompt expansion |
 | `loaded_surfaces_changed` | Loaded skills, extensions, or MCP inventory changed; re-read `get_commands` and `get_loaded_surfaces` |
 | `model_changed` | Active model changed (any source), with the thinking level in force afterwards |
 | `service_tier_changed` | Effective service tier or fast-mode state changed |
@@ -1425,6 +1437,66 @@ For branch summaries, `source` is `"branchSummary"` and no `reason` is present.
 ```json
 {
   "type": "summarization_retry_finished"
+}
+```
+
+### skill_invocation
+
+Emitted once after one or more explicit skill tokens are expanded. `skills` preserves invocation order.
+`syntax` reports the token form that selected the skill; `path` is the resolved `SKILL.md` path.
+
+```json
+{
+  "type": "skill_invocation",
+  "skills": [
+    {
+      "name": "debugging",
+      "path": "/project/.agents/skills/debugging/SKILL.md",
+      "syntax": "dollar"
+    },
+    {
+      "name": "review",
+      "path": "/project/.agents/skills/review/SKILL.md",
+      "syntax": "slash"
+    }
+  ]
+}
+```
+
+In multi-session mode the normal routing `sessionId` is added. This event does not mutate loaded
+surfaces; clients continue to use `loaded_surfaces_changed` plus `get_loaded_surfaces` for MCP reveal.
+
+### commands_changed
+
+Emitted whenever a post-bind runtime reload changes the ordered command surface. The initial surface is available
+through `get_commands` and does not emit this invalidation event. The `commands` payload has the same shape and
+ordering as `get_commands`; identical snapshots are not re-emitted.
+
+```json
+{
+  "type": "commands_changed",
+  "commands": [
+    {"name": "session-name", "source": "extension", "syntax": "slash", "sourceInfo": {"path": "/project/extensions/session.ts", "source": "auto", "scope": "project", "origin": "top-level"}},
+    {"name": "skill:debugging", "source": "skill", "syntax": "dollar", "sourceInfo": {"path": "/project/.agents/skills/debugging/SKILL.md", "source": "auto", "scope": "project", "origin": "top-level"}}
+  ]
+}
+```
+
+### command_invocation
+
+Emitted exactly once after the session resolves an extension command, or after a prompt template survives extension
+input interception and prompt acceptance. Unknown, transformed, or rejected commands do not produce this event;
+skills continue to use `skill_invocation`.
+
+```json
+{
+  "type": "command_invocation",
+  "command": {
+    "name": "session-name",
+    "source": "extension",
+    "syntax": "slash",
+    "sourceInfo": {"path": "/project/extensions/session.ts", "source": "auto", "scope": "project", "origin": "top-level"}
+  }
 }
 ```
 

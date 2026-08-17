@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
+import { cursorOAuth } from "../src/auth/oauth/cursor.ts";
 import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
 import { kimiCodingOAuth } from "../src/auth/oauth/kimi-coding.ts";
 import { openaiCodexOAuth } from "../src/auth/oauth/openai-codex.ts";
@@ -28,7 +29,14 @@ describe.sequential("OAuthAuth adapters", () => {
 	});
 
 	it("identifies only subscription-backed OAuth flows as subscriptions", () => {
-		for (const oauth of [anthropicOAuth, openaiCodexOAuth, githubCopilotOAuth, kimiCodingOAuth, xaiOAuth]) {
+		for (const oauth of [
+			anthropicOAuth,
+			openaiCodexOAuth,
+			githubCopilotOAuth,
+			kimiCodingOAuth,
+			xaiOAuth,
+			cursorOAuth,
+		]) {
 			expect(oauth.isSubscription).toBe(true);
 		}
 		expect(openRouterOAuth.isSubscription).not.toBe(true);

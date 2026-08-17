@@ -99,9 +99,7 @@ describe("GLM 5.3 prompt preset", () => {
 			.map((model) => `${model.provider}/${model.id}`);
 
 		// then
-		expect(catalogModelIds).toEqual(
-			expect.arrayContaining(["zai/glm-5.3", "zai-coding-cn/glm-5.3"]),
-		);
+		expect(catalogModelIds).toEqual(expect.arrayContaining(["zai/glm-5.3", "zai-coding-cn/glm-5.3"]));
 		expect(misses).toEqual([]);
 	});
 });

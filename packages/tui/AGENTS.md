@@ -1,6 +1,6 @@
 # packages/tui
 
-Commit: `4f26b8282` (2026-08-07)
+Commit: `abae968e8` (2026-08-17)
 
 `@earendil-works/pi-tui` is the standalone terminal renderer/editor library used by Senpi interactive mode. Rendering uses synchronized, differential frames and must preserve terminal ownership boundaries.
 
@@ -22,6 +22,7 @@ src/keybindings.ts          Configurable default bindings
 src/keys.ts                 Key parsing and matching
 src/stdin-buffer.ts         Paste/input framing
 src/terminal-image.ts       Kitty/iTerm image paths
+src/dollar-invocation-autocomplete.ts  $-invocation suggestions for the editor
 src/changes.md              Fork render behavior
 test/*.test.ts              Node test-runner coverage
 bench/frame-cost.ts         Frame cost benchmark (see test/frame-cost-harness.test.ts)
@@ -58,6 +59,13 @@ Public exports include `VStack`, `HStack`, `ScrollView`, `Spacer`, `TuiAltScreen
 | Width/wrapping | `src/utils.ts` |
 | Terminal-output normalization/tab width | `src/utils.ts` (`normalizeTerminalOutput`, `visibleWidth`) and `src/tui.ts` |
 | Images | `src/terminal-image.ts` |
+| $-invocation autocomplete | `src/dollar-invocation-autocomplete.ts`, `src/autocomplete.ts` (`CombinedAutocompleteProvider`) |
+
+## $-INVOCATION
+
+- A leading `$` on prompt line 0 offers the same candidate list as `/`: slash commands insert as `/name`, skills as bare `$name`.
+- After one known skill, only further skills are offered. Mid-line `$` (e.g. `$HOME`) stays literal.
+- Completion application must preserve trailing-space behavior for both `/command ` and `$skill ` forms.
 
 ## ANTI-PATTERNS
 

@@ -41,6 +41,9 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"azure-openai-responses": "gpt-5.4",
 	"openai-codex": "gpt-5.5",
 	ollama: "qwen3.5:397b",
+	// Cursor ships no models until its chat protocol is ported; "auto" matches
+	// the Cursor agent's native model auto-selection once models exist.
+	cursor: "auto",
 	radius: "auto",
 	nvidia: "nvidia/nemotron-3-super-120b-a12b",
 	deepseek: "deepseek-v4-pro",

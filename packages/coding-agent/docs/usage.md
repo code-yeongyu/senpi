@@ -262,8 +262,8 @@ senpi --no-extensions -e ./my-extension.ts
 
 | Option | Description |
 |--------|-------------|
-| `--system-prompt <text>` | Replace default prompt; context files and skills are still appended |
-| `--append-system-prompt <text>` | Append to system prompt |
+| `--system-prompt <text>` | Replace the generated base prompt (text or a file path); per-model prompt presets step aside; context files and skills are still appended |
+| `--append-system-prompt <text>` | Append to the system prompt (repeatable; text or a file path); applies after per-model prompt presets |
 | `--tui-mode <mode>` | TUI mode: `regular` (default) or experimental `fullscreen` |
 | `--use-theme <name[/name]>` | Set the initial interactive theme for this run without changing settings |
 | `--verbose` | Force verbose startup |

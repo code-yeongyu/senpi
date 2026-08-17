@@ -6,6 +6,22 @@
 
 ### Added
 
+- Added a mixed `$` autocomplete surface that groups canonical commands before skills, filters both with one query,
+  inserts the correct `/name` or `$name` syntax, and triggers from real editor input
+  ([#909](https://github.com/code-yeongyu/senpi/pull/909)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.16] - 2026-08-16
+
+### Breaking Changes
+
+### Added
+
 ### Changed
 
 - Synced with upstream v0.84.2: fullscreen transcript search, keyboard-protocol negotiation buffering with fragment-timeout flush, OSC 9;4 progress keepalive, Windows VT input, and lone-`ESC`-scoped `PI_TUI_ESC_TIMEOUT`. The fork's dead-terminal error handling and `PI_TUI_KEYBOARD_PROTOCOL` kill-switch are preserved, and fullscreen focus events now reach the alt-screen viewport so upstream's idle-focus repaint suppression takes effect ([#892](https://github.com/code-yeongyu/senpi/pull/892)).

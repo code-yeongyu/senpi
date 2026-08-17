@@ -125,6 +125,8 @@ export interface AgentOptions {
 	removedToolHints?: Record<string, string>;
 	resolveUnknownToolCall?: AgentLoopConfig["resolveUnknownToolCall"];
 	abortServerSideFallback?: boolean;
+	/** Cursor exec-channel tool handlers; see {@link AgentLoopConfig.cursorExecHandlers}. */
+	cursorExecHandlers?: AgentLoopConfig["cursorExecHandlers"];
 }
 
 export interface AgentContinuationOptions {
@@ -246,6 +248,8 @@ export class Agent {
 	public resolveUnknownToolCall?: AgentLoopConfig["resolveUnknownToolCall"];
 	/** Forwarded to the stream function; providers without server-side fallback ignore it. */
 	public abortServerSideFallback?: boolean;
+	/** Cursor exec-channel tool handlers; see {@link AgentLoopConfig.cursorExecHandlers}. */
+	public cursorExecHandlers?: AgentLoopConfig["cursorExecHandlers"];
 
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
@@ -274,6 +278,7 @@ export class Agent {
 		this.removedToolHints = runtimeOptions.removedToolHints ?? {};
 		this.resolveUnknownToolCall = runtimeOptions.resolveUnknownToolCall;
 		this.abortServerSideFallback = runtimeOptions.abortServerSideFallback;
+		this.cursorExecHandlers = runtimeOptions.cursorExecHandlers;
 	}
 
 	/**
@@ -574,6 +579,7 @@ export class Agent {
 			initialRequestStreamStartTimeoutMs: options.initialRequestStreamStartTimeoutMs,
 			maxRetryDelayMs: this.maxRetryDelayMs,
 			abortServerSideFallback: this.abortServerSideFallback,
+			cursorExecHandlers: this.cursorExecHandlers,
 			toolExecution: this.toolExecution,
 			removedToolHints: this.removedToolHints,
 			resolveUnknownToolCall: this.resolveUnknownToolCall,
@@ -771,5 +777,18 @@ export class Agent {
 		for (const listener of this.listeners) {
 			await listener(event, signal);
 		}
+	}
+
+	/**
+	 * Emit a host-generated event through the normal listener pipeline.
+	 *
+	 * Used by the Cursor exec bridge: bridge-run tools execute inside the
+	 * provider stream, outside the loop's executor, so their
+	 * `tool_execution_start`/`tool_execution_end` lifecycle must be injected
+	 * here or the live tool card for a synthesized call never resolves.
+	 * Only valid during an active run (bridge executions always are).
+	 */
+	async emitExternalEvent(event: AgentEvent): Promise<void> {
+		await this.processEvents(event);
 	}
 }

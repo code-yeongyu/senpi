@@ -18,6 +18,7 @@ import { buildGpt55Prompt } from "./gpt-5.5.ts";
 import { buildGpt56Prompt } from "./gpt-5.6.ts";
 import { buildGpt5Prompt } from "./gpt-5.ts";
 import { buildGrok45Prompt } from "./grok-4.5.ts";
+import { buildGrok46Prompt } from "./grok-4.6.ts";
 import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
 import { buildKimiK27Prompt } from "./kimi-k2-7.ts";
 import { buildKimiK3Prompt } from "./kimi-k3.ts";
@@ -144,6 +145,15 @@ function isGrok45Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGrok45Signal(model.id) || (model.name !== undefined && hasGrok45Signal(model.name));
 }
 
+function hasGrok46Signal(value: string): boolean {
+	// Same id shapes as hasGrok45Signal with a 4.6 minor version. Keep 4.5 / 4.3 / 4.20 / 3 out.
+	return /(?:^|[/@:._-])grok(?:[._-]|p)?4(?:[._-]|p)?6(?:$|[/@._:-])/.test(normalizeModelId(value));
+}
+
+function isGrok46Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGrok46Signal(model.id) || (model.name !== undefined && hasGrok46Signal(model.name));
+}
+
 function isClaudeFable5Model(modelId: string): boolean {
 	return normalizeModelId(modelId).includes("fable-5");
 }
@@ -223,6 +233,9 @@ export function resolvePresetName(
 	if (isDeepseekV4ProModel(model)) {
 		return "deepseek-v4-pro";
 	}
+	if (isGrok46Model(model)) {
+		return "grok-4.6";
+	}
 	if (isGrok45Model(model)) {
 		return "grok-4.5";
 	}
@@ -253,6 +266,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildDeepseekV4Flash0731Prompt(options) };
 		case "deepseek-v4-pro":
 			return { name, prompt: buildDeepseekV4ProPrompt(options) };
+		case "grok-4.6":
+			return { name, prompt: buildGrok46Prompt(options) };
 		case "grok-4.5":
 			return { name, prompt: buildGrok45Prompt(options) };
 		case "kimi-k3":

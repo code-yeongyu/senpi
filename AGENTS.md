@@ -1,7 +1,7 @@
 # Senpi Repository Guide
 
-Generated: 2026-08-07
-Commit: `4f26b8282`
+Generated: 2026-08-17
+Commit: `abae968e8`
 Branch: `main`
 
 Metadata above records the source state used for this generation pass.
@@ -41,9 +41,10 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | `packages/coding-agent/` | `senpi` CLI, sessions, extensions, RPC, interactive mode |
 | `packages/tui/` | Differential terminal renderer and editor primitives |
 | `packages/server/` | Composable, transport-neutral protocol server |
+| `packages/telemetry/` | Vendor-neutral telemetry contracts and typed schema utilities |
 | `packages/protocol/` | Transport-neutral CBOR protocol for remote pi sessions |
 | `packages/client/` | Transport-neutral client for remote pi sessions (framed CBOR) |
-| `packages/storage/` | Storage backends; `sqlite-node/` Node sqlite session store |
+| `packages/session-backends/` | Session backend adapters; `sqlite-node/` Node sqlite session store |
 | `packages/evals/` | Behavioral, model-backed eval suites over real `AgentSession` |
 | `packages/pty/` | TypeScript PTY loader, sessions, registry, pipe fallback |
 | `packages/senpi-codemode/` | Source-only persistent-kernel `eval` extension |
@@ -57,6 +58,7 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 |---|---|
 | Add a feature to the CLI | `packages/coding-agent/src/core/extensions/builtin/` |
 | Change provider/API behavior | `packages/ai/src/api/` then `packages/ai/src/providers/` |
+| Change Cursor agent transport or exec bridging | `packages/ai/src/api/cursor-agent/` and `packages/coding-agent/src/core/cursor-exec-bridge.ts` |
 | Change agent-loop semantics | `packages/agent/src/agent-loop.ts` |
 | Change interactive rendering | `packages/coding-agent/src/modes/interactive/` and `packages/tui/src/tui.ts` |
 | Change app-server/RPC | `packages/coding-agent/src/modes/app-server/` or `packages/coding-agent/src/modes/rpc/` |
@@ -65,7 +67,7 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | Change PTY behavior | `packages/pty/` and, for native behavior, `crates/senpi-pty/` |
 | Add provider setup docs | `packages/ai/README.md` and `packages/coding-agent/docs/providers.md` |
 | Change model/provider runtime | `packages/ai/src/models.ts`, `packages/ai/src/auth/`, `packages/ai/src/providers/` |
-| Change eval prompt/rendering | `packages/senpi-codemode/src/prompt/` and `src/tool/` |
+| Change eval prompt/rendering | `packages/senpi-codemode/src/prompt/` and `packages/senpi-codemode/src/tool/` |
 | Audit changelogs | `.github/agent/commands/cl.md` |
 | Prepare a release | `scripts/release.mjs` and `scripts/release-packages.mjs` |
 | Regenerate model catalog data | `packages/ai/src/providers/data/` via root `npm run hydrate:model-data` / `check:model-data` |
@@ -86,7 +88,8 @@ Persistent terminals -> packages/pty -> crates/senpi-pty
 ## COMMANDS
 
 - Install or refresh dependencies: `npm install --ignore-scripts`.
-- Full static validation after code changes: `npm run check`; it does not run tests.
+- Refresh lockfiles after an approved dependency change: `npm run refresh-lock` (lockfile + registry metadata + shrinkwrap + install-lock regeneration).
+- Full static validation after code changes: `npm run check`; it does not run tests. It includes biome, pinned-deps/ts-imports/shrinkwrap/install-lock checks, `check:claude-sdk-platform-lock`, `tsc --noEmit`, and the browser-smoke probe.
 - Full workspace tests when broad validation is justified: `npm test`.
 - Narrow tests run from the package root using that package's test command.
 - Never run `npm run dev` in this repository.
@@ -106,7 +109,7 @@ Persistent terminals -> packages/pty -> crates/senpi-pty
 
 ## QUALITY GATES
 
-- Any runtime change under `packages/{ai,agent,coding-agent,tui}` requires scoped tests, `npm run check`, and real CLI QA through `.agents/skills/senpi-qa/`.
+- Any runtime change under `packages/{ai,agent,coding-agent,tui,pty,senpi-codemode}` (the changelog-gate release-managed set, plus `crates/senpi-pty`) requires scoped tests, `npm run check`, and real CLI QA through `.agents/skills/senpi-qa/`.
 - Save QA receipts under `local-ignore/qa-evidence/<YYYYMMDD>-<slug>/`. No evidence means no commit or push.
 - Evidence, logs, comments, and PR bodies must not contain tokens, credentials, auth headers, cookies, or raw environment dumps.
 - Default/unit tests must not spend tokens or require real credentials. Coding-agent tests use the faux provider and `packages/coding-agent/test/suite/harness.ts`; AI live integration tests require explicit opt-in gating.
@@ -117,7 +120,7 @@ Persistent terminals -> packages/pty -> crates/senpi-pty
 
 - Treat dependency and lockfile diffs as code. Pin direct external dependencies exactly and use `--ignore-scripts` for install/lock refreshes.
 - The lockfile hook allows workspace-metadata-only refreshes; other lockfile changes require explicit `PI_ALLOW_LOCKFILE_CHANGE=1` approval.
-- Keep shared environment surfaces synchronized: dependency, Node, provider/env, QA-channel, build-command, and forwarded-port changes must update `scripts/devenv-setup.mjs`, `.devcontainer/devcontainer.json`, and related references together.
+- Keep shared environment surfaces synchronized: dependency, Node, provider/env, QA-channel, build-command, and forwarded-port changes must update `scripts/devenv-setup.mjs`, `.devcontainer/devcontainer.json`, and related references together, keeping root `package.json` workspaces and `pnpm-workspace.yaml` aligned with any workspace-package move or rename.
 - Regenerate `packages/coding-agent/publish-deps.lock.json` with `node scripts/generate-coding-agent-shrinkwrap.mjs`; never replace it with `npm-shrinkwrap.json`.
 - External registry entries in root, publish, and installer locks must preserve both npm tarball `resolved` URLs
   and `integrity` hashes; incomplete merge results are invalid even when dependency topology still resolves.

@@ -12,6 +12,7 @@ interface ApiMock {
 interface HeaderContext {
 	model: { id: string; provider: string; api: string };
 	cwd: string;
+	getSystemPromptOptions(): { cwd: string; customPrompt?: string };
 	ui: {
 		setHeader(factory: ((tui: never, theme: never) => Component & { dispose?(): void }) | undefined): void;
 	};
@@ -44,12 +45,16 @@ function renderHeaderText(factory: ((tui: never, theme: never) => Component) | u
 		.join("\n");
 }
 
-function createHeaderContext(modelId: string): { context: HeaderContext; getHeaderText(): string } {
+function createHeaderContext(
+	modelId: string,
+	options?: { customPrompt?: string },
+): { context: HeaderContext; getHeaderText(): string } {
 	let headerFactory: ((tui: never, theme: never) => Component) | undefined;
 	return {
 		context: {
 			model: { id: modelId, provider: "openai-codex", api: "openai-codex-responses" },
 			cwd: "/repo",
+			getSystemPromptOptions: () => ({ cwd: "/repo", customPrompt: options?.customPrompt }),
 			ui: {
 				setHeader(factory) {
 					headerFactory = factory;
@@ -131,6 +136,19 @@ describe("prompt preset startup header", () => {
 		// given
 		const { api, handlers } = makeApiMock();
 		const { context, getHeaderText } = createHeaderContext("claude-sonnet-4-5");
+		promptPresetExtension(api as never);
+
+		// when
+		await handlers.session_start[0]({ type: "session_start", reason: "startup" }, context);
+
+		// then
+		expect(getHeaderText()).toBe("");
+	});
+
+	it("shows no startup header when the user provided a custom system prompt", async () => {
+		// given
+		const { api, handlers } = makeApiMock();
+		const { context, getHeaderText } = createHeaderContext("gpt-5.5", { customPrompt: "Custom base prompt." });
 		promptPresetExtension(api as never);
 
 		// when

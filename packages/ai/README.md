@@ -90,6 +90,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Qwen Token Plan** (separate Individual and existing catalogs, with a separate China provider)
 - **Xiaomi MiMo** (defaults to API billing endpoint, with separate Token Plan providers for `cn`/`ams`/`sgp` regions)
 - **Alibaba Token Plan** (Alibaba Cloud Model Studio prepaid Token Plan, OpenAI-compatible `ap-southeast-1` endpoint)
+- **Cursor** (Pro/Ultra/Teams subscription; native `cursor-agent` protocol with full chat + server-driven tool calling, per-account dynamic catalog, requires OAuth, see below)
 - **Any other OpenAI-compatible API**: local Ollama, vLLM, LM Studio, etc.
 
 ## Installation
@@ -1161,6 +1162,7 @@ Built-in API implementations live under `./api/<api-id>`:
 | `openai-completions` | `OpenAICompletionsOptions` |
 | `openai-responses` | `OpenAIResponsesOptions` |
 | `openai-codex-responses` | `OpenAICodexResponsesOptions` |
+| `cursor-agent` | `CursorAgentOptions` |
 | `azure-openai-responses` | `AzureOpenAIResponsesOptions` |
 | `google-generative-ai` | `GoogleOptions` |
 | `google-vertex` | `GoogleVertexOptions` |
@@ -1483,6 +1485,7 @@ Several providers support OAuth authentication instead of static API keys:
 - **OpenAI Codex** (ChatGPT Plus/Pro subscription, access to GPT-5.x Codex models)
 - **GitHub Copilot** (Copilot subscription)
 - **OpenRouter** (OAuth PKCE that mints a user-controlled API key)
+- **Cursor** (Pro/Ultra/Teams subscription; browser deep-link + poll flow. After login, the per-account model catalog is discovered through `GetUsableModels` and chat streams over the native `cursor-agent` protocol with in-band tool execution — hosts supply `CursorAgentOptions.execHandlers` to bridge Cursor's server-driven tool calls onto local tools)
 
 Each of these providers carries an `OAuthAuth` on `provider.auth.oauth` with three operations: `login(interaction)` uses the provider-neutral `AuthInteraction.prompt()`/`notify()` protocol and returns a credential, `refresh(credential, signal)` refreshes expiring credentials when applicable, and `toAuth(credential)` derives request auth (GitHub Copilot's per-account base URL comes from here). Provider login interactions and refresh calls always carry a concrete abort signal. Refresh is automatic: `models.getAuth(providerId)` and request paths refresh expired tokens under a credential-store lock, so concurrent requests and processes cannot double-refresh. OpenRouter's OAuth flow instead returns a permanent API key, so its refresh operation is a no-op.
 

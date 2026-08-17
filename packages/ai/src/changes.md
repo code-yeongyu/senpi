@@ -1,5 +1,96 @@
 # AI Source Changes
 
+## 2026-08-16 - Cursor agent protocol: full chat + tool calling (`cursor-agent` API)
+
+### What changed and why
+
+- `api/cursor-agent.ts` (new) + `api/cursor-agent.lazy.ts` (new): full port of the Cursor agent protocol from
+  upstream oh-my-pi, adapted to this fork's API architecture. One HTTP/2 Connect stream per assistant turn
+  (`POST /agent.v1.AgentService/Run`, `application/connect+proto`, 5-byte envelope framing, 5s client
+  heartbeats, gRPC-trailer + Connect end-stream error decoding, abort via stream close). Interaction updates
+  map onto assistant events (text/thinking deltas, streamed MCP tool calls with cumulative `args_text_delta`
+  buffering + throttled partial-JSON parsing, `turnEnded`, `tokenDelta` usage). The exec channel is answered
+  in band: the server blocks mid-turn on tool results, so exec frames dispatch onto injected
+  `CursorExecHandlers` (legacy read/ls/grep/write/shell(+stream)/delete frames, modern `pi_*` frames, MCP
+  calls incl. approval-only probes, kv blob get/set, `requestContext` tool advertising, `mcpState` regrouping,
+  neutral hook replies) and every remaining frame gets a typed refusal or `ExecClientThrow` — an unanswered
+  frame strands the turn. Each bridged call is synthesized into the assistant message as an already-resolved
+  `toolCall` block (`kCursorExecResolved`) and paired with a `ToolResultMessage` via `onToolResult`.
+- `api/cursor-agent/gen/agent_pb.ts` (new, vendored): protobuf-es v2.13 codegen of
+  `packages/ai/proto/cursor/agent.proto`, with TS enums rewritten to erasable const objects by
+  `scripts/transform-cursor-agent-proto.mjs` (repo compiles with `erasableSyntaxOnly`; runtime decode uses the
+  embedded descriptor, not the TS enums). Excluded from Biome via `biome.json`.
+- `api/cursor-agent/{types,exec-modern,pi-args,deterministic-id}.ts` (new): browser-safe handler contracts,
+  wire result builders for the Pi frames, and arg translations shared by the API's synthesized display blocks
+  and the coding-agent bridge (senpi's tools take plain kwargs, so `pi_read` maps to `offset`/`limit` instead
+  of upstream's path selectors; `pi_edit` maps 1:1 onto `edits[{oldText,newText}]`; `workingDirectory`
+  composes onto `bash` commands as a quoted `cd` prefix because senpi's bash has no cwd kwarg).
+- Conversation continuity: history is rebuilt per request from `context.messages` into
+  `rootPromptMessagesJson` blobs (system prompt + Vercel-AI-SDK-shaped user/assistant/tool JSON) and
+  `turns[]` display structures over a per-conversation SHA-256 blob store; checkpoints are cached per
+  conversation id; a bare `resource_exhausted` with zero tokens rotates the wire conversation id once.
+- Model discovery: `fetchCursorUsableModels` (unary `GetUsableModels` over HTTP/2) normalizes usable models
+  (1M-context signals, max-mode flag → `Model.compat.cursorMaxMode`); `providers/cursor.ts` now wires
+  `api: cursorAgentApi()` + `fetchModels`, so the catalog appears after `/login cursor` (refresh runs
+  automatically after login).
+- Registration: `KnownApi`/`ApiOptionsMap` gain `"cursor-agent"`; `compat.ts` `BUILTIN_APIS` registers the
+  lazy API; `model.ts` gains `CursorAgentCompat`; `utils/block-symbols.ts` (new) carries the streaming and
+  `kCursorExecResolved` markers; `utils/event-stream.ts` gains `trackLocalWork`/`hasPendingLocalWork` so idle
+  watchdogs can attribute mid-stream tool-run silence to local work.
+- Deliberately not ported from upstream: computer use, subagents, background shells, canvas, smart-mode
+  classifier, conversation search, native todo mirroring (summary-only pairing is kept), Kimi-K3 thinking
+  replay, request-debug capture, and proxy tunneling — each answered with the protocol's typed refusal.
+
+### Why this cannot be expressed as an extension
+
+- The exec channel must be answered on the SAME HTTP/2 stream mid-turn, which requires provider-internal
+  transport access; `KnownApi` registration, `Model.compat` typing, and the event-stream local-work contract
+  are all package-internal seams.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` (`KnownApi`, `ApiOptionsMap`), `compat.ts` lists, `model.ts` compat conditional,
+  `index.ts` export blocks — additive lines.
+- NONE expected under `api/cursor-agent/`: fork-only files; upstream's implementation lives in a different
+  architecture (`src/providers/cursor.ts`).
+
+## 2026-08-16 - Cursor OAuth authentication and builtin provider
+
+### What changed and why
+
+- `auth/oauth/cursor.ts` (new): Cursor's browser deep-link + poll OAuth flow. `login` generates a PKCE S256
+  pair, notifies `auth_url` for `https://cursor.com/loginDeepControl?challenge&uuid&mode=login&redirectTarget=cli`,
+  and polls `https://api2.cursor.sh/auth/poll?uuid&verifier` with capped geometric backoff (1s ×1.2 up to 10s,
+  150 attempts). 404 means "not approved yet"; 400/401/403/410 fail fast as definitive rejections; 429 keeps
+  polling without burning the transient budget; network errors and 5xx tolerate 3 consecutive failures. The
+  poll sleep is abort-aware, so cancelling the login interaction aborts immediately. `refresh` POSTs the stored
+  refresh token as a bearer to `auth/exchange_user_api_key` and keeps the previous refresh token when the
+  server does not rotate it. Expiry comes from the access-token JWT `exp` claim minus a 5-minute skew, with a
+  1-hour fallback for unreadable tokens. Error messages carry HTTP status plus short server `error` strings,
+  never raw bodies or token material.
+- Compared to the upstream oh-my-pi flow this fixes a self-swallowed error bug (upstream throws its polling
+  `OAuthError` inside its own `try`, so a definitive 401 was retried as if it were a network hiccup), adds
+  abort-signal support, and validates response shapes strictly.
+- `auth/oauth/load.ts` + `bun-oauth.ts`: `cursor` loader added to the lazy registry and the Bun static bundle.
+- `providers/cursor.ts` (new) + `providers/all.ts` + `types.ts`: builtin `cursor` provider (OAuth-only,
+  `isSubscription`), registered with an empty model catalog and an empty API map because Cursor chat runs on a
+  protobuf Connect-RPC agent protocol (`agent.v1.AgentService`) that is not ported. Nothing becomes selectable
+  in model pickers, and `Models.getAuth("cursor")` resolves the stored access token for integrations that speak
+  the Cursor protocol.
+
+### Why this cannot be expressed as an extension
+
+- Builtin OAuth flows are lazy-loaded through the bundler-opaque loader registry in `auth/oauth/load.ts` and
+  statically registered for standalone Bun binaries in `bun-oauth.ts`; both are package-internal seams an
+  extension cannot reach, and `KnownProvider` typing is compile-time.
+
+### Expected merge conflict zones
+
+- LOW: `auth/oauth/load.ts` and `bun-oauth.ts` loader lists when upstream adds flows.
+- LOW: `providers/all.ts` builtin list and `types.ts` `KnownProvider` union (additive lines).
+- NONE expected in `auth/oauth/cursor.ts` / `providers/cursor.ts`: fork-only files; upstream's Cursor
+  implementation lives in a different architecture (`src/registry/oauth/`).
+
 ## 2026-08-16 - GLM 5.3 reasoning effort + zai always-enabled thinking + catalog entries
 
 ### What changed and why

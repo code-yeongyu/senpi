@@ -57,9 +57,12 @@ import {
 	EXTENSION_EVENTS_CAPABILITY,
 } from "./custom-capability.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
+import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
+import { rpcCommandShapeError, rpcMessageLengthError } from "./rpc-input-validation.ts";
 import type {
 	RpcAuthProvider,
 	RpcCommand,
+	RpcCommandInvocationEvent,
 	RpcExtensionEvent,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
@@ -68,7 +71,7 @@ import type {
 	RpcMcpServerStatus,
 	RpcResponse,
 	RpcSessionState,
-	RpcSlashCommand,
+	RpcSkillInvocationEvent,
 } from "./rpc-types.ts";
 import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
 
@@ -210,6 +213,7 @@ export function createRpcConnectionHandler(
 	let unsubscribeExtensionEvents: (() => void) | undefined;
 	let mcpWireStatus: McpWireStatusSnapshot = { servers: [] };
 	let loadedSurfacesDigest: string | undefined;
+	let rpcCommandsDigest: string | undefined;
 	let suppressLoadedSurfaceEvents = false;
 	const eventOutput = createRpcEventOutputBuffer(sink.writeRaw);
 
@@ -549,12 +553,19 @@ export function createRpcConnectionHandler(
 		const wasSuppressed = suppressLoadedSurfaceEvents;
 		suppressLoadedSurfaceEvents = true;
 		if (resetMcp) mcpWireStatus = { servers: [] };
+		let commandsChanged: ReturnType<typeof createCommandsChangedEvent>;
 		try {
 			await operation();
 			await requestMcpWireStatus();
 			loadedSurfacesDigest = currentLoadedSurfaces().digest;
+			const commands = buildRpcCommandsForSession(session);
+			commandsChanged = createCommandsChangedEvent(rpcCommandsDigest, commands);
+			rpcCommandsDigest = rpcCommandListDigest(commands);
 		} finally {
 			suppressLoadedSurfaceEvents = wasSuppressed;
+		}
+		if (!wasSuppressed && commandsChanged) {
+			outputEvent(commandsChanged);
 		}
 		if (!wasSuppressed && previousDigest !== undefined && previousDigest !== loadedSurfacesDigest) {
 			outputEvent({ type: "loaded_surfaces_changed" });
@@ -626,6 +637,14 @@ export function createRpcConnectionHandler(
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
 		unsubscribe = session.subscribe((event) => {
+			if (event.type === "skill_invocation") {
+				outputEvent(event satisfies RpcSkillInvocationEvent);
+				return;
+			}
+			if (event.type === "command_invocation") {
+				outputEvent(event satisfies RpcCommandInvocationEvent);
+				return;
+			}
 			outputEvent(event);
 		});
 		unsubscribeBackpressure = session.agent.subscribe(async () => {
@@ -740,7 +759,7 @@ export function createRpcConnectionHandler(
 						thinkingLevel: command.thinkingLevel,
 						source: "rpc",
 						preflightResult: (didSucceed) => {
-							if (didSucceed) {
+							if (didSucceed && !preflightSucceeded) {
 								preflightSucceeded = true;
 								output(success(id, "prompt"));
 							}
@@ -1052,36 +1071,7 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "get_commands": {
-				const commands: RpcSlashCommand[] = [];
-
-				for (const command of session.extensionRunner.getRegisteredCommands()) {
-					commands.push({
-						name: command.invocationName,
-						description: command.description,
-						source: "extension",
-						sourceInfo: command.sourceInfo,
-					});
-				}
-
-				for (const template of session.promptTemplates) {
-					commands.push({
-						name: template.name,
-						description: template.description,
-						source: "prompt",
-						sourceInfo: template.sourceInfo,
-					});
-				}
-
-				for (const skill of session.resourceLoader.getSkills().skills) {
-					commands.push({
-						name: `skill:${skill.name}`,
-						description: skill.description,
-						source: "skill",
-						sourceInfo: skill.sourceInfo,
-					});
-				}
-
-				return success(id, "get_commands", { commands });
+				return success(id, "get_commands", { commands: buildRpcCommandsForSession(session) });
 			}
 
 			case "get_loaded_surfaces": {
@@ -1181,6 +1171,13 @@ export function createRpcConnectionHandler(
 			return;
 		}
 
+		const shapeError = rpcCommandShapeError(parsed);
+		if (shapeError) {
+			output(error(undefined, "parse", shapeError));
+			await waitForRpcBackpressure();
+			return;
+		}
+
 		// Handle extension UI responses
 		if (
 			typeof parsed === "object" &&
@@ -1198,6 +1195,12 @@ export function createRpcConnectionHandler(
 		}
 
 		const command = parsed as RpcCommand;
+		const messageLengthError = rpcMessageLengthError(command);
+		if (messageLengthError) {
+			output(error(command.id, command.type, messageLengthError));
+			await waitForRpcBackpressure();
+			return;
+		}
 		try {
 			const response = await handleCommand(command);
 			if (response) {

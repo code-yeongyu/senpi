@@ -1,5 +1,44 @@
 # changes
 
+## Custom-editor Enter submissions are no longer dropped (2026-08-16)
+
+### What changed
+
+- The custom-editor submit bridge in `interactive-mode.ts` (`setCustomEditorComponent`) now expands the submitted value via a new `expandSubmittedText()` in `editor-paste-transfer.ts`. It preserves a non-empty live expanded value for custom editors that submit before clearing, but falls back to the authoritative callback text (and any surviving paste registry) when pi-tui has already cleared the editor.
+- The previous bridge called `expandEditorSubmission()`, which prefers `editor.getExpandedText()` over the submitted text. That preference is correct for live draft reads (`getExpandedEditorText()`) but wrong at submit time: pi-tui's `Editor.submitValue()` clears the editor state and paste registry *before* invoking `onSubmit`, so any custom editor implementing `getExpandedText()` (e.g. a wrapper delegating to a pi-tui `Editor`) reported "" and the entire submission was silently discarded — Enter cleared the prompt without sending anything.
+- `expandEditorSubmission()` itself is unchanged; only the submit call site switched. Regression coverage now drives the real host bridge with both clear-before-callback and uncleared custom editors.
+
+### Why
+
+- With a custom editor installed (for example the `pi-voice-stt` dictation extension), pressing Enter cleared the prompt but no message ever reached the model — the TUI could not send any user input at all.
+
+### Why this cannot be expressed externally
+
+- The submit bridge lives in the core custom-editor wiring; extensions can only supply the editor component, not how the host reads back its submission.
+
+### Expected merge conflict zones
+
+- LOW: one call site and one import in `interactive-mode.ts`, plus one additive export in the fork-only `editor-paste-transfer.ts`.
+
+## Show the selected settings source (2026-08-16)
+
+### What changed
+
+- Interactive mode renders `settings_source_selected` as a concise dim status such as `Settings: settings.jsonc (JSONC)`.
+- Rendering is event-driven: one startup/reload selection produces one status update, with no polling or input-path emission.
+
+### Why
+
+- JSONC precedence is otherwise invisible, especially when both settings flavors exist.
+
+### Why this cannot be expressed externally
+
+- The event can arrive before extension UI binding and the built-in transcript/status lifecycle owns startup rendering.
+
+### Expected merge conflict zones
+
+- LOW: one additive `handleEvent` case and helper in `interactive-mode.ts`.
+
 ## Favorite persist merges by pattern resolution, keeping `:level` / `:priority` decorators (2026-08-16)
 
 Supersedes "Favorite patterns survive a persist while providers are unavailable (2026-08-12)": the

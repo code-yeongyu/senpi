@@ -1,5 +1,21 @@
 # Core Extensions Changes
 
+## 2026-08-17 - getSystemPromptOptions exposed on the base ExtensionContext
+
+### What changed
+
+- `ExtensionContext` gains OPTIONAL `getSystemPromptOptions?(): BuildSystemPromptOptions`, so event handlers (not just command handlers) can read the base system-prompt construction options. It stays REQUIRED on `ExtensionCommandContext` (now a redeclaration that narrows the optional base member), so existing command-handler callers are unaffected and hand-built test contexts keep compiling.
+- `runner.ts` binds the getter in `createContext()` (it always exists at runtime under the senpi runner); the duplicate binding in `createCommandContext()` is removed because the descriptor copy carries it.
+- The returned options now include the user-override fields already present on `BuildSystemPromptOptions`: `customPrompt` (from `--system-prompt` / SDK loader) and `appendSystemPrompt` (pre-joined `--append-system-prompt` texts), populated by `agent-session.ts` `_rebuildSystemPrompt()`.
+
+### Why
+
+- The prompt-preset builtin must know at `session_start` (header) and in prompt events whether the user supplied an explicit system prompt, so presets yield instead of clobbering it. Per convention, new core data lands as a typed `ExtensionContext` getter; optional-on-base keeps the ~30 hand-built `ExtensionContext` fakes across coding-agent and senpi-codemode tests source-compatible.
+
+### Expected merge-conflict zones
+
+- `types.ts` `ExtensionContext` / `ExtensionCommandContext` member lists; `runner.ts` `createContext()` tail. Resolution: keep the optional base getter plus the required command-context redeclaration.
+
 ## 2026-08-13 - Content-anchored compaction admission
 
 ### What changed

@@ -711,7 +711,9 @@ describe("default model selection", () => {
 
 	test("every bundled provider default resolves in its catalog", () => {
 		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
-			if (provider === "radius" || provider === "ollama") continue;
+			// radius/ollama are dynamic catalogs; cursor is authentication-only until
+			// its chat protocol is ported.
+			if (provider === "radius" || provider === "ollama" || provider === "cursor") continue;
 			const defaultModelId = defaultModelPerProvider[provider];
 			const modelIds = getModels(provider).map((model) => model.id);
 			expect(modelIds.length, `${provider} should expose a bundled catalog`).toBeGreaterThan(0);

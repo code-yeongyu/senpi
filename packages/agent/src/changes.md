@@ -1,5 +1,45 @@
 # Changes
 
+## 2026-08-16 - Cursor exec-channel contract in the agent loop
+
+### What changed and why
+
+- `agent-loop.ts`: the tool-call collection sites (loop collection and the
+  `executeToolCalls` re-filter) skip `toolCall` blocks stamped
+  `kCursorExecResolved` — Cursor's server-driven protocol already executed
+  those tools mid-stream through the exec bridge, and re-running them would
+  duplicate side-effecting bash/write calls.
+- `streamAssistantResponse` returns `{ message, providerToolResults }`: when
+  `config.cursorExecHandlers` is set, the loop injects `execHandlers` plus a
+  buffering `onToolResult` into the stream options; buffered results are
+  emitted as ordinary `message_start`/`message_end` events and appended to the
+  context right after the assistant message — including on terminal
+  error/abort paths, so resolved calls never end up unpaired.
+- The idle watchdog (`readNextAssistantEvent`) re-arms instead of failing when
+  the provider stream reports pending local work
+  (`AssistantMessageEventStream.hasPendingLocalWork`), because a
+  server-requested tool run legitimately emits no events while it executes.
+- `agent.ts`: `AgentOptions.cursorExecHandlers` flows onto the loop config;
+  `emitExternalEvent()` (new) lets the exec bridge inject
+  `tool_execution_start`/`tool_execution_end` lifecycle events for tools that
+  run inside the provider stream, outside the loop's executor.
+- `types.ts`: `AgentLoopConfig.cursorExecHandlers`.
+
+### Why the extension system could not handle this
+
+- Tool-call execution skipping and transcript ordering are loop-core
+  decisions made between the provider stream ending and `executeToolCalls`
+  starting; no extension hook exists in that window, and a `tool_call` block
+  hook can only produce error-shaped results.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `agent-loop.ts` at the tool-call collection block and
+  `streamAssistantResponse`'s return shape (upstream returns the bare
+  message).
+- LOW: `agent.ts` options/config plumbing (additive), `types.ts` additive
+  field.
+
 ## 2026-08-13 - Summary-safe branch compaction text
 
 ### What changed and why

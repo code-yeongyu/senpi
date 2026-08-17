@@ -6,9 +6,25 @@
 
 ### Added
 
+- The agent loop understands Cursor's server-driven tool execution: tool calls the `cursor-agent` provider already executed mid-stream (marked `kCursorExecResolved`) are never re-executed, their provider-buffered results are appended right after the assistant message (also on error/abort paths so calls never end up unpaired), and the stream idle watchdog re-arms while the provider reports pending local tool work instead of aborting a healthy request. `AgentOptions.cursorExecHandlers` carries the host's exec bridge onto the loop config, and `Agent.emitExternalEvent()` lets bridge-run tools surface `tool_execution_*` lifecycle events ([#910](https://github.com/code-yeongyu/senpi/pull/910)).
+
 ### Changed
 
 ### Fixed
+
+### Removed
+
+## [2026.8.16] - 2026-08-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Windows process-tree shutdown now resolves `taskkill.exe` through absolute `System32` and `Sysnative` paths before PATH lookup, executes synchronously so same-tick exits still terminate descendants, and falls back to the direct child only when no launcher can start ([#807](https://github.com/code-yeongyu/senpi/pull/807) by [@yeongjunyoo](https://github.com/yeongjunyoo)).
 
 ### Removed
 

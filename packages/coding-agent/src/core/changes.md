@@ -1,5 +1,117 @@
 # changes
 
+## Expand explicit dollar skill tokens and publish invocation metadata (2026-08-16) ([PR #909](https://github.com/code-yeongyu/senpi/pull/909))
+
+### What changed
+
+- Skill composition accepts a leading `$name` run alongside `/skill:name`.
+- The desktop composer's explicit `$skill:name` token expands even when it appears inline, while bare inline
+  dollar tokens such as `$HOME` remain literal.
+- Successful expansion emits one ordered `skill_invocation` session event containing each resolved skill's name,
+  source path, and `dollar` or `slash` syntax.
+- Dollar and slash tokens share the existing duplicate, unknown, file-read, and five-skill cap behavior.
+- Token removal preserves unrelated blank lines, indentation, and literal dollar text, and token discovery stops after
+  a bounded 64-token prefix while leaving every unprocessed token literal.
+- Resolved extension commands and accepted prompt templates emit one `command_invocation` session event after
+  extension input interception, so transformed or rejected text cannot be reported as an invocation.
+
+### Why
+
+- OmO Desktop serializes a selected skill chip as `$skill:name`; treating it as prose made the new desktop picker
+  look successful while the runtime silently ignored the invocation.
+- TUI autocomplete needs a concise leading `$name` form without making arbitrary inline shell variables executable.
+- RPC consumers need typed invocation metadata instead of reparsing the expanded user prompt.
+- Prompt content outside explicit invocation token spans must remain byte-meaningful for pasted code and structured text.
+
+### Why an extension could not handle it
+
+- Prompt, steering, follow-up, RPC, and interactive entry paths must share one pre-provider expansion contract.
+- The session event union and prompt expansion boundary are core-owned and run before extensions can safely
+  normalize every entry surface.
+- Prompt-template resolution metadata is private session state; extensions cannot reliably emit accepted invocation
+  events after another extension transforms or handles the original input.
+
+### Expected merge-conflict zones
+
+- `agent-session.ts` skill parsing, prompt-template resolution, command dispatch, queueing, and `AgentSessionEvent`.
+- `prompt-templates.ts` expansion metadata.
+- Skill-composition and command-invocation regressions under `test/suite/regressions/`.
+
+## Cursor exec bridge (2026-08-16)
+
+### What changed
+
+- `cursor-exec-bridge.ts` (new): maps Cursor exec-channel frames onto the session's real tools through the
+  same wrapped `AgentTool.execute` path model-issued calls use. Legacy frames map read→`read`
+  (offset/limit kwargs), ls→`ls`, grep→`grep`, write→`write`, shell→`bash` (workingDirectory composed as a
+  quoted `cd` prefix; senpi's bash has no cwd kwarg); modern Pi frames map 1:1 (`pi_edit` →
+  `edits[{oldText,newText}]`, `pi_grep` flags, `pi_find` → `find`, `pi_ls` → `ls` with `limit`); MCP calls
+  dispatch by tool name. Args are validated with `validateToolArguments` before execution;
+  `tool_execution_start`/`tool_execution_end` events are emitted so live tool cards resolve. `delete`,
+  `diagnostics`, and `mcpApprovalPreflight` handlers are deliberately absent (typed refusals on the wire).
+- `sdk.ts`: constructs the bridge and passes it to the Agent as `cursorExecHandlers`; tools resolve through a
+  late-bound session ref because the session (and its registry) is created after the Agent; lifecycle events
+  ride `agent.emitExternalEvent`.
+- `agent-session.ts`: `getRegisteredTool()` (new) exposes the full registry (builtin + extension tools)
+  because Cursor drives its native tools over the exec channel regardless of the request's advertised set.
+
+### Why
+
+- Cursor's protocol executes tools server-drivenly mid-stream; without the bridge every Cursor turn that
+  touches a tool would stall and time out.
+
+### Why an extension could not do this
+
+- The bridge must be wired into the Agent's loop config before any extension loads, and it needs the wrapped
+  tool registry (approvals, sandboxing, truncation) rather than raw tool definitions.
+
+### Expected merge conflict zones
+
+- LOW: `sdk.ts` Agent construction options (additive), `agent-session.ts` additive accessor.
+- NONE expected in `cursor-exec-bridge.ts`: fork-only file.
+
+## Cursor provider display name (2026-08-16)
+
+### What changed
+
+- `provider-display-names.ts`: added `cursor: "Cursor"` for the new builtin Cursor OAuth provider
+  (`packages/ai/src/providers/cursor.ts`). The `/login` list and auth status surfaces pick the name up
+  automatically from the provider registration; only the display-name map needed a row.
+
+### Why
+
+- Without the entry the provider id would render raw ("cursor") in provider name surfaces that consult
+  `BUILT_IN_PROVIDER_DISPLAY_NAMES`.
+
+### Why an extension could not do this
+
+- The display-name map for builtin providers is a core lookup table, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the alphabetical map in `provider-display-names.ts` when upstream adds providers.
+
+## JSONC settings parser, precedence, and write ownership (2026-08-16)
+
+### What changed
+
+- `settings-manager.ts` now strips line/block comments only outside quoted strings, removes trailing commas before object/array closers, and delegates final validation to `JSON.parse`; no dependency was added.
+- File storage selects `settings.jsonc` before `settings.json`, retains that selected path for writes, and reselects only at create/reload/project-trust load boundaries.
+- Selected-source metadata includes path, format, reason, and scope; `AgentSession` forwards reload decisions and replays startup decisions once to each host subscriber.
+
+### Why
+
+- A per-write filesystem probe could redirect a session to another flavor after load, while JSON-only parsing prevented maintainable commented settings. Selection boundaries make precedence and write ownership explicit.
+
+### Why an extension could not do this
+
+- Parsing and locking happen before extensions load, and the session emitter is the shared transport boundary used by RPC and TUI hosts.
+
+### Expected merge conflict zones
+
+- HIGH: `settings-manager.ts` path/storage/load/save sections.
+- MEDIUM: `agent-session.ts` event and subscription lifecycle.
+
 ## Model and service-tier session events (2026-08-16)
 
 ### What changed

@@ -4,6 +4,7 @@ import type {
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
 	Context,
+	CursorExecHandlers,
 	ImageContent,
 	Message,
 	Model,
@@ -152,6 +153,18 @@ export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {}
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
+
+	/**
+	 * Cursor exec-channel tool handlers (cursor-agent models only).
+	 *
+	 * Cursor's server-driven protocol executes tools MID-STREAM: the server
+	 * blocks on an in-band reply, so the provider runs these handlers while
+	 * the Run stream is open, synthesizes already-resolved `toolCall` blocks
+	 * (marked `kCursorExecResolved`, which this loop skips), and buffers each
+	 * paired `ToolResultMessage` for emission right after the assistant
+	 * message. Other providers ignore this field.
+	 */
+	cursorExecHandlers?: CursorExecHandlers;
 
 	/**
 	 * Maximum time in milliseconds to wait for the FIRST provider stream event.

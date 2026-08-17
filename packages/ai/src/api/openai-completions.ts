@@ -1009,9 +1009,8 @@ function buildParams(
 			thinking?: { type: "enabled" | "disabled"; clear_thinking?: boolean };
 			reasoning_effort?: string;
 		};
-		zaiParams.thinking = options?.reasoningEffort || isGlm53
-			? { type: "enabled", clear_thinking: false }
-			: { type: "disabled" };
+		zaiParams.thinking =
+			options?.reasoningEffort || isGlm53 ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
 			const effort = resolveReasoningEffort(thinkingLevelMap, options.reasoningEffort);
 			if (effort !== undefined) {

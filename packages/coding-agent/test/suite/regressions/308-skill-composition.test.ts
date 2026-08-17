@@ -5,7 +5,12 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { MAX_SKILL_EXPANSIONS_PER_PROMPT } from "../../../src/core/agent-session.ts";
+import {
+	type AgentSessionEvent,
+	MAX_SKILL_EXPANSIONS_PER_PROMPT,
+	MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT,
+	parseSkillInvocationTokens,
+} from "../../../src/core/agent-session.ts";
 import { createSyntheticSourceInfo } from "../../../src/core/source-info.ts";
 import type { ResourceLoader } from "../../../src/index.ts";
 import { createTestResourceLoader } from "../../utilities.ts";
@@ -75,6 +80,17 @@ async function promptAndCapture(harness: Harness, text: string): Promise<string>
 
 	await harness.session.prompt(text);
 	return captured;
+}
+
+function collectSkillInvocationEvents(harness: Harness): {
+	events: AgentSessionEvent[];
+	unsubscribe: () => void;
+} {
+	const events: AgentSessionEvent[] = [];
+	const unsubscribe = harness.session.subscribe((event) => {
+		if (event.type === "skill_invocation") events.push(event);
+	});
+	return { events, unsubscribe };
 }
 
 async function createWaitingHarness(resourceLoader: ResourceLoader): Promise<{
@@ -153,6 +169,109 @@ describe("#308 skill composition", () => {
 		expect(actual).toBe(
 			`${skillBlock(skills[0]!, tempDir)}\n\n${skillBlock(skills[1]!, tempDir)}\n\n${userRequest("compose both skills")}`,
 		);
+	});
+
+	it("expands a leading dollar skill and emits invocation metadata", async () => {
+		const { resourceLoader, skills, tempDir } = createFixtures([
+			{ name: "debugging", body: "# Debugging Skill\n\nTrace the defect." },
+		]);
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		const invocationEvents = collectSkillInvocationEvents(harness);
+
+		const actual = await promptAndCapture(harness, "$debugging investigate regression");
+		invocationEvents.unsubscribe();
+
+		expect(actual).toBe(`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("investigate regression")}`);
+		expect(invocationEvents.events).toEqual([
+			{
+				type: "skill_invocation",
+				skills: [{ name: "debugging", path: skills[0]!.filePath, syntax: "dollar" }],
+			},
+		]);
+	});
+
+	it("expands explicit desktop dollar skills inline while preserving ordinary dollar prose", async () => {
+		const { resourceLoader, skills, tempDir } = createFixtures([
+			{ name: "debugging", body: "# Debugging Skill\n\nTrace the defect." },
+		]);
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		const invocationEvents = collectSkillInvocationEvents(harness);
+
+		const actual = await promptAndCapture(harness, "Use $skill:debugging to inspect $HOME safely");
+		invocationEvents.unsubscribe();
+
+		expect(actual).toBe(`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("Use to inspect $HOME safely")}`);
+		expect(invocationEvents.events).toEqual([
+			{
+				type: "skill_invocation",
+				skills: [{ name: "debugging", path: skills[0]!.filePath, syntax: "dollar" }],
+			},
+		]);
+	});
+
+	it("preserves indentation and blank-line structure outside removed tokens", async () => {
+		const { resourceLoader, skills, tempDir } = createFixtures([
+			{ name: "first", body: "# First Skill\n\nUse the first skill." },
+		]);
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+
+		const actual = await promptAndCapture(harness, "/skill:first\n\n    const x = 1;\n\treturn x;");
+
+		expect(actual).toBe(`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("    const x = 1;\n\treturn x;")}`);
+	});
+
+	it("bounds token parsing before processing adversarial repeated input", () => {
+		const prompt = Array.from({ length: MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT + 20 }, () => "$skill:debugging").join(
+			" ",
+		);
+
+		const tokens = parseSkillInvocationTokens(prompt);
+
+		expect(tokens).toHaveLength(MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT);
+		expect(prompt.slice(tokens.at(-1)!.end)).toContain("$skill:debugging");
+	});
+
+	it("keeps bare inline dollar skill names literal", async () => {
+		const { resourceLoader } = createFixtures([
+			{ name: "debugging", body: "# Debugging Skill\n\nTrace the defect." },
+		]);
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		const invocationEvents = collectSkillInvocationEvents(harness);
+		const prompt = "Use $debugging now";
+
+		expect(await promptAndCapture(harness, prompt)).toBe(prompt);
+		invocationEvents.unsubscribe();
+		expect(invocationEvents.events).toEqual([]);
+	});
+
+	it("preserves mixed dollar and slash invocation order", async () => {
+		const { resourceLoader, skills, tempDir } = createFixtures([
+			{ name: "debugging", body: "# Debugging Skill\n\nTrace the defect." },
+			{ name: "review", body: "# Review Skill\n\nReview the result." },
+		]);
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		const invocationEvents = collectSkillInvocationEvents(harness);
+
+		const actual = await promptAndCapture(harness, "$debugging /skill:review compare them");
+		invocationEvents.unsubscribe();
+
+		expect(actual).toBe(
+			`${skillBlock(skills[0]!, tempDir)}\n\n${skillBlock(skills[1]!, tempDir)}\n\n${userRequest("compare them")}`,
+		);
+		expect(invocationEvents.events).toEqual([
+			{
+				type: "skill_invocation",
+				skills: [
+					{ name: "debugging", path: skills[0]!.filePath, syntax: "dollar" },
+					{ name: "review", path: skills[1]!.filePath, syntax: "slash" },
+				],
+			},
+		]);
 	});
 
 	it("stops at an unknown skill without swallowing it or later text", async () => {

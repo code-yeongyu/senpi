@@ -1,5 +1,24 @@
 # changes.md — dynamic-prompt
 
+## User overrides exposed on `_baseSystemPromptOptions` (2026-08-17)
+
+### What changed
+
+- `agent-session.ts`: `_rebuildSystemPrompt()` now records the loader's user overrides on `_baseSystemPromptOptions` — `customPrompt` (the `--system-prompt` / SDK override) and `appendSystemPrompt` (CLI appends pre-joined with `\n\n`). The field type is widened with those two upstream `BuildSystemPromptOptions` members; `buildDynamicSystemPrompt()` ignores them, so the generated prompt is byte-identical when no overrides exist.
+- The options flow into `before_agent_start` / `model_select` events and the `ctx.getSystemPromptOptions()` getter, letting prompt-preset yield to user overrides (see `extensions/builtin/prompt-preset/changes.md`).
+
+### Why
+
+- The 2026-07-18 restoration made the base prompt honor loader overrides, but extensions could not tell an override-carrying base from a generated one, so presets clobbered user prompts — which is why the CLI wiring was disconnected on 2026-07-19. Exposing the facts on the options closes that loop.
+
+### Why extension system couldn't handle this
+
+- Same as the 2026-07-18 entry: base prompt assembly is core-owned; only the core knows whether the base came from a user override.
+
+### Expected merge conflict zones
+
+- `agent-session.ts` `_rebuildSystemPrompt()` tail and the `_baseSystemPromptOptions` declaration. Resolution: keep the two override fields populated alongside whatever upstream adds.
+
 ## Test-discipline rules: prose-pinning prohibition + behavior wording (2026-08-03)
 
 ### What changed

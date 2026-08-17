@@ -218,6 +218,33 @@ describe("eval execution event contract", () => {
 		);
 	});
 
+	it("derives wall duration and exact nested tool-call count in returned details separately from kernel duration", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(1_000);
+		const kernel = new SerialFakeKernel([
+			{ type: "tool-call", callId: "read-1", toolName: "read", args: { path: "/tmp/a" } },
+			{ type: "tool-call", callId: "bash-1", toolName: "bash", args: { command: "true" } },
+			result("throughput-cell", "done", 99),
+		]);
+		const executeTool: ExecuteTool = vi.fn(async (name) => {
+			vi.setSystemTime(Date.now() + (name === "read" ? 11 : 7));
+			return textResult(`${name} result`);
+		});
+
+		const settled = await createTool(kernel, executeTool).execute(
+			"throughput-cell",
+			{ language: "js", code: "await Promise.all([tool.read({}), tool.bash({})])", summary: "two calls" },
+			undefined,
+			undefined,
+			fakeExtensionContext(),
+		);
+
+		expect(settled.details.toolCallCount).toBe(2);
+		expect(settled.details.wallDurationMs).toBe(18);
+		expect(settled.details.durationMs).toBe(99);
+		expect(settled.details.cells?.[0]?.durationMs).toBe(99);
+	});
+
 	it("emits exactly once after a detached cell reaches terminal settlement", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(4_000);

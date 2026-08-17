@@ -47,11 +47,13 @@ describe("builtin providers", () => {
 		const all = models.getModels();
 		expect(all.length).toBeGreaterThan(500);
 
-		// Static providers list models immediately; Radius and Ollama are purely dynamic.
+		// Static providers list models immediately; Radius and Ollama are purely
+		// dynamic, and Cursor is authentication-only until its chat protocol is ported.
 		for (const provider of providers) {
 			const list = models.getModels(provider.id);
-			if (provider.id === "radius" || provider.id === "ollama") expect(list).toEqual([]);
-			else expect(list.length).toBeGreaterThan(0);
+			if (provider.id === "radius" || provider.id === "ollama" || provider.id === "cursor") {
+				expect(list).toEqual([]);
+			} else expect(list.length).toBeGreaterThan(0);
 			expect(list.every((m) => m.provider === provider.id)).toBe(true);
 		}
 	});

@@ -1149,6 +1149,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
 			},
+			getSystemPromptOptions: () => {
+				runner.assertActive();
+				return runner.getSystemPromptOptionsFn();
+			},
 			getLoadedHookSources: () => {
 				runner.assertActive();
 				return runner.getLoadedHookSourcesFn();
@@ -1168,10 +1172,6 @@ export class ExtensionRunner {
 			{},
 			Object.getOwnPropertyDescriptors(this.createContext()),
 		) as ExtensionCommandContext;
-		context.getSystemPromptOptions = () => {
-			this.assertActive();
-			return this.getSystemPromptOptionsFn();
-		};
 		context.waitForIdle = () => {
 			this.assertActive();
 			return this.waitForIdleFn();

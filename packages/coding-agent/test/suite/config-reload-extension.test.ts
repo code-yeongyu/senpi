@@ -46,6 +46,7 @@ type WatchProbe = {
 
 type FixtureOptions = {
 	readonly settingsContent?: string;
+	readonly settingsFileName?: "settings.json" | "settings.jsonc";
 	readonly withReload?: boolean;
 	readonly reload?: () => Promise<void>;
 	readonly extraFactories?: Array<(pi: ExtensionAPI) => void>;
@@ -128,7 +129,7 @@ async function settleChange(fixture: Fixture, path: string, filename: string | n
 async function createFixture(options: FixtureOptions = {}): Promise<Fixture> {
 	const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-extension-"));
 	agentDirs.push(agentDir);
-	const settingsPath = join(agentDir, "settings.json");
+	const settingsPath = join(agentDir, options.settingsFileName ?? "settings.json");
 	writeFileSync(settingsPath, options.settingsContent ?? '{"theme":"dark"}\n', "utf-8");
 	const watches = createWatchProbe();
 	const notifications: string[] = [];
@@ -248,6 +249,20 @@ describe("config reload builtin extension", () => {
 
 		writeFileSync(fixture.settingsPath, '{"theme":"light"}\n');
 		await settleChange(fixture, fixture.agentDir, "settings.json");
+
+		expect(fixture.reload).toHaveBeenCalledTimes(1);
+		expect(fixture.notifications.some((message) => message.startsWith("Hot-reloading:"))).toBe(true);
+	});
+
+	it("requests one reload for a valid JSONC settings change", async () => {
+		vi.useFakeTimers();
+		const fixture = await createFixture({
+			settingsFileName: "settings.jsonc",
+			settingsContent: '{ // initial\n "theme": "dark",\n}\n',
+		});
+
+		writeFileSync(fixture.settingsPath, '{ /* changed */\n "theme": "light",\n}\n');
+		await settleChange(fixture, fixture.agentDir, "settings.jsonc");
 
 		expect(fixture.reload).toHaveBeenCalledTimes(1);
 		expect(fixture.notifications.some((message) => message.startsWith("Hot-reloading:"))).toBe(true);
@@ -578,7 +593,6 @@ describe("config reload builtin extension", () => {
 		["string", '"x"'],
 		["number", "5"],
 		["array", "[]"],
-		["comments", "// not JSON\n{}"],
 	] as const) {
 		it(`rejects a ${label} settings.json root before reload`, async () => {
 			vi.useFakeTimers();

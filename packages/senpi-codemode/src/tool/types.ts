@@ -164,6 +164,10 @@ export interface EvalToolDetails {
 	readonly languages?: readonly EvalLanguage[];
 	readonly summary?: string;
 	readonly durationMs: number;
+	/** True wall-clock elapsed time since the cell started; `durationMs` stays kernel-reported. */
+	readonly wallDurationMs?: number;
+	/** Exact count of initiated nested tool calls, including calls still pending at settlement. */
+	readonly toolCallCount?: number;
 	readonly toolCalls: readonly EvalToolCallSummary[];
 	readonly truncated: boolean;
 	readonly isError?: boolean;

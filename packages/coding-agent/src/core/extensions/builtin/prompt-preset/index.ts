@@ -11,6 +11,10 @@ interface SystemPromptOptionsLike {
 	promptGuidelines?: string[];
 	contextFiles?: Array<{ path: string; content: string }>;
 	skills?: BuildDynamicSystemPromptOptions["skills"];
+	/** User override from --system-prompt / SDK loader; outranks any preset. */
+	customPrompt?: string;
+	/** User appends from --append-system-prompt, pre-joined; reapplied after a preset. */
+	appendSystemPrompt?: string;
 }
 
 function eventOptionsToBuilderInput(
@@ -37,7 +41,19 @@ function getPresetName(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "mo
 	if (!model) {
 		return undefined;
 	}
+	if (hasUserSystemPrompt(ctx.getSystemPromptOptions?.())) {
+		return undefined;
+	}
 	return resolvePresetName(model, getSettings(ctx));
+}
+
+function hasUserSystemPrompt(options: SystemPromptOptionsLike | undefined): boolean {
+	return Boolean(options?.customPrompt);
+}
+
+function withUserAppends(presetPrompt: string, options: SystemPromptOptionsLike | undefined): string {
+	const append = options?.appendSystemPrompt;
+	return append ? `${presetPrompt}\n\n${append}` : presetPrompt;
 }
 
 function refreshHeader(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "model">): void {
@@ -59,12 +75,18 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
+		// An explicit user system prompt (--system-prompt / SDK loader override)
+		// outranks the per-model preset; the base prompt already carries it.
+		if (hasUserSystemPrompt(event.systemPromptOptions)) {
+			return undefined;
+		}
+
 		const preset = resolvePreset(model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx));
 		if (!preset) {
 			return undefined;
 		}
 
-		return { systemPrompt: preset.prompt };
+		return { systemPrompt: withUserAppends(preset.prompt, event.systemPromptOptions) };
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -73,9 +95,14 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 
 	pi.on("model_select", async (event, ctx) => {
 		refreshHeader(ctx, event);
+		// Returning null resets to the base prompt, which already carries the
+		// user's custom prompt and appends.
+		if (hasUserSystemPrompt(event.systemPromptOptions)) {
+			return { systemPrompt: null };
+		}
 		const preset = resolvePreset(event.model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx));
 		return {
-			systemPrompt: preset?.prompt ?? null,
+			systemPrompt: preset ? withUserAppends(preset.prompt, event.systemPromptOptions) : null,
 			systemPromptName: preset?.name,
 		};
 	});

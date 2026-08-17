@@ -1,5 +1,24 @@
 # config-reload Extension Changes
 
+## Watch and validate JSONC settings (2026-08-16)
+
+### What changed
+
+- Built-in global/project settings watches now admit both `settings.jsonc` and `settings.json`.
+- Validation and routine-change classification use the shared dependency-free settings parser, and content snapshots cover both filenames.
+
+### Why
+
+- Loading JSONC without watching it would make automatic reload behavior depend on the file extension and leave valid JSONC edits inert.
+
+### Why an extension could not handle it
+
+- This builtin owns the protected config watch targets, self-write suppression, validation, and reload handoff.
+
+### Expected merge conflict zones
+
+- LOW: settings filename allowlists and validator in `index.ts`; settings path/snapshot parsing in `routine-settings.ts`.
+
 ## Treat durable last-on reasoning memory as a routine setting (2026-08-16)
 
 ### What changed

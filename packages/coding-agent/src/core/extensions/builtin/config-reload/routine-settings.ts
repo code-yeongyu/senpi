@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { CONFIG_DIR_NAME } from "../../../../config.ts";
+import { parseSettingsJson } from "../../../settings-manager.ts";
 import type { ConfigReloadLogger } from "./log.ts";
 
 /**
@@ -26,9 +27,9 @@ export function joinConfigDir(cwd: string): string {
 }
 
 export function isSettingsPath(path: string, agentDir: string, cwd: string): boolean {
-	return (
-		resolve(path) === resolve(agentDir, "settings.json") ||
-		resolve(path) === resolve(joinConfigDir(cwd), "settings.json")
+	const resolvedPath = resolve(path);
+	return ["settings.jsonc", "settings.json"].some(
+		(name) => resolvedPath === resolve(agentDir, name) || resolvedPath === resolve(joinConfigDir(cwd), name),
 	);
 }
 
@@ -47,14 +48,15 @@ export function updateSettingsContentSnapshot(contents: Map<string, string>, pat
 
 export function refreshSettingsContentSnapshots(contents: Map<string, string>, agentDir: string, cwd: string): void {
 	contents.clear();
-	updateSettingsContentSnapshot(contents, resolve(agentDir, "settings.json"));
-	updateSettingsContentSnapshot(contents, resolve(joinConfigDir(cwd), "settings.json"));
+	for (const name of ["settings.jsonc", "settings.json"]) {
+		updateSettingsContentSnapshot(contents, resolve(agentDir, name));
+		updateSettingsContentSnapshot(contents, resolve(joinConfigDir(cwd), name));
+	}
 }
 
 function parseSettingsObject(content: string): Record<string, unknown> | undefined {
 	try {
-		const parsed: unknown = JSON.parse(content);
-		return isPlainObject(parsed) ? parsed : undefined;
+		return parseSettingsJson(content);
 	} catch {
 		return undefined;
 	}
@@ -107,10 +109,4 @@ export function excludeRoutineOnlySettingsChanges(
 		logger.debug("routine_settings_change_suppressed", { path });
 		return false;
 	});
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-	const prototype = Object.getPrototypeOf(value);
-	return prototype === Object.prototype || prototype === null;
 }

@@ -497,6 +497,14 @@ export interface ExtensionContext {
 	applyCompaction(precomputed: CompactionResult, options: ApplyCompactionOptions): Promise<ApplyCompactionResult>;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/**
+	 * Get the current base system-prompt construction options, including any
+	 * user overrides (`customPrompt` from --system-prompt, `appendSystemPrompt`
+	 * from --append-system-prompt). Optional on the base context for
+	 * compatibility with hand-built contexts; the senpi runner always binds it,
+	 * and it stays required on ExtensionCommandContext.
+	 */
+	getSystemPromptOptions?(): BuildSystemPromptOptions;
 	/** Get hook source paths currently visible to the builtin hooks extension. */
 	getLoadedHookSources?(): LoadedHookSources;
 	/** Get extension-declared MCP servers aggregated across all extensions (first-wins). */
@@ -524,7 +532,6 @@ export interface ProviderRequestPreparation {
 export interface ExtensionCommandContext extends ExtensionContext {
 	/** Get the current base system-prompt construction options. */
 	getSystemPromptOptions(): BuildSystemPromptOptions;
-
 	/** Wait for the agent to finish streaming */
 	waitForIdle(): Promise<void>;
 

@@ -79,7 +79,7 @@ import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { toJsonEvent } from "../json-event.ts";
 import { createRpcConnectionHandler, type RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
-import { attachJsonlLineReader } from "./jsonl.ts";
+import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
 
 // Re-export types for consumers
 export type {
@@ -172,9 +172,26 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	process.stdin.on("end", onInputEnd);
 
 	detachInput = (() => {
-		const detachJsonl = attachJsonlLineReader(process.stdin, (line) => {
-			void handleInputLine(line);
-		});
+		const detachJsonl = attachJsonlLineReader(
+			process.stdin,
+			(line) => {
+				void handleInputLine(line);
+			},
+			{
+				maxLineLength: MAX_RPC_LINE_CHARACTERS,
+				onOversizedLine: () => {
+					writeRawStdout(
+						serializeJsonLine({
+							type: "response",
+							command: "parse",
+							success: false,
+							error: `RPC input line exceeds ${MAX_RPC_LINE_CHARACTERS} characters.`,
+						}),
+					);
+					void waitForRawStdoutBackpressure();
+				},
+			},
+		);
 		return () => {
 			detachJsonl();
 			process.stdin.off("end", onInputEnd);

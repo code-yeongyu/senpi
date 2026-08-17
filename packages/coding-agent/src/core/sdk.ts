@@ -6,6 +6,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
+import { createCursorExecBridge } from "./cursor-exec-bridge.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
@@ -324,6 +325,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		});
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
+	// The session (and its tool registry) is constructed after the Agent, so
+	// the Cursor exec bridge resolves tools through this late-bound ref.
+	const cursorBridgeSessionRef: { current?: AgentSession } = {};
 
 	agent = new Agent({
 		initialState: {
@@ -393,6 +397,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		timeoutMs: settingsManager.getAgentStreamIdleTimeoutMs(),
 		streamStartTimeoutMs: settingsManager.getAgentStreamStartTimeoutMs(),
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
+		cursorExecHandlers: createCursorExecBridge({
+			getTool: (name) => cursorBridgeSessionRef.current?.getRegisteredTool(name),
+			emitEvent: (event) => {
+				void agent.emitExternalEvent(event);
+			},
+			getAbortSignal: () => agent.signal,
+		}),
 	});
 
 	// Restore messages if session has existing data
@@ -436,6 +447,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
 	});
+	cursorBridgeSessionRef.current = session;
 	const extensionsResult = resourceLoader.getExtensions();
 
 	return {

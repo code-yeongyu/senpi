@@ -127,6 +127,8 @@ export class CellResultBuilder {
 			languages: [this.#state.input.language],
 			...(this.#state.input.summary === undefined ? {} : { summary: this.#state.input.summary }),
 			durationMs: this.#state.durationMs,
+			wallDurationMs: Math.max(0, Date.now() - this.#state.startedAt),
+			toolCallCount: this.#state.toolCallMetrics.length,
 			toolCalls: [...this.#state.toolCalls],
 			truncated: output?.truncated ?? false,
 			...(isError ? { isError: true } : {}),

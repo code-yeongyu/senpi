@@ -186,7 +186,7 @@ import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
-import { expandEditorSubmission, transferEditorContent } from "./editor-paste-transfer.ts";
+import { expandEditorSubmission, expandSubmittedText, transferEditorContent } from "./editor-paste-transfer.ts";
 import { formatExtensionErrorHeadline, sanitizeTuiErrorMessage } from "./extension-error-format.ts";
 import { editFileInExternalEditor, editInExternalEditor } from "./external-editor.ts";
 import { GrokChrome, type InteractiveChrome, type InteractiveFooter } from "./grok/chrome.ts";
@@ -3267,7 +3267,7 @@ export class InteractiveMode {
 
 			// Wire up callbacks from the default editor
 			newEditor.onSubmit = (text) => {
-				this.defaultEditor.onSubmit?.(expandEditorSubmission(newEditor, text));
+				this.defaultEditor.onSubmit?.(expandSubmittedText(newEditor, text));
 			};
 			newEditor.onChange = this.defaultEditor.onChange;
 
@@ -3895,6 +3895,10 @@ export class InteractiveMode {
 
 			case "high_reasoning_warning":
 				this.showHighReasoningWarning(event);
+				break;
+
+			case "settings_source_selected":
+				this.showSettingsSourceSelected(event);
 				break;
 
 			case "message_start":
@@ -5205,6 +5209,10 @@ export class InteractiveMode {
 		);
 		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("error", text)));
 		this.ui.requestRender();
+	}
+
+	showSettingsSourceSelected(event: Extract<AgentSessionEvent, { type: "settings_source_selected" }>): void {
+		this.showStatus(`Settings: ${path.basename(event.path)} (${event.format.toUpperCase()})`);
 	}
 
 	showHighReasoningWarning(event: { modelId: string; provider: string; thinkingLevel: ThinkingLevel }): void {

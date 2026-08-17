@@ -13,6 +13,10 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import type { RpcSlashCommand } from "./rpc-command-surface.ts";
+
+export type { RpcCommandInvocationEvent } from "./rpc-command-invocation.ts";
+export type { RpcCommandsChangedEvent, RpcSlashCommand } from "./rpc-command-surface.ts";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -179,18 +183,6 @@ export interface RpcProviderAccount {
 // ============================================================================
 // RPC Slash Command (for get_commands response)
 // ============================================================================
-
-/** A command available for invocation via prompt */
-export interface RpcSlashCommand {
-	/** Command name (without leading slash) */
-	name: string;
-	/** Human-readable description */
-	description?: string;
-	/** What kind of command this is */
-	source: "extension" | "prompt" | "skill";
-	/** Source metadata for the owning resource */
-	sourceInfo: SourceInfo;
-}
 
 /** One extension module loaded by the session resource loader. */
 export interface RpcLoadedExtension {
@@ -527,6 +519,25 @@ export interface RpcHighReasoningWarningEvent {
 	thinkingLevel: ThinkingLevel;
 }
 
+/** Emitted after explicit skill tokens are expanded for a user-authored request. */
+export interface RpcSkillInvocationEvent {
+	type: "skill_invocation";
+	skills: readonly {
+		name: string;
+		path: string;
+		syntax: "dollar" | "slash";
+	}[];
+}
+
+/** Emitted when startup or reload selects an existing settings file. */
+export interface RpcSettingsSourceSelectedEvent {
+	type: "settings_source_selected";
+	path: string;
+	format: "jsonc" | "json";
+	reason: "explicit-jsonc" | "json-only";
+	scope: "global" | "project";
+}
+
 /**
  * Emitted after the session's active model changed, with the thinking level in force AFTER
  * the switch (per-model memory, a favorite's pinned level, or the clamped previous level).
@@ -548,7 +559,6 @@ export interface RpcServiceTierChangedEvent {
 	tier?: ServiceTier;
 	fastMode: boolean;
 }
-
 /** Emitted after the loaded skill, extension, or MCP inventory changes. */
 export interface RpcLoadedSurfacesChangedEvent {
 	type: "loaded_surfaces_changed";

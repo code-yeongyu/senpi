@@ -1,6 +1,6 @@
 import { Readable } from "node:stream";
 import { describe, expect, test } from "vitest";
-import { attachJsonlLineReader, serializeJsonLine } from "../src/modes/rpc/jsonl.ts";
+import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "../src/modes/rpc/jsonl.ts";
 
 describe("RPC JSONL framing", () => {
 	test("serializes strict JSONL records without escaping Unicode separators", () => {
@@ -61,5 +61,55 @@ describe("RPC JSONL framing", () => {
 		await done;
 
 		expect(lines).toEqual(['{"a":1}']);
+	});
+
+	test("reports one oversized record, discards through LF, and resynchronizes", async () => {
+		const lines: string[] = [];
+		let oversized = 0;
+		const stream = Readable.from(["123456789", "discarded\n{}\n"]);
+		const done = new Promise<void>((resolve) => {
+			stream.on("end", resolve);
+		});
+
+		attachJsonlLineReader(
+			stream,
+			(line) => {
+				lines.push(line);
+			},
+			{
+				maxLineLength: 8,
+				onOversizedLine: () => {
+					oversized++;
+				},
+			},
+		);
+
+		await done;
+
+		expect(oversized).toBe(1);
+		expect(lines).toEqual(["{}"]);
+	});
+
+	test("accepts a fully escaped maximum-size RPC message record", async () => {
+		const lines: string[] = [];
+		const record = serializeJsonLine({ type: "prompt", message: "\0".repeat(1_000_000) });
+		expect(record.length).toBeLessThan(MAX_RPC_LINE_CHARACTERS);
+		const stream = Readable.from([record]);
+		const done = new Promise<void>((resolve) => {
+			stream.on("end", resolve);
+		});
+
+		attachJsonlLineReader(
+			stream,
+			(line) => {
+				lines.push(line);
+			},
+			{ maxLineLength: MAX_RPC_LINE_CHARACTERS },
+		);
+
+		await done;
+
+		expect(lines).toHaveLength(1);
+		expect(JSON.parse(lines[0])).toEqual({ type: "prompt", message: "\0".repeat(1_000_000) });
 	});
 });

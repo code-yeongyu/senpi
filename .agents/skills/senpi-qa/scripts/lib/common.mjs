@@ -260,6 +260,9 @@ export function dateStamp(d = new Date()) {
 
 /** Create (and return) local-ignore/qa-evidence/<date>-<slug>/ under the repo root. */
 export function evidenceDir(slug) {
+	if (typeof slug !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(slug)) {
+		throw new Error("Evidence slug must be a single safe path segment.");
+	}
 	const dir = join(repoRoot(), "local-ignore", "qa-evidence", `${dateStamp()}-${slug}`);
 	mkdirSync(dir, { recursive: true });
 	return dir;

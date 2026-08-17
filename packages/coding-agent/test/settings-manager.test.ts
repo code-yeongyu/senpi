@@ -38,6 +38,87 @@ describe("SettingsManager", () => {
 		}
 	});
 
+	describe("JSONC settings sources", () => {
+		it("loads comments and trailing commas without treating comment markers inside strings as syntax", () => {
+			writeFileSync(
+				join(agentDir, "settings.jsonc"),
+				`{
+					// line comment
+					"theme": "dark",
+					"shellCommandPrefix": "echo // literal /* text */",
+					/* block comment */
+					"favoriteModels": ["openai/gpt-5.5",],
+				}`,
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getTheme()).toBe("dark");
+			expect(manager.getShellCommandPrefix()).toBe("echo // literal /* text */");
+			expect(manager.getFavoriteModels()).toEqual(["openai/gpt-5.5"]);
+		});
+
+		it("prefers settings.jsonc when both settings formats exist", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "light" }));
+			writeFileSync(join(agentDir, "settings.jsonc"), '{ "theme": "dark", }');
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getTheme()).toBe("dark");
+			expect(manager.getSelectedSettingsSources()).toContainEqual({
+				path: join(agentDir, "settings.jsonc"),
+				format: "jsonc",
+				reason: "explicit-jsonc",
+				scope: "global",
+			});
+		});
+
+		it("keeps settings.json as the source when it is the only settings file", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "light" }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getTheme()).toBe("light");
+			expect(manager.getSelectedSettingsSources()).toContainEqual({
+				path: join(agentDir, "settings.json"),
+				format: "json",
+				reason: "json-only",
+				scope: "global",
+			});
+		});
+
+		it("writes back to the loaded JSONC path without creating settings.json", async () => {
+			const jsoncPath = join(agentDir, "settings.jsonc");
+			writeFileSync(jsoncPath, '{ "theme": "dark", }');
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			manager.setDefaultModel("gpt-5.5");
+			await manager.flush();
+
+			expect(existsSync(join(agentDir, "settings.json"))).toBe(false);
+			expect(JSON.parse(readFileSync(jsoncPath, "utf-8"))).toMatchObject({
+				theme: "dark",
+				defaultModel: "gpt-5.5",
+			});
+		});
+
+		it("reselects JSONC on reload and keeps later writes on that path", async () => {
+			const jsonPath = join(agentDir, "settings.json");
+			const jsoncPath = join(agentDir, "settings.jsonc");
+			writeFileSync(jsonPath, JSON.stringify({ theme: "light" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			writeFileSync(jsoncPath, '{ "theme": "dark", }');
+
+			await manager.reload();
+			manager.setDefaultModel("gpt-5.5");
+			await manager.flush();
+
+			expect(manager.getTheme()).toBe("dark");
+			expect(JSON.parse(readFileSync(jsonPath, "utf-8"))).toEqual({ theme: "light" });
+			expect(JSON.parse(readFileSync(jsoncPath, "utf-8"))).toMatchObject({ defaultModel: "gpt-5.5" });
+		});
+	});
+
 	describe("preserves externally added settings", () => {
 		it("should preserve enabledModels when changing thinking level", async () => {
 			// Create initial settings file

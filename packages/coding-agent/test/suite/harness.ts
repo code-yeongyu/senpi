@@ -85,6 +85,8 @@ export interface HarnessOptions {
 	transportImageBudget?: { budgetBytes: number; alwaysKeepNewest: number };
 	modelsJson?: Record<string, unknown>;
 	fileSettings?: boolean;
+	settingsFileName?: "settings.json" | "settings.jsonc";
+	settingsContent?: string;
 }
 
 export interface Harness {
@@ -133,7 +135,10 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	const agentDir = join(tempDir, "agent");
 	if (options.fileSettings) {
 		mkdirSync(agentDir, { recursive: true });
-		writeFileSync(join(agentDir, "settings.json"), JSON.stringify(options.settings ?? {}, null, 2));
+		writeFileSync(
+			join(agentDir, options.settingsFileName ?? "settings.json"),
+			options.settingsContent ?? JSON.stringify(options.settings ?? {}, null, 2),
+		);
 	}
 	const settingsManager = options.fileSettings
 		? SettingsManager.create(tempDir, agentDir)
