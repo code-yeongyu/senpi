@@ -11,20 +11,23 @@ import {
 } from "./prepare-senpi-bundled-workspaces.mjs";
 import { buildPublishArgs } from "./publish-command.mjs";
 import { rewritePublishManifest } from "./publish-manifest.mjs";
+import { materializeMissingPublishRuntime } from "./materialize-publish-runtime.mjs";
+import { parseNpmPackJson } from "./npm-pack-json.mjs";
 
 // Source packages retain their upstream names and private guard. Registry-backed
 // packages are published from temporary manifests under our scope, while bundled-only
 // client/protocol imports keep their original @earendil-works keys in the Senpi tarball.
 //
 // @code-yeongyu/senpi-server remains excluded because it is `private: true`, and
-// @earendil-works/pi-storage-sqlite-node keeps upstream's independent semver line.
+// The sqlite session backend keeps upstream's independent semver line.
 const packages = [
 	{ directory: "packages/ai", name: "@code-yeongyu/senpi-ai", rewriteManifest: true },
 	{ directory: "packages/agent", name: "@code-yeongyu/senpi-agent-core", rewriteManifest: true },
 	{ directory: "packages/tui", name: "@code-yeongyu/senpi-tui", rewriteManifest: true },
 	{ directory: "packages/pty", name: "@code-yeongyu/senpi-pty", rewriteManifest: true },
+	{ directory: "packages/telemetry", name: "@code-yeongyu/senpi-telemetry", rewriteManifest: true },
 	{ directory: "packages/senpi-codemode", name: "@code-yeongyu/senpi-codemode", rewriteManifest: true },
-	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi" },
+	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi", rewriteManifest: true },
 ];
 const sourceOnlyPackages = new Set(["@code-yeongyu/senpi-codemode"]);
 const temporaryPublishDirectories = [];
@@ -95,11 +98,11 @@ function assertBuildOutputExists(directory) {
 	}
 }
 
-function validatePack(directory) {
+function validatePack(directory, sourceDirectory) {
 	const result = run("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], { capture: true, cwd: directory });
-	const packed = JSON.parse(result.stdout)[0];
+	const packed = parseNpmPackJson(result.stdout)[0];
 	const packageJson = readPackageJson(directory);
-	if (directory === "packages/coding-agent") {
+	if (sourceDirectory === "packages/coding-agent") {
 		assertSenpiPackedWorkspaceFiles(packed, {
 			runtimeDependencies: [
 				...Object.keys(packageJson.dependencies ?? {}),
@@ -154,8 +157,11 @@ if (versions.length !== 1) {
 	throw new Error(`Publish packages are not lockstep versioned: ${versions.join(", ")}`);
 }
 
+const publishArgs = dryRun ? undefined : buildPublishArgs({ githubActions: process.env.GITHUB_ACTIONS === "true" });
+
 console.log(`Publishing senpi packages at ${versions[0]}${dryRun ? " (dry run)" : ""}\n`);
 
+await materializeMissingPublishRuntime();
 prepareSenpiBundledWorkspaces();
 
 const packageStates = packages.map((pkg) => ({
@@ -174,7 +180,7 @@ for (const pkg of packageStates) {
 	} else {
 		console.log(`${pkg.name}@${pkg.version} is not published; validating package contents before publish.`);
 	}
-	validatePack(pkg.publishDirectory);
+	validatePack(pkg.publishDirectory, pkg.directory);
 	console.log();
 }
 
@@ -192,7 +198,7 @@ try {
 			continue;
 		}
 
-		run("npm", buildPublishArgs({ githubActions: process.env.GITHUB_ACTIONS === "true" }), {
+		run("npm", publishArgs, {
 			cwd: pkg.publishDirectory,
 		});
 		console.log();

@@ -35,6 +35,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { computeNextVersion } from "./calver.mjs";
+import { syncRemoteMainBeforePush } from "./release-git.mjs";
 import {
 	runGenerateImageModels,
 	runGenerateModels,
@@ -362,6 +363,7 @@ function main() {
 	stageChangedFiles(args.dryRun);
 	gitCommit("Add [Unreleased] section for next cycle", args.dryRun);
 
+	syncRemoteMainBeforePush(args.dryRun, runCommand, log, dryRunLog);
 	gitPush("main", args.dryRun);
 	gitPush(`v${version}`, args.dryRun);
 

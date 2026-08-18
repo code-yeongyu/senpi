@@ -13,6 +13,8 @@ export interface OpenAIResponsesCompat {
 	supportsRemoteCompactionV2?: boolean;
 	/** Whether the provider supports the native `web_search_preview` tool. */
 	supportsWebSearchPreview?: boolean;
+	/** Whether the provider supports the native `image_generation` tool. */
+	supportsImageGeneration?: boolean;
 	/** Whether the provider supports strict JSON-schema function tools. */
 	supportsStrictMode?: boolean;
 	/** Whether to emit OpenAI custom tools with Lark/regex grammar formats. */

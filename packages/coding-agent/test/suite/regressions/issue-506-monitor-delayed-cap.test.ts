@@ -15,7 +15,7 @@ import {
 	createSentMessageHarness,
 	makeGoalContext,
 	TestEventBus,
-	waitForGoalContinuationCount,
+	waitForEventCount,
 	waitForSentCount,
 } from "../goal-monitor-test-harness.ts";
 
@@ -91,9 +91,9 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 			goal: countedGoal,
 			messages: [assistantStopWithText("still waiting")],
 		});
-		const blockedGoalRecorded = waitForGoalContinuationCount(ctx, 0);
+		const guardTripped = waitForEventCount(events, "goal_continuation_guard_tripped", 1);
 		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
-		await blockedGoalRecorded;
+		await guardTripped;
 
 		expect(harness.sent).toHaveLength(1);
 		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({

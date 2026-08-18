@@ -46,6 +46,7 @@ type WatchProbe = {
 
 type FixtureOptions = {
 	readonly settingsContent?: string;
+	readonly settingsFileName?: "settings.json" | "settings.jsonc";
 	readonly withReload?: boolean;
 	readonly reload?: () => Promise<void>;
 	readonly extraFactories?: Array<(pi: ExtensionAPI) => void>;
@@ -128,7 +129,7 @@ async function settleChange(fixture: Fixture, path: string, filename: string | n
 async function createFixture(options: FixtureOptions = {}): Promise<Fixture> {
 	const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-extension-"));
 	agentDirs.push(agentDir);
-	const settingsPath = join(agentDir, "settings.json");
+	const settingsPath = join(agentDir, options.settingsFileName ?? "settings.json");
 	writeFileSync(settingsPath, options.settingsContent ?? '{"theme":"dark"}\n', "utf-8");
 	const watches = createWatchProbe();
 	const notifications: string[] = [];
@@ -248,6 +249,20 @@ describe("config reload builtin extension", () => {
 
 		writeFileSync(fixture.settingsPath, '{"theme":"light"}\n');
 		await settleChange(fixture, fixture.agentDir, "settings.json");
+
+		expect(fixture.reload).toHaveBeenCalledTimes(1);
+		expect(fixture.notifications.some((message) => message.startsWith("Hot-reloading:"))).toBe(true);
+	});
+
+	it("requests one reload for a valid JSONC settings change", async () => {
+		vi.useFakeTimers();
+		const fixture = await createFixture({
+			settingsFileName: "settings.jsonc",
+			settingsContent: '{ // initial\n "theme": "dark",\n}\n',
+		});
+
+		writeFileSync(fixture.settingsPath, '{ /* changed */\n "theme": "light",\n}\n');
+		await settleChange(fixture, fixture.agentDir, "settings.jsonc");
 
 		expect(fixture.reload).toHaveBeenCalledTimes(1);
 		expect(fixture.notifications.some((message) => message.startsWith("Hot-reloading:"))).toBe(true);
@@ -578,7 +593,6 @@ describe("config reload builtin extension", () => {
 		["string", '"x"'],
 		["number", "5"],
 		["array", "[]"],
-		["comments", "// not JSON\n{}"],
 	] as const) {
 		it(`rejects a ${label} settings.json root before reload`, async () => {
 			vi.useFakeTimers();
@@ -698,6 +712,71 @@ describe("config reload builtin extension", () => {
 		});
 		expect(watches.subscribeCalls).not.toContain(restrictedDir);
 		expect(watches.activeListenerCount(restrictedDir)).toBe(0);
+	});
+
+	it("accepts an agent-dir watch whose filters are all root-anchored and non-protected", async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-filtered-agent-"));
+		agentDirs.push(agentDir);
+		writeJson(join(agentDir, "settings.json"), { theme: "dark" });
+		writeJson(join(agentDir, "auth.json"), { token: "secret" });
+		mkdirSync(join(agentDir, "sessions"), { recursive: true });
+		const bus = createEventBus();
+		const watches = createWatchProbe();
+		const extension = createManualExtension(bus);
+		configReloadExtension(extension.api, { agentDir, subscribe: watches.subscribe, logger: silentLogger() });
+		await invoke(
+			extension.handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+			fakeContext({ cwd: agentDir }),
+		);
+		const rejected: unknown[] = [];
+		bus.on(CONFIG_WATCH_REJECTED, (payload) => rejected.push(payload));
+
+		bus.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo",
+			displayName: ".omo config",
+			targets: [{ path: agentDir, kind: "dir" as const, filterGlobs: ["/omo.jsonc", "/omo.json"] }],
+		});
+
+		expect(rejected).toHaveLength(0);
+	});
+
+	it("still rejects unfiltered, unanchored, and protected agent-dir watches", async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-filtered-reject-"));
+		agentDirs.push(agentDir);
+		writeJson(join(agentDir, "settings.json"), { theme: "dark" });
+		const bus = createEventBus();
+		const watches = createWatchProbe();
+		const extension = createManualExtension(bus);
+		configReloadExtension(extension.api, { agentDir, subscribe: watches.subscribe, logger: silentLogger() });
+		await invoke(
+			extension.handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+			fakeContext({ cwd: agentDir }),
+		);
+		const rejected: unknown[] = [];
+		bus.on(CONFIG_WATCH_REJECTED, (payload) => rejected.push(payload));
+
+		const cases: Array<{ id: string; filterGlobs?: string[] }> = [
+			{ id: "unfiltered" }, // no filterGlobs at all
+			{ id: "unanchored", filterGlobs: ["omo.json"] }, // matches at any depth
+			{ id: "protected-auth", filterGlobs: ["/auth.json"] },
+			{ id: "protected-sessions", filterGlobs: ["/sessions"] },
+			{ id: "mixed", filterGlobs: ["/omo.jsonc", "/auth.json"] }, // one protected member
+		];
+		for (const c of cases) {
+			bus.emit(CONFIG_WATCH_REGISTER, {
+				id: c.id,
+				displayName: c.id,
+				targets: [
+					{ path: agentDir, kind: "dir" as const, ...(c.filterGlobs ? { filterGlobs: c.filterGlobs } : {}) },
+				],
+			});
+		}
+
+		expect(rejected).toHaveLength(cases.length);
 	});
 
 	it("processes a re-registration with a changed target after a rejection", async () => {
@@ -959,8 +1038,8 @@ describe("config reload builtin extension", () => {
 
 		const compaction = harness.session.compact();
 		await compactEvent.promise;
-		expect(harness.session.isCompacting).toBe(true);
-		expect(reload).not.toHaveBeenCalled();
+		expect(harness.session.isCompacting).toBe(false);
+		expect(reload).toHaveBeenCalledTimes(1);
 		await compaction;
 		expect(harness.session.isCompacting).toBe(false);
 

@@ -21,6 +21,7 @@ import { McpService } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { registerMcpServiceDirectTools } from "../../src/core/extensions/builtin/mcp/service-register.ts";
 import type { McpConnectionEntry } from "../../src/core/extensions/builtin/mcp/service-types.ts";
 import { connectAndRefreshMcpCatalog } from "../../src/core/extensions/builtin/mcp/startup-race.ts";
+import { ToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
 import { capturingPi, registeredTool, testContext, textContent } from "./fixtures/register-call.ts";
 import { waitForCondition } from "./fixtures/service-lifecycle.ts";
 import { type IdpFixture, spawnOAuthIdp } from "./fixtures/spawn-idp.ts";
@@ -316,6 +317,11 @@ describe("headless oauth flows", () => {
 				settings: { outputGuard: { maxBytes: 50 * 1024, maxLines: 2000 }, searchThreshold: 10, toolPrefix: "mcp" },
 			},
 			[entry],
+			new ToolSearchService({
+				getAllTools: () => [],
+				getActiveTools: () => pi.getActiveTools(),
+				setActiveTools: (names) => pi.setActiveTools([...names]),
+			}),
 		);
 		await harness.store.update((current) => ({ ...current, expiresAt: Date.now() + 60_000 }));
 		const tool = registeredTool(pi, "mcp_fix_tool_1");

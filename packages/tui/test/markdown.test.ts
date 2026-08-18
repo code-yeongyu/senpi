@@ -4,9 +4,9 @@ import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Chalk } from "chalk";
 import { latexToUnicode } from "../src/components/latex.ts";
 import { Markdown } from "../src/components/markdown.ts";
-import { TuiMainScreen } from "../src/TuiMainScreen.ts";
 import { resetCapabilitiesCache, setCapabilities } from "../src/terminal-image.ts";
 import { type Component, TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { visibleWidth } from "../src/utils.ts";
 import { defaultMarkdownTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
@@ -1448,6 +1448,17 @@ bar`,
 	});
 
 	describe("LaTeX math", () => {
+		it("allows LaTeX rendering to be disabled", () => {
+			const markdown = new Markdown("Energy is $E=mc^2$.", 0, 0, defaultMarkdownTheme, undefined, {
+				renderLatex: false,
+			});
+
+			assert.deepStrictEqual(
+				markdown.render(80).map((line) => stripAnsi(line).trimEnd()),
+				["Energy is $E=mc^2$."],
+			);
+		});
+
 		it("LaTeX renders inline and display math", () => {
 			const markdown = new Markdown("Energy is $E=mc^2$.\n\n$$\\int_0^1 x^2 dx$$", 0, 0, defaultMarkdownTheme);
 

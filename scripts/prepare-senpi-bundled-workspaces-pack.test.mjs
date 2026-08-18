@@ -17,6 +17,13 @@ function clientProtocolFiles(prefix = "package/") {
 	];
 }
 
+function telemetryFiles(prefix = "package/") {
+	return [
+		{ path: `${prefix}node_modules/@earendil-works/pi-telemetry/package.json` },
+		{ path: `${prefix}node_modules/@earendil-works/pi-telemetry/dist/index.js` },
+	];
+}
+
 describe("assertSenpiPackedWorkspaceFiles", () => {
 	it("keeps client and protocol outside bundled workspace checks", () => {
 		const packageNames = bundledWorkspacePackageChecks().map((check) => check.packageName);
@@ -56,10 +63,12 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 			files: [
 				{ path: "package/dist/cli.js" },
 				...clientProtocolFiles(),
+				...telemetryFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/dist/index.js" },
+				...telemetryFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-pty/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-pty/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-pty/native/index.js" },
@@ -87,10 +96,12 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 			files: [
 				{ path: "package/dist/cli.js" },
 				...clientProtocolFiles(),
+				...telemetryFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/dist/index.js" },
+				...telemetryFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-pty/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-pty/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-pty/native/index.js" },
@@ -120,11 +131,13 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 			files: [
 				{ path: "package/dist/cli.js" },
 				...clientProtocolFiles(),
+				...telemetryFiles(),
 				{ path: "package/npm-shrinkwrap.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/dist/index.js" },
+				...telemetryFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-pty/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-pty/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-pty/native/index.js" },
@@ -151,6 +164,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 			files: [
 				{ path: "package/dist/cli.js" },
 				...clientProtocolFiles(),
+				...telemetryFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
@@ -178,6 +192,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 			files: [
 				{ path: "dist/cli.js" },
 				...clientProtocolFiles(""),
+				...telemetryFiles(""),
 				{ path: "node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "node_modules/@earendil-works/pi-ai/package.json" },
@@ -204,6 +219,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 			files: [
 				{ path: "package/dist/cli.js" },
 				...clientProtocolFiles(),
+				...telemetryFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
@@ -228,6 +244,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 			files: [
 				{ path: "package/dist/cli.js" },
 				...clientProtocolFiles(),
+				...telemetryFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
@@ -264,6 +281,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/dist/index.js" },
+				...telemetryFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-pty/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-pty/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-pty/native/index.js" },

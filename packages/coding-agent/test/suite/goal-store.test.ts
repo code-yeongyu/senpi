@@ -773,6 +773,37 @@ describe("goal store (budget-free)", () => {
 		expect(completed.lastStartedAt).toBeUndefined();
 	});
 
+	it("lets a user resume a completed goal as the same active goal", async () => {
+		const ref = await tempStore("thread-resume-complete");
+		const created = await createGoal(ref, "Resume completed work");
+		const completed = await updateGoal(ref, { status: "complete" });
+		await recordContinuationDelivered(ref, `${created.id}:completed`);
+
+		const resumed = await updateGoal(ref, { status: "active" }, "user");
+
+		expect(resumed).toMatchObject({
+			id: created.id,
+			objective: created.objective,
+			status: "active",
+			consecutiveContinuations: 0,
+		});
+		expect(resumed.completedAt).toBeUndefined();
+		expect(resumed.lastStartedAt).toBeGreaterThan(completed.updatedAt);
+		expect(resumed.lastContinuationSignature).toBeUndefined();
+		expect(await readGoal(ref)).toEqual(resumed);
+	});
+
+	it("still rejects pausing a completed goal", async () => {
+		const ref = await tempStore("thread-pause-complete");
+		await createGoal(ref, "Keep completion terminal by default");
+		await updateGoal(ref, { status: "complete" });
+
+		await expect(updateGoal(ref, { status: "paused" }, "user")).rejects.toThrow(
+			"illegal goal transition: complete -> paused",
+		);
+		expect((await readGoal(ref))?.status).toBe("complete");
+	});
+
 	it("clears the store while preserving the versioned file", async () => {
 		const ref = await tempStore();
 		await createGoal(ref, "Temporary");

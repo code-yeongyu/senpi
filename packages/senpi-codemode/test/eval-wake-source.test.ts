@@ -268,7 +268,7 @@ describe("wake source liveness wiring", () => {
 
 		kernel.completeDeferredRun(result("wire-cell", "42"));
 		await vi.waitFor(() =>
-			expect(busEmissions.at(-1)).toEqual({
+			expect(busEmissions.filter((emission) => emission.name === "wake_source_state").at(-1)).toEqual({
 				name: "wake_source_state",
 				data: { source: "senpi-codemode", activeCount: 0, items: [] },
 			}),

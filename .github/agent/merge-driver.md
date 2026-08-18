@@ -1,5 +1,13 @@
 # Upstream merge + changelog driver
 
+## Release-history and lock invariants
+
+- Preserve every released fork CalVer section byte-for-byte in package `CHANGELOG.md` files.
+- Preserve exactly one top-level `[Unreleased]` section per package. Translate adopted upstream release notes into
+  that section; never insert upstream SemVer headings into the fork's released history.
+- Treat generated dependency locks as integrity artifacts: every external npm entry must retain its `resolved`
+  tarball URL and `integrity` hash, and generators must produce identical hashes on consecutive runs.
+
 You are Codex running headless inside GitHub Actions on the `senpi` fork
 (`code-yeongyu/senpi`). Your job is to integrate the latest upstream release from
 `badlogic/pi-mono`, audit changelogs, and leave a PR-ready automation branch. Work only in

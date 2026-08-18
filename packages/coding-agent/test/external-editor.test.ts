@@ -21,10 +21,22 @@ async function runExternalEditor(fixtureFlag?: "--fail" | "--empty"): Promise<{
 	const testDirectory = mkdtempSync(join(tmpdir(), "pi-external-editor-test-"));
 	const capturePath = join(testDirectory, "capture.json");
 	try {
-		const result = await editInExternalEditor({
-			command: `${process.execPath} ${editorFixturePath} ${capturePath}${fixtureFlag ? ` ${fixtureFlag}` : ""}`,
-			content: "original",
-		});
+		// These cases exercise editor-exit behavior. Launch-failure behavior has its own
+		// real-OS regression below. Under full-suite subprocess pressure, a transient
+		// EAGAIN can prevent the fixture from starting and therefore from writing its
+		// capture file, so retry only that distinct pre-launch result.
+		let result: ExternalEditorResult;
+		let attempts = 0;
+		do {
+			result = await editInExternalEditor({
+				command: `${process.execPath} ${editorFixturePath} ${capturePath}${fixtureFlag ? ` ${fixtureFlag}` : ""}`,
+				content: "original",
+			});
+			attempts += 1;
+		} while (result.status === "launch-failed" && attempts < 3);
+		if (result.status === "launch-failed") {
+			throw new Error(`Editor could not launch after ${attempts} attempts`);
+		}
 		const capture = JSON.parse(readFileSync(capturePath, "utf-8")) as EditorCapture;
 		return { result, capture };
 	} finally {
@@ -59,5 +71,27 @@ describe("editInExternalEditor", () => {
 		const { result } = await runExternalEditor("--empty");
 
 		expect(result).toEqual({ status: "complete", content: "" });
+	});
+
+	it("reports when the editor cannot launch", async () => {
+		const previousComSpec = process.env.ComSpec;
+		if (process.platform === "win32") {
+			process.env.ComSpec = "Z:\\senpi-missing-command-shell.exe";
+		}
+		let result: ExternalEditorResult;
+		try {
+			result = await editInExternalEditor({
+				command: join(tmpdir(), "senpi-missing-external-editor"),
+				content: "original",
+			});
+		} finally {
+			if (previousComSpec === undefined) {
+				delete process.env.ComSpec;
+			} else {
+				process.env.ComSpec = previousComSpec;
+			}
+		}
+
+		expect(result).toEqual({ status: "launch-failed" });
 	});
 });

@@ -149,6 +149,7 @@ export function createAssistantRenderDescriptors(
 		case "pending":
 		case "stop":
 		case "toolUse":
+		case "deferred":
 			break;
 		default:
 			assertNever(message.stopReason);

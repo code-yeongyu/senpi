@@ -1,5 +1,60 @@
 # changes.md — ai
 
+> Audit backfill (2026-08-17): the entry below was recorded during the repository-wide changes.md audit
+> of divergences from the upstream pin (v0.84.2, `914cf1472e`) so its audited production paths carry a
+> canonical four-section record; it is dated by its underlying work.
+
+## Catalog generation and data validation audit backfill (2026-08-17)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: carries the fork's accumulated generator divergences from the
+  pinned upstream v0.84.2 script: OpenAI `-fast` priority-tier emission (`OPENAI_PRIORITY_TIER_MODEL_IDS`
+  cloning eligible `openai` models with `upstreamModelId` plus `serviceTier: "priority"`), Kimi Coding
+  fallback metadata that live models.dev data may override but not silently remove, Anthropic Opus 5
+  adaptive-thinking and temperature-unsupported markers, the literal `anthropic/`/`qwen/`/`google/`
+  cache-control prefix allowlist shared with runtime detection, GLM 5.3 catalog cloning (`isGlm5x` across
+  zai, OpenRouter, Fireworks, opencode-go), DashScope `qwen*` families pinned to
+  `thinkingFormat: "qwen"` (top-level `enable_thinking`), and the PR #892 provider-metadata refresh
+  (`supportsAdditionalTools` on OpenAI/Codex entries, native DeepSeek `maxTokensField`, Cloudflare
+  Responses `supportsStrictMode`, DeepSeek V4 Flash `low` reasoning effort).
+- `packages/ai/scripts/generate-models.ts`: `glm-5.3` was added to
+  `QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS` with the GLM 5.3 expansion and removed again the same day
+  (2026-08-16): models.dev does not yet publish GLM 5.3 for that provider, so the strict allowlist
+  validation (exact model-ID match plus the strict-generation error assertion) failed. The other 24
+  `glm-5.3` entries across 17 provider data files remain because only this provider carries the strict
+  models.dev allowlist.
+- `packages/ai/scripts/generate-image-models.ts`: beside the live OpenRouter fetch, the generator emits
+  static hand-authored `IMAGE_MODELS.openai` entries (`gpt-image-2`, `gpt-image-1.5`; text-only input for
+  the v1 generations endpoint; models.dev-quoted costs, zero-filled where unpublished). Serialization was
+  generalized over `ImagesApi` (`serializeImageModel()`) so the OpenRouter-only emitter became a
+  multi-provider emitter.
+- `packages/ai/scripts/model-data.ts`: the shared schema/load validator accepts `"video"` as a valid
+  model input modality beside `"text"` and `"image"`.
+
+### Why
+
+- The generated catalog is committed, reviewed source: regeneration must reproduce the fork's capability
+  metadata (priority tiers, thinking maps, fallback entries) or typed model IDs and regressions drift and
+  release generation fails static validation. The strict qwen-token-plan-individual allowlist exists
+  precisely to catch unpublished IDs, which is why the GLM 5.3 addition had to be reverted rather than
+  kept. OpenAI publishes no image-model catalog endpoint, so its image entries must be authored inside
+  the generator, and the data validator must accept the `video` modality the Kimi K3 catalog entries
+  declare or `check:model-data` rejects committed data.
+
+### Why an extension could not handle it
+
+- Model inventory and image catalogs are generated build-time data inside `packages/ai`; the coding-agent
+  extension runtime loads after generation and cannot add typed catalog entries, alter generation
+  allowlists, or relax the committed-data validator.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` provider-metadata blocks (GLM, Kimi, Opus 5, qwen,
+  OpenAI priority tiers) whenever upstream regenerates or extends the same generator sites.
+- LOW: `packages/ai/scripts/generate-image-models.ts` static OpenAI table and shared serializer.
+- LOW: `packages/ai/scripts/model-data.ts` modality validation list.
+
 ## Follow Groq Qwen catalog replacement during generation (2026-08-04)
 
 ### What changed
@@ -116,7 +171,7 @@
 - `src/utils/prompt-cache-ttl.ts` (new): `resolvePromptCacheTtlSeconds(model, env?) -> number | undefined`
   plus `PROMPT_CACHE_TTL_SHORT_SECONDS` (300) / `PROMPT_CACHE_TTL_LONG_SECONDS` (3600). It mirrors EACH
   target API's own `resolveCacheRetention` precedence verbatim rather than inventing a unified one:
-  anthropic-messages falls back to `"long"` and honors the bare `process.env.PI_CACHE_RETENTION`
+  anthropic-messages falls back to `"short"` and honors the bare `process.env.PI_CACHE_RETENTION`
   set-but-not-long branch; openai-completions / openai-responses / bedrock fall back to `"short"`;
   pi-messages returns `undefined` (backend default). Retention `"none"` and every API with unknown cache
   semantics (google, mistral, pi-messages, unknown) resolve to `undefined`.

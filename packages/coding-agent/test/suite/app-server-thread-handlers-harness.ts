@@ -23,6 +23,7 @@ type HarnessOptions = Pick<ThreadRegistryOptions, "createSession"> &
 	Pick<ThreadLifecycleHandlersOptions, "deferUntilResponded">;
 
 export const roots: string[] = [];
+const threadRegistries = new Set<ThreadRegistry>();
 
 export class FakeConnection implements RoutableConnection, RegistryConnection {
 	readonly id: string;
@@ -48,6 +49,8 @@ export async function scratchRoot(): Promise<string> {
 }
 
 export async function cleanupRoots(): Promise<void> {
+	await Promise.all([...threadRegistries].map((threads) => threads.dispose()));
+	threadRegistries.clear();
 	while (roots.length > 0) {
 		const root = roots.pop();
 		if (root) {
@@ -86,6 +89,7 @@ export function createHarnessForRoot(
 		sessionDir: join(root, "sessions"),
 		createSession: options.createSession,
 	});
+	threadRegistries.add(threads);
 	const notifications = new NotificationRouter({ connections: [connection] });
 	const registry = createRegistry();
 	const turnLog = new TurnLog();

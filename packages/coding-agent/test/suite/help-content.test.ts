@@ -106,7 +106,9 @@ describe("buildHelpMarkdown", () => {
 		expect(keybindings).toContain(`| \`${remappedThinkingKey}\` | Cycle thinking level |`);
 		expect(keybindings.toLowerCase()).not.toContain("shift+tab");
 		expect(commands).toContain(`/favorite-models — Manage favorite models for ${remappedModelKey} cycling`);
-		expect(commands).not.toContain("Ctrl+P");
+		const favoriteModelsLine = commands.split("\n").find((line) => line.includes("/favorite-models"));
+		expect(favoriteModelsLine).toBeDefined();
+		expect(favoriteModelsLine).not.toContain("Ctrl+P");
 	});
 
 	it("lists every builtin when no extension commands are provided", () => {

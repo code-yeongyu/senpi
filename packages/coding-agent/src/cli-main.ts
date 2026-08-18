@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "./valid-cwd.ts";
 import { APP_NAME } from "./config.ts";
 import { scrubBrandFromEnvironment } from "./core/brand.ts";
 import { configureHttpDispatcher } from "./core/http-dispatcher.ts";

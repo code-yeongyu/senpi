@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "../../../types.ts";
+import type { ToolSearchService } from "../../tool-search/service.ts";
 import { cachedToolsToCatalogEntries, collectToolCatalog, type McpToolCatalogEntry } from "../catalog.ts";
 import type { McpCachedServerCatalog } from "../catalog-cache.ts";
 import type { ResolvedMcpConfig } from "../config-schema.ts";
@@ -31,6 +32,7 @@ export async function registerDirectMcpTools(
 	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
 	config: ResolvedMcpConfig,
 	entries: Iterable<McpDirectRegistrationEntry>,
+	toolSearchService: ToolSearchService,
 	options: McpCatalogRegistrationOptions = {},
 ): Promise<McpSessionRegistration | undefined> {
 	const registeredEntries: McpToolCatalogEntry[] = [];
@@ -107,6 +109,7 @@ export async function registerDirectMcpTools(
 	const registration = registerMcpTierBTools(
 		pi,
 		{ activeEntries, proxyGateways, registeredEntries, searchMode, settings: config.settings, utilityTools },
+		toolSearchService,
 		(message) => createMcpLogger("service").warn(message),
 	);
 	return { ...registration, promptServers, resourceServers };

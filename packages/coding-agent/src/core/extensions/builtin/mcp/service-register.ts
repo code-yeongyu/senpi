@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "../../types.ts";
+import type { ToolSearchService } from "../tool-search/service.ts";
 import type { ResolvedMcpConfig } from "./config-schema.ts";
 import type { McpSessionRegistration } from "./expose/session.ts";
 import { registerDirectMcpTools } from "./expose/session.ts";
@@ -15,6 +16,7 @@ export async function registerMcpServiceDirectTools(
 	pi: McpToolRegistrar,
 	config: ResolvedMcpConfig,
 	entries: Iterable<McpConnectionEntry>,
+	toolSearchService: ToolSearchService,
 	options: McpServiceDirectToolRegistrationOptions = {},
 ): Promise<McpSessionRegistration | undefined> {
 	return await registerDirectMcpTools(
@@ -33,6 +35,7 @@ export async function registerMcpServiceDirectTools(
 				name: entry.name,
 			};
 		}),
+		toolSearchService,
 		options,
 	);
 }

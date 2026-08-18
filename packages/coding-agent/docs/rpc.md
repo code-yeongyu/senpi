@@ -17,6 +17,20 @@ Common options:
 - `--no-session`: Disable session persistence
 - `--session-dir <path>`: Custom session storage directory
 
+### Client capabilities
+
+Optional additive records are enabled through the comma-separated
+`SENPI_RPC_CLIENT_CAPABILITIES` environment variable:
+
+```bash
+SENPI_RPC_CLIENT_CAPABILITIES=extension_events senpi --mode rpc
+```
+
+Rebranded distributions read the equivalent variable under their configured environment prefix
+(for example `OMO_RPC_CLIENT_CAPABILITIES`). Unknown capability names are ignored. Advertising
+`extension_events` opts the client into generic extension-owned event records; clients that omit it
+retain the previous wire stream unchanged.
+
 ## Multi-session mode (D1 wire protocol)
 
 Multi-session mode lets one `senpi --mode rpc` process serve several independent conversations concurrently over the same stdio JSONL stream. Classic single-session mode is byte-identical to today; the only additive classic-mode behavior is that `get_protocol_info` is answered.
@@ -83,6 +97,9 @@ This matters for clients:
 - Split records on `\n` only
 - Accept optional `\r\n` input by stripping a trailing `\r`
 - Do not use generic line readers that treat Unicode separators as newlines
+- Send JSON objects only; valid JSON primitives and arrays receive a parse-style error response
+- Keep each encoded input record at or below 16,777,216 characters. Oversized records receive one parse-style error,
+  are discarded through the next LF, and do not desynchronize following records
 
 In particular, Node `readline` is not protocol-compliant for RPC mode because it also splits on `U+2028` and `U+2029`, which are valid inside JSON strings.
 
@@ -122,7 +139,9 @@ Queued prompts cannot include `thinkingLevel`; wait for the current turn to comp
 
 **Extension commands**: If the message is an extension command (e.g., `/mycommand`), it executes immediately even during streaming. Extension commands manage their own LLM interaction via `pi.sendMessage()`.
 
-**Input expansion**: Skill commands (`/skill:name`) and prompt templates (`/template`) are expanded before sending/queueing.
+**Input expansion**: Leading skill tokens (`/skill:name`, `$name`, or `$skill:name`), inline explicit
+desktop skill tokens (`$skill:name`), and prompt templates (`/template`) are expanded before
+sending/queueing. Bare inline dollar text remains literal.
 
 Response:
 ```json
@@ -132,6 +151,8 @@ Response:
 `success: true` means the prompt was accepted, queued, or handled immediately. `success: false` means the prompt was rejected before acceptance. Failures after acceptance are reported through the normal event and message stream, not as a second `response` for the same request id.
 
 The `images` field is optional. Each image uses `ImageContent` format: `{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}`.
+The `message` field for `prompt`, `steer`, and `follow_up` is limited to 1,000,000 characters;
+image payloads are not counted toward this text limit.
 
 #### steer
 
@@ -232,6 +253,8 @@ Response:
   "data": {
     "model": {...},
     "thinkingLevel": "medium",
+    "serviceTier": "priority",
+    "fastMode": true,
     "isStreaming": false,
     "isCompacting": false,
     "steeringMode": "all",
@@ -247,6 +270,8 @@ Response:
 ```
 
 The `model` field is a full [Model](#model) object or `null`. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
+
+`serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
 
 #### get_messages
 
@@ -351,8 +376,18 @@ Response:
 {"type": "response", "command": "set_thinking_level", "success": true}
 ```
 
-Pass `"scope": "turn"` to change only the current session level without rewriting the global default. The command
-returns an error when the active model cannot apply the requested level.
+Pass `"scope": "turn"` to change only the current session level without rewriting the model's remembered level. The
+command returns an error when the active model cannot apply the requested level, and a rejected request leaves the
+session level unchanged — a failed `set_thinking_level` never mutates state.
+
+```json
+{
+  "type": "response",
+  "command": "set_thinking_level",
+  "success": false,
+  "error": "Thinking level low is not supported by the active model."
+}
+```
 
 #### cycle_thinking_level
 
@@ -391,6 +426,67 @@ Response:
   }
 }
 ```
+
+### Fast mode
+
+#### set_fast_mode
+
+Turn fast mode (the OpenAI Codex `priority` service tier) on or off for the active model. The choice is remembered
+per model, so a later session on the same model starts the same way; `enabled: false` records an explicit `"auto"`
+so it also overrides a tier inherited from the model catalog.
+
+```json
+{"type": "set_fast_mode", "enabled": true}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "set_fast_mode",
+  "success": true,
+  "data": {
+    "enabled": true,
+    "serviceTier": "priority",
+    "provider": "openai-codex",
+    "modelId": "gpt-5.6-sol"
+  }
+}
+```
+
+`serviceTier` is the tier just recorded for the model (`"priority"` on, `"auto"` off). `provider`/`modelId` identify
+the model the preference was stored under: a `-fast` catalog variant and its base model share one entry, so the
+reported id can be the base model rather than the model that was active.
+
+The command returns an error instead of a silent no-op when the request cannot be applied:
+
+| Situation | `error` |
+|-----------|---------|
+| Active model is not an OpenAI Codex model | `Fast mode is only available for OpenAI Codex models.` |
+| `enabled: false` while the model selection pins `:priority` | `Fast mode is fixed by the active model selection's priority tier.` |
+| `enabled` is not a boolean | `set_fast_mode requires a boolean 'enabled' field.` |
+
+A successful call emits a [`service_tier_changed`](#service_tier_changed) event.
+
+#### get_fast_mode
+
+Read the current fast-mode state.
+
+```json
+{"type": "get_fast_mode"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_fast_mode",
+  "success": true,
+  "data": {"enabled": true, "serviceTier": "priority"}
+}
+```
+
+`serviceTier` is `null` when no tier applies. It matches `get_state.serviceTier`.
 
 ### Queue Modes
 
@@ -851,7 +947,8 @@ The current session name is available via `get_state` in the `sessionName` field
 
 #### get_commands
 
-Get available commands (extension commands, prompt templates, and skills). These can be invoked via the `prompt` command by prefixing with `/`.
+Get the ordered command surface (extension commands, prompt templates, and skills). Extension and prompt rows are
+invoked through `prompt` with `/name`; skill rows use `$name` or the compatibility form `/skill:name`.
 
 ```json
 {"type": "get_commands"}
@@ -865,17 +962,18 @@ Response:
   "success": true,
   "data": {
     "commands": [
-      {"name": "session-name", "description": "Set or clear session name", "source": "extension", "sourceInfo": {"path": "/home/user/.senpi/agent/extensions/session.ts", "source": "auto", "scope": "user", "origin": "top-level"}},
-      {"name": "fix-tests", "description": "Fix failing tests", "source": "prompt", "sourceInfo": {"path": "/home/user/myproject/.senpi/prompts/fix-tests.md", "source": "auto", "scope": "project", "origin": "top-level"}},
-      {"name": "skill:brave-search", "description": "Web search via Brave API", "source": "skill", "sourceInfo": {"path": "/home/user/.senpi/agent/skills/brave-search/SKILL.md", "source": "auto", "scope": "user", "origin": "top-level"}}
+      {"name": "session-name", "description": "Set or clear session name", "source": "extension", "syntax": "slash", "sourceInfo": {"path": "/home/user/.senpi/agent/extensions/session.ts", "source": "auto", "scope": "user", "origin": "top-level"}},
+      {"name": "fix-tests", "description": "Fix failing tests", "source": "prompt", "syntax": "slash", "sourceInfo": {"path": "/home/user/myproject/.senpi/prompts/fix-tests.md", "source": "auto", "scope": "project", "origin": "top-level"}},
+      {"name": "skill:brave-search", "description": "Web search via Brave API", "source": "skill", "syntax": "dollar", "sourceInfo": {"path": "/home/user/.senpi/agent/skills/brave-search/SKILL.md", "source": "auto", "scope": "user", "origin": "top-level"}}
     ]
   }
 }
 ```
 
 Each command has:
-- `name`: Command name (invoke with `/name`)
+- `name`: Command identity without its leading invocation marker
 - `description`: Human-readable description (optional for extension commands)
+- `syntax`: Canonical marker clients should insert (`"slash"` for extension/prompt rows, `"dollar"` for skills)
 - `source`: What kind of command:
   - `"extension"`: Registered via `pi.registerCommand()` in an extension
   - `"prompt"`: Loaded from a prompt template `.md` file
@@ -888,6 +986,88 @@ Each command has:
   - `baseDir`: Base directory of the owning resource (optional)
 
 **Note**: Built-in TUI commands (`/settings`, `/hotkeys`, etc.) are not included. They are handled only in interactive mode and would not execute if sent via `prompt`.
+
+#### get_loaded_surfaces
+
+Get the extensions and MCP servers loaded by the active runtime. Skills remain available through `get_commands`, where each loaded skill is represented by one `source: "skill"` row.
+
+```json
+{"type": "get_loaded_surfaces"}
+```
+
+Response:
+
+```json
+{
+  "type": "response",
+  "command": "get_loaded_surfaces",
+  "success": true,
+  "data": {
+    "extensions": [
+      {
+        "name": "my-extension",
+        "path": "/home/user/.senpi/agent/extensions/my-extension.ts",
+        "sourceInfo": {
+          "path": "/home/user/.senpi/agent/extensions/my-extension.ts",
+          "source": "auto",
+          "scope": "user",
+          "origin": "top-level"
+        },
+        "enabled": true
+      }
+    ],
+    "mcpServers": [
+      {
+        "name": "filesystem",
+        "toolCount": 12,
+        "status": "connected",
+        "authStatus": "unsupported"
+      }
+    ]
+  }
+}
+```
+
+Extension rows come directly from the session's loaded resource inventory, not from registered slash commands. A commandless extension therefore appears once, and an extension registering several commands is not duplicated. MCP rows come from the live session-owned MCP service and expose its current server state, listed tool count, and non-secret auth status.
+
+In multi-session mode this is a session-scoped command and requires the routing `sessionId`.
+
+### extension_request
+
+Invoke a request handler registered by an extension through `pi.rpc.handle(name, handler)`:
+
+```json
+{
+  "id": "req-42",
+  "type": "extension_request",
+  "name": "acme.job.cancel",
+  "data": {
+    "jobId": "job-42"
+  }
+}
+```
+
+Success returns the extension-owned structured value:
+
+```json
+{
+  "id": "req-42",
+  "type": "response",
+  "command": "extension_request",
+  "success": true,
+  "data": {
+    "cancelled": true
+  }
+}
+```
+
+The request `name` must resolve to exactly one handler in the active extension generation.
+Unknown names, duplicate names, stale generations, handler failures, and empty names return the
+normal `{ type: "response", success: false, error }` envelope. Senpi treats request and response
+data as opaque; the owning extension and client must validate their payloads.
+
+In multi-session mode this command requires the owning routing `sessionId`. The response receives
+the same `sessionId`, and another session's extension handlers are never consulted.
 
 ## Events
 
@@ -918,6 +1098,67 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `summarization_retry_attempt_start` | Retried summarization request starts |
 | `summarization_retry_finished` | Summarization retry loop completes |
 | `extension_error` | Extension threw an error |
+| `extension_event` | Capability-gated extension-owned event (`extension_events` clients only) |
+| `commands_changed` | Ordered command/skill candidate snapshot changed |
+| `command_invocation` | Accepted extension-command or prompt-template invocation metadata |
+| `skill_invocation` | Ordered explicit skill metadata after prompt expansion |
+| `loaded_surfaces_changed` | Loaded skills, extensions, or MCP inventory changed; re-read `get_commands` and `get_loaded_surfaces` |
+| `model_changed` | Active model changed (any source), with the thinking level in force afterwards |
+| `service_tier_changed` | Effective service tier or fast-mode state changed |
+
+Event types are additive: a client that does not recognise a type must ignore that record rather than fail. `model_changed`
+and `service_tier_changed` were added after the initial protocol and are safe to ignore.
+
+### model_changed
+
+Emitted after the session's active model changed, whatever caused it: a `set_model` or `cycle_model` command, a slash
+command, a retry fallback, or a session restore.
+
+```json
+{
+  "type": "model_changed",
+  "model": {"provider": "openai-codex", "id": "gpt-5.6-sol", "...": "..."},
+  "thinkingLevel": "xhigh",
+  "source": "cycle"
+}
+```
+
+`model` is a full [Model](#model) object. `thinkingLevel` is the level in force **after** the switch — each model
+remembers its own level, so this is that model's restored level (clamped to what it supports), not the level the
+previous model was using. `source` is one of `"set"`, `"cycle"`, `"restore"`, `"fallback"`, or `"fallback-revert"`.
+
+Clients that previously inferred the active model from `entry_appended` records can consume this instead.
+
+### service_tier_changed
+
+Emitted when the tier requests would carry, or the fast-mode indicator, changes — a `set_fast_mode` command, the
+`/fast` slash command, or a model switch that resolves a different tier.
+
+```json
+{"type": "service_tier_changed", "tier": "priority", "fastMode": true}
+```
+
+`tier` is omitted when no tier applies. The pair matches `get_state.serviceTier` / `get_state.fastMode`.
+
+### extension_event
+
+Emitted when an extension calls `pi.rpc.emit(name, data)` and the client advertised
+`extension_events`:
+
+```json
+{
+  "type": "extension_event",
+  "name": "acme.job.updated",
+  "data": {
+    "jobId": "job-42",
+    "status": "running"
+  }
+}
+```
+
+`name` is extension-owned and `data` is opaque to Senpi. Consumers should validate the payload for
+the specific event name before applying it. In multi-session mode the record also includes the
+routing `sessionId`; delivery preserves the owning session and per-session event order.
 
 ### agent_start
 
@@ -941,7 +1182,7 @@ Emitted when one low-level agent run completes. Contains all messages generated 
 
 ### agent_settled
 
-Emitted after the full session-level run settles. At this point Pi will not continue automatically through retry, compaction retry, or queued follow-up messages.
+Emitted after the full session-level run settles. At this point senpi will not continue automatically through retry, compaction retry, or queued follow-up messages.
 
 ```json
 {"type": "agent_settled"}
@@ -974,17 +1215,23 @@ Emitted when a message begins and completes. The `message` field contains an `Ag
 
 ### message_update (Streaming)
 
-Emitted during streaming of assistant messages. Contains both the partial message and a streaming delta event.
+Emitted during streaming of assistant messages. Contains a delta event without a cumulative message snapshot.
 
 ```json
 {
   "type": "message_update",
-  "message": {...},
+  "usage": {
+    "input": 100,
+    "output": 1,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 101,
+    "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0}
+  },
   "assistantMessageEvent": {
     "type": "text_delta",
     "contentIndex": 0,
-    "delta": "Hello ",
-    "partial": {...}
+    "delta": "Hello "
   }
 }
 ```
@@ -993,7 +1240,6 @@ The `assistantMessageEvent` field contains one of these delta types:
 
 | Type | Description |
 |------|-------------|
-| `start` | Message generation started |
 | `text_start` | Text content block started |
 | `text_delta` | Text content chunk |
 | `text_end` | Text content block ended |
@@ -1003,16 +1249,23 @@ The `assistantMessageEvent` field contains one of these delta types:
 | `toolcall_start` | Tool call started |
 | `toolcall_delta` | Tool call arguments chunk |
 | `toolcall_end` | Tool call ended (includes full `toolCall` object) |
-| `done` | Message complete (reason: `"stop"`, `"length"`, `"toolUse"`) |
-| `error` | Error occurred (reason: `"aborted"`, `"error"`) |
 
 Example streaming a text response:
 ```json
-{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_start","contentIndex":0,"partial":{...}}}
-{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello","partial":{...}}}
-{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" world","partial":{...}}}
-{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"Hello world","partial":{...}}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_start","contentIndex":0}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello"}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" world"}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"Hello world"}}
 ```
+
+The top-level `usage` field contains the latest cumulative provider-reported usage. It may remain
+zero until completion when a provider does not report usage during streaming.
+
+`message_update` intentionally omits the former cumulative `message` field and
+`assistantMessageEvent.partial`. Clients that need a live partial message must assemble it
+from `message_start` and subsequent events using `contentIndex`. Treat `message_end.message`
+as authoritative. For tool calls, buffer `toolcall_delta.delta`; `toolcall_end.toolCall`
+contains the completed call.
 
 ### bash_execution_update
 
@@ -1185,6 +1438,74 @@ For branch summaries, `source` is `"branchSummary"` and no `reason` is present.
 {
   "type": "summarization_retry_finished"
 }
+```
+
+### skill_invocation
+
+Emitted once after one or more explicit skill tokens are expanded. `skills` preserves invocation order.
+`syntax` reports the token form that selected the skill; `path` is the resolved `SKILL.md` path.
+
+```json
+{
+  "type": "skill_invocation",
+  "skills": [
+    {
+      "name": "debugging",
+      "path": "/project/.agents/skills/debugging/SKILL.md",
+      "syntax": "dollar"
+    },
+    {
+      "name": "review",
+      "path": "/project/.agents/skills/review/SKILL.md",
+      "syntax": "slash"
+    }
+  ]
+}
+```
+
+In multi-session mode the normal routing `sessionId` is added. This event does not mutate loaded
+surfaces; clients continue to use `loaded_surfaces_changed` plus `get_loaded_surfaces` for MCP reveal.
+
+### commands_changed
+
+Emitted whenever a post-bind runtime reload changes the ordered command surface. The initial surface is available
+through `get_commands` and does not emit this invalidation event. The `commands` payload has the same shape and
+ordering as `get_commands`; identical snapshots are not re-emitted.
+
+```json
+{
+  "type": "commands_changed",
+  "commands": [
+    {"name": "session-name", "source": "extension", "syntax": "slash", "sourceInfo": {"path": "/project/extensions/session.ts", "source": "auto", "scope": "project", "origin": "top-level"}},
+    {"name": "skill:debugging", "source": "skill", "syntax": "dollar", "sourceInfo": {"path": "/project/.agents/skills/debugging/SKILL.md", "source": "auto", "scope": "project", "origin": "top-level"}}
+  ]
+}
+```
+
+### command_invocation
+
+Emitted exactly once after the session resolves an extension command, or after a prompt template survives extension
+input interception and prompt acceptance. Unknown, transformed, or rejected commands do not produce this event;
+skills continue to use `skill_invocation`.
+
+```json
+{
+  "type": "command_invocation",
+  "command": {
+    "name": "session-name",
+    "source": "extension",
+    "syntax": "slash",
+    "sourceInfo": {"path": "/project/extensions/session.ts", "source": "auto", "scope": "project", "origin": "top-level"}
+  }
+}
+```
+
+### loaded_surfaces_changed
+
+Emitted without a request id when the loaded skill, extension, or MCP inventory changes. The event carries no inventory payload; clients re-read `get_commands` for skills and `get_loaded_surfaces` for extensions/MCP, mirroring the app-server `skills/changed` invalidation model.
+
+```json
+{"type": "loaded_surfaces_changed"}
 ```
 
 ### extension_error
@@ -1422,6 +1743,7 @@ Source files:
 - [`packages/ai/src/types.ts`](../../ai/src/types.ts) - `Model`, `UserMessage`, `AssistantMessage`, `ToolResultMessage`
 - [`packages/agent/src/types.ts`](../../agent/src/types.ts) - `AgentMessage`, `AgentEvent`
 - [`src/core/messages.ts`](../src/core/messages.ts) - `BashExecutionMessage`
+- [`src/modes/json-event.ts`](../src/modes/json-event.ts) - `JsonAgentSessionEvent`
 - [`src/modes/rpc/rpc-types.ts`](../src/modes/rpc/rpc-types.ts) - RPC command/response types, extension UI request/response types
 
 ### Model

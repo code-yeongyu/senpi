@@ -28,6 +28,8 @@ export interface Model<TApi extends Api> {
 	cost: ModelCost;
 	contextWindow: number;
 	maxTokens: number;
+	/** Default sampling parameters; per-request values override these by key. */
+	samplingParams?: Record<string, unknown>;
 	headers?: Record<string, string>;
 	/** Default prompt-cache retention preference when the request omits one. */
 	cacheRetention?: CacheRetention;
@@ -49,5 +51,13 @@ export interface Model<TApi extends Api> {
 				? AnthropicMessagesCompat
 				: TApi extends "bedrock-converse-stream"
 					? BedrockCompat
-					: never;
+					: TApi extends "cursor-agent"
+						? CursorAgentCompat
+						: never;
+}
+
+/** Cursor agent protocol model metadata. */
+export interface CursorAgentCompat {
+	/** Request Cursor's max-mode (1M-context) variant of the model. */
+	cursorMaxMode?: boolean;
 }

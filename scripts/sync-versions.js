@@ -8,12 +8,15 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { findPackageDirectories } from "./package-workspaces.mjs";
+import { resolveRegistryPackages } from "./registry-packages.mjs";
 
 const GENERATED_PACKAGE_SUFFIXES = [join("coding-agent", "install-lock")];
 // Fork-specific: `@earendil-works/pi-storage-sqlite-node` follows upstream's independent
 // semver line (see scripts/publish.mjs), so it stays out of this fork's CalVer lockstep
 // validation and its dependency pins are left alone.
-const INDEPENDENT_VERSION_PACKAGE_NAMES = new Set(["@earendil-works/pi-storage-sqlite-node"]);
+const INDEPENDENT_VERSION_PACKAGE_NAMES = new Set([
+	"@earendil-works/pi-storage-sqlite-node",
+]);
 
 function nextWorkspaceVersion(currentVersion, nextVersion) {
 	return currentVersion.startsWith("^") ? `^${nextVersion}` : nextVersion;
@@ -33,10 +36,11 @@ const workspacePackages = findPackageDirectories(packageRoot)
 	.filter((directory) => !GENERATED_PACKAGE_SUFFIXES.some((suffix) => directory.endsWith(suffix)))
 	.map((directory) => {
 		const path = join(directory, "package.json");
-		return { data: JSON.parse(readFileSync(path, "utf8")), path };
+		const data = JSON.parse(readFileSync(path, "utf8"));
+		return { data, name: data.name, path };
 	})
 	.filter((pkg) => !INDEPENDENT_VERSION_PACKAGE_NAMES.has(pkg.data.name));
-const publishedPackages = workspacePackages.filter((pkg) => pkg.data.private !== true);
+const publishedPackages = resolveRegistryPackages(workspacePackages);
 const versionMap = new Map(workspacePackages.map((pkg) => [pkg.data.name, pkg.data.version]));
 
 console.log("Current versions:");
@@ -46,7 +50,7 @@ for (const pkg of [...publishedPackages].sort((a, b) => a.data.name.localeCompar
 
 const versions = new Set(publishedPackages.map((pkg) => pkg.data.version));
 if (versions.size > 1) {
-	console.error("\nERROR: Not all non-private packages have the same version.");
+	console.error("\nERROR: Not all registry packages have the same version.");
 	console.error("Expected lockstep versioning. Run one of:");
 	console.error("  npm run version:patch");
 	console.error("  npm run version:minor");
@@ -54,7 +58,7 @@ if (versions.size > 1) {
 	process.exit(1);
 }
 
-console.log("\nAll non-private packages are at the same version (lockstep).");
+console.log("\nAll registry packages are at the same version (lockstep).");
 
 // Source manifests must stay on local lockstep workspace versions so local
 // builds and tests resolve the current workspace packages. The release script

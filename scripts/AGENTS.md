@@ -37,13 +37,13 @@ Root `package.json` runs `preinstall: node scripts/create-bin-stubs.mjs`.
 
 - `local-release.mjs`: Smoke-test release to a temp directory. Doesn't push tags.
 
-- `publish.mjs`: Publishes six fork-owned packages in release order:
+- `publish.mjs`: Publishes seven fork-owned packages in release order:
   `@code-yeongyu/senpi-ai`, `@code-yeongyu/senpi-agent-core`,
   `@code-yeongyu/senpi-tui`, `@code-yeongyu/senpi-pty`,
-  `@code-yeongyu/senpi-codemode`, and `@code-yeongyu/senpi`.
-  The four upstream-named source packages remain `private`; the publisher copies
-  each to a temporary manifest under the fork scope. `@code-yeongyu/senpi-server`
-  is `private: true` and explicitly excluded.
+  `@code-yeongyu/senpi-telemetry`, `@code-yeongyu/senpi-codemode`, and
+  `@code-yeongyu/senpi`. Every source package remains `private`; the publisher
+  copies each to a temporary public manifest under the fork scope.
+  `@code-yeongyu/senpi-server` remains private and explicitly excluded.
 
 - `build-binaries.sh`: Mirrors `.github/workflows/build-binaries.yml` for local
   cross-platform binary builds.

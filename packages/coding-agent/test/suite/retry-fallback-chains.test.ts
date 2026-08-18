@@ -128,7 +128,7 @@ describe("resolveRetryFallbackSettings chain defaults", () => {
 
 		expect(resolved.chains["example-gateway/unrelated-model"]).toEqual(["example-gateway/unrelated-fallback:max"]);
 		expect(resolved.chains[fableKey]).toEqual(DEFAULT_FALLBACK_CHAINS[fableKey]);
-		expect(DEFAULT_FALLBACK_CHAINS[fableKey]).toHaveLength(3);
+		expect(DEFAULT_FALLBACK_CHAINS[fableKey]).toHaveLength(4);
 		// The shipped default is provider-agnostic: bare ids only, expanded at canonicalization.
 		expect(Object.keys(DEFAULT_FALLBACK_CHAINS).every((key) => !key.includes("/"))).toBe(true);
 	});

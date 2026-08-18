@@ -29,6 +29,7 @@ import { completeSimple, getEnvApiKey, getModel } from "../src/compat.ts";
 import type { Api, AssistantMessage, Message, Model, Tool, ToolResultMessage } from "../src/types.ts";
 import { hasAzureOpenAICredentials } from "./azure-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { BASETEN_LIVE_TEST_FLAG, isLiveApiTestEnabled, QWEN_TOKEN_PLAN_LIVE_TEST_FLAG } from "./live-api-gates.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Simple tool for testing
@@ -92,8 +93,8 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	},
 	{
 		provider: "cloudflare-ai-gateway",
-		model: "claude-sonnet-4-5",
-		label: "cloudflare-gateway-claude-sonnet-4-5",
+		model: "claude-sonnet-5",
+		label: "cloudflare-gateway-claude-sonnet-5",
 		upstreamApiKeyEnv: "ANTHROPIC_API_KEY",
 	},
 	{
@@ -108,6 +109,8 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "huggingface", model: "moonshotai/Kimi-K2.5", label: "huggingface-kimi-k2.5" },
 	// Together AI
 	{ provider: "together", model: "moonshotai/Kimi-K2.6", label: "together-kimi-k2.6" },
+	// Baseten
+	{ provider: "baseten", model: "zai-org/GLM-5.2", label: "baseten-glm-5.2" },
 	// Kimi For Coding
 	{ provider: "kimi-coding", model: "kimi-for-coding", label: "kimi-for-coding" },
 	// Mistral
@@ -137,6 +140,21 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	// Qwen Token Plan
 	{ provider: "qwen-token-plan", model: "qwen3.7-max", label: "qwen-token-plan-qwen3.7-max" },
 	{ provider: "qwen-token-plan-cn", model: "qwen3.7-max", label: "qwen-token-plan-cn-qwen3.7-max" },
+	{
+		provider: "qwen-token-plan-individual",
+		model: "qwen3.8-max",
+		label: "qwen-token-plan-individual-qwen3.8-max",
+	},
+	{
+		provider: "qwen-token-plan-individual",
+		model: "deepseek-v4-flash-0731",
+		label: "qwen-token-plan-individual-deepseek-v4-flash-0731",
+	},
+	{
+		provider: "qwen-token-plan-individual",
+		model: "glm-5.2",
+		label: "qwen-token-plan-individual-glm-5.2",
+	},
 ];
 
 // Cached context structure
@@ -153,6 +171,8 @@ interface CachedContext {
  * Get API key for provider - checks OAuth storage first, then env vars
  */
 async function getApiKey(provider: string): Promise<string | undefined> {
+	const liveFlag = getProviderLiveFlag(provider);
+	if (liveFlag && !isLiveApiTestEnabled(liveFlag)) return undefined;
 	const oauthKey = await resolveApiKey(provider);
 	if (oauthKey) return oauthKey;
 	return getEnvApiKey(provider);
@@ -162,6 +182,8 @@ async function getApiKey(provider: string): Promise<string | undefined> {
  * Synchronous check for API key availability (env vars only, for skipIf)
  */
 function hasApiKey(pair: ProviderModelPair): boolean {
+	const liveFlag = getProviderLiveFlag(pair.provider);
+	if (liveFlag && !isLiveApiTestEnabled(liveFlag)) return false;
 	if (pair.provider === "azure-openai-responses") {
 		return hasAzureOpenAICredentials();
 	}
@@ -173,6 +195,12 @@ function hasApiKey(pair: ProviderModelPair): boolean {
 		return pair.upstreamApiKeyEnv ? !!process.env[pair.upstreamApiKeyEnv] : true;
 	}
 	return !!getEnvApiKey(pair.provider);
+}
+
+function getProviderLiveFlag(provider: string): string | undefined {
+	if (provider === "baseten") return BASETEN_LIVE_TEST_FLAG;
+	if (provider.startsWith("qwen-token-plan")) return QWEN_TOKEN_PLAN_LIVE_TEST_FLAG;
+	return undefined;
 }
 
 function getHeaders(pair: ProviderModelPair): Record<string, string> | undefined {

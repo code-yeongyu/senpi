@@ -29,6 +29,7 @@ import type {
 	StreamFunction,
 	StreamOptions,
 	TextContent,
+	ThinkingBudgets,
 	ThinkingContent,
 	Tool,
 	ToolCall,
@@ -56,6 +57,7 @@ import {
 	createGrammarToolInputProperties,
 	type GrammarToolInputJsonBuffer,
 	getGrammarToolInput,
+	getJsonSchemaToolParameters,
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
@@ -66,6 +68,8 @@ import {
 	applyExtraBody,
 	buildBaseOptions,
 	clampMaxForOpenAI,
+	clampReasoning,
+	MIN_ANSWER_TOKENS,
 	OPENAI_COMPLETIONS_RESERVED_BODY_KEYS,
 } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -155,7 +159,7 @@ function getThinkingLevelMap(
 	const isKimiK3 = id === "k3" || id.startsWith("k3-") || /(?:^|[/:-])kimi-k3(?:$|[/.:_-])/.test(id);
 	const isDeepSeek = id.includes("deepseek");
 	const isMiMo = /\bmimo\b/.test(id);
-	const isGlm52 = /(?:^|[/:-])glm-5\.2(?:$|[/.:_-])/.test(id);
+	const isGlm5x = /(?:^|[/:-])glm-5\.[23](?:$|[/.:_-])/.test(id);
 
 	if (model.provider === "ollama") {
 		return OLLAMA_THINKING_LEVEL_MAP;
@@ -172,7 +176,7 @@ function getThinkingLevelMap(
 	if (isDeepSeek) {
 		return DEEPSEEK_THINKING_LEVEL_MAP;
 	}
-	if (isGlm52) {
+	if (isGlm5x) {
 		if (compat.thinkingFormat === "zai") {
 			return DEEPSEEK_THINKING_LEVEL_MAP;
 		}
@@ -281,6 +285,8 @@ function isEncryptedReasoningDetail(detail: unknown): detail is OpenAIEncryptedR
 export interface OpenAICompletionsOptions extends StreamOptions {
 	toolChoice?: OpenAI.Chat.Completions.ChatCompletionToolChoiceOption;
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+	/** Token budgets per thinking level. Only used when `compat.supportsThinkingTokenBudget` is set. */
+	thinkingBudgets?: ThinkingBudgets;
 }
 
 export interface ConvertCompletionsMessagesOptions {
@@ -869,6 +875,7 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 		...base,
 		reasoningEffort,
 		toolChoice,
+		thinkingBudgets: options?.thinkingBudgets,
 	} satisfies OpenAICompletionsOptions);
 };
 
@@ -997,11 +1004,13 @@ function buildParams(
 	}
 
 	if (compat.thinkingFormat === "zai" && model.reasoning) {
+		const isGlm53 = /(?:^|[/:-])glm-5\.3(?:$|[/.:_-])/.test(model.id.toLowerCase());
 		const zaiParams = params as Omit<typeof params, "reasoning_effort"> & {
 			thinking?: { type: "enabled" | "disabled"; clear_thinking?: boolean };
 			reasoning_effort?: string;
 		};
-		zaiParams.thinking = options?.reasoningEffort ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
+		zaiParams.thinking =
+			options?.reasoningEffort || isGlm53 ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
 			const effort = resolveReasoningEffort(thinkingLevelMap, options.reasoningEffort);
 			if (effort !== undefined) {
@@ -1022,9 +1031,26 @@ function buildParams(
 			preserve_thinking: true,
 		};
 	} else if (compat.thinkingFormat === "chat-template" && model.reasoning) {
-		const chatTemplateKwargs = buildChatTemplateKwargs(model, options, compat);
+		const chatTemplateKwargs = buildChatTemplateValues(model, options, compat, compat.chatTemplateKwargs);
 		if (chatTemplateKwargs) {
 			(params as any).chat_template_kwargs = chatTemplateKwargs;
+		}
+	} else if (compat.thinkingFormat === "baseten" && model.reasoning) {
+		const basetenParams = params as Omit<typeof params, "reasoning_effort"> & {
+			chat_template_args?: Record<string, ResolvedChatTemplateKwargValue>;
+			reasoning_effort?: string;
+		};
+		const chatTemplateArgs = buildChatTemplateValues(model, options, compat, compat.chatTemplateArgs ?? {});
+		if (chatTemplateArgs) {
+			basetenParams.chat_template_args = chatTemplateArgs;
+		}
+		if (compat.supportsReasoningEffort) {
+			const requestedEffort = options?.reasoningEffort;
+			const mappedEffort = requestedEffort ? model.thinkingLevelMap?.[requestedEffort] : model.thinkingLevelMap?.off;
+			const effort = mappedEffort === undefined ? requestedEffort : mappedEffort;
+			if (typeof effort === "string") {
+				basetenParams.reasoning_effort = effort;
+			}
 		}
 	} else if (compat.thinkingFormat === "deepseek" && model.reasoning) {
 		if (options?.reasoningEffort) {
@@ -1088,6 +1114,27 @@ function buildParams(
 		}
 	}
 
+	// vLLM caps reasoning with a top-level thinking_token_budget. Independent of
+	// thinkingFormat: the same server can serve zai, qwen or chat-template models.
+	// Reasoning and the answer share max_tokens here, so an uncapped reasoning
+	// phase can consume the whole response and leave no answer and no tool call.
+	if (compat.supportsThinkingTokenBudget && options?.reasoningEffort && model.reasoning) {
+		const level = clampReasoning(options.reasoningEffort)!;
+		const budgets: ThinkingBudgets = {
+			minimal: 1024,
+			low: 2048,
+			medium: 8192,
+			high: 16384,
+			...options.thinkingBudgets,
+		};
+		const ceiling = (params as { max_tokens?: number }).max_tokens ?? params.max_completion_tokens ?? model.maxTokens;
+		// Always leave room for the answer, otherwise the budget recreates the bug it prevents.
+		const budget = Math.min(budgets[level]!, Math.max(0, ceiling - MIN_ANSWER_TOKENS));
+		if (budget > 0) {
+			(params as { thinking_token_budget?: number }).thinking_token_budget = budget;
+		}
+	}
+
 	// OpenRouter provider routing preferences
 	if (model.compat?.openRouterRouting) {
 		params.provider = model.compat.openRouterRouting;
@@ -1106,24 +1153,30 @@ function buildParams(
 
 	applyExtraBody(params, options?.extraBody, OPENAI_COMPLETIONS_RESERVED_BODY_KEYS);
 
+	// Last so custom keys override the named request fields.
+	if (options?.samplingParams) {
+		Object.assign(params, options.samplingParams);
+	}
+
 	return params;
 }
 
-function buildChatTemplateKwargs(
+function buildChatTemplateValues(
 	model: Model<"openai-completions">,
 	options: OpenAICompletionsOptions | undefined,
 	compat: ResolvedOpenAICompletionsCompat,
+	values: Record<string, ChatTemplateKwargValue>,
 ): Record<string, ResolvedChatTemplateKwargValue> | undefined {
-	const kwargs: Record<string, ResolvedChatTemplateKwargValue> = {};
+	const resolvedValues: Record<string, ResolvedChatTemplateKwargValue> = {};
 
-	for (const [key, value] of Object.entries(compat.chatTemplateKwargs)) {
+	for (const [key, value] of Object.entries(values)) {
 		const resolved = resolveChatTemplateKwargValue(model, options, compat, value);
 		if (resolved !== undefined) {
-			kwargs[key] = resolved;
+			resolvedValues[key] = resolved;
 		}
 	}
 
-	return Object.keys(kwargs).length > 0 ? kwargs : undefined;
+	return Object.keys(resolvedValues).length > 0 ? resolvedValues : undefined;
 }
 
 function resolveChatTemplateKwargValue(
@@ -1295,12 +1348,17 @@ export function convertMessages(
 			return `${prefix}_${hash}`;
 		}
 
-		if (model.provider === "openai") return id.length > 40 ? id.slice(0, 40) : id;
-		return id;
+		const sanitizedId = id.replace(/[^a-zA-Z0-9_-]/g, "_") || "tool_call";
+		if (sanitizedId === id && sanitizedId.length <= 40) return id;
+
+		const hash = shortHash(id).slice(0, 8);
+		const prefix = sanitizedId.slice(0, Math.max(1, 40 - hash.length - 1));
+		return `${prefix}_${hash}`;
 	};
 
 	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id), {
 		preserveThinking: options.preserveThinking,
+		normalizeSameModelToolCallIds: true,
 	});
 
 	if (context.systemPrompt) {
@@ -1586,11 +1644,12 @@ function convertTools(
 			throw new Error("Freeform tools cannot be sent to OpenAI Chat Completions; use Responses API");
 		}
 
+		const strict = resolveJsonSchemaStrictSampling(tool, compat.supportsStrictMode !== false);
+		const schemaParameters = getJsonSchemaToolParameters(tool, strict) as Record<string, unknown>;
 		const normalizedParameters =
 			compat.toolSchemaFlavor === "moonshot-mfjs"
-				? normalizeToolParametersForMoonshot(tool.parameters as Record<string, unknown>)
-				: normalizeToolParametersForOpenAICompat(tool.parameters as Record<string, unknown>);
-		const strict = resolveJsonSchemaStrictSampling(tool, compat.supportsStrictMode !== false);
+				? normalizeToolParametersForMoonshot(schemaParameters)
+				: normalizeToolParametersForOpenAICompat(schemaParameters);
 		return {
 			type: "function",
 			function: {

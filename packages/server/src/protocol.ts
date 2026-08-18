@@ -36,7 +36,8 @@ type _AiAssistantContentTypesAccountedFor = Assert<
 /**
  * Enumerate mapped and intentionally omitted pi-ai fields so additions fail compilation here.
  * Provider replay metadata, diagnostics, cache-write retention splits, model transport settings,
- * pricing tiers, and deferred-tool availability remain intentionally server-side.
+ * model sampling defaults, pricing tiers, and deferred-tool availability remain intentionally
+ * server-side.
  */
 type _AiTextContentFieldsAccountedFor = Assert<ExactKeys<AiTextContent, "type" | "text" | "textSignature">>;
 type _AiThinkingContentFieldsAccountedFor = Assert<
@@ -47,7 +48,10 @@ type _AiThinkingContentFieldsAccountedFor = Assert<
 >;
 type _AiImageContentFieldsAccountedFor = Assert<ExactKeys<AiImageContent, "type" | "data" | "mimeType">>;
 type _AiToolCallFieldsAccountedFor = Assert<
-	ExactKeys<ToolCall, "type" | "id" | "name" | "arguments" | "incomplete" | "errorMessage" | "thoughtSignature">
+	ExactKeys<
+		ToolCall,
+		"type" | "id" | "name" | "arguments" | "incomplete" | "errorMessage" | "thoughtSignature" | "namespace"
+	>
 >;
 type _AiUsageFieldsAccountedFor = Assert<
 	ExactKeys<
@@ -72,6 +76,7 @@ type _AiModelFieldsAccountedFor = Assert<
 		| "cost"
 		| "contextWindow"
 		| "maxTokens"
+		| "samplingParams"
 		| "headers"
 		| "cacheRetention"
 		| "upstreamModelId"
@@ -98,8 +103,10 @@ type _AiAssistantMessageFieldsAccountedFor = Assert<
 		| "usage"
 		| "stopReason"
 		| "stopDetails"
+		| "deferred"
 		| "errorMessage"
 		| "rawStopReason"
+		| "endTurn"
 		| "timestamp"
 	>
 >;
@@ -324,6 +331,8 @@ export function toProtocolAssistantMessage(
 				status: "complete",
 				stopReason: message.stopReason,
 			} satisfies AssistantTranscriptItem;
+		case "deferred":
+			throw new TypeError("Deferred assistant messages are not supported by protocol v1");
 		case "error":
 			if (message.errorMessage?.length === 0) {
 				throw new TypeError("Assistant error messages must not be empty");

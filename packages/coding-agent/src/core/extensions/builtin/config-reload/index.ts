@@ -4,7 +4,7 @@ import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
 import { resolvePath } from "../../../../utils/paths.ts";
 import { ModelConfig } from "../../../model-config.ts";
-import { type Settings, SettingsManager, wasSelfWrite } from "../../../settings-manager.ts";
+import { parseSettingsJson, type Settings, SettingsManager, wasSelfWrite } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../types.ts";
 import { isLoadableExtensionEntry, isScannableExtensionDirectory } from "./extension-watch-scope.ts";
 import { excludeGeneratedExtensionShims } from "./generated-shim-filter.ts";
@@ -17,6 +17,7 @@ import {
 	CONFIG_WATCH_RELOADED,
 	CONFIG_WATCH_UNREGISTER,
 	type ConfigWatchRegistration,
+	type ConfigWatchTarget,
 	isConfigWatchRegistration,
 	isConfigWatchUnregistration,
 	isConfigWatchValidation,
@@ -43,7 +44,7 @@ const BUILTIN_REGISTRATION_ID = "builtin";
 const DEFAULT_DEBOUNCE_MS = 200;
 const COMPACTION_RECHECK_MS = 250;
 const VETO_RECHECK_MS = 1000;
-const CONFIG_FILE_NAMES = ["settings.json", "models.json", "keybindings.json"] as const;
+const CONFIG_FILE_NAMES = ["settings.jsonc", "settings.json", "models.json", "keybindings.json"] as const;
 
 /**
  * The engine applies one predicate to both file gating and directory descent, so
@@ -612,7 +613,7 @@ function buildWatchTargets(options: {
 	const projectDir = joinConfigDir(cwd);
 
 	const jsonAllowList = CONFIG_FILE_NAMES.filter((name) => {
-		if (name === "settings.json") return settings.watch.settings;
+		if (name === "settings.json" || name === "settings.jsonc") return settings.watch.settings;
 		if (name === "models.json") return settings.watch.models;
 		return settings.watch.keybindings;
 	});
@@ -652,7 +653,7 @@ function buildWatchTargets(options: {
 				addBuiltin("builtin-project-settings", {
 					kind: "dir",
 					path: projectDir,
-					allowList: ["settings.json"],
+					allowList: ["settings.jsonc", "settings.json"],
 				});
 			}
 			if (settings.watch.prompts) {
@@ -848,13 +849,12 @@ function validateBuiltinPaths(paths: readonly string[], agentDir: string, cwd: s
 function validateSettingsFile(path: string): string | undefined {
 	if (!existsSync(path)) return undefined;
 	try {
-		const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
-		if (!isPlainObject(parsed)) return "settings.json must contain an object";
+		const parsed = parseSettingsJson(readFileSync(path, "utf-8"));
 		// Keep validation aligned with SettingsManager's loader and migrations without duplicating migration rules.
 		SettingsManager.inMemory(parsed as Partial<Settings>);
 		return undefined;
 	} catch (error) {
-		return `Invalid settings.json: ${errorMessage(error)}`;
+		return `Invalid ${basename(path)}: ${errorMessage(error)}`;
 	}
 }
 
@@ -887,6 +887,28 @@ function registrationFingerprint(registration: ConfigWatchRegistration): string 
 	});
 }
 
+function isProtectedAgentPath(candidate: string, agentDir: string): boolean {
+	const authPath = resolve(agentDir, "auth.json");
+	const sessionsPath = resolve(agentDir, "sessions");
+	const logsPath = resolve(agentDir, "logs");
+	return isWithin(candidate, authPath) || isWithin(candidate, sessionsPath) || isWithin(candidate, logsPath);
+}
+
+// A watch rooted exactly at the agent directory is safe when every filter is
+// root-anchored (a leading `/` matches only an immediate child of the watch root,
+// never a nested path) and none of those anchored names resolves into a protected
+// path. Unfiltered targets, unanchored filters, and any protected filter stay
+// fail-closed.
+function isSafeFilteredAgentDirTarget(target: ConfigWatchTarget, resolvedPath: string, agentDir: string): boolean {
+	if (target.kind !== "dir" || resolvedPath !== resolve(agentDir)) return false;
+	const filterGlobs = target.filterGlobs;
+	if (!filterGlobs || filterGlobs.length === 0) return false;
+	return filterGlobs.every((glob) => {
+		if (!glob.startsWith("/")) return false;
+		return !isProtectedAgentPath(resolve(resolvedPath, glob.slice(1)), agentDir);
+	});
+}
+
 function registrationHasRestrictedTarget(
 	registration: ConfigWatchRegistration,
 	cwd: string,
@@ -897,6 +919,7 @@ function registrationHasRestrictedTarget(
 	const logsPath = resolve(agentDir, "logs");
 	return registration.targets.some((target) => {
 		const path = resolvePath(target.path, cwd, { trim: true });
+		if (isSafeFilteredAgentDirTarget(target, path, agentDir)) return false;
 		return (
 			isWithin(path, authPath) ||
 			isWithin(authPath, path) ||

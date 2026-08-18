@@ -112,7 +112,7 @@ type OpenAiRemoteCompactionContext = {
 			| {
 					ok: true;
 					apiKey?: string;
-					headers?: Record<string, string>;
+					headers?: ProviderHeaders;
 					extraBody?: Record<string, unknown>;
 					baseUrl?: string;
 					upstreamModelId?: string;
@@ -362,7 +362,7 @@ export function buildOpenAiResponsesStreamCompactionResult(options: {
 
 async function runOpenAiResponsesStreamCompaction(options: {
 	model: Model<"openai-responses">;
-	auth: { apiKey?: string; headers?: Record<string, string>; extraBody?: Record<string, unknown> };
+	auth: { apiKey?: string; headers?: ProviderHeaders; extraBody?: Record<string, unknown> };
 	firstKeptEntryId: string;
 	now: () => number;
 	request: OpenAiRemoteCompactionRequest;
@@ -667,7 +667,7 @@ export async function runOpenAiRemoteCompaction(
 			const responseOrigin = openAiRemoteCompactionOrigin(responsesModel, responseHeaders);
 			if (!responseOrigin) return undefined;
 			const result = await attemptOpenAiResponsesV2Compaction({
-				auth,
+				auth: { apiKey: auth.apiKey, extraBody: auth.extraBody },
 				emit,
 				event,
 				headers: responseHeaders,
@@ -713,7 +713,7 @@ export async function runOpenAiRemoteCompaction(
 				run: (signal) =>
 					runOpenAiResponsesStreamCompaction({
 						model: requestModel,
-						auth,
+						auth: { apiKey: auth.apiKey, extraBody: auth.extraBody },
 						firstKeptEntryId: event.preparation.firstKeptEntryId,
 						now: dependencies.now ?? Date.now,
 						request,

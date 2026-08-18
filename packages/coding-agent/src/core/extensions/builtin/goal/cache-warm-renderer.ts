@@ -16,7 +16,7 @@ export const renderGoalCacheWarmupEntry: EntryRenderer<GoalCacheWarmupEntryData>
 		title: titleLine(data),
 		why: whyLine(data),
 		extra: warm === undefined ? [] : [{ text: warm, tone: "success" }],
-		expandedLine: `goal ${data.goalId} · planned delay ${formatWakeDuration(data.delayMs)}`,
+		expandedLine: expandedLine(data),
 	};
 });
 
@@ -29,7 +29,7 @@ function titleLine(data: GoalCacheWarmupEntryData): string {
 		case "scheduled":
 			return `⚡ Cache-warm wait${iterationText} · ${wakeSources}`;
 		case "resumed":
-			return `⚡ Cache-warm wake${iterationText} · waited ${formatWakeDuration(data.waitedMs ?? data.delayMs)} · ${wakeSources}`;
+			return `⚡ Cache-warm wake${iterationText} · ${formatExpectedWake(data.dueAtMs, data.waitedMs ?? data.delayMs)} · ${wakeSources}`;
 	}
 }
 
@@ -40,17 +40,29 @@ function validIteration(value: number | undefined): number | undefined {
 function whyLine(data: GoalCacheWarmupEntryData): string {
 	switch (data.phase) {
 		case "scheduled": {
-			const deferred = `Continuation deferred ${formatWakeDuration(data.delayMs)}`;
+			const expected = `Continuation expected ${formatExpectedWake(data.dueAtMs, data.delayMs)}`;
 			if (data.cache?.ttlSeconds === undefined) {
-				return `${deferred} - the monitor wakes the goal the moment decisive output lands.`;
+				return `${expected} - the monitor wakes the goal the moment decisive output lands.`;
 			}
 			return data.delayMs < data.cache.ttlSeconds * 1000
-				? `${deferred} - the timed wake stays inside the ${formatCacheTtl(data.cache.ttlSeconds)} prompt-cache TTL.`
-				: `${deferred} - the prompt-cache TTL may elapse before the timed wake.`;
+				? `${expected} - the timed wake stays inside the ${formatCacheTtl(data.cache.ttlSeconds)} prompt-cache TTL.`
+				: `${expected} - the prompt-cache TTL may elapse before the timed wake.`;
 		}
 		case "resumed":
 			return "Woke on schedule to keep pursuing the goal.";
 	}
+}
+
+function formatExpectedWake(dueAtMs: number | undefined, elapsedMs: number): string {
+	if (dueAtMs === undefined || !Number.isFinite(dueAtMs)) return `waited ${formatWakeDuration(elapsedMs)}`;
+	const timestamp = new Date(dueAtMs).toISOString().slice(0, 16).replace("T", " ");
+	return `ready ${timestamp} UTC (${formatWakeDuration(elapsedMs)})`;
+}
+
+function expandedLine(data: GoalCacheWarmupEntryData): string {
+	const planned = `goal ${data.goalId} · planned delay ${formatWakeDuration(data.delayMs)}`;
+	if (data.phase === "scheduled") return `${planned} · ${formatExpectedWake(data.dueAtMs, data.delayMs)}`;
+	return `${planned} · ${formatExpectedWake(data.dueAtMs, data.waitedMs ?? data.delayMs)}`;
 }
 
 function warmLine(data: GoalCacheWarmupEntryData): string | undefined {

@@ -1,5 +1,181 @@
 # Builtin extensions changes
 
+## Repository audit baseline for the builtin extensions tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`). The audited production paths whose exact nearest tracker is this file:
+  `packages/coding-agent/src/core/extensions/builtin/import-repro.ts` and
+  `packages/coding-agent/src/core/extensions/builtin/redraws.ts` (both renamed out of upstream `.pi/extensions/`).
+- Every other builtin extension and shared module in this directory is fork-only (absent from the pinned upstream
+  tree) and exempt from the audit; their per-feature history lives in the dated entries below and in each extension's
+  own `changes.md`.
+
+### Why
+
+- The audit requires every upstream-owned production divergence to be covered by one entry with all four canonical
+  sections in its exact nearest tracker. The pre-existing entries below use flat bullets without canonical section
+  headings, so both renamed paths were reported uncovered; this inventory closes that gap without rewriting accurate
+  history.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository and release policy, not runtime behavior; it is enforced by repository scripts before
+  any extension loader exists.
+
+### Expected merge conflict zones
+
+- NONE: this tracker is fork-only (upstream has no counterpart file); the inventory names pin-relative paths so it
+  stays valid as entries below change.
+
+## /tui redraw diagnostic relocated in-tree (2026-08-17)
+
+### What changed
+
+- `redraws.ts`: upstream's `.pi/extensions/redraws.ts` project extension is now the in-tree builtin
+  `packages/coding-agent/src/core/extensions/builtin/redraws.ts` (registered from `builtin/index.ts`), and its
+  `ExtensionAPI` import resolves relatively via `../types.ts` instead of the published
+  `@earendil-works/pi-coding-agent` package.
+- Behavior is unchanged: `/tui` renders one custom UI frame to read `tui.fullRedraws`, then notifies
+  `TUI full redraws: <count>` — the diagnostic for how many full redraws the TUI has performed.
+
+### Why
+
+- The fork does not carry upstream's `.pi` project-extension directory; as a builtin the diagnostic ships with the
+  agent and is registered for every session instead of depending on project-local discovery.
+
+### Why an extension could not handle it
+
+- It already is an extension; the tracked divergence is the file's location and import style, which only the
+  repository layout controls.
+
+### Expected merge conflict zones
+
+- LOW: the `redraws.ts` import header (upstream still ships the file under `.pi/extensions/`); the command body is
+  upstream-owned.
+
+## Upstream .pi prompt-url-widget and TPS extensions relocated in-tree (2026-08-17)
+
+### What changed
+
+- `.pi/extensions/prompt-url-widget.ts` (deleted at the pin) lives on as the fork builtin
+  `packages/coding-agent/src/core/extensions/builtin/prompt-url-widget.ts`, resolved through the global default
+  extension factory fast path rather than `.pi` discovery; `DynamicBorder` now imports from the interactive-mode
+  component (`../../../modes/interactive/components/dynamic-border.ts`) instead of the published package, and the
+  GitHub security-advisory draft branch of the upstream widget was dropped (PR/issue prompt patterns remain).
+- `.pi/extensions/tps.ts` (deleted at the pin) lives on as the fork builtin
+  `packages/coding-agent/src/core/extensions/builtin/tps.ts`: assistant elapsed time is accumulated per
+  `message_start`/`message_end` pair on the monotonic `performance.now()` clock, so a wall-clock jump backward can no
+  longer suppress a valid TPS notice, and the turn notification uses the concise cache-hit form (entries below:
+  2026-08-06, 2026-07-31).
+
+### Why
+
+- The fork does not carry upstream's `.pi` project-extension directory, and both widgets are expected in every
+  session; the in-tree builtin/global-default surface keeps them pinned to the fork's runtime instead of drifting
+  with a project-local checkout.
+
+### Why an extension could not handle it
+
+- Both already are extensions; the tracked divergence is the relocation of upstream-owned paths (deletion of
+  `.pi/extensions/prompt-url-widget.ts` and `.pi/extensions/tps.ts` plus fork-only destination files), which only the
+  repository layout controls.
+
+### Expected merge conflict zones
+
+- NONE in-tree: the destination files are fork-only. Upstream continues to evolve the `.pi` originals; on sync, port
+  deliberate upstream fixes into the builtin copies rather than restoring the `.pi` files.
+
+## Missing apply_patch extension seams (2026-08-17)
+
+### What changed
+
+- Records as tracker inventory the seams the `gpt-apply-patch` builtin compensates for because the host provides no
+  extension hook there: there is no builtin-extension seam between app-server projection of a completed `apply_patch`
+  result and its persistence into the session transcript, so completed-result retention is a fixed documented budget
+  inside the tool (complete unified patches retained only up to 16 KiB per file; omission instead of an invalid
+  partial diff — `gpt-apply-patch/changes.md`, 2026-08-02).
+- Core consumers instead learned the tool's shape: compaction's `extractFileOpsFromMessage()` recognizes `apply_patch`
+  calls and records patched paths as edited (compaction tracker, 2026-08-17), because no extension seam exposes a
+  builtin tool's file mutations to core file-operation accounting.
+
+### Why
+
+- `apply_patch` deliberately replaces `edit`/`write` in the active tool set for eligible wire modes; host surfaces
+  that assumed those core tools (projection, persistence, file-op extraction) need either a new seam or an explicit
+  in-tool contract. The fork chose documented fixed contracts over host seams that would exist for exactly one
+  builtin.
+
+### Why an extension could not handle it
+
+- These are seams the host would have to provide — a post-projection pre-persistence hook and core file-operation
+  extraction; an extension cannot insert itself into a pipeline position the runner never dispatches.
+
+### Expected merge conflict zones
+
+- NONE: documents contracts in fork-owned builtin files (`gpt-apply-patch/`) and cross-references sibling trackers; no
+  upstream file changes.
+
+## cursor-cli-oauth: register the Cursor CLI fallback lane (2026-08-17)
+
+- `index.ts` imports the `cursor-cli-oauth` extension and registers it in `builtinExtensions` beside `claude-sdk-oauth`, one `BuiltinExtensionFactory` entry: `{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension }`.
+- Registration is unconditional and probing-free: the factory registers the provider immediately with an offline static model catalog (the probe-backed catalog replaces it asynchronously) and reports executable/auth state through its oauth `check`, so the registry itself never blocks on, waits for, or conditions the entry on the external `cursor-agent` binary.
+- Why beside `claude-sdk-oauth`: both are provider-lane extensions whose only ordering requirement is "present before model-catalog feeders observe them"; neither mutates another extension's state, so their relative order is not load-bearing (same slot as the existing entry).
+- Positioning (plan addendum): the native Cursor provider (`cursor`, api2.cursor.sh protobuf transport shipped in v2026.8.16) stays the first-party primary path; this lane is the documented fallback for when the native path does not work well or Cursor's own agent harness is explicitly wanted.
+- Why an extension boundary could not avoid this edit: `builtinExtensions` is a core-owned array with no self-registration hook - a builtin provider cannot join the registry from outside this file. This one entry is the lane's entire footprint here; all behavior lives under `cursor-cli-oauth/` (see that directory's `changes.md`/`AGENTS.md`; the display-name row is recorded in `core/changes.md`).
+- Expected merge conflict zones: MEDIUM in `index.ts` at the import cluster and the registry array — every new builtin lane edits the same two hunks.
+
+## service-tier: per-model /fast persistence across sessions (2026-08-16)
+
+- `/fast [on|off]` now persists the choice per model in settings `modelServiceTiers` (global scope, nested-key write so concurrent sessions merge safely), so fast mode survives a restart instead of dying with the session. No-arg `/fast` keeps the established toggle UX; argument completions are `on` and `off`.
+- `on` writes `${provider}/${id}: "priority"`; `off` writes an explicit `"auto"` — never a deleted key, because deletion silently re-inherits a catalog/`-fast` priority tier that the user just turned off.
+- A `-fast` catalog variant and its base model are one choice to the user, so both read and write ONE key: `-fast` is normalized onto its base model through the existing `findBaseModel` helper, so `model` and `model-fast` can never hold contradictory preferences.
+- `session_start` reads the memory (instead of unconditionally resetting to false): for `openai-codex-responses` models the flag is `remembered === "priority" || (remembered === undefined && ctx.serviceTier === "priority")` — a remembered `"auto"` wins over a catalog-inherited priority tier, and a model that is already served at priority (models.json entry, scoped pin) with nothing remembered starts fast. The flag is derived from the POST-swap model, so a `-fast` catalog variant is judged on the base model the user ends up on. Malformed/garbage values read back as `undefined` (never throw at startup). The existing `-fast` -> base model swap on start is unchanged.
+- Tier precedence (request side): explicit scoped/favorite `:priority` pin > catalog compat `serviceTier` > `openai.serviceTier` (still applied in the non-Codex path). The per-model memory is not a step in `_resolveServiceTier`; it reaches the wire only for `openai-codex-responses` models via fast mode (session-start default, plus the `"auto"` suppression of a catalog-inherited priority). A pin is recognized as a priority tier the catalog does not explain (`ctx.serviceTier === "priority"` while `modelRegistry.getServiceTier(model) !== "priority"`), which covers favorite pins too — scanning `scopedModels` alone would miss them. Under a pin, `/fast off` notifies `Fast mode is fixed by the active model selection's priority tier.` and writes nothing. Non-Codex models keep `Fast mode is only available for OpenAI Codex models.`
+- The memory is applied in the extension layer (it owns the fresh settings read) rather than cached in `AgentSession._resolveServiceTier`: caching there would survive a same-session `/fast off` (no model switch to re-resolve) and leak an inherited priority onto the wire. `AgentSession.setSessionFastMode(false)` instead clears the cached priority tier for codex-response models when that priority is INHERITED from the catalog (never when it is a `:priority` pin), so a same-session `/fast off` takes effect immediately on both the badge and the wire; `_resolveServiceTier` itself is unchanged apart from its doc. The extension additionally tracks the live memory tier (per base key, RE-DERIVED on `model_select` for the incoming model — read that model's own memory rather than dropping the previous model's, so switching away and back in one session cannot resurrect a catalog-inherited priority the user turned off) to suppress a CATALOG-EXPLAINED priority in `before_provider_request` after `/fast off`; the suppression requires `modelRegistry.getServiceTier(model) === "priority"` so a config-time `:priority` pin (resolved before `session_start`, hence live alongside a remembered `"auto"`) still reaches the wire — the same pin-vs-catalog discriminator `applyFastMode` uses to refuse `/fast off`.
+- Exports a single reusable entry point `applyFastMode(ctx, enabled)` (plus `getRememberedServiceTier` / `resolveServiceTierMemoryModel` / `CODEX_RESPONSES_API`); todo 11's RPC `set_fast_mode` will call the same function so persistence and normalization exist once.
+- Coverage: new `test/suite/fast-mode-persistence.test.ts` (16 cases — restart on/off, on->restart->off->restart->on, same-session off wire effect, no-arg toggle, bad argument, completions, `-fast` normalization to one key, explicit-auto beats catalog priority (+ control), config-time pin keeps the wire tier despite a remembered auto, remembered auto survives a switch away and back, malformed memory, stale memory, scoped-pin block, favorite-pin block, non-Codex, nested-key concurrent write) and `test/suite/fast-mode-manual-qa.test.ts` (real-handler manual-QA probe writing `task-10-manual-qa.txt`). `test/suite/service-tier-extension.test.ts`: "drops on restart" became "carries into a new session, drops only on `/fast off`"; the old "catalog flex wins over session fast" case now asserts the memory-over-catalog precedence (`/fast on` outranks a catalog `flex`), with an un-toggled control keeping `flex`. Regression fences: `test/model-runtime-catalog-service-tier.test.ts`.
+- Expected merge conflict zones: LOW in `service-tier.ts` (session_start + handler rewrite + before_provider_request); LOW in `agent-session.ts` at `setSessionFastMode` (clear-on-off) — `_resolveServiceTier` itself is untouched.
+
+## reasoning: capability-aware /reasoning and /efforts commands (2026-08-16)
+
+- New builtin `reasoning/` registers `/reasoning [on|off]` (the on/off axis) and `/efforts [minimal|low|medium|high|xhigh|max]` (the effort ladder). Registered next to `service-tier`: both are read-the-active-model command surfaces that only notify, so their relative order is not load-bearing.
+- Behavior branches on `classifyReasoningCapability(model)` (`core/thinking-levels.ts`), never on model ids or `thinkingFormat`. Each invocation re-classifies `ctx.model`, so a mid-session model switch is honored immediately and no capability is cached:
+  - `none` — `/reasoning on` and both `/efforts` forms answer `Model <provider/id> does not support reasoning.`; `/reasoning off` is an idempotent `Reasoning: off.`
+  - `always-on` — `/reasoning off` answers `Reasoning cannot be disabled for <provider/id>.`
+  - `on-off` — `/efforts` answers `Reasoning effort is not configurable for <provider/id>; this model supports on/off only. Use /reasoning on or /reasoning off.`
+  - `graded` — the full ladder, with `xhigh`/`max` offered only when the catalog says the model has them.
+- `/reasoning on` restores, in order: this model's persisted `modelLastOnThinkingLevels` entry, a legacy non-off `modelThinkingLevels` entry, the global `defaultThinkingLevel`, then `medium` — always clamped to a supported non-off level. `/reasoning off` persists the effective `off` state without erasing the companion level, so the same off/on sequence restores identically before and after restart; no session-scoped fallback map remains.
+- No-arg forms notify status only and never open a selector, so both commands work headless and over RPC. No `/thinking` alias is registered.
+- Effort completions are dynamic: the ladder is read from the live model (tracked via `session_start`/`model_select`, since completion callbacks receive only a prefix) and suppressed entirely for non-graded models.
+- Coverage: `test/suite/reasoning-commands.test.ts` (41 cases) pins every user-facing string verbatim across all four capability classes, plus malformed input (wrong case, extra args, unicode, whitespace-only, `off` as an effort) and a mid-session model switch.
+- Expected merge conflict zones: LOW in `builtin/index.ts` at the import block and the registration array entry after `service-tier`.
+
+## loop-guard: hard escalation uses the existing pre-tool and system-abort APIs (2026-08-17)
+
+- Loop-guard moved to the first builtin slot and now combines its
+  `tool_execution_start` observation with the existing vetoable `tool_call`
+  hook. Two ignored identical-loop reminders arm blocking after the current
+  turn; three blocked repeats claim a shared wake-source lease, show a
+  transcript/UI warning, and interrupt with a system abort. Settlement then
+  triggers a hidden recovery message as a fresh provider user-role turn and
+  releases the lease when that turn starts. Similar/cycle warnings remain
+  non-blocking.
+- The implementation stays extension-only: no `types.ts`, runner, agent-loop,
+  or public extension API changes. Existing error-result and system-abort
+  contracts preserve active Goals; shared wake-source plus continuation-hold
+  events prevent immediate and timer-driven duplicate Goal recovery.
+- Why the registration move is required: `ExtensionRunner.emitToolCall`
+  returns on the first blocker. Repeated calls must be stopped before
+  settings-configured PreToolUse hooks and permission prompts repeat their own
+  work.
+- Coverage: focused loop-guard hard-escalation and Goal-isolation suites,
+  saturation detector coverage, package TypeScript, and real CLI QA.
+- Expected merge conflict zones: MEDIUM in `builtin/index.ts` at the first
+  registration slot; LOW in the loop-guard directory and focused tests; NONE
+  in public APIs or Goal production code.
+
 ## import-repro: guard /ir against mid-run and mid-compaction dispatch (2026-08-09)
 
 - Extension commands now dispatch immediately inside `AgentSession.prompt()` (immediate-extension-commands plan), including while a run is streaming and while compaction is active. `/ir` replaces the live session through `ctx.switchSession()`, which aborts the in-flight turn without confirmation and — during compaction — fire-and-forget aborts the compaction task and disposes the session while that task is still unwinding (`agent-session-runtime.ts` `teardownCurrent` -> `abort()` -> `dispose()`).

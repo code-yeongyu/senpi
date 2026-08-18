@@ -2,7 +2,7 @@ import { convertToLlm, filterContextExcludedMessages } from "../../../messages.t
 import { buildSessionContext } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { BtwPanel } from "./panel.ts";
-import { buildSideQueryContext, runSideQuery } from "./side-query.ts";
+import { buildSideQueryContext, getSideQueryPromptContextWindow, runSideQuery } from "./side-query.ts";
 
 const WIDGET_KEY = "btw";
 const ESCAPE = "";
@@ -62,7 +62,6 @@ export default function btwExtension(pi: ExtensionAPI) {
 			const systemPrompt = ctx.getSystemPrompt();
 			const thinkingLevel = pi.getThinkingLevel();
 			const sessionId = ctx.sessionManager.getSessionId();
-			const context = buildSideQueryContext({ systemPrompt, history, question });
 
 			dismiss(ctx, { abort: true });
 			const controller = new AbortController();
@@ -91,10 +90,20 @@ export default function btwExtension(pi: ExtensionAPI) {
 			}
 
 			try {
+				const context = buildSideQueryContext({
+					systemPrompt,
+					history,
+					question,
+					promptContextWindow: getSideQueryPromptContextWindow(model),
+				});
 				const { replyText } = await runSideQuery(
 					{
 						model,
-						auth: { apiKey: auth.apiKey, headers: auth.headers, extraBody: auth.extraBody },
+						auth: {
+							apiKey: auth.apiKey,
+							headers: auth.headers,
+							extraBody: auth.extraBody,
+						},
 						sessionId,
 						thinkingLevel: thinkingLevel === "off" ? undefined : thinkingLevel,
 						streamFn: (streamModel, streamContext, options) =>

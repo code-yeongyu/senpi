@@ -14,7 +14,8 @@ concurrency:
 
 jobs:
   # User-facing PRs must ship a CHANGELOG [Unreleased] entry (or carry the
-  # `no-changelog` label) so release archaeology stops catching missed entries.
+  # `no-changelog` label) and cover every upstream-owned production change in
+  # its exact nearest changes.md tracker with all four canonical sections.
   changelog-gate:
     name: Changelog gate
     runs-on: ubuntu-latest
@@ -30,8 +31,11 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Check PR changelog
-        run: node scripts/check-pr-changelog.mjs --base ${{ github.event.pull_request.base.sha }} --labels "${{ join(github.event.pull_request.labels.*.name, ',') }}"
+      - name: Check PR changelog and changes.md coverage
+        env:
+          CHANGELOG_GATE_BASE: ${{ github.event.pull_request.base.sha }}
+          CHANGELOG_GATE_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node scripts/check-pr-changelog.mjs
 
       - name: Workflow summary
         if: always()

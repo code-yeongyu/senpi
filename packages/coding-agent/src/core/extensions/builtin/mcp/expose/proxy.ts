@@ -13,8 +13,9 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 import type { ToolDefinition } from "../../../types.ts";
+import { buildBm25Index } from "../../tool-search/engine/bm25.ts";
+import { deriveMcpRegistrationId } from "../../tool-search/engine/marker.ts";
 import type { McpToolCatalogEntry } from "../catalog.ts";
-import { buildBm25Index } from "./bm25.ts";
 import { executeMcpCatalogEntry, type McpToolDetails, mapMcpCatalogNames } from "./register.ts";
 
 const ParamsSchema = Type.Object({
@@ -38,7 +39,17 @@ export function createMcpProxyTool(server: string, entries: readonly McpToolCata
 	const named = mapMcpCatalogNames(entries);
 	const byTool = new Map(named.map(({ entry }) => [entry.tool, entry] as const));
 	const index = buildBm25Index(
-		named.map(({ entry, name }) => ({ description: entry.description, name, server, toolName: entry.tool })),
+		named.map(({ entry, name }) => ({
+			name,
+			label: entry.tool,
+			aliases: [entry.tool],
+			description: entry.description,
+			keywords: [],
+			source: "mcp" as const,
+			group: server,
+			ownerLabel: server,
+			registrationId: deriveMcpRegistrationId(server, entry.tool),
+		})),
 	);
 	const name = named[0]?.name.split("_").slice(0, 2).join("_") ?? `mcp_${server}`;
 	return {
@@ -55,7 +66,7 @@ export function createMcpProxyTool(server: string, entries: readonly McpToolCata
 					matches.length === 0
 						? `No '${server}' tools matched. Try broader keywords or op:"describe" with an exact tool name.`
 						: matches
-								.map((match) => `- ${match.doc.toolName} — ${match.doc.description ?? "(no description)"}`)
+								.map((match) => `- ${match.doc.label} — ${match.doc.description ?? "(no description)"}`)
 								.join("\n");
 				return textResult(server, `Tools on '${server}':\n${body}`);
 			}
@@ -101,8 +112,7 @@ function textResult(server: string, text: string): ProxyResult {
 
 function unknownToolText(server: string, tool: string | undefined, index: ReturnType<typeof buildBm25Index>): string {
 	const nearest = tool === undefined ? [] : index.search(tool, 3, {});
-	const hint =
-		nearest.length === 0 ? "" : ` Nearest matches: ${nearest.map((match) => match.doc.toolName).join(", ")}.`;
+	const hint = nearest.length === 0 ? "" : ` Nearest matches: ${nearest.map((match) => match.doc.label).join(", ")}.`;
 	return `Unknown tool '${tool ?? "(missing)"}' on '${server}'.${hint} Use op:"search" to list tools.`;
 }
 

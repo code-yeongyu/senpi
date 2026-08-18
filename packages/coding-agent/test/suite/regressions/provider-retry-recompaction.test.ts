@@ -4,7 +4,6 @@ import { createHarness, getMessageText, type Harness } from "../harness.ts";
 
 const DEFAULT_PROVIDER_IDLE_TIMEOUT_MS = 300_000;
 const DEFAULT_STREAM_START_TIMEOUT_MS = 90_000;
-const RETRY_PROVIDER_TIMEOUT_MS = 30_000;
 
 type ContinuationInternals = {
 	_scheduledContinuationRecompacted: boolean;
@@ -103,11 +102,11 @@ describe("provider retry recompaction", () => {
 			expect(getRequestUserTexts(harness)).toEqual([["original request"], retryUserTexts]);
 			expect(harness.faux.getCallLog().map((call) => call.options?.timeoutMs)).toEqual([
 				DEFAULT_PROVIDER_IDLE_TIMEOUT_MS,
-				RETRY_PROVIDER_TIMEOUT_MS,
+				DEFAULT_PROVIDER_IDLE_TIMEOUT_MS,
 			]);
 			expect(harness.faux.getCallLog().map((call) => getStreamStartTimeoutMs(call.options))).toEqual([
 				DEFAULT_STREAM_START_TIMEOUT_MS,
-				RETRY_PROVIDER_TIMEOUT_MS,
+				DEFAULT_STREAM_START_TIMEOUT_MS,
 			]);
 		},
 	);

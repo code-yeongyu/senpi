@@ -37,6 +37,7 @@ const BUNDLED_WORKSPACE_NAMES = [
 	"@earendil-works/pi-agent-core",
 	"@earendil-works/pi-ai",
 	"@earendil-works/pi-pty",
+	"@earendil-works/pi-telemetry",
 	"@earendil-works/pi-tui",
 	"@code-yeongyu/senpi-codemode",
 ];
@@ -49,6 +50,7 @@ const BUNDLED_WORKSPACE_PACKAGE_NAMES = new Map([
 	["client", "@earendil-works/pi-client"],
 	["protocol", "@earendil-works/pi-protocol"],
 	["pty", "@earendil-works/pi-pty"],
+	["telemetry", "@earendil-works/pi-telemetry"],
 	["tui", "@earendil-works/pi-tui"],
 	["senpi-codemode", "@code-yeongyu/senpi-codemode"],
 ]);
@@ -121,7 +123,7 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-workspaces-"));
 		writeShrinkwrap(tempDir, { "": { dependencies: {} } });
 		writeCodingAgentManifest(tempDir);
-		for (const workspace of ["agent", "ai", "client", "protocol", "pty", "tui", "senpi-codemode"]) {
+		for (const workspace of ["agent", "ai", "client", "protocol", "pty", "telemetry", "tui", "senpi-codemode"]) {
 			writeBundledWorkspace(tempDir, workspace);
 		}
 
@@ -151,7 +153,7 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-missing-pty-prebuild-"));
 		writeShrinkwrap(tempDir, { "": { dependencies: {} } });
 		writeCodingAgentManifest(tempDir);
-		for (const workspace of ["agent", "ai", "client", "protocol", "tui", "senpi-codemode"]) {
+		for (const workspace of ["agent", "ai", "client", "protocol", "telemetry", "tui", "senpi-codemode"]) {
 			writeBundledWorkspace(tempDir, workspace);
 		}
 		writeBundledWorkspace(tempDir, "pty");
@@ -217,7 +219,7 @@ describe("prepareSenpiBundledWorkspaces", () => {
 				{ name: `@earendil-works/${packageName}`, version: "stale" },
 			);
 		}
-		for (const workspace of ["agent", "ai", "client", "protocol", "pty", "tui", "senpi-codemode"]) {
+		for (const workspace of ["agent", "ai", "client", "protocol", "pty", "telemetry", "tui", "senpi-codemode"]) {
 			writeBundledWorkspace(tempDir, workspace);
 		}
 		for (const name of ["cross-spawn", "which"]) {
@@ -257,7 +259,10 @@ describe("prepareSenpiBundledWorkspaces", () => {
 			"@earendil-works/pi-agent-core": "npm:@code-yeongyu/senpi-agent-core@2026.7.22",
 			"@earendil-works/pi-ai": "npm:@code-yeongyu/senpi-ai@2026.7.22",
 			"@earendil-works/pi-pty": "npm:@code-yeongyu/senpi-pty@2026.7.22",
+			"@earendil-works/pi-telemetry": "npm:@code-yeongyu/senpi-telemetry@2026.7.22",
 			"@earendil-works/pi-tui": "npm:@code-yeongyu/senpi-tui@2026.7.22",
+			"cross-spawn": "1.0.0",
+			which: "1.0.0",
 		});
 		const stagedAgentManifest = JSON.parse(
 			readFileSync(
@@ -318,7 +323,7 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-vendor-specifier-leak-"));
 		writeShrinkwrap(tempDir, { "": { dependencies: {} } });
 		writeCodingAgentManifest(tempDir);
-		for (const workspace of ["agent", "ai", "client", "protocol", "pty", "tui", "senpi-codemode"]) {
+		for (const workspace of ["agent", "ai", "client", "protocol", "pty", "telemetry", "tui", "senpi-codemode"]) {
 			writeBundledWorkspace(tempDir, workspace);
 		}
 		const leakedImport = join(tempDir, "packages", "coding-agent", "dist", "leak.js");
@@ -335,7 +340,7 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-vendor-runtime-dependency-"));
 		writeShrinkwrap(tempDir, { "": { dependencies: {} } });
 		writeCodingAgentManifest(tempDir);
-		for (const workspace of ["agent", "ai", "client", "protocol", "pty", "tui", "senpi-codemode"]) {
+		for (const workspace of ["agent", "ai", "client", "protocol", "pty", "telemetry", "tui", "senpi-codemode"]) {
 			writeBundledWorkspace(tempDir, workspace);
 		}
 		writeJson(join(tempDir, "packages", "protocol", "package.json"), {
@@ -357,7 +362,7 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-missing-pty-loader-"));
 		writeShrinkwrap(tempDir, { "": { dependencies: {} } });
 		writeCodingAgentManifest(tempDir);
-		for (const workspace of ["agent", "ai", "client", "protocol", "tui"]) {
+		for (const workspace of ["agent", "ai", "client", "protocol", "telemetry", "tui"]) {
 			writeBundledWorkspace(tempDir, workspace);
 		}
 		writeBundledWorkspace(tempDir, "pty");

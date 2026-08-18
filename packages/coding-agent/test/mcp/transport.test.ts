@@ -172,7 +172,7 @@ async function waitForChildPids(rootPid: number): Promise<number[]> {
 async function childPids(parentPid: number): Promise<number[]> {
 	if (!["darwin", "linux"].includes(process.platform)) return [];
 	try {
-		const { stdout } = await execFileAsync("pgrep", ["-P", String(parentPid)], { timeout: 1000 });
+		const { stdout } = await execFileAsync("pgrep", ["-P", String(parentPid), "."], { timeout: 1000 });
 		return stdout
 			.split(/\s+/)
 			.map((pid) => Number(pid))

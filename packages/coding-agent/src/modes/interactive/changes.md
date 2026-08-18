@@ -1,5 +1,392 @@
 # changes
 
+## Repository-wide changes.md audit backfill for interactive rendering, selectors, and editor surfaces (2026-08-17)
+
+### What changed
+
+- Backfill from the repository-wide changes.md audit (pin `914cf147`, tag v0.84.2): this entry names every upstream-owned interactive production path that still diverges from the pinned upstream tree. Detailed behavioral history stays in the dated entries of this file; the entries added by this backfill carry the rest.
+- Transcript renderers: `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` (incremental descriptor reconciliation, per-section thinking-duration headers, compact provider-native web-search rendering, descriptor extraction into `assistant-render-descriptors.ts`), `packages/coding-agent/src/modes/interactive/components/tool-execution.ts` (lifecycle/renderer/images split, todo-strike reveal, animation teardown), `packages/coding-agent/src/modes/interactive/components/bash-execution.ts` (bash syntax highlighting in the command header), and `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts` (OpenAI remote compaction details plus display-only escape sanitization).
+- Selectors: `packages/coding-agent/src/modes/interactive/components/model-selector.ts` (ranked search with favorites-first partition and frozen favorite ordering), `packages/coding-agent/src/modes/interactive/components/extension-selector.ts` (windowed option lists), `packages/coding-agent/src/modes/interactive/components/settings-selector.ts` (smooth-streaming and streaming-fps controls), `packages/coding-agent/src/modes/interactive/components/status-indicator.ts` (bounded single-row compaction progress with the compact-label collapse), `packages/coding-agent/src/modes/interactive/components/tree-selector.ts` (providerNative content blocks count as non-empty text), `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts` (extended xhigh wording), and `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts` (still consumed directly for scoped-model configuration; its components-barrel export moved to the favorites selector and the residual diff is comment/format churn).
+- Editor and footer surfaces: `packages/coding-agent/src/modes/interactive/components/custom-editor.ts` (prompt marker and padding floor), `packages/coding-agent/src/modes/interactive/components/diff.ts` (intra-line highlighting with the single-span fast path), `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts` (`escape` displays as `esc`), `packages/coding-agent/src/modes/interactive/components/footer.ts` (anchor-pinned width ladder, fast-mode glyph, abbreviated tokens; OmO badge removed), `packages/coding-agent/src/modes/interactive/components/index.ts` (exports `FavoriteModelsSelectorComponent`, drops `ScopedModelsSelectorComponent`), `packages/coding-agent/src/modes/interactive/external-editor.ts` (launch-failure discrimination plus the `editFileInExternalEditor()` seam), and `packages/coding-agent/src/modes/interactive/theme/theme.ts` (grok-night/grok-day built-in themes, theme proxy through `Reflect.get`).
+
+### Why
+
+- Merges resolve tracker files to `ours`, so every divergent upstream-owned path needs an entry in its exact nearest tracker that names it; the audit and the next upstream sync read this inventory instead of silently dropping fork behavior.
+
+### Why an extension could not handle it
+
+- These files are the built-in interactive renderer, selector, editor, and theme surfaces themselves. Extension hooks compose around them but cannot replace their private render paths, selector callbacks, or settings writes.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`, `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`, `packages/coding-agent/src/modes/interactive/components/footer.ts`, and `packages/coding-agent/src/modes/interactive/components/model-selector.ts` (heavily rewritten render paths).
+- LOW: the remaining component files, `packages/coding-agent/src/modes/interactive/external-editor.ts`, and the builtin-theme loading in `packages/coding-agent/src/modes/interactive/theme/theme.ts`.
+
+## Custom editor keeps its prompt marker and configured padding (2026-08-17)
+
+Landed 2026-08-03 (commits 5573069b1 and ce53fc60d).
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/custom-editor.ts`: the composer reserves a prompt gutter of at least two columns (`promptPaddingX = max(2, configured)`) while `getPaddingX()`/`setPaddingX()` report and accept the configured value, so `paddingX: 0` no longer erases the gutter and custom editors keep the padding they were handed (companion to the `paddingX` propagation on pi-tui's `EditorComponent`).
+- `render()` draws the themed `❯` prompt marker on the first content row and keeps it there when the draft wraps; the marker is skipped only for the history-scroll `↑` row and terminals narrower than five columns.
+
+### Why
+
+- A small or zero `paddingX` collapsed the prompt gutter entirely, and the chevron drifted off the first row on wrapped drafts, leaving the composer without a stable prompt anchor.
+
+### Why an extension could not handle it
+
+- The prompt marker and padding are drawn inside the built-in `CustomEditor` render override; extensions supply editor components but cannot re-anchor the default composer's gutter.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/components/custom-editor.ts` constructor, padding accessors, and `render()` override.
+
+## Single-span fast path for intra-line diffs (2026-08-17)
+
+Landed 2026-06-16 (commit 1da1ab5e4).
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/diff.ts`: `renderIntraLineDiff()` tries `renderIntraLineDiffFastPath()` first — identical lines return immediately, and a single replacement span (found by trimming the common prefix and suffix) renders directly as prefix plus inverse removed/added text — falling back to the exported `renderIntraLineDiffWithDiffWords()` (`Diff.diffWords`) only for multi-span edits. `LONG_LINE_FAST_PATH_LIMIT` (500) is exported for the bench and focused tests.
+- Coverage: `packages/coding-agent/test/diff-intraline-fastpath.test.ts`, `packages/coding-agent/test/diff-intraline-no-diffwords.test.ts`, and `packages/coding-agent/bench/word-diff.ts` against the pinned `bench/baseline/word-diff-baseline.json`.
+
+### Why
+
+- Most edit-tool diffs change one span per line; routing every line through `diffWords` dominated diff rendering time for large edits.
+
+### Why an extension could not handle it
+
+- Intra-line highlighting is computed by the built-in diff component before any extension result renderer sees the tool output.
+
+### Expected merge conflict zones
+
+- LOW/MEDIUM: `packages/coding-agent/src/modes/interactive/components/diff.ts` around the fast-path helpers and the exported seams.
+
+## Key hints display `escape` as `esc` (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts`: `keyText()`/`keyHint()` resolve display names through `KEY_DISPLAY_ALIASES` (`escape` → `esc`) before the existing macOS `alt` → `option` rule, so hints read `esc to cancel` while bindings keep matching the canonical `escape` id.
+
+### Why
+
+- The spelled-out `escape` widened single-row hints (compaction cancel hints, selector footers) beyond the key users actually press.
+
+### Why an extension could not handle it
+
+- Key display formatting is the shared helper every built-in hint row renders through; the alias must stay consistent across all of them.
+
+### Expected merge conflict zones
+
+- LOW: the `KEY_DISPLAY_ALIASES` map and `formatKeyPart()` in `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts`.
+
+## Model selector search text helper removed (2026-08-17)
+
+Landed 2026-08-09 (commit 444f900d0).
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/model-search.ts`: `getModelSelectorSearchText()` is deleted. `/model` search ranks through `rankModelSearchItems` (see "model selector search ranking and frozen ordering"), which left the selector-specific concatenated-string builder with no consumers; `getModelSearchText()` remains for command autocomplete.
+
+### Why
+
+- Dead helpers in the shared search module invite the next editor to rank through the retired path that mis-ordered `opus` queries.
+
+### Why an extension could not handle it
+
+- The helper was private interactive-mode search plumbing; no extension consumed it.
+
+### Expected merge conflict zones
+
+- LOW: the deletion site in `packages/coding-agent/src/modes/interactive/model-search.ts`; an upstream sync restoring it conflicts trivially.
+
+## Renderer-only hosts: startup guards the default editor and stop defers exit output (2026-08-17)
+
+Landed 2026-08-16 (commit 03f46f57e, shipped in PR #892; see the focus-routing entry in `packages/tui/src/changes.md`).
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: startup wires the `app.clear`, Ctrl-D, and startup-submit handlers on `defaultEditor` only when a base editor exists, because renderer-only lifecycle hosts may mount the chrome tree without constructing one. `stop(fullscreenExitOutput?)` no longer eagerly reads the fullscreen-exit setting at default-parameter evaluation; the value resolves as `fullscreenExitOutput ?? this.settingsManager.getFullscreenExitOutput()` when the TUI is actually stopped.
+
+### Why
+
+- The v0.84.2 sync introduced renderer-only hosts; assuming a default editor and reading settings eagerly broke both paths outside the classic editor lifecycle.
+
+### Why an extension could not handle it
+
+- Startup wiring and `stop()` are `InteractiveMode` lifecycle internals that run before and after extension hooks.
+
+### Expected merge conflict zones
+
+- LOW: the `defaultEditor` guard block and the `stop()` signature/default resolution in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
+
+## OmO Native footer badge removed (2026-08-17)
+
+Landed 2026-08-10 (commit c416335e9). Supersedes every copy of "Footer prepends (OmO Native) badge when the OMO native stack is active (2026-07-28)" in this file.
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the `(OmO Native)` anchor segment and its `footerData.isOmoNative()` feed are gone; the footer renders no OmO-specific coupling. The width-elision ladder, fast-mode glyph, and the rest of the fork footer behavior are unchanged.
+- The supporting `detectOmoNativeInstall()` module and its tests were deleted with the badge (the core-side data-provider cleanup is tracked by `packages/coding-agent/src/core/changes.md`).
+
+### Why
+
+- The badge coupled the brand-neutral footer to OmO-specific install detection that no longer carries product meaning; removing it deletes the detection path instead of leaving it dark.
+
+### Why an extension could not handle it
+
+- Footer segment composition is built into the interactive footer renderer; an extension cannot remove a built-in anchor segment.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/components/footer.ts` around the (already removed) anchor construction.
+
+## Grok slash-menu colors resolve through chrome tokens (2026-08-17)
+
+Landed 2026-07-26 (commit ed353b365).
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/grok/chrome-tokens.ts` and `packages/coding-agent/src/modes/interactive/grok/chrome.ts`: the grok chrome colors slash-menu selection prefixes, primary text, and descriptions through chrome tokens backed by the active theme, composing each row via the pi-tui `SelectListTheme.renderRow` seam (see the renderRow entry in `packages/tui/src/changes.md`) instead of inline hex literals.
+- Coverage: `packages/coding-agent/test/grok/chrome.test.ts` pins the token-resolved rows.
+
+### Why
+
+- The mixed command/skill picker needed grok-night and grok-day to color the same rows differently without forking the shared select list.
+
+### Why an extension could not handle it
+
+- Chrome tokens are consumed inside the built-in interactive chrome strategy before extension UI contributions are composed.
+
+### Expected merge conflict zones
+
+- LOW: the token additions in `packages/coding-agent/src/modes/interactive/grok/chrome-tokens.ts` and the composer wiring in `packages/coding-agent/src/modes/interactive/grok/chrome.ts` (fork-only directory).
+
+## Custom-editor Enter submissions are no longer dropped (2026-08-16)
+
+### What changed
+
+- The custom-editor submit bridge in `interactive-mode.ts` (`setCustomEditorComponent`) now expands the submitted value via a new `expandSubmittedText()` in `editor-paste-transfer.ts`. It preserves a non-empty live expanded value for custom editors that submit before clearing, but falls back to the authoritative callback text (and any surviving paste registry) when pi-tui has already cleared the editor.
+- The previous bridge called `expandEditorSubmission()`, which prefers `editor.getExpandedText()` over the submitted text. That preference is correct for live draft reads (`getExpandedEditorText()`) but wrong at submit time: pi-tui's `Editor.submitValue()` clears the editor state and paste registry *before* invoking `onSubmit`, so any custom editor implementing `getExpandedText()` (e.g. a wrapper delegating to a pi-tui `Editor`) reported "" and the entire submission was silently discarded — Enter cleared the prompt without sending anything.
+- `expandEditorSubmission()` itself is unchanged; only the submit call site switched. Regression coverage now drives the real host bridge with both clear-before-callback and uncleared custom editors.
+
+### Why
+
+- With a custom editor installed (for example the `pi-voice-stt` dictation extension), pressing Enter cleared the prompt but no message ever reached the model — the TUI could not send any user input at all.
+
+### Why this cannot be expressed externally
+
+- The submit bridge lives in the core custom-editor wiring; extensions can only supply the editor component, not how the host reads back its submission.
+
+### Expected merge conflict zones
+
+- LOW: one call site and one import in `interactive-mode.ts`, plus one additive export in the fork-only `editor-paste-transfer.ts`.
+
+## Show the selected settings source (2026-08-16)
+
+### What changed
+
+- Interactive mode renders `settings_source_selected` as a concise dim status such as `Settings: settings.jsonc (JSONC)`.
+- Rendering is event-driven: one startup/reload selection produces one status update, with no polling or input-path emission.
+
+### Why
+
+- JSONC precedence is otherwise invisible, especially when both settings flavors exist.
+
+### Why this cannot be expressed externally
+
+- The event can arrive before extension UI binding and the built-in transcript/status lifecycle owns startup rendering.
+
+### Expected merge conflict zones
+
+- LOW: one additive `handleEvent` case and helper in `interactive-mode.ts`.
+
+## Favorite persist merges by pattern resolution, keeping `:level` / `:priority` decorators (2026-08-16)
+
+Supersedes "Favorite patterns survive a persist while providers are unavailable (2026-08-12)": the
+`unresolvedPatterns` contract described there no longer exists, and `persistFavoritePatterns` is gone.
+
+### What changed
+
+- `mergeFavoritePatternsForPersist()` in `components/model-favorites.ts` now consumes
+  `PatternResolution[]` (per-pattern ownership metadata from `core/model-resolver.ts`) instead of a
+  flat `unresolvedPatterns` list. Contract, per stored pattern:
+  - unresolved (malformed, empty, or zero-match) passes through verbatim;
+  - resolved with zero owned ids is dropped (it only duplicated models an earlier pattern claimed,
+    so keeping it would resurrect a model the user just removed);
+  - resolved whose visible owned ids are ALL still selected and still an unbroken ordered block is
+    preserved VERBATIM, so `claude-opus-5:xhigh` and `gpt-5.5:priority:high` survive a toggle of an
+    unrelated favorite;
+  - a partially deselected glob EXPLODES into exact decorated entries - still-selected visible ids in
+    selector order, then owned ids outside the candidate set, each re-decorated from the glob's
+    `serviceTier` / `thinkingLevel`;
+  - newly favorited models append as bare canonical ids; identical strings dedupe first-wins;
+    `undefined` is still written only when the merged result is genuinely empty.
+- Stored patterns are paired with their resolutions through a `Map<pattern, PatternResolution>`, not
+  by array position. When the two lists drift - settings mutated externally between snapshot capture
+  and merge, an inserted/removed/reordered entry, or an empty `patternResolutions` - a decorated
+  pattern is still matched by identity. The previous positional guard
+  (`resolution.pattern !== storedPatterns[index] -> continue`) silently skipped such patterns into the
+  bare-id append path, which is exactly the decorator loss this entry exists to prevent. Duplicate
+  identical stored patterns share the first (owning) resolution; the later duplicate resolves to no
+  ownership anyway, so first-wins keeps the output identical.
+- `interactive-mode.ts` replaced `persistFavoritePatterns` with `captureFavoritePatternSnapshot()` +
+  `applyFavoriteSelection()`, so the LIVE session favorites and the persisted settings both derive
+  from the SAME merged pattern list. Previously the session was rebuilt from bare ids before the
+  persist, dropping decorators pre-write.
+- Coverage: `../../../test/favorite-model-pattern-merge.test.ts` (verbatim preservation, glob
+  explosion, unfavorite/refavorite round trip, unresolved pass-through, overlapping-pattern drop,
+  and the drifted-snapshot class: inserted, removed, reordered, empty resolutions, duplicates), plus
+  the existing `favorite-models-preserve-unresolvable`, `favorite-models-frozen-order`, and
+  `favorite-model-selection` suites as the regression fence.
+
+### Why
+
+- Favorite patterns carry per-model reasoning and service-tier intent (`:xhigh`, `:priority:high`).
+  The selectors present favorites as plain ids, so persisting that view collapsed every decorated
+  pattern to a bare id: toggling one unrelated favorite silently reset another model's reasoning
+  level. Ownership metadata is the only way to tell "the user did not touch this pattern" from "the
+  user deselected part of it".
+- Keying by pattern rather than position closes the same bug class at its second entry point: a
+  snapshot that no longer lines up with `settings.json` must not be able to turn a decorated pattern
+  into a bare id.
+
+### Why this cannot be expressed externally
+
+- Interactive mode owns the selector callbacks, the availability-filtered favorites view, and the
+  settings write. No extension hook can intervene between the filtered view and the persist, and the
+  ownership metadata it merges against is internal model-resolver output.
+
+### Expected merge conflict zones
+
+- LOW: `components/model-favorites.ts` around `mergeFavoritePatternsForPersist` (the whole helper is
+  fork-specific; upstream has no equivalent).
+- LOW: `interactive-mode.ts` around `captureFavoritePatternSnapshot()` / `applyFavoriteSelection()`
+  and the two selector persist callbacks - the zone the 2026-08-12 entry declared, now renamed.
+
+## Extension selector windows long option lists (2026-08-13)
+
+### What changed
+
+- `components/extension-selector.ts` renders only a window of options around the selection (sized like
+  `TreeList`: half the terminal rows, minimum 5, defaulting to 10 without a TUI handle) with muted
+  `… N more above/below` markers when clipped. Previously `updateList()` rebuilt every option on every
+  keypress; on large model registries the overflowing list pushed past the viewport and the moved highlight
+  was never painted, so arrows and j/k looked dead in `/fallback` even though the selection moved (issue #795).
+- Coverage: `test/suite/regressions/795-extension-selector-windowing.test.ts` and the real-CLI scenario
+  `.agents/skills/senpi-qa/scripts/scenarios/fallback-selector-nav-repro.mjs` (60-model registry,
+  kitty-encoded and legacy input).
+
+### Why
+
+- Every `/fallback` chain edit on a large registry hit a selector whose visible highlight never updated:
+  the selection index advanced synchronously, but the full-list repaint was lost past the viewport, so the
+  flow looked frozen while Esc (a single cheap repaint of the restored editor) still responded.
+
+### Why this cannot be expressed externally
+
+- The component is the shared extension-dialog selector owned by interactive mode; no extension hook
+  intercepts its per-keypress render.
+
+### Expected merge conflict zones
+
+- LOW: `components/extension-selector.ts` `updateList()` and constructor option handling.
+
+## Deferred assistant messages are not errors (2026-08-13)
+
+### What changed
+
+- The assistant renderer treats upstream's new `deferred` stop reason as a successful non-error terminal state.
+- Focused component coverage proves it does not synthesize an `Error:` row.
+
+### Why
+
+- The exhaustive switch predated the new stop reason, causing both a build failure and the risk of falsely
+  presenting intentionally deferred work as a provider error.
+
+### Why this cannot be expressed externally
+
+- The built-in assistant component owns terminal-state rendering before extension UI contributions are composed.
+
+### Expected merge conflict zones
+
+- LOW: `components/assistant-render-descriptors.ts` stop-reason switch.
+
+## Favorite patterns survive a persist while providers are unavailable (2026-08-12)
+
+> SUPERSEDED by "Favorite persist merges by pattern resolution, keeping `:level` / `:priority`
+> decorators (2026-08-16)". Retained for history. Two claims below are no longer accurate:
+> `mergeFavoritePatternsForPersist()` no longer takes an `unresolvedPatterns` list (it takes
+> `PatternResolution[]` and derives unresolved status per pattern), and `persistFavoritePatterns` no
+> longer exists (`interactive-mode.ts` persists through `captureFavoritePatternSnapshot()` +
+> `applyFavoriteSelection()`). The underlying guarantee - stored favorites are not erased by a
+> persist taken while providers are unavailable - still holds, and is now the `unresolved` branch of
+> the newer contract.
+
+### What changed
+
+- `mergeFavoritePatternsForPersist()` in `components/model-favorites.ts` merges the
+  selector's visible selection with stored favorite patterns that currently resolve to
+  no model. `interactive-mode.ts` persists through it from both the model selector's
+  `onFavoriteChange` and the favorites selector's `onPersist`.
+- The persisted list keeps unresolvable patterns in their stored order and appends the
+  user's selection without duplicating entries. `undefined` is still written only when
+  the merged result is genuinely empty.
+
+### Why
+
+- Both selectors derive their favorite ids from `session.favoriteModels`, which is
+  `resolveModelScope()` filtered against the current availability snapshot. Persisting
+  that view verbatim erased every stored favorite whose provider was momentarily
+  unauthenticated or unreachable, and an empty result removed the `favoriteModels` key
+  from `settings.json` entirely.
+
+### Why this cannot be expressed externally
+
+- Interactive mode owns the selector callbacks and the settings write, so no extension
+  hook can intervene between the filtered view and the persist.
+
+### Expected merge conflict zones
+
+- LOW: `components/model-favorites.ts` around the merge helper and `interactive-mode.ts`
+  around the two selector persist callbacks.
+
+## External-editor launch failures remain distinct (2026-08-12)
+
+### What changed
+
+- `editInExternalEditor()` now resolves a discriminated child-process outcome:
+  the `error` event returns `launch-failed`, while `close` after a real launch
+  returns `failed` for nonzero or signal exits and `complete` only for exit 0.
+- The composer still replaces its text only for `complete`, so launch failures
+  and editor failures both preserve the current prompt without widening the
+  UI control flow.
+- Deterministic coverage uses a guaranteed-missing executable to force a real
+  operating-system launch failure, rather than mocking `spawn`, sleeping,
+  increasing timeouts, or relying on an overloaded full suite to reproduce by
+  chance.
+
+### Why
+
+- The old path resolved `error` as `null` and then treated it as an editor
+  nonzero exit. Under full-suite process pressure, the editor could fail to
+  launch while callers and tests received the status that means it did launch.
+- The sibling file-editor path already preserves this distinction because only
+  a launched editor may have modified caller-owned files.
+
+### Why this cannot be expressed externally
+
+- The built-in interactive mode owns the process spawn, temporary prompt
+  directory, editor result type, and composer replacement decision before any
+  extension hook can intervene.
+
+### Expected merge conflict zones
+
+- LOW: `external-editor.ts` around `ExternalEditorResult` and the prompt-editor
+  `spawn` event handlers.
+
 ## Bound omitted render-signature hashing (2026-08-10)
 
 ### What changed
@@ -361,6 +748,10 @@
 
 ## Footer prepends (OmO Native) badge when the OMO native stack is active (2026-07-28)
 
+> SUPERSEDED by "OmO Native footer badge removed (2026-08-17)". Retained for history: the `(OmO Native)` anchor
+> segment, its `footerData.isOmoNative()` feed, and `detectOmoNativeInstall()` were removed on 2026-08-10 (commit
+> c416335e9), so this badge no longer renders. The width-elision ladder it participated in is unchanged.
+
 ### What changed
 
 - `components/footer.ts`: `render()` prepends an `(OmO Native)` anchor segment (colored `success`) as the leftmost footer element when `footerData.isOmoNative()` returns true, before pwd and branch. The badge participates in the existing width-elision ladder as an anchor (never dropped, only elided with pwd when space is exhausted).
@@ -587,6 +978,10 @@ The tip line was teaching a small slice of the product while most of the surface
 
 ## Footer prepends (OmO Native) badge when the OMO native stack is active (2026-07-28)
 
+> SUPERSEDED by "OmO Native footer badge removed (2026-08-17)". Retained for history: the `(OmO Native)` anchor
+> segment, its `footerData.isOmoNative()` feed, and `detectOmoNativeInstall()` were removed on 2026-08-10 (commit
+> c416335e9), so this badge no longer renders. The width-elision ladder it participated in is unchanged.
+
 ### What changed
 
 - `components/footer.ts`: `render()` prepends an `(OmO Native)` anchor segment (colored `success`) as the leftmost footer element when `footerData.isOmoNative()` returns true, before pwd and branch. The badge participates in the existing width-elision ladder as an anchor (never dropped, only elided with pwd when space is exhausted).
@@ -756,6 +1151,10 @@ The tip line was teaching a small slice of the product while most of the surface
 ### Expected merge conflict zones
 
 ## Footer prepends (OmO Native) badge when the OMO native stack is active (2026-07-28)
+
+> SUPERSEDED by "OmO Native footer badge removed (2026-08-17)". Retained for history: the `(OmO Native)` anchor
+> segment, its `footerData.isOmoNative()` feed, and `detectOmoNativeInstall()` were removed on 2026-08-10 (commit
+> c416335e9), so this badge no longer renders. The width-elision ladder it participated in is unchanged.
 
 ### What changed
 

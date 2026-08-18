@@ -147,7 +147,7 @@ describe("cache keep-alive", () => {
 		expect(h.warm).toHaveBeenCalledOnce();
 		expect(h.emitted).toContainEqual({
 			channel: "cache_warm_ping",
-			data: expect.objectContaining({ iteration: 1, cachedTokens: 45_000, ttlSeconds: 3600 }),
+			data: expect.objectContaining({ iteration: 1, cachedTokens: 45_000, ttlSeconds: 300 }),
 		});
 	});
 

@@ -191,6 +191,7 @@ describe("stagePublishManifest", () => {
 		assert.deepEqual(manifest.dependencies, {
 			"@earendil-works/pi-ai": "npm:@code-yeongyu/senpi-ai@2026.7.22",
 			"cross-spawn": "7.0.6",
+			which: "1.0.0",
 		});
 		assert.deepEqual(manifest.optionalDependencies, { "@mariozechner/clipboard": "0.3.9" });
 		assert.ok(manifest.bundleDependencies.includes("@earendil-works/pi-ai"));

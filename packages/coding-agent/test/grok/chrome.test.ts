@@ -27,7 +27,7 @@ function createRuntime(): AgentSessionRuntime {
 				getOutputPad: () => 1,
 				getPackages: () => [],
 				getShowHardwareCursor: () => false,
-				getUiMode: () => "inline",
+				getTuiMode: () => "regular",
 				getSmoothStreaming: () => false,
 				getSmoothStreamingFps: () => 60,
 				getThemeSetting: () => "grok-night",

@@ -29,6 +29,8 @@ const PRIORITY_TIER_MODEL_IDS = [
 	"o4-mini",
 ] as const;
 
+const OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const;
+
 const NON_PRIORITY_MODEL_IDS = [
 	"gpt-5-pro",
 	"gpt-5.2-pro",
@@ -85,10 +87,39 @@ describe("OpenAI -fast priority-tier catalog variants", () => {
 		}
 	});
 
-	it("does not recurse (-fast-fast) and keeps variants out of other providers", () => {
+	it("does not recurse (-fast-fast) and keeps variants out of azure", () => {
 		const catalogIds = getModels("openai").map((model) => model.id);
 		expect(catalogIds.some((id) => id.endsWith("-fast-fast"))).toBe(false);
 		expect(getModels("azure-openai-responses").some((model) => model.id.endsWith("-fast"))).toBe(false);
-		expect(getModels("openai-codex").some((model) => model.id.endsWith("-fast"))).toBe(false);
+	});
+
+	it("ships a -fast variant for openai-codex priority-eligible models", () => {
+		const codexCatalogIds = getModels("openai-codex").map((model) => model.id);
+		for (const id of OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS) {
+			expect(codexCatalogIds, `codex base model ${id} should exist`).toContain(id);
+			expect(codexCatalogIds, `codex ${id}-fast should exist`).toContain(`${id}-fast`);
+		}
+	});
+
+	it("clones the codex base model with upstreamModelId, priority tier, and base cost rates", () => {
+		for (const id of OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS) {
+			const base = getModel("openai-codex", id);
+			const fast = getModel("openai-codex", `${id}-fast`);
+			expect(base, `${id} should exist`).toBeDefined();
+			expect(fast, `${id}-fast should exist`).toBeDefined();
+			expect(fast!.name).toBe(`${base!.name} Fast`);
+			expect(fast!.upstreamModelId).toBe(id);
+			expect(fast!.serviceTier).toBe("priority");
+			expect(fast!.api).toBe(base!.api);
+			expect(fast!.provider).toBe("openai-codex");
+			expect(fast!.baseUrl).toBe(base!.baseUrl);
+			expect(fast!.reasoning).toBe(base!.reasoning);
+			expect(fast!.input).toEqual(base!.input);
+			expect(fast!.contextWindow).toBe(base!.contextWindow);
+			expect(fast!.maxTokens).toBe(base!.maxTokens);
+			expect(fast!.thinkingLevelMap).toEqual(base!.thinkingLevelMap);
+			expect(fast!.compat).toEqual(base!.compat);
+			expect(fast!.cost).toEqual(base!.cost);
+		}
 	});
 });

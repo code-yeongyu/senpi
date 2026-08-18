@@ -21,8 +21,10 @@ const root = dirname(__dirname);
 const SUPPORTED_PMS = new Set(["npm", "bun", "pnpm"]);
 
 export const BUILD_PHASES = [
-	["packages/tui", "packages/pty", "packages/ai", "packages/protocol"],
-	["packages/agent", "packages/client"],
+	["packages/tui", "packages/pty", "packages/telemetry", "packages/protocol"],
+	["packages/ai", "packages/client"],
+	["packages/agent"],
+	["packages/session-backends/sqlite-node"],
 	["packages/coding-agent"],
 	["packages/server"],
 ];

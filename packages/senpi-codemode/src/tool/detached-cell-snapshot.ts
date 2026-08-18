@@ -12,6 +12,8 @@ export interface DetachedCellResultSource {
 	stateRetained: boolean | undefined;
 	liveResult: (() => AgentToolResult<EvalToolDetails>) | undefined;
 	terminalResult: AgentToolResult<EvalToolDetails> | undefined;
+	hardLimited?: boolean;
+	hardLimitSeconds?: number;
 }
 
 export function snapshotDetachedCell(cell: DetachedCellResultSource, nowMs: number): EvalDetachedCellSnapshot {
@@ -24,6 +26,9 @@ export function snapshotDetachedCell(cell: DetachedCellResultSource, nowMs: numb
 		outputTail: detachedOutputTail(result),
 		result,
 		stateRetained: cell.stateRetained,
+		...(cell.hardLimited === true && cell.hardLimitSeconds !== undefined
+			? { hardLimitSeconds: cell.hardLimitSeconds }
+			: {}),
 	};
 }
 

@@ -10,6 +10,53 @@ function parseLines(chunks: readonly string[]): Array<Record<string, unknown>> {
 }
 
 describe("RPC event output coalescing", () => {
+	it("keeps every classic message delta while batching one raw write", () => {
+		const chunks: string[] = [];
+		const scheduled: Array<() => void> = [];
+		const buffer = createRpcEventOutputBuffer(
+			(chunk) => chunks.push(chunk),
+			(flush) => scheduled.push(flush),
+		);
+		const source = Array.from({ length: 1000 }, (_, index) => String.fromCharCode(97 + (index % 26))).join("");
+
+		for (const delta of source) {
+			buffer.enqueueEvent({
+				type: "message_update",
+				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+			});
+		}
+		scheduled[0]!();
+
+		const output = parseLines(chunks);
+		expect(chunks).toHaveLength(1);
+		expect(output).toHaveLength(1000);
+		expect(output.map((record) => (record.assistantMessageEvent as { delta: string }).delta).join("")).toBe(source);
+		expect(output.every((record) => !Object.hasOwn(record, "message"))).toBe(true);
+		expect(output.every((record) => !Object.hasOwn(record.assistantMessageEvent as object, "partial"))).toBe(true);
+	});
+
+	it("preserves event, UI-request, event, response ordering across immediate barriers", () => {
+		const chunks: string[] = [];
+		const scheduled: Array<() => void> = [];
+		const buffer = createRpcEventOutputBuffer(
+			(chunk) => chunks.push(chunk),
+			(flush) => scheduled.push(flush),
+		);
+
+		buffer.enqueueEvent({ type: "event", sequence: 1 });
+		buffer.writeImmediate({ type: "extension_ui_request", id: "ui-1" });
+		buffer.enqueueEvent({ type: "event", sequence: 2 });
+		buffer.writeImmediate({ type: "response", id: "cmd-1" });
+
+		expect(chunks).toHaveLength(4);
+		expect(parseLines(chunks)).toEqual([
+			{ type: "event", sequence: 1 },
+			{ type: "extension_ui_request", id: "ui-1" },
+			{ type: "event", sequence: 2 },
+			{ type: "response", id: "cmd-1" },
+		]);
+	});
+
 	it("flushes pending events before immediate response writes", () => {
 		const chunks: string[] = [];
 		const scheduled: Array<() => void> = [];

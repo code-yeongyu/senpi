@@ -202,7 +202,9 @@ describe("configured request header auth", () => {
 		const apiKey = provider.auth.apiKey;
 		expect(apiKey).toBeDefined();
 		if (!apiKey) throw new Error("Expected api-key auth");
-		await expect(apiKey.resolve({ ctx: emptyAuthContext })).rejects.toThrow("authHeader requires a resolved API key");
+		await expect(apiKey.resolve({ ctx: emptyAuthContext, signal: new AbortController().signal })).rejects.toThrow(
+			"authHeader requires a resolved API key",
+		);
 	});
 });
 

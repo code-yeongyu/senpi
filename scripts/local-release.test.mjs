@@ -154,13 +154,14 @@ function writeLocalReleaseFixture(repoRoot) {
 		packages: {},
 	});
 	for (const [directory, name] of [
+		["packages/telemetry", "@earendil-works/pi-telemetry"],
 		["packages/ai", "@earendil-works/pi-ai"],
 		["packages/pty", "@earendil-works/pi-pty"],
 		["packages/tui", "@earendil-works/pi-tui"],
 		["packages/agent", "@earendil-works/pi-agent-core"],
 		["packages/protocol", "@earendil-works/pi-protocol"],
 		["packages/client", "@earendil-works/pi-client"],
-		["packages/storage/sqlite-node", "@earendil-works/pi-storage-sqlite-node"],
+		["packages/session-backends/sqlite-node", "@earendil-works/pi-storage-sqlite-node"],
 		["packages/senpi-codemode", "@code-yeongyu/senpi-codemode"],
 		["packages/coding-agent", "@code-yeongyu/senpi"],
 		["packages/server", "@code-yeongyu/senpi-server"],

@@ -1,6 +1,6 @@
 # packages/ai/src/api
 
-Generated: 2026-08-07. Commit `4f26b8282`.
+Generated: 2026-08-17. Commit `abae968e8`.
 
 Provider wire protocol implementations and stream adapters. Each provider ships as a concrete module plus a `.lazy.ts` wrapper that uses `lazyApi()` from `lazy.ts`.
 
@@ -12,6 +12,7 @@ Provider wire protocol implementations and stream adapters. Each provider ships 
 | `openai-responses.ts` | `openai-responses.lazy.ts` |
 | `openai-completions.ts` | `openai-completions.lazy.ts` |
 | `openai-codex-responses.ts` | `openai-codex-responses.lazy.ts` |
+| `cursor-agent.ts` | `cursor-agent.lazy.ts` |
 | `azure-openai-responses.ts` | `azure-openai-responses.lazy.ts` |
 | `google-generative-ai.ts` | `google-generative-ai.lazy.ts` |
 | `google-vertex.ts` | `google-vertex.lazy.ts` |
@@ -21,6 +22,8 @@ Provider wire protocol implementations and stream adapters. Each provider ships 
 | `openrouter-images.ts` | `openrouter-images.lazy.ts` |
 
 Utility modules with no lazy wrapper: `cloudflare.ts`, `github-copilot-headers.ts`, `openai-prompt-cache.ts`, `anthropic-tool-pairs.ts` (browser-safe Anthropic tool_use/tool_result pair sanitizer; final pre-submit pass), `openai-client-auth.ts` (shared client-auth resolution from credential headers), `constrained-sampling.ts` (JSON-schema-driven constrained sampling helpers).
+
+`cursor-agent/` subdir: `types.ts` (exec-handler contracts), `pi-args.ts` (arg translators shared with `cursor-exec-bridge.ts` in coding-agent — display blocks and executed args must stay identical), `exec-modern.ts` (wire result builders for modern exec frames), `deterministic-id.ts` (stable UUID-shape ids), and `gen/agent_pb.ts` (generated protobuf-es schema; regenerate with `buf generate` from `packages/ai/proto/cursor/agent.proto`, then `node scripts/transform-cursor-agent-proto.mjs <in> <out>`; never hand-edit). `cursor-agent.ts` is Node-only: it is reached exclusively through `cursor-agent.lazy.ts`, and the Bun binary overrides it statically via `packages/ai/src/cursor-agent-provider.ts` plus `packages/coding-agent/src/bun/register-cursor-agent.ts` (imported before any Cursor provider use).
 
 `openai-codex-responses/` subdir: `fallback-state.ts` (WebSocket fallback state + cooldown), `reasoning.ts` (Codex reasoning summary normalizer).
 
@@ -34,7 +37,10 @@ Utility modules with no lazy wrapper: `cloudflare.ts`, `github-copilot-headers.t
 
 - `simple-options.ts` `applyExtraBody()`: merges caller-supplied `extraBody` into a provider request, skipping keys in the provider's `reservedKeys` set. Never overwrite `model`, `messages`, `stream`, tool-call fields, or reasoning fields. Each provider declares its own `RESERVED_BODY_KEYS` set (e.g., `OPENAI_COMPLETIONS_RESERVED_BODY_KEYS`).
 - `transform-messages.ts`: cross-provider message coercion (image downgrade, tool-result flattening). Returns new structures; never mutates shared message arrays. Cross-model transforms drop incompatible opaque state (provider-native content that can't round-trip). Same-model provider-native state (Anthropic signed thinking, redacted thinking blocks, encrypted web-search state) is byte-sensitive and must be preserved exactly.
-- `openai-responses-shared.ts`: shared logic for both `openai-responses.ts` and `openai-codex-responses.ts`.
+- `openai-responses-shared.ts`: shared logic for both `openai-responses.ts` and `openai-codex-responses.ts`. Native
+  `image_generation_call` items are structurally reconciled here (not from the installed SDK type): partial-image
+  events are ignored, terminal output can backfill a missing done frame, and final base64 is aggregate-capped before
+  provider-native content leaves the parser.
 - `google-shared.ts`: shared logic for both `google-generative-ai.ts` and `google-vertex.ts`.
 
 ## PROVIDERSTREAMS CONTRACT

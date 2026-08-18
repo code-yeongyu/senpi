@@ -30,6 +30,12 @@ const apitopiaToolSchemaRejectionMessage =
 	'500 data: {"error":{"message":"500 server_error: Invalid request: tools.function.parameters.type is required and must be \\"object\\"","type":"server_error","code":500,"status":500,"statusCode":500,"isRetryable":true}}\n\ndata:[DONE]\n\n';
 const moonshotToolSchemaRejectionMessage =
 	"500 server_error: Invalid request: tools.0.function.parameters: invalid tool schema";
+const gatewayModelRequestRejectedMessage = "Error: The model request was rejected. Check the request and try again.";
+const nonCanonicalModelRequestRejectionMessages = [
+	"Error: The model request was rejected because this API key does not have permission to use it.",
+	"Error: The model request was rejected because max_tokens must be greater than or equal to 1.",
+	"Error: The model request was rejected by the safety classifier.",
+] as const;
 
 describe("provider retry classification", () => {
 	it("matches explicit provider retry guidance", () => {
@@ -204,6 +210,17 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
+	it("matches upstream request buffer exhaustion wording", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "Error: exceeded request buffer limit while retrying upstream",
+				}),
+			),
+		).toBe(true);
+	});
+
 	it.each([
 		wrappedDnsLookupError,
 		"connect ENOTFOUND api.example.com",
@@ -271,6 +288,59 @@ describe("provider retry classification", () => {
 				}),
 			),
 		).toBe(true);
+	});
+
+	it("matches the canonical gateway model-request rejection as transient", () => {
+		// Gateways/proxies answer with "The model request was rejected. Check the
+		// request and try again." when the upstream lane is momentarily unable to
+		// serve the request. Coupling both sentences keeps unrelated permission,
+		// request-shape, and content-policy rejections terminal.
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: gatewayModelRequestRejectedMessage }),
+			),
+		).toBe(true);
+	});
+
+	it.each(nonCanonicalModelRequestRejectionMessages)(
+		"keeps non-canonical model-request rejections terminal: %s",
+		(errorMessage) => {
+			expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(false);
+		},
+	);
+
+	it.each(["refusal", "sensitive"] as const)(
+		"keeps typed %s messages terminal even with the canonical retry wording",
+		(type) => {
+			expect(
+				isRetryableAssistantError(
+					fauxAssistantMessage("", {
+						stopReason: "error",
+						errorMessage: gatewayModelRequestRejectedMessage,
+						stopDetails: { type },
+					}),
+				),
+			).toBe(false);
+		},
+	);
+
+	it("keeps non-retryable overlap precedence over the canonical retry wording", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: `${gatewayModelRequestRejectedMessage} quota exceeded`,
+				}),
+			),
+		).toBe(false);
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: `${gatewayModelRequestRejectedMessage} Invalid request: tools.0.function.parameters.type is required`,
+				}),
+			),
+		).toBe(false);
 	});
 
 	it("keeps provider limit errors non-retryable", () => {
@@ -362,6 +432,21 @@ describe("retryAssistantCall", () => {
 		expect(res.content).toEqual([{ type: "text", text: "recovered" }]);
 		expect(produce).toHaveBeenCalledTimes(3);
 		expect(onRetryFinished).toHaveBeenCalledWith(true, 2);
+	});
+
+	it("retries a model-request rejection once then returns the recovered response", async () => {
+		let n = 0;
+		const produce = vi.fn(async () => {
+			n++;
+			return n < 2
+				? fauxAssistantMessage("", { stopReason: "error", errorMessage: gatewayModelRequestRejectedMessage })
+				: fauxAssistantMessage("recovered");
+		});
+		const onRetryScheduled = vi.fn();
+		const res = await retryAssistantCall(produce, enabled, undefined, { onRetryScheduled });
+		expect(res.content).toEqual([{ type: "text", text: "recovered" }]);
+		expect(produce).toHaveBeenCalledTimes(2);
+		expect(onRetryScheduled).toHaveBeenCalledTimes(1);
 	});
 
 	it("reports an aborted retried call as unsuccessful", async () => {

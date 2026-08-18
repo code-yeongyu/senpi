@@ -66,6 +66,7 @@
  * Full prose docs: `packages/coding-agent/docs/rpc.md` (Multi-session mode).
  */
 
+import type { AgentSessionEvent } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { envValue } from "../../core/brand.ts";
 import {
@@ -75,9 +76,10 @@ import {
 	writeRawStdout,
 } from "../../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
+import { toJsonEvent } from "../json-event.ts";
 import { createRpcConnectionHandler, type RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
-import { attachJsonlLineReader } from "./jsonl.ts";
+import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
 
 // Re-export types for consumers
 export type {
@@ -96,7 +98,17 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	takeOverStdout();
 
 	const sink: RpcConnectionSink = {
-		writeRaw: writeRawStdout,
+		writeRaw: (chunk) => {
+			const linearized = chunk
+				.split("\n")
+				.filter((line) => line.length > 0)
+				.map((line) => {
+					const value = JSON.parse(line) as { type?: string };
+					return JSON.stringify(value.type === "message_update" ? toJsonEvent(value as AgentSessionEvent) : value);
+				})
+				.join("\n");
+			writeRawStdout(linearized.length > 0 ? `${linearized}\n` : "");
+		},
 		waitForBackpressure: waitForRawStdoutBackpressure,
 	};
 
@@ -160,9 +172,26 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	process.stdin.on("end", onInputEnd);
 
 	detachInput = (() => {
-		const detachJsonl = attachJsonlLineReader(process.stdin, (line) => {
-			void handleInputLine(line);
-		});
+		const detachJsonl = attachJsonlLineReader(
+			process.stdin,
+			(line) => {
+				void handleInputLine(line);
+			},
+			{
+				maxLineLength: MAX_RPC_LINE_CHARACTERS,
+				onOversizedLine: () => {
+					writeRawStdout(
+						serializeJsonLine({
+							type: "response",
+							command: "parse",
+							success: false,
+							error: `RPC input line exceeds ${MAX_RPC_LINE_CHARACTERS} characters.`,
+						}),
+					);
+					void waitForRawStdoutBackpressure();
+				},
+			},
+		);
 		return () => {
 			detachJsonl();
 			process.stdin.off("end", onInputEnd);

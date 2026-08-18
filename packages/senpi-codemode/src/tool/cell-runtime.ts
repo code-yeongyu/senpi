@@ -1,5 +1,6 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
+import type { EvalToolCallMetric } from "./call-capture.ts";
 import { type EvalImageResizer, EvalOutputCollector, type EvalOutputResult } from "./image.ts";
 import type { EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
 
@@ -9,14 +10,17 @@ type ToolCall = EvalToolDetails["toolCalls"] extends readonly (infer Item)[] ? I
 
 export interface CellState {
 	readonly input: EvalToolInput;
+	readonly startedAt: number;
 	readonly signal: AbortSignal;
 	readonly onUpdate: AgentToolUpdateCallback<EvalToolDetails> | undefined;
 	readonly toolCalls: ToolCall[];
+	readonly toolCallMetrics: EvalToolCallMetric[];
 	readonly pendingBridgeCalls: Promise<void>[];
 	readonly statusEvents: EvalStatusEvent[];
 	active: boolean;
 	output: string;
 	phase: string | undefined;
+	error: string | undefined;
 	durationMs: number;
 	status: "pending" | "running" | "complete" | "error";
 }
@@ -70,6 +74,7 @@ export class CellResultBuilder {
 			if (result.valueRepr) this.#output.push(`${result.valueRepr}\n`);
 			this.#state.status = "complete";
 		} else {
+			this.#state.error = result.error.message;
 			this.#output.push(`${result.error.message}\n`);
 			this.#state.status = "error";
 		}
@@ -77,6 +82,7 @@ export class CellResultBuilder {
 	}
 
 	async finalizeCancellation(error: Error): Promise<AgentToolResult<EvalToolDetails>> {
+		this.#state.error = error.message;
 		this.#output.push(`${error.message}\n`);
 		this.#state.status = "error";
 		return await this.#finish(true);
@@ -121,6 +127,8 @@ export class CellResultBuilder {
 			languages: [this.#state.input.language],
 			...(this.#state.input.summary === undefined ? {} : { summary: this.#state.input.summary }),
 			durationMs: this.#state.durationMs,
+			wallDurationMs: Math.max(0, Date.now() - this.#state.startedAt),
+			toolCallCount: this.#state.toolCallMetrics.length,
 			toolCalls: [...this.#state.toolCalls],
 			truncated: output?.truncated ?? false,
 			...(isError ? { isError: true } : {}),

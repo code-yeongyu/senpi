@@ -71,16 +71,27 @@ For project-level Claude Code skills, add to `.senpi/settings.json`:
 
 This is progressive disclosure: only descriptions are always in context, full instructions load on-demand.
 
-## Skill Commands
+## Skill Invocation
 
-Skills register as `/skill:name` commands:
+Skills register as `/skill:name` commands and also participate in the prompt-leading `$` picker:
 
 ```bash
 /skill:brave-search           # Load and execute the skill
 /skill:pdf-tools extract      # Load skill with arguments
+$brave-search                 # Equivalent leading dollar invocation
 ```
 
-Arguments after the command are appended to the skill content as `User: <args>`.
+Type `$` at the beginning of the interactive editor to browse commands and skills together. Selecting
+a command inserts its canonical `/name ` form; selecting a skill inserts `$name `. Additional leading
+`$` tokens reopen only the skill list, so multiple skills can be composed in source order.
+
+OmO Desktop skill chips serialize as `$skill:name`. Senpi expands that explicit form even when it
+appears inline. Bare inline dollar text remains literal, so `Use $HOME` and `explain $brave-search`
+do not become skill invocations.
+
+After resolving the explicit tokens, Senpi removes only those tokens and wraps the remaining text once
+as the user request. Unknown tokens stay literal, duplicates are skipped, and at most five distinct
+skills expand per prompt.
 
 Toggle skill commands via `/settings` in interactive mode or in `settings.json`:
 
@@ -253,6 +264,14 @@ cd /path/to/brave-search && npm install
 ./content.js https://example.com
 ```
 ````
+
+## Bundled Skills
+
+Senpi contributes built-in skills conditionally based on available credentials and capabilities.
+
+**gpt-image-gen** is contributed by the `imagegen` builtin extension when image-generation credentials exist (a stored OpenAI key, `OPENAI_API_KEY`, or a configured OpenAI-compatible gateway). It provides a prompt-crafting guide for `gpt-image-2`, covering detail-maxxing techniques, verbatim quoted render text, revised-prompt feedback loops, and routing guidance for the native server tool vs. the client `generate_image` tool. The skill is absent from `<available_skills>` when no credentials are configured.
+
+Skill visibility refreshes at startup and on `/reload`. Mid-session credential changes (login, environment variable updates) take effect on the tool and injector immediately but are reflected in the skill list only after the next reload.
 
 ## Skill Repositories
 

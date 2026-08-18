@@ -8,6 +8,118 @@
 
 ### Fixed
 
+## [2026.8.17] - 2026-08-17
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.8.16] - 2026-08-16
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.8.14] - 2026-08-14
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.8.13-2] - 2026-08-13
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.8.13] - 2026-08-13
+
+### Breaking Changes
+
+- Changed tool-result protocol conversion to require and verify the original tool call.
+- Replaced runtime session summaries with durable `SessionMetadata` in server inventory responses.
+
+### Changed
+
+### Fixed
+
+- Hardened protocol adapters against contradictory lifecycle states, invalid identifiers and timestamps, sparse
+  execution arrays, and additive AI-contract drift.
+- Sanitized service and runtime failures into stable `not_implemented` and `internal_error` responses without
+  exposing private error details.
+
+## [2026.8.12-4] - 2026-08-12
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.8.12-3] - 2026-08-12
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.8.12-2] - 2026-08-12
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.8.12] - 2026-08-12
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.8.11-6] - 2026-08-11
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.8.11-5] - 2026-08-11
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.8.11-4] - 2026-08-11
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.8.11-3] - 2026-08-11
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
 ## [2026.8.11-2] - 2026-08-10
 
 ### Breaking Changes

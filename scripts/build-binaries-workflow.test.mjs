@@ -7,6 +7,10 @@ import { describe, it } from "node:test";
 const workflow = readFileSync(new URL("../.github/workflows/build-binaries.yml", import.meta.url), "utf8");
 const buildScriptUrl = new URL("./build-binaries.sh", import.meta.url);
 const buildScript = readFileSync(buildScriptUrl, "utf8");
+const resourceLoader = readFileSync(
+	new URL("../packages/coding-agent/src/core/resource-loader.ts", import.meta.url),
+	"utf8",
+);
 const codingAgentPackage = JSON.parse(
 	readFileSync(new URL("../packages/coding-agent/package.json", import.meta.url), "utf8"),
 );
@@ -37,7 +41,20 @@ describe("binary release workflow", () => {
 
 	it("keeps the package binary build aligned with release packaging", () => {
 		const binaryBuild = codingAgentPackage.scripts["build:binary"];
+		assert.match(binaryBuild, /npm --prefix \.\.\/pty run build/);
 		assert.match(binaryBuild, /node \.\.\/\.\.\/scripts\/prepare-bun-compile-assets\.mjs/);
 		assert.match(binaryBuild, /node_modules\/jsdom\/lib\/jsdom\/living\/xhr\/xhr-sync-worker\.js/);
+		assert.doesNotMatch(binaryBuild, /--external=css-tree/);
+	});
+
+	it("ships and explicitly resolves the bundled codemode sidecar", () => {
+		assert.match(buildScript, /copy-codemode-sidecar\.mjs"\s+"\$OUTPUT_DIR\/\$platform"/);
+		assert.match(codingAgentPackage.scripts["copy-binary-assets"], /copy-codemode-sidecar\.mjs dist/);
+		assert.match(
+			resourceLoader,
+			/node_modules["'`]\s*,\s*["'`]@code-yeongyu["'`]\s*,\s*["'`]senpi-codemode["'`]\s*,\s*["'`]package\.json/,
+		);
+		assert.match(resourceLoader, /resolveBinaryFactory/);
+		assert.match(resourceLoader, /require\(["'`]@code-yeongyu\/senpi-codemode["'`]\)/);
 	});
 });

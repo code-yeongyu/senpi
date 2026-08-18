@@ -1,5 +1,54 @@
 # changes — btw
 
+## 2026-08-13 - Preserve provider-header deletion markers
+
+### What changed
+
+- `/btw` passes model-registry `ProviderHeaders` directly into the runtime stream options, including `null`
+  values that delete inherited provider headers.
+
+### Why
+
+- The upstream auth contract widened during this merge. Materializing headers early would make a side query
+  retain a header that the active provider configuration explicitly removed.
+
+### Why an extension could not handle it
+
+- This is the builtin command's private registry-to-stream boundary; an external hook cannot restore a deletion
+  marker after it has been dropped.
+
+### Expected merge-conflict zones
+
+- LOW: `index.ts` auth forwarding and `side-query.ts` `SideQueryAuth`.
+
+## Model-aware side-query context budgeting (2026-08-12)
+
+### What changed
+
+- `/btw` now budgets the complete side-query prompt against the selected model's context window, including output
+  reserve, the session system prompt, the side-query instruction, captured history, and the final question.
+- Oversized captured snapshots run through the existing deterministic context reducer, orphaned tool-result repair, and
+  oldest-first pruning before provider dispatch. Small snapshots remain unchanged.
+- If mandatory prompt content cannot fit, `/btw` fails locally with an actionable `/compact` suggestion instead of
+  sending a provider request that is guaranteed to be rejected.
+
+### Why
+
+- `/btw` previously bypassed the main-turn context pipeline and replayed the full captured session snapshot directly to
+  the provider. Large sessions could therefore fail with `Your input exceeds the context window of this model` even
+  while normal main turns continued successfully.
+
+### Why an extension could not do this
+
+- The failure is inside the builtin command's private snapshot-to-provider path. An external extension cannot intercept
+  and structurally budget that ephemeral provider payload without replacing the builtin command.
+
+### Expected merge-conflict zones
+
+- `index.ts` around captured snapshot construction and side-query dispatch.
+- `side-query.ts` around context assembly and model runtime options.
+- `test/suite/btw-side-query.test.ts` around the builtin command and context-builder regression coverage.
+
 ## Runtime provider dispatch for side queries (2026-07-30)
 
 ### What changed

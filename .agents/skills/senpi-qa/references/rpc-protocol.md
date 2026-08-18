@@ -21,6 +21,8 @@ response. Common ones:
 | `get_messages` | — | `{ messages: AgentMessage[] }` |
 | `set_model` | `provider`, `modelId` | the resolved `Model` |
 | `get_available_models` | — | `{ models: Model[] }` |
+| `get_commands` | — | `{ commands }` (including one row per loaded skill) |
+| `get_loaded_surfaces` | — | `{ extensions, mcpServers }` from the live session runtime |
 | `bash` | `command`, `excludeFromContext?` | `BashResult` |
 | `new_session` | `parentSession?` | `{ cancelled }` |
 
@@ -29,8 +31,9 @@ Full union: `RpcCommand` in `rpc-types.ts`.
 ## Responses & events (stdout)
 
 - Response: `{ id?, type:"response", command, success, data? | error }`.
-- Events: any other `{ type, ... }` line is an `AgentSessionEvent` (assistant
-  text deltas, tool calls/results, `agent_end`, `agent_aborted`, …).
+- Events: any other `{ type, ... }` line is an `AgentSessionEvent` or RPC host
+  invalidation event (assistant text deltas, tool calls/results, `agent_end`,
+  `loaded_surfaces_changed`, …).
 
 ## Detecting turn completion
 

@@ -413,6 +413,8 @@ export interface MarkdownOptions {
 	preserveBackslashEscapes?: boolean;
 	/** Transform source Markdown before parsing, with the exact width available for content. */
 	transform?: (markdown: string, availableWidth: number) => string;
+	/** Render supported LaTeX math expressions as Unicode text (default: true). */
+	renderLatex?: boolean;
 }
 
 interface InlineStyleContext {
@@ -492,7 +494,9 @@ export class Markdown implements Component {
 			this.paddingX,
 			this.paddingY,
 			this.theme.codeBlockIndent ?? "  ",
-			(this.options.preserveOrderedListMarkers ? 1 : 0) | (this.options.preserveBackslashEscapes ? 2 : 0),
+			(this.options.preserveOrderedListMarkers ? 1 : 0) |
+				(this.options.preserveBackslashEscapes ? 2 : 0) |
+				(this.options.renderLatex === false ? 4 : 0),
 			objectId(this.theme),
 			styleKey,
 			getCapabilities().images ?? "",
@@ -759,7 +763,7 @@ export class Markdown implements Component {
 
 			case "latex_block":
 				if (isLatexToken(token)) {
-					const formula = latexToUnicode(token.text);
+					const formula = this.options.renderLatex === false ? token.raw.trim() : latexToUnicode(token.text);
 					lines.push(styleContext ? styleContext.applyText(formula) : this.applyDefaultStyle(formula));
 					if (nextTokenType && nextTokenType !== "space") {
 						lines.push("");
@@ -919,7 +923,9 @@ export class Markdown implements Component {
 
 				case "latex_inline":
 					if (isLatexToken(token)) {
-						result += applyTextWithNewlines(latexToUnicode(token.text));
+						result += applyTextWithNewlines(
+							this.options.renderLatex === false ? token.raw : latexToUnicode(token.text),
+						);
 					}
 					break;
 

@@ -46,7 +46,9 @@ describe("MCP disk metadata cache", () => {
 
 		await attach(root, pi);
 
-		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1"]);
+		expect(withoutMcpUtilityTools(pi.registeredTools).filter((name) => name !== "tool_search")).toEqual([
+			"mcp_fx_tool_1",
+		]);
 		await expect(readCounter(counterFile)).rejects.toMatchObject({ code: "ENOENT" });
 
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
@@ -175,7 +177,7 @@ function writeCache(root: TestRoot, servers: Record<string, CacheServer>): void 
  * connect lands between the two. Production registerTool replaces by name, so
  * assert the deduped set (same invariant as the exposure-policy suite). */
 function dedupedRegisteredTools(pi: ReturnType<typeof capturingPi>): string[] {
-	return [...new Set(withoutMcpUtilityTools(pi.registeredTools))];
+	return [...new Set(withoutMcpUtilityTools(pi.registeredTools).filter((name) => name !== "tool_search"))];
 }
 
 /** The raced background continuation writes the disk cache after the in-memory

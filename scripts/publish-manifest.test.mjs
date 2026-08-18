@@ -39,6 +39,7 @@ describe("publish manifest rewrite", () => {
 		const manifest = {
 			name: "@code-yeongyu/senpi-codemode",
 			version: "2026.8.3-2",
+			private: true,
 			peerDependencies: {
 				"@code-yeongyu/senpi": "*",
 			},
@@ -52,5 +53,6 @@ describe("publish manifest rewrite", () => {
 		assert.deepEqual(manifest.peerDependencies, {
 			"@code-yeongyu/senpi": "2026.8.3-2",
 		});
+		assert.equal(manifest.private, undefined);
 	});
 });

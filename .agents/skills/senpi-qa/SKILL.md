@@ -112,6 +112,7 @@ node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test --api anthropic-messages
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --with-tool --api openai-responses
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --with-mcp-tool mcp_fx_tool_1 --tool-args '{"value":"ok"}'
+node .agents/skills/senpi-qa/scripts/mock-loop.mjs --with-eval-hard-limit --evidence eval-hard-limit
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --scenario transient-recover
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --scenario budget-exhaust
 node .agents/skills/senpi-qa/scripts/mock-loop.mjs --scenario long-retry-after
@@ -150,6 +151,8 @@ node .agents/skills/senpi-qa/scripts/pty-drive.mjs --self-test --force-pipe
 | `scripts/mock-loop.mjs --self-test` | scripted marker returns through the real loop via the mock provider; retry error injection proves same-model recovery, retry-budget fallback, and long-retry-after fallback; zero real calls; auth unchanged |
 | `scripts/mock-loop.mjs --with-tool` | full loop: two model turns served, bash tool ran, final text returned |
 | `scripts/mock-loop.mjs --with-mcp-tool <tool>` | full loop with a registered sandbox MCP stdio fixture proxy; fails if the requested `mcp_fx_tool_<n>` is not registered, invoked, and fed back to the model |
+| `scripts/mock-loop.mjs --with-eval-hard-limit` | full loop where a never-returning eval cell is killed by its wall-clock hard limit and the kill is reported back to the model |
+| `scripts/eval-hard-limit-rpc-qa.mjs --self-test` | RPC channel: a DETACHED eval cell killed by the hard limit injects its `<system-reminder>` kill notice into the model's next request (print mode cannot show this) |
 | `scripts/tui-smoke.mjs --self-test` | TUI boots, renders, accepts a keystroke, tears down; auth unchanged |
 | `scripts/cli-smoke.mjs --self-test` | `--help`/`--version`/`--list-models` work offline; unknown flag reported; auth unchanged |
 | `scripts/pty-drive.mjs --self-test` | PTY runtime backing the `terminal` tools: background line watch + peek, stdin steering, screen snapshot + resize, registry teardown (no orphans); auth unchanged |

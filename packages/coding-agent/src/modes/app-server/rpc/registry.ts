@@ -50,6 +50,37 @@ export interface MethodRegistry {
 	dispatch(connection: RegistryConnection, request: RpcRequest): Promise<RpcResponse>;
 }
 
+export interface ExtensionRequestTarget {
+	readonly extensionRunner: {
+		requestRpc(name: string, data: unknown): Promise<unknown>;
+	};
+}
+
+export function registerExtensionRequestMethod(
+	registry: MethodRegistry,
+	getThread: (threadId: string) => ExtensionRequestTarget,
+): void {
+	registry.register("extension_request", {
+		scope: "thread",
+		handler: async ({ request }) => {
+			const params = request.params;
+			if (typeof params !== "object" || params === null || Array.isArray(params)) {
+				throw new RpcHandlerError({ code: -32602, message: "Invalid params" });
+			}
+			const threadId = Reflect.get(params, "threadId");
+			const name = Reflect.get(params, "name");
+			if (typeof threadId !== "string" || threadId.length === 0 || typeof name !== "string" || name.length === 0) {
+				throw new RpcHandlerError({ code: -32602, message: "Invalid params" });
+			}
+			try {
+				return await getThread(threadId).extensionRunner.requestRpc(name, Reflect.get(params, "data"));
+			} catch (error) {
+				throw new RpcHandlerError(internalError(error instanceof Error ? error.message : String(error)));
+			}
+		},
+	});
+}
+
 export function createRegistry(): MethodRegistry {
 	return new InMemoryMethodRegistry();
 }

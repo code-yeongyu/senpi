@@ -1,5 +1,135 @@
 # senpi-codemode fork changes
 
+## Eval completion throughput badge (2026-08-17)
+
+### What changed
+
+- Final single-cell eval frames now append the exact initiated nested tool-call count, a two-decimal
+  calls-per-second rate, and true wall-clock elapsed time to the completed header, for example
+  `eval py done ✓ · 2 calls · 1.00 calls/s · 2s · timeout 420s`.
+- `EvalToolDetails` carries `wallDurationMs` and `toolCallCount` alongside the existing
+  kernel-reported `durationMs`; the renderer uses wall time for final elapsed and throughput while
+  preserving kernel duration for consumers that need interpreter timing.
+- Zero calls over zero elapsed time render `0.00 calls/s`; positive calls without a positive wall
+  duration render `n/a calls/s`, so the TUI never displays `Infinity` or `NaN`.
+- Partial, pending, running, error, and synthetic multi-cell frames do not show a misleading final
+  aggregate. The legacy no-cells result path renders the same final metadata when the new fields are
+  available and preserves old output when they are absent.
+
+### Why
+
+- The eval extension already measures every nested tool invocation and true end-to-end wall time,
+  but users could only see completion duration and per-call rows. Surfacing count and throughput in
+  the final header makes eval composition efficiency observable without opening an analytics view.
+- Dividing by kernel-reported duration would overstate throughput whenever host tool calls wait
+  outside interpreter timing, so the visible elapsed label and the rate denominator share the same
+  wall-clock source.
+
+### Why this cannot be expressed externally
+
+- The completed frame is owned by the eval renderer, while exact initiated-call counts and cell
+  start time are owned by the eval runtime before the generic tool result reaches any external
+  extension. An external renderer cannot reconstruct both facts reliably.
+
+### Expected merge conflict zones
+
+- MEDIUM in `src/tool/render.ts` around `cellHeader`, `renderDetailedLines`, and final result metadata.
+- LOW in `src/tool/types.ts` and `src/tool/cell-runtime.ts` around `EvalToolDetails` construction.
+- LOW in eval renderer and execution-event tests.
+
+## Eval execution metadata event (2026-08-16)
+
+### What changed
+
+- Every settled eval cell now publishes one versioned `senpi.eval.execution` event. The in-process
+  event bus receives the full bounded payload, while the external RPC channel receives a
+  metadata-only projection that excludes prompts, arguments, call ids, errors, and result previews.
+- The payload records producer timestamps, true end-to-end eval wall time, kernel-reported runtime,
+  terminal status, detached status, every initiated nested tool-call count (including calls still
+  pending when an error cell settles), distinct tool names, and per-tool aggregate durations.
+- Generic and MCP tools retain the existing 30-call enrichment cap while every call still
+  contributes to exact counts and aggregates. Reserved agent/output calls now receive the same
+  bounded argument and duration capture; internal schema bridge calls preserve their legacy shape.
+- Captured names and identifiers are length-bounded, at most 64 distinct names receive individual
+  aggregates, excess names roll into an exact overflow aggregate, and the RPC projection has a
+  final 32 KiB serialized-byte ceiling with a deterministic aggregate-only fallback.
+- Session-generation fencing suppresses events from retired codemode runtimes.
+
+### Why
+
+- OMO needs producer-side timing data to determine whether eval composition and parallel tool calls
+  actually reduce round trips and wall-clock time, rather than relying on model-side assumptions.
+- OMO can consume rich metadata from the in-process event bus and later publish an explicitly
+  redacted or capability-gated desktop projection. The current desktop adapter decodes but ignores
+  unknown extension event names, so desktop rendering remains a separate consumer change.
+
+### Why this cannot be expressed externally
+
+- The eval extension owns kernel message dispatch, per-call bridge timing, bounded argument/result
+  capture, detached settlement, and session-generation fencing. An external extension cannot
+  reconstruct those facts accurately after the eval tool result has returned.
+
+### Expected merge conflict zones
+
+- MEDIUM in `src/index.ts`, `src/tool/eval-tool.ts`, and `src/tool/cell-handler.ts` around runtime
+  registration, settlement, and nested tool-call capture.
+- LOW in `src/tool/cell-runtime.ts`, `src/tool/eval-tool-options.ts`, and the new event builder.
+
+## Eval cell hard limit (2026-08-13)
+
+### What changed
+
+- A cell now carries a wall-clock kill deadline resolved from the new `hardLimitSeconds` setting
+  (default 1800s, `SENPI_CODEMODE_HARD_LIMIT_SECONDS` override), raised per call by an explicit
+  larger `timeout`.
+- `EvalDetachedCellManager` arms that deadline when the cell is created and clears it only on
+  settlement, so it survives `detach()` and is never paused by bridge tool calls. On expiry the cell
+  is interrupted, settles as cancelled, and the detached-cell notification tells the main agent it
+  was killed at the hard limit.
+
+### Why
+
+- `cellTimeoutSeconds` only feeds the idle watchdog: `CellExecution.detach()` disposes that watchdog
+  and `withBridgeTimeoutPause` pauses it for the whole duration of every host tool call, so a
+  detached or tool-call-heavy cell had no upper bound at all — one observed cell ran 1h13m. The bash
+  tool has enforced a kill deadline since `bash-timeout/timeout.ts`; eval now matches it.
+
+### Why this cannot be expressed externally
+
+- Cell lifetime, kernel interruption, and the detached-cell notification queue all live inside the
+  package; an extension cannot observe a detached cell, let alone kill it.
+
+### Expected merge conflict zones
+
+- MEDIUM in `src/tool/detached-cell-manager.ts` around cell creation and settlement.
+- LOW in `src/config/settings.ts` schema/defaults and the prompt timeout wording.
+
+## Compiled binary runner sidecar resolution (2026-08-11)
+
+### What changed
+
+- Ruby and Julia kernels now preserve their normal module-relative runner path
+  in source/npm execution but fall back to the standalone executable's
+  `node_modules/@code-yeongyu/senpi-codemode/src/kernels/...` sidecar when the
+  embedded `$bunfs` path does not exist.
+- Focused tests pin Ruby, Julia, and non-compiled local-path behavior.
+
+### Why
+
+- The compiled coding-agent embeds the codemode factory and JavaScript
+  dependency graph, but Ruby and Julia execute external runner files that Bun
+  does not expose at the embedded module's `import.meta.dirname`.
+
+### Why this cannot be expressed externally
+
+- Runner paths are selected inside kernel construction before user code or an
+  extension wrapper can replace the subprocess arguments.
+
+### Expected merge conflict zones
+
+- `src/kernels/rb/kernel.ts` and `src/kernels/jl/kernel.ts` runner arguments.
+- `src/kernels/shared/runtime-asset.ts` compiled sidecar layout.
+
 ## Detached eval cell wake-source contract (2026-08-09)
 
 ### What changed

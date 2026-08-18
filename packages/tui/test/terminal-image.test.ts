@@ -11,14 +11,18 @@ import {
 	buildKittyPlaceholderRow,
 	cropKittyImageLine,
 	deleteAllKittyImages,
+	deleteAllKittyPlacements,
 	deleteKittyImage,
 	detectCapabilities,
+	encodeITerm2,
 	encodeKitty,
 	getCellDimensions,
 	getKittyImageMetadata,
+	getKittyImagePlacement,
 	hyperlink,
 	imageFallback,
 	isImageLine,
+	registerKittyImageMetadata,
 	renderImage,
 	resetCapabilitiesCache,
 	setCapabilities,
@@ -508,6 +512,13 @@ describe("detectCapabilities", () => {
 	});
 });
 
+describe("iTerm2 image encoding", () => {
+	it("includes the decoded payload size in OSC 1337 metadata", () => {
+		const sequence = encodeITerm2("AAAA", { width: 2, height: "auto" });
+		assert.strictEqual(sequence, "\x1b]1337;File=inline=1;size=3;width=2;height=auto:AAAA\x07");
+	});
+});
+
 describe("Kitty image cursor movement", () => {
 	it("can request no terminal-side cursor movement", () => {
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
@@ -524,6 +535,7 @@ describe("Kitty image cursor movement", () => {
 		try {
 			assert.strictEqual(deleteKittyImage(42), "\x1b_Ga=d,d=I,i=42,q=2\x1b\\");
 			assert.strictEqual(deleteAllKittyImages(), "\x1b_Ga=d,d=A,q=2\x1b\\");
+			assert.strictEqual(deleteAllKittyPlacements(), "\x1b_Ga=d,d=a,q=2\x1b\\");
 		} finally {
 			resetCapabilitiesCache();
 		}
@@ -579,6 +591,24 @@ describe("Kitty image cursor movement", () => {
 			resetCapabilitiesCache();
 			setCellDimensions({ widthPx: 9, heightPx: 18 });
 		}
+	});
+
+	it("creates placement-only commands for uploaded and cropped images", () => {
+		registerKittyImageMetadata({ imageId: 42, columns: 3, rows: 3, widthPx: 100, heightPx: 100 });
+		const transmission = encodeKitty("A".repeat(8192), {
+			columns: 3,
+			rows: 3,
+			imageId: 42,
+			moveCursor: false,
+		});
+		const line = `left ${cropKittyImageLine(transmission, 2, 1)} right`;
+		const placement = getKittyImagePlacement(line);
+		assert.ok(placement);
+		assert.strictEqual(placement.transmissionBytes, line.length - "left ".length - " right".length);
+		assert.strictEqual(placement.estimatedDecodedBytes, 100 * 100 * 4);
+		assert.strictEqual(placement.sequence, "\x1b_Ga=p,q=2,C=1,c=3,i=42,y=66,h=34,r=1\x1b\\");
+		assert.strictEqual(placement.replacementLine, `left ${placement.sequence} right`);
+		assert.ok(!placement.replacementLine.includes("AAAA"));
 	});
 
 	it("honors maxHeightCells by reducing rendered width", () => {

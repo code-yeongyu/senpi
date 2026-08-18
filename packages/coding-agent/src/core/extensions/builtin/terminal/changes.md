@@ -1,5 +1,50 @@
 # terminal builtin extension — fork surface
 
+## Align terminal bash environment guidance (2026-08-13)
+
+### What changed
+
+- Matched the terminal extension's bash prompt guideline to the core tool:
+  `You can inspect PI_* environment variables for current model and session
+  details.`
+
+### Why
+
+- The default terminal extension replaces the core bash tool, so stale wording
+  otherwise overrides the canonical SDK prompt contract.
+
+### Why an extension could not handle it
+
+- This is the builtin extension's own registered tool description.
+
+### Expected merge conflict zones
+
+- LOW: `tools/bash.ts`, in `promptGuidelines`.
+
+## Burst-aware monitor pauses force a wake (2026-08-11)
+
+### What changed
+
+- The monitor wake budget now counts a burst of actual model-visible injections instead of accumulating every update since the last user or tool action. A strict gap greater than twice the resolved monitor rate limit resets the streak before the next nonduplicate batch consumes budget.
+- Deferred and byte-identical batches do not update the streak timestamp. The existing budget, sticky pause, summary delivery, fresh-monitor reset, and explicit rearm behavior remain unchanged.
+- The batch that reaches the wake budget now forces `steer` delivery when terminal notifications use `next-turn`. Ordinary `next-turn` monitor updates remain follow-ups, while `off`, noninteractive modes, and sessions without an active model remain suppressed.
+
+### Why
+
+A real `gh pr checks --watch --interval 30` monitor delivered useful progress snapshots (`5 -> 6 -> 8 -> 10 -> 13 -> 14` successful checks) over several minutes. The previous lifetime counter treated those widely spaced updates as one unbroken wake storm and paused after five injections. Raising the budget would only postpone the same failure while weakening protection against actual bursts.
+
+When a true burst does exhaust the budget, entering the sticky paused state is an actionable session-state change. It must wake the main session immediately even when ordinary monitor notifications are configured to wait for the next turn.
+
+### Why this cannot be expressed externally
+
+The streak counter, duplicate suppression, rate-limit readiness, pause transition, and hidden message delivery mode are private state inside the builtin terminal notifier. An extension or wrapper command cannot distinguish actual injections from deferred or suppressed batches, nor can it upgrade only the pause-triggering hidden message from follow-up to steer without bypassing terminal notification guards.
+
+### Expected merge conflict zones
+
+- `monitor-notify.ts` around the notifier's wake-budget state and `#flush()` injection boundary.
+- `notify.ts` around the internal `TerminalNotificationDelivery.send` options and `deliverAs` selection.
+- `terminal-monitor-notify.test.ts` and `terminal-monitor-dup-suppression.test.ts` around wake-budget timing assertions.
+
 ## Terminal wake-source snapshots (2026-08-09)
 
 ### What changed

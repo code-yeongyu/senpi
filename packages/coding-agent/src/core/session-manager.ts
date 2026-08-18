@@ -17,7 +17,7 @@ import { readdir, stat } from "fs/promises";
 import { join, resolve } from "path";
 import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
-import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
+import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
 
@@ -416,19 +416,30 @@ function getSessionContextSettings(path: SessionEntry[]): Pick<SessionContext, "
 	let thinkingLevel = "off";
 	let model: { provider: string; modelId: string } | null = null;
 	let isInFallbackWindow = false;
+	// A fallback switch applies an ephemeral thinking level to the fallback model, so
+	// the level recorded inside the window must not outlive it: restoring the primary
+	// model with the fallback model's level would silently change the reasoning budget.
+	// Mirrors the model restoration above, including the never-reverted (crashed) case.
+	let preFallbackThinkingLevel = thinkingLevel;
 
 	for (const entry of path) {
 		if (entry.type === "thinking_level_change") {
 			thinkingLevel = entry.thinkingLevel;
 		} else if (entry.type === "model_change") {
 			if (entry.reason === "fallback") {
-				if (!isInFallbackWindow && entry.originalProvider && entry.originalModelId) {
-					model = { provider: entry.originalProvider, modelId: entry.originalModelId };
+				if (!isInFallbackWindow) {
+					preFallbackThinkingLevel = thinkingLevel;
+					if (entry.originalProvider && entry.originalModelId) {
+						model = { provider: entry.originalProvider, modelId: entry.originalModelId };
+					}
 				}
 				isInFallbackWindow = true;
 			} else if (entry.reason === "fallback-revert") {
+				if (isInFallbackWindow) thinkingLevel = preFallbackThinkingLevel;
 				isInFallbackWindow = false;
 			} else {
+				// A manual model switch abandons the window: the level the user set inside
+				// it is a deliberate choice and carries over to the newly selected model.
 				isInFallbackWindow = false;
 				model = { provider: entry.provider, modelId: entry.modelId };
 			}
@@ -436,6 +447,10 @@ function getSessionContextSettings(path: SessionEntry[]): Pick<SessionContext, "
 			model = { provider: entry.message.provider, modelId: entry.message.model };
 		}
 	}
+
+	// The process can exit inside a fallback window; the primary model is already
+	// restored above, so its pre-fallback level has to be restored with it.
+	if (isInFallbackWindow) thinkingLevel = preFallbackThinkingLevel;
 
 	return { thinkingLevel, model };
 }
@@ -1004,7 +1019,7 @@ export class SessionManager {
 			if (this.fileEntries.length === 0) {
 				const explicitPath = this.sessionFile;
 				if (statSync(explicitPath).size > 0) {
-					throw new Error(`Session file is not a valid pi session: ${explicitPath}`);
+					throw new Error(`Session file is not a valid ${APP_NAME} session: ${explicitPath}`);
 				}
 				this.newSession();
 				this.sessionFile = explicitPath;
@@ -1939,7 +1954,9 @@ export class SessionManager {
 				return [];
 			}
 			const entries = await readdir(sessionsDir, { withFileTypes: true });
-			const dirs = entries.filter((e) => e.isDirectory()).map((e) => join(sessionsDir, e.name));
+			const dirs = entries
+				.filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+				.map((entry) => join(sessionsDir, entry.name));
 
 			// Count total files first for accurate progress
 			let totalFiles = 0;

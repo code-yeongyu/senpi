@@ -22,6 +22,7 @@ type HeaderFixture = {
 		getQuietStartup(): boolean;
 		getTipsEnabled(): boolean;
 		getTipsHistory(): Record<string, number>;
+		getFullscreenScrollbar(): "auto";
 		setTipShown(tipId: string, timestamp: number): void;
 	};
 	keybindings: unknown;
@@ -30,6 +31,7 @@ type HeaderFixture = {
 		start(): void;
 		requestRender(): void;
 	};
+	renderer: Container;
 	headerContainer: Container;
 	loadedResourcesContainer: Container;
 	chatContainer: Container;
@@ -44,6 +46,7 @@ type HeaderFixture = {
 	footerContainer: Container;
 	editor: Container;
 	renderWidgets(): void;
+	mountInteractiveTui(renderer: Container, components: readonly Container[]): void;
 	setupKeyHandlers(): void;
 	setupEditorSubmitHandler(): void;
 	themeController: { applyFromSettings(): Promise<void> };
@@ -93,10 +96,12 @@ function createHeaderFixture(): HeaderFixture {
 			getQuietStartup: () => false,
 			getTipsEnabled: () => false,
 			getTipsHistory: () => ({}),
+			getFullscreenScrollbar: () => "auto",
 			setTipShown: () => {},
 		},
 		keybindings: {},
 		ui,
+		renderer: ui,
 		headerContainer,
 		loadedResourcesContainer,
 		chatContainer,
@@ -111,6 +116,9 @@ function createHeaderFixture(): HeaderFixture {
 		footerContainer: new Container(),
 		editor: new Container(),
 		renderWidgets: () => {},
+		mountInteractiveTui: (renderer, components) => {
+			for (const component of components) renderer.addChild(component);
+		},
 		setupKeyHandlers: () => {},
 		setupEditorSubmitHandler: () => {},
 		themeController: { applyFromSettings: async () => {} },
@@ -138,7 +146,7 @@ function createClassicRuntime(): AgentSessionRuntime {
 				getOutputPad: () => 1,
 				getPackages: () => [],
 				getShowHardwareCursor: () => false,
-				getUiMode: () => "inline",
+				getTuiMode: () => "regular",
 				getSmoothStreaming: () => false,
 				getSmoothStreamingFps: () => 60,
 				getThemeSetting: () => "dark",
@@ -162,7 +170,10 @@ function createFooterSession(): AgentSession {
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		isFastModeActive: () => false,
-		modelRuntime: { isUsingOAuth: () => false },
+		modelRuntime: {
+			isUsingOAuth: () => false,
+			isUsingSubscription: () => false,
+		},
 	} as unknown as AgentSession;
 }
 

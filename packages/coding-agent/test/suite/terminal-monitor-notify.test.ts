@@ -29,6 +29,24 @@ describe("terminal monitor event delivery", () => {
 		expect(sent[0]?.options).toEqual({ triggerTurn: true, deliverAs: "followUp" });
 	});
 
+	it("forces only the pause-triggering next-turn batch to steer", () => {
+		const { notifier, pauseMonitors, scheduler, sent } = createNotifier({
+			mode: "next-turn",
+			settings: { coalesceWindowMs: 10, rateLimitMs: 100, wakeBudget: 2 },
+		});
+		notifier.notifyEvent(line("bash_next_pause", "next-pause", "wake-1"));
+		scheduler.advanceBy(10);
+		expect(sent[0]?.options).toEqual({ triggerTurn: true, deliverAs: "followUp" });
+
+		notifier.notifyEvent(line("bash_next_pause", "next-pause", "wake-2"));
+		scheduler.advanceBy(100);
+
+		expect(sent).toHaveLength(2);
+		expect(sent[1]?.message.content).toContain("Monitor paused after repeated updates");
+		expect(sent[1]?.options).toEqual({ triggerTurn: true, deliverAs: "steer" });
+		expect(pauseMonitors).toHaveBeenCalledTimes(1);
+	});
+
 	it("enforces the per-monitor rate limit while retaining an overflow event for the next wake", () => {
 		const { notifier, scheduler, sent } = createNotifier();
 		notifier.notifyEvent(line("bash_rate", "rate", "first"));
@@ -40,6 +58,21 @@ describe("terminal monitor event delivery", () => {
 		scheduler.advanceBy(3000);
 		expect(sent).toHaveLength(2);
 		expect(sent[1]?.message.content).toContain("second");
+	});
+
+	it("breaks the wake streak after a gap longer than twice the rate limit", () => {
+		const { notifier, pauseMonitors, scheduler, sent } = createNotifier({
+			settings: { coalesceWindowMs: 10, rateLimitMs: 100, wakeBudget: 2 },
+		});
+		for (let index = 1; index <= 3; index++) {
+			notifier.notifyEvent(line("bash_progress", "progress", `step-${index}`));
+			scheduler.advanceBy(10);
+			if (index < 3) scheduler.advanceBy(201);
+		}
+
+		expect(sent).toHaveLength(3);
+		expect(sent.every(({ message }) => !message.content.includes("Monitor paused"))).toBe(true);
+		expect(pauseMonitors).not.toHaveBeenCalled();
 	});
 
 	it("coalesces monitors that fire in the same wake window", () => {

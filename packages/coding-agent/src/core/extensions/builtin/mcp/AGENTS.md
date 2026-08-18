@@ -20,7 +20,7 @@ TypeBox schema in `config-schema.ts`. Config loader in `config.ts`: reads global
 
 ## EXPOSURE MODES
 
-Three modes: `direct` (tools register immediately), `search` (full catalog in tier-B, only `directTools` active, `tool_search` promotes on demand), `proxy` (single gateway tool, catalog hidden). `auto` never selects `proxy`; spec evidence: -27.3pp GSM8K structured-output regression (see `policy.ts` comment). Search tool name constant: `TOOL_SEARCH_TOOL_NAME = "tool_search"`.
+Three modes: `direct` (tools register immediately), `search` (full catalog in tier-B, only `directTools` active, the shared `tool_search` promotes on demand), `proxy` (single gateway tool, catalog hidden). `auto` never selects `proxy`; spec evidence: -27.3pp GSM8K structured-output regression (see `policy.ts` comment).
 
 ## ATTACH AND SESSION LIFECYCLE
 

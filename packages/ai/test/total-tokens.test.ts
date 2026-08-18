@@ -15,7 +15,12 @@
 import { describe, expect, it } from "vitest";
 import { complete, getModel } from "../src/compat.ts";
 import type { Api, Context, Model, StreamOptions, Usage } from "../src/types.ts";
-import { getLiveEnvApiKey, OPENROUTER_LIVE_TEST_FLAG } from "./live-api-gates.ts";
+import {
+	BASETEN_LIVE_TEST_FLAG,
+	getLiveEnvApiKey,
+	OPENROUTER_LIVE_TEST_FLAG,
+	QWEN_TOKEN_PLAN_LIVE_TEST_FLAG,
+} from "./live-api-gates.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
@@ -32,6 +37,9 @@ const oauthTokens = await Promise.all([
 ]);
 const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
 const openRouterApiKey = getLiveEnvApiKey("OPENROUTER_API_KEY", OPENROUTER_LIVE_TEST_FLAG);
+const basetenApiKey = getLiveEnvApiKey("BASETEN_API_KEY", BASETEN_LIVE_TEST_FLAG);
+const qwenTokenPlanApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
+const qwenTokenPlanCnApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_CN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
 
 // Generate a long system prompt to trigger caching (>2k bytes for most providers)
 const LONG_SYSTEM_PROMPT = `You are a helpful assistant. Be concise in your responses.
@@ -219,11 +227,11 @@ describe("totalTokens field", () => {
 	// =========================================================================
 
 	describe.skipIf(!process.env.GEMINI_API_KEY)("Google", () => {
-		it("gemini-2.0-flash - should return totalTokens equal to sum of components", {
+		it("gemini-2.5-flash - should return totalTokens equal to sum of components", {
 			retry: 3,
 			timeout: 60000,
 		}, async () => {
-			const llm = getModel("google", "gemini-2.0-flash");
+			const llm = getModel("google", "gemini-2.5-flash");
 
 			console.log(`\nGoogle / ${llm.id}:`);
 			const { first, second } = await testTotalTokensWithCache(llm);
@@ -380,6 +388,28 @@ describe("totalTokens field", () => {
 			console.log(`\nTogether AI / ${llm.id}:`);
 			const { first, second } = await testTotalTokensWithCache(llm, {
 				apiKey: process.env.TOGETHER_API_KEY,
+				reasoningEffort: "high",
+			});
+
+			logUsage("First request", first);
+			logUsage("Second request", second);
+
+			assertTotalTokensEqualsComponents(first);
+			assertTotalTokensEqualsComponents(second);
+		});
+	});
+
+	// =========================================================================
+	// Baseten
+	// =========================================================================
+
+	describe.skipIf(!basetenApiKey)("Baseten", () => {
+		it("GLM 5.2 - should return totalTokens equal to sum of components", { retry: 3, timeout: 60000 }, async () => {
+			const llm = getModel("baseten", "zai-org/GLM-5.2");
+
+			console.log(`\nBaseten / ${llm.id}:`);
+			const { first, second } = await testTotalTokensWithCache(llm, {
+				apiKey: basetenApiKey,
 				reasoningEffort: "high",
 			});
 
@@ -576,7 +606,26 @@ describe("totalTokens field", () => {
 	// Qwen Token Plan
 	// =========================================================================
 
-	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_API_KEY)("Qwen Token Plan", () => {
+	describe.skipIf(!process.env.OPENGATEWAY_API_KEY)("OpenGateway", () => {
+		it("moonshotai/kimi-k3 - should return totalTokens equal to sum of components", {
+			retry: 3,
+			timeout: 60000,
+		}, async () => {
+			const llm = getModel("opengateway", "moonshotai/kimi-k3");
+
+			console.log(`\nOpenGateway / ${llm.id}:`);
+			const { first, second } = await testTotalTokensWithCache(llm, {
+				apiKey: process.env.OPENGATEWAY_API_KEY,
+			});
+
+			logUsage("First request", first);
+			logUsage("Second request", second);
+
+			assertTotalTokensEqualsComponents(first);
+		});
+	});
+
+	describe.skipIf(!qwenTokenPlanApiKey)("Qwen Token Plan", () => {
 		it("qwen3.7-max - should return totalTokens equal to sum of components", {
 			retry: 3,
 			timeout: 60000,
@@ -585,7 +634,31 @@ describe("totalTokens field", () => {
 
 			console.log(`\nQwen Token Plan / ${llm.id}:`);
 			const { first, second } = await testTotalTokensWithCache(llm, {
-				apiKey: process.env.QWEN_TOKEN_PLAN_API_KEY,
+				apiKey: qwenTokenPlanApiKey,
+			});
+
+			logUsage("First request", first);
+			logUsage("Second request", second);
+
+			assertTotalTokensEqualsComponents(first);
+			assertTotalTokensEqualsComponents(second);
+		});
+	});
+
+	// =========================================================================
+	// Qwen Token Plan Individual
+	// =========================================================================
+
+	describe.skipIf(!qwenTokenPlanApiKey)("Qwen Token Plan Individual", () => {
+		it("qwen3.8-max - should return totalTokens equal to sum of components", {
+			retry: 3,
+			timeout: 60000,
+		}, async () => {
+			const llm = getModel("qwen-token-plan-individual", "qwen3.8-max");
+
+			console.log(`\nQwen Token Plan Individual / ${llm.id}:`);
+			const { first, second } = await testTotalTokensWithCache(llm, {
+				apiKey: qwenTokenPlanApiKey,
 			});
 
 			logUsage("First request", first);
@@ -600,7 +673,7 @@ describe("totalTokens field", () => {
 	// Qwen Token Plan CN
 	// =========================================================================
 
-	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_CN_API_KEY)("Qwen Token Plan (CN)", () => {
+	describe.skipIf(!qwenTokenPlanCnApiKey)("Qwen Token Plan (CN)", () => {
 		it("qwen3.7-max - should return totalTokens equal to sum of components", {
 			retry: 3,
 			timeout: 60000,
@@ -609,7 +682,7 @@ describe("totalTokens field", () => {
 
 			console.log(`\nQwen Token Plan CN / ${llm.id}:`);
 			const { first, second } = await testTotalTokensWithCache(llm, {
-				apiKey: process.env.QWEN_TOKEN_PLAN_CN_API_KEY,
+				apiKey: qwenTokenPlanCnApiKey,
 			});
 
 			logUsage("First request", first);

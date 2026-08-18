@@ -31,17 +31,32 @@ test("synchronizes private dependencies without touching registry aliases, gener
 		await writeManifest(root, "packages/ai", {
 			name: "@earendil-works/pi-ai",
 			version: "2.0.0",
+			private: true,
 		});
 		await writeManifest(root, "packages/coding-agent", {
-			name: "@earendil-works/pi-coding-agent",
+			name: "@code-yeongyu/senpi",
 			version: "2.0.0",
+			private: true,
 		});
+		for (const [directory, name] of [
+			["agent", "@earendil-works/pi-agent-core"],
+			["tui", "@earendil-works/pi-tui"],
+			["pty", "@earendil-works/pi-pty"],
+			["telemetry", "@earendil-works/pi-telemetry"],
+			["senpi-codemode", "@code-yeongyu/senpi-codemode"],
+		]) {
+			await writeManifest(root, `packages/${directory}`, {
+				name,
+				version: "2.0.0",
+				private: true,
+			});
+		}
 		await writeManifest(root, "packages/evals", {
 			name: "@earendil-works/pi-evals",
 			version: "9.9.9",
 			private: true,
 			dependencies: {
-				"@earendil-works/pi-coding-agent": "^1.0.0",
+				"@code-yeongyu/senpi": "^1.0.0",
 				"@mariozechner/pi-ai": "npm:@earendil-works/pi-ai@1.0.0",
 			},
 		});
@@ -50,7 +65,7 @@ test("synchronizes private dependencies without touching registry aliases, gener
 			version: "0.0.0",
 			private: true,
 			dependencies: {
-				"@earendil-works/pi-coding-agent": "^1.0.0",
+				"@code-yeongyu/senpi": "^1.0.0",
 			},
 		});
 
@@ -58,14 +73,15 @@ test("synchronizes private dependencies without touching registry aliases, gener
 		assert.equal(result.status, 0, result.stderr);
 
 		const evalsManifest = await readManifest(root, "packages/evals");
-		assert.equal(evalsManifest.dependencies["@earendil-works/pi-coding-agent"], "^2.0.0");
+		assert.equal(evalsManifest.dependencies["@code-yeongyu/senpi"], "^2.0.0");
 		assert.equal(evalsManifest.dependencies["@mariozechner/pi-ai"], "npm:@earendil-works/pi-ai@1.0.0");
 		const generatedManifest = await readManifest(root, "packages/coding-agent/install-lock");
-		assert.equal(generatedManifest.dependencies["@earendil-works/pi-coding-agent"], "^1.0.0");
+		assert.equal(generatedManifest.dependencies["@code-yeongyu/senpi"], "^1.0.0");
 
 		await writeManifest(root, "packages/ai", {
 			name: "@earendil-works/pi-ai",
 			version: "3.0.0",
+			private: true,
 		});
 		const lockstepFailure = runSyncVersions(root);
 		assert.equal(lockstepFailure.status, 1, lockstepFailure.stderr);

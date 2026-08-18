@@ -59,7 +59,7 @@ jobs:
         run: bash scripts/assert-bun-canary.sh
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm install --ignore-scripts --no-audit --no-fund
 
       - name: Build all workspaces (so husky pre-commit type check resolves)
         run: npm run build

@@ -7,6 +7,7 @@ const SYSTEM_REMINDER_OPEN = "<system-reminder>";
 const SYSTEM_REMINDER_CLOSE = "</system-reminder>";
 const QUEUE_OVERHEAD_CHARS = 512;
 const MONITOR_NOTIFICATION_CUSTOM_TYPE = "senpi-monitor:notification";
+const WAKE_STREAK_QUIET_GAP_MULTIPLIER = 2;
 
 export interface MonitorNotificationScheduler {
 	now(): number;
@@ -87,6 +88,7 @@ export class MonitorNotifier {
 	#timer: unknown;
 	#scheduledAt: number | undefined;
 	#consecutiveWakes = 0;
+	#lastWakeAt: number | undefined;
 	#wakeBudgetPaused = false;
 
 	constructor(deps: MonitorNotifierDeps) {
@@ -195,6 +197,12 @@ export class MonitorNotifier {
 		const overflowCount = [...this.#overflow.values()]
 			.filter((overflow) => injectedIds.has(overflow.id))
 			.reduce((total, overflow) => total + overflow.count, 0);
+		if (
+			this.#lastWakeAt !== undefined &&
+			now - this.#lastWakeAt > settings.rateLimitMs * WAKE_STREAK_QUIET_GAP_MULTIPLIER
+		) {
+			this.#consecutiveWakes = 0;
+		}
 		const deliversSummary = selected.some((event) => event.type === "summary");
 		const reachesBudget = !deliversSummary && this.#consecutiveWakes + 1 >= settings.wakeBudget;
 		const pauseNotice = reachesBudget
@@ -202,7 +210,8 @@ export class MonitorNotifier {
 			: "";
 		const content = this.#buildMessage(selected, overflowCount, pauseNotice, settings.maxCharsPerInjection);
 
-		delivery.send(content);
+		delivery.send(content, reachesBudget ? { forceWake: true } : undefined);
+		this.#lastWakeAt = now;
 		for (const id of injectedIds) {
 			this.#lastInjectionAt.set(id, now);
 			this.#overflow.delete(id);

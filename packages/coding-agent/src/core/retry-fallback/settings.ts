@@ -34,7 +34,10 @@ export interface ResolvedRetryFallbackSettings {
  * provider, the Claude SDK OAuth extension, a gateway, or Bedrock.
  */
 export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {
-	"claude-fable-5": ["k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
+	// `kimi-k3:max` is an alias entry for providers that expose Kimi K3 under the
+	// vendor-prefixed id `kimi-k3` (e.g. OpenCode Go), which the conservative `k3`
+	// family matcher intentionally cannot capture (issue #793).
+	"claude-fable-5": ["k3:max", "kimi-k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
 };
 
 function cloneDefaultFallbackChains(): Record<string, readonly string[]> {

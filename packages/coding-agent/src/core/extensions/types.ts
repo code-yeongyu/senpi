@@ -50,6 +50,7 @@ import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { BashResult } from "../bash-executor.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
+import type { WarmAnchorSnapshot } from "../compaction/warm-anchor.ts";
 import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
@@ -96,6 +97,7 @@ export type ServiceTier = "auto" | "flex" | "priority";
 export type CompactionReason = "manual" | "threshold" | "overflow" | "pre_prompt" | "branch" | "extension";
 export type CompactionRejectionCause =
 	| "cancelled-by-extension"
+	| "external-owner"
 	| "would-overflow"
 	| "circuit-breaker"
 	| "per-turn-cap"
@@ -339,6 +341,12 @@ export interface CompactOptions {
 export interface ApplyCompactionOptions {
 	reason: CompactionReason;
 	expectedRevision?: number;
+	/**
+	 * Content anchor for a warm summary: the compaction applies while this snapshot
+	 * still describes an unrewritten summarized prefix, so idle-time appends after
+	 * the cut no longer discard the summary the way the revision counter does.
+	 */
+	expectedWarmAnchor?: WarmAnchorSnapshot;
 	/** The feedback operation that owns this apply, when one was begun. */
 	signal?: AbortSignal;
 }
@@ -489,6 +497,14 @@ export interface ExtensionContext {
 	applyCompaction(precomputed: CompactionResult, options: ApplyCompactionOptions): Promise<ApplyCompactionResult>;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/**
+	 * Get the current base system-prompt construction options, including any
+	 * user overrides (`customPrompt` from --system-prompt, `appendSystemPrompt`
+	 * from --append-system-prompt). Optional on the base context for
+	 * compatibility with hand-built contexts; the senpi runner always binds it,
+	 * and it stays required on ExtensionCommandContext.
+	 */
+	getSystemPromptOptions?(): BuildSystemPromptOptions;
 	/** Get hook source paths currently visible to the builtin hooks extension. */
 	getLoadedHookSources?(): LoadedHookSources;
 	/** Get extension-declared MCP servers aggregated across all extensions (first-wins). */
@@ -516,7 +532,6 @@ export interface ProviderRequestPreparation {
 export interface ExtensionCommandContext extends ExtensionContext {
 	/** Get the current base system-prompt construction options. */
 	getSystemPromptOptions(): BuildSystemPromptOptions;
-
 	/** Wait for the agent to finish streaming */
 	waitForIdle(): Promise<void>;
 
@@ -562,7 +577,7 @@ export interface ReplacedSessionContext extends ExtensionCommandContext {
 
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 	): Promise<void>;
 }
 
@@ -614,6 +629,8 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 	spinnerFrame?: number;
 }
 
+export type ToolExposure = "direct" | "search";
+
 /**
  * Tool definition for registerTool().
  */
@@ -624,9 +641,35 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	label: string;
 	/** Description for LLM */
 	description: string;
-	/** Optional one-line snippet for the Available tools section in the default system prompt. Custom tools are omitted from that section when this is not provided. */
+	/**
+	 * Initial model-exposure policy. Defaults to `"direct"`.
+	 *
+	 * This is not a permission boundary: explicit `setActiveTools()` calls or host configuration may still activate
+	 * a search-exposed tool.
+	 */
+	exposure?: ToolExposure;
+	/** Supplemental capability text indexed by `tool_search`; never sent to the model and ignored unless exposure is `"search"`. */
+	searchText?: string;
+	/** Synonyms and domain terms indexed by `tool_search` with the same weight as tool names; never sent to the model. */
+	searchKeywords?: readonly string[];
+	/** Organizational filter group for `tool_search`; defaults to a host-derived extension label. */
+	searchGroup?: string;
+	/**
+	 * Whether `tool_search` and inactive-tool execution may lazily activate this tool. Defaults to true.
+	 * When false, lazy activators must not run, but explicit `setActiveTools()` calls may still activate the tool.
+	 */
+	allowLazyActivation?: boolean;
+	/**
+	 * Optional one-line snippet for the Available tools section in the default system prompt. Custom tools are omitted
+	 * from that section when this is not provided. Promoting a search-exposed tool carrying prompt text rebuilds the
+	 * system prompt and may invalidate the provider prompt-cache prefix.
+	 */
 	promptSnippet?: string;
-	/** Optional guideline bullets appended to the default system prompt Guidelines section when this tool is active. */
+	/**
+	 * Optional guideline bullets appended to the default system prompt Guidelines section when this tool is active.
+	 * Promoting a search-exposed tool carrying prompt text rebuilds the system prompt and may invalidate the provider
+	 * prompt-cache prefix.
+	 */
 	promptGuidelines?: string[];
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
@@ -668,6 +711,29 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 		theme: Theme,
 		context: ToolRenderContext<TState, Static<TParams>>,
 	) => Component;
+}
+
+/** Resolve the effective search-exposure metadata for a tool definition. */
+export function normalizeToolExposure(
+	definition: Pick<
+		ToolDefinition,
+		"exposure" | "searchText" | "searchKeywords" | "searchGroup" | "allowLazyActivation"
+	>,
+): {
+	exposure: ToolExposure;
+	searchText?: string;
+	searchKeywords: readonly string[];
+	searchGroup?: string;
+	allowLazyActivation: boolean;
+} {
+	const exposure: ToolExposure = definition.exposure === "search" ? "search" : "direct";
+	return {
+		exposure,
+		searchText: exposure === "search" ? definition.searchText : undefined,
+		searchKeywords: definition.searchKeywords ?? [],
+		searchGroup: definition.searchGroup,
+		allowLazyActivation: definition.allowLazyActivation !== false,
+	};
 }
 
 type AnyToolDefinition = ToolDefinition<any, any, any>;
@@ -1351,6 +1417,11 @@ export interface ToolCallEventResult {
 	/** Block tool execution. To modify arguments, mutate `event.input` in place instead. */
 	block?: boolean;
 	reason?: string;
+	/**
+	 * Hint that the agent should stop after the current tool batch when this call is blocked.
+	 * Early termination only happens when every finalized tool result in the batch sets this to true.
+	 */
+	terminate?: boolean;
 }
 
 /** Result from user_bash event handler */
@@ -1503,6 +1574,13 @@ export type ExtensionHandler<E, R = undefined> = (event: E, ctx: ExtensionContex
  */
 export interface ExtensionAPI {
 	// =========================================================================
+	// Session Context
+	// =========================================================================
+
+	/** Absolute cwd of the session this extension instance was loaded for. */
+	readonly cwd: string;
+
+	// =========================================================================
 	// Event Subscription
 	// =========================================================================
 
@@ -1642,10 +1720,11 @@ export interface ExtensionAPI {
 	/**
 	 * Send a user message to the agent. Always triggers a turn.
 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
+	 * Set expandPromptTemplates to dispatch extension commands and expand skill commands and prompt templates.
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
@@ -1795,9 +1874,22 @@ export interface ExtensionAPI {
 	 */
 	unregisterProvider(name: string): void;
 
+	/**
+	 * Exchange structured extension-owned data with RPC clients.
+	 *
+	 * `emit` is fire-and-forget server -> client delivery. `handle` registers a
+	 * client -> extension request handler owned by this extension generation.
+	 */
+	rpc: {
+		emit(name: string, data: unknown): void;
+		handle(name: string, handler: ExtensionRpcRequestHandler): void;
+	};
+
 	/** Shared event bus for extension communication. */
 	events: EventBus;
 }
+
+export type ExtensionRpcRequestHandler = (data: unknown) => unknown | Promise<unknown>;
 
 // ============================================================================
 // Provider Registration Types
@@ -1813,7 +1905,12 @@ export interface ProviderConfig {
 	apiKey?: string;
 	/** API type. Required at provider or model level when defining models. */
 	api?: Api;
-	/** Optional streamSimple handler for custom APIs. */
+	/**
+	 * Optional streamSimple handler for custom APIs.
+	 * Implementations must invoke `options.onPayload` before sending the provider request and use any
+	 * returned replacement payload. They must invoke `options.onResponse` after receiving the response
+	 * and before consuming its body, matching built-in providers.
+	 */
 	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 	/** Custom headers to include in requests. */
 	headers?: Record<string, string>;
@@ -1825,19 +1922,21 @@ export interface ProviderConfig {
 	models?: ProviderModelConfig[];
 	/**
 	 * Refresh this provider's model list. The returned list replaces extension-provided models.
-	 * Use context.store explicitly when the catalog should persist across sessions.
+	 * Use context.publish({ persist: entry }) when the catalog should persist across sessions.
 	 */
 	refreshModels?(context: RefreshModelsContext): Promise<ProviderModelConfig[]>;
 	/** OAuth provider for /login support. The `id` is set automatically from the provider name. */
 	oauth?: {
 		/** Display name for the provider in login UI. */
 		name: string;
+		/** Whether access through this auth method is backed by a provider subscription. */
+		isSubscription?: boolean;
 		/** @deprecated Retained for source compatibility; canonical auth flows ignore it. */
 		usesCallbackServer?: boolean;
 		/** Run the login flow, return credentials to persist. */
 		login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials>;
 		/** Refresh expired credentials, return updated credentials to persist. */
-		refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials>;
+		refreshToken(credentials: OAuthCredentials, signal: AbortSignal): Promise<OAuthCredentials>;
 		/** Convert credentials to API key string for the provider. */
 		getApiKey(credentials: OAuthCredentials): string;
 		/** Legacy synchronous credential-dependent model projection. */
@@ -1925,7 +2024,7 @@ export type SendMessageHandler = <T = unknown>(
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
-	options?: { deliverAs?: "steer" | "followUp" },
+	options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 ) => void;
 
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
@@ -1978,9 +2077,14 @@ export type RegisterLazyToolActivatorHandler = (activator: LazyToolActivator) =>
 
 export type GetActiveToolsHandler = () => string[];
 
-/** Tool info with name, description, parameter schema, prompt guidelines, and source metadata. */
-export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "promptGuidelines"> & {
+/** Tool info with normalized exposure metadata and source metadata. */
+export type ToolInfo = Pick<ToolDefinition, "name" | "label" | "description" | "parameters" | "promptGuidelines"> & {
 	sourceInfo: SourceInfo;
+	exposure: ToolExposure;
+	searchText?: string;
+	searchKeywords: readonly string[];
+	searchGroup?: string;
+	allowLazyActivation: boolean;
 };
 
 export type GetAllToolsHandler = () => ToolInfo[];
@@ -2043,6 +2147,8 @@ export interface ExtensionRuntimeState {
 	assertActive: () => void;
 	/** Marks this extension instance as stale after runtime replacement or reload. */
 	invalidate: (message?: string) => void;
+	/** Retain an event-bus subscription until this runtime is invalidated. */
+	trackEventBusSubscription: (unsubscribe: () => void) => () => void;
 	/**
 	 * Register or unregister a provider.
 	 *
@@ -2193,6 +2299,8 @@ export interface Extension {
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;
 	commands: Map<string, RegisteredCommand>;
+	/** Optional for compatibility with extension records created before RPC requests. */
+	rpcHandlers?: Map<string, ExtensionRpcRequestHandler>;
 	flags: Map<string, ExtensionFlag>;
 	shortcuts: Map<KeyId, ExtensionShortcut>;
 	mcpServers: Map<string, RegisteredMcpServerDeclaration>;
@@ -2205,6 +2313,8 @@ export interface LoadExtensionsResult {
 	errors: Array<{ path: string; error: string }>;
 	/** Shared runtime - actions are throwing stubs until runner.initialize() */
 	runtime: ExtensionRuntime;
+	/** Event bus shared by every API created for this extension generation. */
+	eventBus?: EventBus;
 }
 
 // ============================================================================

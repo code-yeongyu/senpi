@@ -1,5 +1,353 @@
 # Builtin compaction extension changes
 
+## Stand down silently when a compaction request is aborted (2026-08-16)
+
+### What changed
+
+- The `session_before_compact` handler returns immediately when `event.signal` is already aborted,
+  before touching warm-job ownership, and converts an abort-driven throw from
+  `runOpenAiRemoteCompaction` into a silent stand-down (`return undefined`) instead of letting the
+  raw `Request was aborted` escape through `ExtensionRunner.emit` as a stack-bearing extension
+  error ([#886](https://github.com/code-yeongyu/senpi/issues/886)).
+- `applyBlockingCompaction`'s catch treats an aborted feedback signal as a cancellation: it ends
+  feedback with `aborted: true` and no `errorMessage`, records no circuit-breaker failure, and
+  returns `{ applied: false, reason: "rejected" }` instead of painting
+  `Compaction failed: Request was aborted` and rethrowing out of `before_agent_start`. This
+  matches the faux-route contract already pinned by
+  `blocking-compaction-review-hardening.test.ts` ("degrades silently with no error message").
+
+### Why
+
+- Compaction claims are last-writer-wins in core (`_claimCompactionController`), so a resumed
+  session where a queued extension message races the user's prompt routinely aborts the loser's
+  in-flight remote compaction. The remote route deliberately rethrows on abort
+  (`openai-remote.ts` abort guard, `openai-remote-timeout.ts` entry guard); without handler-level
+  containment every such race rendered `Extension "<builtin:compaction>" error: Request was
+  aborted` with a full async stack.
+- The stand-down must NOT use the `{cancel: true}` path: a cancel emits `session_compact` with
+  `accepted: false`, which records a circuit-breaker failure — aborts are not failures.
+- CONTRACT CHANGE: an aborted-at-entry request previously returned `{cancel: true}` without a
+  reason (pinned by `before-compact-error-surfacing.test.ts` and
+  `required-compaction-deterministic-fallback.test.ts`, both updated). The rendering is
+  unchanged — core's aborted classification still shows the plain "Compaction cancelled" — but
+  the abort no longer debits the circuit breaker through the rejected-compaction path.
+
+### Why an extension could not handle it
+
+- The defect is inside this builtin's own handlers; no core change is involved in this half of
+  the fix (the admission-side half lives in `core/agent-session.ts`, see `src/core/changes.md`).
+
+### Expected merge conflict zones
+
+- `index.ts` `session_before_compact` handler entry and the core-route `runOpenAiRemoteCompaction`
+  call site; `applyBlockingCompaction`'s catch block.
+
+## Survive provider body-size rejections and strict turn alternation in summarization requests (2026-08-16)
+
+### What changed
+
+- Gateway HTTP 413 body-size rejections ("Request body too large", "Request Entity Too Large")
+  now flow into the existing overflow shrink-retry: the summarization input halves across
+  attempts and exhaustion throws the classifiable `SummarizationOverflowExhaustedError`, so
+  threshold/overflow compactions degrade through the deterministic fallback instead of wedging
+  the session on `Compaction rejected: compaction generator failed: 413 ...`
+  ([#884](https://github.com/code-yeongyu/senpi/issues/884)).
+- New `summarization-turn-order.ts` normalizes the final summarization message list at the
+  `generateSummaryMessage` seam (after `convertToLlm` + pair repair, where roles are final):
+  adjacent assistant messages merge, and content before the first user message is dropped.
+  Gemini's 400 `function call turn must come immediately after a user turn` fired twice in the
+  incident because sessions carry adjacent assistants (split turns, retries) and budget pruning
+  can drop the leading user message.
+- `overflow-retry.ts` request sizing now adds a CJK density correction (weight 3, mirroring the
+  base64-run weighting) to the chars/4 estimate: Korean text tokenizes near 1 token per 1.5
+  characters, and the 4.00 chars/token estimate let Korean-heavy sessions send first attempts
+  far over provider size limits. The correction rides `estimateTotalTokens`, so it also reaches
+  `hardLimitEmergencyPrune` and the `/btw` side-query bound — both prune Korean-heavy sessions
+  slightly earlier, which is the same undercount corrected in the safe direction.
+
+### Why
+
+- A live session hit all three defects in one compaction: two gateway 413 shapes never reached
+  the shrink path (unclassified), gemini-3.7-flash-high rejected the request's turn order twice,
+  and the final model stalled the 120s wall-clock on the oversized input. Every fallback model
+  retried the same payload and failed identically, permanently wedging the session.
+
+### Why an extension could not handle it
+
+- The shrink-retry classification, the request message construction, and the input sizing all
+  live inside this builtin's summarization pipeline; an external extension observes only the
+  final cancel reason.
+
+### Expected merge conflict zones
+
+- LOW: `speculative.ts` at the `requestContext` construction (one wrapped call site);
+  `overflow-retry.ts` estimator internals. New module `summarization-turn-order.ts` is
+  fork-only with no upstream counterpart.
+
+## Surface the concrete reason a compaction did not apply (2026-08-14)
+
+### What changed
+
+- `endCompactionFeedback` now threads the remote stage's fallback reason (captured from the `remote_fallback` event) and the terminal local reason (`unavailable` / `stale`) into `ctx.endCompaction`'s `errorMessage`, so the decision log and TUI show e.g. `Compaction did not apply: remote-compaction-timeout; local fallback unavailable` instead of the bare generic string.
+- An aborted compaction still renders `Compaction cancelled` downstream and carries no failure message.
+
+### Why
+
+- Both the remote-timeout path and the `unavailable`/`stale` fallback collapsed into the generic `Compaction did not apply`, so the actual cause was not diagnosable after the fact. The remote reason was previously emitted only on an event bus with no subscriber.
+
+### Why an extension could not handle it
+
+- The reason is produced inside this builtin's blocking route; an external extension cannot observe the remote stage's fallback event or the feedback call site.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` `endCompactionFeedback` and the remote-capture emit in `applyBlockingCompaction`; LOW in the compaction tests that pinned silent degradation.
+
+## Report provider-owned compaction as delegated (2026-08-14)
+
+### What changed
+
+- The SDK-native lane's `session_before_compact` cancellation now carries the structured `external-owner` rejection
+  cause while preserving its existing human-readable reason.
+- The lane-policy documentation now describes the structured ownership signal instead of the former generic
+  extension cancellation.
+
+### Why
+
+- Core admission must distinguish a provider lane that will compact inside the admitted query from an ordinary
+  extension refusal. Treating both as `cancelled-by-extension` made over-threshold SDK-native sessions fail with
+  `RequiredCompactionError` before the provider could run.
+
+### Why an extension could not do this
+
+- The builtin compaction extension owns the lane cancellation verdict and is the only layer that can identify this
+  cancellation as provider ownership before core records the lifecycle failure.
+
+### Expected merge-conflict zones
+
+- LOW: `index.ts`, in the SDK-native lane branch of `session_before_compact`.
+- LOW: `lane-policy.ts`, around `SDK_NATIVE_LANE_REJECTION_REASON` documentation.
+
+## Stand the idle warm-up watcher down on a retired generation (2026-08-13)
+
+### What changed
+
+- `index.ts` gained `isContextRetired(ctx)`, and `armIdleWarmupRetry` now consults it in BOTH continuations that
+  outlive the runner generation that armed them: the `job.failure` continuation and the armed retry `setTimeout`.
+- `index.ts` registers a `session_shutdown` handler that cancels the pending warm-up timer, resets the attempt
+  counter, and aborts the in-flight speculative job.
+
+### Why
+
+- `AgentSession.reload()` retires the old extension generation (`oldExtensionRunner.invalidate("stale extension
+  generation after reload")`), after which every `ExtensionContext` getter throws. The warm-up watcher outlived that
+  invalidation and read the retired context anyway, and neither call site had a caller left to receive the throw:
+  the failure continuation is spawned with `void` (an unhandled rejection) and the timer callback throws straight
+  into the timer queue. Interactive mode promotes that to `uncaughtCrash`, so a reload landing inside the warm-up
+  retry window killed the CLI with:
+
+  ```
+  pi exiting due to uncaughtException:
+  Error: stale extension generation after reload
+      at ExtensionRunner.assertActive (core/extensions/runner.js)
+      at Object.getContextUsage (core/extensions/runner.js)
+      at core/extensions/builtin/compaction/index.js
+  ```
+
+- `session_shutdown` fires on the reload path BEFORE the invalidation, so tearing the watcher down there is the
+  deterministic fix; `isContextRetired` remains the backstop for any path that retires a generation without
+  emitting the event.
+- The probe reads a getter inside `try`/`catch` because `ExtensionContext` deliberately exposes no liveness flag.
+  Adding one is a public-API change that this crash does not justify.
+
+### Why an extension could not do this
+
+- This is the builtin extension's own private warm-up watcher. No external extension can observe, cancel, or guard
+  another extension's armed timer or in-flight summarization continuation.
+
+### Expected merge-conflict zones
+
+- MEDIUM: `index.ts` `armIdleWarmupRetry` (both guard sites) — upstream has no such watcher, so a sync that
+  rewrites this function will drop the guards.
+- LOW: the trailing `session_shutdown` handler at the end of the extension factory.
+
+## 2026-08-13 - Let the core route claim the idle warm summary
+
+### What changed
+
+- `session_before_compact` now attempts `claimWarmSummaryForCoreRoute()` BEFORE invalidating, and
+  returns the warm result as its `compaction` when the claim holds. The claim detaches the job
+  synchronously (before any `await`) so exactly one route can own it, and deliberately does NOT abort
+  its controller - aborting is what threw the already-paid summarization away.
+- A claim requires: no custom instructions (manual compaction keeps its own wording), a speculative
+  origin, the same model identity, a valid `WarmAnchorSnapshot` against the event branch, and a
+  boundary equal to the core preparation's `firstKeptEntryId`. Anything else falls through to the
+  existing fresh generation, unchanged.
+- The claimed job's generation is logged as `warm_consumed` with `route: "core-route"`.
+
+### Why
+
+On a new prompt the ordering is deterministic, not a race: `_enforceCompactionBeforeProvider` runs
+before `emitBeforeAgentStart`, so the CORE route always reaches compaction first. Its handler called
+`invalidateSpeculativeCompaction()` as its first statement, so the idle warm-up - whose entire purpose
+is to keep summarization off the user's critical path - was destroyed and re-billed exactly when it
+was needed. PR #853 fixed the extension route only; this closes the other half.
+
+### Why an extension could not do it
+
+The warm job lives in this extension, but the route that discarded it is the core-driven
+`session_before_compact` emission; the fix has to happen inside that handler.
+
+### Expected merge-conflict zones
+
+- `index.ts` `session_before_compact` handler head and the block preceding core-route snapshot creation.
+
+## 2026-08-13 - Anchor warm summaries to the summarized prefix
+
+### What changed
+
+- `applyGeneratedCompaction` no longer discards a warm summary on message-revision
+  inequality alone. When the revision moved, it builds a warm-anchor snapshot from
+  `preparation.firstKeptEntryId` (`core/compaction/warm-anchor.ts`) and applies the warm
+  result while the summarized prefix is unchanged.
+- That path passes `expectedWarmAnchor` instead of `expectedRevision`, and the core
+  compare-and-apply gate re-validates it with the SAME shared validator before mutating the
+  transcript, so the two gates cannot drift apart.
+- The compaction boundary is compared by entry ID, never by array position. Compaction records
+  are appended after the entries they summarize, so a valid next-generation anchor routinely
+  precedes the boundary it updates, and sibling branches can hold different boundaries at the
+  same index. A positional rule silently rejected every warm summary in an already-compacted
+  session while still admitting a cross-branch boundary.
+
+### Why
+
+The idle warm-up exists to move summarization off the user's critical path, but
+`_messageRevision` increments on every appended message. A session parked in a cache-warm
+wait appends wait notices, monitor state, and finally the user's own prompt, so the warm
+summary was guaranteed stale exactly when the blocking route needed it. Field logs showed
+415 warm-ups started, 36 consumed and only 10 applied; the rest paid a second full
+summarization for work already done. A summary describes the entries before its cut, so
+appends after the anchor cannot invalidate it - only a rewrite of the summarized prefix can.
+
+### Why an extension could not do it
+
+The compare-and-apply admission gate lives in `core/agent-session.ts`; admitting a warm
+summary under a content anchor requires that core option and its revalidation.
+
+### Expected merge-conflict zones
+
+- `speculative.ts` `applyGeneratedCompaction` and the `applyCompaction` context signature.
+- `core/agent-session.ts` `applyCompaction` guard block.
+
+## 2026-08-13 - Preserve auth-resolved local compaction endpoints
+
+### What changed
+
+- Local speculative and blocking compaction overlay the snapshot model with the
+  base URL returned by `ModelRegistry.getApiKeyAndHeaders()` before dispatching
+  summarization.
+
+### Why
+
+- OAuth providers such as GitHub Copilot derive account-specific enterprise
+  endpoints from credentials; using the catalog model silently fell back to the
+  individual endpoint.
+
+### Why an extension could not handle it
+
+- The builtin compaction extension owns this alternate summarization path.
+
+### Expected merge-conflict zones
+
+- MEDIUM: `speculative.ts`, around auth resolution and summary request snapshot
+  construction.
+
+## 2026-08-13 - Make retry-policy tests deterministic
+
+### What changed
+
+- Blocking compaction retry tests now advance fake time through the production
+  1s/2s/4s backoff instead of waiting on wall-clock timers.
+
+### Why
+
+- The full retry budget is seven seconds, longer than Vitest's five-second test
+  timeout. Real-time waits made the merged tests fail deterministically despite
+  correct retry behavior.
+
+### Why an extension could not handle it
+
+- This is test-harness coverage for the builtin extension's retry policy; no
+  shipped runtime behavior changed.
+
+### Expected merge-conflict zones
+
+- LOW: blocking compaction retry-policy tests.
+
+## 2026-08-13 - Preserve nullable provider-header overrides
+
+### What changed
+
+- Speculative and OpenAI remote compaction auth contracts now accept `ProviderHeaders`, preserving `null`
+  deletion markers through registry and provider-request transforms.
+- Concrete compact-endpoint and WebSocket request construction remains the boundary that materializes final
+  wire headers.
+
+### Why
+
+- Upstream widened provider headers so a later layer can explicitly remove an inherited header. String-only
+  structural types introduced during merge resolution either failed compilation or silently discarded those
+  deletion markers before the canonical request boundary.
+
+### Why an extension could not handle it
+
+- These types bridge the builtin compaction route directly to the model registry and stream runtime. An external
+  extension cannot recover a deleted marker after this private structural boundary has narrowed it away.
+
+### Expected merge-conflict zones
+
+- MEDIUM: `speculative.ts`, `openai-remote.ts`, and `openai-remote-responses-v2.ts` auth option shapes.
+
+## Retry transient blocking summarization failures (2026-08-12)
+
+### What changed
+
+- `speculative.ts` now runs the summarization request inside `retryTransientCall` from `@earendil-works/pi-ai`, with
+  the budget in the new `summarization-retry.ts` (3 retries, 1s base delay, 60s total wall-clock bound).
+- The provider `error` stop is raised INSIDE the retried producer, so a transient failure spends the retry budget.
+  Overflow shrinking and abort handling stay in the surrounding loop and are never answered by replaying a request.
+- Retry is limited to `core-route` and `blocking` snapshot origins. The speculative warm-up keeps `idle-retry.ts`,
+  whose idle/breaker/threshold guards are re-evaluated between attempts against live session state, and a failed warm
+  job stays inheritable so the next blocking route degrades on it instead of paying for a second request.
+- `isRetryableSummaryAttempt()` refuses every class that has a deterministic zero-LLM recovery: watchdog timeouts,
+  `upstream-stream-truncated`, and overflow exhaustion are rebuilt for free by the required-compaction fallback. Those
+  classes are mirrored from `classifyRequiredCompactionFallbackFailure` rather than imported, because
+  `deterministic-fallback.ts` imports this module.
+- Exhaustion is unchanged externally: one `compaction_end` carrying the verbatim upstream message and exactly one
+  circuit-breaker failure, not one per attempt.
+
+### Why
+
+- The core `compact()` route already retries summarization through `completeSummarization` with
+  `SettingsManager.getRetrySettings()`, but the extension route had no retry at all. A real session on 2026-08-12 hit
+  an upstream Cloudflare Worker OOM (`500 Worker exceeded memory limit.`, 28ms round trip, 471,441 tokens) and the
+  route reported `willRetry:false` on attempt one, even though `isTransientSummarizationFailure` already classified
+  that message as transient.
+- The wall-clock bound exists because one attempt may hold the session for
+  `DEFAULT_SUMMARIZATION_MAX_DURATION_MS` (120s); replaying a slow failure would stack deadlines, which is the freeze
+  the budget and the speculative-handoff degrade path exist to prevent.
+
+### Why an extension could not do this
+
+- This is the builtin extension's private summarization request path. `ExtensionContext` exposes no retry-policy
+  accessor, and no external extension can wrap another extension's in-flight summary generation.
+
+### Expected merge-conflict zones
+
+- MEDIUM: `speculative.ts` inside `runExtensionCompaction`'s request loop and its import block.
+- LOW: `summarization-retry.ts` is new and fork-owned.
+- LOW: blocking-route tests that express attempts against `MAX_SUMMARIZATION_ATTEMPT_RETRIES`.
+
 ## Regenerate after a warm summary goes stale (2026-08-09)
 
 ### What changed

@@ -100,7 +100,7 @@ describe("retention precedence stays pinned to the API adapters", () => {
 	});
 
 	it("uses each adapter's own unset fallback", () => {
-		expect(resolvePromptCacheTtlSeconds(anthropicModel)).toBe(3600);
+		expect(resolvePromptCacheTtlSeconds(anthropicModel)).toBe(300);
 		expect(resolvePromptCacheTtlSeconds(anthropicCompletionsModel)).toBe(300);
 		expect(resolvePromptCacheTtlSeconds(cacheableBedrockModel)).toBe(300);
 		expect(resolvePromptCacheTtlSeconds(openAIResponsesModel)).toBe(300);

@@ -3,14 +3,19 @@
 Pi uses environment variables in three ways:
 
 - Variables such as `PI_OFFLINE` configure the Pi process.
-- Pi sets `PI_CODING_AGENT` so child processes can detect that they run inside Pi.
+- Pi sets process markers so child processes can identify Pi as the launching agent.
 - Commands run by the LLM-callable bash tool receive `PI_*` variables describing the current session.
 
 Provider API-key variables are documented separately in [Providers](providers.md#environment-variables-or-auth-file).
 
 ## Process Marker
 
-The CLI and RPC entry points set `PI_CODING_AGENT=true`. Child processes inherit it and can use it to detect that they run inside Pi. It is not session-specific and is not set automatically when Pi is embedded through the SDK.
+The CLI and RPC entry points set two process markers:
+
+- `AI_AGENT=pi` is a generic marker that lets tooling identify Pi as the agent that launched the process.
+- `PI_CODING_AGENT=true` is Pi-specific and lets child processes detect that they run inside Pi.
+
+Child processes inherit both markers. They are not session-specific and are not set automatically when Pi is embedded through the SDK.
 
 ## Bash Tool Session Environment
 
@@ -79,11 +84,19 @@ These variables are read by Pi itself:
 | `PI_OFFLINE` | Disable startup network operations, including update checks, package updates, and install/update telemetry |
 | `PI_SKIP_VERSION_CHECK` | Disable the `pi.dev` latest-version request |
 | `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers: `1`/`true`/`yes` or `0`/`false`/`no` |
-| `PI_CACHE_RETENTION` | Set to `long` for extended provider prompt caching where supported |
+| `PI_CACHE_RETENTION` | Set to `long` to opt into extended provider prompt caching where supported; direct Anthropic defaults to 5 minutes |
 | `PI_SHARE_VIEWER_URL` | Override the base URL used by `/share` |
 | `PI_HARDWARE_CURSOR` | Set to `1` to show the hardware cursor; see [Terminal setup](terminal-setup.md) |
+| `PI_TUI_ESC_TIMEOUT` | How long to wait after a lone ESC before treating it as Escape, in milliseconds; defaults to `100` over SSH and `10` otherwise. Increase if Alt-key input is misread as Escape |
 | `SENPI_RECOVER_INSPECTOR_VM_IMPORT` | Set to `1` at process start to keep the TUI running when a Node Inspector (`node inspect` / `--inspect`) eval uses dynamic `import()`, which Node rejects with `ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`. Recovery applies only to that exact Inspector-originated rejection while an Inspector endpoint is active; all other uncaught errors remain fatal. Use `require()` or a target-side loader in Inspector evals instead |
 | `VISUAL`, `EDITOR` | External editor fallback when `externalEditor` is unset |
 | `HTTP_PROXY`, `HTTPS_PROXY` | Proxy outbound HTTP requests |
+
+### Image Generation
+
+| Variable | Description |
+|----------|-------------|
+| `PI_OPENAI_IMAGE_GEN` | Enable or disable native `image_generation` server-tool injection on OpenAI Responses models. Accepts `1`/`true`/`yes` (default) or `0`/`false`/`no`. When disabled, the client-side `generate_image` tool is used instead |
+| `PI_IMAGE_GEN_PROVIDER` | Pin a specific configured gateway provider for image generation (for example `quotio-openai`). The provider must have a resolvable API key and base URL in `models.json`. When unset, the credential resolver picks the best available source automatically |
 
 Provider credentials such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and cloud-provider configuration are listed in [Providers](providers.md#environment-variables-or-auth-file).

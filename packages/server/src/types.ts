@@ -2,9 +2,9 @@ import type {
 	Command,
 	ModelMetadata,
 	ModelRef,
+	SessionMetadata,
 	SessionPhase,
 	SessionSnapshot,
-	SessionSummary,
 	ThinkingLevel,
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
@@ -12,7 +12,6 @@ import type { PiServerError } from "./errors.ts";
 import type { PiServerListener } from "./listener.ts";
 
 export interface PiServerOptions {
-	token: string;
 	listeners: readonly PiServerListener[];
 	maxFrameLength?: number;
 	handshakeTimeoutMs?: number;
@@ -26,7 +25,7 @@ export type PromptInput = Omit<Extract<Command, { command: "prompt" }>, "command
 export type SteerInput = Omit<Extract<Command, { command: "steer" }>, "command" | "sessionId">;
 
 export interface CreateSessionOptions {
-	/** A collision-resistant ID assigned by PiServer. The backend must persist this exact ID. */
+	/** A collision-resistant ID assigned by PiServer. The service must persist this exact ID. */
 	id: string;
 	cwd?: string;
 	name?: string;
@@ -52,14 +51,13 @@ export interface PiSessionRuntime {
 	dispose(): Promise<void>;
 }
 
-/** Durable storage and exclusively acquired runtime boundary. */
-export interface PiSessionBackend {
-	listSessions(): Promise<SessionSummary[]>;
+/** Service boundary for durable sessions and exclusively acquired runtimes. */
+export interface PiServerService {
+	listSessions(): Promise<SessionMetadata[]>;
 	listModels(): Promise<ModelMetadata[]>;
 	createSession(options: CreateSessionOptions): Promise<PiSessionRuntime>;
 	openSession(sessionId: string): Promise<PiSessionRuntime>;
 }
 
 export type SessionRuntime = PiSessionRuntime;
-export type SessionBackend = PiSessionBackend;
 export type SessionRuntimeEvent = PiSessionRuntimeEvent;

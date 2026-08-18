@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME, getAgentDir, getPackageDir } from "../config.ts";
+import { CONFIG_DIR_NAME, getAgentDir, getPackageDir, isBunBinary } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { ACCEPTED_SHIM_BANNERS, GENERATED_SHIM_BANNER } from "./generated-shim-banner.ts";
@@ -110,25 +110,42 @@ const VENDORED_BUILTIN_EXTENSION_PACKAGES: ReadonlyArray<{ builtinId: string; pa
 	{ builtinId: "todowrite", packageName: "pi-todotools" },
 	{ builtinId: "codemode", packageName: "@code-yeongyu/senpi-codemode" },
 ];
-const require = createRequire(import.meta.url);
+const moduleRequire = createRequire(import.meta.url);
 
-const bundledBuiltinExtensions: ReadonlyArray<{ id: string; resolvePackage: () => string }> = [
+const bundledBuiltinExtensions: ReadonlyArray<{
+	id: string;
+	resolvePackage: () => string;
+	resolveBinaryFactory?: () => Promise<ExtensionFactory>;
+}> = [
 	{
 		id: "codemode",
 		resolvePackage: () =>
-			resolveBundledPackageJson("@code-yeongyu/senpi-codemode/package.json", "senpi-codemode/package.json"),
+			resolveBundledPackageJson(
+				"@code-yeongyu/senpi-codemode/package.json",
+				"senpi-codemode/package.json",
+				join("node_modules", "@code-yeongyu", "senpi-codemode", "package.json"),
+			),
+		resolveBinaryFactory: async () => require("@code-yeongyu/senpi-codemode").default as ExtensionFactory,
 	},
 ];
 
-function resolveBundledPackageJson(packageSpecifier: string, workspaceRelativePath: string): string {
+function resolveBundledPackageJson(
+	packageSpecifier: string,
+	workspaceRelativePath: string,
+	binaryRelativePath: string,
+): string {
 	const packageRoot = getPackageDir();
 	const runningFromSource = fileURLToPath(import.meta.url).includes(`${sep}src${sep}core${sep}resource-loader.`);
 	const workspacePath = resolve(packageRoot, "..", workspaceRelativePath);
 	if (runningFromSource && existsSync(workspacePath)) {
 		return workspacePath;
 	}
+	const binaryPath = resolve(packageRoot, binaryRelativePath);
+	if (isBunBinary && existsSync(binaryPath)) {
+		return binaryPath;
+	}
 	try {
-		return require.resolve(packageSpecifier);
+		return moduleRequire.resolve(packageSpecifier);
 	} catch (error) {
 		if (existsSync(workspacePath)) {
 			return workspacePath;
@@ -215,7 +232,7 @@ function resolveGeneratedGlobalDefaultExtensionFactory(
 }
 
 function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
-	const candidates = ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
+	const candidates = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
 	for (const filename of candidates) {
 		const filePath = join(dir, filename);
 		if (existsSync(filePath)) {
@@ -237,7 +254,7 @@ function loadContextFileFromDir(dir: string): { path: string; content: string } 
 
 /**
  * The main repo's context file that a nested linked worktree's own copy shadows: both
- * are the same tracked AGENTS.md/CLAUDE.md, so loading both loads it twice. Returns
+ * occupy the same logical repository scope, so loading both applies that context twice. Returns
  * undefined when nothing is shadowed, leaving normal ancestor inheritance alone.
  *
  * Returned canonicalized (realpath), because `git worktree add` writes the `.git`
@@ -870,6 +887,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			extensions: orderedExtensions,
 			errors: [...preTrustExtensions.errors, ...remainingExtensions.errors],
 			runtime: preTrustExtensions.runtime,
+			eventBus: preTrustExtensions.eventBus ?? remainingExtensions.eventBus ?? this.eventBus,
 		};
 		this.rebuildExtensionFlagDefaults(extensionsResult);
 		this.addExtensionConflictDiagnostics(extensionsResult);
@@ -1369,6 +1387,19 @@ export class DefaultResourceLoader implements ResourceLoader {
 				continue;
 			}
 			try {
+				if (isBunBinary && bundledExtension.resolveBinaryFactory) {
+					const factory = await bundledExtension.resolveBinaryFactory();
+					const extensionPath = `<builtin:${bundledExtension.id}>`;
+					const extension = await loadExtensionFromFactory(
+						factory,
+						this.cwd,
+						this.eventBus,
+						runtime,
+						extensionPath,
+					);
+					extensions.push(extension);
+					continue;
+				}
 				const packageJsonPath = bundledExtension.resolvePackage();
 				const entries = this.resolvePackageExtensionEntries(packageJsonPath);
 				if (entries.length === 0) {

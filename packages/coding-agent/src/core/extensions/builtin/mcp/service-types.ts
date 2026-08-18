@@ -17,6 +17,7 @@ export type McpWireJsonValue =
 	| { readonly [key: string]: McpWireJsonValue | undefined };
 
 export type McpWireAuthStatus = "unsupported" | "notLoggedIn" | "bearerToken" | "oAuth";
+export type McpWireServerStatus = ServerConnectionState | ResolvedMcpServer["state"];
 
 export type McpWireServerInfo = {
 	readonly name: string;
@@ -68,6 +69,7 @@ export type McpWireStatusServer = {
 	readonly resources: readonly McpWireResource[];
 	readonly resourceTemplates: readonly McpWireResourceTemplate[];
 	readonly authStatus: McpWireAuthStatus;
+	readonly status?: McpWireServerStatus;
 };
 
 export type McpWireStatusSnapshot = {
@@ -153,4 +155,6 @@ export interface McpConnectionEntry {
 	lastListChangedDelta?: string;
 	/** Teardown for the list_changed coalescer + subscription. */
 	disposeListChanged?: () => void;
+	/** Teardown for the control-inventory connection-state subscription. */
+	disposeWireStatus?: () => void;
 }

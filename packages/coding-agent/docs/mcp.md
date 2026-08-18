@@ -147,6 +147,8 @@ local `tool_search` for the session.
 
 ## Exposure tiers
 
+> **Note:** `tool_search` is a shared catalog tool that covers both MCP servers and native extension tools. When filtering searches, the legacy MCP `server` parameter is mapped to the shared `group` parameter.
+
 | Tier | When | Cost profile |
 |---|---|---|
 | direct | `exposure:"direct"`, `directTools:true`, or `auto` at/below `searchThreshold` | Every tool schema on every request |

@@ -98,13 +98,19 @@ describe("account slots", () => {
 
 	it("refreshSlot updates only its slot under the store lock", async () => {
 		const store = makeStore(addAccount(emptyCredential(), { ...slotA, expires: Date.now() - 1000 }));
-		const refresher = async (refresh: string) => ({
-			refresh: `${refresh}-new`,
-			access: "aA-new",
-			expires: Date.now() + 120_000,
-		});
-		const next = await refreshSlot(store, "claude-sdk-oauth", "default", refresher);
+		const signal = new AbortController().signal;
+		let receivedSignal: AbortSignal | undefined;
+		const refresher = async (refresh: string, refreshSignal: AbortSignal) => {
+			receivedSignal = refreshSignal;
+			return {
+				refresh: `${refresh}-new`,
+				access: "aA-new",
+				expires: Date.now() + 120_000,
+			};
+		};
+		const next = await refreshSlot(store, "claude-sdk-oauth", "default", refresher, signal);
 		const slot = listAccounts(next as ClaudeSdkOauthCredential)[0];
+		expect(receivedSignal).toBe(signal);
 		expect(slot.access).toBe("aA-new");
 		expect(slot.refresh).toBe("rA-new");
 		const stored = (await store.read("claude-sdk-oauth")) as ClaudeSdkOauthCredential;
@@ -126,8 +132,9 @@ describe("account slots", () => {
 			await barrier;
 			return { refresh, access: `a-${calls}`, expires: Date.now() + 60_000 };
 		};
-		const first = refreshSlot(store, "claude-sdk-oauth", "default", refresher);
-		const second = refreshSlot(store, "claude-sdk-oauth", "default", refresher);
+		const signal = new AbortController().signal;
+		const first = refreshSlot(store, "claude-sdk-oauth", "default", refresher, signal);
+		const second = refreshSlot(store, "claude-sdk-oauth", "default", refresher, signal);
 		gate?.();
 		await Promise.all([first, second]);
 		expect(calls).toBe(1);

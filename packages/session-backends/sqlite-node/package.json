@@ -1,0 +1,43 @@
+{
+	"name": "@earendil-works/pi-storage-sqlite-node",
+	"version": "0.83.0",
+	"private": true,
+	"description": "Node sqlite session backend for @earendil-works/pi-agent-core sessions",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"scripts": {
+		"clean": "node -e \"import('node:fs/promises').then(fs=>fs.rm('dist',{recursive:true,force:true}))\"",
+		"build": "tsc -p tsconfig.build.json && node ./scripts/prepare-dist.mjs copy-sqlite-migrations",
+		"test": "vitest --run",
+		"coverage": "vitest --run --coverage",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/session-backends/sqlite-node"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-ai": "file:../../ai",
+		"@earendil-works/pi-agent-core": "file:../../agent",
+		"@vitest/coverage-v8": "4.1.9",
+		"vitest": "4.1.9"
+	}
+}

@@ -26,7 +26,7 @@ export function outerKittyGraphicsMode(clientTermname: string): "placeholder" | 
 
 export function detectTerminalCapabilities(
 	env: NodeJS.ProcessEnv = process.env,
-	_platform: NodeJS.Platform = process.platform,
+	platform: NodeJS.Platform = process.platform,
 	execTmux?: TmuxExecFile,
 ): DetectedTerminalCapabilities {
 	const term = env.TERM ?? "";
@@ -78,6 +78,12 @@ export function detectTerminalCapabilities(
 	}
 	if (term.startsWith("screen")) {
 		return { images: null, trueColor, hyperlinks: false };
+	}
+	// Windows Terminal does not always set WT_SESSION, for example when it hosts
+	// a cmd.exe launched directly from Win+R. Modern Windows consoles support
+	// truecolor; keep hyperlinks off unless we positively detected support above.
+	if (platform === "win32") {
+		return { images: null, trueColor: true, hyperlinks: false };
 	}
 	return {
 		images: term === "xterm-kitty" ? "kitty" : null,

@@ -49,12 +49,131 @@ describe("smoke-standalone-binary", () => {
 		const binaryPath = join(tempDir, "fixed-binary");
 		writeExecutable(
 			binaryPath,
-			`#!/usr/bin/env node\nprocess.stdout.write(process.argv[2] === "--version" ? "2026.8.5" : "help");\n`,
+			`#!/usr/bin/env node
+if (process.argv.includes("--mode")) {
+	process.stdout.write(${JSON.stringify(
+		`${JSON.stringify({
+			id: "standalone-smoke-surfaces",
+			type: "response",
+			command: "get_loaded_surfaces",
+			success: true,
+			data: {
+				extensions: [{ name: "codemode", path: "<builtin:codemode>", enabled: true }],
+				mcpServers: [],
+			},
+		})}\n`,
+	)});
+} else {
+	process.stdout.write(process.argv[2] === "--version" ? "2026.8.5" : "help");
+}
+`,
 		);
 
 		const result = spawnSync(process.execPath, [smokeScript, binaryPath, workerPath], { encoding: "utf8" });
 
 		assert.equal(result.status, 0, result.stderr);
 		assert.equal(readFileSync(workerPath, "utf8"), `"use strict";\n`);
+	});
+
+	it("fails a relocated binary whose RPC inventory omits bundled codemode", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-standalone-smoke-"));
+		const workerPath = join(tempDir, "node_modules", "jsdom", "xhr-sync-worker.js");
+		mkdirSync(dirname(workerPath), { recursive: true });
+		writeFileSync(workerPath, `"use strict";\n`);
+		const binaryPath = join(tempDir, "missing-codemode-binary");
+		writeExecutable(
+			binaryPath,
+			`#!/usr/bin/env node
+if (process.argv.includes("--mode")) {
+	process.stdout.write(${JSON.stringify(
+		`${JSON.stringify({
+			id: "standalone-smoke-surfaces",
+			type: "response",
+			command: "get_loaded_surfaces",
+			success: true,
+			data: { extensions: [], mcpServers: [] },
+		})}\n`,
+	)});
+} else {
+	process.stdout.write(process.argv[2] === "--version" ? "2026.8.11-3" : "help");
+}
+`,
+		);
+
+		const result = spawnSync(process.execPath, [smokeScript, binaryPath, workerPath], { encoding: "utf8" });
+
+		assert.notEqual(result.status, 0);
+		assert.match(result.stderr, /<builtin:codemode>/);
+		assert.equal(readFileSync(workerPath, "utf8"), `"use strict";\n`);
+	});
+
+	it("fails a relocated binary that emits malformed RPC output", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-standalone-smoke-"));
+		const workerPath = join(tempDir, "node_modules", "jsdom", "xhr-sync-worker.js");
+		mkdirSync(dirname(workerPath), { recursive: true });
+		writeFileSync(workerPath, `"use strict";\n`);
+		const binaryPath = join(tempDir, "malformed-rpc-binary");
+		writeExecutable(
+			binaryPath,
+			`#!/usr/bin/env node
+if (process.argv.includes("--mode")) {
+	process.stdout.write("not-json\\n");
+	process.stdout.write(${JSON.stringify(
+		`${JSON.stringify({
+			id: "standalone-smoke-surfaces",
+			type: "response",
+			command: "get_loaded_surfaces",
+			success: true,
+			data: {
+				extensions: [{ name: "codemode", path: "<builtin:codemode>", enabled: true }],
+				mcpServers: [],
+			},
+		})}\n`,
+	)});
+} else {
+	process.stdout.write(process.argv[2] === "--version" ? "2026.8.11-3" : "help");
+}
+`,
+		);
+
+		const result = spawnSync(process.execPath, [smokeScript, binaryPath, workerPath], { encoding: "utf8" });
+
+		assert.notEqual(result.status, 0);
+		assert.match(result.stderr, /malformed RPC output/);
+	});
+
+	it("fails a relocated binary whose loaded-surfaces response is unsuccessful", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-standalone-smoke-"));
+		const workerPath = join(tempDir, "node_modules", "jsdom", "xhr-sync-worker.js");
+		mkdirSync(dirname(workerPath), { recursive: true });
+		writeFileSync(workerPath, `"use strict";\n`);
+		const binaryPath = join(tempDir, "failed-rpc-binary");
+		writeExecutable(
+			binaryPath,
+			`#!/usr/bin/env node
+if (process.argv.includes("--mode")) {
+	process.stdout.write(${JSON.stringify(
+		`${JSON.stringify({
+			id: "standalone-smoke-surfaces",
+			type: "response",
+			command: "get_loaded_surfaces",
+			success: false,
+			error: "synthetic failure",
+			data: {
+				extensions: [{ name: "codemode", path: "<builtin:codemode>", enabled: true }],
+				mcpServers: [],
+			},
+		})}\n`,
+	)});
+} else {
+	process.stdout.write(process.argv[2] === "--version" ? "2026.8.11-3" : "help");
+}
+`,
+		);
+
+		const result = spawnSync(process.execPath, [smokeScript, binaryPath, workerPath], { encoding: "utf8" });
+
+		assert.notEqual(result.status, 0);
+		assert.match(result.stderr, /unsuccessful loaded-surfaces response/);
 	});
 });

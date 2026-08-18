@@ -49,6 +49,12 @@ const bundledWorkspaces = [
 	},
 	{ source: "packages/tui", packageName: "@earendil-works/pi-tui", targetParts: ["@earendil-works", "pi-tui"], sourceOnly: false },
 	{
+		source: "packages/telemetry",
+		packageName: "@earendil-works/pi-telemetry",
+		targetParts: ["@earendil-works", "pi-telemetry"],
+		sourceOnly: false,
+	},
+	{
 		source: "packages/senpi-codemode",
 		packageName: "@code-yeongyu/senpi-codemode",
 		targetParts: ["@code-yeongyu", "senpi-codemode"],

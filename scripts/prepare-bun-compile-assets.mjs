@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +14,30 @@ const jsdomRoots = [
 	join(repoRoot, "node_modules", "jsdom"),
 	join(repoRoot, "packages", "coding-agent", "node_modules", "jsdom"),
 ];
+const imageGenSkillSourcePath = join(
+	repoRoot,
+	"packages",
+	"coding-agent",
+	"src",
+	"core",
+	"extensions",
+	"builtin",
+	"imagegen",
+	"skill",
+	"SKILL.md",
+);
+const imageGenSkillDestinationPath = join(
+	repoRoot,
+	"packages",
+	"coding-agent",
+	"dist",
+	"core",
+	"extensions",
+	"builtin",
+	"imagegen",
+	"skill",
+	"SKILL.md",
+);
 const jsdomDefaultStylesheetRead =
 	/const defaultStyleSheet = fs\.readFileSync\(\s*path\.resolve\(\s*__dirname,\s*["']\.\.\/\.\.\/\.\.\/browser\/default-stylesheet\.css["']\s*\),\s*(?:\{\s*encoding:\s*["']utf-8["']\s*\}|["']utf8["'])\s*\);/;
 const jsdomSyncWorkerResolve =
@@ -21,6 +45,7 @@ const jsdomSyncWorkerResolve =
 
 let preparedCssTreeCount = 0;
 let preparedJsdomCount = 0;
+let preparedImageGenSkillCount = 0;
 
 for (const cssTreeRoot of cssTreeRoots) {
 	const patchJsonPath = join(cssTreeRoot, "data", "patch.json");
@@ -139,11 +164,17 @@ for (const jsdomRoot of jsdomRoots) {
 	}
 }
 
-if (preparedCssTreeCount === 0 && preparedJsdomCount === 0) {
-	console.log("[prepare-bun-compile-assets] css-tree and jsdom assets not installed; skipping");
+if (existsSync(imageGenSkillSourcePath)) {
+	mkdirSync(dirname(imageGenSkillDestinationPath), { recursive: true });
+	copyFileSync(imageGenSkillSourcePath, imageGenSkillDestinationPath);
+	preparedImageGenSkillCount = 1;
+}
+
+if (preparedCssTreeCount === 0 && preparedJsdomCount === 0 && preparedImageGenSkillCount === 0) {
+	console.log("[prepare-bun-compile-assets] css-tree, jsdom, and imagegen assets not installed; skipping");
 	process.exit(0);
 }
 
 console.log(
-	`[prepare-bun-compile-assets] prepared Bun compile assets (${preparedCssTreeCount} css-tree, ${preparedJsdomCount} jsdom)`,
+	`[prepare-bun-compile-assets] prepared Bun compile assets (${preparedCssTreeCount} css-tree, ${preparedJsdomCount} jsdom, ${preparedImageGenSkillCount} imagegen skill)`,
 );

@@ -90,20 +90,20 @@ describe("monitor duplicate-batch suppression", () => {
 	});
 
 	it("suppressed refreshes never consume the wake budget", () => {
-		const { notifier, pauseMonitors, scheduler, sent } = createNotifier({ settings: { wakeBudget: 2 } });
+		const { notifier, pauseMonitors, scheduler, sent } = createNotifier({
+			settings: { coalesceWindowMs: 10, rateLimitMs: 100, wakeBudget: 2 },
+		});
 		notifier.notifyEvent(line("bash_budget", "budget", "state A"));
-		scheduler.advanceBy(2000);
+		scheduler.advanceBy(10);
 		expect(sent).toHaveLength(1);
 
-		for (let index = 0; index < 3; index++) {
-			notifier.notifyEvent(line("bash_budget", "budget", "state A"));
-			scheduler.advanceBy(10_000);
-		}
+		notifier.notifyEvent(line("bash_budget", "budget", "state A"));
+		scheduler.advanceBy(100);
 		expect(sent).toHaveLength(1);
 		expect(pauseMonitors).not.toHaveBeenCalled();
 
 		notifier.notifyEvent(line("bash_budget", "budget", "state B"));
-		scheduler.advanceBy(10_000);
+		scheduler.advanceBy(10);
 		expect(sent).toHaveLength(2);
 		expect(sent[1]?.message.content).toContain("state B");
 		expect(pauseMonitors).toHaveBeenCalledTimes(1);

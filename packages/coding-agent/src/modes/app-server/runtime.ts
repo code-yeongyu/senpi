@@ -2,7 +2,8 @@ import { ENV_SESSION_DIR, getAgentDir } from "../../config.ts";
 import { getMcpService } from "../../core/extensions/builtin/mcp/service.ts";
 import { DefaultResourceLoader } from "../../core/resource-loader.ts";
 import { type CreateAgentSessionOptions, createAgentSession } from "../../core/sdk.ts";
-import { createRegistry, type MethodRegistry } from "./rpc/registry.ts";
+import type { RpcNotification } from "./rpc/envelope.ts";
+import { createRegistry, type MethodRegistry, registerExtensionRequestMethod } from "./rpc/registry.ts";
 import { registerFuzzyFileSearchMethods } from "./search/fuzzy-search-methods.ts";
 import { FuzzyFileSearchService } from "./search/fuzzy-search-service.ts";
 import { ApprovalBridge, createAppServerUIContext } from "./server/approvals.ts";
@@ -65,6 +66,7 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 		createSession: (options) => createBoundAppServerSession(options, approvals, notifications, requestShutdown),
 		mcpWireStatusAdapter: processMcpWireStatusAdapter,
 	});
+	registerExtensionRequestMethod(registry, (threadId) => threads.getLoadedThread(threadId).session);
 	const core = createRoutedServerCore(
 		registry,
 		notifications,
@@ -130,6 +132,19 @@ async function createBoundAppServerSession(
 ): Promise<AppServerSessionResult> {
 	const result = await createAgentSession(options);
 	const threadId = result.session.sessionId;
+	const initialNotifications: RpcNotification[] = [];
+	let bindingExtensions = true;
+	result.session.extensionRunner.onRpcEvent(({ name, data }) => {
+		const notification = {
+			method: "extension_event",
+			params: { type: "extension_event", name, data, threadId },
+		};
+		if (bindingExtensions) {
+			initialNotifications.push(notification);
+			return;
+		}
+		notifications.toThread(threadId, notification);
+	});
 	await result.session.bindExtensions({
 		uiContext: createAppServerUIContext(approvals, threadId),
 		mode: "app-server",
@@ -138,6 +153,7 @@ async function createBoundAppServerSession(
 			notifications.toThread(threadId, { method: "error", params: error });
 		},
 	});
+	bindingExtensions = false;
 	// The MCP service captures this session's attach state under its session id.
 	// Convert that captured state into a session-owned adapter before the entry is
 	// registered; later requests never consult the service-global lifecycle view.
@@ -148,7 +164,7 @@ async function createBoundAppServerSession(
 			approvals.cancelPendingForThread(threadId);
 		}
 	});
-	return { ...result, mcpWireStatusAdapter };
+	return { ...result, initialNotifications, mcpWireStatusAdapter };
 }
 
 function registerTurnHandlers(registry: MethodRegistry, turns: TurnEngineApi, core: ServerCore): void {

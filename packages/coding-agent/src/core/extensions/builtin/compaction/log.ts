@@ -37,6 +37,8 @@ const EVENTS = new Set([
 	"emergency_prune",
 	"ineffective_counted",
 	"summary_failed",
+	"remote_aborted",
+	"blocking_aborted",
 ]);
 
 export type CompactionLoggerEvent =
@@ -54,7 +56,9 @@ export type CompactionLoggerEvent =
 	| "emergency_prune"
 	| "ineffective_counted"
 	| "idle_trigger"
-	| "summary_failed";
+	| "summary_failed"
+	| "remote_aborted"
+	| "blocking_aborted";
 
 export interface CompactionLoggerData {
 	origin?: string;

@@ -9,9 +9,9 @@
  *   - `/responses`         -> OpenAI Responses         (api "openai-responses")
  *
  * Turns are scripted protocol-independently ({ reasoning?, text?, toolCalls? })
- * or as exclusive provider failures ({ error: { status, message } }). Success
- * handlers render matching SSE; errors return non-200 provider JSON. Run
- * `node fake-model-server.mjs --self-test`.
+ * or as exclusive provider failures ({ error: { status, message, type? } }).
+ * Success handlers render matching SSE; errors return non-200 provider JSON.
+ * Run `node fake-model-server.mjs --self-test`.
  */
 
 import { createServer } from "node:http";
@@ -20,7 +20,7 @@ import { pathToFileURL } from "node:url";
 const isMain = import.meta.url === pathToFileURL(process.argv[1] || "").href;
 
 /**
- * @param {{ port?: number, turns?: Array<{reasoning?:string, text?:string, chunks?:number, chunkDelayMs?:number, toolCalls?:Array<{id?:string,name:string,args:object}>, error?:{status:number,message:string}}> }} opts
+ * @param {{ port?: number, turns?: Array<{reasoning?:string, text?:string, chunks?:number, chunkDelayMs?:number, toolCalls?:Array<{id?:string,name:string,args:object}>, error?:{status:number,message:string,type?:string}}> }} opts
  * @returns {Promise<{url:string, origin:string, port:number, requests:object[], streamLog:Array<{streamId:number,protocol:string,kind:string,delta:string}>, stop:()=>Promise<void>}>}
  *
  * A turn's non-empty `reasoning` and `text` fields are each emitted as ONE delta
@@ -113,6 +113,9 @@ function validateScriptedTurns(turns) {
 		if (typeof error.message !== "string" || !error.message.trim()) {
 			throw new Error(`${label}: error.message must be a non-empty string`);
 		}
+		if (error.type !== undefined && (typeof error.type !== "string" || !error.type.trim())) {
+			throw new Error(`${label}: error.type must be a non-empty string when given`);
+		}
 		const successField = ["reasoning", "text", "chunks", "chunkDelayMs", "toolCalls"].find((field) => Object.hasOwn(turn, field));
 		if (successField) {
 			throw new Error(`${label}: error turns cannot also define ${successField}`);
@@ -129,7 +132,7 @@ function sendProviderError(res, error) {
 	sendJson(res, error.status, {
 		error: {
 			message: error.message,
-			type: error.status === 429 ? "rate_limit_error" : "server_error",
+			type: error.type ?? (error.status === 429 ? "rate_limit_error" : "server_error"),
 		},
 	});
 }

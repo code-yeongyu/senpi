@@ -72,6 +72,7 @@ describe("goal cache-warm continuation story", () => {
 
 	it("tells the cache-warm story when the continuation is scheduled", async () => {
 		vi.useFakeTimers();
+		vi.setSystemTime(0);
 		const { harness, notices } = await setupWarmHarness("thread-cache-warm-scheduled");
 
 		expect(notices).toEqual([]);
@@ -80,6 +81,7 @@ describe("goal cache-warm continuation story", () => {
 			expect.objectContaining({
 				goalId: expect.any(String),
 				delayMs: 270_000,
+				dueAtMs: 270_000,
 				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({ cachedTokens: 120_000, ttlSeconds: 300 }),
@@ -93,6 +95,7 @@ describe("goal cache-warm continuation story", () => {
 				phase: "scheduled",
 				goalId: expect.any(String),
 				delayMs: 270_000,
+				dueAtMs: 270_000,
 				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({ cachedTokens: 120_000, ttlSeconds: 300 }),

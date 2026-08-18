@@ -7,15 +7,18 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { AgentSessionEvent, SessionStats } from "../../core/agent-session.ts";
+import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
 	RpcAccountFailoverEvent,
 	RpcAuthAccountsChangedEvent,
 	RpcCommand,
+	RpcExtensionEvent,
 	RpcProviderAccount,
 	RpcResponse,
 	RpcSessionState,
@@ -56,9 +59,10 @@ export interface ModelInfo {
 }
 
 export type RpcProviderAccountEvent = RpcAuthAccountsChangedEvent | RpcAccountFailoverEvent;
-export type RpcEventListener = (event: AgentSessionEvent | RpcProviderAccountEvent) => void;
+export type RpcClientEvent = JsonAgentSessionEvent | RpcProviderAccountEvent | RpcExtensionEvent;
+export type RpcEventListener = (event: RpcClientEvent) => void;
 
-function isProviderAccountEvent(event: AgentSessionEvent | RpcProviderAccountEvent): event is RpcProviderAccountEvent {
+function isProviderAccountEvent(event: RpcClientEvent): event is RpcProviderAccountEvent {
 	return event.type === "auth_accounts_changed" || event.type === "account_failover";
 }
 
@@ -281,9 +285,16 @@ export class RpcClient {
 
 	/**
 	 * Set thinking level.
+	 *
+	 * `scope: "turn"` changes only this session's level without rewriting the model's remembered
+	 * level; it throws when the active model does not support the requested level, and the
+	 * session keeps the level it already had.
 	 */
-	async setThinkingLevel(level: ThinkingLevel): Promise<void> {
-		await this.send({ type: "set_thinking_level", level });
+	async setThinkingLevel(level: ThinkingLevel, options?: { scope?: "turn" }): Promise<void> {
+		const response = await this.send({ type: "set_thinking_level", level, scope: options?.scope });
+		if (!response.success) {
+			throw new Error((response as Extract<RpcResponse, { success: false }>).error);
+		}
 	}
 
 	/**
@@ -300,6 +311,26 @@ export class RpcClient {
 	async getAvailableThinkingLevels(): Promise<ThinkingLevel[]> {
 		const response = await this.send({ type: "get_available_thinking_levels" });
 		return this.getData<{ levels: ThinkingLevel[] }>(response).levels;
+	}
+
+	/**
+	 * Turn OpenAI Codex fast mode (the `priority` service tier) on or off for the active model.
+	 *
+	 * The choice is remembered per model, so a later session on the same model starts the same
+	 * way. Throws when the request is refused: a non-Codex model, or an active `:priority` model
+	 * pin that fast mode must not undo.
+	 */
+	async setFastMode(
+		enabled: boolean,
+	): Promise<{ enabled: boolean; serviceTier: ServiceTier; provider: string; modelId: string }> {
+		const response = await this.send({ type: "set_fast_mode", enabled });
+		return this.getData(response);
+	}
+
+	/** Current fast-mode state and the service tier requests would carry. */
+	async getFastMode(): Promise<{ enabled: boolean; serviceTier: ServiceTier | null }> {
+		const response = await this.send({ type: "get_fast_mode" });
+		return this.getData(response);
 	}
 
 	/**
@@ -458,6 +489,16 @@ export class RpcClient {
 		return this.getData<{ commands: RpcSlashCommand[] }>(response).commands;
 	}
 
+	/** Invoke one extension-owned RPC request handler and return its structured result. */
+	async requestExtension<T = unknown>(name: string, data?: unknown): Promise<T> {
+		const response = await this.send({
+			type: "extension_request",
+			name,
+			...(data === undefined ? {} : { data }),
+		});
+		return this.getData<T>(response);
+	}
+
 	/** List safe metadata for the named provider's configured account slots. */
 	async getProviderAccounts(provider: string): Promise<RpcProviderAccount[]> {
 		const response = await this.send({ type: "get_provider_accounts", provider });
@@ -502,16 +543,16 @@ export class RpcClient {
 	/**
 	 * Collect events until agent becomes idle.
 	 */
-	collectEvents(timeout = 60000): Promise<AgentSessionEvent[]> {
+	collectEvents(timeout = 60000): Promise<JsonAgentSessionEvent[]> {
 		return new Promise((resolve, reject) => {
-			const events: AgentSessionEvent[] = [];
+			const events: JsonAgentSessionEvent[] = [];
 			const timer = setTimeout(() => {
 				unsubscribe();
 				reject(new Error(`Timeout collecting events. Stderr: ${this.stderr}`));
 			}, timeout);
 
 			const unsubscribe = this.onEvent((event) => {
-				if (isProviderAccountEvent(event)) return;
+				if (isProviderAccountEvent(event) || event.type === "extension_event") return;
 				events.push(event);
 				if (event.type === "agent_settled") {
 					clearTimeout(timer);
@@ -525,7 +566,7 @@ export class RpcClient {
 	/**
 	 * Send prompt and wait for completion, returning all events.
 	 */
-	async promptAndWait(message: string, images?: ImageContent[], timeout = 60000): Promise<AgentSessionEvent[]> {
+	async promptAndWait(message: string, images?: ImageContent[], timeout = 60000): Promise<JsonAgentSessionEvent[]> {
 		const eventsPromise = this.collectEvents(timeout);
 		await this.prompt(message, images);
 		return eventsPromise;
@@ -549,7 +590,7 @@ export class RpcClient {
 
 			// Otherwise it's an event
 			for (const listener of this.eventListeners) {
-				listener(data as AgentSessionEvent);
+				listener(data as RpcClientEvent);
 			}
 		} catch {
 			// Ignore non-JSON lines

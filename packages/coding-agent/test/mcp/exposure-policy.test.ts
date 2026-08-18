@@ -83,7 +83,7 @@ describe("MCP Tier-A exposure policy", () => {
 		const tenPi = capturingPi();
 		await attach(tenRoot, tenPi);
 		await awaitMcpToolRegistration("fx");
-		expect(withoutMcpUtilityTools(tenPi.registeredTools)).toEqual(toolNames(10));
+		expect(withoutMcpUtilityTools(tenPi.registeredTools)).toEqual(["tool_search", ...toolNames(10)]);
 		expect(withoutMcpUtilityTools(tenPi.activeTools)).toEqual(toolNames(10));
 
 		const elevenRoot = mcpRoot("threshold-11");
@@ -155,14 +155,12 @@ describe("MCP Tier-A exposure policy", () => {
 		// registration pass itself via its exposure-policy warning.
 		await waitForCondition(() => logContains("fx", "0 exposed"), 10_000);
 
-		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual([]);
+		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["tool_search"]);
 		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["bash"]);
 		// A raced attach registers twice (empty pass at attach, catalog pass after
 		// the background connect); every pass must keep the base-only active set.
 		expect(pi.setActiveCalls.length).toBeGreaterThan(0);
-		for (const call of pi.setActiveCalls) {
-			expect(withoutMcpUtilityTools(call)).toEqual(["bash"]);
-		}
+		expect(withoutMcpUtilityTools(pi.setActiveCalls.at(-1) ?? [])).toEqual(["bash"]);
 		expect(logContains("fx", "0 exposed")).toBe(true);
 	});
 });

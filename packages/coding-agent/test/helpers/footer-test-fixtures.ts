@@ -84,7 +84,10 @@ export function createFooterSession(options: FooterSessionOptions): AgentSession
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		isFastModeActive: () => options.fastModeActive ?? false,
-		modelRuntime: { isUsingOAuth: () => false },
+		modelRuntime: {
+			isUsingOAuth: () => false,
+			isUsingSubscription: () => false,
+		},
 	} as unknown as AgentSession;
 }
 

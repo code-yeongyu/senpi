@@ -1,5 +1,380 @@
 # Core Extensions Changes
 
+## Repository audit baseline for the extensions tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`). The audited production paths whose exact nearest tracker is this file:
+  `packages/coding-agent/src/core/extensions/index.ts`, `packages/coding-agent/src/core/extensions/loader.ts`,
+  `packages/coding-agent/src/core/extensions/runner.ts`, and `packages/coding-agent/src/core/extensions/types.ts`.
+- Per-file divergence history for the public API surface (events, context getters, RPC, lazy activation, compaction
+  admission) is preserved in the dated entries below; fork-only additions in this directory (`AGENTS.md`, `wrapper.ts`,
+  `notice/`) are absent from the pinned upstream tree and therefore exempt from the audit.
+
+### Why
+
+- The audit requires every upstream-owned production divergence to be covered by one entry with all four canonical
+  sections in its exact nearest tracker. Most entries below predate the gate and are not parseable in canonical form,
+  so this inventory anchors the four modified files without rewriting accurate history.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository and release policy, not runtime behavior; it is enforced by repository scripts before
+  any extension loader exists.
+
+### Expected merge conflict zones
+
+- NONE: this tracker is fork-only (upstream has no counterpart file); the inventory names pin-relative paths so it
+  stays valid as entries below change.
+
+## Extension loader per-CWD LRU factory cache and Senpi alias (2026-08-17)
+
+### What changed
+
+- `loader.ts`: the extension factory cache is scoped per working directory. Upstream kept one global `extensionCache`
+  plus a single `extensionCacheCwd`; any different cwd cleared the entire cache and bumped one global generation. The
+  fork replaces that with `extensionCacheByCwd`, a map of per-cwd `ExtensionCacheEntry` (`cwd`, `generation`,
+  `factories`) bounded by `MAX_EXTENSION_CACHE_CWD_ENTRIES = 16`: a cache hit re-inserts the entry to mark it most
+  recently used, a miss evicts the least recently used cwd, and each new entry is stamped from the monotonic
+  `nextExtensionCacheGeneration` so `isCurrentCacheToken()` still rejects factories held by an evicted or cleared
+  entry. `clearExtensionCache()` drops all entries; `loadExtensionsCached()` remains the cached entry point and
+  `loadExtensions()` keeps fresh-source semantics (`moduleCache: false`, one shared jiti importer per batch).
+- `loader.ts`: `@code-yeongyu/senpi` is a first-class alias for the coding-agent package — mapped to the bundled
+  module in `VIRTUAL_MODULES` and to the resolved dist-or-source entry in `getAliases()` — alongside the existing
+  `@earendil-works/pi-coding-agent` and `@mariozechner/pi-coding-agent` spellings.
+
+### Why
+
+- The module-level cache is process state shared by every session a host runs; with upstream's clear-on-switch
+  behavior, a host alternating sessions across project roots re-paid jiti's per-extension TypeScript resolution cost
+  on every cwd change. A bounded per-cwd LRU keeps recently used roots warm without unbounded growth.
+- Extensions published under the fork's package name import `@code-yeongyu/senpi`; without the alias jiti resolves
+  that specifier from the extension's own `node_modules`, pulling a duplicate runtime and breaking identity
+  expectations — the same failure mode the `@mariozechner/pi-*` alias exists to prevent.
+
+### Why an extension could not handle it
+
+- The cache and alias table live inside the loader that resolves extension factories themselves; no extension can
+  observe or replace its own import-path resolution.
+
+### Expected merge conflict zones
+
+- MEDIUM: `loader.ts` cache block (`MAX_EXTENSION_CACHE_CWD_ENTRIES`, `ExtensionCacheEntry`, `useExtensionCacheCwd()`,
+  `loadExtensionModule()`) — upstream still maintains the single-slot cache there.
+- LOW: the two `@code-yeongyu/senpi` lines in `VIRTUAL_MODULES` and `getAliases()`; additive keys beside upstream's.
+
+## Runner tool-hook lifecycle and status reporting (2026-08-17)
+
+### What changed
+
+- `runner.ts`: every `tool_call` (`PreToolUse`) and `tool_result` (`PostToolUse`) handler invocation is wrapped in a
+  lifecycle run. `beginToolHookRun()` assigns `hookRunId` (`<toolCallId>:<hookName>:<run index>`), emits a `start`
+  event, and hands the handler a context whose `ctx.updateToolHookStatus(update)` emits `update` events with a
+  sanitized message; the run closes with an `end` event carrying terminal status `completed`, `blocked` (a
+  `ToolCallEventResult.block` veto won), or `failed` (handler threw) plus the error message.
+- `runner.ts`: hosts observe the stream through `setToolHookLifecycleObserver()` receiving
+  `ExtensionToolHookLifecycleEvent`. Default status text comes from `getToolHookStatusMessage()` — `running <extension
+  name>`, or the compaction/tool-result-size checks the builtin hooks extension performs — and
+  `sanitizedToolHookStatusMessage()` bounds every message to 79 characters after stripping ANSI, control characters,
+  and collapsed whitespace.
+
+### Why
+
+- Interactive hosts had no per-hook progress signal while PreToolUse/PostToolUse handlers ran, so a slow permission or
+  compaction hook was indistinguishable from a hung tool call. Lifecycle phases plus a bounded, sanitized status line
+  let the host surface which extension hook is running and how the run ended.
+
+### Why an extension could not handle it
+
+- The stream must be emitted by the runner that dispatches the hooks; an extension cannot observe another extension's
+  hook dispatch or reach the host's status surface for it.
+
+### Expected merge conflict zones
+
+- MEDIUM: `runner.ts` `emitToolCall()` / `emitToolResult()` handler loops and the `beginToolHookRun()` block —
+  upstream owns the dispatch loops and rewrites them when event-result shapes change.
+- LOW: `ExtensionToolHookLifecycleEvent` / `ExtensionToolHookLifecycleObserver` / `setToolHookLifecycleObserver()`;
+  fork-owned additive surface.
+
+## Extension RPC event forwarding onto the shared session bus (2026-08-17)
+
+### What changed
+
+- `loader.ts`: `pi.rpc.emit(name, data)` (absent from the pinned upstream loader) validates a non-empty trimmed name
+  and publishes an `ExtensionRpcEvent` (`{ name, data }`) on the session's shared event bus under the reserved
+  `EXTENSION_RPC_EVENT_CHANNEL` exported from `core/event-bus.ts`, so extension-originated events reach RPC hosts
+  through one named channel instead of each extension writing to a transport. `pi.rpc.handle()` /
+  `ExtensionRunner.requestRpc()` form the request/response counterpart (2026-08-12 entries below).
+- `pi.events.emit/on` keep forwarding extension-local pub/sub onto the same shared bus with generation-tracked
+  subscriptions that `runtime.invalidate()` tears down (upstream-owned contract, unchanged).
+
+### Why
+
+- Extensions needed a first-class way to raise events that RPC/TUI consumers observe without the extension holding a
+  transport, and hosts needed one channel contract to subscribe to rather than per-extension delivery paths.
+
+### Why an extension could not handle it
+
+- The event bus is constructed by core before extensions load and handed into `loadExtensions()`; only the loader can
+  wire each extension's `rpc` surface onto it.
+
+### Expected merge conflict zones
+
+- LOW: `loader.ts` `createExtensionAPI()` `rpc` arm and the `EXTENSION_RPC_EVENT_CHANNEL` import; the channel constant
+  itself is fork-owned in `core/event-bus.ts` (core tracker, 2026-08-17).
+
+## 2026-08-17 - getSystemPromptOptions exposed on the base ExtensionContext
+
+### What changed
+
+- `ExtensionContext` gains OPTIONAL `getSystemPromptOptions?(): BuildSystemPromptOptions`, so event handlers (not just command handlers) can read the base system-prompt construction options. It stays REQUIRED on `ExtensionCommandContext` (now a redeclaration that narrows the optional base member), so existing command-handler callers are unaffected and hand-built test contexts keep compiling.
+- `runner.ts` binds the getter in `createContext()` (it always exists at runtime under the senpi runner); the duplicate binding in `createCommandContext()` is removed because the descriptor copy carries it.
+- The returned options now include the user-override fields already present on `BuildSystemPromptOptions`: `customPrompt` (from `--system-prompt` / SDK loader) and `appendSystemPrompt` (pre-joined `--append-system-prompt` texts), populated by `agent-session.ts` `_rebuildSystemPrompt()`.
+
+### Why
+
+- The prompt-preset builtin must know at `session_start` (header) and in prompt events whether the user supplied an explicit system prompt, so presets yield instead of clobbering it. Per convention, new core data lands as a typed `ExtensionContext` getter; optional-on-base keeps the ~30 hand-built `ExtensionContext` fakes across coding-agent and senpi-codemode tests source-compatible.
+
+### Expected merge-conflict zones
+
+- `types.ts` `ExtensionContext` / `ExtensionCommandContext` member lists; `runner.ts` `createContext()` tail. Resolution: keep the optional base getter plus the required command-context redeclaration.
+
+## 2026-08-13 - Content-anchored compaction admission
+
+### What changed
+
+- `ApplyCompactionOptions` gains optional `expectedWarmAnchor` (`WarmAnchorSnapshot` from
+  `core/compaction/warm-anchor.ts`): the anchor entry id, the prefix entry ids it covers, and the
+  latest compaction entry id observed when the summary was generated. The host accepts it as an
+  alternative to `expectedRevision` when admitting a precomputed compaction.
+
+### Why
+
+`expectedRevision` conflates appended messages with rewritten history, so every warm
+speculative summary went stale after any idle-time append. The anchor lets the host admit a
+warm summary whose summarized prefix is still intact, while still rejecting one whose history
+was rewritten.
+
+### Expected merge-conflict zones
+
+- `types.ts` `ApplyCompactionOptions`.
+
+## 2026-08-12 - Expose session cwd during extension registration
+
+### What changed
+
+- `ExtensionAPI.cwd` exposes the absolute cwd of the session that loaded the extension instance.
+
+### Why
+
+- Extension factories may need to initialize per-project state at registration time, before any event
+  supplies an `ExtensionContext`.
+- In multi-session hosts, `process.cwd()` is the shared process launch directory rather than the
+  project root for each extension instance.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` ExtensionAPI interface, `loader.ts` createExtensionAPI return literal.
+
+## 2026-08-12 - Reject stale in-flight RPC request results
+
+### What changed
+
+- `ExtensionRunner.requestRpc()` re-checks generation liveness after an asynchronous handler
+  completes, so a result cannot escape after reload or replacement invalidates its owner.
+- Focused tests cover both explicit mid-flight invalidation and a real session reload.
+
+### Why
+
+- Entry-time liveness alone allowed a slow handler from generation N to return successfully after
+  generation N+1 became active.
+
+### Expected merge conflict zones
+
+- LOW: `runner.ts` request dispatch and its RPC request suite.
+
+## 2026-08-12 - Extension-owned RPC request handlers
+
+### What changed
+
+- `pi.rpc.handle(name, handler)` registers structured client-to-extension request handlers on the
+  loaded extension generation.
+- `ExtensionRunner.requestRpc()` requires exactly one active handler and rejects unknown,
+  duplicate, empty, and stale-generation requests without invoking the model.
+- `pi.rpc.emit()` now also checks generation liveness before publishing.
+
+### Why
+
+- RPC clients need a direct, typed control path for extension-owned runtime state; encoding controls
+  as slash-command prompts would involve the model and lose request/response semantics.
+- Per-generation ownership prevents captured handlers from surviving extension replacement or
+  reload.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts`, `loader.ts`, and `runner.ts` RPC extension surfaces.
+
+## 2026-08-11 - Native-deferred catalog tools activate at call time
+
+### What changed
+
+- The shared tool-search builtin injects inactive searchable extension schemas into Anthropic Messages payloads with native `defer_loading` metadata.
+- AgentSession resolves a model call for an inactive catalog member through the existing shared lazy-promotion path, then returns the newly active tool to agent-core for normal execution.
+- Non-catalog names and lazy-activation-gated definitions retain the existing unknown-tool result.
+
+### Why
+
+- Native provider search may return a tool call for a schema that was intentionally absent from the agent context snapshot; activation must happen between tool-name lookup and argument preparation.
+- Reusing catalog promotion keeps call-time activation aligned with local `tool_search` and eval/code-mode behavior.
+
+### Why this cannot be expressed externally
+
+- The model call reaches agent-core before extension tool hooks run, while registry activation and winning-definition resolution are session-owned operations.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` agent tool-hook installation.
+- MEDIUM: tool-search provider-request wiring.
+
+## 2026-08-11 - Deferred tool-search registration and MCP catalog activation
+
+### What changed
+
+- The tool-search builtin owns the single reserved `tool_search` definition but defers registering it until the shared catalog first contains a searchable document; sessions whose catalog stays empty never register or activate it.
+- Once registered, `tool_search` is active only while searchable documents exist. If the catalog later empties, the definition remains registered because the extension API has no unregister operation, but it is removed from the active set.
+- The session-scoped service accepts MCP documents and activation hooks, lazily activates either catalog source, and rehydrates v2 plus legacy MCP markers once per catalog generation.
+- Generic searches no longer default to the MCP source; only the legacy `server` argument maps to `source: "mcp"` plus the equivalent group filter.
+
+### Why
+
+- Atomic ownership and feeder activation avoid duplicate builtin precedence while preserving model-visible MCP behavior and enabling extension tools through the same search surface.
+- Deferred first registration gives sessions that never gain a searchable catalog zero registry and prompt cost, including `noTools: "all"` sessions, while active-set removal preserves zero prompt cost if a populated catalog later empties.
+
+### Why this cannot be expressed externally
+
+- The service coordinates inactive registered tools, active-set replacement, session history, and MCP-owned stub swapping across builtin boundaries.
+
+### Expected merge conflict zones
+
+- HIGH: tool-search `index.ts`/`service.ts` registration and MCP feeder integration.
+- MEDIUM: shared search tool tests and MCP lifecycle fixtures.
+
+## 2026-08-11 - Lazy activation honors per-tool hard stops
+
+### What changed
+
+- `executeTool(..., { activateInactiveTool: true })` now checks the winning definition before invoking lazy activators.
+- Definitions with `allowLazyActivation: false` return the existing `inactive_tool` error without calling any activator.
+- Default-enabled lazy activation and explicit `setActiveTools()` activation retain their existing behavior.
+
+### Why
+
+- The declarative hard stop must apply before extension or shared-search activators can produce side effects.
+- Already-active tools remain executable because the flag governs lazy promotion, not active-set permissions.
+
+### Why this cannot be expressed externally
+
+- Core owns winning-definition resolution and the ordered lazy-activator dispatch used by every execution caller.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `_activateLazyTool` as shared tool-search activation wiring lands.
+
+## 2026-08-11 - Dormant shared tool-search builtin wiring
+
+### What changed
+
+- The builtin list now loads a shared tool-search service before MCP while keeping MCP last.
+- The service catalogs search-exposed extension tools, promotes them additively through lazy activation, and replays ownership-aware activation history once per catalog generation.
+- The generalized `tool_search` definition is authored but intentionally not registered in this increment.
+
+### Why
+
+- Shared extension catalog behavior must be available before MCP becomes a feeder, but registering a second builtin with the same tool name before removing MCP's registration would violate atomic winner precedence.
+
+### Why this cannot be expressed externally
+
+- Live registry metadata, inactive-tool activation, and session-history lifecycle hooks are core extension-runtime surfaces.
+
+### Expected merge conflict zones
+
+- LOW: builtin ordering immediately before the MCP-last sentinel.
+- MEDIUM: tool-search registration and MCP feeder wiring in the planned atomic follow-up.
+
+## 2026-08-11 - Reload continuity follows tool ownership
+
+### What changed
+
+- Session reload now preserves active membership only when a tool name still belongs to the same registration identity.
+- A search-exposed same-name replacement from a different extension is treated as a fresh inactive registration.
+- Tools no longer registered by a still-loaded extension continue to fall out through the rebuilt registry filter.
+
+### Why
+
+- Name-only continuity could transfer a prior promotion to an unrelated extension that took over the same tool name.
+- Binding continuity to the host-derived source path keeps remembered activation scoped to the owning registration.
+
+### Why this cannot be expressed externally
+
+- Reload replaces the extension runner and registry atomically, so only core can compare the previous and winning owners.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` reload and `_refreshToolRegistry` option threading.
+
+## 2026-08-11 - Search-exposed tools start inactive
+
+### What changed
+
+- Factory-loaded and post-bind extension tools now auto-activate only when their effective exposure is `direct`.
+- Explicit initial active names and host allowlists remain authoritative, including for search-exposed tools.
+- Re-registering an existing tool preserves its current active or inactive membership instead of reapplying exposure defaults.
+
+### Why
+
+- Search-exposed tools must remain registered and discoverable without adding their schemas to every model request.
+- Exposure is an initial-state policy, not a permission boundary or a reason to demote an already-promoted tool.
+
+### Why this cannot be expressed externally
+
+- Initial activation is computed while the core session rebuilds its winning definition and executable registries.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` active-set computation in `_refreshToolRegistry` as shared tool search lands.
+
+## 2026-08-11 - Declarative tool search-exposure metadata
+
+### What changed
+
+- `ToolDefinition` now declares an initial `direct` or `search` exposure policy plus supplemental search text,
+  keywords, grouping, and lazy-activation control.
+- `getAllTools()` projects the human-readable label and normalized effective metadata, preserving `direct`, an empty
+  keyword list, and lazy activation as the defaults for existing definitions.
+- Non-builtin extensions cannot register the reserved `tool_search` name.
+- MCP harness factories that stand in for the production builtin now use host-assigned `<builtin:...>` paths, so the
+  reserved-name guard exercises the same source identity in tests without exempting inline or end-user extensions.
+- Definition metadata coverage now pins that `searchText` is omitted from the normalized projection for direct tools.
+
+### Why
+
+- A shared searchable catalog needs complete, normalized metadata without a second extension lookup, while existing
+  extensions must retain their current direct-exposure behavior when they omit the new fields.
+- Reserving the catalog tool name prevents extension registration order from shadowing the builtin search surface.
+- Keeping the guard strict and correcting builtin test identity avoids a harness-only regression without opening a
+  registration path that a real end-user extension could use.
+
+### Why this cannot be expressed externally
+
+- Default exposure, registry projection, and registration-name ownership are core extension-runtime concerns shared by
+  every host and extension source.
+
+### Expected merge conflict zones
+
+- MEDIUM: `types.ts` around `ToolDefinition` and `ToolInfo` as the shared search catalog lands.
+- LOW: `loader.ts` registration validation and `agent-session.ts` `getAllTools()` projection.
+
 ## 2026-08-09 - Extension-registered filesystem access policies
 
 ### What changed
@@ -1409,3 +1784,9 @@ If upstream modifies compaction event definitions in `types.ts`, preserve the ad
 
 - `types.ts` around `ToolDefinition`
 - `builtin/index.ts` builtin registration ordering
+
+## Extensions can emit capability-gated RPC events (2026-08-11)
+
+Extension APIs now expose `pi.rpc.emit(name, data)`. It validates a non-empty name and publishes an
+opaque payload on the generation-owned extension bus; it does not write to a transport directly.
+Keep ordinary `pi.events` extension-local, and keep RPC delivery opt-in at the connection boundary.

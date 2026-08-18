@@ -58,6 +58,34 @@ describe("retry fallback hard errors", () => {
 		expect(cooldownsFor(harness).isSuppressed(primary)).toBe(true);
 	});
 
+	it("does not report a fallback auth error as a successful response", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: { enabled: true, maxRetries: 0, baseDelayMs: 60_000, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		const authError = "Not logged in · Please run /login";
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: insufficientQuota }),
+			fauxAssistantMessage(authError, { stopReason: "stop", errorMessage: authError }),
+			fauxAssistantMessage("next turn succeeds"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toHaveLength(1);
+		expect(harness.eventsOfType("retry_fallback_succeeded")).toEqual([]);
+		expect(harness.eventsOfType("auto_retry_end").filter((event) => event.success)).toEqual([]);
+
+		await harness.session.prompt("next");
+
+		expect(harness.eventsOfType("retry_fallback_succeeded")).toEqual([]);
+		expect(harness.eventsOfType("auto_retry_end").filter((event) => event.success)).toEqual([]);
+	});
+
 	it("settles an insufficient-quota error without a configured fallback", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, baseDelayMs: 1 } } });
 		harnesses.push(harness);

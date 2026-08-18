@@ -73,6 +73,29 @@ describe("claude-sdk-oauth oauth login config", () => {
 		expect(config.getApiKey(credential)).toBe(SENTINEL_OAUTH_FIELDS.access);
 	});
 
+	it("passes a concrete abort signal to the provider login flow", async () => {
+		const controller = new AbortController();
+		let receivedSignal: AbortSignal | undefined;
+		const loginFlow: OAuthAuth = {
+			name: "signal-probe",
+			async login(interaction) {
+				receivedSignal = interaction.signal;
+				return { type: "oauth", ...fresh };
+			},
+			async refresh(current) {
+				return current;
+			},
+			async toAuth(current) {
+				return { apiKey: current.access };
+			},
+		};
+		const config = createOAuthConfig({ readCurrent: async () => undefined, loginFlow });
+
+		await config.login({ signal: controller.signal });
+
+		expect(receivedSignal).toBe(controller.signal);
+	});
+
 	it("refreshToken is a preserving no-op", async () => {
 		const config = createOAuthConfig({ readCurrent: async () => undefined, loginFlow: fakeFlow(fresh) });
 		const credential = await config.login({});

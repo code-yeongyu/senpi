@@ -17,6 +17,8 @@ it("accepts consumer-resolved platform optionals outside the packed bundle", () 
 			{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 			{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
 			{ path: "package/node_modules/@earendil-works/pi-ai/dist/index.js" },
+			{ path: "package/node_modules/@earendil-works/pi-telemetry/package.json" },
+			{ path: "package/node_modules/@earendil-works/pi-telemetry/dist/index.js" },
 			{ path: "package/vendor/pi-client/index.js" },
 			{ path: "package/vendor/pi-client/index.d.ts" },
 			{ path: "package/vendor/pi-protocol/index.js" },

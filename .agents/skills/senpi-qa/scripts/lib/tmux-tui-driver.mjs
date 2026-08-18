@@ -3,7 +3,7 @@ import { readFileSync, watch, writeFileSync } from "node:fs";
 import { stripAnsi } from "./common.mjs";
 
 export function startTmuxTui({ cwd, env, command, args, capturePath, cols, rows }) {
-	const session = `senpi-qa-fallback-abort-${process.pid}`;
+	const session = `senpi-qa-${process.pid}-${Date.now().toString(36)}`;
 	writeFileSync(capturePath, "");
 	killSession(session);
 	execFileSync("tmux", [
@@ -26,12 +26,19 @@ export function startTmuxTui({ cwd, env, command, args, capturePath, cols, rows 
 		for (const waiter of waiters) waiter.check(text);
 	});
 	const launchPath = `${capturePath}.launch.sh`;
+	const removedKeys = Object.keys(process.env).filter((key) => !Object.hasOwn(env, key));
 	const environment = Object.entries(env)
 		.filter(([key, value]) => process.env[key] !== value)
 		.map(([key, value]) => `export ${key}=${shellQuote(value)}`);
 	writeFileSync(
 		launchPath,
-		["#!/bin/sh", ...environment, `exec ${shellQuote(command)} ${args.map(shellQuote).join(" ")}`, ""].join("\n"),
+		[
+			"#!/bin/sh",
+			...removedKeys.map((key) => `unset ${key}`),
+			...environment,
+			`exec ${shellQuote(command)} ${args.map(shellQuote).join(" ")}`,
+			"",
+		].join("\n"),
 	);
 	execFileSync("tmux", ["send-keys", "-t", session, "-l", `exec /bin/sh ${shellQuote(launchPath)}`]);
 	execFileSync("tmux", ["send-keys", "-t", session, "Enter"]);

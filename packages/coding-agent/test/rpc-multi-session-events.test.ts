@@ -10,8 +10,193 @@ function records(chunks: readonly string[]): Array<Record<string, unknown>> {
 		.map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
+function cumulativeTextUpdate(delta: string, text: string, contentIndex = 0): Record<string, unknown> {
+	return {
+		type: "message_update",
+		assistantMessageEvent: {
+			type: "text_delta",
+			contentIndex,
+			delta,
+			partial: { role: "assistant", content: [{ type: "text", text }] },
+		},
+		message: { role: "assistant", content: [{ type: "text", text }] },
+	};
+}
+
+function flushedDeltas(output: readonly Record<string, unknown>[]): string {
+	return output
+		.filter((record) => record.type === "message_update")
+		.map((record) => (record.assistantMessageEvent as { delta?: string }).delta ?? "")
+		.join("");
+}
+
+function deferred<T = void>(): {
+	promise: Promise<T>;
+	resolve: (value: T | PromiseLike<T>) => void;
+	reject: (reason?: unknown) => void;
+} {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+		resolve = resolvePromise;
+		reject = rejectPromise;
+	});
+	return { promise, resolve, reject };
+}
+
 describe("multi-session RPC event writer", () => {
-	it("tags every record, preserves per-session FIFO, and round-robins complete records", () => {
+	it("compacts 1000 stalled message snapshots without losing assistant transitions", async () => {
+		const chunks: string[] = [];
+		const scheduled: Array<() => void> = [];
+		const writer = new SessionEventWriter(
+			(chunk) => chunks.push(chunk),
+			(flush) => scheduled.push(flush),
+		);
+		const source = Array.from({ length: 1000 }, (_, index) => String.fromCharCode(97 + (index % 26))).join("");
+		let cumulative = "";
+		let cumulativeBytes = 0;
+
+		writer.enqueue("a", { type: "message_start", message: { role: "assistant", content: [] } });
+		for (const delta of source) {
+			cumulative += delta;
+			const update = cumulativeTextUpdate(delta, cumulative);
+			cumulativeBytes += Buffer.byteLength(`${JSON.stringify({ ...update, sessionId: "a" })}\n`);
+			writer.enqueue("a", update);
+		}
+		writer.enqueue("a", {
+			type: "message_end",
+			message: { role: "assistant", content: [{ type: "text", text: source }] },
+		});
+		await scheduled[0]!();
+
+		const output = records(chunks);
+		const updates = output.filter((record) => record.type === "message_update");
+		expect(output[0]?.type).toBe("message_start");
+		expect(output.at(-1)?.type).toBe("message_end");
+		expect(flushedDeltas(output)).toBe(source);
+		expect(updates.at(-1)?.message).toEqual({
+			role: "assistant",
+			content: [{ type: "text", text: source }],
+		});
+		expect(updates.slice(0, -1).every((record) => record.message === null)).toBe(true);
+		expect(Buffer.byteLength(chunks.join(""))).toBeLessThan(cumulativeBytes / 20);
+	});
+
+	it("latest-wins coalesces tool progress independently by toolCallId", async () => {
+		const chunks: string[] = [];
+		const scheduled: Array<() => void> = [];
+		const writer = new SessionEventWriter(
+			(chunk) => chunks.push(chunk),
+			(flush) => scheduled.push(flush),
+		);
+
+		writer.enqueue("a", { type: "tool_execution_start", toolCallId: "A" });
+		writer.enqueue("a", { type: "tool_execution_update", toolCallId: "A", partialResult: "A1" });
+		writer.enqueue("a", { type: "tool_execution_update", toolCallId: "B", partialResult: "B1" });
+		writer.enqueue("a", { type: "tool_execution_update", toolCallId: "A", partialResult: "A2" });
+		writer.enqueue("a", { type: "tool_execution_update", toolCallId: "B", partialResult: "B2" });
+		writer.enqueue("a", { type: "tool_execution_end", toolCallId: "A" });
+		await scheduled[0]!();
+
+		expect(
+			records(chunks).map(({ type, toolCallId, partialResult }) => ({ type, toolCallId, partialResult })),
+		).toEqual([
+			{ type: "tool_execution_start", toolCallId: "A", partialResult: undefined },
+			{ type: "tool_execution_update", toolCallId: "A", partialResult: "A2" },
+			{ type: "tool_execution_update", toolCallId: "B", partialResult: "B2" },
+			{ type: "tool_execution_end", toolCallId: "A", partialResult: undefined },
+		]);
+	});
+
+	it("does not merge across assistant or protocol barriers", async () => {
+		const chunks: string[] = [];
+		const scheduled: Array<() => void> = [];
+		const writer = new SessionEventWriter(
+			(chunk) => chunks.push(chunk),
+			(flush) => scheduled.push(flush),
+		);
+
+		writer.enqueue("a", cumulativeTextUpdate("a", "a"));
+		writer.enqueue("a", cumulativeTextUpdate("b", "ab"));
+		writer.enqueue("a", {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_end", contentIndex: 0 },
+			message: {},
+		});
+		writer.enqueue("a", cumulativeTextUpdate("c", "abc"));
+		writer.enqueue("a", cumulativeTextUpdate("d", "abcd"));
+		writer.enqueue("a", { type: "extension_ui_request", id: "ui" });
+		writer.enqueue("a", cumulativeTextUpdate("e", "abcde"));
+		writer.enqueue("a", cumulativeTextUpdate("f", "abcdef"));
+		writer.enqueue("a", { type: "response", id: "command", success: true });
+		writer.enqueue("a", cumulativeTextUpdate("g", "abcdefg"));
+		writer.enqueue("a", cumulativeTextUpdate("h", "abcdefgh"));
+		await scheduled[0]!();
+
+		const output = records(chunks);
+		expect(output.map((record) => record.type)).toEqual([
+			"message_update",
+			"message_update",
+			"message_update",
+			"message_update",
+			"message_update",
+			"extension_ui_request",
+			"message_update",
+			"message_update",
+			"response",
+			"message_update",
+			"message_update",
+		]);
+		expect(flushedDeltas(output)).toBe("abcdefgh");
+		expect(
+			output
+				.filter((record) => record.type === "message_update")
+				.map((record) => (record.assistantMessageEvent as { type: string }).type),
+		).toEqual([
+			"text_delta",
+			"text_delta",
+			"text_end",
+			"text_delta",
+			"text_delta",
+			"text_delta",
+			"text_delta",
+			"text_delta",
+			"text_delta",
+		]);
+	});
+
+	it("never coalesces delta-only, error, lifecycle, or unknown records", async () => {
+		const chunks: string[] = [];
+		const scheduled: Array<() => void> = [];
+		const writer = new SessionEventWriter(
+			(chunk) => chunks.push(chunk),
+			(flush) => scheduled.push(flush),
+		);
+		const barriers = [
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "delta-only" },
+			},
+			{ type: "extension_error", error: "boom" },
+			{ type: "agent_settled" },
+			{ type: "future_record", value: 1 },
+		];
+
+		barriers.forEach((barrier, index) => {
+			const sessionId = `barrier-${index}`;
+			writer.enqueue(sessionId, cumulativeTextUpdate("x", "x"));
+			writer.enqueue(sessionId, barrier);
+			writer.enqueue(sessionId, cumulativeTextUpdate("y", "xy"));
+		});
+		await scheduled[0]!();
+
+		const output = records(chunks);
+		expect(output).toHaveLength(12);
+		expect(output.filter((record) => record.message === null)).toHaveLength(0);
+		expect(output.filter((record) => record.type === "message_update")).toHaveLength(9);
+	});
+
+	it("tags every record, preserves per-session FIFO, and round-robins complete records", async () => {
 		const chunks: string[] = [];
 		const scheduled: Array<() => void> = [];
 		const writer = new SessionEventWriter(
@@ -24,7 +209,7 @@ describe("multi-session RPC event writer", () => {
 		writer.enqueue("b", { type: "message_update", sequence: 1 });
 		writer.enqueue("a", { type: "agent_settled", sequence: 2 });
 		writer.enqueue("b", { type: "agent_settled", sequence: 2 });
-		scheduled[0]!();
+		await scheduled[0]!();
 
 		expect(records(chunks)).toEqual([
 			{ type: "message_update", sequence: 1, sessionId: "a" },
@@ -57,7 +242,7 @@ describe("multi-session RPC event writer", () => {
 		expect(resolvedB).toBe(true);
 	});
 
-	it("does not emit after a session is sealed, while allowing its terminal close response", () => {
+	it("does not emit after a session is sealed, while allowing its terminal close response", async () => {
 		const chunks: string[] = [];
 		const writer = new SessionEventWriter(
 			(chunk) => chunks.push(chunk),
@@ -68,12 +253,151 @@ describe("multi-session RPC event writer", () => {
 		writer.closeSession("a", { id: "close-a", type: "response", command: "close_session", success: true });
 		writer.enqueue("a", { type: "agent_settled" });
 		writer.enqueue("b", { type: "agent_settled" });
-		writer.flush();
+		await writer.flush();
 
 		expect(records(chunks)).toEqual([
 			{ type: "message_update", sessionId: "a" },
 			{ id: "close-a", type: "response", command: "close_session", success: true, sessionId: "a" },
 			{ type: "agent_settled", sessionId: "b" },
 		]);
+	});
+
+	it("keeps one raw write in flight while round-robining ready sessions", async () => {
+		const chunks: string[] = [];
+		const scheduled: Array<() => Promise<void>> = [];
+		const releases = [deferred(), deferred(), deferred()];
+		const writes = [deferred(), deferred(), deferred()];
+		let writeIndex = 0;
+		let waitIndex = 0;
+		const writer = new SessionEventWriter(
+			(chunk) => {
+				chunks.push(chunk);
+				writes[writeIndex++]?.resolve();
+			},
+			() => releases[waitIndex++]!.promise,
+			(flush) => scheduled.push(flush),
+		);
+
+		writer.enqueue("a", { type: "event", sequence: "A1" });
+		const draining = scheduled[0]!();
+		await writes[0]!.promise;
+		writer.enqueue("a", { type: "event", sequence: "A2" });
+		writer.enqueue("b", { type: "event", sequence: "B1" });
+		expect(chunks).toHaveLength(1);
+		expect(writer.bufferedRecordCount).toBe(3);
+
+		releases[0]!.resolve();
+		await writes[1]!.promise;
+		expect(records(chunks).map((record) => record.sequence)).toEqual(["A1", "B1"]);
+		expect(chunks).toHaveLength(2);
+
+		releases[1]!.resolve();
+		await writes[2]!.promise;
+		expect(records(chunks).map((record) => record.sequence)).toEqual(["A1", "B1", "A2"]);
+		releases[2]!.resolve();
+		await draining;
+		expect(writer.bufferedRecordCount).toBe(0);
+		expect(writer.bufferedByteLength).toBe(0);
+	});
+
+	it("never drops or coalesces untagged control responses", async () => {
+		const chunks: string[] = [];
+		const scheduled: Array<() => Promise<void>> = [];
+		const writer = new SessionEventWriter(
+			(chunk) => chunks.push(chunk),
+			async () => {},
+			(flush) => scheduled.push(flush),
+		);
+
+		writer.enqueue("a", { type: "event", sequence: 1 });
+		const first = writer.enqueueControl({ type: "response", id: "control-1", success: true });
+		writer.enqueue("a", { type: "event", sequence: 2 });
+		const second = writer.enqueueControl({ type: "response", id: "control-2", success: false });
+		await scheduled[0]!();
+		await Promise.all([first, second]);
+
+		expect(records(chunks)).toEqual([
+			{ type: "event", sequence: 1, sessionId: "a" },
+			{ type: "response", id: "control-1", success: true },
+			{ type: "event", sequence: 2, sessionId: "a" },
+			{ type: "response", id: "control-2", success: false },
+		]);
+		expect(chunks).toHaveLength(4);
+	});
+
+	it("flush waits for the in-flight record and all retained records", async () => {
+		const chunks: string[] = [];
+		const releases = [deferred(), deferred()];
+		const writes = [deferred(), deferred()];
+		let writeIndex = 0;
+		let waitIndex = 0;
+		const writer = new SessionEventWriter(
+			(chunk) => {
+				chunks.push(chunk);
+				writes[writeIndex++]?.resolve();
+			},
+			() => releases[waitIndex++]!.promise,
+		);
+		writer.enqueue("a", { type: "event", sequence: 1 });
+		writer.enqueue("a", { type: "event", sequence: 2 });
+
+		let flushed = false;
+		const flush = writer.flush().then(() => {
+			flushed = true;
+		});
+		await writes[0]!.promise;
+		expect(flushed).toBe(false);
+		expect(writer.bufferedRecordCount).toBe(2);
+		expect(writer.bufferedByteLength).toBeGreaterThan(0);
+
+		releases[0]!.resolve();
+		await writes[1]!.promise;
+		expect(flushed).toBe(false);
+		releases[1]!.resolve();
+		await flush;
+		expect(flushed).toBe(true);
+		expect(records(chunks).map((record) => record.sequence)).toEqual([1, 2]);
+	});
+
+	it("seals close_session after the retained stream and rejects late enqueue", async () => {
+		const chunks: string[] = [];
+		const scheduled: Array<() => Promise<void>> = [];
+		const writer = new SessionEventWriter(
+			(chunk) => chunks.push(chunk),
+			async () => {},
+			(flush) => scheduled.push(flush),
+		);
+
+		writer.enqueue("a", cumulativeTextUpdate("a", "a"));
+		writer.enqueue("a", cumulativeTextUpdate("b", "ab"));
+		writer.closeSession("a", { id: "close-a", type: "response", command: "close_session", success: true });
+		expect(writer.enqueue("a", cumulativeTextUpdate("late", "ablate"))).toBe(false);
+		await scheduled[0]!();
+
+		const output = records(chunks);
+		expect(flushedDeltas(output)).toBe("ab");
+		expect(output.at(-1)).toEqual({
+			id: "close-a",
+			type: "response",
+			command: "close_session",
+			success: true,
+			sessionId: "a",
+		});
+	});
+
+	it("rejects flush and control completion on permanent stdout errors", async () => {
+		const failure = new Error("EPIPE: permanent stdout failure");
+		const writer = new SessionEventWriter(
+			() => {},
+			async () => {
+				throw failure;
+			},
+		);
+		writer.enqueue("a", { type: "event" });
+		const control = writer.enqueueControl({ type: "response", id: "control" });
+
+		await expect(writer.flush()).rejects.toBe(failure);
+		await expect(control).rejects.toBe(failure);
+		await expect(writer.flush()).rejects.toBe(failure);
 	});
 });

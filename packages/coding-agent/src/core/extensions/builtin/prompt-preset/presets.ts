@@ -10,6 +10,7 @@ import { buildDeepseekV4FlashPrompt } from "./deepseek-v4-flash.ts";
 import { buildDeepseekV4Flash0731Prompt } from "./deepseek-v4-flash-0731.ts";
 import { buildDeepseekV4ProPrompt } from "./deepseek-v4-pro.ts";
 import { buildGlm52Prompt } from "./glm-5-2.ts";
+import { buildGlm53Prompt } from "./glm-5-3.ts";
 import { buildGpt52Prompt } from "./gpt-5.2.ts";
 import { buildGpt53CodexPrompt } from "./gpt-5.3-codex.ts";
 import { buildGpt54Prompt } from "./gpt-5.4.ts";
@@ -17,6 +18,7 @@ import { buildGpt55Prompt } from "./gpt-5.5.ts";
 import { buildGpt56Prompt } from "./gpt-5.6.ts";
 import { buildGpt5Prompt } from "./gpt-5.ts";
 import { buildGrok45Prompt } from "./grok-4.5.ts";
+import { buildGrok46Prompt } from "./grok-4.6.ts";
 import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
 import { buildKimiK27Prompt } from "./kimi-k2-7.ts";
 import { buildKimiK3Prompt } from "./kimi-k3.ts";
@@ -125,6 +127,14 @@ function isGlm52Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGlm52Signal(model.id) || (model.name !== undefined && hasGlm52Signal(model.name));
 }
 
+function hasGlm53Signal(value: string): boolean {
+	return /(?:^|[/@._-])glm(?:[._-]|p)5(?:[._-]|p)3(?:$|[/@._:-])/.test(normalizeModelId(value));
+}
+
+function isGlm53Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGlm53Signal(model.id) || (model.name !== undefined && hasGlm53Signal(model.name));
+}
+
 function hasGrok45Signal(value: string): boolean {
 	// Match any Grok 4.5 id shape: grok-4.5, grok4.5, grok45, grok-4p5, provider:model,
 	// path/prefix ids, and trailing tags (:thinking, -latest). Keep 4.3 / 4.20 / 3 out.
@@ -133,6 +143,15 @@ function hasGrok45Signal(value: string): boolean {
 
 function isGrok45Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGrok45Signal(model.id) || (model.name !== undefined && hasGrok45Signal(model.name));
+}
+
+function hasGrok46Signal(value: string): boolean {
+	// Same id shapes as hasGrok45Signal with a 4.6 minor version. Keep 4.5 / 4.3 / 4.20 / 3 out.
+	return /(?:^|[/@:._-])grok(?:[._-]|p)?4(?:[._-]|p)?6(?:$|[/@._:-])/.test(normalizeModelId(value));
+}
+
+function isGrok46Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGrok46Signal(model.id) || (model.name !== undefined && hasGrok46Signal(model.name));
 }
 
 function isClaudeFable5Model(modelId: string): boolean {
@@ -198,6 +217,9 @@ export function resolvePresetName(
 	if (claudeVersion) {
 		return claudeVersion;
 	}
+	if (isGlm53Model(model)) {
+		return "glm-5.3";
+	}
 	if (isGlm52Model(model)) {
 		return "glm-5.2";
 	}
@@ -210,6 +232,9 @@ export function resolvePresetName(
 	}
 	if (isDeepseekV4ProModel(model)) {
 		return "deepseek-v4-pro";
+	}
+	if (isGrok46Model(model)) {
+		return "grok-4.6";
 	}
 	if (isGrok45Model(model)) {
 		return "grok-4.5";
@@ -231,6 +256,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildGpt52Prompt(options) };
 		case "gpt-5":
 			return { name, prompt: buildGpt5Prompt(options) };
+		case "glm-5.3":
+			return { name, prompt: buildGlm53Prompt(options) };
 		case "glm-5.2":
 			return { name, prompt: buildGlm52Prompt(options) };
 		case "deepseek-v4-flash":
@@ -239,6 +266,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildDeepseekV4Flash0731Prompt(options) };
 		case "deepseek-v4-pro":
 			return { name, prompt: buildDeepseekV4ProPrompt(options) };
+		case "grok-4.6":
+			return { name, prompt: buildGrok46Prompt(options) };
 		case "grok-4.5":
 			return { name, prompt: buildGrok45Prompt(options) };
 		case "kimi-k3":

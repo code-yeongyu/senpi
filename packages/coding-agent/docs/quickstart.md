@@ -101,6 +101,8 @@ Senpi loads:
 - `~/.senpi/agent/AGENTS.md` for global instructions
 - `AGENTS.md` or `CLAUDE.md` from parent directories and the current directory
 
+If a directory contains `AGENTS.override.md`, senpi loads it instead of `AGENTS.md` or `CLAUDE.md` from that directory.
+
 Restart senpi, or run `/reload`, after changing context files.
 
 ## Common things to try

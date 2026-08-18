@@ -820,6 +820,40 @@ describe("Agent", () => {
 		expect(agent.hasQueuedMessages()).toBe(false);
 	});
 
+	it("should reject reset while processing without corrupting the transcript", async () => {
+		const streamStarted = createDeferred();
+		const releaseResponse = createDeferred();
+		const agent = new Agent({
+			streamFn: () => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(async () => {
+					stream.push({ type: "start", partial: createAssistantMessage("") });
+					streamStarted.resolve();
+					await releaseResponse.promise;
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("Done") });
+				});
+				return stream;
+			},
+		});
+
+		const promptPromise = agent.prompt("Hello");
+		await streamStarted.promise;
+
+		try {
+			expect(agent.state.isStreaming).toBe(true);
+			expect(agent.state.messages.map((message) => message.role)).toEqual(["user"]);
+			expect(() => agent.reset()).toThrow("Agent is already processing. Wait for completion before resetting.");
+			expect(agent.state.isStreaming).toBe(true);
+			expect(agent.state.messages.map((message) => message.role)).toEqual(["user"]);
+		} finally {
+			releaseResponse.resolve();
+			await promptPromise;
+		}
+
+		expect(agent.state.isStreaming).toBe(false);
+		expect(agent.state.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+	});
+
 	it("should throw when prompt() called while streaming", async () => {
 		let abortSignal: AbortSignal | undefined;
 		const agent = new Agent({
@@ -1501,6 +1535,50 @@ describe("Agent", () => {
 			if (replace) expect(providerUserTexts[1]).toEqual(["start", "replacement"]);
 		},
 	);
+
+	it("forwards shouldStopAfterTurn through AgentOptions", async () => {
+		const schema = Type.Object({});
+		const tool: AgentTool<typeof schema> = {
+			name: "noop",
+			label: "Noop",
+			description: "Noop tool",
+			parameters: schema,
+			execute: async () => ({ content: [{ type: "text", text: "tool complete" }], details: {} }),
+		};
+		let requestCount = 0;
+		let sawAbortSignal = false;
+		let callbackContextRoles: string[] = [];
+		const agent = new Agent({
+			initialState: { tools: [tool] },
+			shouldStopAfterTurn: (context, signal) => {
+				sawAbortSignal = signal instanceof AbortSignal;
+				callbackContextRoles = context.context.messages.map((message) => message.role);
+				return true;
+			},
+			streamFn: () => {
+				requestCount++;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					if (requestCount === 1) {
+						const message = createAssistantToolUseMessage([
+							{ type: "toolCall", id: "tool-1", name: "noop", arguments: {} },
+						]);
+						stream.push({ type: "done", reason: "toolUse", message });
+						return;
+					}
+					const message = createAssistantMessage("should not run");
+					stream.push({ type: "done", reason: "stop", message });
+				});
+				return stream;
+			},
+		});
+
+		await agent.prompt("start");
+
+		expect(requestCount).toBe(1);
+		expect(sawAbortSignal).toBe(true);
+		expect(callbackContextRoles).toEqual(["user", "assistant", "toolResult"]);
+	});
 
 	it("forwards sessionId to streamFn options", async () => {
 		let receivedSessionId: string | undefined;

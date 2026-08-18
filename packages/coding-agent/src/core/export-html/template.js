@@ -314,18 +314,40 @@
       }
 
       /**
-       * Parse a skill block from message text.
-       * Returns null if the text doesn't contain a skill block.
-       * Matches the format: <skill name="..." location="...">\n...\n</skill>\n\nuser message
+       * Parse a current or legacy skill invocation from message text.
+       * Kept in sync with core/agent-session.ts for standalone HTML exports.
        */
       function parseSkillBlock(text) {
-        const match = text.match(/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/);
-        if (!match) return null;
+        const instructionPattern =
+          /^The user explicitly invoked the "([^"]+)" skill\. Follow the instructions in <skill-instruction> as binding for this request, while respecting higher-priority instructions\.\n\n<skill-instruction name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill-instruction>/;
+        const instructionMatch = text.match(instructionPattern);
+        if (instructionMatch) {
+          if (instructionMatch[1] !== instructionMatch[2]) return null;
+          let remainder = text.slice(instructionMatch[0].length);
+          while (remainder.startsWith("\n\nThe user explicitly invoked the ")) {
+            const chainedMatch = remainder.slice(2).match(instructionPattern);
+            if (!chainedMatch || chainedMatch[1] !== chainedMatch[2]) return null;
+            remainder = remainder.slice(chainedMatch[0].length + 2);
+          }
+          const requestMatch = remainder.match(/^\n\n<user-request>\n([\s\S]*?)\n<\/user-request>$/);
+          if (remainder && !requestMatch) return null;
+          return {
+            name: instructionMatch[1],
+            location: instructionMatch[3],
+            content: instructionMatch[4],
+            userMessage: requestMatch?.[1].trim() || undefined,
+          };
+        }
+
+        const legacyMatch = text.match(
+          /^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/,
+        );
+        if (!legacyMatch) return null;
         return {
-          name: match[1],
-          location: match[2],
-          content: match[3],
-          userMessage: match[4]?.trim() || undefined,
+          name: legacyMatch[1],
+          location: legacyMatch[2],
+          content: legacyMatch[3],
+          userMessage: legacyMatch[4]?.trim() || undefined,
         };
       }
 

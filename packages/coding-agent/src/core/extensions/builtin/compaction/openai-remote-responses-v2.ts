@@ -87,7 +87,7 @@ export function supportsOpenAiResponsesWebSocket(
 }
 
 export async function runOpenAiResponsesV2Compaction(args: {
-	auth: { apiKey?: string; headers?: Record<string, string>; extraBody?: Record<string, unknown> };
+	auth: { apiKey?: string; headers?: ProviderHeaders; extraBody?: Record<string, unknown> };
 	event: SessionBeforeCompactEvent;
 	headers: ProviderHeaders;
 	model: Model<"openai-responses">;

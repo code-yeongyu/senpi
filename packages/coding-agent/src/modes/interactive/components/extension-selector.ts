@@ -16,6 +16,7 @@ export interface ExtensionSelectorOptions {
 }
 
 export class ExtensionSelectorComponent extends Container {
+	private static readonly DEFAULT_MAX_VISIBLE_OPTIONS = 10;
 	private options: string[];
 	private selectedIndex = 0;
 	private listContainer: Container;
@@ -25,6 +26,7 @@ export class ExtensionSelectorComponent extends Container {
 	private baseTitle: string;
 	private countdown: CountdownTimer | undefined;
 	private onToggleToolsExpanded: (() => void) | undefined;
+	private maxVisibleOptions: number;
 
 	constructor(
 		title: string,
@@ -40,6 +42,12 @@ export class ExtensionSelectorComponent extends Container {
 		this.onCancelCallback = onCancel;
 		this.onToggleToolsExpanded = opts?.onToggleToolsExpanded;
 		this.baseTitle = title;
+		// Window long lists (issue #795): rendering every option overflows the
+		// viewport on large registries and the moved highlight is never painted,
+		// making navigation look dead. Same sizing rule as TreeList.
+		this.maxVisibleOptions = opts?.tui
+			? Math.max(5, Math.floor(opts.tui.terminal.rows / 2))
+			: ExtensionSelectorComponent.DEFAULT_MAX_VISIBLE_OPTIONS;
 
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
@@ -79,12 +87,24 @@ export class ExtensionSelectorComponent extends Container {
 
 	private updateList(): void {
 		this.listContainer.clear();
-		for (let i = 0; i < this.options.length; i++) {
+		const count = this.options.length;
+		const startIndex = Math.max(
+			0,
+			Math.min(this.selectedIndex - Math.floor(this.maxVisibleOptions / 2), count - this.maxVisibleOptions),
+		);
+		const endIndex = Math.min(startIndex + this.maxVisibleOptions, count);
+		if (startIndex > 0) {
+			this.listContainer.addChild(new Text(theme.fg("muted", `  … ${startIndex} more above`), 1, 0));
+		}
+		for (let i = startIndex; i < endIndex; i++) {
 			const isSelected = i === this.selectedIndex;
 			const text = isSelected
 				? theme.fg("accent", "→ ") + theme.fg("accent", this.options[i])
 				: `  ${theme.fg("text", this.options[i])}`;
 			this.listContainer.addChild(new Text(text, 1, 0));
+		}
+		if (endIndex < count) {
+			this.listContainer.addChild(new Text(theme.fg("muted", `  … ${count - endIndex} more below`), 1, 0));
 		}
 	}
 

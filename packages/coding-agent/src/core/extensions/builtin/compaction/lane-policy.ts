@@ -26,9 +26,8 @@ export const CLAUDE_SDK_OAUTH_COMPACT_ENTRY_TYPE = "claude-sdk-oauth-compact";
 export const CLAUDE_SDK_OAUTH_COMPACT_BOUNDARY_DIAGNOSTIC = "claude_sdk_oauth_compact_boundary";
 /**
  * Reason reported when senpi declines to compact an SDK-native lane. The
- * structured `rejectionCause` stays `cancelled-by-extension` (a closed union
- * shared with the RPC surface); this string is what the user and the compaction
- * log see.
+ * `external-owner` rejection cause carries the machine-readable policy while
+ * this string is what the user and the compaction log see.
  */
 export const SDK_NATIVE_LANE_REJECTION_REASON = "the Claude Agent SDK owns compaction for this session";
 const COMPACT_BOUNDARY_SCHEMA = "senpi.claude-sdk-oauth.compact-boundary.v1";

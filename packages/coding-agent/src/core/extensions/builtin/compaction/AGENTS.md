@@ -16,6 +16,7 @@ compaction/
 ├── context-reduction.ts      # Deterministic no-LLM reductions (collapse tool-result runs, shrink old answers, clear old tool results)
 ├── openai-remote.ts          # OpenAI Responses remote-compaction route (`senpi.compaction.openai-remote.v1` schema)
 ├── repair-tool-pairs.ts      # Replaces orphaned tool-call/result pairs left by pruning with placeholders
+├── summarization-turn-order.ts # Merges adjacent assistants + guarantees a leading user turn in summarization requests (Gemini alternation rule)
 ├── circuit-breaker.ts        # N consecutive failures → halt automatic compaction
 ├── degradation-monitor.ts    # Detects post-compact assistant degradation (all-tool, no-text turns)
 ├── log.ts                    # Always-on compaction logging + debug stderr mirror

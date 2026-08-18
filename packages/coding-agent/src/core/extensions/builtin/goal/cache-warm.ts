@@ -53,6 +53,8 @@ export interface GoalCacheWarmupEntryData {
 	readonly iteration?: number;
 	/** Planned continuation delay in milliseconds. */
 	readonly delayMs: number;
+	/** Epoch milliseconds when the scheduled continuation is expected to resume. */
+	readonly dueAtMs?: number;
 	/** Actual wait in milliseconds; present on the `resumed` phase only. */
 	readonly waitedMs?: number;
 	/** Backward-compatible field containing the total active wake-source count. */
@@ -64,6 +66,28 @@ export interface GoalCacheWarmupEntryData {
 
 /** Live entries always carry an iteration; the ordinal is intentionally not persisted into Goal state. */
 export type LiveGoalCacheWarmupEntryData = GoalCacheWarmupEntryData & { readonly iteration: number };
+
+export type GoalCacheWarmScheduleData = Omit<LiveGoalCacheWarmupEntryData, "phase" | "waitedMs">;
+
+export function createGoalCacheWarmScheduleData(options: {
+	readonly goalId: string;
+	readonly delayMs: number;
+	readonly scheduledAtMs: number;
+	readonly iteration: number;
+	readonly activeMonitorCount: number;
+	readonly wakeSources: Readonly<Record<string, number>>;
+	readonly cache?: GoalCacheWarmMetrics;
+}): GoalCacheWarmScheduleData {
+	return {
+		goalId: options.goalId,
+		delayMs: options.delayMs,
+		dueAtMs: options.scheduledAtMs + options.delayMs,
+		iteration: options.iteration,
+		activeMonitorCount: options.activeMonitorCount,
+		wakeSources: options.wakeSources,
+		...(options.cache !== undefined ? { cache: options.cache } : {}),
+	};
+}
 
 const TOKENS_PER_PRICE_UNIT = 1_000_000;
 

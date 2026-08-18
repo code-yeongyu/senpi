@@ -1,12 +1,10 @@
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { registryPackageNames } from "./registry-packages.mjs";
 
-export const ownedRegistryAliases = new Map([
-	["@earendil-works/pi-ai", "@code-yeongyu/senpi-ai"],
-	["@earendil-works/pi-agent-core", "@code-yeongyu/senpi-agent-core"],
-	["@earendil-works/pi-tui", "@code-yeongyu/senpi-tui"],
-	["@earendil-works/pi-pty", "@code-yeongyu/senpi-pty"],
-]);
+export const ownedRegistryAliases = new Map(
+	[...registryPackageNames].filter(([sourceName, registryName]) => sourceName !== registryName),
+);
 const ownedRegistryPackageNames = new Set([...ownedRegistryAliases.values(), "@code-yeongyu/senpi-codemode"]);
 const vendoredOnlyPackageNames = ["@earendil-works/pi-client", "@earendil-works/pi-protocol"];
 
@@ -179,6 +177,17 @@ export function stagePublishManifest(repoRoot) {
 		...promotePlatformOptionalDependencyFamilies(codingAgentNodeModules, stagedPackageNames),
 		...(manifest.optionalDependencies ?? {}),
 	};
+	manifest.dependencies ??= {};
+	for (const packageName of bundlablePackageNames) {
+		if (manifest.dependencies[packageName] !== undefined || manifest.optionalDependencies[packageName] !== undefined) {
+			continue;
+		}
+		const packageManifest = readPackageManifest(join(codingAgentNodeModules, packageName));
+		if (typeof packageManifest?.version !== "string") {
+			throw new Error(`Bundled runtime package ${packageName} must declare an exact version`);
+		}
+		manifest.dependencies[packageName] = packageManifest.version;
+	}
 	const bundlableSet = new Set(bundlablePackageNames);
 	for (const packageName of stagedPackageNames) {
 		if (!bundlableSet.has(packageName)) {

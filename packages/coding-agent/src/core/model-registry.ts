@@ -6,7 +6,10 @@ import type {
 	Context,
 	Model,
 	ModelsApiStreamOptions,
+	ModelsRefreshOptions,
+	ModelsRefreshResult,
 	Provider,
+	ProviderHeaders,
 } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { AuthStorage } from "./auth-storage.ts";
@@ -20,7 +23,7 @@ export type ResolvedRequestAuth =
 	| {
 			ok: true;
 			apiKey?: string;
-			headers?: Record<string, string>;
+			headers?: ProviderHeaders;
 			extraBody?: Record<string, unknown>;
 			baseUrl?: string;
 			upstreamModelId?: string;
@@ -62,8 +65,8 @@ export class ModelRegistry {
 	}
 
 	/** Reload models.json asynchronously. Await before making synchronous registry reads. */
-	async refresh(): Promise<void> {
-		await this.runtime.refresh();
+	refresh(options?: ModelsRefreshOptions): Promise<ModelsRefreshResult> {
+		return this.runtime.refresh(options);
 	}
 
 	getError(): string | undefined {
@@ -111,26 +114,12 @@ export class ModelRegistry {
 				if (compatibility.authHeader) {
 					return { ok: false, error: `No API key found for "${model.provider}"` };
 				}
-				const headers = compatibility.headers
-					? Object.fromEntries(
-							Object.entries(compatibility.headers).filter(
-								(entry): entry is [string, string] => entry[1] !== null,
-							),
-						)
-					: undefined;
-				return { ok: true, headers, extraBody: compatibility.extraBody };
+				return { ok: true, headers: compatibility.headers, extraBody: compatibility.extraBody };
 			}
-			const headers = resolution.auth.headers
-				? Object.fromEntries(
-						Object.entries(resolution.auth.headers).filter(
-							(entry): entry is [string, string] => entry[1] !== null,
-						),
-					)
-				: undefined;
 			return {
 				ok: true,
 				apiKey: resolution.auth.apiKey,
-				headers,
+				headers: resolution.auth.headers,
 				extraBody: compatibility.extraBody,
 				baseUrl: resolution.auth.baseUrl,
 				upstreamModelId: compatibility.upstreamModelId,

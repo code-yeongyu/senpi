@@ -16,7 +16,9 @@
  */
 
 import * as crypto from "node:crypto";
+import { basename, dirname, extname } from "node:path";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
+import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { buildLoginProviderInfos } from "../../core/auth-providers.ts";
 import {
@@ -29,6 +31,18 @@ import {
 	pinProviderAccount,
 	removeProviderAccount,
 } from "../../core/extensions/builtin/claude-sdk-oauth/account-management.ts";
+import {
+	isMcpControlInventoryChanged,
+	MCP_CONTROL_INVENTORY_CHANGED_EVENT,
+	MCP_CONTROL_INVENTORY_REQUEST_EVENT,
+	type McpControlInventoryRequest,
+} from "../../core/extensions/builtin/mcp/control-inventory.ts";
+import type { McpWireStatusServer, McpWireStatusSnapshot } from "../../core/extensions/builtin/mcp/service-types.ts";
+import {
+	applyFastMode,
+	type FastModeContext,
+	resolveServiceTierMemoryModel,
+} from "../../core/extensions/builtin/service-tier.ts";
 import type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
@@ -37,16 +51,27 @@ import type {
 } from "../../core/extensions/index.ts";
 import { getSupportedThinkingLevels } from "../../core/thinking-levels.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
-import { buildCustomUnsupportedRequest, DEFAULT_CUSTOM_EXTENSION_LABEL } from "./custom-capability.ts";
+import {
+	buildCustomUnsupportedRequest,
+	DEFAULT_CUSTOM_EXTENSION_LABEL,
+	EXTENSION_EVENTS_CAPABILITY,
+} from "./custom-capability.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
+import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
+import { rpcCommandShapeError, rpcMessageLengthError } from "./rpc-input-validation.ts";
 import type {
 	RpcAuthProvider,
 	RpcCommand,
+	RpcCommandInvocationEvent,
+	RpcExtensionEvent,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcLoadedExtension,
+	RpcLoadedMcpServer,
+	RpcMcpServerStatus,
 	RpcResponse,
 	RpcSessionState,
-	RpcSlashCommand,
+	RpcSkillInvocationEvent,
 } from "./rpc-types.ts";
 import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
 
@@ -89,6 +114,84 @@ export interface RpcConnectionHandler {
 	dispose(): Promise<void>;
 }
 
+function loadedExtensionName(path: string): string {
+	const synthetic = /^<(?:builtin|inline):([^>]+)>$/.exec(path);
+	if (synthetic) return synthetic[1];
+	const withoutExtension = basename(path, extname(path));
+	if (withoutExtension !== "index") return withoutExtension;
+	const parent = dirname(path);
+	const parentName = basename(parent);
+	return parentName === "src" || parentName === "dist" ? basename(dirname(parent)) : parentName;
+}
+
+function loadedExtensions(session: AgentSession): RpcLoadedExtension[] {
+	return session.resourceLoader.getExtensions().extensions.map((extension) => ({
+		name: loadedExtensionName(extension.path),
+		path: extension.path,
+		sourceInfo: extension.sourceInfo,
+		enabled: true,
+	}));
+}
+
+function loadedMcpStatus(server: McpWireStatusServer): RpcMcpServerStatus {
+	if (server.status !== undefined) return server.status;
+	if (server.serverInfo !== null) return "connected";
+	if (server.authStatus === "notLoggedIn") return "needs_auth";
+	return "enabled";
+}
+
+/**
+ * Project one session into the wire state shape.
+ *
+ * Shared with `open_session` (session-command-router) so both surfaces answer with the SAME
+ * fields: a second hand-rolled literal silently drifts, which is how `serviceTier`/`fastMode`
+ * would otherwise be missing from an opened session's initial state.
+ */
+export function buildRpcSessionState(session: AgentSession): RpcSessionState {
+	return {
+		model: session.model,
+		thinkingLevel: session.thinkingLevel,
+		serviceTier: session.effectiveServiceTier,
+		fastMode: session.isFastModeActive(),
+		isStreaming: session.isStreaming,
+		isCompacting: session.isCompacting,
+		steeringMode: session.steeringMode,
+		followUpMode: session.followUpMode,
+		sessionFile: session.sessionFile,
+		sessionId: session.sessionId,
+		sessionName: session.sessionName,
+		autoCompactionEnabled: session.autoCompactionEnabled,
+		messageCount: session.messages.length,
+		pendingMessageCount: session.pendingMessageCount,
+	};
+}
+
+function loadedMcpServers(snapshot: McpWireStatusSnapshot): RpcLoadedMcpServer[] {
+	return snapshot.servers.map((server) => ({
+		name: server.name,
+		toolCount: server.tools.length,
+		status: loadedMcpStatus(server),
+		authStatus: server.authStatus,
+	}));
+}
+
+function loadedSurfacesFingerprint(
+	session: AgentSession,
+	extensions: readonly RpcLoadedExtension[],
+	mcpServers: readonly RpcLoadedMcpServer[],
+): string {
+	return JSON.stringify({
+		skills: session.resourceLoader.getSkills().skills.map((skill) => ({
+			name: skill.name,
+			path: skill.filePath,
+			sourceInfo: skill.sourceInfo,
+			enabled: !skill.disableModelInvocation,
+		})),
+		extensions,
+		mcpServers,
+	});
+}
+
 /**
  * Create a per-connection RPC handler bound to one runtime host and one sink.
  *
@@ -106,6 +209,12 @@ export function createRpcConnectionHandler(
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
+	let unsubscribeLoadedSurfaces: (() => void) | undefined;
+	let unsubscribeExtensionEvents: (() => void) | undefined;
+	let mcpWireStatus: McpWireStatusSnapshot = { servers: [] };
+	let loadedSurfacesDigest: string | undefined;
+	let rpcCommandsDigest: string | undefined;
+	let suppressLoadedSurfaceEvents = false;
 	const eventOutput = createRpcEventOutputBuffer(sink.writeRaw);
 
 	const tagSessionRecord = <T extends object>(value: T): T | (T & { sessionId: string }) =>
@@ -118,6 +227,53 @@ export function createRpcConnectionHandler(
 	const outputEvent = (event: object) => {
 		eventOutput.enqueueEvent(tagSessionRecord(event));
 	};
+
+	const currentLoadedSurfaces = (): {
+		data: { extensions: RpcLoadedExtension[]; mcpServers: RpcLoadedMcpServer[] };
+		digest: string;
+	} => {
+		const extensions = loadedExtensions(session);
+		const mcpServers = loadedMcpServers(mcpWireStatus);
+		return {
+			data: { extensions, mcpServers },
+			digest: loadedSurfacesFingerprint(session, extensions, mcpServers),
+		};
+	};
+
+	const recordLoadedSurfaces = (emitChange: boolean): ReturnType<typeof currentLoadedSurfaces> => {
+		const current = currentLoadedSurfaces();
+		const changed = loadedSurfacesDigest !== undefined && loadedSurfacesDigest !== current.digest;
+		loadedSurfacesDigest = current.digest;
+		if (emitChange && changed && !suppressLoadedSurfaceEvents) {
+			outputEvent({ type: "loaded_surfaces_changed" });
+		}
+		return current;
+	};
+
+	const requestMcpWireStatus = async (): Promise<void> => {
+		let response: Promise<McpWireStatusSnapshot> | undefined;
+		const request: McpControlInventoryRequest = {
+			sessionId: session.sessionId,
+			respond(snapshot) {
+				response ??= snapshot;
+			},
+		};
+		session.resourceLoader.emitExtensionEvent?.(MCP_CONTROL_INVENTORY_REQUEST_EVENT, request);
+		mcpWireStatus = response === undefined ? { servers: [] } : await response;
+	};
+
+	const subscribeLoadedSurfaceEvents = (): void => {
+		unsubscribeLoadedSurfaces?.();
+		unsubscribeLoadedSurfaces = session.resourceLoader.onExtensionEvent?.(
+			MCP_CONTROL_INVENTORY_CHANGED_EVENT,
+			(data) => {
+				if (!isMcpControlInventoryChanged(data) || data.sessionId !== session.sessionId) return;
+				mcpWireStatus = data.snapshot;
+				if (!suppressLoadedSurfaceEvents) recordLoadedSurfaces(true);
+			},
+		);
+	};
+
 	const unsubscribeProviderAccountEvents = subscribeProviderAccountEvents((event) => {
 		if (event.type === "accounts_changed") {
 			outputEvent({ type: "auth_accounts_changed", provider: event.provider });
@@ -137,11 +293,7 @@ export function createRpcConnectionHandler(
 		await sink.waitForBackpressure();
 	};
 
-	const success = <T extends RpcCommand["type"]>(
-		id: string | undefined,
-		command: T,
-		data?: object | null,
-	): RpcResponse => {
+	const success = <T extends RpcCommand["type"]>(id: string | undefined, command: T, data?: unknown): RpcResponse => {
 		if (data === undefined) {
 			return { id, type: "response", command, success: true } as RpcResponse;
 		}
@@ -396,53 +548,103 @@ export function createRpcConnectionHandler(
 		},
 	});
 
+	const refreshLoadedSurfacesAfter = async (operation: () => Promise<void>, resetMcp: boolean): Promise<void> => {
+		const previousDigest = loadedSurfacesDigest;
+		const wasSuppressed = suppressLoadedSurfaceEvents;
+		suppressLoadedSurfaceEvents = true;
+		if (resetMcp) mcpWireStatus = { servers: [] };
+		let commandsChanged: ReturnType<typeof createCommandsChangedEvent>;
+		try {
+			await operation();
+			await requestMcpWireStatus();
+			loadedSurfacesDigest = currentLoadedSurfaces().digest;
+			const commands = buildRpcCommandsForSession(session);
+			commandsChanged = createCommandsChangedEvent(rpcCommandsDigest, commands);
+			rpcCommandsDigest = rpcCommandListDigest(commands);
+		} finally {
+			suppressLoadedSurfaceEvents = wasSuppressed;
+		}
+		if (!wasSuppressed && commandsChanged) {
+			outputEvent(commandsChanged);
+		}
+		if (!wasSuppressed && previousDigest !== undefined && previousDigest !== loadedSurfacesDigest) {
+			outputEvent({ type: "loaded_surfaces_changed" });
+		}
+	};
+
 	runtimeHost.setRebindSession(async () => {
 		await rebindSession();
 	});
 
 	const rebindSession = async (): Promise<void> => {
+		unsubscribeLoadedSurfaces?.();
+		unsubscribeExtensionEvents?.();
 		session = runtimeHost.session;
-		await session.bindExtensions({
-			uiContext: createExtensionUIContext(),
-			mode: "rpc",
-			commandContextActions: {
-				waitForIdle: () => session.agent.waitForIdle(),
-				newSession: async (options) => runtimeHost.newSession(options),
-				fork: async (entryId, forkOptions) => {
-					const result = await runtimeHost.fork(entryId, forkOptions);
-					return { cancelled: result.cancelled };
-				},
-				navigateTree: async (targetId, options) => {
-					const result = await session.navigateTree(targetId, {
-						summarize: options?.summarize,
-						customInstructions: options?.customInstructions,
-						replaceInstructions: options?.replaceInstructions,
-						label: options?.label,
-					});
-					return { cancelled: result.cancelled };
-				},
-				switchSession: async (sessionPath, options) => {
-					return runtimeHost.switchSession(sessionPath, options);
-				},
-				reload: async () => {
-					await session.reload();
-				},
-			},
-			shutdownHandler: () => {
-				if (options.shutdownHandler) {
-					options.shutdownHandler();
-				} else {
-					shutdownRequested = true;
-				}
-			},
-			onError: (err) => {
-				output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
-			},
-		});
-
+		unsubscribeExtensionEvents = clientCapabilities?.includes(EXTENSION_EVENTS_CAPABILITY)
+			? session.extensionRunner.onRpcEvent(({ name, data }) => {
+					outputEvent({ type: "extension_event", name, data } satisfies RpcExtensionEvent);
+				})
+			: undefined;
+		subscribeLoadedSurfaceEvents();
+		await refreshLoadedSurfacesAfter(
+			() =>
+				session.bindExtensions({
+					uiContext: createExtensionUIContext(),
+					mode: "rpc",
+					commandContextActions: {
+						waitForIdle: () => session.agent.waitForIdle(),
+						newSession: async (options) => runtimeHost.newSession(options),
+						fork: async (entryId, forkOptions) => {
+							const result = await runtimeHost.fork(entryId, forkOptions);
+							return { cancelled: result.cancelled };
+						},
+						navigateTree: async (targetId, options) => {
+							const result = await session.navigateTree(targetId, {
+								summarize: options?.summarize,
+								customInstructions: options?.customInstructions,
+								replaceInstructions: options?.replaceInstructions,
+								label: options?.label,
+							});
+							return { cancelled: result.cancelled };
+						},
+						switchSession: async (sessionPath, options) => {
+							return runtimeHost.switchSession(sessionPath, options);
+						},
+						reload: async () => {
+							await refreshLoadedSurfacesAfter(async () => {
+								await session.reload();
+							}, false);
+						},
+					},
+					shutdownHandler: () => {
+						if (options.shutdownHandler) {
+							options.shutdownHandler();
+						} else {
+							shutdownRequested = true;
+						}
+					},
+					onError: (err) => {
+						output({
+							type: "extension_error",
+							extensionPath: err.extensionPath,
+							event: err.event,
+							error: err.error,
+						});
+					},
+				}),
+			true,
+		);
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
 		unsubscribe = session.subscribe((event) => {
+			if (event.type === "skill_invocation") {
+				outputEvent(event satisfies RpcSkillInvocationEvent);
+				return;
+			}
+			if (event.type === "command_invocation") {
+				outputEvent(event satisfies RpcCommandInvocationEvent);
+				return;
+			}
 			outputEvent(event);
 		});
 		unsubscribeBackpressure = session.agent.subscribe(async () => {
@@ -498,6 +700,27 @@ export function createRpcConnectionHandler(
 		}
 	};
 
+	/**
+	 * Host capabilities for `applyFastMode`, mirroring what the `/fast` command passes from its
+	 * extension context. The notification is dropped: a command response carries the message
+	 * (`data` on success, `error` on refusal), so a duplicate `extension_ui_request` would be noise.
+	 */
+	const fastModeContext = (): FastModeContext => ({
+		cwd: session.cwd,
+		agentDir: session.agentDir,
+		model: session.model,
+		modelRegistry: session.modelRegistry,
+		serviceTier: session.serviceTier,
+		isProjectTrusted: () => session.settingsManager.isProjectTrusted(),
+		notify: () => {},
+		setSessionModel: async (model) => {
+			if (!session.modelRuntime.hasConfiguredAuth(model.provider)) return false;
+			await session.setSessionModel(model);
+			return true;
+		},
+		setSessionFastMode: (enabled) => session.setSessionFastMode(enabled),
+	});
+
 	// Handle a single command
 	const handleCommand = async (command: RpcCommand): Promise<RpcResponse | undefined> => {
 		const id = command.id;
@@ -536,7 +759,7 @@ export function createRpcConnectionHandler(
 						thinkingLevel: command.thinkingLevel,
 						source: "rpc",
 						preflightResult: (didSucceed) => {
-							if (didSucceed) {
+							if (didSucceed && !preflightSucceeded) {
 								preflightSucceeded = true;
 								output(success(id, "prompt"));
 							}
@@ -578,23 +801,8 @@ export function createRpcConnectionHandler(
 			// State
 			// =================================================================
 
-			case "get_state": {
-				const state: RpcSessionState = {
-					model: session.model,
-					thinkingLevel: session.thinkingLevel,
-					isStreaming: session.isStreaming,
-					isCompacting: session.isCompacting,
-					steeringMode: session.steeringMode,
-					followUpMode: session.followUpMode,
-					sessionFile: session.sessionFile,
-					sessionId: session.sessionId,
-					sessionName: session.sessionName,
-					autoCompactionEnabled: session.autoCompactionEnabled,
-					messageCount: session.messages.length,
-					pendingMessageCount: session.pendingMessageCount,
-				};
-				return success(id, "get_state", state);
-			}
+			case "get_state":
+				return success(id, "get_state", buildRpcSessionState(session));
 
 			// =================================================================
 			// Model
@@ -634,14 +842,17 @@ export function createRpcConnectionHandler(
 
 			case "set_thinking_level": {
 				if (command.scope === "turn") {
-					session.setSessionThinkingLevel(command.level);
-					if (session.thinkingLevel !== command.level) {
+					// Validate BEFORE mutating: the session clamps an unsupported level to a supported
+					// neighbour, so applying first would leave a REJECTED request's clamped level in
+					// place. A failed command must not change session state.
+					if (!session.getAvailableThinkingLevels().includes(command.level)) {
 						return error(
 							id,
 							"set_thinking_level",
 							`Thinking level ${command.level} is not supported by the active model.`,
 						);
 					}
+					session.setSessionThinkingLevel(command.level);
 				} else {
 					session.setThinkingLevel(command.level);
 				}
@@ -659,6 +870,42 @@ export function createRpcConnectionHandler(
 			case "get_available_thinking_levels":
 				return success(id, "get_available_thinking_levels", {
 					levels: session.getAvailableThinkingLevels(),
+				});
+
+			// =================================================================
+			// Fast mode
+			// =================================================================
+
+			case "set_fast_mode": {
+				if (typeof command.enabled !== "boolean") {
+					return error(id, "set_fast_mode", "set_fast_mode requires a boolean 'enabled' field.");
+				}
+				const model = session.model;
+				if (!model) {
+					return error(id, "set_fast_mode", "No active model.");
+				}
+				// Same entry point as the /fast command: persistence, `-fast` key normalization,
+				// and pin precedence live in applyFastMode, never duplicated here.
+				const result = await applyFastMode(fastModeContext(), command.enabled);
+				if (!result.applied) {
+					// A refusal (non-Codex model, active `:priority` pin, failed model switch) has no
+					// notification channel for a command response, so it is reported as an error
+					// instead of a success that silently did nothing.
+					return error(id, "set_fast_mode", result.message);
+				}
+				const memoryModel = resolveServiceTierMemoryModel(session.modelRegistry, session.model ?? model);
+				return success(id, "set_fast_mode", {
+					enabled: result.enabled,
+					serviceTier: result.recordedTier,
+					provider: memoryModel.provider,
+					modelId: memoryModel.id,
+				});
+			}
+
+			case "get_fast_mode":
+				return success(id, "get_fast_mode", {
+					enabled: session.isFastModeActive(),
+					serviceTier: session.effectiveServiceTier ?? null,
 				});
 
 			// =================================================================
@@ -824,36 +1071,22 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "get_commands": {
-				const commands: RpcSlashCommand[] = [];
+				return success(id, "get_commands", { commands: buildRpcCommandsForSession(session) });
+			}
 
-				for (const command of session.extensionRunner.getRegisteredCommands()) {
-					commands.push({
-						name: command.invocationName,
-						description: command.description,
-						source: "extension",
-						sourceInfo: command.sourceInfo,
-					});
+			case "get_loaded_surfaces": {
+				await requestMcpWireStatus();
+				const inventory = recordLoadedSurfaces(true);
+				return success(id, "get_loaded_surfaces", inventory.data);
+			}
+
+			case "extension_request": {
+				const name = command.name.trim();
+				if (name.length === 0) {
+					return error(id, "extension_request", "Extension RPC request name cannot be empty");
 				}
-
-				for (const template of session.promptTemplates) {
-					commands.push({
-						name: template.name,
-						description: template.description,
-						source: "prompt",
-						sourceInfo: template.sourceInfo,
-					});
-				}
-
-				for (const skill of session.resourceLoader.getSkills().skills) {
-					commands.push({
-						name: `skill:${skill.name}`,
-						description: skill.description,
-						source: "skill",
-						sourceInfo: skill.sourceInfo,
-					});
-				}
-
-				return success(id, "get_commands", { commands });
+				const data = await session.extensionRunner.requestRpc(name, command.data);
+				return success(id, "extension_request", data);
 			}
 
 			// =================================================================
@@ -938,6 +1171,13 @@ export function createRpcConnectionHandler(
 			return;
 		}
 
+		const shapeError = rpcCommandShapeError(parsed);
+		if (shapeError) {
+			output(error(undefined, "parse", shapeError));
+			await waitForRpcBackpressure();
+			return;
+		}
+
 		// Handle extension UI responses
 		if (
 			typeof parsed === "object" &&
@@ -955,6 +1195,12 @@ export function createRpcConnectionHandler(
 		}
 
 		const command = parsed as RpcCommand;
+		const messageLengthError = rpcMessageLengthError(command);
+		if (messageLengthError) {
+			output(error(command.id, command.type, messageLengthError));
+			await waitForRpcBackpressure();
+			return;
+		}
 		try {
 			const response = await handleCommand(command);
 			if (response) {
@@ -978,8 +1224,12 @@ export function createRpcConnectionHandler(
 		unsubscribeProviderAccountEvents();
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
+		unsubscribeLoadedSurfaces?.();
+		unsubscribeExtensionEvents?.();
 		unsubscribe = undefined;
 		unsubscribeBackpressure = undefined;
+		unsubscribeLoadedSurfaces = undefined;
+		unsubscribeExtensionEvents = undefined;
 		if (options.disposeRuntime !== false) {
 			await runtimeHost.dispose();
 		}

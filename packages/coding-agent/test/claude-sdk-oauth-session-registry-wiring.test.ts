@@ -268,13 +268,20 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 		expect(decision.kind).not.toBe("flatten");
 	});
 
-	it("records a compaction fork boundary idempotently", async () => {
+	it("records a compaction fork boundary only when compaction was accepted", async () => {
 		const extension = fakeExtension();
 		registerSessionRegistry(extension.api);
 		createEntry("compact-session");
 
-		await emitTwice(extension, "session_compact", { type: "session_compact" }, "compact-session");
+		await emitTwice(extension, "session_compact", { type: "session_compact", accepted: false }, "compact-session");
+		expect(getSession("compact-session")).toMatchObject({ pendingForkReason: null });
 
+		for (const rejectedEvent of [{ type: "session_compact" }, { type: "session_compact", accepted: undefined }]) {
+			await emitTwice(extension, "session_compact", rejectedEvent, "compact-session");
+			expect(getSession("compact-session")).toMatchObject({ pendingForkReason: null });
+		}
+
+		await emitTwice(extension, "session_compact", { type: "session_compact", accepted: true }, "compact-session");
 		expect(getSession("compact-session")).toMatchObject({ pendingForkReason: "compaction" });
 	});
 

@@ -5,6 +5,7 @@ import { dirname } from "path";
 import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";
+import { getExperimentalToolSampling } from "../experimental.ts";
 import type { FilesystemPolicyChecker, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { renderToolDiff } from "./diff-render.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
@@ -23,6 +24,11 @@ const writeSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to write (relative or absolute)" }),
 	content: Type.String({ description: "Content to write to the file" }),
 });
+
+export const writeToolSystemPromptContribution = {
+	snippet: "Create or overwrite files",
+	guidelines: ["Use write only for new files or complete rewrites."],
+} as const;
 
 export type WriteToolInput = Static<typeof writeSchema>;
 
@@ -206,9 +212,10 @@ export function createWriteToolDefinition(
 		label: "write",
 		description:
 			"Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
-		promptSnippet: "Create or overwrite files",
-		promptGuidelines: ["Use write only for new files or complete rewrites."],
+		promptSnippet: writeToolSystemPromptContribution.snippet,
+		promptGuidelines: [...writeToolSystemPromptContribution.guidelines],
 		parameters: writeSchema,
+		constrainedSampling: getExperimentalToolSampling(),
 		async execute(
 			_toolCallId,
 			{ path, content }: { path: string; content: string },

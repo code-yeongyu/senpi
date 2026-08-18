@@ -23,6 +23,9 @@
 		"OPENROUTER_API_KEY": {
 			"description": "(Optional) OpenRouter API key."
 		},
+		"OPENGATEWAY_API_KEY": {
+			"description": "(Optional) OpenGateway API key (https://opengateway.ai/api-keys)."
+		},
 		"GEMINI_API_KEY": {
 			"description": "(Optional) Google Gemini API key (senpi's default provider is google)."
 		},

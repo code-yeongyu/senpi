@@ -1,40 +1,56 @@
-// Todo 31 — tool_search tool + promotion engine.
-//
-// Proves: turn-1 search lists full names + "next turn" and activates matches;
-// turn-2 the promoted tool is callable; inactive tools contribute ZERO tokens
-// to the provider payload (they never appear in context.tools); a nonexistent
-// capability activates nothing and leaves the next turn unchanged; and
-// activations are derivable from a real session transcript (rehydrate).
+// MCP model-visible promotion semantics through the shared tool-search engine.
 
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import type { ToolSearchDocument } from "../../src/core/extensions/builtin/tool-search/engine/document.ts";
 import {
-	buildMcpSearchResultText,
-	createMcpSearchTool,
-	rehydrateActiveToolsFromHistory,
-	type SearchableMcpTool,
-	TOOL_SEARCH_ACTIVATION_MARKER,
+	rehydrate,
+	TOOL_SEARCH_ACTIVATION_MARKER_V2,
+} from "../../src/core/extensions/builtin/tool-search/engine/marker.ts";
+import { ToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
+import {
+	buildToolSearchResultText,
+	createToolSearchTool,
 	TOOL_SEARCH_TOOL_NAME,
-	unionStable,
-} from "../../src/core/extensions/builtin/mcp/expose/tool-search.ts";
+} from "../../src/core/extensions/builtin/tool-search/tool.ts";
 import type { ExtensionAPI, ExtensionFactory, ToolDefinition } from "../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 
-const CATALOG: SearchableMcpTool[] = [
+const CATALOG: ToolSearchDocument[] = [
 	{
 		name: "mcp_docs_get-library-docs",
-		toolName: "get-library-docs",
+		label: "get-library-docs",
+		aliases: ["get-library-docs"],
 		description: "Fetch up-to-date documentation for a library",
-		server: "docs",
+		keywords: [],
+		source: "mcp",
+		group: "docs",
+		ownerLabel: "docs",
+		registrationId: "mcp\0docs\0get-library-docs",
 	},
 	{
 		name: "mcp_docs_resolve-library-id",
-		toolName: "resolve-library-id",
+		label: "resolve-library-id",
+		aliases: ["resolve-library-id"],
 		description: "Resolve a library name to a Context7-compatible ID",
-		server: "docs",
+		keywords: [],
+		source: "mcp",
+		group: "docs",
+		ownerLabel: "docs",
+		registrationId: "mcp\0docs\0resolve-library-id",
 	},
-	{ name: "mcp_fs_read-file", toolName: "read-file", description: "Read a file from disk", server: "fs" },
+	{
+		name: "mcp_fs_read-file",
+		label: "read-file",
+		aliases: ["read-file"],
+		description: "Read a file from disk",
+		keywords: [],
+		source: "mcp",
+		group: "fs",
+		ownerLabel: "fs",
+		registrationId: "mcp\0fs\0read-file",
+	},
 ];
 
 function fakeMcpTool(name: string): ToolDefinition {
@@ -48,23 +64,22 @@ function fakeMcpTool(name: string): ToolDefinition {
 	};
 }
 
-// Extension that registers the catalog tools (inactive) + an always-active
-// tool_search wired to promote via pi.setActiveTools.
 function toolSearchExtension(): ExtensionFactory {
 	return (pi: ExtensionAPI) => {
+		const service = new ToolSearchService({
+			getAllTools: () => pi.getAllTools(),
+			getActiveTools: () => pi.getActiveTools(),
+			setActiveTools: (names) => pi.setActiveTools([...names]),
+		});
 		for (const entry of CATALOG) pi.registerTool(fakeMcpTool(entry.name));
-		pi.registerTool(
-			createMcpSearchTool({
-				getSearchableTools: () => CATALOG,
-				getActiveTools: () => pi.getActiveTools(),
-				setActiveTools: (names) => pi.setActiveTools([...names]),
-			}),
-		);
+		pi.registerTool(createToolSearchTool(service));
 		let armed = false;
 		pi.on("before_agent_start", async () => {
 			if (armed) return undefined;
 			armed = true;
-			// Only tool_search is active initially; catalog tools stay inactive.
+			service.feed("mcp", CATALOG, {
+				activate: (names) => pi.setActiveTools([...new Set([...pi.getActiveTools(), ...names])]),
+			});
 			pi.setActiveTools([TOOL_SEARCH_TOOL_NAME]);
 			return undefined;
 		});
@@ -77,12 +92,14 @@ afterEach(() => {
 });
 
 async function makeHarness(): Promise<Harness> {
-	const harness = await createHarness({ extensionFactories: [toolSearchExtension()] });
+	const harness = await createHarness({
+		extensionFactories: [{ factory: toolSearchExtension(), path: "<builtin:tool-search>" }],
+	});
 	harnesses.push(harness);
 	return harness;
 }
 
-describe("todo31 tool_search: two-turn promotion + zero-token inactive tools", () => {
+describe("shared tool_search: two-turn MCP promotion + zero-token inactive tools", () => {
 	it("turn1 search activates matches; turn2 they are callable; unmatched stay inactive", async () => {
 		const harness = await makeHarness();
 		const providerToolNames: string[][] = [];
@@ -105,13 +122,9 @@ describe("todo31 tool_search: two-turn promotion + zero-token inactive tools", (
 
 		await harness.session.prompt("find a docs tool");
 
-		// Turn 1: only tool_search was exposed — inactive catalog tools cost 0 tokens.
 		expect(providerToolNames[0]).toEqual(["tool_search"]);
-		// Turn 2: the two matched docs tools are now active alongside tool_search;
-		// the unmatched mcp_fs_read-file is still absent (zero contribution).
 		expect(providerToolNames[1]).toEqual(["mcp_docs_get-library-docs", "mcp_docs_resolve-library-id", "tool_search"]);
 		expect(providerToolNames[1]).not.toContain("mcp_fs_read-file");
-		// The promoted tool actually ran.
 		expect(harness.session.getActiveToolNames()).toContain("mcp_docs_get-library-docs");
 	});
 
@@ -132,62 +145,35 @@ describe("todo31 tool_search: two-turn promotion + zero-token inactive tools", (
 		]);
 
 		await harness.session.prompt("search for a capability that does not exist");
-
 		expect(providerToolNames[0]).toEqual(["tool_search"]);
-		// No activation -> next turn identical.
 		expect(providerToolNames[1]).toEqual(["tool_search"]);
 	});
 });
 
-describe("todo31 tool_search: result text + rehydration", () => {
-	it("result text lists full names, a next-turn notice, and the activation marker", () => {
-		const matches = [
-			{ name: "mcp_docs_get-library-docs", doc: CATALOG[0] as SearchableMcpTool },
-			{ name: "mcp_docs_resolve-library-id", doc: CATALOG[1] as SearchableMcpTool },
-		];
-		const text = buildMcpSearchResultText("library docs", matches, undefined);
+describe("shared tool_search: result text + rehydration", () => {
+	it("result text lists full names, a next-turn notice, and the v2 activation marker", () => {
+		const matches = CATALOG.slice(0, 2).map((doc) => ({ name: doc.name, doc, score: 1, exact: false }));
+		const text = buildToolSearchResultText("library docs", matches, "mcp", undefined);
 		expect(text).toContain("NEXT turn");
 		expect(text).toContain("mcp_docs_get-library-docs");
 		expect(text).toContain("Fetch up-to-date documentation");
-		expect(text).toContain(`${TOOL_SEARCH_ACTIVATION_MARKER} mcp_docs_get-library-docs mcp_docs_resolve-library-id`);
+		expect(text).toContain(TOOL_SEARCH_ACTIVATION_MARKER_V2);
 	});
 
 	it("empty result carries no activation marker", () => {
-		const text = buildMcpSearchResultText("nope", [], undefined);
-		expect(text).not.toContain(TOOL_SEARCH_ACTIVATION_MARKER);
+		const text = buildToolSearchResultText("nope", [], "mcp", undefined);
+		expect(text).not.toContain(TOOL_SEARCH_ACTIVATION_MARKER_V2);
 		expect(text).toContain("unchanged");
 	});
 
-	it("rehydrateActiveToolsFromHistory restores activations from a synthetic compacted session", () => {
-		const valid = new Set(CATALOG.map((entry) => entry.name));
-		const messages = [
-			{ role: "user", content: "find docs tools" },
-			{
-				role: "toolResult",
-				toolName: TOOL_SEARCH_TOOL_NAME,
-				content: [
-					{
-						type: "text",
-						text: buildMcpSearchResultText(
-							"library docs",
-							[
-								{ name: "mcp_docs_get-library-docs", doc: CATALOG[0] as SearchableMcpTool },
-								{ name: "mcp_docs_resolve-library-id", doc: CATALOG[1] as SearchableMcpTool },
-							],
-							undefined,
-						),
-					},
-				],
-			},
-		];
-		expect(rehydrateActiveToolsFromHistory(messages, valid)).toEqual([
-			"mcp_docs_get-library-docs",
-			"mcp_docs_resolve-library-id",
-		]);
+	it("rehydrate restores ownership-matching activations from a synthetic compacted session", () => {
+		const matches = CATALOG.slice(0, 2).map((doc) => ({ name: doc.name, doc, score: 1, exact: false }));
+		const messages = [{ content: buildToolSearchResultText("library docs", matches, "mcp", undefined) }];
+		const current = new Map(CATALOG.map((doc) => [doc.name, { ...doc, allowLazyActivation: true }] as const));
+		expect(rehydrate(messages, current)).toEqual(["mcp_docs_get-library-docs", "mcp_docs_resolve-library-id"]);
 	});
 
 	it("rehydrate drops names no longer in the catalog and is derivable from a real transcript", async () => {
-		// Real session: run a search, then reconstruct activations from history.
 		const harness = await makeHarness();
 		harness.setResponses([
 			fauxAssistantMessage(fauxToolCall("tool_search", { query: "library documentation" }), {
@@ -196,21 +182,20 @@ describe("todo31 tool_search: result text + rehydration", () => {
 			fauxAssistantMessage("done"),
 		]);
 		await harness.session.prompt("find docs tool");
-
-		const entries = harness.sessionManager.getEntries();
-		const messages = entries.filter((entry) => entry.type === "message").map((entry) => entry.message);
-		// Full catalog still valid -> both matches restored.
-		expect(rehydrateActiveToolsFromHistory(messages, new Set(CATALOG.map((entry) => entry.name)))).toEqual([
-			"mcp_docs_get-library-docs",
-			"mcp_docs_resolve-library-id",
-		]);
-		// One tool removed from the catalog -> it is not restored.
-		expect(rehydrateActiveToolsFromHistory(messages, new Set(["mcp_docs_get-library-docs"]))).toEqual([
-			"mcp_docs_get-library-docs",
-		]);
+		const messages = harness.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "message")
+			.map((entry) => entry.message);
+		const current = new Map(CATALOG.map((doc) => [doc.name, { ...doc, allowLazyActivation: true }] as const));
+		expect(rehydrate(messages, current)).toEqual(["mcp_docs_get-library-docs", "mcp_docs_resolve-library-id"]);
+		current.delete("mcp_docs_resolve-library-id");
+		expect(rehydrate(messages, current)).toEqual(["mcp_docs_get-library-docs"]);
 	});
 
-	it("unionStable dedupes and sorts", () => {
-		expect(unionStable(["tool_search", "b"], ["a", "b"])).toEqual(["a", "b", "tool_search"]);
+	it("legacy name-only markers remain compatible for MCP documents", () => {
+		const current = new Map(CATALOG.map((doc) => [doc.name, { ...doc, allowLazyActivation: true }] as const));
+		expect(rehydrate([{ content: "[tool_search:activated] mcp_docs_get-library-docs" }], current)).toEqual([
+			"mcp_docs_get-library-docs",
+		]);
 	});
 });

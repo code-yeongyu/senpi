@@ -1,10 +1,13 @@
 export function runPackageLockRefresh(dryRun, runCommand, log, dryRunLog) {
 	if (dryRun) {
 		dryRunLog("npm install --package-lock-only --ignore-scripts");
+		dryRunLog("npm install --ignore-scripts --no-audit --no-fund");
 		return;
 	}
 	log("npm install --package-lock-only --ignore-scripts");
 	runCommand("npm", ["install", "--package-lock-only", "--ignore-scripts"]);
+	log("npm install --ignore-scripts --no-audit --no-fund");
+	runCommand("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"]);
 }
 
 export function runGenerateModels(dryRun, runCommand, log, dryRunLog) {

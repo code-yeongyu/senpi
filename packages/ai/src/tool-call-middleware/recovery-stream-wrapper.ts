@@ -158,6 +158,11 @@ export function wrapStreamWithInvokeRecovery(
 					case "done":
 						if (!synchronizeTerminal(event.message) || !projection) return;
 						if (!outerStream.markSourceClosed()) return;
+						if (event.reason === "deferred") {
+							outerStream.push(event);
+							outerStream.end(event.message);
+							return;
+						}
 						terminal.done(projection, event.message, sawToolCall, event.reason);
 						return;
 					case "error":

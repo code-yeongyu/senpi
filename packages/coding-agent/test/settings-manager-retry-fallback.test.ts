@@ -30,7 +30,7 @@ afterEach(() => {
 
 describe("SettingsManager retry fallback settings", () => {
 	const defaultChains = {
-		"claude-fable-5": ["k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
+		"claude-fable-5": ["k3:max", "kimi-k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
 	};
 
 	it("defaults abortServerSideFallback to true and round-trips an explicit false", () => {

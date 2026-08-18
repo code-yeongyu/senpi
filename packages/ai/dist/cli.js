@@ -41,6 +41,7 @@ async function login(providerId) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {
         const credential = await provider.auth.oauth.login({
+            signal: new AbortController().signal,
             prompt: (authPrompt) => answerPrompt(rl, authPrompt),
             notify: (event) => {
                 switch (event.type) {

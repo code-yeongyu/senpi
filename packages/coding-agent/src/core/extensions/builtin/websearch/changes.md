@@ -1,5 +1,13 @@
 # changes.md — websearch (vendored)
 
+## Senpi merge repair (2026-08-13)
+
+- Native route discovery accepts registry `ProviderHeaders`, preserving nullable deletion markers while it
+  resolves credentials. Web search currently consumes only the resolved API key, so no premature header
+  materialization is required.
+- This remains a Senpi adaptation because the builtin bridges Senpi's model registry into the vendored
+  extension; re-vendoring can overwrite `native.ts` and `tool.ts`.
+
 Vendored from [`code-yeongyu/pi-websearch`](https://github.com/code-yeongyu/pi-websearch) at `7fb28c31623bafb77f437095d57315c26f202dc2` (0.3.0).
 
 ## Senpi adaptations vs upstream

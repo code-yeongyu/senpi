@@ -4,6 +4,8 @@ import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
 import { createModels } from "../src/models.ts";
 import { githubCopilotProvider } from "../src/providers/github-copilot.ts";
 
+const neverAbortedSignal = new AbortController().signal;
+
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
 		status,
@@ -38,7 +40,7 @@ function loginGitHubCopilotForTest(options: {
 	signal?: AbortSignal;
 }) {
 	return githubCopilotOAuth.login({
-		signal: options.signal,
+		signal: options.signal ?? neverAbortedSignal,
 		prompt: (prompt) => {
 			if (prompt.type !== "text") throw new Error(`Unexpected prompt: ${prompt.type}`);
 			return options.onPrompt({ message: prompt.message, placeholder: prompt.placeholder, allowEmpty: true });
@@ -53,6 +55,44 @@ function loginGitHubCopilotForTest(options: {
 	});
 }
 
+async function refreshGitHubCopilotModelsForTest(
+	data: readonly unknown[],
+	proxyHost: string = "proxy.individual.githubcopilot.com",
+) {
+	const accessToken = `tid=test;exp=9999999999;proxy-ep=${proxyHost};`;
+	const modelsUrl = `https://${proxyHost.replace(/^proxy\./, "api.")}/models`;
+	const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+		const url = getUrl(input);
+
+		if (url.includes("/copilot_internal/v2/token")) {
+			return jsonResponse({
+				token: accessToken,
+				expires_at: 9999999999,
+			});
+		}
+
+		if (url === modelsUrl) {
+			expect(init?.headers).toMatchObject({
+				Authorization: `Bearer ${accessToken}`,
+			});
+			return jsonResponse({ data });
+		}
+
+		throw new Error(`Unexpected fetch URL: ${url}`);
+	});
+
+	vi.stubGlobal("fetch", fetchMock);
+	return githubCopilotOAuth.refresh(
+		{
+			type: "oauth",
+			access: "old-access-token",
+			refresh: "ghu_refresh_token",
+			expires: 0,
+		},
+		neverAbortedSignal,
+	);
+}
+
 describe("GitHub Copilot OAuth device flow", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
@@ -60,53 +100,25 @@ describe("GitHub Copilot OAuth device flow", () => {
 	});
 
 	it("filters models to the authenticated account picker catalog", async () => {
-		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
-			const url = getUrl(input);
-
-			if (url.includes("/copilot_internal/v2/token")) {
-				return jsonResponse({
-					token: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
-					expires_at: 9999999999,
-				});
-			}
-
-			if (url === "https://api.individual.githubcopilot.com/models") {
-				expect(init?.headers).toMatchObject({
-					Authorization: "Bearer tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
-				});
-				return jsonResponse({
-					data: [
-						{
-							id: "gpt-4.1",
-							model_picker_enabled: true,
-							capabilities: { supports: { tool_calls: true } },
-						},
-						{
-							id: "claude-opus-4.7",
-							model_picker_enabled: true,
-							policy: { state: "disabled" },
-							capabilities: { supports: { tool_calls: true } },
-						},
-						{
-							id: "gpt-5.4-nano",
-							model_picker_enabled: false,
-							capabilities: { supports: { tool_calls: true } },
-						},
-					],
-				});
-			}
-
-			throw new Error(`Unexpected fetch URL: ${url}`);
-		});
-
-		vi.stubGlobal("fetch", fetchMock);
-
-		const credentials = await githubCopilotOAuth.refresh({
-			type: "oauth",
-			access: "old-access-token",
-			refresh: "ghu_refresh_token",
-			expires: 0,
-		});
+		const credentials = await refreshGitHubCopilotModelsForTest([
+			{
+				id: "gpt-4.1",
+				model_picker_enabled: true,
+				capabilities: { supports: { tool_calls: true } },
+			},
+			{
+				id: "claude-opus-4.7",
+				model_picker_enabled: true,
+				policy: { state: "disabled" },
+				capabilities: { supports: { tool_calls: true } },
+			},
+			{
+				id: "gpt-5.4-nano",
+				model_picker_enabled: false,
+				policy: { state: "enabled" },
+				capabilities: { supports: { tool_calls: true } },
+			},
+		]);
 		expect(credentials.availableModelIds).toEqual(["gpt-4.1"]);
 
 		const store = new InMemoryCredentialStore();
@@ -114,6 +126,58 @@ describe("GitHub Copilot OAuth device flow", () => {
 		const models = createModels({ credentials: store });
 		models.setProvider(githubCopilotProvider());
 		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["gpt-4.1"]);
+	});
+
+	it("falls back to explicitly enabled policy models when the picker catalog is empty", async () => {
+		const credentials = await refreshGitHubCopilotModelsForTest([
+			{
+				id: "gpt-4.1",
+				model_picker_enabled: false,
+				policy: { state: "enabled" },
+				capabilities: { supports: { tool_calls: true } },
+			},
+			{
+				id: "claude-opus-4.7",
+				model_picker_enabled: false,
+				policy: { state: "disabled" },
+				capabilities: { supports: { tool_calls: true } },
+			},
+			{
+				id: "gpt-5.4-nano",
+				model_picker_enabled: false,
+				capabilities: { supports: { tool_calls: true } },
+			},
+			{
+				id: "gpt-4o",
+				model_picker_enabled: false,
+				policy: { state: "enabled" },
+				capabilities: { supports: { tool_calls: false } },
+			},
+		]);
+
+		expect(credentials.availableModelIds).toEqual(["gpt-4.1"]);
+
+		const store = new InMemoryCredentialStore();
+		await store.modify("github-copilot", async () => ({ ...credentials, type: "oauth" }));
+		const models = createModels({ credentials: store });
+		models.setProvider(githubCopilotProvider());
+		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["gpt-4.1"]);
+	});
+
+	it("does not fall back to policy models for non-Individual accounts", async () => {
+		const credentials = await refreshGitHubCopilotModelsForTest(
+			[
+				{
+					id: "gpt-4.1",
+					model_picker_enabled: false,
+					policy: { state: "enabled" },
+					capabilities: { supports: { tool_calls: true } },
+				},
+			],
+			"proxy.business.githubcopilot.com",
+		);
+
+		expect(credentials.availableModelIds).toEqual([]);
 	});
 
 	it("reports device-code details through onDeviceCode", async () => {
@@ -173,6 +237,68 @@ describe("GitHub Copilot OAuth device flow", () => {
 		});
 		await vi.advanceTimersByTimeAsync(1000);
 		await loginPromise;
+	});
+
+	it("limits concurrent model policy updates during login", async () => {
+		vi.useFakeTimers();
+
+		let activePolicyRequests = 0;
+		let maxActivePolicyRequests = 0;
+		let policyRequestCount = 0;
+		const fetchMock = vi.fn(async (input: unknown): Promise<Response> => {
+			const url = getUrl(input);
+
+			if (url.endsWith("/login/device/code")) {
+				return jsonResponse({
+					device_code: "device-code",
+					user_code: "ABCD-EFGH",
+					verification_uri: "https://github.com/login/device",
+					interval: 1,
+					expires_in: 900,
+				});
+			}
+
+			if (url.endsWith("/login/oauth/access_token")) {
+				return jsonResponse({ access_token: "ghu_refresh_token" });
+			}
+
+			if (url.includes("/copilot_internal/v2/token")) {
+				return jsonResponse({
+					token: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
+					expires_at: 9999999999,
+				});
+			}
+
+			if (url.endsWith("/models")) {
+				return jsonResponse({ data: [] });
+			}
+
+			if (url.includes("/models/") && url.endsWith("/policy")) {
+				policyRequestCount += 1;
+				activePolicyRequests += 1;
+				maxActivePolicyRequests = Math.max(maxActivePolicyRequests, activePolicyRequests);
+				await new Promise<void>((resolve) => setTimeout(resolve, 10));
+				activePolicyRequests -= 1;
+				return new Response("", { status: 200 });
+			}
+
+			throw new Error(`Unexpected fetch URL: ${url}`);
+		});
+
+		vi.stubGlobal("fetch", fetchMock);
+
+		const loginPromise = loginGitHubCopilotForTest({
+			onDeviceCode: () => {},
+			onPrompt: async () => "",
+		});
+
+		await vi.advanceTimersByTimeAsync(0);
+		await vi.advanceTimersByTimeAsync(1000);
+		await vi.advanceTimersByTimeAsync(1000);
+		await loginPromise;
+
+		expect(policyRequestCount).toBeGreaterThan(4);
+		expect(maxActivePolicyRequests).toBe(4);
 	});
 
 	it("rejects a non-http(s) verification_uri before it reaches onDeviceCode", async () => {

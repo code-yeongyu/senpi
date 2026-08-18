@@ -44,6 +44,11 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			cwd: tempDir,
 			agentDir,
 			settingsManager,
+			noSkills: true,
+			extensionsOverride: (base) => ({
+				...base,
+				extensions: base.extensions.filter((extension) => extension.path === "<inline:1>"),
+			}),
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_start", () => {
@@ -86,34 +91,8 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 				.getAllTools()
 				.map((tool) => tool.name)
 				.sort(),
-		).toEqual([
-			"apply_patch",
-			"bash",
-			"create_goal",
-			"dynamic_tool",
-			"edit",
-			"find",
-			"get_goal",
-			"grep",
-			"look_at",
-			"ls",
-			"read",
-			"read_video",
-			"todo",
-			"update_goal",
-			"web_search",
-			"webfetch",
-			"write",
-		]);
-		expect(session.getActiveToolNames()).toEqual([
-			"todo",
-			"web_search",
-			"webfetch",
-			"create_goal",
-			"update_goal",
-			"get_goal",
-			"dynamic_tool",
-		]);
+		).toEqual(["bash", "dynamic_tool", "edit", "find", "grep", "ls", "read", "write"]);
+		expect(session.getActiveToolNames()).toEqual(["dynamic_tool"]);
 		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
 		expect(session.systemPrompt).not.toContain("- read:");
 		expect(session.systemPrompt).not.toContain("- bash:");
@@ -147,6 +126,7 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 
 		expect(session.getActiveToolNames()).toEqual([
 			"apply_patch",
+			"generate_image",
 			"todo",
 			"web_search",
 			"webfetch",

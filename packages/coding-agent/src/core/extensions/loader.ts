@@ -27,7 +27,7 @@ import { CONFIG_DIR_NAME, getAgentDir, isBunBinary } from "../../config.ts";
 // avoiding a circular dependency. Extensions can import from @code-yeongyu/senpi.
 import * as _bundledPiCodingAgent from "../../index.ts";
 import { resolvePath } from "../../utils/paths.ts";
-import { createEventBus, type EventBus } from "../event-bus.ts";
+import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { readPiManifest } from "../pi-manifest.ts";
@@ -248,6 +248,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 	// Shared sequence across the legacy and native pre-bind queues so flushers
 	// can replay registrations in original call order (last-registration-wins).
 	let nextProviderRegistrationOrder = 0;
+	const eventBusUnsubscribers = new Set<() => void>();
 	const assertActive = () => {
 		if (state.staleMessage) {
 			throw new Error(state.staleMessage);
@@ -281,9 +282,23 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		pendingNativeProviderRegistrations: [],
 		assertActive,
 		invalidate: (message) => {
-			state.staleMessage ??=
+			if (state.staleMessage) return;
+			state.staleMessage =
 				message ??
 				"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
+			for (const unsubscribe of eventBusUnsubscribers) unsubscribe();
+			eventBusUnsubscribers.clear();
+		},
+		trackEventBusSubscription: (unsubscribe) => {
+			let active = true;
+			const trackedUnsubscribe = () => {
+				if (!active) return;
+				active = false;
+				eventBusUnsubscribers.delete(trackedUnsubscribe);
+				unsubscribe();
+			};
+			eventBusUnsubscribers.add(trackedUnsubscribe);
+			return trackedUnsubscribe;
 		},
 		// Pre-bind: queue registrations so bindCore() can flush them once the
 		// model registry is available. bindCore() replaces both with direct calls.
@@ -344,6 +359,8 @@ function createExtensionAPI(
 	eventBus: EventBus,
 ): ExtensionAPI {
 	const api = {
+		cwd,
+
 		// Registration methods - write to extension
 		on(event: string, handler: HandlerFn): void {
 			runtime.assertActive();
@@ -354,6 +371,9 @@ function createExtensionAPI(
 
 		registerTool(tool: ToolDefinition): void {
 			runtime.assertActive();
+			if (tool.name === "tool_search" && extension.sourceInfo.source !== "builtin") {
+				throw new Error('Tool name "tool_search" is reserved for the builtin tool-search extension.');
+			}
 			extension.tools.set(tool.name, {
 				definition: tool,
 				sourceInfo: extension.sourceInfo,
@@ -561,7 +581,38 @@ function createExtensionAPI(
 			runtime.unregisterProvider(name, extension.path);
 		},
 
-		events: eventBus,
+		rpc: {
+			emit(name, data) {
+				runtime.assertActive();
+				const normalizedName = name.trim();
+				if (normalizedName.length === 0) throw new Error("RPC extension event name must not be empty");
+				eventBus.emit(EXTENSION_RPC_EVENT_CHANNEL, {
+					name: normalizedName,
+					data,
+				} satisfies ExtensionRpcEvent);
+			},
+			handle(name, handler) {
+				runtime.assertActive();
+				const normalizedName = name.trim();
+				if (normalizedName.length === 0) throw new Error("RPC extension request name must not be empty");
+				const handlers = extension.rpcHandlers ?? new Map();
+				if (handlers.has(normalizedName)) {
+					throw new Error(`RPC extension request handler already registered: ${normalizedName}`);
+				}
+				handlers.set(normalizedName, handler);
+				extension.rpcHandlers = handlers;
+			},
+		},
+		events: {
+			emit(channel, data) {
+				runtime.assertActive();
+				eventBus.emit(channel, data);
+			},
+			on(channel, handler) {
+				runtime.assertActive();
+				return runtime.trackEventBusSubscription(eventBus.on(channel, handler));
+			},
+		},
 	} as ExtensionAPI;
 
 	return api;
@@ -631,6 +682,7 @@ function createExtension(extensionPath: string, resolvedPath: string, registrati
 		messageRenderers: new Map(),
 		entryRenderers: undefined,
 		commands: new Map(),
+		rpcHandlers: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),
 		mcpServers: new Map(),
@@ -736,6 +788,7 @@ async function loadExtensionsInternal(
 		extensions,
 		errors,
 		runtime: resolvedRuntime,
+		eventBus: resolvedEventBus,
 	};
 }
 

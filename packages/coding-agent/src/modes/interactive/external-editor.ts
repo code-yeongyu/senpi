@@ -8,7 +8,10 @@ export interface ExternalEditorOptions {
 	content: string;
 }
 
-export type ExternalEditorResult = { status: "complete"; content: string } | { status: "failed" };
+export type ExternalEditorResult =
+	| { status: "complete"; content: string }
+	| { status: "failed" }
+	| { status: "launch-failed" };
 
 export async function editInExternalEditor(options: ExternalEditorOptions): Promise<ExternalEditorResult> {
 	const directory = mkdtempSync(join(tmpdir(), "pi-editor-"));
@@ -21,16 +24,22 @@ export async function editInExternalEditor(options: ExternalEditorOptions): Prom
 		// Do not use spawnSync here. On Windows, synchronous child_process calls can keep
 		// Node/libuv's console input read active after the parent pauses stdin, racing
 		// vim/nvim for the console input buffer until Ctrl+C cancels the pending read.
-		const exitCode = await new Promise<number | null>((resolve) => {
+		// Keep launch failures distinct from editor failures. Under process pressure,
+		// `error` can report EAGAIN before the editor starts; folding that into a
+		// nonzero exit makes callers and tests assume editor side effects occurred.
+		const outcome = await new Promise<{ launched: false } | { launched: true; code: number | null }>((resolve) => {
 			const child = spawn(editor, [...editorArgs, filePath], {
 				stdio: "inherit",
 				shell: process.platform === "win32",
 			});
-			child.on("error", () => resolve(null));
-			child.on("close", (code) => resolve(code));
+			child.on("error", () => resolve({ launched: false }));
+			child.on("close", (code) => resolve({ launched: true, code }));
 		});
 
-		if (exitCode !== 0) {
+		if (!outcome.launched) {
+			return { status: "launch-failed" };
+		}
+		if (outcome.code !== 0) {
 			return { status: "failed" };
 		}
 

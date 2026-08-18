@@ -1,4 +1,3 @@
-import { watch } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +5,6 @@ import { clearTimeout as clearRealTimeout, setTimeout as setRealTimeout } from "
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
-import { readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
 
 type AnyTool = ToolDefinition;
@@ -256,36 +254,6 @@ export function waitForEventCount(
 			clearRealTimeout(timeout);
 			timeout = undefined;
 			unsubscribe();
-			if (error === undefined) resolve();
-			else reject(error);
-		}
-	});
-}
-
-export function waitForGoalContinuationCount(ctx: ExtensionContext, expectedCount: number): Promise<void> {
-	const baseDir = join(ctx.sessionManager.getSessionDir(), "extensions", "goal");
-	const threadId = ctx.sessionManager.getSessionId();
-	const goalFileName = `${encodeURIComponent(threadId)}.json`;
-	return new Promise((resolve, reject) => {
-		let completed = false;
-		let timeout: ReturnType<typeof setRealTimeout> | undefined;
-		const watcher = watch(baseDir, { encoding: "utf8" }, (_eventType, changedFileName) => {
-			if (changedFileName !== goalFileName) return;
-			void readGoal({ baseDir, threadId }).then((goal) => {
-				if (goal?.consecutiveContinuations === expectedCount) complete();
-			}, complete);
-		});
-		timeout = setRealTimeout(
-			() => complete(new Error(`Timed out waiting for continuation count ${expectedCount}`)),
-			5_000,
-		);
-		watcher.once("error", complete);
-
-		function complete(error: Error | undefined = undefined): void {
-			if (completed) return;
-			completed = true;
-			if (timeout !== undefined) clearRealTimeout(timeout);
-			watcher.close();
 			if (error === undefined) resolve();
 			else reject(error);
 		}

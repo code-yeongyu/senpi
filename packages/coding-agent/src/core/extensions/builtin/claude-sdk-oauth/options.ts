@@ -230,7 +230,7 @@ export function buildClaudeSdkOauthQueryOptions(input: ClaudeSdkOauthQueryOption
 		});
 		if (deprecation !== undefined) input.onGuidance(deprecation);
 	}
-	const authLane = input.authLane ?? providerSettings.tokenInjection ?? "oauth-slots";
+	const authLane = input.authLane ?? providerSettings.tokenInjection ?? "ambient";
 	const append =
 		mode === "preset-append"
 			? [
@@ -255,6 +255,7 @@ export function buildClaudeSdkOauthQueryOptions(input: ClaudeSdkOauthQueryOption
 		canUseTool,
 		hooks: HOST_TOOL_DENIAL_HOOKS,
 		systemPrompt,
+		settings: { autoCompactEnabled: true },
 		settingSources: resolveSettingSources(providerSettings, mode, authLane),
 	};
 	if (input.pathToClaudeCodeExecutable) queryOptions.pathToClaudeCodeExecutable = input.pathToClaudeCodeExecutable;

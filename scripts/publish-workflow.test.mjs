@@ -10,6 +10,12 @@ const codingAgentPackage = JSON.parse(
 );
 
 describe("publish-only workflow", () => {
+	it("installs release dependencies without native lifecycle scripts", () => {
+		const installStep = workflow.match(/- name: Install dependencies[\s\S]*?(?=\n      - name: Build all workspaces)/)?.[0];
+		assert.ok(installStep, "expected dependency install step");
+		assert.match(installStep, /npm install --ignore-scripts --no-audit --no-fund/);
+	});
+
 	it("reuses the release validation instead of rerunning the full suite", () => {
 		const publishStep = workflow.match(/- name: Publish prepared version[\s\S]*?(?=\n      - name: Workflow summary)/)?.[0];
 		assert.ok(publishStep, "expected publish-only step");

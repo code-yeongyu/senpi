@@ -3,10 +3,20 @@
  */
 
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
-import type { Context, ImageContent, Model, ProviderNativeContent, StopReason, TextContent, Tool } from "../types.ts";
+import type {
+	Context,
+	ImageContent,
+	Model,
+	ProviderNativeContent,
+	StopReason,
+	StreamOptions,
+	TextContent,
+	Tool,
+} from "../types.ts";
+import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { normalizeToolCallId } from "../utils/tool-call-id.ts";
-import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 type GoogleApiType = "google-generative-ai" | "google-vertex";
@@ -70,7 +80,12 @@ function resolveThoughtSignature(isSameProviderAndModel: boolean, signature: str
  * Models via Google APIs that require explicit tool call IDs in function calls/responses.
  */
 export function requiresToolCallId(modelId: string): boolean {
-	return modelId.startsWith("claude-") || modelId.startsWith("gpt-oss-");
+	const geminiMajorVersion = getGeminiMajorVersion(modelId);
+	return (
+		modelId.startsWith("claude-") ||
+		modelId.startsWith("gpt-oss-") ||
+		(geminiMajorVersion !== undefined && geminiMajorVersion >= 3)
+	);
 }
 
 function getGeminiMajorVersion(modelId: string): number | undefined {
@@ -294,14 +309,78 @@ const JSON_SCHEMA_META_DECLARATIONS = new Set([
  * Strip meta-declarations from a schema obj
  */
 function sanitizeForOpenApi(schema: unknown): unknown {
-	if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
+	if (typeof schema !== "object" || schema === null) {
 		return schema;
+	}
+
+	if (Array.isArray(schema)) {
+		return schema.map(sanitizeForOpenApi);
 	}
 
 	const result: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(schema)) {
 		if (JSON_SCHEMA_META_DECLARATIONS.has(key)) continue;
 		result[key] = sanitizeForOpenApi(value);
+	}
+	return result;
+}
+
+/**
+ * Keywords whose values hold instance data, not subschemas. These must be
+ * passed through untouched so that e.g. `const: { optional: true }` is
+ * preserved as legitimate data.
+ */
+const SCHEMA_VALUE_KEYWORDS = new Set(["const", "default", "examples", "enum"]);
+
+/**
+ * Keywords whose values are maps of name → subschema (e.g. `properties`).
+ * The map keys are instance property / definition names and must be
+ * preserved even if one happens to be named `optional`.
+ */
+const SCHEMA_MAP_KEYS_STRIP = new Set(["properties", "patternProperties", "$defs", "definitions"]);
+
+/**
+ * Strip the non-standard 'optional' keyword from a JSON schema object.
+ *
+ * Position-aware: only strips `optional` when it appears as a schema keyword
+ * (a sibling of `type`, `properties`, etc.). Preserves `optional` when it is
+ * a property name inside `properties`/`patternProperties`/`$defs`/`definitions`,
+ * and does not traverse value keywords (`const`/`default`/`examples`/`enum`)
+ * whose contents are instance data, not subschemas.
+ */
+function stripOptional(schema: unknown): unknown {
+	if (typeof schema !== "object" || schema === null) {
+		return schema;
+	}
+
+	if (Array.isArray(schema)) {
+		return schema.map(stripOptional);
+	}
+
+	const result: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(schema)) {
+		// Strip the non-standard 'optional' keyword from schema keyword position.
+		if (key === "optional") continue;
+
+		// Value keywords hold instance data, not schemas — pass through untouched.
+		if (SCHEMA_VALUE_KEYWORDS.has(key)) {
+			result[key] = value;
+			continue;
+		}
+
+		// Map keys hold instance property names / definition names as keys.
+		// Preserve each key but recurse into the subschema value.
+		if (SCHEMA_MAP_KEYS_STRIP.has(key) && typeof value === "object" && value !== null && !Array.isArray(value)) {
+			const map: Record<string, unknown> = {};
+			for (const [name, subschema] of Object.entries(value as Record<string, unknown>)) {
+				map[name] = stripOptional(subschema);
+			}
+			result[key] = map;
+			continue;
+		}
+
+		// All other keywords hold schemas (or schema arrays) — recurse.
+		result[key] = stripOptional(value);
 	}
 	return result;
 }
@@ -317,17 +396,22 @@ function sanitizeForOpenApi(schema: unknown): unknown {
 export function convertTools(
 	tools: Tool[],
 	useParameters = false,
+	supportsStrictMode = true,
 ): { functionDeclarations: Record<string, unknown>[] }[] | undefined {
 	if (tools.length === 0) return undefined;
 	return [
 		{
-			functionDeclarations: tools.map((tool) => ({
-				name: tool.name,
-				description: tool.description,
-				...(useParameters
-					? { parameters: sanitizeForOpenApi(tool.parameters) }
-					: { parametersJsonSchema: tool.parameters }),
-			})),
+			functionDeclarations: tools.map((tool) => {
+				const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+				const parameters = getJsonSchemaToolParameters(tool, strict);
+				return {
+					name: tool.name,
+					description: tool.description,
+					...(useParameters
+						? { parameters: stripOptional(sanitizeForOpenApi(parameters)) }
+						: { parametersJsonSchema: stripOptional(parameters) }),
+				};
+			}),
 		},
 	];
 }
@@ -397,4 +481,49 @@ export function mapStopReason(reason: FinishReason): StopReason {
 			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
 		}
 	}
+}
+/**
+ * Map string finish reason to our StopReason (for raw API responses).
+ */
+export function mapStopReasonString(reason: string): StopReason {
+	switch (reason) {
+		case "STOP":
+			return "stop";
+		case "MAX_TOKENS":
+			return "length";
+		default:
+			return "error";
+	}
+}
+
+/**
+ * Run a Google GenAI SDK request with the shared provider retry policy
+ * (408/409/429/5xx with backoff, honoring retry-after), mirroring how the
+ * Anthropic and OpenAI adapters wrap their initial request in
+ * retryProviderRequest. The SDK's ApiError has a `status` property but no
+ * `headers` property, and retryProviderRequest only retries errors that carry
+ * both, so normalize the error by adding the missing `headers` before
+ * rethrowing.
+ */
+export function retryGoogleRequest<T>(
+	request: () => Promise<T>,
+	options?: Pick<StreamOptions, "maxRetries" | "maxRetryDelayMs" | "signal">,
+): Promise<T> {
+	return retryProviderRequest(
+		async () => {
+			try {
+				return await request();
+			} catch (error) {
+				if (error instanceof Error && "status" in error && !("headers" in error)) {
+					(error as { headers?: Headers }).headers = undefined;
+				}
+				throw error;
+			}
+		},
+		{
+			maxRetries: options?.maxRetries,
+			maxRetryDelayMs: options?.maxRetryDelayMs,
+			signal: options?.signal,
+		},
+	);
 }

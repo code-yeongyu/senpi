@@ -59,7 +59,7 @@ async function createCloudflareRuntime(): Promise<{ modelRuntime: ModelRuntime; 
 describe("ModelRegistry Cloudflare compat streaming", () => {
 	it("materializes the Cloudflare endpoint through ModelRuntime streaming", async () => {
 		const { modelRuntime } = await createCloudflareRuntime();
-		const model = modelRuntime.getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.5");
+		const model = modelRuntime.getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6");
 		expect(model).toBeDefined();
 
 		resetApiProviders();
@@ -75,13 +75,18 @@ describe("ModelRegistry Cloudflare compat streaming", () => {
 
 	it("materializes the Cloudflare endpoint after extension-style auth resolution", async () => {
 		const { modelRegistry } = await createCloudflareRuntime();
-		const model = modelRegistry.find("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.5");
+		const model = modelRegistry.find("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6");
 		expect(model).toBeDefined();
 
 		resetApiProviders();
 		const auth = await modelRegistry.getApiKeyAndHeaders(model!);
 		expect(auth.ok).toBe(true);
 		if (!auth.ok) throw new Error(auth.error);
+		expect(auth.headers).toMatchObject({
+			"cf-aig-authorization": "Bearer test-token",
+			Authorization: null,
+			"x-api-key": null,
+		});
 
 		await complete(model!, { messages: [] }, auth);
 
@@ -91,5 +96,7 @@ describe("ModelRegistry Cloudflare compat streaming", () => {
 		};
 		expect(clientOptions.baseURL).toBe("https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/compat");
 		expect(clientOptions.defaultHeaders?.["cf-aig-authorization"]).toBe("Bearer test-token");
+		expect(clientOptions.defaultHeaders?.Authorization).toBeNull();
+		expect(clientOptions.defaultHeaders?.["x-api-key"]).toBeNull();
 	});
 });

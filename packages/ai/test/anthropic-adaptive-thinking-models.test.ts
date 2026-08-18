@@ -35,6 +35,7 @@ const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
 	"vercel-ai-gateway/anthropic/claude-opus-4.8",
 	"vercel-ai-gateway/anthropic/claude-opus-4.8-fast",
 	"vercel-ai-gateway/anthropic/claude-opus-5",
+	"vercel-ai-gateway/anthropic/claude-opus-5-fast",
 	"vercel-ai-gateway/anthropic/claude-sonnet-4.6",
 	"vercel-ai-gateway/anthropic/claude-sonnet-5",
 ];

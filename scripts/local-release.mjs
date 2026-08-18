@@ -10,6 +10,7 @@ import { prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspace
 export { run } from "./local-release-runner.mjs";
 
 const packages = [
+	{ directory: "packages/telemetry", name: "@earendil-works/pi-telemetry" },
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
 	{ directory: "packages/pty", name: "@earendil-works/pi-pty" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
@@ -178,7 +179,9 @@ function packPackage(pkg, tarballDirectory) {
 		capture: true,
 		cwd: pkg.directory,
 	});
-	const packed = JSON.parse(output)[0];
+	// npm <11.6 returns an array; newer npm returns an object keyed by package name.
+	const parsed = JSON.parse(output);
+	const packed = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0];
 	return join(tarballDirectory, packed.filename);
 }
 

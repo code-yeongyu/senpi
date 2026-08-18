@@ -1,6 +1,6 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, existsSync } from "node:fs";
 import {
 	access,
 	appendFile,
@@ -10,11 +10,12 @@ import {
 	readdir,
 	readFile,
 	realpath,
+	rename,
 	rm,
 	writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import {
@@ -81,7 +82,7 @@ function fileInfoFromStats(
 	const kind = fileKindFromStats(stats);
 	if (!kind) return err(new FileError("invalid", "Unsupported file type", path));
 	return ok({
-		name: path.replace(/\/+$/, "").split("/").pop() ?? path,
+		name: basename(path),
 		path,
 		kind,
 		size: stats.size,
@@ -93,12 +94,14 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 	return error instanceof Error && "code" in error;
 }
 
-function toFileError(error: unknown, path?: string): FileError {
+function toFileError(error: unknown, fallbackPath?: string): FileError {
 	if (error instanceof FileError) return error;
 	const cause = toError(error);
-	if (isNodeError(error)) {
-		const message = error.message;
-		switch (error.code) {
+	const nodeError = isNodeError(error) ? error : undefined;
+	const path = typeof nodeError?.path === "string" ? nodeError.path : fallbackPath;
+	if (nodeError) {
+		const message = nodeError.message;
+		switch (nodeError.code) {
 			case "ABORT_ERR":
 				return new FileError("aborted", message, path, cause);
 			case "ENOENT":
@@ -247,17 +250,83 @@ function getShellEnv(
 	};
 }
 
+/**
+ * Ordered `taskkill` launchers to try, most reliable first.
+ *
+ * `spawn("taskkill", ...)` relies on a PATH lookup, so any session whose PATH lost
+ * `%SystemRoot%\System32` (a POSIX-style PATH inherited from a Git Bash/MSYS launcher,
+ * a truncated user PATH, a locked-down service account) fails to resolve it. A broken PATH
+ * must not cost us the process-tree kill, so every absolute System32 location that actually
+ * exists is tried before the bare PATH-resolved name.
+ */
+export function windowsTaskkillCandidates(env: NodeJS.ProcessEnv = process.env): string[] {
+	// A bare `SystemDrive` is drive-relative ("C:"), so anchor it before joining.
+	const systemDrive = env.SystemDrive ? `${env.SystemDrive}\\` : undefined;
+	const roots = [env.SystemRoot, env.SYSTEMROOT, env.windir, systemDrive && join(systemDrive, "Windows")];
+	const candidates: string[] = [];
+	for (const root of roots) {
+		if (!root) continue;
+		// Sysnative reaches the real 64-bit System32 from a 32-bit process, where System32
+		// is redirected to SysWOW64.
+		for (const systemDir of ["System32", "Sysnative"]) {
+			const absolute = join(root, systemDir, "taskkill.exe");
+			if (!candidates.includes(absolute) && existsSync(absolute)) candidates.push(absolute);
+		}
+	}
+	candidates.push("taskkill.exe");
+	return candidates;
+}
+
+function killProcessDirectly(pid: number): void {
+	try {
+		process.kill(pid);
+	} catch {
+		// Process already dead.
+	}
+}
+
+/** Upper bound on how long a teardown may block waiting for `taskkill` to finish. */
+const TASKKILL_TIMEOUT_MS = 5_000;
+
+function taskkillHandledTree(pid: number, taskkillPath: string): boolean {
+	try {
+		const result = spawnSync(taskkillPath, ["/F", "/T", "/PID", String(pid)], {
+			stdio: "ignore",
+			windowsHide: true,
+			timeout: TASKKILL_TIMEOUT_MS,
+		});
+		// `error` means the launcher never started (ENOENT, EACCES); a null status means
+		// the timeout killed it. Any real taskkill exit code counts as handled.
+		return result.error === undefined && result.status !== null;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Kill a process and all its children on Windows via `taskkill /T`.
+ *
+ * Synchronous on purpose. A caller that tears down and exits in the same tick would never
+ * observe an asynchronous killer's `error` event, leaving the target alive. `spawnSync`
+ * also reports a failed executable lookup on its returned `error` field instead of
+ * emitting it, so a PATH without `%SystemRoot%\System32` can no longer surface as an
+ * uncaught `spawn taskkill ENOENT`.
+ *
+ * The direct `process.kill` at the end is a degraded last resort reached only when no
+ * `taskkill.exe` can be launched at all. It maps to `TerminateProcess`, which does not
+ * touch descendants; nothing in-process can walk a Windows process tree without an
+ * external tool, so this still beats leaving the whole tree running.
+ */
+export function killWindowsProcessTree(pid: number, taskkillPaths = windowsTaskkillCandidates()): void {
+	for (const taskkillPath of taskkillPaths) {
+		if (taskkillHandledTree(pid, taskkillPath)) return;
+	}
+	killProcessDirectly(pid);
+}
+
 function killProcessTree(pid: number): void {
 	if (process.platform === "win32") {
-		try {
-			spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {
-				stdio: "ignore",
-				detached: true,
-				windowsHide: true,
-			});
-		} catch {
-			// Ignore errors.
-		}
+		killWindowsProcessTree(pid);
 		return;
 	}
 
@@ -576,6 +645,23 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			return ok(undefined);
 		} catch (error) {
 			return err(toFileError(error, resolved));
+		}
+	}
+
+	async renameFile(
+		sourcePath: string,
+		destinationPath: string,
+		abortSignal?: AbortSignal,
+	): Promise<Result<void, FileError>> {
+		const source = resolvePath(this.cwd, sourcePath);
+		const destination = resolvePath(this.cwd, destinationPath);
+		const aborted = abortResult<void>(abortSignal, destination);
+		if (aborted) return aborted;
+		try {
+			await rename(source, destination);
+			return ok(undefined);
+		} catch (error) {
+			return err(toFileError(error, source));
 		}
 	}
 

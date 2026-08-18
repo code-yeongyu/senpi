@@ -29,6 +29,8 @@ function runtime(
 	return {
 		session: {
 			sessionManager: options.sessionManager,
+			// Projected into the `open_session` wire state, which shares one builder with get_state.
+			isFastModeActive: () => false,
 			extensionRunner: { hasHandlers: () => false, emit: async () => {} },
 			abort: async () => {},
 			abortBash: () => {},
@@ -197,6 +199,20 @@ describe("RPC session registry", () => {
 	test("returns unknown_session for an unknown or terminal handle", async () => {
 		const { dir, registry } = await createRegistry();
 		await expect(registry.close("does-not-exist")).rejects.toMatchObject({ code: "unknown_session" });
+		const router = new SessionCommandRouter(registry, new SessionEventWriter(() => {}), { cwd: dir });
+		expect(
+			await router.handle({
+				id: "missing-surfaces",
+				type: "get_loaded_surfaces",
+				sessionId: "does-not-exist",
+			}),
+		).toEqual({
+			id: "missing-surfaces",
+			type: "response",
+			command: "get_loaded_surfaces",
+			success: false,
+			error: "unknown_session",
+		});
 		const opened = await registry.openSession(profile(dir, join(dir, "closed.jsonl")));
 		await registry.close(opened.sessionId);
 		await expect(registry.close(opened.sessionId)).rejects.toMatchObject({ code: "unknown_session" });

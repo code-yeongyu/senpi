@@ -24,6 +24,7 @@ type SetCustomEditorComponentThis = {
 	keybindings: KeybindingsManager;
 	ui: TUI;
 	getExpandedEditorText: () => string;
+	disposeActiveSelector(): void;
 };
 
 function prototypeMethod<T>(name: string): T {
@@ -62,6 +63,7 @@ function makeFakeThis(): SetCustomEditorComponentThis {
 		keybindings: new KeybindingsManager(),
 		ui,
 		getExpandedEditorText: prototypeMethod<(this: SetCustomEditorComponentThis) => string>("getExpandedEditorText"),
+		disposeActiveSelector: () => {},
 	};
 	fakeThis.editorContainer.addChild(defaultEditor);
 	return fakeThis;

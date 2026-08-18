@@ -6,15 +6,25 @@
 
 import { describe, expect, it } from "vitest";
 import {
-	type Bm25Doc,
 	buildBm25Index,
 	normalizeToolName,
 	tokenizeToolText,
-} from "../../src/core/extensions/builtin/mcp/expose/bm25.ts";
+} from "../../src/core/extensions/builtin/tool-search/engine/bm25.ts";
+import type { ToolSearchDocument } from "../../src/core/extensions/builtin/tool-search/engine/document.ts";
 
-function doc(name: string, description: string, server = "docs"): Bm25Doc {
-	const toolName = name.replace(/^mcp_[^_]+_/, "");
-	return { name, toolName, description, server };
+function doc(name: string, description: string, group = "docs"): ToolSearchDocument {
+	const label = name.replace(/^mcp_[^_]+_/, "");
+	return {
+		name,
+		label,
+		aliases: [label],
+		description,
+		keywords: [],
+		source: "mcp",
+		group,
+		ownerLabel: group,
+		registrationId: `mcp\0${group}\0${label}`,
+	};
 }
 
 describe("todo30 bm25: tokenizer", () => {
@@ -37,7 +47,7 @@ describe("todo30 bm25: exact-name short-circuit before BM25", () => {
 		// description so BM25 length-normalisation (b=0.4) tanks its per-term
 		// score, while a terser decoy with the same query tokens outscores it.
 		const filler = new Array(40).fill("alpha beta gamma delta epsilon zeta eta theta").join(" ");
-		const corpus: Bm25Doc[] = [
+		const corpus: ToolSearchDocument[] = [
 			doc("mcp_docs_get-library-docs", `get library docs ${filler}`),
 			// Decoy: matches get/library/docs on its name, short document -> higher raw BM25.
 			doc("mcp_docs_get_library_docs_helper", "get library docs"),
@@ -78,15 +88,10 @@ describe("todo30 bm25: relevance sanity (10 queries x 50-tool corpus)", () => {
 		"fetch-table",
 		"resolve-session",
 	];
-	const corpus: Bm25Doc[] = [];
+	const corpus: ToolSearchDocument[] = [];
 	for (const server of servers) {
 		for (const pair of pairs) {
-			corpus.push({
-				name: `mcp_${server}_${pair}`,
-				toolName: pair,
-				description: `${pair.replace("-", " a ")} on the ${server} server`,
-				server,
-			});
+			corpus.push(doc(`mcp_${server}_${pair}`, `${pair.replace("-", " a ")} on the ${server} server`, server));
 		}
 	}
 	const index = buildBm25Index(corpus);
@@ -108,9 +113,9 @@ describe("todo30 bm25: relevance sanity (10 queries x 50-tool corpus)", () => {
 	}
 
 	it("server filter narrows results to a single server", () => {
-		const results = index.search("get", 20, { server: "github" });
+		const results = index.search("get", 20, { group: "github" });
 		expect(results.length).toBeGreaterThan(0);
-		expect(results.every((r) => r.doc.server === "github")).toBe(true);
+		expect(results.every((r) => r.doc.group === "github")).toBe(true);
 	});
 });
 
@@ -130,7 +135,7 @@ describe("todo30 bm25: empty / garbage queries", () => {
 
 describe("todo30 bm25: determinism + perf", () => {
 	it("ranking is deterministic and tie-breaks by name", () => {
-		const corpus: Bm25Doc[] = [
+		const corpus: ToolSearchDocument[] = [
 			doc("mcp_docs_b_tool", "same words here"),
 			doc("mcp_docs_a_tool", "same words here"),
 			doc("mcp_docs_c_tool", "same words here"),
@@ -144,14 +149,15 @@ describe("todo30 bm25: determinism + perf", () => {
 	});
 
 	it("5k-tool corpus search is under 100ms (loose bound)", () => {
-		const corpus: Bm25Doc[] = [];
+		const corpus: ToolSearchDocument[] = [];
 		for (let i = 0; i < 5000; i += 1) {
-			corpus.push({
-				name: `mcp_s${i % 20}_tool-number-${i}`,
-				toolName: `tool-number-${i}`,
-				description: `synthetic tool ${i} performing operation ${i % 7} on resource ${i % 13}`,
-				server: `s${i % 20}`,
-			});
+			corpus.push(
+				doc(
+					`mcp_s${i % 20}_tool-number-${i}`,
+					`synthetic tool ${i} performing operation ${i % 7} on resource ${i % 13}`,
+					`s${i % 20}`,
+				),
+			);
 		}
 		const index = buildBm25Index(corpus);
 		// Warm up (JIT + first-query index touch).

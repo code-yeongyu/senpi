@@ -49,13 +49,20 @@ describe("MCP catalog + registerTool bridge", () => {
 		await awaitMcpToolRegistration("fx");
 
 		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual([
+			"tool_search",
 			"mcp_fx_tool_1",
 			"mcp_fx_tool_2",
 			"mcp_fx_tool_3",
 			"mcp_fx_tool_4",
 			"mcp_fx_tool_5",
 		]);
-		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(withoutMcpUtilityTools(pi.registeredTools));
+		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual([
+			"mcp_fx_tool_1",
+			"mcp_fx_tool_2",
+			"mcp_fx_tool_3",
+			"mcp_fx_tool_4",
+			"mcp_fx_tool_5",
+		]);
 	});
 
 	it("runs a model turn through the registered MCP tool and returns fixture payload", async () => {
@@ -63,7 +70,7 @@ describe("MCP catalog + registerTool bridge", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "5"]) });
 		const providerToolNames: string[][] = [];
 		const harness = await createHarness({
-			extensionFactories: [mcpExtensionFor(root.agentDir)],
+			extensionFactories: [{ factory: mcpExtensionFor(root.agentDir), path: "<builtin:mcp>" }],
 		});
 		harnesses.push(harness);
 		await attachHarnessSession(harness, "fx");
@@ -86,7 +93,9 @@ describe("MCP catalog + registerTool bridge", () => {
 	it("surfaces MCP isError as an exact model-visible tool error result", async () => {
 		const root = mcpRoot("iserror");
 		setConfig(root, { fx: stdioServer(["--tools", "0", "--iserror-tool"]) });
-		const harness = await createHarness({ extensionFactories: [mcpExtensionFor(root.agentDir)] });
+		const harness = await createHarness({
+			extensionFactories: [{ factory: mcpExtensionFor(root.agentDir), path: "<builtin:mcp>" }],
+		});
 		harnesses.push(harness);
 		await attachHarnessSession(harness, "fx");
 		harness.setResponses([
@@ -167,7 +176,7 @@ describe("MCP catalog + registerTool bridge", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "5"]) });
 		const providerToolNames: string[][] = [];
 		const harness = await createHarness({
-			extensionFactories: [mcpExtensionFor(root.agentDir, ["mcp_fx_tool_1"])],
+			extensionFactories: [{ factory: mcpExtensionFor(root.agentDir, ["mcp_fx_tool_1"]), path: "<builtin:mcp>" }],
 		});
 		harnesses.push(harness);
 		await attachHarnessSession(harness, "fx");

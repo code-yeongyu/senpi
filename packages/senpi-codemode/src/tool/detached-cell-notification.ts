@@ -66,6 +66,7 @@ function textContent(cell: EvalDetachedCellSnapshot): string {
 }
 
 function outcomeOf(cell: EvalDetachedCellSnapshot): string {
+	if (cell.hardLimitSeconds !== undefined) return `was killed at the ${cell.hardLimitSeconds}s hard limit`;
 	if (cell.state === "completed") return "completed";
 	if (cell.state === "cancelled") return "cancelled";
 	return "failed";

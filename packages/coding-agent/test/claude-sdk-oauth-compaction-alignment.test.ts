@@ -220,7 +220,11 @@ describe("claude-sdk-oauth lane: senpi compaction stands down", () => {
 
 		const result = await harness.sessionBeforeCompact(beforeCompactEvent(), harness.ctx);
 
-		expect(result).toMatchObject({ cancel: true, reason: SDK_NATIVE_LANE_REJECTION_REASON });
+		expect(result).toMatchObject({
+			cancel: true,
+			reason: SDK_NATIVE_LANE_REJECTION_REASON,
+			rejectionCause: "external-owner",
+		});
 	});
 
 	it("leaves context messages untouched while the same load reduces them for other providers", () => {

@@ -4,6 +4,7 @@ import type {
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
 	Context,
+	CursorExecHandlers,
 	ImageContent,
 	Message,
 	Model,
@@ -63,6 +64,11 @@ export type AgentToolCall = Extract<AssistantMessage["content"][number], { type:
 export interface BeforeToolCallResult {
 	block?: boolean;
 	reason?: string;
+	/**
+	 * Hint that the agent should stop after the current tool batch when this call is blocked.
+	 * Early termination only happens when every finalized tool result in the batch sets this to true.
+	 */
+	terminate?: boolean;
 }
 
 /**
@@ -147,6 +153,18 @@ export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {}
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
+
+	/**
+	 * Cursor exec-channel tool handlers (cursor-agent models only).
+	 *
+	 * Cursor's server-driven protocol executes tools MID-STREAM: the server
+	 * blocks on an in-band reply, so the provider runs these handlers while
+	 * the Run stream is open, synthesizes already-resolved `toolCall` blocks
+	 * (marked `kCursorExecResolved`, which this loop skips), and buffers each
+	 * paired `ToolResultMessage` for emission right after the assistant
+	 * message. Other providers ignore this field.
+	 */
+	cursorExecHandlers?: CursorExecHandlers;
 
 	/**
 	 * Maximum time in milliseconds to wait for the FIRST provider stream event.
@@ -296,9 +314,21 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	removedToolHints?: Record<string, string>;
 
 	/**
+	 * Called when a model names a tool absent from the current context snapshot.
+	 * Return a newly available tool to continue normal validation and execution, or
+	 * undefined to emit the existing unknown-tool result. Hosts may use this to
+	 * activate a registered lazy tool at call time.
+	 */
+	resolveUnknownToolCall?: (
+		toolName: string,
+		context: AgentContext,
+	) => AgentTool | undefined | Promise<AgentTool | undefined>;
+
+	/**
 	 * Called before a tool is executed, after arguments have been validated.
 	 *
 	 * Return `{ block: true }` to prevent execution. The loop emits an error tool result instead.
+	 * A blocked result can also set `terminate: true` to participate in the batch early-termination rule.
 	 * The hook receives the agent abort signal and is responsible for honoring it.
 	 */
 	beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;

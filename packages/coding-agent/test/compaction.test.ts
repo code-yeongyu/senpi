@@ -232,6 +232,7 @@ function captureCompactionHandlers(): CapturedCompactionHandlers {
 	let messageEnd: MessageEndHandler | undefined;
 	let modelSelect: ModelSelectHandler | undefined;
 	const api: ExtensionAPI = Object.assign(Object.create(null), {
+		cwd: "/tmp/senpi-compaction-test",
 		on: (event: string, currentHandler: BeforeAgentStartHandler | MessageEndHandler | ModelSelectHandler) => {
 			if (event === "before_agent_start") {
 				beforeAgentStart = currentHandler as BeforeAgentStartHandler;

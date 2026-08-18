@@ -58,7 +58,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 
 	describe("Anthropic Provider", () => {
 		it.skipIf(!process.env.ANTHROPIC_API_KEY)(
-			"should use default 1h cache TTL when PI_CACHE_RETENTION is not set",
+			"should use default 5m cache TTL when PI_CACHE_RETENTION is not set",
 			async () => {
 				const model = getModel("anthropic", "claude-haiku-4-5");
 				let capturedPayload: any = null;
@@ -76,7 +76,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 
 				expect(capturedPayload).not.toBeNull();
 				expect(capturedPayload.system).toBeDefined();
-				expect(capturedPayload.system[0].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+				expect(capturedPayload.system[0].cache_control).toEqual({ type: "ephemeral" });
 			},
 		);
 
@@ -102,7 +102,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload.system[0].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
 		});
 
-		it("defaults to 1h cache TTL on the canonical Anthropic API when cacheRetention is omitted", async () => {
+		it("defaults to 5m cache TTL on the canonical Anthropic API when cacheRetention is omitted", async () => {
 			const baseModel = getModel("anthropic", "claude-haiku-4-5");
 			let capturedPayload: AnthropicCachePayload | undefined;
 
@@ -122,7 +122,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			}
 
 			expect(capturedPayload).toBeDefined();
-			expect(capturedPayload?.system?.[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+			expect(capturedPayload?.system?.[0]?.cache_control).toEqual({ type: "ephemeral" });
 		});
 
 		it("uses short cache retention when PI_CACHE_RETENTION explicitly opts out", async () => {
@@ -271,7 +271,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			const lastMessage = capturedPayload.messages[capturedPayload.messages.length - 1];
 			expect(Array.isArray(lastMessage.content)).toBe(true);
 			const lastBlock = lastMessage.content[lastMessage.content.length - 1];
-			expect(lastBlock.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+			expect(lastBlock.cache_control).toEqual({ type: "ephemeral" });
 		});
 
 		it("should set 1h cache TTL when cacheRetention is long", async () => {

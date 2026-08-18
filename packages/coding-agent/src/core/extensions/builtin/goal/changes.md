@@ -1,5 +1,75 @@
 # goal Extension Changes
 
+## External continuation holds pause Goal monitor recovery until release (2026-08-18)
+
+### What changed
+
+- Goal now subscribes to the shared `continuation_hold_state` event through a
+  focused channel-subscription module. An active source maps to the existing
+  `holdDirectInput("external:<source>")` mechanism; release maps to
+  `resolveDirectInput(..., false)`.
+- Existing terminal-monitor and `wake_source_state` subscriptions moved into
+  the same helper without changing their count or timer semantics.
+
+### Why
+
+- A wake source deliberately schedules periodic Goal continuation while work is
+  live. Loop-guard's post-recovery hard stop needs the opposite contract:
+  preserve the active Goal but prevent every automatic continuation until real
+  input releases ownership.
+
+### Why an extension could not handle it
+
+- The continuation timer and direct-input hold set are private to Goal. A
+  generic event is the narrow boundary that lets another builtin claim and
+  release terminal ownership without importing Goal internals or changing Goal
+  status.
+
+### Expected merge conflict zones
+
+- LOW in `monitor-continuation.ts` channel subscription wiring; LOW in the new
+  `channel-state-subscriptions.ts`; LOW in wake-source tests.
+
+## Claude SDK OAuth account exhaustion blocks the goal (2026-08-14)
+
+### What changed
+
+- `didTerminalProviderErrorEndTurn` now also classifies the claude-sdk-oauth account-rotating proxy's total-exhaustion response as a terminal provider error. The proxy returns it as an assistant message with `stopReason: "stop"` and zero usage, so it previously slipped past the stopReason checks and the goal kept auto-continuing.
+- The match requires `api: "claude-sdk-oauth"`, `stopReason: "stop"`, and both stable phrases (`API Error: Server is temporarily limiting requests` and `accounts exhausted`); the account count and the `Retry in NNNs` suffix vary and are not matched.
+
+### Why
+
+- An active goal treated the exhaustion response as a clean turn end and queued another hidden continuation, looping failed zero-token requests until the continuation cap fired. The goal now blocks mechanically and resumes on the next accepted user message.
+
+### Why an extension could not handle it
+
+- Terminal provider-error classification lives in this builtin's `terminal-provider-error.ts`; an external extension cannot intercept the goal's block decision.
+
+### Expected merge conflict zones
+
+- LOW: `terminal-provider-error.ts` classification; LOW in `goal-extension.test.ts`.
+
+## Explicit resume revives completed goals (2026-08-11)
+
+### What changed
+
+- User-originated status mutations may transition a completed goal back to `active`, so `/goal resume` and app-server `thread/goal/set {status:"active"}` revive the existing goal and queue the normal continuation path.
+- Resuming clears `completedAt`, stamps `lastStartedAt`, and resets persisted continuation streak state through the existing status-transition behavior.
+- Model-originated transitions remain unchanged, `complete -> paused` remains illegal, and restart-resume prompting still excludes completed goals.
+
+### Why
+
+Codex permits an explicit user action to reactivate a completed thread goal. Senpi parsed `/goal resume` and wired continuation delivery correctly, but its user transition guard rejected `complete -> active` before that path could run.
+
+### Why this is not extension-only
+
+The transition guard is private to the builtin goal store and controls both the command and app-server wire paths. An external extension cannot authorize a new persisted status edge.
+
+### Merge-conflict zones
+
+- LOW in `transitions.ts` around the user transition set.
+- LOW in goal store and command-path tests covering completed-goal resume.
+
 ## Serialized goal mutations and stale-continuation cancellation (2026-08-10)
 
 ### What changed
@@ -550,6 +620,30 @@ surface; no core extension API change is required.
   todo tool itself.
 
 ## Cache-warm continuation story: enriched events + durable entry + TUI renderer (2026-07-29)
+
+### Follow-up: expected-ready timestamps in cache-warm status (2026-08-13)
+
+- Scheduled cache-warm pi-events and durable `goal-cache-warmup` entries now carry an optional
+  additive `dueAtMs` epoch timestamp derived from the producer's scheduling clock and `delayMs`.
+  RPC consumers no longer need to approximate the completion point from receipt time.
+- The TUI renderer names that expected UTC completion point and keeps the planned or actual
+  elapsed duration in parentheses. Legacy entries and invalid timestamps retain the existing
+  elapsed-only `waited ...` wording.
+- The schedule payload builder lives in `cache-warm.ts` so the already oversized monitor
+  orchestrator does not absorb another formatting/contract responsibility.
+- Coverage: `goal-cache-warmup.test.ts`, `goal-monitor-rpc-notice.test.ts`, and
+  `goal-cache-warm-renderer.test.ts`.
+
+#### Why this lives in the fork
+
+- Cache-warm continuation entries, monitor-aware scheduling, and their TUI renderer are
+  fork-owned builtin Goal behavior. A consumer extension cannot amend an already-emitted
+  durable entry with the producer's authoritative due timestamp.
+
+#### Expected merge conflict zones on the next sync
+
+- LOW in `cache-warm.ts` and `cache-warm-renderer.ts`, both fork-owned cache-warm surfaces.
+- LOW in `monitor-continuation.ts` around the scheduled payload construction.
 
 ### What changed
 

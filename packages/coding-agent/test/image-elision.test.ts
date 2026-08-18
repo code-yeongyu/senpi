@@ -159,6 +159,68 @@ describe("elideOldImages", () => {
 
 		expect(result.map((message) => (message.content as Array<{ type: string }>)[0].type)).toEqual(["text", "image"]);
 	});
+
+	it("elides old images while preserving recent history and the current turn", () => {
+		const messages = [
+			{ role: "user", content: [img("old-a")] },
+			{ role: "assistant", content: [{ type: "text", text: "analyzed a" }] },
+			{ role: "user", content: [img("old-b")] },
+			{ role: "assistant", content: [{ type: "text", text: "analyzed b" }] },
+			{ role: "user", content: [img("recent-history")] },
+			{ role: "assistant", content: [{ type: "text", text: "analyzed recent" }] },
+			{ role: "user", content: [img("current-a"), img("current-b")] },
+		] as unknown as Message[];
+
+		const result = elideOldImages(messages, {
+			budgetBytes: Number.POSITIVE_INFINITY,
+			alwaysKeepNewest: 0,
+			maxHistoricalImages: 1,
+		});
+
+		expect(result[0].content).toEqual([{ type: "text", text: IMAGE_ELISION_PLACEHOLDER }]);
+		expect(result[2].content).toEqual([{ type: "text", text: IMAGE_ELISION_PLACEHOLDER }]);
+		expect(result[4].content).toEqual([img("recent-history")]);
+		expect(result[6].content).toEqual([img("current-a"), img("current-b")]);
+	});
+
+	it("preserves tool result identity when an historical image is elided", () => {
+		const messages = [
+			toolResult(img("old"), { type: "text", text: "OCR result" }),
+			{ role: "assistant", content: [{ type: "text", text: "used OCR" }] },
+			{ role: "user", content: [{ type: "text", text: "continue" }] },
+		] as unknown as Message[];
+
+		const result = elideOldImages(messages, {
+			budgetBytes: Number.POSITIVE_INFINITY,
+			alwaysKeepNewest: 0,
+			maxHistoricalImages: 0,
+		});
+
+		expect(result[0]).toMatchObject({
+			role: "toolResult",
+			toolCallId: "c1",
+			toolName: "read",
+			content: [
+				{ type: "text", text: IMAGE_ELISION_PLACEHOLDER },
+				{ type: "text", text: "OCR result" },
+			],
+		});
+	});
+
+	it("keeps existing behavior when no historical image limit is configured", () => {
+		const messages = [
+			{ role: "user", content: [img("old")] },
+			{ role: "assistant", content: [{ type: "text", text: "analyzed" }] },
+			{ role: "user", content: [img("current")] },
+		] as unknown as Message[];
+
+		expect(
+			elideOldImages(messages, {
+				budgetBytes: Number.POSITIVE_INFINITY,
+				alwaysKeepNewest: 0,
+			}),
+		).toBe(messages);
+	});
 });
 
 describe("convertToLlmForTransport", () => {

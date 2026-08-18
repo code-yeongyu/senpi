@@ -9,7 +9,7 @@ import { createHarness, type Harness } from "../harness.ts";
 
 const DEFAULT_PROVIDER_IDLE_TIMEOUT_MS = 300_000;
 const DEFAULT_STREAM_START_TIMEOUT_MS = 90_000;
-const RETRY_PROVIDER_TIMEOUT_MS = 30_000;
+const RETRY_CONTINUATION_BOUND_MS = 30_000;
 
 function createAssistantStream(): EventStream<AssistantMessageEvent, AssistantMessage> {
 	return new EventStream<AssistantMessageEvent, AssistantMessage>(
@@ -61,7 +61,7 @@ describe("provider idle recovery", () => {
 		}
 	});
 
-	it("uses the configured provider stream retry cap", async () => {
+	it("keeps the configured provider timeouts on the retry request", async () => {
 		const harness = await createHarness({
 			settings: {
 				retry: {
@@ -86,12 +86,12 @@ describe("provider idle recovery", () => {
 
 		expect(harness.faux.getCallLog().map((call) => call.options?.timeoutMs)).toEqual([
 			DEFAULT_PROVIDER_IDLE_TIMEOUT_MS,
-			45_000,
+			DEFAULT_PROVIDER_IDLE_TIMEOUT_MS,
 			DEFAULT_PROVIDER_IDLE_TIMEOUT_MS,
 		]);
 		expect(harness.faux.getCallLog().map((call) => getStreamStartTimeoutMs(call.options))).toEqual([
 			DEFAULT_STREAM_START_TIMEOUT_MS,
-			45_000,
+			DEFAULT_STREAM_START_TIMEOUT_MS,
 			DEFAULT_STREAM_START_TIMEOUT_MS,
 		]);
 	});
@@ -167,7 +167,7 @@ describe("provider idle recovery", () => {
 		}
 	});
 
-	it("expires a no-first-event retry at the retry cap instead of the configured start timeout", async () => {
+	it("expires a no-first-event retry at the continuation bound without shortening the provider guards", async () => {
 		vi.useFakeTimers();
 		const harness = await createHarness({
 			settings: { retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 } },
@@ -208,7 +208,7 @@ describe("provider idle recovery", () => {
 			await retryStarted;
 			await vi.runOnlyPendingTimersAsync();
 			await secondRequestStarted.promise;
-			await vi.advanceTimersByTimeAsync(RETRY_PROVIDER_TIMEOUT_MS - 1);
+			await vi.advanceTimersByTimeAsync(RETRY_CONTINUATION_BOUND_MS - 1);
 			expect(harness.eventsOfType("auto_retry_end")).toEqual([]);
 
 			await vi.advanceTimersByTimeAsync(1);
@@ -220,16 +220,11 @@ describe("provider idle recovery", () => {
 					timeoutMs: DEFAULT_PROVIDER_IDLE_TIMEOUT_MS,
 					streamStartTimeoutMs: DEFAULT_STREAM_START_TIMEOUT_MS,
 				},
-				{ timeoutMs: RETRY_PROVIDER_TIMEOUT_MS, streamStartTimeoutMs: RETRY_PROVIDER_TIMEOUT_MS },
+				{
+					timeoutMs: DEFAULT_PROVIDER_IDLE_TIMEOUT_MS,
+					streamStartTimeoutMs: DEFAULT_STREAM_START_TIMEOUT_MS,
+				},
 			]);
-			const finalAssistant = harness
-				.eventsOfType("message_end")
-				.map((event) => event.message)
-				.filter((message): message is AssistantMessage => message.role === "assistant")
-				.at(-1);
-			expect(finalAssistant?.errorMessage).toBe(
-				`Provider stream start timed out after ${RETRY_PROVIDER_TIMEOUT_MS}ms`,
-			);
 		} finally {
 			if (harness.session.isStreaming) await harness.session.abort();
 			await prompt;

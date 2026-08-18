@@ -25,12 +25,19 @@ The first present key wins; `devenv-setup.mjs` seeds `.env.local` from it.
 `ANTHROPIC_API_KEY`, `ANTHROPIC_OAUTH_TOKEN`, `OPENAI_API_KEY`, `OLLAMA_API_KEY`,
 `AZURE_OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `NVIDIA_API_KEY`, `GEMINI_API_KEY`,
 `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY`, `FIREWORKS_API_KEY`,
-`TOGETHER_API_KEY`, `OPENROUTER_API_KEY`, `AI_GATEWAY_API_KEY`, `ZAI_API_KEY`,
+`TOGETHER_API_KEY`, `OPENROUTER_API_KEY`, `AI_GATEWAY_API_KEY`, `OPENGATEWAY_API_KEY`,
+`ZAI_API_KEY`,
 `MISTRAL_API_KEY`, `MINIMAX_API_KEY`, `MOONSHOT_API_KEY`, `KIMI_API_KEY`,
 `OPENCODE_API_KEY`, `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID` /
 `CLOUDFLARE_GATEWAY_ID`), `XIAOMI_API_KEY` (+ regional token-plan keys),
 `ALIBABA_TOKEN_PLAN_API_KEY`,
 `HF_TOKEN`, and the AWS Bedrock / Google Vertex variable sets.
+
+OAuth-only subscription providers have no env key: `openai-codex` and
+`cursor` (Cursor's model catalog is per account, discovered via
+`GetUsableModels` after `/login cursor`; chat rides the `cursor-agent`
+HTTP/2 Connect protocol, which the standard OpenAI/Anthropic mock-loop
+channels do not emulate).
 
 When you add a provider, add its key here AND to the `.devcontainer`
 `secrets` block AND keep `env-api-keys.ts` as the source of truth.

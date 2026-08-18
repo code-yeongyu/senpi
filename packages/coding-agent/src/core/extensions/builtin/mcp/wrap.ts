@@ -3,6 +3,7 @@ export { Server } from "@modelcontextprotocol/sdk/server/index.js";
 export type { CallToolResult, ListToolsResult } from "@modelcontextprotocol/sdk/types.js";
 
 import type { EventEmitter } from "node:events";
+import type { EventBus } from "../../../event-bus.ts";
 import { redactMcpLogText } from "./log.ts";
 
 type MaybePromise<T> = T | Promise<T>;
@@ -79,6 +80,10 @@ export function safeOn(
 	return () => {
 		emitter.off(eventName, wrapped);
 	};
+}
+
+export function safeEventBusOn(bus: EventBus, channel: string, handler: (data: unknown) => void): () => void {
+	return bus.on(channel, handler);
 }
 
 export async function reportMcpAsyncError(scope: string, error: unknown, sink: McpAsyncErrorSink): Promise<void> {

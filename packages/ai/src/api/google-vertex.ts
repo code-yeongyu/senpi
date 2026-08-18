@@ -37,6 +37,7 @@ import {
 	mapStopReason,
 	resolveGoogleFunctionCallingMode,
 	retainThoughtSignature,
+	retryGoogleRequest,
 	supportsGoogleStrictToolSampling,
 	toProviderNativeContent,
 } from "./google-shared.ts";
@@ -108,7 +109,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
-			const googleStream = await client.models.generateContentStream(params);
+			const googleStream = await retryGoogleRequest(() => client.models.generateContentStream(params), options);
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
@@ -260,7 +261,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 				if (candidate?.finishReason) {
 					output.rawStopReason = candidate.finishReason;
 					output.stopReason = mapStopReason(candidate.finishReason);
-					if (output.content.some((b) => b.type === "toolCall")) {
+					if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 						output.stopReason = "toolUse";
 					}
 				}
@@ -505,13 +506,17 @@ function buildParams(
 		generationConfig.maxOutputTokens = options.maxTokens;
 	}
 
+	const supportsStrictMode = supportsGoogleStrictToolSampling(model.id);
 	const functionCallingMode = context.tools?.length
-		? resolveGoogleFunctionCallingMode(context.tools, options.toolChoice, supportsGoogleStrictToolSampling(model.id))
+		? resolveGoogleFunctionCallingMode(context.tools, options.toolChoice, supportsStrictMode)
 		: undefined;
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
 		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
-		...(context.tools && context.tools.length > 0 && { tools: convertTools(context.tools) }),
+		...(context.tools &&
+			context.tools.length > 0 && {
+				tools: convertTools(context.tools, false, supportsStrictMode),
+			}),
 		...(functionCallingMode !== undefined && {
 			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
 		}),

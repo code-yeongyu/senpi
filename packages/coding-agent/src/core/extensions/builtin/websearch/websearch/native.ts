@@ -11,7 +11,7 @@ export interface NativeModelInfo {
 }
 
 export type NativeAuthResult =
-	| { ok: true; apiKey?: string; headers?: Record<string, string> }
+	| { ok: true; apiKey?: string; headers?: Record<string, string | null> }
 	| { ok: false; error: string };
 
 export interface NativeModelRegistry {

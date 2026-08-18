@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "./valid-cwd.ts";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 
 process.title = APP_NAME;
 process.env.PI_CODING_AGENT = "true";
+process.env.AI_AGENT = APP_NAME;
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 const args = process.argv.slice(2);

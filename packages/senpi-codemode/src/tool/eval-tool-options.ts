@@ -5,6 +5,7 @@ import type { ResolvedCodemodeSettings } from "../config/settings.ts";
 import type { EvalExecutionTracker } from "../extension/session-manager.ts";
 import type { EvalTimeoutFactory } from "./cell-execution.ts";
 import type { EvalDetachedCellManager } from "./detached-cell-manager.ts";
+import type { EvalExecutionEventPayload } from "./eval-execution-event.ts";
 import type { EvalImageResizer } from "./image.ts";
 import type {
 	EnabledEvalLanguages,
@@ -19,6 +20,8 @@ export interface CreateEvalToolOptions {
 	readonly enabledLanguages: EnabledEvalLanguages;
 	readonly kernelManager: EvalKernelManager;
 	readonly cellTimeoutSeconds: number;
+	/** Wall-clock kill deadline applied to every cell; only used when this factory creates its own manager. */
+	readonly hardLimitSeconds?: number;
 	readonly executeTool: ExecuteTool;
 	readonly listTools?: () => readonly EvalSchemaToolInfo[];
 	readonly complete?: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
@@ -27,6 +30,7 @@ export interface CreateEvalToolOptions {
 	readonly imageResizer?: EvalImageResizer;
 	readonly executionTracker?: EvalExecutionTracker;
 	readonly cellManager?: EvalDetachedCellManager;
+	readonly onCellSettled?: (payload: EvalExecutionEventPayload) => void;
 	readonly timeoutFactory?: EvalTimeoutFactory;
 	readonly proxyExecutor?: (params: EvalToolInput, signal?: AbortSignal) => Promise<AgentToolResult<EvalToolDetails>>;
 	readonly renderers?: Pick<ToolDefinition<EvalInputSchema, EvalToolDetails>, "renderCall" | "renderResult">;

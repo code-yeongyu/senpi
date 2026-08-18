@@ -259,6 +259,8 @@ export interface ElideOldImagesOptions {
 	budgetBytes?: number;
 	/** Newest image blocks always kept regardless of budget. They still consume it. Defaults to 1. */
 	alwaysKeepNewest?: number;
+	/** Keep at most this many images from turns completed by a later assistant response. */
+	maxHistoricalImages?: number;
 }
 
 export interface TransportConvertOptions extends ElideOldImagesOptions {
@@ -295,8 +297,12 @@ export function dedupeConsecutivePlaceholder(
 export function elideOldImages(messages: Message[], options?: ElideOldImagesOptions): Message[] {
 	const budgetBytes = options?.budgetBytes ?? TRANSPORT_IMAGE_BUDGET_BYTES;
 	const alwaysKeepNewest = options?.alwaysKeepNewest ?? 1;
+	const maxHistoricalImages = options?.maxHistoricalImages;
+	const limitHistory = maxHistoricalImages !== undefined;
+	const lastAssistantIndex = messages.findLastIndex((message) => message.role === "assistant");
 	const imagesToElide = new Set<string>();
 	let keptImages = 0;
+	let keptHistoricalImages = 0;
 	let imageBytes = 0;
 	let cutoffReached = false;
 
@@ -309,14 +315,23 @@ export function elideOldImages(messages: Message[], options?: ElideOldImagesOpti
 		for (let blockIndex = message.content.length - 1; blockIndex >= 0; blockIndex--) {
 			const block = message.content[blockIndex];
 			if (block.type !== "image") continue;
+			const isCurrentTurn = limitHistory && messageIndex > lastAssistantIndex;
+			const isProtectedHistory = limitHistory && !isCurrentTurn && keptHistoricalImages < maxHistoricalImages;
+			const exceedsHistoryLimit = limitHistory && !isCurrentTurn && !isProtectedHistory;
 
-			if (cutoffReached) {
+			if (exceedsHistoryLimit || (cutoffReached && !isCurrentTurn && !isProtectedHistory)) {
 				imagesToElide.add(`${messageIndex}:${blockIndex}`);
 				continue;
 			}
 
-			if (keptImages < alwaysKeepNewest || imageBytes + block.data.length <= budgetBytes) {
+			if (
+				isCurrentTurn ||
+				isProtectedHistory ||
+				keptImages < alwaysKeepNewest ||
+				imageBytes + block.data.length <= budgetBytes
+			) {
 				keptImages++;
+				if (!isCurrentTurn) keptHistoricalImages++;
 				imageBytes += block.data.length;
 				continue;
 			}

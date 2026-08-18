@@ -1,74 +1,93 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-	createLazyToolActivator,
-	resolveLazyActivationTargets,
-} from "../../src/core/extensions/builtin/mcp/expose/lazy-activate.ts";
+import type { ToolSearchDocument } from "../../src/core/extensions/builtin/tool-search/engine/document.ts";
+import { ToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
 
-const SEARCHABLE = [
-	{ name: "mcp_computer_use_click", toolName: "click", server: "computer_use" },
-	{ name: "mcp_computer_use_batch", toolName: "batch", server: "computer_use" },
-] as const;
+const SEARCHABLE: ToolSearchDocument[] = [
+	{
+		name: "mcp_computer_use_click",
+		label: "click",
+		aliases: ["click"],
+		description: "click the computer screen",
+		keywords: [],
+		source: "mcp",
+		group: "computer_use",
+		ownerLabel: "computer_use",
+		registrationId: "mcp\0computer_use\0click",
+	},
+	{
+		name: "mcp_computer_use_batch",
+		label: "batch",
+		aliases: ["batch"],
+		description: "batch computer actions",
+		keywords: [],
+		source: "mcp",
+		group: "computer_use",
+		ownerLabel: "computer_use",
+		registrationId: "mcp\0computer_use\0batch",
+	},
+];
 
-describe("resolveLazyActivationTargets", () => {
+function serviceState(activeNames: string[] = ["read", "bash"]) {
+	const active = [...activeNames];
+	const activate = vi.fn((names: readonly string[]) => {
+		for (const name of names) if (!active.includes(name)) active.push(name);
+	});
+	const service = new ToolSearchService({
+		getAllTools: () => [],
+		getActiveTools: () => [...active],
+		setActiveTools: (names) => active.splice(0, active.length, ...names),
+	});
+	service.feed("mcp", SEARCHABLE, { activate });
+	return { activate, active, service };
+}
+
+describe("shared-service MCP lazy activation", () => {
 	it("selects a searchable tool that is registered but inactive", () => {
-		expect(
-			resolveLazyActivationTargets(["mcp_computer_use_click"], {
-				searchable: SEARCHABLE,
-				active: ["read", "bash"],
-			}),
-		).toEqual(["mcp_computer_use_click"]);
+		const state = serviceState();
+		expect(state.service.activateTool("mcp_computer_use_click")).toBe(true);
+		expect(state.active).toContain("mcp_computer_use_click");
 	});
 
-	it("skips a tool that is already active", () => {
-		expect(
-			resolveLazyActivationTargets(["mcp_computer_use_click"], {
-				searchable: SEARCHABLE,
-				active: ["read", "mcp_computer_use_click"],
-			}),
-		).toEqual([]);
+	it("routes an already-active searchable name through the feeder for stub swapping", () => {
+		const state = serviceState(["read", "mcp_computer_use_click"]);
+		expect(state.service.activateTool("mcp_computer_use_click")).toBe(true);
+		expect(state.activate).toHaveBeenCalledWith(["mcp_computer_use_click"]);
 	});
 
 	it("refuses a tool outside the searchable catalog", () => {
-		expect(resolveLazyActivationTargets(["look_at"], { searchable: SEARCHABLE, active: ["read"] })).toEqual([]);
+		const state = serviceState();
+		expect(state.service.activateTool("look_at")).toBe(false);
+		expect(state.activate).not.toHaveBeenCalled();
 	});
 
 	it("refuses an unknown tool", () => {
-		expect(resolveLazyActivationTargets(["nope"], { searchable: SEARCHABLE, active: ["read"] })).toEqual([]);
+		const state = serviceState();
+		expect(state.service.activateTool("nope")).toBe(false);
+		expect(state.activate).not.toHaveBeenCalled();
 	});
 
-	it("coalesces several names into one deduplicated batch", () => {
-		expect(
-			resolveLazyActivationTargets(
-				["mcp_computer_use_click", "mcp_computer_use_click", "mcp_computer_use_batch", "look_at"],
-				{ searchable: SEARCHABLE, active: ["read"] },
-			),
-		).toEqual(["mcp_computer_use_click", "mcp_computer_use_batch"]);
+	it("activates multiple ranked MCP matches in one feeder batch", () => {
+		const state = serviceState();
+		const matches = state.service.search("computer", 10, { source: "mcp" });
+		expect(state.service.activate(matches)).toEqual(["mcp_computer_use_batch", "mcp_computer_use_click"]);
+		expect(state.activate).toHaveBeenCalledOnce();
+		expect(state.activate).toHaveBeenCalledWith(["mcp_computer_use_batch", "mcp_computer_use_click"]);
 	});
-});
 
-describe("createLazyToolActivator", () => {
-	it("routes activation through the tier-B activate path exactly once", () => {
-		const activate = vi.fn();
-		const activator = createLazyToolActivator({
-			getSearchable: () => SEARCHABLE,
-			getActiveTools: () => ["read"],
-			activate,
+	it("returns true only after the feeder makes the requested name active", () => {
+		const active = ["read"];
+		const service = new ToolSearchService({
+			getAllTools: () => [],
+			getActiveTools: () => [...active],
+			setActiveTools: (names) => active.splice(0, active.length, ...names),
 		});
-
-		expect(activator("mcp_computer_use_click")).toBe(true);
-		expect(activate).toHaveBeenCalledTimes(1);
-		expect(activate).toHaveBeenCalledWith(["mcp_computer_use_click"]);
+		service.feed("mcp", SEARCHABLE, { activate: vi.fn() });
+		expect(service.activateTool("mcp_computer_use_click")).toBe(false);
 	});
 
-	it("never calls activate for an ineligible tool", () => {
-		const activate = vi.fn();
-		const activator = createLazyToolActivator({
-			getSearchable: () => SEARCHABLE,
-			getActiveTools: () => ["read"],
-			activate,
-		});
-
-		expect(activator("look_at")).toBe(false);
-		expect(activate).not.toHaveBeenCalled();
+	it("never calls the feeder for an ineligible tool", () => {
+		const state = serviceState();
+		expect(state.service.activateTool("look_at")).toBe(false);
+		expect(state.activate).not.toHaveBeenCalled();
 	});
 });

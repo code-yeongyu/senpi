@@ -6,8 +6,10 @@
 
 ```text
 src/cli.ts, cli-main.ts, main.ts   Bootstrap, args, mode dispatch
+src/bun/cli.ts, src/bun/register-cursor-agent.ts   Bun-binary entry; static cursor-agent module install
 src/package-manager-cli.ts         install/update/config subcommands (incl. `senpi update --models`)
 src/core/agent-session.ts          Session lifecycle and runtime
+src/core/cursor-exec-bridge.ts     Maps Cursor exec frames to session tools (cursorExecHandlers wiring)
 src/core/agent-abort-provenance.ts Abort ownership across retries and event dispatch
 src/core/agent-settled-delivery.ts Cancellable extension messages after settlement
 src/core/dynamic-prompt/           Dynamic system-prompt assembly + workstation facts
@@ -30,7 +32,8 @@ src/core/compaction/               Core compaction mechanics
 src/modes/interactive/             TUI mode and components
 src/modes/app-server/              App-server transport and RPC registry; runtime.ts
                                    wiring, search/ fuzzy file search
-src/modes/rpc/                     JSONL RPC mode/client/types
+src/modes/rpc/                     JSONL RPC mode/client/types and the ordered command
+                                   surface (get_commands / commands_changed)
 src/modes/print-mode.ts            One-shot mode
 test/suite/harness.ts              Preferred faux-provider harness
 test/                              Test domains, fixtures, QA, integration gates
@@ -61,7 +64,8 @@ src/changes.md                     Root fork-change record
 - Keep branding consistent: package `@code-yeongyu/senpi`, binary `senpi`, config directory `.senpi`.
 - Preserve the inlined UUIDv7 implementation; do not add a `uuid` dependency.
 - Do not run real providers in tests. Use `test/suite/harness.ts` and the faux provider.
-- RPC/app-server streams are LF-framed and request-correlated; preserve pending-work rejection on disconnect or child exit. Inbound NDJSON readers are not size-bounded; outbound stdio waits for stdout backpressure (`transports/stdio.ts`) and WebSocket closes slow clients at queue cap (`transports/websocket-connection-handler.ts`); preserve those contracts.
+- RPC-mode JSONL is bounded and strict: LF-only framing, `MAX_RPC_LINE_CHARACTERS` 16 MiB line ceiling with oversized-record resynchronization, and `MAX_RPC_MESSAGE_CHARACTERS` 1,000,000-character message limit (`src/modes/rpc/jsonl.ts`, `src/modes/rpc/rpc-input-validation.ts`); preserve those bounds. App-server outbound stdio waits for stdout backpressure (`transports/stdio.ts`) and WebSocket closes slow clients at queue cap (`transports/websocket-connection-handler.ts`); app-server inbound NDJSON readers are not size-bounded — preserve those contracts.
+- The RPC command surface (`get_commands`, post-baseline `commands_changed`, `command_invocation`/`skill_invocation` metadata) is owned by `src/modes/rpc/`; the suppressed initial `commands_changed` (baseline digest starts `undefined`) is intentional — see `src/modes/rpc/AGENTS.md`.
 - MCP token/log storage preserves restricted directory/file permissions; do not widen inherited child environments. RPC child stderr is currently emitted and embedded raw, so treat diagnostics as potentially secret-bearing and do not claim redaction without implementing it.
 
 ## ANTI-PATTERNS
@@ -81,4 +85,4 @@ src/changes.md                     Root fork-change record
 - Keep `src/changes.md`, nested `changes.md`, public docs, and examples aligned with fork behavior.
 
 ---
-Generated: 2026-08-07 | Commit: `4f26b8282`
+Generated: 2026-08-17 | Commit: `abae968e8`

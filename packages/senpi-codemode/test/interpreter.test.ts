@@ -91,7 +91,12 @@ describe("interpreter detection", () => {
 		});
 
 		const availability = await getInterpreterAvailability(
-			{ languages: { py: true, js: true, rb: false, jl: false }, cellTimeoutSeconds: 30, parallelPoolWidth: 4 },
+			{
+				languages: { py: true, js: true, rb: false, jl: false },
+				cellTimeoutSeconds: 30,
+				hardLimitSeconds: 1800,
+				parallelPoolWidth: 4,
+			},
 			detector,
 		);
 

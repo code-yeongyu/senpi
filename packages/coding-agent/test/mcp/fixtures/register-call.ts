@@ -5,6 +5,9 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
 import type { McpMappedContentBlock } from "../../../src/core/extensions/builtin/mcp/expose/schema-compat.ts";
 import { getMcpService } from "../../../src/core/extensions/builtin/mcp/service.ts";
+import toolSearchExtension from "../../../src/core/extensions/builtin/tool-search/index.ts";
+import { getToolSearchService } from "../../../src/core/extensions/builtin/tool-search/service.ts";
+import { createToolSearchTool } from "../../../src/core/extensions/builtin/tool-search/tool.ts";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -28,6 +31,12 @@ export async function attach(
 	root: TestRoot,
 	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
 ): Promise<void> {
+	const toolSearchService = getToolSearchService({
+		getAllTools: () => [],
+		getActiveTools: () => pi.getActiveTools(),
+		setActiveTools: (names) => pi.setActiveTools([...names]),
+	});
+	pi.registerTool(createToolSearchTool(toolSearchService));
 	await getMcpService().attachSession(
 		{ type: "session_start", reason: "startup" },
 		{ cwd: root.cwd, isProjectTrusted: () => true },
@@ -105,6 +114,7 @@ export async function attachHarnessSession(harness: Harness, serverNames: string
 
 export function mcpExtensionFor(agentDir: string, activeTools?: string[]): ExtensionFactory {
 	return (pi) => {
+		toolSearchExtension(pi);
 		let attached = false;
 		const attachOnce = async (ctx: ExtensionContext): Promise<void> => {
 			if (attached) return;

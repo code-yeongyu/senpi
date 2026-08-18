@@ -1,5 +1,198 @@
 # changes
 
+## Suppress initial command-surface invalidation events (2026-08-17)
+
+### What changed
+
+- RPC records the initial ordered command digest without publishing `commands_changed`.
+- Later distinct command snapshots still publish once, while identical reload snapshots remain deduplicated.
+- Focused coverage distinguishes baseline initialization from an actual post-bind command-surface change.
+
+### Why
+
+- Discovery sessions already fetch their initial command surface with `get_commands`. Treating that baseline as an
+  invalidation made clients refresh provider discovery, whose new sessions emitted another baseline invalidation and
+  created an unbounded refresh loop.
+
+### Why extension system couldn't handle this
+
+- Baseline establishment and JSONL event emission are owned by the built-in RPC transport.
+
+### Expected merge conflict zones
+
+- LOW: `rpc-command-surface.ts` initial-digest guard and its focused regression.
+
+## Publish typed command surfaces and invocation events without disturbing MCP inventory (2026-08-16) ([PR #909](https://github.com/code-yeongyu/senpi/pull/909))
+
+### What changed
+
+- RPC exports self-describing `RpcSlashCommand` rows with canonical `syntax`, pushes ordered `commands_changed`
+  snapshots after initial bind and runtime reloads, and publishes typed `command_invocation` metadata only after the
+  session actually resolves an extension command or an accepted prompt template survives extension input interception.
+- RPC continues to export `RpcSkillInvocationEvent` with ordered `{name,path,syntax}` entries.
+- The classic and routed connection handler explicitly type-checks `skill_invocation` and `command_invocation` before
+  forwarding them through the existing event buffer.
+- Prompt, steer, and follow-up text fields reject inputs above one million characters before session dispatch.
+- Classic and multi-session hosts reject valid non-object JSON with parse-style responses instead of dereferencing it
+  as a command, and both enforce a 16 MiB JSONL record ceiling that discards one oversized record through LF before
+  resuming framing.
+- Regression coverage proves candidate ordering, update deduplication, post-interception command classification,
+  bounded text and record handling, malformed-command rejection, JSONL resynchronization, and skill event delivery
+  while `get_loaded_surfaces` keeps the same revealed MCP inventory before and after invocation.
+
+### Why
+
+- OmO Desktop can render and refresh the same mixed command/skill picker without terminal parsing or command-surface
+  polling, and can observe accepted command or skill invocations as typed metadata.
+- Skill expansion must remain orthogonal to MCP inventory reveal; a new event cannot reset or reorder loaded
+  surfaces.
+
+### Why extension system couldn't handle this
+
+- The public JSONL event contract and loaded-surface inventory response are owned by the built-in RPC transport.
+
+### Expected merge conflict zones
+
+- LOW: additive event types in `rpc-types.ts`, `rpc-command-surface.ts`, and `rpc-command-invocation.ts`.
+- MEDIUM: `connection-handler.ts`, `rpc-mode.ts`, `multi-session-host.ts`, `rpc-input-validation.ts`, and `jsonl.ts`
+  own command-surface invalidation, input/framing bounds, and typed event forwarding.
+- LOW: focused RPC contract tests plus `rpc-loaded-surfaces.test.ts` inventory assertions.
+
+## Settings source selection event (2026-08-16)
+
+### What changed
+
+- Classic and multi-session RPC now receive the additive `settings_source_selected` session event with `{ path, format, reason, scope }` at startup/rebind and after settings reload selection.
+- The public RPC type surface documents the event; existing session forwarding and routing remain unchanged.
+
+### Why
+
+- Headless clients need to know whether JSONC won precedence and which path subsequent settings writes target.
+
+### Why the extension system could not handle this
+
+- The source is selected before extension binding, while RPC framing/routing is host-owned.
+
+### Expected merge conflict zones
+
+- LOW: additive event typing in `rpc-types.ts`; event forwarding uses the existing unfiltered session subscription.
+
+## Model/tier events, fast-mode commands, and turn-scope validation (2026-08-16)
+
+### What changed
+
+- Additive events `model_changed` (model + post-switch thinking level + source) and `service_tier_changed` (tier + fastMode) reach clients through the existing session subscription; no event is reshaped.
+- `RpcSessionState` gained `serviceTier?` and `fastMode`, so `get_state` no longer hides which tier a request would carry.
+- `get_state` and `open_session` now project state through one exported `buildRpcSessionState(session)`. They were two hand-rolled literals, and only the `get_state` one was type-annotated, so `open_session` silently answered without the new fields.
+- New commands `set_fast_mode` / `get_fast_mode` delegate to `applyFastMode` from the service-tier extension module — the same entry point the `/fast` command uses, so persistence and `-fast` key normalization exist once.
+- `scope: "turn"` `set_thinking_level` now validates the level against `getAvailableThinkingLevels()` BEFORE applying it. Previously it applied first and reported the mismatch afterwards, so a rejected request left the session on the clamped level.
+- `RpcClient` gained `setFastMode`/`getFastMode`, and `setThinkingLevel` accepts `{ scope: "turn" }` and now throws on a failed response instead of swallowing it.
+
+### Why
+
+- Clients had no way to observe model or tier changes: model tracking was inferred from `entry_appended`, and fast mode was invisible to the protocol even though it changes what is sent upstream.
+- A command that answers `success: false` after mutating state is unusable for state reconciliation — the client's retry/rollback logic cannot know what actually happened.
+
+### Why extension system couldn't handle this
+
+- The command union, `RpcSessionState`, and the event projection are transport contracts owned by the RPC mode; extensions cannot add commands or state fields to them.
+
+### Expected merge conflict zones
+
+- LOW: additive union arms in `rpc-types.ts` and additive `case` arms in `connection-handler.ts`.
+- LOW: the `set_thinking_level` case body is rewritten in place (validate-then-apply).
+- LOW: `session-command-router.ts` `open_session` now calls the shared state builder instead of inlining the literal. Session test doubles must answer `isFastModeActive()`.
+
+## Pin classic RPC delta batching and immediate barriers (2026-08-14)
+
+### What changed
+
+- Characterization coverage now proves 1000 classic delta-only `message_update` records remain complete while sharing one same-tick raw write.
+- Event, extension-UI request, event, and response ordering is pinned across consecutive immediate-write barriers.
+- Classic connection-handler backpressure remains deliberately attached to every agent-loop event.
+
+### Why
+
+- Classic RPC projects cumulative assistant updates into delta-only public wire records. Those deltas cannot be compacted safely, so per-event backpressure is its flow control and must not be removed as part of the multi-session writer redesign.
+- `RpcClient` consumers depend on the documented delta sequence and on immediate UI/response records never overtaking pending events.
+
+### Why extension system couldn't handle this
+
+- Classic JSONL projection, batching, and agent-loop backpressure are built-in RPC transport contracts below extension hooks.
+
+### Expected merge conflict zones
+
+- LOW: characterization-only additions in `rpc-event-coalescing.test.ts`.
+- NONE: classic runtime code remains unchanged.
+
+## Single-flight multi-session RPC drain and control lane (2026-08-14)
+
+### What changed
+
+- The multi-session writer now hands exactly one complete record to stdout, awaits backpressure, and then selects the next ready session in round-robin order.
+- Untagged host responses use a dedicated non-coalescing control lane, and shutdown waits for all retained and in-flight records before flushing raw stdout.
+- Deterministic buffered-record/byte counters include the in-flight record, control enqueues resolve after their own backpressure boundary, and permanent stdout failures reject the active drain and pending control completions.
+
+### Why
+
+- Direct host response writes could bypass session ordering, while synchronous queue draining still fed an unbounded downstream promise chain during stdout stalls.
+- Keeping the backlog in typed lanes lets per-session compaction remain effective and prevents one busy session from monopolizing the raw writer.
+
+### Why extension system couldn't handle this
+
+- Process-wide stdout ownership, host control responses, session fairness, and shutdown flushing are built-in RPC transport responsibilities.
+
+### Expected merge conflict zones
+
+- HIGH: `session-event-writer.ts` drain lifecycle and constructor contract.
+- MEDIUM: `multi-session-host.ts` output and shutdown wiring.
+- LOW: deterministic multi-session drain tests.
+
+## Compact cumulative multi-session RPC events per session (2026-08-14)
+
+### What changed
+
+- Multi-session RPC queues now retain structured records until drain time and compact cumulative assistant snapshots within each session and ordering segment.
+- Superseded full snapshots keep their delta while replacing cumulative `message` and `partial` fields with present `null` values; adjacent compatible deltas merge, and the newest update remains the sole full snapshot.
+- Tool progress is latest-wins per tool-call id, with retained updates appended in occurrence order. Protocol, lifecycle, error, delta-only, and unknown records remain barriers and are never coalesced.
+
+### Why
+
+- Long cumulative assistant snapshots produced quadratic queued bytes when a desktop RPC reader stalled, causing visible freezes followed by large output bursts.
+- Delta content and transition boundaries must remain lossless, while repeated cumulative snapshots and accumulated tool progress are redundant before they reach stdout.
+
+### Why extension system couldn't handle this
+
+- Session tagging, JSONL framing, and pending stdout scheduling are owned by the built-in multi-session RPC transport below extension hooks.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-event-writer.ts` queue representation, compaction keys, and drain serialization.
+- LOW: focused multi-session event-writer tests.
+
+## Extension request RPC command (2026-08-12)
+
+### What changed
+
+- Added the session-scoped `extension_request` command and structured success/error response.
+- `RpcClient.requestExtension()` exposes the command through the public client.
+- Existing multi-session routing tags the response with the owning `sessionId`.
+
+### Why
+
+- Capability-gated `extension_event` records cover extension-to-client state, but interactive
+  extension controls also need a direct client-to-extension request path that does not become a
+  model prompt.
+
+### Why extension system couldn't handle this
+
+- Request ids, multi-session routing, JSONL response serialization, and public client correlation
+  are owned by the built-in RPC transport.
+
+### Expected merge conflict zones
+
+- MEDIUM: `rpc-types.ts`, `connection-handler.ts`, and `rpc-client.ts`.
+
 ## Multi-session open failure details (2026-08-07)
 
 ### What changed
@@ -231,3 +424,23 @@ fork change here is a merge-conflict surface on upstream syncs.
 
 - MEDIUM: `connection-handler.ts` command dispatch and `rpc-types.ts` response unions.
 - LOW: `rpc-client.ts` model metadata and `docs/rpc.md` protocol reference.
+
+## Capability-gated extension events reach classic and multi-session clients (2026-08-11)
+
+RPC clients advertising `extension_events` now receive additive
+`extension_event { name, data }` records. Unflagged clients remain byte-identical. Multi-session mode
+parses `SENPI_RPC_CLIENT_CAPABILITIES`, threads capabilities through `SessionCommandRouter` and
+`createRpcSessionBinding`, and preserves the owning routing `sessionId` on emitted records.
+
+## Session-start extension events are subscribed before binding (2026-08-11)
+
+Capability-gated extension RPC listeners now attach before `bindExtensions()` dispatches
+`session_start`. This preserves initial atomic extension snapshots such as native task state while
+keeping rebind cleanup generation-safe; subscribing after binding deterministically dropped those
+events.
+## Public RPC client exposes extension events (2026-08-11)
+
+`RpcClientEvent`, `RpcEventListener`, the modes barrel, and the package root now include
+`RpcExtensionEvent`, so capability-enabled SDK consumers can narrow and validate generic extension
+records. The extension and RPC guides document `pi.rpc.emit`, capability environment variables, the
+wire shape, multi-session tagging, and payload validation responsibilities.

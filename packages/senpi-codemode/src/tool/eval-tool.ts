@@ -8,6 +8,7 @@ import { abortError, CellExecution, defaultTimeoutFactory } from "./cell-executi
 import { CellHandler, type CellState } from "./cell-handler.ts";
 import { EvalDetachedCellManager } from "./detached-cell-manager.ts";
 import { detachedKernelBusyError, executeEvalControl, resultAfterDetach } from "./detached-eval-result.ts";
+import { buildEvalExecutionEventPayload, type EvalExecutionSettleOutcome } from "./eval-execution-event.ts";
 import { clampEvalSummary, evalTimeoutBehavior, isEvalControlRequest, parseEvalRequest } from "./eval-request.ts";
 import type { CreateEvalToolOptions, EvalCellInvocation } from "./eval-tool-options.ts";
 import { describeTimeoutState } from "./interrupt-note.ts";
@@ -32,7 +33,12 @@ export function createEvalTool(options: CreateEvalToolOptions): ToolDefinition<E
 		...(options.hostLine === undefined ? {} : { hostLine: options.hostLine }),
 	});
 	const languages = enabledLanguageList(options.enabledLanguages);
-	const cellManager = options.cellManager ?? new EvalDetachedCellManager({ artifactsDir: options.artifactsDir });
+	const cellManager =
+		options.cellManager ??
+		new EvalDetachedCellManager({
+			...(options.artifactsDir === undefined ? {} : { artifactsDir: options.artifactsDir }),
+			...(options.hardLimitSeconds === undefined ? {} : { hardLimitSeconds: options.hardLimitSeconds }),
+		});
 	return {
 		name: "eval",
 		label: "Eval",
@@ -94,18 +100,22 @@ async function runEvalCell(
 	const bridgeContext: ExtensionContext = { ...invocation.ctx, signal: cellSignal };
 	const state: CellState = {
 		input: invocation.input,
+		startedAt: Date.now(),
 		signal: cellSignal,
 		onUpdate: invocation.onUpdate,
 		toolCalls: [],
+		toolCallMetrics: [],
 		pendingBridgeCalls: [],
 		statusEvents: [],
 		active: true,
 		output: "",
 		phase: undefined,
+		error: undefined,
 		durationMs: 0,
 		status: "pending",
 	};
 	const cell = cellManager.create(invocation.cellId, invocation.input);
+	let detached = false;
 	let execution: CellExecution;
 	execution = new CellExecution({
 		callerSignal: invocation.signal,
@@ -114,6 +124,7 @@ async function runEvalCell(
 		timeoutFactory: options.timeoutFactory ?? defaultTimeoutFactory,
 		onTimeout: (error) => {
 			if (timeoutBehavior === "detach" && cellManager.detach(cell)) {
+				detached = true;
 				execution.detach();
 				return;
 			}
@@ -134,13 +145,29 @@ async function runEvalCell(
 		bridgeContext,
 		bridgeAbortController,
 	);
+	let settleEventEmitted = false;
+	const emitSettled = (outcome: EvalExecutionSettleOutcome): void => {
+		if (settleEventEmitted) return;
+		settleEventEmitted = true;
+		options.onCellSettled?.(
+			buildEvalExecutionEventPayload({
+				cellId: invocation.cellId,
+				state,
+				outcome,
+				completedAt: Date.now(),
+				detached,
+			}),
+		);
+	};
 	const finalized = running.then(
 		(result) => {
 			cellManager.complete(cell, result);
+			emitSettled({ result });
 			return result;
 		},
 		(error: unknown) => {
 			cellManager.fail(cell, error instanceof Error ? error : new Error(String(error)));
+			emitSettled({ error });
 			throw error;
 		},
 	);
@@ -194,7 +221,12 @@ async function executeCell(
 			...(options.imageResizer === undefined ? {} : { imageResizer: options.imageResizer }),
 		});
 		handler = activeHandler;
-		cellManager.markRunning(cell, kernel, () => activeHandler.liveResult());
+		cellManager.markRunning(
+			cell,
+			kernel,
+			() => activeHandler.liveResult(),
+			(error) => execution.cancel(error),
+		);
 		if ("setContext" in options.kernelManager && typeof options.kernelManager.setContext === "function") {
 			options.kernelManager.setContext(bridgeContext);
 		}

@@ -82,6 +82,7 @@ export type {
 	ExtensionFlag,
 	ExtensionHandler,
 	ExtensionMode,
+	ExtensionRpcRequestHandler,
 	// Runtime
 	ExtensionRuntime,
 	ExtensionShortcut,

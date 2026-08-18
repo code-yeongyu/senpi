@@ -44,6 +44,7 @@ import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
 	getGrammarToolInput,
+	getJsonSchemaToolParameters,
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
@@ -146,6 +147,7 @@ export interface ConvertResponsesMessagesOptions {
 	preserveTextSignatures?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	deferredTools?: ReadonlyMap<string, Tool>;
+	deferredToolsMode?: "additional-tools" | "tool-search";
 	toolOptions?: ConvertResponsesToolsOptions;
 	/** Internal request-local provenance sealing pass. Never serialized to provider payloads. */
 	sealContextProvenance?: boolean;
@@ -164,6 +166,7 @@ type ResponseCustomToolCallItem = {
 	call_id: string;
 	name: string;
 	input?: string;
+	namespace?: string;
 };
 
 type ResponseCustomToolCallOutputItem = {
@@ -173,7 +176,17 @@ type ResponseCustomToolCallOutputItem = {
 	output: string | ResponseFunctionCallOutputItemList;
 };
 
-type ResponseInputItem = OpenAIResponseInputItem | ResponseCustomToolCallItem | ResponseCustomToolCallOutputItem;
+type AdditionalToolsInputItem = {
+	type: "additional_tools";
+	role: "developer";
+	tools: OpenAITool[];
+};
+
+type ResponseInputItem =
+	| OpenAIResponseInputItem
+	| ResponseCustomToolCallItem
+	| ResponseCustomToolCallOutputItem
+	| AdditionalToolsInputItem;
 
 export const CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL = "custom";
 
@@ -308,10 +321,9 @@ export function convertResponsesMessages<TApi extends Api>(
 		} else if (msg.role === "assistant") {
 			const output: ResponseInputItem[] = [];
 			const assistantMsg = msg as AssistantMessage;
-			const isDifferentModel =
-				assistantMsg.model !== model.id &&
-				assistantMsg.provider === model.provider &&
-				assistantMsg.api === model.api;
+			const isSameProviderAndApi = assistantMsg.provider === model.provider && assistantMsg.api === model.api;
+			const isSameModel = isSameProviderAndApi && assistantMsg.model === model.id;
+			const isDifferentModel = isSameProviderAndApi && assistantMsg.model !== model.id;
 			let textBlockIndex = 0;
 
 			const pushAssistantText = (text: string, textSignature?: string): void => {
@@ -375,6 +387,8 @@ export function convertResponsesMessages<TApi extends Api>(
 						itemId = undefined;
 					}
 
+					const canReplayNamespace = isSameModel || options?.deferredTools?.has(toolCall.name) === true;
+
 					if (customInputProperty !== undefined) {
 						output.push({
 							type: "custom_tool_call",
@@ -384,6 +398,9 @@ export function convertResponsesMessages<TApi extends Api>(
 							input: sanitizeSurrogates(
 								getGrammarToolInput(toolCall.name, toolCall.arguments, customInputProperty),
 							),
+							...(canReplayNamespace && toolCall.namespace !== undefined
+								? { namespace: toolCall.namespace }
+								: {}),
 						} satisfies ResponseCustomToolCallItem);
 					} else if (isFreeform) {
 						output.push({
@@ -391,6 +408,9 @@ export function convertResponsesMessages<TApi extends Api>(
 							call_id: callId,
 							name: toolCall.name,
 							input: getFreeformToolInput(toolCall.arguments),
+							...(canReplayNamespace && toolCall.namespace !== undefined
+								? { namespace: toolCall.namespace }
+								: {}),
 						} satisfies ResponseCustomToolCallItem);
 					} else {
 						output.push({
@@ -399,6 +419,9 @@ export function convertResponsesMessages<TApi extends Api>(
 							call_id: callId,
 							name: toolCall.name,
 							arguments: JSON.stringify(toolCall.arguments),
+							...(canReplayNamespace && toolCall.namespace !== undefined
+								? { namespace: toolCall.namespace }
+								: {}),
 						});
 					}
 				}
@@ -452,7 +475,19 @@ export function convertResponsesMessages<TApi extends Api>(
 				loadedToolNames.add(name);
 				deferredTools.push(tool);
 			}
-			if (deferredTools.length > 0) {
+			if (deferredTools.length > 0 && options?.deferredToolsMode === "additional-tools") {
+				messages.push(
+					withContextProvenance(
+						{
+							type: "additional_tools",
+							role: "developer",
+							tools: convertResponsesTools(deferredTools, options.toolOptions),
+						} satisfies ResponseInputItem,
+						msg,
+						options.sealContextProvenance,
+					),
+				);
+			} else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
 				const names = deferredTools.map((tool) => tool.name);
 				const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
 				messages.push(
@@ -527,17 +562,18 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 		}
 
 		const constrainedStrict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+		const strict = constrainedStrict ?? defaultStrict;
 		const functionTool: Omit<ResponseFunctionTool, "strict"> & {
 			strict?: ResponseFunctionTool["strict"];
 		} = {
 			type: "function",
 			name: tool.name,
 			description: tool.description,
-			parameters: tool.parameters as ResponseFunctionTool["parameters"], // TypeBox already generates JSON Schema
+			parameters: getJsonSchemaToolParameters(tool, strict === true) as ResponseFunctionTool["parameters"],
 			...(options?.deferLoading ? { defer_loading: true } : {}),
 		};
 		if (supportsStrictMode) {
-			functionTool.strict = constrainedStrict ?? defaultStrict;
+			functionTool.strict = strict;
 		}
 		return functionTool as OpenAITool;
 	});
@@ -578,6 +614,60 @@ type ResponsesOutputSlot =
 
 type ToolCallOutputSlot = Extract<ResponsesOutputSlot, { type: "toolCall" }>;
 
+type NativeImageGenerationCall = {
+	type: "image_generation_call";
+	id?: string;
+	status: string;
+	result?: string | null;
+	revised_prompt?: string;
+};
+
+const MAX_NATIVE_IMAGE_BASE64_CHARS = 24 * 1024 * 1024;
+
+function readNativeImageGenerationCall(value: unknown): NativeImageGenerationCall | undefined {
+	if (typeof value !== "object" || value === null || !("type" in value) || !("status" in value)) return undefined;
+	if (value.type !== "image_generation_call" || typeof value.status !== "string") return undefined;
+	return {
+		type: "image_generation_call",
+		...("id" in value && typeof value.id === "string" ? { id: value.id } : {}),
+		status: value.status,
+		...("result" in value && (typeof value.result === "string" || value.result === null)
+			? { result: value.result }
+			: {}),
+		...("revised_prompt" in value && typeof value.revised_prompt === "string"
+			? { revised_prompt: value.revised_prompt }
+			: {}),
+	};
+}
+
+function isValidBase64(value: string): boolean {
+	return value.length > 0 && value.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(value);
+}
+
+function reconcileNativeImageGenerationCall(item: NativeImageGenerationCall): NativeImageGenerationCall {
+	if (item.status !== "completed") {
+		return {
+			type: "image_generation_call",
+			...(item.id !== undefined ? { id: item.id } : {}),
+			status: item.status,
+		};
+	}
+	if (typeof item.result !== "string" || !isValidBase64(item.result)) {
+		return {
+			type: "image_generation_call",
+			...(item.id !== undefined ? { id: item.id } : {}),
+			status: "malformed",
+		};
+	}
+	return {
+		type: "image_generation_call",
+		...(item.id !== undefined ? { id: item.id } : {}),
+		status: "completed",
+		result: item.result,
+		...(item.revised_prompt?.trim() ? { revised_prompt: item.revised_prompt } : {}),
+	};
+}
+
 export async function processResponsesStream<TApi extends Api>(
 	openaiStream: AsyncIterable<ResponseStreamEvent>,
 	output: AssistantMessage,
@@ -586,8 +676,11 @@ export async function processResponsesStream<TApi extends Api>(
 	options?: OpenAIResponsesStreamOptions,
 ): Promise<void> {
 	let sawTerminalResponseEvent = false;
+	let nativeImageBase64Chars = 0;
 	const outputSlots = new Map<number, ResponsesOutputSlot>();
 	const reasoningBlocksById = new Map<string, ThinkingContent>();
+	const nativeImageCharsByOutputIndex = new Map<number, number>();
+	const finalizedNativeImageOutputIndexes = new Set<number>();
 	const applyMessagePhaseStopReason = (item: ResponseOutputItem): void => {
 		if (item.type === "message" && item.phase === "final_answer") {
 			output.stopReason = "stop";
@@ -640,6 +733,7 @@ export async function processResponsesStream<TApi extends Api>(
 				id: `${item.call_id}|${item.id}`,
 				name: item.name,
 				arguments: {},
+				...(item.namespace !== undefined ? { namespace: item.namespace } : {}),
 				partialJson: item.arguments || "",
 			};
 			output.content.push(block);
@@ -660,6 +754,7 @@ export async function processResponsesStream<TApi extends Api>(
 				id: `${item.call_id}|${item.id ?? CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL}`,
 				name: item.name,
 				arguments: { [inputProperty]: input },
+				...(item.namespace !== undefined ? { namespace: item.namespace } : {}),
 				customInput: {
 					property: inputProperty,
 					jsonBuffer: { input: "", started: false, closed: false },
@@ -675,13 +770,19 @@ export async function processResponsesStream<TApi extends Api>(
 			stream.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
 			return slot;
 		}
-		const block = { type: "providerNative", subtype: item.type, raw: item } satisfies ProviderNativeContent;
-		output.content.push(block);
+		const imageItem = readNativeImageGenerationCall(item);
+		const block = {
+			type: "providerNative",
+			subtype: item.type,
+			raw: imageItem ? reconcileNativeImageGenerationCall(imageItem) : item,
+		} satisfies ProviderNativeContent;
 		const slot = {
 			type: "providerNative",
 			block,
-			contentIndex: output.content.length - 1,
+			contentIndex: output.content.length,
 		} satisfies ResponsesOutputSlot;
+		if (imageItem) reconcileNativeImageSlot(outputIndex, slot, imageItem);
+		output.content.push(block);
 		outputSlots.set(outputIndex, slot);
 		return slot;
 	};
@@ -690,6 +791,50 @@ export async function processResponsesStream<TApi extends Api>(
 		item: ResponseOutputItem | ResponseCustomToolCallItem,
 	): ResponsesOutputSlot | undefined => {
 		return outputSlots.get(outputIndex) ?? createSlot(outputIndex, item);
+	};
+	function scrubNativeImageResults(): void {
+		for (const block of output.content) {
+			if (block.type !== "providerNative" || block.subtype !== "image_generation_call") continue;
+			const item = readNativeImageGenerationCall(block.raw);
+			if (typeof item?.result !== "string") continue;
+			block.raw = {
+				type: "image_generation_call",
+				...(item.id !== undefined ? { id: item.id } : {}),
+				status: "malformed",
+			};
+		}
+		nativeImageBase64Chars = 0;
+		nativeImageCharsByOutputIndex.clear();
+	}
+	function reconcileNativeImageSlot(
+		outputIndex: number,
+		slot: Extract<ResponsesOutputSlot, { type: "providerNative" }>,
+		item: NativeImageGenerationCall,
+	): void {
+		const reconciled = reconcileNativeImageGenerationCall(item);
+		const previousChars = nativeImageCharsByOutputIndex.get(outputIndex) ?? 0;
+		const nextChars = typeof reconciled.result === "string" ? reconciled.result.length : 0;
+		const nextTotal = nativeImageBase64Chars - previousChars + nextChars;
+		if (nextTotal > MAX_NATIVE_IMAGE_BASE64_CHARS) {
+			scrubNativeImageResults();
+			throw new Error("Native image generation results exceed the 24 MiB base64 limit");
+		}
+		nativeImageBase64Chars = nextTotal;
+		if (nextChars > 0) nativeImageCharsByOutputIndex.set(outputIndex, nextChars);
+		else nativeImageCharsByOutputIndex.delete(outputIndex);
+		slot.block.subtype = "image_generation_call";
+		slot.block.raw = reconciled;
+	}
+	const backfillNativeImageGenerationCalls = (responseOutput: readonly ResponseOutputItem[]): void => {
+		for (const [outputIndex, outputItem] of responseOutput.entries()) {
+			if (finalizedNativeImageOutputIndexes.has(outputIndex)) continue;
+			const imageItem = readNativeImageGenerationCall(outputItem);
+			if (!imageItem) continue;
+			const existingSlot = getSlot(outputIndex, "providerNative");
+			if (existingSlot) reconcileNativeImageSlot(outputIndex, existingSlot, imageItem);
+			else createSlot(outputIndex, outputItem);
+			outputSlots.delete(outputIndex);
+		}
 	};
 	// Azure OpenAI can omit reasoning.encrypted_content from response.output_item.done
 	// and provide it only in response.completed.response.output. Backfill the
@@ -714,6 +859,7 @@ export async function processResponsesStream<TApi extends Api>(
 	) => {
 		sawTerminalResponseEvent = true;
 		backfillReasoningSignatures(response.output ?? []);
+		backfillNativeImageGenerationCalls(response.output ?? []);
 		if (response?.id) {
 			output.responseId = response.id;
 		}
@@ -741,10 +887,15 @@ export async function processResponsesStream<TApi extends Api>(
 				: (response?.service_tier ?? options.serviceTier);
 			options.applyServiceTierPricing(output.usage, serviceTier);
 		}
-		// Map status to stop reason
+		// Map status to stop reason. For incomplete responses, retain the provider's
+		// specific reason so max-output truncation and content filtering stay distinct.
 		const status = response?.status;
-		output.rawStopReason = status;
-		output.stopReason = mapStopReason(status);
+		const incompleteDetails = response?.incomplete_details as { reason?: unknown } | null | undefined;
+		const incompleteReason = typeof incompleteDetails?.reason === "string" ? incompleteDetails.reason : undefined;
+		output.rawStopReason = incompleteReason ? `${status}.${incompleteReason}` : status;
+		const mappedStop = mapStopReason(status, incompleteReason);
+		output.stopReason = mappedStop.stopReason;
+		output.errorMessage = mappedStop.errorMessage;
 		if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 			output.stopReason = "toolUse";
 		}
@@ -837,8 +988,13 @@ export async function processResponsesStream<TApi extends Api>(
 			const item = event.item;
 			applyMessagePhaseStopReason(item);
 			const slot = getOrCreateSlot(event.output_index, item);
+			const imageItem = readNativeImageGenerationCall(item);
 
-			if (item.type === "reasoning" && slot?.type === "thinking") {
+			if (imageItem && slot?.type === "providerNative") {
+				reconcileNativeImageSlot(event.output_index, slot, imageItem);
+				finalizedNativeImageOutputIndexes.add(event.output_index);
+				outputSlots.delete(event.output_index);
+			} else if (item.type === "reasoning" && slot?.type === "thinking") {
 				const summaryText = item.summary?.map((s) => s.text).join("\n\n") || "";
 				const contentText = item.content?.map((c) => c.text).join("\n\n") || "";
 				slot.block.thinking = summaryText || contentText || slot.block.thinking;
@@ -867,6 +1023,7 @@ export async function processResponsesStream<TApi extends Api>(
 				slot.block.partialJson !== undefined
 			) {
 				slot.block.arguments = parseStreamingJson(item.arguments || slot.block.partialJson || "{}");
+				if (item.namespace !== undefined) slot.block.namespace = item.namespace;
 				// Finalize in-place and strip the scratch buffer so replay only
 				// carries parsed arguments.
 				delete slot.block.partialJson;
@@ -882,6 +1039,7 @@ export async function processResponsesStream<TApi extends Api>(
 					slot,
 					appendCustomToolCallInput(slot.block, item.input ?? getCustomToolCallInput(slot.block), true),
 				);
+				if (item.namespace !== undefined) slot.block.namespace = item.namespace;
 				delete slot.block.customInput;
 				stream.push({
 					type: "toolcall_end",
@@ -929,20 +1087,31 @@ export async function processResponsesStream<TApi extends Api>(
 	}
 }
 
-function mapStopReason(status: OpenAI.Responses.ResponseStatus | undefined): StopReason {
-	if (!status) return "stop";
+function mapStopReason(
+	status: OpenAI.Responses.ResponseStatus | undefined,
+	incompleteReason?: string,
+): { stopReason: StopReason; errorMessage?: string } {
+	if (!status) return { stopReason: "stop" };
 	switch (status) {
 		case "completed":
-			return "stop";
+			return { stopReason: "stop" };
 		case "incomplete":
-			return "length";
+			if (incompleteReason === "max_output_tokens") {
+				return { stopReason: "length" };
+			}
+			return {
+				stopReason: "error",
+				errorMessage: incompleteReason
+					? `Response incomplete: ${incompleteReason}`
+					: "Response incomplete without a provider reason",
+			};
 		case "failed":
 		case "cancelled":
-			return "error";
+			return { stopReason: "error" };
 		// These two are wonky ...
 		case "in_progress":
 		case "queued":
-			return "stop";
+			return { stopReason: "stop" };
 		default: {
 			const _exhaustive: never = status;
 			throw new Error(`Unhandled stop reason: ${_exhaustive}`);

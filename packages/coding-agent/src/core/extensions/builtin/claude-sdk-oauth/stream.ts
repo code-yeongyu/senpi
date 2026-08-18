@@ -136,6 +136,8 @@ export function streamClaudeSdkOauth(
 						),
 						query: getSdkBoundary().query,
 						providerSettings,
+						env: options?.env,
+						signal: options?.signal,
 						sessionId: affinityKey,
 						pinnedAccount: getSessionClaudeAccountPin(options?.sessionId),
 						onQuery: (query) => {

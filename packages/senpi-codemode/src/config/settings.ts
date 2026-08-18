@@ -19,6 +19,7 @@ export const codemodeSettingsSchema = Type.Object(
 			),
 		),
 		cellTimeoutSeconds: Type.Optional(Type.Number({ minimum: 1 })),
+		hardLimitSeconds: Type.Optional(Type.Number({ minimum: 1 })),
 		parallelPoolWidth: Type.Optional(Type.Number({ minimum: 1 })),
 		taskTools: Type.Optional(
 			Type.Object(
@@ -63,6 +64,8 @@ export interface CodemodeSettings {
 		readonly jl: boolean;
 	};
 	readonly cellTimeoutSeconds: number;
+	/** Wall-clock kill deadline for a single cell; bounds detached cells too. */
+	readonly hardLimitSeconds: number;
 	readonly parallelPoolWidth: number;
 	readonly taskTools?: CodemodeTaskTools;
 	readonly outputSink?: CodemodeOutputSink;
@@ -86,6 +89,15 @@ export interface LoadedCodemodeSettings {
 	readonly warnings: readonly string[];
 }
 
+/**
+ * Bash parity: `bash-timeout/timeout.ts` kills a command at 1800s. An eval cell gets the same
+ * unconditional wall-clock kill deadline, which — unlike `cellTimeoutSeconds` — is neither paused by
+ * host tool calls nor discarded when the cell detaches.
+ */
+export const DEFAULT_HARD_LIMIT_SECONDS = 1800;
+
+export const HARD_LIMIT_ENVIRONMENT_FLAG = "SENPI_CODEMODE_HARD_LIMIT_SECONDS";
+
 // OMP settings-schema.ts:3211-3299 has language/path settings only; eval.ts:427
 // defaults timeout to 30s, and codemode pins concurrency-bridge.ts:30 width to 4.
 export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
@@ -96,6 +108,7 @@ export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
 		jl: false,
 	},
 	cellTimeoutSeconds: 30,
+	hardLimitSeconds: DEFAULT_HARD_LIMIT_SECONDS,
 	parallelPoolWidth: 4,
 	taskTools: {
 		task: "task",
@@ -144,6 +157,15 @@ export function resolveEnabledLanguages(
 	};
 }
 
+/** Environment override wins over the settings file; a non-positive or malformed value is ignored. */
+export function resolveHardLimitSeconds(settings: CodemodeSettings, env: Environment = process.env): number {
+	const override = env[HARD_LIMIT_ENVIRONMENT_FLAG];
+	if (override === undefined) return settings.hardLimitSeconds;
+	const parsed = Number.parseInt(override, 10);
+	if (!Number.isFinite(parsed) || parsed <= 0) return settings.hardLimitSeconds;
+	return parsed;
+}
+
 async function loadSettingsFile(path: string): Promise<LoadedCodemodeSettings> {
 	const raw = await readFile(path, "utf8");
 	let parsed: unknown;
@@ -178,6 +200,7 @@ function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
 			jl: input.languages?.jl ?? defaultCodemodeSettings.languages.jl,
 		},
 		cellTimeoutSeconds: input.cellTimeoutSeconds ?? defaultCodemodeSettings.cellTimeoutSeconds,
+		hardLimitSeconds: input.hardLimitSeconds ?? defaultCodemodeSettings.hardLimitSeconds,
 		parallelPoolWidth: input.parallelPoolWidth ?? defaultCodemodeSettings.parallelPoolWidth,
 		taskTools: {
 			task: input.taskTools?.task ?? defaultCodemodeSettings.taskTools.task,

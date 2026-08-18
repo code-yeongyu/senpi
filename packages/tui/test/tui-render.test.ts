@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { describe, it, test } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
-import { TuiMainScreen } from "../src/TuiMainScreen.ts";
 import {
 	deleteKittyImage,
 	encodeKitty,
@@ -14,6 +13,7 @@ import {
 	setCellDimensions,
 } from "../src/terminal-image.ts";
 import { type Component, TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class TestComponent implements Component {
@@ -96,6 +96,38 @@ class MultipleExpandableToolTranscriptComponent implements Component {
 			? ["tool expanded bash", "stdout line 0", "stdout line 1", "stdout line 2", "stdout line 3", "stdout line 4"]
 			: ["tool collapsed bash output"];
 		return [...readBlock, ...toolBlock, ...this.tail];
+	}
+
+	invalidate(): void {}
+}
+
+// A component whose expansion grows two offscreen blocks AND changes a visible
+// status row in the same frame, so the renderer takes the viewport-remap repaint
+// branch (firstVisibleChanged !== -1) rather than the replay escape.
+class VisibleChangeExpandableComponent implements Component {
+	private expanded = false;
+	readonly tail = Array.from({ length: 3 }, (_, index) => `tail row ${index}`);
+
+	setExpanded(expanded: boolean): void {
+		this.expanded = expanded;
+	}
+
+	render(_width: number): string[] {
+		const readBlock = this.expanded
+			? [
+					"read expanded lib.rs:210",
+					"pub until: Option<String>,",
+					"pub year: Option<String>,",
+					"pub scanner_settings: scanner::ScannerSettings,",
+					"pub struct DailyTotals {",
+					"pub tokens: i64,",
+				]
+			: ["read collapsed lib.rs:210-329"];
+		const toolBlock = this.expanded
+			? ["tool expanded bash", "stdout line 0", "stdout line 1", "stdout line 2", "stdout line 3", "stdout line 4"]
+			: ["tool collapsed bash output"];
+		const status = this.expanded ? "status expanded" : "status collapsed";
+		return [...readBlock, ...toolBlock, status, ...this.tail];
 	}
 
 	invalidate(): void {}
@@ -939,6 +971,53 @@ describe("TUI viewport remap for above-viewport growth", () => {
 			"tail row 6",
 			"tail row 7",
 		]);
+
+		tui.stop();
+	});
+
+	it("replays every offscreen Ctrl+O block when expansion also changes a visible row", async () => {
+		// Geometry that hits the viewport-remap repaint branch (firstVisibleChanged !== -1):
+		// the tail is short enough that a visible row changes when the blocks expand,
+		// unlike the stable-tail case above which routes to the replay escape.
+		const terminal = new LoggingVirtualTerminal(72, 5);
+		const tui = new TUI(terminal);
+		const component = new VisibleChangeExpandableComponent();
+		tui.addChild(component);
+
+		component.setExpanded(false);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		component.setExpanded(true);
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const scrollback = terminal.getScrollBuffer();
+		// The failing branch repaints only the visible rows and marks the inserted
+		// above-viewport rows as painted, so the expanded blocks never reach scrollback.
+		assert.deepStrictEqual(
+			getScrollbackSuffix(scrollback, 16),
+			[
+				"read expanded lib.rs:210",
+				"pub until: Option<String>,",
+				"pub year: Option<String>,",
+				"pub scanner_settings: scanner::ScannerSettings,",
+				"pub struct DailyTotals {",
+				"pub tokens: i64,",
+				"tool expanded bash",
+				"stdout line 0",
+				"stdout line 1",
+				"stdout line 2",
+				"stdout line 3",
+				"stdout line 4",
+				"status expanded",
+				"tail row 0",
+				"tail row 1",
+				"tail row 2",
+			],
+			"Expanded offscreen blocks must reach scrollback even when a visible row also changed",
+		);
 
 		tui.stop();
 	});

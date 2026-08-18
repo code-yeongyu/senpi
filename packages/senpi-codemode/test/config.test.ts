@@ -2,7 +2,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { defaultCodemodeSettings, loadCodemodeSettings, resolveEnabledLanguages } from "../src/config/settings.ts";
+import {
+	defaultCodemodeSettings,
+	loadCodemodeSettings,
+	resolveEnabledLanguages,
+	resolveHardLimitSeconds,
+} from "../src/config/settings.ts";
 
 describe("codemode settings", () => {
 	it("uses project config before global config before defaults", async () => {
@@ -29,6 +34,7 @@ describe("codemode settings", () => {
 			expect(loaded.settings).toEqual({
 				languages: { py: false, js: true, rb: true, jl: false },
 				cellTimeoutSeconds: 30,
+				hardLimitSeconds: 1800,
 				parallelPoolWidth: 9,
 				taskTools: { task: "task", output: "task_output" },
 				outputSink: { headBytes: 20480, maxColumns: 768 },
@@ -57,6 +63,7 @@ describe("codemode settings", () => {
 			expect(loaded.settings).toEqual({
 				languages: { py: true, js: false, rb: false, jl: true },
 				cellTimeoutSeconds: 12,
+				hardLimitSeconds: 1800,
 				parallelPoolWidth: 4,
 				taskTools: { task: "task", output: "task_output" },
 				outputSink: { headBytes: 20480, maxColumns: 768 },
@@ -180,6 +187,49 @@ describe("codemode settings", () => {
 			expect(invalid.warnings[0]).toContain("Invalid codemode settings");
 		} finally {
 			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("defaults hardLimitSeconds to the bash-parity kill deadline", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-config-"));
+		try {
+			const loaded = await loadCodemodeSettings({ cwd: join(root, "project"), homeDir: join(root, "home") });
+
+			expect(loaded.settings.hardLimitSeconds).toBe(1800);
+			expect(defaultCodemodeSettings.hardLimitSeconds).toBe(1800);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reads hardLimitSeconds from the settings file", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-config-"));
+		try {
+			const projectDir = join(root, "project");
+			await mkdir(join(projectDir, ".senpi"), { recursive: true });
+			await writeFile(join(projectDir, ".senpi", "codemode.json"), JSON.stringify({ hardLimitSeconds: 90 }));
+
+			const loaded = await loadCodemodeSettings({ cwd: projectDir, homeDir: join(root, "home") });
+
+			expect(loaded.warnings).toEqual([]);
+			expect(loaded.settings.hardLimitSeconds).toBe(90);
+			expect(resolveHardLimitSeconds(loaded.settings, {})).toBe(90);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("lets the environment override beat the settings file hard limit", () => {
+		const settings = { ...defaultCodemodeSettings, hardLimitSeconds: 90 };
+
+		expect(resolveHardLimitSeconds(settings, { SENPI_CODEMODE_HARD_LIMIT_SECONDS: "45" })).toBe(45);
+	});
+
+	it("ignores a non-positive or malformed hard limit environment value", () => {
+		const settings = { ...defaultCodemodeSettings, hardLimitSeconds: 90 };
+
+		for (const value of ["0", "-5", "abc", ""]) {
+			expect(resolveHardLimitSeconds(settings, { SENPI_CODEMODE_HARD_LIMIT_SECONDS: value })).toBe(90);
 		}
 	});
 });

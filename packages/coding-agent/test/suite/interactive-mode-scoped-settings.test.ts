@@ -94,7 +94,8 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 				setSessionThinkingLevel,
 			},
 			settingsManager: createSettingsManagerStub(),
-			themeController: { getTerminalTheme: () => "dark" },
+			ui: { mode: "inline" },
+			themeController: { getThemeSelection: () => "dark", getTerminalTheme: () => "dark" },
 			footer: { invalidate: vi.fn() },
 			updateEditorBorderColor: vi.fn(),
 		};
@@ -121,12 +122,17 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 		const setSessionModel = vi.fn(async () => undefined);
 		const fakeThis = {
 			session: {
-				modelRuntime: { getAvailable: vi.fn(async () => [defaultModel]) },
+				modelRuntime: {
+					getAvailableSnapshot: vi.fn(() => [defaultModel]),
+					refresh: async () => ({ aborted: false, errors: new Map() }),
+				},
 				setModel,
 				setSessionModel,
 			},
 			updateAvailableProviderCount: vi.fn(async () => undefined),
+			ui: { requestRender: vi.fn() },
 			footer: { invalidate: vi.fn() },
+			showWarning: vi.fn(),
 			updateEditorBorderColor: vi.fn(),
 			showStatus: vi.fn(),
 			showError: vi.fn(),
@@ -175,10 +181,12 @@ function createSettingsManagerStub() {
 		getQuietStartup: () => false,
 		getClearOnShrink: () => false,
 		getShowTerminalProgress: () => false,
-		getUiMode: () => "inline",
+		getTuiMode: () => "regular",
+		getFullscreenExitOutput: () => "transcript",
 		getFullscreenScrollbar: () => "auto",
 		getSmoothStreaming: () => false,
 		getSmoothStreamingFps: () => 30,
+		getMermaidRenderingMode: () => "streaming",
 		getWarnings: () => ({}),
 	};
 }

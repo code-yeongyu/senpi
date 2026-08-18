@@ -35,6 +35,28 @@ describe("extension loader", () => {
 		expect(createJiti).toHaveBeenCalledTimes(1);
 	});
 
+	it("exposes the session cwd to the extension factory", async () => {
+		const sessionCwd = path.resolve("/tmp/senpi-extension-session-cwd");
+		expect(sessionCwd).not.toBe(process.cwd());
+
+		let capturedApi: ExtensionAPI | undefined;
+		const extensionFactory: ExtensionFactory = (pi) => {
+			capturedApi = pi;
+		};
+		const importExtension = vi.fn(async () => extensionFactory);
+		const createJiti = vi.fn(() => ({
+			import: importExtension,
+		}));
+
+		vi.doMock("jiti/static", () => ({ createJiti }));
+		const { loadExtensions } = await import("../src/core/extensions/loader.ts");
+
+		const result = await loadExtensions(["first.js"], sessionCwd);
+
+		expect(result.errors).toHaveLength(0);
+		expect(capturedApi?.cwd).toBe(sessionCwd);
+	});
+
 	it("prefers bundled package aliases when the local coding-agent package carries dependencies", async () => {
 		// given a linked local senpi install where dependencies live under
 		// packages/coding-agent/node_modules instead of the workspace root

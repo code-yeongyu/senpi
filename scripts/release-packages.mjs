@@ -1,4 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { findPackageDirectories } from "./package-workspaces.mjs";
+import { resolveRegistryPackages } from "./registry-packages.mjs";
 
 export const WORKSPACE_PACKAGES = [
 	"packages/ai/package.json",
@@ -8,6 +11,7 @@ export const WORKSPACE_PACKAGES = [
 	"packages/protocol/package.json",
 	"packages/server/package.json",
 	"packages/pty/package.json",
+	"packages/telemetry/package.json",
 	"packages/senpi-codemode/package.json",
 	"packages/tui/package.json",
 ];
@@ -43,4 +47,17 @@ export function runSyncVersions(dryRun, runCommand, log, dryRunLog) {
 	}
 	log("running scripts/sync-versions.js");
 	runCommand("node", ["scripts/sync-versions.js"]);
+}
+
+export function getPublicWorkspacePackages() {
+	const workspacePackages = findPackageDirectories()
+		.map((directory) => ({
+			directory,
+			...JSON.parse(readFileSync(join(directory, "package.json"), "utf8")),
+		}));
+	return resolveRegistryPackages(workspacePackages).map(({ directory, registryName, version }) => ({
+			directory,
+			name: registryName,
+			version,
+		}));
 }

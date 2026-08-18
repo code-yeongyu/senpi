@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
 	RPC_ERROR_MISSING_SESSION_ID,
 	RPC_ERROR_MULTI_SESSION_DISABLED,
@@ -43,6 +43,109 @@ describe("multi-session RPC routing", () => {
 			command: "get_protocol_info",
 			success: true,
 			data: { protocolVersion: 1, capabilities: ["multi_session"], mode: "multi" },
+		});
+	});
+
+	test("forwards client capabilities into each opened session binding", async () => {
+		const entry = {
+			runtime: {
+				session: {
+					model: undefined,
+					thinkingLevel: "off",
+					isStreaming: false,
+					isCompacting: false,
+					steeringMode: "one-at-a-time",
+					followUpMode: "one-at-a-time",
+					sessionFile: undefined,
+					sessionId: "durable-session-beta",
+					sessionName: undefined,
+				},
+			},
+		};
+		const registry = {
+			openSession: async () => ({ sessionId: "rpc-session-beta" }),
+			getForCommand: () => entry,
+			list: () => [],
+			beginClose: () => entry,
+			closeMarked: async () => {},
+		} as never;
+		const createBinding = vi.fn(async () => ({
+			handle: async () => {},
+			dispose: async () => {},
+		}));
+		const writer = new SessionEventWriter(() => {});
+		const router = Reflect.construct(SessionCommandRouter, [
+			registry,
+			writer,
+			{ cwd: "/tmp" },
+			createBinding,
+			{ capabilities: ["extension_events"] },
+		]) as SessionCommandRouter;
+
+		await router.handle({ id: "open", type: "open_session", cwd: "/tmp" });
+
+		expect(createBinding).toHaveBeenCalledWith("rpc-session-beta", entry, writer, expect.any(Function), {
+			capabilities: ["extension_events"],
+		});
+	});
+
+	test("routes extension requests only to the addressed session binding", async () => {
+		const sessionIds = ["rpc-session-alpha", "rpc-session-beta"];
+		const entryFor = (sessionId: string) => ({
+			runtime: {
+				session: {
+					model: undefined,
+					thinkingLevel: "off",
+					isStreaming: false,
+					isCompacting: false,
+					steeringMode: "one-at-a-time",
+					followUpMode: "one-at-a-time",
+					sessionFile: undefined,
+					sessionId: `durable-${sessionId}`,
+					sessionName: undefined,
+					autoCompactionEnabled: true,
+					messages: [],
+					pendingMessageCount: 0,
+				},
+			},
+		});
+		const registry = {
+			openSession: async () => ({ sessionId: sessionIds.shift() ?? "unexpected" }),
+			getForCommand: (sessionId: string) => entryFor(sessionId),
+			list: () => [],
+			beginClose: () => entryFor("closing"),
+			closeMarked: async () => {},
+		} as never;
+		const alphaHandle = vi.fn(async () => {});
+		const betaHandle = vi.fn(async () => {});
+		const createBinding = vi.fn(async (sessionId: string) => ({
+			handle: sessionId === "rpc-session-alpha" ? alphaHandle : betaHandle,
+			dispose: async () => {},
+		}));
+		const router = Reflect.construct(SessionCommandRouter, [
+			registry,
+			new SessionEventWriter(() => {}),
+			{ cwd: "/tmp" },
+			createBinding,
+		]) as SessionCommandRouter;
+		await router.handle({ id: "open-alpha", type: "open_session", cwd: "/tmp" });
+		await router.handle({ id: "open-beta", type: "open_session", cwd: "/tmp" });
+
+		await router.handle({
+			id: "request-beta",
+			type: "extension_request",
+			sessionId: "rpc-session-beta",
+			name: "fixture.owner",
+			data: { expected: "beta" },
+		});
+
+		expect(alphaHandle).not.toHaveBeenCalled();
+		expect(betaHandle).toHaveBeenCalledWith({
+			id: "request-beta",
+			type: "extension_request",
+			sessionId: "rpc-session-beta",
+			name: "fixture.owner",
+			data: { expected: "beta" },
 		});
 	});
 

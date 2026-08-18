@@ -3,8 +3,8 @@ import { describe, it } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "../src/autocomplete.ts";
 import { Editor, wordWrapLine } from "../src/components/editor.ts";
-import { TuiMainScreen } from "../src/TuiMainScreen.ts";
 import { CURSOR_MARKER, type TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { visibleWidth } from "../src/utils.ts";
 import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
@@ -2443,16 +2443,16 @@ describe("Editor component", () => {
 			let suggestionCalls = 0;
 
 			editor.setAutocompleteProvider({
-				triggerCharacters: ["$"],
+				triggerCharacters: ["%"],
 				getSuggestions: async (lines, _cursorLine, cursorCol) => {
 					suggestionCalls += 1;
 					const prefix = (lines[0] || "").slice(0, cursorCol);
-					return { items: [{ value: "$skill-name", label: "skill-name" }], prefix };
+					return { items: [{ value: "%skill-name", label: "skill-name" }], prefix };
 				},
 				applyCompletion,
 			});
 
-			editor.handleInput("$");
+			editor.handleInput("%");
 			editor.handleInput("s");
 			editor.handleInput("k");
 
@@ -2469,19 +2469,19 @@ describe("Editor component", () => {
 			let suggestionCalls = 0;
 
 			editor.setAutocompleteProvider({
-				triggerCharacters: ["$"],
-				getSuggestions: async () => ({ items: [{ value: "$skill-name", label: "skill-name" }], prefix: "$" }),
+				triggerCharacters: ["%"],
+				getSuggestions: async () => ({ items: [{ value: "%skill-name", label: "skill-name" }], prefix: "%" }),
 				applyCompletion,
 			});
 			editor.setAutocompleteProvider({
 				getSuggestions: async () => {
 					suggestionCalls += 1;
-					return { items: [{ value: "$skill-name", label: "skill-name" }], prefix: "$" };
+					return { items: [{ value: "%skill-name", label: "skill-name" }], prefix: "%" };
 				},
 				applyCompletion,
 			});
 
-			editor.handleInput("$");
+			editor.handleInput("%");
 			editor.handleInput("s");
 			await new Promise((resolve) => setTimeout(resolve, 50));
 			await flushAutocomplete();

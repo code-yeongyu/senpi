@@ -26,7 +26,8 @@ function residentEntryFor(sessionId: string, message: AssistantMessage) {
 }
 
 export function registerSessionRegistry(pi: Pick<ExtensionAPI, "on">): void {
-	pi.on("session_compact", (_event, ctx) => {
+	pi.on("session_compact", (event, ctx) => {
+		if (!event.accepted) return;
 		recordPendingFork(ctx.sessionManager.getSessionId(), "compaction");
 	});
 	pi.on("session_before_fork", (_event, ctx) => {

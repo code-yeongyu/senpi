@@ -4,6 +4,38 @@
 import type { ImagesApi, ImagesModel } from "./types.ts";
 
 export const IMAGE_MODELS = {
+	openai: {
+		"gpt-image-2": {
+			id: "gpt-image-2",
+			name: "GPT Image 2",
+			api: "openai-images",
+			provider: "openai",
+			baseUrl: "https://api.openai.com/v1",
+			input: ["text"],
+			output: ["image"],
+			cost: {
+				input: 5,
+				output: 30,
+				cacheRead: 1.25,
+				cacheWrite: 0,
+			},
+		} satisfies ImagesModel<"openai-images">,
+		"gpt-image-1.5": {
+			id: "gpt-image-1.5",
+			name: "GPT Image 1.5",
+			api: "openai-images",
+			provider: "openai",
+			baseUrl: "https://api.openai.com/v1",
+			input: ["text"],
+			output: ["image"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+		} satisfies ImagesModel<"openai-images">,
+	},
 	openrouter: {
 		"black-forest-labs/flux.2-flex": {
 			id: "black-forest-labs/flux.2-flex",
@@ -72,6 +104,36 @@ export const IMAGE_MODELS = {
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
 			input: ["image", "text"],
+			output: ["image"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+		} satisfies ImagesModel<"openrouter-images">,
+		"bytedance-seed/seedream-5-0-lite": {
+			id: "bytedance-seed/seedream-5-0-lite",
+			name: "ByteDance Seed: Seedream 5.0 Lite",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+			output: ["image"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+		} satisfies ImagesModel<"openrouter-images">,
+		"bytedance-seed/seedream-5-0-pro": {
+			id: "bytedance-seed/seedream-5-0-pro",
+			name: "ByteDance Seed: Seedream 5.0 Pro",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
 			output: ["image"],
 			cost: {
 				input: 0,
@@ -608,6 +670,21 @@ export const IMAGE_MODELS = {
 		"sourceful/riverflow-v2.5-pro": {
 			id: "sourceful/riverflow-v2.5-pro",
 			name: "Sourceful: Riverflow V2.5 Pro",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+			output: ["image"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+		} satisfies ImagesModel<"openrouter-images">,
+		"x-ai/grok-imagine-image-2.0": {
+			id: "x-ai/grok-imagine-image-2.0",
+			name: "xAI: Grok Imagine Image 2.0",
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",

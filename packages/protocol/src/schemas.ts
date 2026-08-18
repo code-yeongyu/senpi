@@ -1,6 +1,6 @@
 import Type, { type Static } from "typebox";
 
-export const PROTOCOL_VERSION = 2 as const;
+export const PROTOCOL_VERSION = 1 as const;
 
 const IdSchema = Type.String({ minLength: 1 });
 const TimestampSchema = Type.Integer({ minimum: 0 });
@@ -230,7 +230,15 @@ export const TranscriptProgressSchema = Type.Union([
 ]);
 export type TranscriptProgress = Static<typeof TranscriptProgressSchema>;
 
-const SessionSummaryProperties = {
+export const SessionMetadataSchema = StrictObject({
+	id: IdSchema,
+	createdAt: TimestampSchema,
+	updatedAt: Type.Optional(TimestampSchema),
+	parentSessionId: Type.Optional(IdSchema),
+	sessionName: Type.Optional(Type.String()),
+	cwd: Type.Optional(Type.String({ minLength: 1 })),
+});
+export const SessionSnapshotSchema = StrictObject({
 	id: IdSchema,
 	name: Type.Optional(Type.String()),
 	cwd: Type.String({ minLength: 1 }),
@@ -241,35 +249,31 @@ const SessionSummaryProperties = {
 	thinkingLevel: ThinkingLevelSchema,
 	attached: Type.Boolean(),
 	locked: Type.Boolean(),
-} as const;
-
-export const SessionSummarySchema = StrictObject(SessionSummaryProperties);
-export const SessionSnapshotSchema = StrictObject({
-	...SessionSummaryProperties,
 	revision: Type.Integer({ minimum: 0 }),
 	transcript: Type.Array(TranscriptItemSchema),
 	queuedSteer: Type.Array(UserTranscriptItemSchema),
 	queuedSteerCount: Type.Integer({ minimum: 0 }),
 });
-export type SessionSummary = Static<typeof SessionSummarySchema>;
+export type SessionMetadata = Static<typeof SessionMetadataSchema>;
 export type SessionSnapshot = Static<typeof SessionSnapshotSchema>;
 
 export const ServerSnapshotSchema = StrictObject({
 	serverId: IdSchema,
 	protocolVersion: Type.Literal(PROTOCOL_VERSION),
 	revision: Type.Integer({ minimum: 0 }),
-	sessions: Type.Array(SessionSummarySchema),
+	sessions: Type.Array(SessionMetadataSchema),
 	models: Type.Array(ModelMetadataSchema),
 });
 export type ServerSnapshot = Static<typeof ServerSnapshotSchema>;
 
 export const ProtocolErrorCodeSchema = Type.Union([
-	Type.Literal("auth"),
 	Type.Literal("version"),
 	Type.Literal("busy"),
 	Type.Literal("session_locked"),
 	Type.Literal("not_found"),
 	Type.Literal("invalid_request"),
+	Type.Literal("not_implemented"),
+	Type.Literal("internal_error"),
 ]);
 export const ProtocolErrorSchema = StrictObject({
 	code: ProtocolErrorCodeSchema,
@@ -352,7 +356,7 @@ export const SetThinkingResultSchema = StrictObject({
 
 export const ListResultSchema = StrictObject({
 	command: Type.Literal("list"),
-	sessions: Type.Array(SessionSummarySchema),
+	sessions: Type.Array(SessionMetadataSchema),
 });
 export const DetachResultSchema = StrictObject({
 	command: Type.Literal("detach"),
@@ -381,7 +385,6 @@ export type ResultForCommand<TCommand extends Command> = TCommand["command"] ext
 export const ClientHelloSchema = StrictObject({
 	type: Type.Literal("hello"),
 	version: Type.Integer({ minimum: 0 }),
-	token: Type.String({ minLength: 1 }),
 });
 export type ClientHello = Static<typeof ClientHelloSchema>;
 

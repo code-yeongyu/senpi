@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { defineTool } from "../../../types.ts";
+import { defineTool, type ExtensionContext } from "../../../types.ts";
 
 import { buildNativeEntries, type NativeModelInfo, type NativeModelRegistry } from "./native.ts";
 import { renderSearchCall, renderSearchResult } from "./renderers.ts";
@@ -34,14 +34,9 @@ const Params = Type.Object(
 export type ConfigProvider = () => ConfigLoadResult;
 type WebSearchTool = ReturnType<typeof defineTool<typeof Params, SearchRenderDetails>>;
 
-interface WebSearchToolContext {
-	model: NativeModelInfo | undefined;
-	modelRegistry: NativeModelRegistry;
-}
-
 async function configWithNativeRoute(
 	config: WebsearchConfig,
-	ctx: WebSearchToolContext | undefined,
+	ctx: { model: NativeModelInfo | undefined; modelRegistry: NativeModelRegistry } | undefined,
 	signal: AbortSignal | undefined,
 ): Promise<WebsearchConfig> {
 	if (!config.auto) return config;
@@ -72,7 +67,7 @@ export function createWebSearchTool(getConfig: ConfigProvider): WebSearchTool {
 		promptSnippet: "Search the web for current information, documentation, news, or external facts.",
 		promptGuidelines: ["After using web_search, cite relevant returned URLs in the final answer."],
 		parameters: Params,
-		async execute(_toolCallId, params, signal, onUpdate, ctx?: WebSearchToolContext) {
+		async execute(_toolCallId, params, signal, onUpdate, ctx: ExtensionContext) {
 			if (params.allowed_domains?.length && params.blocked_domains?.length) {
 				const message = "Error: Cannot specify both allowed_domains and blocked_domains in the same request";
 				const details = searchErrorDetails(params.query, message);

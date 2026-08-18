@@ -39,7 +39,8 @@ function isAllowedTransition(current: GoalStatus, next: GoalStatus, source: Goal
 	return (
 		(current === "active" && next === "paused") ||
 		(current === "paused" && next === "active") ||
-		(current === "blocked" && next === "active")
+		(current === "blocked" && next === "active") ||
+		(current === "complete" && next === "active")
 	);
 }
 

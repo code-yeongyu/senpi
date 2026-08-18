@@ -1,4 +1,10 @@
-import type { Credential, CredentialInfo, CredentialStore, OAuthAuth } from "@earendil-works/pi-ai";
+import type {
+	AuthOperationOptions,
+	Credential,
+	CredentialInfo,
+	CredentialStore,
+	OAuthAuth,
+} from "@earendil-works/pi-ai";
 
 type ExtensionOAuthRegistry = {
 	registerOAuthProvider(providerId: string, oauth: OAuthAuth): void;
@@ -12,7 +18,6 @@ function asExtensionOAuthRegistry(store: CredentialStore): ExtensionOAuthRegistr
 		? (candidate as ExtensionOAuthRegistry)
 		: undefined;
 }
-
 /** Async credential store overlay for non-persistent runtime API keys. */
 export class RuntimeCredentials implements CredentialStore {
 	private readonly store: CredentialStore;
@@ -42,13 +47,15 @@ export class RuntimeCredentials implements CredentialStore {
 		return this.overrides.has(providerId);
 	}
 
-	async read(providerId: string): Promise<Credential | undefined> {
+	async read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
+		options?.signal?.throwIfAborted();
 		const override = this.overrides.get(providerId);
-		return override ? { type: "api_key", key: override } : this.store.read(providerId);
+		return override ? { type: "api_key", key: override } : this.store.read(providerId, options);
 	}
 
-	async list(): Promise<readonly CredentialInfo[]> {
-		const entries = new Map((await this.store.list()).map((entry) => [entry.providerId, entry]));
+	async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
+		const entries = new Map((await this.store.list(options)).map((entry) => [entry.providerId, entry]));
+		options?.signal?.throwIfAborted();
 		for (const providerId of this.overrides.keys()) {
 			entries.set(providerId, { providerId, type: "api_key" });
 		}
@@ -58,12 +65,14 @@ export class RuntimeCredentials implements CredentialStore {
 	modify(
 		providerId: string,
 		fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+		options?: AuthOperationOptions,
 	): Promise<Credential | undefined> {
-		return this.store.modify(providerId, fn);
+		return this.store.modify(providerId, fn, options);
 	}
 
-	async delete(providerId: string): Promise<void> {
+	async delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
+		options?.signal?.throwIfAborted();
+		await this.store.delete(providerId, options);
 		this.overrides.delete(providerId);
-		await this.store.delete(providerId);
 	}
 }

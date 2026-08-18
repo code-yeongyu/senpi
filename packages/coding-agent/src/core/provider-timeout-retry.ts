@@ -31,20 +31,19 @@ export function createProviderTimeoutRetryPlan({
 		return { options: {}, watchdogTimeoutMs: undefined };
 	}
 
-	const capEnabledBound = (configuredMs: number | undefined): number | undefined => {
-		if (streamRetryTimeoutMs === undefined || configuredMs === undefined) return undefined;
-		return Math.min(configuredMs, streamRetryTimeoutMs);
-	};
-	const boundedTimeoutMs = capEnabledBound(timeoutMs);
-	const boundedStreamStartTimeoutMs = capEnabledBound(streamStartTimeoutMs);
+	// The retry keeps the user's configured provider guards: shortening them
+	// made a 90s stream-start budget expire after 30s, so a slow-but-alive
+	// provider was reported as a second stall instead of being given the budget
+	// it was configured with. `streamRetryTimeoutMs` still bounds the retry
+	// continuation itself (see `runBoundedRetryContinuation`), which cancels a
+	// wedged retry without lying to the provider about its deadline.
 	return {
 		options: {
 			deferQueuedMessages: true,
-			...(boundedTimeoutMs === undefined ? {} : { timeoutMs: boundedTimeoutMs }),
-			...(boundedStreamStartTimeoutMs === undefined ? {} : { streamStartTimeoutMs: boundedStreamStartTimeoutMs }),
+			...(timeoutMs === undefined ? {} : { timeoutMs }),
+			...(streamStartTimeoutMs === undefined ? {} : { streamStartTimeoutMs }),
 		},
-		watchdogTimeoutMs:
-			boundedTimeoutMs === undefined && boundedStreamStartTimeoutMs === undefined ? streamRetryTimeoutMs : undefined,
+		watchdogTimeoutMs: streamRetryTimeoutMs,
 	};
 }
 

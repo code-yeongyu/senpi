@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { cliEntry, track, tsxEntry } from "./common.mjs";
 
 export class TargetRpcClient {
-	constructor({ env, cwd, targetRoot }) {
+	constructor({ env, cwd, targetRoot, extraArgs = [] }) {
 		const argv = [
 			tsxEntry(targetRoot),
 			"--tsconfig",
@@ -12,6 +12,7 @@ export class TargetRpcClient {
 			"--mode",
 			"rpc",
 			"--no-context-files",
+			...extraArgs,
 		];
 		this.child = track(spawn(process.execPath, argv, { cwd, env, stdio: ["pipe", "pipe", "pipe"] }));
 		this.pending = new Map();

@@ -9,8 +9,13 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { McpToolCatalogEntry } from "../../src/core/extensions/builtin/mcp/catalog.ts";
+import { defaultSettings } from "../../src/core/extensions/builtin/mcp/config-schema.ts";
+import { orderActiveSet, registerMcpTierBTools } from "../../src/core/extensions/builtin/mcp/expose/tier-b.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import { TOOL_SEARCH_ACTIVATION_MARKER_V2 } from "../../src/core/extensions/builtin/tool-search/engine/marker.ts";
+import { ToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import {
 	attachHarnessSession,
@@ -19,7 +24,7 @@ import {
 	withoutMcpUtilityTools,
 } from "./fixtures/register-call.ts";
 import type { TestRoot } from "./fixtures/service-lifecycle.ts";
-import { cleanupRoots, stdioServer } from "./fixtures/service-lifecycle.ts";
+import { cleanupRoots, fakePi, stdioServer } from "./fixtures/service-lifecycle.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
 const harnesses: Harness[] = [];
@@ -63,7 +68,9 @@ function names(shapes: ToolShape[]): string[] {
 }
 
 async function harnessFor(root: TestRoot): Promise<Harness> {
-	const harness = await createHarness({ extensionFactories: [mcpExtensionFor(root.agentDir)] });
+	const harness = await createHarness({
+		extensionFactories: [{ factory: mcpExtensionFor(root.agentDir), path: "<builtin:mcp>" }],
+	});
 	harnesses.push(harness);
 	// The harness never emits session_start on its own; attach + await the
 	// raced registration so the first prompt's tool snapshot is deterministic.
@@ -205,5 +212,62 @@ describe("todo32 tier-B: stubSwap keeps the tools array byte-stable", () => {
 
 		// Flapping (re-search tool_5) is a byte-identical no-op: cache preserved.
 		expect(turn3).toEqual(turn2);
+
+		const searchResults = harness.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "message")
+			.filter((entry) => entry.message.role === "toolResult")
+			.map((entry) => JSON.stringify(entry.message));
+		expect(searchResults.some((result) => result.includes(TOOL_SEARCH_ACTIVATION_MARKER_V2))).toBe(true);
+
+		// Catalog membership, not an mcp_ prefix, controls the sorted suffix.
+		const catalogNames = new Set(["weather_forecast", "calendar_create"]);
+		const firstPromotion = orderActiveSet(
+			["base_second", "weather_forecast", "base_first"],
+			["base_first", "base_second"],
+			catalogNames,
+		);
+		const secondPromotion = orderActiveSet([...firstPromotion, "calendar_create"], firstPromotion, catalogNames);
+		expect(secondPromotion).toEqual(["base_first", "base_second", "calendar_create", "weather_forecast"]);
+		if (process.env.TOOL_SEARCH_QA === "1") console.log(JSON.stringify({ firstPromotion, secondPromotion }));
+	});
+});
+
+describe("todo8 tier-B: shared tool-search feed contract", () => {
+	it("feeds each MCP tool name as both its label and alias", () => {
+		const pi = fakePi();
+		const toolSearchService = new ToolSearchService({
+			getAllTools: () => [],
+			getActiveTools: () => pi.getActiveTools(),
+			setActiveTools: (names) => pi.setActiveTools([...names]),
+		});
+		const feed = vi.spyOn(toolSearchService, "feed");
+		const entries: McpToolCatalogEntry[] = ["calendar_create", "weather_forecast"].map((tool) => ({
+			server: "extension-catalog",
+			tool,
+			schema: { type: "object" },
+			requestTimeoutMs: 1_000,
+			connection: {} as McpToolCatalogEntry["connection"],
+		}));
+
+		registerMcpTierBTools(
+			pi,
+			{ registeredEntries: entries, activeEntries: [], searchMode: true, settings: defaultSettings },
+			toolSearchService,
+		);
+
+		const documents = feed.mock.calls[0]?.[1] ?? [];
+		expect(documents.map(({ name, label, aliases }) => ({ name, label, aliases }))).toEqual([
+			{
+				name: "mcp_extension-catalog_calendar_create",
+				label: "calendar_create",
+				aliases: ["calendar_create"],
+			},
+			{
+				name: "mcp_extension-catalog_weather_forecast",
+				label: "weather_forecast",
+				aliases: ["weather_forecast"],
+			},
+		]);
 	});
 });

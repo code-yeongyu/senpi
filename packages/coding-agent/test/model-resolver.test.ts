@@ -416,6 +416,64 @@ describe("resolveCliModel", () => {
 		expect(result.error).toContain("No models available");
 	});
 
+	test("prefers the sole authenticated provider for an ambiguous bare exact model id", () => {
+		const azureModel: Model<"anthropic-messages"> = {
+			...mockModels[1],
+			id: "gpt-5.6-sol",
+			name: "GPT 5.6 Sol",
+			provider: "azure-openai-responses",
+		};
+		const codexModel: Model<"anthropic-messages"> = {
+			...mockModels[1],
+			id: "gpt-5.6-sol",
+			name: "GPT 5.6 Sol",
+			provider: "openai-codex",
+		};
+		const registry = {
+			getModels: () => [azureModel, codexModel],
+			hasConfiguredAuth: (provider: string) => provider === "openai-codex",
+		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
+
+		const result = resolveCliModel({
+			cliModel: "gpt-5.6-sol",
+			modelRuntime: registry,
+		});
+
+		expect(result.error).toBeUndefined();
+		expect(result.model?.provider).toBe("openai-codex");
+		expect(result.model?.id).toBe("gpt-5.6-sol");
+	});
+
+	test("requires an explicit provider for an ambiguous bare exact model id without a unique authenticated provider", () => {
+		const azureModel: Model<"anthropic-messages"> = {
+			...mockModels[1],
+			id: "gpt-5.6-sol",
+			name: "GPT 5.6 Sol",
+			provider: "azure-openai-responses",
+		};
+		const codexModel: Model<"anthropic-messages"> = {
+			...mockModels[1],
+			id: "gpt-5.6-sol",
+			name: "GPT 5.6 Sol",
+			provider: "openai-codex",
+		};
+		const registry = {
+			getModels: () => [azureModel, codexModel],
+			hasConfiguredAuth: () => false,
+		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
+
+		const result = resolveCliModel({
+			cliModel: "gpt-5.6-sol",
+			modelRuntime: registry,
+		});
+
+		expect(result.model).toBeUndefined();
+		expect(result.error).toContain('Model "gpt-5.6-sol" is ambiguous across providers');
+		expect(result.error).toContain("azure-openai-responses/gpt-5.6-sol");
+		expect(result.error).toContain("openai-codex/gpt-5.6-sol");
+		expect(result.error).toContain("Use --provider or provider/model");
+	});
+
 	test("prefers provider/model split over gateway model with matching id", () => {
 		// When a user writes "zai/glm-5", and both a zai provider model (id: "glm-5")
 		// and a gateway model (id: "zai/glm-5") exist, prefer the zai provider model.
@@ -647,13 +705,15 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["zai-coding-cn"]).toBe("glm-5.2");
 		expect(defaultModelPerProvider.minimax).toBe("MiniMax-M2.7");
 		expect(defaultModelPerProvider["minimax-cn"]).toBe("MiniMax-M2.7");
-		expect(defaultModelPerProvider.cerebras).toBe("zai-glm-4.7");
+		expect(defaultModelPerProvider.cerebras).toBe("gpt-oss-120b");
 		expect(defaultModelPerProvider["ant-ling"]).toBe("Ring-2.6-1T");
 	});
 
 	test("every bundled provider default resolves in its catalog", () => {
 		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
-			if (provider === "radius" || provider === "ollama") continue;
+			// radius/ollama are dynamic catalogs; cursor is authentication-only until
+			// its chat protocol is ported.
+			if (provider === "radius" || provider === "ollama" || provider === "cursor") continue;
 			const defaultModelId = defaultModelPerProvider[provider];
 			const modelIds = getModels(provider).map((model) => model.id);
 			expect(modelIds.length, `${provider} should expose a bundled catalog`).toBeGreaterThan(0);
@@ -667,6 +727,10 @@ describe("default model selection", () => {
 
 	test("ollama defaults to its current coding model", () => {
 		expect(defaultModelPerProvider.ollama).toBe("qwen3.5:397b");
+	});
+
+	test("qwen token plan individual default tracks current model", () => {
+		expect(defaultModelPerProvider["qwen-token-plan-individual"]).toBe("qwen3.8-max");
 	});
 
 	test("findInitialModel accepts explicit provider custom model ids", async () => {
@@ -686,6 +750,71 @@ describe("default model selection", () => {
 		expect(result.model?.id).toBe("openai/ghost-model");
 	});
 
+	test("findInitialModel returns a CLI model suffix as an explicit thinking level", async () => {
+		const registry = {
+			getModels: () => allModels,
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+		const inherited = await findInitialModel({
+			cliProvider: "anthropic",
+			cliModel: "claude-sonnet-4-5",
+			scopedModels: [],
+			isContinuing: false,
+			modelRuntime: registry,
+		});
+		const pinned = await findInitialModel({
+			cliProvider: "anthropic",
+			cliModel: "claude-sonnet-4-5:high",
+			scopedModels: [],
+			isContinuing: false,
+			modelRuntime: registry,
+		});
+
+		expect(inherited.thinkingLevel).toBeUndefined();
+		expect(pinned.thinkingLevel).toBe("high");
+	});
+
+	test("findInitialModel returns thinking only for an explicit scoped pattern level", async () => {
+		const registry = {
+			getAvailableSnapshot: () => allModels,
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+		const inherited = await findInitialModel({
+			scopedModels: [{ model: mockModels[0] }],
+			isContinuing: false,
+			defaultThinkingLevel: "low",
+			modelRuntime: registry,
+		});
+		const pinned = await findInitialModel({
+			scopedModels: [{ model: mockModels[0], thinkingLevel: "high" }],
+			isContinuing: false,
+			defaultThinkingLevel: "low",
+			modelRuntime: registry,
+		});
+
+		expect(inherited.thinkingLevel).toBeUndefined();
+		expect(pinned.thinkingLevel).toBe("high");
+	});
+
+	test("findInitialModel does not promote the global default to an explicit settings level", async () => {
+		const registry = {
+			getModel: (provider: string, modelId: string) =>
+				allModels.find((candidate) => candidate.provider === provider && candidate.id === modelId),
+			hasConfiguredAuth: () => true,
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+		const result = await findInitialModel({
+			scopedModels: [],
+			isContinuing: false,
+			defaultProvider: mockModels[0].provider,
+			defaultModelId: mockModels[0].id,
+			defaultThinkingLevel: "low",
+			modelRuntime: registry,
+		});
+
+		expect(result.thinkingLevel).toBeUndefined();
+	});
+
 	test("findInitialModel selects ai-gateway default when available", async () => {
 		const aiGatewayModel: Model<"anthropic-messages"> = {
 			id: "zai/glm-5.1",
@@ -701,7 +830,7 @@ describe("default model selection", () => {
 		};
 
 		const registry = {
-			getAvailable: async () => [aiGatewayModel],
+			getAvailableSnapshot: () => [aiGatewayModel],
 		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
 
 		const result = await findInitialModel({
@@ -757,7 +886,7 @@ describe("default model selection", () => {
 					? savedDeepSeekModel
 					: undefined,
 			hasConfiguredAuth: (provider: string) => provider === "spark-two",
-			getAvailable: async () => [localDeepSeekModel],
+			getAvailableSnapshot: () => [localDeepSeekModel],
 		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
 
 		const result = await findInitialModel({

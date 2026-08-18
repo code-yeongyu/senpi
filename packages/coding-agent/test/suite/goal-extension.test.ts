@@ -8,7 +8,6 @@ import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
 import { goalFilePath, readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
-import { waitForGoalContinuationCount } from "./goal-monitor-test-harness.ts";
 
 type AnyTool = ToolDefinition<any, any, any>;
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
@@ -19,6 +18,7 @@ interface GoalHarness {
 	commands: Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>;
 	handlers: Map<string, Handler[]>;
 	sent: SentMessage[];
+	continuationQueued: Promise<void>;
 }
 
 function createGoalHarness(): GoalHarness {
@@ -26,6 +26,10 @@ function createGoalHarness(): GoalHarness {
 	const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
 	const handlers = new Map<string, Handler[]>();
 	const sent: SentMessage[] = [];
+	let markContinuationQueued: () => void = () => {};
+	const continuationQueued = new Promise<void>((resolve) => {
+		markContinuationQueued = resolve;
+	});
 	const pi = {
 		registerTool: (tool: AnyTool) => tools.set(tool.name, tool),
 		registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) =>
@@ -35,12 +39,15 @@ function createGoalHarness(): GoalHarness {
 			list.push(handler);
 			handlers.set(event, list);
 		},
-		sendMessage: (message: SentMessage["message"], options: unknown) => sent.push({ message, options }),
+		sendMessage: (message: SentMessage["message"], options: unknown) => {
+			sent.push({ message, options });
+			markContinuationQueued();
+		},
 		registerEntryRenderer: () => {},
 		appendEntry: () => {},
 	} as unknown as ExtensionAPI;
 	goalExtension(pi);
-	return { tools, commands, handlers, sent };
+	return { tools, commands, handlers, sent, continuationQueued };
 }
 
 const tempDirs: string[] = [];
@@ -343,6 +350,42 @@ describe("goal extension contract (budget-free)", () => {
 		expect(sent).toHaveLength(0);
 	});
 
+	it("blocks a claude-sdk-oauth goal when every account is exhausted on a zero-token stop", async () => {
+		const { tools, handlers, sent } = createGoalHarness();
+		const notices: string[] = [];
+		const ctx = await makeNotifyingCtx(notices, "thread-sdk-oauth-exhausted");
+		await tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Survive account exhaustion" }, undefined, undefined, ctx);
+
+		await runHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		// The account-rotating proxy reports exhaustion as an assistant message with
+		// stopReason "stop" and zero usage, so the goal must treat it as a terminal
+		// provider error, not a clean turn end.
+		const exhaustionMessage = {
+			...assistantMessageWithStopReason("stop"),
+			api: "claude-sdk-oauth",
+			content: [
+				{
+					type: "text",
+					text: "API Error: Server is temporarily limiting requests (not your usage limit) · All 3 accounts exhausted. Retry in 300s.",
+				},
+			],
+		};
+		await runHandlers(
+			handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [exhaustionMessage], willRetry: false },
+			ctx,
+		);
+
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
+			status: "blocked",
+			blockedReason: "provider error ended the turn (retries exhausted)",
+		});
+		expect(sent).toHaveLength(0);
+	});
+
 	it("keeps a goal active while a provider-error retry is pending", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const notices: string[] = [];
@@ -559,6 +602,29 @@ describe("goal extension contract (budget-free)", () => {
 		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("complete");
 	});
 
+	it("resumes a completed goal through /goal and queues a continuation", async () => {
+		const notices: string[] = [];
+		const { tools, commands, sent, continuationQueued } = createGoalHarness();
+		const ctx = await makeNotifyingCtx(notices, "thread-command-resume-complete");
+		const ref = storeRefFor(ctx);
+		await tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Resume through the command" }, undefined, undefined, ctx);
+		await tools.get("update_goal")?.execute("u1", { status: "complete" }, undefined, undefined, ctx);
+		const completed = await readGoal(ref);
+
+		await commands.get("goal")?.handler("resume", ctx);
+
+		const resumed = await readGoal(ref);
+		expect(resumed).toMatchObject({ id: completed?.id, status: "active" });
+		expect(resumed?.completedAt).toBeUndefined();
+		expect(resumed?.lastStartedAt).toBeGreaterThan(completed?.updatedAt ?? 0);
+		await continuationQueued;
+		expect(await readGoal(ref)).toMatchObject({ status: "active", consecutiveContinuations: 1 });
+		expect(sent.map((entry) => entry.message.customType)).toEqual(["goal-continuation"]);
+		expect(notices).not.toContain("illegal goal transition: complete -> active");
+	});
+
 	it("renders a live elapsed footer segment while a goal is actively pursued", async () => {
 		const statuses: Array<string | undefined> = [];
 		const { tools, commands } = createGoalHarness();
@@ -737,7 +803,7 @@ describe("goal extension session_start migration-lite admission", () => {
 
 	it("resumes normally on the next clean turn after a real user prompt follows a suppressed load", async () => {
 		vi.useFakeTimers();
-		const { tools, handlers, sent } = createGoalHarness();
+		const { tools, handlers, sent, continuationQueued } = createGoalHarness();
 		const notices: string[] = [];
 		const ctx = await makeNotifyingCtx(notices, "thread-suppressed-then-prompt", [
 			userMessageEntry(),
@@ -767,12 +833,14 @@ describe("goal extension session_start migration-lite admission", () => {
 			ctx,
 		);
 		expect(sent).toHaveLength(0);
-		const graceDeliveryRecorded = waitForGoalContinuationCount(ctx, 1);
 		await vi.advanceTimersByTimeAsync(GOAL_USER_GRACE_DELAY_MS);
-		await graceDeliveryRecorded;
+		await continuationQueued;
 		expect(sent).toHaveLength(1);
 		expect(sent[0]?.message.customType).toBe("goal-continuation");
-		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("active");
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
+			status: "active",
+			consecutiveContinuations: 1,
+		});
 		vi.useRealTimers();
 	});
 

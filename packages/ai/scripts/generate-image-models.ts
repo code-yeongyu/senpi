@@ -3,7 +3,7 @@
 import { writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
-import type { ImagesModel } from "../src/types.ts";
+import type { ImagesApi, ImagesModel } from "../src/types.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -89,6 +89,37 @@ export function parseOpenRouterImageModels(
 	return models;
 }
 
+// Static OpenAI image models. The OpenRouter fetch below stays the only live
+// source; these entries are hand-authored because OpenAI's own API exposes no
+// public image-model catalog to fetch from.
+// Costs quoted from models.dev (https://models.dev/api.json, openai provider)
+// as of 2026-08-11: gpt-image-2 $5 input / $30 output / $1.25 cache-read per
+// 1M tokens; gpt-image-1.5 has no models.dev cost entry as of that date, so
+// its cost is zero-filled until pricing is published.
+// Input is ["text"] only: the v1 generations endpoint is text-only.
+const OPENAI_IMAGE_MODELS: ImagesModel<"openai-images">[] = [
+	{
+		id: "gpt-image-2",
+		name: "GPT Image 2",
+		api: "openai-images",
+		provider: "openai",
+		baseUrl: "https://api.openai.com/v1",
+		input: ["text"],
+		output: ["image"],
+		cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0 },
+	},
+	{
+		id: "gpt-image-1.5",
+		name: "GPT Image 1.5",
+		api: "openai-images",
+		provider: "openai",
+		baseUrl: "https://api.openai.com/v1",
+		input: ["text"],
+		output: ["image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+];
+
 async function fetchOpenRouterImageModels(strict: boolean): Promise<ImagesModel<"openrouter-images">[]> {
 	try {
 		console.log("Fetching image models from OpenRouter API...");
@@ -104,14 +135,8 @@ async function fetchOpenRouterImageModels(strict: boolean): Promise<ImagesModel<
 	}
 }
 
-function generateImageModelsFile(models: ImagesModel<"openrouter-images">[]): string {
-	const imageModelsByProvider = {
-		openrouter: Object.fromEntries(
-			models
-				.sort((a, b) => a.id.localeCompare(b.id))
-				.map((model) => [
-					model.id,
-					`{
+function serializeImageModel(model: ImagesModel<ImagesApi>): string {
+	return `{
 			id: ${JSON.stringify(model.id)},
 			name: ${JSON.stringify(model.name)},
 			api: ${JSON.stringify(model.api)},
@@ -120,15 +145,19 @@ function generateImageModelsFile(models: ImagesModel<"openrouter-images">[]): st
 			input: ${JSON.stringify(model.input)},
 			output: ${JSON.stringify(model.output)},
 			cost: ${JSON.stringify(model.cost, null, 2).replace(/^/gm, "\t")}
-		} satisfies ImagesModel<${JSON.stringify(model.api)}>`,
-				]),
-		),
+		} satisfies ImagesModel<${JSON.stringify(model.api)}>`;
+}
+
+function generateImageModelsFile(openrouterModels: ImagesModel<"openrouter-images">[]): string {
+	const imageModelsByProvider: Record<string, ImagesModel<ImagesApi>[]> = {
+		openai: [...OPENAI_IMAGE_MODELS],
+		openrouter: [...openrouterModels].sort((a, b) => a.id.localeCompare(b.id)),
 	};
 
 	const providerEntries = Object.entries(imageModelsByProvider)
 		.map(([provider, providerModels]) => {
-			const modelEntries = Object.entries(providerModels)
-				.map(([id, serialized]) => `\t\t${JSON.stringify(id)}: ${serialized},`)
+			const modelEntries = providerModels
+				.map((model) => `\t\t${JSON.stringify(model.id)}: ${serializeImageModel(model)},`)
 				.join("\n");
 			return `\t${JSON.stringify(provider)}: {\n${modelEntries}\n\t},`;
 		})

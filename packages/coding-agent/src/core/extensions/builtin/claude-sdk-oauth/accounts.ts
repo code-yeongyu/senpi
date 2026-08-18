@@ -108,7 +108,10 @@ export function envSlotToken(env: (name: string) => string | undefined, slotName
 	return env(suffix === undefined ? "CLAUDE_CODE_OAUTH_TOKEN" : `CLAUDE_CODE_OAUTH_TOKEN_${suffix}`);
 }
 
-export type SlotRefresher = (refreshToken: string) => Promise<{ refresh: string; access: string; expires: number }>;
+export type SlotRefresher = (
+	refreshToken: string,
+	signal: AbortSignal,
+) => Promise<{ refresh: string; access: string; expires: number }>;
 export type SlotExpirationCheck = (expires: number) => boolean;
 
 export async function refreshSlot(
@@ -116,6 +119,7 @@ export async function refreshSlot(
 	providerId: string,
 	slotName: string,
 	refresher: SlotRefresher,
+	signal: AbortSignal,
 	isExpiring: SlotExpirationCheck = (expires) => Date.now() >= expires,
 ): Promise<Credential | undefined> {
 	return store.modify(providerId, async (current) => {
@@ -124,7 +128,7 @@ export async function refreshSlot(
 		const slot = storedSlots(credential).find((candidate) => candidate.name === slotName);
 		if (!slot) return current;
 		if (!isExpiring(slot.expires)) return current;
-		const refreshed = await refresher(slot.refresh);
+		const refreshed = await refresher(slot.refresh, signal);
 		const accounts = storedSlots(credential).map((candidate) =>
 			candidate.name === slotName
 				? { ...candidate, refresh: refreshed.refresh, access: refreshed.access, expires: refreshed.expires }

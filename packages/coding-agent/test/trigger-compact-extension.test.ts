@@ -41,6 +41,7 @@ describe("trigger-compact example extension", () => {
 			| undefined;
 
 		const api: ExtensionAPI = Object.assign(Object.create(null), {
+			cwd: "/tmp/senpi-trigger-compact-test",
 			on: (event: string, handler: (event: { type: "turn_end" }, ctx: ExtensionContext) => void) => {
 				if (event === "turn_end") {
 					turnEndHandler = handler;

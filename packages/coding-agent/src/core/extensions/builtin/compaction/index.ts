@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Tool } from "@earendil-works/pi-ai";
 import type { CompactionResult } from "../../../compaction/index.ts";
+import { createWarmAnchorSnapshot, isWarmSummaryAnchorValid } from "../../../compaction/warm-anchor.ts";
 import { convertToLlm } from "../../../messages.ts";
 import type {
 	ContextUsage,
@@ -91,7 +92,7 @@ function estimatePendingPromptTokens(event: { prompt?: string; images?: readonly
 	return approxTokens(event.prompt ?? "") + (event.images?.length ?? 0) * IMAGE_PROMPT_TOKEN_ESTIMATE;
 }
 
-function getPromptContextWindow(contextWindow: number, maxTokens: number | undefined): number {
+export function getPromptContextWindow(contextWindow: number, maxTokens: number | undefined): number {
 	if (typeof maxTokens !== "number" || !Number.isFinite(maxTokens) || maxTokens <= 0 || contextWindow <= 0) {
 		return contextWindow;
 	}
@@ -137,9 +138,21 @@ function endCompactionFeedback(
 	ctx: ExtensionContext,
 	signal: AbortSignal | undefined,
 	result: SpeculativeCompactionResult,
+	remoteFallbackReason?: string,
 ): void {
 	if (shouldEndFeedback(result)) {
-		ctx.endCompaction?.({ reason: "extension", signal, aborted: signal?.aborted });
+		// Surface the concrete failure instead of the generic "Compaction did not
+		// apply": the remote stage's reason (e.g. remote-compaction-timeout) and the
+		// terminal local reason (unavailable / stale), so the decision log and TUI
+		// show what actually happened. An aborted compaction renders "Compaction
+		// cancelled" downstream and must not carry a failure message.
+		const localReason = result.applied ? undefined : result.reason;
+		const parts = [remoteFallbackReason, localReason].filter((part): part is string => Boolean(part));
+		const errorMessage =
+			signal?.aborted || parts.length === 0
+				? undefined
+				: `Compaction did not apply: ${parts.join("; local fallback ")}`;
+		ctx.endCompaction?.({ reason: "extension", signal, aborted: signal?.aborted, errorMessage });
 	}
 }
 
@@ -219,8 +232,28 @@ export default function compactionExtension(
 		idleWarmupTimer = undefined;
 	}
 
-	// Fenced on the observed job: a prompt, invalidation, or newer warm-up
-	// stands this watcher down before it can start a duplicate summarization.
+	// A session reload retires this extension generation while the warm-up
+	// watcher below is still armed: `AgentSession.reload()` invalidates the old
+	// runner, after which every `ExtensionContext` getter throws
+	// "stale extension generation after reload". The watcher outlives that
+	// invalidation in two places — the `job.failure` continuation and the armed
+	// retry timer — and neither had a caller left to receive the throw: the
+	// continuation is spawned with `void` (unhandled rejection) and the timer
+	// callback throws straight into the timer queue, which terminates the
+	// process. The context carries no liveness flag, so a retired generation is
+	// only observable by reading a getter and catching the assertion.
+	function isContextRetired(ctx: ExtensionContext): boolean {
+		try {
+			ctx.isIdle();
+			return false;
+		} catch {
+			return true;
+		}
+	}
+
+	// Fenced on the observed job: a prompt, invalidation, a reload, or a newer
+	// warm-up stands this watcher down before it can start a duplicate
+	// summarization.
 	function armIdleWarmupRetry(ctx: ExtensionContext): void {
 		const job = speculativeJob;
 		if (!job) return;
@@ -230,6 +263,11 @@ export default function compactionExtension(
 				return;
 			}
 			if (speculativeJob !== job) return;
+			// A reload between arming and this continuation retires the context.
+			if (isContextRetired(ctx)) {
+				cancelIdleWarmupRetry();
+				return;
+			}
 			const usage = ctx.getContextUsage();
 			const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
 			const retryDecision: idleRetry.IdleWarmupRetryDecision = {
@@ -251,6 +289,9 @@ export default function compactionExtension(
 			idleWarmupTimer = setTimeout(() => {
 				idleWarmupTimer = undefined;
 				if (speculativeJob !== job) return;
+				// The reload may land after the timer was armed; a throw here would
+				// escape into the timer queue as an uncaughtException.
+				if (isContextRetired(ctx)) return;
 				if (!ctx.isIdle()) return;
 				idleWarmupAttempt += 1;
 				getLogger(ctx).debug("idle_trigger", {
@@ -263,6 +304,47 @@ export default function compactionExtension(
 				armIdleWarmupRetry(ctx);
 			}, idleRetry.IDLE_WARMUP_RETRY_DELAY_MS);
 		});
+	}
+
+	function isSameModelIdentity(
+		left: SpeculativeCompactionSnapshot["model"],
+		right: ExtensionContext["model"],
+	): boolean {
+		return (
+			right !== undefined &&
+			left.api === right.api &&
+			left.provider === right.provider &&
+			left.id === right.id &&
+			left.baseUrl === right.baseUrl &&
+			left.contextWindow === right.contextWindow
+		);
+	}
+
+	/**
+	 * Detach the warm job for the core route before any `await`, so exactly one
+	 * claimant can own it. The controller is deliberately NOT aborted: the whole
+	 * point is to keep the already-paid summarization alive and hand its result to
+	 * core, and clearing the reference is what stands the idle-retry watcher down.
+	 */
+	function claimWarmSummaryForCoreRoute(
+		event: SessionBeforeCompactEvent,
+		ctx: ExtensionContext,
+	): typeof speculativeJob {
+		const job = speculativeJob;
+		if (!job) return undefined;
+		if (event.customInstructions !== undefined) return undefined;
+		if (job.snapshot.origin !== "speculative") return undefined;
+		if (job.snapshot.preparation.firstKeptEntryId !== event.preparation.firstKeptEntryId) return undefined;
+		if (!isSameModelIdentity(job.snapshot.model, ctx.model)) return undefined;
+		const anchor = createWarmAnchorSnapshot(
+			job.snapshot.preparation.firstKeptEntryId,
+			job.snapshot.branchEntries ?? [],
+		);
+		if (!anchor || !isWarmSummaryAnchorValid(anchor, event.branchEntries ?? ctx.sessionManager.getBranch())) {
+			return undefined;
+		}
+		speculativeJob = undefined;
+		return job;
 	}
 
 	function invalidateSpeculativeCompaction(ctx: ExtensionContext): void {
@@ -328,6 +410,7 @@ export default function compactionExtension(
 		}
 		let feedbackSignal = ctx.beginCompaction?.({ reason: "extension" });
 		try {
+			let remoteFallbackReason: string | undefined;
 			if (isOpenAiRemoteCompactionModel(ctx.model)) {
 				const remoteGeneration = speculativeGeneration + 1;
 				const remoteSnapshot = createSpeculativeCompactionSnapshot(ctx, {
@@ -341,7 +424,12 @@ export default function compactionExtension(
 					const remoteCompaction = await runOpenAiRemoteCompaction(
 						ctx,
 						createBlockingRemoteCompactionEvent(ctx, remoteSnapshot, customInstructions, remoteSignal),
-						(data) => pi.events.emit(SENPI_COMPACTION_EVENT, data),
+						(data) => {
+							if (data?.action === "remote_fallback" && typeof data.reason === "string") {
+								remoteFallbackReason = data.reason;
+							}
+							pi.events.emit(SENPI_COMPACTION_EVENT, data);
+						},
 						remoteCompactionDependencies,
 					);
 					if (remoteCompaction) {
@@ -428,7 +516,7 @@ export default function compactionExtension(
 			if (!snapshot) {
 				const result = { applied: false, reason: "unavailable" } as const;
 				getLogger(ctx).debug("summary_failed", { reason: "unavailable" });
-				endCompactionFeedback(ctx, feedbackSignal, result);
+				endCompactionFeedback(ctx, feedbackSignal, result, remoteFallbackReason);
 				return result;
 			}
 			let compaction: CompactionResult | undefined;
@@ -451,9 +539,18 @@ export default function compactionExtension(
 				compaction,
 				feedbackSignal,
 			);
-			endCompactionFeedback(ctx, feedbackSignal, result);
+			endCompactionFeedback(ctx, feedbackSignal, result, remoteFallbackReason);
 			return result;
 		} catch (error) {
+			if (feedbackSignal?.aborted) {
+				// An aborted blocking compaction is a cancellation, not a failure: no
+				// red "Compaction failed" line, no breaker debit, no rethrow through
+				// the before_agent_start handler (issue #886). The faux-route flavor
+				// of this contract is pinned by blocking-compaction-review-hardening.
+				getLogger(ctx).debug("blocking_aborted", { route: "blocking" });
+				ctx.endCompaction?.({ reason: "extension", signal: feedbackSignal, aborted: true });
+				return { applied: false, reason: "rejected" };
+			}
 			const message = error instanceof Error ? error.message : String(error);
 			ctx.endCompaction?.({
 				reason: "extension",
@@ -471,97 +568,147 @@ export default function compactionExtension(
 	}
 
 	pi.on("session_before_compact", async (event: SessionBeforeCompactEvent, ctx) => {
+		// A pre-aborted request (superseded admission or user cancel) must stand
+		// down before touching warm-job ownership: core's own post-emit abort
+		// checks turn it into a clean cancellation (issue #886).
+		if (event.signal.aborted) return undefined;
+		const claimedWarmJob = claimWarmSummaryForCoreRoute(event, ctx);
+		// The claim detaches the job without aborting it, so ownership must survive every
+		// exit from this handler - including a throw - or the request it already paid for
+		// keeps streaming for a result nobody will read.
+		let warmJobConsumed = false;
 		invalidateSpeculativeCompaction(ctx);
-		if (lanePolicy.disablesSenpiCompaction(ctx)) {
-			return { cancel: true, reason: SDK_NATIVE_LANE_REJECTION_REASON };
-		}
-		if (cap.shouldRejectByCap(state).cancel) {
-			getLogger(ctx).debug("skip_cap", { reason: event.reason, count: state.acceptedAbsolute });
-			return {
-				cancel: true,
-				rejectionCause: "per-turn-cap",
-				reason: "absolute compaction cap reached for this session",
-			};
-		}
-		const now = Date.now();
-		if (breaker.isTripped(state, now) && !breaker.shouldBypass(state, { reason: event.reason })) {
-			const remainingMs = state.trippedAt !== null ? Math.max(0, state.trippedAt + breaker.COOLDOWN_MS - now) : 0;
-			getLogger(ctx).debug("skip_breaker", { reason: event.reason, remainingSec: Math.ceil(remainingMs / 1000) });
-			return {
-				cancel: true,
-				rejectionCause: "circuit-breaker",
-				reason: `compaction circuit breaker cooling down (${Math.ceil(remainingMs / 1000)}s left)`,
-			};
-		}
-
-		capturePendingMetadata(event.requestId, ctx);
-
-		const model = ctx.model;
-		if (!model) return undefined;
-		const remoteCompaction = await runOpenAiRemoteCompaction(
-			ctx,
-			event,
-			(data) => pi.events.emit(SENPI_COMPACTION_EVENT, data),
-			remoteCompactionDependencies,
-		);
-		if (remoteCompaction) {
-			getLogger(ctx).debug("core_route_generated", { route: "core-route", requestId: event.requestId });
-			return { compaction: remoteCompaction };
-		}
-
-		const snapshot = {
-			generation: ++speculativeGeneration,
-			expectedRevision: ctx.getMessageRevision(),
-			model,
-			contextWindow: ctx.getContextUsage()?.contextWindow ?? model.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
-			preparation: event.preparation,
-			branchEntries: event.branchEntries,
-			promptVariant: getPromptVariant(event),
-			origin: "core-route" as const,
-			customInstructions: event.customInstructions,
-			systemPrompt: ctx.getSystemPrompt(),
-			tools: getSummarizationTools(),
-		};
-		let compaction: CompactionResult | undefined;
 		try {
-			compaction = await runExtensionCompaction(ctx, snapshot, event.signal, (delta) =>
-				ctx.updateCompaction?.({ reason: event.reason, signal: event.signal, delta }),
-			);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			const failureKind = classifyRequiredCompactionFallbackFailure(error);
-			if (isRequiredCompactionFallbackReason(event.reason) && failureKind !== undefined && !event.signal.aborted) {
-				const fallback = createRequiredCompactionFallback(
-					snapshot.preparation,
-					snapshot.contextWindow,
-					failureKind,
-					{ taskIntent: resolveInheritedTaskIntent(event.branchEntries) },
-					event.branchEntries,
-				);
-				if (fallback) return { compaction: fallback };
-				pendingMetadata.delete(event.requestId);
+			if (lanePolicy.disablesSenpiCompaction(ctx)) {
 				return {
 					cancel: true,
-					reason: "deterministic compaction fallback cannot retain the prepared suffix",
+					rejectionCause: "external-owner",
+					reason: SDK_NATIVE_LANE_REJECTION_REASON,
 				};
 			}
-			pendingMetadata.delete(event.requestId);
-			if (error instanceof SummaryGenerationError) {
-				return { cancel: true, reason: error.message };
+			if (cap.shouldRejectByCap(state).cancel) {
+				getLogger(ctx).debug("skip_cap", { reason: event.reason, count: state.acceptedAbsolute });
+				return {
+					cancel: true,
+					rejectionCause: "per-turn-cap",
+					reason: "absolute compaction cap reached for this session",
+				};
 			}
-			return { cancel: true, reason: `compaction generator failed: ${message}` };
-		}
-		if (!compaction) {
-			pendingMetadata.delete(event.requestId);
-			if (event.signal.aborted) {
-				return { cancel: true };
+			const now = Date.now();
+			if (breaker.isTripped(state, now) && !breaker.shouldBypass(state, { reason: event.reason })) {
+				const remainingMs = state.trippedAt !== null ? Math.max(0, state.trippedAt + breaker.COOLDOWN_MS - now) : 0;
+				getLogger(ctx).debug("skip_breaker", { reason: event.reason, remainingSec: Math.ceil(remainingMs / 1000) });
+				return {
+					cancel: true,
+					rejectionCause: "circuit-breaker",
+					reason: `compaction circuit breaker cooling down (${Math.ceil(remainingMs / 1000)}s left)`,
+				};
 			}
-			return { cancel: true, reason: "compaction generator returned no summary" };
-		}
 
-		return {
-			compaction,
-		};
+			capturePendingMetadata(event.requestId, ctx);
+
+			const model = ctx.model;
+			if (!model) {
+				return undefined;
+			}
+			let remoteCompaction: Awaited<ReturnType<typeof runOpenAiRemoteCompaction>>;
+			try {
+				remoteCompaction = await runOpenAiRemoteCompaction(
+					ctx,
+					event,
+					(data) => pi.events.emit(SENPI_COMPACTION_EVENT, data),
+					remoteCompactionDependencies,
+				);
+			} catch (error) {
+				// The remote route deliberately rethrows once its signal aborts; the
+				// handler converts that into a silent stand-down so the abort is not
+				// reported as an extension error with a stack (issue #886).
+				if (!event.signal.aborted) throw error;
+				getLogger(ctx).debug("remote_aborted", { route: "core-route", requestId: event.requestId });
+				return undefined;
+			}
+			if (remoteCompaction) {
+				getLogger(ctx).debug("core_route_generated", { route: "core-route", requestId: event.requestId });
+				return { compaction: remoteCompaction };
+			}
+
+			if (claimedWarmJob) {
+				const unlinkAbort = linkAbortSignal(event.signal, claimedWarmJob.controller);
+				let warmCompaction: CompactionResult | undefined;
+				let warmFailure: Error | undefined;
+				try {
+					warmCompaction = await claimedWarmJob.promise;
+					warmFailure = await claimedWarmJob.failure;
+				} finally {
+					unlinkAbort();
+				}
+				if (warmFailure === undefined && warmCompaction && !event.signal.aborted) {
+					getLogger(ctx).debug("warm_consumed", { generation: claimedWarmJob.generation, route: "core-route" });
+					warmJobConsumed = true;
+					return { compaction: warmCompaction };
+				}
+			}
+
+			const snapshot = {
+				generation: ++speculativeGeneration,
+				expectedRevision: ctx.getMessageRevision(),
+				model,
+				contextWindow: ctx.getContextUsage()?.contextWindow ?? model.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+				preparation: event.preparation,
+				branchEntries: event.branchEntries,
+				promptVariant: getPromptVariant(event),
+				origin: "core-route" as const,
+				customInstructions: event.customInstructions,
+				systemPrompt: ctx.getSystemPrompt(),
+				tools: getSummarizationTools(),
+			};
+			let compaction: CompactionResult | undefined;
+			try {
+				compaction = await runExtensionCompaction(ctx, snapshot, event.signal, (delta) =>
+					ctx.updateCompaction?.({ reason: event.reason, signal: event.signal, delta }),
+				);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				const failureKind = classifyRequiredCompactionFallbackFailure(error);
+				if (
+					isRequiredCompactionFallbackReason(event.reason) &&
+					failureKind !== undefined &&
+					!event.signal.aborted
+				) {
+					const fallback = createRequiredCompactionFallback(
+						snapshot.preparation,
+						snapshot.contextWindow,
+						failureKind,
+						{ taskIntent: resolveInheritedTaskIntent(event.branchEntries) },
+						event.branchEntries,
+					);
+					if (fallback) return { compaction: fallback };
+					pendingMetadata.delete(event.requestId);
+					return {
+						cancel: true,
+						reason: "deterministic compaction fallback cannot retain the prepared suffix",
+					};
+				}
+				pendingMetadata.delete(event.requestId);
+				if (error instanceof SummaryGenerationError) {
+					return { cancel: true, reason: error.message };
+				}
+				return { cancel: true, reason: `compaction generator failed: ${message}` };
+			}
+			if (!compaction) {
+				pendingMetadata.delete(event.requestId);
+				if (event.signal.aborted) {
+					return { cancel: true };
+				}
+				return { cancel: true, reason: "compaction generator returned no summary" };
+			}
+
+			return {
+				compaction,
+			};
+		} finally {
+			if (!warmJobConsumed) claimedWarmJob?.controller.abort();
+		}
 	});
 
 	pi.on("model_select", (event, ctx) => {
@@ -823,5 +970,16 @@ export default function compactionExtension(
 
 	pi.on("tool_call", (event) => {
 		restoration.trackToolCall(restorationState, event);
+	});
+
+	// The reload path retires this extension generation right after this event
+	// (`AgentSession.reload()` invalidates the old runner), so stand the idle
+	// warm-up watcher down here rather than leaving a timer armed against a
+	// context that is about to start throwing on every read.
+	pi.on("session_shutdown", () => {
+		cancelIdleWarmupRetry();
+		idleWarmupAttempt = 0;
+		speculativeJob?.controller.abort();
+		speculativeJob = undefined;
 	});
 }

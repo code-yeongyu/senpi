@@ -10,9 +10,194 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.8.17] - 2026-08-17
+
+### Breaking Changes
+
+### Added
+
+- The agent loop understands Cursor's server-driven tool execution: tool calls the `cursor-agent` provider already executed mid-stream (marked `kCursorExecResolved`) are never re-executed, their provider-buffered results are appended right after the assistant message (also on error/abort paths so calls never end up unpaired), and the stream idle watchdog re-arms while the provider reports pending local tool work instead of aborting a healthy request. `AgentOptions.cursorExecHandlers` carries the host's exec bridge onto the loop config, and `Agent.emitExternalEvent()` lets bridge-run tools surface `tool_execution_*` lifecycle events ([#910](https://github.com/code-yeongyu/senpi/pull/910)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.16] - 2026-08-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Windows process-tree shutdown now resolves `taskkill.exe` through absolute `System32` and `Sysnative` paths before PATH lookup, executes synchronously so same-tick exits still terminate descendants, and falls back to the direct child only when no launcher can start ([#807](https://github.com/code-yeongyu/senpi/pull/807) by [@yeongjunyoo](https://github.com/yeongjunyoo)).
+
+### Removed
+
+## [2026.8.14] - 2026-08-14
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.13-2] - 2026-08-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.13] - 2026-08-13
+
+### Breaking Changes
+
+- Replaced the legacy harness session model with the lane-based `Session`, `SessionStorage`, and `SessionRepo`
+  APIs, including durable operation records, global facts, shared sequence numbers, and tree-scoped lane views.
+- Promoted `AgentHarness` v2 and the new session API to the default export, removed the experimental subpaths,
+  and removed the legacy JSONL and in-memory repository APIs.
+- Required harness file-system implementations to provide atomic same-filesystem `renameFile()` semantics.
+
+### Added
+
+- Added typed AI-request and harness telemetry schemas, reusable callbacks, and a generated schema reference.
+- Added bounded branch-entry queries, indexed open-operation recovery, a compile-complete `AgentHarness` v2
+  scaffold, and the append-only v4 `JsonlSessionRepo`.
+- Added `AgentOptions.shouldStopAfterTurn`, arbitrary OpenAI-compatible `samplingParams` proxy forwarding, and
+  blocked-tool `terminate` handling for all-terminating batches.
+
+### Changed
+
+- Backfilled the durable `AgentHarness` design docs (`docs/harness.md`, `docs/harness-v2.md`) from upstream
+  v0.83.0; upstream v0.82.1 and v0.83.0 shipped no other agent-package changes.
+
+### Fixed
+
+- Fixed `Agent.reset()` mutating transcript and runtime state during active runs; reset now rejects until idle.
+- Fixed Windows path handling for execution-environment basenames, recursive skill loading, and prompt templates.
+- Fixed JSONL session IDs being treated as globally unique across working directories.
+- Fixed JSONL forks and torn-tail repairs publishing non-atomically after interrupted writes.
+
+### Removed
+
+## [2026.8.12-4] - 2026-08-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.12-3] - 2026-08-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.12-2] - 2026-08-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.12] - 2026-08-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11-6] - 2026-08-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11-5] - 2026-08-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11-4] - 2026-08-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11-3] - 2026-08-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Refresh `abortServerSideFallback` from the host's next-turn snapshot so an active agent run cannot carry a prior
   model's server-fallback policy into the next provider request
   ([#796](https://github.com/code-yeongyu/senpi/pull/796)).
+- The Node harness Windows process-tree kill no longer raises an uncaught `spawn taskkill ENOENT`. It tries every
+  absolute `System32` / `Sysnative` `taskkill.exe` before the PATH-resolved name, runs synchronously so a teardown
+  that exits in the same tick still terminates its children, and degrades to killing the direct child only when no
+  launcher starts at all ([#812](https://github.com/code-yeongyu/senpi/issues/812),
+  [#807](https://github.com/code-yeongyu/senpi/pull/807)).
 
 ### Removed
 

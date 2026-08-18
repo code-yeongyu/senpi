@@ -155,7 +155,7 @@ describe("speculative compaction", () => {
 		expect(snapshot?.preparation.firstKeptEntryId).not.toBe(lateEntryId);
 	});
 
-	it("skips applyCompaction when message revision changes while the summary is in flight", async () => {
+	it("applies the summary when the revision changed but the summarized prefix is intact", async () => {
 		// Given
 		let revision = 1;
 		const context = createContext({ revision });
@@ -166,6 +166,41 @@ describe("speculative compaction", () => {
 			appliedSummaries.push(precomputed.summary);
 			return { applied: true, reason: "ok" };
 		};
+		revision = 2;
+
+		// When
+		const result = await applySpeculativeCompaction(
+			context,
+			snapshot,
+			() => 1,
+			async () => ({
+				summary: "generated summary",
+				firstKeptEntryId: snapshot?.preparation.firstKeptEntryId ?? "missing",
+				tokensBefore: snapshot?.preparation.tokensBefore ?? 0,
+			}),
+		);
+
+		// Then
+		expect(result).toEqual({ applied: true, reason: "ok" });
+		expect(appliedSummaries).toEqual(["generated summary"]);
+	});
+
+	it("skips applyCompaction when a compaction boundary rewrote the summarized prefix", async () => {
+		// Given
+		let revision = 1;
+		const context = createContext({ revision });
+		context.getMessageRevision = () => revision;
+		const snapshot = createSpeculativeCompactionSnapshot(context, { generation: 1 });
+		const appliedSummaries: string[] = [];
+		context.applyCompaction = async (precomputed) => {
+			appliedSummaries.push(precomputed.summary);
+			return { applied: true, reason: "ok" };
+		};
+		context.sessionManager.appendCompaction(
+			"summary committed by another route",
+			snapshot?.branchEntries?.[0]?.id ?? "",
+			100,
+		);
 		revision = 2;
 
 		// When

@@ -40,6 +40,20 @@ const STANDARD_RETRY_SCENARIOS = {
 		primaryAttempts: 3,
 		fallbackAttempts: 0,
 	},
+	"model-request-rejected-recover": {
+		// 400 + invalid_request_error keeps every pre-existing status/text pattern
+		// from matching, so recovery can only be credited to the "model request was
+		// rejected" classifier entry.
+		error: {
+			status: 400,
+			message: "The model request was rejected. Check the request and try again.",
+			type: "invalid_request_error",
+		},
+		errorCount: 1,
+		marker: "SENPI-QA-RETRY-MODEL-REQUEST-REJECTED-7d21",
+		primaryAttempts: 2,
+		fallbackAttempts: 0,
+	},
 	"budget-exhaust": {
 		error: { status: 500, message: "overloaded_error" },
 		errorCount: 4,

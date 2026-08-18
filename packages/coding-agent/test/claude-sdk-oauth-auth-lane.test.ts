@@ -295,18 +295,22 @@ describe("Claude SDK OAuth auth lanes", () => {
 		const store = await storeWith(slot("default", "stale-access", Date.now() - 1));
 		const captured: Options[] = [];
 		let refreshes = 0;
+		let receivedSignal: AbortSignal | undefined;
+		const controller = new AbortController();
 		configureAuth(store, managedEnvironment(), undefined, "oauth-slots");
 		overrideAuthLaneBoundary({
-			refresher: async () => {
+			refresher: async (_refresh, signal) => {
 				refreshes++;
+				receivedSignal = signal;
 				return { access: "fresh-access", refresh: "fresh-refresh", expires: Date.now() + 60 * 60_000 };
 			},
 		});
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
-		await streamClaudeSdkOauth(model, context).result();
+		await streamClaudeSdkOauth(model, context, { signal: controller.signal }).result();
 
 		expect(refreshes).toBe(1);
+		expect(receivedSignal).toBe(controller.signal);
 		expect(captured[0]?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("fresh-access");
 		const credential = (await store.read(providerId)) as ClaudeSdkOauthCredential;
 		expect(credential.accounts?.[0]).toMatchObject({ access: "fresh-access", refresh: "fresh-refresh" });

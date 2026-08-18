@@ -117,6 +117,18 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).toContain("Operation aborted");
 	});
 
+	test("renders deferred assistant messages without a false error row", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([], {
+				stopReason: "deferred",
+			}),
+		);
+
+		expect(component.render(80).join("\n")).not.toContain("Error:");
+	});
+
 	test("renders Anthropic server web search calls as compact providerNative summaries", () => {
 		initTheme("dark");
 
@@ -266,7 +278,7 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).not.toContain("groundingChunks");
 	});
 
-	test("renders length stops as visible errors", () => {
+	test("renders length stops with explicit token-limit wording", () => {
 		initTheme("dark");
 
 		const component = new AssistantMessageComponent(
@@ -277,7 +289,6 @@ describe("AssistantMessageComponent", () => {
 
 		expect(rendered).toContain("Thinking...");
 		expect(rendered).toContain("maximum output token limit");
-		expect(rendered).toContain("response may be incomplete");
 	});
 
 	test("coalesces adjacent thinking blocks into one hidden thinking label", () => {

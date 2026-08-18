@@ -1,6 +1,11 @@
 import { bindToProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
-import { createRpcConnectionHandler, type RpcConnectionHandler, type RpcConnectionSink } from "./connection-handler.ts";
+import {
+	createRpcConnectionHandler,
+	type RpcConnectionHandler,
+	type RpcConnectionOptions,
+	type RpcConnectionSink,
+} from "./connection-handler.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
 
@@ -25,6 +30,7 @@ export async function createRpcSessionBinding(
 	entry: RpcSessionEntry,
 	writer: SessionEventWriter,
 	requestClose: () => void,
+	options: Pick<RpcConnectionOptions, "capabilities"> = {},
 ): Promise<RpcSessionBinding> {
 	if (!entry.runtime) throw new Error("Session runtime was not created");
 	const handler: RpcConnectionHandler = await runWithProviderScope(entry.scope, async () => {
@@ -36,6 +42,7 @@ export async function createRpcSessionBinding(
 			sessionId,
 			shutdownHandler: bindToProviderScope(requestClose),
 			disposeRuntime: false,
+			...options,
 		});
 	});
 	await handler.ready;

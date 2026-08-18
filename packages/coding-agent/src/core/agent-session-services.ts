@@ -43,6 +43,7 @@ export interface CreateAgentSessionServicesOptions {
 	agentDir?: string;
 	settingsManager?: SettingsManager;
 	modelRuntime?: ModelRuntime;
+	modelRuntimeSignal?: AbortSignal;
 	extensionFlagValues?: Map<string, boolean | string>;
 	resourceLoaderOptions?: Omit<DefaultResourceLoaderOptions, "cwd" | "agentDir" | "settingsManager">;
 	resourceLoaderReloadOptions?: ResourceLoaderReloadOptions;
@@ -152,6 +153,7 @@ export async function createAgentSessionServices(
 		(await ModelRuntime.create({
 			credentials: authStorage,
 			modelsPath: join(agentDir, "models.json"),
+			signal: options.modelRuntimeSignal,
 		}));
 	const modelRegistry = new ModelRegistry(modelRuntime, authStorage);
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
@@ -170,9 +172,9 @@ export async function createAgentSessionServices(
 	for (const registration of drainPendingProviderRegistrations(extensionsResult.runtime)) {
 		try {
 			if (registration.kind === "config") {
-				modelRuntime.registerProvider(registration.name, registration.config);
+				void modelRuntime.registerProvider(registration.name, registration.config, { refresh: false });
 			} else {
-				modelRuntime.registerNativeProvider(registration.provider);
+				void modelRuntime.registerNativeProvider(registration.provider, { refresh: false });
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);

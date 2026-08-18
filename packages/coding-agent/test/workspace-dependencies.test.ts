@@ -10,12 +10,17 @@ const WORKSPACE_DEPENDENCIES = [
 	{ name: "@earendil-works/pi-ai", packageJsonPath: "packages/ai/package.json" },
 	{ name: "@earendil-works/pi-tui", packageJsonPath: "packages/tui/package.json" },
 ] as const;
+const BUNDLED_WORKSPACE_NAMES = new Set([
+	...WORKSPACE_DEPENDENCIES.map((dependency) => dependency.name),
+	"@earendil-works/pi-telemetry",
+]);
 
 const GLOBAL_INSTALL_EXCLUDED_DEPENDENCIES = new Set(["@google/genai"]);
 
 type PackageJson = {
 	readonly name: string;
 	readonly version: string;
+	readonly private: boolean;
 	readonly dependencies: Readonly<Record<string, string>>;
 	readonly optionalDependencies: Readonly<Record<string, string>>;
 	readonly bundledDependencies: readonly string[];
@@ -39,6 +44,9 @@ function readPackageJson(packageJsonPath: string): PackageJson {
 	const json = readJsonObject(filePath);
 	if (typeof json.name !== "string" || typeof json.version !== "string") {
 		throw new Error(`${packageJsonPath} must include string name and version fields`);
+	}
+	if (json.private !== undefined && typeof json.private !== "boolean") {
+		throw new Error(`${packageJsonPath} private must be a boolean`);
 	}
 
 	const dependencies: Record<string, string> = {};
@@ -83,7 +91,15 @@ function readPackageJson(packageJsonPath: string): PackageJson {
 		}
 	}
 
-	return { name: json.name, version: json.version, dependencies, optionalDependencies, bundledDependencies, scripts };
+	return {
+		name: json.name,
+		version: json.version,
+		private: json.private ?? false,
+		dependencies,
+		optionalDependencies,
+		bundledDependencies,
+		scripts,
+	};
 }
 
 describe("coding-agent workspace dependencies", () => {
@@ -105,14 +121,25 @@ describe("coding-agent workspace dependencies", () => {
 
 	test("does not install nested registry pi packages under coding-agent", () => {
 		// Given
-		const lockfile = readFileSync(join(WORKSPACE_ROOT, "package-lock.json"), "utf8");
+		const lockfile = readJsonObject(join(WORKSPACE_ROOT, "package-lock.json"));
+		if (!isRecord(lockfile.packages)) {
+			throw new Error("package-lock.json packages must be a JSON object");
+		}
 
 		// When
-		const nestedRegistryPackagePattern =
-			/"packages\/coding-agent\/node_modules\/@earendil-works\/pi-(?:agent-core|ai|tui)"/;
+		const nestedPiEntries = Object.entries(lockfile.packages).filter(([path]) =>
+			/^packages\/coding-agent\/node_modules\/@earendil-works\/pi-(?:agent-core|ai|tui|pty|telemetry|storage-sqlite-node)$/.test(
+				path,
+			),
+		);
 
 		// Then
-		expect(lockfile).not.toMatch(nestedRegistryPackagePattern);
+		for (const [path, value] of nestedPiEntries) {
+			expect(isRecord(value), path).toBe(true);
+			if (!isRecord(value)) continue;
+			expect(value.link, path).toBe(true);
+			expect(value.resolved, path).toMatch(/^packages\//);
+		}
 	});
 
 	test("bundles local pi packages for npm publish", () => {
@@ -128,7 +155,7 @@ describe("coding-agent workspace dependencies", () => {
 		}
 	});
 
-	test("prepares bundled workspace packages before npm publish", () => {
+	test("routes root publication through the guarded bundle publisher", () => {
 		// Given
 		const rootPackage = readJsonObject(join(WORKSPACE_ROOT, "package.json"));
 		if (!isRecord(rootPackage.scripts)) {
@@ -143,21 +170,21 @@ describe("coding-agent workspace dependencies", () => {
 		}
 
 		// Then
-		expect(publishScript).toContain("scripts/prepare-senpi-bundled-workspaces.mjs");
-		expect(dryRunScript).toContain("scripts/prepare-senpi-bundled-workspaces.mjs");
+		expect(publishScript).toContain("scripts/publish.mjs");
+		expect(dryRunScript).toContain("scripts/publish.mjs --dry-run");
+		expect(readPackageJson("packages/coding-agent/package.json").private).toBe(true);
+		expect(readPackageJson("packages/senpi-codemode/package.json").private).toBe(true);
 	});
 
 	test("declares external dependencies required by bundled workspaces", () => {
 		// Given
 		const codingAgentPackage = readPackageJson("packages/coding-agent/package.json");
-		const bundledWorkspaceNames = new Set<string>(WORKSPACE_DEPENDENCIES.map((dependency) => dependency.name));
-
 		// When
 		const missingExternalDependencies: string[] = [];
 		for (const dependency of WORKSPACE_DEPENDENCIES) {
 			const localPackage = readPackageJson(dependency.packageJsonPath);
 			for (const [name, version] of Object.entries(localPackage.dependencies)) {
-				if (bundledWorkspaceNames.has(name) || GLOBAL_INSTALL_EXCLUDED_DEPENDENCIES.has(name)) {
+				if (BUNDLED_WORKSPACE_NAMES.has(name) || GLOBAL_INSTALL_EXCLUDED_DEPENDENCIES.has(name)) {
 					continue;
 				}
 				const declaredVersion =

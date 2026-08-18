@@ -10,6 +10,7 @@ import { getAgentDir } from "../../config.ts";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
+import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
@@ -372,6 +373,7 @@ export class ExtensionRunner {
 	private cwd: string;
 	private sessionManager: SessionManager;
 	private modelRegistry: ModelRegistry;
+	private eventBus: EventBus;
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
 	private getModel: () => Model<any> | undefined = () => undefined;
 	private getServiceTier: () => ServiceTier | undefined = () => undefined;
@@ -444,6 +446,7 @@ export class ExtensionRunner {
 		cwd: string,
 		sessionManager: SessionManager,
 		modelRegistry: ModelRegistry,
+		eventBus: EventBus = createEventBus(),
 	) {
 		this.extensions = extensions;
 		this.runtime = runtime;
@@ -451,6 +454,7 @@ export class ExtensionRunner {
 		this.cwd = cwd;
 		this.sessionManager = sessionManager;
 		this.modelRegistry = modelRegistry;
+		this.eventBus = eventBus;
 	}
 
 	bindCore(
@@ -654,6 +658,12 @@ export class ExtensionRunner {
 		return this.extensions.flatMap((extension) =>
 			(extension.filesystemPolicies ?? []).flatMap((policy) => policy.deniedRoots ?? []),
 		);
+	}
+
+	onRpcEvent(handler: (event: ExtensionRpcEvent) => void): () => void {
+		return this.eventBus.on(EXTENSION_RPC_EVENT_CHANNEL, (data) => {
+			handler(data as ExtensionRpcEvent);
+		});
 	}
 
 	/** Get extension-declared MCP servers (first declaration per name wins). */
@@ -948,6 +958,27 @@ export class ExtensionRunner {
 		return this.resolveRegisteredCommands().find((command) => command.invocationName === name);
 	}
 
+	async requestRpc(name: string, data: unknown): Promise<unknown> {
+		this.assertActive();
+		const normalizedName = name.trim();
+		if (normalizedName.length === 0) {
+			throw new Error("Extension RPC request name must not be empty");
+		}
+		const matches = this.extensions.flatMap((extension) => {
+			const handler = extension.rpcHandlers?.get(normalizedName);
+			return handler === undefined ? [] : [handler];
+		});
+		if (matches.length === 0) {
+			throw new Error(`Unknown extension RPC request: ${normalizedName}`);
+		}
+		if (matches.length > 1) {
+			throw new Error(`Multiple extension RPC request handlers registered: ${normalizedName}`);
+		}
+		const result = await matches[0]?.(data);
+		this.assertActive();
+		return result;
+	}
+
 	/**
 	 * Request a graceful shutdown. Called by extension tools and event handlers.
 	 * The actual shutdown behavior is provided by the mode via bindExtensions().
@@ -1118,6 +1149,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
 			},
+			getSystemPromptOptions: () => {
+				runner.assertActive();
+				return runner.getSystemPromptOptionsFn();
+			},
 			getLoadedHookSources: () => {
 				runner.assertActive();
 				return runner.getLoadedHookSourcesFn();
@@ -1137,10 +1172,6 @@ export class ExtensionRunner {
 			{},
 			Object.getOwnPropertyDescriptors(this.createContext()),
 		) as ExtensionCommandContext;
-		context.getSystemPromptOptions = () => {
-			this.assertActive();
-			return this.getSystemPromptOptionsFn();
-		};
 		context.waitForIdle = () => {
 			this.assertActive();
 			return this.waitForIdleFn();

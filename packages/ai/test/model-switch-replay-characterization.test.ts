@@ -7,6 +7,7 @@ import type { Context } from "../src/types.ts";
 import {
 	APPLY_PATCH_TOOL,
 	COMPLETIONS_COMPAT,
+	EMPTY_USAGE,
 	HISTORY,
 	makeModel,
 	makePatchHistory,
@@ -211,5 +212,100 @@ describe("model-switch replay characterization", () => {
 			{ role: "model", parts: [{ functionCall: { name: "apply_patch", args: { input: PATCH } } }] },
 			{ role: "user", parts: [{ functionResponse: { name: "apply_patch", response: { output: "Done!" } } }] },
 		]);
+	});
+
+	it("normalizes Kimi tool call ids for Anthropic-backed OpenAI gateways", () => {
+		// Given: this reproduces ~/.omo session 019fef2f-0c70-7074-a03a-f47d29b7a7ec,
+		// where Kimi stored `eval:18` before the conversation switched to OpenGateway Fable.
+		const context: Context = {
+			messages: [
+				{
+					role: "assistant",
+					content: [
+						{ type: "text", text: "Inspecting the session." },
+						{ type: "toolCall", id: "eval:18", name: "eval", arguments: { code: "1 + 1" } },
+					],
+					api: "openai-completions",
+					provider: "apitopia",
+					model: "kimi-k3-unlocked",
+					usage: EMPTY_USAGE,
+					stopReason: "toolUse",
+					timestamp: 1,
+				},
+				{
+					role: "toolResult",
+					toolCallId: "eval:18",
+					toolName: "eval",
+					content: [{ type: "text", text: "2" }],
+					isError: false,
+					timestamp: 2,
+				},
+			],
+		};
+
+		// When
+		const replay = convertCompletionMessages(
+			makeModel("openai-completions", "opengateway", "anthropic/claude-fable-5"),
+			context,
+			COMPLETIONS_COMPAT,
+		);
+
+		// Then
+		const assistant = replay[0];
+		const toolResult = replay[1];
+		if (assistant?.role !== "assistant" || assistant.tool_calls?.[0] === undefined || toolResult?.role !== "tool") {
+			throw new Error("unexpected OpenAI completions replay shape");
+		}
+		const normalizedId = assistant.tool_calls[0].id;
+		expect(normalizedId).toMatch(/^[a-zA-Z0-9_-]+$/);
+		expect(normalizedId.length).toBeLessThanOrEqual(40);
+		expect(normalizedId).not.toContain(":");
+		expect(toolResult.tool_call_id).toBe(normalizedId);
+	});
+
+	it("normalizes invalid same-model OpenAI completions tool call ids", () => {
+		// Given: a resumed OpenGateway conversation can contain an invalid ID from an
+		// older client even when its stored provider/model already match the target.
+		const context: Context = {
+			messages: [
+				{
+					role: "assistant",
+					content: [{ type: "toolCall", id: "eval:18", name: "eval", arguments: { code: "1 + 1" } }],
+					api: "openai-completions",
+					provider: "opengateway",
+					model: "anthropic/claude-fable-5",
+					usage: EMPTY_USAGE,
+					stopReason: "toolUse",
+					timestamp: 1,
+				},
+				{
+					role: "toolResult",
+					toolCallId: "eval:18",
+					toolName: "eval",
+					content: [{ type: "text", text: "2" }],
+					isError: false,
+					timestamp: 2,
+				},
+			],
+		};
+
+		// When
+		const replay = convertCompletionMessages(
+			makeModel("openai-completions", "opengateway", "anthropic/claude-fable-5"),
+			context,
+			COMPLETIONS_COMPAT,
+		);
+
+		// Then
+		const assistant = replay[0];
+		const toolResult = replay[1];
+		if (assistant?.role !== "assistant" || assistant.tool_calls?.[0] === undefined || toolResult?.role !== "tool") {
+			throw new Error("unexpected OpenAI completions replay shape");
+		}
+		const normalizedId = assistant.tool_calls[0].id;
+		expect(normalizedId).toMatch(/^[a-zA-Z0-9_-]+$/);
+		expect(normalizedId.length).toBeLessThanOrEqual(40);
+		expect(normalizedId).not.toContain(":");
+		expect(toolResult.tool_call_id).toBe(normalizedId);
 	});
 });

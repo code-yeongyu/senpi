@@ -284,23 +284,40 @@ describe("retry fallback engine", () => {
 		await harness.session.prompt("seed fallback compaction state");
 		const firstEntry = harness.sessionManager.getEntries()[0];
 		if (!firstEntry) throw new Error("Expected a persisted seed entry");
+		let markPrimaryStarted = () => {};
+		const primaryStarted = new Promise<void>((resolve) => {
+			markPrimaryStarted = resolve;
+		});
+		let releasePrimaryError = () => {};
+		const primaryErrorReleased = new Promise<void>((resolve) => {
+			releasePrimaryError = resolve;
+		});
 		const beginFeedback = Reflect.get(harness.session, "_beginExtensionCompactionFeedback");
 		if (typeof beginFeedback !== "function") throw new Error("Expected extension compaction feedback lifecycle");
-		const signal = beginFeedback.call(harness.session, "extension") as AbortSignal;
+		let signal: AbortSignal | undefined;
 		let oldApply: Promise<unknown> | undefined;
 		harness.session.subscribe((event) => {
 			if (event.type !== "auto_retry_start" || event.delayMs !== 0) return;
+			if (!signal) throw new Error("Expected extension compaction feedback signal");
 			oldApply = harness.session.applyCompaction(
 				{ summary: "must not apply after fallback selection", firstKeptEntryId: firstEntry.id, tokensBefore: 42 },
 				{ reason: "extension", signal },
 			);
 		});
 		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			async () => {
+				markPrimaryStarted();
+				await primaryErrorReleased;
+				return fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" });
+			},
 			fauxAssistantMessage("fallback answer"),
 		]);
 
-		await harness.session.prompt("trigger fallback while compaction is pending");
+		const promptPromise = harness.session.prompt("trigger fallback while compaction is pending");
+		await primaryStarted;
+		signal = beginFeedback.call(harness.session, "extension") as AbortSignal;
+		releasePrimaryError();
+		await promptPromise;
 
 		if (!oldApply) throw new Error("Expected fallback retry to attempt the stale apply");
 		await expect(oldApply).resolves.toEqual({ applied: false, reason: "stale" });

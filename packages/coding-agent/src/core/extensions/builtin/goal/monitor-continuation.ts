@@ -1,12 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import {
-	isTerminalMonitorStateEvent,
-	isWakeSourceStateEvent,
-	TERMINAL_MONITOR_STATE_EVENT,
-	WAKE_SOURCE_STATE_EVENT,
-} from "../monitor-state-event.ts";
-import {
+	createGoalCacheWarmScheduleData,
 	estimateCacheWarmMetrics,
 	GOAL_CACHE_WARMUP_ENTRY_TYPE,
 	GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS,
@@ -15,6 +10,7 @@ import {
 	type LiveGoalCacheWarmupEntryData,
 	resolveGoalMonitorContinuationDelayMs,
 } from "./cache-warm.ts";
+import { subscribeGoalChannelState } from "./channel-state-subscriptions.ts";
 
 export { GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS } from "./cache-warm.ts";
 
@@ -284,22 +280,19 @@ export class MonitorAwareGoalContinuation {
 			const wakeSources = this.#wakeSourceSnapshot();
 			this.#scheduledCache = cache;
 			this.#scheduledAtMs = Date.now();
-			this.#pi.events?.emit(GOAL_CONTINUATION_SCHEDULED_EVENT, {
+			const scheduleData = createGoalCacheWarmScheduleData({
 				goalId: goal.id,
 				delayMs,
-				iteration,
-				activeMonitorCount: this.#activeWakeSourceCount(),
-				wakeSources,
-				cache,
-			});
-			this.#appendWarmupEntry({
-				phase: "scheduled",
-				goalId: goal.id,
-				delayMs,
+				scheduledAtMs: this.#scheduledAtMs,
 				iteration,
 				activeMonitorCount: this.#activeWakeSourceCount(),
 				wakeSources,
 				...(cache !== undefined ? { cache } : {}),
+			});
+			this.#pi.events?.emit(GOAL_CONTINUATION_SCHEDULED_EVENT, scheduleData);
+			this.#appendWarmupEntry({
+				phase: "scheduled",
+				...scheduleData,
 			});
 		} else {
 			this.#scheduledAtMs = undefined;
@@ -497,13 +490,13 @@ export class MonitorAwareGoalContinuation {
 		const events = this.#pi.events;
 		if (events === undefined) return;
 		this.#channelStateUnsubscribers.push(
-			events.on(TERMINAL_MONITOR_STATE_EVENT, (data) => {
-				if (!isTerminalMonitorStateEvent(data)) return;
-				this.#setWakeSourceCount("terminal-monitors", data.activeCount);
-			}),
-			events.on(WAKE_SOURCE_STATE_EVENT, (data) => {
-				if (!isWakeSourceStateEvent(data)) return;
-				this.#setWakeSourceCount(data.source, data.activeCount);
+			...subscribeGoalChannelState(events, {
+				onWakeSource: (source, activeCount) => this.#setWakeSourceCount(source, activeCount),
+				onContinuationHold: (source, active) => {
+					const inputId = `external:${source}`;
+					if (active) this.holdDirectInput(inputId);
+					else this.resolveDirectInput(inputId, false);
+				},
 			}),
 		);
 	}

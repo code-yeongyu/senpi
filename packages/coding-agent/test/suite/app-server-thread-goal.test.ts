@@ -107,6 +107,33 @@ describe("app-server thread goal handlers", () => {
 		});
 	});
 
+	it("reactivates a completed goal through thread/goal/set with user transition semantics", async () => {
+		// Given: a persistent thread whose goal was completed through the wire.
+		const { connection, registry, root } = await createHarness();
+		const threadId = threadIdFromResponse(
+			await registry.dispatch(connection, { id: 14, method: "thread/start", params: { cwd: root } }),
+		);
+		await registry.dispatch(connection, {
+			id: 15,
+			method: "thread/goal/set",
+			params: { threadId, objective: "Resume through app-server", status: "complete" },
+		});
+
+		// When: the client explicitly sets that completed goal back to active.
+		const resumed = await registry.dispatch(connection, {
+			id: 16,
+			method: "thread/goal/set",
+			params: { threadId, status: "active" },
+		});
+
+		// Then: the shared store accepts the same user transition as /goal resume.
+		expect(objectAt(responseResult(resumed), "goal")).toMatchObject({
+			threadId,
+			objective: "Resume through app-server",
+			status: "active",
+		});
+	});
+
 	it("broadcasts goal updates globally only after the response", async () => {
 		// Given: two initialized connections, with only the requester subscribed to the thread.
 		const deferredActions: Array<() => Promise<void> | void> = [];

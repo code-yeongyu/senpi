@@ -22,7 +22,7 @@ export interface TerminalNotifierDeps {
 export const NOTICE_TAIL_MAX_CHARS = 2000;
 
 export interface TerminalNotificationDelivery {
-	readonly send: (content: string) => void;
+	readonly send: (content: string, options?: { readonly forceWake?: boolean }) => void;
 }
 
 /** Shared terminal-notification guard and notify-mode mapping. */
@@ -35,10 +35,13 @@ export function getTerminalNotificationDelivery(
 	const ctx = deps.getContext();
 	if (!ctx || NON_INTERACTIVE_MODES.has(ctx.mode) || !ctx.model) return undefined;
 	return {
-		send: (content) =>
+		send: (content, options) =>
 			deps.sendMessage(
 				{ customType, content, display: false },
-				{ triggerTurn: true, deliverAs: mode === "wake" ? "steer" : "followUp" },
+				{
+					triggerTurn: true,
+					deliverAs: mode === "wake" || options?.forceWake === true ? "steer" : "followUp",
+				},
 			),
 	};
 }

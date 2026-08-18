@@ -421,6 +421,7 @@ internal-error path; a listed method is not silently treated as unsupported.
 | `permissionProfile/list` | Senpi's actual single `dangerFullAccess`-equivalent profile. |
 | `experimentalFeature/list` | Numeric-cursor paginated Senpi feature catalog, currently allowed to be empty. |
 | `fuzzyFileSearch` | One-shot subsequence file search over requested roots; an empty query returns no results. |
+| `extension_request` | Routes `{threadId,name,data}` to exactly one `pi.rpc.handle(name, handler)` in the loaded thread and returns the handler result. Unknown or duplicate handlers return a typed internal JSON-RPC error. |
 | `thread/start` | Creates, loads, and subscribes the calling connection to a session-backed thread. |
 | `thread/resume` | Loads a saved thread and subscribes the calling connection. |
 | `thread/read` | Reads a thread, optionally including turns. |
@@ -468,7 +469,11 @@ they have no `id` and may arrive before, between, or after correlated responses 
 - Broadcast notifications include thread lifecycle updates, `thread/unarchived`, name changes, global goal updates, and
   fuzzy-search session updates.
 - Thread-scoped notifications go only to subscribers of that thread. This includes turn lifecycle and item events,
-  `thread/settings/updated`, and `turn/diff/updated`.
+  `thread/settings/updated`, `turn/diff/updated`, and extension-owned `extension_event` notifications.
+- Extensions opt into app-server delivery with `pi.rpc.emit(name, data)`. The notification shape is
+  `{method:"extension_event",params:{type:"extension_event",threadId,name,data},emittedAtMs}`. App-server initialize
+  capabilities do not include RPC mode's `extension_events` capability, so initialized thread subscribers receive these
+  records unconditionally. Ordinary `pi.events` channels remain extension-local and are never forwarded.
 - `turn/diff/updated` is Senpi's cumulative aggregation of the projected file-change unified diffs for a turn, in item
   order. It is intentionally not a byte-for-byte substitute for Codex's git-based diff text.
 - `thread/unarchive`, goal mutation, and a successful settings mutation send their response before the corresponding

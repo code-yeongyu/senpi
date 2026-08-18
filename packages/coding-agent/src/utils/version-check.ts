@@ -1,6 +1,7 @@
 import { compare, valid } from "semver";
 import { PACKAGE_NAME } from "../config.ts";
 import { type BrandUpdateChannel, brandProfile, envValue } from "../core/brand.ts";
+import { fetchWithRetry } from "./management-http.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
 
 const REGISTRY_BASE_URL = "https://registry.npmjs.org";
@@ -38,7 +39,25 @@ function parseSenpiCalVer(version: string): readonly [number, number, number, nu
 	}
 	return [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4] ?? 1)];
 }
+/** Include useful errno details hidden behind Node's generic "fetch failed" error. */
+export function formatVersionCheckError(error: unknown): string {
+	const rootMessage = error instanceof Error && error.message ? error.message : String(error);
+	const cause = error instanceof Error ? error.cause : undefined;
+	const causes = cause instanceof AggregateError ? cause.errors : cause === undefined ? [] : [cause];
+	const codes = causes
+		.map((value) =>
+			typeof value === "object" && value !== null && "code" in value && typeof value.code === "string"
+				? value.code
+				: undefined,
+		)
+		.filter((code): code is string => code !== undefined);
 
+	if (codes.length > 0) return `${rootMessage} (${[...new Set(codes)].join(", ")})`;
+	const causeMessage = causes.find(
+		(value): value is Error => value instanceof Error && Boolean(value.message),
+	)?.message;
+	return causeMessage ? `${rootMessage} (cause: ${causeMessage})` : rootMessage;
+}
 export function comparePackageVersions(leftVersion: string, rightVersion: string): number | undefined {
 	const leftTrimmed = leftVersion.trim();
 	const rightTrimmed = rightVersion.trim();
@@ -81,7 +100,7 @@ export function getReleaseChangelogUrl(version: string): string {
 
 export async function getLatestPiRelease(
 	currentVersion: string,
-	options: { timeoutMs?: number } = {},
+	options: { timeoutMs?: number; retry?: boolean } = {},
 ): Promise<LatestPiRelease | undefined> {
 	if (envValue("OFFLINE")) return undefined;
 
@@ -92,13 +111,19 @@ export async function getLatestPiRelease(
 		// advertising them would send the user after an update they cannot apply.
 		return undefined;
 	}
-	const response = await fetch(latestVersionUrl(channel), {
-		headers: {
-			"User-Agent": getPiUserAgent(currentVersion),
-			accept: "application/json",
+	const response = await fetchWithRetry(
+		latestVersionUrl(channel),
+		{
+			headers: {
+				"User-Agent": getPiUserAgent(currentVersion),
+				accept: "application/json",
+			},
 		},
-		signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS),
-	});
+		{
+			maxRetries: options.retry ? 2 : 0,
+			timeoutMs: options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS,
+		},
+	);
 	if (!response.ok) return undefined;
 
 	const data = (await response.json()) as { packageName?: unknown; version?: unknown; note?: unknown };
@@ -117,7 +142,7 @@ export async function getLatestPiRelease(
 
 export async function getLatestPiVersion(
 	currentVersion: string,
-	options: { timeoutMs?: number } = {},
+	options: { timeoutMs?: number; retry?: boolean } = {},
 ): Promise<string | undefined> {
 	return (await getLatestPiRelease(currentVersion, options))?.version;
 }

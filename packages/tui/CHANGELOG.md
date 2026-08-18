@@ -12,6 +12,200 @@
 
 ### Removed
 
+## [2026.8.17] - 2026-08-17
+
+### Breaking Changes
+
+### Added
+
+- Added a mixed `$` autocomplete surface that groups canonical commands before skills, filters both with one query,
+  inserts the correct `/name` or `$name` syntax, and triggers from real editor input
+  ([#909](https://github.com/code-yeongyu/senpi/pull/909)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.16] - 2026-08-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Synced with upstream v0.84.2: fullscreen transcript search, keyboard-protocol negotiation buffering with fragment-timeout flush, OSC 9;4 progress keepalive, Windows VT input, and lone-`ESC`-scoped `PI_TUI_ESC_TIMEOUT`. The fork's dead-terminal error handling and `PI_TUI_KEYBOARD_PROTOCOL` kill-switch are preserved, and fullscreen focus events now reach the alt-screen viewport so upstream's idle-focus repaint suppression takes effect ([#892](https://github.com/code-yeongyu/senpi/pull/892)).
+
+### Fixed
+
+- Expanding several tool results at once (Ctrl+O) no longer renders mismatched or truncated content: when a frame grows above the viewport and a visible row also changes, the renderer now replays the canonical transcript instead of repainting only the visible rows, so every expanded result reaches scrollback under its own header ([#701](https://github.com/code-yeongyu/senpi/issues/701)).
+
+### Removed
+
+## [2026.8.14] - 2026-08-14
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.13-2] - 2026-08-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.13] - 2026-08-13
+
+### Breaking Changes
+
+### Added
+
+- Added unbound half-page transcript scrolling actions, `tui.altScreen.halfPageUp` and `tui.altScreen.halfPageDown`, for fullscreen TUI keybindings ([#7735](https://github.com/earendil-works/pi/issues/7735)).
+- Added double-click word and whitespace selection, granularity-aware drag selection, and triple-click paragraph selection in the fullscreen TUI ([#7725](https://github.com/earendil-works/pi/issues/7725), [#7733](https://github.com/earendil-works/pi/pull/7733) by [@volsa](https://github.com/volsa)).
+- Added an optional right-click paste handler to the alternate-screen TUI, currently enabled on Windows.
+- Added terminal-friendly Unicode rendering for LaTeX expressions in Markdown, including inline and display math, fractions, scripts, common symbols, aligned equations, cases, and matrices.
+- Added the shared `TuiMode` type and `mode` discriminants to the main-screen and alternate-screen TUI renderers.
+- Added TUI lifecycle and render-state handoff APIs for replacing renderers without replaying main-screen content.
+- Added alternate-screen `VStack`, `HStack`, and nested `ScrollView` layouts with constrained sizing, sticky regions, and pointer-targeted scrolling.
+- Added proportional scrollbars with mouse dragging, Home/End document navigation, transient `auto` mode, and an `always` mode that reserves the rightmost column; scrollbar modes can be changed at runtime.
+- Added configurable previous/next prompt history actions for navigation independent of vertical cursor movement.
+- Added stacked transient notifications to the alternate-screen renderer ([#7361](https://github.com/earendil-works/pi/pull/7361)).
+
+### Changed
+
+- Reduced the default alternate-screen mouse wheel step from three lines to one for finer scrolling.
+
+### Fixed
+
+- Fixed LaTeX relation, multiplication, and named-operator spacing, and correctly composed matrices with stacked fractions, operator limits, and adjacent matrices.
+- Reduced fullscreen mouse event volume under tmux, Zellij, and GNU Screen by using button-motion tracking instead of all-motion tracking.
+- Fixed Windows Shift+Enter detection by extending the native Win32 helper to report modifier key state.
+- Fixed the npm package omitting the source and build script needed to rebuild the Windows native addon.
+- Fixed the npm package omitting the source and build script needed to rebuild the Darwin native addon.
+- Fixed Windows console truecolor detection when Windows Terminal does not provide `WT_SESSION` to child shells.
+- Fixed terminal width accounting for Indic conjunct grapheme clusters ([#6987](https://github.com/earendil-works/pi/pull/6987) by [@petrroll](https://github.com/petrroll)).
+- Fixed alternate-screen redraws retransmitting Kitty image data when placements move or recently offscreen images return, dropping adjacent row content when reusing placements, rendering fixed-basis scroll content twice per frame, and scanning clipped transcript rows while painting.
+- Fixed fullscreen transcript navigation leaving no editor-accessible `Home`, `End`, `PageUp`, or `PageDown` variants by adding Ctrl-modified editor bindings ([#7574](https://github.com/earendil-works/pi/issues/7574)).
+- Fixed keyboard input rendering latency on Windows by letting input preempt the throttled render timer.
+- Fixed nested stack layouts ignoring child minimum sizes.
+- Fixed batched terminal color-scheme reports being parsed as one malformed response ([#7550](https://github.com/earendil-works/pi/pull/7550)).
+- Fixed terminal progress clearing to emit the complete OSC 9;4 sequence ([#7581](https://github.com/earendil-works/pi/pull/7581)).
+- Fixed iTerm2 image payloads omitting the size metadata required by the xterm.js image addon ([#7612](https://github.com/earendil-works/pi/pull/7612)).
+- Fixed width truncation leaving OSC 8 hyperlinks unterminated ([#7657](https://github.com/earendil-works/pi/pull/7657) by [@xXJSONDeruloXx](https://github.com/xXJSONDeruloXx)).
+- Fixed long image fallback paths overflowing narrow terminals, shortened home-directory paths, and made absolute paths clickable when terminal hyperlinks are available ([#7262](https://github.com/earendil-works/pi/pull/7262)).
+
+### Removed
+
+## [2026.8.12-4] - 2026-08-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.12-3] - 2026-08-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.12-2] - 2026-08-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.12] - 2026-08-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11-6] - 2026-08-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11-5] - 2026-08-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11-4] - 2026-08-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11-3] - 2026-08-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.8.11-2] - 2026-08-10
 
 ### Breaking Changes

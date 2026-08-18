@@ -116,6 +116,11 @@ export interface TransformMessagesOptions {
 	 * compatibility payloads.
 	 */
 	preserveUnsignedThinking?: boolean;
+	/**
+	 * Normalize tool-call IDs even when stored provider/API/model metadata match
+	 * the target. Enable only for target protocols whose wire contract requires it.
+	 */
+	normalizeSameModelToolCallIds?: boolean;
 }
 
 /**
@@ -138,6 +143,7 @@ export function transformMessages<TApi extends Api>(
 	const preserveThinking = options.preserveThinking ?? true;
 	const preserveTextSignatures = options.preserveTextSignatures ?? false;
 	const preserveUnsignedThinking = options.preserveUnsignedThinking ?? false;
+	const normalizeSameModelToolCallIds = options.normalizeSameModelToolCallIds ?? false;
 
 	// First pass: transform messages (unsupported image downgrade, thinking blocks, tool call ID normalization)
 	const transformed = imageAwareMessages.map((msg) => {
@@ -206,7 +212,7 @@ export function transformMessages<TApi extends Api>(
 						delete (normalizedToolCall as { thoughtSignature?: string }).thoughtSignature;
 					}
 
-					if (!isSameModel && normalizeToolCallId) {
+					if ((!isSameModel || normalizeSameModelToolCallIds) && normalizeToolCallId) {
 						const normalizedId = normalizeToolCallId(toolCall.id, model, assistantMsg);
 						if (normalizedId !== toolCall.id) {
 							toolCallIdMap.set(toolCall.id, normalizedId);

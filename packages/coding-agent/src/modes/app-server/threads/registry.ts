@@ -56,6 +56,7 @@ export interface ThreadEntry {
 }
 
 export type AppServerSessionResult = CreateAgentSessionResult & {
+	readonly initialNotifications?: readonly RpcNotification[];
 	readonly mcpWireStatusAdapter?: McpWireStatusAdapter;
 };
 
@@ -116,7 +117,13 @@ export class ThreadRegistry {
 			model: options.model,
 		});
 		this.deletedThreadIds.delete(result.session.sessionId);
-		return this.registerSession(result.session, cwd, undefined, result.mcpWireStatusAdapter);
+		return this.registerSession(
+			result.session,
+			cwd,
+			undefined,
+			result.initialNotifications,
+			result.mcpWireStatusAdapter,
+		);
 	}
 
 	async resumeThread(threadId: string): Promise<ThreadEntry> {
@@ -139,7 +146,13 @@ export class ThreadRegistry {
 			agentDir: this.agentDir,
 			sessionManager,
 		});
-		return this.registerSession(result.session, sessionManager.getCwd(), sessionInfo, result.mcpWireStatusAdapter);
+		return this.registerSession(
+			result.session,
+			sessionManager.getCwd(),
+			sessionInfo,
+			result.initialNotifications,
+			result.mcpWireStatusAdapter,
+		);
 	}
 
 	async forkThread(threadId: string, options: Partial<CreateThreadOptions> = {}): Promise<ThreadEntry> {
@@ -157,7 +170,13 @@ export class ThreadRegistry {
 			model: options.model,
 		});
 		this.deletedThreadIds.delete(result.session.sessionId);
-		return this.registerSession(result.session, cwd, undefined, result.mcpWireStatusAdapter);
+		return this.registerSession(
+			result.session,
+			cwd,
+			undefined,
+			result.initialNotifications,
+			result.mcpWireStatusAdapter,
+		);
 	}
 
 	async deleteThread(threadId: string): Promise<boolean> {
@@ -245,6 +264,16 @@ export class ThreadRegistry {
 		return this.entries.delete(threadId);
 	}
 
+	async dispose(): Promise<void> {
+		const entries = [...this.entries.values()];
+		await Promise.all(entries.map((entry) => entry.taskQueue));
+		for (const entry of entries) {
+			entry.session.dispose();
+			this.mcpWireStatuses.removeThread(entry.id);
+		}
+		this.entries.clear();
+	}
+
 	buildThread(entry: ThreadEntry): WireThread {
 		return this.buildLoadedThread(entry);
 	}
@@ -257,6 +286,7 @@ export class ThreadRegistry {
 		session: AgentSession,
 		cwd: string,
 		sessionInfo?: SessionInfo,
+		initialNotifications: readonly RpcNotification[] = [],
 		mcpWireStatusAdapter?: McpWireStatusAdapter,
 	): ThreadEntry {
 		const existing = this.entries.get(session.sessionId);
@@ -278,7 +308,7 @@ export class ThreadRegistry {
 			cwd,
 			subscribers: new Set<ConnectionId>(),
 			activeTurn: null,
-			queuedTerminalNotifications: [],
+			queuedTerminalNotifications: [...initialNotifications],
 			status: "idle",
 			taskQueue: Promise.resolve(),
 			createdAt: sessionInfo?.created.toISOString() ?? now,

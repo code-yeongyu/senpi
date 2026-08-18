@@ -65,6 +65,7 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// Wrapper/provider text for transient upstream failures, including OpenRouter
 	// "Provider returned error" responses (#2264).
 	"provider.?returned.?error",
+	"exceeded request buffer limit while retrying upstream",
 
 	// Network, proxy, and fetch transport failures. This includes OpenAI Codex
 	// raw-fetch failures such as "upstream connect", "connection refused", and
@@ -108,6 +109,14 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"you can retry your request",
 	"try your request again",
 	"please retry your request",
+
+	// Gateway/proxy-side rejection of the whole model request, e.g. "Error: The
+	// model request was rejected. Check the request and try again." (observed in a
+	// live session, 2026-08-11). Coupling the rejection sentence to its explicit
+	// retry instruction keeps unrelated permission, request-shape, and content-
+	// policy rejections terminal while the bounded retry policy absorbs this
+	// transient wrapper wording.
+	"the model request was rejected\\.\\s*check the request and try again\\.?",
 
 	// Anthropic server-tool pairing rejections, e.g. "`web_search` tool use with id
 	// `srvtoolu_...` was found without a corresponding `web_search_tool_result`
@@ -174,6 +183,76 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 			{ once: true },
 		);
 	});
+}
+
+/**
+ * Run a producer that signals failure by THROWING, with the same bounded
+ * backoff, abort, and callback semantics as {@link retryAssistantCall}.
+ *
+ * `retryAssistantCall` is value-based: its producer reports failure by resolving
+ * an `AssistantMessage` with `stopReason: "error"`. Callers that instead reject
+ * (compaction summarization, and any other request pipeline that throws) need
+ * the identical retry policy without reshaping their failures into assistant
+ * messages first, so both live here and share one implementation of the delay,
+ * abort, and callback contract.
+ *
+ * Behavior:
+ * - A resolved value is returned immediately.
+ * - A throw that `isRetryable` rejects is rethrown at once: deterministic
+ *   failures never spend a retry.
+ * - Otherwise the call is retried up to `policy.maxRetries` times with the same
+ *   exponential backoff (`baseDelayMs * 2^(attempt-1)`), rethrowing the final
+ *   error when the budget is exhausted.
+ * - An abort during the backoff sleep stops the loop and rethrows; unlike the
+ *   assistant-message path there is no aborted value to normalize to.
+ *
+ * When `policy` is undefined or disabled the producer runs exactly once and its
+ * error propagates unchanged.
+ */
+export async function retryTransientCall<T>(
+	produce: () => Promise<T>,
+	isRetryable: (error: unknown) => boolean,
+	policy: RetryPolicy | undefined,
+	signal: AbortSignal | undefined,
+	callbacks?: RetryCallbacks,
+): Promise<T> {
+	const maxAttempts = policy?.enabled ? policy.maxRetries : 0;
+
+	let attempt = 0;
+	let lastRetry: { attempt: number; errorMessage: string } | undefined;
+	for (;;) {
+		try {
+			const value = await produce();
+			if (lastRetry) await callbacks?.onRetryFinished?.(true, lastRetry.attempt);
+			return value;
+		} catch (error) {
+			if (error instanceof RetrySleepAbortError) throw error;
+			if (attempt >= maxAttempts || !isRetryable(error)) {
+				if (lastRetry) {
+					await callbacks?.onRetryFinished?.(false, lastRetry.attempt, errorMessageOf(error));
+				}
+				throw error;
+			}
+
+			attempt++;
+			lastRetry = { attempt, errorMessage: errorMessageOf(error) };
+			const delayMs = policy!.baseDelayMs * 2 ** (attempt - 1);
+			await callbacks?.onRetryScheduled?.(attempt, maxAttempts, delayMs, lastRetry.errorMessage);
+
+			try {
+				await sleep(delayMs, signal);
+			} catch (sleepError) {
+				await callbacks?.onRetryFinished?.(false, attempt, lastRetry.errorMessage);
+				throw sleepError instanceof RetrySleepAbortError ? error : sleepError;
+			}
+			await callbacks?.onRetryAttemptStart?.();
+		}
+	}
+}
+
+function errorMessageOf(error: unknown): string {
+	if (error instanceof Error) return error.message || "Unknown error";
+	return String(error) || "Unknown error";
 }
 
 /**

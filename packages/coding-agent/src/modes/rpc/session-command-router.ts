@@ -1,3 +1,4 @@
+import { buildRpcSessionState } from "./connection-handler.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import {
 	RPC_ERROR_MISSING_SESSION_ID,
@@ -26,17 +27,20 @@ export class SessionCommandRouter {
 		"cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel"
 	>;
 	private readonly createBinding: typeof createRpcSessionBinding;
+	private readonly connectionOptions: Parameters<typeof createRpcSessionBinding>[4];
 
 	constructor(
 		registry: RpcSessionRegistry,
 		writer: SessionEventWriter,
 		defaults: Pick<RpcSessionLaunchProfile, "cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel">,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,
+		connectionOptions: Parameters<typeof createRpcSessionBinding>[4] = {},
 	) {
 		this.registry = registry;
 		this.writer = writer;
 		this.defaults = defaults;
 		this.createBinding = createBinding;
+		this.connectionOptions = connectionOptions;
 	}
 
 	async handle(command: RpcCommand): Promise<RpcResponse | undefined> {
@@ -111,6 +115,7 @@ export class SessionCommandRouter {
 					entry,
 					this.writer,
 					() => void this.close({ type: "close_session", sessionId: openedSession.sessionId }),
+					this.connectionOptions,
 				),
 			);
 			const state = entry.runtime!.session;
@@ -121,20 +126,7 @@ export class SessionCommandRouter {
 				success: true,
 				data: {
 					sessionId: opened.sessionId,
-					state: {
-						model: state.model,
-						thinkingLevel: state.thinkingLevel,
-						isStreaming: state.isStreaming,
-						isCompacting: state.isCompacting,
-						steeringMode: state.steeringMode,
-						followUpMode: state.followUpMode,
-						sessionFile: state.sessionFile,
-						sessionId: state.sessionId,
-						sessionName: state.sessionName,
-						autoCompactionEnabled: state.autoCompactionEnabled,
-						messageCount: state.messages.length,
-						pendingMessageCount: state.pendingMessageCount,
-					},
+					state: buildRpcSessionState(state),
 				},
 			});
 			return undefined;

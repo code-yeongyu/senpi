@@ -1,5 +1,6 @@
 export const TERMINAL_MONITOR_STATE_EVENT = "terminal_monitor_state";
 export const WAKE_SOURCE_STATE_EVENT = "wake_source_state";
+export const CONTINUATION_HOLD_STATE_EVENT = "continuation_hold_state";
 
 export interface WakeSourceStateItem {
 	readonly id: string;
@@ -11,6 +12,11 @@ export interface WakeSourceStateEvent {
 	readonly source: string;
 	readonly activeCount: number;
 	readonly items?: readonly WakeSourceStateItem[];
+}
+
+export interface ContinuationHoldStateEvent {
+	readonly source: string;
+	readonly active: boolean;
 }
 
 /**
@@ -27,6 +33,18 @@ export function isWakeSourceStateEvent(data: unknown): data is WakeSourceStateEv
 		"activeCount" in data &&
 		typeof data.activeCount === "number" &&
 		Number.isFinite(data.activeCount)
+	);
+}
+
+export function isContinuationHoldStateEvent(data: unknown): data is ContinuationHoldStateEvent {
+	return (
+		typeof data === "object" &&
+		data !== null &&
+		"source" in data &&
+		typeof data.source === "string" &&
+		data.source.length > 0 &&
+		"active" in data &&
+		typeof data.active === "boolean"
 	);
 }
 

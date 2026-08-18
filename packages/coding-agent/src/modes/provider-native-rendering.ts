@@ -117,6 +117,33 @@ function formatSources(sources: SearchSource[], label: "result" | "source" | "ur
 	return lines;
 }
 
+/** Decoded size of a base64 payload, computed without allocating the bytes. */
+function base64ByteLength(value: string): number {
+	const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+	return Math.max(0, Math.floor(value.length / 4) * 3 - padding);
+}
+
+/**
+ * Renders an OpenAI `image_generation_call` without ever echoing the payload.
+ * The base64 result is deliberately reduced to a byte count, and no path is shown:
+ * the file only exists once the message_end externalization pass has replaced this
+ * block with text, which this renderer never sees.
+ */
+function formatImageGenerationCallBody(raw: unknown): string | undefined {
+	const record = isRecord(raw) ? raw : undefined;
+	if (!record) return undefined;
+
+	const status = readString(record, "status");
+	const result = readString(record, "result");
+	const revisedPrompt = readString(record, "revised_prompt");
+	const lines = [
+		...(status ? [`status: ${status}`] : []),
+		...(result ? [`${base64ByteLength(result)} bytes`] : []),
+		...(revisedPrompt?.trim() ? [`revised prompt: ${shorten(revisedPrompt, 200)}`] : []),
+	];
+	return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
 function formatServerToolUseBody(raw: unknown): string | undefined {
 	const record = isRecord(raw) ? raw : undefined;
 	const input = readRecord(record, "input");
@@ -219,6 +246,11 @@ function formatSpecializedProviderNativeSummary(
 		const status = readString(raw, "status");
 		return `${marker} ${provider}web_search${status ? ` · ${status}` : " · web_search_call"}`;
 	}
+	if (content.subtype === "image_generation_call") {
+		const raw = isRecord(content.raw) ? content.raw : undefined;
+		const status = readString(raw, "status");
+		return `${marker} ${provider}image_generation${status ? ` · ${status}` : " · image_generation_call"}`;
+	}
 	if (content.subtype === "groundingMetadata") {
 		const body = formatGoogleGroundingMetadataBody(content.raw, expanded);
 		if (body) {
@@ -243,6 +275,9 @@ function formatSpecializedProviderNativeBody(content: ProviderNativeContent, exp
 	}
 	if (content.subtype === "web_search_call") {
 		return formatOpenAiWebSearchCallBody(content.raw, expanded);
+	}
+	if (content.subtype === "image_generation_call") {
+		return formatImageGenerationCallBody(content.raw);
 	}
 	if (content.subtype === "groundingMetadata") {
 		return formatGoogleGroundingMetadataBody(content.raw, expanded);

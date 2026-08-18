@@ -528,6 +528,20 @@ export function compositeTuiLine(
 	return protocolPrefix + composited;
 }
 
+export type TuiMode = "regular" | "fullscreen";
+
+export interface TuiStopOptions {
+	/** Leave renderer output in place for another TUI taking over the same terminal. */
+	preserveScreen?: boolean;
+}
+
+/**
+ * Structural contract every renderer satisfies. The concrete `TUI` class below is the
+ * fork's legacy main-screen renderer and owns this name in both the value and type
+ * position, so the upstream `interface TUI` cannot be declared alongside it; the members
+ * upstream added to that interface (`mode`, `stop(options)`, `renderNow`) live on
+ * `TuiBase` and are therefore present on every renderer typed as `TUI`.
+ */
 export const VIEWPORT_TUI = Symbol.for("@earendil-works/pi-tui/viewport");
 
 export interface ViewportTUI extends TUI {
@@ -540,13 +554,14 @@ export function isViewportTUI(tui: TUI): tui is ViewportTUI {
 }
 
 export abstract class TuiBase extends Container {
+	abstract readonly mode: TuiMode;
 	public terminal: Terminal;
-	private previousLines: string[] = [];
+	protected previousLines: string[] = [];
 	private previousRawLines: string[] = [];
 	private normalizeMemo = new Map<string, string>();
-	private previousKittyImageIds = new Set<number>();
-	private previousWidth = 0;
-	private previousHeight = 0;
+	protected previousKittyImageIds = new Set<number>();
+	protected previousWidth = 0;
+	protected previousHeight = 0;
 	private focusedComponent: Component | null = null;
 	private inputListeners = new Set<TuiInputListener>();
 
@@ -558,12 +573,12 @@ export abstract class TuiBase extends Container {
 	/** Minimum interval between scheduled renders. Default preserves the historic ~60fps cap. */
 	#minRenderIntervalMs = 16;
 	private inputRenderPending = false;
-	private cursorRow = 0; // Logical cursor row (end of rendered content)
-	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
+	protected cursorRow = 0; // Logical cursor row (end of rendered content)
+	protected hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
-	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
-	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
+	protected maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
+	protected previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	protected fullRedrawCount = 0;
 	private muxViewportRepaintCount = 0;
 	private overWideCrashDumpWritten = false;
@@ -579,7 +594,7 @@ export abstract class TuiBase extends Container {
 	private focusOrderCounter = 0;
 	private overlayStack: OverlayStackEntry[] = [];
 
-	protected get hasOverlayEntries(): boolean {
+	get hasOverlayEntries(): boolean {
 		return this.overlayStack.length > 0;
 	}
 	private overlayFocusRestore: OverlayFocusRestoreState = { status: "inactive" };
@@ -603,9 +618,9 @@ export abstract class TuiBase extends Container {
 
 	protected afterTerminalStart(): void {}
 
-	protected beforeTerminalStop(): void {}
+	protected beforeTerminalStop(_options: TuiStopOptions): void {}
 
-	protected afterTerminalStop(): void {}
+	protected afterTerminalStop(_options: TuiStopOptions): void {}
 
 	get fullRedraws(): number {
 		return this.fullRedrawCount;
@@ -636,6 +651,10 @@ export abstract class TuiBase extends Container {
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
+	}
+
+	getFocusedComponent(): Component | null {
+		return this.focusedComponent;
 	}
 
 	setFocus(component: Component | null): void {
@@ -885,6 +904,13 @@ export abstract class TuiBase extends Container {
 		return this.overlayStack.some((o) => this.isOverlayVisible(o));
 	}
 
+	/** Check if the focused component is a visible overlay */
+	protected isOverlayFocused(): boolean {
+		return this.overlayStack.some(
+			(entry) => entry.component === this.focusedComponent && this.isOverlayVisible(entry),
+		);
+	}
+
 	/** Check if an overlay entry is currently visible */
 	private isOverlayVisible(entry: OverlayStackEntry): boolean {
 		if (entry.hidden) return false;
@@ -907,8 +933,8 @@ export abstract class TuiBase extends Container {
 	}
 
 	override invalidate(): void {
-		super.invalidate();
-		for (const overlay of this.overlayStack) overlay.component.invalidate?.();
+		for (const root of this.getMountedRoots()) root.invalidate();
+		for (const overlay of this.overlayStack) overlay.component.invalidate();
 	}
 
 	start(): void {
@@ -969,20 +995,18 @@ export abstract class TuiBase extends Container {
 		this.terminal.write("\x1b[16t");
 	}
 
-	stop(): void {
+	stop(options: TuiStopOptions = {}): void {
 		this.stopped = true;
 		this.renderRequested = false;
 		this.inputRenderPending = false;
-		if (this.renderTimer) {
-			clearTimeout(this.renderTimer);
-			this.renderTimer = undefined;
-		}
+		this.cancelRenderTimer();
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031l");
 		}
-		this.beforeTerminalStop();
-		// Move cursor to the end of the content to prevent overwriting/artifacts on exit
-		if (this.previousLines.length > 0) {
+		this.beforeTerminalStop(options);
+		// Move cursor to the end of the content to prevent overwriting/artifacts on exit.
+		// Skipped when the screen is preserved for another renderer taking over this terminal.
+		if (!options.preserveScreen && this.previousLines.length > 0) {
 			// Only overwrite the cursor cell when the last published frame kept the hardware cursor hidden;
 			// a pending visibility change has not rendered yet and must not erase content.
 			if (this.#lastCursorVisibility === false) {
@@ -1002,7 +1026,7 @@ export abstract class TuiBase extends Container {
 		this.#setCursorVisibility(true);
 		if (process.env.TMUX) this.terminal.write(DISABLE_FOCUS_REPORTING);
 		this.terminal.stop();
-		this.afterTerminalStop();
+		this.afterTerminalStop(options);
 		this.resetRenderState();
 		this.#lastCursorVisibility = undefined;
 		this.previousLines = [];
@@ -1014,6 +1038,15 @@ export abstract class TuiBase extends Container {
 		this.hardwareCursorRow = 0;
 		this.maxLinesRendered = 0;
 		this.previousViewportTop = 0;
+	}
+
+	renderNow(force = false): void {
+		if (force) this.resetForcedRenderState();
+		this.renderRequested = false;
+		this.inputRenderPending = false;
+		this.cancelRenderTimer();
+		this.lastRenderAt = performance.now();
+		this.doRender();
 	}
 
 	#setCursorVisibility(visible: boolean): void {
@@ -1029,19 +1062,8 @@ export abstract class TuiBase extends Container {
 	requestRender(force = false, source = "unknown"): void {
 		if (force) {
 			this.inputRenderPending = false;
-			this.resetRenderState();
-			this.previousLines = [];
-			this.previousRawLines = [];
-			this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
-			this.previousHeight = -1; // -1 triggers heightChanged, forcing a full clear
-			this.cursorRow = 0;
-			this.hardwareCursorRow = 0;
-			this.maxLinesRendered = 0;
-			this.previousViewportTop = 0;
-			if (this.renderTimer) {
-				clearTimeout(this.renderTimer);
-				this.renderTimer = undefined;
-			}
+			this.resetForcedRenderState();
+			this.cancelRenderTimer();
 			this.renderRequested = true;
 			process.nextTick(() => {
 				if (this.stopped || !this.renderRequested) {
@@ -1074,6 +1096,25 @@ export abstract class TuiBase extends Container {
 	setMaxRenderFps(fps: number): void {
 		const clamped = Math.min(120, Math.max(30, Math.round(fps)));
 		this.#minRenderIntervalMs = Math.floor(1000 / clamped);
+	}
+
+	/** Drop every cached frame so the next render repaints from a clean slate. */
+	private resetForcedRenderState(): void {
+		this.resetRenderState();
+		this.previousLines = [];
+		this.previousRawLines = [];
+		this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
+		this.previousHeight = -1; // -1 triggers heightChanged, forcing a full clear
+		this.cursorRow = 0;
+		this.hardwareCursorRow = 0;
+		this.maxLinesRendered = 0;
+		this.previousViewportTop = 0;
+	}
+
+	private cancelRenderTimer(): void {
+		if (!this.renderTimer) return;
+		clearTimeout(this.renderTimer);
+		this.renderTimer = undefined;
 	}
 
 	private scheduleRender(): void {
@@ -1112,13 +1153,18 @@ export abstract class TuiBase extends Container {
 	}
 
 	private handleTerminalInput(data: string): void {
-		const focus = consumeTmuxFocusEvent(data);
-		if (focus.event !== null) {
-			resetCapabilitiesCache();
-			this.invalidate();
-			this.requestRender(true);
-			if (focus.data.length === 0) return;
-			data = focus.data;
+		// Fullscreen renderers own focus events so they can clear only an active drag selection
+		// without forcing idle or completed-selection repaints. Main-screen mode still uses focus
+		// changes to refresh terminal capabilities after returning to a multiplexer pane.
+		if (this.mode !== "fullscreen") {
+			const focus = consumeTmuxFocusEvent(data);
+			if (focus.event !== null) {
+				resetCapabilitiesCache();
+				this.invalidate();
+				this.requestRender(true);
+				if (focus.data.length === 0) return;
+				data = focus.data;
+			}
 		}
 		if (this.consumeOsc11BackgroundResponse(data)) {
 			return;
@@ -2229,6 +2275,30 @@ export abstract class TuiBase extends Container {
 			}
 
 			if (viewportTop !== prevViewportTop) {
+				// Content grew above the viewport (e.g. Ctrl+O expanding several tool
+				// blocks at once). Repainting only the visible rows would drop the
+				// inserted above-viewport rows from scrollback while marking them painted,
+				// so fall back to the canonical replay / mux dispatch used by the
+				// firstVisibleChanged === -1 path, which re-emits the full transcript.
+				if (lineCountDelta !== 0) {
+					if (preserveMuxScrollback) {
+						if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, viewportTop)) {
+							fullRender(true, false);
+						}
+					} else {
+						this.renderScrollbackReplay(
+							newLines,
+							rawLines,
+							cursorPos,
+							width,
+							height,
+							prevViewportTop,
+							hardwareCursorRow,
+						);
+					}
+					return;
+				}
+
 				const previousViewportBottom = Math.min(this.previousLines.length - 1, prevViewportTop + height - 1);
 				let buffer = TUI.FRAME_BEGIN;
 				buffer += this.deleteChangedKittyImages(prevViewportTop, previousViewportBottom);
@@ -2536,4 +2606,6 @@ export abstract class TuiBase extends Container {
 }
 
 /** Legacy main-screen renderer export. */
-export class TUI extends TuiBase {}
+export class TUI extends TuiBase {
+	readonly mode: TuiMode = "regular";
+}

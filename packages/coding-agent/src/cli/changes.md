@@ -1,5 +1,101 @@
 # changes
 
+## Repository audit baseline for the CLI tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`, tag v0.84.2). It assigns every audited production path whose exact
+  nearest tracker is this file, summarizing each fork delta; the dated history below it remains authoritative for the
+  feature narrative.
+- `packages/coding-agent/src/cli/args.ts`: `--list-tips`, the gated `--grok-neo` flag and help row (via
+  `grok-neo-gate.ts`), `--multi-session`, app-server command/usage/example rows, the `--theme` register-not-select
+  wording, and environment-help rows for `OLLAMA_API_KEY`, `OPENGATEWAY_API_KEY`, `ALIBABA_TOKEN_PLAN_API_KEY`, and
+  the `PI_RULES_*` limits.
+- `packages/coding-agent/src/cli/config-selector.ts` and `packages/coding-agent/src/cli/startup-ui.ts`: startup TUIs
+  construct `TUI` over `ProcessTerminal` with the external-stdout guard so stray startup `console.log` output is
+  hidden and redacted into the debug log (2026-07-04 entry below).
+- `packages/coding-agent/src/cli/project-trust.ts`: `toExtensionMode()` maps the `app-server` app mode to the `print`
+  extension mode instead of falling through.
+- `packages/coding-agent/src/cli/list-models.ts`: returns early when the listing signal already aborted and reads the
+  registry snapshot via `getModels()` instead of an async availability expansion.
+- `packages/coding-agent/src/cli/initial-message.ts`: `initialTitlePrompt` extraction (own entry below).
+
+### Why
+
+- The pre-backfill audit reported these paths as uncovered because the entries that describe them predate the
+  canonical four-section format (their conflict-zone headings carried suffixes) or never named the exact path. This
+  inventory closes that gap without rewriting accurate history below.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository policy enforced by repository scripts before any extension loader exists; the paths
+  themselves are pre-extension CLI surfaces.
+
+### Expected merge conflict zones
+
+- NONE for this inventory: the tracker merges to `ours` and the path list is pin-relative.
+
+## First-prompt session title capture in initial-message assembly (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/cli/initial-message.ts`: `InitialMessageResult` gained `initialTitlePrompt`.
+  `buildInitialMessage()` keeps the first CLI message available as the title prompt when the initial prompt has no
+  private context — no piped stdin, no `@file` text, no attached images — while still folding that message into the
+  initial prompt it returns. `main.ts` threads the value into interactive mode's `sessionTitlePrompt`.
+
+### Why
+
+- Auto title generation previously had no clean candidate for a plain one-message launch; reusing the first prompt
+  gives the session a meaningful title without exposing stdin or file context that may be private.
+
+### Why an extension could not handle it
+
+- The initial message is assembled before the session and its extension runner exist; the title prompt must ride the
+  same pre-session result object.
+
+### Expected merge conflict zones
+
+- LOW: the `InitialMessageResult` interface and the title-prompt derivation in `buildInitialMessage()`.
+
+## `OPENGATEWAY_API_KEY` in `--help` environment list (2026-08-12)
+
+### What changed
+
+- `args.ts`: the `Environment Variables:` help block lists `OPENGATEWAY_API_KEY` (with the
+  https://opengateway.ai/api-keys issuance URL) next to the other provider keys.
+
+### Why
+
+- The new `opengateway` built-in provider authenticates with this variable; the help block is the
+  in-CLI discovery surface and stays exhaustive per provider-add convention.
+
+### Expected merge conflict zones
+
+- LOW: `args.ts` environment-variable help rows.
+
+## PI_RULES environment settings in top-level help (2026-08-03)
+
+### What changed
+
+- `args.ts`: the Environment Variables section now lists `PI_RULES_DISABLED`,
+  `PI_RULES_MAX_RULE_CHARS`, and `PI_RULES_MAX_RESULT_CHARS` with their accepted values and defaults.
+
+### Why
+
+- The settings added in #670 were documented in the README but omitted from `senpi --help`, leaving the two
+  environment-only character limits undiscoverable from the CLI.
+
+### Why extension system couldn't handle this
+
+- The static Environment Variables section belongs to `printHelp()` and extensions can register flags, not help
+  entries for environment settings.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `args.ts` Environment Variables rows.
+
 ## `senpi --list-tips` prints the tip catalog as JSON (2026-07-29)
 
 ### What changed

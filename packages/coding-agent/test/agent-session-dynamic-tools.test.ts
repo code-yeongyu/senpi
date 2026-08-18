@@ -74,7 +74,7 @@ describe("AgentSession dynamic tool registration", () => {
 
 		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash")!;
 		expect(session.systemPrompt).toContain(
-			"Inspect PI_* environment variables for current model and session details.",
+			"You can inspect PI_* environment variables for current model and session details.",
 		);
 		await bashTool.execute("bash-env", { command: "printf ok" });
 		expect(sessionEnv).toMatchObject({
@@ -204,6 +204,47 @@ describe("AgentSession dynamic tool registration", () => {
 			origin: "top-level",
 		});
 		expect(session.getActiveToolNames()).toContain("sdk_tool");
+
+		session.dispose();
+	});
+
+	it("preserves active membership when an existing tool is re-registered as search-exposed", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		let registerAgain: (() => void) | undefined;
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					const definition = {
+						name: "stable_active_tool",
+						label: "Stable Active Tool",
+						description: "Tool whose registration metadata changes",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text" as const, text: "ok" }], details: {} }),
+					};
+					pi.registerTool(definition);
+					registerAgain = () => pi.registerTool({ ...definition, exposure: "search" });
+				},
+			],
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		expect(session.getActiveToolNames()).toContain("stable_active_tool");
+		registerAgain?.();
+		expect(session.getAllTools().find(({ name }) => name === "stable_active_tool")?.exposure).toBe("search");
+		expect(session.getActiveToolNames()).toContain("stable_active_tool");
 
 		session.dispose();
 	});

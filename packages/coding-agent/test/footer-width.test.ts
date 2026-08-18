@@ -4,7 +4,17 @@ import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/co
 import { type FooterSegment, planFooterLayout } from "../src/modes/interactive/components/footer-layout.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
-import { createFooterData, createFooterSession } from "./helpers/footer-test-fixtures.ts";
+import {
+	createFooterData,
+	createFooterSession as createFooterSessionFixture,
+	type FooterSessionOptions,
+} from "./helpers/footer-test-fixtures.ts";
+
+function createFooterSession(options: FooterSessionOptions) {
+	const session = createFooterSessionFixture(options);
+	Object.assign(session, { modelRuntime: { isUsingSubscription: () => false } });
+	return session;
+}
 
 describe("formatCwdForFooter", () => {
 	it("does not abbreviate sibling paths that share the home prefix", () => {
@@ -187,5 +197,27 @@ describe("planFooterLayout provider priority", () => {
 		expect(plan.kind).toBe("pwd-elided");
 		if (plan.kind !== "pwd-elided") throw new Error("unexpected plan");
 		expect(plan.pwdPlain.length).toBeGreaterThan(0);
+	});
+
+	it("marks explicitly identified subscription auth", () => {
+		const session = createFooterSession({ sessionName: "", provider: "anthropic" });
+		Object.assign(session, { modelRuntime: { isUsingSubscription: () => true } });
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		expect(stripAnsi(footer.render(120)[0])).toContain("$0.000 (sub)");
+	});
+
+	it("does not mark non-subscription auth as a subscription", () => {
+		const session = createFooterSession({
+			sessionName: "",
+			provider: "openrouter",
+			usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 1.234 } },
+		});
+		Object.assign(session, { modelRuntime: { isUsingSubscription: () => false } });
+		const footer = new FooterComponent(session, createFooterData(1));
+		const stats = stripAnsi(footer.render(120)[0]);
+
+		expect(stats).toContain("$1.234");
+		expect(stats).not.toContain("(sub)");
 	});
 });

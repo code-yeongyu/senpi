@@ -2,12 +2,12 @@
 
 Commit: `4f26b8282` (2026-08-07)
 
-`@code-yeongyu/senpi-server` is an experimental private package. Top level is a composable, transport-neutral protocol server built on `@earendil-works/pi-protocol`. The old daemon/IPC/Radius stack lives on under `src/legacy/` and still backs the `server` CLI bin (`dist/legacy/cli.js`). Node `>=22.19.0`.
+`@code-yeongyu/senpi-server` is an experimental private package. It is a composable, transport-neutral protocol server built on `@earendil-works/pi-protocol`. The old daemon/IPC/Radius stack under `src/legacy/` and the `server` CLI bin were removed upstream in v0.84.1; applications supply their own `PiServerService`. Node `>=22.19.0`.
 
 ## STRUCTURE
 
 ```text
-src/index.ts             Re-exports errors, listener, protocol, server, types, legacy
+src/index.ts             Re-exports errors, listener, protocol, server, types
 src/server.ts            PiServer: handshake, auth token hash, message dispatch
 src/protocol.ts          pi-ai <-> pi-protocol type bridging and transcript mapping
 src/listener.ts          PiServerListener interface (start/close, accept)
@@ -18,11 +18,9 @@ src/errors.ts            PiServerError
 src/types.ts             PiServerOptions, PiSessionBackend, PiSessionRuntime
 src/transports/unix/     createUnixListener, createUnixServer preset
 src/testing/             TestSessionBackend, ProtocolTestClient, createTestServer
-src/legacy/              Old daemon: serve, ipc/, rpc-process, supervisor, radius,
-                         config, storage, cli (the `server` bin)
 ```
 
-Package exports: `.` (core + legacy re-export), `./testing`, `./unix`, `./legacy`.
+Package exports: `.` (core), `./testing`, `./unix`.
 
 ## INVARIANTS
 
@@ -45,14 +43,6 @@ Package exports: `.` (core + legacy re-export), `./testing`, `./unix`, `./legacy
 | Unix socket specifics (stale sockets) | `src/transports/unix/listener.ts`, `test/unix.test.ts`, `test/fixtures/stale-socket-server.mjs` |
 | Test harness/backend fakes | `src/testing/` |
 | Protocol conformance | `test/conformance.test.ts`, `test/protocol.test.ts` |
-
-## LEGACY (`src/legacy/`)
-
-- Daemon entry `serve.ts`, JSONL IPC under `ipc/`, child RPC in `rpc-process.ts` + `supervisor.ts`, Radius in `radius.ts`, plus `config.ts`, `storage.ts`, `cli.ts`.
-- Preserve newline-delimited JSON framing and per-connection write serialization; interleaved bytes corrupt the protocol.
-- Supervisor owns spawned children; clean up on stop, error, and partial startup.
-- Radius handles heartbeat retry backoff and re-registration after repeated 404s; credentials via `readStoredCredential("radius")`, fallback `SENPI_RADIUS_API_KEY`.
-- Never log credentials, tokens, raw auth headers, or secret-bearing environments.
 
 ## VALIDATION
 

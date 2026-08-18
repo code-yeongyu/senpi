@@ -100,6 +100,16 @@ export function registryTarballUrl(packageName, version) {
 	return `https://registry.npmjs.org/${packageName}/-/${tarballName}-${version}.tgz`;
 }
 
+export function registryMetadataError(lockPath, entry) {
+	if (!lockPath.includes("node_modules/") || entry.inBundle || entry.link) return undefined;
+	if (typeof entry.resolved !== "string") return `${lockPath} is missing resolved registry metadata`;
+	if (!entry.resolved.startsWith("https://registry.npmjs.org/")) {
+		return `${lockPath} does not resolve from the npm registry: ${entry.resolved}`;
+	}
+	if (typeof entry.integrity !== "string") return `${lockPath} is missing integrity registry metadata`;
+	return undefined;
+}
+
 export function isExactVersionSpec(spec) {
 	return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(spec);
 }
