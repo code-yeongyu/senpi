@@ -9,8 +9,8 @@
 		"test": "vitest run --config vitest.test.config.ts"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "^2026.8.17",
-		"@code-yeongyu/senpi": "^2026.8.17",
+		"@earendil-works/pi-ai": "^2026.8.18",
+		"@code-yeongyu/senpi": "^2026.8.18",
 		"@types/node": "26.1.1",
 		"shx": "0.4.0",
 		"typescript": "7.0.2",

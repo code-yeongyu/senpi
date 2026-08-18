@@ -30,6 +30,7 @@ const PRIORITY_TIER_MODEL_IDS = [
 ] as const;
 
 const OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const;
+const GPT_56_SOL_MODEL_IDS = ["gpt-5.6-sol", "gpt-5.6-sol-fast"] as const;
 
 const NON_PRIORITY_MODEL_IDS = [
 	"gpt-5-pro",
@@ -50,6 +51,16 @@ const NON_PRIORITY_MODEL_IDS = [
 ] as const;
 
 describe("OpenAI -fast priority-tier catalog variants", () => {
+	it("defaults GPT-5.6 Sol variants to a 400k context window", () => {
+		for (const provider of ["openai", "openai-codex"] as const) {
+			for (const id of GPT_56_SOL_MODEL_IDS) {
+				const model = getModel(provider, id);
+				expect(model, `${provider}/${id} should exist`).toBeDefined();
+				expect(model!.contextWindow, `${provider}/${id}`).toBe(400_000);
+			}
+		}
+	});
+
 	it("ships a -fast variant for every priority-eligible model in the catalog", () => {
 		const catalogIds = getModels("openai").map((model) => model.id);
 		for (const id of PRIORITY_TIER_MODEL_IDS) {

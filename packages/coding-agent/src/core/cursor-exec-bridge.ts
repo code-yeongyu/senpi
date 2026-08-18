@@ -42,11 +42,11 @@ export interface CursorExecBridgeOptions {
 	 * the agent loop's executor, so without these the live tool card for a
 	 * synthesized call never resolves.
 	 */
-	emitEvent?: (event: AgentEvent) => void;
+	emitEvent: (event: AgentEvent, runSignal: AbortSignal) => Promise<void>;
 	/** Run the session's vetoable extension preflight before tool execution. */
 	preflightToolCall?: (event: ToolCallEvent) => Promise<ToolCallEventResult | undefined>;
 	/** Abort signal for in-flight bridge executions (the active run's signal). */
-	getAbortSignal?: () => AbortSignal | undefined;
+	getAbortSignal: () => AbortSignal | undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -81,6 +81,11 @@ async function executeTool(
 	toolCallId: string,
 	args: Record<string, unknown>,
 ): Promise<ToolResultMessage> {
+	const runSignal = options.getAbortSignal();
+	if (!runSignal) {
+		return errorResult(toolCallId, toolName, "Tool execution has no active run");
+	}
+
 	const tool = options.getTool(toolName);
 	if (!tool) {
 		return errorResult(toolCallId, toolName, `Tool "${toolName}" is not available in this session`);
@@ -107,7 +112,9 @@ async function executeTool(
 		return errorResult(toolCallId, toolName, error instanceof Error ? error.message : String(error));
 	}
 
-	options.emitEvent?.({ type: "tool_execution_start", toolCallId, toolName, args: cleanArgs });
+	await options.emitEvent({ type: "tool_execution_start", toolCallId, toolName, args: cleanArgs }, runSignal);
+	let toolResult: ToolResultMessage;
+	let endEvent: AgentEvent;
 	try {
 		if (!isRecord(params)) {
 			throw new Error(`Tool "${toolName}" prepared non-object arguments`);
@@ -120,39 +127,41 @@ async function executeTool(
 		});
 		if (preflight?.block) {
 			const message = preflight.reason || "Tool execution was blocked";
-			options.emitEvent?.({
+			toolResult = errorResult(toolCallId, toolName, message);
+			endEvent = {
 				type: "tool_execution_end",
 				toolCallId,
 				toolName,
 				result: { content: [{ type: "text", text: message }], details: undefined },
 				isError: true,
-			});
-			return errorResult(toolCallId, toolName, message);
+			};
+		} else {
+			const result = await tool.execute(toolCallId, params, runSignal, undefined);
+			toolResult = {
+				role: "toolResult",
+				toolCallId,
+				toolName,
+				content: result.content ?? [],
+				details: result.details,
+				usage: result.usage,
+				isError: false,
+				timestamp: Date.now(),
+			};
+			endEvent = { type: "tool_execution_end", toolCallId, toolName, result, isError: false };
 		}
-		const result = await tool.execute(toolCallId, params, options.getAbortSignal?.(), undefined);
-		const toolResult: ToolResultMessage = {
-			role: "toolResult",
-			toolCallId,
-			toolName,
-			content: result.content ?? [],
-			details: result.details,
-			usage: result.usage,
-			isError: false,
-			timestamp: Date.now(),
-		};
-		options.emitEvent?.({ type: "tool_execution_end", toolCallId, toolName, result, isError: false });
-		return toolResult;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		options.emitEvent?.({
+		toolResult = errorResult(toolCallId, toolName, message);
+		endEvent = {
 			type: "tool_execution_end",
 			toolCallId,
 			toolName,
 			result: { content: [{ type: "text", text: message }], details: undefined },
 			isError: true,
-		});
-		return errorResult(toolCallId, toolName, message);
+		};
 	}
+	await options.emitEvent(endEvent, runSignal);
+	return toolResult;
 }
 
 /**

@@ -10,6 +10,20 @@
 
 ### Fixed
 
+- Late Cursor exec-bridge lifecycle events that settle after an abort or timeout are tied to their originating run, so they neither raise an unhandled `Agent listener invoked outside active run` error nor leak into a replacement run.
+
+### Removed
+
+## [2026.8.18] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 ### Removed
 
 ## [2026.8.17] - 2026-08-17

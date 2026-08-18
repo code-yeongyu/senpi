@@ -45,8 +45,9 @@ describe("cursor exec bridge tool_call preflight", () => {
 				};
 			},
 		};
+		const runSignal = new AbortController().signal;
 		const agent = {
-			signal: undefined,
+			signal: runSignal,
 			async emitExternalEvent(event: AgentEvent) {
 				events.push(event);
 				eventQueue = eventQueue.then(async () => {

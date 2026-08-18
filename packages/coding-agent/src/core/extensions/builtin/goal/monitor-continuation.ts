@@ -198,6 +198,23 @@ export class MonitorAwareGoalContinuation {
 		}
 	}
 
+	/** Live resumption channels known to this generation (e.g. terminal snapshots replayed on reload). */
+	hasActiveWakeSources(): boolean {
+		return this.#activeWakeSourceCount() > 0;
+	}
+
+	/**
+	 * Re-arms the monitor-delayed backstop a reload tore down with the retired
+	 * generation, so a later wake-source drain can still deliver the goal
+	 * continuation. No-op unless the goal is active, a wake source is live, and
+	 * no continuation is already scheduled.
+	 */
+	rearmMonitorBackstop(goal: Goal): void {
+		if (goal.status !== "active" || this.#activeWakeSourceCount() === 0) return;
+		this.#goal = goal;
+		this.#schedule(goal, "monitor");
+	}
+
 	/** Temporarily prevents a scheduled continuation from racing unresolved direct-input admission. */
 	holdDirectInput(inputId: string): void {
 		if (this.#directInputHolds.has(inputId)) return;

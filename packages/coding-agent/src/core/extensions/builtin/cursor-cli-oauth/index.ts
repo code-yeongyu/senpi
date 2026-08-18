@@ -5,8 +5,14 @@ import type { ExtensionAPI, ProviderModelConfig } from "../../types.ts";
 import { registerCursorCliAccountCommand } from "./account-command.ts";
 import { defaultCursorAgentExecutableDeps, resolveCursorAgentExecutable } from "./executable.ts";
 import { resolveCursorCliModelCatalog, STATIC_CURSOR_CLI_MODELS } from "./models.ts";
+import { createCursorCliOauthCredentialReader } from "./native-bootstrap.ts";
 import { CURSOR_CLI_OAUTH_PROVIDER_ID, createCursorCliOauthConfig } from "./oauth-login.ts";
-import { type CursorCliOauthProviderSettings, loadCursorCliOauthProviderSettingsFromDisk } from "./settings.ts";
+import {
+	type CursorCliOauthProviderSettings,
+	loadCursorCliOauthProviderSettingsFromDisk,
+	persistCursorCliNoApprovalAcknowledgement,
+	persistCursorCliOauthEnabled,
+} from "./settings.ts";
 import { streamCursorCliOauth } from "./stream.ts";
 
 export { CURSOR_CLI_OAUTH_PROVIDER_ID } from "./oauth-login.ts";
@@ -18,6 +24,7 @@ export type CursorCliOauthExtensionDeps = {
 	readonly agentDir?: string;
 	readonly store?: CredentialStore;
 	readonly readCurrent?: () => Promise<Credential | undefined>;
+	readonly readNativeCredential?: () => Credential | undefined | Promise<Credential | undefined>;
 	readonly loadSettings?: (cwd: string) => CursorCliOauthProviderSettings;
 	readonly resolveExecutable?: (settings: { executablePath?: string }) => string;
 };
@@ -35,7 +42,22 @@ export function registerCursorCliOauthExtension(pi: ExtensionAPI, deps: CursorCl
 	const cwd = deps.cwd ?? process.cwd();
 	const agentDir = deps.agentDir ?? getAgentDir();
 	const store = deps.store ?? AuthStorage.create();
-	const readCurrent = deps.readCurrent ?? (async () => store.read(CURSOR_CLI_OAUTH_PROVIDER_ID));
+	const readCurrent =
+		deps.readCurrent ??
+		createCursorCliOauthCredentialReader({
+			store,
+			readNativeCredential: deps.readNativeCredential ?? (() => store.read("cursor")),
+			canBootstrap: () => {
+				const settings = loadSettings(cwd);
+				if (!settings.enabled) return false;
+				try {
+					resolveExecutable(settings);
+					return true;
+				} catch {
+					return false;
+				}
+			},
+		});
 	const loadSettings = deps.loadSettings ?? loadCursorCliOauthProviderSettingsFromDisk;
 	const resolveExecutable = deps.resolveExecutable ?? defaultResolveExecutable;
 
@@ -56,6 +78,8 @@ export function registerCursorCliOauthExtension(pi: ExtensionAPI, deps: CursorCl
 				readCurrent,
 				readSettings: () => loadSettings(cwd),
 				resolveExecutable,
+				persistAcknowledgement: (acknowledgedAt) => persistCursorCliNoApprovalAcknowledgement(cwd, acknowledgedAt),
+				persistEnabled: (enabled) => persistCursorCliOauthEnabled(cwd, enabled),
 			}),
 		});
 	};

@@ -192,6 +192,25 @@ describe("cursor-cli-oauth login and availability", () => {
 		expect(login).toHaveBeenCalledTimes(2);
 	});
 
+	it("requests provider enablement after a successful login", async () => {
+		const persistEnabled = vi.fn();
+		const config = createCursorCliOauthConfig({
+			...dependencies(async () => undefined),
+			loadOAuth: async () => oauthFlow(),
+			persistEnabled,
+		});
+
+		await config.login({
+			onAuth: vi.fn(),
+			onDeviceCode: vi.fn(),
+			onPrompt: vi.fn(async () => "no"),
+			onSelect: vi.fn(async () => undefined),
+		});
+
+		expect(persistEnabled).toHaveBeenCalledOnce();
+		expect(persistEnabled).toHaveBeenCalledWith(true);
+	});
+
 	it("delegates expired slot refresh to the Cursor OAuth loader", async () => {
 		const refresh = vi.fn(
 			async (_stored: OAuthCredential, _signal: AbortSignal): Promise<OAuthCredential> => ({

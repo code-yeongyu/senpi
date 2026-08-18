@@ -99,8 +99,8 @@ describe("issue #447: goal continuation guardrails", () => {
 		const notices: string[] = [];
 		const harness = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "issue-447-distinct-progress");
-		await createActiveGoal(harness, ctx, "Finish the issue #447 regression");
 		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		await createActiveGoal(harness, ctx, "Finish the issue #447 regression");
 
 		for (let turn = 1; turn <= 50; turn++) {
 			const promptsBeforeTurn = harness.sent.length;
@@ -148,8 +148,8 @@ describe("issue #447: goal continuation guardrails", () => {
 		const notices: string[] = [];
 		const harness = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "issue-447-length");
-		await createActiveGoal(harness, ctx, "Finish the truncated response");
 		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		await createActiveGoal(harness, ctx, "Finish the truncated response");
 
 		await runContinuationTurn(harness, ctx, assistantStopWithReason("length", "first response cut off"));
 		expect(harness.sent).toHaveLength(1);
@@ -169,8 +169,8 @@ describe("issue #447: goal continuation guardrails", () => {
 		const notices: string[] = [];
 		const harness = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "issue-447-user-grace");
-		await createActiveGoal(harness, ctx, "Answer the direct user question first");
 		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		await createActiveGoal(harness, ctx, "Answer the direct user question first");
 
 		await runGoalHandlers(
 			harness.handlers,
@@ -204,8 +204,8 @@ describe("issue #447: goal continuation guardrails", () => {
 		const notices: string[] = [];
 		const harness = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "issue-447-terminal-error");
-		await createActiveGoal(harness, ctx, "Recover only when the provider can retry");
 		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		await createActiveGoal(harness, ctx, "Recover only when the provider can retry");
 
 		await runContinuationTurn(harness, ctx, assistantStopWithReason("error", "provider exhausted retries"), false);
 

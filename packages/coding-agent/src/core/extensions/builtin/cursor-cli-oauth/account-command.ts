@@ -21,6 +21,7 @@ import {
 	CURSOR_CLI_OAUTH_PROVIDER_ID,
 	confirmCursorCliNoApprovalAcknowledgement,
 	importLocalCursorCredential,
+	importNativeCursorCredential,
 	type LocalCursorImportDeps,
 } from "./oauth-login.ts";
 import { type CursorCliSessionRouter, cursorCliSessionRouter } from "./session-router.ts";
@@ -28,6 +29,7 @@ import {
 	type CursorCliOauthProviderSettings,
 	loadCursorCliOauthProviderSettingsFromDisk,
 	persistCursorCliNoApprovalAcknowledgement,
+	persistCursorCliOauthEnabled,
 } from "./settings.ts";
 
 /** Injectable seams; every default resolves real on-disk state at invocation time. */
@@ -38,15 +40,18 @@ export type CursorCliAccountCommandDeps = {
 	readonly probeVersion?: (executable: string) => Promise<string>;
 	readonly readNativeCredential?: () => Credential | undefined | Promise<Credential | undefined>;
 	readonly importCredential?: typeof importLocalCursorCredential;
+	readonly importNativeCredential?: typeof importNativeCursorCredential;
 	readonly importDeps?: LocalCursorImportDeps;
 	/** Acknowledgement persistence seam; the default read-modify-writes the global settings file. */
 	readonly persistAcknowledgement?: (cwd: string, acknowledgedAt: string) => void;
+	/** Enablement persistence seam; explicit login/import actions activate the fallback lane. */
+	readonly persistEnabled?: (cwd: string, enabled: boolean) => void;
 	readonly now?: () => number;
 	readonly generation?: CursorCliGenerationGuard;
 };
 
 const USAGE =
-	"Usage: /cursor-account [list | add | remove <name> | pin <name> | unpin | import | acknowledge | status]";
+	"Usage: /cursor-account [list | add | remove <name> | pin <name> | unpin | import [local | native] | acknowledge | status]";
 
 function asCursorCredential(value: Credential | undefined): CursorCliOauthCredential {
 	return value !== undefined && value.type === "oauth" ? (value as CursorCliOauthCredential) : emptyCredential();
@@ -117,7 +122,12 @@ export function registerCursorCliAccountCommand(pi: ExtensionAPI, deps: CursorCl
 					return;
 				}
 				if (action === "import") {
-					await importAccount(ctx, deps);
+					const source = args[1] ?? "local";
+					if (source !== "local" && source !== "native") {
+						ctx.ui.notify(USAGE, "error");
+						return;
+					}
+					await importAccount(ctx, deps, source);
 					return;
 				}
 				if (action === "acknowledge") {
@@ -261,8 +271,13 @@ async function unpinAccount(ctx: ExtensionCommandContext): Promise<void> {
 	ctx.ui.notify("Unpinned Cursor CLI (OAuth) account.", "info");
 }
 
-async function importAccount(ctx: ExtensionCommandContext, deps: CursorCliAccountCommandDeps): Promise<void> {
+async function importAccount(
+	ctx: ExtensionCommandContext,
+	deps: CursorCliAccountCommandDeps,
+	source: "local" | "native",
+): Promise<void> {
 	const importCredential = deps.importCredential ?? importLocalCursorCredential;
+	const importNativeCredential = deps.importNativeCredential ?? importNativeCursorCredential;
 	const importDeps: LocalCursorImportDeps = { ...deps.importDeps };
 	if (importDeps.onPrompt === undefined && ctx.hasUI) {
 		importDeps.onPrompt = async (prompt: { message: string }) => {
@@ -275,7 +290,13 @@ async function importAccount(ctx: ExtensionCommandContext, deps: CursorCliAccoun
 	try {
 		await ctx.modelRegistry.authStorage.modify(CURSOR_CLI_OAUTH_PROVIDER_ID, async (current) => {
 			const before = asCursorCredential(current);
-			const updated = await importCredential(before, importDeps);
+			const updated =
+				source === "native"
+					? await importNativeCredential(
+							before,
+							deps.readNativeCredential ?? (() => ctx.modelRegistry.authStorage.get(NATIVE_CURSOR_PROVIDER_ID)),
+						)
+					: await importCredential(before, importDeps);
 			const existing = new Set(listAccounts(before).map((account) => account.name));
 			importedName = listAccounts(updated).find((account) => !existing.has(account.name))?.name;
 			return updated;
@@ -287,9 +308,23 @@ async function importAccount(ctx: ExtensionCommandContext, deps: CursorCliAccoun
 		);
 		return;
 	}
+	const persistEnabled = deps.persistEnabled ?? persistCursorCliOauthEnabled;
+	try {
+		persistEnabled(ctx.cwd, true);
+		await ctx.modelRegistry.modelRuntime.refresh({
+			allowNetwork: false,
+			providers: [CURSOR_CLI_OAUTH_PROVIDER_ID],
+		});
+	} catch (error) {
+		ctx.ui.notify(
+			`Imported ${source === "native" ? "native " : ""}Cursor credential, but provider activation failed: ${error instanceof Error ? error.message : String(error)}`,
+			"warning",
+		);
+		return;
+	}
 	emitProviderAccountsChanged(CURSOR_CLI_OAUTH_PROVIDER_ID);
 	ctx.ui.notify(
-		`Imported local Cursor credential as '${importedName ?? "a new account"}' (copied into this provider's store).`,
+		`Imported ${source === "native" ? "native " : "local "}Cursor credential as '${importedName ?? "a new account"}' (copied into this provider's store).`,
 		"info",
 	);
 }

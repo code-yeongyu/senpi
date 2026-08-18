@@ -3,7 +3,7 @@ import type { OpenAIResponsesOptions } from "../src/api/openai-responses.ts";
 import { getSupportedThinkingLevels } from "../src/models.ts";
 import { XAI_MODELS } from "../src/providers/xai.models.ts";
 import { xaiProvider } from "../src/providers/xai.ts";
-import type { Context, Model } from "../src/types.ts";
+import type { Api, Context, Model } from "../src/types.ts";
 
 type CapturedRequest = {
 	url: string;
@@ -33,6 +33,12 @@ function completedResponse(): Response {
 	});
 }
 
+function getXaiModel(id: string): Model<Api> {
+	const model = Object.values(XAI_MODELS).find((candidate) => candidate.id === id);
+	expect(model).toBeDefined();
+	return model!;
+}
+
 async function captureRequest(
 	model: Model<"openai-responses">,
 	context: Context,
@@ -60,16 +66,24 @@ describe("xAI Responses provider", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("excludes retired and redundant models from the built-in catalog", () => {
-		for (const modelId of [
-			"grok-3",
-			"grok-3-fast",
-			"grok-4.20-0309-non-reasoning",
-			"grok-4.20-0309-reasoning",
-			"grok-code-fast-1",
-		]) {
+	it("excludes retired models from the built-in catalog", () => {
+		for (const modelId of ["grok-3", "grok-3-fast", "grok-code-fast-1"]) {
 			expect(Object.keys(XAI_MODELS)).not.toContain(modelId);
 		}
+	});
+
+	it("exposes the documented Grok 4.6 reasoning efforts", () => {
+		expect(getSupportedThinkingLevels(getXaiModel("grok-4.6"))).toEqual(["low", "medium", "high", "xhigh"]);
+	});
+
+	it("restores the Grok 4.20 reasoning and non-reasoning variants", () => {
+		const reasoning = getXaiModel("grok-4.20-0309-reasoning");
+		expect(reasoning.reasoning).toBe(true);
+		expect(getSupportedThinkingLevels(reasoning)).toEqual(["high"]);
+
+		const nonReasoning = getXaiModel("grok-4.20-0309-non-reasoning");
+		expect(nonReasoning.reasoning).toBe(false);
+		expect(getSupportedThinkingLevels(nonReasoning)).toEqual(["off"]);
 	});
 
 	it("uses Responses with low/medium/high efforts only for Grok 4.5", () => {

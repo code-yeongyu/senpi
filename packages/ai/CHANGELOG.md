@@ -10,6 +10,27 @@
 
 ### Fixed
 
+- GPT-5.6 Sol and Sol Fast now default to a 400,000-token context window in both the direct OpenAI and
+  ChatGPT OAuth (`openai-codex`) catalogs ([#933](https://github.com/code-yeongyu/senpi/pull/933)).
+- Refreshed Vercel AI Gateway pricing for `alibaba/qwen3.8-27b` from zero-value placeholder metadata to the
+  current upstream input, output, and cache-read rates ([#933](https://github.com/code-yeongyu/senpi/pull/933)).
+
+### Removed
+
+## [2026.8.18] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- xAI Grok model metadata now exposes the documented `low`/`medium`/`high`/`xhigh` effort ladder for Grok 4.6,
+  sends the selected Chat Completions `reasoning_effort`, and restores the current Grok 4.20 reasoning and
+  non-reasoning variants with their correct fixed-thinking behavior ([#930](https://github.com/code-yeongyu/senpi/pull/930)).
+
 ### Removed
 
 ## [2026.8.17] - 2026-08-17

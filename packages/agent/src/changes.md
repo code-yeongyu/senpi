@@ -1,5 +1,35 @@
 # Changes
 
+## Late Cursor bridge lifecycle events after run teardown (2026-08-18)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `Agent.emitExternalEvent()` now accepts the
+  originating run signal and
+  discards bridge-generated lifecycle events when that signal no longer owns
+  the active run.
+
+### Why
+
+- Cursor exec handlers can outlive an aborted provider stream. Their final
+  `tool_execution_end` event previously reached `processEvents()` after
+  `finishRun()` cleared `activeRun`, producing an unhandled
+  `Agent listener invoked outside active run` rejection.
+- The ownership guard remains specific to externally injected events. Internal
+  loop events still require an active run, and listener failures during the
+  owning active run still propagate.
+
+### Why the extension system could not handle this
+
+- The race occurs in the engine contract between the provider-owned Cursor exec
+  handler and the agent run lifecycle, before an extension can intercept or
+  recover the rejected event promise.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/agent.ts`: the external event entry point and active-run
+  ownership checks.
+
 > Audit backfill (2026-08-17): the canonical four-section records added today were recorded during
 > the repository-wide changes.md audit of divergences from the upstream pin (v0.84.2, `914cf1472e`)
 > so every audited production path assigned to this tracker carries a canonical record; they are

@@ -84,9 +84,15 @@ function createContext(
 	storage: AuthStorage,
 	sessionId = "session-01",
 	extra: { hasUI?: boolean; login?: () => Promise<void>; input?: (title: string) => Promise<string | undefined> } = {},
-): { ctx: ExtensionCommandContext; notices: Notice[]; login: ReturnType<typeof vi.fn> } {
+): {
+	ctx: ExtensionCommandContext;
+	notices: Notice[];
+	login: ReturnType<typeof vi.fn>;
+	refresh: ReturnType<typeof vi.fn>;
+} {
 	const notices: Notice[] = [];
 	const login = vi.fn(extra.login ?? (async () => {}));
+	const refresh = vi.fn(async () => ({ aborted: false, errors: new Map() }));
 	return {
 		ctx: {
 			hasUI: extra.hasUI ?? true,
@@ -96,7 +102,7 @@ function createContext(
 			sessionManager: { getSessionId: () => sessionId },
 			modelRegistry: {
 				authStorage: storage,
-				modelRuntime: { login },
+				modelRuntime: { login, refresh },
 			},
 			ui: {
 				notify: (message: string, type?: Notice["type"]) => notices.push({ message, type }),
@@ -105,6 +111,7 @@ function createContext(
 		} as unknown as ExtensionCommandContext,
 		notices,
 		login,
+		refresh,
 	};
 }
 
@@ -266,18 +273,58 @@ describe("/cursor-account", () => {
 
 	it("invokes the local-credential import function and stores the copied slot", async () => {
 		const storage = AuthStorage.inMemory({ [PROVIDER_ID]: credential(slot("alpha")) });
-		const { ctx, notices } = createContext(storage);
+		const { ctx, notices, refresh } = createContext(storage);
 		const importCredential = vi.fn<typeof importLocalCursorCredential>(async (current) =>
 			addAccount(current, slot("imported", { source: "import" })),
 		);
-		const harness = createHarness({ importCredential });
+		const persistEnabled = vi.fn();
+		const harness = createHarness({ importCredential, persistEnabled });
 
 		await command(harness).handler("import", ctx);
 
 		expect(importCredential).toHaveBeenCalledTimes(1);
 		expect(asCredential(importCredential.mock.calls[0]?.[0]).accounts?.map((a) => a.name)).toEqual(["alpha"]);
 		expect((asCredential(storage.get(PROVIDER_ID)).accounts ?? []).map((a) => a.name)).toEqual(["alpha", "imported"]);
+		expect(persistEnabled).toHaveBeenCalledWith("/tmp/cursor-account-command", true);
+		expect(refresh).toHaveBeenCalledWith({ allowNetwork: false, providers: [PROVIDER_ID] });
 		expect(lastNotice(notices)).toContain("imported");
+	});
+
+	it("imports the native cursor credential without modifying the primary provider", async () => {
+		const nativeCredential: Credential = {
+			type: "oauth",
+			access: "native-access-token",
+			refresh: "native-refresh-token",
+			expires: FIXED_NOW + 3_600_000,
+		};
+		const storage = AuthStorage.inMemory({ cursor: nativeCredential });
+		const nativeBefore = JSON.stringify(storage.get("cursor"));
+		const { ctx, notices, refresh } = createContext(storage);
+		const persistEnabled = vi.fn();
+		const harness = createHarness({
+			importDeps: {
+				platform: "linux",
+				readCursorFile: async () => undefined,
+				readCursorKeychain: async () => undefined,
+			},
+			persistEnabled,
+			readNativeCredential: () => storage.get("cursor"),
+		});
+
+		await command(harness).handler("import native", ctx);
+
+		expect(asCredential(storage.get(PROVIDER_ID)).accounts ?? []).toMatchObject([
+			{
+				name: "native",
+				access: "native-access-token",
+				refresh: "native-refresh-token",
+				source: "import",
+			},
+		]);
+		expect(JSON.stringify(storage.get("cursor"))).toBe(nativeBefore);
+		expect(persistEnabled).toHaveBeenCalledWith("/tmp/cursor-account-command", true);
+		expect(refresh).toHaveBeenCalledWith({ allowNetwork: false, providers: [PROVIDER_ID] });
+		expect(lastNotice(notices)).toContain("native");
 	});
 
 	it("surfaces an import failure as an error without changing the store", async () => {

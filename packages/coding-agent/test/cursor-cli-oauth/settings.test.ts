@@ -29,7 +29,7 @@ afterEach(() => {
 describe("Cursor CLI OAuth provider settings", () => {
 	it("pins every contract default", () => {
 		expect(parseCursorCliOauthProviderSettings(undefined, {})).toEqual({
-			enabled: false,
+			enabled: true,
 			executablePath: undefined,
 			forceExecution: true,
 			noApprovalAcknowledgedAt: undefined,
@@ -162,7 +162,7 @@ describe("Cursor CLI OAuth provider settings", () => {
 		(value) => {
 			expect(() => parseCursorCliOauthProviderSettings(value, {})).not.toThrow();
 			expect(parseCursorCliOauthProviderSettings(value, {})).toMatchObject({
-				enabled: false,
+				enabled: true,
 				forceExecution: true,
 				executionMode: "agent",
 				resumeMode: "auto",
@@ -282,7 +282,10 @@ describe("persisting the Cursor CLI OAuth no-approval acknowledgement", () => {
 		persistCursorCliNoApprovalAcknowledgement(cwd, "2026-08-17T12:05:00.000Z");
 
 		expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({
-			cursorCliOauthProvider: { noApprovalAcknowledgedAt: "2026-08-17T12:05:00.000Z" },
+			cursorCliOauthProvider: {
+				enabled: true,
+				noApprovalAcknowledgedAt: "2026-08-17T12:05:00.000Z",
+			},
 		});
 	});
 

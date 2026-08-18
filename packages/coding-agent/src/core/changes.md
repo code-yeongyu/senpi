@@ -1,5 +1,39 @@
 # changes
 
+## Cursor bridge lifecycle events retain run ownership (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/core/cursor-exec-bridge.ts`: bridge executions
+  require and capture the active run signal before emitting
+  `tool_execution_start`, pass that same signal through every matching
+  `tool_execution_end` path, and await lifecycle delivery.
+- `packages/coding-agent/src/core/cursor-exec-bridge-session.ts`: the session
+  adapter forwards that captured signal to agent-core and returns its promise
+  to the bridge.
+
+### Why
+
+- An aborted bridge tool can settle after a replacement run has started. The
+  signal lets agent-core discard the stale lifecycle event instead of
+  delivering it to the replacement run.
+- A bridge dispatch with no active run is refused before tool execution, and
+  active-run listener failures stay attached to the dispatch instead of
+  becoming detached unhandled rejections.
+
+### Why an extension could not handle it
+
+- The run signal is owned by the engine bridge before extension preflight and
+  tool execution, so an extension cannot reliably reconstruct the originating
+  run after the asynchronous tool settles.
+
+### Expected merge-conflict zones
+
+- `packages/coding-agent/src/core/cursor-exec-bridge.ts`: lifecycle emission
+  around preflight and tool execution.
+- `packages/coding-agent/src/core/cursor-exec-bridge-session.ts`: the
+  agent-core event forwarding adapter.
+
 ## Single availability scan across provider re-register (2026-08-18)
 
 ### What changed

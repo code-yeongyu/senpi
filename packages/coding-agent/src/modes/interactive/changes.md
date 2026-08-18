@@ -1,5 +1,78 @@
 # changes
 
+## Native Cursor login refreshes the CLI fallback lane in the same session (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`:
+  `completeProviderAuthentication()` refreshes both `cursor` and
+  `cursor-cli-oauth` after native Cursor login. Every other provider remains
+  scoped to its own id, and the existing network/abort/warning behavior is
+  unchanged.
+
+### Why
+
+- The fallback lane now bootstraps automatically from the native Cursor OAuth
+  credential. Refreshing only `cursor` after `/login cursor` left the CLI
+  provider unavailable until a later model-availability refresh or restart.
+
+### Why an extension could not handle it
+
+- The post-login refresh controller and provider list are private
+  `InteractiveMode` lifecycle state; the fallback extension receives no
+  callback that can extend the native provider's completed login refresh.
+
+### Expected merge conflict zones
+
+- LOW: the provider-list construction immediately before the existing
+  `modelRuntime.refresh()` call.
+
+## Extension widget updates preserve stacking order (2026-08-18)
+
+### What changed
+
+- `setExtensionWidget()` in `interactive-mode.ts` no longer deletes and re-appends the updated key on every call. It now removes the key only from the OTHER placement map, disposes the replaced component, and writes through `Map.set`, which keeps an existing key at its insertion position. Removal (`content === undefined`) still deletes from both maps, and a placement change still appends the key at the end of the new placement.
+- Regression coverage: `test/interactive-mode-widget-order.test.ts` drives the real `setExtensionWidget` / `renderWidgets` / `renderWidgetContainer` methods and pins that belowEditor and aboveEditor stacking order survives content updates, removals, and placement moves.
+
+### Why
+
+- Every widget refresh used to move the refreshed key to the end of its placement map, so two live widgets with independent refresh timers swapped vertical positions on every paint. With omo-senpi's `omo-task` (250 ms live refresh) and `omo-dag` (1 s live refresh) widgets both active, the below-editor region visibly bounced up and down several times per second.
+
+### Why this cannot be expressed externally
+
+- The stacking maps and `renderWidgets()` are private core state; extensions can only call `setWidget`, not control where an update lands.
+
+### Expected merge conflict zones
+
+- LOW: the body of `setExtensionWidget()` in `interactive-mode.ts` only.
+
+## Post-login provider catalog refresh explicitly allows network discovery (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`:
+  `completeProviderAuthentication()` now passes `allowNetwork: true` to its
+  existing provider-scoped, 15-second background refresh after successful
+  OAuth/API-key login.
+
+### Why
+
+- Ordinary interactive runtimes default model networking off. The post-login
+  refresh inherited that default, so dynamic providers such as native Cursor
+  stored valid credentials but restored only cached models instead of
+  fetching the authenticated account catalog immediately.
+
+### Why an extension could not handle it
+
+- Login completion, its bounded refresh controller, and the status/warning UI
+  are private `InteractiveMode` lifecycle code. Provider extensions cannot
+  alter the options on the core refresh that runs after their login returns.
+
+### Expected merge conflict zones
+
+- LOW: the single `modelRuntime.refresh()` option object inside
+  `completeProviderAuthentication()`.
+
 ## Repository-wide changes.md audit backfill for interactive rendering, selectors, and editor surfaces (2026-08-17)
 
 ### What changed

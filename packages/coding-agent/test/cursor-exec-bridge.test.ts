@@ -23,9 +23,11 @@ function stubTool(
 
 function makeBridge(tools: AgentTool[], events: AgentEvent[] = []) {
 	const byName = new Map(tools.map((tool) => [tool.name, tool]));
+	const runSignal = new AbortController().signal;
 	return createCursorExecBridge({
 		getTool: (name) => byName.get(name),
-		emitEvent: (event) => {
+		getAbortSignal: () => runSignal,
+		emitEvent: async (event) => {
 			events.push(event);
 		},
 	});
@@ -211,6 +213,58 @@ describe("cursor exec bridge", () => {
 		expect(events.map((event) => event.type)).toEqual(["tool_execution_start", "tool_execution_end"]);
 		const end = events[1];
 		expect(end.type === "tool_execution_end" && end.isError).toBe(false);
+	});
+
+	it("keeps the originating run signal on both lifecycle events", async () => {
+		const runSignal = new AbortController().signal;
+		const emitEvent = vi.fn();
+		const tool = stubTool("read", Type.Object({ path: Type.String() }), vi.fn());
+		const bridge = createCursorExecBridge({
+			getTool: (name) => (name === "read" ? tool : undefined),
+			getAbortSignal: () => runSignal,
+			emitEvent,
+		});
+
+		await bridge.read?.({ path: "a.ts", toolCallId: "call-owned" } as never);
+
+		expect(emitEvent).toHaveBeenCalledTimes(2);
+		expect(emitEvent.mock.calls.map((call) => call[1])).toEqual([runSignal, runSignal]);
+	});
+
+	it("refuses to execute when no active run signal owns the bridge dispatch", async () => {
+		const execute = vi.fn();
+		const emitEvent = vi.fn();
+		const tool = stubTool("read", Type.Object({ path: Type.String() }), execute);
+		const bridge = createCursorExecBridge({
+			getTool: (name) => (name === "read" ? tool : undefined),
+			getAbortSignal: () => undefined,
+			emitEvent,
+		});
+
+		const result = asToolResult(await bridge.read?.({ path: "a.ts", toolCallId: "call-unowned" } as never));
+
+		expect(result.isError).toBe(true);
+		expect(result.content[0]).toMatchObject({ text: expect.stringContaining("active run") });
+		expect(execute).not.toHaveBeenCalled();
+		expect(emitEvent).not.toHaveBeenCalled();
+	});
+
+	it("propagates lifecycle listener failures through the bridge dispatch", async () => {
+		const runSignal = new AbortController().signal;
+		const execute = vi.fn();
+		const tool = stubTool("read", Type.Object({ path: Type.String() }), execute);
+		const bridge = createCursorExecBridge({
+			getTool: (name) => (name === "read" ? tool : undefined),
+			getAbortSignal: () => runSignal,
+			emitEvent: async () => {
+				throw new Error("listener failed");
+			},
+		});
+
+		await expect(bridge.read?.({ path: "a.ts", toolCallId: "call-listener-failure" } as never)).rejects.toThrow(
+			"listener failed",
+		);
+		expect(execute).not.toHaveBeenCalled();
 	});
 
 	it("reports missing tools without throwing", async () => {

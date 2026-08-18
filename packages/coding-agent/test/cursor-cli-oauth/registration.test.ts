@@ -1,9 +1,17 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AuthContext, InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
-import { emptyCredential } from "../../src/core/extensions/builtin/cursor-cli-oauth/accounts.ts";
+import {
+	type AuthContext,
+	type Credential,
+	InMemoryCredentialStore,
+	type OAuthCredential,
+} from "@earendil-works/pi-ai";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+	type CursorCliOauthCredential,
+	emptyCredential,
+} from "../../src/core/extensions/builtin/cursor-cli-oauth/accounts.ts";
 import { CursorAgentNotInstalledError } from "../../src/core/extensions/builtin/cursor-cli-oauth/executable.ts";
 import cursorCliOauthExtension, {
 	CURSOR_CLI_OAUTH_PROVIDER_ID,
@@ -58,6 +66,13 @@ async function captureRegistration(
 	factory: (pi: ExtensionAPI, deps: CursorCliOauthExtensionDeps) => void,
 	store: InMemoryCredentialStore,
 ): Promise<Registration> {
+	return captureRegistrationWithDeps(factory, missingExecutableDeps(store));
+}
+
+async function captureRegistrationWithDeps(
+	factory: (pi: ExtensionAPI, deps: CursorCliOauthExtensionDeps) => void,
+	deps: CursorCliOauthExtensionDeps,
+): Promise<Registration> {
 	let captured: Registration | undefined;
 	const pi = {
 		registerProvider: (name: string, config: ProviderConfigInput) => {
@@ -68,7 +83,7 @@ async function captureRegistration(
 		getFlag: () => undefined,
 		on: () => {},
 	} as unknown as ExtensionAPI;
-	factory(pi, missingExecutableDeps(store));
+	factory(pi, deps);
 	if (!captured) throw new Error("extension did not register a provider");
 	return captured;
 }
@@ -95,6 +110,35 @@ function authContext(): AuthContext {
 		env: async () => undefined,
 		fileExists: async () => false,
 	};
+}
+
+function nativeCredential(): OAuthCredential {
+	return {
+		type: "oauth",
+		access: "native-access-token",
+		refresh: "native-refresh-token",
+		expires: Date.now() + 3_600_000,
+	};
+}
+
+async function managedCredential(store: InMemoryCredentialStore): Promise<CursorCliOauthCredential | undefined> {
+	const value = await store.read(CURSOR_CLI_OAUTH_PROVIDER_ID);
+	return value?.type === "oauth" ? (value as CursorCliOauthCredential) : undefined;
+}
+
+function bootstrapDeps(
+	store: InMemoryCredentialStore,
+	overrides: Partial<CursorCliOauthExtensionDeps> & {
+		readNativeCredential?: () => Credential | undefined | Promise<Credential | undefined>;
+	} = {},
+): CursorCliOauthExtensionDeps {
+	return {
+		cwd: temporaryDirectory(),
+		store,
+		loadSettings: () => enabledSettings(),
+		resolveExecutable: () => "/qa/cursor-agent",
+		...overrides,
+	} as CursorCliOauthExtensionDeps;
 }
 
 afterEach(() => {
@@ -142,5 +186,134 @@ describe("cursor-cli-oauth provider registration", () => {
 		// check under Promise.all, so an unusable lane resolves undefined instead of
 		// rejecting all model listing; turn-time resolution still throws the guidance.
 		await expect(oauth.check({ ctx: authContext() })).resolves.toBeUndefined();
+	});
+});
+
+describe("cursor-cli-oauth automatic native bootstrap", () => {
+	it("imports one native account during the first configured auth check", async () => {
+		const store = new InMemoryCredentialStore();
+		const native = nativeCredential();
+		await store.modify("cursor", async () => native);
+		const nativeBefore = JSON.stringify(await store.read("cursor"));
+		const registration = await captureRegistrationWithDeps(
+			(pi, deps) => registerCursorCliOauthExtension(pi, deps),
+			bootstrapDeps(store, { readNativeCredential: () => store.read("cursor") }),
+		);
+		const oauth = registration.config.oauth as {
+			check: (input: { ctx: AuthContext }) => Promise<unknown>;
+		};
+
+		await expect(oauth.check({ ctx: authContext() })).resolves.toEqual({
+			type: "oauth",
+			source: "configured (file-store, 1 accounts)",
+		});
+		expect((await managedCredential(store))?.accounts).toMatchObject([
+			{ name: "native", source: "import", access: native.access, refresh: native.refresh },
+		]);
+		expect(JSON.stringify(await store.read("cursor"))).toBe(nativeBefore);
+	});
+
+	it("does not read or copy native credentials when explicitly disabled", async () => {
+		const store = new InMemoryCredentialStore();
+		await store.modify("cursor", async () => nativeCredential());
+		const readNativeCredential = vi.fn(() => store.read("cursor"));
+		const registration = await captureRegistrationWithDeps(
+			(pi, deps) => registerCursorCliOauthExtension(pi, deps),
+			bootstrapDeps(store, {
+				loadSettings: () => ({ ...enabledSettings(), enabled: false }),
+				readNativeCredential,
+			}),
+		);
+		const oauth = registration.config.oauth as {
+			check: (input: { ctx: AuthContext }) => Promise<unknown>;
+		};
+
+		await expect(oauth.check({ ctx: authContext() })).resolves.toBeUndefined();
+		expect(readNativeCredential).not.toHaveBeenCalled();
+		expect(await store.read(CURSOR_CLI_OAUTH_PROVIDER_ID)).toBeUndefined();
+	});
+
+	it("does not read or copy native credentials when cursor-agent is missing", async () => {
+		const store = new InMemoryCredentialStore();
+		await store.modify("cursor", async () => nativeCredential());
+		const readNativeCredential = vi.fn(() => store.read("cursor"));
+		const registration = await captureRegistrationWithDeps(
+			(pi, deps) => registerCursorCliOauthExtension(pi, deps),
+			bootstrapDeps(store, {
+				readNativeCredential,
+				resolveExecutable: () => {
+					throw new CursorAgentNotInstalledError();
+				},
+			}),
+		);
+		const oauth = registration.config.oauth as {
+			check: (input: { ctx: AuthContext }) => Promise<unknown>;
+		};
+
+		await expect(oauth.check({ ctx: authContext() })).resolves.toBeUndefined();
+		expect(readNativeCredential).not.toHaveBeenCalled();
+		expect(await store.read(CURSOR_CLI_OAUTH_PROVIDER_ID)).toBeUndefined();
+	});
+
+	it("preserves existing managed accounts without reading the native credential", async () => {
+		const store = await storeWithAccount();
+		await store.modify("cursor", async () => nativeCredential());
+		const readNativeCredential = vi.fn(() => store.read("cursor"));
+		const before = JSON.stringify(await store.read(CURSOR_CLI_OAUTH_PROVIDER_ID));
+		const registration = await captureRegistrationWithDeps(
+			(pi, deps) => registerCursorCliOauthExtension(pi, deps),
+			bootstrapDeps(store, { readNativeCredential }),
+		);
+		const oauth = registration.config.oauth as {
+			check: (input: { ctx: AuthContext }) => Promise<unknown>;
+		};
+
+		await expect(oauth.check({ ctx: authContext() })).resolves.toEqual({
+			type: "oauth",
+			source: "configured (file-store, 1 accounts)",
+		});
+		expect(readNativeCredential).not.toHaveBeenCalled();
+		expect(JSON.stringify(await store.read(CURSOR_CLI_OAUTH_PROVIDER_ID))).toBe(before);
+	});
+
+	it("deduplicates concurrent checks and repeated startup reads", async () => {
+		const store = new InMemoryCredentialStore();
+		await store.modify("cursor", async () => nativeCredential());
+		const readNativeCredential = vi.fn(() => store.read("cursor"));
+		const registration = await captureRegistrationWithDeps(
+			(pi, deps) => registerCursorCliOauthExtension(pi, deps),
+			bootstrapDeps(store, { readNativeCredential }),
+		);
+		const oauth = registration.config.oauth as {
+			check: (input: { ctx: AuthContext }) => Promise<unknown>;
+		};
+
+		await Promise.all([
+			oauth.check({ ctx: authContext() }),
+			oauth.check({ ctx: authContext() }),
+			oauth.check({ ctx: authContext() }),
+		]);
+		await oauth.check({ ctx: authContext() });
+
+		expect((await managedCredential(store))?.accounts?.map((account) => account.name)).toEqual(["native"]);
+		expect(readNativeCredential).toHaveBeenCalledOnce();
+	});
+
+	it("keeps auth checks non-throwing when native bootstrap fails", async () => {
+		const store = new InMemoryCredentialStore();
+		const registration = await captureRegistrationWithDeps(
+			(pi, deps) => registerCursorCliOauthExtension(pi, deps),
+			bootstrapDeps(store, {
+				readNativeCredential: async () => {
+					throw new Error("native store unavailable");
+				},
+			}),
+		);
+		const oauth = registration.config.oauth as {
+			check: (input: { ctx: AuthContext }) => Promise<unknown>;
+		};
+
+		await expect(oauth.check({ ctx: authContext() })).resolves.toBeUndefined();
+		expect(await store.read(CURSOR_CLI_OAUTH_PROVIDER_ID)).toBeUndefined();
 	});
 });

@@ -648,14 +648,18 @@ function textOf(result: { content?: Array<{ type: string; text?: string }> } | u
 }
 
 describe("goal extension reload does not auto-start a stopped agent", () => {
-	it("does not queue a continuation on session_start reason 'reload'", async () => {
+	it("does not queue a continuation on session_start reason 'reload' for a blocked goal", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const ctx = await makeCtx("thread-reload-noop");
 		await tools.get("create_goal")?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx);
+		await tools
+			.get("update_goal")
+			?.execute("u1", { status: "blocked", reason: "user interrupted the turn" }, undefined, undefined, ctx);
 
 		await runHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 
 		expect(sent).toHaveLength(0);
+		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("blocked");
 	});
 
 	it("still queues a continuation on session_start reason 'startup'", async () => {
@@ -844,7 +848,7 @@ describe("goal extension session_start migration-lite admission", () => {
 		vi.useRealTimers();
 	});
 
-	it("keeps reload sessions inert even with a flooded branch (no queue, no suppression notice)", async () => {
+	it("suppresses with a notice on reload when a flooded branch parks an active goal", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const notices: string[] = [];
 		const ctx = await makeNotifyingCtx(notices, "thread-flooded-reload", [
@@ -856,7 +860,9 @@ describe("goal extension session_start migration-lite admission", () => {
 		await runHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 
 		expect(sent).toHaveLength(0);
-		expect(notices).toEqual([]);
+		expect(notices).toContainEqual(
+			"Goal auto-continuation suppressed for this resumed session (300 historical continuations). Send a message to resume.",
+		);
 		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("active");
 	});
 });

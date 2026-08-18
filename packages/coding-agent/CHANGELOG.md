@@ -6,9 +6,37 @@
 
 ### Fixed
 
+- Goals no longer stall after a settings hot-reload: a reload `session_start` now re-engages an active goal (re-arming the monitor backstop while wake sources are live, or queueing a continuation through the existing sessionStart admission) instead of parking it until the next user message; stopped goals still never auto-start on reload ([#936](https://github.com/code-yeongyu/senpi/pull/936)).
+- Cursor CLI OAuth is now available by default when its real prerequisites exist: with `cursor-agent` installed and no managed CLI account, a native `cursor` OAuth credential is copied automatically into one canonical `native` slot without modifying the primary credential; explicit `enabled: false` remains a hard opt-out, repeated/concurrent startup is idempotent, and `/login cursor` refreshes the CLI fallback in the same session ([#931](https://github.com/code-yeongyu/senpi/pull/931)).
+
+- Cursor exec-bridge lifecycle events now require their originating run signal and await listener delivery, preventing delayed completions from entering a replacement run or becoming detached unhandled rejections.
+
 - Fixed interactive render signature hashing to process omitted array items and object keys iteratively, preventing stack
   overflows on very large tool and assistant values while retaining tail-change cache invalidation
   ([#782](https://github.com/code-yeongyu/senpi/pull/782) by [@achieve0410](https://github.com/achieve0410)).
+
+### New Features
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Removed
+
+## [2026.8.18] - 2026-08-18
+
+### Added
+
+### Fixed
+
+- Extension widgets no longer change stacking order when their content updates: `setWidget` now replaces the
+  component in place, so two live widgets with independent refresh timers (for example omo-senpi's `omo-task` and
+  `omo-dag` status widgets) stay in a fixed vertical order instead of bouncing on every refresh
+  ([#929](https://github.com/code-yeongyu/senpi/pull/929)).
+
+- Cursor model catalogs now become available immediately after authentication: dynamic providers perform their scoped network refresh after login, while explicit Cursor CLI fallback login/import enables the lane, `/cursor-account import native` safely copies the primary OAuth credential into managed accounts, and imported accounts refresh model availability in the current session ([#928](https://github.com/code-yeongyu/senpi/pull/928)).
 
 ### New Features
 

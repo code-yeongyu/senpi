@@ -386,6 +386,7 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
 const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
+const GPT_56_SOL_DEFAULT_CONTEXT_WINDOW = 400000;
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
 	"gpt-5.5",
@@ -474,10 +475,32 @@ const XAI_RESPONSES_MODEL_ID = "grok-4.5";
 const XAI_BUILTIN_EXCLUDED_MODEL_IDS = new Set([
 	"grok-3",
 	"grok-3-fast",
-	"grok-4.20-0309-non-reasoning",
-	"grok-4.20-0309-reasoning",
 	"grok-code-fast-1",
 ]);
+const XAI_COMPLETIONS_THINKING_LEVEL_MAPS: Record<
+	string,
+	NonNullable<Model<"openai-completions">["thinkingLevelMap"]>
+> = {
+	"grok-4.6": {
+		off: null,
+		minimal: null,
+		low: "low",
+		medium: "medium",
+		high: "high",
+		xhigh: "xhigh",
+		max: null,
+	},
+	"grok-4.20-0309-reasoning": {
+		off: null,
+		minimal: null,
+		low: null,
+		medium: null,
+		high: "high",
+		xhigh: null,
+		max: null,
+	},
+};
+const XAI_COMPLETIONS_REASONING_EFFORT_MODEL_IDS = new Set(["grok-4.6"]);
 const XAI_RESPONSES_EFFORT_LEVEL_MAP = {
 	off: null,
 	minimal: null,
@@ -1717,6 +1740,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
 				const useResponsesApi = modelId === XAI_RESPONSES_MODEL_ID;
+				const thinkingLevelMap = XAI_COMPLETIONS_THINKING_LEVEL_MAPS[modelId];
+				const supportsReasoningEffort = XAI_COMPLETIONS_REASONING_EFFORT_MODEL_IDS.has(modelId);
 
 				models.push({
 					id: modelId,
@@ -1724,8 +1749,13 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					api: useResponsesApi ? "openai-responses" : "openai-completions",
 					provider: "xai",
 					baseUrl: "https://api.x.ai/v1",
-					...(useResponsesApi ? { compat: { ...XAI_RESPONSES_COMPAT } } : {}),
+					...(useResponsesApi
+						? { compat: { ...XAI_RESPONSES_COMPAT } }
+						: supportsReasoningEffort
+							? { compat: { supportsReasoningEffort: true } }
+							: {}),
 					reasoning: m.reasoning === true,
+					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || 0,
@@ -2474,6 +2504,9 @@ async function generateModels() {
 			candidate.contextWindow = OPENAI_LONG_CONTEXT_INPUT_THRESHOLD;
 			candidate.maxTokens = 128000;
 		}
+		if (candidate.provider === "openai" && candidate.id === "gpt-5.6-sol") {
+			candidate.contextWindow = GPT_56_SOL_DEFAULT_CONTEXT_WINDOW;
+		}
 		if (candidate.provider === "openai" && OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS.has(candidate.id)) {
 			const standardCost = OPENAI_GPT_56_STANDARD_COSTS[candidate.id];
 			candidate.cost = withOpenAiLongContextPricing(standardCost ?? candidate.cost);
@@ -2704,7 +2737,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing({ input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 }),
-			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+			contextWindow: GPT_56_SOL_DEFAULT_CONTEXT_WINDOW,
 			maxTokens: 128000,
 		},
 		{
@@ -2882,7 +2915,8 @@ async function generateModels() {
 
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
-	// Older model limits are based on observed server behavior; GPT-5.6 follows Codex's 272k catalog limit (formerly 372k).
+	// Older model limits are based on observed server behavior. GPT-5.6 Luna and Terra follow Codex's 272k
+	// catalog limit (formerly 372k); Sol defaults to 400k.
 	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 	const CODEX_CONTEXT = 272000;
 	const CODEX_GPT_56_CONTEXT = 272000;
@@ -2958,7 +2992,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing({ input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 }),
-			contextWindow: CODEX_GPT_56_CONTEXT,
+			contextWindow: GPT_56_SOL_DEFAULT_CONTEXT_WINDOW,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{

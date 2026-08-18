@@ -1,5 +1,49 @@
 # goal Extension Changes
 
+## Reload re-engages active goals instead of parking them (2026-08-18, fixes #934)
+
+### What changed
+
+- `session_start` with reason `"reload"` now routes through
+  `reload-reengagement.ts` (`reengageGoalAfterReload`) instead of skipping every
+  goal. A non-active goal (paused/blocked/complete) is still skipped, so a
+  reload never auto-starts an agent the user stopped. An active goal with live
+  wake sources re-arms the monitor-delayed backstop via the new
+  `MonitorAwareGoalContinuation.rearmMonitorBackstop`; an active goal without
+  wake sources queues a continuation through the existing sessionStart
+  admission, trailing-flood suppression included.
+- `MonitorAwareGoalContinuation` gains `hasActiveWakeSources()` and
+  `rearmMonitorBackstop(goal)`. The terminal builtin's reload `session_start`
+  replays its monitor snapshots before Goal's handler runs (builtin order is
+  load-bearing), so live-channel counts are already restored when the
+  re-engagement decision reads them.
+
+### Why
+
+- A config reload retires the extension generation: `session_shutdown` disposes
+  the continuation monitor, cancelling every armed timer (user grace, monitor
+  backstop) with it. The 2026-07-27 guard then skipped re-engagement for ANY
+  goal on reload, so an active goal mid-wait parked until the next user
+  message; wake-source drain could not self-heal because drain-fire requires a
+  scheduled monitor-kind continuation that never existed post-reload.
+- The guard's protective case is already covered by status: every user stop
+  marks the goal blocked via `session_abort` / `agent_end` abortSource "user",
+  and the continuation evaluator denies non-active goals. Skipping active goals
+  as well was over-broad and produced the reported stall.
+
+### Why an extension could not handle it
+
+- The continuation timers, wake-source counts, and the reload admission
+  decision are private to this builtin's monitor and `session_start` handler;
+  an external extension cannot re-arm a disposed timer or observe the reload
+  reason with the goal's continuation state.
+
+### Expected merge conflict zones
+
+- LOW in `index.ts` around the `session_start` reload branch; LOW in
+  `monitor-continuation.ts` around the new public accessors; LOW in the new
+  `reload-reengagement.ts`.
+
 ## External continuation holds pause Goal monitor recovery until release (2026-08-18)
 
 ### What changed

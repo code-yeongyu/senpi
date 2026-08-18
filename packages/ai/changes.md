@@ -4,6 +4,75 @@
 > of divergences from the upstream pin (v0.84.2, `914cf1472e`) so its audited production paths carry a
 > canonical four-section record; it is dated by its underlying work.
 
+## Default GPT-5.6 Sol catalogs to 400k context (2026-08-18)
+
+### What changed
+
+- `scripts/generate-models.ts`: direct `openai` and ChatGPT OAuth `openai-codex` entries for `gpt-5.6-sol`
+  now default to a 400,000-token context window. Their generated `-fast` variants inherit the same limit.
+- `test/openai-fast-models.test.ts`: covers both providers and both base/fast Sol IDs.
+- `src/providers/data/*.json`: regenerated committed catalog data and manifest carry the new default.
+- The same reviewed regeneration refreshed Vercel AI Gateway's `alibaba/qwen3.8-27b` pricing from zero-value
+  placeholder metadata to the current upstream rates: input 0.1, output 0.4, and cache read 0.01.
+
+### Why
+
+- The GPT-5.6 Sol service can accept up to a 1M context, but the default Senpi catalog should reserve a
+  400k operating window instead of inheriting the generic 272k OpenAI short-tier cap or advertising the
+  full service maximum.
+- Luna and Terra remain at their existing defaults; this is intentionally scoped to Sol and Sol Fast.
+- The Vercel Qwen price change is retained because generated provider data is an atomic snapshot of the
+  upstream sources at generation time; keeping a stale per-model value would make the checked-in artifact
+  disagree with a fresh strict regeneration.
+
+### Why this cannot be expressed as an extension
+
+- Context-window metadata is generated before the coding-agent extension runtime loads and is consumed by
+  compaction, admission, and model-selection code throughout the runtime.
+
+### Modified upstream files
+
+- `packages/ai/scripts/generate-models.ts`
+- `packages/ai/test/openai-fast-models.test.ts`
+- `packages/ai/src/providers/data/*.json`
+
+### Expected merge conflict zones
+
+- MEDIUM: the temporary OpenAI metadata override block and explicit OpenAI Codex model list.
+- MEDIUM: generated provider JSON whenever upstream model metadata changes.
+
+## Current xAI Grok reasoning specifications (2026-08-18)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` now treats xAI reasoning controls as model-specific instead of inheriting the generic
+  Grok compatibility veto. `grok-4.6` exposes only the documented `low`, `medium`, `high`, and `xhigh` levels and
+  enables OpenAI-compatible `reasoning_effort` serialization. The fixed-reasoning Grok 4.20 variant exposes only
+  `high`, while the non-reasoning variant exposes only `off`; neither Grok 4.20 model sends a reasoning-effort field.
+- The generated xAI catalog again includes `grok-4.20-0309-reasoning` and
+  `grok-4.20-0309-non-reasoning`. They were removed with the older 0.80.9 catalog cleanup, but current official xAI
+  model pages and the live models.dev catalog list both canonical IDs as active tool-capable models.
+- Focused catalog and payload tests pin the exact selectable levels and Chat Completions request bodies so future
+  model-data hydration cannot silently disable Grok 4.6 effort control or remove the non-reasoning option.
+
+### Why
+
+- Senpi's generated metadata disabled `reasoning_effort` for every xAI Chat Completions model and kept the current
+  Grok 4.20 variants out of the built-in catalog, contradicting xAI's published model specifications and the live
+  models.dev inventory.
+
+### Why an extension could not handle it
+
+- The model selector reads built-in catalog metadata before extensions can alter provider request compatibility, and
+  `reasoning_effort` is serialized inside the provider-owned OpenAI Completions adapter. An extension cannot safely
+  repair both the catalog and the outbound xAI wire contract.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` xAI model filtering and per-model metadata; upstream model-catalog refreshes
+  may edit the same constants and generation loop.
+- LOW: generated `src/providers/data/xai.json`, its manifest hash, and focused xAI tests.
+
 ## Catalog generation and data validation audit backfill (2026-08-17)
 
 ### What changed

@@ -1,5 +1,96 @@
 # cursor-cli-oauth extension changes
 
+## 2026-08-18 - Default-on native credential bootstrap
+
+### What changed
+
+- `settings.ts`: `cursorCliOauthProvider.enabled` now defaults to true. Explicit
+  settings/environment false values remain authoritative.
+- `native-bootstrap.ts`: new default managed-credential reader. After the
+  enabled and executable gates pass, it copies a usable native `cursor` OAuth
+  credential into one canonical `native` slot when managed accounts are
+  empty. It re-checks the target inside `CredentialStore.modify`, shares only
+  in-flight concurrent reads, preserves existing/incompatible credentials,
+  never writes the native provider, and returns the previous state on errors.
+  The reader repeats the enabled/executable gate for direct reads outside
+  `assessConfiguration` (notably explicit login), so a cancelled login cannot
+  bypass `enabled:false`.
+- `index.ts`: the builtin registration uses the bootstrap reader only for its
+  default `readCurrent`; injected readers keep their existing test/embedding
+  behavior.
+- Native Cursor login now refreshes the fallback provider in the same
+  interactive completion pass; that shared-file change is tracked in
+  `packages/coding-agent/src/modes/interactive/changes.md`.
+
+### Why
+
+- A valid native Cursor login plus an installed `cursor-agent` already
+  satisfies the fallback lane's real prerequisites. Requiring a second login,
+  a settings edit, or `/cursor-account import native` hid otherwise usable
+  models and duplicated setup work.
+- Startup and native-login refreshes can overlap, so a lock-rechecked,
+  in-flight-deduplicated reader is required to avoid duplicate `native-*`
+  accounts.
+
+### Why an extension could not handle it
+
+- The bootstrap owns the builtin provider's private credential reader and
+  authentication check boundary. External hooks cannot change the default
+  settings contract, atomically write the managed provider credential before
+  availability is computed, or extend core post-login refresh scoping.
+
+### Expected merge conflict zones
+
+- LOW: fork-only `native-bootstrap.ts`, `settings.ts`, and `index.ts`.
+- LOW: `interactive-mode.ts` post-login refresh option construction, tracked
+  separately in the nearest interactive `changes.md`.
+
+## 2026-08-18 - Activate explicit login/import and copy native Cursor credentials
+
+### What changed
+
+- `settings.ts`: provider activation now uses the same locked
+  read-modify-write path as the no-approval acknowledgement.
+  `persistCursorCliOauthEnabled()` preserves every sibling setting, and a
+  successful acknowledgement writes `enabled: true` together with
+  `noApprovalAcknowledgedAt`.
+- `oauth-login.ts`: successful OAuth login requests persisted enablement even
+  when the user declines unattended tool execution. The new
+  `importNativeCursorCredential()` copies a usable flat OAuth credential from
+  the primary `cursor` provider into a canonical named account slot; it never
+  writes or deletes the source credential.
+- `index.ts`: the real builtin registration now wires both acknowledgement
+  and enablement persistence into the OAuth config, instead of leaving the
+  login-time acknowledgement as an unwritten optional callback.
+- `account-command.ts`: `/cursor-account import native` explicitly copies the
+  primary provider credential. Local and native imports persist enablement
+  and run a scoped offline availability refresh so the current session's
+  model selector updates without restart.
+
+### Why
+
+- The fallback provider registered its model catalog but remained hidden after
+  successful login/import because `cursorCliOauthProvider.enabled` defaulted
+  false and the explicit actions never changed it.
+- Users with a valid native `cursor` OAuth credential had to copy token
+  material by hand into the fallback provider's sentinel `accounts[]` shape,
+  risking accidental removal of the primary credential.
+- The login acknowledgement prompt claimed success but the production
+  registration did not supply the persistence callback.
+
+### Why an extension could not handle it
+
+- These are the fallback extension's private OAuth, settings, account-command,
+  and provider-registration boundaries. No external extension can rewrite the
+  builtin provider's credential shape, add persistence to its login callback,
+  or refresh its private model-runtime availability after import.
+
+### Expected merge conflict zones
+
+- LOW: fork-only `settings.ts`, `oauth-login.ts`, `index.ts`, and
+  `account-command.ts`; conflicts are expected only with concurrent hardening
+  of the same Cursor CLI OAuth lane.
+
 ## 2026-08-17 - Initial builtin fallback lane
 
 Plan: `.omo/plans/cursor-cli-oauth.md`. Probe evidence: `local-ignore/qa-evidence/20260817-cursor-cli-p-lane/`.

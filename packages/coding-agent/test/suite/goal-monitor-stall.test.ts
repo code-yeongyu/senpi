@@ -26,10 +26,10 @@ async function createStallHarness(threadId: string, monitorsActive = true): Prom
 	const notices: string[] = [];
 	const harness = createGoalHarness();
 	const ctx = await makeGoalContext(notices, threadId);
+	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 	await harness.tools
 		.get("create_goal")
 		?.execute("create", { objective: "Keep monitoring" }, undefined, undefined, ctx);
-	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 	if (monitorsActive) {
 		harness.events.emit("terminal_monitor_state", { activeCount: 1 });
 		await harness.events.flush();

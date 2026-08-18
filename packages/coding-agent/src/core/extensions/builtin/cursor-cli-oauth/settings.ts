@@ -27,7 +27,7 @@ type Environment = Readonly<Record<string, string | undefined>>;
 type ParsedSettings = Partial<CursorCliOauthProviderSettings>;
 
 const DEFAULT_SETTINGS: CursorCliOauthProviderSettings = {
-	enabled: false,
+	enabled: true,
 	executablePath: undefined,
 	forceExecution: true,
 	noApprovalAcknowledgedAt: undefined,
@@ -209,13 +209,11 @@ export function loadCursorCliOauthProviderSettingsFromDisk(cwd: string): CursorC
 	);
 }
 
-/**
- * Read-modify-write `noApprovalAcknowledgedAt` into the provider block of the
- * global settings file, preserving every other key. An unparseable file is
- * reported instead of silently clobbered, so an acknowledgement can never
- * claim success while leaving the settings unwritten.
- */
-export function persistCursorCliNoApprovalAcknowledgement(cwd: string, acknowledgedAt: string): void {
+function persistCursorCliOauthProviderPatch(
+	cwd: string,
+	action: string,
+	patch: Readonly<Record<string, unknown>>,
+): void {
 	const storage = new FileSettingsStorage(cwd, getAgentDir());
 	storage.selectSource("global");
 	storage.withLock("global", (current) => {
@@ -224,7 +222,7 @@ export function persistCursorCliNoApprovalAcknowledgement(cwd: string, acknowled
 			root = current === undefined ? {} : parseSettingsJson(current);
 		} catch (error) {
 			throw new Error(
-				`Cannot persist the cursor-cli-oauth acknowledgement: the settings file is unparseable (${error instanceof Error ? error.message : String(error)})`,
+				`Cannot persist the cursor-cli-oauth ${action}: the settings file is unparseable (${error instanceof Error ? error.message : String(error)})`,
 			);
 		}
 		const provider =
@@ -233,10 +231,24 @@ export function persistCursorCliNoApprovalAcknowledgement(cwd: string, acknowled
 			!Array.isArray(root.cursorCliOauthProvider)
 				? { ...(root.cursorCliOauthProvider as Record<string, unknown>) }
 				: {};
-		return JSON.stringify(
-			{ ...root, cursorCliOauthProvider: { ...provider, noApprovalAcknowledgedAt: acknowledgedAt } },
-			null,
-			2,
-		);
+		return JSON.stringify({ ...root, cursorCliOauthProvider: { ...provider, ...patch } }, null, 2);
+	});
+}
+
+/** Persist explicit provider activation while preserving every sibling setting. */
+export function persistCursorCliOauthEnabled(cwd: string, enabled: boolean): void {
+	persistCursorCliOauthProviderPatch(cwd, "enabled state", { enabled });
+}
+
+/**
+ * Read-modify-write `noApprovalAcknowledgedAt` into the provider block of the
+ * global settings file, preserving every other key. An unparseable file is
+ * reported instead of silently clobbered, so an acknowledgement can never
+ * claim success while leaving the settings unwritten.
+ */
+export function persistCursorCliNoApprovalAcknowledgement(cwd: string, acknowledgedAt: string): void {
+	persistCursorCliOauthProviderPatch(cwd, "acknowledgement", {
+		enabled: true,
+		noApprovalAcknowledgedAt: acknowledgedAt,
 	});
 }

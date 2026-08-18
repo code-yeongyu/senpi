@@ -54,10 +54,10 @@ describe("loop-guard Goal isolation", () => {
 			pendingMessages: false,
 			goalBackstopMaxSeconds: 240,
 		});
+		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 		await harness.tools
 			.get("create_goal")
 			?.execute("create", { objective: "Recover from loop guard" }, undefined, undefined, ctx);
-		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 		harness.events.emit("continuation_hold_state", {
 			source: "loop-guard-hard-stop",
 			active: true,

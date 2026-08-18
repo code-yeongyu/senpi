@@ -31,6 +31,7 @@ import {
 	type CursorCliOauthProviderSettings,
 	loadCursorCliOauthProviderSettingsFromDisk,
 	persistCursorCliNoApprovalAcknowledgement,
+	persistCursorCliOauthEnabled,
 } from "./settings.ts";
 
 export const CURSOR_CLI_OAUTH_PROVIDER_ID = "cursor-cli-oauth";
@@ -60,6 +61,8 @@ export type CursorCliOauthConfigDeps = {
 	now?: () => Date;
 	/** Persists the no-approval acknowledgement; the disk default is wired in defaultCursorCliOauthConfig. */
 	persistAcknowledgement?: (acknowledgedAt: string) => void;
+	/** Persists explicit provider activation after a successful login. */
+	persistEnabled?: (enabled: boolean) => void;
 };
 
 export type CursorCliOauthLaneResolution = {
@@ -323,7 +326,9 @@ export function createCursorCliOauthConfig(deps: CursorCliOauthConfigDeps): Curs
 				deps.now ?? (() => new Date()),
 			);
 			if (acknowledgedAt !== undefined) deps.persistAcknowledgement?.(acknowledgedAt);
-			return addAccount(current, slotFromCredential(loggedIn, name, "login"));
+			const credential = addAccount(current, slotFromCredential(loggedIn, name, "login"));
+			deps.persistEnabled?.(true);
+			return credential;
 		},
 
 		async refreshToken(credentials, signal) {
@@ -441,6 +446,40 @@ export async function importLocalCursorCredential(
 	);
 }
 
+function isUsableFlatOAuthCredential(value: Credential | undefined): value is OAuthCredential {
+	return (
+		value?.type === "oauth" &&
+		typeof value.access === "string" &&
+		value.access.length > 0 &&
+		typeof value.refresh === "string" &&
+		value.refresh.length > 0 &&
+		typeof value.expires === "number" &&
+		Number.isFinite(value.expires)
+	);
+}
+
+function nativeAccountName(existing: readonly CursorCliAccountSlot[]): string {
+	const names = new Set(existing.map((account) => account.name));
+	if (!names.has("native")) return "native";
+	for (let index = 2; index <= 10_000; index++) {
+		const candidate = `native-${index}`;
+		if (!names.has(candidate)) return candidate;
+	}
+	throw new Error("Could not allocate a Cursor CLI OAuth native account name");
+}
+
+/** Explicitly copy Senpi's native `cursor` OAuth credential into a managed CLI account slot. */
+export async function importNativeCursorCredential(
+	current: CursorCliOauthCredential,
+	readNativeCredential: () => Credential | undefined | Promise<Credential | undefined>,
+): Promise<CursorCliOauthCredential> {
+	const native = await readNativeCredential();
+	if (!isUsableFlatOAuthCredential(native)) {
+		throw new Error("No stored native Cursor OAuth credential found");
+	}
+	return addAccount(current, slotFromCredential(native, nativeAccountName(listAccounts(current)), "import"));
+}
+
 export function defaultCursorCliOauthConfig(
 	cwd: string,
 	readCurrent: () => Promise<Credential | undefined>,
@@ -458,5 +497,6 @@ export function defaultCursorCliOauthConfig(
 		now: () => new Date(),
 		persistAcknowledgement: (acknowledgedAt: string) =>
 			persistCursorCliNoApprovalAcknowledgement(cwd, acknowledgedAt),
+		persistEnabled: (enabled: boolean) => persistCursorCliOauthEnabled(cwd, enabled),
 	});
 }

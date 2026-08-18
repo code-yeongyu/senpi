@@ -24,9 +24,8 @@ export function createSessionCursorExecBridge(
 				},
 				event.input,
 			),
-		emitEvent: (event: AgentEvent) => {
-			void getAgent().emitExternalEvent(event);
-		},
+		emitEvent: async (event: AgentEvent, runSignal: AbortSignal) =>
+			await getAgent().emitExternalEvent(event, runSignal),
 		getAbortSignal: () => getAgent().signal,
 	});
 }

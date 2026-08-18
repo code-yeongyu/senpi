@@ -786,9 +786,12 @@ export class Agent {
 	 * provider stream, outside the loop's executor, so their
 	 * `tool_execution_start`/`tool_execution_end` lifecycle must be injected
 	 * here or the live tool card for a synthesized call never resolves.
-	 * Only valid during an active run (bridge executions always are).
+	 * A bridge execution may settle after an aborted run has already ended; its
+	 * late lifecycle event belongs to that finished run and must be discarded.
 	 */
-	async emitExternalEvent(event: AgentEvent): Promise<void> {
+	async emitExternalEvent(event: AgentEvent, runSignal?: AbortSignal): Promise<void> {
+		const activeSignal = this.activeRun?.abortController.signal;
+		if (!activeSignal || (runSignal && runSignal !== activeSignal)) return;
 		await this.processEvents(event);
 	}
 }

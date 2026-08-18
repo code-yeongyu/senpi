@@ -40,8 +40,8 @@ async function setupWarmHarness(
 		model: cacheModel(),
 		cacheSafeWaitSeconds: 270,
 	});
-	await harness.tools.get("create_goal")?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
 	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+	await harness.tools.get("create_goal")?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
 	harness.events.emit("terminal_monitor_state", { activeCount: 1 });
 	await harness.events.flush();
 	await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -230,10 +230,10 @@ describe("goal cache-warm continuation story", () => {
 		const notices: string[] = [];
 		const harness = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-cache-warm-plain");
+		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 		await harness.tools
 			.get("create_goal")
 			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
-		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 		harness.events.emit("terminal_monitor_state", { activeCount: 1 });
 		await harness.events.flush();
 		await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
