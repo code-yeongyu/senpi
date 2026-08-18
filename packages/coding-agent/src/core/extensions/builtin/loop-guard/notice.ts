@@ -1,8 +1,33 @@
 import type { LoopGuardDetection } from "./detectors.ts";
 
 export const LOOP_GUARD_NOTICE_CUSTOM_TYPE = "loop-guard:notice";
+export const LOOP_GUARD_ESCALATION_CUSTOM_TYPE = "loop-guard:escalation";
+export const LOOP_GUARD_RECOVERY_CUSTOM_TYPE = "loop-guard:recovery";
 
 export type LoopGuardNoticeDetails = LoopGuardDetection;
+
+export interface LoopGuardEscalationDetails {
+	readonly toolName: string;
+	readonly blockedCallCount: number;
+}
+
+export function buildLoopGuardBlockReason(toolName: string, blockedCallCount: number): string {
+	return [
+		`Loop guard blocked repeated call ${blockedCallCount} to \`${toolName}\` with arguments that already triggered two identical-call warnings.`,
+		"Reuse the existing result, change an argument deliberately, or choose a different tool.",
+	].join(" ");
+}
+
+export function buildLoopGuardHardStopWarning(toolName: string, blockedCallCount: number): string {
+	return `Loop guard interrupted the turn after blocking ${blockedCallCount} repeated calls to ${toolName}.`;
+}
+
+export function buildLoopGuardHardStopSteer(toolName: string): string {
+	return [
+		`The loop guard stopped the previous turn because you kept calling \`${toolName}\` with arguments that had already been blocked.`,
+		"Do not repeat that call. Re-plan from the current goal and use a different tool or deliberately changed arguments.",
+	].join(" ");
+}
 
 export function buildLoopGuardReminder(detection: LoopGuardDetection): string {
 	switch (detection.kind) {

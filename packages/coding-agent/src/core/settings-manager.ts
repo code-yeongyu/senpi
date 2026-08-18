@@ -11,6 +11,7 @@ import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { envValue } from "./brand.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+import { FILE_STORAGE_LOCK_OPTIONS } from "./lockfile-policy.ts";
 import {
 	type ResolvedHintPolicySettings,
 	type ResolvedRetryFallbackSettings,
@@ -46,6 +47,8 @@ export interface BranchSummarySettings {
 }
 
 export type TuiMode = RendererTuiMode;
+export type FullscreenExitOutput = "transcript" | "resume-hint";
+
 export interface TerminalSettings {
 	showImages?: boolean; // default: true (only relevant if terminal supports images)
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
@@ -108,6 +111,32 @@ export interface OpenAISettings {
 	serviceTier?: "auto" | "flex" | "priority";
 }
 
+/** Service tier remembered per model; "auto" is an explicit opt-out of an inherited priority tier. */
+export type ModelServiceTier = "auto" | "flex" | "priority";
+
+const THINKING_LEVEL_VALUES: ReadonlySet<string> = new Set<ThinkingLevel>([
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+]);
+
+const MODEL_SERVICE_TIER_VALUES: ReadonlySet<string> = new Set<ModelServiceTier>(["auto", "flex", "priority"]);
+
+/** Opaque per-model memory key. Ids may contain `/` and `:`, so keys are never split back apart. */
+function modelMemoryKey(provider: string, modelId: string): string {
+	return `${provider}/${modelId}`;
+}
+
+function readModelMemoryEntry(map: unknown, key: string, allowed: ReadonlySet<string>): string | undefined {
+	if (typeof map !== "object" || map === null || Array.isArray(map)) return undefined;
+	const value = (map as Record<string, unknown>)[key];
+	return typeof value === "string" && allowed.has(value) ? value : undefined;
+}
+
 export interface WarningSettings {
 	anthropicExtraUsage?: boolean; // default: true
 	offRecommendedModel?: boolean; // default: false
@@ -140,6 +169,9 @@ export interface Settings {
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: ThinkingLevel;
+	modelThinkingLevels?: Record<string, ThinkingLevel>; // `${provider}/${id}` -> effective thinking level for that model
+	modelLastOnThinkingLevels?: Record<string, ThinkingLevel>; // `${provider}/${id}` -> last non-off thinking level
+	modelServiceTiers?: Record<string, ModelServiceTier>; // `${provider}/${id}` -> last service tier set for that model
 	transport?: TransportSetting; // default: "auto"
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
@@ -179,6 +211,7 @@ export interface Settings {
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
 	enabledModels?: string[]; // Legacy global model narrowing patterns (same format as --models CLI flag)
+	defaultTools?: string[]; // Initial built-in tool selection
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
@@ -194,6 +227,7 @@ export interface Settings {
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
 	tuiMode?: TuiMode; // default: "regular"
+	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 }
 
@@ -244,6 +278,95 @@ function parseTimeoutSetting(value: unknown, settingName: string): number | unde
 }
 
 export type SettingsScope = "global" | "project";
+export type SettingsFormat = "jsonc" | "json";
+export type SettingsSourceReason = "explicit-jsonc" | "json-only";
+
+export interface SettingsSourceSelection {
+	path: string;
+	format: SettingsFormat;
+	reason: SettingsSourceReason;
+	scope: SettingsScope;
+}
+
+export type SettingsSourceListener = (source: SettingsSourceSelection) => void;
+
+/** Parse JSON or JSONC without changing comment-like text inside strings. */
+export function parseSettingsJson(content: string): Record<string, unknown> {
+	const withoutComments: string[] = [];
+	let inString = false;
+	let escaped = false;
+
+	for (let index = 0; index < content.length; index += 1) {
+		const char = content[index];
+		const next = content[index + 1];
+		if (inString) {
+			withoutComments.push(char);
+			if (escaped) escaped = false;
+			else if (char === "\\") escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+		if (char === '"') {
+			inString = true;
+			withoutComments.push(char);
+			continue;
+		}
+		if (char === "/" && next === "/") {
+			withoutComments.push(" ", " ");
+			index += 2;
+			while (index < content.length && content[index] !== "\n" && content[index] !== "\r") {
+				withoutComments.push(" ");
+				index += 1;
+			}
+			if (index < content.length) withoutComments.push(content[index]);
+			continue;
+		}
+		if (char === "/" && next === "*") {
+			withoutComments.push(" ", " ");
+			index += 2;
+			let closed = false;
+			for (; index < content.length; index += 1) {
+				if (content[index] === "*" && content[index + 1] === "/") {
+					withoutComments.push(" ", " ");
+					index += 1;
+					closed = true;
+					break;
+				}
+				withoutComments.push(content[index] === "\n" || content[index] === "\r" ? content[index] : " ");
+			}
+			if (!closed) throw new SyntaxError("Unterminated block comment in settings");
+			continue;
+		}
+		withoutComments.push(char);
+	}
+
+	const normalized = withoutComments;
+	inString = false;
+	escaped = false;
+	for (let index = 0; index < normalized.length; index += 1) {
+		const char = normalized[index];
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === "\\") escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+		if (char === '"') {
+			inString = true;
+			continue;
+		}
+		if (char !== ",") continue;
+		let nextIndex = index + 1;
+		while (nextIndex < normalized.length && /\s/.test(normalized[nextIndex])) nextIndex += 1;
+		if (normalized[nextIndex] === "}" || normalized[nextIndex] === "]") normalized[index] = " ";
+	}
+
+	const parsed: unknown = JSON.parse(normalized.join(""));
+	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+		throw new TypeError("Settings must contain a JSON object");
+	}
+	return parsed as Record<string, unknown>;
+}
 
 const SELF_WRITE_TTL_MS = 15_000;
 const MAX_SELF_WRITES_PER_PATH = 8;
@@ -312,19 +435,42 @@ export function __setSelfWriteTrackerClockForTests(clock: (() => number) | undef
 	selfWriteClock = clock ?? Date.now;
 }
 
-/** Returns the absolute settings path for a filesystem-backed storage scope. */
+function getSettingsDirectory(cwd: string, agentDir: string, scope: SettingsScope, homeDir: string): string {
+	if (scope === "global") return resolvePath(agentDir);
+	const resolvedCwd = resolvePath(cwd);
+	return findNearestParentConfigDir(resolvedCwd, homeDir, CONFIG_DIR_NAME) ?? join(resolvedCwd, CONFIG_DIR_NAME);
+}
+
+/** Resolve the existing settings source, preferring JSONC when both formats exist. */
+export function resolveSettingsSource(
+	cwd: string,
+	agentDir: string,
+	scope: SettingsScope,
+	homeDir: string = homedir(),
+): SettingsSourceSelection | undefined {
+	const directory = getSettingsDirectory(cwd, agentDir, scope, homeDir);
+	const jsoncPath = join(directory, "settings.jsonc");
+	if (existsSync(jsoncPath)) {
+		return { path: jsoncPath, format: "jsonc", reason: "explicit-jsonc", scope };
+	}
+	const jsonPath = join(directory, "settings.json");
+	if (existsSync(jsonPath)) {
+		return { path: jsonPath, format: "json", reason: "json-only", scope };
+	}
+	return undefined;
+}
+
+/** Returns the selected settings path, or the legacy JSON write target when no source exists. */
 export function getSettingsPath(
 	cwd: string,
 	agentDir: string,
 	scope: SettingsScope,
 	homeDir: string = homedir(),
 ): string {
-	if (scope === "global") {
-		return join(resolvePath(agentDir), "settings.json");
-	}
-	const resolvedCwd = resolvePath(cwd);
-	const projectConfigDir = findNearestParentConfigDir(resolvedCwd, homeDir, CONFIG_DIR_NAME);
-	return join(projectConfigDir ?? join(resolvedCwd, CONFIG_DIR_NAME), "settings.json");
+	return (
+		resolveSettingsSource(cwd, agentDir, scope, homeDir)?.path ??
+		join(getSettingsDirectory(cwd, agentDir, scope, homeDir), "settings.json")
+	);
 }
 
 /** Returns the stable virtual path used to identify in-memory settings storage writes. */
@@ -338,6 +484,7 @@ export interface SettingsManagerCreateOptions {
 
 export interface SettingsStorage {
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void;
+	selectSource?(scope: SettingsScope): SettingsSourceSelection | undefined;
 }
 
 export interface SettingsError {
@@ -348,10 +495,25 @@ export interface SettingsError {
 export class FileSettingsStorage implements SettingsStorage {
 	private globalSettingsPath: string;
 	private projectSettingsPath: string;
+	private readonly cwd: string;
+	private readonly agentDir: string;
+	private readonly homeDir: string;
 
 	constructor(cwd: string, agentDir: string, homeDir: string = homedir()) {
+		this.cwd = cwd;
+		this.agentDir = agentDir;
+		this.homeDir = homeDir;
 		this.globalSettingsPath = getSettingsPath(cwd, agentDir, "global", homeDir);
 		this.projectSettingsPath = getSettingsPath(cwd, agentDir, "project", homeDir);
+	}
+
+	selectSource(scope: SettingsScope): SettingsSourceSelection | undefined {
+		const source = resolveSettingsSource(this.cwd, this.agentDir, scope, this.homeDir);
+		const path =
+			source?.path ?? join(getSettingsDirectory(this.cwd, this.agentDir, scope, this.homeDir), "settings.json");
+		if (scope === "global") this.globalSettingsPath = path;
+		else this.projectSettingsPath = path;
+		return source;
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
@@ -361,7 +523,7 @@ export class FileSettingsStorage implements SettingsStorage {
 
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 			try {
-				return lockfile.lockSync(path, { realpath: false });
+				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS });
 			} catch (error) {
 				const code =
 					typeof error === "object" && error !== null && "code" in error
@@ -451,6 +613,8 @@ export class SettingsManager {
 	private projectSettingsLoadError: Error | null = null; // Track if project settings file had parse errors
 	private writeQueue: Promise<void> = Promise.resolve();
 	private errors: SettingsError[];
+	private selectedSources = new Map<SettingsScope, SettingsSourceSelection>();
+	private sourceListeners: SettingsSourceListener[] = [];
 
 	private constructor(
 		storage: SettingsStorage,
@@ -460,6 +624,7 @@ export class SettingsManager {
 		projectLoadError: Error | null = null,
 		initialErrors: SettingsError[] = [],
 		projectTrusted = true,
+		initialSources: readonly SettingsSourceSelection[] = [],
 	) {
 		this.storage = storage;
 		this.globalSettings = initialGlobal;
@@ -468,6 +633,7 @@ export class SettingsManager {
 		this.globalSettingsLoadError = globalLoadError;
 		this.projectSettingsLoadError = projectLoadError;
 		this.errors = [...initialErrors];
+		for (const source of initialSources) this.selectedSources.set(source.scope, source);
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
 	}
 
@@ -484,7 +650,12 @@ export class SettingsManager {
 	/** Create a SettingsManager from an arbitrary storage backend */
 	static fromStorage(storage: SettingsStorage, options: SettingsManagerCreateOptions = {}): SettingsManager {
 		const projectTrusted = options.projectTrusted ?? true;
+		const initialSources: SettingsSourceSelection[] = [];
+		const globalSource = storage.selectSource?.("global");
+		if (globalSource) initialSources.push(globalSource);
 		const globalLoad = SettingsManager.tryLoadFromStorage(storage, "global");
+		const projectSource = projectTrusted ? storage.selectSource?.("project") : undefined;
+		if (projectSource) initialSources.push(projectSource);
 		const projectLoad = SettingsManager.tryLoadFromStorage(storage, "project", projectTrusted);
 		const initialErrors: SettingsError[] = [];
 		if (globalLoad.error) {
@@ -502,6 +673,7 @@ export class SettingsManager {
 			projectLoad.error,
 			initialErrors,
 			projectTrusted,
+			initialSources,
 		);
 	}
 
@@ -527,8 +699,7 @@ export class SettingsManager {
 		if (!content) {
 			return {};
 		}
-		const settings = JSON.parse(content);
-		return SettingsManager.migrateSettings(settings);
+		return SettingsManager.migrateSettings(parseSettingsJson(content));
 	}
 
 	private static tryLoadFromStorage(
@@ -651,6 +822,7 @@ export class SettingsManager {
 			return;
 		}
 
+		this.selectAndPublishSource("project");
 		const projectLoad = SettingsManager.tryLoadFromStorage(this.storage, "project", trusted);
 		this.projectSettings = projectLoad.settings;
 		this.projectSettingsLoadError = projectLoad.error;
@@ -662,6 +834,7 @@ export class SettingsManager {
 
 	async reload(): Promise<void> {
 		await this.writeQueue;
+		this.selectAndPublishSource("global");
 		const globalLoad = SettingsManager.tryLoadFromStorage(this.storage, "global");
 		if (!globalLoad.error) {
 			this.globalSettings = globalLoad.settings;
@@ -676,6 +849,7 @@ export class SettingsManager {
 		this.modifiedProjectFields.clear();
 		this.modifiedProjectNestedFields.clear();
 
+		if (this.projectTrusted) this.selectAndPublishSource("project");
 		const projectLoad = SettingsManager.tryLoadFromStorage(this.storage, "project", this.projectTrusted);
 		if (!projectLoad.error) {
 			this.projectSettings = projectLoad.settings;
@@ -686,6 +860,28 @@ export class SettingsManager {
 		}
 
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+	}
+
+	getSelectedSettingsSources(): SettingsSourceSelection[] {
+		return [...this.selectedSources.values()].map((source) => ({ ...source }));
+	}
+
+	subscribeToSourceSelection(listener: SettingsSourceListener): () => void {
+		this.sourceListeners.push(listener);
+		return () => {
+			const index = this.sourceListeners.indexOf(listener);
+			if (index !== -1) this.sourceListeners.splice(index, 1);
+		};
+	}
+
+	private selectAndPublishSource(scope: SettingsScope): void {
+		const source = this.storage.selectSource?.(scope);
+		if (!source) {
+			this.selectedSources.delete(scope);
+			return;
+		}
+		this.selectedSources.set(scope, source);
+		for (const listener of this.sourceListeners) listener({ ...source });
 	}
 
 	/** Apply additional overrides on top of current settings */
@@ -766,9 +962,7 @@ export class SettingsManager {
 		modifiedNestedFields: Map<keyof Settings, Set<string>>,
 	): void {
 		this.storage.withLock(scope, (current) => {
-			const currentFileSettings = current
-				? SettingsManager.migrateSettings(JSON.parse(current) as Record<string, unknown>)
-				: {};
+			const currentFileSettings = current ? SettingsManager.migrateSettings(parseSettingsJson(current)) : {};
 			const mergedSettings: Settings = { ...currentFileSettings };
 			for (const field of modifiedFields) {
 				const value = snapshotSettings[field];
@@ -928,6 +1122,96 @@ export class SettingsManager {
 	setDefaultThinkingLevel(level: ThinkingLevel): void {
 		this.globalSettings.defaultThinkingLevel = level;
 		this.markModified("defaultThinkingLevel");
+		this.save();
+	}
+
+	/** Thinking level last set for this exact model, or undefined when unknown/invalid on disk. */
+	getModelThinkingLevel(provider: string, modelId: string): ThinkingLevel | undefined {
+		return readModelMemoryEntry(
+			this.settings.modelThinkingLevels,
+			modelMemoryKey(provider, modelId),
+			THINKING_LEVEL_VALUES,
+		) as ThinkingLevel | undefined;
+	}
+
+	/** Remember (or with `undefined`, forget) this model's effective thinking level in GLOBAL settings. */
+	setModelThinkingLevel(
+		provider: string,
+		modelId: string,
+		level: ThinkingLevel | undefined,
+		options: { preserveLastOn?: boolean } = {},
+	): void {
+		const key = modelMemoryKey(provider, modelId);
+		const existing = this.globalSettings.modelThinkingLevels;
+		const map: Record<string, ThinkingLevel> =
+			typeof existing === "object" && existing !== null && !Array.isArray(existing) ? { ...existing } : {};
+		if (level === undefined) {
+			delete map[key];
+		} else {
+			map[key] = level;
+		}
+		this.globalSettings.modelThinkingLevels = map;
+		// Nested key only: concurrent sessions writing OTHER models must survive the merge.
+		this.markModified("modelThinkingLevels", key);
+
+		// `off` is durable effective state, but it must not erase the level `/reasoning on` restores.
+		if (level !== "off" && !options.preserveLastOn) {
+			this.updateModelLastOnThinkingLevel(key, level);
+		}
+		this.save();
+	}
+
+	/** Last non-off thinking level for this exact model, or undefined when unknown/invalid on disk. */
+	getModelLastOnThinkingLevel(provider: string, modelId: string): ThinkingLevel | undefined {
+		const level = readModelMemoryEntry(
+			this.settings.modelLastOnThinkingLevels,
+			modelMemoryKey(provider, modelId),
+			THINKING_LEVEL_VALUES,
+		) as ThinkingLevel | undefined;
+		return level === "off" ? undefined : level;
+	}
+
+	/** Remember (or with `undefined`, forget) this model's last non-off level in GLOBAL settings. */
+	setModelLastOnThinkingLevel(provider: string, modelId: string, level: ThinkingLevel | undefined): void {
+		this.updateModelLastOnThinkingLevel(modelMemoryKey(provider, modelId), level === "off" ? undefined : level);
+		this.save();
+	}
+
+	private updateModelLastOnThinkingLevel(key: string, level: ThinkingLevel | undefined): void {
+		const existing = this.globalSettings.modelLastOnThinkingLevels;
+		const map: Record<string, ThinkingLevel> =
+			typeof existing === "object" && existing !== null && !Array.isArray(existing) ? { ...existing } : {};
+		if (level === undefined) {
+			delete map[key];
+		} else {
+			map[key] = level;
+		}
+		this.globalSettings.modelLastOnThinkingLevels = map;
+		this.markModified("modelLastOnThinkingLevels", key);
+	}
+
+	/** Service tier last set for this exact model, or undefined when unknown/invalid on disk. */
+	getModelServiceTier(provider: string, modelId: string): ModelServiceTier | undefined {
+		return readModelMemoryEntry(
+			this.settings.modelServiceTiers,
+			modelMemoryKey(provider, modelId),
+			MODEL_SERVICE_TIER_VALUES,
+		) as ModelServiceTier | undefined;
+	}
+
+	/** Remember (or with `undefined`, forget) this model's service tier in GLOBAL settings. */
+	setModelServiceTier(provider: string, modelId: string, tier: ModelServiceTier | undefined): void {
+		const key = modelMemoryKey(provider, modelId);
+		const existing = this.globalSettings.modelServiceTiers;
+		const map: Record<string, ModelServiceTier> =
+			typeof existing === "object" && existing !== null && !Array.isArray(existing) ? { ...existing } : {};
+		if (tier === undefined) {
+			delete map[key];
+		} else {
+			map[key] = tier;
+		}
+		this.globalSettings.modelServiceTiers = map;
+		this.markModified("modelServiceTiers", key);
 		this.save();
 	}
 
@@ -1540,6 +1824,16 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getFullscreenExitOutput(): FullscreenExitOutput {
+		return this.settings.fullscreenExitOutput === "resume-hint" ? "resume-hint" : "transcript";
+	}
+
+	setFullscreenExitOutput(output: FullscreenExitOutput): void {
+		this.globalSettings.fullscreenExitOutput = output;
+		this.markModified("fullscreenExitOutput");
+		this.save();
+	}
+
 	getFullscreenScrollbar(): ScrollViewScrollbar {
 		const mode = this.settings.fullscreenScrollbar;
 		return mode === "always" || mode === "hidden" ? mode : "auto";
@@ -1598,6 +1892,11 @@ export class SettingsManager {
 		this.globalSettings.favoriteModels = patterns;
 		this.markModified("favoriteModels");
 		this.save();
+	}
+
+	getDefaultTools(): string[] | undefined {
+		const tools = this.settings.defaultTools;
+		return tools ? [...tools] : undefined;
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

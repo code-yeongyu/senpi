@@ -31,17 +31,19 @@ export function readLatestFact(db: SqliteDatabase, sessionId: string, kind: stri
 }
 
 export function readLatestLabelFacts(db: SqliteDatabase, sessionId: string) {
-	return sql`WITH latest AS (
-			SELECT key, MAX(seq) AS seq
-			FROM facts INDEXED BY idx_facts_session_kind_key_seq
-			WHERE session_id = ${sessionId} AND kind = 'label'
-			GROUP BY key
-		)
-		SELECT latest.key, f.value
-		FROM latest
-		JOIN facts AS f ON f.session_id = ${sessionId} AND f.seq = latest.seq
-		WHERE f.value IS NOT NULL
-		ORDER BY latest.key`.all<{ key: string; value: string }>(db);
+	return sql`SELECT f.key, f.value
+		FROM facts AS f INDEXED BY idx_facts_session_kind_key_seq
+		WHERE f.session_id = ${sessionId}
+			AND f.kind = 'label'
+			AND f.value IS NOT NULL
+			AND f.seq = (
+				SELECT MAX(candidate.seq)
+				FROM facts AS candidate INDEXED BY idx_facts_session_kind_key_seq
+				WHERE candidate.session_id = f.session_id
+					AND candidate.kind = f.kind
+					AND candidate.key IS f.key
+			)
+		ORDER BY f.key`.all<{ key: string; value: string }>(db);
 }
 
 export function readFactRows(

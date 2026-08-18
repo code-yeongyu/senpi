@@ -1,5 +1,145 @@
 # Core Extensions Changes
 
+## Repository audit baseline for the extensions tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`). The audited production paths whose exact nearest tracker is this file:
+  `packages/coding-agent/src/core/extensions/index.ts`, `packages/coding-agent/src/core/extensions/loader.ts`,
+  `packages/coding-agent/src/core/extensions/runner.ts`, and `packages/coding-agent/src/core/extensions/types.ts`.
+- Per-file divergence history for the public API surface (events, context getters, RPC, lazy activation, compaction
+  admission) is preserved in the dated entries below; fork-only additions in this directory (`AGENTS.md`, `wrapper.ts`,
+  `notice/`) are absent from the pinned upstream tree and therefore exempt from the audit.
+
+### Why
+
+- The audit requires every upstream-owned production divergence to be covered by one entry with all four canonical
+  sections in its exact nearest tracker. Most entries below predate the gate and are not parseable in canonical form,
+  so this inventory anchors the four modified files without rewriting accurate history.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository and release policy, not runtime behavior; it is enforced by repository scripts before
+  any extension loader exists.
+
+### Expected merge conflict zones
+
+- NONE: this tracker is fork-only (upstream has no counterpart file); the inventory names pin-relative paths so it
+  stays valid as entries below change.
+
+## Extension loader per-CWD LRU factory cache and Senpi alias (2026-08-17)
+
+### What changed
+
+- `loader.ts`: the extension factory cache is scoped per working directory. Upstream kept one global `extensionCache`
+  plus a single `extensionCacheCwd`; any different cwd cleared the entire cache and bumped one global generation. The
+  fork replaces that with `extensionCacheByCwd`, a map of per-cwd `ExtensionCacheEntry` (`cwd`, `generation`,
+  `factories`) bounded by `MAX_EXTENSION_CACHE_CWD_ENTRIES = 16`: a cache hit re-inserts the entry to mark it most
+  recently used, a miss evicts the least recently used cwd, and each new entry is stamped from the monotonic
+  `nextExtensionCacheGeneration` so `isCurrentCacheToken()` still rejects factories held by an evicted or cleared
+  entry. `clearExtensionCache()` drops all entries; `loadExtensionsCached()` remains the cached entry point and
+  `loadExtensions()` keeps fresh-source semantics (`moduleCache: false`, one shared jiti importer per batch).
+- `loader.ts`: `@code-yeongyu/senpi` is a first-class alias for the coding-agent package — mapped to the bundled
+  module in `VIRTUAL_MODULES` and to the resolved dist-or-source entry in `getAliases()` — alongside the existing
+  `@earendil-works/pi-coding-agent` and `@mariozechner/pi-coding-agent` spellings.
+
+### Why
+
+- The module-level cache is process state shared by every session a host runs; with upstream's clear-on-switch
+  behavior, a host alternating sessions across project roots re-paid jiti's per-extension TypeScript resolution cost
+  on every cwd change. A bounded per-cwd LRU keeps recently used roots warm without unbounded growth.
+- Extensions published under the fork's package name import `@code-yeongyu/senpi`; without the alias jiti resolves
+  that specifier from the extension's own `node_modules`, pulling a duplicate runtime and breaking identity
+  expectations — the same failure mode the `@mariozechner/pi-*` alias exists to prevent.
+
+### Why an extension could not handle it
+
+- The cache and alias table live inside the loader that resolves extension factories themselves; no extension can
+  observe or replace its own import-path resolution.
+
+### Expected merge conflict zones
+
+- MEDIUM: `loader.ts` cache block (`MAX_EXTENSION_CACHE_CWD_ENTRIES`, `ExtensionCacheEntry`, `useExtensionCacheCwd()`,
+  `loadExtensionModule()`) — upstream still maintains the single-slot cache there.
+- LOW: the two `@code-yeongyu/senpi` lines in `VIRTUAL_MODULES` and `getAliases()`; additive keys beside upstream's.
+
+## Runner tool-hook lifecycle and status reporting (2026-08-17)
+
+### What changed
+
+- `runner.ts`: every `tool_call` (`PreToolUse`) and `tool_result` (`PostToolUse`) handler invocation is wrapped in a
+  lifecycle run. `beginToolHookRun()` assigns `hookRunId` (`<toolCallId>:<hookName>:<run index>`), emits a `start`
+  event, and hands the handler a context whose `ctx.updateToolHookStatus(update)` emits `update` events with a
+  sanitized message; the run closes with an `end` event carrying terminal status `completed`, `blocked` (a
+  `ToolCallEventResult.block` veto won), or `failed` (handler threw) plus the error message.
+- `runner.ts`: hosts observe the stream through `setToolHookLifecycleObserver()` receiving
+  `ExtensionToolHookLifecycleEvent`. Default status text comes from `getToolHookStatusMessage()` — `running <extension
+  name>`, or the compaction/tool-result-size checks the builtin hooks extension performs — and
+  `sanitizedToolHookStatusMessage()` bounds every message to 79 characters after stripping ANSI, control characters,
+  and collapsed whitespace.
+
+### Why
+
+- Interactive hosts had no per-hook progress signal while PreToolUse/PostToolUse handlers ran, so a slow permission or
+  compaction hook was indistinguishable from a hung tool call. Lifecycle phases plus a bounded, sanitized status line
+  let the host surface which extension hook is running and how the run ended.
+
+### Why an extension could not handle it
+
+- The stream must be emitted by the runner that dispatches the hooks; an extension cannot observe another extension's
+  hook dispatch or reach the host's status surface for it.
+
+### Expected merge conflict zones
+
+- MEDIUM: `runner.ts` `emitToolCall()` / `emitToolResult()` handler loops and the `beginToolHookRun()` block —
+  upstream owns the dispatch loops and rewrites them when event-result shapes change.
+- LOW: `ExtensionToolHookLifecycleEvent` / `ExtensionToolHookLifecycleObserver` / `setToolHookLifecycleObserver()`;
+  fork-owned additive surface.
+
+## Extension RPC event forwarding onto the shared session bus (2026-08-17)
+
+### What changed
+
+- `loader.ts`: `pi.rpc.emit(name, data)` (absent from the pinned upstream loader) validates a non-empty trimmed name
+  and publishes an `ExtensionRpcEvent` (`{ name, data }`) on the session's shared event bus under the reserved
+  `EXTENSION_RPC_EVENT_CHANNEL` exported from `core/event-bus.ts`, so extension-originated events reach RPC hosts
+  through one named channel instead of each extension writing to a transport. `pi.rpc.handle()` /
+  `ExtensionRunner.requestRpc()` form the request/response counterpart (2026-08-12 entries below).
+- `pi.events.emit/on` keep forwarding extension-local pub/sub onto the same shared bus with generation-tracked
+  subscriptions that `runtime.invalidate()` tears down (upstream-owned contract, unchanged).
+
+### Why
+
+- Extensions needed a first-class way to raise events that RPC/TUI consumers observe without the extension holding a
+  transport, and hosts needed one channel contract to subscribe to rather than per-extension delivery paths.
+
+### Why an extension could not handle it
+
+- The event bus is constructed by core before extensions load and handed into `loadExtensions()`; only the loader can
+  wire each extension's `rpc` surface onto it.
+
+### Expected merge conflict zones
+
+- LOW: `loader.ts` `createExtensionAPI()` `rpc` arm and the `EXTENSION_RPC_EVENT_CHANNEL` import; the channel constant
+  itself is fork-owned in `core/event-bus.ts` (core tracker, 2026-08-17).
+
+## 2026-08-17 - getSystemPromptOptions exposed on the base ExtensionContext
+
+### What changed
+
+- `ExtensionContext` gains OPTIONAL `getSystemPromptOptions?(): BuildSystemPromptOptions`, so event handlers (not just command handlers) can read the base system-prompt construction options. It stays REQUIRED on `ExtensionCommandContext` (now a redeclaration that narrows the optional base member), so existing command-handler callers are unaffected and hand-built test contexts keep compiling.
+- `runner.ts` binds the getter in `createContext()` (it always exists at runtime under the senpi runner); the duplicate binding in `createCommandContext()` is removed because the descriptor copy carries it.
+- The returned options now include the user-override fields already present on `BuildSystemPromptOptions`: `customPrompt` (from `--system-prompt` / SDK loader) and `appendSystemPrompt` (pre-joined `--append-system-prompt` texts), populated by `agent-session.ts` `_rebuildSystemPrompt()`.
+
+### Why
+
+- The prompt-preset builtin must know at `session_start` (header) and in prompt events whether the user supplied an explicit system prompt, so presets yield instead of clobbering it. Per convention, new core data lands as a typed `ExtensionContext` getter; optional-on-base keeps the ~30 hand-built `ExtensionContext` fakes across coding-agent and senpi-codemode tests source-compatible.
+
+### Expected merge-conflict zones
+
+- `types.ts` `ExtensionContext` / `ExtensionCommandContext` member lists; `runner.ts` `createContext()` tail. Resolution: keep the optional base getter plus the required command-context redeclaration.
+
 ## 2026-08-13 - Content-anchored compaction admission
 
 ### What changed

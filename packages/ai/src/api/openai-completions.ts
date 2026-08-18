@@ -57,6 +57,7 @@ import {
 	createGrammarToolInputProperties,
 	type GrammarToolInputJsonBuffer,
 	getGrammarToolInput,
+	getJsonSchemaToolParameters,
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
@@ -158,7 +159,7 @@ function getThinkingLevelMap(
 	const isKimiK3 = id === "k3" || id.startsWith("k3-") || /(?:^|[/:-])kimi-k3(?:$|[/.:_-])/.test(id);
 	const isDeepSeek = id.includes("deepseek");
 	const isMiMo = /\bmimo\b/.test(id);
-	const isGlm52 = /(?:^|[/:-])glm-5\.2(?:$|[/.:_-])/.test(id);
+	const isGlm5x = /(?:^|[/:-])glm-5\.[23](?:$|[/.:_-])/.test(id);
 
 	if (model.provider === "ollama") {
 		return OLLAMA_THINKING_LEVEL_MAP;
@@ -175,7 +176,7 @@ function getThinkingLevelMap(
 	if (isDeepSeek) {
 		return DEEPSEEK_THINKING_LEVEL_MAP;
 	}
-	if (isGlm52) {
+	if (isGlm5x) {
 		if (compat.thinkingFormat === "zai") {
 			return DEEPSEEK_THINKING_LEVEL_MAP;
 		}
@@ -1003,11 +1004,13 @@ function buildParams(
 	}
 
 	if (compat.thinkingFormat === "zai" && model.reasoning) {
+		const isGlm53 = /(?:^|[/:-])glm-5\.3(?:$|[/.:_-])/.test(model.id.toLowerCase());
 		const zaiParams = params as Omit<typeof params, "reasoning_effort"> & {
 			thinking?: { type: "enabled" | "disabled"; clear_thinking?: boolean };
 			reasoning_effort?: string;
 		};
-		zaiParams.thinking = options?.reasoningEffort ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
+		zaiParams.thinking =
+			options?.reasoningEffort || isGlm53 ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
 			const effort = resolveReasoningEffort(thinkingLevelMap, options.reasoningEffort);
 			if (effort !== undefined) {
@@ -1641,11 +1644,12 @@ function convertTools(
 			throw new Error("Freeform tools cannot be sent to OpenAI Chat Completions; use Responses API");
 		}
 
+		const strict = resolveJsonSchemaStrictSampling(tool, compat.supportsStrictMode !== false);
+		const schemaParameters = getJsonSchemaToolParameters(tool, strict) as Record<string, unknown>;
 		const normalizedParameters =
 			compat.toolSchemaFlavor === "moonshot-mfjs"
-				? normalizeToolParametersForMoonshot(tool.parameters as Record<string, unknown>)
-				: normalizeToolParametersForOpenAICompat(tool.parameters as Record<string, unknown>);
-		const strict = resolveJsonSchemaStrictSampling(tool, compat.supportsStrictMode !== false);
+				? normalizeToolParametersForMoonshot(schemaParameters)
+				: normalizeToolParametersForOpenAICompat(schemaParameters);
 		return {
 			type: "function",
 			function: {

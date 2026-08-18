@@ -6,7 +6,7 @@
 
 ```text
 src/agent.ts                 Agent state, prompt queue, subscriptions, abort
-src/agent-loop.ts            Provider/tool loop and scheduling
+src/agent-loop.ts            Provider/tool loop, scheduling, cursor-exec bridging
 src/assistant-terminal-state.ts  Terminal-state classification for assistant turns
 src/empty-assistant-recovery.ts  Recovery for empty assistant responses
 src/stream-fn.ts             Injectable stream function abstraction
@@ -35,7 +35,7 @@ src/changes.md               Fork-specific behavior record
 | Node process and filesystem behavior | `src/harness/env/nodejs.ts` |
 | Session persistence | `src/harness/session/` (`repository.ts`, `jsonl-store.ts`, `memory-store.ts`, `array-session-reader.ts`, `fork.ts`, `keyed-operation-queue.ts`, `search-backend.ts`) |
 | Built-in tool behavior | `src/harness/tools/` |
-| SQLite session storage | `packages/storage/sqlite-node` (`@earendil-works/pi-storage-sqlite-node`) |
+| SQLite session storage | `packages/session-backends/sqlite-node` (`@earendil-works/pi-storage-sqlite-node`) |
 | Compaction | `src/harness/compaction/` |
 
 ## INVARIANTS
@@ -63,7 +63,8 @@ src/changes.md               Fork-specific behavior record
 
 ## NOTES
 
-- Session backend refactor: old `jsonl-repo`/`memory-repo`/`repo-utils` are gone. Storage is store-based (`jsonl-store.ts`, `memory-store.ts`, SQLite via `packages/storage/sqlite-node`) behind `repository.ts`.
+- Session backend refactor: old `jsonl-repo`/`memory-repo`/`repo-utils` are gone. Storage is store-based (`jsonl-store.ts`, `memory-store.ts`, SQLite via `packages/session-backends/sqlite-node`) behind `repository.ts`.
+- Cursor exec bridging: `execHandlers`/`onToolResult` are installed only when `config.cursorExecHandlers` is set. Assistant `toolCall` blocks stamped `kCursorExecResolved` (`packages/ai/src/utils/block-symbols.ts`) were executed server-side and are never re-run locally; their buffered `toolResult`s are appended right after the assistant message, including on error/abort paths. Local exec work re-arms the idle watchdog via `AssistantMessageEventStream.trackLocalWork`.
 
 ---
-Generated: 2026-08-07 | Commit `4f26b8282`
+Generated: 2026-08-17 | Commit `abae968e8`

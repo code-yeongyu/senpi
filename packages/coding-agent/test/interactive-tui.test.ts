@@ -2,7 +2,7 @@ import type { Component, Terminal, TUI } from "@earendil-works/pi-tui";
 import { Container, isViewportTUI, Text } from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
-import type { TuiMode } from "../src/core/settings-manager.ts";
+import type { FullscreenExitOutput, TuiMode } from "../src/core/settings-manager.ts";
 import {
 	createInteractiveTui,
 	createInteractiveTuiReference,
@@ -68,7 +68,7 @@ describe("createInteractiveTui", () => {
 		altTui.stop();
 	});
 
-	it("replaces the renderer while preserving components and focus", async () => {
+	it("replaces the renderer and restores the previous screen for resume-hint exits", async () => {
 		const terminal = new RecordingTerminal(40, 8);
 		const renderer = createInteractiveTui({
 			tuiMode: "regular",
@@ -105,7 +105,7 @@ describe("createInteractiveTui", () => {
 		stableUi = createInteractiveTuiReference(() => context.renderer);
 		context.ui = stableUi;
 		const { stopInteractiveTui, switchTuiMode } = InteractiveMode.prototype as unknown as {
-			stopInteractiveTui(this: SwitchContext): void;
+			stopInteractiveTui(this: SwitchContext, fullscreenExitOutput: FullscreenExitOutput): void;
 			switchTuiMode(this: SwitchContext, mode: TuiMode, restoreProgress?: boolean): boolean;
 		};
 
@@ -121,10 +121,10 @@ describe("createInteractiveTui", () => {
 		expect(invalidatedModes).toEqual(["fullscreen"]);
 		expect([terminal.startCount, terminal.stopCount]).toEqual([2, 1]);
 
-		stopInteractiveTui.call(context);
+		stopInteractiveTui.call(context, "resume-hint");
 
-		expect(stableUi.mode).toBe("regular");
-		expect([terminal.startCount, terminal.stopCount]).toEqual([2, 3]);
+		expect(stableUi.mode).toBe("fullscreen");
+		expect([terminal.startCount, terminal.stopCount]).toEqual([2, 2]);
 	});
 });
 

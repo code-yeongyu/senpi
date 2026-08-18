@@ -83,7 +83,7 @@ import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
-const EXTENSION_LOAD_FAILURE_HINT = 'Hint: Start without extensions using "pi -ne".';
+const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP_NAME} -ne".`;
 
 /**
  * Read all content from piped stdin.
@@ -115,6 +115,13 @@ function collectSettingsDiagnostics(
 	return settingsManager.drainErrors().map(({ scope, error }) => ({
 		type: "warning",
 		message: `(${context}, ${scope} settings) ${error.message}`,
+	}));
+}
+
+function collectAuthDiagnostics(authStorage: AuthStorage, context: string): AgentSessionRuntimeDiagnostic[] {
+	return authStorage.drainErrors().map((error) => ({
+		type: "warning",
+		message: `(${context}, auth storage) ${error.message}`,
 	}));
 }
 
@@ -775,6 +782,7 @@ export async function main(args: string[], options?: MainOptions) {
 		reportDiagnostics([
 			...services.diagnostics,
 			...collectSettingsDiagnostics(services.settingsManager, "model listing"),
+			...collectAuthDiagnostics(services.authStorage, "model listing"),
 		]);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
 		await listModels(services.modelRuntime, searchPattern);
@@ -792,6 +800,10 @@ export async function main(args: string[], options?: MainOptions) {
 	) {
 		await showFirstTimeSetup(startupSettingsManager);
 		time("firstTimeSetup");
+	}
+
+	if (appMode === "interactive" && parsed.useTheme !== undefined) {
+		startupSettingsManager.applyOverrides({ theme: parsed.useTheme });
 	}
 
 	// Decide the final runtime cwd before creating cwd-bound runtime services.
@@ -920,6 +932,8 @@ export async function main(args: string[], options?: MainOptions) {
 				noPromptTemplates: parsed.noPromptTemplates,
 				noThemes: parsed.noThemes,
 				noContextFiles: parsed.noContextFiles,
+				systemPrompt: parsed.systemPrompt,
+				appendSystemPrompt: parsed.appendSystemPrompt,
 				extensionFactories,
 			},
 		});
@@ -1076,6 +1090,9 @@ export async function main(args: string[], options?: MainOptions) {
 
 	time("resolveModelScope");
 	reportDiagnostics(runtime.diagnostics);
+	if (appMode !== "interactive") {
+		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "runtime creation"));
+	}
 	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
 		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
 			console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
@@ -1120,6 +1137,7 @@ export async function main(args: string[], options?: MainOptions) {
 			verbose: parsed.verbose,
 			chrome: parsed.grokNeo ? "grok" : undefined,
 			tuiMode: parsed.tuiMode,
+			initialThemeSetting: parsed.useTheme,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();
@@ -1149,6 +1167,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialMessage,
 			initialImages,
 		});
+		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "print mode"));
 		stopThemeWatcher();
 		restoreStdout();
 		if (exitCode !== 0) {

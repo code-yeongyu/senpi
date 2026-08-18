@@ -12,6 +12,46 @@
 
 ### Removed
 
+## [2026.8.18] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.17] - 2026-08-17
+
+### Breaking Changes
+
+### Added
+
+- Show exact nested tool-call count and calls-per-second in completed eval TUI headers, using true wall-clock elapsed time for both the visible duration and throughput denominator while preserving kernel-reported timing separately ([#916](https://github.com/code-yeongyu/senpi/pull/916)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.16] - 2026-08-16
+
+### Breaking Changes
+
+### Added
+
+- Published one versioned `senpi.eval.execution` event per settled eval cell: the in-process bus receives bounded rich call details, while the external RPC projection exposes only byte-capped timing/count metadata for safe OMO analytics; total wall time, kernel runtime, pending calls, exact aggregate totals, and overflow accounting are reported separately ([#897](https://github.com/code-yeongyu/senpi/pull/897)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.8.14] - 2026-08-14
 
 ### Breaking Changes

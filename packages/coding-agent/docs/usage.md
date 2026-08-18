@@ -42,6 +42,9 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | [`/llama`](llama-cpp.md) | Download, load, and unload llama.cpp router models |
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
+| `/reasoning [on\|off]` | Show or toggle reasoning for the current model |
+| `/efforts [level]` | Show or set reasoning effort (graded models only) |
+| `/fast [on\|off]` | Toggle fast mode (OpenAI Codex models, persisted per model) |
 | `/settings` | Thinking level, theme, message delivery, transport |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
@@ -62,6 +65,22 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/keybindings` | Open your `keybindings.json` in `$EDITOR` (seeded with current bindings when missing) and reload it live |
 | `/changelog` | Display version history |
 | `/quit`, `/exit` | Quit senpi |
+
+### Reasoning and Fast Mode Commands
+
+**`/reasoning [on|off]`** shows or toggles reasoning. Behavior adapts to the active model:
+
+- Models without reasoning support are told plainly.
+- Always-on models reject `/reasoning off`.
+- On/off-only and graded models toggle normally.
+
+`/reasoning on` restores the effort level you last used for that model. No-arg shows current status.
+
+**`/efforts [minimal|low|medium|high|xhigh|max]`** sets the reasoning effort ladder for graded models. On/off-only models are directed to use `/reasoning` instead. `xhigh` and `max` appear only when the model supports them. No-arg shows current effort and available levels.
+
+**`/fast [on|off]`** toggles OpenAI Codex fast mode (`service_tier: "priority"`). The choice is remembered per model and survives restarts. No-arg toggles. Non-Codex models are told fast mode is unavailable. If the active model selection pins `:priority` via a favorite decorator, `/fast off` is blocked and explains why.
+
+All three commands work over RPC and headless (no selector opened, status sent as text notifications).
 
 ## Message Queue
 
@@ -243,18 +262,19 @@ senpi --no-extensions -e ./my-extension.ts
 
 | Option | Description |
 |--------|-------------|
-| `--system-prompt <text>` | Replace default prompt; context files and skills are still appended |
-| `--append-system-prompt <text>` | Append to system prompt |
+| `--system-prompt <text>` | Replace the generated base prompt (text or a file path); per-model prompt presets step aside; context files and skills are still appended |
+| `--append-system-prompt <text>` | Append to the system prompt (repeatable; text or a file path); applies after per-model prompt presets |
 | `--tui-mode <mode>` | TUI mode: `regular` (default) or experimental `fullscreen` |
+| `--use-theme <name[/name]>` | Set the initial interactive theme for this run without changing settings |
 | `--verbose` | Force verbose startup |
 | `-a`, `--approve` | Trust project-local files for this run |
 | `-na`, `--no-approve` | Ignore project-local files for this run |
 | `-h`, `--help` | Show help |
 | `-v`, `--version` | Show version |
 
-In `fullscreen` mode, the transcript scrolls inside the terminal viewport while queued messages, working status, extension widgets, editor, and footer remain fixed at the bottom. Mouse/trackpad input scrolls the region under the pointer; keyboard viewport actions always remain available. Inline images work in terminals that support the Kitty graphics protocol, including Kitty and Ghostty. In iTerm2 they render as text placeholders because its inline-image protocol cannot delete or crop placements during application-owned scrolling. In `regular` mode, senpi uses the main screen and terminal-owned scrollback, and iTerm2 inline images continue to render normally.
+In `fullscreen` mode, the transcript scrolls inside the terminal viewport while queued messages, working status, extension widgets, editor, and footer remain fixed at the bottom. Mouse/trackpad input scrolls the region under the pointer; keyboard viewport actions always remain available. Inline images work in terminals that support the Kitty graphics protocol, including Kitty and Ghostty. In iTerm2 they render as text placeholders because its inline-image protocol cannot delete or crop placements during application-owned scrolling. In `regular` mode, senpi uses the main screen and terminal-owned scrollback, and iTerm2 inline images continue to render normally. See [Terminal setup](terminal-setup.md) for terminal-specific settings and workarounds.
 
-Set **TUI mode** in `/settings` to switch between `regular` and `fullscreen` immediately and choose the default for future sessions.
+Set **TUI mode** in `/settings` to switch between `regular` and `fullscreen` immediately and choose the default for future sessions. **Fullscreen exit output** controls whether exiting fullscreen prints the final transcript or restores the previous screen and prints only the session resume hint.
 
 ### File Arguments
 

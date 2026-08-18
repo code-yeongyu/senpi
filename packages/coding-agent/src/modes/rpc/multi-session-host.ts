@@ -9,7 +9,8 @@ import {
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
-import { attachJsonlLineReader } from "./jsonl.ts";
+import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
+import { rpcCommandShapeError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import { SessionCommandRouter } from "./session-command-router.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
@@ -42,9 +43,9 @@ export async function runMultiSessionHost(options: MultiSessionHostOptions): Pro
 		await writer.enqueueControl(response);
 	};
 	const handle = async (line: string) => {
-		let command: RpcCommand;
+		let parsed: unknown;
 		try {
-			command = JSON.parse(line) as RpcCommand;
+			parsed = JSON.parse(line);
 		} catch (cause) {
 			await output({
 				type: "response",
@@ -54,6 +55,17 @@ export async function runMultiSessionHost(options: MultiSessionHostOptions): Pro
 			});
 			return;
 		}
+		const shapeError = rpcCommandShapeError(parsed);
+		if (shapeError) {
+			await output({
+				type: "response",
+				command: "parse",
+				success: false,
+				error: shapeError,
+			});
+			return;
+		}
+		const command = parsed as RpcCommand;
 		const response = await router.handle(command);
 		if (response) await output(response);
 	};
@@ -68,7 +80,17 @@ export async function runMultiSessionHost(options: MultiSessionHostOptions): Pro
 	};
 	const onEnd = () => void shutdown();
 	process.stdin.on("end", onEnd);
-	const detachReader = attachJsonlLineReader(process.stdin, (line) => void handle(line));
+	const detachReader = attachJsonlLineReader(process.stdin, (line) => void handle(line), {
+		maxLineLength: MAX_RPC_LINE_CHARACTERS,
+		onOversizedLine: () => {
+			void output({
+				type: "response",
+				command: "parse",
+				success: false,
+				error: `RPC input line exceeds ${MAX_RPC_LINE_CHARACTERS} characters.`,
+			});
+		},
+	});
 	const detach = () => {
 		detachReader();
 		process.stdin.off("end", onEnd);

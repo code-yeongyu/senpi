@@ -1,5 +1,90 @@
 # core/tools changes
 
+## Repository audit baseline for the core/tools tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`). The audited production paths whose exact nearest tracker is this file:
+  `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/edit.ts`,
+  `packages/coding-agent/src/core/tools/edit-diff.ts`, `packages/coding-agent/src/core/tools/write.ts`,
+  `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/grep.ts`,
+  `packages/coding-agent/src/core/tools/find.ts`, `packages/coding-agent/src/core/tools/ls.ts`,
+  `packages/coding-agent/src/core/tools/index.ts`, `packages/coding-agent/src/core/tools/output-accumulator.ts`, and
+  `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`.
+- Per-file divergence history for the bash tool (prompt tuning, timeout validation, abort/timeout kill, elapsed and
+  syntax-highlight rendering), the shared diff renderer, source-backed write results, Node 26 path typing, and the
+  extension filesystem policy is preserved in the dated entries below.
+
+### Why
+
+- The audit requires every upstream-owned production divergence to be covered by one entry with all four canonical
+  sections in its exact nearest tracker. Earlier entries in this file use a non-canonical conflict-zone heading and
+  bare tool names, so paths they describe were reported uncovered; this inventory closes that gap without rewriting
+  accurate history.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository policy enforced by repository scripts before any extension loader exists.
+
+### Expected merge conflict zones
+
+- NONE: this tracker merges to `ours`; the inventory names pin-relative paths so it survives edits below.
+
+## Pruned tool factory surface and freeform passthrough (2026-08-17)
+
+### What changed
+
+- `index.ts`: removed the per-name factory helpers `createToolDefinition()`, `createTool()`,
+  `createCodingToolDefinitions()`, `createReadOnlyToolDefinitions()`, and `createAllTools()`; callers use
+  `createAllToolDefinitions()`, `createReadOnlyTools()`, or the per-tool `create*ToolDefinition()` factories
+  directly.
+- `tool-definition-wrapper.ts`: `wrapToolDefinition()` and `createToolDefinitionFromAgentTool()` forward the
+  `freeform` flag from the underlying definition/tool, so wrapped tools keep their freeform-input contract.
+
+### Why
+
+- The switch-based helpers duplicated the explicit factory lists and drifted from them as tools were added; every
+  consumer in the fork already resolved tools through the map or the per-tool factories. The `freeform` flag existed
+  on tool definitions and agent tools but was silently dropped by wrapping, breaking freeform tools (patch-style
+  text input) registered through the wrapper.
+
+### Why an extension could not handle it
+
+- These are the module's own export surface and the wrapper every built-in tool definition passes through; both sit
+  beneath the extension registration API.
+
+### Expected merge conflict zones
+
+- MEDIUM: `index.ts` export list — upstream may add helpers back; keep the fork's explicit-list style.
+- LOW: the `freeform` line in each wrapper spread.
+
+## Bounded decoded tail window for streaming tool output (2026-08-17)
+
+### What changed
+
+- `output-accumulator.ts`: rolling-tail maintenance moved into fork-owned `tail-window.ts` (`TailWindow` with the
+  same `maxBytes * 2` rolling bound, UTF-8 continuation-byte-safe trimming, and line-boundary tracking); snapshots
+  read `tail.text()` and trim to the first newline when the window starts mid-line.
+- `output-accumulator.ts`: new `appendText()` accepts already-decoded strings (text producers skip the TextDecoder);
+  `append(Buffer)` decodes once and both paths feed one `appendDecodedText(text, bytes)` accounting point;
+  `closeTempFile()` takes ownership of the temp-file stream before awaiting finish so a second close is a no-op.
+
+### Why
+
+- The inline tail trim kept a decoded string, a byte count, and a line-boundary flag in three places that could
+  disagree after multi-byte splits; string producers (steered/exec bridges) had to round-trip through Buffer to
+  accumulate output; and closing the temp file twice could double-settle the write promise.
+
+### Why an extension could not handle it
+
+- The accumulator is the output path of the built-in bash/exec tools; extensions receive already-truncated results
+  and cannot bound the buffering that precedes them.
+
+### Expected merge conflict zones
+
+- LOW: `output-accumulator.ts` tail/snapshot methods; NONE: `tail-window.ts` is fork-owned.
+
 ## Node 26 path-type compatibility (2026-08-13)
 
 ### What changed

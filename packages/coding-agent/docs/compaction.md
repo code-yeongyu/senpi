@@ -42,13 +42,13 @@ You can also trigger manually with `/compact [instructions]`, where optional ins
 2. **Extract messages**: Collect messages from the previous kept boundary (or session start) up to the cut point
 3. **Generate summary**: Call LLM to summarize with structured format, passing the previous summary as iterative context when present
 4. **Append entry**: Save `CompactionEntry` with summary and `firstKeptEntryId`
-5. **Reload**: Session reloads, using summary + messages from `firstKeptEntryId` onwards
+5. **Rebuilds context**: Session rebuilds the context for the next request, using summary + messages from `firstKeptEntryId` onwards
 
 ```
 Before compaction:
 
   entry:  0     1     2     3      4     5     6      7      8     9
-        ┌─────┬─────┬─────┬─────┬──────┬─────┬─────┬──────┬──────┬─────┐
+        ┌─────┬─────┬─────┬──────┬─────┬─────┬──────┬──────┬─────┬─────┐
         │ hdr │ usr │ ass │ tool │ usr │ ass │ tool │ tool │ ass │ tool│
         └─────┴─────┴─────┴──────┴─────┴─────┴──────┴──────┴─────┴─────┘
                 └────────┬───────┘ └──────────────┬──────────────┘
@@ -59,7 +59,7 @@ Before compaction:
 After compaction (new entry appended):
 
   entry:  0     1     2     3      4     5     6      7      8     9     10
-        ┌─────┬─────┬─────┬─────┬──────┬─────┬─────┬──────┬──────┬─────┬─────┐
+        ┌─────┬─────┬─────┬──────┬─────┬─────┬──────┬──────┬─────┬─────┬─────┐
         │ hdr │ usr │ ass │ tool │ usr │ ass │ tool │ tool │ ass │ tool│ cmp │
         └─────┴─────┴─────┴──────┴─────┴─────┴──────┴──────┴─────┴─────┴─────┘
                └──────────┬──────┘ └──────────────────────┬───────────────────┘

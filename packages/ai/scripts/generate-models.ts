@@ -149,10 +149,6 @@ const COPILOT_STATIC_HEADERS = {
 	"Copilot-Integration-Id": "vscode-chat",
 } as const;
 
-const KIMI_STATIC_HEADERS = {
-	"User-Agent": "KimiCLI/1.5",
-} as const;
-
 const TOGETHER_BASE_URL = "https://api.together.ai/v1";
 const TOGETHER_BASE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
@@ -268,6 +264,10 @@ const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 	high: "high",
 	max: "max",
 } as const;
+const DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP = {
+	...DEEPSEEK_V4_THINKING_LEVEL_MAP,
+	low: "low",
+} as const;
 const QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP = {
 	minimal: null,
 	low: null,
@@ -379,7 +379,14 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 ]);
+// Public OpenAI documents additional_tools for applications that load tools
+// outside the normal tool-search flow. Codex currently uses the input item for
+// its Responses Lite GPT-5.6 models.
+// https://developers.openai.com/api/docs/guides/tools-tool-search#add-tools-at-a-specific-point-in-the-input
+const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
+const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
+const GPT_56_SOL_DEFAULT_CONTEXT_WINDOW = 400000;
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
 	"gpt-5.5",
@@ -454,14 +461,46 @@ const OPENAI_PRIORITY_TIER_MODEL_IDS = new Set([
 	"o3",
 	"o4-mini",
 ]);
+
+// Codex backend models eligible for Priority-tier -fast variants. Mirrors the
+// OpenAI priority list but restricted to GPT-5.6 reasoning models that ship on
+// the Codex Responses API; older Codex-only SKUs (gpt-5.3-codex-spark) are
+// Priority-ineligible.
+const OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS = new Set([
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+]);
 const XAI_RESPONSES_MODEL_ID = "grok-4.5";
 const XAI_BUILTIN_EXCLUDED_MODEL_IDS = new Set([
 	"grok-3",
 	"grok-3-fast",
-	"grok-4.20-0309-non-reasoning",
-	"grok-4.20-0309-reasoning",
 	"grok-code-fast-1",
 ]);
+const XAI_COMPLETIONS_THINKING_LEVEL_MAPS: Record<
+	string,
+	NonNullable<Model<"openai-completions">["thinkingLevelMap"]>
+> = {
+	"grok-4.6": {
+		off: null,
+		minimal: null,
+		low: "low",
+		medium: "medium",
+		high: "high",
+		xhigh: "xhigh",
+		max: null,
+	},
+	"grok-4.20-0309-reasoning": {
+		off: null,
+		minimal: null,
+		low: null,
+		medium: null,
+		high: "high",
+		xhigh: null,
+		max: null,
+	},
+};
+const XAI_COMPLETIONS_REASONING_EFFORT_MODEL_IDS = new Set(["grok-4.6"]);
 const XAI_RESPONSES_EFFORT_LEVEL_MAP = {
 	off: null,
 	minimal: null,
@@ -673,6 +712,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
 	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
 	const isTogetherReasoningOnly = isTogether && TOGETHER_REASONING_ONLY_MODELS.has(model.id);
+	const isDeepSeek = provider === "deepseek" || baseUrl.toLowerCase().includes("deepseek.com");
 
 	const isNonStandard =
 		isNvidia ||
@@ -682,7 +722,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		baseUrl.includes("api.x.ai") ||
 		isTogether ||
 		baseUrl.includes("chutes.ai") ||
-		baseUrl.includes("deepseek.com") ||
+		isDeepSeek ||
 		isZai ||
 		isMoonshot ||
 		provider === "opencode" ||
@@ -692,10 +732,16 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		isAntLing;
 
 	const useMaxTokens =
-		baseUrl.includes("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing || isZai;
+		baseUrl.includes("chutes.ai") ||
+		isDeepSeek ||
+		isMoonshot ||
+		isCloudflareAiGateway ||
+		isTogether ||
+		isNvidia ||
+		isAntLing ||
+		isZai;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
-	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
 	const openRouterCacheControlPrefixes = ["anthropic/", "qwen/", "google/"];
@@ -778,7 +824,10 @@ function applyOpenAICompletionsCompatMetadata(model: Model<Api>): void {
 }
 
 function applyStrictToolCompatMetadata(model: Model<Api>): void {
-	if (model.provider === "openai" && model.api === "openai-responses") {
+	if (
+		(model.provider === "openai" || model.provider === "cloudflare-ai-gateway") &&
+		model.api === "openai-responses"
+	) {
 		model.compat = { ...(model.compat as OpenAIResponsesCompat | undefined), supportsStrictMode: true };
 	} else if (model.provider === "anthropic" && model.api === "anthropic-messages") {
 		mergeAnthropicMessagesCompat(model, { supportsStrictTools: true });
@@ -814,8 +863,12 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 	const isOpenAIResponses = model.provider === "openai" && model.api === "openai-responses";
 	const isOpenAICodex = model.provider === "openai-codex" && model.api === "openai-codex-responses";
 	if (!(isOpenAIResponses || isOpenAICodex) || !OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id)) return;
+	const supportsAdditionalTools =
+		(isOpenAIResponses && OPENAI_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id)) ||
+		(isOpenAICodex && OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id));
 	model.compat = {
 		...(model.compat as OpenAIResponsesCompat | undefined),
+		...(supportsAdditionalTools ? { supportsAdditionalTools: true } : {}),
 		supportsToolSearch: true,
 	};
 }
@@ -929,7 +982,9 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 			model,
 			model.provider === "openrouter"
 				? { ...DEEPSEEK_V4_THINKING_LEVEL_MAP, xhigh: "xhigh", max: null }
-				: DEEPSEEK_V4_THINKING_LEVEL_MAP,
+				: model.provider === "deepseek" && model.id === "deepseek-v4-flash"
+					? DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP
+					: DEEPSEEK_V4_THINKING_LEVEL_MAP,
 		);
 	}
 	if (isGoogleThinkingApi(model) && isGemini3ProModel(model.id)) {
@@ -963,13 +1018,13 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		// Pi's low/medium/high pass through verbatim; OpenRouter normalizes to Mercury's vocabulary.
 		mergeThinkingLevelMap(model, { off: null });
 	}
-	if (model.provider === "openrouter" && model.id === "z-ai/glm-5.2") {
+	if (model.provider === "openrouter" && (model.id === "z-ai/glm-5.2" || model.id === "z-ai/glm-5.3")) {
 		mergeThinkingLevelMap(model, { xhigh: "xhigh" });
 	}
-	if (model.provider === "fireworks" && model.id.includes("glm-5p2")) {
+	if (model.provider === "fireworks" && (model.id.includes("glm-5p2") || model.id.includes("glm-5p3"))) {
 		mergeThinkingLevelMap(model, { off: "none", minimal: null, low: "high", medium: "high", max: "max" });
 	}
-	if (model.provider === "opencode-go" && model.id === "glm-5.2") {
+	if (model.provider === "opencode-go" && (model.id === "glm-5.2" || model.id === "glm-5.3")) {
 		mergeThinkingLevelMap(model, OPENCODE_GO_GLM52_THINKING_LEVEL_MAP);
 	}
 	if (model.provider === "opencode-go" && model.id === "kimi-k2.6") {
@@ -1685,6 +1740,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
 				const useResponsesApi = modelId === XAI_RESPONSES_MODEL_ID;
+				const thinkingLevelMap = XAI_COMPLETIONS_THINKING_LEVEL_MAPS[modelId];
+				const supportsReasoningEffort = XAI_COMPLETIONS_REASONING_EFFORT_MODEL_IDS.has(modelId);
 
 				models.push({
 					id: modelId,
@@ -1692,8 +1749,13 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					api: useResponsesApi ? "openai-responses" : "openai-completions",
 					provider: "xai",
 					baseUrl: "https://api.x.ai/v1",
-					...(useResponsesApi ? { compat: { ...XAI_RESPONSES_COMPAT } } : {}),
+					...(useResponsesApi
+						? { compat: { ...XAI_RESPONSES_COMPAT } }
+						: supportsReasoningEffort
+							? { compat: { supportsReasoningEffort: true } }
+							: {}),
 					reasoning: m.reasoning === true,
+					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || 0,
@@ -1721,7 +1783,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					if (m.tool_call !== true) continue;
 					const supportsImage = m.modalities?.input?.includes("image");
 
-					const isGlm52 = modelId === "glm-5.2";
+					const isGlm5x = modelId === "glm-5.2" || modelId === "glm-5.3";
 
 					models.push({
 						id: modelId,
@@ -1730,7 +1792,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						provider,
 						baseUrl,
 						reasoning: m.reasoning === true,
-						...(isGlm52 ? { thinkingLevelMap: ZAI_GLM52_THINKING_LEVEL_MAP } : {}),
+						...(isGlm5x ? { thinkingLevelMap: ZAI_GLM52_THINKING_LEVEL_MAP } : {}),
 						input: supportsImage ? ["text", "image"] : ["text"],
 						cost: {
 							input: m.cost?.input || 0,
@@ -1741,7 +1803,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						compat: {
 							supportsDeveloperRole: false,
 							thinkingFormat: "zai",
-							...(isGlm52 ? { supportsReasoningEffort: true } : {}),
+							...(isGlm5x ? { supportsReasoningEffort: true } : {}),
 							...(!ZAI_TOOL_STREAM_UNSUPPORTED_MODELS.has(modelId) ? { zaiToolStream: true } : {}),
 						},
 						contextWindow: m.limit?.context || 4096,
@@ -2108,7 +2170,6 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider: "kimi-coding",
 					// Kimi For Coding's Anthropic-compatible API - SDK appends /v1/messages
 					baseUrl: "https://api.kimi.com/coding",
-					headers: { ...KIMI_STATIC_HEADERS },
 					compat: {
 						...(allowEmptySignature ? { allowEmptySignature: true } : {}),
 						forceAdaptiveThinking: true,
@@ -2443,6 +2504,9 @@ async function generateModels() {
 			candidate.contextWindow = OPENAI_LONG_CONTEXT_INPUT_THRESHOLD;
 			candidate.maxTokens = 128000;
 		}
+		if (candidate.provider === "openai" && candidate.id === "gpt-5.6-sol") {
+			candidate.contextWindow = GPT_56_SOL_DEFAULT_CONTEXT_WINDOW;
+		}
 		if (candidate.provider === "openai" && OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS.has(candidate.id)) {
 			const standardCost = OPENAI_GPT_56_STANDARD_COSTS[candidate.id];
 			candidate.cost = withOpenAiLongContextPricing(standardCost ?? candidate.cost);
@@ -2673,7 +2737,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing({ input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 }),
-			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+			contextWindow: GPT_56_SOL_DEFAULT_CONTEXT_WINDOW,
 			maxTokens: 128000,
 		},
 		{
@@ -2851,7 +2915,8 @@ async function generateModels() {
 
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
-	// Older model limits are based on observed server behavior; GPT-5.6 follows Codex's 272k catalog limit (formerly 372k).
+	// Older model limits are based on observed server behavior. GPT-5.6 Luna and Terra follow Codex's 272k
+	// catalog limit (formerly 372k); Sol defaults to 400k.
 	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 	const CODEX_CONTEXT = 272000;
 	const CODEX_GPT_56_CONTEXT = 272000;
@@ -2927,7 +2992,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing({ input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 }),
-			contextWindow: CODEX_GPT_56_CONTEXT,
+			contextWindow: GPT_56_SOL_DEFAULT_CONTEXT_WINDOW,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{
@@ -3052,10 +3117,11 @@ async function generateModels() {
 	}
 
 	// Emit after metadata application so variants clone fully processed base models.
-	// Cost rates stay at base values: the openai-responses adapter multiplies usage
-	// cost by the service-tier multiplier at request time, so raised catalog rates
-	// would double-count. Scoped to the direct OpenAI provider; Azure clones and the
-	// Codex backend are intentionally excluded.
+	// Cost rates stay at base values: the openai-responses and openai-codex-responses
+	// adapters multiply usage cost by the service-tier multiplier at request time, so
+	// raised catalog rates would double-count. Scoped to the direct OpenAI provider and
+	// the Codex backend (both support Priority service tier via service_tier=priority).
+	// Azure clones are intentionally excluded (they proxy OpenAI and would double-count).
 	const openAiFastVariants: Model<Api>[] = [];
 	for (const model of allModels) {
 		if (model.provider !== "openai" || !OPENAI_PRIORITY_TIER_MODEL_IDS.has(model.id)) continue;
@@ -3067,7 +3133,18 @@ async function generateModels() {
 			serviceTier: "priority",
 		});
 	}
-	allModels.push(...openAiFastVariants);
+	const codexFastVariants: Model<Api>[] = [];
+	for (const model of allModels) {
+		if (model.provider !== "openai-codex" || !OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS.has(model.id)) continue;
+		codexFastVariants.push({
+			...model,
+			id: `${model.id}-fast`,
+			name: `${model.name} Fast`,
+			upstreamModelId: model.id,
+			serviceTier: "priority",
+		});
+	}
+	allModels.push(...openAiFastVariants, ...codexFastVariants);
 
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};

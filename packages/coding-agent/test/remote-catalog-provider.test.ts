@@ -9,7 +9,11 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VERSION } from "../src/config.ts";
-import { withRemoteCatalog } from "../src/core/remote-catalog-provider.ts";
+import {
+	FORK_ONLY_BUILTIN_PROVIDERS,
+	remoteCatalogServesProvider,
+	withRemoteCatalog,
+} from "../src/core/remote-catalog-provider.ts";
 
 const neverAbortedSignal = new AbortController().signal;
 
@@ -70,6 +74,22 @@ async function refreshProvider(
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+describe("remoteCatalogServesProvider", () => {
+	it("excludes fork-only builtin providers under the default catalog base URL", () => {
+		expect(remoteCatalogServesProvider("opengateway")).toBe(false);
+		expect(remoteCatalogServesProvider("alibaba-token-plan")).toBe(false);
+		expect(remoteCatalogServesProvider("anthropic")).toBe(true);
+		expect(remoteCatalogServesProvider("openrouter")).toBe(true);
+	});
+
+	it("keeps fork-only providers eligible when a custom catalog base URL is configured", () => {
+		for (const providerId of FORK_ONLY_BUILTIN_PROVIDERS) {
+			expect(remoteCatalogServesProvider(providerId, "http://127.0.0.1:1")).toBe(true);
+			expect(remoteCatalogServesProvider(providerId, "https://catalog.example.test")).toBe(true);
+		}
+	});
+});
 
 describe("remote catalog provider", () => {
 	it("parses keyed catalogs, sends version headers, observes the refresh TTL, and supports forced refreshes", async () => {

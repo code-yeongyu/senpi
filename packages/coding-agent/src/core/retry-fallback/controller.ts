@@ -1,6 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Api, Model } from "@earendil-works/pi-ai";
-import { getSupportedThinkingLevels } from "../thinking-levels.ts";
+import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
 import {
 	baseSelector,
 	candidatesAfter,
@@ -230,8 +229,10 @@ export class RetryFallbackController {
 		inherited: ThinkingLevel | undefined,
 	): ThinkingLevel {
 		const requested = selector.thinkingLevel ?? inherited ?? "off";
-		const supported = getSupportedThinkingLevels(model);
-		return supported.includes(requested) ? requested : (supported[supported.length - 1] ?? "off");
+		// Canonical clamp walks to the NEAREST supported level. Picking the highest
+		// supported level instead would escalate an "off" request to max reasoning on
+		// always-on fallback models.
+		return clampThinkingLevel(model, requested);
 	}
 
 	private skip(candidate: string, skipReason: string): void {

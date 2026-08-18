@@ -84,7 +84,10 @@ Permission rules are a confirmation policy, not a sandbox. Senpi, extensions, pa
 | `defaultProvider` | string | - | Default provider (e.g., `"anthropic"`, `"openai"`) |
 | `defaultModel` | string | - | Default model ID |
 | `defaultThinkingLevel` | string | - | `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
-| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k3"`, `"glm-5.2"`, `"claude-fable-5"`, `"claude-opus-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-pro"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, or `"gpt-5.6"` |
+| `modelThinkingLevels` | object | - | Per-model reasoning effort memory (`"provider/id": "level"`) |
+| `modelLastOnThinkingLevels` | object | - | Per-model last non-off reasoning level, used by `/reasoning on` to restore the previous effort |
+| `modelServiceTiers` | object | - | Per-model service tier memory (`"provider/id": "auto" \| "priority"`) |
+| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k3"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"claude-fable-5"`, `"claude-opus-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-pro"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, or `"gpt-5.6"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level |
@@ -136,6 +139,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `autocompleteMaxVisible` | number | `5` | Max visible items in autocomplete dropdown (3-20) |
 | `showHardwareCursor` | boolean | `false` | Show the terminal cursor while TUI positions it for IME support |
 | `tuiMode` | string | `"regular"` | Interactive TUI mode: `"regular"` or experimental `"fullscreen"`. Changes from `/settings` apply immediately; `--tui-mode` overrides this setting at startup |
+| `fullscreenExitOutput` | string | `"transcript"` | Fullscreen exit output: `"transcript"` prints the final transcript and resume hint, while `"resume-hint"` restores the previous screen and prints only the resume hint. Has no effect in regular TUI mode |
 | `fullscreenScrollbar` | string | `"auto"` | Fullscreen transcript scrollbar: `"auto"` shows it temporarily while scrolling, `"always"` reserves the rightmost column and keeps it visible, and `"hidden"` hides it. Has no effect in regular TUI mode |
 
 For VS Code, include `--wait` so senpi resumes after the editor exits:
@@ -348,6 +352,20 @@ instead of being killed; its explicit `timeout` remains the kill deadline. See
 | `shellCommandPrefix` | string | - | Prefix for every bash command (e.g., `"shopt -s expand_aliases"`) |
 | `npmCommand` | string[] | - | Command argv used for npm package lookup/install operations (e.g., `["mise", "exec", "node@20", "--", "npm"]`) |
 
+Windows paths in JSON must use forward slashes or escaped backslashes:
+
+```json
+{
+  "shellPath": "C:/Program Files/Git/bin/bash.exe"
+}
+```
+
+```json
+{
+  "shellPath": "C:\\Program Files\\Git\\bin\\bash.exe"
+}
+```
+
 ```json
 {
   "npmCommand": ["mise", "exec", "node@20", "--", "npm"]
@@ -355,6 +373,22 @@ instead of being killed; its explicit `timeout` remains the kill deadline. See
 ```
 
 `npmCommand` is used for all npm package-manager operations, including installs, uninstalls, and dependency installs inside git packages. User-scoped npm packages install under `~/.senpi/agent/npm/`; project-scoped npm packages install under `.senpi/npm/`. Use argv-style entries exactly as the process should be launched. When `npmCommand` is configured, git package dependency installs use plain `install` to avoid npm-specific flags in wrappers or alternate package managers.
+
+### Tools
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `defaultTools` | string[] | - | Built-in tools enabled initially. When omitted, Pi uses its standard defaults |
+
+`defaultTools` selects the built-in tools enabled at startup. Extension and SDK custom tools remain enabled:
+
+```json
+{
+  "defaultTools": ["bash", "edit", "write"]
+}
+```
+
+An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array replaces the global array.
 
 ### Sessions
 
@@ -383,6 +417,64 @@ When multiple sources specify a session directory, precedence is `--session-dir`
 ```
 
 `enabledModels` changes which models appear in the catalog, startup selection, and `/model` narrowing. `favoriteModels` is separate and only controls Ctrl+P cycling.
+
+#### Per-model memory
+
+`modelThinkingLevels`, `modelLastOnThinkingLevels`, and `modelServiceTiers` are maps from `"provider/id"` to a level or tier value. They're managed automatically: switching models, using `/reasoning`, `/efforts`, or `/fast` writes the appropriate key. You rarely need to edit them by hand, but the shape looks like this:
+
+```json
+{
+  "modelThinkingLevels": {
+    "openai-codex/gpt-5.6-sol": "xhigh",
+    "anthropic/claude-fable-5": "high"
+  },
+  "modelServiceTiers": {
+    "openai-codex/gpt-5.6-sol": "priority"
+  }
+}
+```
+
+A `-fast` catalog variant (like `gpt-5.6-sol-fast`) and its base model share one entry, so you can't give them conflicting tiers.
+
+#### Favorite model decorators
+
+Favorite model patterns accept optional decorator suffixes for reasoning level and service tier:
+
+```
+provider/model-id                  # bare pattern
+provider/model-id:high             # pin reasoning to high
+provider/model-id:priority         # pin service tier to priority
+provider/model-id:priority:high    # pin both tier and level
+claude-*:xhigh                     # glob with level pin
+```
+
+Decorators survive favorite toggling. A `:level` pin takes precedence over the per-model memory for reasoning, and a `:priority` pin takes precedence for the service tier. Under a pin, `/fast off` notifies that fast mode is fixed by the active model selection.
+
+#### Thinking level precedence
+
+When a model becomes active, its reasoning level is resolved in this order:
+
+1. An explicit or ephemeral session-scoped level (e.g. turn-scope `set_thinking_level`)
+2. A favorite pattern `:level` pin
+3. The per-model `modelThinkingLevels` memory
+4. `defaultThinkingLevel`
+5. `"medium"` (the hardcoded fallback)
+
+The resolved level is always clamped to what the model actually supports.
+
+#### Service tier precedence
+
+The service tier on outgoing requests is resolved as:
+
+1. A scoped/favorite `:priority` pin
+2. The model catalog's `compat.serviceTier`
+3. `openai.serviceTier` (the global OpenAI setting)
+
+The per-model `modelServiceTiers` memory is not part of that resolution: it applies to OpenAI Codex
+models only, through fast mode. It acts as the session-start default for `/fast` (a remembered
+`"priority"` starts the session fast) and as an explicit `"auto"` opt-out of a catalog-inherited
+priority tier, which keeps `service_tier` off the wire. Under a `:priority` pin the memory has no
+effect, because the pin outranks it.
 
 ### Markdown
 

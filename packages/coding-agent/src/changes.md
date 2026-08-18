@@ -1,7 +1,438 @@
 # changes
 
+## Repository audit baseline for the src tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`, tag v0.84.2). It assigns every audited production path whose exact
+  nearest tracker is this file, so the audit gate resolves each divergence even where the per-feature history below
+  predates the gate. `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/main.ts` are already covered by
+  dated entries below.
+- Entrypoints: `packages/coding-agent/src/bun/cli.ts` (Bun-binary entry now loads the full bootstrap and registers the
+  cursor-agent module), `packages/coding-agent/src/rpc-entry.ts` (RPC entry scrubs the brand environment and exports
+  the branded `AI_AGENT` identity).
+- Brand and config resolution: `packages/coding-agent/src/config.ts` — brand-profile consumption for identity constants,
+  flat-layout agent-directory resolution with nearest-parent discovery, brand-scoped environment reads, and the Bun
+  self-update launcher-repair step (own entry below).
+- Startup migrations: `packages/coding-agent/src/migrations.ts` — brand engine-state copy-forward plus the fork
+  extension-system and legacy-directory migrations replacing upstream's inline commands-to-prompts path (own entry
+  below).
+- Public surface: `packages/coding-agent/src/index.ts` re-exports the extension RPC handler, filesystem-policy,
+  input-disposition, MCP-declaration, and RPC-client event types; `packages/coding-agent/src/modes/index.ts`
+  re-exports `RpcClientEvent` and `RpcExtensionEvent`.
+- Mode and client deltas: `packages/coding-agent/src/modes/print-mode.ts` (one-shot prompts pass
+  `sessionTitlePrompt: false`, the final assistant message is selected with `findLast` so trailing non-assistant
+  entries cannot mask it, provider-native content renders in text mode, and the run waits for settled session work
+  before exiting), `packages/coding-agent/src/client/transcript.ts` (equivalent optional-chaining guard on transcript
+  progress application), `packages/coding-agent/src/package-manager-cli.ts` (branded `update`/`list`/`config` help
+  surface, brand update-channel redirect that defers to the parent package, and the removable omo-local-update beta
+  worker flag).
+- Local provider: `packages/coding-agent/src/extensions/llama/provider.ts` keeps sleeping llama.cpp runners
+  discoverable (own entry below).
+
+### Why
+
+- The pre-backfill audit reported these paths uncovered: the entries that described them either predate the canonical
+  four-section format or never named the exact path. This inventory closes that gap without rewriting the accurate
+  per-feature history below.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository and release policy, not runtime behavior; it is enforced by repository scripts before
+  any extension loader exists.
+
+### Expected merge conflict zones
+
+- NONE: this tracker file merges to `ours` on upstream sync; the inventory intentionally names pin-relative paths so
+  it stays valid as entries below change.
+
+## Brand profile, config-directory resolution, and engine-state migration (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/config.ts`: consumes a `BrandProfile` injected once per process — `APP_NAME`, `APP_TITLE`,
+  and `CONFIG_DIR_NAME` resolve the brand ahead of the package's `piConfig` metadata, `DISPLAY_VERSION` separates the
+  brand-facing version from the engine `VERSION` used for update comparisons, `CONFIG_FLAT_LAYOUT` marks brands that
+  keep agent state directly under the config directory, and `ENV_PREFIX` builds `ENV_AGENT_DIR`/`ENV_SESSION_DIR`
+  while legacy prefixes stay readable.
+- `packages/coding-agent/src/config.ts`: environment reads go through brand-scoped `envValue()` (`PACKAGE_DIR`,
+  `SHARE_VIEWER_URL`, `CODING_AGENT_DIR`) instead of raw `PI_*` literals; `resolveAgentDir()` adds nearest-parent
+  config discovery with a flat-layout `settings.json` sentinel; Bun self-update composes a launcher-repair step and
+  binary-download guidance points at the senpi releases page.
+- `packages/coding-agent/src/migrations.ts`: `runMigrations()` runs `migrateEngineStateForBrand()` first — a
+  copy-forward (never a move) of the engine's `~/.senpi/agent` state into a flat-layout brand directory, guarded by
+  the `.migrated-from-senpi` marker and skipping regenerable entries — then the fork's `migrateLegacySenpiDirs()` and
+  `migrateExtensionSystem()`, replacing upstream's inline commands-to-prompts and deprecated-directory checks that
+  now live in `extension-system-migration.ts`.
+
+### Why
+
+- A rebranded distribution reads different config and state locations than the engine install it replaces; resolving
+  them once keeps every downstream consumer brand-correct, and copying (not moving) engine state keeps a standalone
+  engine install on the same machine intact.
+- Environment prefixes and display versions are brand identity, not feature behavior, so they must not be hardcoded
+  per call site.
+
+### Why an extension could not handle it
+
+- Config-path, brand, and environment resolution happen at module load and bootstrap, before the extension loader
+  exists; startup migrations run once over directories extensions never see.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/config.ts` identity constants and `resolveAgentDir()`.
+- MEDIUM: `packages/coding-agent/src/migrations.ts` `runMigrations()` ordering; upstream may reshape its own
+  command/prompt migrations.
+
+## Split CLI bootstrap: thin launcher, full engine child, branded entries (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts` is now a thin bootstrap: it imports the deleted-cwd guard first, answers
+  `--version`/`-v` directly from `DISPLAY_VERSION` without loading the engine, detects package-manager subcommands,
+  and when a package-manager install is missing its bundled workspace dependencies routes through the bootstrap
+  self-update handler before spawning the full CLI as a child process with the parent's `execArgv`, propagating the
+  child's exit signal.
+- `packages/coding-agent/src/cli-main.ts` is the relocated full bootstrap (early inspector-import recovery, brand
+  scrubbing, `PI_CODING_AGENT` marker, HTTP dispatcher configuration) that awaits `main()`.
+- `packages/coding-agent/src/bun/cli.ts` registers Bun OAuth flows, restores the sandbox environment, registers the
+  Bedrock and cursor-agent modules, then loads the full bootstrap instead of the thin launcher.
+- `packages/coding-agent/src/rpc-entry.ts` keeps its dedicated RPC dispatch but now scrubs the brand environment and
+  sets `AI_AGENT` to `APP_NAME` instead of the hardcoded engine name.
+
+### Why
+
+- A broken or half-updated global install must offer a self-repair path instead of dying on module resolution, and
+  version or package-manager queries should not pay full engine startup. RPC host processes need their own process
+  identity and a clean brand environment so nested engine runs keep the engine's identity.
+
+### Why an extension could not handle it
+
+- These are pre-runtime entrypoints: extensions load only after `main()` has bootstrapped settings and the resource
+  loader, so no extension can restructure process spawning, environment scrubbing, or self-repair.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/cli.ts` was substantially rewritten relative to upstream's direct `main()` call.
+- MEDIUM: `packages/coding-agent/src/cli-main.ts` bootstrap ordering.
+- LOW: the registration lines in `packages/coding-agent/src/bun/cli.ts` and the identity lines in
+  `packages/coding-agent/src/rpc-entry.ts`.
+
+## Deleted-cwd bootstrap guard (2026-08-17)
+
+### What changed
+
+- New fork-only first-import guard `packages/coding-agent/src/valid-cwd.ts`: when the shell's working directory no
+  longer exists (a removed worktree or checkout), it changes to the home directory with a stderr notice before any
+  other module loads. `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/cli-main.ts` import it as
+  their first statement.
+
+### Why
+
+- Node boots with a stale cwd handle and only throws `uv_cwd` when something evaluates `process.cwd()`; the bundled
+  agent SDK does that during module evaluation, before user code could recover, so a deleted cwd crashed the CLI at
+  import time with no guidance.
+
+### Why an extension could not handle it
+
+- The guard must run before every other import, including the SDK's module evaluation; the extension loader does not
+  exist yet.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/valid-cwd.ts` is fork-only; the first-import lines in the entrypoints may conflict
+  with upstream import reshuffles.
+
+## llama.cpp local provider keeps sleeping runners discoverable (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/llama/provider.ts`: the router-fed `setCatalog()` keeps models whose runner
+  status is `loaded` OR `sleeping`, because the llama.cpp router wakes sleeping runners on demand; the persisted
+  `refreshModels()` snapshot still filters to `loaded` only. Credential resolution accepts a stored server URL, the
+  `LLAMA_BASE_URL` environment, or the default local server, with an optional API key.
+
+### Why
+
+- A model whose runner was asleep but wakeable disappeared from the model list, so users could not select exactly
+  the local models the router exists to wake on demand.
+
+### Why an extension could not handle it
+
+- The provider is a builtin registered with the model runtime; catalog filtering happens inside the provider's own
+  model snapshot, which the runtime reads before any extension can post-process it.
+
+### Expected merge conflict zones
+
+- LOW: the status filter in `setCatalog()` and the credential-resolution chain.
+
+## APP_NAME process identity and first-prompt session titles (2026-08-17)
+
+### What changed
+
+- Process identity is derived from the resolved brand: `process.title` is `APP_NAME` in `packages/coding-agent/src/cli.ts`,
+  `packages/coding-agent/src/cli-main.ts`, and `packages/coding-agent/src/bun/cli.ts`, and `${APP_NAME}-rpc` in
+  `packages/coding-agent/src/rpc-entry.ts`; `AI_AGENT` and inherited brand environment variables are set or scrubbed
+  per entrypoint so nested engine runs keep the engine's own identity.
+- Session titles: `buildInitialMessage()` in `packages/coding-agent/src/cli/initial-message.ts` returns the first CLI
+  message as `initialTitlePrompt` when the initial prompt carries no private context (no piped stdin, no `@file` text,
+  no attached images); `main.ts` threads it into interactive mode, which passes it as `sessionTitlePrompt` so the
+  session is titled from the user's actual prompt. One-shot print mode passes `sessionTitlePrompt: false` instead.
+
+### Why
+
+- Process lists, logs, and RPC host spawns must distinguish branded runs (and RPC hosts) from the upstream engine,
+  and an auto-generated title that ignored a plain first prompt produced generic titles for the most common launch
+  shape.
+
+### Why an extension could not handle it
+
+- `process.title`, brand scrubbing, and argv-to-options wiring all execute in the entrypoints before the extension
+  loader exists; the title prompt must be captured before the session consumes the initial message.
+
+### Expected merge conflict zones
+
+- LOW: per-entrypoint title and environment lines; the `sessionTitlePrompt` threading in `main.ts` and interactive
+  mode.
+
+## Retry-exhausted provider timeouts release retained steering (2026-08-17)
+
+### What changed
+
+- `core/agent-session.ts`: when a managed provider-timeout retry exhausts its retry/fallback budget, the retry owner
+  now hands steering or follow-up input that was deliberately deferred from the retry request to the existing
+  scheduled-continuation path. Successful retries keep their current queue behavior, and generic terminal
+  provider errors or aborts still park queued work.
+- Queue ownership follows the retry continuation that actually deferred the queue (recorded when the
+  provider-timeout retry plan schedules its continuation), not the class of the final error: a timeout retry that
+  ends in a different retryable failure still releases its deferred queue, while late steering queued during an
+  ordinary non-deferring retry stays parked. User aborts — in flight or during the retry backoff sleep — keep
+  retained input parked; a cancelled backoff reports a distinct outcome from budget exhaustion.
+- Coverage: `test/suite/regressions/provider-idle-steering.test.ts` proves a provider timeout, one failed managed
+  retry, and a steer queued during `auto_retry_start` produce an automatic third request without another prompt.
+  `.agents/skills/senpi-qa/scripts/mock-loop-stream-start-timeout-steering.mjs` drives the same sequence through the
+  real RPC CLI and actual stream-start watchdogs.
+
+### Why
+
+- Provider-timeout retries use `deferQueuedMessages: true` so steering cannot be consumed by another retry request
+  that has not demonstrated responsiveness. If that retry also failed and no fallback remained, the generic Agent
+  terminal-error policy correctly parked the queue, but the coding-agent retry owner had already finished and no
+  lifecycle owner remained to admit it. The queued message therefore ran only after an unrelated later prompt.
+
+### Why an extension could not do this
+
+- Retry attempt accounting, provider-timeout continuation options, terminal `agent_end` admission, compaction
+  revalidation, and queued-message ownership are coordinated inside `AgentSession` before extension callbacks can
+  safely claim or release the queue.
+
+### Expected merge conflict zones
+
+- HIGH: `core/agent-session.ts` around `_processAgentEvent()` retry/compaction continuation admission.
+- LOW: additive coverage in `test/suite/regressions/provider-idle-steering.test.ts` and the Senpi QA scenario.
+
+## Custom-editor submit callbacks preserve the authoritative value (2026-08-16)
+
+### What changed
+
+- `modes/interactive/interactive-mode.ts` now routes custom-editor submissions through `expandSubmittedText()`.
+- The submit helper preserves a non-empty `getExpandedText()` result from editors that submit before clearing, but uses the callback text when the live editor has already been cleared by pi-tui.
+- The real host bridge is covered in `test/suite/regressions/0000-editor-paste-submit.test.ts` for clear-before-callback, retained paste-state expansion, and uncleared custom-editor compatibility.
+
+### Why
+
+- pi-tui computes the submitted value, clears editor and paste state, then invokes `onSubmit`. Re-reading the cleared editor returned `""`, so Enter cleared the prompt without sending a message.
+
+### Why an extension could not do this
+
+- The host owns the callback bridge between extension-provided editors and the default submission handler.
+
+### Expected merge conflict zones
+
+- LOW: `modes/interactive/editor-paste-transfer.ts`, the `setCustomEditorComponent()` submit callback, and its focused regression suite.
+
+## CLI system-prompt overrides rewired into the runtime resource loader (2026-08-17)
+
+### What changed
+
+- `main.ts`: the runtime `resourceLoaderOptions` again forwards `parsed.systemPrompt` / `parsed.appendSystemPrompt` to `DefaultResourceLoader`, re-enabling the documented `--system-prompt` / `--append-system-prompt` flags on the CLI path (the SDK path already honored loader overrides).
+
+### Why
+
+- Commit `0ce8ac312` (2026-07-19, "preserve dynamic prompt policy") disconnected the flags because the prompt-preset extension clobbered user overrides on preset-matching models. The preset extension now yields to a user custom prompt and reapplies user appends (see `core/extensions/builtin/prompt-preset/changes.md`), so the flags can compose with the dynamic prompt policy instead of fighting it.
+
+### Why extension system couldn't handle this
+
+- CLI argv-to-loader wiring is host bootstrap code; extensions load after the resource loader exists.
+
+### Expected merge conflict zones
+
+- LOW: `main.ts` runtime `resourceLoaderOptions` block — keep both fields when upstream reshapes the options.
+
+## JSONC settings selection and source events (2026-08-16)
+
+### What changed
+
+- Settings loading now accepts dependency-free JSONC syntax (line/block comments outside strings and trailing commas) in both `settings.jsonc` and existing settings content.
+- Each global/project config directory prefers `settings.jsonc` over `settings.json`; the selected path remains the write target until the next explicit reload selection.
+- `AgentSessionEvent` gained `settings_source_selected` with `{ path, format, reason, scope }`. Current selections replay once to newly attached host listeners, and reload selections publish through the normal session emitter.
+- The config-reload builtin watches and validates both settings filenames with the same parser.
+
+### Why
+
+- Users need commented settings without losing plain-JSON compatibility, deterministic precedence, or having a UI write silently create the other file flavor.
+- RPC and interactive hosts need an authoritative source decision instead of inferring it from filesystem state.
+
+### Why an extension could not do this
+
+- Settings path selection, parse-before-runtime, merge-before-write, and session listener attachment all occur in core before an extension can replace them. The built-in config watcher also owns reload admission and validation.
+
+### Expected merge conflict zones
+
+- HIGH: `core/settings-manager.ts` around path resolution, storage locking, load/reload, and merge-before-write parsing.
+- MEDIUM: `core/agent-session.ts` event union, subscription replay, and disposal.
+- LOW: additive host handling under `modes/rpc/` and `modes/interactive/`, plus config-reload filename allowlists/validation.
+
+## Unified lockfile staleness policy across auth and settings storage (2026-08-16)
+
+### What changed
+
+- `core/lockfile-policy.ts` exports `FILE_STORAGE_LOCK_OPTIONS` (`stale: 30_000`, `update: 10_000`, `realpath: false`)
+  and both file-backed stores acquire proper-lockfile locks with it: `FileAuthStorageBackend` sync and async paths in
+  `core/auth-storage.ts` and `FileSettingsStorage` in `core/settings-manager.ts`. Lock file locations and read/write
+  semantics are unchanged.
+- Coverage: `test/lockfile-policy.test.ts` captures the options each backend passes to `lockSync`/`lock` and asserts
+  all three acquisitions report the identical policy.
+
+### Why
+
+- Proper-lockfile defaults to `stale: 10_000` and refreshes a held lock's mtime every `stale / 2` ms. The async auth
+  path used `stale: 30_000` (15s refresh) while both sync paths kept the 10s default, so a sync contender could
+  classify a still-live async lock as stale in the 10-15s window and steal it mid-update.
+
+### Why an extension could not do this
+
+- Lock acquisition options are hardcoded inside core storage backends; an extension cannot intercept or reconfigure
+  the proper-lockfile calls used by credential and settings persistence.
+
+### Expected merge conflict zones on next upstream sync
+
+- `core/auth-storage.ts` and `core/settings-manager.ts`, around the lock acquisition helpers.
+
+## Non-interactive auth reads degrade on storage lock failures (2026-08-16)
+
+### What changed
+
+- `core/auth-storage.ts`: asynchronous credential reads now preserve the last valid in-memory snapshot when acquiring
+  or reading the auth storage lock fails, regardless of whether the caller supplied an operation signal. The failure is
+  retained in `AuthStorage.drainErrors()`; an actual caller abort still rejects instead of being converted into stale data.
+- `main.ts`: non-interactive startup/model-listing and completed print runs drain auth-storage failures through the
+  existing warning diagnostic renderer. Interactive-mode reporting is unchanged.
+- OAuth refresh persistence remains fail-closed because `modify` and `delete` still propagate every lock, parse, and
+  write failure without fallback.
+
+### Why
+
+- Model-runtime credential reads always carry a normalized signal. The previous signal-gated branch therefore skipped
+  its intended last-good fallback, so a sandbox-denied `auth.json.lock` mkdir escaped top-level `senpi -p` startup as an
+  uncaught `EPERM` instead of a warning.
+- Corrupt auth data must remain visible even when the last-good snapshot keeps a non-interactive run alive, so degraded
+  reads record the original failure for the CLI diagnostic surface.
+
+### Why an extension could not do this
+
+- Credential storage locking and the non-interactive bootstrap diagnostic boundary run inside core before an extension
+  can intercept model authentication or recover a rejected credential-store read.
+
+### Expected merge conflict zones on next upstream sync
+
+- `core/auth-storage.ts`, around `readLatestData` reload coalescing and abort handling.
+- `main.ts`, around startup diagnostics and print-mode dispatch.
+
+
+## Idempotent ambient OAuth auth composition (2026-08-14)
+
+### What changed
+
+- `core/provider-api-key-auth.ts` now accepts an ambient OAuth resolver's own synthetic key when resolved auth is replayed as an explicit request key by title, compaction, and branch-summary calls.
+- The compatibility adapter identifies itself as ambient-only, so a replayed marker or unrelated explicit key cannot bypass a valid stored OAuth account.
+- The ambient adapter now resolves configured metadata headers and `authHeader` through the same composition used by stored OAuth.
+- Replay-only credential environment participates in configured header resolution while unrelated explicit keys remain rejected.
+- Present-but-empty Claude token slots survive synthetic-marker replay, preventing auxiliary calls from falling back to a host token.
+- When any request Claude token slot is present, ambient resolution treats that request token set as the complete namespace and cannot import a different host slot during replay.
+- Request-backed `config-dir` authentication uses the non-persisting OAuth environment lane for that request, so request credentials are never written below the stable agent directory.
+- Coverage compares ambient and stored OAuth auth shapes, drives replay through real title generation, and pins stored-account precedence.
+
+### Why
+
+- Auxiliary calls copy resolved request auth into their own options. Rejecting the provider's marker made the second auth pass report unconfigured, while allowing the ambient adapter to outrank stored OAuth broke managed-account replay and an early ambient return dropped configured headers and synthesized authorization.
+
+### Why an extension could not do this
+
+- Provider auth composition runs before request hooks and is the mechanism that makes extension-registered providers callable. An extension cannot repair auth that the host composer rejected or omitted.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `core/provider-api-key-auth.ts` around the ambient-only OAuth adapter and its precedence metadata.
+
+
 The historical-image transport entry moved to `core/changes.md`, beside the
 other provider-bound image transport behavior that owns the same payload path.
+
+## GLM 5.3 full support: preset + catalog + wire (2026-08-16)
+
+### What changed
+
+- `core/extensions/builtin/prompt-preset/`: new `glm-5-3.ts` preset (clone of `glm-5-2.ts`), `presets.ts` matcher + dispatch, `settings.ts` union entry. The preset carries "running on GLM 5.3" tuning; every behavioral directive is identical to 5.2.
+- `packages/ai`: `openai-completions.ts` generalized `isGlm52`→`isGlm5x` (5.3 inherits 5.2's thinkingLevelMap branches) and forces zai `{type:"enabled"}` for 5.3 even without reasoning effort. 25 glm-5.3 catalog entries cloned across 18 provider data files. `generate-models.ts` updated so regeneration preserves 5.3.
+- Tests: `test/suite/prompt-presets-glm-5-3.test.ts` (preset resolution + catalog sweep), `packages/ai/test/glm-5.3-thinking.test.ts` (reasoning effort map + zai always-enabled).
+
+### Why
+
+- GLM 5.3 shipped in upstream catalogs (oh-my-pi's `zai` provider defaults to `glm-5.3`) but senpi had zero 5.3 support: no preset, no catalog entries, no wire-level reasoning effort handling. Users selecting GLM 5.3 got the untuned fallback prompt and unmapped reasoning effort.
+
+### Expected merge conflict zones
+
+- `prompt-preset/presets.ts`/`settings.ts`: shared lists — trivial adjacent-line conflicts if upstream adds presets.
+- `openai-completions.ts`: the `isGlm52`→`isGlm5x` rename and zai handler guard sit in fork-modified sections.
+- Provider data files: fork-only; upstream has no counterpart.
+
+## Explicit `/skill:` invocations retain user authority (2026-08-16)
+
+### What changed
+
+- `core/agent-session.ts`: each known leading `/skill:<name>` expansion now states that the user explicitly invoked that
+  skill, places its binding workflow in a `<skill-instruction>` section, and isolates trailing free text in a
+  `<user-request>` section. Chained skills retain written order; unknown-skill fallthrough, duplicate suppression, and
+  the five-skill expansion cap are unchanged. `parseSkillBlock` recognizes that current format first and retains its
+  legacy `<skill>` fallback so resumed and imported sessions still collapse correctly.
+- `core/export-html/template.js`: the intentionally standalone parser mirrors the runtime parser, preserving collapsed
+  skill rendering in exported transcripts for both current and legacy session payloads.
+- Coverage: `test/suite/agent-session-prompt.test.ts` pins invocation shape with and without trailing arguments and for
+  chained skills; `test/suite/regressions/308-skill-composition.test.ts` keeps unknown-skill, cap, deduplication, steer,
+  and follow-up behavior pinned to the new shape; `test/export-html-skill-block.test.ts` executes both parsers against
+  payloads from the production formatter and covers chained and legacy messages; the real-expansion hook test confirms
+  `UserPromptSubmit` context injection preserves the new wrapper and request.
+
+### Why
+
+- The previous expansion flattened passive `<skill>` content and trailing arguments into one ordinary user message.
+  That erased the user's explicit command authority, allowing the Intent Gate to route only on the trailing prose and
+  ignore the selected skill's rules or workflow (issue #890).
+
+### Why an extension could not do this
+
+- Skill-command expansion happens in the private `AgentSession` prompt, steering, and follow-up dispatch paths before
+  the provider sees the user message. Extensions cannot replace that text transformation consistently across all three
+  paths.
+
+### Expected merge conflict zones on next upstream sync
+
+- `core/agent-session.ts` around skill invocation formatting, parsing, and `_expandSkillCommand`.
+- `core/export-html/template.js` around the standalone `parseSkillBlock` copy.
+- `test/export-html-skill-block.test.ts`, `test/suite/agent-session-prompt.test.ts`, and
+  `test/suite/regressions/308-skill-composition.test.ts` where parsing and the exact expanded payload are pinned.
 
 ## Shipped Fable fallback chain reaches Kimi K3 served as `kimi-k3` (2026-08-13)
 

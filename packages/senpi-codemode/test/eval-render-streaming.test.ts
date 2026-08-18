@@ -253,6 +253,46 @@ describe("eval renderer streaming reuse", () => {
 		expect.soft(renderLines(final).slice(0, 4)).toEqual(["eval js done", "phase complete | took <1s", "", "final"]);
 	});
 
+	it("Given a partial result with an already-complete single cell when rendered then throughput stays hidden", () => {
+		// Given
+		const givenResult = evalResult(
+			{
+				language: "py",
+				phase: "settling",
+				durationMs: 0,
+				toolCallCount: 2,
+				wallDurationMs: 2_000,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "work()",
+						language: "py",
+						output: "ok",
+						status: "complete",
+						durationMs: 2_000,
+					},
+				],
+			},
+			"partial",
+		);
+
+		// When
+		const text = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: true },
+			undefined,
+			resultContext({ args: { language: "py", code: "work()", summary: "throughput" } }),
+		)
+			.render(120)
+			.join("\n");
+
+		// Then
+		expect(text).toContain("eval py done ✓ · 2s");
+		expect(text).not.toContain("calls/s");
+	});
+
 	it("Given running completed and failed agent events when rendered then progress rows expose state detail and duration", () => {
 		// Given
 		const givenResult = evalResult(

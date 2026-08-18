@@ -2,6 +2,7 @@ import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import type { AnthropicOptions } from "./api/anthropic-messages.ts";
 import type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 import type { BedrockOptions } from "./api/bedrock-converse-stream.ts";
+import type { CursorAgentOptions } from "./api/cursor-agent/types.ts";
 import type { GoogleOptions } from "./api/google-generative-ai.ts";
 import type { GoogleVertexOptions } from "./api/google-vertex.ts";
 import type { MistralOptions } from "./api/mistral-conversations.ts";
@@ -10,12 +11,19 @@ import type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 import type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
 import type { PiMessagesOptions } from "./api/pi-messages.ts";
 import type { Model } from "./model.ts";
-import type { SessionAffinityFormat } from "./openai-responses-compat.ts";
+import type {
+	OpenAIResponsesCompat as BaseOpenAIResponsesCompat,
+	SessionAffinityFormat,
+} from "./openai-responses-compat.ts";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
 import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
 export type { Model } from "./model.ts";
-export type { OpenAIResponsesCompat, SessionAffinityFormat } from "./openai-responses-compat.ts";
+export type { SessionAffinityFormat } from "./openai-responses-compat.ts";
+export type OpenAIResponsesCompat = BaseOpenAIResponsesCompat & {
+	/** Whether the model supports message-anchored `additional_tools` input items. Default: false. */
+	supportsAdditionalTools?: boolean;
+};
 export type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
 export type KnownApi =
@@ -24,6 +32,7 @@ export type KnownApi =
 	| "openai-responses"
 	| "azure-openai-responses"
 	| "openai-codex-responses"
+	| "cursor-agent"
 	| "anthropic-messages"
 	| "bedrock-converse-stream"
 	| "google-generative-ai"
@@ -47,6 +56,7 @@ export type KnownProvider =
 	| "azure-openai-responses"
 	| "openai-codex"
 	| "ollama"
+	| "cursor"
 	| "radius"
 	| "nvidia"
 	| "deepseek"
@@ -279,6 +289,7 @@ export interface ApiOptionsMap {
 	"openai-completions": OpenAICompletionsOptions;
 	"openai-responses": OpenAIResponsesOptions;
 	"openai-codex-responses": OpenAICodexResponsesOptions;
+	"cursor-agent": CursorAgentOptions;
 	"azure-openai-responses": AzureOpenAIResponsesOptions;
 	"google-generative-ai": GoogleOptions;
 	"google-vertex": GoogleVertexOptions;
@@ -415,6 +426,8 @@ export interface ToolCall {
 	/** Error explaining why an incomplete tool call could not be recovered. */
 	errorMessage?: string;
 	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
+	/** OpenAI Responses namespace for calls to dynamically loaded or namespaced tools. */
+	namespace?: string;
 }
 
 /**
@@ -503,6 +516,11 @@ export interface AssistantMessage {
 	deferred?: DeferredHandle;
 	errorMessage?: string;
 	rawStopReason?: string;
+	/**
+	 * Provider indication of whether the model explicitly ended its turn.
+	 * Preserved for debugging and does not currently affect agent control flow.
+	 */
+	endTurn?: boolean;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 

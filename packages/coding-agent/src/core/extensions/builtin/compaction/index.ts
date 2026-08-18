@@ -542,6 +542,15 @@ export default function compactionExtension(
 			endCompactionFeedback(ctx, feedbackSignal, result, remoteFallbackReason);
 			return result;
 		} catch (error) {
+			if (feedbackSignal?.aborted) {
+				// An aborted blocking compaction is a cancellation, not a failure: no
+				// red "Compaction failed" line, no breaker debit, no rethrow through
+				// the before_agent_start handler (issue #886). The faux-route flavor
+				// of this contract is pinned by blocking-compaction-review-hardening.
+				getLogger(ctx).debug("blocking_aborted", { route: "blocking" });
+				ctx.endCompaction?.({ reason: "extension", signal: feedbackSignal, aborted: true });
+				return { applied: false, reason: "rejected" };
+			}
 			const message = error instanceof Error ? error.message : String(error);
 			ctx.endCompaction?.({
 				reason: "extension",
@@ -559,6 +568,10 @@ export default function compactionExtension(
 	}
 
 	pi.on("session_before_compact", async (event: SessionBeforeCompactEvent, ctx) => {
+		// A pre-aborted request (superseded admission or user cancel) must stand
+		// down before touching warm-job ownership: core's own post-emit abort
+		// checks turn it into a clean cancellation (issue #886).
+		if (event.signal.aborted) return undefined;
 		const claimedWarmJob = claimWarmSummaryForCoreRoute(event, ctx);
 		// The claim detaches the job without aborting it, so ownership must survive every
 		// exit from this handler - including a throw - or the request it already paid for
@@ -598,12 +611,22 @@ export default function compactionExtension(
 			if (!model) {
 				return undefined;
 			}
-			const remoteCompaction = await runOpenAiRemoteCompaction(
-				ctx,
-				event,
-				(data) => pi.events.emit(SENPI_COMPACTION_EVENT, data),
-				remoteCompactionDependencies,
-			);
+			let remoteCompaction: Awaited<ReturnType<typeof runOpenAiRemoteCompaction>>;
+			try {
+				remoteCompaction = await runOpenAiRemoteCompaction(
+					ctx,
+					event,
+					(data) => pi.events.emit(SENPI_COMPACTION_EVENT, data),
+					remoteCompactionDependencies,
+				);
+			} catch (error) {
+				// The remote route deliberately rethrows once its signal aborts; the
+				// handler converts that into a silent stand-down so the abort is not
+				// reported as an extension error with a stack (issue #886).
+				if (!event.signal.aborted) throw error;
+				getLogger(ctx).debug("remote_aborted", { route: "core-route", requestId: event.requestId });
+				return undefined;
+			}
 			if (remoteCompaction) {
 				getLogger(ctx).debug("core_route_generated", { route: "core-route", requestId: event.requestId });
 				return { compaction: remoteCompaction };

@@ -1,4 +1,5 @@
 import type { Model } from "@earendil-works/pi-ai";
+import type { PatternResolution } from "../../../core/model-resolver.ts";
 
 export type FavoriteModelIds = string[] | null;
 
@@ -58,16 +59,85 @@ export function moveFavoriteModel(favoriteIds: FavoriteModelIds, id: string, del
 
 export function mergeFavoritePatternsForPersist(options: {
 	storedPatterns: readonly string[];
-	unresolvedPatterns: readonly string[];
+	patternResolutions: readonly PatternResolution[];
 	selectedIds: FavoriteModelIds;
 	candidateIds: readonly string[];
 }): string[] | undefined {
-	const { storedPatterns, unresolvedPatterns, selectedIds, candidateIds } = options;
-	const unresolved = new Set(unresolvedPatterns);
-	const merged = storedPatterns.filter((pattern) => unresolved.has(pattern));
-	const selected = selectedIds === null ? candidateIds : selectedIds;
+	const { storedPatterns, patternResolutions, selectedIds, candidateIds } = options;
+	const selected = selectedIds === null ? [...candidateIds] : selectedIds;
+	const selectedSet = new Set(selected);
+	const candidateSet = new Set(candidateIds);
+	const accountedIds = new Set<string>();
+	const merged: string[] = [];
+	const mergedSet = new Set<string>();
+
+	const append = (pattern: string): void => {
+		if (mergedSet.has(pattern)) return;
+		mergedSet.add(pattern);
+		merged.push(pattern);
+	};
+	const decorateExactId = (id: string, resolution: PatternResolution): string => {
+		let exactPattern = id;
+		if (resolution.serviceTier) exactPattern += `:${resolution.serviceTier}`;
+		if (resolution.thinkingLevel) exactPattern += `:${resolution.thinkingLevel}`;
+		return exactPattern;
+	};
+
+	// Resolutions are matched by pattern identity, not position: the stored list can
+	// drift from the snapshot (settings edited between capture and merge), and a
+	// positional mismatch used to drop the pattern into the bare-id append path,
+	// silently losing its `:level`/`:tier` decorators. Duplicate stored patterns share
+	// the first (owning) resolution; the later duplicate resolves to no ownership
+	// anyway, and identical merged strings are deduped by `append`.
+	const resolutionByPattern = new Map<string, PatternResolution>();
+	for (const resolution of patternResolutions) {
+		if (!resolutionByPattern.has(resolution.pattern)) resolutionByPattern.set(resolution.pattern, resolution);
+	}
+
+	for (const storedPattern of storedPatterns) {
+		const resolution = resolutionByPattern.get(storedPattern);
+		if (!resolution) continue;
+
+		if (resolution.unresolved) {
+			append(resolution.pattern);
+			continue;
+		}
+
+		// A resolved pattern with no ownership only duplicated models claimed by an
+		// earlier pattern. Keeping it could resurrect a model the user just removed.
+		if (resolution.ownedIds.length === 0) continue;
+
+		const visibleOwnedIds = resolution.ownedIds.filter((id) => candidateSet.has(id));
+		const selectedVisibleIds = visibleOwnedIds.filter((id) => selectedSet.has(id));
+		const selectedPositions = selectedVisibleIds.map((id) => selected.indexOf(id));
+		const remainsOrderedBlock = selectedPositions.every(
+			(position, positionIndex) => positionIndex === 0 || position === selectedPositions[positionIndex - 1] + 1,
+		);
+		const preserveVerbatim = selectedVisibleIds.length === visibleOwnedIds.length && remainsOrderedBlock;
+
+		if (preserveVerbatim) {
+			append(resolution.pattern);
+			for (const id of selectedVisibleIds) accountedIds.add(id);
+			continue;
+		}
+
+		if (!resolution.isGlob) continue;
+
+		// An edited glob becomes exact entries. Visible entries follow the selector
+		// order; registry-owned entries outside the candidate set must survive too.
+		const selectedVisibleSet = new Set(selectedVisibleIds);
+		const explodedIds = [
+			...selected.filter((id) => selectedVisibleSet.has(id)),
+			...resolution.ownedIds.filter((id) => !candidateSet.has(id)),
+		];
+		for (const id of explodedIds) {
+			append(decorateExactId(id, resolution));
+			if (candidateSet.has(id)) accountedIds.add(id);
+		}
+	}
+
 	for (const id of selected) {
-		if (!merged.includes(id)) merged.push(id);
+		if (!accountedIds.has(id)) append(id);
 	}
 	return merged.length > 0 ? merged : undefined;
 }

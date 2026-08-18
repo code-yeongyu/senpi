@@ -104,6 +104,25 @@ describe("goal wake sources", () => {
 		});
 	});
 
+	it("maps continuation-hold events onto the monitor direct-input hold", async () => {
+		const harness = createMonitorHarness();
+		const holdSpy = vi.spyOn(harness.monitor, "holdDirectInput");
+		const resolveSpy = vi.spyOn(harness.monitor, "resolveDirectInput");
+
+		harness.events.emit("continuation_hold_state", {
+			source: "loop-guard-hard-stop",
+			active: true,
+		});
+		await harness.events.flush();
+		expect(holdSpy).toHaveBeenCalledWith("external:loop-guard-hard-stop");
+		harness.events.emit("continuation_hold_state", {
+			source: "loop-guard-hard-stop",
+			active: false,
+		});
+		await harness.events.flush();
+		expect(resolveSpy).toHaveBeenCalledWith("external:loop-guard-hard-stop", false);
+	});
+
 	it("fires after the micro-grace when a background session exits without a notification", async () => {
 		vi.useFakeTimers();
 		const ctx = await makeGoalContext([], "thread-background-drain");

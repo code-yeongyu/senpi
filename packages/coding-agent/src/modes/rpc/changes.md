@@ -1,5 +1,108 @@
 # changes
 
+## Suppress initial command-surface invalidation events (2026-08-17)
+
+### What changed
+
+- RPC records the initial ordered command digest without publishing `commands_changed`.
+- Later distinct command snapshots still publish once, while identical reload snapshots remain deduplicated.
+- Focused coverage distinguishes baseline initialization from an actual post-bind command-surface change.
+
+### Why
+
+- Discovery sessions already fetch their initial command surface with `get_commands`. Treating that baseline as an
+  invalidation made clients refresh provider discovery, whose new sessions emitted another baseline invalidation and
+  created an unbounded refresh loop.
+
+### Why extension system couldn't handle this
+
+- Baseline establishment and JSONL event emission are owned by the built-in RPC transport.
+
+### Expected merge conflict zones
+
+- LOW: `rpc-command-surface.ts` initial-digest guard and its focused regression.
+
+## Publish typed command surfaces and invocation events without disturbing MCP inventory (2026-08-16) ([PR #909](https://github.com/code-yeongyu/senpi/pull/909))
+
+### What changed
+
+- RPC exports self-describing `RpcSlashCommand` rows with canonical `syntax`, pushes ordered `commands_changed`
+  snapshots after initial bind and runtime reloads, and publishes typed `command_invocation` metadata only after the
+  session actually resolves an extension command or an accepted prompt template survives extension input interception.
+- RPC continues to export `RpcSkillInvocationEvent` with ordered `{name,path,syntax}` entries.
+- The classic and routed connection handler explicitly type-checks `skill_invocation` and `command_invocation` before
+  forwarding them through the existing event buffer.
+- Prompt, steer, and follow-up text fields reject inputs above one million characters before session dispatch.
+- Classic and multi-session hosts reject valid non-object JSON with parse-style responses instead of dereferencing it
+  as a command, and both enforce a 16 MiB JSONL record ceiling that discards one oversized record through LF before
+  resuming framing.
+- Regression coverage proves candidate ordering, update deduplication, post-interception command classification,
+  bounded text and record handling, malformed-command rejection, JSONL resynchronization, and skill event delivery
+  while `get_loaded_surfaces` keeps the same revealed MCP inventory before and after invocation.
+
+### Why
+
+- OmO Desktop can render and refresh the same mixed command/skill picker without terminal parsing or command-surface
+  polling, and can observe accepted command or skill invocations as typed metadata.
+- Skill expansion must remain orthogonal to MCP inventory reveal; a new event cannot reset or reorder loaded
+  surfaces.
+
+### Why extension system couldn't handle this
+
+- The public JSONL event contract and loaded-surface inventory response are owned by the built-in RPC transport.
+
+### Expected merge conflict zones
+
+- LOW: additive event types in `rpc-types.ts`, `rpc-command-surface.ts`, and `rpc-command-invocation.ts`.
+- MEDIUM: `connection-handler.ts`, `rpc-mode.ts`, `multi-session-host.ts`, `rpc-input-validation.ts`, and `jsonl.ts`
+  own command-surface invalidation, input/framing bounds, and typed event forwarding.
+- LOW: focused RPC contract tests plus `rpc-loaded-surfaces.test.ts` inventory assertions.
+
+## Settings source selection event (2026-08-16)
+
+### What changed
+
+- Classic and multi-session RPC now receive the additive `settings_source_selected` session event with `{ path, format, reason, scope }` at startup/rebind and after settings reload selection.
+- The public RPC type surface documents the event; existing session forwarding and routing remain unchanged.
+
+### Why
+
+- Headless clients need to know whether JSONC won precedence and which path subsequent settings writes target.
+
+### Why the extension system could not handle this
+
+- The source is selected before extension binding, while RPC framing/routing is host-owned.
+
+### Expected merge conflict zones
+
+- LOW: additive event typing in `rpc-types.ts`; event forwarding uses the existing unfiltered session subscription.
+
+## Model/tier events, fast-mode commands, and turn-scope validation (2026-08-16)
+
+### What changed
+
+- Additive events `model_changed` (model + post-switch thinking level + source) and `service_tier_changed` (tier + fastMode) reach clients through the existing session subscription; no event is reshaped.
+- `RpcSessionState` gained `serviceTier?` and `fastMode`, so `get_state` no longer hides which tier a request would carry.
+- `get_state` and `open_session` now project state through one exported `buildRpcSessionState(session)`. They were two hand-rolled literals, and only the `get_state` one was type-annotated, so `open_session` silently answered without the new fields.
+- New commands `set_fast_mode` / `get_fast_mode` delegate to `applyFastMode` from the service-tier extension module — the same entry point the `/fast` command uses, so persistence and `-fast` key normalization exist once.
+- `scope: "turn"` `set_thinking_level` now validates the level against `getAvailableThinkingLevels()` BEFORE applying it. Previously it applied first and reported the mismatch afterwards, so a rejected request left the session on the clamped level.
+- `RpcClient` gained `setFastMode`/`getFastMode`, and `setThinkingLevel` accepts `{ scope: "turn" }` and now throws on a failed response instead of swallowing it.
+
+### Why
+
+- Clients had no way to observe model or tier changes: model tracking was inferred from `entry_appended`, and fast mode was invisible to the protocol even though it changes what is sent upstream.
+- A command that answers `success: false` after mutating state is unusable for state reconciliation — the client's retry/rollback logic cannot know what actually happened.
+
+### Why extension system couldn't handle this
+
+- The command union, `RpcSessionState`, and the event projection are transport contracts owned by the RPC mode; extensions cannot add commands or state fields to them.
+
+### Expected merge conflict zones
+
+- LOW: additive union arms in `rpc-types.ts` and additive `case` arms in `connection-handler.ts`.
+- LOW: the `set_thinking_level` case body is rewritten in place (validate-then-apply).
+- LOW: `session-command-router.ts` `open_session` now calls the shared state builder instead of inlining the literal. Session test doubles must answer `isFastModeActive()`.
+
 ## Pin classic RPC delta batching and immediate barriers (2026-08-14)
 
 ### What changed

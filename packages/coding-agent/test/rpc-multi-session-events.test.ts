@@ -60,7 +60,7 @@ describe("multi-session RPC event writer", () => {
 		for (const delta of source) {
 			cumulative += delta;
 			const update = cumulativeTextUpdate(delta, cumulative);
-			cumulativeBytes += Buffer.byteLength(JSON.stringify({ ...update, sessionId: "a" }) + "\n");
+			cumulativeBytes += Buffer.byteLength(`${JSON.stringify({ ...update, sessionId: "a" })}\n`);
 			writer.enqueue("a", update);
 		}
 		writer.enqueue("a", {

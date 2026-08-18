@@ -5,7 +5,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import type { InputDispositionEvent, InputEvent } from "../../src/core/extensions/index.ts";
+import type { ExtensionAPI, InputDispositionEvent, InputEvent } from "../../src/core/extensions/index.ts";
 import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
 import { createTestResourceLoader } from "../utilities.ts";
@@ -187,7 +187,54 @@ describe("AgentSession prompt characterization", () => {
 		await harness.session.prompt("/skill:test explain this");
 
 		expect(expandedPrompt).toBe(
-			`<skill name="test" location="${skillPath}">\nReferences are relative to ${tempDir}.\n\n# Test Skill\n\nUse the skill body.\n</skill>\n\nexplain this`,
+			`The user explicitly invoked the "test" skill. Follow the instructions in <skill-instruction> as binding for this request, while respecting higher-priority instructions.\n\n<skill-instruction name="test" location="${skillPath}">\nReferences are relative to ${tempDir}.\n\n# Test Skill\n\nUse the skill body.\n</skill-instruction>\n\n<user-request>\nexplain this\n</user-request>`,
+		);
+	});
+
+	it("preserves explicit skill invocation when no request arguments are provided", async () => {
+		const tempDir = join(tmpdir(), `pi-skill-no-args-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(tempDir, { recursive: true });
+		tempDirs.push(tempDir);
+		const skillPath = join(tempDir, "test-skill.md");
+		writeFileSync(skillPath, "# Test Skill\n\nUse the skill body.");
+
+		const resourceLoader = {
+			...createTestResourceLoader(),
+			getSkills: () => ({
+				skills: [
+					{
+						name: "test",
+						description: "Test skill",
+						filePath: skillPath,
+						disableModelInvocation: false,
+						baseDir: tempDir,
+						sourceInfo: createSyntheticSourceInfo(skillPath, {
+							source: "local",
+							scope: "project",
+							origin: "top-level",
+							baseDir: tempDir,
+						}),
+					},
+				],
+				diagnostics: [],
+			}),
+		};
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		let expandedPrompt = "";
+
+		harness.setResponses([
+			(context) => {
+				const user = context.messages.find((message) => message.role === "user");
+				expandedPrompt = user ? getMessageText(user) : "";
+				return fauxAssistantMessage("ok");
+			},
+		]);
+
+		await harness.session.prompt("/skill:test");
+
+		expect(expandedPrompt).toBe(
+			`The user explicitly invoked the "test" skill. Follow the instructions in <skill-instruction> as binding for this request, while respecting higher-priority instructions.\n\n<skill-instruction name="test" location="${skillPath}">\nReferences are relative to ${tempDir}.\n\n# Test Skill\n\nUse the skill body.\n</skill-instruction>`,
 		);
 	});
 
@@ -249,7 +296,7 @@ describe("AgentSession prompt characterization", () => {
 		await harness.session.prompt("/skill:first /skill:second compose both skills");
 
 		expect(expandedPrompt).toBe(
-			`<skill name="first" location="${firstSkillPath}">\nReferences are relative to ${tempDir}.\n\n# First Skill\n\nUse the first skill.\n</skill>\n\n<skill name="second" location="${secondSkillPath}">\nReferences are relative to ${tempDir}.\n\n# Second Skill\n\nUse the second skill.\n</skill>\n\ncompose both skills`,
+			`The user explicitly invoked the "first" skill. Follow the instructions in <skill-instruction> as binding for this request, while respecting higher-priority instructions.\n\n<skill-instruction name="first" location="${firstSkillPath}">\nReferences are relative to ${tempDir}.\n\n# First Skill\n\nUse the first skill.\n</skill-instruction>\n\nThe user explicitly invoked the "second" skill. Follow the instructions in <skill-instruction> as binding for this request, while respecting higher-priority instructions.\n\n<skill-instruction name="second" location="${secondSkillPath}">\nReferences are relative to ${tempDir}.\n\n# Second Skill\n\nUse the second skill.\n</skill-instruction>\n\n<user-request>\ncompose both skills\n</user-request>`,
 		);
 	});
 
@@ -286,6 +333,39 @@ describe("AgentSession prompt characterization", () => {
 		expect(expandedPrompt).toBe("Review this code: src/index.ts");
 	});
 
+	it("sendUserMessage can opt into prompt template expansion", async () => {
+		const template: PromptTemplate = {
+			name: "review",
+			description: "Review template",
+			content: "Review this code: $1",
+			filePath: "/virtual/review.md",
+			sourceInfo: createSyntheticSourceInfo("/virtual/review.md", {
+				source: "local",
+				scope: "temporary",
+				origin: "top-level",
+			}),
+		};
+		const resourceLoader = {
+			...createTestResourceLoader(),
+			getPrompts: () => ({ prompts: [template], diagnostics: [] }),
+		};
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		let expandedPrompt = "";
+
+		harness.setResponses([
+			(context) => {
+				const user = context.messages.find((message) => message.role === "user");
+				expandedPrompt = user ? getMessageText(user) : "";
+				return fauxAssistantMessage("ok");
+			},
+		]);
+
+		await harness.session.sendUserMessage("/review src/index.ts", { expandPromptTemplates: true });
+
+		expect(expandedPrompt).toBe("Review this code: src/index.ts");
+	});
+
 	it("dispatches extension commands without consuming a provider response", async () => {
 		const commandRuns: string[] = [];
 		const harness = await createHarness({
@@ -308,6 +388,35 @@ describe("AgentSession prompt characterization", () => {
 		expect(commandRuns).toEqual(["hello world"]);
 		expect(harness.session.messages).toEqual([]);
 		expect(harness.getPendingResponseCount()).toBe(1);
+	});
+
+	it("extension sendUserMessage can opt into extension command dispatch", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		let resolveCommandRun: (args: string) => void = () => {};
+		const commandRun = new Promise<string>((resolve) => {
+			resolveCommandRun = resolve;
+		});
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+					pi.registerCommand("testcmd", {
+						description: "Test command",
+						handler: async (args) => {
+							resolveCommandRun(args);
+						},
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		expect(extensionApi).toBeDefined();
+
+		extensionApi?.sendUserMessage("/testcmd hello world", { expandPromptTemplates: true });
+
+		await expect(commandRun).resolves.toBe("hello world");
+		expect(harness.session.messages).toEqual([]);
+		expect(harness.getPendingResponseCount()).toBe(0);
 	});
 
 	it("sendUserMessage while idle triggers a turn", async () => {

@@ -1,5 +1,129 @@
 # changes.md — ai
 
+> Audit backfill (2026-08-17): the entry below was recorded during the repository-wide changes.md audit
+> of divergences from the upstream pin (v0.84.2, `914cf1472e`) so its audited production paths carry a
+> canonical four-section record; it is dated by its underlying work.
+
+## Default GPT-5.6 Sol catalogs to 400k context (2026-08-18)
+
+### What changed
+
+- `scripts/generate-models.ts`: direct `openai` and ChatGPT OAuth `openai-codex` entries for `gpt-5.6-sol`
+  now default to a 400,000-token context window. Their generated `-fast` variants inherit the same limit.
+- `test/openai-fast-models.test.ts`: covers both providers and both base/fast Sol IDs.
+- `src/providers/data/*.json`: regenerated committed catalog data and manifest carry the new default.
+- The same reviewed regeneration refreshed Vercel AI Gateway's `alibaba/qwen3.8-27b` pricing from zero-value
+  placeholder metadata to the current upstream rates: input 0.1, output 0.4, and cache read 0.01.
+
+### Why
+
+- The GPT-5.6 Sol service can accept up to a 1M context, but the default Senpi catalog should reserve a
+  400k operating window instead of inheriting the generic 272k OpenAI short-tier cap or advertising the
+  full service maximum.
+- Luna and Terra remain at their existing defaults; this is intentionally scoped to Sol and Sol Fast.
+- The Vercel Qwen price change is retained because generated provider data is an atomic snapshot of the
+  upstream sources at generation time; keeping a stale per-model value would make the checked-in artifact
+  disagree with a fresh strict regeneration.
+
+### Why this cannot be expressed as an extension
+
+- Context-window metadata is generated before the coding-agent extension runtime loads and is consumed by
+  compaction, admission, and model-selection code throughout the runtime.
+
+### Modified upstream files
+
+- `packages/ai/scripts/generate-models.ts`
+- `packages/ai/test/openai-fast-models.test.ts`
+- `packages/ai/src/providers/data/*.json`
+
+### Expected merge conflict zones
+
+- MEDIUM: the temporary OpenAI metadata override block and explicit OpenAI Codex model list.
+- MEDIUM: generated provider JSON whenever upstream model metadata changes.
+
+## Current xAI Grok reasoning specifications (2026-08-18)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` now treats xAI reasoning controls as model-specific instead of inheriting the generic
+  Grok compatibility veto. `grok-4.6` exposes only the documented `low`, `medium`, `high`, and `xhigh` levels and
+  enables OpenAI-compatible `reasoning_effort` serialization. The fixed-reasoning Grok 4.20 variant exposes only
+  `high`, while the non-reasoning variant exposes only `off`; neither Grok 4.20 model sends a reasoning-effort field.
+- The generated xAI catalog again includes `grok-4.20-0309-reasoning` and
+  `grok-4.20-0309-non-reasoning`. They were removed with the older 0.80.9 catalog cleanup, but current official xAI
+  model pages and the live models.dev catalog list both canonical IDs as active tool-capable models.
+- Focused catalog and payload tests pin the exact selectable levels and Chat Completions request bodies so future
+  model-data hydration cannot silently disable Grok 4.6 effort control or remove the non-reasoning option.
+
+### Why
+
+- Senpi's generated metadata disabled `reasoning_effort` for every xAI Chat Completions model and kept the current
+  Grok 4.20 variants out of the built-in catalog, contradicting xAI's published model specifications and the live
+  models.dev inventory.
+
+### Why an extension could not handle it
+
+- The model selector reads built-in catalog metadata before extensions can alter provider request compatibility, and
+  `reasoning_effort` is serialized inside the provider-owned OpenAI Completions adapter. An extension cannot safely
+  repair both the catalog and the outbound xAI wire contract.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` xAI model filtering and per-model metadata; upstream model-catalog refreshes
+  may edit the same constants and generation loop.
+- LOW: generated `src/providers/data/xai.json`, its manifest hash, and focused xAI tests.
+
+## Catalog generation and data validation audit backfill (2026-08-17)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: carries the fork's accumulated generator divergences from the
+  pinned upstream v0.84.2 script: OpenAI `-fast` priority-tier emission (`OPENAI_PRIORITY_TIER_MODEL_IDS`
+  cloning eligible `openai` models with `upstreamModelId` plus `serviceTier: "priority"`), Kimi Coding
+  fallback metadata that live models.dev data may override but not silently remove, Anthropic Opus 5
+  adaptive-thinking and temperature-unsupported markers, the literal `anthropic/`/`qwen/`/`google/`
+  cache-control prefix allowlist shared with runtime detection, GLM 5.3 catalog cloning (`isGlm5x` across
+  zai, OpenRouter, Fireworks, opencode-go), DashScope `qwen*` families pinned to
+  `thinkingFormat: "qwen"` (top-level `enable_thinking`), and the PR #892 provider-metadata refresh
+  (`supportsAdditionalTools` on OpenAI/Codex entries, native DeepSeek `maxTokensField`, Cloudflare
+  Responses `supportsStrictMode`, DeepSeek V4 Flash `low` reasoning effort).
+- `packages/ai/scripts/generate-models.ts`: `glm-5.3` was added to
+  `QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS` with the GLM 5.3 expansion and removed again the same day
+  (2026-08-16): models.dev does not yet publish GLM 5.3 for that provider, so the strict allowlist
+  validation (exact model-ID match plus the strict-generation error assertion) failed. The other 24
+  `glm-5.3` entries across 17 provider data files remain because only this provider carries the strict
+  models.dev allowlist.
+- `packages/ai/scripts/generate-image-models.ts`: beside the live OpenRouter fetch, the generator emits
+  static hand-authored `IMAGE_MODELS.openai` entries (`gpt-image-2`, `gpt-image-1.5`; text-only input for
+  the v1 generations endpoint; models.dev-quoted costs, zero-filled where unpublished). Serialization was
+  generalized over `ImagesApi` (`serializeImageModel()`) so the OpenRouter-only emitter became a
+  multi-provider emitter.
+- `packages/ai/scripts/model-data.ts`: the shared schema/load validator accepts `"video"` as a valid
+  model input modality beside `"text"` and `"image"`.
+
+### Why
+
+- The generated catalog is committed, reviewed source: regeneration must reproduce the fork's capability
+  metadata (priority tiers, thinking maps, fallback entries) or typed model IDs and regressions drift and
+  release generation fails static validation. The strict qwen-token-plan-individual allowlist exists
+  precisely to catch unpublished IDs, which is why the GLM 5.3 addition had to be reverted rather than
+  kept. OpenAI publishes no image-model catalog endpoint, so its image entries must be authored inside
+  the generator, and the data validator must accept the `video` modality the Kimi K3 catalog entries
+  declare or `check:model-data` rejects committed data.
+
+### Why an extension could not handle it
+
+- Model inventory and image catalogs are generated build-time data inside `packages/ai`; the coding-agent
+  extension runtime loads after generation and cannot add typed catalog entries, alter generation
+  allowlists, or relax the committed-data validator.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` provider-metadata blocks (GLM, Kimi, Opus 5, qwen,
+  OpenAI priority tiers) whenever upstream regenerates or extends the same generator sites.
+- LOW: `packages/ai/scripts/generate-image-models.ts` static OpenAI table and shared serializer.
+- LOW: `packages/ai/scripts/model-data.ts` modality validation list.
+
 ## Follow Groq Qwen catalog replacement during generation (2026-08-04)
 
 ### What changed

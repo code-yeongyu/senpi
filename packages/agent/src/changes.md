@@ -1,5 +1,304 @@
 # Changes
 
+## Late Cursor bridge lifecycle events after run teardown (2026-08-18)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `Agent.emitExternalEvent()` now accepts the
+  originating run signal and
+  discards bridge-generated lifecycle events when that signal no longer owns
+  the active run.
+
+### Why
+
+- Cursor exec handlers can outlive an aborted provider stream. Their final
+  `tool_execution_end` event previously reached `processEvents()` after
+  `finishRun()` cleared `activeRun`, producing an unhandled
+  `Agent listener invoked outside active run` rejection.
+- The ownership guard remains specific to externally injected events. Internal
+  loop events still require an active run, and listener failures during the
+  owning active run still propagate.
+
+### Why the extension system could not handle this
+
+- The race occurs in the engine contract between the provider-owned Cursor exec
+  handler and the agent run lifecycle, before an extension can intercept or
+  recover the rejected event promise.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/agent.ts`: the external event entry point and active-run
+  ownership checks.
+
+> Audit backfill (2026-08-17): the canonical four-section records added today were recorded during
+> the repository-wide changes.md audit of divergences from the upstream pin (v0.84.2, `914cf1472e`)
+> so every audited production path assigned to this tracker carries a canonical record; they are
+> dated by their underlying work. Legacy entries keep their original wording and detail.
+
+## Agent source audit backfill (2026-08-17)
+
+### What changed
+
+- Recorded the fork divergences this tracker owns against the pinned upstream
+  (badlogic/pi-mono v0.84.2, `914cf1472e715297caa30db4b9535d534a9eb718`) so the
+  repository-wide changes.md audit reports them covered. The pre-backfill audit
+  report assigned zero already-covered and thirteen uncovered production paths
+  to this tracker; this entry is their canonical four-section record.
+- Audited production paths covered by this entry:
+  - `packages/agent/src/agent-loop.ts`
+  - `packages/agent/src/agent.ts`
+  - `packages/agent/src/types.ts`
+  - `packages/agent/src/proxy.ts`
+  - `packages/agent/src/stream-fn.ts`
+  - `packages/agent/src/harness/types.ts`
+  - `packages/agent/src/harness/messages.ts`
+  - `packages/agent/src/harness/reducer.ts`
+  - `packages/agent/src/harness/env/nodejs.ts`
+  - `packages/agent/src/harness/session/state.ts`
+  - `packages/agent/src/harness/compaction/branch-summarization.ts`
+  - `packages/agent/src/harness/compaction/compaction.ts`
+  - `packages/agent/src/harness/compaction/utils.ts`
+- `packages/agent/src/empty-assistant-recovery.ts` and
+  `packages/agent/src/assistant-terminal-state.ts` are fork-only files absent
+  from the pin tree, so the audit exempts them; their behavior stays recorded
+  in the 2026-08-09 and 2026-07-27 entries.
+- Legacy entries predate the canonical four-heading format (their "What changed
+  and why" style does not canonicalize), so the per-change detail for the paths
+  above remains in those dated entries; the audit-backfill sections added today
+  carry the canonical records for the harness reducer, session store,
+  compaction, and stream-function surfaces.
+
+### Why
+
+- Root policy requires every fork-specific source change to update the nearest
+  `changes.md` in the same verified increment, and `scripts/audit-changes-md.mjs`
+  now enforces the canonical-section contract mechanically. Without this record
+  the gate reports every agent-core divergence as untracked.
+
+### Why an extension could not handle it
+
+- Tracker hygiene for fork-owned agent-core divergence. The audited surfaces
+  themselves (loop scheduling, harness session and compaction internals, proxy
+  wire types, stream-function plumbing) execute below the coding-agent
+  extension runtime, as the per-change entries already document.
+
+### Expected merge conflict zones
+
+- NONE for this record itself (tracker prose only). The underlying per-file
+  zones are unchanged and stay listed in the dated entries: MEDIUM for
+  `packages/agent/src/agent-loop.ts` tool-call collection and stream plumbing
+  and `packages/agent/src/agent.ts` continuation/lifecycle queues; LOW for the
+  harness type, reducer, session-state, Windows kill, proxy wire, and
+  compaction content sites.
+
+## 2026-08-16 - Cursor exec-channel contract in the agent loop
+
+### What changed and why
+
+- `agent-loop.ts`: the tool-call collection sites (loop collection and the
+  `executeToolCalls` re-filter) skip `toolCall` blocks stamped
+  `kCursorExecResolved` — Cursor's server-driven protocol already executed
+  those tools mid-stream through the exec bridge, and re-running them would
+  duplicate side-effecting bash/write calls.
+- `streamAssistantResponse` returns `{ message, providerToolResults }`: when
+  `config.cursorExecHandlers` is set, the loop injects `execHandlers` plus a
+  buffering `onToolResult` into the stream options; buffered results are
+  emitted as ordinary `message_start`/`message_end` events and appended to the
+  context right after the assistant message — including on terminal
+  error/abort paths, so resolved calls never end up unpaired.
+- The idle watchdog (`readNextAssistantEvent`) re-arms instead of failing when
+  the provider stream reports pending local work
+  (`AssistantMessageEventStream.hasPendingLocalWork`), because a
+  server-requested tool run legitimately emits no events while it executes.
+- `agent.ts`: `AgentOptions.cursorExecHandlers` flows onto the loop config;
+  `emitExternalEvent()` (new) lets the exec bridge inject
+  `tool_execution_start`/`tool_execution_end` lifecycle events for tools that
+  run inside the provider stream, outside the loop's executor.
+- `types.ts`: `AgentLoopConfig.cursorExecHandlers`.
+
+### Why the extension system could not handle this
+
+- Tool-call execution skipping and transcript ordering are loop-core
+  decisions made between the provider stream ending and `executeToolCalls`
+  starting; no extension hook exists in that window, and a `tool_call` block
+  hook can only produce error-shaped results.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `agent-loop.ts` at the tool-call collection block and
+  `streamAssistantResponse`'s return shape (upstream returns the bare
+  message).
+- LOW: `agent.ts` options/config plumbing (additive), `types.ts` additive
+  field.
+
+## Durable harness reducer and SessionState projection hardening (2026-08-13)
+
+### What changed
+
+- `packages/agent/src/harness/reducer.ts`: the durable-log projection guards in
+  `validateToolStart` and `deriveToolBatch` replaced the negated disjunction
+  (`!assistantEntry || assistantEntry.type !== "message" || ...`) with
+  optional-chain narrowing (`assistantEntry?.type !== "message" || ...`), so
+  tool-start validation and tool-batch derivation keep narrowing the projected
+  assistant entry under the repository's warning-as-error type gate.
+- `packages/agent/src/harness/session/state.ts`: the fork-target guard applies
+  the same optional-chain narrowing (`entry?.type !== "message"`) before
+  rejecting a non-message fork target with `invalid_fork_target`.
+- `packages/agent/src/harness/types.ts`: `getOrUndefined` is now a generic
+  null-to-undefined normalizer — the fork removed the dead Result-unwrapping
+  original on 2026-06-10 and the v0.84.x sync reintroduced the name with the
+  narrowed semantics — and the harness error classes (`FileError`,
+  `ExecutionError`, `CompactionError`) declare a typed `readonly cause`
+  assigned after `super()` so `cause` stays typed under ES2021 library
+  declarations.
+- Consolidates the 2026-08-13 "Upstream harness type cleanup" and 2026-05-11
+  "Harness ES2021 diagnostic compatibility" records under the canonical
+  four-section format; runtime behavior is unchanged.
+
+### Why
+
+- The merged durable harness code had to pass the fork's stricter diagnostics
+  and library level without weakening the durable projection invariants: a tool
+  start must reference a projected assistant entry, a fork target must be a
+  message entry, and harness errors must carry a typed cause for callers that
+  inspect failure chains.
+
+### Why an extension could not handle it
+
+- These guards run inside the durable session reducer and the `SessionState`
+  projection, and the error contracts are exported harness primitives consumed
+  before any coding-agent extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/harness/reducer.ts` tool-start validation and
+  tool-batch derivation guards; `packages/agent/src/harness/session/state.ts`
+  fork-target validation; `packages/agent/src/harness/types.ts`
+  `getOrUndefined` and the error-class cause declarations.
+
+## Atomic JSONL publication and session-name clearing on the durable store (2026-08-13)
+
+### What changed
+
+- Adopted, with the upstream v0.84.1/v0.84.2 syncs, the durable session store
+  whose JSONL publication is crash-safe:
+  `packages/agent/src/harness/session/jsonl/storage.ts` stages a complete
+  sibling `.tmp` file and atomically renames it over the destination, so a
+  crash while populating a fork or repair leaves the published file untouched
+  and at most an ignored temporary behind; a torn tail (an unacknowledged
+  partial append after a crash) is repaired by atomically publishing the valid
+  prefix.
+- Session names became clearable through the same durable mutation log:
+  `setName(name: string | undefined)` enqueues a `name` fact mutation and
+  passing `undefined` clears the name
+  (`packages/agent/src/harness/session/jsonl/storage.ts`,
+  `packages/agent/src/harness/session/jsonl/codec.ts`,
+  `packages/agent/src/harness/session/memory.ts`,
+  `packages/agent/src/harness/session/session.ts`).
+- The retired `jsonl-repo`/`memory-repo` layer referenced by the 2026-05-11
+  UUID entry is gone; that conflict zone now maps to the store files above
+  behind the session facade. The only fork divergence left in this tree is the
+  `SessionState` projection guard recorded in the reducer entry.
+
+### Why
+
+- Crash-safe publication and torn-tail repair keep a forked or repaired session
+  recoverable instead of half-written, and clearable names let hosts release
+  stale labels without deleting durable history. Recording the migration keeps
+  the tracker's legacy conflict zones honest after the store refactor.
+
+### Why an extension could not handle it
+
+- JSONL staging, atomic rename, torn-tail truncation, and name-fact mutations
+  are storage-layer durability mechanics inside the harness session store,
+  below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/harness/session/jsonl/storage.ts` staged publication
+  and torn-tail repair; `packages/agent/src/harness/session/state.ts`
+  projection guards (fork narrowing only).
+
+## Durable compaction API migration (2026-08-13)
+
+### What changed
+
+- Adopted the promoted durable harness compaction API from the upstream
+  v0.84.x syncs: compaction runs against the durable session model with
+  Result-typed helpers in `packages/agent/src/harness/types.ts`, compaction
+  entries persist as session entries, and the split-turn summary-request
+  serialization accepted earlier (2026-07-02 entry) kept its scheduling slot
+  through the promotion (`packages/agent/src/harness/compaction/compaction.ts`).
+- The fork's surviving compaction-surface divergences on top of the promoted
+  API: `CompactionSummaryMessage.details` in
+  `packages/agent/src/harness/messages.ts` (provider-native compaction route
+  details for TUI rendering and replay, 2026-05-15 entry) and the summary-safe
+  request-content wiring plus cut-point retention recorded in the adjacent
+  2026-08-13 summary-safe entry.
+
+### Why
+
+- The promotion moved compaction onto the same durability and error contracts
+  as the rest of the harness; recording it keeps the tracker's compaction
+  history continuous across the API change instead of implying the fork still
+  patches the pre-promotion call sites.
+
+### Why an extension could not handle it
+
+- Compaction entry persistence, Result error contracts, and summary-request
+  scheduling run inside the harness compaction helpers before coding-agent
+  extensions observe a compacted session.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/harness/messages.ts` around
+  `CompactionSummaryMessage`; `packages/agent/src/harness/types.ts` compaction
+  error contracts; `packages/agent/src/harness/compaction/compaction.ts`
+  summary-request scheduling and content extraction.
+
+## Summary-safe request content for branch summarization and compaction (2026-08-13)
+
+### What changed
+
+- `packages/agent/src/harness/compaction/utils.ts` exports
+  `contentTextForSummary()`, which filters provider-native replay blocks from a
+  copy before handing content to pi-ai's portable `contentText()`; the
+  provider-native blocks stay on the persisted assistant message for
+  same-provider replay, and the persisted message is never cast or mutated.
+- Wired into every summarization request path:
+  `packages/agent/src/harness/compaction/branch-summarization.ts`
+  (`generateBranchSummary`), `packages/agent/src/harness/compaction/compaction.ts`
+  (`generateSummaryWithUsage`, `generateTurnPrefixSummary`), and
+  `serializeConversation()`'s user/assistant/tool-result extraction in
+  `packages/agent/src/harness/compaction/utils.ts`.
+- `findCutPoint()` in `packages/agent/src/harness/compaction/compaction.ts`
+  keeps the last valid cut point when the recent-token budget overshoots the
+  newest eligible cut point instead of dropping the compaction (PR #40,
+  2026-06-15).
+- Consolidates the 2026-08-13 "Summary-safe branch compaction text" record
+  under the canonical four-section format.
+
+### Why
+
+- Provider-native replay content must not leak into durable summaries, and a
+  token-budget overshoot must still compact rather than leave the session over
+  context; both decide request content before any extension sees the payload.
+
+### Why an extension could not handle it
+
+- The summary request content is assembled inside harness compaction helpers
+  before coding-agent extensions can inspect or rewrite the session entry
+  payload.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/harness/compaction/utils.ts` around
+  `contentTextForSummary()` and `serializeConversation()`;
+  `packages/agent/src/harness/compaction/branch-summarization.ts` in
+  `generateBranchSummary()` content extraction;
+  `packages/agent/src/harness/compaction/compaction.ts` content extraction and
+  the `findCutPoint()` overshoot branch.
+
 ## 2026-08-13 - Summary-safe branch compaction text
 
 ### What changed and why
@@ -127,6 +426,41 @@
 
 - MEDIUM: `empty-assistant-recovery.ts` visibility checks and stream wrapper gate.
 - LOW: `agent-loop.ts` at the recovery wrapper call site.
+
+## Default StreamFn compatibility for empty-assistant recovery (2026-07-30)
+
+### What changed
+
+- `packages/agent/src/stream-fn.ts` re-exports `withEmptyAssistantRecovery`
+  from `packages/agent/src/empty-assistant-recovery.ts`, keeping the injectable
+  stream-function seam (`setDefaultStreamFn`/`getDefaultStreamFn`) the single
+  place a host wires streaming.
+- `packages/agent/src/agent-loop.ts` wraps the resolved stream function with
+  `withEmptyAssistantRecovery(requestConfig.model, streamFunction)` before each
+  provider request, so bounded empty-assistant recovery applies to every
+  StreamFn in effect — explicitly passed or installed as the host default —
+  without hosts importing the wrapper from a deep path.
+- Landed with the Kimi empty-response retry; the 2026-07-30 and 2026-08-09
+  recovery entries remain the accurate behavioral history and are preserved
+  unchanged.
+
+### Why
+
+- Recovery must compose with host-installed default stream functions (the
+  browser-safe core ships no provider catalog of its own), and the re-export
+  keeps the loop importing its stream plumbing from one module.
+
+### Why an extension could not handle it
+
+- The wrapper sits between the loop and the provider stream, buffering and
+  retrying empty assistant responses before message-update events reach
+  subscribers or a turn is committed; extensions cannot retract leaked
+  attempt-one events or replace the committed turn.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/stream-fn.ts` re-export line;
+  `packages/agent/src/agent-loop.ts` at the recovery wrapper call site.
 
 ## 2026-07-30 - Bound empty Kimi assistant responses
 

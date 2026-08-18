@@ -16,6 +16,7 @@ import {
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
 import type {
 	DefaultProjectTrust,
+	FullscreenExitOutput,
 	MermaidRenderingMode,
 	TuiMode,
 	WarningSettings,
@@ -89,6 +90,7 @@ export interface SettingsConfig {
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
 	tuiMode: TuiMode;
+	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
 	warnings: WarningSettings;
 }
@@ -125,6 +127,7 @@ export interface SettingsCallbacks {
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
 	onTuiModeChange: (mode: TuiMode) => void;
+	onFullscreenExitOutputChange: (output: FullscreenExitOutput) => void;
 	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
 	onCancel: () => void;
@@ -655,6 +658,13 @@ export class SettingsSelectorComponent extends Container {
 				values: ["regular", "fullscreen"],
 			},
 			{
+				id: "fullscreen-exit-output",
+				label: "Fullscreen exit output",
+				description: "Print the transcript or only a session resume hint when exiting fullscreen mode",
+				currentValue: config.fullscreenExitOutput,
+				values: ["transcript", "resume-hint"],
+			},
+			{
 				id: "fullscreen-scrollbar",
 				label: "Fullscreen scrollbar",
 				description: "Scrollbar behavior in fullscreen mode; has no effect in regular mode",
@@ -881,6 +891,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "tui-mode":
 						callbacks.onTuiModeChange(newValue as TuiMode);
+						break;
+					case "fullscreen-exit-output":
+						callbacks.onFullscreenExitOutputChange(newValue as FullscreenExitOutput);
 						break;
 					case "fullscreen-scrollbar":
 						callbacks.onFullscreenScrollbarChange(newValue as ScrollViewScrollbar);

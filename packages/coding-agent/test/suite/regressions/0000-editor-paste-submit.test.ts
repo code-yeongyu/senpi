@@ -86,6 +86,35 @@ class PairedEditor implements EditorComponent {
 	invalidate(): void {}
 }
 
+class UnclearedExpandedEditor implements EditorComponent {
+	focused = false;
+	onSubmit?: (text: string) => void;
+	onChange?: (text: string) => void;
+	private text = "";
+
+	getText(): string {
+		return this.text;
+	}
+
+	setText(text: string): void {
+		this.text = text;
+	}
+
+	getExpandedText(): string {
+		return `expanded:${this.text}`;
+	}
+
+	handleInput(data: string): void {
+		if (data === "\r") this.onSubmit?.(this.text);
+	}
+
+	render(): string[] {
+		return [this.text];
+	}
+
+	invalidate(): void {}
+}
+
 const PASTE_BODY = Array.from({ length: 18 }, (_, index) => `SUBMIT-BODY-${index + 1}`).join("\n");
 
 describe("custom editor paste submission", () => {
@@ -104,6 +133,34 @@ describe("custom editor paste submission", () => {
 		fakeThis.editor.handleInput("\r");
 
 		expect(submitted).toBe(PASTE_BODY);
+	});
+
+	test("forwards a real custom Editor value after submit clears live state", () => {
+		const fakeThis = makeFakeThis();
+		let submitted = "";
+		fakeThis.defaultEditor.onSubmit = (text) => {
+			submitted = text;
+		};
+
+		setCustomEditor(fakeThis, (ui) => new Editor(ui, getEditorTheme()));
+		fakeThis.editor.setText("the typed prompt");
+		fakeThis.editor.handleInput("\r");
+
+		expect(submitted).toBe("the typed prompt");
+	});
+
+	test("preserves non-empty expanded text from an uncleared custom editor", () => {
+		const fakeThis = makeFakeThis();
+		let submitted = "";
+		fakeThis.defaultEditor.onSubmit = (text) => {
+			submitted = text;
+		};
+
+		setCustomEditor(fakeThis, () => new UnclearedExpandedEditor());
+		fakeThis.editor.setText("raw prompt");
+		fakeThis.editor.handleInput("\r");
+
+		expect(submitted).toBe("expanded:raw prompt");
 	});
 
 	test("same-editor unset never computes expanded text", () => {

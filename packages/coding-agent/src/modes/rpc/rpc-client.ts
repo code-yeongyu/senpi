@@ -10,6 +10,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
@@ -284,9 +285,16 @@ export class RpcClient {
 
 	/**
 	 * Set thinking level.
+	 *
+	 * `scope: "turn"` changes only this session's level without rewriting the model's remembered
+	 * level; it throws when the active model does not support the requested level, and the
+	 * session keeps the level it already had.
 	 */
-	async setThinkingLevel(level: ThinkingLevel): Promise<void> {
-		await this.send({ type: "set_thinking_level", level });
+	async setThinkingLevel(level: ThinkingLevel, options?: { scope?: "turn" }): Promise<void> {
+		const response = await this.send({ type: "set_thinking_level", level, scope: options?.scope });
+		if (!response.success) {
+			throw new Error((response as Extract<RpcResponse, { success: false }>).error);
+		}
 	}
 
 	/**
@@ -303,6 +311,26 @@ export class RpcClient {
 	async getAvailableThinkingLevels(): Promise<ThinkingLevel[]> {
 		const response = await this.send({ type: "get_available_thinking_levels" });
 		return this.getData<{ levels: ThinkingLevel[] }>(response).levels;
+	}
+
+	/**
+	 * Turn OpenAI Codex fast mode (the `priority` service tier) on or off for the active model.
+	 *
+	 * The choice is remembered per model, so a later session on the same model starts the same
+	 * way. Throws when the request is refused: a non-Codex model, or an active `:priority` model
+	 * pin that fast mode must not undo.
+	 */
+	async setFastMode(
+		enabled: boolean,
+	): Promise<{ enabled: boolean; serviceTier: ServiceTier; provider: string; modelId: string }> {
+		const response = await this.send({ type: "set_fast_mode", enabled });
+		return this.getData(response);
+	}
+
+	/** Current fast-mode state and the service tier requests would carry. */
+	async getFastMode(): Promise<{ enabled: boolean; serviceTier: ServiceTier | null }> {
+		const response = await this.send({ type: "get_fast_mode" });
+		return this.getData(response);
 	}
 
 	/**

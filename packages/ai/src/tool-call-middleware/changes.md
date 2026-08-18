@@ -2,6 +2,21 @@
 
 # Tool Call Middleware Changes
 
+## 2026-08-18 - Cursor exec marker preservation
+
+### What changed and why
+
+- Recovery stream snapshots now retain enumerable symbol-keyed metadata on native
+  content blocks. This preserves Cursor's `kCursorExecResolved` marker through
+  Claude/Kimi model recovery so the agent loop does not execute an already-resolved
+  tool call a second time (fixes #938).
+- String-keyed snapshot cloning and recovered text-tool behavior are unchanged.
+
+### Why the extension system could not handle this
+
+- The marker must survive the provider-neutral model recovery wrapper before the
+  agent loop or extensions consume the assistant stream.
+
 ## 2026-08-09 - Claude missing-angle ANTML invoke recovery
 
 ### What changed and why

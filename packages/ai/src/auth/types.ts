@@ -171,6 +171,9 @@ export interface ApiKeyAuth {
 	/** Display name, e.g. "Anthropic API key". */
 	name: string;
 
+	/** Ambient compatibility adapter that must not outrank a stored OAuth credential. */
+	ambientOnly?: boolean;
+
 	/** Interactive setup (prompt for key/provider env). Absent = ambient-only. */
 	login?(interaction: ProviderAuthInteraction): Promise<ApiKeyCredential>;
 

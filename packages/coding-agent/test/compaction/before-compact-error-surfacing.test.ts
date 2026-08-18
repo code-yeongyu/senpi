@@ -210,7 +210,7 @@ describe("session_before_compact error surfacing", () => {
 		expect(result?.reason ?? "").toContain("credentials unavailable");
 	});
 
-	it("cancels without a reason when the user aborted the compaction signal", async () => {
+	it("stands down without a cancel when the compaction signal is already aborted", async () => {
 		// Given
 		const harness = createHarness();
 		harness.registration.setResponses([fauxAssistantMessage("never used")]);
@@ -220,9 +220,10 @@ describe("session_before_compact error surfacing", () => {
 		// When
 		const result = await harness.beforeCompact(createEvent({ signal: controller.signal }), harness.ctx);
 
-		// Then: no extension reason means agent-session's aborted branch renders
-		// the plain "Compaction cancelled" instead of a misleading rejection error.
-		expect(result?.cancel).toBe(true);
-		expect(result && "reason" in result ? result.reason : undefined).toBeUndefined();
+		// Then: no cancel result means core's own aborted classification renders
+		// the plain "Compaction cancelled", and no session_compact accepted:false
+		// is emitted, so an abort never counts as a circuit-breaker failure
+		// (issue #886).
+		expect(result).toBeUndefined();
 	});
 });

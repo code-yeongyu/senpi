@@ -55,7 +55,7 @@ import {
 	resolveConfiguredModelHeaders,
 	validateExtensionProvider,
 } from "./provider-composer.ts";
-import { withRemoteCatalog } from "./remote-catalog-provider.ts";
+import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
 
 // The product's identity must ride outgoing requests. This lives here because the AI package
@@ -203,7 +203,7 @@ export class ModelRuntime implements Models {
 		const providers = builtinProviderCatalog
 			.builtinProviders()
 			.map((provider) =>
-				provider.refreshModels
+				provider.refreshModels || !remoteCatalogServesProvider(provider.id, options.catalogBaseUrl)
 					? provider
 					: withRemoteCatalog(provider, options.catalogBaseUrl, builtinModelDataGeneratedAt),
 			);
@@ -250,7 +250,11 @@ export class ModelRuntime implements Models {
 				: new InMemoryCodingAgentModelsStore());
 		const providers = builtinProviderCatalog
 			.builtinProviders()
-			.map((provider) => (provider.refreshModels ? provider : withRemoteCatalog(provider, options.catalogBaseUrl)));
+			.map((provider) =>
+				provider.refreshModels || !remoteCatalogServesProvider(provider.id, options.catalogBaseUrl)
+					? provider
+					: withRemoteCatalog(provider, options.catalogBaseUrl),
+			);
 		const runtime = new ModelRuntime(
 			credentials,
 			config,
@@ -821,6 +825,13 @@ export class ModelRuntime implements Models {
 	 * usable without a manual refresh. Offline policy restores from the store only and never
 	 * touches the network.
 	 */
+	private shouldSkipRegistrationRefresh(providerId: string): boolean {
+		return (
+			this.hasFreshAvailabilitySnapshot() &&
+			(this.nativeExtensionProviders.has(providerId) || this.extensionProviders.has(providerId))
+		);
+	}
+
 	private refreshAfterRegistration(): Promise<ModelsRefreshResult> {
 		if (!this.modelNetworkEnabled) return this.refresh({ allowNetwork: false });
 		const controller = new AbortController();
@@ -828,8 +839,9 @@ export class ModelRuntime implements Models {
 		return this.refresh({ allowNetwork: true, signal: controller.signal }).finally(() => clearTimeout(timeout));
 	}
 
-	registerNativeProvider(provider: Provider): Promise<ModelsRefreshResult> {
+	registerNativeProvider(provider: Provider, options?: { refresh?: boolean }): Promise<ModelsRefreshResult> {
 		if (!provider.id.trim()) throw new Error("Provider id must not be empty.");
+		const alreadyFresh = this.shouldSkipRegistrationRefresh(provider.id);
 		this.extensionProviders.delete(provider.id);
 		this.nativeExtensionProviders.set(provider.id, provider);
 		this.recomposeProvider(provider.id);
@@ -837,13 +849,21 @@ export class ModelRuntime implements Models {
 		if (composedOAuth) this.credentials.registerOAuthProvider(provider.id, composedOAuth);
 		else this.credentials.unregisterOAuthProvider(provider.id);
 		this.updateModelSnapshot();
+		if (alreadyFresh || options?.refresh === false) {
+			return Promise.resolve({ aborted: false, errors: new Map() });
+		}
 		return this.refreshAfterRegistration();
 	}
 
-	registerProvider(providerId: string, config: ProviderConfigInput): Promise<ModelsRefreshResult> {
+	registerProvider(
+		providerId: string,
+		config: ProviderConfigInput,
+		options?: { refresh?: boolean },
+	): Promise<ModelsRefreshResult> {
 		// Validate the incoming registration on its own, like the legacy registry:
 		// a broken re-registration must throw without touching the stored config.
 		validateExtensionProvider(providerId, this.builtins.get(providerId), this.config.getProvider(providerId), config);
+		const alreadyFresh = this.shouldSkipRegistrationRefresh(providerId);
 		this.nativeExtensionProviders.delete(providerId);
 		// Re-registration merges defined values over the previous registration and
 		// preserves undefined ones, matching the legacy ModelRegistry contract.
@@ -877,6 +897,9 @@ export class ModelRuntime implements Models {
 				configuredProviders,
 				available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
 			};
+		}
+		if (alreadyFresh || options?.refresh === false) {
+			return Promise.resolve({ aborted: false, errors: new Map() });
 		}
 		return this.refreshAfterRegistration();
 	}

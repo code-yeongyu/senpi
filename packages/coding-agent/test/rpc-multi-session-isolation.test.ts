@@ -150,6 +150,10 @@ function hostFixture() {
 				sessionManager: options.sessionManager,
 				model: undefined,
 				thinkingLevel: "off",
+				// Part of the wire state `open_session` projects; a router fixture still has to
+				// answer them because both surfaces share one state builder.
+				effectiveServiceTier: undefined,
+				isFastModeActive: () => false,
 				get isStreaming() {
 					return streaming.get(durableSessionId) ?? false;
 				},

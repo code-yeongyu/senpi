@@ -9,6 +9,24 @@ export type { AnthropicEffort, AnthropicOptions, AnthropicThinkingDisplay } from
 export { sanitizeAnthropicToolPairs } from "./api/anthropic-tool-pairs.ts";
 export type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 export type { BedrockOptions, BedrockThinkingDisplay } from "./api/bedrock-converse-stream.ts";
+export {
+	composeShellCommand as composeCursorShellCommand,
+	omitUndefinedArgs as omitUndefinedCursorArgs,
+	piLimit as cursorPiLimit,
+	piLsPath as cursorPiLsPath,
+	piReadArgs as cursorPiReadArgs,
+	piTimeout as cursorPiTimeout,
+} from "./api/cursor-agent/pi-args.ts";
+export type {
+	CursorAgentOptions,
+	CursorExecHandlerResult,
+	CursorExecHandlers,
+	CursorExecPairing,
+	CursorMcpCall,
+	CursorPiCall,
+	CursorShellStreamCallbacks,
+	CursorToolResultHandler,
+} from "./api/cursor-agent/types.ts";
 export type { GoogleOptions } from "./api/google-generative-ai.ts";
 export type { GoogleThinkingLevel } from "./api/google-shared.ts";
 export type { GoogleVertexOptions } from "./api/google-vertex.ts";
@@ -65,6 +83,12 @@ export {
 export { createXtmlRecoveryStreamParser } from "./tool-call-middleware/protocols/kimi-xtml/recovery-stream.ts";
 export { wrapStreamWithInvokeRecovery } from "./tool-call-middleware/recovery-stream-wrapper.ts";
 export * from "./types.ts";
+export {
+	type CursorExecResolvedCarrier,
+	copyCursorExecResolved,
+	isCursorExecResolved,
+	kCursorExecResolved,
+} from "./utils/block-symbols.ts";
 export * from "./utils/diagnostics.ts";
 export * from "./utils/event-stream.ts";
 export * from "./utils/json-parse.ts";

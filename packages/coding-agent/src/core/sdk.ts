@@ -6,6 +6,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
+import { createSessionCursorExecBridge } from "./cursor-exec-bridge-session.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
@@ -79,9 +80,11 @@ export interface CreateAgentSessionOptions {
 	/**
 	 * Optional allowlist of tool names.
 	 *
-	 * When omitted, pi enables the default built-in tools (read, bash, edit, write)
-	 * and leaves extension/custom tools enabled unless `noTools` changes that default.
-	 * When provided, only the listed tool names are enabled.
+	 * When omitted, pi uses the `defaultTools` setting for the initial built-in
+	 * selection when configured. Otherwise it enables the default built-in tools
+	 * (read, bash, edit, write). Extension/custom tools remain enabled unless
+	 * `noTools` changes that default. When provided, only the listed tool names are
+	 * enabled.
 	 */
 	tools?: string[];
 	/** Optional denylist of tool names to disable. Applies after `tools` when both are provided. */
@@ -244,6 +247,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	let model = options.model;
 	let initialModelProvenance = options.initialModelProvenance;
+	let initialResolvedThinkingLevel: ThinkingLevel | undefined;
 	let modelFallbackMessage: string | undefined;
 
 	// If session has data, try to restore model from it
@@ -269,6 +273,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		});
 		model = result.model;
 		initialModelProvenance = result.provenance;
+		initialResolvedThinkingLevel = result.thinkingLevel;
 		if (!model) {
 			modelFallbackMessage = formatNoModelsAvailableMessage();
 		} else if (modelFallbackMessage) {
@@ -276,16 +281,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		}
 	}
 
-	let thinkingLevel = options.thinkingLevel;
+	let thinkingLevel = options.thinkingLevel ?? initialResolvedThinkingLevel;
 
-	// If session has data, restore thinking level from it
-	if (thinkingLevel === undefined && hasExistingSession) {
-		thinkingLevel = hasThinkingEntry
-			? (existingSession.thinkingLevel as ThinkingLevel)
-			: (settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL);
+	// An exact-session thinking entry wins over settings. Otherwise resolve the selected model's
+	// remembered level before falling back to the global seed for never-seen models.
+	if (thinkingLevel === undefined && hasExistingSession && hasThinkingEntry) {
+		thinkingLevel = existingSession.thinkingLevel as ThinkingLevel;
 	}
-
-	// Fall back to settings default
+	if (thinkingLevel === undefined && model) {
+		thinkingLevel = settingsManager.getModelThinkingLevel(model.provider, model.id);
+	}
 	if (thinkingLevel === undefined) {
 		thinkingLevel = settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL;
 	}
@@ -298,11 +303,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	}
 
 	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write"];
+	const configuredDefaultToolNames = settingsManager.getDefaultTools();
+	const sessionDefaultToolNames =
+		options.tools === undefined && options.noTools === undefined ? configuredDefaultToolNames : undefined;
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
 	const excludedToolNames = options.excludeTools;
 	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
-	const initialActiveToolNames: string[] = (
-		options.tools ? [...options.tools] : options.noTools ? [] : defaultActiveToolNames
+	const initialActiveToolNames = (
+		options.tools ?? (options.noTools ? [] : (configuredDefaultToolNames ?? defaultActiveToolNames))
 	).filter((name) => !excludedToolNameSet?.has(name));
 
 	let agent: Agent;
@@ -317,6 +325,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		});
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
+	// The session (and its tool registry) is constructed after the Agent, so
+	// the Cursor exec bridge resolves tools through this late-bound ref.
+	const cursorBridgeSessionRef: { current?: AgentSession } = {};
 
 	agent = new Agent({
 		initialState: {
@@ -386,6 +397,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		timeoutMs: settingsManager.getAgentStreamIdleTimeoutMs(),
 		streamStartTimeoutMs: settingsManager.getAgentStreamStartTimeoutMs(),
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
+		cursorExecHandlers: createSessionCursorExecBridge(cursorBridgeSessionRef, () => agent),
 	});
 
 	// Restore messages if session has existing data
@@ -422,12 +434,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		modelRuntime,
 		modelRegistry,
 		initialActiveToolNames,
+		defaultToolNames: sessionDefaultToolNames,
 		allowedToolNames,
 		excludedToolNames,
 		extensionRunnerRef,
 		sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
 	});
+	cursorBridgeSessionRef.current = session;
 	const extensionsResult = resourceLoader.getExtensions();
 
 	return {

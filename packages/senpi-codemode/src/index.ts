@@ -17,6 +17,11 @@ import type { CodemodeSessionManager, CreateCodemodeSessionManagerOptions } from
 import { SessionManagerProxy } from "./extension/session-manager-proxy.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceState } from "./extension/wake-source-state.ts";
 import { EvalDetachedCellManager, type EvalDetachedCellStatusEntry } from "./tool/detached-cell-manager.ts";
+import {
+	EVAL_EXECUTION_EVENT,
+	type EvalExecutionEventPayload,
+	toEvalExecutionRpcPayload,
+} from "./tool/eval-execution-event.ts";
 import { createEvalTool } from "./tool/eval-tool.ts";
 import { renderEvalCall, renderEvalResult } from "./tool/render.ts";
 
@@ -39,8 +44,10 @@ export interface CodemodeExtensionAPI {
 	getActiveTools(): string[];
 	getAllTools(): readonly EvalSchemaToolInfo[];
 	sendUserMessage(content: string, options?: { deliverAs?: "steer" | "followUp" }): void;
-	/** Optional host event bus; a host without one turns wake-source emission into a harmless no-op. */
+	/** Optional host event bus; a host without one turns extension event emission into a harmless no-op. */
 	events?: { emit(name: string, data: unknown): void };
+	/** Optional host RPC surface for forwarding extension-owned events to connected clients. */
+	rpc?: { emit(name: string, data: unknown): void };
 }
 
 export interface SenpiCodemodeOptions {
@@ -90,6 +97,11 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		modelId: string | undefined,
 		cellManager: EvalDetachedCellManager,
 	): void => {
+		const onCellSettled = (payload: EvalExecutionEventPayload): void => {
+			if (activeCells !== cellManager) return;
+			pi.rpc?.emit(EVAL_EXECUTION_EVENT, toEvalExecutionRpcPayload(payload));
+			pi.events?.emit(EVAL_EXECUTION_EVENT, payload);
+		};
 		pi.registerTool(
 			createEvalTool({
 				enabledLanguages: runtime.enabledLanguages,
@@ -102,6 +114,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 				artifactsDir: runtime.artifactsDir,
 				cellManager,
 				executionTracker: manager,
+				onCellSettled,
 				renderers,
 				spawns: runtime.spawns,
 				spawnDefaultAgent: runtime.settings.taskTools.task,

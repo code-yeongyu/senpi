@@ -10,6 +10,48 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.8.18] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.17] - 2026-08-17
+
+### Breaking Changes
+
+### Added
+
+- Added a mixed `$` autocomplete surface that groups canonical commands before skills, filters both with one query,
+  inserts the correct `/name` or `$name` syntax, and triggers from real editor input
+  ([#909](https://github.com/code-yeongyu/senpi/pull/909)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.16] - 2026-08-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Synced with upstream v0.84.2: fullscreen transcript search, keyboard-protocol negotiation buffering with fragment-timeout flush, OSC 9;4 progress keepalive, Windows VT input, and lone-`ESC`-scoped `PI_TUI_ESC_TIMEOUT`. The fork's dead-terminal error handling and `PI_TUI_KEYBOARD_PROTOCOL` kill-switch are preserved, and fullscreen focus events now reach the alt-screen viewport so upstream's idle-focus repaint suppression takes effect ([#892](https://github.com/code-yeongyu/senpi/pull/892)).
+
+### Fixed
+
 - Expanding several tool results at once (Ctrl+O) no longer renders mismatched or truncated content: when a frame grows above the viewport and a visible row also changes, the renderer now replays the canonical transcript instead of repainting only the visible rows, so every expanded result reaches scrollback under its own header ([#701](https://github.com/code-yeongyu/senpi/issues/701)).
 
 ### Removed

@@ -1,6 +1,6 @@
 # packages/ai
 
-Generated: 2026-08-07. Commit `4f26b8282`.
+Generated: 2026-08-17. Commit `abae968e8`.
 
 `@earendil-works/pi-ai` is the provider-neutral streaming, model, auth, tool-call, and image API used across the monorepo. Its root surface must remain browser-safe.
 
@@ -14,6 +14,10 @@ src/api-registry.ts             API registration/lookup
 src/model-catalog.ts            Catalog assembly over static + dynamic models
 src/models-store.ts             Persisted dynamic-model store
 src/api/                        Wire/API implementations and lazy wrappers
+src/api/cursor-agent/           Cursor Connect-RPC client (Node-only, reached via api/cursor-agent.lazy.ts);
+                                gen/agent_pb.ts is generated protobuf-es output — never hand-edit
+src/cursor-agent-provider.ts    Static cursor-agent module bundle for the Bun binary override
+proto/cursor/agent.proto        Vendored Cursor agent protocol schema (source for gen/)
 src/providers/                  Provider factories, catalogs, shared transforms
 src/providers/data/             COMMITTED generated per-provider model JSON (see below)
 src/auth/                       Credential stores, contexts, auth helpers/types
@@ -57,6 +61,7 @@ test/                           Faux-first and opt-in live tests
 | Task | Path |
 |---|---|
 | Add or change a wire protocol | `src/api/` |
+| Cursor agent transport/exec frames | `src/api/cursor-agent/`, `src/providers/cursor.ts` |
 | Add provider metadata/factory | `src/providers/` |
 | Translate reasoning/tool options | `src/api/simple-options.ts` |
 | Cross-provider message coercion | `src/api/transform-messages.ts` |
@@ -70,7 +75,7 @@ test/                           Faux-first and opt-in live tests
 ## INVARIANTS
 
 - Dynamic imports are limited to lazy API and browser-safe credential/OAuth boundaries; ordinary source uses top-level imports.
-- Generated model files are never hand-edited. Regenerate and commit intentional catalog changes.
+- Generated model files are never hand-edited. Regenerate and commit intentional catalog changes. `src/api/cursor-agent/gen/agent_pb.ts` is likewise generated: run `buf generate` against `proto/cursor/agent.proto`, then `node scripts/transform-cursor-agent-proto.mjs <in> <out>` to rewrite enums for `erasableSyntaxOnly`.
 - Unit tests use `src/providers/faux.ts`; live APIs require explicit key/feature gating and must not be part of default success.
 - Keep `extraBody`, tool definitions, reasoning options, usage, stop reasons, errors, and abort behavior consistent across APIs.
 - Inspect installed SDK types before changing external request/response shapes.

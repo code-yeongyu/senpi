@@ -19,9 +19,8 @@ const availableModel: Model<"anthropic-messages"> = {
 const availabilitySnapshot = { getAvailable: async () => [availableModel] };
 const candidateIds = ["anthropic/claude-fable-5"];
 
-async function unresolvedPatternsFor(storedPatterns: string[]): Promise<string[]> {
-	const { diagnostics } = await resolveModelScopeWithDiagnostics(storedPatterns, availabilitySnapshot);
-	return diagnostics.filter((diagnostic) => diagnostic.code === "no-match").map((diagnostic) => diagnostic.pattern);
+async function patternResolutionsFor(storedPatterns: string[]) {
+	return (await resolveModelScopeWithDiagnostics(storedPatterns, availabilitySnapshot)).patternResolutions;
 }
 
 describe("mergeFavoritePatternsForPersist", () => {
@@ -32,14 +31,18 @@ describe("mergeFavoritePatternsForPersist", () => {
 				"anthropic/claude-fable-5",
 				"apitopia/deepseek-v4-flash",
 			];
-			const unresolvedPatterns = await unresolvedPatternsFor(storedPatterns);
+			const patternResolutions = await patternResolutionsFor(storedPatterns);
 
-			expect(unresolvedPatterns).toContain("atlascloud/moonshotai/kimi-k3");
-			expect(unresolvedPatterns).toContain("apitopia/deepseek-v4-flash");
+			expect(patternResolutions.find((item) => item.pattern === "atlascloud/moonshotai/kimi-k3")?.unresolved).toBe(
+				true,
+			);
+			expect(patternResolutions.find((item) => item.pattern === "apitopia/deepseek-v4-flash")?.unresolved).toBe(
+				true,
+			);
 
 			const next = mergeFavoritePatternsForPersist({
 				storedPatterns,
-				unresolvedPatterns,
+				patternResolutions,
 				selectedIds: ["anthropic/claude-fable-5"],
 				candidateIds,
 			});
@@ -51,11 +54,11 @@ describe("mergeFavoritePatternsForPersist", () => {
 
 		test("does not wipe settings when the visible selection is emptied", async () => {
 			const storedPatterns = ["atlascloud/moonshotai/kimi-k3", "apitopia/deepseek-v4-flash"];
-			const unresolvedPatterns = await unresolvedPatternsFor(storedPatterns);
+			const patternResolutions = await patternResolutionsFor(storedPatterns);
 
 			const next = mergeFavoritePatternsForPersist({
 				storedPatterns,
-				unresolvedPatterns,
+				patternResolutions,
 				selectedIds: [],
 				candidateIds,
 			});
@@ -63,10 +66,11 @@ describe("mergeFavoritePatternsForPersist", () => {
 			expect(next).toEqual(storedPatterns);
 		});
 
-		test("preserves unresolvable patterns when every candidate is favorited", () => {
+		test("preserves unresolvable patterns when every candidate is favorited", async () => {
+			const storedPatterns = ["atlascloud/moonshotai/kimi-k3", "anthropic/claude-fable-5"];
 			const next = mergeFavoritePatternsForPersist({
-				storedPatterns: ["atlascloud/moonshotai/kimi-k3", "anthropic/claude-fable-5"],
-				unresolvedPatterns: ["atlascloud/moonshotai/kimi-k3"],
+				storedPatterns,
+				patternResolutions: await patternResolutionsFor(storedPatterns),
 				selectedIds: null,
 				candidateIds,
 			});
@@ -74,10 +78,11 @@ describe("mergeFavoritePatternsForPersist", () => {
 			expect(next).toEqual(["atlascloud/moonshotai/kimi-k3", "anthropic/claude-fable-5"]);
 		});
 
-		test("keeps a selected pattern that is already stored from being duplicated", () => {
+		test("keeps a selected pattern that is already stored from being duplicated", async () => {
+			const storedPatterns = ["atlascloud/moonshotai/kimi-k3", "anthropic/claude-fable-5"];
 			const next = mergeFavoritePatternsForPersist({
-				storedPatterns: ["atlascloud/moonshotai/kimi-k3", "anthropic/claude-fable-5"],
-				unresolvedPatterns: ["atlascloud/moonshotai/kimi-k3"],
+				storedPatterns,
+				patternResolutions: await patternResolutionsFor(storedPatterns),
 				selectedIds: ["anthropic/claude-fable-5"],
 				candidateIds,
 			});
@@ -87,10 +92,11 @@ describe("mergeFavoritePatternsForPersist", () => {
 	});
 
 	describe("a genuine user clear", () => {
-		test("returns undefined when nothing is stored beyond the cleared selection", () => {
+		test("returns undefined when nothing is stored beyond the cleared selection", async () => {
+			const storedPatterns = ["anthropic/claude-fable-5"];
 			const next = mergeFavoritePatternsForPersist({
-				storedPatterns: ["anthropic/claude-fable-5"],
-				unresolvedPatterns: [],
+				storedPatterns,
+				patternResolutions: await patternResolutionsFor(storedPatterns),
 				selectedIds: [],
 				candidateIds,
 			});

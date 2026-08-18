@@ -16,7 +16,7 @@ import type {
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { normalizeToolCallId } from "../utils/tool-call-id.ts";
-import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 type GoogleApiType = "google-generative-ai" | "google-vertex";
@@ -396,17 +396,22 @@ function stripOptional(schema: unknown): unknown {
 export function convertTools(
 	tools: Tool[],
 	useParameters = false,
+	supportsStrictMode = true,
 ): { functionDeclarations: Record<string, unknown>[] }[] | undefined {
 	if (tools.length === 0) return undefined;
 	return [
 		{
-			functionDeclarations: tools.map((tool) => ({
-				name: tool.name,
-				description: tool.description,
-				...(useParameters
-					? { parameters: stripOptional(sanitizeForOpenApi(tool.parameters)) }
-					: { parametersJsonSchema: stripOptional(tool.parameters) }),
-			})),
+			functionDeclarations: tools.map((tool) => {
+				const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+				const parameters = getJsonSchemaToolParameters(tool, strict);
+				return {
+					name: tool.name,
+					description: tool.description,
+					...(useParameters
+						? { parameters: stripOptional(sanitizeForOpenApi(parameters)) }
+						: { parametersJsonSchema: stripOptional(parameters) }),
+				};
+			}),
 		},
 	];
 }

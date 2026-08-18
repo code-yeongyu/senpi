@@ -705,13 +705,15 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["zai-coding-cn"]).toBe("glm-5.2");
 		expect(defaultModelPerProvider.minimax).toBe("MiniMax-M2.7");
 		expect(defaultModelPerProvider["minimax-cn"]).toBe("MiniMax-M2.7");
-		expect(defaultModelPerProvider.cerebras).toBe("zai-glm-4.7");
+		expect(defaultModelPerProvider.cerebras).toBe("gpt-oss-120b");
 		expect(defaultModelPerProvider["ant-ling"]).toBe("Ring-2.6-1T");
 	});
 
 	test("every bundled provider default resolves in its catalog", () => {
 		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
-			if (provider === "radius" || provider === "ollama") continue;
+			// radius/ollama are dynamic catalogs; cursor is authentication-only until
+			// its chat protocol is ported.
+			if (provider === "radius" || provider === "ollama" || provider === "cursor") continue;
 			const defaultModelId = defaultModelPerProvider[provider];
 			const modelIds = getModels(provider).map((model) => model.id);
 			expect(modelIds.length, `${provider} should expose a bundled catalog`).toBeGreaterThan(0);
@@ -746,6 +748,71 @@ describe("default model selection", () => {
 
 		expect(result.model?.provider).toBe("openrouter");
 		expect(result.model?.id).toBe("openai/ghost-model");
+	});
+
+	test("findInitialModel returns a CLI model suffix as an explicit thinking level", async () => {
+		const registry = {
+			getModels: () => allModels,
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+		const inherited = await findInitialModel({
+			cliProvider: "anthropic",
+			cliModel: "claude-sonnet-4-5",
+			scopedModels: [],
+			isContinuing: false,
+			modelRuntime: registry,
+		});
+		const pinned = await findInitialModel({
+			cliProvider: "anthropic",
+			cliModel: "claude-sonnet-4-5:high",
+			scopedModels: [],
+			isContinuing: false,
+			modelRuntime: registry,
+		});
+
+		expect(inherited.thinkingLevel).toBeUndefined();
+		expect(pinned.thinkingLevel).toBe("high");
+	});
+
+	test("findInitialModel returns thinking only for an explicit scoped pattern level", async () => {
+		const registry = {
+			getAvailableSnapshot: () => allModels,
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+		const inherited = await findInitialModel({
+			scopedModels: [{ model: mockModels[0] }],
+			isContinuing: false,
+			defaultThinkingLevel: "low",
+			modelRuntime: registry,
+		});
+		const pinned = await findInitialModel({
+			scopedModels: [{ model: mockModels[0], thinkingLevel: "high" }],
+			isContinuing: false,
+			defaultThinkingLevel: "low",
+			modelRuntime: registry,
+		});
+
+		expect(inherited.thinkingLevel).toBeUndefined();
+		expect(pinned.thinkingLevel).toBe("high");
+	});
+
+	test("findInitialModel does not promote the global default to an explicit settings level", async () => {
+		const registry = {
+			getModel: (provider: string, modelId: string) =>
+				allModels.find((candidate) => candidate.provider === provider && candidate.id === modelId),
+			hasConfiguredAuth: () => true,
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+		const result = await findInitialModel({
+			scopedModels: [],
+			isContinuing: false,
+			defaultProvider: mockModels[0].provider,
+			defaultModelId: mockModels[0].id,
+			defaultThinkingLevel: "low",
+			modelRuntime: registry,
+		});
+
+		expect(result.thinkingLevel).toBeUndefined();
 	});
 
 	test("findInitialModel selects ai-gateway default when available", async () => {

@@ -1,5 +1,80 @@
 # Local fork changes
 
+## Repository-wide changes.md audit backfill for package manifests and configs (2026-08-17)
+
+### What changed
+
+- Backfill from the repository-wide changes.md audit (pin 914cf147, tag v0.84.2): records the package-root manifest and config deltas. Runtime deltas under `src/` are tracked by their nearest nested changes.md files, and the TypeScript toolchain migration rationale is in the 2026-08-02 entry.
+- `packages/coding-agent/package.json`: fork identity - renamed to `@code-yeongyu/senpi` with `private: true`, CalVer versioning, `piConfig` name `senpi` with config dir `.senpi`, the `senpi` bin, the fork repository URL, and Node `>=24`. Build scripts run `tsc` (TypeScript 7.0.2) and emit `dist/senpi`; `build:binary` builds the `../pty` workspace first, runs `prepare-bun-compile-assets.mjs`, and compiles with Bun `--compile-autoload-package-json --minify --keep-names` plus the embedded jsdom worker. Asset staging copies css-tree, mdn-data, and source-map-js into `dist/node_modules`, stages the codemode sidecar, TUI native prebuilds, PTY natives, and the imagegen skill, and adds the `qa:app-server` runner. Dependencies are the exact-pinned fork runtime set (Claude/Anthropic/Bedrock/Mistral/OpenAI SDKs, MCP, jsdom, marked, turndown, readability, proxy agents, OpenTelemetry, zod, and more) plus the five-workspace `bundledDependencies` list, the `@hono/node-server` override, and `npm-shrinkwrap.json` removed from `files`.
+- `packages/coding-agent/install-lock/package.json`: renamed to `@code-yeongyu/senpi-install`, versioned in CalVer, depends on the matching `@code-yeongyu/senpi` version, adds the `@hono/node-server` override, and requires Node `>=24`.
+- `packages/coding-agent/tsconfig.build.json`: added `@earendil-works/pi-pty` and `pi-pty/*` path mappings to the PTY workspace's `dist` declarations, and excluded `src/modes/app-server/protocol/generated/**` so the vendored Codex protocol types stay out of the build program and dist output.
+- `packages/coding-agent/tsconfig.examples.json`: examples resolve the SDK through the fork identity - the `@earendil-works/pi-coding-agent` and `/hooks` aliases were replaced by `@code-yeongyu/senpi` pointing at `./src/index.ts`.
+- `packages/coding-agent/vitest.config.ts`: a global `./test/setup.ts` setup file quarantines `SENPI_CODING_AGENT_DIR` (and clears `PI_RULES_*` variables) so suites never write faux-provider session JSONLs into the developer's real agent directory; when `CI` or `GITHUB_ACTIONS` is set, the forks pool is capped at two workers with a 20-second teardown so subprocess-heavy MCP, PTY, and app-server suites do not oversubscribe 4-vCPU runners or hang pool shutdown (measured 1364s single-fork, dominated by per-file import cost); resolve aliases map `@earendil-works/pi-ai/node/provider-scope` and `@earendil-works/pi-pty` to the sibling workspace sources.
+
+### Why
+
+- These are the package-root halves of fork changes whose runtime halves are recorded under `src/`. Without this record, a naive upstream merge would restore the upstream package identity, `tsgo` scripts, caret-pinned upstream workspace ranges, an untyped CI vitest pool, and example aliases that no longer resolve.
+- The vitest setup and pool cap encode two measured failures: leaked session writes permanently polluting real transcript directories, and unreaped subprocess children hanging the whole test step on constrained runners.
+
+### Why an extension could not handle it
+
+- Package manifests, TypeScript project configurations, and the Vitest harness are build and test infrastructure loaded before the coding-agent runtime or any extension exists.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/package.json` scripts, dependencies, and bundling whenever upstream re-versions or reshapes packaging.
+- MEDIUM: `packages/coding-agent/vitest.config.ts` pool, setup, and alias sections, and `packages/coding-agent/tsconfig.build.json` path and exclude lists.
+- LOW: `packages/coding-agent/tsconfig.examples.json` alias map and `packages/coding-agent/install-lock/package.json` identity and engines lines.
+
+## 2026-08-17 — Dollar invocation and RPC contract regression suites ([PR #909](https://github.com/code-yeongyu/senpi/pull/909))
+
+### What changed
+
+- Added focused RPC suites for ordered `commands_changed` snapshots, actual post-interception
+  `command_invocation` events, bounded prompt/steer/follow-up text, and `skill_invocation`
+  delivery without MCP inventory drift.
+- Added classic and multi-session malformed-command regressions plus JSONL record-cap,
+  discard-through-LF resynchronization, and worst-case escaped-message coverage.
+- Expanded the #308 skill-composition suite to cover dollar/slash ordering, unknown and
+  duplicate tokens, ordinary dollar text, indentation preservation, token-discovery bounds,
+  the five-skill expansion cap, and queued steering/follow-up behavior.
+- Added TUI autocomplete/editor regressions for mixed dollar candidates and real trigger input.
+
+### Why this lives in the fork
+
+Senpi owns the dollar composer syntax, typed JSONL event contract, and OmO Desktop compatibility
+surface. Upstream does not expose these exact candidate or invocation events, so a naive merge
+would otherwise drop the only regression coverage for the fork contract.
+
+### Expected merge-conflict zones
+
+- `test/rpc-command-invocation.test.ts`, `test/rpc-commands-changed.test.ts`,
+  `test/rpc-input-validation.test.ts`, `test/rpc-jsonl.test.ts`, `test/rpc-multi-session-input.test.ts`,
+  `test/rpc-loaded-surfaces.test.ts`, and `test/suite/regressions/5868-rpc-unknown-command-id.test.ts`
+  resolve to `ours`; port upstream additions into the retained suites.
+- `test/suite/regressions/308-skill-composition.test.ts` resolves case by case while preserving
+  every dollar/slash, indentation, cap, and queueing assertion.
+- TUI dollar autocomplete tests resolve to `ours` unless upstream adds equivalent `$` behavior.
+
+## 2026-08-16 — Dual JSONC/JSON settings coverage
+
+### What changed
+
+- Added deterministic settings-manager coverage for JSONC comments/trailing commas, JSONC-over-JSON precedence, JSON-only compatibility, write-target preservation, and reload reselection.
+- Added real connection-handler coverage for the `settings_source_selected` RPC record, focused interactive notice coverage, and config-reload coverage for valid JSONC edits.
+
+### Why this lives in the fork
+
+- The fork owns the source-selection event and interactive/config-reload integration around the upstream-derived settings manager.
+
+### Why an extension could not do this
+
+- The tests pin pre-extension settings parsing, persistence, host event delivery, and built-in reload behavior.
+
+### Expected merge-conflict zones
+
+- `test/settings-manager.test.ts`, `test/suite/harness.ts`, and `test/suite/config-reload-extension.test.ts`; the two focused source-event tests are additive files.
+
 ## 2026-08-14 — RPC stream regression suites for multi-session compaction
 
 ### What changed

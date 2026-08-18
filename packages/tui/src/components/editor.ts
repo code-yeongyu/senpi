@@ -239,7 +239,7 @@ const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 };
 
 const ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS = 20;
-const DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS = ["@", "#"];
+const DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS = ["@", "#", "$"];
 
 function escapeCharacterClass(value: string): string {
 	return value.replace(/[\\^$.*+?()[\]{}|-]/g, "\\$&");

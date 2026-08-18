@@ -1,12 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import {
-	isTerminalMonitorStateEvent,
-	isWakeSourceStateEvent,
-	TERMINAL_MONITOR_STATE_EVENT,
-	WAKE_SOURCE_STATE_EVENT,
-} from "../monitor-state-event.ts";
-import {
 	createGoalCacheWarmScheduleData,
 	estimateCacheWarmMetrics,
 	GOAL_CACHE_WARMUP_ENTRY_TYPE,
@@ -16,6 +10,7 @@ import {
 	type LiveGoalCacheWarmupEntryData,
 	resolveGoalMonitorContinuationDelayMs,
 } from "./cache-warm.ts";
+import { subscribeGoalChannelState } from "./channel-state-subscriptions.ts";
 
 export { GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS } from "./cache-warm.ts";
 
@@ -201,6 +196,23 @@ export class MonitorAwareGoalContinuation {
 			this.#cancelTimer();
 			this.#resetContinuationState();
 		}
+	}
+
+	/** Live resumption channels known to this generation (e.g. terminal snapshots replayed on reload). */
+	hasActiveWakeSources(): boolean {
+		return this.#activeWakeSourceCount() > 0;
+	}
+
+	/**
+	 * Re-arms the monitor-delayed backstop a reload tore down with the retired
+	 * generation, so a later wake-source drain can still deliver the goal
+	 * continuation. No-op unless the goal is active, a wake source is live, and
+	 * no continuation is already scheduled.
+	 */
+	rearmMonitorBackstop(goal: Goal): void {
+		if (goal.status !== "active" || this.#activeWakeSourceCount() === 0) return;
+		this.#goal = goal;
+		this.#schedule(goal, "monitor");
 	}
 
 	/** Temporarily prevents a scheduled continuation from racing unresolved direct-input admission. */
@@ -495,13 +507,13 @@ export class MonitorAwareGoalContinuation {
 		const events = this.#pi.events;
 		if (events === undefined) return;
 		this.#channelStateUnsubscribers.push(
-			events.on(TERMINAL_MONITOR_STATE_EVENT, (data) => {
-				if (!isTerminalMonitorStateEvent(data)) return;
-				this.#setWakeSourceCount("terminal-monitors", data.activeCount);
-			}),
-			events.on(WAKE_SOURCE_STATE_EVENT, (data) => {
-				if (!isWakeSourceStateEvent(data)) return;
-				this.#setWakeSourceCount(data.source, data.activeCount);
+			...subscribeGoalChannelState(events, {
+				onWakeSource: (source, activeCount) => this.#setWakeSourceCount(source, activeCount),
+				onContinuationHold: (source, active) => {
+					const inputId = `external:${source}`;
+					if (active) this.holdDirectInput(inputId);
+					else this.resolveDirectInput(inputId, false);
+				},
 			}),
 		);
 	}

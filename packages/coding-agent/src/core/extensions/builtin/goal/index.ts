@@ -13,6 +13,7 @@ import { formatGoalForTool, goalStatusLabel } from "./format.ts";
 import { isResumeOfStoppedGoal, queueGoalContinuation } from "./lifecycle-helpers.ts";
 import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { migrateLegacyGoalFile } from "./persistence.ts";
+import { reengageGoalAfterReload } from "./reload-reengagement.ts";
 import { accountGoalUsage, readGoal, updateGoal } from "./store.ts";
 import { GOAL_STORE_CHANGED_EVENT, isGoalStoreChangedEvent } from "./store-changed-event.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
@@ -145,9 +146,18 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		if (await maybePromptResumeStoppedGoal(pi, ctx, event.reason, goal)) {
 			return;
 		}
-		// A config reload must not auto-start an agent that was stopped. Only a fresh
-		// startup or explicit resume may re-engage an active goal via a continuation.
-		if (goal && event.reason !== "reload") {
+		if (goal && event.reason === "reload") {
+			// A reload retires the extension generation and every armed continuation
+			// timer with it. Re-engage through the reload path: stopped goals stay
+			// stopped, active goals resume the wait the reload tore down.
+			await reengageGoalAfterReload({
+				ctx,
+				goal,
+				monitor: monitorContinuation,
+				countTrailingContinuations: () => countTrailingGoalContinuationEntries(ctx.sessionManager.getBranch()),
+				queueContinuation: () => queueGoalContinuationForCurrentSession(pi, ctx, goal),
+			});
+		} else if (goal) {
 			// Migration-lite admission: a resumed session carrying a trailing flood of
 			// historical continuations must not reignite on load. Skip the auto-queue,
 			// leave the goal active (no status rewrite), and tell the user how to resume.

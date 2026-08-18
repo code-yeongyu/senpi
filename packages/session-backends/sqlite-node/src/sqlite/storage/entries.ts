@@ -8,7 +8,7 @@ export interface EntryRow {
 	id: string;
 	parent_id: string | null;
 	type: Entry["type"];
-	timestamp: string;
+	timestamp: number;
 	payload: string;
 }
 
@@ -17,7 +17,7 @@ export interface NewEntryRow {
 	id: string;
 	parentId: string | null;
 	type: Entry["type"];
-	timestamp: string;
+	timestamp: number;
 	payload: string;
 }
 
@@ -42,14 +42,28 @@ export function readEntryRow(db: SqliteDatabase, sessionId: string, entryId: str
 export function readEntryRows(
 	db: SqliteDatabase,
 	sessionId: string,
-	options: { afterSeq?: number; order?: EntryOrder; limit?: number } = {},
+	options: {
+		afterSeq?: number;
+		cursor?: { afterSeq: number };
+		type?: Entry["type"];
+		order?: EntryOrder;
+		limit?: number;
+	} = {},
 ) {
+	const oldestFirst = options.order === "oldestFirst";
 	const after = options.afterSeq === undefined ? sql`` : sql` AND seq > ${options.afterSeq}`;
-	const direction = options.order === "oldestFirst" ? sql`ASC` : sql`DESC`;
+	const cursor =
+		options.cursor === undefined
+			? sql``
+			: oldestFirst
+				? sql` AND seq > ${options.cursor.afterSeq}`
+				: sql` AND seq < ${options.cursor.afterSeq}`;
+	const type = options.type === undefined ? sql`` : sql` AND type = ${options.type}`;
+	const direction = oldestFirst ? sql`ASC` : sql`DESC`;
 	const limit = options.limit === undefined ? sql`` : sql` LIMIT ${options.limit}`;
 	return sql`SELECT session_id, seq, id, parent_id, type, timestamp, payload
 		FROM entries
-		WHERE session_id = ${sessionId}${after}
+		WHERE session_id = ${sessionId}${after}${cursor}${type}
 		ORDER BY seq ${direction}${limit}`.all<EntryRow>(db);
 }
 

@@ -1555,6 +1555,53 @@ describe("openai-completions tool_choice", () => {
 		}
 	});
 
+	it("sends max_tokens for built-in and custom DeepSeek API models", async () => {
+		const customModel = {
+			...localOpenAICompletionsModel,
+			id: "custom-deepseek-model",
+			name: "Custom DeepSeek Model",
+			provider: "custom-deepseek",
+			baseUrl: "https://api.deepseek.com",
+		} satisfies Model<"openai-completions">;
+		const customUppercaseModel = {
+			...customModel,
+			id: "custom-uppercase-deepseek-model",
+			name: "Custom Uppercase DeepSeek Model",
+			baseUrl: "https://API.DeepSeek.COM",
+		} satisfies Model<"openai-completions">;
+		const nativeModels = [
+			getModel("deepseek", "deepseek-v4-flash")!,
+			getModel("deepseek", "deepseek-v4-pro")!,
+		] as const;
+		const cases = [...nativeModels, customModel, customUppercaseModel] as const;
+
+		for (const model of nativeModels) {
+			expect(model.compat?.maxTokensField).toBe("max_tokens");
+		}
+
+		for (const model of cases) {
+			let payload: unknown;
+
+			await streamSimple(
+				model,
+				{
+					messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+				},
+				{
+					apiKey: "test",
+					maxTokens: 123,
+					onPayload: (params: unknown) => {
+						payload = params;
+					},
+				},
+			).result();
+
+			const params = (payload ?? mockState.lastParams) as { max_tokens?: number; max_completion_tokens?: number };
+			expect(params.max_tokens).toBe(123);
+			expect(params.max_completion_tokens).toBeUndefined();
+		}
+	});
+
 	it("sends max_tokens for Z.AI completions models", async () => {
 		const cases = [getModel("zai", "glm-5-turbo")!, getModel("zai", "glm-5.2")!] as const;
 

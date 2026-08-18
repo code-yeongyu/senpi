@@ -93,6 +93,7 @@ function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Require
 		supportsImageGeneration: model.compat?.supportsImageGeneration ?? isNativeEndpoint,
 		supportsStrictMode: model.compat?.supportsStrictMode ?? false,
 		supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
+		supportsAdditionalTools: model.compat?.supportsAdditionalTools ?? false,
 		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
 		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
 	};
@@ -404,7 +405,12 @@ function buildParams(
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const toolPlacement = splitDeferredTools(context, compat.supportsToolSearch);
+	const deferredToolsMode = compat.supportsAdditionalTools
+		? "additional-tools"
+		: compat.supportsToolSearch
+			? "tool-search"
+			: undefined;
+	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
 	const requestedReasoningEffort = options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined);
 	const mappedReasoningEffort =
 		requestedReasoningEffort === undefined ? undefined : model.thinkingLevelMap?.[requestedReasoningEffort];
@@ -415,6 +421,7 @@ function buildParams(
 		preserveThinking: reasoningRequested,
 		grammarToolInputProperties,
 		deferredTools: toolPlacement.deferred,
+		deferredToolsMode,
 		toolOptions: {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,

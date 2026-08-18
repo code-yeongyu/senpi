@@ -23,9 +23,12 @@ function clonePlainGraph<T>(value: T, seen: WeakMap<object, unknown>): T {
 		return clone as T;
 	}
 	if (!isPlainObject(value)) return value;
-	const clone = Object.create(Object.getPrototypeOf(value)) as Record<string, unknown>;
+	const clone = Object.create(Object.getPrototypeOf(value)) as Record<PropertyKey, unknown>;
 	seen.set(value, clone);
-	for (const key of Object.keys(value)) {
+	const enumerableSymbols = Object.getOwnPropertySymbols(value).filter((key) =>
+		Object.prototype.propertyIsEnumerable.call(value, key),
+	);
+	for (const key of [...Object.keys(value), ...enumerableSymbols]) {
 		Object.defineProperty(clone, key, {
 			value: clonePlainGraph(Reflect.get(value, key), seen),
 			writable: true,

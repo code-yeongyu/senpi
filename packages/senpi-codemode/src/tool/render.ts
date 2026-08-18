@@ -188,12 +188,18 @@ type RenderEnvironment = {
 	readonly width: number;
 	readonly meta: TruncationMeta | undefined;
 };
-type CellBadges = { readonly reset: boolean; readonly timeout: number | undefined };
+type CellBadges = {
+	readonly reset: boolean;
+	readonly timeout: number | undefined;
+	readonly throughput: CellThroughput | undefined;
+};
+type CellThroughput = { readonly calls: number; readonly wallDurationMs: number | undefined };
 type PrefixStyle = { readonly prefix: string; readonly continuation: string; readonly color: ThemeColor };
 type DetailedRenderContext = {
 	readonly environment: RenderEnvironment;
 	readonly args: EvalToolRequest;
 	readonly showImageFallback: boolean;
+	readonly isFinal: boolean;
 };
 
 function assertNever(value: never): never {
@@ -256,7 +262,9 @@ function renderPrefixed(text: string, environment: RenderEnvironment, prefixStyl
 function cellHeader(cell: EvalCellResult, environment: RenderEnvironment, badges: CellBadges): string {
 	const presentation = cellPresentation(cell.status, environment.spinnerFrame);
 	let header = `eval ${cell.language} ${presentation.label} ${presentation.icon}`;
-	if (cell.durationMs !== undefined) header += ` · ${formatDuration(cell.durationMs)}`;
+	if (badges.throughput !== undefined) header += ` · ${formatThroughputBadge(badges.throughput)}`;
+	const elapsedMs = badges.throughput?.wallDurationMs ?? cell.durationMs;
+	if (elapsedMs !== undefined) header += ` · ${formatDuration(elapsedMs)}`;
 	if (badges.reset) header += " · reset";
 	if (badges.timeout !== undefined) header += ` · timeout ${badges.timeout}s`;
 	return style(environment.theme, presentation.color, header);
@@ -281,6 +289,19 @@ function eventNumber(value: unknown): number {
 
 function plural(count: number, singular: string, pluralNoun: string): string {
 	return `${count} ${count === 1 ? singular : pluralNoun}`;
+}
+
+function formatCallsPerSecond(calls: number, wallDurationMs: number | undefined): string {
+	const seconds = typeof wallDurationMs === "number" && Number.isFinite(wallDurationMs) ? wallDurationMs / 1_000 : 0;
+	if (seconds <= 0) return calls === 0 ? "0.00 calls/s" : "n/a calls/s";
+	return `${(calls / seconds).toFixed(2)} calls/s`;
+}
+
+function formatThroughputBadge(throughput: CellThroughput): string {
+	return `${plural(throughput.calls, "call", "calls")} · ${formatCallsPerSecond(
+		throughput.calls,
+		throughput.wallDurationMs,
+	)}`;
 }
 
 function statusIcon(op: string): string {
@@ -613,9 +634,17 @@ function renderDetailedLines(
 	const cells = details.cells ?? [];
 	for (const [index, cell] of cells.entries()) {
 		const run = isEvalRunInput(context.args) ? context.args : undefined;
+		const throughput =
+			context.isFinal &&
+			cells.length === 1 &&
+			cell.status === "complete" &&
+			typeof details.toolCallCount === "number"
+				? { calls: details.toolCallCount, wallDurationMs: details.wallDurationMs }
+				: undefined;
 		const badges = {
 			reset: index === 0 && run?.reset === true,
 			timeout: index === 0 ? run?.timeout : undefined,
+			throughput,
 		};
 		appendLines(lines, renderCell(cell, context.environment, badges));
 		if (index < cells.length - 1) lines.push("");
@@ -754,11 +783,14 @@ function resultMetadata(
 	details: EvalToolDetails | undefined,
 	options: ToolRenderResultOptions,
 	theme: Theme | undefined,
+	status: "running" | "done" | "error",
 ): RenderBlock[] {
 	const metadata: string[] = [];
 	if (details?.phase) metadata.push(`phase ${details.phase}`);
-	if (!options.isPartial && typeof details?.durationMs === "number")
-		metadata.push(`took ${formatDuration(details.durationMs)}`);
+	const elapsedMs = details?.wallDurationMs ?? details?.durationMs;
+	if (!options.isPartial && typeof elapsedMs === "number") metadata.push(`took ${formatDuration(elapsedMs)}`);
+	if (status === "done" && typeof details?.toolCallCount === "number")
+		metadata.push(formatThroughputBadge({ calls: details.toolCallCount, wallDurationMs: details.wallDurationMs }));
 	if (metadata.length === 0) return [];
 	return [{ kind: "text", text: style(theme, "muted", metadata.join(" | ")) }];
 }
@@ -814,7 +846,11 @@ export function renderEvalCall(
 					output: "",
 					status: context.spinnerFrame === undefined ? "pending" : "running",
 				};
-				return renderCell(cell, environment, { reset: args.reset === true, timeout: args.timeout });
+				return renderCell(cell, environment, {
+					reset: args.reset === true,
+					timeout: args.timeout,
+					throughput: undefined,
+				});
 			},
 		},
 	]);
@@ -846,6 +882,7 @@ export function renderEvalResult(
 						},
 						args: context.args,
 						showImageFallback: context.showImages && imageProtocol === null,
+						isFinal: !options.isPartial,
 					}),
 			},
 		];
@@ -862,7 +899,7 @@ export function renderEvalResult(
 		...(details?.summary === undefined
 			? []
 			: [{ kind: "text" as const, text: style(theme, "muted", details.summary) }]),
-		...resultMetadata(details, options, theme),
+		...resultMetadata(details, options, theme, status),
 		{ kind: "blank" },
 	];
 	const rawOutput = textOutput(result, context.showImages && imageProtocol === null);

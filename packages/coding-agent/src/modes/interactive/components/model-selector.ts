@@ -3,6 +3,7 @@ import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TU
 import { ModelRegistry } from "../../../core/model-registry.ts";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
+import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
 import { rankModelSearchItems } from "../model-search-rank.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -22,7 +23,7 @@ interface ScopedModelItem {
 }
 
 type ModelScope = "all" | "narrowed";
-type ModelSelectorTui = Pick<TUI, "requestRender">;
+type ModelSelectorTui = Pick<TUI, "requestRender"> & { terminal?: { rows: number } };
 type ModelSelectorSource = ModelRuntime | ModelRegistry;
 
 export interface ModelSelectorFavoriteOptions {
@@ -203,7 +204,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				await this.modelRuntime.refresh();
 				result = { aborted: false, errors: new Map() };
 			} else {
-				result = await this.modelRuntime.refresh({ signal: this.refreshAbortController.signal });
+				result = await refreshModelCatalogs(this.modelRuntime, this.refreshAbortController.signal);
 			}
 			if (this.closed) return;
 			this.refreshStatusMessage = "";
@@ -306,12 +307,18 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private updateList(): void {
 		this.listContainer.clear();
 
-		const maxVisible = 10;
+		// Window long registries using the same viewport-aware sizing as the
+		// extension selector, while retaining a stable fallback for test doubles.
+		const maxVisible = this.tui.terminal ? Math.max(5, Math.floor(this.tui.terminal.rows / 2)) : 10;
 		const startIndex = Math.max(
 			0,
 			Math.min(this.selectedIndex - Math.floor(maxVisible / 2), this.filteredModels.length - maxVisible),
 		);
 		const endIndex = Math.min(startIndex + maxVisible, this.filteredModels.length);
+
+		if (startIndex > 0) {
+			this.listContainer.addChild(new Text(theme.fg("muted", `  … ${startIndex} more above`), 0, 0));
+		}
 
 		// Show visible slice of filtered models
 		for (let i = startIndex; i < endIndex; i++) {
@@ -341,10 +348,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.listContainer.addChild(new Text(line, 0, 0));
 		}
 
-		// Add scroll indicator if needed
-		if (startIndex > 0 || endIndex < this.filteredModels.length) {
-			const scrollInfo = theme.fg("muted", `  (${this.selectedIndex + 1}/${this.filteredModels.length})`);
-			this.listContainer.addChild(new Text(scrollInfo, 0, 0));
+		if (endIndex < this.filteredModels.length) {
+			this.listContainer.addChild(
+				new Text(theme.fg("muted", `  … ${this.filteredModels.length - endIndex} more below`), 0, 0),
+			);
 		}
 
 		// Show error message or "no results" if empty

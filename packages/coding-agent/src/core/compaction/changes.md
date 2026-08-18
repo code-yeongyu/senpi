@@ -1,5 +1,136 @@
 # changes.md — compaction
 
+## Repository audit baseline for the compaction tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`). The audited production paths whose exact nearest tracker is this file:
+  `packages/coding-agent/src/core/compaction/compaction.ts`,
+  `packages/coding-agent/src/core/compaction/branch-summarization.ts`, and
+  `packages/coding-agent/src/core/compaction/utils.ts`.
+
+### Why
+
+- The audit requires every upstream-owned production divergence to be covered by one entry with all four canonical
+  sections in its exact nearest tracker; `utils.ts` divergence predated the gate and had no entry naming it.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository policy enforced by repository scripts before any extension loader exists.
+
+### Expected merge conflict zones
+
+- NONE: this tracker merges to `ours`; the inventory names pin-relative paths so it survives edits below.
+
+## Summary content normalization and apply_patch file operations (2026-08-17)
+
+### What changed
+
+- `utils.ts`: new `contentTextForSummary()` extracts text from content that may retain provider-native replay blocks
+  by filtering `providerNative` blocks out of a copy before `contentText()`; `serializeConversation()` uses it for user,
+  assistant, and tool-result arms. Provider-native blocks stay on the persisted message for same-provider replay and
+  are never mutated.
+- `utils.ts`: `extractFileOpsFromMessage()` recognizes `apply_patch` calls — patched paths extracted from the patch
+  text via `extractPatchedPaths()` are recorded as edited — and each tool arm validates its own argument shape
+  instead of sharing one pre-checked `path` variable.
+
+### Why
+
+- Provider-native blocks are outside `pi-ai`'s portable `contentText` contract, so summarization either cast them
+  away or crashed; apply_patch mutations were invisible to the file-operation lists that summaries use to describe
+  what the compacted history changed on disk.
+
+### Why an extension could not handle it
+
+- These helpers run inside the core compaction fallback (`compact()` with no extension result) and inside branch
+  summarization before any extension hook can substitute content.
+
+### Expected merge conflict zones
+
+- LOW: `utils.ts` `extractFileOpsFromMessage()` switch and the `contentTextForSummary()` helper; the
+  `gpt-apply-patch` import is a fork-only dependency direction.
+
+## Summarization request options: extra body, session affinity, env (2026-08-17)
+
+### What changed
+
+- `compaction.ts`: `generateSummary()`, `generateSummaryWithUsage()`, `compact()`, and `generateTurnPrefixSummary()`
+  accept `extraBody` (merged into the outgoing provider payload) and `sessionId`; `createSummarizationOptions()`
+  passes `extraBody` and sets `affinitySessionId` from the session id.
+- `compaction.ts`: `completeSummarization()` keeps summary requests standalone — `cacheRetention: "none"`, a fresh
+  `sessionId` per request, affinity inherited from the caller's session — and its option type is
+  `SimpleStreamOptions & { env }` so provider-scoped environment values ride the request.
+- `branch-summarization.ts`: `GenerateBranchSummaryOptions` gains `extraBody` alongside `env`, and the branch-summary
+  stream options carry the same environment typing.
+
+### Why
+
+- Summaries are one-shot requests: they must not write cache entries nothing will reuse, they must be attributable
+  to the session that produced them, and fork providers need per-request body fields (routing, affinity) applied to
+  the summarization request exactly as to main turns.
+
+### Why an extension could not handle it
+
+- The core fallback summarization request is dispatched inside `compact()` where extensions that returned no result
+  never see the request; option plumbing at this seam is the only path those requests have.
+
+### Expected merge conflict zones
+
+- LOW-MEDIUM: the option-parameter lists on the four public functions (upstream adds parameters here periodically);
+  re-apply the trailing `extraBody`/`sessionId` parameters on sync.
+
+## Cut-point fallback, forced progress, and summary-only regeneration (2026-08-17)
+
+### What changed
+
+- `compaction.ts`: `findCutPoint()` falls back to the last valid cut point when the token budget is exceeded before
+  any cut point exists at or after the scan index (previously it returned the boundary start and prepared nothing);
+  the backward cut-extension scan also stops at context-excluded custom entries.
+- `compaction.ts`: `prepareCompaction()` accepts `forceProgress` — when the natural cut point equals the boundary
+  start, it advances to the next valid cut point and recomputes the split-turn window — and `allowSummaryOnly`, which
+  permits regeneration of an existing summary even when no new messages would otherwise be summarized.
+
+### Why
+
+- Overflow recovery and retry-fallback model switches need a compaction that provably shrinks the next prompt:
+  without the fallback, a session whose kept-window landed before the first cut point could not compact at all, and a
+  model switch to a smaller context window could not regenerate an oversized summary.
+
+### Why an extension could not handle it
+
+- Cut-point selection and preparation are pure core functions feeding both the extension hook
+  (`session_before_compact`) and the core fallback; the admission gates compare against these results.
+
+### Expected merge conflict zones
+
+- MEDIUM: `findCutPoint()` scan loop and `prepareCompaction()` cut-point block; keep the fallback and the
+  `forceProgress`/`allowSummaryOnly` parameters together with their admission callers in `agent-session.ts`.
+
+## Extension context transform for summarization sources (2026-08-17)
+
+### What changed
+
+- `compaction.ts`: `generateSummaryWithUsage()` and `compact()` accept `transformContext`; `transformSummarySource()`
+  runs it over the previous summary (injected as a sentinel message with a unique negative timestamp) plus the current
+  messages, then splits the transformed previous summary back out and re-serializes it for the `<previous-summary>`;
+  untransformed paths are unchanged.
+
+### Why
+
+- Providers and extensions that rewrite context (sanitization, format conversion, provider-native replay) must apply
+  the same transform to what compaction summarizes, or the summary and the kept window diverge from what the provider
+  actually saw.
+
+### Why an extension could not handle it
+
+- The transform must wrap the exact message array handed to the summarization request inside core; the
+  `session_before_compact` hook replaces summary content but cannot transform the source window itself.
+
+### Expected merge conflict zones
+
+- LOW: `transformSummarySource()` and the two call sites; the sentinel-timestamp scheme is fork-owned.
+
 ## Wall-clock budget includes provider stream acquisition (2026-07-28)
 
 ### What changed

@@ -3,6 +3,7 @@ import {
 	type AssistantMessageEventStream,
 	type AuthCheck,
 	type AuthContext,
+	type AuthResult,
 	type Context,
 	type Credential,
 	getApiProvider,
@@ -40,6 +41,14 @@ export interface ExtensionOAuthConfig {
 	/** @deprecated Retained for extension source compatibility; ignored by canonical auth flows. */
 	usesCallbackServer?: boolean;
 	check?(input: { ctx: AuthContext; credential?: OAuthCredential }): Promise<AuthCheck | undefined>;
+	/**
+	 * Request auth for providers whose credentials live outside auth.json —
+	 * an environment token, or a CLI the provider shells out to. Supplying this
+	 * gives the provider api-key auth it would otherwise be denied for having
+	 * `oauth`, so ambient users resolve instead of hitting
+	 * "Provider is not configured". Never consulted once a credential is stored.
+	 */
+	resolveAmbient?(input: { ctx: AuthContext; signal?: AbortSignal }): Promise<AuthResult | undefined>;
 	login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials>;
 	refreshToken(credentials: OAuthCredentials, signal: AbortSignal): Promise<OAuthCredentials>;
 	getApiKey(credentials: OAuthCredentials): string;

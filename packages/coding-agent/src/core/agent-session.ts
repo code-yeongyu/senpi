@@ -85,7 +85,7 @@ import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "./dynamic-prompt/index.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
-import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
+import { CODEX_RESPONSES_API, type ServiceTier } from "./extensions/builtin/service-tier.ts";
 import { deriveExtensionRegistrationId } from "./extensions/builtin/tool-search/engine/marker.ts";
 import { getToolSearchService } from "./extensions/builtin/tool-search/service.ts";
 import {
@@ -134,7 +134,7 @@ import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
-import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
+import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
@@ -162,7 +162,7 @@ import {
 } from "./session-manager.ts";
 import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle } from "./session-title-generator.ts";
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
-import type { SettingsManager } from "./settings-manager.ts";
+import type { SettingsManager, SettingsSourceSelection } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { getSupportedThinkingLevels, supportsMax, supportsXhigh } from "./thinking-levels.ts";
@@ -174,10 +174,33 @@ import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapp
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
 const TURN_RETRY_SUPPRESSION_PREFIX = "senpi:no-turn-retry:";
+const DEFERRED_RETRY_QUEUE_OWNERS = new WeakSet<object>();
 
 // ============================================================================
-// Skill Block Parsing
+// Skill Invocation Formatting and Parsing
 // ============================================================================
+
+export interface SkillInvocationPromptSkill {
+	name: string;
+	filePath: string;
+	baseDir: string;
+	body: string;
+}
+
+/** Format the user-attributed payload for one or more explicit skill invocations. */
+export function formatSkillInvocationPrompt(
+	skills: readonly SkillInvocationPromptSkill[],
+	userRequest?: string,
+): string {
+	const skillBlocks = skills.map(
+		(skill) =>
+			`The user explicitly invoked the "${skill.name}" skill. Follow the instructions in <skill-instruction> as binding for this request, while respecting higher-priority instructions.\n\n<skill-instruction name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${skill.body}\n</skill-instruction>`,
+	);
+	const expandedSkills = skillBlocks.join("\n\n");
+	return userRequest && /\S/.test(userRequest)
+		? `${expandedSkills}\n\n<user-request>\n${userRequest}\n</user-request>`
+		: expandedSkills;
+}
 
 /** Parsed skill block from a user message */
 export interface ParsedSkillBlock {
@@ -192,14 +215,137 @@ export interface ParsedSkillBlock {
  * Returns null if the text doesn't contain a skill block.
  */
 export function parseSkillBlock(text: string): ParsedSkillBlock | null {
-	const match = text.match(/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/);
-	if (!match) return null;
+	const instructionPattern =
+		/^The user explicitly invoked the "([^"]+)" skill\. Follow the instructions in <skill-instruction> as binding for this request, while respecting higher-priority instructions\.\n\n<skill-instruction name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill-instruction>/;
+	const instructionMatch = text.match(instructionPattern);
+	if (instructionMatch) {
+		if (instructionMatch[1] !== instructionMatch[2]) return null;
+		let remainder = text.slice(instructionMatch[0].length);
+		while (remainder.startsWith("\n\nThe user explicitly invoked the ")) {
+			const chainedMatch = remainder.slice(2).match(instructionPattern);
+			if (!chainedMatch || chainedMatch[1] !== chainedMatch[2]) return null;
+			remainder = remainder.slice(chainedMatch[0].length + 2);
+		}
+		const requestMatch = remainder.match(/^\n\n<user-request>\n([\s\S]*?)\n<\/user-request>$/);
+		if (remainder && !requestMatch) return null;
+		return {
+			name: instructionMatch[1],
+			location: instructionMatch[3],
+			content: instructionMatch[4],
+			userMessage: requestMatch?.[1].trim() || undefined,
+		};
+	}
+
+	const legacyMatch = text.match(
+		/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/,
+	);
+	if (!legacyMatch) return null;
 	return {
-		name: match[1],
-		location: match[2],
-		content: match[3],
-		userMessage: match[4]?.trim() || undefined,
+		name: legacyMatch[1],
+		location: legacyMatch[2],
+		content: legacyMatch[3],
+		userMessage: legacyMatch[4]?.trim() || undefined,
 	};
+}
+
+export type SkillInvocationSyntax = "dollar" | "slash";
+
+export interface CommandInvocation {
+	name: string;
+	source: "extension" | "prompt";
+	sourceInfo: SourceInfo;
+	syntax: "slash";
+}
+
+export interface SkillInvocationToken {
+	name: string;
+	syntax: SkillInvocationSyntax;
+	start: number;
+	end: number;
+	position: "inline" | "leading";
+}
+
+export const MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT = 64;
+
+const LEADING_SKILL_INVOCATION_PATTERN = /^(?:\/skill:([a-zA-Z][a-zA-Z0-9:_-]*)|\$([a-zA-Z][a-zA-Z0-9:_-]*))(?=\s|$)/;
+const INLINE_DOLLAR_SKILL_INVOCATION_PATTERN = /(^|\s)\$skill:([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
+
+/**
+ * Find explicit skill invocation tokens without treating ordinary inline dollar
+ * prose (for example `$HOME`) as executable.
+ *
+ * Leading runs accept `/skill:name`, `$name`, and `$skill:name`. Outside the
+ * leading run only the desktop's explicit `$skill:name` token is executable.
+ */
+export function parseSkillInvocationTokens(text: string): SkillInvocationToken[] {
+	const tokens: SkillInvocationToken[] = [];
+	let cursor = 0;
+
+	while (cursor < text.length) {
+		while (cursor < text.length && /\s/.test(text[cursor]!)) cursor++;
+		const match = text.slice(cursor).match(LEADING_SKILL_INVOCATION_PATTERN);
+		if (!match) break;
+		const syntax: SkillInvocationSyntax = match[1] ? "slash" : "dollar";
+		const dollarName = match[2];
+		const name = match[1] ?? (dollarName?.startsWith("skill:") ? dollarName.slice("skill:".length) : dollarName);
+		if (!name) break;
+		tokens.push({
+			name,
+			syntax,
+			start: cursor,
+			end: cursor + match[0].length,
+			position: "leading",
+		});
+		if (tokens.length >= MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT) return tokens;
+		cursor += match[0].length;
+	}
+
+	INLINE_DOLLAR_SKILL_INVOCATION_PATTERN.lastIndex = cursor;
+	for (const match of text.matchAll(INLINE_DOLLAR_SKILL_INVOCATION_PATTERN)) {
+		const start = (match.index ?? 0) + match[1].length;
+		tokens.push({
+			name: match[2],
+			syntax: "dollar",
+			start,
+			end: start + `$skill:${match[2]}`.length,
+			position: "inline",
+		});
+		if (tokens.length >= MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT) break;
+	}
+
+	return tokens;
+}
+
+function stripLeadingInvocationSeparators(text: string): string {
+	let cursor = 0;
+	while (text[cursor] === " " || text[cursor] === "\t") cursor++;
+	while (text[cursor] === "\n" || (text[cursor] === "\r" && text[cursor + 1] === "\n")) {
+		cursor += text[cursor] === "\r" ? 2 : 1;
+		const lineStart = cursor;
+		while (text[cursor] === " " || text[cursor] === "\t") cursor++;
+		if (text[cursor] !== "\n" && !(text[cursor] === "\r" && text[cursor + 1] === "\n")) {
+			return text.slice(lineStart);
+		}
+	}
+	return text.slice(cursor);
+}
+
+function removeSkillInvocationTokens(text: string, tokens: readonly SkillInvocationToken[]): string {
+	let cursor = 0;
+	let result = "";
+	for (const token of tokens) {
+		result += text.slice(cursor, token.start);
+		cursor = token.end;
+		if (
+			token.position === "inline" &&
+			(result.endsWith(" ") || result.endsWith("\t")) &&
+			(text[cursor] === " " || text[cursor] === "\t")
+		) {
+			cursor++;
+		}
+	}
+	result += text.slice(cursor);
+	return tokens.some((token) => token.position === "leading") ? stripLeadingInvocationSeparators(result) : result;
 }
 
 /** Session-specific events that extend the core AgentEvent */
@@ -211,6 +357,18 @@ export type AgentSessionEvent =
 	| { type: "agent_settled" }
 	| { type: "session_abort" }
 	| { type: "continuation_error"; errorMessage: string }
+	| {
+			type: "skill_invocation";
+			skills: readonly {
+				name: string;
+				path: string;
+				syntax: SkillInvocationSyntax;
+			}[];
+	  }
+	| {
+			type: "command_invocation";
+			command: CommandInvocation;
+	  }
 	| {
 			type: "queue_update";
 			steering: readonly string[];
@@ -224,6 +382,11 @@ export type AgentSessionEvent =
 	| SystemPromptChangeEvent
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| { type: "high_reasoning_warning"; modelId: string; provider: string; thinkingLevel: ThinkingLevel }
+	| ({ type: "settings_source_selected" } & SettingsSourceSelection)
+	/** Active model changed; `thinkingLevel` is the level in force AFTER the switch. */
+	| { type: "model_changed"; model: Model<any>; thinkingLevel: ThinkingLevel; source: ModelSelectSource }
+	/** Effective service tier or fast-mode state changed. */
+	| { type: "service_tier_changed"; tier?: ServiceTier; fastMode: boolean }
 	| {
 			type: "compaction_end";
 			reason: CompactionReason;
@@ -308,6 +471,8 @@ export interface AgentSessionConfig {
 	modelRegistry?: ModelRegistry;
 	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
 	initialActiveToolNames?: string[];
+	/** Configured built-in defaults; fork-native builtin extension tools outside this set are omitted. */
+	defaultToolNames?: string[];
 	/** Optional allowlist of tool names. When provided, only these tool names are exposed. */
 	allowedToolNames?: string[];
 	/** Optional denylist of tool names. When provided, these tool names are not exposed. */
@@ -484,7 +649,7 @@ export type ClearedQueue = {
 };
 
 export interface PromptOptions {
-	/** Whether to expand file-based prompt templates (default: true) */
+	/** Whether to dispatch extension commands and expand skill commands and prompt templates (default: true) */
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
 	images?: ImageContent[];
@@ -582,6 +747,7 @@ export class AgentSession {
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
+	private _unsubscribeSettingsSource?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _agentEventQueue: Promise<void> = Promise.resolve();
 	/**
@@ -679,6 +845,7 @@ export class AgentSession {
 	private _agentDir: string;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
+	private _defaultToolNames?: Set<string>;
 	private _allowedToolNames?: Set<string>;
 	private _excludedToolNames?: Set<string>;
 	private _baseToolsOverride?: Record<string, AgentTool>;
@@ -712,13 +879,22 @@ export class AgentSession {
 	private _currentServiceTier: ServiceTier | undefined = undefined;
 	private _sessionFastMode = false;
 	private readonly _shownHighReasoningWarningKeys = new Set<string>();
-	private _baseSystemPromptOptions!: BuildDynamicSystemPromptOptions;
+	// Widened with the upstream BuildSystemPromptOptions user-override fields so
+	// extensions (prompt-preset) can see CLI/SDK custom prompts via
+	// before_agent_start/model_select systemPromptOptions and ctx.getSystemPromptOptions().
+	private _baseSystemPromptOptions!: BuildDynamicSystemPromptOptions & {
+		customPrompt?: string;
+		appendSystemPrompt?: string;
+	};
 	private _systemPromptOverride?: string;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
+		this._unsubscribeSettingsSource = this.settingsManager.subscribeToSourceSelection((source) => {
+			this._emit({ type: "settings_source_selected", ...source });
+		});
 		const noModelFallback =
 			config.resourceLoader.getExtensions().runtime.flagValues.get("no-model-fallback") === true ||
 			envValue("NO_FALLBACK") === "1";
@@ -776,6 +952,7 @@ export class AgentSession {
 		});
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
+		this._defaultToolNames = config.defaultToolNames ? new Set(config.defaultToolNames) : undefined;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
@@ -935,7 +1112,7 @@ export class AgentSession {
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
 			this._toolExecutionDepth++;
 			try {
-				const result = await this._emitBeforeToolCallHooks(toolCall, args);
+				const result = await this.preflightToolCall(toolCall, args);
 				if (result?.block) {
 					this._toolExecutionDepth--;
 				}
@@ -955,11 +1132,7 @@ export class AgentSession {
 		};
 	}
 
-	private async _emitBeforeToolCallHooks(
-		toolCall: AgentToolCall,
-		args: unknown,
-		options: { waitForEventQueue?: boolean } = {},
-	) {
+	async preflightToolCall(toolCall: AgentToolCall, args: unknown, options: { waitForEventQueue?: boolean } = {}) {
 		if (options.waitForEventQueue !== false) {
 			await this._agentEventQueue;
 		}
@@ -1236,6 +1409,14 @@ export class AgentSession {
 	/** Resolved agent state directory for this session. */
 	get agentDir(): string {
 		return this._agentDir;
+	}
+
+	/**
+	 * Working directory this session resolves settings against — the same value extensions
+	 * receive as `ctx.cwd`, so a host surface (RPC) reads project settings identically.
+	 */
+	get cwd(): string {
+		return this._cwd;
 	}
 
 	private async _waitForSettledSessionWork(): Promise<void> {
@@ -1753,6 +1934,7 @@ export class AgentSession {
 		// Check auto-retry and auto-compaction after agent completes.
 		let launchedContinuation = false;
 		let retryContinuationBlocked = false;
+		let retryExhaustionAllowsQueuedContinuation = false;
 		let allowsPostCompactionUsageExemptContinuation = false;
 		const userAbortSuppressedQueuedContinuation =
 			event.type === "agent_end" && this._suppressQueuedContinuationAfterUserAbort;
@@ -1789,7 +1971,9 @@ export class AgentSession {
 				retryContinuationBlocked = !compactedBeforeRetry && !this._isCompactionDelegated();
 			}
 
-			let retryOutcome: "continued" | "blocked" | "not-handled" = "not-handled";
+			let retryOutcome: "continued" | "blocked" | "not-handled" | "cancelled" = "not-handled";
+			const retryOwnedDeferredQueue = DEFERRED_RETRY_QUEUE_OWNERS.has(this);
+			DEFERRED_RETRY_QUEUE_OWNERS.delete(this);
 			if (!retryContinuationBlocked && !userAbortSuppressedQueuedContinuation) {
 				if (retryableError) {
 					retryOutcome = await this._handleRetryableError(msg);
@@ -1801,6 +1985,16 @@ export class AgentSession {
 				this._abortProvenance.closeAgentEndBoundary();
 				return;
 			}
+			// Provider-timeout retries deliberately skip their first queue poll so
+			// steering cannot be consumed by another doomed retry request. Once the
+			// managed retry owner exhausts its budget, hand that retained queue back
+			// to the normal scheduled-continuation path instead of parking it until
+			// an unrelated later prompt arrives.
+			retryExhaustionAllowsQueuedContinuation =
+				!userAbortSuppressedQueuedContinuation &&
+				retryOwnedDeferredQueue &&
+				retryOutcome === "not-handled" &&
+				(msg.stopReason === "error" || msg.stopReason === "aborted");
 
 			if (retryOutcome === "not-handled" && this._retryAttempt > 0 && msg.errorMessage) {
 				const attempt = this._retryAttempt;
@@ -1849,7 +2043,9 @@ export class AgentSession {
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
-				(allowsQueuedContinuation || allowsPostCompactionUsageExemptContinuation) &&
+				(allowsQueuedContinuation ||
+					allowsPostCompactionUsageExemptContinuation ||
+					retryExhaustionAllowsQueuedContinuation) &&
 				this.agent.hasQueuedMessages()
 			) {
 				// A scheduled continuation owns the queue now; the stored admission
@@ -2124,6 +2320,9 @@ export class AgentSession {
 	 */
 	subscribe(listener: AgentSessionEventListener): () => void {
 		this._eventListeners.push(listener);
+		for (const source of this.settingsManager.getSelectedSettingsSources()) {
+			listener({ type: "settings_source_selected", ...source });
+		}
 
 		// Return unsubscribe function for this specific listener
 		return () => {
@@ -2176,6 +2375,8 @@ export class AgentSession {
 			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);
 		this._disconnectFromAgent();
+		this._unsubscribeSettingsSource?.();
+		this._unsubscribeSettingsSource = undefined;
 		this._eventListeners = [];
 		cleanupSessionResources(this.sessionId);
 	}
@@ -2216,14 +2417,56 @@ export class AgentSession {
 		return this._sessionFastMode || this._currentServiceTier === "priority";
 	}
 
-	/** Session-scoped fast-mode indicator; never persisted, reset on session start. */
+	/**
+	 * The tier a request would carry right now: `serviceTier`, promoted to `"priority"` while
+	 * session fast mode is on (which is exactly what the service-tier extension puts on the
+	 * wire). Reported to clients so `serviceTier` and `fastMode` can never disagree.
+	 */
+	get effectiveServiceTier(): ServiceTier | undefined {
+		return this.isFastModeActive() ? "priority" : this._currentServiceTier;
+	}
+
+	/**
+	 * Session-scoped fast-mode indicator; never persisted, reset on session start.
+	 *
+	 * Turning fast OFF also clears the cached priority tier: `/fast off` writes a remembered
+	 * `"auto"` that must override an inherited catalog-priority tier immediately (display and
+	 * request side), not only on the next session. Only codex-response models are touched, and
+	 * never when an explicit scoped/favorite `:priority` pin is in force — those are pinned by
+	 * the user's model selection, not by `/fast`.
+	 */
 	setSessionFastMode(enabled: boolean): void {
+		const previousFastMode = this.isFastModeActive();
+		const previousTier = this._currentServiceTier;
 		this._sessionFastMode = enabled;
+		if (!enabled && this._currentServiceTier === "priority" && this.model?.api === CODEX_RESPONSES_API) {
+			// Only an INHERITED (catalog) priority is cleared. A priority the catalog does not
+			// explain came from an explicit scoped/favorite `:priority` pin, which `/fast` must not undo.
+			if (this._modelRuntime.getCompatibilityRequestConfig(this.model).serviceTier === "priority") {
+				this._currentServiceTier = undefined;
+			}
+		}
+		this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
+	}
+
+	/**
+	 * Emit `service_tier_changed` when the effective tier or the fast-mode indicator actually
+	 * moved. Both are observable state for RPC clients (`get_state.serviceTier` / `.fastMode`),
+	 * and they can move independently: a session fast-mode toggle need not change the resolved
+	 * tier, and a model switch can change the tier with fast mode untouched.
+	 */
+	private _emitServiceTierChangeIfNeeded(previousTier: ServiceTier | undefined, previousFastMode: boolean): void {
+		const fastMode = this.isFastModeActive();
+		if (previousTier === this._currentServiceTier && previousFastMode === fastMode) return;
+		this._emit({ type: "service_tier_changed", tier: this.effectiveServiceTier, fastMode });
 	}
 
 	/**
 	 * Explicit scoped/favorite tiers win; otherwise fall back to the model's
-	 * configured serviceTier from models.json/extension compatibility config.
+	 * configured serviceTier from models.json/extension compatibility config. The per-model
+	 * `/fast` memory is honored by the service-tier extension (`liveMemoryTier` + the session
+	 * flag in `before_provider_request`), not cached here: caching it would survive a same-session
+	 * `/fast off` (no model switch to re-resolve) and leak an inherited priority onto the wire.
 	 */
 	private _resolveServiceTier(
 		model: Model<any> | undefined,
@@ -2330,7 +2573,7 @@ export class AgentSession {
 			);
 		}
 
-		const beforeResult = await this._emitBeforeToolCallHooks(prepared.toolCall, prepared.args, {
+		const beforeResult = await this.preflightToolCall(prepared.toolCall, prepared.args, {
 			waitForEventQueue: this._toolExecutionDepth === 0,
 		});
 		if (beforeResult?.block) {
@@ -2390,6 +2633,16 @@ export class AgentSession {
 	 * Also rebuilds the system prompt to reflect the new tool set.
 	 * Changes take effect on the next agent turn.
 	 */
+	/**
+	 * Resolve an executable tool from the full registry (builtin + extension
+	 * tools), independent of the active set. The Cursor exec bridge uses this:
+	 * Cursor drives its native tools (read/bash/grep/ls/write) over the exec
+	 * channel regardless of which tools the request advertised.
+	 */
+	getRegisteredTool(name: string): AgentTool | undefined {
+		return this._toolRegistry.get(name);
+	}
+
 	setActiveToolsByName(toolNames: string[]): void {
 		const tools: AgentTool[] = [];
 		const validToolNames: string[] = [];
@@ -2583,6 +2836,8 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
+			customPrompt: loaderSystemPrompt,
+			appendSystemPrompt: loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined,
 		};
 		const basePrompt = loaderSystemPrompt ?? buildDynamicSystemPrompt(this._baseSystemPromptOptions);
 		return loaderAppendSystemPrompt.length > 0
@@ -2697,6 +2952,12 @@ export class AgentSession {
 		let titlePrompt: string | undefined;
 		let consumedNextTurnMessages: CustomMessage[] | undefined;
 		let inputId: string | undefined;
+		let pendingCommandInvocation: CommandInvocation | undefined;
+		const emitPendingCommandInvocation = (): void => {
+			if (!pendingCommandInvocation) return;
+			this._emit({ type: "command_invocation", command: pendingCommandInvocation });
+			pendingCommandInvocation = undefined;
+		};
 		const emitInputDisposition = async (
 			disposition: "handled" | "queued" | "started" | "rejected",
 		): Promise<void> => {
@@ -2734,7 +2995,16 @@ export class AgentSession {
 			let expandedText = currentText;
 			if (expandPromptTemplates) {
 				expandedText = this._expandSkillCommand(expandedText);
-				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+				const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
+				expandedText = templateExpansion.text;
+				if (templateExpansion.template) {
+					pendingCommandInvocation = {
+						name: templateExpansion.template.name,
+						source: "prompt",
+						sourceInfo: templateExpansion.template.sourceInfo,
+						syntax: "slash",
+					};
+				}
 			}
 			titlePrompt = options?.sessionTitlePrompt === false ? undefined : (options?.sessionTitlePrompt ?? text);
 
@@ -2753,6 +3023,7 @@ export class AgentSession {
 				} else {
 					await this._queueSteer(expandedText, currentImages);
 				}
+				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
 				promptDisposition?.("queued");
 				preflightResult?.(true);
@@ -2771,6 +3042,7 @@ export class AgentSession {
 				} else {
 					await this._queueSteer(expandedText, currentImages);
 				}
+				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
 				promptDisposition?.("queued");
 				preflightResult?.(true);
@@ -2799,6 +3071,7 @@ export class AgentSession {
 					} else {
 						await this._queueSteer(expandedText, currentImages);
 					}
+					emitPendingCommandInvocation();
 					await emitInputDisposition("queued");
 					promptDisposition?.("queued");
 					preflightResult?.(true);
@@ -2822,6 +3095,7 @@ export class AgentSession {
 				} else {
 					await this._queueSteer(expandedText, currentImages);
 				}
+				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
 				promptDisposition?.("queued");
 				preflightResult?.(true);
@@ -2930,6 +3204,7 @@ export class AgentSession {
 		}
 
 		promptDisposition?.("started");
+		emitPendingCommandInvocation();
 		preflightResult?.(true);
 		if (options?.thinkingLevel !== undefined) {
 			this.setSessionThinkingLevel(options.thinkingLevel);
@@ -2964,6 +3239,15 @@ export class AgentSession {
 
 		const command = this._extensionRunner.getCommand(commandName);
 		if (!command) return false;
+		this._emit({
+			type: "command_invocation",
+			command: {
+				name: commandName,
+				source: "extension",
+				sourceInfo: command.sourceInfo,
+				syntax: "slash",
+			},
+		});
 
 		// Get command context from extension runner (includes session control methods)
 		const ctx = this._extensionRunner.createCommandContext();
@@ -2983,68 +3267,79 @@ export class AgentSession {
 	}
 
 	/**
-	 * Expand a leading run of skill commands (/skill:name /skill:other args) to their full content.
-	 * Returns the expanded text, or the original text if the first skill command is not found.
-	 * Emits errors via extension runner if file reads fail or the expansion cap is reached.
+	 * Expand explicit skill invocations to their full content.
+	 * Leading runs accept slash and dollar syntax; inline expansion is limited to
+	 * the desktop's explicit `$skill:name` token so ordinary dollar prose stays literal.
 	 */
 	private _expandSkillCommand(text: string): string {
-		if (!text.startsWith("/skill:")) return text;
+		const invocationTokens = parseSkillInvocationTokens(text);
+		if (invocationTokens.length === 0) return text;
 
 		const skills = this.resourceLoader.getSkills().skills;
 		const expandedSkillNames = new Set<string>();
-		const skillBlocks: string[] = [];
-		let tokenStart = 0;
+		const skillBlocks: SkillInvocationPromptSkill[] = [];
+		const invocationMetadata: Array<{
+			name: string;
+			path: string;
+			syntax: SkillInvocationSyntax;
+		}> = [];
+		const removedTokens: SkillInvocationToken[] = [];
 
-		while (tokenStart < text.length) {
-			let tokenEnd = tokenStart;
-			while (tokenEnd < text.length && !/\s/.test(text[tokenEnd]!)) {
-				tokenEnd += 1;
-			}
-			const token = text.slice(tokenStart, tokenEnd);
-			if (!token.startsWith("/skill:")) break;
-
-			const skillName = token.slice(7);
-			const skill = skills.find((candidate) => candidate.name === skillName);
-			if (!skill) break; // Unknown skills and everything after them remain literal text.
-
-			if (!expandedSkillNames.has(skill.name)) {
-				if (skillBlocks.length >= MAX_SKILL_EXPANSIONS_PER_PROMPT) {
-					this._extensionRunner.emitError({
-						extensionPath: "skill:expansion",
-						event: "skill_expansion",
-						error: `Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; remaining skill commands were left as literal text.`,
-					});
-					break;
-				}
-
-				try {
-					const content = readFileSync(skill.filePath, "utf-8");
-					const body = stripFrontmatter(content).trim();
-					skillBlocks.push(
-						`<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`,
-					);
-					expandedSkillNames.add(skill.name);
-				} catch (err) {
-					this._extensionRunner.emitError({
-						extensionPath: skill.filePath,
-						event: "skill_expansion",
-						error: err instanceof Error ? err.message : String(err),
-					});
-					return text; // Return the original prompt when any skill file cannot be read.
-				}
+		for (const token of invocationTokens) {
+			const skill = skills.find((candidate) => candidate.name === token.name);
+			if (!skill) {
+				if (token.position === "leading") break;
+				continue;
 			}
 
-			tokenStart = tokenEnd;
-			while (tokenStart < text.length && /\s/.test(text[tokenStart]!)) {
-				tokenStart += 1;
+			if (skillBlocks.length >= MAX_SKILL_EXPANSIONS_PER_PROMPT) {
+				this._extensionRunner.emitError({
+					extensionPath: "skill:expansion",
+					event: "skill_expansion",
+					error: `Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; remaining skill commands were left as literal text.`,
+				});
+				break;
+			}
+
+			removedTokens.push(token);
+			if (expandedSkillNames.has(skill.name)) {
+				this._extensionRunner.emitError({
+					extensionPath: skill.filePath,
+					event: "skill_expansion",
+					error: `Skipped duplicate skill invocation: ${skill.name}`,
+				});
+				continue;
+			}
+
+			try {
+				const content = readFileSync(skill.filePath, "utf-8");
+				const body = stripFrontmatter(content).trim();
+				skillBlocks.push({
+					name: skill.name,
+					filePath: skill.filePath,
+					baseDir: skill.baseDir,
+					body,
+				});
+				expandedSkillNames.add(skill.name);
+				invocationMetadata.push({
+					name: skill.name,
+					path: skill.filePath,
+					syntax: token.syntax,
+				});
+			} catch (err) {
+				this._extensionRunner.emitError({
+					extensionPath: skill.filePath,
+					event: "skill_expansion",
+					error: err instanceof Error ? err.message : String(err),
+				});
+				return text; // Return the original prompt when any skill file cannot be read.
 			}
 		}
 
 		if (skillBlocks.length === 0) return text;
-
-		const args = text.slice(tokenStart).trim();
-		const expandedSkills = skillBlocks.join("\n\n");
-		return args ? `${expandedSkills}\n\n${args}` : expandedSkills;
+		const userRequest = removeSkillInvocationTokens(text, removedTokens);
+		this._emit({ type: "skill_invocation", skills: invocationMetadata });
+		return formatSkillInvocationPrompt(skillBlocks, userRequest);
 	}
 
 	/**
@@ -3063,9 +3358,21 @@ export class AgentSession {
 
 		// Expand skill commands and prompt templates
 		let expandedText = this._expandSkillCommand(text);
-		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+		const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
+		expandedText = templateExpansion.text;
 
 		await this._queueSteer(expandedText, images, recovery?.enqueueOrder);
+		if (templateExpansion.template) {
+			this._emit({
+				type: "command_invocation",
+				command: {
+					name: templateExpansion.template.name,
+					source: "prompt",
+					sourceInfo: templateExpansion.template.sourceInfo,
+					syntax: "slash",
+				},
+			});
+		}
 	}
 
 	/**
@@ -3083,9 +3390,21 @@ export class AgentSession {
 
 		// Expand skill commands and prompt templates
 		let expandedText = this._expandSkillCommand(text);
-		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+		const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
+		expandedText = templateExpansion.text;
 
 		await this._queueFollowUp(expandedText, images, recovery?.enqueueOrder);
+		if (templateExpansion.template) {
+			this._emit({
+				type: "command_invocation",
+				command: {
+					name: templateExpansion.template.name,
+					source: "prompt",
+					sourceInfo: templateExpansion.template.sourceInfo,
+					syntax: "slash",
+				},
+			});
+		}
 	}
 
 	private _startSessionTitleGeneration(firstPrompt: string): void {
@@ -3273,7 +3592,7 @@ export class AgentSession {
 
 			if (options?.deliverAs === "nextTurn") {
 				this._pendingNextTurnMessages.push(appMessage);
-			} else if (this.isStreaming) {
+			} else if (this.isStreaming && options?.triggerTurn !== false) {
 				if (options?.deliverAs === "followUp") {
 					this.agent.followUp(appMessage);
 				} else {
@@ -3334,10 +3653,11 @@ export class AgentSession {
 	 *
 	 * @param content User message content (string or content array)
 	 * @param options.deliverAs Delivery mode when streaming: "steer" or "followUp"
+	 * @param options.expandPromptTemplates Whether to dispatch extension commands and expand skill commands and prompt templates. Default: false.
 	 */
 	async sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 	): Promise<void> {
 		const bindingPromptReadiness = this._extensionBindingPromptReadiness;
 		let resolveBindingPromptReadiness: (() => void) | undefined;
@@ -3374,9 +3694,8 @@ export class AgentSession {
 		let finishSessionWork: (() => void) | undefined;
 		let disposition: PromptDisposition | undefined;
 		try {
-			// Use prompt() with expandPromptTemplates: false to skip command handling and template expansion
 			await this.prompt(text, {
-				expandPromptTemplates: false,
+				expandPromptTemplates: options?.expandPromptTemplates ?? false,
 				streamingBehavior: options?.deliverAs,
 				images,
 				source: "extension",
@@ -3615,7 +3934,7 @@ export class AgentSession {
 		if (opts.invalidateCompaction && this._modelSelectionChangesContext(previousModel, model)) {
 			this._invalidateCompactionForModelSelection();
 		}
-		const thinkingLevel = this._getThinkingLevelForModelSwitch(opts.ephemeralThinkingLevel);
+		const thinkingLevel = this._getThinkingLevelForModelSwitch(model, opts.ephemeralThinkingLevel);
 		this.agent.state.model = model;
 		this.agent.abortServerSideFallback =
 			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
@@ -3633,6 +3952,8 @@ export class AgentSession {
 		}
 
 		const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, model));
+		const previousTier = this._currentServiceTier;
+		const previousFastMode = this.isFastModeActive();
 		this._currentServiceTier = this._resolveServiceTier(model, scopedMatch?.serviceTier);
 
 		if (opts.ephemeralThinkingLevel !== undefined) {
@@ -3642,6 +3963,15 @@ export class AgentSession {
 		}
 
 		this._emitHighReasoningWarningIfNeeded();
+		// Post-switch: the level reported here is the one actually in force (clamped, or restored
+		// from this model's memory), not the level requested for the previous model.
+		this._emit({
+			type: "model_changed",
+			model,
+			thinkingLevel: this.thinkingLevel,
+			source: opts.modelSelectSource,
+		});
+		this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
 
 		if (!opts.emitModelSelect) return undefined;
 		return await this._emitModelSelect(model, previousModel, opts.modelSelectSource);
@@ -3692,11 +4022,13 @@ export class AgentSession {
 		}
 		this._probeBackScheduler.cancel("manual-model-change");
 		this._retryFallback.clearForManualModelChange(next.model);
-		const thinkingLevel = this._getThinkingLevelForModelSwitch(next.thinkingLevel);
+		const thinkingLevel = this._getThinkingLevelForModelSwitch(next.model, next.thinkingLevel);
 
 		this.agent.state.model = next.model;
 		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
 		this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
+		const previousTier = this._currentServiceTier;
+		const previousFastMode = this.isFastModeActive();
 		this._currentServiceTier = this._resolveServiceTier(next.model, next.serviceTier);
 
 		// Apply thinking level.
@@ -3704,6 +4036,15 @@ export class AgentSession {
 		// - Undefined favorite model thinking level restores the remembered user preference
 		// setSessionThinkingLevel clamps without replacing that preference.
 		this.setSessionThinkingLevel(thinkingLevel);
+
+		// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
+		this._emit({
+			type: "model_changed",
+			model: next.model,
+			thinkingLevel: this.thinkingLevel,
+			source: "cycle",
+		});
+		this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
 
 		const systemPromptChange = await this._emitModelSelect(next.model, currentModel, "cycle");
 
@@ -3721,7 +4062,7 @@ export class AgentSession {
 	/**
 	 * Set thinking level.
 	 * Clamps to model capabilities based on available thinking levels.
-	 * Saves to session and settings only if the level actually changes.
+	 * Persistent calls refresh per-model memory; session entries and events are emitted only on change.
 	 */
 	setThinkingLevel(level: ThinkingLevel): void {
 		this._setThinkingLevel(level, true);
@@ -3747,6 +4088,13 @@ export class AgentSession {
 		}
 
 		this.agent.state.thinkingLevel = effectiveLevel;
+
+		if (updateGlobalDefault) {
+			const model = this.model;
+			if (model) {
+				this.settingsManager.setModelThinkingLevel(model.provider, model.id, effectiveLevel);
+			}
+		}
 
 		if (isChanging) {
 			this.sessionManager.appendThinkingLevelChange(effectiveLevel);
@@ -3825,11 +4173,13 @@ export class AgentSession {
 		return !!this.model?.reasoning;
 	}
 
-	private _getThinkingLevelForModelSwitch(explicitLevel?: ThinkingLevel): ThinkingLevel {
-		if (explicitLevel !== undefined) {
-			return explicitLevel;
-		}
-		return this.settingsManager.getDefaultThinkingLevel() ?? this.thinkingLevel ?? DEFAULT_THINKING_LEVEL;
+	private _getThinkingLevelForModelSwitch(model: Model<Api>, explicitLevel?: ThinkingLevel): ThinkingLevel {
+		const requestedLevel =
+			explicitLevel ??
+			this.settingsManager.getModelThinkingLevel(model.provider, model.id) ??
+			this.settingsManager.getDefaultThinkingLevel() ??
+			DEFAULT_THINKING_LEVEL;
+		return this._clampThinkingLevel(requestedLevel, getSupportedThinkingLevels(model) as ThinkingLevel[]);
 	}
 
 	private _clampThinkingLevel(level: ThinkingLevel, availableLevels: ThinkingLevel[]): ThinkingLevel {
@@ -4632,7 +4982,9 @@ export class AgentSession {
 			const compacted = await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, inlineReason);
 			if (compacted) return true;
 		}
-		if (this._isCompactionOnCooldown() || this._isCompactionDelegated()) return false;
+		if (this._isCompactionOnCooldown() || this._isCompactionDelegated() || this._hasSupersedingCompactionClaim()) {
+			return false;
+		}
 		throw new RequiredCompactionError();
 	}
 
@@ -4675,6 +5027,7 @@ export class AgentSession {
 
 		const compacted = await this._runPrePromptCompaction(lastAssistantMessage, false, "pre_prompt");
 		if (!compacted && this._isCompactionDelegated()) return;
+		if (!compacted && this._hasSupersedingCompactionClaim()) return;
 		if (!compacted && !isOversized() && this._isCompactionOnCooldown()) return;
 		if (!compacted || isOversized()) {
 			throw new RequiredCompactionError();
@@ -4787,7 +5140,7 @@ export class AgentSession {
 				this._restoreAgentMessagesFromSession();
 				this._incrementMessageRevision();
 			}
-			if (!compacted && inlineReason && !this._isCompactionDelegated()) {
+			if (!compacted && inlineReason && !this._isCompactionDelegated() && !this._hasSupersedingCompactionClaim()) {
 				throw new RequiredCompactionError();
 			}
 			return compacted;
@@ -4861,6 +5214,18 @@ export class AgentSession {
 	private _isCompactionOnCooldown(): boolean {
 		const state = this._compactionLifecycle.state;
 		return state.status === "failed" && state.rejectionCause === "circuit-breaker";
+	}
+
+	/**
+	 * Compaction claims are last-writer-wins: a newer admission aborts the
+	 * incumbent controller (_claimCompactionController). When the failed attempt
+	 * lost that race, a live claimant now owns the route and re-gates admission
+	 * itself, so the loser must not surface RequiredCompactionError (issue #886).
+	 * A user abort leaves no live claimant behind and keeps throwing.
+	 */
+	private _hasSupersedingCompactionClaim(): boolean {
+		const claimant = this._compactionAbortController ?? this._autoCompactionAbortController;
+		return claimant !== undefined && !claimant.signal.aborted;
 	}
 
 	private _isCompactionDelegated(): boolean {
@@ -4948,7 +5313,9 @@ export class AgentSession {
 
 		const compacted = await this._runPrePromptCompaction(this._findLastAssistantMessage(), true, "pre_prompt");
 		if (!compacted) {
-			if (this._isCompactionOnCooldown() || this._isCompactionDelegated()) return;
+			if (this._isCompactionOnCooldown() || this._isCompactionDelegated() || this._hasSupersedingCompactionClaim()) {
+				return;
+			}
 			throw new RequiredCompactionError();
 		}
 		this._scheduledContinuationRecompacted = true;
@@ -5023,8 +5390,14 @@ export class AgentSession {
 		const finishContinuationWork = this._sessionWorkBarrier.begin();
 		const continueAfterEvent = async (): Promise<void> => {
 			try {
-				await this._continueAgentAfterCurrentRun(options, retryTimeoutMs);
+				const outcome = await this._continueAgentAfterCurrentRun(options, retryTimeoutMs);
+				if (retryContinuation && outcome === "taken-over") {
+					DEFERRED_RETRY_QUEUE_OWNERS.delete(this);
+				}
 			} catch (error) {
+				if (retryContinuation) {
+					DEFERRED_RETRY_QUEUE_OWNERS.delete(this);
+				}
 				const message = error instanceof Error ? error.message : String(error);
 				this._emit({
 					type: "continuation_error",
@@ -5209,6 +5582,7 @@ export class AgentSession {
 			this._applyExtensionBindings(this._extensionRunner);
 			this.syncPromptCacheSafeWaitEnv();
 			await this._extensionRunner.emit(this._sessionStartEvent);
+			this._enforceConfiguredDefaultTools();
 			await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
 		} finally {
 			if (this._extensionBindingPromptReadiness === bindingPromptReadiness) {
@@ -5564,6 +5938,26 @@ export class AgentSession {
 		return this._fallbackValidationWarnings;
 	}
 
+	private _isBuiltinExtensionPath(path: string): boolean {
+		return path.startsWith("<builtin:") || /[\\/]senpi-codemode[\\/]/u.test(path);
+	}
+
+	private _enforceConfiguredDefaultTools(): void {
+		const defaultToolNames = this._defaultToolNames;
+		if (defaultToolNames === undefined) return;
+		this.setActiveToolsByName(
+			this.getActiveToolNames().filter((name) => {
+				if (defaultToolNames.has(name)) return true;
+				const entry = this._toolDefinitions.get(name);
+				return (
+					entry !== undefined &&
+					!this._isBuiltinExtensionPath(entry.sourceInfo.path) &&
+					entry.sourceInfo.source !== "builtin"
+				);
+			}),
+		);
+	}
+
 	private _refreshToolRegistry(options?: {
 		activeToolNames?: string[];
 		includeAllExtensionTools?: boolean;
@@ -5577,8 +5971,13 @@ export class AgentSession {
 			(!allowedToolNames || allowedToolNames.has(name)) && !excludedToolNames?.has(name);
 
 		const registeredTools = this._extensionRunner.getAllRegisteredTools();
+		const defaultToolNames = this._defaultToolNames;
+		const isConfiguredBuiltinTool = (tool: (typeof registeredTools)[number]): boolean =>
+			(tool.sourceInfo.source !== "builtin" && !this._isBuiltinExtensionPath(tool.sourceInfo.path)) ||
+			defaultToolNames === undefined ||
+			defaultToolNames.has(tool.definition.name);
 		const allCustomTools = [
-			...registeredTools,
+			...registeredTools.filter(isConfiguredBuiltinTool),
 			...this._customTools.map((definition) => ({
 				definition,
 				sourceInfo: createSyntheticSourceInfo(`<sdk:${definition.name}>`, { source: "sdk" }),
@@ -5972,7 +6371,7 @@ export class AgentSession {
 	private async _handleRetryableError(
 		message: AssistantMessage,
 		options: { hardErrorFallback?: boolean } = {},
-	): Promise<"continued" | "blocked" | "not-handled"> {
+	): Promise<"continued" | "blocked" | "not-handled" | "cancelled"> {
 		const settings = this.settingsManager.getRetrySettings();
 		if (!settings.enabled) {
 			this._resolveRetry();
@@ -6281,7 +6680,7 @@ export class AgentSession {
 				finalError: "Retry cancelled",
 			});
 			this._resolveRetry();
-			return "not-handled";
+			return "cancelled";
 		}
 		this._retryAbortController = undefined;
 
@@ -6303,7 +6702,12 @@ export class AgentSession {
 			shouldCompact(contextTokens, model.contextWindow, compactionSettings)
 		) {
 			const preRetryCompaction = await this._runPrePromptCompaction(message, true, "threshold", true, true);
-			if (!preRetryCompaction && !this._isCompactionOnCooldown() && !this._isCompactionDelegated()) {
+			if (
+				!preRetryCompaction &&
+				!this._isCompactionOnCooldown() &&
+				!this._isCompactionDelegated() &&
+				!this._hasSupersedingCompactionClaim()
+			) {
 				const attempt = this._retryAttempt;
 				this._retryAttempt = 0;
 				this._resetHintTierState();
@@ -6331,6 +6735,11 @@ export class AgentSession {
 			timeoutMs: this.agent.timeoutMs,
 			streamStartTimeoutMs: this.agent.streamStartTimeoutMs,
 		});
+		if (continuation.options.deferQueuedMessages === true) {
+			DEFERRED_RETRY_QUEUE_OWNERS.add(this);
+		} else {
+			DEFERRED_RETRY_QUEUE_OWNERS.delete(this);
+		}
 		this.agent.suppressQueuedMessageDrain();
 		this._scheduleContinuationAfterCurrentEvent(continuation.options, true, continuation.watchdogTimeoutMs);
 
@@ -6870,11 +7279,13 @@ export class AgentSession {
 	/**
 	 * Export session to HTML.
 	 * @param outputPath Optional output path (defaults to session directory)
+	 * @param options Optional export presentation settings
 	 * @returns Path to exported file
 	 */
-	async exportToHtml(outputPath?: string): Promise<string> {
-		const configuredThemeName = this.settingsManager.getTheme();
-		const themeName = configuredThemeName && getThemeByName(configuredThemeName) ? configuredThemeName : undefined;
+	async exportToHtml(outputPath?: string, options: { themeName?: string } = {}): Promise<string> {
+		const themeName = [options.themeName, this.settingsManager.getTheme()].find(
+			(candidate) => candidate !== undefined && getThemeByName(candidate) !== undefined,
+		);
 
 		// Create tool renderer if we have an extension runner (for custom tool HTML rendering)
 		const toolRenderer: ToolHtmlRenderer = createToolHtmlRenderer({

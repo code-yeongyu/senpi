@@ -251,6 +251,7 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		prompt: "",
 		query: getSdkBoundary().query,
 		providerSettings: input.providerSettings,
+		env: input.streamOptions.env,
 		signal: input.streamOptions.signal,
 		sessionId: input.streamOptions.affinitySessionId ?? input.streamOptions.sessionId,
 		pinnedAccount: input.pinnedAccount,

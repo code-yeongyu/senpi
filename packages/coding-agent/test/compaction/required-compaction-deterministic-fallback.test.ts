@@ -141,8 +141,15 @@ describe("required compaction deterministic fallback", () => {
 				},
 				harness.ctx,
 			);
-			expect(result).toMatchObject({ cancel: true });
-			expect(result).not.toHaveProperty("compaction");
+			if (testCase.aborted) {
+				// A pre-aborted request stands down without a cancel result (issue
+				// #886): core's aborted classification renders the cancellation, and
+				// no session_compact accepted:false reaches the circuit breaker.
+				expect(result).toBeUndefined();
+			} else {
+				expect(result).toMatchObject({ cancel: true });
+			}
+			expect(result ?? {}).not.toHaveProperty("compaction");
 		}
 	});
 

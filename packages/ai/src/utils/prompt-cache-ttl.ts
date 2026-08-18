@@ -109,6 +109,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Reso
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
 	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
+	const isDeepSeek = provider === "deepseek" || baseUrl.toLowerCase().includes("deepseek.com");
 
 	const isNonStandard =
 		isNvidia ||
@@ -118,7 +119,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Reso
 		baseUrl.includes("api.x.ai") ||
 		isTogether ||
 		baseUrl.includes("chutes.ai") ||
-		baseUrl.includes("deepseek.com") ||
+		isDeepSeek ||
 		isZai ||
 		isMoonshot ||
 		provider === "opencode" ||
@@ -129,6 +130,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Reso
 
 	const useMaxTokens =
 		baseUrl.includes("chutes.ai") ||
+		isDeepSeek ||
 		isMoonshot ||
 		isCloudflareAiGateway ||
 		isTogether ||
@@ -137,7 +139,6 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Reso
 		isZai;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
-	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
 	const openRouterCacheControlPrefixes = ["anthropic/", "qwen/", "google/"];

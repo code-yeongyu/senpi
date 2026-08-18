@@ -29,10 +29,10 @@ async function createActiveMonitorHarness(threadId: string): Promise<ActiveMonit
 	const state: GoalContextState = { pendingMessages: false, status, cacheSafeWaitSeconds: 270 };
 	const harness = createGoalHarness();
 	const ctx = await makeGoalContext(notices, threadId, state);
+	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 	await harness.tools
 		.get("create_goal")
 		?.execute("create", { objective: "Keep monitoring" }, undefined, undefined, ctx);
-	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 	harness.events.emit("terminal_monitor_state", { activeCount: 1 });
 	await harness.events.flush();
 	return { harness, ctx, notices, state, status };
@@ -108,7 +108,7 @@ describe("goal monitor continuation lifecycle", () => {
 		expect(harness.sent).toHaveLength(0);
 	});
 
-	it("disposes the delayed continuation on session reload", async () => {
+	it("disposes the delayed continuation on session reload and re-engages the active goal", async () => {
 		vi.useFakeTimers();
 		const { harness, ctx, status } = await createActiveMonitorHarness("thread-monitor-reload");
 		const countdownStarted = waitForGoalStatus(
@@ -124,9 +124,12 @@ describe("goal monitor continuation lifecycle", () => {
 		);
 		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 		await countdownCleared;
+		// The reload re-engagement (issue #934) queues one continuation for the still-active goal.
+		expect(harness.sent).toHaveLength(1);
 
+		// The retired generation's delayed timer stays disposed: no second delivery.
 		await vi.advanceTimersByTimeAsync(270_000);
-		expect(harness.sent).toHaveLength(0);
+		expect(harness.sent).toHaveLength(1);
 
 		harness.events.emit("terminal_monitor_state", { activeCount: 1 });
 		await harness.events.flush();

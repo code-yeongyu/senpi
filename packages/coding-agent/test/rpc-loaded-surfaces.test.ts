@@ -18,6 +18,7 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import type { Skill } from "../src/core/skills.ts";
 import { createRpcConnectionHandler, type RpcConnectionSink } from "../src/modes/rpc/connection-handler.ts";
+import type { RpcSkillInvocationEvent } from "../src/modes/rpc/rpc-types.ts";
 import { createTestExtensionsResult } from "./utilities.ts";
 
 const MCP_INVENTORY_REQUEST_EVENT = "senpi.rpc.mcp_inventory.request";
@@ -414,6 +415,39 @@ describe("RPC loaded surfaces", () => {
 			snapshot: harness.resourceLoader.mcpSnapshot,
 		});
 		expect(await mcpChanged).toEqual({ type: "loaded_surfaces_changed" });
+
+		await handler.dispose();
+	});
+
+	it("forwards skill_invocation without disturbing the revealed MCP inventory", async () => {
+		const collected = makeSink();
+		const harness = await makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		const skillPath = join(tempDir, "skill-alpha.md");
+		writeFileSync(skillPath, "# Alpha\n\nUse the alpha skill.");
+		harness.resourceLoader.skills[0] = {
+			...harness.resourceLoader.skills[0]!,
+			filePath: skillPath,
+			baseDir: tempDir,
+		};
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		await handler.ready;
+
+		await handler.handleInputLine(JSON.stringify({ id: "before", type: "get_loaded_surfaces" }));
+		const before = await collected.waitFor((message) => message.id === "before");
+
+		const afterIndex = collected.messages().length;
+		const invocationPromise = collected.waitFor((message) => message.type === "skill_invocation", afterIndex);
+		await harness.runtimeHost.session.steer("$skill:alpha inspect").catch(() => {});
+		const expectedInvocation = {
+			type: "skill_invocation",
+			skills: [{ name: "alpha", path: skillPath, syntax: "dollar" }],
+		} satisfies RpcSkillInvocationEvent;
+		expect(await invocationPromise).toEqual(expectedInvocation);
+
+		await handler.handleInputLine(JSON.stringify({ id: "after", type: "get_loaded_surfaces" }));
+		const after = await collected.waitFor((message) => message.id === "after");
+		expect(after.data).toEqual(before.data);
 
 		await handler.dispose();
 	});

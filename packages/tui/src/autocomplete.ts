@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import { readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, dirname, join } from "path";
+import { getDollarInvocationContext, getDollarInvocationSuggestions } from "./dollar-invocation-autocomplete.ts";
 import { getSlashCommandSuggestions } from "./slash-command-autocomplete.ts";
 
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
@@ -305,6 +306,20 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
+		const dollarContext = getDollarInvocationContext(textBeforeCursor, cursorLine, this.commands);
+		if (dollarContext) {
+			const suggestions = getDollarInvocationSuggestions(
+				this.commands,
+				dollarContext.query,
+				dollarContext.skillsOnly,
+			);
+			if (suggestions.length === 0) return null;
+			return {
+				items: suggestions,
+				prefix: dollarContext.prefix,
+			};
+		}
+
 		if (!options.force && textBeforeCursor.startsWith("/")) {
 			const spaceIndex = textBeforeCursor.indexOf(" ");
 
@@ -391,6 +406,17 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		const hasTrailingQuoteInItem = item.value.endsWith('"');
 		const adjustedAfterCursor =
 			isQuotedPrefix && hasTrailingQuoteInItem && hasLeadingQuoteAfterCursor ? afterCursor.slice(1) : afterCursor;
+
+		if (prefix.startsWith("$") && (item.value.startsWith("/") || item.value.startsWith("$"))) {
+			const newLine = `${beforePrefix}${item.value} ${adjustedAfterCursor}`;
+			const newLines = [...lines];
+			newLines[cursorLine] = newLine;
+			return {
+				lines: newLines,
+				cursorLine,
+				cursorCol: beforePrefix.length + item.value.length + 1,
+			};
+		}
 
 		// Check if we're completing a slash command (prefix starts with "/" but NOT a file path).
 		// Skill commands may also appear after an already-known leading skill command.

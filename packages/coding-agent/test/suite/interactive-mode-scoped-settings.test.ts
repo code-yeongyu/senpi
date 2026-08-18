@@ -95,7 +95,7 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 			},
 			settingsManager: createSettingsManagerStub(),
 			ui: { mode: "inline" },
-			themeController: { getTerminalTheme: () => "dark" },
+			themeController: { getThemeSelection: () => "dark", getTerminalTheme: () => "dark" },
 			footer: { invalidate: vi.fn() },
 			updateEditorBorderColor: vi.fn(),
 		};
@@ -182,6 +182,7 @@ function createSettingsManagerStub() {
 		getClearOnShrink: () => false,
 		getShowTerminalProgress: () => false,
 		getTuiMode: () => "regular",
+		getFullscreenExitOutput: () => "transcript",
 		getFullscreenScrollbar: () => "auto",
 		getSmoothStreaming: () => false,
 		getSmoothStreamingFps: () => 30,

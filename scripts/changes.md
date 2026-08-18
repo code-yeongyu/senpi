@@ -1,5 +1,77 @@
 # changes
 
+## Reviewer-cited tracker parser, collector, and CI hardening (2026-08-17)
+
+### What changed
+
+- `scripts/changes-md-policy.mjs` now parses date-first `## YYYY-MM-DD` headings as well as `## Title (YYYY-MM-DD)`, maps established Why / extension-why / conflict heading dialects onto the four canonical sections, excludes every `*.generated.ts` (and `.mts`/`.cts`/`.js`) catalog-style source from production and CHANGELOG runtime classification, and exports `restrictTrackerEntriesToAddedLines` so a PR only gets credit for bullets it actually added.
+- Split git/filesystem collectors into `scripts/changes-md-git.mjs`. `listTrackerFiles` skips symlink `changes.md` files. `validateGitRevision` rejects option-like or metacharacter-bearing `--base` values before they reach git.
+- `scripts/check-pr-changelog.mjs` uses the added-line restrictor instead of the stale `entryTouchesDiff` path-substring bypass, exports `parseArgs` so labels can come from `CHANGELOG_GATE_LABELS` / `CHANGELOG_GATE_BASE`, and validates `--base` through `validateGitRevision`.
+- `.github/workflows/changelog-gate.yml` passes base SHA and labels through those env vars instead of interpolating label names into the shell command.
+- Added `scripts/changes-md-reviewer-fixes.test.mjs` for the date-first, dialect, generated, symlink, added-line, revision, and env-label contracts.
+
+### Why
+
+- Review of the first implementation found that date-first trackers and established heading aliases were treated as uncovered, stale full-file entries could satisfy a PR, symlink trackers and `*.generated.ts` files were misclassified, and workflow label interpolation plus unvalidated `--base` were injection surfaces.
+
+### Why an extension could not handle it
+
+- These are repository CI and audit-script contracts. They run in the changelog-gate workflow and local Node CLIs before any Senpi runtime or extension loader exists.
+
+### Expected merge conflict zones
+
+- LOW: heading-split regex and `SECTION_ALIASES` in `scripts/changes-md-policy.mjs`.
+- LOW: `parseArgs` / added-line collection in `scripts/check-pr-changelog.mjs`.
+- NONE: `scripts/changes-md-git.mjs` and `scripts/changes-md-reviewer-fixes.test.mjs` are fork-owned additions.
+
+
+## Repository-wide changes.md audit backfill for validation and transcript tooling (2026-08-17)
+
+### What changed
+
+- Backfill from the repository-wide changes.md audit (pin 914cf147, tag v0.84.2): records the fork deltas on upstream-owned utility scripts. The binary, release, pinning, and publish pipeline deltas remain recorded in the entries below.
+- `scripts/check-pinned-deps.mjs`: `isInternalWorkspaceDependency()` now also recognizes `@code-yeongyu/*` names, so fork-scoped workspace and alias dependencies are exempt from the exact-version pinning rule exactly like `@earendil-works/pi-*`.
+- `scripts/check-ts-relative-imports.mjs`: imports the TypeScript API from `@typescript/typescript6` because TypeScript 7 removed the classic programmatic JS API, and skips the generated `evidence/` and `local-ignore/` QA trees when collecting TypeScript files.
+- `scripts/session-transcripts.ts`: the shebang is now `npx tsx` so the TypeScript source runs directly, and the `--analyze` subagent mode was removed with the delegated execution runtime - the pi JSON-event spawn machinery, readline parsing, truncation helpers, and the AGENTS.md pattern-mining prompt are gone; only cwd-scoped transcript extraction and context-sized splitting remain.
+- `scripts/tool-stats.ts`: hardened tool-call accounting with an `isRecord` guard for bash arguments and destructured `id`/`name` string checks instead of `"name" in block` probes, keeping the script type-safe under the typed Message shape without `any`.
+
+### Why
+
+- Fork-scoped package identities, the TypeScript 7 toolchain split, the removal of the delegated execution runtime, and the typed message shape each changed an assumption these utility scripts were written against; an untracked divergence would hide the exact reason the fork cannot take upstream's version verbatim on the next sync.
+
+### Why an extension could not handle it
+
+- These are repository validation and analysis scripts executed outside any Senpi runtime or extension loader.
+
+### Expected merge conflict zones
+
+- LOW: the internal-name predicate in `scripts/check-pinned-deps.mjs`, the import and ignore list in `scripts/check-ts-relative-imports.mjs`, the shebang and mode surface of `scripts/session-transcripts.ts`, and the narrowing guards in `scripts/tool-stats.ts`.
+
+## Changes.md tracker policy enforced by the changelog gate and a repository audit (2026-08-17)
+
+### What changed
+
+- `scripts/check-pr-changelog.mjs` (modified upstream file) now audits changes.md tracker coverage in addition to the release `CHANGELOG.md` requirement: every upstream-owned production change in a PR must be covered by an entry with all four canonical sections in its exact nearest `changes.md` tracker. The `no-changelog` label still bypasses only the `CHANGELOG.md` requirement, never the tracker policy.
+- Added `scripts/changes-md-policy.mjs`, the shared policy module: production-path classification (docs, tests, fixtures, examples, generated catalogs, lockfiles, trackers, and `.github/upstream.json` are excluded), exact nearest-ancestor tracker resolution, canonical-section coverage checks, rename/delete auditing rules, and fail-closed upstream-pin validation plus the git/filesystem collectors both tools share.
+- Added `scripts/audit-changes-md.mjs`, a repository-wide audit CLI (`--upstream <path>`, `--format json|markdown`, `--help`) that compares HEAD against the pinned upstream SHA, exempts fork-only paths absent from the pin tree, and reports covered/uncovered paths with their nearest tracker and a reason, exiting 1 when anything is uncovered.
+- The PR CLI now parses rename-aware `git diff --name-status -M base...HEAD`, reads `.github/upstream.json`, verifies the pinned commit exists, distinguishes fork-only from upstream-owned paths via the pin tree, and audits only integration repairs (`divergentFiles`) on pin-changing syncs. `--help` was added to both CLIs.
+- Added failing-first suites `scripts/check-pr-changes-md.test.mjs` and `scripts/audit-changes-md.test.mjs` that pin the seam contract (`trackerPolicy` input, ordered `uncovered` output).
+
+### Why
+
+- AGENTS.md already required every upstream-owned production edit to update the nearest `changes.md` in the same increment, but nothing verified it, so stale entries accumulated silently and misled the next upstream sync.
+- The existing gate only checked for any `CHANGELOG.md` edit, which a package-unrelated changelog could satisfy; coverage must be exact-nearest-tracker and must name the audited path.
+
+### Why an extension could not handle it
+
+- The rule is repository and CI policy: it must run in the changelog-gate workflow and in local audit tooling before any Senpi runtime or extension loader exists, so only repository scripts under `scripts/` can enforce it.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/check-pr-changelog.mjs` `checkPrChangelog` verdict wiring and CLI argument parsing; upstream may add gate flags.
+- LOW: `scripts/changes-md-policy.mjs` classifier patterns and canonical-section aliases; upstream has no equivalent file.
+- NONE: `scripts/audit-changes-md.mjs` and both test files are fork-owned additions.
+
 ## Require provenance-backed npm release publication (2026-08-13)
 
 ### What changed
@@ -79,7 +151,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: `prepareAndPackPackage` in `publish.mjs`.
+- LOW: `validatePack` in `publish.mjs` and `parseNpmPackJson` in `npm-pack-json.mjs`.
 
 ## Merge concurrent main updates before release push (2026-08-13)
 

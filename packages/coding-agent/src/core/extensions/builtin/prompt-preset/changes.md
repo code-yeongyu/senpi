@@ -1,5 +1,70 @@
 # prompt-preset Extension Changes
 
+## Grok 4.6 preset (2026-08-17)
+
+### What changed
+
+- `grok-4.6.ts`: new full-core preset (builder `corePrompt` override, precedent: kimi-k3.ts / gpt-5.6.ts). Direct-implementer posture — NOT a clone of the grok-4.5 CEO/orchestrator preset. Tuned per the Grok 4.6 launch field guide (Eric Zakariasson, 2026-08-12): binding declared-stop-condition contract in the routing line (the guide's core finding — define what done means or the model decides), no intensity/exhortation language (measured as a no-op on this model), a real-surface verification loop as the highest-leverage rule (walk the user paths the change touches; for hard-to-inspect output: capture current state → list what is wrong → fix only those), a shared-piece rule against its observed repeated-block habit, and information-dense reporting (dense summaries, quiet through small changes, one short update at meaningful phase changes). Reuses `buildTestDisciplineSection()`; no `buildFileOperationsTuning()` because `apply_patch` is gated to gpt-* ids and never activates on Grok.
+- `presets.ts`: `hasGrok46Signal`/`isGrok46Model` matcher (the 4.5 regex with a 4.6 minor version), checked before the 4.5 matcher; `resolvePresetName` branch + `buildPreset` case.
+- `settings.ts`: `"grok-4.6"` joins `PromptPresetName` and `VALID_PRESETS`.
+- `docs/settings.md`: preset value list gains `grok-4.5` (was missing) and `grok-4.6`.
+- `test/suite/prompt-presets-grok-4-6.test.ts`: id-shape resolution, non-routing of 4.5/4.3/4.20/3/build/4.60, 4.5-vs-4.6 distinctness, settings force, and a catalog sweep asserting every built-in Grok 4.6 entry (xai, opencode, openrouter, vercel-ai-gateway) resolves.
+
+### Why
+
+- Grok 4.6 shipped in four built-in catalogs with no preset, falling back to the untuned dynamic prompt; the 4.5 matcher deliberately excludes it. The 4.5 CEO posture is a fork experiment specific to that model; 4.6 is positioned (and field-tested) as an all-round daily driver, so it gets an implementer core.
+
+### Why extension system couldn't handle this differently
+
+- Content-only addition inside this builtin; follows the established corePrompt preset architecture.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `grok-4.6.ts` is fork-only; `presets.ts`/`settings.ts` touch shared lists — trivial adjacent-line conflicts if upstream adds presets.
+
+## Presets yield to user system-prompt overrides (2026-08-17)
+
+### What changed
+
+- `index.ts`: `before_agent_start` returns no replacement when `event.systemPromptOptions.customPrompt` is set (a `--system-prompt` / SDK loader override) — the base prompt already carries the user's prompt plus appends. When only `appendSystemPrompt` is set, the preset still replaces the base but reappends the user text (`preset + "\n\n" + appends`), so appends survive preset replacement.
+- `model_select` applies the same policy: custom prompt present returns `{ systemPrompt: null }` (reset to the user-carrying base); otherwise the preset prompt gets the user appends reattached.
+- The startup header (`getPresetName`) reports no preset when a custom prompt is active, via the new `ctx.getSystemPromptOptions()` base-context getter.
+- `agent-session.ts` populates `customPrompt` / `appendSystemPrompt` (pre-joined) into `_baseSystemPromptOptions`, which flows into both events and the context getter.
+
+### Why
+
+- Before this, a preset-matching model silently discarded explicit user overrides: the preset replaced the entire base prompt (including `--append-system-prompt` text) on every turn. That made the documented flags unusable on gpt-5.x/claude/kimi/glm/deepseek/grok models and forced the 2026-07-19 decision to disconnect the CLI flags entirely.
+
+### Why extension system couldn't handle this differently
+
+- The gate lives in this builtin, but it needs the user-override facts on the event; those fields exist on the upstream `BuildSystemPromptOptions` contract and are now populated by the session core.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `index.ts` handler bodies; keep the customPrompt yield and append reattachment when upstream reshapes handlers.
+
+## GLM 5.3 preset (2026-08-16)
+
+### What changed
+
+- `glm-5-3.ts`: new preset for the GLM 5.3 family, cloned from `glm-5-2.ts` (thin `tuningSection` wrapper over the shared dynamic core, `workstationDialect: "claude"`). The tuning text carries "running on GLM 5.3" in place of 5.2; every behavioral directive is identical to 5.2 per the fork direction to copy the system prompt.
+- `presets.ts`: `hasGlm53Signal`/`isGlm53Model` matcher (regex `glm(?:[._-]|p)5(?:[._-]|p)3` with `[/@._-]` boundaries), checked BEFORE the 5.2 matcher so 5.3 never falls through to 5.2. `resolvePresetName` branch + `buildPreset` case added.
+- `settings.ts`: `"glm-5.3"` joins `PromptPresetName` and `VALID_PRESETS`.
+- `docs/settings.md`, `AGENTS.md`, `builtin/AGENTS.md`: preset lists updated.
+- `test/suite/prompt-presets-glm-5-3.test.ts`: id resolution across bare/provider-prefixed/fireworks/highspeed/display-name shapes, non-routing of 5.2/4.x, settings force, and a catalog sweep asserting every built-in GLM 5.3 entry resolves.
+
+### Why
+
+- GLM 5.3 shipped in the model catalogs without a preset, so it fell back to the untuned dynamic prompt. Its lineage is identical to 5.2 (Opus 4.6-class, Fable 5 decisiveness, GPT 5.5 outcome-first coding), so the preset is a direct copy.
+
+### Why extension system couldn't handle this differently
+
+- Content-only addition inside this builtin; follows the thin-wrapper preset architecture (`tuningSection` only).
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `glm-5-3.ts` is fork-only; `presets.ts`/`settings.ts` touch shared lists — trivial adjacent-line conflicts if upstream adds presets.
+
 ## Kimi K3 + GPT-5.6: test-proportionality rules (2026-08-03)
 
 ### What changed

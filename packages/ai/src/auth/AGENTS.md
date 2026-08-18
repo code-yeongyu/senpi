@@ -1,6 +1,6 @@
 # packages/ai/src/auth
 
-Generated: 2026-08-07. Commit `4f26b8282`.
+Generated: 2026-08-17. Commit `abae968e8`.
 
 Credential storage, auth contexts, provider auth resolution, and bundled OAuth flows. Everything here must stay browser-safe; Node access goes through injected/lazy boundaries only.
 
@@ -24,6 +24,7 @@ pkce.ts              Shared PKCE machinery
 device-code.ts       Shared device-code flow
 oauth-page.ts        Local callback/result page rendering
 anthropic.ts         Anthropic OAuth flow
+cursor.ts            Cursor OAuth flow
 github-copilot.ts    Copilot device flow
 kimi-coding.ts       Kimi coding-plan flow
 openai-codex.ts      Codex flow

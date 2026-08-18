@@ -8,6 +8,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	private done = false;
 	#failed = false;
 	#error: unknown;
+	#localWorkDepth = 0;
 	private finalResultPromise: Promise<R>;
 	private resolveFinalResult!: (result: R) => void;
 	private rejectFinalResult!: (error: unknown) => void;
@@ -105,6 +106,27 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 
 	result(): Promise<R> {
 		return this.finalResultPromise;
+	}
+
+	/**
+	 * Track a locally executing unit of work (for example a server-requested
+	 * tool run on Cursor's exec channel) during which the stream legitimately
+	 * emits no events. Idle watchdogs consult {@link hasPendingLocalWork} to
+	 * attribute the silence to the tool run instead of aborting a healthy
+	 * stream. Rejections propagate to the caller unchanged.
+	 */
+	async trackLocalWork<TWork>(work: Promise<TWork>): Promise<TWork> {
+		this.#localWorkDepth++;
+		try {
+			return await work;
+		} finally {
+			this.#localWorkDepth--;
+		}
+	}
+
+	/** True while at least one {@link trackLocalWork} promise is unsettled. */
+	hasPendingLocalWork(): boolean {
+		return this.#localWorkDepth > 0;
 	}
 }
 

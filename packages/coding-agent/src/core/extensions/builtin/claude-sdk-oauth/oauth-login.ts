@@ -1,6 +1,7 @@
 import type {
 	AuthCheck,
 	AuthContext,
+	AuthResult,
 	OAuthAuth,
 	OAuthCredential,
 	OAuthCredentials,
@@ -29,7 +30,23 @@ export type CurrentCredentialReader = () => Promise<ClaudeSdkOauthCredential | u
 
 export type OAuthConfigShape = {
 	name: string;
-	check(input: { ctx: AuthContext; credential?: OAuthCredential }): Promise<AuthCheck | undefined>;
+	check(input: {
+		ctx: AuthContext;
+		credential?: OAuthCredential;
+		signal?: AbortSignal;
+	}): Promise<AuthCheck | undefined>;
+	/**
+	 * Request auth for the ambient lane — an environment OAuth token or a
+	 * logged-in Claude CLI — used when auth.json holds no managed accounts.
+	 * The SDK subprocess authenticates itself in that lane, so the sentinel is
+	 * the whole credential; without this the provider passes `check` and then
+	 * fails every request with "Provider is not configured".
+	 */
+	resolveAmbient(input: {
+		ctx: AuthContext;
+		env?: Record<string, string>;
+		signal?: AbortSignal;
+	}): Promise<AuthResult | undefined>;
 	login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials>;
 	refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials>;
 	getApiKey(credentials: OAuthCredentials): string;
@@ -40,7 +57,17 @@ const ENV_TOKEN_NAMES = [
 	"CLAUDE_CODE_OAUTH_TOKEN",
 	...Array.from({ length: 15 }, (_, index) => `CLAUDE_CODE_OAUTH_TOKEN_${index + 2}`),
 ] as const;
+const ENV_TOKEN_NAME_SET = new Set<string>(ENV_TOKEN_NAMES);
 const AUTH_CHECK = { source: "Claude SDK OAuth", type: "oauth" } as const;
+
+function requestClaudeEnvironment(value: unknown): Record<string, string> {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+	const environment: Record<string, string> = {};
+	for (const [name, entry] of Object.entries(value)) {
+		if (ENV_TOKEN_NAME_SET.has(name) && typeof entry === "string") environment[name] = entry;
+	}
+	return environment;
+}
 
 function toSlot(
 	credential: { access: string; refresh: string; expires: number },
@@ -65,24 +92,59 @@ async function promptAccountName(callbacks: OAuthLoginCallbacks, existing: Accou
 export function createOAuthConfig(deps: {
 	readCurrent: CurrentCredentialReader;
 	readAnthropicCredential?: () => Promise<{ access: string; refresh: string; expires: number } | undefined>;
-	readAmbientAuthStatus?: () => Promise<boolean>;
+	readAmbientAuthStatus?: (signal?: AbortSignal) => Promise<boolean>;
 	readSettings?: () => { tokenInjection?: "oauth-slots" | "config-dir" | "ambient" } | undefined;
 	loginFlow?: OAuthAuth;
 }): OAuthConfigShape {
+	const claudeEnvironment = async (ctx: AuthContext): Promise<Record<string, string>> => {
+		const entries = await Promise.all(ENV_TOKEN_NAMES.map(async (name) => [name, await ctx.env(name)] as const));
+		return Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => entry[1] !== undefined));
+	};
+
+	/** Single predicate behind both `check` and `resolveAmbient`, so availability and resolution cannot disagree. */
+	const configuredFor = async (
+		ctx: AuthContext,
+		stored: ClaudeSdkOauthCredential | undefined,
+		signal?: AbortSignal,
+		environment?: Record<string, string>,
+	): Promise<boolean> => {
+		const storedAccounts = stored?.type === "oauth" && Array.isArray(stored.accounts) ? stored.accounts : [];
+		const effectiveEnvironment = environment ?? (await claudeEnvironment(ctx));
+		const environmentTokenCount = Object.values(effectiveEnvironment).filter(Boolean).length;
+		const accountCount = storedAccounts.length + environmentTokenCount;
+		const lane = deps.readSettings?.()?.tokenInjection ?? (accountCount > 0 ? "oauth-slots" : "ambient");
+		if (lane === "ambient") {
+			if (environmentTokenCount > 0) return true;
+			return (deps.readAmbientAuthStatus ?? readAmbientClaudeAuthStatus)(signal);
+		}
+		return accountCount > 0;
+	};
+
 	return {
 		name: CLAUDE_SDK_OAUTH_NAME,
 
-		async check({ ctx, credential }) {
-			const stored = credential as ClaudeSdkOauthCredential | undefined;
-			const storedAccounts = stored?.type === "oauth" && Array.isArray(stored.accounts) ? stored.accounts : [];
-			const envTokens = await Promise.all(ENV_TOKEN_NAMES.map((name) => ctx.env(name)));
-			const envAccountCount = envTokens.filter((token) => token !== undefined && token.length > 0).length;
-			const accountCount = storedAccounts.length + envAccountCount;
-			const lane = deps.readSettings?.()?.tokenInjection ?? (accountCount > 0 ? "oauth-slots" : "ambient");
-			if (lane === "ambient") {
-				return (await (deps.readAmbientAuthStatus ?? readAmbientClaudeAuthStatus)()) ? AUTH_CHECK : undefined;
-			}
-			return accountCount > 0 ? AUTH_CHECK : undefined;
+		async check({ ctx, credential, signal }) {
+			const requestEnvironment = requestClaudeEnvironment(credential?.env);
+			return (await configuredFor(
+				ctx,
+				credential as ClaudeSdkOauthCredential | undefined,
+				signal,
+				Object.keys(requestEnvironment).length > 0 ? requestEnvironment : undefined,
+			))
+				? AUTH_CHECK
+				: undefined;
+		},
+
+		async resolveAmbient({ ctx, env, signal }) {
+			const requestEnvironment = requestClaudeEnvironment(env);
+			const environment =
+				Object.keys(requestEnvironment).length > 0 ? requestEnvironment : await claudeEnvironment(ctx);
+			if (!(await configuredFor(ctx, undefined, signal, environment))) return undefined;
+			return {
+				auth: { apiKey: SENTINEL_OAUTH_FIELDS.access },
+				...(Object.keys(environment).length > 0 ? { env: environment } : {}),
+				source: AUTH_CHECK.source,
+			};
 		},
 
 		async login(callbacks) {

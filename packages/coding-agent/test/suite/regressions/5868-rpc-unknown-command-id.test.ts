@@ -22,6 +22,7 @@ vi.mock("../../../src/core/output-guard.js", () => ({
 vi.mock("../../../src/modes/interactive/theme/theme.js", () => ({ theme: {} }));
 
 vi.mock("../../../src/modes/rpc/jsonl.js", () => ({
+	MAX_RPC_LINE_CHARACTERS: 16 * 1024 * 1024,
 	attachJsonlLineReader: vi.fn((_stream: NodeJS.ReadableStream, onLine: (line: string) => void) => {
 		rpcIo.lineHandler = onLine;
 		return () => {
@@ -103,6 +104,30 @@ describe("RPC unknown command responses (#5868)", () => {
 					command: "foobar",
 					success: false,
 					error: "Unknown command: foobar",
+				});
+			});
+		} finally {
+			harness.cleanup();
+			restoreListeners(listenerSnapshot);
+		}
+	});
+
+	test("rejects valid non-object JSON without crashing the classic host", async () => {
+		const listenerSnapshot = takeListenerSnapshot();
+		const harness = await createHarness();
+
+		try {
+			void runRpcMode(createRuntimeHost(harness));
+			await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
+
+			rpcIo.lineHandler?.("null");
+
+			await vi.waitFor(() => {
+				expect(parseOutputLines()).toContainEqual({
+					type: "response",
+					command: "parse",
+					success: false,
+					error: "RPC command must be a JSON object.",
 				});
 			});
 		} finally {

@@ -21,6 +21,42 @@ import { estimateTokens } from "../../../compaction/index.ts";
 export const MAX_SUMMARIZATION_OVERFLOW_RETRIES = 3;
 
 /**
+ * CJK text tokenizes far denser than the chars/4 prose heuristic (roughly one
+ * token per 1.5 Korean characters, not four). The shared estimator undercounts
+ * such text by ~2.7x, so a Korean-heavy session whose estimate "fits" could
+ * still produce a summarization request over provider size limits (observed
+ * 2026-08-16 as gateway HTTP 413 rejections on every fallback model). Weight
+ * CJK runs so request sizing stays conservative for them, mirroring the
+ * estimator's existing base64-run weighting.
+ */
+const CJK_RUN_RE = /[\u1100-\u11FF\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF00-\uFFEF\u{20000}-\u{2FA1F}]+/gu;
+const CJK_CHAR_WEIGHT = 3;
+
+function cjkExtraChars(text: string): number {
+	let extra = 0;
+	for (const match of text.matchAll(CJK_RUN_RE)) {
+		extra += match[0].length * (CJK_CHAR_WEIGHT - 1);
+	}
+	return extra;
+}
+
+/**
+ * Request-sizing estimate: the shared chars/4 estimate plus a CJK density
+ * correction. JSON serialization carries every content field, so CJK runs are
+ * counted wherever they appear (text, tool arguments, outputs, summaries).
+ */
+function estimateWireTokens(message: AgentMessage): number {
+	const base = estimateTokens(message);
+	let serialized: string;
+	try {
+		serialized = JSON.stringify(message);
+	} catch {
+		return base;
+	}
+	return base + Math.ceil(cjkExtraChars(serialized) / 4);
+}
+
+/**
  * Cumulative wall-clock budget across all overflow retries of one compaction
  * run. Twice the per-attempt stream budget: a slow provider may consume the
  * per-attempt watchdog on each attempt, and the retry loop must still end
@@ -56,7 +92,7 @@ export interface PruneStep {
 
 export function estimateTotalTokens(messages: AgentMessage[]): number {
 	let total = 0;
-	for (const message of messages) total += estimateTokens(message);
+	for (const message of messages) total += estimateWireTokens(message);
 	return total;
 }
 
@@ -82,7 +118,7 @@ function removeAssistantToolPair(messages: AgentMessage[], assistantIndex: numbe
 	let removedTokens = 0;
 	const pruned = messages.filter((message, index) => {
 		const remove = index === assistantIndex || (message.role === "toolResult" && ids.has(message.toolCallId));
-		if (remove) removedTokens += estimateTokens(message);
+		if (remove) removedTokens += estimateWireTokens(message);
 		return !remove;
 	});
 	return { messages: pruned, removedTokens };
@@ -97,7 +133,7 @@ function removeFirstOldToolPair(messages: AgentMessage[], boundaryIndex: number)
 		if (message.role === "toolResult") {
 			return {
 				messages: messages.filter((_message, candidateIndex) => candidateIndex !== index),
-				removedTokens: estimateTokens(message),
+				removedTokens: estimateWireTokens(message),
 			};
 		}
 	}
@@ -112,7 +148,7 @@ function removeFirstOldMessage(messages: AgentMessage[], boundaryIndex: number):
 			return removeAssistantToolPair(messages, index);
 		return {
 			messages: messages.filter((_candidate, candidateIndex) => candidateIndex !== index),
-			removedTokens: estimateTokens(message),
+			removedTokens: estimateWireTokens(message),
 		};
 	}
 	return undefined;

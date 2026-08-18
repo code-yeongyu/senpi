@@ -280,10 +280,12 @@ describe("service-tier builtin extension", () => {
 		expect(await runner.emitBeforeProviderRequest(anthropicPayload)).toBe(anthropicPayload);
 	});
 
-	it("lets an explicitly configured model tier win over session fast mode", async () => {
+	it("lets a persisted /fast preference outrank a catalog flex tier", async () => {
 		// given
-		// A models.json/scoped tier is a deliberate per-model choice; the session toggle is a
-		// fallback for Codex models that have none, so it must never overwrite the explicit value.
+		// Under per-model memory precedence (memory > catalog), `/fast on` persists `priority` for
+		// this model and so it wins over the model's catalog `flex` tier on the wire. Without
+		// `/fast`, the catalog `flex` stands (a per-model catalog choice is respected for a model the
+		// user never toggled).
 		const harness = await createHarness({
 			api: CODEX_API,
 			provider: CODEX_PROVIDER,
@@ -294,6 +296,10 @@ describe("service-tier builtin extension", () => {
 		harnesses.push(harness);
 		const runner = harness.getExtensionRunner();
 		expect(harness.session.serviceTier).toBe("flex");
+		expect(await runner.emitBeforeProviderRequest({ model: BASE_MODEL_ID })).toEqual({
+			model: BASE_MODEL_ID,
+			service_tier: "flex",
+		});
 
 		// when
 		await harness.session.prompt("/fast");
@@ -301,18 +307,20 @@ describe("service-tier builtin extension", () => {
 		// then
 		expect(await runner.emitBeforeProviderRequest({ model: BASE_MODEL_ID })).toEqual({
 			model: BASE_MODEL_ID,
-			service_tier: "flex",
+			service_tier: "priority",
 		});
 	});
 
-	it("drops session fast mode when a new session starts", async () => {
+	it("carries fast mode into a new session and drops it only when turned off", async () => {
 		// given
-		// The toggle is session-scoped and never persisted, so a fresh session_start must not
-		// inherit a priority tier from the previous one.
+		// Fast mode is remembered per model (settings `modelServiceTiers`), so a fresh
+		// session_start restores the user's last choice for this model instead of resetting it.
+		// Turning it off is what clears the tier — see test/suite/fast-mode-persistence.test.ts.
 		const harness = await createHarness({
 			api: CODEX_API,
 			provider: CODEX_PROVIDER,
 			models: [{ id: BASE_MODEL_ID }, { id: FAST_MODEL_ID }],
+			fileSettings: true,
 			extensionFactories: [serviceTierExtension],
 		});
 		harnesses.push(harness);
@@ -324,6 +332,16 @@ describe("service-tier builtin extension", () => {
 		});
 
 		// when
+		await harness.session.bindExtensions({});
+
+		// then
+		expect(await runner.emitBeforeProviderRequest({ model: BASE_MODEL_ID })).toEqual({
+			model: BASE_MODEL_ID,
+			service_tier: "priority",
+		});
+
+		// when
+		await harness.session.prompt("/fast off");
 		await harness.session.bindExtensions({});
 
 		// then

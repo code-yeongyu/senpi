@@ -172,9 +172,9 @@ export async function createAgentSessionServices(
 	for (const registration of drainPendingProviderRegistrations(extensionsResult.runtime)) {
 		try {
 			if (registration.kind === "config") {
-				modelRuntime.registerProvider(registration.name, registration.config);
+				void modelRuntime.registerProvider(registration.name, registration.config, { refresh: false });
 			} else {
-				modelRuntime.registerNativeProvider(registration.provider);
+				void modelRuntime.registerNativeProvider(registration.provider, { refresh: false });
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);

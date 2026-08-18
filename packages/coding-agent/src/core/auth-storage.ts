@@ -25,6 +25,7 @@ import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileRevision, normalizePath } from "../utils/paths.ts";
+import { FILE_STORAGE_LOCK_OPTIONS } from "./lockfile-policy.ts";
 import { isCommandConfigValue, resolveConfigValue } from "./resolve-config-value.ts";
 
 type AuthStorageData = Record<string, Credential>;
@@ -98,7 +99,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 			try {
-				return lockfile.lockSync(path, { realpath: false });
+				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS });
 			} catch (error) {
 				const code =
 					typeof error === "object" && error !== null && "code" in error
@@ -143,7 +144,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		signal: AbortSignal | undefined,
 		onCompromised: (error: Error) => void,
 	): Promise<() => Promise<void>> {
-		const staleMs = 30_000;
+		const staleMs = FILE_STORAGE_LOCK_OPTIONS.stale;
 		const maxDelayMs = 2_000;
 		const deadline = Date.now() + staleMs;
 		let retry = 0;
@@ -152,9 +153,8 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			let release: (() => Promise<void>) | undefined;
 			try {
 				release = await lockfile.lock(this.authPath, {
-					realpath: false,
+					...FILE_STORAGE_LOCK_OPTIONS,
 					retries: 0,
-					stale: staleMs,
 					onCompromised,
 				});
 			} catch (error) {
@@ -499,8 +499,13 @@ export class AuthStorage implements CredentialStore {
 	private async readLatestData(options?: AuthOperationOptions): Promise<AuthStorageData> {
 		options?.signal?.throwIfAborted();
 		if (!this.authPath) {
-			const reload = this.reloadFromStorageAsync(options);
-			return options?.signal ? reload : reload.catch(() => this.readState.data);
+			try {
+				return await this.reloadFromStorageAsync(options);
+			} catch (error) {
+				options?.signal?.throwIfAborted();
+				this.recordError(error);
+				return this.readState.data;
+			}
 		}
 		const revision = getFileRevision(this.authPath);
 		if (revision !== undefined && revision === this.readState.revision) return this.readState.data;
@@ -526,8 +531,12 @@ export class AuthStorage implements CredentialStore {
 		const reload = this.readState.reload;
 		reload.readers++;
 		try {
-			const result = raceWithAbortSignal(reload.promise, options?.signal);
-			return options?.signal ? await result : await result.catch(() => this.readState.data);
+			try {
+				return await raceWithAbortSignal(reload.promise, options?.signal);
+			} catch {
+				options?.signal?.throwIfAborted();
+				return this.readState.data;
+			}
 		} finally {
 			reload.readers--;
 			if (reload.readers === 0 && this.readState.reload === reload) {

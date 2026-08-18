@@ -75,6 +75,25 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(commaMessage, 256000)).toBe(true);
 	});
 
+	it("detects gateway 413 body-size rejections as byte-size overflow", () => {
+		// Real gateway rejections captured 2026-08-16: a compaction summarization
+		// request whose HTTP body exceeded the provider/gateway limit. These are
+		// byte-size overflows — the same class as Anthropic's request_too_large —
+		// and must route into input-shrinking recovery, not a terminal error.
+		const openAiStyle = createErrorMessage(
+			'413: {"message":"Request body too large","type":"invalid_request_error","code":"body_too_large"}',
+		);
+		expect(isContextOverflow(openAiStyle, 200000)).toBe(true);
+
+		const aiSdkStyle = createErrorMessage(
+			'413: {"message":"Request Entity Too Large","type":"AI_APICallError","param":{"error":"Request Entity Too Large","statusCode":413,"name":"AI_APICallError","message":"Request Entity Too Large","isRetryable":false,"type":"AI_APICallError"}}',
+		);
+		expect(isContextOverflow(aiSdkStyle, 200000)).toBe(true);
+
+		const rfcStyle = createErrorMessage("413 Payload Too Large");
+		expect(isContextOverflow(rfcStyle, 200000)).toBe(true);
+	});
+
 	it("does not treat generic non-overflow Ollama errors as overflow", () => {
 		const message = createErrorMessage("500 `model runner crashed unexpectedly`");
 		expect(isContextOverflow(message, 32768)).toBe(false);

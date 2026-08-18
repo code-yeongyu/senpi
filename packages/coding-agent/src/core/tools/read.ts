@@ -11,6 +11,7 @@ import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/inte
 import { processImage } from "../../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.ts";
+import { getExperimentalToolSampling } from "../experimental.ts";
 import type { FilesystemPolicyChecker, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
 import { resolveReadPathAsync, resolveToCwd } from "./path-utils.ts";
@@ -222,6 +223,7 @@ export function createReadToolDefinition(
 		promptSnippet: readToolSystemPromptContribution.snippet,
 		promptGuidelines: [...readToolSystemPromptContribution.guidelines],
 		parameters: readSchema,
+		constrainedSampling: getExperimentalToolSampling(),
 		async execute(
 			_toolCallId,
 			{ path, offset, limit }: { path: string; offset?: number; limit?: number },

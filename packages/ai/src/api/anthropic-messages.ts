@@ -37,6 +37,7 @@ import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
+import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getAnthropicCompat, isAnthropicApiBaseUrl } from "../utils/prompt-cache-ttl.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -54,7 +55,7 @@ import { resolveRootObjectSchema } from "../utils/tool-schema-compat.ts";
 import { demotedToolCallText, demotedToolResultText } from "../utils/unavailable-tool-text.ts";
 import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
-import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import {
 	ANTHROPIC_RESERVED_BODY_KEYS,
@@ -363,8 +364,43 @@ function mergeHeaders(...headerSources: (Record<string, string | null> | undefin
 	return merged;
 }
 
-function hasAuthorizationHeader(headers?: Record<string, string>): boolean {
-	return Object.keys(headers ?? {}).some((name) => name.toLowerCase() === "authorization");
+function mergeClientHeaders(
+	model: Model<"anthropic-messages">,
+	...headerSources: (Record<string, string | null> | undefined)[]
+): Record<string, string | null> {
+	const merged = mergeHeaders(...headerSources);
+	if (model.provider === "kimi-coding") {
+		for (const name of Object.keys(merged)) {
+			if (name.toLowerCase() === "user-agent") delete merged[name];
+		}
+		merged["User-Agent"] = getPiUserAgent();
+	}
+	return merged;
+}
+
+function hasHeader(headers: Record<string, string | null> | undefined, name: string): boolean {
+	if (!headers) return false;
+	const expected = name.toLowerCase();
+	for (const [key, value] of Object.entries(headers)) {
+		if (key.toLowerCase() === expected && value !== null && value.trim().length > 0) return true;
+	}
+	return false;
+}
+
+function assertRequestAuth(
+	provider: string,
+	apiKey: string | undefined,
+	headers: Record<string, string | null> | undefined,
+): void {
+	if (apiKey) return;
+	if (
+		hasHeader(headers, "authorization") ||
+		hasHeader(headers, "x-api-key") ||
+		hasHeader(headers, "cf-aig-authorization")
+	) {
+		return;
+	}
+	throw new Error(`No API key for provider: ${provider}`);
 }
 
 interface ServerSentEvent {
@@ -1219,9 +1255,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			} else {
 				const apiKey = options?.apiKey;
 				const optionsHeaders = providerHeadersToRecord(options?.headers);
-				if (!apiKey && !hasAuthorizationHeader(optionsHeaders)) {
-					throw new Error(`No API key for provider: ${model.provider}`);
-				}
+				assertRequestAuth(model.provider, apiKey, optionsHeaders);
 
 				let copilotDynamicHeaders: Record<string, string> | undefined;
 				if (model.provider === "github-copilot") {
@@ -1688,9 +1722,7 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
-	if (!apiKey && !hasAuthorizationHeader(providerHeadersToRecord(options?.headers))) {
-		throw new Error(`No API key for provider: ${model.provider}`);
-	}
+	assertRequestAuth(model.provider, apiKey, providerHeadersToRecord(options?.headers));
 
 	const base = buildBaseOptions(model, context, options, options?.apiKey);
 	if (!options?.reasoning) {
@@ -1789,7 +1821,8 @@ function createClient(
 			fetch,
 			defaultHeaders: sanitizeAdaptiveThinkingHeaders(
 				model,
-				mergeHeaders(
+				mergeClientHeaders(
+					model,
 					{
 						accept: "application/json",
 						"anthropic-dangerous-direct-browser-access": "true",
@@ -1815,7 +1848,8 @@ function createClient(
 			fetch,
 			defaultHeaders: sanitizeAdaptiveThinkingHeaders(
 				model,
-				mergeHeaders(
+				mergeClientHeaders(
+					model,
 					{
 						accept: "application/json",
 						"anthropic-dangerous-direct-browser-access": "true",
@@ -1843,7 +1877,8 @@ function createClient(
 		fetch,
 		defaultHeaders: sanitizeAdaptiveThinkingHeaders(
 			model,
-			mergeHeaders(
+			mergeClientHeaders(
+				model,
 				{
 					accept: "application/json",
 					"anthropic-dangerous-direct-browser-access": "true",
@@ -2356,9 +2391,10 @@ function convertTools(
 
 	return tools.map((tool, index) => {
 		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictTools);
+		const parameters = getJsonSchemaToolParameters(tool, strict);
 		// A root union carries no top-level properties, so reading them directly
 		// would advertise the tool to the model as taking no arguments at all.
-		const schema = resolveRootObjectSchema(tool.parameters as Record<string, unknown>) as {
+		const schema = resolveRootObjectSchema(parameters as Record<string, unknown>) as {
 			properties?: unknown;
 			required?: string[];
 		};
@@ -2370,7 +2406,7 @@ function convertTools(
 		const inputSchema =
 			strict === true
 				? {
-						...(tool.parameters as Record<string, unknown>),
+						...(parameters as Record<string, unknown>),
 						...legacyInputSchema,
 					}
 				: legacyInputSchema;

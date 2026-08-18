@@ -27,6 +27,59 @@
 - MEDIUM in `session-binding.ts` and `session-registry-wiring.ts`; LOW in their focused tests and issue #6981
   regression.
 
+## Repository audit baseline for the claude-sdk-oauth tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`). The audited production paths whose exact nearest tracker is this file:
+  none — every file under `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/` is fork-only (absent
+  from the pinned upstream tree), so the audit assigns this tracker no upstream-owned divergence.
+- Two leftover diff3 conflict-separator lines were removed from the historical entries below; the surrounding
+  history is preserved unchanged.
+
+### Why
+
+- Anchoring the tracker in canonical four-section form keeps future divergences under this directory resolvable by
+  the audit gate, and stray conflict markers would corrupt any future structural pass over the history.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository and release policy, not runtime behavior; it is enforced by repository scripts before
+  any extension loader exists.
+
+### Expected merge conflict zones
+
+- NONE: this tracker is fork-only (upstream has no counterpart file).
+
+## 2026-08-14 - Preserve effective ambient request authentication
+
+### What changed
+
+- Ambient resolution now returns the effective `CLAUDE_CODE_OAUTH_TOKEN` slot environment with its sentinel auth result.
+- Both resident and non-resident SDK lanes pass only Claude OAuth request slots into account discovery and subprocess environment construction.
+- A request token namespace replaces host token slots instead of joining them, and unrelated request values such as `PATH`, `HOME`, or `NODE_OPTIONS` cannot cross the SDK child boundary.
+- Present-but-empty request token slots remain in the effective environment returned with the synthetic auth marker, so replay cannot substitute a host token.
+- Ambient resolution receives the raw request environment and applies Claude token slots as one namespace. Masking the primary slot therefore cannot import a host secondary slot, and masking a numbered slot cannot import the host primary slot.
+- A request token configured with `tokenInjection: "config-dir"` is routed through the non-persisting OAuth environment lane instead of being written into the stable agent credential directory.
+- Explicit ambient injection treats request token slots as configured without probing host Claude login state.
+- Availability probes reject pre-aborted cold callers, keep one in-flight owner across TTL boundaries, and timestamp only settled cache results.
+- Focused coverage drives request tokens through stored/ambient auth, true ambient and resident lanes, real session-title generation, and captured SDK subprocess options while a different host token is present.
+
+### Why
+
+- Request-scoped environment overrides were accepted during availability resolution but discarded before SDK spawn, widened to unrelated process-control values, persisted under `config-dir`, or merged per variable so a different host token slot survived an explicit mask. Empty masks were also dropped before replay. The child could inherit or fail over to a host account, cross account and billing boundaries, persist a request secret, or accept request-controlled Node startup configuration.
+- A pre-aborted caller could start and populate a shared probe, while a long-running probe could be duplicated once its future cache TTL elapsed.
+
+### Why an extension could not handle it
+
+- The effective credential crosses the builtin provider's private auth resolver, resident-session adapter, availability cache, and SDK subprocess boundary. No external hook can restore or safely narrow it after those boundaries.
+
+### Expected merge-conflict zones
+
+- MEDIUM: `oauth-login.ts` around ambient resolution, `auth-lane.ts` plus `auth-environment.ts` around environment/account discovery, `config-dir-credentials.ts` around persistent managed-account materialization, and `availability.ts` around in-flight/cache ownership.
+- LOW: `stream.ts` and `session-stream.ts` where request options enter the auth lane.
+
 ## 2026-08-14 - Pin native auto-compaction on the SDK lane
 
 ### What changed
@@ -74,7 +127,6 @@
 
 - LOW: `session-registry-wiring.ts` at the `session_compact` handler and its focused wiring test.
 
-||||||| parent of 2c6a09919 (fix(coding-agent): hide Claude auth probe window)
 
 ## 2026-08-14 - Hide ambient auth probes on Windows
 
@@ -83,6 +135,11 @@
 - `readAmbientClaudeAuthStatus()` now passes `windowsHide: true` when spawning
   `claude auth status`, preventing the availability check from opening a console
   window on Windows.
+- Merged with the bounded ambient probe: `windowsHide` moved onto the default
+  `spawnProbe`, so the injected-spawn path and the real spawn stay identical.
+- `claude-sdk-oauth-availability.test.ts` drives the two outcome cases through
+  `probeAmbientClaudeAuthStatus` instead of the reader, because the reader
+  memoises for 30s and would replay the first probe's `true` to both.
 
 ### Expected merge-conflict zones
 
@@ -138,6 +195,60 @@ The lane decision lives inside the builtin provider's own `queryWithAuthLane`/`m
 
 LOW in `auth-lane.ts` (new `resolveEffectiveLane` + `managedPool` lane resolution); LOW in `oauth-login.ts` (`readSettings` dep + lane-aware `check`); LOW in `index.ts` (one new import + `readSettings` wiring); LOW in `options.ts` (one fallback literal). LOW in `test/claude-sdk-oauth-auth-status.test.ts` and `test/suite/regressions/6784-claude-sdk-oauth-default-lane.test.ts`.
 
+## 2026-08-13 - Bound the ambient probe and let an abandoned request stop waiting
+
+### What changed
+
+- `probeAmbientClaudeAuthStatus` runs under a 10s deadline, killing the status child and reporting unavailable
+  when it expires. The probe accepts an injected spawn so the deadline is covered without a real subprocess.
+- The reader returned by `createAmbientAuthStatusReader` takes an optional `AbortSignal` and rejects for THAT
+  caller once its request is abandoned. The shared probe keeps running for the callers still waiting on it.
+- `check()` and `resolveAmbient()` thread the signal supplied by `ApiKeyAuth`, so both paths through
+  `configuredFor()` are bounded.
+
+### Why
+
+- `claude auth status` validates credentials and can stall. The probe sits on the auth path of every request and
+  its result is shared, so one stall parked every caller that joined it, with no deadline and no way for an
+  aborted turn to walk away. Model calls waited behind auth resolution that could never settle.
+- Cancelling the shared probe on one caller's abort would be the wrong repair: it would cancel work another live
+  request is waiting on. Only the individual wait is abandoned.
+
+### Why an extension could not handle it
+
+- The probe and its cache live inside this builtin provider, behind `Models.getAuth()`. No external hook observes
+  that boundary or the per-request signal reaching it.
+
+### Expected merge-conflict zones
+
+- LOW: `availability.ts` around the reader and probe signatures.
+- LOW: `oauth-login.ts` at `configuredFor`, `check`, and `resolveAmbient` parameter lists.
+
+## 2026-08-12 - Restore request auth for the ambient lane
+
+- Regression from 2acbb6e0c ("Require a real OAuth login for runtime availability"), which removed the
+  `apiKey: "claude-sdk-oauth-managed"` registration placeholder. That placeholder was the provider's only route to
+  api-key auth, and `resolveProviderAuth()` reads ambient credentials exclusively through `apiKey.resolve()`.
+  Removing it left the provider registering `oauth` alone, so with no stored account every request failed
+  `Provider is not configured: claude-sdk-oauth` — including the automatic `session_title_generation` call, which
+  surfaced the error on session start before the user typed anything.
+- The availability check kept accepting an environment token or a logged-in Claude CLI, so those users still had
+  `claude-sdk-oauth` models offered and selected. Availability and resolution disagreed, and no configuration could
+  fix it: only a stored credential was ever consulted, while `queryWithAuthLane` has always supported an `ambient`
+  lane that `managedPool` selects by default.
+- `createOAuthConfig` now exposes `resolveAmbient()`, returning the sentinel access field when the provider is
+  usable without a stored credential. `check()` and `resolveAmbient()` share one `configuredFor()` predicate — the
+  lane resolution introduced by the entry above, factored out — so availability and resolution cannot drift apart
+  again. This does not restore the false availability 2acbb6e0c fixed: resolution applies the same lane rules and
+  the same real probe as `check()`, where the removed literal reported configured unconditionally.
+- `availability.ts` memoises the ambient probe (30s TTL, shared in-flight read, rejections uncached). The probe
+  spawns the Claude binary at roughly 200-650ms and now sits on the per-request auth path rather than only on
+  catalog refresh.
+- This cannot be implemented by an external extension: the composer discards a provider's ambient credentials
+  before `Models.getAuth()` runs, so the resolution path must exist in provider composition.
+- Expected merge conflict zones: LOW in `oauth-login.ts` and `availability.ts`; LOW in the focused ambient
+  resolution and probe-cache tests.
+
 ## 2026-08-11 - Require a real OAuth login for runtime availability
 
 - Removed the literal `apiKey: "claude-sdk-oauth-managed"` registration placeholder. Provider composition treated
@@ -176,7 +287,6 @@ The stored-OAuth branch in `ModelsImpl.checkProviderAuth` is a structural short-
 
 LOW in `oauth-login.ts` (added `check` to the returned shape + optional `readSettings` dep); LOW in `index.ts` (one added `readSettings` line); LOW in `provider-composer.ts` (`ExtensionOAuthConfig.check` + `adaptOAuth` forwarding, both additive).
 
-||||||| parent of 5baf13f11 (fix(claude-sdk-oauth): ignore content-less user messages in continuity hashes)
 
 ## 2026-08-10 - Ignore content-less user messages in sent-stream continuity
 

@@ -10,6 +10,73 @@
 
 ### Fixed
 
+- Model recovery now preserves Cursor's in-memory resolved-tool marker on native tool-call blocks, so Claude/Kimi-id
+  Cursor turns do not execute server-resolved bash/write/delete calls a second time
+  ([#939](https://github.com/code-yeongyu/senpi/pull/939)).
+- GPT-5.6 Sol and Sol Fast now default to a 400,000-token context window in both the direct OpenAI and
+  ChatGPT OAuth (`openai-codex`) catalogs ([#933](https://github.com/code-yeongyu/senpi/pull/933)).
+- Refreshed Vercel AI Gateway pricing for `alibaba/qwen3.8-27b` from zero-value placeholder metadata to the
+  current upstream input, output, and cache-read rates ([#933](https://github.com/code-yeongyu/senpi/pull/933)).
+
+### Removed
+
+## [2026.8.18] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- xAI Grok model metadata now exposes the documented `low`/`medium`/`high`/`xhigh` effort ladder for Grok 4.6,
+  sends the selected Chat Completions `reasoning_effort`, and restores the current Grok 4.20 reasoning and
+  non-reasoning variants with their correct fixed-thinking behavior ([#930](https://github.com/code-yeongyu/senpi/pull/930)).
+
+### Removed
+
+## [2026.8.17] - 2026-08-17
+
+### Breaking Changes
+
+### Added
+
+- `openai-codex` provider now ships `-fast` Priority-tier variants for GPT-5.6 sol/terra/luna, mirroring the existing `openai` provider pattern (`upstreamModelId` + `serviceTier: "priority"`, base cost rates). The Codex Responses adapter already supports Priority service tier and applies the cost multiplier at usage-accounting time, so catalog costs stay at base values to avoid double-counting.
+- Cursor chat and tool calling are now fully supported through the new `cursor-agent` API: one HTTP/2 Connect stream per assistant turn against `agent.v1.AgentService/Run`, streaming text/thinking/tool-call deltas, usage from token deltas, and in-band execution of Cursor's server-driven exec channel (native read/ls/grep/write/shell frames, modern `pi_*` frames, MCP-advertised tools, kv blob store, tool-catalog handshake). Bridged tool runs are synthesized into the assistant message as already-resolved tool calls with paired results, so transcripts and the agent loop stay consistent, and the model catalog is discovered per account through `GetUsableModels` after `/login cursor` (max-mode 1M-context variants included). The Cursor protobuf schema is vendored with a regeneration script; unsupported protocol surfaces (computer use, subagents, background shells, canvas, smart-mode classification, conversation search) answer with typed refusals ([#910](https://github.com/code-yeongyu/senpi/pull/910)).
+
+### Changed
+
+### Fixed
+
+- Cloudflare AI Gateway live tests now pin `claude-sonnet-5` instead of the retired `claude-sonnet-4-5` id, so root typecheck still passes after model-catalog hydration ([#925](https://github.com/code-yeongyu/senpi/pull/925)).
+- Cursor's server-driven exec channel now keeps pending local tools alive with write-completion-chained 3-second
+  exec heartbeats and closes every normal typed result sequence exactly once. Read, shell, MCP, and modern `pi_*`
+  tool turns no longer leave the server-side exec pending until the Run stream ends before `turnEnded`
+  ([#915](https://github.com/code-yeongyu/senpi/pull/915)).
+
+### Removed
+
+## [2026.8.16] - 2026-08-16
+
+### Breaking Changes
+
+### Added
+
+- Cursor (Pro/Ultra/Teams) is now a builtin OAuth provider: `/login cursor` opens the `cursor.com/loginDeepControl` browser deep link with a PKCE S256 challenge and polls `api2.cursor.sh/auth/poll` with capped backoff until the browser approval releases the tokens; refresh exchanges the stored refresh token at `auth/exchange_user_api_key` under the credential-store lock and keeps the previous refresh token when Cursor does not rotate it. Definitive poll rejections (400/401/403/410) fail fast instead of being retried as network hiccups, the poll wait is abort-aware, and token expiry derives from the access-token JWT `exp` claim with a 5-minute refresh skew. The provider is authentication-only for now — Cursor chat runs on a protobuf Connect-RPC agent protocol that is not ported yet, so no models are exposed; the stored access token resolves through the standard auth pipeline for integrations that speak the Cursor protocol ([#905](https://github.com/code-yeongyu/senpi/pull/905)).
+- GLM 5.3 is now a fully supported model family: 25 catalog entries cloned across 18 providers (alibaba-token-plan, baseten, cloudflare, fireworks, huggingface, nvidia, opencode, opencode-go, opengateway, openrouter, qwen-token-plan, together, vercel-ai-gateway, zai, zai-coding-cn), the `openai-completions` thinking-level-map matcher generalizes to cover 5.3 (`isGlm52` → `isGlm5x`), and the zai `thinkingFormat` handler forces `{type:"enabled"}` for 5.3 even when no reasoning effort is set (5.3 cannot disable thinking per the Z.AI wire contract). `generate-models.ts` was updated so regeneration preserves the 5.3 entries and their thinkingLevelMaps ([#895](https://github.com/code-yeongyu/senpi/pull/895)).
+
+### Changed
+
+- Synced the provider transports with upstream v0.84.2: the Anthropic streaming path now uses upstream's SSE decoder with deferred tools (`tool_reference`/`defer_loading`) and adaptive `xhigh` effort, OpenAI Completions gained strict JSON-schema conversion, grammar/custom tool calls and the new thinking backends, and the Responses transports support upstream's `additional_tools` deferred-tool mode. The fork's server-fallback receipts, retry hints, tool-choice fallback, prompt-cache TTL, deterministic tool-call-ID sanitizer and `senpi` wire identity are preserved. `mistral-conversations` moves to upstream's native transport. Provider catalog data was refreshed for the capabilities these features read (`supportsAdditionalTools`, native DeepSeek `max_tokens`, Cloudflare Responses strict mode, DeepSeek V4 Flash `low` effort), and DeepSeek base-URL detection is now case-insensitive ([#892](https://github.com/code-yeongyu/senpi/pull/892)).
+
+### Fixed
+
+- Stored OAuth request resolution now refreshes before availability checks, passes transient request environment through both availability and auth derivation, preserves it for replay, and respects explicit empty environment overrides ([#836](https://github.com/code-yeongyu/senpi/pull/836) by [@ismetanin](https://github.com/ismetanin)).
+- Ambient-only API-key compatibility adapters can no longer outrank a valid stored OAuth credential ([#836](https://github.com/code-yeongyu/senpi/pull/836) by [@ismetanin](https://github.com/ismetanin)).
+- Ambient-only authentication can now apply provider-owned request credential namespaces without importing sibling host credentials ([#836](https://github.com/code-yeongyu/senpi/pull/836) by [@ismetanin](https://github.com/ismetanin)).
+- `isContextOverflow` now classifies gateway HTTP 413 byte-size rejections — "Request body too large", "Request Entity Too Large", `body_too_large`, and "Payload Too Large" — as overflow, the same recovery class as Anthropic's native `request_too_large`. Sessions whose requests exceed a gateway body limit previously saw these as terminal errors, which wedged compaction on every fallback model ([#884](https://github.com/code-yeongyu/senpi/issues/884)).
+
 ### Removed
 
 ## [2026.8.14] - 2026-08-14

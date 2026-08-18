@@ -1,5 +1,3 @@
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import { loadAnthropicOAuth } from "@earendil-works/pi-ai/oauth";
 import { getAgentDir } from "../../../../config.ts";
@@ -8,7 +6,6 @@ import { emitProviderAccountFailover, emitProviderAccountsChanged } from "./acco
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
 import {
 	type AccountSlot,
-	assertValidAccountName,
 	type ClaudeSdkOauthCredential,
 	emptyCredential,
 	envSlotToken,
@@ -18,6 +15,8 @@ import {
 } from "./accounts.ts";
 import { selectAccount } from "./affinity.ts";
 import { type AuthenticatedAttemptInput, createAttemptMessages, type RetainableAttempt } from "./auth-attempt.ts";
+import { hasRequestOauthToken, mergeRequestAuthEnvironment, stripManagedAuthEnvironment } from "./auth-environment.ts";
+import { writeConfigDirCredential } from "./config-dir-credentials.ts";
 import { classifySdkError } from "./errors.ts";
 import { runFailover } from "./failover.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
@@ -26,14 +25,6 @@ import type { ClaudeSdkOauthProviderSettings, ClaudeSdkOauthTokenInjection } fro
 export { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
 
 export const EXPIRING_WITHIN_MS = 5 * 60_000;
-const CLI_OAUTH_SCOPES = [
-	"org:create_api_key",
-	"user:profile",
-	"user:inference",
-	"user:sessions:claude_code",
-	"user:mcp_servers",
-	"user:file_upload",
-] as const;
 
 type AuthLaneBoundary = {
 	createStore: () => CredentialStore;
@@ -73,6 +64,8 @@ export type AuthenticatedQueryInput = {
 	query: SdkQuery;
 	buildOptions: (lane: ClaudeSdkOauthTokenInjection) => Options;
 	providerSettings: ClaudeSdkOauthProviderSettings;
+	/** Effective request auth environment; overrides the host for account discovery and SDK spawn. */
+	env?: Record<string, string>;
 	signal?: AbortSignal;
 	sessionId?: string;
 	/** Request-scoped CLI pin; takes precedence over persistent settings and account pins. */
@@ -85,52 +78,11 @@ export type AuthenticatedQueryInput = {
 
 type ManagedPool = {
 	accounts: AccountSlot[];
+	environment: NodeJS.ProcessEnv;
 	lane: Exclude<ClaudeSdkOauthTokenInjection, "ambient">;
 	pinnedAccount?: string;
 	store: CredentialStore;
 };
-
-function managedEnvironment(parent: NodeJS.ProcessEnv): Record<string, string | undefined> {
-	const {
-		ANTHROPIC_API_KEY: _apiKey,
-		ANTHROPIC_AUTH_TOKEN: _authToken,
-		ANTHROPIC_BASE_URL: _gateway,
-		ANTHROPIC_CUSTOM_HEADERS: _customHeaders,
-		CLAUDE_CODE_OAUTH_TOKEN: _oauthToken,
-		CLAUDE_CODE_USE_BEDROCK: _bedrock,
-		CLAUDE_CODE_USE_FOUNDRY: _foundry,
-		CLAUDE_CODE_USE_GATEWAY: _gatewayMode,
-		CLAUDE_CODE_USE_VERTEX: _vertex,
-		...environment
-	} = parent;
-	for (const name of Object.keys(environment)) {
-		if (/^CLAUDE_CODE_OAUTH_TOKEN_\d+$/.test(name)) delete environment[name];
-		if (name.startsWith("SENPI_")) delete environment[name];
-	}
-	return environment;
-}
-
-function configDirectory(slot: AccountSlot): string {
-	assertValidAccountName(slot.name);
-	return join(activeBoundary.getAgentDir(), "claude-sdk-oauth-accounts", slot.name);
-}
-
-function writeConfigCredentials(directory: string, slot: AccountSlot, access: string): void {
-	mkdirSync(directory, { recursive: true, mode: 0o700 });
-	chmodSync(directory, 0o700);
-	writeFileSync(
-		join(directory, ".credentials.json"),
-		JSON.stringify({
-			claudeAiOauth: {
-				accessToken: access,
-				refreshToken: slot.refresh,
-				expiresAt: slot.expires,
-				scopes: CLI_OAUTH_SCOPES,
-			},
-		}),
-		{ encoding: "utf8", mode: 0o600 },
-	);
-}
 
 export function resolveEffectiveLane(
 	settings: ClaudeSdkOauthProviderSettings,
@@ -139,10 +91,13 @@ export function resolveEffectiveLane(
 	return settings.tokenInjection ?? (accounts.length > 0 ? "oauth-slots" : "ambient");
 }
 
-async function managedPool(settings: ClaudeSdkOauthProviderSettings): Promise<ManagedPool | undefined> {
+async function managedPool(
+	settings: ClaudeSdkOauthProviderSettings,
+	requestEnvironment?: Record<string, string>,
+): Promise<ManagedPool | undefined> {
 	const store = activeBoundary.createStore();
 	let credential = await store.read(CLAUDE_SDK_OAUTH_PROVIDER_ID);
-	const environment = activeBoundary.env();
+	const environment = mergeRequestAuthEnvironment(activeBoundary.env(), requestEnvironment);
 	let accounts = listAccounts(
 		(credential as ClaudeSdkOauthCredential | undefined) ?? emptyCredential(),
 		(name) => environment[name],
@@ -154,10 +109,12 @@ async function managedPool(settings: ClaudeSdkOauthProviderSettings): Promise<Ma
 			(name) => environment[name],
 		);
 	}
-	const lane = resolveEffectiveLane(settings, accounts);
+	const configuredLane = resolveEffectiveLane(settings, accounts);
+	const lane =
+		configuredLane === "config-dir" && hasRequestOauthToken(requestEnvironment) ? "oauth-slots" : configuredLane;
 	if (lane === "ambient" || accounts.length === 0) return undefined;
 	const stored = credential?.type === "oauth" ? (credential as ClaudeSdkOauthCredential) : undefined;
-	return { accounts, lane, pinnedAccount: settings.pinnedAccount ?? stored?.pinned, store };
+	return { accounts, environment, lane, pinnedAccount: settings.pinnedAccount ?? stored?.pinned, store };
 }
 
 async function prepareSlot(
@@ -165,7 +122,7 @@ async function prepareSlot(
 	selected: AccountSlot,
 	signal: AbortSignal,
 ): Promise<Record<string, string | undefined>> {
-	const environment = activeBoundary.env();
+	const environment = pool.environment;
 	const slot = selected;
 	if (slot.source !== "env" && activeBoundary.now() >= slot.expires - EXPIRING_WITHIN_MS) {
 		try {
@@ -190,10 +147,9 @@ async function prepareSlot(
 	}
 	const access = slot.source === "env" ? envSlotToken((name) => environment[name], slot.name) : slot.access;
 	if (!access) throw new Error("authentication_failed: selected OAuth token is unavailable");
-	const childEnvironment = managedEnvironment(environment);
+	const childEnvironment = stripManagedAuthEnvironment(environment);
 	if (pool.lane === "oauth-slots") return { ...childEnvironment, CLAUDE_CODE_OAUTH_TOKEN: access };
-	const directory = configDirectory(slot);
-	writeConfigCredentials(directory, slot, access);
+	const directory = writeConfigDirCredential(activeBoundary.getAgentDir(), slot, access);
 	return { ...childEnvironment, CLAUDE_CONFIG_DIR: directory };
 }
 
@@ -223,10 +179,10 @@ function visibleSdkMessage(message: SDKMessage): boolean {
 /** Resolves managed OAuth immediately before each subprocess spawn and retries only pre-delta failures. */
 export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncGenerator<SDKMessage> {
 	const signal = input.signal ?? new AbortController().signal;
-	const pool = await managedPool(input.providerSettings);
+	const pool = await managedPool(input.providerSettings, input.env);
 	if (!pool) {
 		const options = input.buildOptions("ambient");
-		const parentEnvironment = activeBoundary.env();
+		const parentEnvironment = mergeRequestAuthEnvironment(activeBoundary.env(), input.env);
 		const ambientEnvironment: Record<string, string | undefined> = { ...parentEnvironment };
 		for (const name of Object.keys(ambientEnvironment)) {
 			if (name.startsWith("SENPI_")) delete ambientEnvironment[name];

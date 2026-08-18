@@ -497,6 +497,14 @@ export interface ExtensionContext {
 	applyCompaction(precomputed: CompactionResult, options: ApplyCompactionOptions): Promise<ApplyCompactionResult>;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/**
+	 * Get the current base system-prompt construction options, including any
+	 * user overrides (`customPrompt` from --system-prompt, `appendSystemPrompt`
+	 * from --append-system-prompt). Optional on the base context for
+	 * compatibility with hand-built contexts; the senpi runner always binds it,
+	 * and it stays required on ExtensionCommandContext.
+	 */
+	getSystemPromptOptions?(): BuildSystemPromptOptions;
 	/** Get hook source paths currently visible to the builtin hooks extension. */
 	getLoadedHookSources?(): LoadedHookSources;
 	/** Get extension-declared MCP servers aggregated across all extensions (first-wins). */
@@ -524,7 +532,6 @@ export interface ProviderRequestPreparation {
 export interface ExtensionCommandContext extends ExtensionContext {
 	/** Get the current base system-prompt construction options. */
 	getSystemPromptOptions(): BuildSystemPromptOptions;
-
 	/** Wait for the agent to finish streaming */
 	waitForIdle(): Promise<void>;
 
@@ -570,7 +577,7 @@ export interface ReplacedSessionContext extends ExtensionCommandContext {
 
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 	): Promise<void>;
 }
 
@@ -1713,10 +1720,11 @@ export interface ExtensionAPI {
 	/**
 	 * Send a user message to the agent. Always triggers a turn.
 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
+	 * Set expandPromptTemplates to dispatch extension commands and expand skill commands and prompt templates.
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
@@ -2016,7 +2024,7 @@ export type SendMessageHandler = <T = unknown>(
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
-	options?: { deliverAs?: "steer" | "followUp" },
+	options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 ) => void;
 
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
