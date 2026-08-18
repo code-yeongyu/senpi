@@ -20,6 +20,7 @@ export type CursorAgentExecutableDeps = {
 export type VersionProbeOptions = {
 	encoding: "utf8";
 	timeout: number;
+	windowsHide?: boolean;
 };
 
 export type VersionProbeCallback = (error: Error | null, stdout: string, stderr: string) => void;
