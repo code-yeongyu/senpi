@@ -92,6 +92,45 @@ describe("TerminalScreen", () => {
 		}
 	});
 
+	it("serializes concurrent feeds through xterm write callbacks", async () => {
+		const originalWrite = xterm.Terminal.prototype.write;
+		let writePending = false;
+
+		xterm.Terminal.prototype.write = function patchedWrite(
+			this: XtermTerminalType,
+			data: string | Uint8Array,
+			callback?: () => void,
+		): void {
+			if (writePending) {
+				throw new Error("write data discarded, use flow control to avoid losing data");
+			}
+			writePending = true;
+			originalWrite.call(this, data, () => {
+				writePending = false;
+				callback?.();
+			});
+		};
+
+		try {
+			const screen = new TerminalScreen({ cols: 20, rows: 2, scrollback: 10 });
+			await Promise.all([screen.feed("first"), screen.feed(" second"), screen.feed(" third")]);
+
+			expect(screen.snapshot().visibleGrid[0]).toBe("first second third");
+		} finally {
+			xterm.Terminal.prototype.write = originalWrite;
+		}
+	});
+
+	it("orders resize replay between concurrent feeds", async () => {
+		const screen = new TerminalScreen({ cols: 6, rows: 4, scrollback: 10 });
+
+		await Promise.all([screen.feed("abcdef"), screen.resize(3, 4), screen.feed("ghi")]);
+
+		const snapshot = screen.snapshot();
+		expect(snapshot.cols).toBe(3);
+		expect(snapshot.visibleGrid).toEqual(["abc", "def", "ghi", ""]);
+	});
+
 	it("bounds resize replay history in long sessions", async () => {
 		const originalWrite = xterm.Terminal.prototype.write;
 		const replayLengths: number[] = [];
