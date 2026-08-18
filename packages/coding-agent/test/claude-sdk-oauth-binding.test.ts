@@ -2,20 +2,27 @@ import { describe, expect, it } from "vitest";
 import {
 	BINDING_ENTRY_TYPE,
 	type BindingCheckpoint,
+	bindingFromCheckpoint,
+	checkpointFromBinding,
 	latestBindingOnBranch,
-	verifyBindingAgainstTranscript,
 } from "../src/core/extensions/builtin/claude-sdk-oauth/session-binding.ts";
+import type { ContinuityBinding } from "../src/core/extensions/builtin/claude-sdk-oauth/session-reattach.ts";
 
 function checkpoint(overrides: Partial<BindingCheckpoint> = {}): BindingCheckpoint {
 	return {
 		schemaVersion: 1,
 		sdkSessionId: "sdk-1",
 		sentCount: 2,
-		sentPrefixHash: "prefix-hash",
+		sentHashes: ["hash-1", "hash-2"],
 		lastAssistantUuid: "uuid-a2",
+		assistantUuidByIndex: [
+			[1, "uuid-a1"],
+			[2, "uuid-a2"],
+		],
 		accountName: "primary",
-		claudeConfigDir: "/home/user/.claude",
 		modelId: "claude-opus-4-5",
+		systemPromptHash: "prompt-v1",
+		toolsetHash: "tools-v1",
 		...overrides,
 	};
 }
@@ -48,47 +55,27 @@ describe("claude-sdk-oauth continuity binding", () => {
 		expect(latestBindingOnBranch(branch)).toBeUndefined();
 	});
 
-	it("reattaches when the transcript still holds the recorded boundary and prefix", () => {
-		const decision = verifyBindingAgainstTranscript({
-			binding: checkpoint(),
-			transcriptExists: true,
-			transcriptHasBoundaryUuid: true,
-			currentSentPrefixHash: "prefix-hash",
-		});
+	it("round-trips a process-local binding through a serializable checkpoint", () => {
+		const binding: ContinuityBinding = {
+			senpiSessionId: "senpi-1",
+			sdkSessionId: "sdk-1",
+			sentCount: 2,
+			sentHashes: ["hash-1", "hash-2"],
+			lastAssistantUuid: "uuid-a2",
+			assistantUuidByIndex: [
+				[1, "uuid-a1"],
+				[2, "uuid-a2"],
+			],
+			accountName: "primary",
+			modelId: "claude-opus-4-5",
+			systemPromptHash: "prompt-v1",
+			toolsetHash: "tools-v1",
+		};
 
-		expect(decision).toMatchObject({ kind: "reattach", sdkSessionId: "sdk-1", from: 2 });
+		expect(bindingFromCheckpoint("senpi-1", checkpointFromBinding(binding))).toEqual(binding);
 	});
 
-	it("forks at the boundary when the local prefix advanced past the checkpoint", () => {
-		const decision = verifyBindingAgainstTranscript({
-			binding: checkpoint(),
-			transcriptExists: true,
-			transcriptHasBoundaryUuid: true,
-			currentSentPrefixHash: "prefix-hash-moved",
-		});
-
-		expect(decision).toMatchObject({ kind: "fork", atUuid: "uuid-a2", reason: "sent_stream_diverged" });
-	});
-
-	it("flattens only when the SDK transcript is gone", () => {
-		const decision = verifyBindingAgainstTranscript({
-			binding: checkpoint(),
-			transcriptExists: false,
-			transcriptHasBoundaryUuid: false,
-			currentSentPrefixHash: "prefix-hash",
-		});
-
-		expect(decision).toEqual({ kind: "flatten", reason: "transcript_missing" });
-	});
-
-	it("flattens when the boundary uuid vanished from an existing transcript", () => {
-		const decision = verifyBindingAgainstTranscript({
-			binding: checkpoint(),
-			transcriptExists: true,
-			transcriptHasBoundaryUuid: false,
-			currentSentPrefixHash: "prefix-hash",
-		});
-
-		expect(decision).toMatchObject({ kind: "flatten", reason: "branch_boundary_unavailable" });
+	it("ignores malformed checkpoints instead of restoring partial state", () => {
+		expect(latestBindingOnBranch([entry(BINDING_ENTRY_TYPE, { ...checkpoint(), sentHashes: [42] })])).toBeUndefined();
 	});
 });
