@@ -1,8 +1,14 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "../../types.ts";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
+import {
+	BINDING_ENTRY_TYPE,
+	bindingFromCheckpoint,
+	checkpointFromBinding,
+	latestBindingOnBranch,
+} from "./session-binding.ts";
 import { AssistantCommitBoundary, isResidentAssistant, isTerminalFailure } from "./session-commit-boundary.ts";
-import { bindingFromEntry, rememberBinding } from "./session-reattach.ts";
+import { bindingFromEntry, getBinding, rememberBinding } from "./session-reattach.ts";
 import {
 	closeSession,
 	getSession,
@@ -25,7 +31,14 @@ function residentEntryFor(sessionId: string, message: AssistantMessage) {
 	return entry;
 }
 
-export function registerSessionRegistry(pi: Pick<ExtensionAPI, "on">): void {
+export function registerSessionRegistry(
+	pi: Pick<ExtensionAPI, "on"> & Partial<Pick<ExtensionAPI, "appendEntry">>,
+): void {
+	pi.on("session_start", (_event, ctx) => {
+		const checkpoint = latestBindingOnBranch(ctx.sessionManager.getBranch());
+		if (!checkpoint) return;
+		rememberBinding(bindingFromCheckpoint(ctx.sessionManager.getSessionId(), checkpoint));
+	});
 	pi.on("session_compact", (event, ctx) => {
 		if (!event.accepted) return;
 		recordPendingFork(ctx.sessionManager.getSessionId(), "compaction");
@@ -71,7 +84,10 @@ export function registerSessionRegistry(pi: Pick<ExtensionAPI, "on">): void {
 		}
 		if (commitBoundary.commit(sessionId, event.message, entry.modelId) === "rewritten") {
 			recordPendingFork(sessionId, "assistant_rewritten");
+			return;
 		}
+		const binding = getBinding(sessionId);
+		if (binding) pi.appendEntry?.(BINDING_ENTRY_TYPE, checkpointFromBinding(binding));
 	});
 	pi.on("session_shutdown", (event, ctx) => {
 		closeSession(ctx.sessionManager.getSessionId(), event.reason);
