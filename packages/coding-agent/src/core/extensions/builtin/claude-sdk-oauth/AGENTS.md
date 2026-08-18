@@ -17,7 +17,7 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 | `session-stream.ts` | Resident-lane attempts (`createResidentAttempt`), flatten serialization + directive dedupe |
 | `session-continuity.ts` | `decideNativeContinuity` decision table: `delta` / `reattach` / `fork` / `flatten` / `bootstrap` |
 | `session-registry.ts` | Resident SDK query registry: idle reaping, eviction, state transitions (with `session-registry-state/pump/wiring.ts`) |
-| `session-binding.ts` | Branch-local binding checkpoint for restart-time resume verification |
+| `session-binding.ts` | Bounded branch-local restart checkpoint with fail-closed prefix and ledger verification |
 | `session-commit-boundary.ts` | `message_end` commit boundary; divergence decided against the SDK ledger, not in-flight staging |
 | `session-observability.ts` | `ContinuityObservation` (kind, reason, delta count, `payloadBytes`, `collapsedDirectives`), `session.log` events |
 | `system-prompt.ts` | `systemPromptMode` handling (`full` default, `preset-append` deprecated, `override` from file); no array-splitting, the CLI joins arrays |
@@ -30,7 +30,7 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 
 ## INVARIANTS (from changes.md)
 
-- Resume-first: every query replacement re-attaches with `resume`; flatten is a last resort for a missing transcript or unusable binding. A live session is never abandoned for a flattened re-send.
+- Resume-first: every query replacement re-attaches with `resume`; persisted restarts reattach only when the branch ledger and bounded prefix checkpoint agree. A live session is never abandoned for a flattened re-send.
 - The SDK ledger is authoritative for divergence; decide at the `message_end` commit boundary. Result-only turns are a supported shape, not divergence.
 - Fork point is the last assistant boundary strictly before the divergence.
 - Non-fork reattach passes `resume` and must omit `sessionId` (the SDK rejects the pair). Fork adds `resumeSessionAt` + `forkSession`.

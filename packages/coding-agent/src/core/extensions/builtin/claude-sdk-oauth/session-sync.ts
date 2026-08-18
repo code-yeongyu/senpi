@@ -82,7 +82,7 @@ export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
 	return hashes;
 }
 
-function prefixDigest(hashes: readonly string[], count = hashes.length): string {
+export function sentHashPrefixDigest(hashes: readonly string[], count = hashes.length): string {
 	return digest(hashes.slice(0, count));
 }
 
@@ -96,7 +96,7 @@ export function recordSyncedStream(entry: ClaudeSdkOauthSessionEntry, hashes: re
 	const copy = [...hashes];
 	sentHashesByEntry.set(entry, copy);
 	entry.sentCount = copy.length;
-	entry.syncedPrefixHash = prefixDigest(copy);
+	entry.syncedPrefixHash = sentHashPrefixDigest(copy);
 	entry.branchInfo = null;
 }
 

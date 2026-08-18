@@ -2,6 +2,7 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Options, SdkQueryHandle } from "../src/core/extensions/builtin/claude-sdk-oauth/sdk-boundary.ts";
 import {
+	type ContinuityBinding,
 	forgetBinding,
 	getBinding,
 	reattachSession,
@@ -28,7 +29,7 @@ function fakeQuery(): SdkQueryHandle {
 	};
 }
 
-function binding() {
+function binding(): ContinuityBinding {
 	return {
 		senpiSessionId: SESSION_ID,
 		sdkSessionId: SDK_SESSION_ID,
@@ -93,6 +94,31 @@ describe("claude-sdk-oauth session reattach", () => {
 		closeSession(SESSION_ID, "idle_ttl");
 
 		expect(getBinding(SESSION_ID)).toMatchObject({ sdkSessionId: SDK_SESSION_ID, sentCount: 2 });
+	});
+
+	it("owns nested binding state across registry writes and reads", () => {
+		const original: ContinuityBinding = {
+			...binding(),
+			assistantUuidByIndex: [
+				[1, "uuid-a1"],
+				[2, "uuid-a2"],
+			],
+		};
+		rememberBinding(original);
+		Reflect.set(original.sentHashes, 0, "mutated-input");
+		Reflect.set(original.assistantUuidByIndex?.[0] ?? [], 1, "mutated-input");
+
+		const first = getBinding(SESSION_ID);
+		expect(first).toBeDefined();
+		if (!first) return;
+		expect(first.sentHashes[0]).toBe("h1");
+		expect(first.assistantUuidByIndex?.[0]?.[1]).toBe("uuid-a1");
+		Reflect.set(first.sentHashes, 0, "mutated-read");
+		Reflect.set(first.assistantUuidByIndex?.[0] ?? [], 1, "mutated-read");
+
+		const second = getBinding(SESSION_ID);
+		expect(second?.sentHashes[0]).toBe("h1");
+		expect(second?.assistantUuidByIndex?.[0]?.[1]).toBe("uuid-a1");
 	});
 
 	it("restores the synchronized prefix onto the reattached entry", async () => {

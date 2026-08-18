@@ -21,6 +21,9 @@ import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extension
 
 type EventHandler = (event: unknown, ctx: ExtensionContext) => unknown;
 
+const PROMPT_HASH = "1".repeat(64);
+const TOOLSET_HASH = "2".repeat(64);
+
 function fakeQuery(): SdkQueryHandle {
 	return {
 		async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage> {},
@@ -43,10 +46,10 @@ function fakeExtension() {
 	return { api, handlers, persisted };
 }
 
-function assistant(): AssistantMessage {
+function assistant(text = "turn one"): AssistantMessage {
 	return {
 		role: "assistant",
-		content: [{ type: "text", text: "turn one" }],
+		content: [{ type: "text", text }],
 		api: "claude-sdk-oauth",
 		provider: "claude-sdk-oauth",
 		model: "claude-test",
@@ -81,14 +84,54 @@ afterEach(() => {
 });
 
 describe("issue #6981 headless restart continuity", () => {
+	it("persists an invalidation when the committed assistant rewrites the provider final", async () => {
+		overrideSessionRegistryBoundary({ queryFactory: () => fakeQuery() });
+		const entry = getOrCreateSession({
+			senpiSessionId: "issue-6981",
+			accountName: "default",
+			modelId: "claude-test",
+			systemPromptHash: PROMPT_HASH,
+			toolsetHash: TOOLSET_HASH,
+			options: {},
+		});
+		entry.sentCount = 1;
+		entry.assistantUuidByIndex.set(1, "assistant-uuid-1");
+		rememberBinding(bindingFromEntry(entry, ["user-hash-1"]));
+
+		const extension = fakeExtension();
+		registerSessionRegistry(extension.api);
+		const context = {
+			sessionManager: {
+				getSessionId: () => "issue-6981",
+				getBranch: () => [],
+			},
+		} as unknown as ExtensionContext;
+		const providerFinal = assistant("provider final");
+
+		await emit(extension.handlers, "message_update", { type: "message_update", message: providerFinal }, context);
+		await emit(
+			extension.handlers,
+			"message_end",
+			{ type: "message_end", message: assistant("committed rewrite") },
+			context,
+		);
+
+		expect(extension.persisted).toEqual([
+			{
+				customType: BINDING_ENTRY_TYPE,
+				data: { schemaVersion: 1, invalidated: true, reason: "assistant_rewritten" },
+			},
+		]);
+	});
+
 	it("persists the SDK binding in the session branch and restores it on startup", async () => {
 		overrideSessionRegistryBoundary({ queryFactory: () => fakeQuery() });
 		const entry = getOrCreateSession({
 			senpiSessionId: "issue-6981",
 			accountName: "default",
 			modelId: "claude-test",
-			systemPromptHash: "prompt-v1",
-			toolsetHash: "tools-v1",
+			systemPromptHash: PROMPT_HASH,
+			toolsetHash: TOOLSET_HASH,
 			options: {},
 		});
 		entry.sentCount = 1;
@@ -124,6 +167,7 @@ describe("issue #6981 headless restart continuity", () => {
 						customType: extension.persisted[0]!.customType,
 						data: extension.persisted[0]!.data,
 					},
+					{ type: "message", message: assistant() },
 				],
 			},
 		} as unknown as ExtensionContext;
@@ -143,7 +187,7 @@ describe("issue #6981 headless restart continuity", () => {
 				currentHashes: ["user-hash-1"],
 				accountName: "default",
 				modelId: "claude-test",
-				fingerprint: { systemPromptHash: "prompt-v1", toolsetHash: "tools-v1" },
+				fingerprint: { systemPromptHash: PROMPT_HASH, toolsetHash: TOOLSET_HASH },
 				transcriptAvailable: true,
 			}),
 		).toMatchObject({ kind: "reattach", reason: "registry_miss" });

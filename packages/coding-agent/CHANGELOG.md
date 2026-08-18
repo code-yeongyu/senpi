@@ -6,8 +6,9 @@
 
 ### Fixed
 
-- Headless Claude SDK OAuth continuation now restores its persisted SDK binding across separate CLI processes, so
-  `-p -c` resumes the existing lineage instead of resending the full conversation after a `registry_miss`.
+- Headless Claude SDK OAuth continuation now restores a bounded, ledger-verified SDK checkpoint across separate CLI
+  processes, so `-p -c` sends only the new turn after a `registry_miss`; rewrites, compaction, malformed state, and
+  inherited branches invalidate or reject stale continuity instead of resuming it.
 
 ### New Features
 

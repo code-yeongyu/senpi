@@ -3,12 +3,13 @@ import type { ExtensionAPI } from "../../types.ts";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
 import {
 	BINDING_ENTRY_TYPE,
+	type BindingInvalidation,
 	bindingFromCheckpoint,
 	checkpointFromBinding,
 	latestBindingOnBranch,
 } from "./session-binding.ts";
 import { AssistantCommitBoundary, isResidentAssistant, isTerminalFailure } from "./session-commit-boundary.ts";
-import { bindingFromEntry, getBinding, rememberBinding } from "./session-reattach.ts";
+import { bindingFromEntry, forgetBinding, getBinding, rememberBinding } from "./session-reattach.ts";
 import {
 	closeSession,
 	getSession,
@@ -18,6 +19,10 @@ import {
 } from "./session-registry.ts";
 
 const commitBoundary = new AssistantCommitBoundary();
+
+function persistBindingInvalidation(pi: Partial<Pick<ExtensionAPI, "appendEntry">>, reason: string): void {
+	pi.appendEntry?.(BINDING_ENTRY_TYPE, { schemaVersion: 1, invalidated: true, reason } satisfies BindingInvalidation);
+}
 
 function keepBindingThenClose(sessionId: string, reason: string): void {
 	const entry = getSession(sessionId);
@@ -34,17 +39,23 @@ function residentEntryFor(sessionId: string, message: AssistantMessage) {
 export function registerSessionRegistry(
 	pi: Pick<ExtensionAPI, "on"> & Partial<Pick<ExtensionAPI, "appendEntry">>,
 ): void {
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", (event, ctx) => {
+		if (event.reason === "reload") return;
+		const sessionId = ctx.sessionManager.getSessionId();
+		forgetBinding(sessionId);
+		if (event.reason === "new" || event.reason === "fork") return;
 		const checkpoint = latestBindingOnBranch(ctx.sessionManager.getBranch());
 		if (!checkpoint) return;
-		rememberBinding(bindingFromCheckpoint(ctx.sessionManager.getSessionId(), checkpoint));
+		rememberBinding(bindingFromCheckpoint(sessionId, checkpoint));
 	});
 	pi.on("session_compact", (event, ctx) => {
 		if (!event.accepted) return;
 		recordPendingFork(ctx.sessionManager.getSessionId(), "compaction");
+		persistBindingInvalidation(pi, "compaction");
 	});
 	pi.on("session_before_fork", (_event, ctx) => {
 		recordPendingFork(ctx.sessionManager.getSessionId(), "fork");
+		persistBindingInvalidation(pi, "fork");
 	});
 	pi.on("session_tree", (event, ctx) => {
 		if (event.oldLeafId === null || event.newLeafId === null) return;
@@ -52,6 +63,7 @@ export function registerSessionRegistry(
 			oldLeafId: event.oldLeafId,
 			newLeafId: event.newLeafId,
 		});
+		persistBindingInvalidation(pi, "tree_changed");
 	});
 	pi.on("model_select", async (event, ctx) => {
 		const sessionId = ctx.sessionManager.getSessionId();
@@ -84,6 +96,7 @@ export function registerSessionRegistry(
 		}
 		if (commitBoundary.commit(sessionId, event.message, entry.modelId) === "rewritten") {
 			recordPendingFork(sessionId, "assistant_rewritten");
+			persistBindingInvalidation(pi, "assistant_rewritten");
 			return;
 		}
 		const binding = getBinding(sessionId);

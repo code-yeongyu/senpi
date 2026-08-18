@@ -163,13 +163,17 @@ async function createResidentAttempt(
 	} else if (decision.kind === "reattach" || decision.kind === "fork") {
 		const source = getBinding(sessionId) ?? (existing ? bindingFromEntry(existing, residentHashes) : undefined);
 		const binding = source
-			? {
-					...source,
+			? (({ sentPrefixHash: _persistedPrefix, ...rest }) => ({
+					...rest,
 					sentCount: decision.from,
-					sentHashes: source.sentHashes.slice(0, decision.from),
+					sentHashes: hashes.slice(0, decision.from),
 					assistantUuidByIndex: (source.assistantUuidByIndex ?? []).filter(([index]) => index <= decision.from),
+					accountName: auth.accountName,
+					modelId: input.model.id,
+					systemPromptHash: fingerprint.systemPromptHash,
+					toolsetHash: fingerprint.toolsetHash,
 					...(decision.kind === "fork" ? { lastAssistantUuid: decision.atUuid } : {}),
-				}
+				}))(source)
 			: undefined;
 		try {
 			if (!binding) throw new Error("Claude SDK OAuth continuity binding is unavailable");

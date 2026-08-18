@@ -3,6 +3,7 @@ import {
 	type ContinuityDecisionInput,
 	decideNativeContinuity,
 } from "../src/core/extensions/builtin/claude-sdk-oauth/session-continuity.ts";
+import { sentHashPrefixDigest } from "../src/core/extensions/builtin/claude-sdk-oauth/session-sync.ts";
 
 const FINGERPRINT = { systemPromptHash: "prompt-v1", toolsetHash: "tools-v1" };
 
@@ -173,6 +174,58 @@ describe("claude-sdk-oauth native continuity decisions", () => {
 		);
 
 		expect(decision).toEqual({ kind: "flatten", reason: "registry_miss" });
+	});
+
+	it("fails closed instead of pairing a restored divergence with the wrong assistant boundary", () => {
+		const decision = decideNativeContinuity(
+			input({
+				entry: undefined,
+				binding: {
+					sdkSessionId: "sdk-restored",
+					sentCount: 2,
+					sentHashes: [],
+					sentPrefixHash: sentHashPrefixDigest(["h1", "h2"]),
+					lastAssistantUuid: "uuid-a2",
+					accountName: "primary",
+					modelId: "claude-opus-4-5",
+					systemPromptHash: FINGERPRINT.systemPromptHash,
+					toolsetHash: FINGERPRINT.toolsetHash,
+				},
+				currentHashes: ["h1", "h2-rewritten", "h3"],
+			}),
+		);
+
+		expect(decision).toEqual({ kind: "flatten", reason: "sent_stream_diverged" });
+	});
+
+	it.each([
+		["account", { accountName: "secondary" }, "account_changed"],
+		["model", { modelId: "claude-sonnet-5" }, "model_changed"],
+		[
+			"options",
+			{ fingerprint: { systemPromptHash: "prompt-v2", toolsetHash: FINGERPRINT.toolsetHash } },
+			"options_changed",
+		],
+	] as const)("reports restored %s drift before reattaching", (_label, override, reason) => {
+		const decision = decideNativeContinuity(
+			input({
+				entry: undefined,
+				binding: {
+					sdkSessionId: "sdk-restored",
+					sentCount: 2,
+					sentHashes: [],
+					sentPrefixHash: sentHashPrefixDigest(["h1", "h2"]),
+					lastAssistantUuid: "uuid-a2",
+					accountName: "primary",
+					modelId: "claude-opus-4-5",
+					systemPromptHash: FINGERPRINT.systemPromptHash,
+					toolsetHash: FINGERPRINT.toolsetHash,
+				},
+				...override,
+			}),
+		);
+
+		expect(decision).toMatchObject({ kind: "reattach", reason, from: 2 });
 	});
 
 	it("flattens when a hash divergence has no assistant boundary to fork at", () => {

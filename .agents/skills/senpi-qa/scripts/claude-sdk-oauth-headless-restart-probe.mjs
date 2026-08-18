@@ -148,19 +148,24 @@ try {
 	const firstContinuity = continuityFrom(first.stdout);
 	const secondContinuity = continuityFrom(second.stdout);
 	const sessionFiles = listFiles(stack.box.sessionDir);
-	const resumed = secondContinuity.some(
-		(observation) => observation.kind === "fork" && observation.reason === "registry_miss",
+	const deltaOnlyResume = secondContinuity.some(
+		(observation) => observation.reason === "registry_miss" && observation.deltaMessages === 1,
 	);
 	const flattened = secondContinuity.some(
 		(observation) => observation.kind === "flatten" || observation.kind === "bootstrap",
+	);
+	const replayedHistory = secondContinuity.some(
+		(observation) =>
+			typeof observation.deltaMessages === "number" && observation.deltaMessages > 1,
 	);
 	const passed =
 		first.code === 0 &&
 		second.code === 0 &&
 		sessionFiles.length > 0 &&
 		stack.providerRequests.length >= 2 &&
-		resumed &&
-		!flattened;
+		deltaOnlyResume &&
+		!flattened &&
+		!replayedHistory;
 	summary = {
 		passed,
 		first: { code: first.code, continuity: firstContinuity },

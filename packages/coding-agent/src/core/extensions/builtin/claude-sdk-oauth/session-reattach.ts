@@ -7,6 +7,7 @@ export type ContinuityBinding = {
 	sdkSessionId: string;
 	sentCount: number;
 	sentHashes: readonly string[];
+	sentPrefixHash?: string;
 	lastAssistantUuid: string | null;
 	accountName: string;
 	modelId: string;
@@ -27,6 +28,14 @@ const bindings = new Map<string, ContinuityBinding>();
 
 export type AbortOutcome = "keep" | "reattach";
 
+function cloneBinding(binding: ContinuityBinding): ContinuityBinding {
+	return {
+		...binding,
+		sentHashes: [...binding.sentHashes],
+		assistantUuidByIndex: binding.assistantUuidByIndex?.map(([index, uuid]) => [index, uuid]),
+	};
+}
+
 export function evaluateAbortOutcome(receipt: unknown): AbortOutcome {
 	if (!receipt || typeof receipt !== "object") return "reattach";
 	const queued = (receipt as { still_queued?: unknown }).still_queued;
@@ -34,11 +43,12 @@ export function evaluateAbortOutcome(receipt: unknown): AbortOutcome {
 }
 
 export function rememberBinding(binding: ContinuityBinding): void {
-	bindings.set(binding.senpiSessionId, { ...binding, sentHashes: [...binding.sentHashes] });
+	bindings.set(binding.senpiSessionId, cloneBinding(binding));
 }
 
 export function getBinding(senpiSessionId: string): ContinuityBinding | undefined {
-	return bindings.get(senpiSessionId);
+	const binding = bindings.get(senpiSessionId);
+	return binding ? cloneBinding(binding) : undefined;
 }
 
 export function forgetBinding(senpiSessionId: string): void {

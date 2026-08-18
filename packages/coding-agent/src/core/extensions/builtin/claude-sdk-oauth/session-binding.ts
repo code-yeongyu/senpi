@@ -1,4 +1,5 @@
 import type { ContinuityBinding } from "./session-reattach.ts";
+import { sentHashPrefixDigest } from "./session-sync.ts";
 
 export const BINDING_ENTRY_TYPE = "claude-sdk-oauth-binding";
 
@@ -6,9 +7,8 @@ export type BindingCheckpoint = {
 	schemaVersion: 1;
 	sdkSessionId: string;
 	sentCount: number;
-	sentHashes: string[];
+	sentPrefixHash: string;
 	lastAssistantUuid: string | null;
-	assistantUuidByIndex: [number, string][];
 	accountName: string;
 	modelId: string;
 	systemPromptHash: string;
@@ -17,10 +17,24 @@ export type BindingCheckpoint = {
 
 export type BindingInvalidation = { schemaVersion: 1; invalidated: true; reason: string };
 
-type BranchEntry = { type: string; customType?: string; data?: unknown };
+type BranchEntry = {
+	type: string;
+	customType?: string;
+	data?: unknown;
+	message?: { role?: unknown };
+};
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+const MAX_CHECKPOINT_TEXT_LENGTH = 256;
+
+function isBoundedText(value: unknown): value is string {
+	return typeof value === "string" && value.length > 0 && value.length <= MAX_CHECKPOINT_TEXT_LENGTH;
+}
 
 function isInvalidation(data: unknown): data is BindingInvalidation {
-	return typeof data === "object" && data !== null && (data as BindingInvalidation).invalidated === true;
+	if (typeof data !== "object" || data === null) return false;
+	const invalidation = data as Partial<BindingInvalidation>;
+	return invalidation.schemaVersion === 1 && invalidation.invalidated === true && isBoundedText(invalidation.reason);
 }
 
 function isCheckpoint(data: unknown): data is BindingCheckpoint {
@@ -28,24 +42,18 @@ function isCheckpoint(data: unknown): data is BindingCheckpoint {
 	const checkpoint = data as Partial<BindingCheckpoint>;
 	return (
 		checkpoint.schemaVersion === 1 &&
-		typeof checkpoint.sdkSessionId === "string" &&
-		Number.isInteger(checkpoint.sentCount) &&
+		isBoundedText(checkpoint.sdkSessionId) &&
+		Number.isSafeInteger(checkpoint.sentCount) &&
 		(checkpoint.sentCount ?? -1) >= 0 &&
-		Array.isArray(checkpoint.sentHashes) &&
-		checkpoint.sentHashes.every((hash) => typeof hash === "string") &&
-		(checkpoint.lastAssistantUuid === null || typeof checkpoint.lastAssistantUuid === "string") &&
-		Array.isArray(checkpoint.assistantUuidByIndex) &&
-		checkpoint.assistantUuidByIndex.every(
-			(boundary) =>
-				Array.isArray(boundary) &&
-				boundary.length === 2 &&
-				Number.isInteger(boundary[0]) &&
-				typeof boundary[1] === "string",
-		) &&
-		typeof checkpoint.accountName === "string" &&
-		typeof checkpoint.modelId === "string" &&
+		typeof checkpoint.sentPrefixHash === "string" &&
+		SHA256_HEX.test(checkpoint.sentPrefixHash) &&
+		(checkpoint.lastAssistantUuid === null || isBoundedText(checkpoint.lastAssistantUuid)) &&
+		isBoundedText(checkpoint.accountName) &&
+		isBoundedText(checkpoint.modelId) &&
 		typeof checkpoint.systemPromptHash === "string" &&
-		typeof checkpoint.toolsetHash === "string"
+		SHA256_HEX.test(checkpoint.systemPromptHash) &&
+		typeof checkpoint.toolsetHash === "string" &&
+		SHA256_HEX.test(checkpoint.toolsetHash)
 	);
 }
 
@@ -54,7 +62,14 @@ export function latestBindingOnBranch(branch: readonly BranchEntry[]): BindingCh
 		const entry = branch[index];
 		if (entry?.type !== "custom" || entry.customType !== BINDING_ENTRY_TYPE) continue;
 		if (isInvalidation(entry.data)) return undefined;
-		if (isCheckpoint(entry.data)) return entry.data;
+		if (isCheckpoint(entry.data)) {
+			const committedAssistant = branch[index + 1];
+			if (committedAssistant?.type !== "message" || committedAssistant.message?.role !== "assistant") {
+				return undefined;
+			}
+			return entry.data;
+		}
+		return undefined;
 	}
 	return undefined;
 }
@@ -64,9 +79,8 @@ export function checkpointFromBinding(binding: ContinuityBinding): BindingCheckp
 		schemaVersion: 1,
 		sdkSessionId: binding.sdkSessionId,
 		sentCount: binding.sentCount,
-		sentHashes: [...binding.sentHashes],
+		sentPrefixHash: sentHashPrefixDigest(binding.sentHashes, binding.sentCount),
 		lastAssistantUuid: binding.lastAssistantUuid,
-		assistantUuidByIndex: binding.assistantUuidByIndex?.map(([index, uuid]) => [index, uuid]) ?? [],
 		accountName: binding.accountName,
 		modelId: binding.modelId,
 		systemPromptHash: binding.systemPromptHash,
@@ -79,9 +93,11 @@ export function bindingFromCheckpoint(senpiSessionId: string, checkpoint: Bindin
 		senpiSessionId,
 		sdkSessionId: checkpoint.sdkSessionId,
 		sentCount: checkpoint.sentCount,
-		sentHashes: [...checkpoint.sentHashes],
+		sentHashes: [],
+		sentPrefixHash: checkpoint.sentPrefixHash,
 		lastAssistantUuid: checkpoint.lastAssistantUuid,
-		assistantUuidByIndex: checkpoint.assistantUuidByIndex.map(([index, uuid]) => [index, uuid]),
+		assistantUuidByIndex:
+			checkpoint.lastAssistantUuid === null ? [] : [[checkpoint.sentCount, checkpoint.lastAssistantUuid]],
 		accountName: checkpoint.accountName,
 		modelId: checkpoint.modelId,
 		systemPromptHash: checkpoint.systemPromptHash,
