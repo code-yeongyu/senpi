@@ -1,5 +1,32 @@
 # claude-sdk-oauth extension changes
 
+## 2026-08-18 - Persist restart bindings for headless continuation (issue #6981)
+
+### What changed
+
+- Successful resident Claude SDK OAuth turns now append the complete continuity binding as a branch-local custom
+  session entry, including the SDK session id, sent-message hashes, assistant boundaries, account/model identity,
+  and prompt/tool fingerprints.
+- `session_start` restores the newest valid checkpoint into the resident binding map before the first resumed turn.
+  A missing, invalidated, or malformed checkpoint still fails closed to the existing bootstrap/flatten path.
+- Assistant rewrites and terminal failures do not persist a clean checkpoint.
+
+### Why
+
+- `omo -p -c` restores the Senpi JSONL session in a new process, but the SDK registry and binding maps are module
+  memory. The existing checkpoint parser was never wired into runtime append or restore, so every headless
+  continuation started without a binding and re-sent the full conversation with `registry_miss`.
+
+### Why an extension could not handle it
+
+- The binding contains private SDK lineage and sent-stream hashes created inside this builtin provider. No external
+  extension can reconstruct that state after the provider process exits.
+
+### Expected merge-conflict zones
+
+- MEDIUM in `session-binding.ts` and `session-registry-wiring.ts`; LOW in their focused tests and issue #6981
+  regression.
+
 ## Repository audit baseline for the claude-sdk-oauth tracker (2026-08-17)
 
 ### What changed
