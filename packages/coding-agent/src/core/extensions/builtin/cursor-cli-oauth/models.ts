@@ -125,6 +125,7 @@ async function runModelsProbe(executable: string, stdoutPath: string, timeoutMs:
 		await new Promise<void>((resolve, reject) => {
 			const child = spawn(executable, ["models"], {
 				stdio: ["ignore", output.fd, "ignore"],
+				windowsHide: true,
 			});
 			let timedOut = false;
 			let settled = false;

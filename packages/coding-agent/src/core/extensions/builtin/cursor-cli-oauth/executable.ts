@@ -116,7 +116,7 @@ export function probeCursorAgentVersion(
 	deps: VersionProbeDeps = defaultVersionProbeDeps,
 ): Promise<string> {
 	return new Promise((resolve, reject) => {
-		deps.execFile(executable, ["--version"], { encoding: "utf8", timeout: 10_000 }, (error, stdout) => {
+		deps.execFile(executable, ["--version"], { encoding: "utf8", timeout: 10_000, windowsHide: true }, (error, stdout) => {
 			if (error) {
 				reject(error);
 				return;

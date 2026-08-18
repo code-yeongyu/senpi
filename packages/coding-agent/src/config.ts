@@ -210,6 +210,7 @@ function readCommandOutput(
 	const result = spawnProcessSync(command, args, {
 		encoding: "utf-8",
 		stdio: ["ignore", "pipe", "pipe"],
+		windowsHide: true,
 	});
 	if (result.status === 0) return result.stdout.trim() || undefined;
 	if (options.requireSuccess) {
