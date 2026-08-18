@@ -1510,6 +1510,27 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 - `model-resolver.ts` pattern matching and partial-match ordering, `agent-session.ts` thinking-level setters,
   `session-manager.ts` entry schema.
 
+## Windows console hide for core exec and package helpers (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/core/exec.ts`: `execCommand` via `spawn` now passes `windowsHide:true`.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: git `spawnSync`/`execFile` probes now pass `windowsHide:true`.
+- `packages/coding-agent/src/core/package-manager.ts`: `spawnCommand`/`spawnCaptureCommand`/`runCommandSync` now pass `windowsHide:true` (central wrapper also forces it).
+
+### Why
+
+- Windows console less parents briefly show a conhost window for every spawn without `windowsHide:true`. Detached/background helpers run periodically, so flashes recur until all sites are hidden.
+
+### Why an extension could not handle it
+
+- Spawn options live inside the caller (helper, daemon, runner). Extensions cannot inject `windowsHide` from outside; the spawn site itself must set it.
+
+### Expected merge conflict zones
+
+- LOW: the spawn options literal in the patched file(s).
+
+
 ## Cursor bridge lifecycle events retain run ownership (2026-08-18)
 
 ### What changed

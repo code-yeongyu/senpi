@@ -61,6 +61,26 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - The import block of `packages/coding-agent/src/utils/syntax-highlight.ts` whenever upstream edits
   its language set (fork must keep extensionless specifiers while highlight.js 11 is pinned).
 
+## Windows console hide central wrapper and utility spawns (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/utils/child-process.ts`: `spawnProcess`/`spawnProcessSync` now force `windowsHide:true` on win32 unless caller opts out (`windowsHide:false`), with `cross-spawn` propagation.
+- `packages/coding-agent/src/utils/clipboard-image.ts`, `clipboard.ts`, `paths.ts`, `shell.ts`, `tools-manager.ts`, `open-browser.ts`: auxiliary `spawnSync`/`spawnProcessSync`/`spawn` calls (`xattr`/`setfattr`/`which`/`--version`/`wl-copy`/`rundll32`/`xdg-open`) now pass `windowsHide:true`.
+
+### Why
+
+- Same as above; central wrapper is the durable fix so future call sites are hidden by default, direct sites remain explicitly marked.
+
+### Why an extension could not handle it
+
+- Central wrapper is the single enforcement point; utilities cannot be fixed externally without touching the wrapper.
+
+### Expected merge conflict zones
+
+- LOW: the wrapper `effective` merge or the utility spawn literals.
+
+
 ## Repository audit baseline for the utils tracker (2026-08-17)
 
 ### What changed

@@ -1044,6 +1044,8 @@
 
 ### Fixed
 
+- Windows spawns no longer flash a console: every `spawn`/`spawnSync`/`execFile` site now passes `windowsHide:true`, with `utils/child-process.ts` forcing it on win32 for all current and future `spawnProcess` callers ([#927](https://github.com/code-yeongyu/senpi/pull/927)).
+
 - Goals no longer stall after a settings hot-reload: a reload `session_start` now re-engages an active goal (re-arming the monitor backstop while wake sources are live, or queueing a continuation through the existing sessionStart admission) instead of parking it until the next user message; stopped goals still never auto-start on reload ([#936](https://github.com/code-yeongyu/senpi/pull/936)).
 - Cursor CLI OAuth is now available by default when its real prerequisites exist: with `cursor-agent` installed and no managed CLI account, a native `cursor` OAuth credential is copied automatically into one canonical `native` slot without modifying the primary credential; explicit `enabled: false` remains a hard opt-out, repeated/concurrent startup is idempotent, and `/login cursor` refreshes the CLI fallback in the same session ([#931](https://github.com/code-yeongyu/senpi/pull/931)).
 
