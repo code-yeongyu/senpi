@@ -2164,3 +2164,23 @@ The tip line was teaching a small slice of the product while most of the surface
 - Changed `src/modes/interactive/interactive-mode.ts` and `compaction-queue-transfer.ts` so every terminal `compaction_end` flushes the TUI compaction queue: accepted compactions keep prompt-admission delivery, while failed/rejected/aborted ones route queued input through the native steer/followUp queues (`deferAdmission`) with a visible held-count status and a `compaction_queue_deferred` session-log event. Previously the queue was flushed only on success, so messages typed during a failing compaction were silently parked forever and lost on session switch (field report 2026-07-30).
 - This was changed in core UI because the compaction queue and `compaction_end` handling are internal `InteractiveMode` state; extensions cannot observe or drain that queue.
 - Expected merge-conflict zone on upstream sync: the `compaction_end` handler and `flushCompactionQueue()` in `src/modes/interactive/interactive-mode.ts`, plus `compaction-queue-transfer.ts` transfer options.
+
+## Large array render signatures avoid recursive tail slicing (2026-08-04)
+
+### What changed
+
+- Render-signature hashing now processes omitted array items iteratively instead of recursively slicing another
+  tail array for every 40 items.
+- Coverage reproduces large-array hashing under a constrained JavaScript stack and verifies that changing an
+  omitted item still changes the signature.
+
+### Why
+
+- Tool results can contain large numeric arrays, including `Buffer.toJSON().data` from screenshot capture code.
+  Recursive tail hashing copied progressively smaller arrays and reset traversal state on every chunk, which could
+  overflow the JavaScript call stack while the TUI rendered the result.
+
+### Expected merge conflict zones
+
+- `components/render-signature.ts` if render-cache signature hashing changes.
+- `../../../test/render-signature.test.ts` if render-signature regression coverage changes.
