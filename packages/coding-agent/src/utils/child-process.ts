@@ -35,7 +35,15 @@ export function spawnProcess(
 ): ChildProcessByStdio<null, Readable, Readable>;
 export function spawnProcess(command: string, args: string[], options: SpawnOptions): ChildProcess;
 export function spawnProcess(command: string, args: string[], options: SpawnOptions): ChildProcess {
-	return process.platform === "win32" ? crossSpawn(command, args, options) : nodeSpawn(command, args, options);
+	const windowsHideOptions =
+		options && typeof (options as { windowsHide?: boolean }).windowsHide !== "undefined"
+			? options
+			: { ...options, windowsHide: true };
+	const effective =
+		process.platform === "win32" && (windowsHideOptions as { windowsHide?: boolean }).windowsHide !== false
+			? { ...windowsHideOptions, windowsHide: true }
+			: options;
+	return process.platform === "win32" ? crossSpawn(command, args, effective) : nodeSpawn(command, args, effective);
 }
 
 export function spawnProcessSync(
@@ -43,9 +51,18 @@ export function spawnProcessSync(
 	args: string[],
 	options: SpawnSyncOptionsWithStringEncoding,
 ): SpawnSyncReturns<string> {
+	const windowsHideOptions =
+			options && typeof (options as { windowsHide?: boolean }).windowsHide !== "undefined"
+			? (options as unknown as Record<string, unknown>)
+			: { ...(options as unknown as Record<string, unknown>), windowsHide: true };
+	const effective =
+		process.platform === "win32" &&
+		(windowsHideOptions as { windowsHide?: boolean }).windowsHide !== false
+			? { ...(windowsHideOptions as Record<string, unknown>), windowsHide: true }
+			: options;
 	return process.platform === "win32"
-		? crossSpawn.sync(command, args, options)
-		: nodeSpawnSync(command, args, options);
+		? crossSpawn.sync(command, args, effective as SpawnSyncOptionsWithStringEncoding)
+		: nodeSpawnSync(command, args, effective as SpawnSyncOptionsWithStringEncoding);
 }
 
 /**
