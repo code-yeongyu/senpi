@@ -276,6 +276,27 @@ Conflict zone: `interactive-mode.ts` `message_update` / `message_end`.
   `interactive-mode.ts` (adjacent to the paste handler wiring), and
   `queueCompactionSubmission()` next to `queueCompactionMessage()`.
 
+## Windows console hide for interactive helpers (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/external-editor.ts`: both editor `spawn` calls now pass `windowsHide:true`.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: tmux `spawn` and `gh` `spawnSync`/`spawn` helpers now pass `windowsHide:true`.
+- `packages/coding-agent/src/modes/interactive/components/session-selector.ts`: `trash` `spawnSync` now passes `windowsHide:true`.
+
+### Why
+
+- Windows console less parents briefly show a conhost window for every spawn without `windowsHide:true`. Detached/background helpers run periodically, so flashes recur until all sites are hidden.
+
+### Why an extension could not handle it
+
+- Spawn options live inside the caller (helper, daemon, runner). Extensions cannot inject `windowsHide` from outside; the spawn site itself must set it.
+
+### Expected merge conflict zones
+
+- LOW: the spawn options literal in the patched file(s).
+
+
 ## Native Cursor login refreshes the CLI fallback lane in the same session (2026-08-18)
 
 ### What changed
