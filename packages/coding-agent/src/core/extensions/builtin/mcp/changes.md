@@ -1,5 +1,25 @@
 # mcp Extension Changes
 
+## App-server process-local config source and targeted reload (2026-08-19)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/additional-config.ts` merges the named process-local app-server source after persisted and ordinary extension declarations.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts` retains session attach inputs for targeted reloads, reconnects each configured server through the existing connection, refreshes session wire status, and reports a missing bearer environment variable as unauthenticated.
+
+### Why
+
+- Codex-compatible app-server clients need ephemeral MCP configuration and reload behavior without writing `mcp.json` or constructing a parallel MCP client.
+
+### Why an extension could not handle it
+
+- The MCP service owns resolved-source precedence, connection reuse, attach serialization, authentication state, and wire snapshots.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/mcp/additional-config.ts`, an additive source-merging module.
+- MEDIUM: `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, around attach state, reconnect, and wire auth projection.
+
 ## Explicit pgrep match-all pattern for process-tree collection (2026-08-12)
 
 ### What changed

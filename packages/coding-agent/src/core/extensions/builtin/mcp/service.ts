@@ -5,6 +5,7 @@ import {
 	resetToolSearchServiceForTests,
 	type ToolSearchService,
 } from "../tool-search/service.ts";
+import { APP_SERVER_MCP_CONFIG_SOURCE_PATH, mergeAdditionalMcpServers } from "./additional-config.ts";
 import { detectLiteralBearerWarnings, resolveAuthMode, resolveServerAuth } from "./auth/context.ts";
 import { collectToolCatalog } from "./catalog.ts";
 import { getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
@@ -58,6 +59,12 @@ type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
 type ListedResourceTemplate = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"][number];
 type McpElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm">;
+type McpServicePi = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">;
+type McpSessionAttachment = {
+	readonly context: McpSessionContext;
+	readonly options: McpSessionOptions;
+	readonly pi: McpServicePi | undefined;
+};
 
 export { registerToolsPreservingActiveSet } from "./active-set.ts";
 
@@ -84,8 +91,9 @@ export class McpService {
 	#tierBRegistration: McpSessionRegistration | undefined;
 	#toolSearchService: ToolSearchService | undefined;
 	#sessionOptions: McpSessionOptions = {};
-	#pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> | undefined;
+	#pi: McpServicePi | undefined;
 	#attachQueue: Promise<void> = Promise.resolve();
+	readonly #attachmentsBySession = new Map<string, McpSessionAttachment>();
 	#latestWireStatus: McpWireStatusSnapshot = { servers: [] };
 	readonly #wireStatusBySession = new Map<string, McpWireStatusSnapshot>();
 	readonly #connections = new Map<string, McpConnectionEntry>();
@@ -95,11 +103,15 @@ export class McpService {
 	async attachSession(
 		event: SessionStartEvent,
 		ctx: McpSessionContext,
-		_pi?: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
+		_pi?: McpServicePi,
 		options: McpSessionOptions = {},
 	): Promise<void> {
 		const attach = this.#attachQueue.then(async () => {
 			this.#sessionContext = ctx;
+			const sessionId = ctx.sessionManager?.getSessionId?.();
+			if (sessionId !== undefined) {
+				this.#attachmentsBySession.set(sessionId, { context: ctx, options, pi: _pi });
+			}
 			this.#sessionStartCount += 1;
 			this.#lastSessionStartReason = event.reason;
 			const config = loadMcpConfig({
@@ -108,7 +120,15 @@ export class McpService {
 				env: options.env,
 				projectTrusted: options.projectTrusted ?? ctx.isProjectTrusted(),
 			});
-			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
+			const declarations = ctx.getRegisteredMcpServers?.() ?? [];
+			const appServerDeclarations = declarations.filter(
+				(declaration) => declaration.extensionPath === APP_SERVER_MCP_CONFIG_SOURCE_PATH,
+			);
+			mergeExtensionMcpServers(
+				config,
+				declarations.filter((declaration) => declaration.extensionPath !== APP_SERVER_MCP_CONFIG_SOURCE_PATH),
+			);
+			mergeAdditionalMcpServers(config, appServerDeclarations);
 			this.#config = config;
 			this.#pi = _pi;
 			if (_pi !== undefined) {
@@ -124,7 +144,7 @@ export class McpService {
 				}
 			}
 			this.#authAgentDir = options.agentDir;
-			this.#authEnv = options.env;
+			this.#authEnv = options.env ?? process.env;
 			this.#sessionOptions = options;
 			const toolRefreshGeneration = this.#toolRefreshGeneration + 1;
 			this.#toolRefreshGeneration = toolRefreshGeneration;
@@ -257,6 +277,7 @@ export class McpService {
 		this.#registrationListeners.clear();
 		this.#wireStatusListeners.clear();
 		this.#wireStatusBySession.clear();
+		this.#attachmentsBySession.clear();
 		this.#latestWireStatus = { servers: [] };
 		const entries = [...this.#connections.values()];
 		this.#connections.clear();
@@ -282,6 +303,30 @@ export class McpService {
 		const entry = this.#entryForName(name);
 		if (entry === undefined) throw new Error(`Unknown MCP server: ${name || "<missing>"}`);
 		await reconnectMcpNow(entry.connection);
+	}
+
+	async reloadSession(sessionId: string): Promise<McpWireStatusSnapshot> {
+		const attachment = this.#attachmentsBySession.get(sessionId);
+		if (attachment === undefined) return { servers: [] };
+		await this.attachSession(
+			{ type: "session_start", reason: "reload" },
+			attachment.context,
+			attachment.pi,
+			attachment.options,
+		);
+		await Promise.all(
+			[...this.#connectionKeysByName.values()].map(async (key) => {
+				const entry = this.#connections.get(key);
+				if (entry === undefined) return;
+				try {
+					await reconnectMcpNow(entry.connection);
+				} catch (error: unknown) {
+					if (!(error instanceof Error)) throw error;
+					entry.logger.debug("MCP reload reconnect failed", error);
+				}
+			}),
+		);
+		return await this.refreshWireStatusSnapshot(sessionId);
 	}
 
 	getServerSnapshots(): McpServerSnapshot[] {
@@ -601,7 +646,7 @@ export class McpService {
 			tools: tools.map(mapWireTool),
 			resources: resources.map(mapWireResource),
 			resourceTemplates: resourceTemplates.map(mapWireResourceTemplate),
-			authStatus: wireAuthStatus(entry, server),
+			authStatus: wireAuthStatus(entry, server, this.#authEnv),
 			...(connection?.state === undefined && server?.state === undefined
 				? {}
 				: { status: connection?.state ?? server?.state }),
@@ -680,13 +725,18 @@ export class McpService {
 function wireAuthStatus(
 	entry: McpConnectionEntry | undefined,
 	server: ResolvedMcpServer | undefined,
+	env: Record<string, string | undefined> | undefined,
 ): McpWireAuthStatus {
 	const mode = entry?.authPlan?.mode ?? (server?.config === undefined ? "none" : resolveAuthMode(server.config));
 	switch (mode) {
 		case "none":
 			return "unsupported";
-		case "bearer":
-			return entry?.connection.state === "needs_auth" ? "notLoggedIn" : "bearerToken";
+		case "bearer": {
+			const envName = server?.config?.bearerTokenEnv;
+			return entry?.connection.state === "needs_auth" || (envName !== undefined && env?.[envName] === undefined)
+				? "notLoggedIn"
+				: "bearerToken";
+		}
 		case "oauth":
 			return entry?.authPlan?.provider?.tokens() === undefined ? "notLoggedIn" : "oAuth";
 		default:

@@ -6,7 +6,7 @@
 
 ### Added
 
-- App-server accepts repeatable Codex-style `-c <key>=<value>` configuration overrides, preserving raw values for T3 Code spawns.
+- App-server accepts repeatable Codex-style `-c <key>=<value>` configuration overrides; complete `mcp_servers.<name>.url` and bearer-environment pairs become process-local HTTP MCP servers, and `config/mcpServer/reload` reattaches loaded sessions without persisting `mcp.json`.
 
 - `/loop`: recurring and self-paced scheduled prompts, ported from Claude Code as a fork-only builtin extension.
   Fixed loops re-deliver a prompt or loop-file sentinel on an interval; dynamic loops pick their own next delay via
