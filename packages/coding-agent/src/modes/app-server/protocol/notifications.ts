@@ -27,6 +27,17 @@ export type TurnDiffUpdatedNotification = {
 	readonly diff: string;
 };
 
+// Shape mirrors generated/v2/TurnPlanUpdatedNotification; defined here so runtime
+// code imports the facade instead of the generated evidence tree.
+export type TurnPlanStepStatus = "pending" | "inProgress" | "completed";
+export type TurnPlanStep = { readonly step: string; readonly status: TurnPlanStepStatus };
+export type TurnPlanUpdatedNotification = {
+	readonly threadId: string;
+	readonly turnId: string;
+	readonly explanation: string | null;
+	readonly plan: readonly TurnPlanStep[];
+};
+
 export type AppServerPlanNotification =
 	| { readonly method: "account/providerAccounts/updated"; readonly params: ProviderAccountsUpdatedNotification }
 	| { readonly method: "account/providerAccounts/failover"; readonly params: ProviderAccountFailoverNotification }
@@ -35,6 +46,7 @@ export type AppServerPlanNotification =
 	| { readonly method: "thread/goal/cleared"; readonly params: ThreadGoalClearedNotification }
 	| { readonly method: "thread/settings/updated"; readonly params: ThreadSettingsUpdatedNotification }
 	| { readonly method: "turn/diff/updated"; readonly params: TurnDiffUpdatedNotification }
+	| { readonly method: "turn/plan/updated"; readonly params: TurnPlanUpdatedNotification }
 	| {
 			readonly method: "fuzzyFileSearch/sessionUpdated";
 			readonly params: FuzzyFileSearchSessionUpdatedNotification;

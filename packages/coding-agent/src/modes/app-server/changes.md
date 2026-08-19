@@ -36,6 +36,38 @@
 
 - LOW: `packages/coding-agent/src/modes/app-server/cli-args.ts`, beside server argument parsing.
 
+## turn/plan/updated from todo-tool plan state (2026-08-19)
+
+### What changed
+
+- `threads/projection.ts` `completeTool()` (the existing `tool_execution_end`
+  seam) now also emits `turn/plan/updated` when the completed tool is the todo
+  tool and its structured `details.phases` parses into plan steps.
+- New `threads/projection-plan.ts` maps senpi todo statuses to Codex V2
+  (`pending`/`in_progress`/`completed`/`abandoned` ->
+  `pending`/`inProgress`/`completed`/`completed`) and skips malformed phases,
+  tasks, and unknown statuses instead of inventing steps.
+- `protocol/notifications.ts` gains facade types `TurnPlanStepStatus`,
+  `TurnPlanStep`, `TurnPlanUpdatedNotification` and a typed union member for
+  `turn/plan/updated` (already enumerated in `protocol/methods.ts`).
+
+### Why
+
+- Codex/T3 clients render a plan panel from `turn/plan/updated`; senpi's todo
+  tool already owns structured plan state, but `senpi.todo-state` entries never
+  reach the `EventProjector`, so the notification had to be projected from the
+  completed tool result at the projection seam.
+
+### Why an extension could not handle it
+
+- The projection seam and notification dispatch are private to the app-server
+  thread runtime; extensions only see tool execution, not wire notifications.
+
+### Expected merge conflict zones
+
+- LOW: `threads/projection.ts` `completeTool()` notification list, beside the
+  `turn/diff/updated` emission; `protocol/notifications.ts` union tail.
+
 ## Registry-owned thread teardown (2026-08-13)
 
 ### What changed
