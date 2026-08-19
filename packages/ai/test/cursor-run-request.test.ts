@@ -122,8 +122,10 @@ describe("cursor Run request reasoning rendering", () => {
 		const model = buildModel("claude-fable-5-thinking", "", fableCompat, "claude-fable-5-thinking-medium");
 		const frame = await captureRunRequest(model, { thinkingSelection: { level: "low", source: "explicit" } });
 		const request = frame.message.value as {
+			modelDetails?: { modelId: string };
 			requestedModel?: { modelId: string; maxMode: boolean; parameters: { id: string; value: string }[] };
 		};
+		expect(request.modelDetails?.modelId).toBe("claude-fable-5-thinking-medium");
 		expect(request.requestedModel?.modelId).toBe("claude-fable-5");
 		expect(
 			request.requestedModel?.parameters.map((parameter) => ({ id: parameter.id, value: parameter.value })),
@@ -138,8 +140,10 @@ describe("cursor Run request reasoning rendering", () => {
 		const model = buildModel("gpt-5.5-medium", "");
 		const withSelection = await captureRunRequest(model, {});
 		const request = withSelection.message.value as {
+			modelDetails?: { modelId: string };
 			requestedModel?: { modelId: string; maxMode: boolean; parameters: { id: string; value: string }[] };
 		};
+		expect(request.modelDetails?.modelId).toBe("gpt-5.5-medium");
 		expect(request.requestedModel?.modelId).toBe("gpt-5.5-medium");
 		expect(request.requestedModel?.parameters ?? []).toEqual([]);
 	});
@@ -150,7 +154,11 @@ describe("cursor Run request reasoning rendering", () => {
 		};
 		const model = buildModel("gpt-5.5", "", compat, "gpt-5.5-medium");
 		const frame = await captureRunRequest(model, {});
-		const request = frame.message.value as { requestedModel?: { modelId: string; parameters?: unknown[] } };
+		const request = frame.message.value as {
+			modelDetails?: { modelId: string };
+			requestedModel?: { modelId: string; parameters?: unknown[] };
+		};
+		expect(request.modelDetails?.modelId).toBe("gpt-5.5-medium");
 		expect(request.requestedModel?.modelId).toBe("gpt-5.5-medium");
 		expect(request.requestedModel?.parameters ?? []).toEqual([]);
 	});

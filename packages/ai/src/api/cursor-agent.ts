@@ -4024,10 +4024,9 @@ async function buildGrpcRequest(
 	});
 
 	const requestedModel = buildRequestedModel(model, options?.thinkingSelection);
-	const wireModelId = requestedModel.modelId;
 	const cursorMaxMode = model.compat?.cursorMaxMode === true;
 	const modelDetails = create(ModelDetailsSchema, {
-		modelId: wireModelId,
+		modelId: model.upstreamModelId ?? model.id,
 		displayModelId: model.id,
 		displayName: model.name,
 		...(cursorMaxMode ? { maxMode: true } : undefined),

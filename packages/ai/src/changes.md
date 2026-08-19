@@ -1,5 +1,31 @@
 # AI Source Changes
 
+## 2026-08-19 - Cursor ModelDetails retains the concrete catalog identity
+
+### What changed
+
+- `packages/ai/src/api/cursor-agent.ts`: `ModelDetails.modelId` now keeps the model's concrete
+  `upstreamModelId` (falling back to `model.id`) instead of reusing the resolved
+  `RequestedModel.modelId`. Explicit grouped reasoning selections still send their bare capability id
+  plus ordered parameters through `RequestedModel`.
+
+### Why
+
+- Cursor uses the fields for different identities. `RequestedModel` describes the parameterized
+  selection, while `ModelDetails` identifies a concrete catalog model. Reusing the grouped capability
+  id in both fields made explicit grouped selections fail with `not_found`, even though the same
+  concrete model remained available.
+
+### Why an extension could not handle it
+
+- Both protobuf fields are assembled inside the native Cursor provider before the request reaches any
+  extension-visible hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/cursor-agent.ts` Run-request model construction beside Cursor reasoning
+  parameter rendering.
+
 ## 2026-08-19 - OpenAI-family adapters re-diverge from the 59a71b23 pin
 
 ### What changed
