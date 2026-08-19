@@ -59,19 +59,26 @@ function hashSignatureString(source: string): string {
 	return formatSignatureHash(updateSignatureHash(SIGNATURE_HASH_OFFSET_BASIS, source));
 }
 
-function hashSignatureEntry(hash: number, key: string, value: unknown, seen: WeakSet<object>): number {
-	const summarized = summarizeSignatureValue(value, key, SIGNATURE_OMITTED_VALUE_DEPTH, seen);
+function hashSignatureEntry(
+	hash: number,
+	key: string,
+	value: unknown,
+	seen: WeakSet<object>,
+	serializerKey = key,
+): number {
+	const summarized = summarizeSignatureValue(value, serializerKey, SIGNATURE_OMITTED_VALUE_DEPTH, seen);
 	return updateSignatureHash(hash, JSON.stringify([key, summarized]));
 }
 
-function hashSignatureArrayTail(value: readonly unknown[], seen: WeakSet<object>): string {
+function hashSignatureArrayTail(tail: readonly unknown[], seen: WeakSet<object>): string {
 	let hash = SIGNATURE_HASH_OFFSET_BASIS;
-	for (let index = SIGNATURE_ARRAY_ITEM_LIMIT; index < value.length; index++) {
-		if (!(index in value)) {
-			hash = updateSignatureHash(hash, JSON.stringify([String(index), null]));
+	for (let offset = 0; offset < tail.length; offset++) {
+		const key = String(SIGNATURE_ARRAY_ITEM_LIMIT + offset);
+		if (!(offset in tail)) {
+			hash = updateSignatureHash(hash, JSON.stringify([key, null]));
 			continue;
 		}
-		hash = hashSignatureEntry(hash, String(index), value[index], seen);
+		hash = hashSignatureEntry(hash, key, tail[offset], seen, String(offset % SIGNATURE_ARRAY_ITEM_LIMIT));
 	}
 	return formatSignatureHash(hash);
 }
@@ -128,9 +135,10 @@ function summarizeSignatureValue(
 			.slice(0, SIGNATURE_ARRAY_ITEM_LIMIT)
 			.map((item, index) => summarizeSignatureValue(item, String(index), depth + 1, seen));
 		if (value.length > SIGNATURE_ARRAY_ITEM_LIMIT) {
-			const tailHash = hashSignatureArrayTail(value, seen);
+			const tail = value.slice(SIGNATURE_ARRAY_ITEM_LIMIT);
+			const tailHash = hashSignatureArrayTail(tail, seen);
 			seen.delete(value);
-			return [...summarized, `[+${value.length - SIGNATURE_ARRAY_ITEM_LIMIT} items hash=${tailHash}]`];
+			return [...summarized, `[+${tail.length} items hash=${tailHash}]`];
 		}
 		seen.delete(value);
 		return summarized;

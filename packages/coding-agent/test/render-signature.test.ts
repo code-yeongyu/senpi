@@ -10,10 +10,14 @@ function createDepthBoundaryValue(marker: string): unknown {
 }
 
 describe("createBoundedRenderSignature", () => {
-	test("#given a very large array #when creating a render signature #then hashing does not overflow the stack", () => {
+	test("#given a very large array #when its final item changes #then hashing remains bounded and detects it", () => {
 		const values = Array.from({ length: 160_000 }, (_item, index) => index);
 
-		expect(() => createBoundedRenderSignature(values)).not.toThrow();
+		const before = createBoundedRenderSignature(values);
+		values[values.length - 1] = -1;
+		const after = createBoundedRenderSignature(values);
+
+		expect(after).not.toBe(before);
 	});
 
 	test("#given arrays differing after the item limit #when creating signatures #then the tail change is detected", () => {
@@ -33,6 +37,39 @@ describe("createBoundedRenderSignature", () => {
 		expect(createBoundedRenderSignature(withHole)).not.toBe(createBoundedRenderSignature(withUndefined));
 	});
 
+	test("#given an omitted getter extends its array #when creating a signature #then hashing uses the original tail", () => {
+		const values: unknown[] = Array.from({ length: 41 }, () => 0);
+		Object.defineProperty(values, 40, {
+			get() {
+				values.push("late");
+				return "tail";
+			},
+		});
+		const expected: unknown[] = Array.from({ length: 41 }, () => 0);
+		expected[40] = "tail";
+
+		expect(createBoundedRenderSignature(values)).toBe(createBoundedRenderSignature(expected));
+	});
+
+	test("#given a key-sensitive omitted serializer #when its value changes #then the synthetic key remains stable", () => {
+		let marker = "before";
+		const serializerKeys: string[] = [];
+		const values: unknown[] = Array.from({ length: 81 }, () => 0);
+		values[80] = {
+			toJSON(key: string) {
+				serializerKeys.push(key);
+				return key === "0" ? marker : "constant";
+			},
+		};
+
+		const before = createBoundedRenderSignature(values);
+		marker = "after";
+		const after = createBoundedRenderSignature(values);
+
+		expect(serializerKeys).toEqual(["0", "0"]);
+		expect(after).not.toBe(before);
+	});
+
 	test("#given an omitted circular reference #when creating a signature #then ancestor tracking remains bounded", () => {
 		const values: unknown[] = Array.from({ length: 41 }, () => 0);
 		values[40] = values;
@@ -49,6 +86,18 @@ describe("createBoundedRenderSignature", () => {
 		const next = { ...previous, "key-080": "changed" };
 
 		expect(createBoundedRenderSignature(next)).not.toBe(createBoundedRenderSignature(previous));
+	});
+
+	test("#given a very large object #when its final value changes #then hashing remains bounded and detects it", () => {
+		const values = Object.fromEntries(
+			Array.from({ length: 160_000 }, (_item, index) => [`key-${index.toString().padStart(6, "0")}`, index]),
+		);
+
+		const before = createBoundedRenderSignature(values);
+		values["key-159999"] = -1;
+		const after = createBoundedRenderSignature(values);
+
+		expect(after).not.toBe(before);
 	});
 
 	test("#given deeply nested omitted array values #when creating signatures #then the prior depth budget is preserved", () => {
