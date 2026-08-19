@@ -6,6 +6,11 @@
 
 ### Fixed
 
+- Cursor exec bridge tool calls no longer fail with "Tool execution has no active run": the bridge
+  resolves stream ownership by request liveness (refuse only when the request signal is aborted or
+  no run is active) instead of comparing the per-request and per-run controller signals by identity,
+  which never matched in production since 31a71f0c5 (issue #1003).
+
 ### Added
 
 ### Changed

@@ -102,16 +102,21 @@ describe("cursor exec bridge run ownership across runs", () => {
 		};
 		const sessionRef = { current: session };
 
-		// given run A is streaming and owns the Cursor exec stream
+		// given run A is streaming and owns the Cursor exec stream; production
+		// binds the bridge to the loop's per-request controller signal, a
+		// different object than the run controller's signal
 		const runA = agent.prompt("run A");
 		await runAStarted.promise;
 		const runASignal = agent.signal;
 		expect(runASignal).toBeDefined();
-		const bridge = createSessionCursorExecBridge(sessionRef, () => agent, runASignal);
+		const requestA = new AbortController();
+		const bridge = createSessionCursorExecBridge(sessionRef, () => agent, requestA.signal);
 
-		// and run A has ended while its stream still holds a buffered exec frame
+		// and run A has ended while its stream still holds a buffered exec frame;
+		// the loop mirrors the run's teardown into the request controller
 		runAStream.push({ type: "done", reason: "stop", message: createAssistantMessage("run A done") });
 		await runA;
+		requestA.abort();
 
 		// and the fallback lane has started run B on another provider
 		const runB = agent.prompt("run B");

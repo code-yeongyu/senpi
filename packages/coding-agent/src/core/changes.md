@@ -1,5 +1,35 @@
 # changes
 
+## Cursor exec bridge resolves run ownership by liveness, not signal identity (2026-08-19)
+
+### What changed
+
+- `packages/coding-agent/src/core/cursor-exec-bridge-session.ts`: `getAbortSignal` now resolves ownership as a
+  liveness property — a frame is owned by its request and refused only when that request's signal is aborted or
+  no run is active — instead of comparing the per-request and per-run signals by object identity.
+- `packages/coding-agent/test/suite/regressions/1003-cursor-exec-bridge-request-signal.test.ts`: regression test
+  reproducing the production wiring (distinct request and run controllers) for live, aborted, no-run, and
+  legacy no-request-signal dispatch.
+- `packages/coding-agent/test/cursor-exec-bridge-run-ownership.test.ts`: the dead-run simulation now aborts the
+  captured request signal when the run ends, matching how the loop tears a request down; assertions unchanged.
+
+### Why
+
+- Since `31a71f0c5` the guard compared the loop's per-request controller signal against the agent's per-run
+  controller signal by identity. They are always different objects in production
+  (`agent-loop.ts` creates the request controller per provider request; `agent.ts` creates the run controller per
+  run), so every live Cursor exec frame was refused with `Tool execution has no active run`, making every
+  Cursor-routed model a no-tools model (issue #1003).
+
+### Why an extension could not handle it
+
+- Run ownership of provider-driven exec frames is an engine contract between the agent loop and the Cursor
+  stream; no extension hook sits between an exec frame and the bridge dispatch.
+
+### Expected merge conflict zones
+
+- `cursor-exec-bridge-session.ts` `getAbortSignal` resolution; the run-ownership test's dead-run simulation.
+
 ## Provider-declared fallback-expansion eligibility gate (2026-08-19)
 
 ### What changed
