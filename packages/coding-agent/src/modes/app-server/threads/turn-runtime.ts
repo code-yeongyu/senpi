@@ -165,8 +165,8 @@ export function buildTurn(
 						additionalDetails: null,
 					}
 				: null,
-		startedAt: startedAtMs / 1000,
-		completedAt: completedAtMs === null ? null : completedAtMs / 1000,
+		startedAt: Math.floor(startedAtMs / 1000),
+		completedAt: completedAtMs === null ? null : Math.floor(completedAtMs / 1000),
 		durationMs: completedAtMs === null ? null : completedAtMs - startedAtMs,
 	};
 }

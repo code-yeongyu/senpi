@@ -82,7 +82,7 @@ describe("app-server wire thread history", () => {
 				additionalDetails: null,
 			},
 			startedAt: 1_784_505_600,
-			completedAt: 1_784_505_601.25,
+			completedAt: 1_784_505_601,
 			durationMs: 1_250,
 		});
 	});
