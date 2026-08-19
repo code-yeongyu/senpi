@@ -6,6 +6,8 @@
 
 ### Added
 
+- App-server accepts repeatable Codex-style `-c <key>=<value>` configuration overrides, preserving raw values for T3 Code spawns.
+
 - `/loop`: recurring and self-paced scheduled prompts, ported from Claude Code as a fork-only builtin extension.
   Fixed loops re-deliver a prompt or loop-file sentinel on an interval; dynamic loops pick their own next delay via
   the new `schedule_wakeup` tool. Loops coalesce missed fires into one catch-up tick, cap at 5 active per session,

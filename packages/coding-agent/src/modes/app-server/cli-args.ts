@@ -15,6 +15,8 @@ export interface AppServerModeOptions {
 	readonly listen: AppServerListen;
 	readonly wsAuth?: AppServerWsAuth;
 	readonly jsonLogs: boolean;
+	/** Raw Codex-style key/value text, including any literal double quotes. */
+	readonly configOverrides: ReadonlyArray<{ readonly key: string; readonly value: string }>;
 }
 
 export interface AppServerDaemonCommandOptions {
@@ -36,7 +38,7 @@ export const APP_SERVER_LISTEN_USAGE =
 export function formatAppServerUsage(): string {
 	const listenForms = "stdio://|unix://|unix:///abs/path|ws://IP:PORT";
 	return [
-		`Usage: ${APP_NAME} app-server [--listen <${listenForms}>] [--ws-auth <token-file|off>] [--json-logs]`,
+		`Usage: ${APP_NAME} app-server [--listen <${listenForms}>] [--ws-auth <token-file|off>] [--json-logs] [-c <key>=<value>]`,
 		`       ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <${listenForms}>]`,
 	].join("\n");
 }
@@ -112,6 +114,7 @@ function parseServerArgs(args: readonly string[]): AppServerModeOptions | AppSer
 	let listen: AppServerListen = { kind: "stdio", url: "stdio://" };
 	let wsAuth: AppServerWsAuth | undefined;
 	let jsonLogs = false;
+	const configOverrides: Array<{ readonly key: string; readonly value: string }> = [];
 
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
@@ -141,10 +144,23 @@ function parseServerArgs(args: readonly string[]): AppServerModeOptions | AppSer
 			jsonLogs = true;
 			continue;
 		}
+		if (arg === "-c") {
+			const override = args[index + 1];
+			if (override === undefined) {
+				return { kind: "usage-error", message: "-c requires <key>=<value>." };
+			}
+			const separator = override.indexOf("=");
+			if (separator < 0) {
+				return { kind: "usage-error", message: "-c requires <key>=<value>." };
+			}
+			configOverrides.push({ key: override.slice(0, separator), value: override.slice(separator + 1) });
+			index++;
+			continue;
+		}
 		return { kind: "usage-error", message: `Unexpected app-server argument: ${arg}` };
 	}
 
-	return { kind: "server", listen, wsAuth, jsonLogs };
+	return { kind: "server", listen, wsAuth, jsonLogs, configOverrides };
 }
 
 function parseDaemonArgs(args: readonly string[]): AppServerDaemonCommandOptions | AppServerUsageError {
