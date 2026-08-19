@@ -6,6 +6,11 @@
 
 ### Fixed
 
+- Native Cursor grouped reasoning selections now keep the concrete catalog identity in
+  `ModelDetails`, so available Claude and GPT models no longer fail with `not_found`
+  ([#987](https://github.com/code-yeongyu/senpi/pull/987) by
+  [@ThewindMom](https://github.com/ThewindMom)).
+
 - Auto-compaction can no longer be starved by a provider that reports a small context while the
   local transcript keeps growing (native Cursor's server-side summarized usage): the threshold
   check now takes the larger of the provider-reported context and the local transcript estimate.

@@ -13,6 +13,12 @@
 
 ### Fixed
 
+- Native Cursor grouped reasoning selections now keep `ModelDetails.modelId` on the concrete catalog
+  variant while `RequestedModel` carries the bare capability id and reasoning parameters, preventing
+  available models from failing with `not_found`
+  ([#987](https://github.com/code-yeongyu/senpi/pull/987) by
+  [@ThewindMom](https://github.com/ThewindMom)).
+
 - Native Cursor turns now report real usage: the billed token split on `turnEnded`
   (input/output/cache read/cache write, taken from the production cursor-agent schema) lands on
   `usage`, and conversation checkpoints feed the server's live `usedTokens` into the in-flight
