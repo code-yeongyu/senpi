@@ -18,6 +18,7 @@ const wireThread: WireThread = {
 
 const loggedTurn: LoggedTurn = {
 	turnId: "turn-1",
+	rollbackLeafId: null,
 	startedAt: "2026-07-20T00:00:00.125Z",
 	completedAt: "2026-07-20T00:00:01.250Z",
 	durationMs: 1_125,
