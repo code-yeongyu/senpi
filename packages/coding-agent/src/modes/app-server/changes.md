@@ -18,6 +18,24 @@
 
 - LOW: `packages/coding-agent/src/modes/app-server/threads/wire-thread.ts` and `packages/coding-agent/src/modes/app-server/threads/turn-runtime.ts`, around timestamp projection.
 
+## Codex-style app-server config overrides (2026-08-19)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/cli-args.ts` now accepts repeatable `-c <key>=<value>` app-server arguments and preserves raw override values in order.
+
+### Why
+
+- T3 Code spawns app-server with Codex-style configuration overrides.
+
+### Why an extension could not handle it
+
+- CLI argument parsing occurs before app-server extensions are loaded.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/app-server/cli-args.ts`, beside server argument parsing.
+
 ## Registry-owned thread teardown (2026-08-13)
 
 ### What changed
