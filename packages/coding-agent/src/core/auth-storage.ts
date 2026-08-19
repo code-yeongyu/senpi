@@ -365,6 +365,7 @@ export class AuthStorage implements CredentialStore {
 		this.authPath = authPath;
 		this.readState =
 			authPath && sharedAuthFileReadState?.authPath === authPath ? sharedAuthFileReadState.readState : { data: {} };
+		this.data = this.readState.data;
 		if (authPath && !sharedAuthFileReadState) {
 			sharedAuthFileReadState = { authPath, readState: this.readState };
 		}

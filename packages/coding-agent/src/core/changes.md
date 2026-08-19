@@ -1,5 +1,31 @@
 # changes
 
+## 2026-08-19 - Reused auth-file snapshots initialize new storage instances
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: a new `AuthStorage` instance now initializes its synchronous
+  credential data from the matching shared auth-file read state before the unchanged-revision fast path returns.
+- Coverage: `packages/coding-agent/test/suite/regressions/codex-appserver-model-list-after-account-read.test.ts`
+  compares model IDs from fresh real app-server processes with and without T3's preceding `account/read` request.
+
+### Why
+
+- `account/read` opened `auth.json` before the lazily-created model registry. The second `AuthStorage` reused the
+  first instance's populated read state, but returned on the matching file revision while its own synchronous
+  credential map was still empty. `ModelRegistry.getAvailable()` therefore treated every provider as unconfigured
+  and returned an empty catalog.
+
+### Why an extension could not handle it
+
+- Credential snapshot initialization happens inside the core storage constructor before extension loading, and the
+  app-server model registry consumes that synchronous core state directly.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/auth-storage.ts`: constructor initialization around the shared auth-file read-state
+  and unchanged-revision fast path.
+
 ## 2026-08-18 - Resume active goals stuck after suppressed continuation-flood loads
 
 ### What changed
