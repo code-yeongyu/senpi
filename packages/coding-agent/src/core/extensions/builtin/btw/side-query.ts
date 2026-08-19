@@ -57,7 +57,7 @@ function boundSideQueryMessages(
 	const messageBudget = promptContextWindow - estimateSystemPromptTokens(systemPrompt);
 	const question = messages.at(-1);
 	if (question === undefined || messageBudget < estimateMessagesTokens([question])) {
-		throw new Error("/btw question does not fit this model's context window; shorten it or run /compact first.");
+		throw new Error("the side question does not fit this model's context window; shorten it or run /compact first.");
 	}
 	if (estimateMessagesTokens(messages) <= messageBudget) return messages;
 
@@ -66,7 +66,7 @@ function boundSideQueryMessages(
 	const pruned = convertToLlm(pruneOldMessagesToBudget(repaired, messageBudget));
 	const bounded = removeIncompleteLeadingTurn(repairOrphanedToolResults(pruned));
 	if (estimateMessagesTokens(bounded) > messageBudget) {
-		throw new Error("/btw context is too large for this model; run /compact first.");
+		throw new Error("the side context is too large for this model; run /compact first.");
 	}
 	return bounded;
 }

@@ -52,6 +52,19 @@ describe("buildSideQueryContext", () => {
 		]);
 	});
 
+	it("reports budget failures without naming a single command spelling", () => {
+		const oversizedQuestion = "q".repeat(40_000);
+
+		expect(() =>
+			buildSideQueryContext({
+				systemPrompt: "BASE",
+				history: [],
+				question: oversizedQuestion,
+				promptContextWindow: 100,
+			}),
+		).toThrow(/^the side question does not fit this model's context window/);
+	});
+
 	it("prunes prior side turns as complete pairs at the budget boundary", () => {
 		const priorQuestion = {
 			role: "user" as const,
@@ -544,6 +557,74 @@ describe("/btw extension command", () => {
 		expect(firstAborted).toBe(true);
 		const lastCall = harness.faux.getCallLog().at(-1);
 		expect(getMessageText(lastCall?.context.messages.at(-1))).toBe("second");
+	});
+
+	it("/side answers a side question without polluting session history", async () => {
+		const harness = await setup();
+		harness.setResponses([fauxAssistantMessage("main answer"), fauxAssistantMessage("side answer")]);
+
+		await harness.session.prompt("main question");
+		const messagesBefore = harness.session.messages.length;
+		await harness.session.prompt("/side what did I just ask?");
+
+		expect(harness.session.messages.length).toBe(messagesBefore);
+		const sideCall = harness.faux.getCallLog().at(-1);
+		expect(sideCall?.context.tools).toEqual([]);
+		const sideMessages = sideCall?.context.messages ?? [];
+		expect(getMessageText(sideMessages.at(-1))).toBe("what did I just ask?");
+		expect(sideMessages.some((message) => getMessageText(message) === "main question")).toBe(true);
+		expect(sideCall?.context.systemPrompt).toContain(SIDE_QUERY_INSTRUCTION);
+	});
+
+	it("/side opens branch-local history instead of calling the provider when the question is empty", async () => {
+		const harness = await setup();
+		harness.setResponses([fauxAssistantMessage("unused")]);
+		harness.sessionManager.appendCustomEntry("btw-history", {
+			question: "stored question",
+			answer: "stored answer",
+			timestamp: 1,
+		});
+		const branchSpy = vi.spyOn(harness.sessionManager, "getBranch");
+
+		await harness.session.prompt("/side");
+
+		expect(harness.faux.state.callCount).toBe(0);
+		expect(branchSpy).toHaveBeenCalled();
+	});
+
+	it("extension registers both btw and side commands", async () => {
+		const harness = await setup();
+		const runner = harness.getExtensionRunner();
+
+		expect(runner.getCommand("btw")).toBeTruthy();
+		expect(runner.getCommand("side")).toBeTruthy();
+	});
+
+	it("/side reports provider errors under the invoked command name", async () => {
+		const harness = await setup();
+		const notify = vi.spyOn(harness.getExtensionRunner().getUIContext(), "notify");
+		harness.setResponses([
+			async () => {
+				throw new Error("provider failure");
+			},
+		]);
+
+		await harness.session.prompt("/side question");
+
+		expect(notify).toHaveBeenCalledWith("/side failed: provider failure", "error");
+	});
+
+	it("/side reports authentication errors under the invoked command name", async () => {
+		const harness = await setup();
+		const notify = vi.spyOn(harness.getExtensionRunner().getUIContext(), "notify");
+		vi.spyOn(harness.getExtensionRunner().getModelRegistry(), "getApiKeyAndHeaders").mockResolvedValue({
+			ok: false,
+			error: "auth failure",
+		});
+
+		await harness.session.prompt("/side question");
+
+		expect(notify).toHaveBeenCalledWith("/side: auth failure", "error");
 	});
 
 	it("aborts an in-flight side query before tree navigation changes the active leaf", async () => {

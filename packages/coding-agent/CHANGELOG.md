@@ -49,6 +49,9 @@
   a live countdown in the footer. `/loop stop|status|pause|resume` manage them.
 - `/btw` now keeps branch-local side-question history. Bare `/btw` opens a keyboard-driven viewer, and follow-up side
   questions can use the newest ten earlier side answers without adding them to the main model conversation.
+- `/side` is now an exact alias of `/btw`. Both the `<question>` form and the bare history-viewer form behave
+  identically under either spelling and share one handler, so the two names cannot drift. Side-question errors are
+  reported under the spelling that was invoked.
 
 ### Changed
 - Upstream sync (`badlogic/pi-mono` main@`59a71b23`): adopted cache-friendly compaction primitives, centralized compaction summary requests, compaction routing sessions, compaction usage notices, tool disabling during summarization, extension loading in Node SEA hosts, and nested markdown skill discovery. The fork's compaction affinity/request-identity split, queued-input recovery, and interactive rendering are unchanged.

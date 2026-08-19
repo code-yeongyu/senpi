@@ -1,5 +1,42 @@
 # changes — btw
 
+## 2026-08-19 - Register /side as an alias of /btw
+
+### What changed
+
+- `/side` is registered as an exact alias of `/btw`. A single shared handler in `index.ts` backs both names, so the
+  `<question>` form and the bare history-viewer form behave identically for both spellings and cannot drift. No
+  behavior of the existing `/btw` command changed.
+- User-facing notifications name the spelling that was actually invoked. The shared handler receives the invoked
+  command name, so a failure raised by `/side` reads `/side failed: ...` rather than `/btw failed: ...`.
+- The two context-budget errors thrown from `side-query.ts` are now command-neutral (`the side question does not fit
+  ...`, `the side context is too large ...`). They are re-emitted by the handler under the invoked command name, so
+  the previous hardcoded `/btw` text can no longer leak into a `/side` notification.
+
+### Why
+
+- Codex exposes the same capability under both `/side` and `/btw` as aliases of one another (pinned commit
+  `fa595fbab8`; `codex-rs/tui/src/slash_command.rs` writes every dispatch and capability branch as
+  `SlashCommand::Side | SlashCommand::Btw`). Users arriving from Codex reach for `/side`. A single shared
+  registration is the lightest way to give senpi that parity.
+- Codex's ephemeral child-thread fork, thread switching (`Ctrl+/`), close-and-destroy semantics, hidden boundary
+  developer instruction, and side-mode slash-command allowlist are intentionally NOT ported. senpi keeps the
+  one-shot query plus branch-local replay. `SIDE_QUERY_INSTRUCTION` is unchanged.
+
+### Why an extension could not handle it
+
+- This changes builtin command registration inside the builtin that already owns side-query dispatch, snapshot
+  construction, provider streaming, and the history surface. An external extension cannot register a second name
+  against that builtin's private handler without reimplementing all of it.
+
+### Expected merge-conflict zones
+
+- The shared `registerCommand` call site in `index.ts`.
+- The three notification strings in `index.ts` that interpolate the invoked command name.
+- The two context-budget error strings in `side-query.ts` `boundSideQueryMessages`.
+- `test/suite/btw-side-query.test.ts` around the extension-command describe block.
+- The `[Unreleased]` changelog entry.
+
 ## 2026-08-13 - Persist branch-local side-question history
 
 ### What changed
