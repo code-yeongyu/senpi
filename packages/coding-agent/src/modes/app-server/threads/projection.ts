@@ -1,6 +1,7 @@
 import type { AssistantMessage, ToolCall } from "@earendil-works/pi-ai";
 import type { AgentSessionEvent } from "../../../core/agent-session.ts";
 import { MessageItemProjector } from "./projection-message-items.ts";
+import { todoPlanSteps } from "./projection-plan.ts";
 import { TurnDiffTracker } from "./projection-turn-diff.ts";
 import {
 	type AssistantMessageEvent,
@@ -187,9 +188,13 @@ export class EventProjector {
 		}
 		const projection = this.projectToolItem(tool, true, isError, result);
 		const cumulativeDiff = this.turnDiff.update(tool.id, projection.diff, this.toolItems.keys());
+		const planSteps = todoPlanSteps(tool.name, result);
 		return [
 			this.completed(projection.item),
 			...(cumulativeDiff === undefined ? [] : [this.notification("turn/diff/updated", { diff: cumulativeDiff })]),
+			...(planSteps === undefined
+				? []
+				: [this.notification("turn/plan/updated", { explanation: null, plan: planSteps })]),
 		];
 	}
 
