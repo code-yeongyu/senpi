@@ -1,5 +1,20 @@
 # Changes
 
+## Cursor exec uses the run abort signal (2026-08-19)
+
+`runAgentLoop` passed `requestAbortController.signal` into `cursorExecHandlers`.
+That controller is per LLM request. `createSessionCursorExecBridge` treats the
+argument as the owning run signal and rejects exec when it is not
+`agent.signal`. Those two objects are never the same on a healthy turn, so
+Cursor native `read`/`bash` fail with `Tool execution has no active run` on a
+new session.
+
+Why not an extension: the factory is invoked inside `packages/agent` before any
+coding-agent hook sees the stream.
+
+Conflict zone: `packages/agent/src/agent-loop.ts` `cursorExecHandlers(...)`
+argument.
+
 ## Aborted tool execution releases the run (2026-08-19)
 
 ### What changed

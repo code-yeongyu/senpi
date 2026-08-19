@@ -495,7 +495,7 @@ async function streamAssistantResponse(
 				? {
 						execHandlers:
 							typeof config.cursorExecHandlers === "function"
-								? config.cursorExecHandlers(requestAbortController.signal)
+								? config.cursorExecHandlers(signal ?? requestAbortController.signal)
 								: config.cursorExecHandlers,
 						onToolResult: (result: ToolResultMessage) => {
 							providerToolResults.push(result);

@@ -282,4 +282,30 @@ describe("cursor exec-channel integration in the agent loop", () => {
 		expect(assistantMessage?.stopReason).toBe("error");
 		expect(assistantMessage?.errorMessage).toContain("Idle timeout");
 	});
+
+	it("passes the run abort signal into cursorExecHandlers, not the per-request controller", async () => {
+		const run = new AbortController();
+		let seen: AbortSignal | undefined;
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [] };
+		const config: AgentLoopConfig = {
+			model: model(),
+			convertToLlm: (messages) => messages.filter((message): message is Message => "role" in message),
+			cursorExecHandlers: (signal) => {
+				seen = signal;
+				return {};
+			},
+		};
+		const stream = agentLoop([{ role: "user", content: "hi", timestamp: 0 }], context, config, run.signal, () => {
+			const response = createAssistantMessageEventStream();
+			const partial = assistant([{ type: "text", text: "ok" }]);
+			response.push({ type: "start", partial });
+			response.push({ type: "text_end", contentIndex: 0, content: "ok" });
+			response.end({ ...partial, stopReason: "stop" });
+			return response;
+		});
+		for await (const _event of stream) {
+			// consume
+		}
+		expect(seen).toBe(run.signal);
+	});
 });
