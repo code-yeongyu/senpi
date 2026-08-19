@@ -1,5 +1,40 @@
 # AI Source Changes
 
+## 2026-08-19 - Native Cursor thinking selections send catalog variant ids
+
+### What changed
+
+- `packages/ai/src/cursor/model-capabilities.ts`: `resolveCursorCatalogVariantId`
+  maps a capability + selected level onto a GetUsableModels / CLI catalog row
+  (`kimi-k3-high`, `claude-fable-5-thinking-low`, `claude-4.6-opus-max-thinking`,
+  `gpt-5.3-codex-xhigh`), looking the candidate up in the existing alias table.
+- `packages/ai/src/cursor/selection-descriptor.ts`: the parameters-encoding
+  branch now puts that catalog id on `modelId` (native Run RPC) and keeps the
+  bare capability id on `cliModelId` so `renderCursorCliModelString` still emits
+  `kimi-k3[reasoning=high]`. Cursor's Connect RPC rejects the bare capability id
+  as `not_found`; the official CLI still accepts the bracket form and resolves
+  it internally. Thinking level is carried by the variant suffix — live probes
+  showed the `reasoning` parameter is ignored when the id already names a level.
+
+### Why
+
+- Selecting any thinking level on `cursor/kimi-k3` (including `:off`) produced
+  `Connect error not_found`. The no-selection path already sent the real
+  representative variant (`kimi-k3-low`) and worked; the explicit-selection path
+  sent `modelId: "kimi-k3"` plus parameters, which is not a catalog model.
+
+### Why an extension could not handle it
+
+- The native RequestedModel encoding lives inside `pi-ai`'s cursor-agent
+  transport. Extensions never see the protobuf `modelId` / parameters split.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/cursor/selection-descriptor.ts` parameters-encoding return
+  (`modelId: bareBase`).
+- `packages/ai/src/cursor/model-capabilities.ts` alias helpers.
+- `packages/ai/test/cursor-reasoning-params.test.ts` pinned `modelId` values.
+
 ## 2026-08-19 - Native Cursor billed usage, live checkpoint context size, and token-gated resource_exhausted overflow
 
 ### What changed

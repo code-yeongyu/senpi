@@ -252,6 +252,41 @@ export function getCursorVariantAlias(originalId: string): CursorVariantAlias | 
 	return ALIASES[originalId];
 }
 
+/**
+ * Map a capability + selected level onto a GetUsableModels / CLI catalog variant
+ * id. Cursor's native Run RPC rejects the bare capability id (`kimi-k3`) as
+ * `not_found`; only the suffixed catalog rows (`kimi-k3-high`) are accepted.
+ * The official CLI still accepts `kimi-k3[reasoning=high]` and resolves it
+ * internally — that path is `cliModelId`, not this function.
+ */
+export function resolveCursorCatalogVariantId(
+	capabilityId: string,
+	specValue: string,
+	level: ModelThinkingLevel,
+	thinkingMode: boolean | undefined,
+): string | undefined {
+	const candidates: string[] = [];
+	if (thinkingMode === true) {
+		candidates.push(`${capabilityId}-thinking-${specValue}`);
+		candidates.push(`${capabilityId}-${specValue}-thinking`);
+	}
+	candidates.push(`${capabilityId}-${specValue}`);
+	if (level !== specValue && level !== "off") {
+		candidates.push(`${capabilityId}-${level}`);
+	}
+	if (specValue === "extra-high" || level === "xhigh") {
+		candidates.push(`${capabilityId}-xhigh`);
+	}
+	if (level === "off") {
+		candidates.push(`${capabilityId}-none`);
+	}
+	for (const candidate of candidates) {
+		const alias = getCursorVariantAlias(candidate);
+		if (alias !== undefined) return alias.legacyVariantId;
+	}
+	return undefined;
+}
+
 /** Resolve any known variant id to its selectable base identity; unknown ids return undefined. */
 export function getCursorBaseIdForVariant(originalId: string): string | undefined {
 	const alias = ALIASES[originalId];

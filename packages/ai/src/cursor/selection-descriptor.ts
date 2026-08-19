@@ -1,9 +1,16 @@
 import type { CursorAgentCompat, Model } from "../model.ts";
 import type { ModelThinkingLevel, ThinkingSelection } from "../types.ts";
-import { CURSOR_MODEL_CAPABILITIES, type CursorParameterId, getCursorVariantAlias } from "./model-capabilities.ts";
+import {
+	CURSOR_MODEL_CAPABILITIES,
+	type CursorParameterId,
+	getCursorVariantAlias,
+	resolveCursorCatalogVariantId,
+} from "./model-capabilities.ts";
 
 export interface CursorResolvedSelection {
 	readonly modelId: string;
+	/** Bare capability id for the CLI `--model` bracket form. Native RPC uses `modelId`. */
+	readonly cliModelId?: string;
 	readonly parameters: readonly { readonly id: CursorParameterId; readonly value: string }[];
 }
 
@@ -49,10 +56,11 @@ function buildParameters(
 
 /**
  * Resolve a Cursor model + thinking selection to its wire descriptor: the exact
- * model id plus ordered parameters. Both Cursor transports consume this; the
- * native lane renders parameters into protobuf, the CLI lane renders a model
- * string. Absent/unsupported selections return the representative or upstream
- * id with zero parameters.
+ * native catalog variant id plus ordered parameters. The native lane sends
+ * `modelId` on the protobuf Run RPC; the CLI lane renders `cliModelId ?? modelId`
+ * as a `--model` string (bracket form still uses the bare capability id).
+ * Absent/unsupported selections return the representative or upstream id with
+ * zero parameters.
  */
 export function resolveCursorSelectionDescriptor(
 	model: Model<"cursor-agent">,
@@ -85,9 +93,15 @@ export function resolveCursorSelectionDescriptor(
 		return { modelId: suffixId, parameters: [] };
 	}
 
-	const bareBase = compat.capabilityId;
 	return {
-		modelId: bareBase,
+		modelId:
+			resolveCursorCatalogVariantId(
+				compat.capabilityId,
+				spec.value,
+				selection.level,
+				compat.thinkingMode,
+			) ?? compat.representativeVariantId,
+		cliModelId: compat.capabilityId,
 		parameters: buildParameters(compat.capabilityId, spec.value, compat.thinkingMode),
 	};
 }
@@ -98,7 +112,8 @@ export function renderCursorCliModelString(
 	selection: ThinkingSelection | undefined,
 ): string {
 	const resolved = resolveCursorSelectionDescriptor(model, selection);
-	if (resolved.parameters.length === 0) return resolved.modelId;
+	const modelId = resolved.cliModelId ?? resolved.modelId;
+	if (resolved.parameters.length === 0) return modelId;
 	const args = resolved.parameters.map((parameter) => `${parameter.id}=${parameter.value}`).join(",");
-	return `${resolved.modelId}[${args}]`;
+	return `${modelId}[${args}]`;
 }

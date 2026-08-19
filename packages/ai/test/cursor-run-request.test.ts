@@ -118,13 +118,13 @@ describe("cursor Run request reasoning rendering", () => {
 		},
 	};
 
-	it("renders an explicit selection as bare base id plus ordered parameters", async () => {
+	it("renders an explicit selection as the catalog variant id plus ordered parameters", async () => {
 		const model = buildModel("claude-fable-5-thinking", "", fableCompat, "claude-fable-5-thinking-medium");
 		const frame = await captureRunRequest(model, { thinkingSelection: { level: "low", source: "explicit" } });
 		const request = frame.message.value as {
 			requestedModel?: { modelId: string; maxMode: boolean; parameters: { id: string; value: string }[] };
 		};
-		expect(request.requestedModel?.modelId).toBe("claude-fable-5");
+		expect(request.requestedModel?.modelId).toBe("claude-fable-5-thinking-low");
 		expect(
 			request.requestedModel?.parameters.map((parameter) => ({ id: parameter.id, value: parameter.value })),
 		).toEqual([
@@ -164,7 +164,7 @@ describe("cursor Run request reasoning rendering", () => {
 		const request = frame.message.value as {
 			requestedModel?: { modelId: string; parameters: { id: string; value: string }[] };
 		};
-		expect(request.requestedModel?.modelId).toBe("gpt-5.5");
+		expect(request.requestedModel?.modelId).toBe("gpt-5.5-none");
 		expect(
 			request.requestedModel?.parameters.map((parameter) => ({ id: parameter.id, value: parameter.value })),
 		).toEqual([
@@ -188,6 +188,7 @@ describe("cursor Run request reasoning rendering", () => {
 		const request = frame.message.value as {
 			requestedModel?: { modelId: string; maxMode: boolean; parameters: { id: string; value: string }[] };
 		};
+		expect(request.requestedModel?.modelId).toBe("claude-fable-5-high");
 		expect(request.requestedModel?.maxMode).toBe(true);
 		expect(
 			request.requestedModel?.parameters.map((parameter) => ({ id: parameter.id, value: parameter.value })),
