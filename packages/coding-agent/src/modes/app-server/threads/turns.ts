@@ -92,12 +92,14 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 					const startedAt = new Date(startedAtMs).toISOString();
 					const turn = buildTurn(turnId, "inProgress", startedAtMs, null, []);
 					const userMessage = buildUserMessage(params.clientUserMessageId ?? null, parsedInput.content);
+					const rollbackLeafId = entry.session.sessionManager?.getLeafId() ?? null;
 
 					entry.activeTurn = { turnId, startedAt };
 					entry.status = "active";
 					entry.updatedAt = startedAt;
 					this.turnLog.recordTurn(params.threadId, {
 						turnId,
+						rollbackLeafId,
 						startedAt,
 						status: "running" satisfies LoggedStartStatus,
 					});
@@ -354,7 +356,12 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 		entry.activeTurn = { turnId, startedAt };
 		entry.status = "active";
 		entry.updatedAt = startedAt;
-		this.turnLog.recordTurn(threadId, { turnId, startedAt, status: "running" });
+		this.turnLog.recordTurn(threadId, {
+			turnId,
+			rollbackLeafId: entry.session.sessionManager?.getLeafEntry()?.parentId ?? null,
+			startedAt,
+			status: "running",
+		});
 		this.pendingByThreadId.set(threadId, {
 			turnId,
 			startedAt,

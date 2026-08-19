@@ -1,5 +1,32 @@
 # changes
 
+## Persistent append-only thread rollback (2026-08-19)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/protocol/thread.ts` exposes the existing V2 rollback request and response shape through the app-server facade.
+- `packages/coding-agent/src/modes/app-server/threads/handlers.ts` registers the rollback handler and captures compaction cutoffs.
+- `packages/coding-agent/src/modes/app-server/threads/rollback-handler.ts` validates rollback requests, moves the session leaf, persists the selected branch, and returns the updated thread snapshot.
+- `packages/coding-agent/src/modes/app-server/threads/turn-log.ts` retains each turn's pre-turn leaf and truncates only the in-process wire view.
+- `packages/coding-agent/src/modes/app-server/threads/turn-runtime.ts` exposes the narrow session-manager checkpoint surface to the turn engine.
+- `packages/coding-agent/src/modes/app-server/threads/turns.ts` records the session leaf at each turn-start seam.
+- `packages/coding-agent/src/modes/app-server/threads/wire-thread.ts` reconstructs persisted turn cutoffs from user-message parent links.
+
+### Why
+
+- Codex-compatible clients use `thread/rollback` to restore a prior conversational checkpoint without reverting workspace files.
+- The selected history must survive session unload/resume while abandoned session entries remain available in the append-only tree.
+
+### Why an extension could not handle it
+
+- Only app-server owns V2 method registration, wire-turn projection, and the in-process turn log.
+- Only the core turn lifecycle can capture the exact session leaf before a requested turn starts.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/modes/app-server/threads/handlers.ts`, `packages/coding-agent/src/modes/app-server/threads/turns.ts`, and `packages/coding-agent/src/modes/app-server/threads/turn-runtime.ts` around lifecycle registration and turn-start state.
+- LOW: `packages/coding-agent/src/modes/app-server/protocol/thread.ts`, `packages/coding-agent/src/modes/app-server/threads/rollback-handler.ts`, `packages/coding-agent/src/modes/app-server/threads/turn-log.ts`, and `packages/coding-agent/src/modes/app-server/threads/wire-thread.ts` around rollback-specific types and history projection.
+
 ## Registry-owned thread teardown (2026-08-13)
 
 ### What changed

@@ -16,6 +16,7 @@ import { threadItemsListResponse, threadTurnsListResponse } from "./history.ts";
 import { listThreadsResponse, loadedThreadsResponse } from "./list-handlers.ts";
 import { registerThreadMetadataHandlers } from "./metadata-handlers.ts";
 import { type ThreadEntry, ThreadNotFoundError, type ThreadRegistry, type WireThread } from "./registry.ts";
+import { registerThreadRollbackHandler } from "./rollback-handler.ts";
 import { threadSearchResponse } from "./search.ts";
 import { ThreadSearchCache } from "./search-cache.ts";
 import { threadSearchOccurrencesResponse } from "./search-occurrences.ts";
@@ -56,6 +57,7 @@ export function registerThreadLifecycleHandlers(
 ): ThreadLifecycleController {
 	registerThreadGoalHandlers(registry, options);
 	registerThreadSettingsHandlers(registry, options);
+	registerThreadRollbackHandler(registry, options.threads, options.turnLog);
 	const archiveState = new ThreadArchiveState(options.threads.getSessionDir());
 	registerThreadMetadataHandlers(registry, {
 		threads: options.threads,
@@ -279,6 +281,7 @@ class ThreadLifecycleHandlers {
 			const startedAtMs = Date.now();
 			this.turnLog.recordTurn(threadId, {
 				turnId,
+				rollbackLeafId: entry.session.sessionManager.getLeafId(),
 				startedAt: new Date(startedAtMs).toISOString(),
 				status: "running",
 			});
