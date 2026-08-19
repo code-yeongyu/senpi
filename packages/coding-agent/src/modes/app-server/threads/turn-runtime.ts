@@ -20,6 +20,10 @@ export type LoggedStartStatus = "running";
 export type TurnEngineSessionEvent = { readonly type: string };
 
 export interface TurnEngineSession {
+	readonly sessionManager?: {
+		getLeafId(): string | null;
+		getLeafEntry(): { readonly parentId: string | null } | undefined;
+	};
 	prompt(
 		text: string,
 		options?: { readonly source?: "rpc"; readonly preflightResult?: (success: boolean) => void },

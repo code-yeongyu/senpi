@@ -4,6 +4,7 @@ export type WireItem = Record<string, unknown>;
 
 export interface LoggedTurn {
 	turnId: string;
+	rollbackLeafId: string | null;
 	startedAt: string;
 	completedAt: string | null;
 	durationMs: number | null;
@@ -14,6 +15,7 @@ export interface LoggedTurn {
 
 export interface RecordTurnOptions {
 	turnId: string;
+	rollbackLeafId?: string | null;
 	startedAt: string;
 	status?: TurnStatus;
 	completedAt?: string | null;
@@ -33,6 +35,7 @@ export class TurnLog {
 		const turns = this.getThreadTurns(threadId);
 		const loggedTurn: LoggedTurn = {
 			turnId: turn.turnId,
+			rollbackLeafId: turn.rollbackLeafId ?? null,
 			startedAt: turn.startedAt,
 			completedAt: turn.completedAt ?? null,
 			durationMs: durationBetween(turn.startedAt, turn.completedAt ?? null),
@@ -67,6 +70,15 @@ export class TurnLog {
 		return this.getThreadTurns(threadId).map(cloneTurn);
 	}
 
+	rollbackTurns(threadId: string, numTurns: number): void {
+		const turns = this.getThreadTurns(threadId);
+		const firstRemoved = turns.at(-numTurns);
+		if (!firstRemoved) {
+			throw new Error(`Cannot roll back ${numTurns} turns from a thread with ${turns.length} turns`);
+		}
+		turns.splice(turns.length - numTurns, numTurns);
+	}
+
 	private getThreadTurns(threadId: string): LoggedTurn[] {
 		let turns = this.turnsByThreadId.get(threadId);
 		if (!turns) {
@@ -80,6 +92,7 @@ export class TurnLog {
 function cloneTurn(turn: LoggedTurn): LoggedTurn {
 	return {
 		turnId: turn.turnId,
+		rollbackLeafId: turn.rollbackLeafId,
 		startedAt: turn.startedAt,
 		completedAt: turn.completedAt,
 		durationMs: turn.durationMs,

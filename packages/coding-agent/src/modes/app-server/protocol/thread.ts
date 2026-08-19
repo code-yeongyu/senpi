@@ -124,6 +124,8 @@ export type ThreadForkResponse = ThreadRuntimeResponse;
 
 export type ThreadReadParams = { readonly threadId: ThreadId; readonly includeTurns?: boolean };
 export type ThreadReadResponse = { readonly thread: Thread };
+export type ThreadRollbackParams = { readonly threadId: ThreadId; readonly numTurns: number };
+export type ThreadRollbackResponse = { readonly thread: Thread };
 export type ThreadListParams = {
 	readonly cursor?: string | null;
 	readonly limit?: number | null;

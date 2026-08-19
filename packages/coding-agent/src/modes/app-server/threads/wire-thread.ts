@@ -91,7 +91,7 @@ export function turnsForEntry(entry: ThreadEntry | WireThread | ThreadHistorySou
 		return loggedTurns;
 	}
 	const entries =
-		"session" in entry ? entry.session.sessionManager.getEntries() : "entries" in entry ? entry.entries : [];
+		"session" in entry ? entry.session.sessionManager.getBranch() : "entries" in entry ? entry.entries : [];
 	return turnsFromSessionEntries(entries, entry.createdAt);
 }
 
@@ -103,6 +103,7 @@ function turnsFromSessionEntries(entries: readonly SessionEntry[], fallbackStart
 		if (entry.message.role === "user") {
 			current = {
 				turnId: `turn-${turns.length + 1}`,
+				rollbackLeafId: entry.parentId,
 				startedAt: entry.timestamp || fallbackStartedAt,
 				completedAt: null,
 				durationMs: null,

@@ -10,6 +10,7 @@
 - app-server: emit `turn/plan/updated` from the todo tool's structured plan state at the `tool_execution_end`
   projection seam, mapping senpi todo statuses to Codex V2 plan-step statuses (`abandoned` collapses to
   `completed`) so Codex-compatible clients render the plan panel. Turns without a plan emit nothing.
+- App-server now supports `thread/rollback`, preserving abandoned session entries while moving the persisted conversation leaf and returning the reduced turn snapshot expected by Codex-compatible clients.
 - `/loop`: recurring and self-paced scheduled prompts, ported from Claude Code as a fork-only builtin extension.
   Fixed loops re-deliver a prompt or loop-file sentinel on an interval; dynamic loops pick their own next delay via
   the new `schedule_wakeup` tool. Loops coalesce missed fires into one catch-up tick, cap at 5 active per session,
