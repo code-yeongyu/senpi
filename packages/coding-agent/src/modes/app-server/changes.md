@@ -1,5 +1,23 @@
 # changes
 
+## Integer wire timestamps (2026-08-19)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/threads/wire-thread.ts` and `packages/coding-agent/src/modes/app-server/threads/turn-runtime.ts` now floor parsed or live timestamps to integer epoch seconds for thread and turn wire fields.
+
+### Why
+
+- Codex V2 clients require timestamp values to satisfy their int64 schema.
+
+### Why an extension could not handle it
+
+- Timestamp projection is owned by the app-server wire serializer before extension code can run.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/app-server/threads/wire-thread.ts` and `packages/coding-agent/src/modes/app-server/threads/turn-runtime.ts`, around timestamp projection.
+
 ## Registry-owned thread teardown (2026-08-13)
 
 ### What changed

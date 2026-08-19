@@ -218,5 +218,5 @@ function toGeneratedStatus(status: WireThread["status"]["type"]): ThreadStatus {
 
 function isoSeconds(value: string): number {
 	const parsed = Date.parse(value);
-	return Number.isFinite(parsed) ? parsed / 1000 : 0;
+	return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : 0;
 }
