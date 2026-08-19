@@ -6,7 +6,7 @@
 
 ### Added
 
-- App-server accepts repeatable Codex-style `-c <key>=<value>` configuration overrides, preserving raw values for T3 Code spawns.
+- App-server accepts repeatable Codex-style `-c <key>=<value>` configuration overrides, preserving raw values for T3 Code spawns. Complete `mcp_servers.<name>.url` and bearer-environment pairs become process-local HTTP MCP servers, and `config/mcpServer/reload` reattaches loaded sessions without persisting `mcp.json`.
 - app-server: emit `turn/plan/updated` from the todo tool's structured plan state at the `tool_execution_end`
   projection seam, mapping senpi todo statuses to Codex V2 plan-step statuses (`abandoned` collapses to
   `completed`) so Codex-compatible clients render the plan panel. Turns without a plan emit nothing.

@@ -61,7 +61,7 @@ export async function runAppServerMode(options: AppServerModeOptions): Promise<v
 	process.on("SIGINT", handleSignal);
 	process.on("SIGTERM", handleSignal);
 
-	const runtime = createAppServerRuntime(requestShutdown);
+	const runtime = createAppServerRuntime(requestShutdown, { configOverrides: options.configOverrides });
 	let stdio: StdioTransport | undefined;
 	let unix: UnixSocketListenerHandle | undefined;
 	let websocket: WebSocketListenerHandle | undefined;

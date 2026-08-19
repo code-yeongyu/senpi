@@ -1,5 +1,29 @@
 # changes
 
+## Process-local Codex MCP overrides and reload (2026-08-19)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/index.ts` passes parsed `-c` overrides into the runtime.
+- `packages/coding-agent/src/modes/app-server/runtime.ts` binds the immutable process-local MCP source to every created session and implements `config/mcpServer/reload` through the existing MCP service.
+- `packages/coding-agent/src/modes/app-server/mcp-config-overrides.ts` materializes complete `mcp_servers.<name>.url` and `bearer_token_env_var` pairs without persistence, while redacting malformed-input diagnostics.
+- `packages/coding-agent/src/modes/app-server/threads/mcp-wire-status.ts` includes the process-local source in threadless status queries and reports absent bearer environment variables as unauthenticated.
+
+### Why
+
+- T3 Code supplies its local MCP endpoint and bearer environment variable through Codex-compatible app-server arguments and refreshes that catalog before turns.
+
+### Why an extension could not handle it
+
+- The source originates in app-server CLI options and the reload request must coordinate all loaded app-server thread adapters; ordinary extensions cannot access either host-owned surface.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/app-server/index.ts`, around runtime construction.
+- MEDIUM: `packages/coding-agent/src/modes/app-server/runtime.ts`, around session construction and method registration.
+- LOW: `packages/coding-agent/src/modes/app-server/mcp-config-overrides.ts`, an additive app-server boundary module.
+- LOW: `packages/coding-agent/src/modes/app-server/threads/mcp-wire-status.ts`, around process-scope adapter construction.
+
 ## Integer wire timestamps (2026-08-19)
 
 ### What changed

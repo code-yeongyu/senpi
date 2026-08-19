@@ -5,6 +5,7 @@ import type { registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, expect, vi } from "vitest";
 import { restoreStdout } from "../../src/core/output-guard.ts";
 import { runAppServerMode } from "../../src/modes/app-server/index.ts";
+import type { AppServerConfigOverride } from "../../src/modes/app-server/mcp-config-overrides.ts";
 import { captureStderrPort } from "./app-server-mode-socket.ts";
 
 const runningModes: Array<Promise<void>> = [];
@@ -45,7 +46,10 @@ export function configureModeEnv(root: string): void {
 	vi.spyOn(process, "exit").mockImplementation(exitThrows);
 }
 
-export async function startWsAppServerMode(preferredPort: QaPort): Promise<RunningAppServerMode> {
+export async function startWsAppServerMode(
+	preferredPort: QaPort,
+	configOverrides: readonly AppServerConfigOverride[] = [],
+): Promise<RunningAppServerMode> {
 	const ports = [preferredPort, ...QA_PORTS.filter((port) => port !== preferredPort)];
 	for (const port of ports) {
 		const banner = captureStderrPort();
@@ -59,6 +63,7 @@ export async function startWsAppServerMode(preferredPort: QaPort): Promise<Runni
 			},
 			wsAuth: { kind: "off" },
 			jsonLogs: false,
+			configOverrides,
 		});
 		runningModes.push(mode);
 		try {
@@ -127,7 +132,7 @@ export async function eventually(assertion: () => void | Promise<void>): Promise
 			await assertion();
 			return;
 		} catch (error: unknown) {
-			lastError = error;
+			lastError = error instanceof Error ? error : new Error(String(error));
 			await deferOneTick();
 		}
 	}

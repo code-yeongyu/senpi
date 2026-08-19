@@ -1,6 +1,6 @@
 import { resolveAuthMode } from "../../../core/extensions/builtin/mcp/auth/context.ts";
 import { loadMcpConfig } from "../../../core/extensions/builtin/mcp/config.ts";
-import type { ResolvedMcpServer } from "../../../core/extensions/builtin/mcp/config-schema.ts";
+import type { McpServerDeclaration, ResolvedMcpServer } from "../../../core/extensions/builtin/mcp/config-schema.ts";
 import type {
 	McpWireAuthStatus,
 	McpWireJsonValue,
@@ -40,6 +40,7 @@ export function createMcpWireStatusAdapter(snapshot: McpWireStatusSnapshot): Mcp
 }
 
 export type ProcessMcpWireStatusOptions = {
+	readonly additionalServers?: Readonly<Record<string, McpServerDeclaration>>;
 	readonly agentDir?: string;
 	readonly cwd: string;
 	readonly env?: Record<string, string | undefined>;
@@ -54,10 +55,25 @@ export type ProcessMcpWireStatusOptions = {
  */
 export function createProcessMcpWireStatusAdapter(options: ProcessMcpWireStatusOptions): McpWireStatusAdapter {
 	const config = loadMcpConfig({ ...options, projectTrusted: false });
-	const servers = Object.values(config.servers)
-		.filter((server) => server.source === "global")
-		.map(toConfiguredServer);
-	return createMcpWireStatusAdapter({ servers });
+	const servers = new Map<string, McpWireStatusServer>(
+		Object.values(config.servers)
+			.filter((server) => server.source === "global")
+			.map((server) => [server.name, toConfiguredServer(server)]),
+	);
+	for (const [name, server] of Object.entries(options.additionalServers ?? {})) {
+		servers.set(name, {
+			name,
+			serverInfo: null,
+			tools: [],
+			resources: [],
+			resourceTemplates: [],
+			authStatus:
+				server.bearerTokenEnv !== undefined && options.env?.[server.bearerTokenEnv] === undefined
+					? "notLoggedIn"
+					: "bearerToken",
+		});
+	}
+	return createMcpWireStatusAdapter({ servers: [...servers.values()] });
 }
 
 /** Resolves loaded-thread adapters while retaining an explicit process scope. */

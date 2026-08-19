@@ -2,6 +2,12 @@ import { ENV_SESSION_DIR, getAgentDir } from "../../config.ts";
 import { getMcpService } from "../../core/extensions/builtin/mcp/service.ts";
 import { DefaultResourceLoader } from "../../core/resource-loader.ts";
 import { type CreateAgentSessionOptions, createAgentSession } from "../../core/sdk.ts";
+import { SettingsManager } from "../../core/settings-manager.ts";
+import {
+	type AppServerConfigOverride,
+	type AppServerMcpConfigSource,
+	materializeAppServerMcpConfigSource,
+} from "./mcp-config-overrides.ts";
 import type { RpcNotification } from "./rpc/envelope.ts";
 import { createRegistry, type MethodRegistry, registerExtensionRequestMethod } from "./rpc/registry.ts";
 import { registerFuzzyFileSearchMethods } from "./search/fuzzy-search-methods.ts";
@@ -33,8 +39,12 @@ export type AppServerRuntime = {
 	readonly dispose: () => void;
 };
 
-export function createAppServerRuntime(requestShutdown: (reason: string) => void): AppServerRuntime {
+export function createAppServerRuntime(
+	requestShutdown: (reason: string) => void,
+	options: { readonly configOverrides?: readonly AppServerConfigOverride[] } = {},
+): AppServerRuntime {
 	const notifications = new NotificationRouter();
+	const mcpConfigSource = materializeAppServerMcpConfigSource(options.configOverrides ?? []);
 	const registry = createRegistry();
 	const fuzzySearch = new FuzzyFileSearchService({
 		broadcast: (notification) => notifications.broadcast(notification),
@@ -42,6 +52,7 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 	registerFuzzyFileSearchMethods(registry, fuzzySearch);
 	let threads: ThreadRegistry;
 	const processMcpWireStatusAdapter = createProcessMcpWireStatusAdapter({
+		additionalServers: mcpConfigSource.servers,
 		agentDir: getAgentDir(),
 		cwd: process.cwd(),
 		env: process.env,
@@ -63,9 +74,16 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 	threads = new ThreadRegistry({
 		agentDir: getAgentDir(),
 		sessionDir: process.env[ENV_SESSION_DIR],
-		createSession: (options) => createBoundAppServerSession(options, approvals, notifications, requestShutdown),
+		createSession: (sessionOptions) =>
+			createBoundAppServerSession(sessionOptions, {
+				approvals,
+				mcpConfigSource,
+				notifications,
+				requestShutdown,
+			}),
 		mcpWireStatusAdapter: processMcpWireStatusAdapter,
 	});
+	registerMcpReloadMethod(registry, threads);
 	registerExtensionRequestMethod(registry, (threadId) => threads.getLoadedThread(threadId).session);
 	const core = createRoutedServerCore(
 		registry,
@@ -124,13 +142,28 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 	};
 }
 
+type AppServerSessionBindings = {
+	readonly approvals: ApprovalBridge;
+	readonly mcpConfigSource: AppServerMcpConfigSource;
+	readonly notifications: NotificationRouter;
+	readonly requestShutdown: (reason: string) => void;
+};
+
 async function createBoundAppServerSession(
 	options: CreateAgentSessionOptions,
-	approvals: ApprovalBridge,
-	notifications: NotificationRouter,
-	requestShutdown: (reason: string) => void,
+	bindings: AppServerSessionBindings,
 ): Promise<AppServerSessionResult> {
-	const result = await createAgentSession(options);
+	const cwd = options.cwd ?? process.cwd();
+	const agentDir = options.agentDir ?? getAgentDir();
+	const settingsManager = SettingsManager.create(cwd, agentDir);
+	const resourceLoader = new DefaultResourceLoader({
+		cwd,
+		agentDir,
+		extensionFactories: [...bindings.mcpConfigSource.extensionFactories],
+		settingsManager,
+	});
+	await resourceLoader.reload();
+	const result = await createAgentSession({ ...options, resourceLoader, settingsManager });
 	const threadId = result.session.sessionId;
 	const initialNotifications: RpcNotification[] = [];
 	let bindingExtensions = true;
@@ -143,14 +176,14 @@ async function createBoundAppServerSession(
 			initialNotifications.push(notification);
 			return;
 		}
-		notifications.toThread(threadId, notification);
+		bindings.notifications.toThread(threadId, notification);
 	});
 	await result.session.bindExtensions({
-		uiContext: createAppServerUIContext(approvals, threadId),
+		uiContext: createAppServerUIContext(bindings.approvals, threadId),
 		mode: "app-server",
-		shutdownHandler: () => requestShutdown("extension shutdown"),
+		shutdownHandler: () => bindings.requestShutdown("extension shutdown"),
 		onError: (error) => {
-			notifications.toThread(threadId, { method: "error", params: error });
+			bindings.notifications.toThread(threadId, { method: "error", params: error });
 		},
 	});
 	bindingExtensions = false;
@@ -161,10 +194,24 @@ async function createBoundAppServerSession(
 	const mcpWireStatusAdapter = createMcpWireStatusAdapter(mcpService.getWireStatusSnapshot(threadId));
 	result.session.subscribe((event) => {
 		if (event.type === "agent_end") {
-			approvals.cancelPendingForThread(threadId);
+			bindings.approvals.cancelPendingForThread(threadId);
 		}
 	});
 	return { ...result, initialNotifications, mcpWireStatusAdapter };
+}
+
+function registerMcpReloadMethod(registry: MethodRegistry, threads: ThreadRegistry): void {
+	registry.register("config/mcpServer/reload", {
+		scope: "global",
+		handler: async () => {
+			const service = getMcpService();
+			for (const thread of threads.listLoaded()) {
+				const entry = threads.getLoadedThread(thread.id);
+				entry.mcpWireStatusAdapter?.update(await service.reloadSession(thread.id));
+			}
+			return {};
+		},
+	});
 }
 
 function registerTurnHandlers(registry: MethodRegistry, turns: TurnEngineApi, core: ServerCore): void {
