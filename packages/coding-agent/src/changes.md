@@ -20,8 +20,6 @@
 - `packages/coding-agent/src/main.ts` `promptConfirm`, `createSessionManager`
 - `packages/coding-agent/test/suite/regressions/interactive-session-confirmation.test.ts`
 
-##
-
 ## 2026-08-20 - Cursor 0-token RE stays on the same model and shrinks
 
 ### What changed
