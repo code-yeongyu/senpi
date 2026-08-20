@@ -49,6 +49,40 @@
   streaming reveal are installed.
 - LOW: the settings row list and switch arms in `settings-selector.ts`.
 
+## Scoped extension custom-overlay completion (2026-08-20)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
+  `showExtensionCustom()` retains the `OverlayHandle` returned for its own
+  overlay and calls `handle.hide()` on completion or setup failure.
+- Completing a hidden overlay no longer calls global `ui.hideOverlay()`, so a
+  newer topmost overlay remains mounted.
+- If a custom component resolves after its lifetime was already closed, its
+  optional `dispose()` hook now still runs.
+- `packages/coding-agent/src/modes/interactive/tips/catalog/workspace-tips.ts`
+  describes the switchable `/btw` and `/side` surface instead of a parallel
+  persisted session.
+
+### Why
+
+- Global topmost dismissal violates ownership when extension overlays overlap.
+  BTW intentionally stays alive while hidden, so session teardown could
+  otherwise close an unrelated selector that opened later.
+
+### Why an extension could not handle it
+
+- Only interactive mode owns the custom overlay's completion callback and the
+  `OverlayHandle` returned by `TUI.showOverlay()`. An extension can request and
+  later complete an overlay, but it cannot replace the host's global
+  `hideOverlay()` implementation.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
+  `showExtensionCustom()` overlay setup and close branches.
+- `packages/coding-agent/src/modes/interactive/tips/catalog/workspace-tips.ts`
+  builtin command tip catalog.
 ## Pasted image markers keep canonical numbering and survive undo with their payloads (2026-08-18)
 
 ### What changed

@@ -1,176 +1,114 @@
+import { Editor, Key, type OverlayHandle } from "@earendil-works/pi-tui";
+import { getEditorTheme } from "../../../../modes/interactive/theme/theme.ts";
 import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
 import { buildSessionContext } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../types.ts";
-import { formatBtwQuestion, sanitizeBtwDisplayText } from "./display-text.ts";
+import { sanitizeBtwDisplayText } from "./display-text.ts";
 import { BTW_HISTORY_ENTRY_TYPE, buildBtwHistoryMessages, readBtwHistory } from "./history.ts";
-import { BTW_HISTORY_OVERLAY_OPTIONS, BtwHistoryPanel } from "./history-panel.ts";
-import { BtwPanel } from "./panel.ts";
+import { abortNonTuiSide, type NonTuiSideState, runNonTuiSideCommand, type SideCommandName } from "./non-tui.ts";
+import {
+	type BtwSideCallbacks,
+	BtwSideController,
+	type BtwSideControllerOpenOptions,
+	type BtwSideSurface,
+} from "./side-controller.ts";
+import { BTW_SIDE_OVERLAY_OPTIONS, BtwSidePanel } from "./side-panel.ts";
 import { buildSideQueryContext, getSideQueryPromptContextWindow, runSideQuery } from "./side-query.ts";
 
-const WIDGET_KEY = "btw";
-const ESCAPE = "";
-
+const STATUS_KEY = "btw";
 const SIDE_COMMAND_NAMES = ["btw", "side"] as const;
 const SIDE_COMMAND_OPTIONS = {
 	description: "Ask a side question in parallel without touching the main session",
 	argumentHint: "<question>",
 };
 
-interface ActiveBtw {
-	controller: AbortController;
-	panel: BtwPanel | undefined;
-	unsubscribeEscape: (() => void) | undefined;
-	settled: boolean;
-}
+export default function btwExtension(pi: ExtensionAPI): void {
+	const controller = new BtwSideController();
+	const nonTuiState: NonTuiSideState = { request: undefined };
 
-export default function btwExtension(pi: ExtensionAPI) {
-	let active: ActiveBtw | undefined;
+	const closeActive = (): void => {
+		controller.close();
+		abortNonTuiSide(nonTuiState);
+	};
 
-	function dismiss(ctx: ExtensionContext, options: { abort: boolean }): void {
-		const current = active;
-		if (!current) return;
-		active = undefined;
-		if (options.abort) current.controller.abort();
-		current.unsubscribeEscape?.();
-		if (current.panel) ctx.ui.setWidget(WIDGET_KEY, undefined);
-	}
-
-	pi.on("session_before_switch", (_event, ctx) => {
-		dismiss(ctx, { abort: true });
+	pi.on("session_before_switch", closeActive);
+	pi.on("session_before_fork", closeActive);
+	pi.on("session_before_tree", closeActive);
+	pi.on("session_shutdown", closeActive);
+	pi.on("session_extensions_removed", closeActive);
+	pi.on("agent_start", () => {
+		controller.setParentStatus("working");
+	});
+	pi.on("agent_end", () => {
+		controller.setParentStatus("idle");
 	});
 
-	pi.on("session_before_fork", (_event, ctx) => {
-		dismiss(ctx, { abort: true });
-	});
+	const toggleSide = (ctx: ExtensionContext): void => {
+		if (controller.isOpen) controller.toggle();
+		else ctx.ui.notify("Use /btw or /side to open a side conversation.", "info");
+	};
+	const toggleShortcut = {
+		description: "Toggle the active BTW side conversation",
+		handler: toggleSide,
+	};
+	pi.registerShortcut(Key.ctrl("_"), toggleShortcut);
+	pi.registerShortcut(Key.ctrl("/"), toggleShortcut);
 
-	pi.on("session_before_tree", (_event, ctx) => {
-		dismiss(ctx, { abort: true });
-	});
-
-	pi.on("session_shutdown", (_event, ctx) => {
-		dismiss(ctx, { abort: true });
-	});
-
-	pi.on("input", (_event, ctx) => {
-		if (active?.settled) dismiss(ctx, { abort: false });
-	});
-
-	async function sideHandler(commandName: string, args: string, ctx: ExtensionCommandContext): Promise<void> {
+	async function sideHandler(commandName: SideCommandName, args: string, ctx: ExtensionCommandContext): Promise<void> {
 		const question = args.trim();
-		if (!question) {
-			const entries = readBtwHistory(ctx.sessionManager.getBranch());
-			if (entries.length === 0) {
-				ctx.ui.notify("No side questions yet in this session.", "info");
-				return;
-			}
-			if (ctx.mode === "tui" && ctx.hasUI) {
-				await ctx.ui.custom<undefined>(
-					(tui, theme, keybindings, done) => new BtwHistoryPanel({ entries, tui, theme, keybindings, done }),
-					{ overlay: true, overlayOptions: BTW_HISTORY_OVERLAY_OPTIONS },
-				);
-				return;
-			}
-			ctx.ui.notify(
-				entries
-					.map(
-						(entry, index) =>
-							`${index + 1}. Question: ${formatBtwQuestion(entry.question)}\nAnswer: ${sanitizeBtwDisplayText(entry.answer)}`,
-					)
-					.join("\n\n"),
-				"info",
-			);
+		if (ctx.mode !== "tui" || !ctx.hasUI) {
+			await runNonTuiSideCommand(pi, commandName, question, ctx, nonTuiState);
 			return;
 		}
 		const model = ctx.model;
-		if (!model) {
+		if (model === undefined) {
 			ctx.ui.notify(`No active model available for /${commandName}.`, "error");
 			return;
 		}
-
 		const snapshot = buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId());
-		const priorBtw = buildBtwHistoryMessages(readBtwHistory(ctx.sessionManager.getBranch()), model);
 		const history = convertToLlm(filterContextExcludedMessages(snapshot.messages));
-		const systemPrompt = ctx.getSystemPrompt();
-		const thinkingLevel = pi.getThinkingLevel();
-		const sessionId = ctx.sessionManager.getSessionId();
-
-		dismiss(ctx, { abort: true });
-		const controller = new AbortController();
-		const entry: ActiveBtw = { controller, panel: undefined, unsubscribeEscape: undefined, settled: false };
-		active = entry;
-
-		if (ctx.mode === "tui" && ctx.hasUI) {
-			ctx.ui.setWidget(WIDGET_KEY, (tui, theme) => {
-				const panel = new BtwPanel(question, tui, theme);
-				entry.panel = panel;
-				return panel.component;
-			});
-			entry.unsubscribeEscape = ctx.ui.onTerminalInput((data) => {
-				if (active !== entry || data !== ESCAPE) return undefined;
-				dismiss(ctx, { abort: true });
-				return undefined;
-			});
-		}
-
-		const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-		if (!auth.ok) {
-			if (active !== entry) return;
-			dismiss(ctx, { abort: false });
-			ctx.ui.notify(`/${commandName}: ${sanitizeBtwDisplayText(auth.error)}`, "error");
-			return;
-		}
-
-		try {
-			const context = buildSideQueryContext({
-				systemPrompt,
-				history,
-				question,
-				priorBtw,
-				promptContextWindow: getSideQueryPromptContextWindow(model),
-			});
-			const { replyText } = await runSideQuery(
-				{
-					model,
-					auth: {
-						apiKey: auth.apiKey,
-						headers: auth.headers,
-						extraBody: auth.extraBody,
+		const options: BtwSideControllerOpenOptions = {
+			createSurface: (callbacks) => createSurface(ctx, callbacks),
+			runQuestion: async ({ question: nextQuestion, signal, onTextDelta }) => {
+				const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+				if (!auth.ok) throw new Error(auth.error);
+				const context = buildSideQueryContext({
+					systemPrompt: ctx.getSystemPrompt(),
+					history,
+					priorBtw: buildBtwHistoryMessages(readBtwHistory(ctx.sessionManager.getBranch()), model),
+					question: nextQuestion,
+					promptContextWindow: getSideQueryPromptContextWindow(model),
+				});
+				const result = await runSideQuery(
+					{
+						model,
+						auth: {
+							apiKey: auth.apiKey,
+							headers: auth.headers,
+							extraBody: auth.extraBody,
+						},
+						sessionId: ctx.sessionManager.getSessionId(),
+						thinkingLevel: ctx.thinkingLevel === "off" ? undefined : ctx.thinkingLevel,
+						streamFn: (streamModel, streamContext, streamOptions) =>
+							ctx.modelRegistry.modelRuntime.streamSimple(streamModel, streamContext, streamOptions),
 					},
-					sessionId,
-					thinkingLevel: thinkingLevel === "off" ? undefined : thinkingLevel,
-					streamFn: (streamModel, streamContext, options) =>
-						ctx.modelRegistry.modelRuntime.streamSimple(streamModel, streamContext, options),
-				},
-				context,
-				{
-					signal: controller.signal,
-					onTextDelta: (delta) => {
-						if (active === entry) entry.panel?.appendText(delta);
-					},
-				},
-			);
-			if (active !== entry) return;
-			entry.settled = true;
-			pi.appendEntry(BTW_HISTORY_ENTRY_TYPE, { question, answer: replyText, timestamp: Date.now() });
-			if (entry.panel) {
-				entry.panel.markDone();
-			} else {
-				ctx.ui.notify(sanitizeBtwDisplayText(replyText), "info");
-			}
-		} catch (error) {
-			if (active !== entry) return;
-			entry.settled = true;
-			const message = error instanceof Error ? error.message : String(error);
-			if (controller.signal.aborted) {
-				entry.panel?.markAborted();
-				return;
-			}
-			if (entry.panel) {
-				entry.panel.markError(message);
-			} else {
-				ctx.ui.notify(`/${commandName} failed: ${sanitizeBtwDisplayText(message)}`, "error");
-			}
-		}
+					context,
+					{ signal, onTextDelta },
+				);
+				return result.replyText;
+			},
+			persist: (entry) => {
+				pi.appendEntry(BTW_HISTORY_ENTRY_TYPE, entry);
+			},
+			notify: (message, type) => {
+				ctx.ui.notify(sanitizeBtwDisplayText(message), type);
+			},
+			setStatus: (text) => {
+				ctx.ui.setStatus(STATUS_KEY, text);
+			},
+			initialParentStatus: ctx.isIdle() ? "idle" : "working",
+		};
+		await controller.open(options, question.length > 0 ? question : undefined);
 	}
 
 	for (const commandName of SIDE_COMMAND_NAMES) {
@@ -179,4 +117,62 @@ export default function btwExtension(pi: ExtensionAPI) {
 			handler: (args, ctx) => sideHandler(commandName, args, ctx),
 		});
 	}
+}
+
+function createSurface(ctx: ExtensionCommandContext, callbacks: BtwSideCallbacks): Promise<BtwSideSurface> {
+	return new Promise((resolve, reject) => {
+		let panel: BtwSidePanel | undefined;
+		let handle: OverlayHandle | undefined;
+		let complete: ((result: undefined) => void) | undefined;
+		let closed = false;
+		let settled = false;
+
+		const close = (): void => {
+			if (closed) return;
+			closed = true;
+			complete?.(undefined);
+		};
+		const resolveWhenReady = (): void => {
+			if (settled || panel === undefined || handle === undefined) return;
+			settled = true;
+			resolve({ panel, handle, close });
+		};
+
+		const lifetime = ctx.ui.custom<undefined>(
+			(tui, theme, keybindings, done) => {
+				complete = done;
+				panel = new BtwSidePanel({
+					entries: readBtwHistory(ctx.sessionManager.getBranch()),
+					tui,
+					theme,
+					keybindings,
+					callbacks,
+					createEditor: () => new Editor(tui, getEditorTheme()),
+				});
+				resolveWhenReady();
+				return panel;
+			},
+			{
+				overlay: true,
+				overlayOptions: BTW_SIDE_OVERLAY_OPTIONS,
+				onHandle: (nextHandle) => {
+					handle = nextHandle;
+					resolveWhenReady();
+				},
+			},
+		);
+		void lifetime.then(
+			() => {
+				if (!closed) callbacks.onClose();
+			},
+			(error: unknown) => {
+				if (settled) {
+					callbacks.onClose();
+					return;
+				}
+				settled = true;
+				reject(error);
+			},
+		);
+	});
 }

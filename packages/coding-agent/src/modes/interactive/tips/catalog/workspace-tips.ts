@@ -53,7 +53,7 @@ export const WORKSPACE_TIPS = [
 		id: "btw-command",
 		bindings: [],
 		requiresCommand: "btw",
-		render: () => "Use /btw to ask a side question in a parallel session without disturbing this one.",
+		render: () => "Use /btw or /side for a switchable side conversation that leaves the main task untouched.",
 	},
 	{
 		id: "lookat-command",

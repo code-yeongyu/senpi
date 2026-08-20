@@ -3562,12 +3562,13 @@ export class InteractiveMode {
 
 		return new Promise((resolve, reject) => {
 			let component: Component & { dispose?(): void };
+			let overlayHandle: OverlayHandle | undefined;
 			let closed = false;
 
 			const close = (result: T) => {
 				if (closed) return;
 				closed = true;
-				if (isOverlay) this.ui.hideOverlay();
+				if (isOverlay) overlayHandle?.hide();
 				else restoreEditor();
 				// Note: both branches above already call requestRender
 				resolve(result);
@@ -3580,8 +3581,11 @@ export class InteractiveMode {
 
 			Promise.resolve(factory(this.ui, theme, this.keybindings, close))
 				.then((c) => {
-					if (closed) return;
 					component = c;
+					if (closed) {
+						component.dispose?.();
+						return;
+					}
 					if (isOverlay) {
 						// Resolve overlay options - can be static or dynamic function
 						const resolveOptions = (): OverlayOptions | undefined => {
@@ -3597,9 +3601,9 @@ export class InteractiveMode {
 							return w ? { width: w } : undefined;
 						};
 						const overlayOptions = resolveOptions();
-						const handle = this.ui.showOverlay(component, overlayOptions);
+						overlayHandle = this.ui.showOverlay(component, overlayOptions);
 						// Expose handle to caller for visibility control
-						options?.onHandle?.(handle);
+						options?.onHandle?.(overlayHandle);
 					} else {
 						this.disposeActiveSelector();
 						this.editorContainer.clear();
@@ -3610,7 +3614,8 @@ export class InteractiveMode {
 				})
 				.catch((err) => {
 					if (closed) return;
-					if (!isOverlay) restoreEditor();
+					if (isOverlay) overlayHandle?.hide();
+					else restoreEditor();
 					reject(err);
 				});
 		});

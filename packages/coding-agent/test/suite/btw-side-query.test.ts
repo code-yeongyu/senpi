@@ -315,6 +315,16 @@ describe("/btw extension command", () => {
 		return harness;
 	}
 
+	it("registers both command aliases and the Ctrl+/ parent toggle shortcut", async () => {
+		const harness = await setup();
+		const runner = harness.getExtensionRunner();
+
+		expect(runner.getRegisteredCommands().map((command) => command.invocationName)).toEqual(
+			expect.arrayContaining(["btw", "side"]),
+		);
+		expect([...runner.getShortcuts({}).keys()]).toEqual(expect.arrayContaining(["ctrl+_", "ctrl+/"]));
+	});
+
 	it("answers a side question without polluting session history", async () => {
 		const harness = await setup();
 		harness.setResponses([fauxAssistantMessage("main answer"), fauxAssistantMessage("side answer")]);
