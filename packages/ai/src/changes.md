@@ -1,3 +1,7 @@
+## Unreleased
+
+- Send Cursor Run suffixed variant ids (claude-fable-5-medium) instead of bare capability ids.
+
 # AI Source Changes
 
 ## 2026-08-19 - OpenAI-family adapters re-diverge from the 59a71b23 pin

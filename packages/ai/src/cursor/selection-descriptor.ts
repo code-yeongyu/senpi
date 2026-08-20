@@ -79,10 +79,12 @@ export function resolveCursorSelectionDescriptor(
 		return { modelId: compat.representativeVariantId, parameters: [] };
 	}
 
-	if (spec.encoding === "variant-id") {
-		const suffixId = legacySuffixId(compat.capabilityId, selection.level, spec.value);
-		if (suffixId === undefined) return { modelId: compat.representativeVariantId, parameters: [] };
+	const suffixId = legacySuffixId(compat.capabilityId, selection.level, spec.value);
+	if (suffixId !== undefined) {
 		return { modelId: suffixId, parameters: [] };
+	}
+	if (spec.encoding === "variant-id") {
+		return { modelId: compat.representativeVariantId, parameters: [] };
 	}
 
 	const bareBase = compat.capabilityId;
