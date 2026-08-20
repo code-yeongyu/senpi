@@ -21,7 +21,7 @@ import { readAmbientClaudeAuthStatus } from "./availability.ts";
 export type OAuthLoginCallbacks = {
 	signal?: AbortSignal;
 	onAuth?: (event: { url: string }) => void | Promise<void>;
-	onPrompt?: (prompt: { message: string; placeholder?: string }) => Promise<string>;
+	onPrompt?: (prompt: { message: string; placeholder?: string; signal?: AbortSignal }) => Promise<string>;
 	onManualCodeInput?: () => Promise<string>;
 	onProgress?: (message: string) => void;
 };
@@ -174,7 +174,7 @@ export function createOAuthConfig(deps: {
 				signal: callbacks.signal ?? new AbortController().signal,
 				prompt: async (prompt) => {
 					if (prompt.type === "select") return "";
-					return callbacks.onPrompt ? callbacks.onPrompt({ message: prompt.message }) : "";
+					return callbacks.onPrompt ? callbacks.onPrompt(prompt) : "";
 				},
 				notify: (event) => {
 					if (event.type === "auth_url" && callbacks.onAuth) void callbacks.onAuth({ url: event.url });
