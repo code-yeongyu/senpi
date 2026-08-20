@@ -481,6 +481,16 @@ describe("Context overflow error handling", () => {
 		}, 120000);
 	});
 
+	describe.skipIf(!process.env.NEURALWATT_API_KEY)("Neuralwatt", () => {
+		it("kimi-k2.6-fast - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("neuralwatt", "kimi-k2.6-fast");
+			const result = await testContextOverflow(model, process.env.NEURALWATT_API_KEY!);
+			logResult(result);
+
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
 	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan", () => {
 		it("qwen3.7-max - should detect overflow via isContextOverflow", async () => {
 			const model = getModel("alibaba-token-plan", "qwen3.7-max");

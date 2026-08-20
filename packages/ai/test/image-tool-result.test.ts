@@ -404,6 +404,18 @@ describe("Tool Results with Images", () => {
 		},
 	);
 
+	describe.skipIf(!process.env.NEURALWATT_API_KEY)("Neuralwatt Provider (kimi-k2.6-fast)", () => {
+		const llm = getModel("neuralwatt", "kimi-k2.6-fast");
+
+		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithImageResult(llm);
+		});
+
+		it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithTextAndImageResult(llm);
+		});
+	});
+
 	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan Provider (qwen3.7-plus)", () => {
 		const llm = getModel("alibaba-token-plan", "qwen3.7-plus");
 

@@ -26,6 +26,7 @@ import { minimaxCnProvider } from "./minimax-cn.ts";
 import { mistralProvider } from "./mistral.ts";
 import { moonshotaiProvider } from "./moonshotai.ts";
 import { moonshotaiCnProvider } from "./moonshotai-cn.ts";
+import { neuralwattProvider } from "./neuralwatt.ts";
 import { nvidiaProvider } from "./nvidia.ts";
 import { ollamaProvider } from "./ollama.ts";
 import { openaiProvider } from "./openai.ts";
@@ -155,6 +156,7 @@ export function builtinProviders(): Provider[] {
 		mistralProvider(),
 		moonshotaiProvider(),
 		moonshotaiCnProvider(),
+		neuralwattProvider(),
 		nvidiaProvider(),
 		openaiProvider(),
 		openaiCodexProvider(),

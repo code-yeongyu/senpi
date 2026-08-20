@@ -1,3 +1,47 @@
+## 2026-08-21 - Add Neuralwatt provider
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: 22-model `neuralwatt` catalog block (`openai-completions`
+  API, ant-ling entry pattern).
+- `packages/ai/src/env-api-keys.ts`: maps `NEURALWATT_API_KEY`.
+- `packages/ai/src/types.ts`: `neuralwatt` joins the `KnownProvider` union.
+- `packages/ai/src/providers/all.ts`: registers the Neuralwatt factory in the `builtinProviders()` list.
+- `packages/ai/src/providers/neuralwatt.ts` and `packages/ai/src/providers/neuralwatt.models.ts` (new):
+  provider factory and catalog module.
+- `packages/ai/README.md`: Neuralwatt bullet in the provider list and a `NEURALWATT_API_KEY` row in the
+  env-var matrix.
+- Test files: provider unit/request tests and env-key coverage under `packages/ai/test/`,
+  model-resolver coverage under `packages/coding-agent/test/`.
+- Coding-agent mirror files: the `Record<KnownProvider, ...>` maps and display-name entries in
+  `packages/coding-agent/src/cli/args.ts`, `src/core/model-config.ts`, `src/core/model-config-schema.ts`,
+  `src/core/model-resolver.ts`, `src/core/provider-display-names.ts`, plus
+  `packages/coding-agent/docs/providers.md`.
+- Infra mirror files: `.devcontainer/devcontainer.json`, the `test.sh` / `pi-test.sh` env-unset lists,
+  and the senpi-qa skill env-vars reference / mock-loop support.
+- Generated artifacts: `packages/ai/src/models.generated.ts` and `packages/ai/src/providers/data/`
+  (including `neuralwatt.json`) — resolve by regenerating.
+
+### Why
+
+- Neuralwatt is a public OpenAI-compatible Korean inference API (docs:
+  https://portal.neuralwatt.com/docs, free tier) that omo-native/senpi users currently cannot reach
+  without per-user `models.json` overlays; adding it as a built-in provider lets users configure only
+  an API key.
+
+### Why an extension could not handle it
+
+- Built-in provider catalogs and env-key detection live in `packages/ai` core; extensions cannot
+  register a builtin catalog provider or contribute to the `KnownProvider` union /
+  `builtinProviders()` map / env-api-keys map.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/env-api-keys.ts` env-key map.
+- `packages/ai/src/providers/all.ts` `builtinProviders` list.
+- `packages/ai/src/types.ts` `KnownProvider` union.
+- `packages/ai/scripts/generate-models.ts` ant-ling-adjacent block.
+
 ## Unreleased
 
 - Skip ANTML invoke recovery when `model.api === "cursor-agent"` so native Cursor tool starts are not rejected as invalid event order.

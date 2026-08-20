@@ -266,6 +266,14 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.NEURALWATT_API_KEY)("Neuralwatt Provider", () => {
+		const model = getModel("neuralwatt", "kimi-k2.6-fast");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
 	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan Provider", () => {
 		const model = getModel("alibaba-token-plan", "qwen3.7-max");
 
