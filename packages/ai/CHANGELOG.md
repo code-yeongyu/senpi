@@ -10,6 +10,10 @@
 
 ### Fixed
 
+- Native Cursor Kimi K3 turns with an explicit thinking level now send the accepted catalog variant id
+  (`kimi-k3-low`, `kimi-k3-high`, or `kimi-k3-max`) instead of the bare `kimi-k3` id that Cursor rejected
+  with `not_found`; the Cursor CLI lane keeps its bracket-form model selection.
+
 - Native Cursor turns now report real usage: the billed token split on `turnEnded`
   (input/output/cache read/cache write, taken from the production cursor-agent schema) lands on
   `usage`, and conversation checkpoints feed the server's live `usedTokens` into the in-flight

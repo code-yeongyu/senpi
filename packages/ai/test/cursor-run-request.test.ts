@@ -134,6 +134,21 @@ describe("cursor Run request reasoning rendering", () => {
 		]);
 	});
 
+	it("renders an explicit Kimi K3 selection with the accepted native catalog id", async () => {
+		const compat: CursorAgentCompat = {
+			cursorReasoning: { capabilityId: "kimi-k3", representativeVariantId: "kimi-k3-high" },
+		};
+		const model = buildModel("kimi-k3", "", compat, "kimi-k3-high");
+		const frame = await captureRunRequest(model, { thinkingSelection: { level: "low", source: "explicit" } });
+		const request = frame.message.value as {
+			requestedModel?: { modelId: string; parameters: { id: string; value: string }[] };
+		};
+		expect(request.requestedModel?.modelId).toBe("kimi-k3-low");
+		expect(
+			request.requestedModel?.parameters.map((parameter) => ({ id: parameter.id, value: parameter.value })),
+		).toEqual([{ id: "reasoning", value: "low" }]);
+	});
+
 	it("keeps the legacy request shape byte-exact when no selection exists", async () => {
 		const model = buildModel("gpt-5.5-medium", "");
 		const withSelection = await captureRunRequest(model, {});
