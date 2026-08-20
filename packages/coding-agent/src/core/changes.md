@@ -1,5 +1,23 @@
 # changes
 
+## 2026-08-20 - Cursor truncates toolResult bodies across compact reload
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: export `truncateToolResultBodies` (2000 chars). Cursor `compactBeforeNextAdmission` truncates before the #984 skip return. Compact apply and `_restoreAgentMessagesFromSession` re-truncate and remint.
+
+### Why
+
+- Compact cannot cut at `toolResult`. Reloading `buildSessionContext()` restored full jsonl bodies, so the Cursor retry still `resource_exhausted`. In-memory truncation without a post-reload pass is wiped.
+
+### Why an extension could not handle it
+
+- Compact reload of `agent.state.messages` is private AgentSession state. There is no hook after `sessionContext.messages` replaces the in-memory transcript.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts` `compactBeforeNextAdmission`, `_executeCompaction` message replace, `_restoreAgentMessagesFromSession`.
+
 ## 2026-08-20 - Session title uses session-model auth
 
 ### What changed

@@ -6,6 +6,7 @@
 
 ### Fixed
 
+- Cursor still skips mid-turn compact (#984) but now truncates each `toolResult` text part to 2000 characters at admission and again after compact reloads `sessionContext.messages`, then remints, so a compact that keeps the last tool turn cannot restore megabyte bodies and 0-token `resource_exhausted` on retry (#1043).
 - Assistant text that arrives after the last tool call now renders below the tool cards instead of updating the blob above the stack, so approval questions stay visible (#990).
 - Late Cursor `tool_execution_end` events now create a TUI tool card when none is pending, so a result is not rendered without a card (#1011).
 - Session title generation now uses the session model's summarization auth instead of remapped compaction auth, so an explicit compaction model no longer produces `unauthenticated` Cursor title calls (#980).

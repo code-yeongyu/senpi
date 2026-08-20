@@ -810,6 +810,34 @@ const THINKING_LEVELS_WITH_MAX: ThinkingLevel[] = ["off", "minimal", "low", "med
 /** Caps explicit skill expansion so one prompt cannot consume unbounded context. */
 export const MAX_SKILL_EXPANSIONS_PER_PROMPT = 5;
 
+/** Cursor ingest rejects large verbatim tool payloads; cap each toolResult text part. */
+export const CURSOR_TOOL_RESULT_MAX_CHARS = 2000;
+
+export function truncateToolResultBodies(
+	messages: AgentMessage[] | undefined,
+	maxChars = CURSOR_TOOL_RESULT_MAX_CHARS,
+): { messages: AgentMessage[] | undefined; changed: boolean } {
+	if (!Array.isArray(messages) || messages.length === 0) {
+		return { messages, changed: false };
+	}
+	let changed = false;
+	const next = messages.map((msg) => {
+		if (msg.role !== "toolResult" || !Array.isArray(msg.content)) return msg;
+		let local = false;
+		const content = msg.content.map((part) => {
+			if (part.type === "text" && typeof part.text === "string" && part.text.length > maxChars) {
+				local = true;
+				return { ...part, text: `${part.text.slice(0, maxChars)}\n...[truncated]` };
+			}
+			return part;
+		});
+		if (!local) return msg;
+		changed = true;
+		return { ...msg, content };
+	});
+	return { messages: changed ? next : messages, changed };
+}
+
 // ============================================================================
 // AgentSession Class
 // ============================================================================
@@ -1291,9 +1319,12 @@ export class AgentSession {
 			const compactBeforeNextAdmission = async (): Promise<boolean> => {
 				const provider = this.model?.provider;
 				// Cursor rebuilds the full conversation each hop. Compacting here
-				// mutates rootPrompt mid-run and poisons conversationId.
+				// mutates rootPrompt mid-run and poisons conversationId (#984).
+				// Still truncate verbatim toolResult bodies so the skip cannot send MB-scale payloads (#1043).
 				if (provider === "cursor" || provider === "cursor-cli-oauth") {
-					return false;
+					const truncated = this._truncateCursorToolResultBodies();
+					if (truncated && this.agent) this.agent.allowConversationRotate = true;
+					return truncated;
 				}
 				if (turn.toolResults.length === 0 && !this.agent.hasQueuedMessages()) {
 					return false;
@@ -5112,6 +5143,7 @@ export class AgentSession {
 				}
 			}
 			this.agent.state.messages = [...sessionContext.messages, ...preservedPendingMessages];
+			this._reapplyCursorToolTruncateAfterReload();
 			compactionResult.estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 			this._incrementMessageRevision();
 			if (
@@ -5222,6 +5254,7 @@ export class AgentSession {
 			pendingMessages.push(message);
 		}
 		this.agent.state.messages = [...sessionMessages, ...pendingMessages];
+		this._reapplyCursorToolTruncateAfterReload();
 	}
 
 	private async _rejectCompaction(
@@ -6718,6 +6751,20 @@ export class AgentSession {
 
 	private _isCursorPayloadOverflow(message: AssistantMessage): boolean {
 		return isCursorPayloadResourceExhausted(message, 0);
+	}
+
+	private _reapplyCursorToolTruncateAfterReload(): boolean {
+		const provider = this.model?.provider;
+		if (provider !== "cursor" && provider !== "cursor-cli-oauth") return false;
+		const truncated = this._truncateCursorToolResultBodies();
+		if (this.agent) this.agent.allowConversationRotate = true;
+		return truncated;
+	}
+
+	private _truncateCursorToolResultBodies(maxChars = CURSOR_TOOL_RESULT_MAX_CHARS): boolean {
+		const { messages: next, changed } = truncateToolResultBodies(this.agent?.state?.messages, maxChars);
+		if (changed && next) this.agent.state.messages = next;
+		return changed;
 	}
 
 	private _truncateAgentMessagesToLastUserTurn(): boolean {
