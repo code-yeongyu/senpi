@@ -1,5 +1,24 @@
 # changes
 
+## Gate the inherited model-catalog publisher behind fork opt-in (2026-08-20)
+
+### What changed
+
+- `.github/workflows/publish-model-catalog.yml` now schedules the `publish` job only when the repository variable `PI_MODEL_CATALOG_PUBLISH` is exactly `true`, in addition to its existing event and manual-publish conditions.
+
+### Why
+
+- This fork inherited upstream's R2 endpoint and bucket without either required `PI_ARTIFACTS_R2_*` secret. Every upload attempt therefore exported empty AWS credentials and failed with `Unable to locate credentials`, while generation and validation stayed green.
+- Keeping publishing opt-in makes the fork's default workflow honest: catalog generation still runs and is validated, but the unavailable upstream infrastructure no longer creates recurring default-branch failures. A maintainer can restore uploads after configuring a fork-owned R2 target, both secrets, and the opt-in variable.
+
+### Why an extension could not handle it
+
+- GitHub evaluates the job graph, repository variables, and environment secrets before any Senpi runtime or extension is available.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `publish` job condition in `.github/workflows/publish-model-catalog.yml`, because upstream may continue changing its publication events or credential contract. Preserve the fork opt-in unless the fork owns a working publication target.
+
 ## Changelog-gate labels and base SHA move to env (2026-08-17)
 
 ### What changed

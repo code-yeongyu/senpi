@@ -11,19 +11,28 @@ import { describe, expect, test } from "vitest";
  * recover. These tests reproduce that exact shape in a child process and pin the recovery guard.
  */
 
+// Both modules are linked while the cwd is still valid: on macOS the ESM loader
+// itself wedges when a dynamic import starts after the cwd was unlinked, which
+// would hang the child instead of exercising the guard. Awaiting the imports is
+// the completion event - no polling, no sleeps - and the deletion plus the
+// guard/probe calls then run synchronously in the deleted-cwd state.
 const driverSource = `import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+const guard = process.env.WITH_GUARD === "1" ? await import(process.env.GUARD_URL) : undefined;
+const probe = await import(process.env.PROBE_URL);
 const dir = mkdtempSync(join(tmpdir(), "senpi-cwd-guard-"));
 process.chdir(dir);
 rmSync(dir, { recursive: true, force: true });
-if (process.env.WITH_GUARD === "1") await import(process.env.GUARD_URL);
-await import(process.env.PROBE_URL);
+guard?.recoverValidCwd();
+probe.resolveCwdLikeBundledSdk();
 console.log("CWD_OK=" + process.cwd());
 `;
 
-const probeSource = `// Mimics the bundled agent SDK: resolves the cwd during module evaluation.
-process.cwd();
+const probeSource = `// Mimics the bundled agent SDK: resolves the cwd the moment it runs.
+export function resolveCwdLikeBundledSdk() {
+	process.cwd();
+}
 `;
 
 function runChild(withGuard: boolean) {
@@ -35,6 +44,9 @@ function runChild(withGuard: boolean) {
 		writeFileSync(probe, probeSource);
 		return spawnSync(process.execPath, [driver], {
 			encoding: "utf8",
+			// Deadlock backstop only; the driver's awaited imports are the real
+			// synchronization, so a healthy child never approaches this bound.
+			timeout: 30_000,
 			env: {
 				...process.env,
 				WITH_GUARD: withGuard ? "1" : "0",
