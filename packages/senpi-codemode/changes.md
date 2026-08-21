@@ -1,5 +1,25 @@
 # senpi-codemode fork changes
 
+## Subprocess readiness gates cell execution (2026-08-21)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts` now keeps Ruby and Julia cells queued until the active subprocess emits `ready`; only then does it write the `run` frame and arm that cell's timeout.
+- An `init-failed` frame now fails queued work immediately as a kernel startup error instead of leaving it to an unrelated cell timeout.
+
+### Why
+
+- The shared kernel previously sent `init` and immediately started the first cell's timeout without observing readiness. Under load, interpreter and prelude startup could consume the entire cell budget, time out the state-setting cell, restart into a clean process, and make the following state-read cell fail nondeterministically.
+
+### Why an extension could not handle it
+
+- Subprocess generation ownership, protocol readiness, run queue dispatch, and timeout arming are private to the shared kernel implementation; an extension cannot safely order those lifecycle transitions from outside the package.
+
+### Expected merge conflict zones
+
+- LOW in `packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts` around process startup and protocol-message dispatch.
+- LOW in the Ruby subprocess lifecycle tests that now emit the protocol readiness event explicitly.
+
 ## Eval completion throughput badge (2026-08-17)
 
 ### What changed

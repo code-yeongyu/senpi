@@ -235,13 +235,23 @@ describe("SubprocessKernel settlement races", () => {
 });
 
 function createKernel(spawn: SubprocessSpawn): SubprocessKernel {
-	return new SubprocessKernel({
+	let initial: RaceSubprocess | undefined;
+	const readySpawn: SubprocessSpawn = (command, args, options) => {
+		const child = spawn(command, args, options);
+		if (!(child instanceof RaceSubprocess)) throw new Error("expected RaceSubprocess");
+		if (!initial) initial = child;
+		else queueMicrotask(() => child.emitMessage({ type: "ready" }));
+		return child;
+	};
+	const kernel = new SubprocessKernel({
 		command: "ruby",
 		args: ["runner.rb"],
-		spawn,
+		spawn: readySpawn,
 		sessionId: "session-1",
 		connection: { port: 39_001, token: "secret-token" },
 	});
+	initial?.emitMessage({ type: "ready" });
+	return kernel;
 }
 
 function spawnFrom(children: RaceSubprocess[]): SubprocessSpawn {

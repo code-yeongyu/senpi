@@ -1,4 +1,43 @@
 # changes
+## 2026-08-21 — assistant text segments keep their painted position between tool cards (fixes #1064)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `syncTrailingAssistantText` no longer reabsorbs trailing assistant text into the streaming head when the next toolCall arrives. The streaming component now owns only the content through the FIRST toolCall (`assistantStreamingHeadMessage`, also used for the reveal target and the `message_start` reveal begin); every text run after the first toolCall is painted by its own persistent `AssistantMessageComponent`, keyed by its start block index, inserted before the following tool card (or appended at the end) and updated in place while live. `agent_end` and the session-rebuild path detach/clear those segments through `detachAssistantTextSegments()`; `message_end` keeps them as the final layout.
+- Removed `packages/coding-agent/src/modes/interactive/split-trailing-assistant-text.ts` (dead after the rewrite) and its `990-trailing-assistant-text` test. The trailing-below-last-card behavior that fix delivered is preserved and now covered, together with the chronological invariant, by `packages/coding-agent/test/suite/regressions/1064-assistant-text-segment-teleport.test.ts`.
+
+### Why
+
+- The split/trailing approach painted text after the last toolCall below the tool cards, then detached it and folded its text back into the streaming component — which renders ABOVE every tool card — as soon as the next toolCall arrived. Every narration/tool boundary therefore teleported a painted text block upward across a tool card, so turns with many tool calls made the transcript visibly shake up and down (field report 2026-08-21, after the 2026.8.20 line shipped). Middle segments also stayed permanently above every tool card, so even the settled layout was not chronological.
+
+### Why an extension could not handle it
+
+- The streaming component, tool-card insertion order, and per-message component ownership are private `InteractiveMode` render state. Extensions observe session events only and cannot decide where a painted component lives inside the transcript container.
+
+### Expected merge conflict zones
+
+- HIGH: `syncTrailingAssistantText`, the `message_start`/`message_update` reveal-target wiring, and the `agent_end` cleanup in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`; any upstream refactor of the streaming render path collides here.
+- LOW: the removed `split-trailing-assistant-text.ts` (fork-added file, now deleted; upstream never carried it).
+
+## 2026-08-21 - Queued input renders as waiting state, not as a sent message
+
+### What changed
+
+- `interactive-mode.ts`: `OptimisticUserEchoController.promptOptions` now keeps an optimistic pending user bubble only when its prompt's `promptDisposition` is `started`. `queued` (steer/follow-up while streaming) and `handled` dispositions unpaint the bubble, so waiting input renders exclusively through `updatePendingMessagesDisplay` (dim `Steering:`/`Follow-up:` lines + dequeue hint) until canonical delivery, matching upstream pi semantics where user messages appear only at `message_start`.
+- `interactive-mode.ts`: `queueCompactionMessage` no longer begins an optimistic echo. Compaction-queued input has no prompt lifecycle until transfer, so its echo could never be resolved by a disposition (the `deliverQueued` transfer path never fires one), leaving a phantom sent-looking message forever.
+
+### Why
+
+- The optimistic echo feature (2026-08-21 below) made prompts submitted while the agent was streaming look already sent at their submission position; the queued/waiting state disappeared and message ordering diverged from actual delivery order. Reported against omo-ai 5.0.0-0.beta.14 (senpi v2026.8.21/-2).
+
+### Why an extension could not handle it
+
+- Same seam as the original feature: pending-echo records and their reconciliation are interactive-mode internals.
+
+### Expected merge conflict zones
+
+- `interactive-mode.ts` `OptimisticUserEchoController.promptOptions` and `queueCompactionMessage`.
+
 
 ## 2026-08-21 - Model selection releases the selector before the auth round trip
 

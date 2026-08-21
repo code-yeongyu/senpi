@@ -170,20 +170,60 @@ describe("optimistic pending user echo", () => {
 		expect(rendered[0]?.removed).toBe(true);
 	});
 
-	it("keeps queued steer echoes and reconciles their canonical starts in order", () => {
+	it("unpaints queued steer echoes so waiting input renders only as the pending queue", () => {
 		const { controller, rendered } = createController();
 		const firstId = controller.begin("first steer");
 		const secondId = controller.begin("second steer");
 		controller.promptOptions(firstId).promptDisposition("queued");
 		controller.promptOptions(secondId).promptDisposition("queued");
+
+		expect(rendered.map((entry) => entry.removed)).toEqual([true, true]);
+
+		const appended: AgentMessage[] = [];
 		const firstCanonical = userMessage("first steer");
-		const secondCanonical = userMessage("second steer");
+		if (!controller.replaceNext(firstCanonical)) appended.push(firstCanonical);
+		expect(appended).toEqual([firstCanonical]);
+		expect(rendered.map((entry) => entry.replacedWith)).toEqual([undefined, undefined]);
+	});
 
-		controller.replaceNext(firstCanonical);
-		controller.replaceNext(secondCanonical);
+	it("keeps a started echo intact while a later queued echo is unpainted", () => {
+		const { controller, rendered } = createController();
+		const startedId = controller.begin("started prompt");
+		controller.promptOptions(startedId).promptDisposition("started");
+		const queuedId = controller.begin("queued steer");
+		controller.promptOptions(queuedId).promptDisposition("queued");
 
-		expect(rendered.map((entry) => entry.replacedWith)).toEqual([firstCanonical, secondCanonical]);
-		expect(rendered.map((entry) => entry.removed)).toEqual([false, false]);
+		expect(rendered[0]?.removed).toBe(false);
+		expect(rendered[1]?.removed).toBe(true);
+
+		const canonical = userMessage("started prompt");
+		expect(controller.replaceNext(canonical)).toBe(true);
+		expect(rendered[0]?.replacedWith).toEqual(canonical);
+	});
+
+	it("queues compaction input without painting a sent-looking echo", () => {
+		const beginCalls: string[] = [];
+		const compactionQueuedMessages: unknown[] = [];
+		const context = {
+			optimisticUserEchoes: {
+				begin: (text: string) => {
+					beginCalls.push(text);
+					return "pending-user-stub";
+				},
+			},
+			compactionQueuedMessages,
+			session: { reserveQueuedInputOrder: () => 1 },
+			getSessionLogger: () => ({ debug: () => {} }),
+			editor: { addToHistory: () => {}, setText: () => {} },
+			updatePendingMessagesDisplay: () => {},
+			showStatus: () => {},
+		};
+		const queue = Reflect.get(interactiveModeModule.InteractiveMode.prototype, "queueCompactionMessage");
+		if (typeof queue !== "function") throw new Error("InteractiveMode.queueCompactionMessage is missing");
+		queue.call(context, "queued during compaction", "steer");
+
+		expect(beginCalls).toEqual([]);
+		expect(compactionQueuedMessages).toHaveLength(1);
 	});
 
 	it("is render-only and does not persist before the canonical message", () => {

@@ -22,6 +22,24 @@ Full port of opencode's permission system to senpi-mono as a builtin extension.
 ## Why Builtin Extension?
 Following pi-mono's extension-first philosophy. All permission logic is in the extension, zero core tool modifications.
 
+## 2026-08-21 - Fix unhandled rejection on session shutdown with pending permissions
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: attached immediate rejection catch handler to `service.ask(request)` promise during `tool_call` so that when `session_shutdown` rejects pending permission requests (or cascade rejection occurs), no unhandled promise rejection or `uncaughtException` is triggered while the prompt is pending.
+
+### Why
+
+- When a session is cleared (`/clear`), reloaded, or terminated while a tool permission prompt is pending, `session_shutdown` rejects all pending permission requests with `RejectedError`. Previously, `askPromise` was floating without an attached `.catch()` handler until after the UI prompt resolved, causing Node.js to fire an `unhandledRejection` event that crashed interactive mode via `uncaughtException`.
+
+### Why this belongs in the builtin extension
+
+- External extensions cannot observe or attach a rejection handler to `PermissionService`'s private request promise. The permission-system builtin owns that promise and the `tool_call` / `session_shutdown` lifecycle, so it must attach the handler immediately when creating the request.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts` `tool_call` event handler.
+
 ## 2026-06-23 - permission presets
 
 ### What changed and why

@@ -1,0 +1,16 @@
+frames: 518
+prompt row: flips=3 min=8 max=27
+marker teleports (content moving UP in absolute buffer): 0
+
+final transcript order:
+   2193  STEP-ONE-NARRATION
+   2194  echo CARD-A
+   2194  STEP-TWO-NARRATION
+   2194  echo CARD-B
+   2195  STEP-THREE-NARRATION
+   2195  echo CARD-C
+   2195  FINAL-NARRATION
+
+chronological: PASS
+  expected: STEP-ONE-NARRATION < echo CARD-A < STEP-TWO-NARRATION < echo CARD-B < STEP-THREE-NARRATION < echo CARD-C < FINAL-NARRATION
+  actual:   STEP-ONE-NARRATION < echo CARD-A < STEP-TWO-NARRATION < echo CARD-B < STEP-THREE-NARRATION < echo CARD-C < FINAL-NARRATION

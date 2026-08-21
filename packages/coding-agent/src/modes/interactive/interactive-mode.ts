@@ -200,7 +200,6 @@ import { applyKeybindingsFileEdit, seedKeybindingsFile } from "./keybindings-com
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
-import { splitTrailingAssistantContent } from "./split-trailing-assistant-text.ts";
 import { DEFAULT_SMOOTH_FPS, StreamingRevealController } from "./streaming-reveal.ts";
 import {
 	getAvailableThemes,
@@ -499,6 +498,17 @@ type OptimisticUserEchoRecord = {
 	eligibleForCanonicalStart: boolean;
 };
 
+/**
+ * Content the streaming component owns: everything through the FIRST toolCall.
+ * Text painted between tool cards lives in persistent per-segment components
+ * below the cards (regression 1064), so the head must never reabsorb it.
+ */
+function assistantStreamingHeadMessage(message: AssistantMessage): AssistantMessage {
+	const firstToolIndex = message.content.findIndex((block) => block.type === "toolCall");
+	if (firstToolIndex === -1) return message;
+	return { ...message, content: message.content.slice(0, firstToolIndex + 1) };
+}
+
 /** Coordinates render-only user echoes with AgentSession's canonical input lifecycle. */
 export class OptimisticUserEchoController {
 	private nextId = 0;
@@ -526,8 +536,12 @@ export class OptimisticUserEchoController {
 			promptDisposition: (disposition) => {
 				const record = this.pending.find((candidate) => candidate.id === id);
 				if (!record) return;
-				if (disposition === "handled") this.reject(id);
-				else record.eligibleForCanonicalStart = true;
+				// Only a prompt that actually STARTED keeps its optimistic echo; queued
+				// (steer/follow-up) input must render as the pending-queue waiting state,
+				// matching upstream pi where user messages appear only at canonical
+				// message_start and queued text lives in the pending display.
+				if (disposition === "started") record.eligibleForCanonicalStart = true;
+				else this.reject(id);
 			},
 		};
 	}
@@ -828,7 +842,7 @@ export class InteractiveMode {
 
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
-	private trailingAssistantComponent: AssistantMessageComponent | undefined = undefined;
+	private readonly assistantTextSegments = new Map<number, AssistantMessageComponent>();
 	private streamingMessage: AssistantMessage | undefined = undefined;
 	private readonly streamingReveal: StreamingRevealController;
 	private readonly toolArgsReveal: ToolArgsRevealController;
@@ -2591,6 +2605,7 @@ export class InteractiveMode {
 		this.toolResultReveal.stop();
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
+		this.assistantTextSegments.clear();
 		this.clearPendingTools();
 		this.clearToolHookStatuses();
 		this.renderInitialMessages();
@@ -4314,7 +4329,10 @@ export class InteractiveMode {
 					this.streamingComponent.setExpanded(this.toolOutputExpanded);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
-					this.streamingReveal.begin(this.streamingComponent, this.streamingMessage);
+					this.streamingReveal.begin(
+						this.streamingComponent,
+						assistantStreamingHeadMessage(this.streamingMessage),
+					);
 					this.requestStreamingRender();
 				}
 				break;
@@ -4322,10 +4340,7 @@ export class InteractiveMode {
 			case "message_update":
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
-					{
-						const { head } = splitTrailingAssistantContent(event.message.content);
-						this.streamingReveal.setTarget({ ...event.message, content: head });
-					}
+					this.streamingReveal.setTarget(assistantStreamingHeadMessage(event.message));
 
 					for (const content of this.streamingMessage.content) {
 						if (content.type === "toolCall") {
@@ -4369,7 +4384,7 @@ export class InteractiveMode {
 						this.streamingMessage.errorMessage = errorMessage;
 					}
 					this.syncTrailingAssistantText(this.streamingMessage);
-					this.trailingAssistantComponent = undefined;
+					this.assistantTextSegments.clear();
 					this.addContinuityNotice(this.streamingMessage);
 
 					if (this.streamingMessage.stopReason === "aborted" || this.streamingMessage.stopReason === "error") {
@@ -4475,6 +4490,7 @@ export class InteractiveMode {
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 				}
+				this.detachAssistantTextSegments();
 				this.clearPendingTools();
 
 				this.ui.requestRender();
@@ -5029,32 +5045,62 @@ export class InteractiveMode {
 
 	private syncTrailingAssistantText(message: AssistantMessage): void {
 		if (!this.streamingComponent) return;
-		const { head, tail } = splitTrailingAssistantContent(message.content);
-		this.streamingComponent.updateContent({ ...message, content: head }, true);
-		if (tail.length === 0) {
-			if (this.trailingAssistantComponent) {
-				this.chatContainer.detachChild(this.trailingAssistantComponent);
-				this.trailingAssistantComponent = undefined;
-			}
+		this.streamingComponent.updateContent(assistantStreamingHeadMessage(message), true);
+		const content = message.content;
+		const firstToolIndex = content.findIndex((block) => block.type === "toolCall");
+		if (firstToolIndex === -1) {
+			this.detachAssistantTextSegments();
 			return;
 		}
-		const tailMessage: AssistantMessage = { ...message, content: tail };
-		if (!this.trailingAssistantComponent) {
-			this.trailingAssistantComponent = new AssistantMessageComponent(
-				tailMessage,
+		let index = firstToolIndex + 1;
+		while (index < content.length) {
+			if (content[index]?.type === "toolCall") {
+				index += 1;
+				continue;
+			}
+			const runStart = index;
+			const runBlocks: AssistantMessage["content"] = [];
+			while (index < content.length && content[index]?.type !== "toolCall") {
+				const runBlock = content[index];
+				if (runBlock) runBlocks.push(runBlock);
+				index += 1;
+			}
+			const runMessage: AssistantMessage = { ...message, content: runBlocks };
+			const existing = this.assistantTextSegments.get(runStart);
+			if (existing) {
+				existing.updateContent(runMessage, true);
+				continue;
+			}
+			const segment = new AssistantMessageComponent(
+				runMessage,
 				this.hideThinkingBlock,
 				this.getMarkdownThemeWithSettings(),
 				this.hiddenThinkingLabel,
 				this.outputPad,
 				this.getMarkdownTransformers(),
 			);
-			this.trailingAssistantComponent.setExpanded(this.toolOutputExpanded);
-			this.chatContainer.addChild(this.trailingAssistantComponent);
-			return;
+			segment.setExpanded(this.toolOutputExpanded);
+			this.assistantTextSegments.set(runStart, segment);
+			const followingToolCall = content.slice(index).find((block) => block.type === "toolCall");
+			const followingToolCallId = followingToolCall?.type === "toolCall" ? followingToolCall.id : undefined;
+			const followingToolComponent = followingToolCallId ? this.pendingTools.get(followingToolCallId) : undefined;
+			const anchorIndex = followingToolComponent ? this.chatContainer.children.indexOf(followingToolComponent) : -1;
+			if (anchorIndex >= 0) this.chatContainer.children.splice(anchorIndex, 0, segment);
+			else this.chatContainer.addChild(segment);
 		}
-		this.trailingAssistantComponent.updateContent(tailMessage, true);
-		this.chatContainer.detachChild(this.trailingAssistantComponent);
-		this.chatContainer.addChild(this.trailingAssistantComponent);
+		for (const [runStart, segment] of this.assistantTextSegments) {
+			if (runStart >= content.length || content[runStart]?.type === "toolCall") {
+				this.chatContainer.detachChild(segment);
+				this.assistantTextSegments.delete(runStart);
+			}
+		}
+	}
+
+	private detachAssistantTextSegments(): void {
+		for (const segment of this.assistantTextSegments.values()) {
+			this.chatContainer.detachChild(segment);
+		}
+		this.assistantTextSegments.clear();
 	}
 
 	private createToolExecutionComponent(toolName: string, toolCallId: string, args: unknown): ToolExecutionComponent {
@@ -5942,12 +5988,12 @@ export class InteractiveMode {
 	}
 
 	private queueCompactionMessage(text: string, mode: "steer" | "followUp", droppedImageCount = 0): void {
-		const pendingEchoId = this.optimisticUserEchoes.begin(text);
+		// No optimistic echo here: compaction-queued input is waiting state and must
+		// render only in the pending-messages display until it is actually delivered.
 		this.compactionQueuedMessages.push({
 			text,
 			mode,
 			enqueueOrder: this.session.reserveQueuedInputOrder(),
-			pendingEchoId,
 		});
 		this.getSessionLogger().debug("compaction_queue_enqueue", {
 			mode,

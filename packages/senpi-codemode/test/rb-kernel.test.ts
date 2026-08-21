@@ -83,7 +83,9 @@ describe("RubyKernel", () => {
 					connection: { port: server.port, token: server.token },
 				});
 				try {
-					await kernel.run({ cellId: "set", code: "$answer = 41", timeoutMs: 3_000 });
+					await expect(
+						kernel.run({ cellId: "set", code: "$answer = 41", timeoutMs: 3_000 }),
+					).resolves.toMatchObject({ ok: true });
 					const persisted = await kernel.run({ cellId: "get", code: "$answer + 1", timeoutMs: 3_000 });
 					expect(persisted).toMatchObject({ ok: true, valueRepr: "42" });
 					await kernel.reset();
