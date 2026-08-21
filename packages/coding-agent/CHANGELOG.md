@@ -6,7 +6,19 @@
 
 ### Fixed
 
+- Completing an extension-owned custom overlay now closes that overlay's
+  captured handle instead of whichever overlay happens to be topmost, so
+  hidden BTW teardown cannot dismiss an unrelated selector opened later.
+
 ### Added
+
+- `/btw` and `/side` now open a switchable side-conversation overlay in the
+  TUI. The parent keeps running while the side streams, Ctrl+/ moves between
+  parent and side across legacy and Kitty keyboards, Ctrl+C closes the side by
+  default, and Escape cancels only the current side answer by default. The
+  overlay supports follow-ups and branch-local history without adding side
+  turns to the main model conversation; RPC and print mode retain one-shot
+  side answers.
 
 ### Changed
 
@@ -240,6 +252,10 @@
   the new `schedule_wakeup` tool. Loops coalesce missed fires into one catch-up tick, cap at 5 active per session,
   carry a 2000-tick budget and 7-day expiry, survive restarts (shutdown suspends, session resume re-arms), and show
   a live countdown in the footer. `/loop stop|status|pause|resume` manage them.
+- `/btw` and `/side` now open a switchable side-conversation overlay in the TUI. The parent keeps running while the
+  side streams, Ctrl+/ moves between parent and side, Ctrl+C closes the side by default, and Escape cancels only the
+  current side answer by default. The overlay supports follow-ups and branch-local history without adding side turns
+  to the main model conversation; RPC and print mode retain one-shot side answers.
 
 ### Changed
 - Upstream sync (`badlogic/pi-mono` main@`59a71b23`): adopted cache-friendly compaction primitives, centralized compaction summary requests, compaction routing sessions, compaction usage notices, tool disabling during summarization, extension loading in Node SEA hosts, and nested markdown skill discovery. The fork's compaction affinity/request-identity split, queued-input recovery, and interactive rendering are unchanged.

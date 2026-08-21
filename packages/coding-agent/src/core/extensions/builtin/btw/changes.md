@@ -1,5 +1,133 @@
 # changes — btw
 
+## 2026-08-20 - Replace the BTW widget with a switchable side conversation
+
+### What changed
+
+- TUI `/btw` and `/side` now open one focused, side-only conversation overlay
+  instead of a one-shot below-editor widget. The overlay contains branch-local
+  side history, the current streamed answer, an editor for follow-ups, parent
+  working/idle status, and configured key hints.
+- Ctrl+/ hides the side and returns focus to the parent editor; Ctrl+/ from the
+  parent restores the same overlay and draft. The configured `app.clear`
+  binding (Ctrl+C by default) closes the side, while the configured
+  `app.interrupt` binding (Escape by default) cancels only the current side
+  answer.
+- Legacy and Kitty keyboard protocols both recognize Ctrl+/. The 80-column
+  footer prioritizes one configured switch, close, cancel, and scroll binding.
+- Long questions wrap instead of truncating silently. Transcript paging clamps
+  at both ends, while PageUp/PageDown remain available to a non-empty draft.
+  Tall editors preserve their top scroll indicator, cursor end, and terminal
+  height bound.
+- The parent keeps running while a side answer streams. Parent session
+  replacement, tree navigation, shutdown, and extension removal abort and
+  close the side exactly once.
+- Completed side exchanges continue to persist as `btw-history` custom
+  entries. They remain excluded from the parent model conversation. RPC and
+  print mode retain the prior one-shot answer and bare-history notification.
+- An open side keeps the parent-context snapshot and model selected when it was
+  opened, matching fork semantics. Close and reopen the side to branch from
+  newer parent progress or a newly selected model.
+- The old `BtwPanel` and read-only `BtwHistoryPanel` surfaces were removed.
+  `BtwSideController` owns request/lifecycle state, while `BtwSidePanel` owns
+  focused input and bounded rendering.
+
+### Why
+
+- The previous widget answered only one question and dismissed on the next
+  parent input, so it did not match the switchable side-thread interaction
+  users expect from Codex.
+- A direct side-query stream already provides isolation without a second
+  persisted session. Reusing it avoids server-session adoption, deletion,
+  cache, and navigation races while still giving the TUI a multi-turn side
+  surface.
+
+### Verification anchors
+
+- `btw-side-controller.test.ts`: open/submit ordering, hide/show, exact-once
+  close, request-only interrupt, late completion rejection, and busy submit.
+- `btw-side-panel.test.ts`: isolated rendering, focus/draft preservation,
+  configured clear/interrupt keys, Ctrl+/, terminal bounds, and sanitization.
+- `interactive-custom-overlay.test.ts`: a completing custom overlay closes its
+  own handle instead of a newer topmost overlay.
+
+### Merge-conflict zones
+
+- `index.ts` command registration and lifecycle handlers.
+- Interactive custom-overlay completion in
+  `modes/interactive/interactive-mode.ts`.
+
+## 2026-08-19 - Register /side as an alias of /btw
+
+### What changed
+
+- `/side` is registered as an exact alias of `/btw`. A single shared handler in `index.ts` backs both names, so the
+  `<question>` form and the bare history-viewer form behave identically for both spellings and cannot drift. No
+  behavior of the existing `/btw` command changed.
+- User-facing notifications name the spelling that was actually invoked. The shared handler receives the invoked
+  command name, so a failure raised by `/side` reads `/side failed: ...` rather than `/btw failed: ...`.
+- The two context-budget errors thrown from `side-query.ts` are now command-neutral (`the side question does not fit
+  ...`, `the side context is too large ...`). They are re-emitted by the handler under the invoked command name, so
+  the previous hardcoded `/btw` text can no longer leak into a `/side` notification.
+
+### Why
+
+- Codex exposes the same capability under both `/side` and `/btw` as aliases of one another (pinned commit
+  `fa595fbab8`; `codex-rs/tui/src/slash_command.rs` writes every dispatch and capability branch as
+  `SlashCommand::Side | SlashCommand::Btw`). Users arriving from Codex reach for `/side`. A single shared
+  registration is the lightest way to give senpi that parity.
+- Codex's ephemeral child-thread fork, thread switching (`Ctrl+/`), close-and-destroy semantics, hidden boundary
+  developer instruction, and side-mode slash-command allowlist are intentionally NOT ported. senpi keeps the
+  one-shot query plus branch-local replay. `SIDE_QUERY_INSTRUCTION` is unchanged.
+
+### Why an extension could not handle it
+
+- This changes builtin command registration inside the builtin that already owns side-query dispatch, snapshot
+  construction, provider streaming, and the history surface. An external extension cannot register a second name
+  against that builtin's private handler without reimplementing all of it.
+
+### Expected merge-conflict zones
+
+- The shared `registerCommand` call site in `index.ts`.
+- The three notification strings in `index.ts` that interpolate the invoked command name.
+- The two context-budget error strings in `side-query.ts` `boundSideQueryMessages`.
+- `test/suite/btw-side-query.test.ts` around the extension-command describe block.
+- The `[Unreleased]` changelog entry.
+
+## 2026-08-13 - Persist branch-local side-question history
+
+### What changed
+
+- Completed `/btw` questions and answers are stored as custom session entries, and bare `/btw` opens a keyboard-driven
+  history viewer without calling the provider.
+- Questions, streamed answers, errors, and persisted history are stripped of terminal escape and non-printing control
+  sequences at every `/btw` display boundary, while stored content and follow-up context remain unchanged.
+- The history overlay resolves selection, scrolling, and cancel input through the configured TUI keybindings while
+  retaining the default Left/Right, Up/Down, and Escape behavior.
+- In-flight side queries abort before session-tree navigation so a completed answer cannot persist onto the newly
+  selected leaf.
+- Continuity includes only the newest ten `/btw` entries from the active branch. The full main conversation snapshot,
+  prior side answers, and current question still pass through the model-aware side-query context budget together.
+- Side-query answers are instructed to use the same language as the current side question.
+
+### Why
+
+- Side questions need durable continuity and review without polluting the main model conversation or leaking entries from
+  sibling branches.
+
+### Why an extension could not handle it
+
+- The builtin owns side-query dispatch, snapshot construction, provider streaming, and the focused TUI command surface.
+
+### Expected merge-conflict zones
+
+- `index.ts` command handling and side-query completion.
+- `display-text.ts`, `panel.ts`, and `history-panel.ts` display sanitization, key handling, and non-TUI notification
+  formatting in `index.ts`.
+- `index.ts` session-navigation abort handlers.
+- `side-query.ts` instruction and bounded message assembly.
+- `history.ts`, `history-view-model.ts`, and `history-panel.ts` are feature-owned additions.
+
 ## 2026-08-13 - Preserve provider-header deletion markers
 
 ### What changed

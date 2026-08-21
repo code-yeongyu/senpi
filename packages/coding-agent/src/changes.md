@@ -220,6 +220,21 @@
 - MEDIUM: `main.ts` `main()` startup ordering (list-models/list-tips early exits, loading indicator, runtime
   factory) and `resolveAppMode()`/`createSessionManager()`; LOW: the alphabetized export blocks in `index.ts`.
 
+## 2026-08-20 - BTW side overlay and scoped custom-overlay teardown
+
+### What changed
+
+- The builtin BTW extension now presents its isolated side-query stream through
+  a switchable, multi-turn TUI overlay while preserving its no-tools,
+  no-parent-message execution contract.
+- Interactive custom components close their captured overlay handle rather than
+  the global topmost overlay.
+
+### Why an extension needed one host fix
+
+- BTW command, query, history, and UI state remain extension-local. The generic
+  `ExtensionUIContext.custom` implementation owned overlay completion, and its
+  previous topmost dismissal could not be corrected from an extension.
 ## 2026-08-18 - Cursor reasoning-level startup wiring
 
 ### What changed
