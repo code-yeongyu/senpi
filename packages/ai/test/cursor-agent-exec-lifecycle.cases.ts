@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { armExecHeartbeat } from "../src/api/cursor-agent/exec-lifecycle.ts";
-import { findControlFrames, runExecLifecycleScenario } from "./cursor-agent-exec-lifecycle-harness.ts";
+import {
+	findControlFrames,
+	runExecLifecycleScenario,
+	runTurnTerminationScenario,
+} from "./cursor-agent-exec-lifecycle-harness.ts";
 
 export function registerCursorExecLifecycleTests(): void {
 	describe("cursor-agent exec heartbeat scheduler", () => {
@@ -41,6 +45,19 @@ export function registerCursorExecLifecycleTests(): void {
 			} finally {
 				vi.useRealTimers();
 			}
+		});
+	});
+
+	describe("cursor-agent turn termination", () => {
+		it("completes after turnEnded while the server keeps the stream open", async () => {
+			const message = await runTurnTerminationScenario("turnEndedOpen");
+			expect(message.stopReason).toBe("stop");
+		});
+
+		it("fails a silent mid-turn stream instead of hanging", async () => {
+			const message = await runTurnTerminationScenario("silentMidTurn");
+			expect(message.stopReason).toBe("error");
+			expect(message.errorMessage).toContain("inbound stream stalled");
 		});
 	});
 

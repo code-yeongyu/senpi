@@ -6,6 +6,16 @@ vi.mock("../src/utils/version-check.ts", () => ({
 	getReleaseChangelogUrl: vi.fn((version: string) => `https://example.invalid/releases/${version}`),
 }));
 
+type EchoControllerStub = ReturnType<typeof createEchoControllerStub>;
+
+function createEchoControllerStub() {
+	return {
+		begin: vi.fn(() => "pending-test"),
+		promptOptions: vi.fn(() => ({ preflightResult: vi.fn(), promptDisposition: vi.fn() })),
+		reject: vi.fn(),
+	};
+}
+
 type SubmitContext = {
 	defaultEditor: { onSubmit?: (text: string) => void | Promise<void> };
 	editor: {
@@ -22,15 +32,16 @@ type SubmitContext = {
 	hideShortcutOverlay: () => void;
 	isExtensionCommand: (text: string) => boolean;
 	lastEditorText: string;
-	onInputCallback?: (input: { text: string; images?: unknown[] }) => void;
-	pendingUserInputs: { text: string; images?: unknown[] }[];
+	onInputCallback?: (input: { text: string; images?: unknown[]; pendingEchoId: string }) => void;
+	pendingUserInputs: { text: string; images?: unknown[]; pendingEchoId: string }[];
 	pendingImages: Map<number, unknown>;
+	optimisticUserEchoes: EchoControllerStub;
 	takeSubmissionImages: (submittedText: string) => unknown[];
 };
 
 type InputContext = {
-	onInputCallback?: (input: { text: string; images?: unknown[] }) => void;
-	pendingUserInputs: { text: string; images?: unknown[] }[];
+	onInputCallback?: (input: { text: string; images?: unknown[]; pendingEchoId?: string }) => void;
+	pendingUserInputs: { text: string; images?: unknown[]; pendingEchoId?: string }[];
 };
 
 type StartupSubmitContext = {
@@ -39,6 +50,7 @@ type StartupSubmitContext = {
 };
 
 type RunContext = {
+	optimisticUserEchoes: EchoControllerStub;
 	init: () => Promise<void>;
 	version: string;
 	options: Record<string, never>;
@@ -50,7 +62,7 @@ type RunContext = {
 	checkForPackageUpdates: () => Promise<string[]>;
 	checkTmuxSetup: () => Promise<string | undefined>;
 	maybeWarnAboutAnthropicSubscriptionAuth: () => Promise<void>;
-	getUserInput: () => Promise<{ text: string; images?: unknown[] }>;
+	getUserInput: () => Promise<{ text: string; images?: unknown[]; pendingEchoId: string }>;
 	showNewVersionNotification: (version: string) => void;
 	showPackageUpdateNotification: (packages: string[]) => void;
 	showRiskyMainModelWarning: () => void;
@@ -87,6 +99,7 @@ function createSubmitContext(): SubmitContext {
 		lastEditorText: "",
 		pendingUserInputs: [],
 		pendingImages: new Map(),
+		optimisticUserEchoes: createEchoControllerStub(),
 		takeSubmissionImages: vi.fn(() => []),
 	};
 	// Borrowed receiver: resolve markers with the REAL production helper (its
@@ -114,7 +127,7 @@ describe("InteractiveMode startup input", () => {
 
 		await context.defaultEditor.onSubmit?.(" early prompt ");
 
-		expect(context.pendingUserInputs).toEqual([{ text: "early prompt" }]);
+		expect(context.pendingUserInputs).toEqual([{ text: "early prompt", pendingEchoId: "pending-test" }]);
 		expect(context.flushPendingBashComponents).toHaveBeenCalledTimes(1);
 		expect(context.editor.addToHistory).toHaveBeenCalledWith("early prompt");
 	});
@@ -136,10 +149,11 @@ describe("InteractiveMode startup input", () => {
 		const stopMainLoop = new Error("stop interactive loop");
 		const prompt = vi.fn(async (_text: string, _options?: unknown) => {});
 		const getUserInput = vi
-			.fn<() => Promise<{ text: string; images?: unknown[] }>>()
-			.mockResolvedValueOnce({ text: "queued prompt" })
+			.fn<() => Promise<{ text: string; images?: unknown[]; pendingEchoId: string }>>()
+			.mockResolvedValueOnce({ text: "queued prompt", pendingEchoId: "pending-test" })
 			.mockRejectedValueOnce(stopMainLoop);
 		const context: RunContext = {
+			optimisticUserEchoes: createEchoControllerStub(),
 			init: vi.fn(async () => {}),
 			version: "test",
 			options: {},
@@ -164,6 +178,13 @@ describe("InteractiveMode startup input", () => {
 
 		// Then dispatch retains steer intent in case a continuation became active.
 		expect(prompt).toHaveBeenCalledTimes(1);
-		expect(prompt).toHaveBeenCalledWith("queued prompt", { streamingBehavior: "steer" });
+		expect(prompt).toHaveBeenCalledWith(
+			"queued prompt",
+			expect.objectContaining({
+				streamingBehavior: "steer",
+				preflightResult: expect.any(Function),
+				promptDisposition: expect.any(Function),
+			}),
+		);
 	});
 });

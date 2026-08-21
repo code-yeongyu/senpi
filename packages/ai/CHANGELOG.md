@@ -12,6 +12,36 @@
 
 ### Removed
 
+## [2026.8.21-2] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Cursor agent turns now finish promptly when `turnEnded` arrives even if the server leaves HTTP/2 open, while silent pre-completion streams fail after a heartbeat-aware health bound instead of freezing until the generic five-minute idle timeout.
+
+### Removed
+
+## [2026.8.21] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Refreshed hydrated provider catalog data: vercel-ai-gateway renamed the Grok vendor slug (`xai/grok-4.5|4.6` -> `spacexai/grok-4.5|4.6`) and opencode delisted `deepseek-v4-flash-free`; prompt-preset catalog sentinels track the new ids so releases no longer fail on this drift.
+- Handled the new `TOO_MANY_TOOL_CALLS` Gemini finish reason introduced by `@google/genai` 2.18.0, mapping it to an error stop reason.
+- Refreshed dependency pins (`@aws-sdk/client-bedrock-runtime`, `@google/genai`, `@smithy/node-http-handler`, `typebox`) and removed the unused `chalk`, `proxy-from-env`, and `@mistralai/mistralai` dependencies.
+
+### Fixed
+
+### Removed
+
 ## [2026.8.20-2] - 2026-08-20
 
 ### Breaking Changes

@@ -14,6 +14,48 @@
 
 ### Removed
 
+## [2026.8.21-2] - 2026-08-21
+
+### Breaking Changes
+
+### Fixed
+
+- Contended auth-storage lock retries now sleep via `Atomics.wait` instead of busy-waiting, matching the settings-lock fix (#1056). The auth store kept the original spin loop, so under multi-session OAuth-refresh contention a synchronous auth write could burn a CPU core on the main thread.
+- Selecting a model now releases the selector and repaints immediately instead of after the provider auth check resolves. The overlay is disposed on Enter, so waiting for that round trip (a network call for subscription-OAuth providers such as Cursor) left the TUI showing a frozen frame on the previous model.
+- Cursor agent turns now finish promptly when `turnEnded` arrives even if the server leaves HTTP/2 open, while silent pre-completion streams fail after a heartbeat-aware health bound instead of freezing until the generic five-minute idle timeout.
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21] - 2026-08-21
+
+### Breaking Changes
+
+### Fixed
+
+- Interactive submissions now render a local pending user echo immediately, reconcile it with the canonical `message_start`, and remove it for rejected or extension-handled input without writing render-only state to session history.
+- The `claude-sdk-oauth` lane now surfaces Claude policy refusals (for example cybersecurity refusals) as an immediate, user-visible error naming the refusal category and explanation, instead of hanging until the ~90s stream watchdog timeout. Refusals are classified as non-retryable, so they no longer enter the timeout-retry ladder or account failover ([#1052](https://github.com/code-yeongyu/senpi/pull/1052)).
+- Contended settings-lock retries now sleep via `Atomics.wait` instead of busy-waiting, retry-fallback canonicalization is memoized per error burst, and `cursor-cli-oauth`/`claude-sdk-oauth` settings loads are cached by mtime+size. Together these eliminate the settings-lock CPU-spin that froze the TUI at ~100% CPU under provider-error storms ([#1056](https://github.com/code-yeongyu/senpi/pull/1056)).
+
+### Added
+
+### Changed
+
+- Settings reads no longer acquire the settings lock: writes publish atomically via a same-directory temp file plus rename, so read-only settings loads skip lock acquisition entirely and can never observe a torn write. Concurrent writers still serialize on the lock and re-merge against the winner's content.
+
+- Refreshed dependency pins, including `@anthropic-ai/claude-agent-sdk` 0.3.238, `jsdom` 30, `undici` 8.10.0, `marked` 18.0.10, `highlight.js` 11.12.0, `grok-mermaid` 0.2.3, `minimatch` 10.2.6, `ws` 8.21.3, and `typebox` 1.3.16, and removed the unused `@mistralai/mistralai` and `@types/ms` entries.
+
+- The `monitor` tool's description, schema text, prompt guidance, and terminal docs now state the verified contract (PTY output with stderr merged, event-only filtering, dedup and pause semantics) and include worked recipes plus an anti-pattern reference.
+
+### Fixed
+
+### Removed
+
 ## [2026.8.20-2] - 2026-08-20
 
 ### Breaking Changes

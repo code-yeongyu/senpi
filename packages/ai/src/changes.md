@@ -44,11 +44,29 @@
 
 ## Unreleased
 
+- Treat Cursor `turnEnded` as definitive completion after a bounded exec-dispatch drain, and fail silent pre-completion streams with heartbeat-aware 30s/90s health thresholds.
 - Skip ANTML invoke recovery when `model.api === "cursor-agent"` so native Cursor tool starts are not rejected as invalid event order.
 - Keep usable Cursor task tool arguments when the complete frame parses as empty.
 - Remint a Cursor conversation wire id after the 3-rotation skip instead of blocking the whole session.
 - Persist Cursor conversation-id rotation under the agent dir (`CODING_AGENT_DIR` / `~/.senpi/agent`), not `$HOME/cursor-conversation-ids.json`.
 - Surface the first 0-token `resource_exhausted` of a `stream()` call so session-layer compaction runs before rotation.
+## 2026-08-20 - Google FinishReason exhaustiveness after the @google/genai 2.18.0 bump
+
+### What changed
+
+- `packages/ai/src/api/google-shared.ts`: `mapStopReason` handles the new `FinishReason.TOO_MANY_TOOL_CALLS` member alongside `UNEXPECTED_TOOL_CALL`, mapping it to the `"error"` stop reason.
+
+### Why
+
+- `@google/genai` 2.18.0 adds that enum member, and the switch closes with a `const _exhaustive: never = reason` guard, so `tsc --noEmit` failed until the new case was handled. Grouping it with the other tool-calling aborts keeps the existing semantics: a run that was stopped by the provider rather than completing is surfaced as an error.
+
+### Why an extension could not handle it
+
+- The mapping runs inside this package's Google streaming adapter, on the provider response path that produces the stop reason an extension would only observe after the fact.
+
+### Expected merge conflict zones
+
+- LOW: the `mapStopReason` case list, which grows only when the upstream SDK adds finish reasons.
 
 ## 2026-08-20 - Cursor 0-token RE overflow without estimate gate
 
@@ -69,6 +87,24 @@
 - `packages/ai/src/utils/overflow.ts` after `getOverflowPatterns()`.
 
 # AI Source Changes
+
+## 2026-08-21 - Cursor turn completion and stream health bounds
+
+### What changed
+
+- `packages/ai/src/api/cursor-agent.ts`: treats a decoded `turnEnded` frame as definitive application completion, drains tracked exec dispatches for at most `CURSOR_TURN_END_DRAIN_TIMEOUT_MS` (5000ms), then closes the client HTTP/2 stream instead of waiting for the server. Before `turnEnded`, `CURSOR_STREAM_HEALTH_FAIL_THRESHOLD_MS` (30000ms) bounds complete inbound silence and `CURSOR_STREAM_HEALTH_HEARTBEAT_ONLY_THRESHOLD_MS` (90000ms) bounds streams carrying only heartbeats or conversation checkpoints.
+
+### Why
+
+- Cursor can leave the HTTP/2 response open after all assistant content, exec results, usage, and `turnEnded` have arrived. The adapter previously waited exclusively for transport end, leaving the user-facing turn frozen until the generic 300000ms agent idle timeout. A server that stalls before `turnEnded` had the same five-minute escape path despite the official Cursor CLI bounding transport silence much sooner.
+
+### Why an extension could not handle it
+
+- Frame decoding, HTTP/2 stream ownership, exec-dispatch tracking, and the conversation-rotation retry loop all live inside the Cursor provider adapter below extension-visible events. Only this transport layer can distinguish heartbeat/checkpoint liveness from meaningful frames and close the active request after the authoritative completion signal.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/ai/src/api/cursor-agent.ts` `stream()` HTTP/2 lifecycle, frame decode loop, and final exec drain; upstream and fork Cursor protocol changes commonly touch the same block.
 
 ## 2026-08-20 - Cursor conversation rotation composes with compact-before-rotate
 

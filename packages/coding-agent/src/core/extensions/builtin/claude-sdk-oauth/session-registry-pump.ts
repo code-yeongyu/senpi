@@ -1,3 +1,4 @@
+import { refusalError } from "./refusal.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
 import { evaluateAbortOutcome } from "./session-reattach.ts";
 import {
@@ -109,7 +110,7 @@ function handleMessage(
 	registry: ClaudeSdkOauthSessionRegistry,
 	entry: ClaudeSdkOauthSessionEntry,
 	message: SDKMessage,
-): void {
+): boolean {
 	// A forked query mints a NEW session id (forkSession: true + resume): the
 	// init message carries it, and it must be persisted BEFORE any turn-state
 	// guard — otherwise subsequent reattach targets the original session and
@@ -118,18 +119,24 @@ function handleMessage(
 		if (message.session_id !== entry.sdkSessionId) entry.sdkSessionId = message.session_id;
 	}
 	const turn = currentTurn(entry);
-	if (!turn || !registry.isCurrentGeneration(entry.senpiSessionId, turn.generation)) return;
+	if (!turn || !registry.isCurrentGeneration(entry.senpiSessionId, turn.generation)) return false;
 	if (!turn.claimed) {
 		if (isReplayFor(message, turn.uuid)) claimTurn(entry, turn);
 		else if (message.type === "stream_event") bufferBeforeReplay(registry, entry, turn, message);
 		else if (message.type === "result") {
 			throw new SessionTurnAttributionError("Claude SDK OAuth result arrived before replay claim");
 		}
-		return;
+		return false;
 	}
-	if (message.type === "user" && "isReplay" in message && message.isReplay === true) return;
+	if (message.type === "user" && "isReplay" in message && message.isReplay === true) return false;
+	const refusal = refusalError(message);
+	if (refusal) {
+		failTurn(registry, entry, refusal);
+		return true;
+	}
 	if (message.type === "result") finishTurn(registry, entry, turn, message);
 	else deliver(entry, turn, message);
+	return false;
 }
 
 async function runPump(registry: ClaudeSdkOauthSessionRegistry, entry: ClaudeSdkOauthSessionEntry): Promise<void> {
@@ -141,7 +148,7 @@ async function runPump(registry: ClaudeSdkOauthSessionRegistry, entry: ClaudeSdk
 				failTurn(registry, entry, new Error("Claude SDK OAuth query ended before the active turn completed"));
 				return;
 			}
-			handleMessage(registry, entry, value);
+			if (handleMessage(registry, entry, value)) return;
 		}
 	} catch (error) {
 		failTurn(registry, entry, error instanceof Error ? error : new Error(String(error)));

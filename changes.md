@@ -3,6 +3,32 @@
 Root tracker for repository-level divergence from upstream `badlogic/pi-mono`.
 Owns every audited production path whose nearest tracker is the repository root.
 
+## Dependency pin refresh, unused-dependency removal, and lock regeneration (2026-08-20)
+
+### What changed
+
+- `package.json`: root devDependencies bumped `esbuild` 0.28.1 -> 0.28.2 and `tsx` 4.23.1 -> 4.23.12; declared `concurrently` 10.0.5 (the root `dev` script invoked it while it was undeclared and absent from the lock); dropped the unused `@anthropic-ai/sandbox-runtime` and `jiti` devDependencies and the unused `get-east-asian-width` dependency. Overrides bumped `@hono/node-server` 2.0.10 -> 2.1.1, `postcss` 8.5.18 -> 8.5.26, `brace-expansion` 5.0.8 -> 5.0.9, `esbuild` 0.28.1 -> 0.28.2, `rimraf` 6.1.2 -> 6.1.3 (including the nested `gaxios.rimraf` pin), `shell-quote` 1.9.0 -> 1.10.0, `vite` 8.0.16 -> 8.2.2, and `ws` 8.21.1 -> 8.21.3, while `fast-uri` stays on 3.x and `protobufjs` on 7.x and `@anthropic-ai/sdk` stays pinned at 0.91.1.
+- `.npmrc`: rewrote the `min-release-age` exemption list as package-name patterns (`@hono/node-server`, `@anthropic-ai/claude-agent-sdk`, `@aws-sdk/*`, `@google/genai`, `@smithy/*`, `typebox`, `vite`) so the freshly published target versions resolve under the repository's two-day supply-chain window.
+- `packages/agent/package.json`, `packages/protocol/package.json`: `typebox` moved to 1.3.16 (from 1.3.8 and from the inconsistent 1.3.7).
+- `packages/telemetry/package.json`: `@types/node` 24.12.4 -> 26.2.0, matching the rest of the repository.
+- `packages/tui/package.json`: `marked` 18.0.7 -> 18.0.10.
+- `crates/senpi-pty/Cargo.toml`, `crates/senpi-pty/package.json`, and the workspace `Cargo.toml` pins: `libc` =0.2.174 -> =0.2.189, `napi` =3.10.3 -> =3.12.1, `napi-derive` =3.5.9 -> =3.6.3, `napi-build` =2.3.2 -> =2.4.1, `@napi-rs/cli` 3.7.2 -> 3.8.6.
+- `scripts/rolldown-platform-lock.test.mjs`: the asserted Rolldown binding version tracks 1.0.3 -> 1.2.4, which is what `vite` 8.2.2 resolves.
+
+### Why
+
+- These pins had drifted behind their current releases while the repository enforces exact pins through `npm run check:pinned-deps`, so refreshing them in one pass keeps every workspace on one resolved version and keeps the shared `typebox` identity single-instanced. The removals delete manifest entries with zero source references, and declaring `concurrently` makes the root manifest truthful about what `npm run dev` actually needs. `@anthropic-ai/sdk` is deliberately held at 0.91.1 because 0.120.0 adds credential-chain modules whose `node:fs` and `node:path` imports break the browser-bundle invariant enforced by `scripts/check-browser-smoke.mjs`. The `.npmrc` rewrite fixes an exemption list that could never match: npm compares these patterns against the package name only, so the previous `name@version` string was inert.
+
+### Why an extension could not handle it
+
+- Dependency resolution, override pinning, the supply-chain age gate, and Cargo pin selection are all performed by the package managers before any runtime exists, so no extension can influence which versions get installed or locked.
+
+### Expected merge conflict zones
+
+- HIGH: the `overrides` and `devDependencies` blocks in `package.json`, which upstream edits on nearly every release.
+- MEDIUM: the per-package `typebox`/`@types/node` pins and the workspace `Cargo.toml` dependency table.
+- LOW: `.npmrc` and the Rolldown binding version constant.
+
 ## Repository-wide upstream divergence audit (2026-08-17)
 
 ### What changed

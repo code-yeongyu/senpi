@@ -1,5 +1,62 @@
 # changes
 
+## 2026-08-21 - Auth-storage lock retry sleeps instead of spinning
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `FileAuthStorageBackend.acquireLockSyncWithRetry` replaces the `while (Date.now() - start < delayMs) {}` busy-wait with `Atomics.wait` on a `SharedArrayBuffer`. The wait stays synchronous (callers and the 20ms/10-attempt policy unchanged) but the thread actually sleeps.
+
+### Why
+
+- This is the same defect PR #1056 removed from `settings-manager.ts`, but `auth-storage.ts` was left out of both #1056 and #1057. The sync `withLock` paths (`reload()`, `set()`, `remove()`) reach it, so under multi-session OAuth-refresh contention (auth.json rewritten by other sessions, forcing `reload()` through a contended lock) a synchronous auth write could spin up to 10×20ms of pure CPU on the main thread.
+
+### Why an extension could not handle it
+
+- `FileAuthStorageBackend` is the core credential persistence path with no extension seam.
+
+### Expected merge conflict zones
+
+- `auth-storage.ts` around `acquireLockSyncWithRetry` (line ~95).
+
+
+## 2026-08-21 - Settings reads are lock-free; writes publish atomically via temp+rename
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `FileSettingsStorage.withLock` no longer acquires the settings lock for read-only callbacks. The initial read happens without the lock; only a callback that returns content acquires the lock, re-reads under it, re-runs the callback when a concurrent winner changed the file, and publishes by writing a same-directory `*.tmp` file then `renameSync`-ing it over the settings path. `recordSelfWrite` fires before the rename so the config-reload watcher's self-write suppression still sees the hash first. A failed publish removes the temp file and rethrows.
+
+### Why
+
+- Follow-up to the settings-lock CPU-spin fix (#1056). Locked reads were the remaining lock-pressure source: every `SettingsManager` load acquired the lock even when nothing was written, so cache misses and multi-session startups still convoyed on `settings.json.lock`. Atomic rename publish makes torn reads impossible, which is the precondition for dropping the read lock entirely.
+
+### Why an extension could not handle it
+
+- `FileSettingsStorage` is the core settings persistence path with no extension seam.
+
+### Expected merge conflict zones
+
+- `settings-manager.ts` around `withLock` (line ~555) and the `fs` import list (line ~5).
+
+
+## 2026-08-21 - Settings-lock retry sleeps instead of spinning; retry-fallback canonicalization memoized
+
+### What changed
+
+- `settings-manager.ts`: `acquireLockSyncWithRetry` replaces the `while (Date.now() - start < delayMs)` busy-wait with `Atomics.wait` on a `SharedArrayBuffer`. The wait stays synchronous (callers and the 20ms/10-attempt policy unchanged) but the thread actually sleeps, so contended retries no longer burn a CPU core per waiter.
+- `retry-fallback/controller.ts`: `RetryFallbackController` memoizes `canonicalizeFallbackChains` by the serialized chains content. `canTryFallback`/`nextCandidate`/`hasConfiguredChain` reuse the canonical result for an unchanged config; a chains edit invalidates immediately; `clear()` drops the memo.
+
+### Why
+
+- Provider-error handling calls `canTryFallback` 4-6 times per error, each re-canonicalizing chains whose oauth-lane eligibility probes create fresh `SettingsManager` instances and locked disk reads. With ~12 sessions sharing one settings.json the lock convoy made every waiter busy-spin on the main thread, starving the TUI render loop and freezing the screen at ~100% CPU under 429/5xx storms. V8 profile of a frozen omo process showed 65% in `acquireLockSyncWithRetry` and 18% in `parseSettingsJson`.
+
+### Why an extension could not handle it
+
+- The settings file lock and the retry-fallback controller are core storage and session-admission paths with no extension seam.
+
+### Expected merge conflict zones
+
+- `settings-manager.ts` around `acquireLockSyncWithRetry` (line ~527). `retry-fallback/controller.ts` around `nextCandidate`/`hasConfiguredChain` and the new `canonicalChains` private method.
+
 ## 2026-08-21 - Neuralwatt model selection defaults
 
 ### What changed

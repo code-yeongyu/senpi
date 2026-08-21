@@ -159,4 +159,9 @@ export interface CursorAgentOptions extends StreamOptions {
 	 * variant request shape.
 	 */
 	thinkingSelection?: ThinkingSelection;
+	/** Override stream health bounds for deterministic provider integration tests. */
+	streamHealthFailThresholdMs?: number;
+	streamHealthHeartbeatOnlyThresholdMs?: number;
+	/** Override the post-turn exec drain bound for deterministic tests. */
+	turnEndDrainTimeoutMs?: number;
 }

@@ -1,5 +1,55 @@
 # claude-sdk-oauth
 
+## 2026-08-21 - Cache provider settings loads by mtime+size to cut lock convoy
+
+### What changed
+
+- `settings.ts`: `loadClaudeSdkOauthProviderSettingsFromDisk` caches the `SettingsManager` instance keyed on (cwd, mtimeMs:size of the global and project settings.json). A cache hit skips `SettingsManager.create` and its two locked disk reads; environment overrides are re-parsed on every call so live env changes take effect immediately.
+
+### Why
+
+- `fallbackEligible()` calls this loader on every retry-fallback candidate probe. A fresh `SettingsManager` per call took the cross-process settings lock twice; under error storms this multiplied into hundreds of locked disk reads per session per error, driving the lock-retry busy-wait (fixed in core) that froze the TUI.
+
+### Why an extension could not handle it
+
+- This IS the extension side: the cache is local to the provider settings loader.
+
+### Expected merge conflict zones
+
+- `settings.ts` around `loadClaudeSdkOauthProviderSettingsFromDisk`.
+
+
+## 2026-08-20 - Terminate policy refusals without waiting for the stream watchdog
+
+### What changed
+
+- `refusal.ts` recognizes the pinned SDK's terminal `system/model_refusal_no_fallback` message and its documented
+  older assistant `message.stop_reason: "refusal"` shape, preserving the policy category and display explanation in a
+  typed terminal error. The fallback-retry notice remains non-terminal.
+- `auth-lane.ts` classifies that error as non-retryable before account failover, `stream.ts` terminates non-resident
+  streams immediately, and `session-registry-pump.ts` settles and closes a resident turn without reading another SDK
+  message.
+- `test/claude-sdk-oauth-refusal.test.ts` covers structured ambient and resident refusals plus the legacy assistant
+  frame, with iterators that fail if consumption proceeds past the refusal.
+
+### Why
+
+Claude policy and cybersecurity refusals can end without an SDK `result` message. The resident pump treated the
+refusal notice as an ordinary message and kept waiting for a result, so the provider watchdog fired about 90 seconds
+later and the timeout retry ladder re-sent the paid conversation. Refusal is a terminal model decision, not a
+stream-start transport failure or an account failover condition.
+
+### Why an extension could not handle it
+
+The dropped signal sits inside this builtin provider's private SDK message consumer and resident query pump. No
+external extension hook can settle the active resident turn or prevent its timeout retry after the SDK message has
+been consumed here.
+
+### Expected merge conflict zones
+
+- LOW in `auth-lane.ts` at `sdkFailure`, `stream.ts` at the SDK message loop, and `session-registry-pump.ts` at active
+  turn message handling.
+
 ## 2026-08-20 - Same-turn timeout retries fork at the pre-turn boundary (issue #723)
 
 ### What changed

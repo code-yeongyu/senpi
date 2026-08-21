@@ -8,6 +8,14 @@ vi.mock("../src/utils/version-check.ts", () => ({
 	getReleaseChangelogUrl: vi.fn((version: string) => `https://example.invalid/releases/${version}`),
 }));
 
+function createEchoControllerStub() {
+	return {
+		begin: vi.fn(() => "pending-test"),
+		promptOptions: vi.fn(() => ({ preflightResult: vi.fn(), promptDisposition: vi.fn() })),
+		reject: vi.fn(),
+	};
+}
+
 type SubmitContext = {
 	defaultEditor: { onSubmit?: (text: string) => void | Promise<void> };
 	editor: {
@@ -27,6 +35,7 @@ type SubmitContext = {
 	onInputCallback?: (input: { text: string; images?: unknown[] }) => void;
 	pendingUserInputs: { text: string; images?: unknown[] }[];
 	pendingImages: Map<number, unknown>;
+	optimisticUserEchoes: ReturnType<typeof createEchoControllerStub>;
 	takeSubmissionImages: (submittedText: string) => unknown[];
 	shutdown: () => Promise<void>;
 };
@@ -57,6 +66,7 @@ function createSubmitContext(): SubmitContext {
 		lastEditorText: "",
 		pendingUserInputs: [],
 		pendingImages: new Map(),
+		optimisticUserEchoes: createEchoControllerStub(),
 		takeSubmissionImages: vi.fn(() => []),
 		shutdown: vi.fn(async () => {}),
 	};

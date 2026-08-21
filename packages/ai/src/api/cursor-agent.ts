@@ -246,6 +246,12 @@ export type {
 export const CURSOR_API_URL = "https://api2.cursor.sh";
 export const CURSOR_CLIENT_VERSION = "cli-2026.07.23-e383d2b";
 const EXEC_HEARTBEAT_INTERVAL_MS = 3000;
+/** Maximum inbound silence before a Cursor turn without turnEnded is failed. */
+export const CURSOR_STREAM_HEALTH_FAIL_THRESHOLD_MS = 30_000;
+/** Maximum heartbeat/checkpoint-only silence before a Cursor turn is failed. */
+export const CURSOR_STREAM_HEALTH_HEARTBEAT_ONLY_THRESHOLD_MS = CURSOR_STREAM_HEALTH_FAIL_THRESHOLD_MS * 3;
+/** Maximum time allowed to drain exec handlers after turnEnded. */
+export const CURSOR_TURN_END_DRAIN_TIMEOUT_MS = 5000;
 
 /**
  * HTTP/1 connection-specific headers that HTTP/2 forbids. Node's
@@ -443,8 +449,10 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 		let h2Client: http2.ClientHttp2Session | null = null;
 		let h2Request: http2.ClientHttp2Stream | null = null;
 		let heartbeatTimer: NodeJS.Timeout | null = null;
+		let streamHealthTimer: NodeJS.Timeout | null = null;
 		let h2Settled = false;
 		let sawTurnEnded = false;
+		let turnEndDrainTimedOut = false;
 		let endStreamError: Error | null = null;
 		// Reachable from the catch: a stream that dies mid-turn must still close
 		// and pair the blocks it left open.
@@ -454,6 +462,10 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 		const settleH2 = (error?: unknown): void => {
 			if (h2Settled) return;
 			h2Settled = true;
+			if (streamHealthTimer) {
+				clearTimeout(streamHealthTimer);
+				streamHealthTimer = null;
+			}
 			if (error !== undefined) {
 				rejectH2(error);
 				return;
@@ -481,6 +493,7 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 			attempt += 1;
 			h2Settled = false;
 			sawTurnEnded = false;
+			turnEndDrainTimedOut = false;
 			endStreamError = null;
 			openBlockState = undefined;
 			const h2Completion = new Promise<void>((resolve, reject) => {
@@ -569,6 +582,60 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 				const onConversationCheckpoint = (checkpoint: ConversationStateStructure) => {
 					conversationStateCache.set(conversationId!, checkpoint);
 				};
+				const healthFailThresholdMs =
+					options?.streamHealthFailThresholdMs ?? CURSOR_STREAM_HEALTH_FAIL_THRESHOLD_MS;
+				const heartbeatOnlyThresholdMs =
+					options?.streamHealthHeartbeatOnlyThresholdMs ?? CURSOR_STREAM_HEALTH_HEARTBEAT_ONLY_THRESHOLD_MS;
+				let lastInboundFrameAt = Date.now();
+				let lastMeaningfulFrameAt = lastInboundFrameAt;
+				let turnEndCompletionStarted = false;
+				const armStreamHealthTimer = (): void => {
+					if (streamHealthTimer) clearTimeout(streamHealthTimer);
+					if (sawTurnEnded || h2Settled) return;
+					const now = Date.now();
+					const deadline = Math.min(
+						lastInboundFrameAt + healthFailThresholdMs,
+						lastMeaningfulFrameAt + heartbeatOnlyThresholdMs,
+					);
+					streamHealthTimer = setTimeout(
+						() => {
+							streamHealthTimer = null;
+							if (sawTurnEnded || h2Settled) return;
+							const stalledFor = Date.now() - lastInboundFrameAt;
+							const meaningfulStalledFor = Date.now() - lastMeaningfulFrameAt;
+							if (stalledFor < healthFailThresholdMs && meaningfulStalledFor < heartbeatOnlyThresholdMs) {
+								armStreamHealthTimer();
+								return;
+							}
+							settleH2(new Error("Cursor stream ended before turnEnded: inbound stream stalled"));
+							h2Request?.close();
+						},
+						Math.max(0, deadline - now),
+					);
+				};
+				const completeAfterTurnEnded = async (): Promise<void> => {
+					const drainTimeoutMs = options?.turnEndDrainTimeoutMs ?? CURSOR_TURN_END_DRAIN_TIMEOUT_MS;
+					let timeout: NodeJS.Timeout | undefined;
+					const drained = await Promise.race([
+						drainInFlightDispatches().then(() => true),
+						new Promise<false>((resolve) => {
+							timeout = setTimeout(() => resolve(false), drainTimeoutMs);
+						}),
+					]);
+					if (timeout) clearTimeout(timeout);
+					if (h2Settled) return;
+					if (!drained) {
+						turnEndDrainTimedOut = true;
+						settleH2(
+							new Error(`Cursor exec dispatches did not settle within ${drainTimeoutMs}ms after turnEnded`),
+						);
+						h2Request?.close();
+						return;
+					}
+					h2Request?.close();
+					settleH2();
+				};
+				armStreamHealthTimer();
 
 				h2Request.on("data", (chunk: Buffer) => {
 					// Steady state drains fully per chunk; alias the fresh h2 chunk
@@ -594,9 +661,17 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 
 						try {
 							const serverMessage = fromBinary(AgentServerMessageSchema, messageBytes);
-							const isTurnEnded =
-								serverMessage.message.case === "interactionUpdate" &&
-								serverMessage.message.value.message?.case === "turnEnded";
+							const interactionUpdateCase =
+								serverMessage.message.case === "interactionUpdate"
+									? serverMessage.message.value.message?.case
+									: undefined;
+							const isTurnEnded = interactionUpdateCase === "turnEnded";
+							const isLivenessOnly =
+								interactionUpdateCase === "heartbeat" ||
+								serverMessage.message.case === "conversationCheckpointUpdate";
+							lastInboundFrameAt = Date.now();
+							if (!isLivenessOnly) lastMeaningfulFrameAt = lastInboundFrameAt;
+							armStreamHealthTimer();
 							// Dispatch is fire-and-forget so the socket keeps draining
 							// while a handler runs, but the promise is tracked: `done`
 							// must not be pushed while an exec handler is still resolving,
@@ -620,10 +695,13 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 							inFlightDispatches.add(dispatch);
 							void dispatch.finally(() => inFlightDispatches.delete(dispatch));
 
-							// Application completion is not protocol success; wait for a
-							// clean HTTP/2 end.
-							if (isTurnEnded) {
+							// turnEnded is the definitive application completion signal. Drain
+							// every dispatch it follows, then close our side of the stream so a
+							// server that keeps HTTP/2 open cannot hold the turn hostage.
+							if (isTurnEnded && !turnEndCompletionStarted) {
 								sawTurnEnded = true;
+								turnEndCompletionStarted = true;
+								void completeAfterTurnEnded().catch((error) => settleH2(error));
 							}
 						} catch (e) {
 							log("error", "parseServerMessage", { error: String(e) });
@@ -690,8 +768,9 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 				// Same reason as the success path: a handler still running would land
 				// its real result after the turn finalized and be discarded — even
 				// though the tool may already have run side effects. On abort the
-				// drain returns immediately.
-				await drainInFlightDispatches();
+				// drain returns immediately. A post-turn drain timeout is already the
+				// bound: do not wait forever a second time in the error path.
+				if (!turnEndDrainTimedOut) await drainInFlightDispatches();
 				// A stream that dies mid-turn leaves blocks open. Closing them here
 				// settles their live cards and pairs the server-owned calls that
 				// nothing else answers — an unpaired call is stripped from every

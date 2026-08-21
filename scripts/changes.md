@@ -1,5 +1,23 @@
 # changes
 
+## Install-script allowlist follows the @google/genai bump (2026-08-20)
+
+### What changed
+
+- `scripts/generate-coding-agent-shrinkwrap.mjs` and `scripts/generate-coding-agent-install-lock.mjs`: the allowed-install-script entry moved from `@google/genai@2.13.0` to `@google/genai@2.18.0`. The `protobufjs@7.6.5` entry is unchanged because the protobufjs major was not taken.
+
+### Why
+
+- Both generators refuse to emit a lock that contains an unreviewed lifecycle script, and the allowlist is keyed by exact `name@version`. Bumping `@google/genai` without moving the allowlist string would fail generation even though the package's `preinstall` is still the same no-op that was reviewed.
+
+### Why an extension could not handle it
+
+- These generators run as repository tooling to produce committed lock artifacts before anything is published or installed, so no extension participates in their execution.
+
+### Expected merge conflict zones
+
+- LOW: the `allowedInstallScriptPackages` map in each generator, which only changes when a lifecycle-script dependency is bumped.
+
 ## Reviewer-cited tracker parser, collector, and CI hardening (2026-08-17)
 
 ### What changed

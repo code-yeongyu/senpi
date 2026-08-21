@@ -111,7 +111,7 @@ it("starts a replacement-session flush while an old transfer remains pending", a
 
 	try {
 		await new Promise<void>((resolve) => setImmediate(resolve));
-		expect(replacementPrompt).toHaveBeenCalledWith(replacementMessage.text);
+		expect(replacementPrompt).toHaveBeenCalledWith(replacementMessage.text, undefined);
 		const replacementTail = context.compactionQueueFlushTail;
 		expect(replacementTail).toBeDefined();
 

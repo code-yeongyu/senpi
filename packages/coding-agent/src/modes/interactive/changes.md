@@ -1,5 +1,45 @@
 # changes
 
+## 2026-08-21 - Model selection releases the selector before the auth round trip
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `selectModelFromUi` now calls `done?.()` and `ui.requestRender()` *before* awaiting `session.setModel(model)`, instead of only after it resolves. The error path no longer double-releases.
+
+### Why
+
+- `ModelSelectorComponent.handleSelect` disposes the overlay synchronously on Enter, but the selector was only released after `setModel` resolved. `AgentSession._setModel` awaits `modelRuntime.checkAuth(provider)` as its first step, which for subscription-OAuth providers (Cursor) is a network round trip. Between Enter and that resolution the TUI held a torn-down-but-unreleased overlay with no repaint, so the screen appeared frozen on the old model while the switch was in flight.
+
+### Why an extension could not handle it
+
+- Selector lifecycle and overlay release are interactive-mode internals with no extension seam.
+
+### Expected merge conflict zones
+
+- `interactive-mode.ts` around `selectModelFromUi` (line ~6460).
+
+
+## 2026-08-21 - Optimistic pending user echo
+
+### What changed
+
+- `interactive-mode.ts`: Enter submissions now paint a TUI-local pending user bubble immediately, mark it eligible only after its own `promptDisposition` is `queued` or `started`, and replace it only when an eligible canonical user `message_start` arrives. Foreign user events are appended normally. Rejected and handled inputs unpaint their own pending bubble, and compaction queue cleanup removes only the queue records it owns.
+- `compaction-queue-transfer.ts`: queued compaction records carry the TUI-local pending echo id without entering session messages or persistence.
+- `packages/coding-agent/test/suite/optimistic-pending-user-echo.test.ts`: covers foreign user events, immediate rendering, exactly-once replacement, rejection/handled cleanup, FIFO queue reconciliation, and render-only persistence.
+
+### Why
+
+- Interactive input previously waited behind session admission gates before its user bubble appeared, creating a measured 0.45s p50 perceived submit delay. The TUI must distinguish its own accepted prompt lifecycle from extension and RPC prompts that can emit user events into the same session.
+
+### Why an extension could not handle it
+
+- Pending records must be created before AgentSession admission and reconciled with private interactive rendering at canonical `message_start`; extensions cannot identify or replace these built-in TUI components without persisting a fake message.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` submit handlers, user `message_start` reconciliation, and compaction queue reset/transfer paths.
+- `packages/coding-agent/src/modes/interactive/compaction-queue-transfer.ts` pending echo metadata.
+
 ## 2026-08-20 - Resumed transcripts paint the visible tail first
 
 ### What changed

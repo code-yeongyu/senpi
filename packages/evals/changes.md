@@ -2,6 +2,24 @@
 
 Tracker for `packages/evals` divergence from upstream `badlogic/pi-mono`.
 
+## vitest-evals harness bump (2026-08-20)
+
+### What changed
+
+- `packages/evals/package.json`: `vitest-evals` 0.15.0 -> 0.16.1.
+
+### Why
+
+- The pin had drifted behind the current release while the repository enforces exact pins, and the eval harness should track the version the suites are run against.
+
+### Why an extension could not handle it
+
+- The eval harness is a devDependency resolved by npm for this workspace before any runtime loads.
+
+### Expected merge conflict zones
+
+- LOW: the single devDependency pin.
+
 ## Repository-wide upstream divergence audit (2026-08-17)
 
 ### What changed

@@ -14,6 +14,7 @@ import { defaultExecutableDeps, resolveClaudeCodeExecutable } from "./executable
 import { buildClaudeSdkOauthQueryOptions } from "./options.ts";
 import { buildPromptBlocks, buildPromptStream } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks } from "./prompt-directive-dedupe.ts";
+import { refusalError } from "./refusal.ts";
 import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
 import { residentSessionMessages } from "./session-stream.ts";
@@ -151,6 +152,8 @@ export function streamClaudeSdkOauth(
 					});
 
 			for await (const message of messages) {
+				const refusal = refusalError(message);
+				if (refusal) throw refusal;
 				if (!started) {
 					stream.push({ type: "start", partial: output });
 					started = true;
@@ -212,6 +215,8 @@ export function streamClaudeSdkOauth(
 				});
 			}
 		} catch (error) {
+			// no-excuse-ok: catch
+			// Provider boundary converts every thrown SDK value into the stream error contract.
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = withAuthGuidance(error, errorMessage(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });

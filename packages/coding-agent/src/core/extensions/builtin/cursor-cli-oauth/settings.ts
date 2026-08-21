@@ -1,5 +1,12 @@
+import { statSync } from "node:fs";
 import { getAgentDir } from "../../../../config.ts";
-import { FileSettingsStorage, parseSettingsJson, type Settings, SettingsManager } from "../../../settings-manager.ts";
+import {
+	FileSettingsStorage,
+	getSettingsPath,
+	parseSettingsJson,
+	type Settings,
+	SettingsManager,
+} from "../../../settings-manager.ts";
 
 export type CursorCliOauthExecutionMode = "agent" | "plan";
 export type CursorCliOauthResumeMode = "auto" | "off";
@@ -213,9 +220,34 @@ export function createCursorCliOauthSandboxModeValidator(
 	};
 }
 
+function settingsFingerprint(path: string): string {
+	try {
+		const stat = statSync(path);
+		return `${stat.mtimeMs}:${stat.size}`;
+	} catch {
+		return "missing";
+	}
+}
+
+let cachedCursorCliOauthManager: { cwd: string; key: string; manager: SettingsManager } | undefined;
+
 /** Load global and project settings afresh, with env values taking final precedence. */
 export function loadCursorCliOauthProviderSettingsFromDisk(cwd: string): CursorCliOauthProviderSettings {
-	const settingsManager = SettingsManager.create(cwd, getAgentDir());
+	// fallbackEligible() calls this per candidate probe during retry-fallback; a fresh
+	// SettingsManager per call drove locked disk reads hundreds of times per provider
+	// error. Cache the manager by (cwd, settings mtime+size) and re-apply env live.
+	const agentDir = getAgentDir();
+	const key = `${cwd}|${settingsFingerprint(getSettingsPath(cwd, agentDir, "global"))}|${settingsFingerprint(
+		getSettingsPath(cwd, agentDir, "project"),
+	)}`;
+	let settingsManager =
+		cachedCursorCliOauthManager?.cwd === cwd && cachedCursorCliOauthManager.key === key
+			? cachedCursorCliOauthManager.manager
+			: undefined;
+	if (!settingsManager) {
+		settingsManager = SettingsManager.create(cwd, agentDir);
+		cachedCursorCliOauthManager = { cwd, key, manager: settingsManager };
+	}
 	const global = settingsManager.getGlobalSettings() as SettingsWithCursorCliOauthProvider;
 	const project = settingsManager.getProjectSettings() as SettingsWithCursorCliOauthProvider;
 	return resolveSettings(

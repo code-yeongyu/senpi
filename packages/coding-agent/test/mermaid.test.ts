@@ -63,29 +63,29 @@ describe("Mermaid rendering", () => {
 	});
 
 	it("falls back to the code block with a warning after streaming", () => {
-		const markdown = "```mermaid\nflowchart LR\n  A[Foo]:::highlight --> B[Bar]\n```";
+		const markdown = "```mermaid\nflowchart LR\n  A[Foo] --> B[Bar]\n  oops one\n```";
 		const final = transformMermaid(markdown);
 		const followedByText = transformMermaid(`${markdown}\nFollowing text`);
 		const streaming = transformMermaid(markdown, { isStreaming: true });
 
 		expect(final).toContain(markdown);
 		expect(final).toContain("```\n`Mermaid diagram not rendered");
-		expect(final).toContain('dropped, expected a link: ":::highlight --> B[Bar]"');
+		expect(final).toContain('dropped, expected a link: "one"');
 		expect(final).not.toContain("more)");
 		expect(followedByText).toContain("  \nFollowing text");
 		expect(streaming).not.toContain("Mermaid diagram not rendered");
 		expect(streaming).not.toContain("```mermaid");
-		expect(streaming).toContain("│ Foo │");
+		expect(streaming).toContain("│ Foo ├");
 	});
 
 	it("summarizes additional partial-render warnings", () => {
-		const markdown = "```mermaid\nflowchart LR\n  A[Foo]:::highlight --> B[Bar]\n  C[Baz]:::other --> D[Qux]\n```";
+		const markdown = "```mermaid\nflowchart LR\n  A[Foo] --> B[Bar]\n  oops one\n  oops two\n```";
 		const rendered = transformMermaid(markdown);
 
 		expect(rendered).toContain(markdown);
-		expect(rendered).toContain('dropped, expected a link: ":::highlight --> B[Bar]"');
+		expect(rendered).toContain('dropped, expected a link: "one"');
 		expect(rendered).toContain("(+1 more)");
-		expect(rendered).not.toContain('dropped, expected a link: ":::other --> D[Qux]"');
+		expect(rendered).not.toContain('dropped, expected a link: "two"');
 	});
 
 	it("respects rendering modes and skips thinking blocks", () => {

@@ -109,10 +109,11 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 					throw error;
 				}
 				lastError = error;
-				const start = Date.now();
-				while (Date.now() - start < delayMs) {
-					// Sleep synchronously to avoid changing callers to async.
-				}
+				// Atomics.wait sleeps the thread without spinning, so contended lock retries
+				// no longer burn a CPU core per waiter (same root cause as the settings-lock
+				// TUI freeze fixed in #1056). Stays synchronous to keep callers unchanged.
+				const sleeper = new Int32Array(new SharedArrayBuffer(4));
+				Atomics.wait(sleeper, 0, 0, delayMs);
 			}
 		}
 

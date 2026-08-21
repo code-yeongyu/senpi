@@ -4,6 +4,25 @@
 > of divergences from the upstream pin (v0.84.2, `914cf1472e`) so its audited production paths carry a
 > canonical four-section record; it is dated by its underlying work.
 
+## Dependency pin refresh and unused fork manifest entry removal (2026-08-20)
+
+### What changed
+
+- `packages/ai/package.json`: `@aws-sdk/client-bedrock-runtime` 3.1112.0 -> 3.1115.0, `@google/genai` 2.13.0 -> 2.18.0, `@smithy/node-http-handler` 4.11.2 -> 4.11.3, and `typebox` 1.3.8 -> 1.3.16. Removed the `chalk`, `proxy-from-env`, and `@mistralai/mistralai` dependencies. `openai` remains pinned at 6.26.0 and `@anthropic-ai/sdk` remains at 0.91.1.
+
+### Why
+
+- The three removed entries were retained fork manifest entries with zero imports left in this package. `proxy-from-env` in particular is no longer needed at all: `src/utils/node-http-proxy.ts` hand-rolls the `getProxyForUrl` and `no_proxy` logic, and that vendoring was itself the fix for compiled Bun binaries failing to resolve the package outside the repository, so keeping the dependency declared cannot help a compiled binary. `@mistralai/mistralai` is unused because the Mistral Conversations client is hand-rolled HTTP. `openai` stays at 6.26.0 as the documented fork pin, and `@anthropic-ai/sdk` stays at 0.91.1 because 0.120.0 breaks the browser-bundle smoke check.
+
+### Why an extension could not handle it
+
+- Dependency resolution happens before any runtime exists, and the browser-safety constraint that keeps `@anthropic-ai/sdk` pinned is a property of this package's own bundled export graph.
+
+### Expected merge conflict zones
+
+- HIGH: the `dependencies` block, which upstream edits on nearly every release; keep the fork pins and the removals.
+- LOW: nothing else in the manifest changed.
+
 ## Package manifest and catalog generator divergence after the 59a71b23 sync (2026-08-19)
 
 ### What changed

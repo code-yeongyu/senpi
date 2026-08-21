@@ -6,6 +6,7 @@ import { frameConnectMessage, stream as streamCursorAgent } from "../src/api/cur
 import type { AssistantMessage, Message, Model, ToolResultMessage } from "../src/types.ts";
 
 export type ExecMode = "success" | "rejection" | "pending" | "unknown" | "shellStream" | "dispatchFailure";
+export type TurnTerminationMode = "turnEndedOpen" | "silentMidTurn";
 type ClientFrame = ReturnType<typeof fromBinary<typeof AgentClientMessageSchema>>;
 
 const EXEC_IDS: Record<ExecMode, number> = {
@@ -96,6 +97,42 @@ async function observeServerTask(task: Promise<void>): Promise<unknown> {
 		return undefined;
 	} catch (error) {
 		return error instanceof Error ? error : new Error(String(error));
+	}
+}
+
+export async function runTurnTerminationScenario(mode: TurnTerminationMode): Promise<AssistantMessage> {
+	const server = http2.createServer();
+	const sessions = new Set<http2.ServerHttp2Session>();
+	server.on("session", (session) => {
+		sessions.add(session);
+		session.once("close", () => sessions.delete(session));
+	});
+	server.on("stream", (stream: http2.ServerHttp2Stream) => {
+		stream.on("data", () => undefined);
+		stream.respond({ ":status": 200, "content-type": "application/connect+proto" });
+		if (mode === "turnEndedOpen") stream.write(turnEndedFrame());
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address();
+	if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+	try {
+		const stream = streamCursorAgent(
+			buildModel(`http://127.0.0.1:${address.port}`),
+			{ messages: [{ role: "user", content: "hello", timestamp: 0 }] satisfies Message[] },
+			{
+				apiKey: "test-token",
+				streamHealthFailThresholdMs: 50,
+				streamHealthHeartbeatOnlyThresholdMs: 150,
+				turnEndDrainTimeoutMs: 50,
+			} satisfies CursorAgentOptions,
+		);
+		for await (const _event of stream) {
+			// Drain the public stream while the fake server deliberately stays open.
+		}
+		return await stream.result();
+	} finally {
+		for (const session of sessions) session.destroy();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
 	}
 }
 

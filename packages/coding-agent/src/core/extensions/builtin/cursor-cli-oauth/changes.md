@@ -1,5 +1,24 @@
 # cursor-cli-oauth extension changes
 
+## 2026-08-21 - Cache provider settings loads by mtime+size to cut lock convoy
+
+### What changed
+
+- `settings.ts`: `loadCursorCliOauthProviderSettingsFromDisk` caches the `SettingsManager` instance keyed on (cwd, mtimeMs:size of the global and project settings.json). A cache hit skips `SettingsManager.create` and its two locked disk reads; environment overrides are re-parsed on every call so live env changes take effect immediately.
+
+### Why
+
+- `fallbackEligible()` calls this loader on every retry-fallback candidate probe. A fresh `SettingsManager` per call took the cross-process settings lock twice and read+parsed both files; under error storms this multiplied into hundreds of locked disk reads per session per error, driving the lock-retry busy-wait (fixed in core) that froze the TUI.
+
+### Why an extension could not handle it
+
+- This IS the extension side: the cache is local to the provider settings loader.
+
+### Expected merge conflict zones
+
+- `settings.ts` around `loadCursorCliOauthProviderSettingsFromDisk`.
+
+
 ## 2026-08-19 - Guaranteed-refusal lane leaves implicit fallback expansion
 
 ### What changed

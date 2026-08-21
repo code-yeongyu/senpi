@@ -488,10 +488,76 @@ function formatLoginProviderCompletionDescription(provider: LoginProviderComplet
 	return provider.name === provider.id ? authTypes : `${provider.name} · ${authTypes}`;
 }
 
+type OptimisticUserEchoRenderHandle = {
+	replace(message: AgentMessage): void;
+	remove(): void;
+};
+
+type OptimisticUserEchoRecord = {
+	readonly id: string;
+	readonly handle: OptimisticUserEchoRenderHandle;
+	eligibleForCanonicalStart: boolean;
+};
+
+/** Coordinates render-only user echoes with AgentSession's canonical input lifecycle. */
+export class OptimisticUserEchoController {
+	private nextId = 0;
+	private readonly pending: OptimisticUserEchoRecord[] = [];
+	private readonly render: (text: string) => OptimisticUserEchoRenderHandle;
+
+	constructor(render: (text: string) => OptimisticUserEchoRenderHandle) {
+		this.render = render;
+	}
+
+	begin(text: string): string {
+		const id = `pending-user-${++this.nextId}`;
+		this.pending.push({ id, handle: this.render(text), eligibleForCanonicalStart: false });
+		return id;
+	}
+
+	promptOptions(id: string): {
+		preflightResult: (success: boolean) => void;
+		promptDisposition: (disposition: "handled" | "queued" | "started") => void;
+	} {
+		return {
+			preflightResult: (success) => {
+				if (!success) this.reject(id);
+			},
+			promptDisposition: (disposition) => {
+				const record = this.pending.find((candidate) => candidate.id === id);
+				if (!record) return;
+				if (disposition === "handled") this.reject(id);
+				else record.eligibleForCanonicalStart = true;
+			},
+		};
+	}
+
+	reject(id: string): void {
+		const index = this.pending.findIndex((record) => record.id === id);
+		if (index === -1) return;
+		const [record] = this.pending.splice(index, 1);
+		record?.handle.remove();
+	}
+
+	remove(id: string): void {
+		this.reject(id);
+	}
+
+	replaceNext(message: AgentMessage): boolean {
+		const first = this.pending[0];
+		if (!first?.eligibleForCanonicalStart) return false;
+		const [record] = this.pending.splice(0, 1);
+		if (!record) return false;
+		record.handle.replace(message);
+		return true;
+	}
+}
+
 /** A user submission: editor text plus the images resolved from its `[Image #N]` markers. */
 interface InteractiveUserInput {
 	text: string;
 	images?: ImageContent[];
+	pendingEchoId: string;
 }
 
 /** Local copy of pi-tui's image-marker pattern so submission scanning never mutates a shared /g regex. */
@@ -713,6 +779,7 @@ export class InteractiveMode {
 	private isInitialized = false;
 	private onInputCallback?: (input: InteractiveUserInput) => void;
 	private pendingUserInputs: InteractiveUserInput[] = [];
+	private readonly optimisticUserEchoes: OptimisticUserEchoController;
 	/**
 	 * Clipboard images pasted into the composer, keyed by their visible
 	 * `[Image #N]` marker number. The editor stores marker ids only, so these
@@ -872,6 +939,7 @@ export class InteractiveMode {
 
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
+		this.optimisticUserEchoes = new OptimisticUserEchoController((text) => this.renderPendingUserEcho(text));
 		const tuiMode = options.tuiMode ?? this.settingsManager.getTuiMode();
 		this.options = { ...options, tuiMode };
 		this.chrome = options.chrome === "grok" ? new GrokChrome() : options.chrome;
@@ -1557,8 +1625,10 @@ export class InteractiveMode {
 				await this.session.prompt(userInput.text, {
 					streamingBehavior: "steer",
 					...(userInput.images ? { images: userInput.images } : {}),
+					...this.optimisticUserEchoes.promptOptions(userInput.pendingEchoId),
 				});
 			} catch (error: unknown) {
+				this.optimisticUserEchoes.reject(userInput.pendingEchoId);
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
 			}
@@ -4040,7 +4110,13 @@ export class InteractiveMode {
 			if (this.isExtensionCommand(text)) {
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
-				await this.session.prompt(text);
+				const pendingEchoId = this.optimisticUserEchoes.begin(text);
+				try {
+					await this.session.prompt(text, this.optimisticUserEchoes.promptOptions(pendingEchoId));
+				} catch (error) {
+					this.optimisticUserEchoes.reject(pendingEchoId);
+					throw error;
+				}
 				return;
 			}
 
@@ -4075,7 +4151,13 @@ export class InteractiveMode {
 				if (this.isExtensionCommand(text)) {
 					this.editor.addToHistory?.(text);
 					this.editor.setText("");
-					await this.session.prompt(text);
+					const pendingEchoId = this.optimisticUserEchoes.begin(text);
+					try {
+						await this.session.prompt(text, this.optimisticUserEchoes.promptOptions(pendingEchoId));
+					} catch (error) {
+						this.optimisticUserEchoes.reject(pendingEchoId);
+						throw error;
+					}
 				} else {
 					this.queueCompactionSubmission(text, "steer");
 				}
@@ -4093,10 +4175,17 @@ export class InteractiveMode {
 				const images = preResolvedImages ?? this.takeSubmissionImages(text);
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
-				await this.session.prompt(text, {
-					streamingBehavior: "steer",
-					...(images.length > 0 ? { images } : {}),
-				});
+				const pendingEchoId = this.optimisticUserEchoes.begin(text);
+				try {
+					await this.session.prompt(text, {
+						streamingBehavior: "steer",
+						...(images.length > 0 ? { images } : {}),
+						...this.optimisticUserEchoes.promptOptions(pendingEchoId),
+					});
+				} catch (error) {
+					this.optimisticUserEchoes.reject(pendingEchoId);
+					throw error;
+				}
 				this.updatePendingMessagesDisplay();
 				this.ui.requestRender();
 				return;
@@ -4107,7 +4196,9 @@ export class InteractiveMode {
 			this.flushPendingBashComponents();
 
 			const images = preResolvedImages ?? this.takeSubmissionImages(text);
-			const submission: InteractiveUserInput = images.length > 0 ? { text, images } : { text };
+			const pendingEchoId = this.optimisticUserEchoes.begin(text);
+			const submission: InteractiveUserInput =
+				images.length > 0 ? { text, images, pendingEchoId } : { text, pendingEchoId };
 			if (this.onInputCallback) {
 				this.onInputCallback(submission);
 			} else {
@@ -4208,7 +4299,7 @@ export class InteractiveMode {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
-					this.addMessageToChat(event.message);
+					if (!this.optimisticUserEchoes.replaceNext(event.message)) this.addMessageToChat(event.message);
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
@@ -4789,6 +4880,42 @@ export class InteractiveMode {
 		}
 
 		this.chatContainer.addChild(component);
+	}
+
+	private renderPendingUserEcho(text: string): OptimisticUserEchoRenderHandle {
+		const spacer = this.chatContainer.children.length > 0 ? new Spacer(1) : undefined;
+		if (spacer) this.chatContainer.addChild(spacer);
+		const component = new UserMessageComponent(
+			text,
+			this.getMarkdownThemeWithSettings(),
+			this.outputPad,
+			this.getMarkdownTransformers(),
+		);
+		this.chatContainer.addChild(component);
+		this.ui.requestRender();
+
+		const removePending = (): number => {
+			const componentIndex = this.chatContainer.children.indexOf(component);
+			const insertionIndex = spacer ? this.chatContainer.children.indexOf(spacer) : componentIndex;
+			if (spacer) this.chatContainer.removeChild(spacer);
+			this.chatContainer.removeChild(component);
+			return insertionIndex;
+		};
+		return {
+			replace: (message) => {
+				const insertionIndex = removePending();
+				const appendIndex = this.chatContainer.children.length;
+				this.addMessageToChat(message);
+				const canonicalChildren = this.chatContainer.children.splice(appendIndex);
+				if (!spacer && canonicalChildren[0] instanceof Spacer) canonicalChildren.shift()?.dispose?.();
+				this.chatContainer.children.splice(insertionIndex, 0, ...canonicalChildren);
+				this.ui.requestRender();
+			},
+			remove: () => {
+				removePending();
+				this.ui.requestRender();
+			},
+		};
 	}
 
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
@@ -5430,10 +5557,17 @@ export class InteractiveMode {
 		if (this.session.isStreaming) {
 			this.editor.addToHistory?.(text);
 			this.editor.setText("");
-			await this.session.prompt(text, {
-				streamingBehavior: "followUp",
-				...(images.length > 0 ? { images } : {}),
-			});
+			const pendingEchoId = this.optimisticUserEchoes.begin(text);
+			try {
+				await this.session.prompt(text, {
+					streamingBehavior: "followUp",
+					...(images.length > 0 ? { images } : {}),
+					...this.optimisticUserEchoes.promptOptions(pendingEchoId),
+				});
+			} catch (error) {
+				this.optimisticUserEchoes.reject(pendingEchoId);
+				throw error;
+			}
 			this.updatePendingMessagesDisplay();
 			this.ui.requestRender();
 		}
@@ -5711,6 +5845,9 @@ export class InteractiveMode {
 		this.compactionInFlightMessages = [];
 		this.compactionTransferAbortControllers.clear();
 		this.compactionQueuedMessages = [];
+		for (const message of compactionMessages) {
+			if (message.pendingEchoId) this.optimisticUserEchoes?.remove(message.pendingEchoId);
+		}
 		const fallbackOrder = nativeMessages.reduce((maximum, message) => Math.max(maximum, message.enqueueOrder), 0);
 		const ordered = [
 			...nativeMessages,
@@ -5805,10 +5942,12 @@ export class InteractiveMode {
 	}
 
 	private queueCompactionMessage(text: string, mode: "steer" | "followUp", droppedImageCount = 0): void {
+		const pendingEchoId = this.optimisticUserEchoes.begin(text);
 		this.compactionQueuedMessages.push({
 			text,
 			mode,
 			enqueueOrder: this.session.reserveQueuedInputOrder(),
+			pendingEchoId,
 		});
 		this.getSessionLogger().debug("compaction_queue_enqueue", {
 			mode,
@@ -5900,16 +6039,37 @@ export class InteractiveMode {
 						return restorable.length;
 					},
 					isCommand: (message) => this.isExtensionCommand(message.text),
-					deliverCommand: (message) => session.prompt(message.text),
+					deliverCommand: async (message) => {
+						const pendingEchoId = message.pendingEchoId;
+						try {
+							await session.prompt(
+								message.text,
+								pendingEchoId ? this.optimisticUserEchoes.promptOptions(pendingEchoId) : undefined,
+							);
+						} catch (error) {
+							if (pendingEchoId) this.optimisticUserEchoes.reject(pendingEchoId);
+							throw error;
+						}
+					},
 					deliverFirstPrompt: (message) =>
 						waitForPromptDisposition(
-							(preflightResult, promptDisposition) =>
-								session.prompt(message.text, {
+							(preflightResult, promptDisposition) => {
+								const echoOptions = message.pendingEchoId
+									? this.optimisticUserEchoes.promptOptions(message.pendingEchoId)
+									: undefined;
+								return session.prompt(message.text, {
 									streamingBehavior: message.mode,
-									preflightResult,
-									promptDisposition,
+									preflightResult: (success) => {
+										echoOptions?.preflightResult(success);
+										preflightResult(success);
+									},
+									promptDisposition: (disposition) => {
+										echoOptions?.promptDisposition(disposition);
+										promptDisposition(disposition);
+									},
 									signal: this.compactionTransferAbortControllers.get(message)?.signal,
-								}),
+								});
+							},
 							(error) => {
 								if ((this.compactionQueueGeneration ?? 0) !== generation || this.session !== session) return;
 								this.showError(
@@ -6298,11 +6458,15 @@ export class InteractiveMode {
 	}
 
 	private async selectModelFromUi(model: Model<any>, done?: () => void): Promise<void> {
+		// The selector overlay is already disposed on Enter, so releasing it only
+		// after setModel resolves leaves a stale frozen frame for the whole provider
+		// auth round trip. Release and repaint first, then apply the switch.
+		done?.();
+		this.ui?.requestRender();
 		try {
 			const systemPromptChange = await this.session.setModel(model);
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
-			done?.();
 			const systemPromptStr = systemPromptChange?.systemPromptName
 				? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
 				: "";
@@ -6311,7 +6475,6 @@ export class InteractiveMode {
 			void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
 			this.checkDaxnutsEasterEgg(model);
 		} catch (error) {
-			done?.();
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}

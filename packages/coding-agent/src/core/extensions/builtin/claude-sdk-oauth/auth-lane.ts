@@ -19,6 +19,7 @@ import { hasRequestOauthToken, mergeRequestAuthEnvironment, stripManagedAuthEnvi
 import { writeConfigDirCredential } from "./config-dir-credentials.ts";
 import { classifySdkError } from "./errors.ts";
 import { runFailover } from "./failover.ts";
+import { refusalError } from "./refusal.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 import type { ClaudeSdkOauthProviderSettings, ClaudeSdkOauthTokenInjection } from "./settings.ts";
 
@@ -154,6 +155,8 @@ async function prepareSlot(
 }
 
 function sdkFailure(message: SDKMessage): unknown | undefined {
+	const refusal = refusalError(message);
+	if (refusal) return refusal;
 	if (message.type === "assistant" && message.error) return message.error;
 	if (message.type === "result" && message.subtype !== "success") {
 		const errors = "errors" in message && Array.isArray(message.errors) ? (message.errors as unknown[]) : [];

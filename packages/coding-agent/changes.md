@@ -1,5 +1,28 @@
 # Local fork changes
 
+## Coding-agent dependency refresh and generated install-lock update (2026-08-20)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.220 -> 0.3.238, `@aws-sdk/client-bedrock-runtime` 3.1112.0 -> 3.1115.0, `@smithy/node-http-handler` 4.11.2 -> 4.11.3, `grok-mermaid` 0.2.2 -> 0.2.3, `highlight.js` 11.11.1 -> 11.12.0, `marked` 18.0.7 -> 18.0.10, `minimatch` 10.2.5 -> 10.2.6, `undici` 8.9.0 -> 8.10.0, `ws` 8.21.1 -> 8.21.3, `typebox` 1.3.8 -> 1.3.16, and `jsdom` 29.1.1 -> 30.0.1 with `@types/jsdom` 28.0.3 -> 30.0.0; the overrides block follows the root on `@hono/node-server` 2.1.1 and `rimraf` 6.1.3. Removed the unused `@mistralai/mistralai` dependency and the unused `@types/ms` devDependency. `@anthropic-ai/sdk` stays at 0.91.1, and `openai` stays at 6.26.0 and `signal-exit` at 3.0.7 as deliberate pins.
+- `packages/coding-agent/install-lock/package.json` and `packages/coding-agent/install-lock/package-lock.json`: regenerated from the refreshed root lock.
+- `packages/coding-agent/publish-deps.lock.json`: regenerated shrinkwrap for the same tree.
+- `packages/coding-agent/test/mermaid.test.ts`: the two tests covering the partial-render warning path now use input that still warns under grok-mermaid 0.2.3, which learned to render the `:::className` node syntax the old fixtures relied on failing.
+- `packages/coding-agent/test/suite/claude-sdk-oauth-naming.test.ts`: asserts the upstream package name without pinning its version, since the naming boundary is the subject of the test.
+
+### Why
+
+- jsdom 30 ships no bundled types, so `@types/jsdom` stays and moves in lockstep; the bun-compile asset patch in `scripts/prepare-bun-compile-assets.mjs` still matches both jsdom internals it rewrites, and the `build:binary` `xhr-sync-worker.js` entry still resolves. `@mistralai/mistralai` and `@types/ms` had zero source references here, and the remaining import-less dependencies stay declared because pi-ai and pi-tui are bundled into this package and their runtime dependencies must resolve from it. The two test edits track real upstream behavior changes rather than relaxing an assertion: both still exercise the same production branches.
+
+### Why an extension could not handle it
+
+- The dependency set, the generated install-lock, and the published shrinkwrap are resolved by npm and by repository tooling before the extension runtime loads, and the bundled-dependency contract is a packaging property of this package.
+
+### Expected merge conflict zones
+
+- HIGH: the `dependencies` block in `packages/coding-agent/package.json` and the two generated lock artifacts, which upstream regenerates on every release.
+- LOW: the two test fixtures, which only move when the corresponding upstream package changes behavior.
+
 ## Repository-wide changes.md audit backfill for package manifests and configs (2026-08-17)
 
 ### What changed

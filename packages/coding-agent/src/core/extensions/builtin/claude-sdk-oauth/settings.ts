@@ -1,5 +1,6 @@
+import { statSync } from "node:fs";
 import { getAgentDir } from "../../../../config.ts";
-import { type Settings, SettingsManager } from "../../../settings-manager.ts";
+import { getSettingsPath, type Settings, SettingsManager } from "../../../settings-manager.ts";
 import type { SettingSource } from "./sdk-boundary.ts";
 
 export type ClaudeSdkOauthSystemPromptMode = "preset-append" | "full" | "override";
@@ -165,7 +166,32 @@ export function loadClaudeSdkOauthProviderSettings(
 	return settings;
 }
 
+function settingsFingerprint(path: string): string {
+	try {
+		const stat = statSync(path);
+		return `${stat.mtimeMs}:${stat.size}`;
+	} catch {
+		return "missing";
+	}
+}
+
+let cachedClaudeSdkOauthManager: { cwd: string; key: string; manager: SettingsManager } | undefined;
+
 /** Load settings from Senpi's configured global and project settings.json paths. */
 export function loadClaudeSdkOauthProviderSettingsFromDisk(cwd: string): ClaudeSdkOauthProviderSettings {
-	return loadClaudeSdkOauthProviderSettings(SettingsManager.create(cwd, getAgentDir()));
+	// fallbackEligible() calls this per candidate probe; cache the manager by
+	// (cwd, settings mtime+size) and re-apply env live to avoid locked disk reads.
+	const agentDir = getAgentDir();
+	const key = `${cwd}|${settingsFingerprint(getSettingsPath(cwd, agentDir, "global"))}|${settingsFingerprint(
+		getSettingsPath(cwd, agentDir, "project"),
+	)}`;
+	let settingsManager =
+		cachedClaudeSdkOauthManager?.cwd === cwd && cachedClaudeSdkOauthManager.key === key
+			? cachedClaudeSdkOauthManager.manager
+			: undefined;
+	if (!settingsManager) {
+		settingsManager = SettingsManager.create(cwd, agentDir);
+		cachedClaudeSdkOauthManager = { cwd, key, manager: settingsManager };
+	}
+	return loadClaudeSdkOauthProviderSettings(settingsManager);
 }

@@ -12,6 +12,32 @@
 
 ### Removed
 
+## [2026.8.21-2] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `js` eval cells now accept `local://` paths in `read()` and `write()` like every other kernel. The session manager computed the session local root only after its `language === "js"` early return, so the JavaScript kernel was constructed without `localRoots` or `artifactsDir` and every `local://` helper call failed with `Protocol paths are not supported by write()`, even though the JavaScript prelude documents `local://` as the session local root. `py`/`rb`/`jl` behavior is unchanged.
+
+### Removed
+
+## [2026.8.21] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.8.20-2] - 2026-08-20
 
 ### Breaking Changes

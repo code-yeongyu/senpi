@@ -111,7 +111,7 @@ describe("Grok 4.5 prompt preset", () => {
 				"xai/grok-4.5",
 				"opencode/grok-4.5",
 				"openrouter/x-ai/grok-4.5",
-				"vercel-ai-gateway/xai/grok-4.5",
+				"vercel-ai-gateway/spacexai/grok-4.5",
 			]),
 		);
 		expect(misses).toEqual([]);

@@ -2,7 +2,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Transport } from "@earendil-works/pi-ai";
 import type { TuiMode as RendererTuiMode, ScrollViewScrollbar } from "@earendil-works/pi-tui";
 import { createHash, randomUUID } from "crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -541,10 +541,11 @@ export class FileSettingsStorage implements SettingsStorage {
 					throw error;
 				}
 				lastError = error;
-				const start = Date.now();
-				while (Date.now() - start < delayMs) {
-					// Sleep synchronously to avoid changing callers to async.
-				}
+				// Atomics.wait sleeps the thread without spinning, so contended lock retries
+				// no longer burn a CPU core per waiter (root cause of the TUI freeze under
+				// provider-error storms). Stays synchronous to keep callers unchanged.
+				const sleeper = new Int32Array(new SharedArrayBuffer(4));
+				Atomics.wait(sleeper, 0, 0, delayMs);
 			}
 		}
 
@@ -555,36 +556,40 @@ export class FileSettingsStorage implements SettingsStorage {
 		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
 		const dir = dirname(path);
 
-		let release: (() => void) | undefined;
+		// Read without the lock: writers publish atomically via temp+rename below, so
+		// a reader can never observe partial content. Read-only callers therefore skip
+		// lock acquisition entirely (no lock churn, no lock-dir filesystem events).
+		const current = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+		let next = fn(current);
+		if (next === undefined) {
+			return;
+		}
+		// Only create directory when we actually need to write
+		if (!existsSync(dir)) {
+			mkdirSync(dir, { recursive: true });
+		}
+		const release = this.acquireLockSyncWithRetry(path);
 		try {
-			// Only create directory and lock if file exists or we need to write
-			let current: string | undefined;
-			if (existsSync(path)) {
-				release = this.acquireLockSyncWithRetry(path);
-				current = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+			const underLock = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+			if (underLock !== current) {
+				// Lost a write race: re-merge against the winner's content under the lock.
+				next = fn(underLock);
 			}
-			let next = fn(current);
 			if (next !== undefined) {
-				// Only create directory when we actually need to write
-				if (!existsSync(dir)) {
-					mkdirSync(dir, { recursive: true });
-				}
-				if (!release) {
-					release = this.acquireLockSyncWithRetry(path);
-					if (existsSync(path)) {
-						// Lost the first-write race: re-merge against the winner's content under the lock.
-						next = fn(readFileSync(path, "utf-8"));
-					}
-				}
-				if (next !== undefined) {
-					writeFileSync(path, next, "utf-8");
+				// Publish atomically: write a same-directory temp file, then rename over
+				// the settings path so lock-free readers never see a torn write.
+				const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+				try {
+					writeFileSync(tempPath, next, "utf-8");
 					recordSelfWrite(path, next);
+					renameSync(tempPath, path);
+				} catch (error) {
+					rmSync(tempPath, { force: true });
+					throw error;
 				}
 			}
 		} finally {
-			if (release) {
-				release();
-			}
+			release();
 		}
 	}
 }
