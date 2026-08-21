@@ -222,8 +222,10 @@
 - `stream-watchdog.ts`: `consumeStreamWithIdleTimeout()` accepts an optional `maxDurationMs` and throws the new
   `StreamDurationBudgetError` when one stream outlives it. The budget is a single absolute deadline for the whole
   stream, not a per-read timer, and it is cleared alongside the idle timer. Caller aborts still win over the budget.
-- `DEFAULT_SUMMARIZATION_MAX_DURATION_MS` = 120s, applied by `compaction.ts` `completeSummarization()` and the
-  extension's `speculative.ts` request path. `retryAssistantCall` applies it per attempt.
+- `DEFAULT_SUMMARIZATION_MAX_DURATION_MS` = 900s, applied by `compaction.ts` `completeSummarization()` and the
+  extension's `speculative.ts` request path. `retryAssistantCall` applies it per attempt. The 120s cap aborted
+  legitimate large-session summaries (observed: 257k tokens on Grok 4.6) while the stream was still live; idle
+  timeout (300s silence) still kills a hung connection.
 
 ### Why
 
