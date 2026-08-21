@@ -1,5 +1,16 @@
 # Builtin compaction extension changes
 
+## Summarization must not forward agent tools (2026-08-21)
+
+### What changed
+- `getSummarizationTools()` now returns `[]` via `compactionSummarizationTools()` instead of copying `pi.getActiveTools()`.
+- The summarizer remains a prose-only LLM call; `snapshot.tools` is empty so models cannot end the summary with a bare `toolUse`.
+
+### Why
+- Forwarding the live tool list made tool-preferring models (observed: openai-codex/gpt-5.6-sol) finish summarization with `stopReason: toolUse` and no text.
+- `getSummaryText()` only joins `content.type === "text"`, so that becomes `SummaryGenerationError("empty-summary")` and compaction is rejected while tokens stay above the threshold.
+- Observed on session `01a01fae` at 257k tokens: auto, retry, and manual `/compact` all rejected with empty-summary `toolUse`. The 2026-07-21 note already documented this failure mode.
+
 ## Skip Cursor compaction while the session is not idle (2026-08-19)
 
 Blocking and generated apply refuse `cursor` / `cursor-cli-oauth` when `!ctx.isIdle()`. Mid-run Cursor compact poisons `conversationId`. Idle `agent_end` / `pre_prompt` still compact.
