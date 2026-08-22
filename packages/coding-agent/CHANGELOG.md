@@ -492,6 +492,10 @@
 
 ### Fixed
 
+- DeepSeek V4 (flash/flash-0731/pro) and Kimi K3 presets now carry delegation + skill gates: partitioned `task` batch before the local critical path and a terminal visible-skill scan (`SKILL.md` + `load_skills`), mirroring the canary's M1/M2 cure for under-delegation / under-load (see PR #912, draft — ready on ≥20 qualified turns).
+
+### Fixed
+
 - Extension selectors (including the `/fallback` model picker) now window long option lists around the
   highlighted row instead of rendering every entry. On large model registries the full list overflowed the
   viewport and the moved highlight was never painted, so arrow keys and j/k appeared to do nothing even
