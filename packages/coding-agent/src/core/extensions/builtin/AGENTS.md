@@ -12,7 +12,7 @@
 | 4 | `gpt-apply-patch` | `gpt-apply-patch/` | Codex-style `apply_patch` tool with rich render + freeform grammar |
 | 5 | `imagegen` | `imagegen/` | Client-side image generation tool plus the bundled `skill/` guidance and shared auth/state used by the native lane |
 | 6 | `openai-image-gen` | `openai-image-gen/` | OpenAI-native image generation; follows `imagegen` so the native injector's bypass wiring observes the registered client tool |
-| 7 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, glm-5.3, deepseek-v4-{flash,flash-0731,pro}, grok-4.{5,6}, kimi-k2-{6,7}, kimi-k3) |
+| 7 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, glm-5.3, deepseek-v4-{flash,flash-0731,pro}, grok-4.{5,6}, gemini, muse-spark, kimi-k2-{6,7}, kimi-k3) |
 | 8 | `todowrite` | `todotools/` | Op-based oh-my-pi todo port + `/todo` command; fully diverged from `../pi-extensions/pi-todotools` |
 | 9 | `redraws` | `redraws.ts` | `/tui` full-redraw count diagnostic |
 | 10 | `anthropic-web-search` | `anthropic-web-search/` | Anthropic-native web search tool |
@@ -65,7 +65,7 @@ Shared non-factory modules in this directory:
 
 - **Subdirectory extensions** ship multi-file: `index.ts` + supporting `.ts` (`registry.ts`, `types.ts`, `parsers.ts`, etc.).
 - **Single-file extensions** are kept flat (`diff.ts`, `files.ts`, `redraws.ts`, `service-tier.ts`, `tps.ts`, `prompt-url-widget.ts`).
-- **`prompt-preset/`** has per-model files (`gpt-5.6.ts`, `claude-opus-4-8.ts`, …) and a shared `file-operations.ts` tuning block. New model = new preset file + entry in `presets.ts`. Models covered: gpt-5.x (incl. `gpt-5.3-codex`), claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, glm-5.3, deepseek-v4-{flash,flash-0731,pro}, grok-4.{5,6}, kimi-k2-{6,7}, kimi-k3.
+- **`prompt-preset/`** has per-model files (`gpt-5.6.ts`, `claude-opus-4-8.ts`, …) and a shared `file-operations.ts` tuning block. New model = new preset file + entry in `presets.ts`. Models covered: gpt-5.x (incl. `gpt-5.3-codex`), claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, glm-5.3, deepseek-v4-{flash,flash-0731,pro}, grok-4.{5,6}, gemini, muse-spark, kimi-k2-{6,7}, kimi-k3.
 - **`permission-system/` is a full port** of opencode's permission flow.
 - **`compaction/`** is policy-rich (`policy.ts`, `speculative.ts`, `restoration-tracker.ts`, `circuit-breaker.ts`, `degradation-monitor.ts`, `per-turn-cap.ts`, `tool-truncation.ts`, `checkpoint-state.ts`, `context-reduction.ts`, `openai-remote.ts`, `repair-tool-pairs.ts`, `state.ts`, `todo-bridge.ts`, `prompts.ts`). Touch only with policy tests in lock-step.
 - **External versions**: `external-versions.json` pins versions of sibling `../pi-extensions` packages used as vendored builtins; refresh with `packages/coding-agent/scripts/sync-builtin-extensions.mjs`.
