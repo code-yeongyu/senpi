@@ -560,6 +560,26 @@ describe("AI Providers Empty Message Tests", () => {
 		},
 	);
 
+	describe.skipIf(!process.env.NEURALWATT_API_KEY)("Neuralwatt Provider Empty Messages", () => {
+		const llm = getModel("neuralwatt", "kimi-k2.6-fast");
+
+		it("should handle empty content array", { retry: 3, timeout: 30000 }, async () => {
+			await testEmptyMessage(llm);
+		});
+
+		it("should handle empty string content", { retry: 3, timeout: 30000 }, async () => {
+			await testEmptyStringMessage(llm);
+		});
+
+		it("should handle whitespace-only content", { retry: 3, timeout: 30000 }, async () => {
+			await testWhitespaceOnlyMessage(llm);
+		});
+
+		it("should handle empty assistant message in conversation", { retry: 3, timeout: 30000 }, async () => {
+			await testEmptyAssistantMessage(llm);
+		});
+	});
+
 	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan Provider Empty Messages", () => {
 		const llm = getModel("alibaba-token-plan", "qwen3.7-max");
 

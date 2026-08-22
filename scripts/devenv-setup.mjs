@@ -78,6 +78,7 @@ const PROVIDER_KEYS = [
 	"XAI_API_KEY",
 	"DEEPSEEK_API_KEY",
 	"ALIBABA_TOKEN_PLAN_API_KEY",
+	"NEURALWATT_API_KEY",
 ];
 
 function hasCmd(cmd) {

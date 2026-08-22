@@ -262,6 +262,7 @@ senpi
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` | `xiaomi-token-plan-ams` |
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` | `xiaomi-token-plan-sgp` |
 | Alibaba Token Plan (ap-southeast-1) | `ALIBABA_TOKEN_PLAN_API_KEY` | `alibaba-token-plan` |
+| Neuralwatt | `NEURALWATT_API_KEY` | `neuralwatt` |
 
 #### OpenGateway
 
@@ -291,7 +292,8 @@ Store credentials in `~/.senpi/agent/auth.json`:
   "xiaomi-token-plan-cn":  { "type": "api_key", "key": "..." },
   "xiaomi-token-plan-ams": { "type": "api_key", "key": "..." },
   "xiaomi-token-plan-sgp": { "type": "api_key", "key": "..." },
-  "alibaba-token-plan": { "type": "api_key", "key": "..." }
+  "alibaba-token-plan": { "type": "api_key", "key": "..." },
+  "neuralwatt": { "type": "api_key", "key": "..." }
 }
 ```
 
