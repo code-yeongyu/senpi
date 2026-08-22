@@ -38,12 +38,13 @@ export class StreamDurationBudgetError extends Error {
 export const DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS = 300_000;
 
 /**
- * Total time one summarization attempt may hold the session. Well above healthy
- * summarizations (tens of seconds) and below the idle budget, so a live-but-slow
- * provider fails fast enough to keep the session interactive. Retries apply this
- * budget per attempt.
+ * Total time one summarization attempt may hold the session. Large sessions
+ * (200k+ tokens) on slower models take minutes, not tens of seconds; 15 minutes
+ * still bounds a live-but-slow provider so the session is not stuck forever.
+ * Silence is a different class and stays on the 300s idle timeout. Retries apply
+ * this budget per attempt.
  */
-export const DEFAULT_SUMMARIZATION_MAX_DURATION_MS = 120_000;
+export const DEFAULT_SUMMARIZATION_MAX_DURATION_MS = 900_000;
 
 export interface ConsumeStreamWithIdleTimeoutOptions<T> {
 	/** Silence budget per read; the timer resets on every event. */
