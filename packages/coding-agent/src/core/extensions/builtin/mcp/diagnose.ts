@@ -121,6 +121,7 @@ function execFileForDiagnostics(
 				cwd: options.cwd,
 				env: options.env,
 				killSignal: "SIGKILL",
+				windowsHide: true,
 				maxBuffer: MCP_STDIO_DIAGNOSTIC_MAX_BYTES * 4,
 				timeout: MCP_STDIO_DIAGNOSTIC_TIMEOUT_MS,
 			},

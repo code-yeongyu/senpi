@@ -1,3 +1,23 @@
+
+## Windows console hide for Cursor CLI probes (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/executable.ts`: `VersionProbeOptions` now allows `windowsHide` and probe `execFile` passes `windowsHide:true`.
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models.ts`: model probe `spawn` now passes `windowsHide:true`.
+
+### Why
+
+- Windows console less parents briefly show a conhost window for every spawn without `windowsHide:true`. Detached/background helpers run periodically, so flashes recur until all sites are hidden.
+
+### Why an extension could not handle it
+
+- Spawn options live inside the caller (helper, daemon, runner). Extensions cannot inject `windowsHide` from outside; the spawn site itself must set it.
+
+### Expected merge conflict zones
+
+- LOW: the spawn options literal in the patched file(s).
+
 # cursor-cli-oauth extension changes
 
 ## 2026-08-21 - Cache provider settings loads by mtime+size to cut lock convoy
