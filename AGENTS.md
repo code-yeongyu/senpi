@@ -153,3 +153,13 @@ Persistent terminals -> packages/pty -> crates/senpi-pty
 - Releases use CalVer and lockstep-version the packages listed in `scripts/release-packages.mjs`.
 - Release only from clean `main` after changelog audit and local release smoke tests. `scripts/release.mjs` owns versioning, generated artifacts, checks, commits, tag, and push.
 - Never rerun the release script after its tag is pushed; failed publishing is retried from the existing tag workflow.
+
+## Cursor Cloud specific instructions
+
+Durable, non-obvious caveats for cloud agents. Standard commands live in `## COMMANDS` and `.agents/skills/senpi-qa/SKILL.md`; this section only records what is easy to get wrong.
+
+- **Node runtime is the main gotcha.** The VM's ambient `node` (`/exec-daemon/node`, first-ish in `PATH`) is v22, but `package.json#engines` requires `>=24`. Node 24 is installed via `nvm` and exposed to every shell (login and non-login) by symlinks in `/usr/local/cargo/bin` — the first, writable `PATH` entry — so bare `node`/`npm`/`npx` already resolve to v24. Don't "fix" a version mismatch by pointing at `/exec-daemon/node`; if bare `node` ever reports v22, re-run the update script or re-create the symlinks (`ln -sf "$(nvm which 24)" /usr/local/cargo/bin/node`, likewise `npm`/`npx`). `/exec-daemon` is read-only sandbox infra — never modify it.
+- **No provider API keys are configured by default.** The CLI boots and renders but shows "No models available", so real agent turns can't run. Exercise the full agent loop with zero tokens via the senpi-qa mock-loop channel (`node .agents/skills/senpi-qa/scripts/mock-loop.mjs --with-tool`) — it spins up a local fake model server and needs no credentials. Add a real key (e.g. `ANTHROPIC_API_KEY`) to `.env.local` or the environment only if you need live-provider QA.
+- **Run the app from source** with `./pi-test.sh` (TUI) — no build step needed; it runs via `tsx`.
+- **`npm run check` uses `biome --write`** and will silently reformat files. On the current tree it reformats a couple of pre-existing drifted files, leaving the working tree dirty even though it exits 0 — revert those with `git checkout -- <path>` if you didn't intend to touch them.
+- **`npm test` runs the entire workspace suite and takes several minutes** (~9 min observed); scope to a single package's test command during iteration.
