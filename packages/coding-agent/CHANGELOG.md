@@ -315,6 +315,8 @@
 
 ### Added
 
+- Skill gate for 7 presets -- `gemini`, `muse-spark`, `glm-5-2`, `glm-5-3` carry `load-matching-skills` typed rule, `grok-4.5`, `grok-4.6`, `gpt-5.5` expose a visible-skill terminal gate (`SKILL.md` + `load_skills`) mirroring the DeepSeek/K3 canary verbatim -- loose-match only, 0~3 loads, no always-5.
+
 ### Fixed
 
 - Goals no longer stall after a settings hot-reload: a reload `session_start` now re-engages an active goal (re-arming the monitor backstop while wake sources are live, or queueing a continuation through the existing sessionStart admission) instead of parking it until the next user message; stopped goals still never auto-start on reload ([#936](https://github.com/code-yeongyu/senpi/pull/936)).
@@ -421,6 +423,7 @@
 - `--system-prompt` and `--append-system-prompt` work again on the CLI path, and now compose with per-model prompt presets instead of being clobbered by them. A custom system prompt replaces the generated base and makes the preset step aside (the startup "Optimized system prompt applied" header also stands down); append texts are reattached after a preset replaces the base, so they survive on preset-matching models and across model switches. The CLI flags had been parsed but disconnected since 2026-07-19 because presets overwrote user overrides. Extensions can now read the user overrides via `ctx.getSystemPromptOptions()`, which moved from the command context to the base `ExtensionContext` ([#903](https://github.com/code-yeongyu/senpi/pull/903)).
 - Settings files now support dependency-free JSONC comments and trailing commas. When both `settings.jsonc` and `settings.json` exist in one config directory, JSONC wins; writes remain on the loaded file, config reload watches both formats, RPC emits `settings_source_selected` with the selected path/format/reason, and the interactive TUI shows the choice at startup or reload ([#902](https://github.com/code-yeongyu/senpi/pull/902)).
 - GLM 5.3 prompt preset: a new `glm-5.3` system-prompt preset cloned from `glm-5.2` (thin `tuningSection` wrapper over the shared dynamic core, `workstationDialect: "claude"`). The `hasGlm53Signal`/`isGlm53Model` matcher is checked before the 5.2 matcher, `"glm-5.3"` joins `PromptPresetName`/`VALID_PRESETS`, and the settings.md value list is updated. Models selecting GLM 5.3 now get the tuned system prompt instead of the untuned fallback ([#895](https://github.com/code-yeongyu/senpi/pull/895)).
+- Gemini and Muse Spark prompt presets: new `gemini` and `muse-spark` system-prompt presets as thin `tuningSection` wrappers over the shared dynamic core (`workstationDialect: "default"`), each carrying its vendor-guidance behaviors as typed rule data (`GEMINI_RULES` / `MUSE_SPARK_RULES`) and ending with a machine-consumed `model-family: <name>` token. The `hasGeminiSignal` matcher covers the catalog Gemini 3.x Flash ids (`google/gemini-3.6-flash`, `google/gemini-3.1-flash-lite`, `google/gemini-3.5-flash`, `google/gemini-3.5-flash-lite`, `google/gemini-3.7-flash`, plus the unprefixed, `:batch`-tagged, and `-preview` shapes; `-image` variants stay out) and `hasMuseSparkSignal` covers `meta/muse-spark-1.1`, `meta/muse-spark-1.2`, and `meta/muse-spark-1.2-contributor`; truncated ids match neither. Both names join `PromptPresetName`/`VALID_PRESETS` and the settings.md value list. Models selecting these families now get tuned system prompts instead of the untuned fallback ([#899](https://github.com/code-yeongyu/senpi/pull/899)).
 
 ### Fixed
 
@@ -489,6 +492,10 @@
 ### Removed
 
 ## [2026.8.14] - 2026-08-14
+
+### Fixed
+
+- DeepSeek V4 (flash/flash-0731/pro) and Kimi K3 presets now carry delegation + skill gates: partitioned `task` batch before the local critical path and a terminal visible-skill scan (`SKILL.md` + `load_skills`), mirroring the canary's M1/M2 cure for under-delegation / under-load (see PR #912, draft — ready on ≥20 qualified turns).
 
 ### Fixed
 

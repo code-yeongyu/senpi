@@ -46,6 +46,8 @@ ${buildTestDisciplineSection()}
 
 ${context.toolSection}
 
+Make the visible-skill scan a terminal gate before substantive work: compare the task with every listed description, read each loosely matching \`SKILL.md\`, and apply it. If matching work is delegated, pass its skill name in \`load_skills\` via the spawned worker's delegation prompt. The gate is complete only when all matches are loaded or the scan finds none.
+
 ## Hard Limits
 - Never commit unless the user asked; never use destructive git (\`reset --hard\`, \`checkout --\`, force-push) or amend without approval.
 - Never suppress type errors, lint warnings, or test failures; never delete, skip, or weaken a failing test to go green.

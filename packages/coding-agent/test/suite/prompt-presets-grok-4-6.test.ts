@@ -1,6 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
+import { buildGrok46Prompt } from "../../src/core/extensions/builtin/prompt-preset/grok-4.6.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -132,5 +133,26 @@ describe("Grok 4.6 prompt preset", () => {
 			]),
 		);
 		expect(misses).toEqual([]);
+	});
+});
+
+describe("Grok 4.6 skill gate", () => {
+	it("renders visible-skill scan gate exactly once", () => {
+		const prompt = buildGrok46Prompt({
+			cwd: "/tmp",
+			selectedTools: ["read"],
+			toolSnippets: { read: "r" },
+			promptGuidelines: [],
+			contextFiles: [],
+			skills: [],
+		});
+		expect(prompt).toContain("terminal gate before substantive");
+		let c = 0,
+			i = prompt.indexOf("terminal gate before substantive");
+		while (i !== -1) {
+			c++;
+			i = prompt.indexOf("terminal gate before substantive", i + 1);
+		}
+		expect(c).toBe(1);
 	});
 });
