@@ -333,17 +333,23 @@ async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: 
  * Resolves false on stdin EOF (Ctrl+D, closed pipe): without the close handler a
  * readline question never settles once the input stream ends, hanging the process.
  */
-async function promptConfirm(message: string): Promise<boolean> {
+export async function promptConfirm(message: string): Promise<boolean> {
 	return new Promise((resolve) => {
 		const rl = createInterface({
 			input: process.stdin,
 			output: process.stdout,
 		});
+		let settled = false;
+		const settle = (result: boolean): void => {
+			if (settled) return;
+			settled = true;
+			resolve(result);
+		};
 		rl.question(`${message} [y/N] `, (answer) => {
+			settle(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
 			rl.close();
-			resolve(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
 		});
-		rl.on("close", () => resolve(false));
+		rl.once("close", () => settle(false));
 	});
 }
 
