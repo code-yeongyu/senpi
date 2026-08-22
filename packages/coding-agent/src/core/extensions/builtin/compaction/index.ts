@@ -13,6 +13,7 @@ import type {
 } from "../../types.ts";
 import * as checkpointState from "./checkpoint-state.ts";
 import * as breaker from "./circuit-breaker.ts";
+import { compactionSummarizationTools } from "./summarization-tools.ts";
 import {
 	BUILTIN_CONTEXT_REDUCTION_OPTIONS,
 	reduceContextMessages,
@@ -211,16 +212,7 @@ export default function compactionExtension(
 	const getLogger = (ctx: ExtensionContext): CompactionLogger => (logger ??= createCompactionLogger(ctx.agentDir));
 
 	function getSummarizationTools(): Tool[] {
-		if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function") return [];
-		try {
-			const definitionsByName = new Map(pi.getAllTools().map((tool) => [tool.name, tool]));
-			return pi.getActiveTools().flatMap((name) => {
-				const tool = definitionsByName.get(name);
-				return tool ? [{ name: tool.name, description: tool.description, parameters: tool.parameters }] : [];
-			});
-		} catch {
-			return [];
-		}
+		return compactionSummarizationTools();
 	}
 
 	let idleWarmupTimer: ReturnType<typeof setTimeout> | undefined;
