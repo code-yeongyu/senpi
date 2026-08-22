@@ -1042,6 +1042,21 @@ function isCacheableUserContentBlock(
 	return block?.type === "text" || block?.type === "image" || block?.type === "tool_result";
 }
 
+function markUserMessageCacheCheckpoint(message: MessageParam, cacheControl: CacheControlEphemeral): boolean {
+	if (message.role !== "user") return false;
+	if (Array.isArray(message.content)) {
+		const lastBlock = message.content[message.content.length - 1];
+		if (!isCacheableUserContentBlock(lastBlock)) return false;
+		lastBlock.cache_control = cacheControl;
+		return true;
+	}
+	if (typeof message.content === "string") {
+		message.content = [{ type: "text", text: message.content, cache_control: cacheControl }];
+		return true;
+	}
+	return false;
+}
+
 const ANTHROPIC_MESSAGE_EVENTS: ReadonlySet<string> = new Set([
 	"message_start",
 	"message_delta",
@@ -1999,7 +2014,7 @@ function buildParams(
 			{
 				type: "text",
 				text: "You are Claude Code, Anthropic's official CLI for Claude.",
-				...(cacheControl ? { cache_control: cacheControl } : {}),
+				...(!context.systemPrompt && cacheControl ? { cache_control: cacheControl } : {}),
 			},
 		];
 		if (context.systemPrompt) {
@@ -2382,24 +2397,9 @@ function convertMessages(
 		}
 	}
 
-	// Add cache_control to the last user message to cache conversation history
-	if (cacheControl && params.length > 0) {
-		const lastMessage = params[params.length - 1];
-		if (lastMessage.role === "user") {
-			if (Array.isArray(lastMessage.content)) {
-				const lastBlock = lastMessage.content[lastMessage.content.length - 1];
-				if (isCacheableUserContentBlock(lastBlock)) {
-					lastBlock.cache_control = cacheControl;
-				}
-			} else if (typeof lastMessage.content === "string") {
-				lastMessage.content = [
-					{
-						type: "text",
-						text: lastMessage.content,
-						cache_control: cacheControl,
-					},
-				];
-			}
+	if (cacheControl && params.length > 0 && markUserMessageCacheCheckpoint(params[params.length - 1], cacheControl)) {
+		for (let index = params.length - 2; index >= 0; index--) {
+			if (markUserMessageCacheCheckpoint(params[index], cacheControl)) break;
 		}
 	}
 

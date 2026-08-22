@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Anthropic prompt caching now retains the previous checkpoint while tool loops append a new result, avoiding repeated prefix reprocessing for API-key and OAuth requests.
+
 ### Removed
 
 ## [2026.8.22] - 2026-08-22
