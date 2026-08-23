@@ -1,5 +1,23 @@
 # changes
 
+## 2026-08-24 - Enforce the active compaction ceiling during final provider admission
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` now routes the final assembled-context admission check through the shared `shouldCompact()` policy instead of comparing only against the physical model window minus reserve tokens.
+
+### Why
+
+- Turn-local custom messages can push a request above the configured or large-model default active ceiling after the earlier persisted-context check. The final admission path must enforce the same ceiling before sending the provider request.
+
+### Why an extension could not handle it
+
+- Final provider admission is a private `AgentSession` guard that runs after context assembly and before dispatch; extensions cannot replace that core oversized-request decision.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts` around `_enforceFinalProviderAdmission()` and its `isOversized` closure.
+
 ## 2026-08-23 - Preserve explicit compaction budget configuration
 
 ### What changed
