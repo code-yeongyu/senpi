@@ -1,5 +1,34 @@
 # changes — btw
 
+## 2026-08-23 - Retained native TUI side sessions
+
+### What changed
+
+- In TUI mode, every `/btw <question>` creates a distinct host session with versioned root-parent
+  metadata, stable `BTW #N: <summary>` naming, a hidden bounded Main-context snapshot, no active
+  tools, and a native transcript.
+- Bare `/btw` opens the native selector with Main, numbered retained sides, and New BTW. The popup
+  renders the effective switch keys and always shows `/btw`; defaults are Ctrl+/, Ctrl+_, and
+  Ctrl+7 so editors that reserve Ctrl+/ still have a terminal fallback.
+- A configured switch input opens the same picker. Two idle interrupt keys inside one second return
+  to Main without deleting the side. The configured clear key switches to Main and then deletes
+  only the visible side.
+- Catalog reads revalidate selected paths, skip stale/corrupt rows, recover root scope from side
+  metadata after reload, and keep failed deletions discoverable.
+- Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
+
+### Why
+
+- One custom widget could not represent multiple retained side conversations, use the host
+  transcript scrollback, survive reload/navigation, or make destructive close unambiguous.
+
+### Expected merge-conflict zones
+
+- MEDIUM: `index.ts` command and session-start wiring.
+- LOW: `session-catalog.ts`, `retained-session.ts`, `tui-command.ts`, `input-controls.ts`, and
+  `session-actions.ts` are extension-local additions.
+- LOW: `core/keybindings.ts`, extension UI context types, and interactive UI context wiring.
+
 ## 2026-08-13 - Preserve provider-header deletion markers
 
 ### What changed

@@ -54,7 +54,7 @@ import type { WarmAnchorSnapshot } from "../compaction/warm-anchor.ts";
 import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
-import type { KeybindingsManager } from "../keybindings.ts";
+import type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
 import type { CustomMessage } from "../messages.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { InitialModelProvenance, ScopedModel } from "../model-resolver.ts";
@@ -158,6 +158,12 @@ export interface ExtensionUIContext {
 
 	/** Listen to raw terminal input (interactive mode only). Returns an unsubscribe function. */
 	onTerminalInput(handler: TerminalInputHandler): () => void;
+
+	/** Match raw terminal input against the active user-configurable app keybinding. */
+	matchesKeybinding?(data: string, keybinding: AppKeybinding): boolean;
+
+	/** Return the active configured keys for an app keybinding. */
+	getKeybindingKeys?(keybinding: AppKeybinding): readonly KeyId[];
 
 	/** Set status text in the footer/status bar. Pass undefined to clear. */
 	setStatus(key: string, text: string | undefined): void;

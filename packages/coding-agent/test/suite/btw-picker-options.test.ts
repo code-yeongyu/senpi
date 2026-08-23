@@ -1,0 +1,110 @@
+import { describe, expect, it } from "vitest";
+import { buildBtwPickerOptions, validateBtwPickerChoice } from "../../src/core/extensions/builtin/btw/picker.ts";
+import type { BtwSessionCatalog } from "../../src/core/extensions/builtin/btw/session-catalog.ts";
+
+function catalog(): BtwSessionCatalog {
+	return {
+		parentSessionPath: "/sessions/main.jsonl",
+		main: {
+			path: "/sessions/main.jsonl",
+			cwd: "/repo",
+			name: "Main task",
+			modified: new Date("2026-08-23T00:00:00.000Z"),
+		},
+		currentSide: undefined,
+		sides: [
+			{
+				path: "/sessions/side-1.jsonl",
+				cwd: "/repo",
+				name: "BTW #1: duplicate summary",
+				modified: new Date("2026-08-23T00:00:01.000Z"),
+				metadata: {
+					version: 1,
+					parentSessionPath: "/sessions/main.jsonl",
+					parentSessionId: "main",
+					ordinal: 1,
+					summary: "duplicate summary",
+					createdAt: "2026-08-23T00:00:01.000Z",
+				},
+			},
+			{
+				path: "/sessions/side-2.jsonl",
+				cwd: "/repo",
+				name: "BTW #2: duplicate summary",
+				modified: new Date("2026-08-23T00:00:02.000Z"),
+				metadata: {
+					version: 1,
+					parentSessionPath: "/sessions/main.jsonl",
+					parentSessionId: "main",
+					ordinal: 2,
+					summary: "duplicate summary",
+					createdAt: "2026-08-23T00:00:02.000Z",
+				},
+			},
+		],
+		skippedPaths: [],
+	};
+}
+
+describe("buildBtwPickerOptions", () => {
+	it("orders Main, numbered retained sides, and New BTW with unambiguous labels", () => {
+		// Given
+		const loaded = catalog();
+
+		// When
+		const options = buildBtwPickerOptions(loaded, "/sessions/side-1.jsonl");
+
+		// Then
+		expect(options.map((option) => option.label)).toEqual([
+			"Main — Main task",
+			"BTW #1 — duplicate summary (current)",
+			"BTW #2 — duplicate summary",
+			"New BTW",
+		]);
+		expect(options.map((option) => option.choice)).toEqual([
+			{ type: "session", sessionPath: "/sessions/main.jsonl" },
+			{ type: "session", sessionPath: "/sessions/side-1.jsonl" },
+			{ type: "session", sessionPath: "/sessions/side-2.jsonl" },
+			{ type: "new", parentSessionPath: "/sessions/main.jsonl" },
+		]);
+	});
+
+	it("keeps retained sides selectable when the parent file is missing", () => {
+		// Given
+		const loaded = catalog();
+		loaded.main = undefined;
+
+		// When
+		const options = buildBtwPickerOptions(loaded, "/sessions/side-2.jsonl");
+
+		// Then
+		expect(options.map((option) => option.label)).toEqual([
+			"BTW #1 — duplicate summary",
+			"BTW #2 — duplicate summary (current)",
+		]);
+		expect(options.some((option) => option.choice.type === "new")).toBe(false);
+	});
+});
+
+describe("validateBtwPickerChoice", () => {
+	it("rejects a selected session or New BTW parent that disappeared", async () => {
+		// Given
+		const exists = async (path: string) => path === "/sessions/main.jsonl";
+
+		// When
+		const staleSide = await validateBtwPickerChoice(
+			{ type: "session", sessionPath: "/sessions/stale.jsonl" },
+			exists,
+		);
+		const staleParent = await validateBtwPickerChoice(
+			{ type: "new", parentSessionPath: "/sessions/deleted-main.jsonl" },
+			exists,
+		);
+		const main = await validateBtwPickerChoice({ type: "session", sessionPath: "/sessions/main.jsonl" }, exists);
+
+		// Then
+		expect(staleSide).toBe(false);
+		expect(staleParent).toBe(false);
+		expect(main).toBe(true);
+	});
+});

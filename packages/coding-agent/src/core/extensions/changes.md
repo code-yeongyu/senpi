@@ -1,5 +1,25 @@
 # Core Extensions Changes
 
+## 2026-08-23 - Extensions can match active app keybindings
+
+### What changed
+
+- `ExtensionUIContext` exposes optional `matchesKeybinding(data, action)` support in interactive
+  hosts.
+- `ExtensionUIContext` also exposes optional `getKeybindingKeys(action)` so an extension can render
+  the user's effective shortcuts instead of stale fixed hints.
+- The bridge accepts an `AppKeybinding`, so extensions resolve user configuration and terminal
+  protocol aliases through the host `KeybindingsManager` instead of hard-coded input sequences.
+
+### Why
+
+- Built-in TUI workflows such as the retained BTW switcher need reliable, remappable input without
+  bypassing reserved host bindings or guessing which terminal protocol emitted the key.
+
+### Expected merge-conflict zones
+
+- LOW: the `ExtensionUIContext` method list in `types.ts`.
+
 ## 2026-08-19 - ProviderConfig.fallbackEligible: deterministic gate for implicit fallback expansion
 
 ### What changed

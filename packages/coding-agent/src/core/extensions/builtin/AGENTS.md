@@ -39,7 +39,7 @@
 | 31 | `loop` | `loop/` | Scheduled/cron loop runs driven by a loopfile + `/loop` command — see `loop/AGENTS.md` |
 | 32 | `cache-keepalive` | `cache-keepalive/` | Warms the provider prompt cache between turns (`warmPromptCache`, Anthropic-aware TTL) and renders a `cache-keepalive` notice entry |
 | 33 | `ttsr` | `ttsr/` | Stream-rule detection (collapse + control-token-leak) with abort→remediate→retry; ported from oh-my-pi — see `ttsr/changes.md` |
-| 34 | `btw` | `btw/` | `/btw` side-question command that queries in parallel without touching the main session |
+| 34 | `btw` | `btw/` | Retained TUI side sessions with native transcripts, a Main/BTW/New switcher, configurable Ctrl aliases, Escape return, and current-side close; non-TUI keeps the parallel one-shot query |
 | 35 | `claude-sdk-oauth` | `claude-sdk-oauth/` | Claude SDK OAuth provider: multi-account OAuth, resume-first session continuity, stream-safe failover — see `claude-sdk-oauth/AGENTS.md` + `changes.md` |
 | 36 | `cursor-cli-oauth` | `cursor-cli-oauth/` | Cursor CLI OAuth provider lane: multi-account OAuth, spawn/stream parsing, failover; registers unconditionally and reports executable/auth state through its oauth check — see `cursor-cli-oauth/AGENTS.md` |
 | 37 | `config-reload` | `config-reload/` | Hash-gated watcher for trusted global/project config surfaces that defers a full session reload until idle and exposes the `config-watch:*` event protocol; registered after settings-dependent builtins so a reload rebuilds their resolved settings, and before final MCP observation |

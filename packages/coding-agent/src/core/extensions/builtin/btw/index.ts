@@ -1,8 +1,17 @@
 import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
 import { buildSessionContext } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { createBtwInputRouter } from "./input-controls.ts";
 import { BtwPanel } from "./panel.ts";
+import { applyBtwSideSessionPolicy } from "./retained-session.ts";
+import {
+	closeRetainedBtwSide,
+	deleteBtwSessionFile,
+	readCurrentBtwSide,
+	returnToBtwParent,
+} from "./session-actions.ts";
 import { buildSideQueryContext, getSideQueryPromptContextWindow, runSideQuery } from "./side-query.ts";
+import { defaultBtwTuiCommandDependencies, runBtwTuiCommand } from "./tui-command.ts";
 
 const WIDGET_KEY = "btw";
 const ESCAPE = "";
@@ -30,6 +39,20 @@ export default function btwExtension(pi: ExtensionAPI) {
 		dismiss(ctx, { abort: true });
 	});
 
+	pi.on("session_start", (_event, ctx) => {
+		applyBtwSideSessionPolicy(pi, ctx);
+		if (ctx.mode !== "tui" || !ctx.ui.matchesKeybinding) return;
+		const router = createBtwInputRouter({
+			isCurrentSide: () => readCurrentBtwSide(ctx.sessionManager) !== undefined,
+			isIdle: () => ctx.isIdle(),
+			matchesKeybinding: (data, keybinding) => ctx.ui.matchesKeybinding?.(data, keybinding) ?? false,
+			dispatch: (command) => {
+				pi.sendUserMessage(command, { expandPromptTemplates: true });
+			},
+		});
+		ctx.ui.onTerminalInput((data) => router.handleInput(data));
+	});
+
 	pi.on("session_before_fork", (_event, ctx) => {
 		dismiss(ctx, { abort: true });
 	});
@@ -42,10 +65,42 @@ export default function btwExtension(pi: ExtensionAPI) {
 		if (active?.settled) dismiss(ctx, { abort: false });
 	});
 
+	pi.registerCommand("btw-main", {
+		description: "Return from the current retained BTW session to Main",
+		handler: async (_args, ctx) => {
+			await returnToBtwParent({
+				ctx,
+				current: readCurrentBtwSide(ctx.sessionManager),
+			});
+		},
+	});
+
+	pi.registerCommand("btw-close", {
+		description: "Delete the current retained BTW session and return to Main",
+		handler: async (_args, ctx) => {
+			await closeRetainedBtwSide({
+				ctx,
+				current: readCurrentBtwSide(ctx.sessionManager),
+				deleteSessionFile: deleteBtwSessionFile,
+			});
+		},
+	});
+
 	pi.registerCommand("btw", {
-		description: "Ask a side question in parallel without touching the main session",
+		description: "Create or switch retained BTW side sessions",
 		argumentHint: "<question>",
 		handler: async (args, ctx) => {
+			if (ctx.mode === "tui" && ctx.hasUI) {
+				dismiss(ctx, { abort: true });
+				try {
+					await runBtwTuiCommand(args, ctx, defaultBtwTuiCommandDependencies);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					ctx.ui.notify(`/btw failed: ${message}`, "error");
+				}
+				return;
+			}
+
 			const question = args.trim();
 			if (!question) {
 				ctx.ui.notify("Usage: /btw <question>", "warning");

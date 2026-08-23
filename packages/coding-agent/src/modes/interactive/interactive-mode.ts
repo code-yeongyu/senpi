@@ -3284,6 +3284,8 @@ export class InteractiveMode {
 			input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
+			matchesKeybinding: (data, keybinding) => this.keybindings.matches(data, keybinding),
+			getKeybindingKeys: (keybinding) => this.keybindings.getKeys(keybinding),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;

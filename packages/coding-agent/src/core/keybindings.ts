@@ -13,6 +13,7 @@ import { getAgentDir } from "../config.ts";
 export interface AppKeybindings {
 	"app.interrupt": true;
 	"app.clear": true;
+	"app.btw.switch": true;
 	"app.exit": true;
 	"app.suspend": true;
 	"app.thinking.cycle": true;
@@ -67,6 +68,10 @@ export const KEYBINDINGS = {
 	...TUI_KEYBINDINGS,
 	"app.interrupt": { defaultKeys: "escape", description: "Cancel or abort" },
 	"app.clear": { defaultKeys: "ctrl+c", description: "Clear editor" },
+	"app.btw.switch": {
+		defaultKeys: ["ctrl+/", "ctrl+_", "ctrl+7"],
+		description: "Open BTW session switcher",
+	},
 	"app.exit": { defaultKeys: "ctrl+d", description: "Exit when editor is empty" },
 	"app.suspend": {
 		defaultKeys: process.platform === "win32" ? [] : "ctrl+z",

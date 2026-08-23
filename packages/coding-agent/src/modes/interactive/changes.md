@@ -1,4 +1,20 @@
 # changes
+## 2026-08-23 - extension input uses active app keybindings
+
+### What changed
+
+- `createExtensionUIContext()` now implements `matchesKeybinding()` and `getKeybindingKeys()` with
+  the live interactive `KeybindingsManager`.
+
+### Why
+
+- Extensions can route configurable TUI actions across legacy, Kitty, and user-remapped key
+  sequences without duplicating terminal parsing.
+
+### Expected merge-conflict zones
+
+- LOW: the `createExtensionUIContext()` return literal in `interactive-mode.ts`.
+
 ## 2026-08-22 - working dock stays painted across queued turn boundaries
 
 ### What changed

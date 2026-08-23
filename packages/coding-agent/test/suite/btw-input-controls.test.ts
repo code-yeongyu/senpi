@@ -1,0 +1,128 @@
+import { setKittyProtocolActive } from "@earendil-works/pi-tui";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { BTW_SWITCH_KEYBINDING, createBtwInputRouter } from "../../src/core/extensions/builtin/btw/input-controls.ts";
+import { type KeybindingsConfig, KeybindingsManager } from "../../src/core/keybindings.ts";
+
+afterEach(() => {
+	setKittyProtocolActive(false);
+});
+
+function createHarness(options: { side?: boolean; idle?: boolean; now?: number; bindings?: KeybindingsConfig } = {}) {
+	const manager = new KeybindingsManager(options.bindings);
+	let side = options.side ?? false;
+	let idle = options.idle ?? true;
+	let now = options.now ?? 0;
+	const dispatch = vi.fn();
+	const router = createBtwInputRouter({
+		isCurrentSide: () => side,
+		isIdle: () => idle,
+		matchesKeybinding: (data, binding) => manager.matches(data, binding),
+		dispatch,
+		now: () => now,
+	});
+	return {
+		dispatch,
+		router,
+		setIdle(value: boolean) {
+			idle = value;
+		},
+		setNow(value: number) {
+			now = value;
+		},
+		setSide(value: boolean) {
+			side = value;
+		},
+	};
+}
+
+describe("BTW switch keybinding", () => {
+	it("opens the picker for Ctrl+/, Ctrl+_, and Ctrl+7", () => {
+		// Given
+		const harness = createHarness();
+		setKittyProtocolActive(true);
+
+		// When
+		const dispositions = ["\x1b[47;5u", "\x1b[95;5u", "\x1b[55;5u"].map((input) => harness.router.handleInput(input));
+		setKittyProtocolActive(false);
+		const legacyDisposition = harness.router.handleInput("\x1f");
+
+		// Then
+		expect(dispositions).toEqual([{ consume: true }, { consume: true }, { consume: true }]);
+		expect(legacyDisposition).toEqual({ consume: true });
+		expect(harness.dispatch).toHaveBeenCalledTimes(4);
+		expect(harness.dispatch).toHaveBeenNthCalledWith(1, "/btw");
+		expect(harness.dispatch).toHaveBeenNthCalledWith(2, "/btw");
+		expect(harness.dispatch).toHaveBeenNthCalledWith(3, "/btw");
+		expect(harness.dispatch).toHaveBeenNthCalledWith(4, "/btw");
+	});
+
+	it("uses the configured switch binding instead of hard-coded keys", () => {
+		// Given
+		const harness = createHarness({
+			bindings: {
+				[BTW_SWITCH_KEYBINDING]: "alt+b",
+			},
+		});
+
+		// When
+		const configured = harness.router.handleInput("\x1bb");
+		const removedDefault = harness.router.handleInput("\x1f");
+
+		// Then
+		expect(configured).toEqual({ consume: true });
+		expect(removedDefault).toBeUndefined();
+		expect(harness.dispatch).toHaveBeenCalledOnce();
+		expect(harness.dispatch).toHaveBeenCalledWith("/btw");
+	});
+});
+
+describe("BTW side input controls", () => {
+	it("returns to Main only on the second idle interrupt inside one second", () => {
+		// Given
+		const harness = createHarness({ side: true, idle: true, now: 10_000 });
+
+		// When
+		const first = harness.router.handleInput("\x1b");
+		harness.setNow(10_999);
+		const second = harness.router.handleInput("\x1b");
+
+		// Then
+		expect(first).toBeUndefined();
+		expect(second).toEqual({ consume: true });
+		expect(harness.dispatch).toHaveBeenCalledOnce();
+		expect(harness.dispatch).toHaveBeenCalledWith("/btw-main");
+	});
+
+	it("does not reuse a busy interrupt or an expired pair", () => {
+		// Given
+		const harness = createHarness({ side: true, idle: false, now: 20_000 });
+
+		// When
+		const busy = harness.router.handleInput("\x1b");
+		harness.setIdle(true);
+		harness.setNow(20_100);
+		const afterBusy = harness.router.handleInput("\x1b");
+		harness.setNow(21_101);
+		const expired = harness.router.handleInput("\x1b");
+
+		// Then
+		expect([busy, afterBusy, expired]).toEqual([undefined, undefined, undefined]);
+		expect(harness.dispatch).not.toHaveBeenCalled();
+	});
+
+	it("dispatches destructive close only for the current visible side", () => {
+		// Given
+		const side = createHarness({ side: true });
+		const main = createHarness({ side: false });
+
+		// When
+		const sideDisposition = side.router.handleInput("\x03");
+		const mainDisposition = main.router.handleInput("\x03");
+
+		// Then
+		expect(sideDisposition).toEqual({ consume: true });
+		expect(side.dispatch).toHaveBeenCalledWith("/btw-close");
+		expect(mainDisposition).toBeUndefined();
+		expect(main.dispatch).not.toHaveBeenCalled();
+	});
+});

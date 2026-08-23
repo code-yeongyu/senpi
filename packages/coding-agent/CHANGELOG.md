@@ -8,6 +8,10 @@
 
 ### Added
 
+- Retained multi-session `/btw` TUI with native transcripts, a Main/numbered-side/New picker,
+  configurable `Ctrl+/`, `Ctrl+_`, and `Ctrl+7` switching, idle Escape-Escape return, and
+  current-side Ctrl+C deletion; non-TUI side queries remain one-shot and parallel.
+
 ### Changed
 
 ### Removed

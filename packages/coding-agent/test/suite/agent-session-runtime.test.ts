@@ -122,6 +122,29 @@ describe("AgentSessionRuntime characterization", () => {
 		return { runtime, faux, tempDir };
 	}
 
+	it("makes new-session setup metadata visible to session_start handlers", async () => {
+		// Given
+		const observedNames: Array<string | undefined> = [];
+		const { runtime } = await createRuntimeForTest((pi: ExtensionAPI) => {
+			pi.on("session_start", (_event, ctx) => {
+				observedNames.push(ctx.sessionManager.getSessionName());
+			});
+		});
+		runtime.setRebindSession(async (session) => {
+			await session.bindExtensions({});
+		});
+
+		// When
+		await runtime.newSession({
+			setup: async (sessionManager) => {
+				sessionManager.appendSessionInfo("setup-visible");
+			},
+		});
+
+		// Then
+		expect(observedNames.at(-1)).toBe("setup-visible");
+	});
+
 	it("persists message_end assistant replacements to the session manager", async () => {
 		const { runtime } = await createRuntimeForTest((pi: ExtensionAPI) => {
 			pi.on("message_end", (event) => {

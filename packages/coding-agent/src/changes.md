@@ -1,5 +1,25 @@
 # changes
 
+## 2026-08-23 - retained BTW sessions and configurable switch routing
+
+### What changed
+
+- The builtin BTW TUI path creates separate retained host sessions and uses native session
+  selection/transcripts instead of the one-shot widget.
+- `app.btw.switch` adds Ctrl+/, Ctrl+_, and Ctrl+7 defaults.
+- Interactive extension UI exposes active key matching and effective-key lookup for configurable
+  terminal routing and visible fallback hints.
+
+### Why
+
+- Side conversations need durable identity, host scrolling, reliable return/close behavior, and a
+  fallback when an editor such as Zed reserves Ctrl+/ before the terminal receives it.
+
+### Expected merge-conflict zones
+
+- MEDIUM: builtin BTW wiring and keybinding definitions.
+- LOW: extension UI context and interactive implementation.
+
 ## 2026-08-22 - emit agent_idle after settlement-deferred turns resolve
 
 ### What changed
