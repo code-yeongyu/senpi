@@ -97,6 +97,7 @@ export async function runBtwTuiCommand(
 	}
 	const question = args.trim();
 	if (question) {
+		await ctx.waitForIdle();
 		const catalog = await dependencies.loadCatalog(ctx);
 		await dependencies.createSide({
 			ctx,
@@ -126,11 +127,13 @@ export async function runBtwTuiCommand(
 			continue;
 		}
 		if (selected.choice.type === "new") {
+			await ctx.waitForIdle();
+			const settledCatalog = await dependencies.loadCatalog(ctx);
 			await dependencies.createSide({
 				ctx,
-				catalog,
+				catalog: settledCatalog,
 				question: undefined,
-				parentContext: await dependencies.buildParentContext(ctx, catalog),
+				parentContext: await dependencies.buildParentContext(ctx, settledCatalog),
 			});
 			return;
 		}

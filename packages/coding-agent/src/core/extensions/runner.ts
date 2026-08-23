@@ -15,6 +15,7 @@ import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
 import { getSessionContextEntryId, SESSION_CONTEXT_ENTRY_ID, type SessionManager } from "../session-manager.ts";
+import { applySessionToolPolicyToProviderPayload } from "../session-tool-policy.ts";
 import { SettingsManager } from "../settings-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
@@ -1549,7 +1550,7 @@ export class ExtensionRunner {
 			}
 		}
 
-		return currentPayload;
+		return applySessionToolPolicyToProviderPayload(this.sessionManager.getEntries(), currentPayload);
 	}
 
 	async emitBeforeProviderHeaders(headers: ProviderHeaders): Promise<ProviderHeaders> {

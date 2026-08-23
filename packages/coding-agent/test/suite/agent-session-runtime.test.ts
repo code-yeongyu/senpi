@@ -165,9 +165,15 @@ describe("AgentSessionRuntime characterization", () => {
 
 	it("keeps a persisted disabled tool policy after later activation attempts", async () => {
 		// Given
-		const { runtime } = await createRuntimeForTest(() => {});
+		const { runtime } = await createRuntimeForTest((pi) => {
+			pi.on("before_provider_request", (event) => ({
+				...(event.payload as Record<string, unknown>),
+				tools: [{ type: "web_search_20250305", name: "web_search" }],
+			}));
+		});
 		let activeTools: string[] | undefined;
 		let registeredRead: unknown;
+		let preparedPayload: unknown;
 
 		// When
 		await runtime.newSession({
@@ -179,12 +185,15 @@ describe("AgentSessionRuntime characterization", () => {
 				ctx.setActiveTools(["read"]);
 				activeTools = runtime.session.getActiveToolNames();
 				registeredRead = runtime.session.getRegisteredTool("read");
+				const prepared = await runtime.session.extensionRunner.prepareProviderRequest([]);
+				preparedPayload = await prepared.transformPayload({ messages: [] });
 			},
 		});
 
 		// Then
 		expect(activeTools).toEqual([]);
 		expect(registeredRead).toBeUndefined();
+		expect(preparedPayload).toEqual({ messages: [] });
 		expect(
 			runtime.session.sessionManager
 				.getEntries()

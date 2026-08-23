@@ -25,6 +25,8 @@
   metadata and inherited by siblings created from a side.
 - A newest message larger than the 64k snapshot budget is truncated into the snapshot instead of
   dropping all parent context.
+- Inline and New BTW creation wait for Main to settle, then reload the catalog before snapshotting
+  so the leaf and content describe the same completed turn.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

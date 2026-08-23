@@ -13,7 +13,10 @@
   every extension transform.
 - Main-side context snapshots follow Main's selected tree leaf rather than the file's physical
   tail; retained siblings inherit that persisted leaf, and an oversized newest message is
-  truncated instead of emptying the snapshot.
+  truncated instead of emptying the snapshot. Creation waits for Main to settle before reloading
+  the catalog and snapshotting.
+- Session tool policy is enforced at `ExtensionRunner`'s final payload boundary, covering normal,
+  compaction, and cache-keepalive provider requests after all extension transforms.
 - `app.btw.switch` adds Ctrl+/, Ctrl+_, and Ctrl+7 defaults.
 - Interactive extension UI exposes active key matching and effective-key lookup for configurable
   terminal routing and visible fallback hints.

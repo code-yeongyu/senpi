@@ -43,12 +43,14 @@ function catalog(): BtwSessionCatalog {
 function createHarness(selections: Array<string | undefined> = []) {
 	const select = vi.fn(async () => selections.shift());
 	const notify = vi.fn();
+	const waitForIdle = vi.fn(async () => undefined);
 	const switchSession = vi.fn(async () => ({ cancelled: false }));
 	const ctx = {
 		cwd: "/repo",
 		sessionManager: {
 			getSessionFile: () => "/sessions/main.jsonl",
 		},
+		waitForIdle,
 		switchSession,
 		ui: {
 			select,
@@ -63,7 +65,7 @@ function createHarness(selections: Array<string | undefined> = []) {
 		buildParentContext: vi.fn(async () => "bounded context"),
 		sessionExists: vi.fn(async () => true),
 	};
-	return { ctx, dependencies, loaded, notify, select, switchSession };
+	return { ctx, dependencies, loaded, notify, select, switchSession, waitForIdle };
 }
 
 describe("runBtwTuiCommand", () => {
@@ -96,6 +98,10 @@ describe("runBtwTuiCommand", () => {
 				question: "next question",
 				parentContext: "bounded context",
 			}),
+		);
+		expect(harness.waitForIdle).toHaveBeenCalledOnce();
+		expect(harness.waitForIdle.mock.invocationCallOrder[0]).toBeLessThan(
+			vi.mocked(harness.dependencies.buildParentContext).mock.invocationCallOrder[0]!,
 		);
 		expect(harness.select).not.toHaveBeenCalled();
 	});
@@ -130,6 +136,8 @@ describe("runBtwTuiCommand", () => {
 				parentContext: "bounded context",
 			}),
 		);
+		expect(harness.waitForIdle).toHaveBeenCalledOnce();
+		expect(harness.dependencies.loadCatalog).toHaveBeenCalledTimes(2);
 	});
 
 	it("refreshes after a selected side disappears instead of switching stale state", async () => {
