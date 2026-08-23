@@ -16,6 +16,7 @@ function sideMetadata(): BtwSideMetadata {
 		version: 1,
 		parentSessionPath: PARENT_PATH,
 		parentSessionId: "main",
+		parentLeafId: "main-leaf",
 		ordinal: 2,
 		summary: "second question",
 		createdAt: "2026-08-23T00:00:02.000Z",
@@ -44,6 +45,7 @@ function manager(entries = sideEntries()): SessionManager {
 
 function createContext(options: { runWithSession?: boolean } = {}) {
 	const notify = vi.fn();
+	const navigateTree = vi.fn(async () => ({ cancelled: false }));
 	const switchSession = vi.fn(
 		async (
 			_path: string,
@@ -52,7 +54,10 @@ function createContext(options: { runWithSession?: boolean } = {}) {
 			},
 		) => {
 			if (options.runWithSession !== false) {
-				await switchOptions?.withSession?.({ ui: { notify } } as unknown as ReplacedSessionContext);
+				await switchOptions?.withSession?.({
+					navigateTree,
+					ui: { notify },
+				} as unknown as ReplacedSessionContext);
 			}
 			return { cancelled: options.runWithSession === false };
 		},
@@ -64,6 +69,7 @@ function createContext(options: { runWithSession?: boolean } = {}) {
 			ui: { notify },
 		} as unknown as ExtensionCommandContext,
 		notify,
+		navigateTree,
 		switchSession,
 	};
 }
@@ -88,6 +94,7 @@ describe("retained BTW session actions", () => {
 		);
 		expect(deleteSessionFile).toHaveBeenCalledOnce();
 		expect(deleteSessionFile).toHaveBeenCalledWith(SIDE_PATH);
+		expect(harness.navigateTree).toHaveBeenCalledWith("main-leaf", { summarize: false });
 	});
 
 	it("returns to Main without deleting the retained side", async () => {
@@ -102,7 +109,11 @@ describe("retained BTW session actions", () => {
 		});
 
 		// Then
-		expect(harness.switchSession).toHaveBeenCalledWith(PARENT_PATH);
+		expect(harness.switchSession).toHaveBeenCalledWith(
+			PARENT_PATH,
+			expect.objectContaining({ withSession: expect.any(Function) }),
+		);
+		expect(harness.navigateTree).toHaveBeenCalledWith("main-leaf", { summarize: false });
 		expect(deleteSessionFile).not.toHaveBeenCalled();
 	});
 

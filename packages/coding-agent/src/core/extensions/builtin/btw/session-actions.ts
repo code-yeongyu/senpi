@@ -14,6 +14,20 @@ export interface DeleteSessionFileResult {
 	error?: string;
 }
 
+export function createBtwParentSwitchOptions(metadata: BtwSideMetadata):
+	| {
+			withSession: (ctx: ExtensionCommandContext) => Promise<void>;
+	  }
+	| undefined {
+	const parentLeafId = metadata.parentLeafId;
+	if (!parentLeafId) return undefined;
+	return {
+		withSession: async (ctx) => {
+			await ctx.navigateTree(parentLeafId, { summarize: false });
+		},
+	};
+}
+
 export async function deleteBtwSessionFile(sessionPath: string): Promise<DeleteSessionFileResult> {
 	try {
 		await unlink(sessionPath);
@@ -45,7 +59,12 @@ export async function returnToBtwParent(input: {
 		input.ctx.ui.notify("This is not a retained BTW session.", "warning");
 		return;
 	}
-	await input.ctx.switchSession(input.current.metadata.parentSessionPath);
+	const options = createBtwParentSwitchOptions(input.current.metadata);
+	if (options) {
+		await input.ctx.switchSession(input.current.metadata.parentSessionPath, options);
+	} else {
+		await input.ctx.switchSession(input.current.metadata.parentSessionPath);
+	}
 }
 
 export async function closeRetainedBtwSide(input: {
@@ -61,8 +80,11 @@ export async function closeRetainedBtwSide(input: {
 	await input.ctx.switchSession(current.metadata.parentSessionPath, {
 		withSession: async (nextCtx) => {
 			const result = await input.deleteSessionFile(current.sessionPath);
-			if (result.ok) return;
-			nextCtx.ui.notify(`Failed to delete BTW session: ${result.error ?? "unknown error"}`, "warning");
+			if (!result.ok) {
+				nextCtx.ui.notify(`Failed to delete BTW session: ${result.error ?? "unknown error"}`, "warning");
+				return;
+			}
+			await createBtwParentSwitchOptions(current.metadata)?.withSession(nextCtx);
 		},
 	});
 }

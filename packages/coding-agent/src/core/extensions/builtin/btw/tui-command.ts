@@ -3,6 +3,7 @@ import { convertToLlm, filterContextExcludedMessages } from "../../../messages.t
 import type { ExtensionCommandContext } from "../../types.ts";
 import { buildBtwPickerOptions, validateBtwPickerChoice } from "./picker.ts";
 import { type CreateRetainedBtwSideInput, createRetainedBtwSide } from "./retained-session.ts";
+import { createBtwParentSwitchOptions } from "./session-actions.ts";
 import type { BtwSessionCatalog } from "./session-catalog.ts";
 import { loadBtwSessionCatalog } from "./session-catalog.ts";
 
@@ -132,7 +133,15 @@ export async function runBtwTuiCommand(
 			return;
 		}
 		if (selected.choice.sessionPath !== currentSessionPath) {
-			await ctx.switchSession(selected.choice.sessionPath);
+			const options =
+				selected.choice.sessionPath === catalog.parentSessionPath && catalog.currentSide
+					? createBtwParentSwitchOptions(catalog.currentSide.metadata)
+					: undefined;
+			if (options) {
+				await ctx.switchSession(selected.choice.sessionPath, options);
+			} else {
+				await ctx.switchSession(selected.choice.sessionPath);
+			}
 		}
 		return;
 	}

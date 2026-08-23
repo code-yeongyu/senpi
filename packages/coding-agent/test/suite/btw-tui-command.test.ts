@@ -14,6 +14,7 @@ function catalog(): BtwSessionCatalog {
 	return {
 		parentSessionPath: "/sessions/main.jsonl",
 		main: {
+			id: "main",
 			path: "/sessions/main.jsonl",
 			cwd: "/repo",
 			name: "Main",
@@ -22,6 +23,7 @@ function catalog(): BtwSessionCatalog {
 		currentSide: undefined,
 		sides: [
 			{
+				id: "side-1",
 				path: "/sessions/side-1.jsonl",
 				cwd: "/repo",
 				name: "BTW #1: first",
@@ -134,6 +136,27 @@ describe("runBtwTuiCommand", () => {
 			"New BTW",
 		]);
 		expect(harness.switchSession).toHaveBeenCalledWith("/sessions/side-1.jsonl");
+	});
+
+	it("restores the captured Main leaf when Main is selected from a side", async () => {
+		// Given
+		const harness = createHarness(["Main — Main"]);
+		harness.loaded.currentSide = harness.loaded.sides[0];
+		harness.loaded.currentSide!.metadata.parentLeafId = "main-leaf";
+		vi.spyOn(harness.ctx.sessionManager, "getSessionFile").mockReturnValue("/sessions/side-1.jsonl");
+		const navigateTree = vi.fn(async () => ({ cancelled: false }));
+
+		// When
+		await runBtwTuiCommand("", harness.ctx, harness.dependencies);
+		const switchOptions = harness.switchSession.mock.calls[0]?.[1];
+		await switchOptions?.withSession?.({ navigateTree } as unknown as ReplacedSessionContext);
+
+		// Then
+		expect(harness.switchSession).toHaveBeenCalledWith(
+			"/sessions/main.jsonl",
+			expect.objectContaining({ withSession: expect.any(Function) }),
+		);
+		expect(navigateTree).toHaveBeenCalledWith("main-leaf", { summarize: false });
 	});
 
 	it("creates an empty retained side when New BTW is selected", async () => {

@@ -10,6 +10,8 @@ interface ExtensionUiPrototype {
 		extensionSelector?: object;
 		extensionInput?: object;
 		extensionEditor?: object;
+		renderer?: { getFocusedComponent(): object | undefined };
+		editor?: object;
 	}): ExtensionUIContext;
 }
 
@@ -44,14 +46,37 @@ describe("InteractiveMode extension keybinding context", () => {
 
 		// When
 		const states = ["extensionSelector", "extensionInput", "extensionEditor"].map((field) => {
+			const editor = {};
+			const dialog = {};
 			const ui = prototype.createExtensionUIContext.call({
 				keybindings,
-				[field]: {},
+				[field]: dialog,
+				renderer: { getFocusedComponent: () => dialog },
+				editor,
 			});
 			return ui.isDialogActive?.();
 		});
 
 		// Then
 		expect(states).toEqual([true, true, true]);
+	});
+
+	it("reports a focused native login dialog as active", () => {
+		// Given
+		const prototype = InteractiveMode.prototype as unknown as ExtensionUiPrototype;
+		const loginDialog = {};
+
+		// When
+		const ui = prototype.createExtensionUIContext.call({
+			keybindings: {
+				getKeys: vi.fn((): KeyId[] => []),
+				matches: vi.fn(() => false),
+			},
+			renderer: { getFocusedComponent: () => loginDialog },
+			editor: {},
+		});
+
+		// Then
+		expect(ui.isDialogActive?.()).toBe(true);
 	});
 });

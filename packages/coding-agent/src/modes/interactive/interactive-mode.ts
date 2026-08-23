@@ -3279,10 +3279,10 @@ export class InteractiveMode {
 
 	private createExtensionUIContext(): ExtensionUIContext {
 		return {
-			isDialogActive: () =>
-				this.extensionSelector !== undefined ||
-				this.extensionInput !== undefined ||
-				this.extensionEditor !== undefined,
+			isDialogActive: () => {
+				const focused = this.renderer.getFocusedComponent();
+				return focused !== undefined && focused !== this.editor;
+			},
 			select: (title, options, opts) => this.showExtensionSelector(title, options, opts),
 			confirm: (title, message, opts) => this.showExtensionConfirm(title, message, opts),
 			input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),

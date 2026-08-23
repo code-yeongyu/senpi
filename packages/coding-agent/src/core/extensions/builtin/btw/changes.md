@@ -39,6 +39,8 @@
   switch shortcut can dispatch.
 - Inline questions require an active model before replacement; catalog membership requires the
   retained side's parent path and parent session ID to match Main.
+- Main return, close, and picker selection restore the side's captured parent leaf. Shortcut
+  re-entry is gated by the renderer's actual focused component, including native login dialogs.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why
