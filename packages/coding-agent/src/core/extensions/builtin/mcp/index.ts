@@ -126,6 +126,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			sink,
 		);
 		pi.on("session_start", (event, ctx) => {
+			if (ctx.isToolUseDisabled()) return;
 			const work = onSessionStart(event, ctx);
 			// Reload's runner.emit("session_start") is on the hot-reload critical path
 			// (~260ms when this awaits reconnect). Attach is already single-flight via

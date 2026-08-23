@@ -72,7 +72,7 @@ describe("BTW extension TUI controls", () => {
 		let terminalHandler: ((data: string) => { consume?: boolean; data?: string } | undefined) | undefined;
 		const ctx = {
 			mode: "tui",
-			isIdle: () => false,
+			isIdle: () => true,
 			sessionManager: {
 				getSessionId: () => "side",
 				getSessionDir: () => "/sessions",
@@ -133,7 +133,7 @@ describe("BTW extension TUI controls", () => {
 		let terminalHandler: ((data: string) => { consume?: boolean; data?: string } | undefined) | undefined;
 		const ctx = {
 			mode: "tui",
-			isIdle: () => false,
+			isIdle: () => true,
 			sessionManager: {
 				getSessionId: () => "side",
 				getSessionDir: () => "/sessions",
@@ -155,7 +155,9 @@ describe("BTW extension TUI controls", () => {
 			},
 			ui: {
 				matchesKeybinding: (data: string, binding: Parameters<KeybindingsManager["matches"]>[1]) =>
-					(data === "switch" && binding === "app.btw.switch") || (data === "close" && binding === "app.clear"),
+					(data === "switch" && binding === "app.btw.switch") ||
+					(data === "close" && binding === "app.clear") ||
+					(data === "escape" && binding === "app.interrupt"),
 				onTerminalInput: (handler: (data: string) => { consume?: boolean; data?: string } | undefined) => {
 					terminalHandler = handler;
 					return () => undefined;
@@ -167,10 +169,14 @@ describe("BTW extension TUI controls", () => {
 		// When
 		const switchDisposition = terminalHandler?.("switch");
 		const closeDisposition = terminalHandler?.("close");
+		const firstEscape = terminalHandler?.("escape");
+		const secondEscape = terminalHandler?.("escape");
 
 		// Then
 		expect(switchDisposition).toEqual({ consume: true });
 		expect(closeDisposition).toEqual({ consume: true });
+		expect(firstEscape).toBeUndefined();
+		expect(secondEscape).toEqual({ consume: true });
 		expect(sendUserMessage).toHaveBeenCalledOnce();
 		expect(sendUserMessage).toHaveBeenCalledWith("/btw", {
 			expandPromptTemplates: true,

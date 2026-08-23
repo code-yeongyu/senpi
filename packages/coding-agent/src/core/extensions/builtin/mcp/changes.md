@@ -4,8 +4,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: `before_agent_start` returns
-  before session attachment or instruction injection when the typed session policy disables tools.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: `session_start` skips attachment
+  and `before_agent_start` skips instruction injection when the typed session policy disables tools.
 
 ### Why
 

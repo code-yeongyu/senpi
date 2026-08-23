@@ -159,4 +159,29 @@ describe("native tool prompt policy", () => {
 		expect(result).toBeUndefined();
 		expect(attachSession).not.toHaveBeenCalled();
 	});
+
+	it("does not attach MCP servers on disabled session start", async () => {
+		// Given
+		const attachSession = vi.fn(async () => undefined);
+		const service = new Proxy(
+			{ attachSession },
+			{
+				get(target, property) {
+					if (property in target) return target[property as keyof typeof target];
+					if (property === "onWireStatusChanged") return () => () => undefined;
+					return () => undefined;
+				},
+			},
+		) as unknown as McpService;
+		const handler = captureHandler<
+			(event: { type: "session_start"; reason: "startup" }, ctx: ExtensionContext) => Promise<void> | void
+		>(createMcpExtension(service), "session_start");
+		const ctx = { isToolUseDisabled: () => true } as unknown as ExtensionContext;
+
+		// When
+		await handler({ type: "session_start", reason: "startup" }, ctx);
+
+		// Then
+		expect(attachSession).not.toHaveBeenCalled();
+	});
 });

@@ -25,8 +25,25 @@ interface ActiveBtw {
 
 export default function btwExtension(pi: ExtensionAPI) {
 	let active: ActiveBtw | undefined;
-	let tuiCommandState: "idle" | "pending" | "running" = "idle";
-	let tuiCloseState: "idle" | "pending" | "running" = "idle";
+	type SessionAction = "switch" | "close" | "main";
+	type SessionActionState = "idle" | `${SessionAction}-pending` | `${SessionAction}-running`;
+	let sessionActionState: SessionActionState = "idle";
+
+	const reserveSessionAction = (action: SessionAction): boolean => {
+		if (sessionActionState !== "idle") return false;
+		sessionActionState = `${action}-pending`;
+		return true;
+	};
+
+	const beginSessionAction = (action: SessionAction): boolean => {
+		if (sessionActionState !== "idle" && sessionActionState !== `${action}-pending`) return false;
+		sessionActionState = `${action}-running`;
+		return true;
+	};
+
+	const finishSessionAction = (action: SessionAction): void => {
+		if (sessionActionState === `${action}-running`) sessionActionState = "idle";
+	};
 
 	function dismiss(ctx: ExtensionContext, options: { abort: boolean }): void {
 		const current = active;
@@ -48,16 +65,9 @@ export default function btwExtension(pi: ExtensionAPI) {
 			isCurrentSide: () => readCurrentBtwSide(ctx.sessionManager) !== undefined,
 			isIdle: () => ctx.isIdle(),
 			isDialogActive: () => ctx.ui.isDialogActive?.() ?? false,
-			tryBeginBtwCommand: () => {
-				if (tuiCommandState !== "idle" || tuiCloseState !== "idle") return false;
-				tuiCommandState = "pending";
-				return true;
-			},
-			tryBeginBtwClose: () => {
-				if (tuiCommandState !== "idle" || tuiCloseState !== "idle") return false;
-				tuiCloseState = "pending";
-				return true;
-			},
+			tryBeginBtwCommand: () => reserveSessionAction("switch"),
+			tryBeginBtwClose: () => reserveSessionAction("close"),
+			tryBeginBtwMain: () => reserveSessionAction("main"),
 			matchesKeybinding: (data, keybinding) => ctx.ui.matchesKeybinding?.(data, keybinding) ?? false,
 			dispatch: (command) => {
 				pi.sendUserMessage(command, { expandPromptTemplates: true });
@@ -81,18 +91,22 @@ export default function btwExtension(pi: ExtensionAPI) {
 	pi.registerCommand("btw-main", {
 		description: "Return from the current retained BTW session to Main",
 		handler: async (_args, ctx) => {
-			await returnToBtwParent({
-				ctx,
-				current: readCurrentBtwSide(ctx.sessionManager),
-			});
+			if (!beginSessionAction("main")) return;
+			try {
+				await returnToBtwParent({
+					ctx,
+					current: readCurrentBtwSide(ctx.sessionManager),
+				});
+			} finally {
+				finishSessionAction("main");
+			}
 		},
 	});
 
 	pi.registerCommand("btw-close", {
 		description: "Delete the current retained BTW session and return to Main",
 		handler: async (_args, ctx) => {
-			if (tuiCommandState !== "idle" || tuiCloseState === "running") return;
-			tuiCloseState = "running";
+			if (!beginSessionAction("close")) return;
 			try {
 				await closeRetainedBtwSide({
 					ctx,
@@ -100,7 +114,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 					deleteSessionFile: deleteBtwSessionFile,
 				});
 			} finally {
-				tuiCloseState = "idle";
+				finishSessionAction("close");
 			}
 		},
 	});
@@ -110,8 +124,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 		argumentHint: "<question>",
 		handler: async (args, ctx) => {
 			if (ctx.mode === "tui" && ctx.hasUI) {
-				if (tuiCommandState === "running" || tuiCloseState !== "idle") return;
-				tuiCommandState = "running";
+				if (!beginSessionAction("switch")) return;
 				dismiss(ctx, { abort: true });
 				try {
 					await runBtwTuiCommand(args, ctx, defaultBtwTuiCommandDependencies);
@@ -119,7 +132,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 					const message = error instanceof Error ? error.message : String(error);
 					ctx.ui.notify(`/btw failed: ${message}`, "error");
 				} finally {
-					tuiCommandState = "idle";
+					finishSessionAction("switch");
 				}
 				return;
 			}
