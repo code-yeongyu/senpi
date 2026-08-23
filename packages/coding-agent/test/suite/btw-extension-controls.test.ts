@@ -115,4 +115,65 @@ describe("BTW extension TUI controls", () => {
 			expandPromptTemplates: true,
 		});
 	});
+
+	it("blocks destructive close while a switch command is pending", () => {
+		// Given
+		const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+		const sendUserMessage = vi.fn();
+		const pi = {
+			on: vi.fn((event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => {
+				handlers.set(event, handler);
+			}),
+			registerCommand: vi.fn(),
+			sendUserMessage,
+			setActiveTools: vi.fn(),
+			getThinkingLevel: vi.fn(() => "off"),
+		} as unknown as ExtensionAPI;
+		btwExtension(pi);
+		let terminalHandler: ((data: string) => { consume?: boolean; data?: string } | undefined) | undefined;
+		const ctx = {
+			mode: "tui",
+			isIdle: () => false,
+			sessionManager: {
+				getSessionId: () => "side",
+				getSessionDir: () => "/sessions",
+				getSessionFile: () => "/sessions/side.jsonl",
+				getEntries: () => [
+					{
+						type: "custom",
+						customType: "btw-side",
+						data: {
+							version: 1,
+							parentSessionPath: "/sessions/main.jsonl",
+							parentSessionId: "main",
+							ordinal: 1,
+							summary: "side",
+							createdAt: "2026-08-23T00:00:00.000Z",
+						},
+					},
+				],
+			},
+			ui: {
+				matchesKeybinding: (data: string, binding: Parameters<KeybindingsManager["matches"]>[1]) =>
+					(data === "switch" && binding === "app.btw.switch") || (data === "close" && binding === "app.clear"),
+				onTerminalInput: (handler: (data: string) => { consume?: boolean; data?: string } | undefined) => {
+					terminalHandler = handler;
+					return () => undefined;
+				},
+			},
+		} as unknown as ExtensionContext;
+		handlers.get("session_start")?.({ type: "session_start", reason: "startup" } satisfies SessionStartEvent, ctx);
+
+		// When
+		const switchDisposition = terminalHandler?.("switch");
+		const closeDisposition = terminalHandler?.("close");
+
+		// Then
+		expect(switchDisposition).toEqual({ consume: true });
+		expect(closeDisposition).toEqual({ consume: true });
+		expect(sendUserMessage).toHaveBeenCalledOnce();
+		expect(sendUserMessage).toHaveBeenCalledWith("/btw", {
+			expandPromptTemplates: true,
+		});
+	});
 });

@@ -52,6 +52,7 @@
 - MCP session attachment and server-instruction injection are suppressed under retained no-tools policy.
 - Repeated Ctrl+C collapses to one destructive close; direct return and picker identity checks use
   header-only inspection rather than full transcript parsing.
+- Switch and destructive close share one mutual-exclusion gate across raw and direct commands.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

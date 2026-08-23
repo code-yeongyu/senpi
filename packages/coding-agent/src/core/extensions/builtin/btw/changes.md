@@ -61,6 +61,7 @@
 - MCP instruction injection also short-circuits before attachment when the retained policy disables tools.
 - Destructive close has its own pending/running reservation, and parent/side/picker identity checks
   use bounded header metadata instead of loading full transcripts.
+- Switch and close reservations cross-gate each other, so one BTW session action owns replacement.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

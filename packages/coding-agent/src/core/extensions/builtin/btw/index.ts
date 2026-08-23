@@ -49,12 +49,12 @@ export default function btwExtension(pi: ExtensionAPI) {
 			isIdle: () => ctx.isIdle(),
 			isDialogActive: () => ctx.ui.isDialogActive?.() ?? false,
 			tryBeginBtwCommand: () => {
-				if (tuiCommandState !== "idle") return false;
+				if (tuiCommandState !== "idle" || tuiCloseState !== "idle") return false;
 				tuiCommandState = "pending";
 				return true;
 			},
 			tryBeginBtwClose: () => {
-				if (tuiCloseState !== "idle") return false;
+				if (tuiCommandState !== "idle" || tuiCloseState !== "idle") return false;
 				tuiCloseState = "pending";
 				return true;
 			},
@@ -91,7 +91,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 	pi.registerCommand("btw-close", {
 		description: "Delete the current retained BTW session and return to Main",
 		handler: async (_args, ctx) => {
-			if (tuiCloseState === "running") return;
+			if (tuiCommandState !== "idle" || tuiCloseState === "running") return;
 			tuiCloseState = "running";
 			try {
 				await closeRetainedBtwSide({
@@ -110,7 +110,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 		argumentHint: "<question>",
 		handler: async (args, ctx) => {
 			if (ctx.mode === "tui" && ctx.hasUI) {
-				if (tuiCommandState === "running") return;
+				if (tuiCommandState === "running" || tuiCloseState !== "idle") return;
 				tuiCommandState = "running";
 				dismiss(ctx, { abort: true });
 				try {
