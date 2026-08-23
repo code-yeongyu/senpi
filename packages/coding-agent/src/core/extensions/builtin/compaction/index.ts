@@ -63,6 +63,7 @@ import {
 	type SpeculativeCompactionResult,
 	type SpeculativeCompactionSnapshot,
 	SummaryGenerationError,
+	usesDedicatedCompactionPrompt,
 } from "./speculative.ts";
 import { type CompactionExtensionState, createInitialState, resetTurnCounter } from "./state.ts";
 import { resolveInheritedTaskIntent } from "./task-intent.ts";
@@ -509,6 +510,7 @@ export default function compactionExtension(
 			return { compaction: remoteCompaction };
 		}
 
+		const dedicatedPrompt = usesDedicatedCompactionPrompt(model);
 		const snapshot = {
 			generation: ++speculativeGeneration,
 			expectedRevision: ctx.getMessageRevision(),
@@ -519,8 +521,7 @@ export default function compactionExtension(
 			promptVariant: getPromptVariant(event),
 			origin: "core-route" as const,
 			customInstructions: event.customInstructions,
-			systemPrompt: ctx.getSystemPrompt(),
-			tools: getSummarizationTools(),
+			...(dedicatedPrompt ? {} : { systemPrompt: ctx.getSystemPrompt(), tools: getSummarizationTools() }),
 		};
 		let compaction: CompactionResult | undefined;
 		try {

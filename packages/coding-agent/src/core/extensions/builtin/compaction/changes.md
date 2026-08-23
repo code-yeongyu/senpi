@@ -1,5 +1,26 @@
 # Builtin compaction extension changes
 
+## Dedicated compaction prompt for Grok/xAI/cliproxy-grok (2026-08-23)
+
+### What changed
+
+- `generateSummaryMessage()` keeps the Anthropic anti-distillation agent-shaped
+  summarization request (session system prompt + tools) for non-Grok models.
+- Grok family summarizers (`provider` `xai`/`grok`, or a model id containing
+  `grok`, including `cliproxy/grok-4.6`) now send only `MERGED_COMPACTION_PROMPT_SYSTEM`
+  and omit tools.
+
+### Why
+
+- A k-pop-diablo `cliproxy/grok-4.6` session at 1.6M/500K stored the IntentGate
+  routing line as the compaction summary (`promptVariant: "update"`, 80 chars).
+  Grok treated the agent-shaped summarization request as a real turn.
+
+### Expected merge-conflict zones
+
+- `speculative.ts` around `generateSummaryMessage` request-context construction.
+- `test/compaction/summarization-grok-prompt.test.ts`.
+
 ## Regenerate after a warm summary goes stale (2026-08-09)
 
 ### What changed

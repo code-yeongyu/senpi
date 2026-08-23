@@ -90,6 +90,18 @@ export interface SpeculativeCompactionSnapshot {
 	tools?: Tool[];
 }
 
+/**
+ * Grok treats an agent-shaped summarization request as a real turn: IntentGate
+ * fires, tools get called, and the one-line routing sentence is stored as the
+ * compaction summary. Those models get the dedicated compaction prompt and no tools.
+ * Anthropic still needs the agent-shaped request to bypass anti-distillation.
+ */
+export function usesDedicatedCompactionPrompt(model: Model<any>): boolean {
+	const provider = model.provider.toLowerCase();
+	if (provider === "xai" || provider === "grok") return true;
+	return model.id.toLowerCase().includes("grok");
+}
+
 export type SpeculativeCompactionResult = ApplyCompactionResult | { applied: false; reason: "unavailable" | "failed" };
 
 function approxTokens(text: string): number {
@@ -227,11 +239,11 @@ async function generateSummaryMessage(options: {
 	};
 }): Promise<Message | undefined> {
 	// Send the conversation as native LLM messages with the summarization
-	// instruction as a trailing user message, mirroring normal agent traffic.
-	// A single serialized `<conversation>` text dump of a large session is
-	// deterministically refused by Anthropic's anti-distillation classifier
-	// ("reverse engineering or duplicating model outputs"), while the same
-	// content as native blocks with the agent's system prompt and tools passes.
+	// instruction as a trailing user message. Anthropic refuses a serialized
+	// `<conversation>` dump ("reverse engineering or duplicating model outputs");
+	// matching normal agent traffic (system prompt + tools) is that bypass.
+	// Grok/xAI/cliproxy-grok treat that same shape as a live agent turn, so they
+	// get the dedicated compaction prompt and no tools.
 	// Request-local controller: the idle watchdog must be able to tear down a
 	// stalled summarization request without aborting the caller's own signal.
 	const requestController = new AbortController();
@@ -250,10 +262,15 @@ async function generateSummaryMessage(options: {
 			},
 		];
 		const providerRequest = await options.context.prepareProviderRequest?.(requestMessages);
+		const dedicatedPrompt = usesDedicatedCompactionPrompt(options.snapshot.model);
 		const requestContext = {
-			systemPrompt: options.snapshot.systemPrompt ?? options.prompt.system,
+			systemPrompt: dedicatedPrompt
+				? options.prompt.system
+				: (options.snapshot.systemPrompt ?? options.prompt.system),
 			messages: repairOrphanedToolResults(convertToLlm(providerRequest?.messages ?? requestMessages)),
-			...(options.snapshot.tools && options.snapshot.tools.length > 0 ? { tools: options.snapshot.tools } : {}),
+			...(!dedicatedPrompt && options.snapshot.tools && options.snapshot.tools.length > 0
+				? { tools: options.snapshot.tools }
+				: {}),
 		};
 		const headers = providerRequest
 			? await providerRequest.transformHeaders(options.auth.headers ?? {})
@@ -398,6 +415,7 @@ export function createSpeculativeCompactionSnapshot(
 	});
 	if (!preparation) return undefined;
 
+	const dedicatedPrompt = usesDedicatedCompactionPrompt(model);
 	return {
 		generation: options.generation,
 		expectedRevision,
@@ -408,8 +426,7 @@ export function createSpeculativeCompactionSnapshot(
 		promptVariant: getPromptVariant({ reason: "extension", preparation }),
 		...(options.origin ? { origin: options.origin } : {}),
 		customInstructions: options.customInstructions,
-		systemPrompt: context.getSystemPrompt?.(),
-		tools: options.tools,
+		...(dedicatedPrompt ? {} : { systemPrompt: context.getSystemPrompt?.(), tools: options.tools }),
 	};
 }
 
