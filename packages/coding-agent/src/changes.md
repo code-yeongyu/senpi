@@ -50,6 +50,8 @@
 - Creation revalidates settled Main ID, recovered siblings bypass header-cwd prefiltering before
   exact parent matching, and imagegen skill discovery is suppressed when tools are disabled.
 - MCP session attachment and server-instruction injection are suppressed under retained no-tools policy.
+- Repeated Ctrl+C collapses to one destructive close; direct return and picker identity checks use
+  header-only inspection rather than full transcript parsing.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

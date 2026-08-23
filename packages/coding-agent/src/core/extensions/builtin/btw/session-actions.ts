@@ -66,7 +66,7 @@ export function readCurrentBtwSide(sessionManager: ReadonlySessionManager): Curr
 
 function hasMatchingBtwParent(ctx: ExtensionCommandContext, current: CurrentBtwSide): boolean {
 	try {
-		if (ctx.inspectSession(current.metadata.parentSessionPath).id === current.metadata.parentSessionId) {
+		if (ctx.inspectSessionMetadata(current.metadata.parentSessionPath)?.id === current.metadata.parentSessionId) {
 			return true;
 		}
 	} catch {
@@ -105,7 +105,7 @@ export async function closeRetainedBtwSide(input: {
 		withSession: async (nextCtx) => {
 			let warning: string | undefined;
 			try {
-				if (nextCtx.inspectSession(current.sessionPath).id !== current.sessionId) {
+				if (nextCtx.inspectSessionMetadata(current.sessionPath)?.id !== current.sessionId) {
 					warning = "The visible BTW session changed before deletion.";
 				}
 			} catch {

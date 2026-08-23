@@ -11,6 +11,7 @@ export function createBtwInputRouter(_input: {
 	isIdle: () => boolean;
 	isDialogActive: () => boolean;
 	tryBeginBtwCommand: () => boolean;
+	tryBeginBtwClose: () => boolean;
 	matchesKeybinding: (data: string, binding: AppKeybinding) => boolean;
 	dispatch: (command: string) => void;
 	now?: () => number;
@@ -39,6 +40,7 @@ export function createBtwInputRouter(_input: {
 			if (input.matchesKeybinding(data, "app.clear")) {
 				resetInterruptPair();
 				if (input.isDialogActive()) return undefined;
+				if (!input.tryBeginBtwClose()) return { consume: true };
 				input.dispatch("/btw-close");
 				return { consume: true };
 			}

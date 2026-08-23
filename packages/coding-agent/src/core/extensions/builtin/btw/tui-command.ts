@@ -89,7 +89,7 @@ export const defaultBtwTuiCommandDependencies: RunBtwTuiCommandDependencies = {
 	},
 	async sessionIdentity(ctx, sessionPath) {
 		try {
-			return ctx.inspectSession(sessionPath).id;
+			return ctx.inspectSessionMetadata(sessionPath)?.id;
 		} catch {
 			return undefined;
 		}

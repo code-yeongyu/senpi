@@ -59,6 +59,8 @@
 - Settled creation revalidates the active/selected parent ID. Recovered catalogs request unfiltered
   header candidates before exact parent matching, and imagegen skill discovery honors no-tools.
 - MCP instruction injection also short-circuits before attachment when the retained policy disables tools.
+- Destructive close has its own pending/running reservation, and parent/side/picker identity checks
+  use bounded header metadata instead of loading full transcripts.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

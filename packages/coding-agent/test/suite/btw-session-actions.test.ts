@@ -53,6 +53,13 @@ function createContext(options: { runWithSession?: boolean; parentSessionId?: st
 		entries: [],
 		context: { messages: [] },
 	}));
+	const inspectSessionMetadata = vi.fn((sessionPath: string) => ({
+		id: sessionPath === SIDE_PATH ? (options.sideSessionId ?? "side") : (options.parentSessionId ?? "main"),
+		path: sessionPath,
+		cwd: "/repo",
+		created: new Date(0),
+		modified: new Date(0),
+	}));
 	const switchSession = vi.fn(
 		async (
 			_path: string,
@@ -63,6 +70,7 @@ function createContext(options: { runWithSession?: boolean; parentSessionId?: st
 			if (options.runWithSession !== false) {
 				await switchOptions?.withSession?.({
 					inspectSession,
+					inspectSessionMetadata,
 					navigateTree,
 					ui: { notify },
 				} as unknown as ReplacedSessionContext);
@@ -74,12 +82,14 @@ function createContext(options: { runWithSession?: boolean; parentSessionId?: st
 		ctx: {
 			sessionManager: manager(),
 			inspectSession,
+			inspectSessionMetadata,
 			switchSession,
 			ui: { notify },
 		} as unknown as ExtensionCommandContext,
 		notify,
 		navigateTree,
 		inspectSession,
+		inspectSessionMetadata,
 		switchSession,
 	};
 }
@@ -108,6 +118,9 @@ describe("retained BTW session actions", () => {
 		expect(deleteSessionFile).toHaveBeenCalledOnce();
 		expect(deleteSessionFile).toHaveBeenCalledWith(SIDE_PATH);
 		expect(harness.navigateTree).toHaveBeenCalledWith("main-leaf", { summarize: false });
+		expect(harness.inspectSession).not.toHaveBeenCalled();
+		expect(harness.inspectSessionMetadata).toHaveBeenCalledWith(PARENT_PATH);
+		expect(harness.inspectSessionMetadata).toHaveBeenCalledWith(SIDE_PATH);
 	});
 
 	it("does not return to a reused parent path with a different session ID", async () => {

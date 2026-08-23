@@ -26,6 +26,7 @@ interface ActiveBtw {
 export default function btwExtension(pi: ExtensionAPI) {
 	let active: ActiveBtw | undefined;
 	let tuiCommandState: "idle" | "pending" | "running" = "idle";
+	let tuiCloseState: "idle" | "pending" | "running" = "idle";
 
 	function dismiss(ctx: ExtensionContext, options: { abort: boolean }): void {
 		const current = active;
@@ -50,6 +51,11 @@ export default function btwExtension(pi: ExtensionAPI) {
 			tryBeginBtwCommand: () => {
 				if (tuiCommandState !== "idle") return false;
 				tuiCommandState = "pending";
+				return true;
+			},
+			tryBeginBtwClose: () => {
+				if (tuiCloseState !== "idle") return false;
+				tuiCloseState = "pending";
 				return true;
 			},
 			matchesKeybinding: (data, keybinding) => ctx.ui.matchesKeybinding?.(data, keybinding) ?? false,
@@ -85,11 +91,17 @@ export default function btwExtension(pi: ExtensionAPI) {
 	pi.registerCommand("btw-close", {
 		description: "Delete the current retained BTW session and return to Main",
 		handler: async (_args, ctx) => {
-			await closeRetainedBtwSide({
-				ctx,
-				current: readCurrentBtwSide(ctx.sessionManager),
-				deleteSessionFile: deleteBtwSessionFile,
-			});
+			if (tuiCloseState === "running") return;
+			tuiCloseState = "running";
+			try {
+				await closeRetainedBtwSide({
+					ctx,
+					current: readCurrentBtwSide(ctx.sessionManager),
+					deleteSessionFile: deleteBtwSessionFile,
+				});
+			} finally {
+				tuiCloseState = "idle";
+			}
 		},
 	});
 

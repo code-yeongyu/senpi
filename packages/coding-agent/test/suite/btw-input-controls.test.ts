@@ -17,11 +17,13 @@ function createHarness(
 	let now = options.now ?? 0;
 	const dispatch = vi.fn();
 	const tryBeginBtwCommand = vi.fn(() => true);
+	const tryBeginBtwClose = vi.fn(() => true);
 	const router = createBtwInputRouter({
 		isCurrentSide: () => side,
 		isIdle: () => idle,
 		isDialogActive: () => dialog,
 		tryBeginBtwCommand,
+		tryBeginBtwClose,
 		matchesKeybinding: (data, binding) => manager.matches(data, binding),
 		dispatch,
 		now: () => now,
@@ -30,6 +32,7 @@ function createHarness(
 		dispatch,
 		router,
 		tryBeginBtwCommand,
+		tryBeginBtwClose,
 		setIdle(value: boolean) {
 			idle = value;
 		},
@@ -189,5 +192,21 @@ describe("BTW side input controls", () => {
 		expect(side.dispatch).toHaveBeenCalledWith("/btw-close");
 		expect(mainDisposition).toBeUndefined();
 		expect(main.dispatch).not.toHaveBeenCalled();
+	});
+
+	it("suppresses a second destructive close while the first is pending", () => {
+		// Given
+		const harness = createHarness({ side: true });
+		harness.tryBeginBtwClose.mockReturnValueOnce(true).mockReturnValueOnce(false);
+
+		// When
+		const first = harness.router.handleInput("\x03");
+		const second = harness.router.handleInput("\x03");
+
+		// Then
+		expect(first).toEqual({ consume: true });
+		expect(second).toEqual({ consume: true });
+		expect(harness.dispatch).toHaveBeenCalledOnce();
+		expect(harness.dispatch).toHaveBeenCalledWith("/btw-close");
 	});
 });
