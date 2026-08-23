@@ -230,6 +230,19 @@ describe("runBtwTuiCommand", () => {
 		expect(harness.dependencies.createSide).not.toHaveBeenCalled();
 	});
 
+	it("refuses New BTW when both catalogs already contain a replacement Main ID", async () => {
+		// Given
+		const harness = createHarness(["New BTW"]);
+		harness.loaded.main!.id = "replacement-main";
+
+		// When
+		await runBtwTuiCommand("", harness.ctx, harness.dependencies);
+
+		// Then
+		expect(harness.notify).toHaveBeenCalledOnce();
+		expect(harness.dependencies.createSide).not.toHaveBeenCalled();
+	});
+
 	it("refreshes after a selected side disappears instead of switching stale state", async () => {
 		// Given
 		const harness = createHarness(["BTW #1 — first", "BTW #1 — first"]);

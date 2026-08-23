@@ -148,9 +148,15 @@ export async function runBtwTuiCommand(
 			continue;
 		}
 		if (selected.choice.type === "new") {
+			const activeParentSessionId =
+				catalog.currentSide?.metadata.parentSessionId ?? ctx.sessionManager.getSessionId();
+			if (selected.choice.parentSessionId !== activeParentSessionId) {
+				ctx.ui.notify("BTW cannot create a side because the original Main session is unavailable.", "warning");
+				return;
+			}
 			await ctx.waitForIdle();
 			const settledCatalog = await dependencies.loadCatalog(ctx);
-			if (!settledCatalog.main || settledCatalog.main.id !== selected.choice.parentSessionId) {
+			if (!settledCatalog.main || settledCatalog.main.id !== activeParentSessionId) {
 				ctx.ui.notify("BTW cannot create a side because the original Main session is unavailable.", "warning");
 				return;
 			}

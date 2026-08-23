@@ -68,6 +68,7 @@
 - Raw switch, close, and Main shortcuts resolve this builtin's collision-safe invocation name before
   reserving or dispatching, so renamed commands cannot fall through as model prompts.
 - Model-specific prompt presets are suppressed under retained no-tools policy before replacement.
+- New BTW creation requires selected and settled Main IDs to match the active visible parent ID.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why
