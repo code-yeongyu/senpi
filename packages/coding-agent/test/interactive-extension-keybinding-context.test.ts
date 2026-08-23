@@ -5,7 +5,12 @@ import type { KeybindingsManager } from "../src/core/keybindings.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 interface ExtensionUiPrototype {
-	createExtensionUIContext(this: { keybindings: Pick<KeybindingsManager, "getKeys" | "matches"> }): ExtensionUIContext;
+	createExtensionUIContext(this: {
+		keybindings: Pick<KeybindingsManager, "getKeys" | "matches">;
+		extensionSelector?: object;
+		extensionInput?: object;
+		extensionEditor?: object;
+	}): ExtensionUIContext;
 }
 
 describe("InteractiveMode extension keybinding context", () => {
@@ -27,5 +32,26 @@ describe("InteractiveMode extension keybinding context", () => {
 		expect(matches).toHaveBeenCalledWith("terminal-sequence", "app.btw.switch");
 		expect(keys).toEqual(["ctrl+7"]);
 		expect(getKeys).toHaveBeenCalledWith("app.btw.switch");
+	});
+
+	it("reports selectors inputs and editors as active dialogs", () => {
+		// Given
+		const prototype = InteractiveMode.prototype as unknown as ExtensionUiPrototype;
+		const keybindings = {
+			getKeys: vi.fn((): KeyId[] => []),
+			matches: vi.fn(() => false),
+		};
+
+		// When
+		const states = ["extensionSelector", "extensionInput", "extensionEditor"].map((field) => {
+			const ui = prototype.createExtensionUIContext.call({
+				keybindings,
+				[field]: {},
+			});
+			return ui.isDialogActive?.();
+		});
+
+		// Then
+		expect(states).toEqual([true, true, true]);
 	});
 });

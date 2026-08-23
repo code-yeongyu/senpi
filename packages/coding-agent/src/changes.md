@@ -26,6 +26,8 @@
   authentication before replacing Main.
 - Native provider prompt contributors honor the typed session tool-policy flag, keeping retained
   side prompts coherent with their empty provider/tool surfaces.
+- Interactive extension dialog state includes selectors, inputs, and editors, preventing raw
+  extension shortcuts from invisibly orphaning any of those pending flows.
 - `app.btw.switch` adds Ctrl+/, Ctrl+_, and Ctrl+7 defaults.
 - Interactive extension UI exposes active key matching and effective-key lookup for configurable
   terminal routing and visible fallback hints.

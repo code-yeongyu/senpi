@@ -35,6 +35,8 @@
   preflighted before Main can be replaced.
 - Native web-search, bash, and image prompt contributors consult the typed session tool-policy flag
   and never advertise unavailable tools inside retained sides.
+- Active-dialog detection covers selectors, text inputs, and full extension editors before the BTW
+  switch shortcut can dispatch.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why
