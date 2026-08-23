@@ -64,7 +64,7 @@ export const defaultBtwTuiCommandDependencies: RunBtwTuiCommandDependencies = {
 		return loadBtwSessionCatalog({
 			cwd: ctx.cwd,
 			currentSessionPath: ctx.sessionManager.getSessionFile() ?? "",
-			listSessions: () => ctx.listSessions(),
+			listSessions: () => ctx.listSessionMetadata(),
 			readMetadata: async (sessionPath) => {
 				const custom = ctx.inspectSessionCustomData(sessionPath, BTW_SIDE_ENTRY_TYPE);
 				return parseBtwSideMetadata(custom?.data);

@@ -157,6 +157,7 @@ describe("retained BTW session actions", () => {
 		expect(harness.switchSession).toHaveBeenCalledOnce();
 		expect(deleteSessionFile).not.toHaveBeenCalled();
 		expect(harness.notify).toHaveBeenCalledOnce();
+		expect(harness.navigateTree).toHaveBeenCalledWith("main-leaf", { summarize: false });
 	});
 
 	it("re-adopts side metadata after a fresh session-manager reload", () => {
@@ -208,6 +209,7 @@ describe("retained BTW session actions", () => {
 
 		// Then
 		expect(harness.notify).toHaveBeenCalledWith(expect.stringContaining("permission denied"), "warning");
+		expect(harness.navigateTree).toHaveBeenCalledWith("main-leaf", { summarize: false });
 	});
 
 	it("does not delete the side when the parent path belongs to another session ID", async () => {

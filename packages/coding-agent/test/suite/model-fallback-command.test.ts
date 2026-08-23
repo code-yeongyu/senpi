@@ -165,6 +165,7 @@ async function context(
 		waitForIdle: async () => {},
 		newSession: async () => ({ cancelled: false }),
 		listSessions: async () => [],
+		listSessionMetadata: async () => [],
 		inspectSession: () => ({
 			id: sessionManager.getSessionId(),
 			entries: sessionManager.getEntries(),

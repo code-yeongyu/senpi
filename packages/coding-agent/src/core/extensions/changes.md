@@ -10,11 +10,22 @@
   the user's effective shortcuts instead of stale fixed hints.
 - The bridge accepts an `AppKeybinding`, so extensions resolve user configuration and terminal
   protocol aliases through the host `KeybindingsManager` instead of hard-coded input sequences.
+- `packages/coding-agent/src/core/extensions/types.ts`: typed dialog, session discovery, inspection,
+  replacement, and tool-policy capabilities.
+- `packages/coding-agent/src/core/extensions/index.ts`: exports the new public inspection result
+  types.
+- `packages/coding-agent/src/core/extensions/runner.ts`: binds the typed capabilities to live host
+  state and final provider boundaries.
 
 ### Why
 
 - Built-in TUI workflows such as the retained BTW switcher need reliable, remappable input without
   bypassing reserved host bindings or guessing which terminal protocol emitted the key.
+
+### Why an extension could not handle it
+
+- Key matching, dialog focus, replacement-session actions, bounded session inspection, and final
+  provider payload enforcement require capabilities owned by the extension host.
 
 ### Expected merge-conflict zones
 

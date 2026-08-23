@@ -100,20 +100,21 @@ export async function closeRetainedBtwSide(input: {
 	if (!hasMatchingBtwParent(input.ctx, current)) return;
 	await input.ctx.switchSession(current.metadata.parentSessionPath, {
 		withSession: async (nextCtx) => {
+			let warning: string | undefined;
 			try {
 				if (nextCtx.inspectSession(current.sessionPath).id !== current.sessionId) {
-					nextCtx.ui.notify("The visible BTW session changed before deletion.", "warning");
-					return;
+					warning = "The visible BTW session changed before deletion.";
 				}
 			} catch {
-				nextCtx.ui.notify("The visible BTW session is no longer available for deletion.", "warning");
-				return;
+				warning = "The visible BTW session is no longer available for deletion.";
 			}
-			const result = await input.deleteSessionFile(current.sessionPath);
-			if (!result.ok) {
-				nextCtx.ui.notify(`Failed to delete BTW session: ${result.error ?? "unknown error"}`, "warning");
-				return;
+			if (!warning) {
+				const result = await input.deleteSessionFile(current.sessionPath);
+				if (!result.ok) {
+					warning = `Failed to delete BTW session: ${result.error ?? "unknown error"}`;
+				}
 			}
+			if (warning) nextCtx.ui.notify(warning, "warning");
 			await createBtwParentSwitchOptions(current.metadata)?.withSession(nextCtx);
 		},
 	});

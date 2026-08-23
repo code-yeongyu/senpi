@@ -202,6 +202,7 @@ describe("default BTW session discovery", () => {
 		// Given
 		const loaded = catalog();
 		const listSessions = vi.fn(async () => [loaded.main!, loaded.sides[0]!]);
+		const listSessionMetadata = vi.fn(async () => [loaded.main!, loaded.sides[0]!]);
 		const inspectSession = vi.fn((sessionPath: string) => ({
 			id: sessionPath === loaded.parentSessionPath ? "main" : "side-1",
 			entries:
@@ -234,6 +235,7 @@ describe("default BTW session discovery", () => {
 				getSessionFile: () => loaded.parentSessionPath,
 			},
 			listSessions,
+			listSessionMetadata,
 			inspectSession,
 			inspectSessionCustomData,
 		} as unknown as ExtensionCommandContext;
@@ -242,7 +244,8 @@ describe("default BTW session discovery", () => {
 		const discovered = await defaultBtwTuiCommandDependencies.loadCatalog(ctx);
 
 		// Then
-		expect(listSessions).toHaveBeenCalledOnce();
+		expect(listSessionMetadata).toHaveBeenCalledOnce();
+		expect(listSessions).not.toHaveBeenCalled();
 		expect(inspectSessionCustomData).toHaveBeenCalled();
 		expect(inspectSession).not.toHaveBeenCalled();
 		expect(discovered.sides).toHaveLength(1);

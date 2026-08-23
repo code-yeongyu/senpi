@@ -5,11 +5,18 @@
 
 - `createExtensionUIContext()` now implements `matchesKeybinding()` and `getKeybindingKeys()` with
   the live interactive `KeybindingsManager`.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: focus and raw-input routing
+  expose the active keybindings and actual focused dialog state.
 
 ### Why
 
 - Extensions can route configurable TUI actions across legacy, Kitty, and user-remapped key
   sequences without duplicating terminal parsing.
+
+### Why an extension could not handle it
+
+- The active focused component, editor container, and terminal input subscription order are private
+  `InteractiveMode` state and must be surfaced by the host.
 
 ### Expected merge-conflict zones
 

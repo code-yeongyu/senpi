@@ -67,6 +67,7 @@ import type {
 	SessionEntry,
 	SessionInfo,
 	SessionManager,
+	SessionMetadataInfo,
 } from "../session-manager.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo } from "../source-info.ts";
@@ -575,6 +576,9 @@ export interface ExtensionCommandContext extends ExtensionContext {
 
 	/** List sessions for the current cwd and configured session directory. */
 	listSessions(): Promise<readonly SessionInfo[]>;
+
+	/** List session headers without computing transcript summaries. */
+	listSessionMetadata(): Promise<readonly SessionMetadataInfo[]>;
 
 	/** Inspect a persisted session, optionally resolving context from a specific leaf. */
 	inspectSession(sessionPath: string, options?: { leafId?: string | null }): ExtensionSessionInspection;

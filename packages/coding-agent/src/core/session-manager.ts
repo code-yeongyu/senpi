@@ -248,6 +248,15 @@ export interface SessionCustomDataInspection {
 	data: unknown;
 }
 
+export interface SessionMetadataInfo {
+	path: string;
+	id: string;
+	cwd: string;
+	parentSessionPath?: string;
+	created: Date;
+	modified: Date;
+}
+
 export type ReadonlySessionManager = Pick<
 	SessionManager,
 	| "getCwd"
@@ -1792,6 +1801,67 @@ export class SessionManager {
 			}
 		}
 		return undefined;
+	}
+
+	static inspectMetadata(sessionPath: string, maxBytes = 16 * 1024): SessionMetadataInfo | undefined {
+		const stats = statSync(sessionPath);
+		if (stats.size === 0) return undefined;
+		const bytesToRead = Math.min(stats.size, maxBytes);
+		const buffer = Buffer.alloc(bytesToRead);
+		const fd = openSync(sessionPath, "r");
+		let bytesRead = 0;
+		try {
+			bytesRead = readSync(fd, buffer, 0, bytesToRead, 0);
+		} finally {
+			closeSync(fd);
+		}
+		const text = buffer.toString("utf8", 0, bytesRead);
+		const lineEnd = text.indexOf("\n");
+		if (lineEnd < 0 && bytesRead < stats.size) return undefined;
+		const firstLine = lineEnd >= 0 ? text.slice(0, lineEnd) : text;
+		const header = JSON.parse(firstLine) as Partial<SessionHeader>;
+		if (
+			header.type !== "session" ||
+			typeof header.id !== "string" ||
+			typeof header.timestamp !== "string" ||
+			typeof header.cwd !== "string"
+		) {
+			return undefined;
+		}
+		return {
+			path: sessionPath,
+			id: header.id,
+			cwd: header.cwd,
+			parentSessionPath: header.parentSession,
+			created: new Date(header.timestamp),
+			modified: stats.mtime,
+		};
+	}
+
+	static async listMetadata(cwd: string, sessionDir?: string): Promise<SessionMetadataInfo[]> {
+		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
+		if (!existsSync(dir)) return [];
+		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
+		const resolvedCwd = resolvePath(cwd);
+		const names = await readdir(dir);
+		const sessions: SessionMetadataInfo[] = [];
+		for (const name of names) {
+			if (!name.endsWith(".jsonl")) continue;
+			const path = join(dir, name);
+			try {
+				const metadata = SessionManager.inspectMetadata(path);
+				if (metadata && (!filterCwd || sessionCwdMatches(metadata.cwd, resolvedCwd))) {
+					sessions.push(metadata);
+				}
+			} catch (error) {
+				if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+					continue;
+				}
+				throw error;
+			}
+		}
+		sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+		return sessions;
 	}
 
 	static async list(cwd: string, sessionDir?: string, onProgress?: SessionListProgress): Promise<SessionInfo[]> {

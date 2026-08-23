@@ -39,6 +39,20 @@
 - Side close reinspects the visible session ID immediately before unlink. BTW catalog discovery uses
   bounded custom-entry inspection rather than full transcript parsing.
 - ModelRegistry exposes live provider authentication checks; BTW requires one before replacing Main.
+- Header-only session listing removes full-summary scans from BTW catalog construction, and close
+  restores the captured Main leaf even when side identity or unlink checks fail.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
+  setup, persistence, and session tool policy.
+- `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed
+  command-context capabilities.
+- `packages/coding-agent/src/core/keybindings.ts`: configurable BTW switch defaults include all
+  terminal-safe aliases.
+- `packages/coding-agent/src/core/model-registry.ts`: retained creation can run the live provider
+  auth check before replacement.
+- `packages/coding-agent/src/core/sdk.ts`: the public session creation contract carries retained
+  setup/policy options.
+- `packages/coding-agent/src/core/session-manager.ts`: initialized persistence and bounded
+  header/custom-metadata discovery support retained catalogs.
 - `app.btw.switch` adds Ctrl+/, Ctrl+_, and Ctrl+7 defaults.
 - Interactive extension UI exposes active key matching and effective-key lookup for configurable
   terminal routing and visible fallback hints.
@@ -47,6 +61,12 @@
 
 - Side conversations need durable identity, host scrolling, reliable return/close behavior, and a
   fallback when an editor such as Zed reserves Ctrl+/ before the terminal receives it.
+
+### Why an extension could not handle it
+
+- Retained session replacement, model/auth preflight, session persistence, key parsing, SDK
+  contracts, and metadata-only discovery require host APIs that extensions consume but cannot
+  safely implement by reaching into private runtime state.
 
 ### Expected merge-conflict zones
 
