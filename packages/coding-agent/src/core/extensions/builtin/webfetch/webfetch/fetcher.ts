@@ -7,6 +7,7 @@ import {
 	WebfetchResponseTooLargeError,
 	WebfetchTimeoutError,
 } from "./errors.ts";
+import { discardBody, type ResponseBodyStream, toUint8Array } from "./response-body.ts";
 
 export const MAX_RESPONSE_SIZE_BYTES = 5 * 1024 * 1024;
 export const DEFAULT_TIMEOUT_SECONDS = 30;
@@ -44,11 +45,6 @@ interface HttpResponse {
 	readonly statusText: string;
 	readonly headers: IncomingHttpHeaders;
 	readonly body: ResponseBodyStream;
-}
-
-interface ResponseBodyStream extends AsyncIterable<unknown> {
-	destroy(error?: Error): void;
-	dump(options?: { limit: number; signal?: AbortSignal }): Promise<void>;
 }
 
 export async function fetchUrl(options: FetchOptions): Promise<FetchResult> {
@@ -174,7 +170,7 @@ async function requestUrl(options: RequestUrlOptions): Promise<HttpResponse> {
 			};
 		}
 
-		await discardBody(response.body);
+		await discardBody(response.body, MAX_RESPONSE_SIZE_BYTES, options.signal);
 		currentUrl = new URL(location, currentUrl).toString();
 	}
 
@@ -186,7 +182,7 @@ async function readHttpResponse(
 	signal: AbortSignal,
 	onProgress: FetchOptions["onProgress"],
 ): Promise<FetchResult> {
-	await rejectOversizedContentLength(response);
+	await rejectOversizedContentLength(response, signal);
 	const body = await readResponseBody(response, signal, onProgress);
 	return {
 		url: response.url,
@@ -199,10 +195,10 @@ async function readHttpResponse(
 	};
 }
 
-async function rejectOversizedContentLength(response: HttpResponse): Promise<void> {
+async function rejectOversizedContentLength(response: HttpResponse, signal: AbortSignal): Promise<void> {
 	const contentLength = getHeader(response.headers, "content-length");
 	if (contentLength && Number.parseInt(contentLength, 10) > MAX_RESPONSE_SIZE_BYTES) {
-		await discardBody(response.body);
+		await discardBody(response.body, MAX_RESPONSE_SIZE_BYTES, signal);
 		throw new WebfetchResponseTooLargeError("Response too large (exceeds 5MB limit)");
 	}
 }
@@ -211,18 +207,6 @@ function getHeader(headers: IncomingHttpHeaders, name: string): string {
 	const value = headers[name.toLowerCase()];
 	if (Array.isArray(value)) return value.join(", ");
 	return value ?? "";
-}
-
-async function discardBody(body: ResponseBodyStream): Promise<void> {
-	try {
-		await body.dump({ limit: 1024 });
-	} catch (error) {
-		if (error instanceof Error) {
-			body.destroy(error);
-			return;
-		}
-		throw error;
-	}
 }
 
 async function readResponseBody(
@@ -270,12 +254,6 @@ function parseContentLength(response: HttpResponse): number | undefined {
 	if (contentLength === "") return undefined;
 	const parsed = Number.parseInt(contentLength, 10);
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
-}
-
-function toUint8Array(chunk: unknown): Uint8Array {
-	if (chunk instanceof Uint8Array) return chunk;
-	if (typeof chunk === "string") return new TextEncoder().encode(chunk);
-	throw new Error("Unexpected response body chunk");
 }
 
 function forwardAbort(signal: AbortSignal | undefined, controller: AbortController): () => void {

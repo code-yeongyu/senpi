@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Webfetch now safely discards redirect response bodies under Bun 1.4.0's bare `undici`, which may omit `body.dump()`, by falling back to argument-free stream destruction instead of re-emitting cleanup failures as uncaught stream errors ([#1089](https://github.com/code-yeongyu/senpi/issues/1089)).
+
 ### Added
 
 - Retained multi-session `/btw` TUI with native transcripts, a Main/numbered-side/New picker,
@@ -130,6 +132,8 @@
 ### Breaking Changes
 
 ### Fixed
+
+- Webfetch's Bun-compatible response cleanup now drains bodies without `dump()` before destruction and guards discard-time stream errors from escaping as uncaught process errors, adapting the lifecycle hardening proposed by `@Indosaram` in [`pi-webfetch` #7](https://github.com/code-yeongyu/pi-webfetch/pull/7).
 
 ### Added
 
