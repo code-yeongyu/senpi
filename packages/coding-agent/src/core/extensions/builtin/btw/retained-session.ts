@@ -1,3 +1,4 @@
+import { SESSION_TOOL_POLICY_ENTRY_TYPE, type SessionToolPolicy } from "../../../session-tool-policy.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../types.ts";
 import {
 	BTW_SIDE_ENTRY_TYPE,
@@ -63,9 +64,11 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 		parentSession: input.catalog.parentSessionPath,
 		setup: async (sessionManager) => {
 			sessionManager.appendCustomEntry(BTW_SIDE_ENTRY_TYPE, metadata);
+			sessionManager.appendCustomEntry(SESSION_TOOL_POLICY_ENTRY_TYPE, {
+				version: 1,
+				tools: "disabled",
+			} satisfies SessionToolPolicy);
 			sessionManager.appendSessionInfo(name);
-			if (model) sessionManager.appendModelChange(model.provider, model.id);
-			if (thinkingLevel) sessionManager.appendThinkingLevelChange(thinkingLevel);
 			sessionManager.appendCustomMessageEntry(
 				BTW_PARENT_CONTEXT_ENTRY_TYPE,
 				[
@@ -78,12 +81,17 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 				metadata,
 			);
 		},
-		withSession: question
-			? async (nextCtx) => {
-					await nextCtx.sendUserMessage(question, {
-						expandPromptTemplates: false,
-					});
-				}
-			: undefined,
+		withSession: async (nextCtx) => {
+			nextCtx.setActiveTools([]);
+			if (model && !(await nextCtx.setSessionModel(model))) {
+				throw new Error(`Unable to restore BTW model ${model.provider}/${model.id}`);
+			}
+			if (thinkingLevel) nextCtx.setSessionThinkingLevel(thinkingLevel);
+			if (question) {
+				await nextCtx.sendUserMessage(question, {
+					expandPromptTemplates: false,
+				});
+			}
+		},
 	});
 }

@@ -176,6 +176,7 @@ import {
 	type SessionHeader,
 } from "./session-manager.ts";
 import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle } from "./session-title-generator.ts";
+import { isSessionToolUseDisabled } from "./session-tool-policy.ts";
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import type { SettingsManager, SettingsSourceSelection } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
@@ -2856,9 +2857,10 @@ export class AgentSession {
 	}
 
 	setActiveToolsByName(toolNames: string[]): void {
+		const effectiveToolNames = isSessionToolUseDisabled(this.sessionManager.getEntries()) ? [] : toolNames;
 		const tools: AgentTool[] = [];
 		const validToolNames: string[] = [];
-		for (const name of toolNames) {
+		for (const name of effectiveToolNames) {
 			const tool = this._toolRegistry.get(name);
 			if (tool) {
 				tools.push(tool);
@@ -7988,6 +7990,13 @@ export class AgentSession {
 		) as ReplacedSessionContext;
 		context.sendMessage = (message, options) => this.sendCustomMessage(message, options);
 		context.sendUserMessage = (content, options) => this.sendUserMessage(content, options);
+		context.setActiveTools = (toolNames) => this.setActiveToolsByName(toolNames);
+		context.setSessionModel = async (model) => {
+			if (!this._modelRuntime.hasConfiguredAuth(model.provider)) return false;
+			await this.setSessionModel(model);
+			return true;
+		};
+		context.setSessionThinkingLevel = (level) => this.setSessionThinkingLevel(level);
 		return context;
 	}
 

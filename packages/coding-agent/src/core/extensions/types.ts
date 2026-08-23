@@ -576,6 +576,15 @@ export interface ExtensionCommandContext extends ExtensionContext {
  * This is passed to `withSession()` callbacks on `newSession()`, `fork()`, and `switchSession()`.
  */
 export interface ReplacedSessionContext extends ExtensionCommandContext {
+	/** Replace the active tool set in the replacement session. */
+	setActiveTools(toolNames: string[]): void;
+
+	/** Set the replacement session model without changing global defaults. */
+	setSessionModel(model: Model<any>): Promise<boolean>;
+
+	/** Set the replacement session thinking level without changing global defaults. */
+	setSessionThinkingLevel(level: ThinkingLevel): void;
+
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },

@@ -14,6 +14,7 @@ import type {
 	ReplacedSessionContext,
 } from "../../src/core/extensions/types.ts";
 import type { SessionManager } from "../../src/core/session-manager.ts";
+import { SESSION_TOOL_POLICY_ENTRY_TYPE } from "../../src/core/session-tool-policy.ts";
 
 function catalog(sideCount = 0, currentSideOrdinal?: number): BtwSessionCatalog {
 	const sides = Array.from({ length: sideCount }, (_, index) => ({
@@ -50,6 +51,13 @@ function catalog(sideCount = 0, currentSideOrdinal?: number): BtwSessionCatalog 
 function createHarness() {
 	const setups: Array<(manager: SessionManager) => Promise<void> | void> = [];
 	const withSessions: Array<(ctx: ReplacedSessionContext) => Promise<void> | void> = [];
+	const replacementActions: string[] = [];
+	const setActiveTools = vi.fn(() => replacementActions.push("tools"));
+	const setSessionModel = vi.fn(async () => {
+		replacementActions.push("model");
+		return true;
+	});
+	const setSessionThinkingLevel = vi.fn(() => replacementActions.push("thinking"));
 	const sendUserMessage = vi.fn(async (_content: string) => undefined);
 	const newSession = vi.fn(async (options: Parameters<ExtensionCommandContext["newSession"]>[0]) => {
 		if (options?.setup) setups.push(options.setup);
@@ -62,8 +70,8 @@ function createHarness() {
 			getSessionId: () => "main",
 			getEntries: () => [],
 		},
-		model: undefined,
-		thinkingLevel: "off",
+		model: { provider: "faux", id: "faux-2" },
+		thinkingLevel: "high",
 		newSession,
 		waitForIdle: vi.fn(async () => undefined),
 	} as unknown as ExtensionCommandContext;
@@ -74,8 +82,28 @@ function createHarness() {
 		appendModelChange: vi.fn(),
 		appendThinkingLevelChange: vi.fn(),
 	} as unknown as SessionManager;
-	const nextCtx = { sendUserMessage } as unknown as ReplacedSessionContext;
-	return { ctx, manager, newSession, nextCtx, sendUserMessage, setups, withSessions };
+	const nextCtx = {
+		sendUserMessage: async (content: string) => {
+			replacementActions.push("send");
+			await sendUserMessage(content);
+		},
+		setActiveTools,
+		setSessionModel,
+		setSessionThinkingLevel,
+	} as unknown as ReplacedSessionContext;
+	return {
+		ctx,
+		manager,
+		newSession,
+		nextCtx,
+		replacementActions,
+		sendUserMessage,
+		setActiveTools,
+		setSessionModel,
+		setSessionThinkingLevel,
+		setups,
+		withSessions,
+	};
 }
 
 async function executeReplacement(harness: ReturnType<typeof createHarness>, call: number): Promise<void> {
@@ -129,17 +157,40 @@ describe("createRetainedBtwSide", () => {
 			"/sessions/main.jsonl",
 			"/sessions/main.jsonl",
 		]);
+		const customEntryCalls = (harness.manager.appendCustomEntry as ReturnType<typeof vi.fn>).mock.calls;
 		expect(
-			(harness.manager.appendCustomEntry as ReturnType<typeof vi.fn>).mock.calls.map(([, value]) => value.ordinal),
+			customEntryCalls
+				.filter(([customType]) => customType === BTW_SIDE_ENTRY_TYPE)
+				.map(([, value]) => value.ordinal),
 		).toEqual([1, 2]);
+		expect(customEntryCalls.filter(([customType]) => customType === SESSION_TOOL_POLICY_ENTRY_TYPE)).toHaveLength(2);
 		expect(harness.sendUserMessage.mock.calls.map(([question]) => question)).toEqual([
 			"first question",
 			"second question",
 		]);
+		expect(harness.replacementActions.slice(0, 4)).toEqual(["tools", "model", "thinking", "send"]);
 		const contextCalls = (harness.manager.appendCustomMessageEntry as ReturnType<typeof vi.fn>).mock.calls;
 		expect(contextCalls).toHaveLength(2);
 		expect(contextCalls[0]?.[1]).toContain("bounded parent context");
 		expect(contextCalls[0]?.[2]).toBe(false);
+	});
+
+	it("applies captured runtime state even when a new side has no inline question", async () => {
+		// Given
+		const harness = createHarness();
+
+		// When
+		await createRetainedBtwSide({
+			ctx: harness.ctx,
+			catalog: catalog(0),
+			question: undefined,
+			parentContext: "bounded parent context",
+		});
+		await executeReplacement(harness, 0);
+
+		// Then
+		expect(harness.replacementActions).toEqual(["tools", "model", "thinking"]);
+		expect(harness.sendUserMessage).not.toHaveBeenCalled();
 	});
 
 	it("creates a sibling under the root parent when invoked from an existing side", async () => {

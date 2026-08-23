@@ -12,6 +12,7 @@ import {
 } from "../../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
+import { SESSION_TOOL_POLICY_ENTRY_TYPE } from "../../src/core/session-tool-policy.ts";
 import type {
 	AgentToolResult,
 	ExtensionAPI,
@@ -143,6 +144,38 @@ describe("AgentSessionRuntime characterization", () => {
 
 		// Then
 		expect(observedNames.at(-1)).toBe("setup-visible");
+	});
+
+	it("exposes replacement-context setters for live model thinking and tools", async () => {
+		// Given
+		const { runtime, faux } = await createRuntimeForTest(() => {});
+		const ctx = runtime.session.createReplacedSessionContext();
+
+		// When
+		const modelSet = await ctx.setSessionModel(faux.getModel("faux-2")!);
+		ctx.setSessionThinkingLevel("off");
+		ctx.setActiveTools([]);
+
+		// Then
+		expect(modelSet).toBe(true);
+		expect(runtime.session.model?.id).toBe("faux-2");
+		expect(runtime.session.thinkingLevel).toBe("off");
+		expect(runtime.session.getActiveToolNames()).toEqual([]);
+	});
+
+	it("keeps a persisted disabled tool policy after later activation attempts", async () => {
+		// Given
+		const { runtime } = await createRuntimeForTest(() => {});
+		runtime.session.sessionManager.appendCustomEntry(SESSION_TOOL_POLICY_ENTRY_TYPE, {
+			version: 1,
+			tools: "disabled",
+		});
+
+		// When
+		runtime.session.setActiveToolsByName(["read"]);
+
+		// Then
+		expect(runtime.session.getActiveToolNames()).toEqual([]);
 	});
 
 	it("persists message_end assistant replacements to the session manager", async () => {
