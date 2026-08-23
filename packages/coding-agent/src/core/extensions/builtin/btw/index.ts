@@ -25,6 +25,7 @@ interface ActiveBtw {
 
 export default function btwExtension(pi: ExtensionAPI) {
 	let active: ActiveBtw | undefined;
+	let tuiCommandState: "idle" | "pending" | "running" = "idle";
 
 	function dismiss(ctx: ExtensionContext, options: { abort: boolean }): void {
 		const current = active;
@@ -46,6 +47,11 @@ export default function btwExtension(pi: ExtensionAPI) {
 			isCurrentSide: () => readCurrentBtwSide(ctx.sessionManager) !== undefined,
 			isIdle: () => ctx.isIdle(),
 			isDialogActive: () => ctx.ui.isDialogActive?.() ?? false,
+			tryBeginBtwCommand: () => {
+				if (tuiCommandState !== "idle") return false;
+				tuiCommandState = "pending";
+				return true;
+			},
 			matchesKeybinding: (data, keybinding) => ctx.ui.matchesKeybinding?.(data, keybinding) ?? false,
 			dispatch: (command) => {
 				pi.sendUserMessage(command, { expandPromptTemplates: true });
@@ -92,12 +98,16 @@ export default function btwExtension(pi: ExtensionAPI) {
 		argumentHint: "<question>",
 		handler: async (args, ctx) => {
 			if (ctx.mode === "tui" && ctx.hasUI) {
+				if (tuiCommandState === "running") return;
+				tuiCommandState = "running";
 				dismiss(ctx, { abort: true });
 				try {
 					await runBtwTuiCommand(args, ctx, defaultBtwTuiCommandDependencies);
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
 					ctx.ui.notify(`/btw failed: ${message}`, "error");
+				} finally {
+					tuiCommandState = "idle";
 				}
 				return;
 			}

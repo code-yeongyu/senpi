@@ -16,10 +16,12 @@ function createHarness(
 	let dialog = options.dialog ?? false;
 	let now = options.now ?? 0;
 	const dispatch = vi.fn();
+	const tryBeginBtwCommand = vi.fn(() => true);
 	const router = createBtwInputRouter({
 		isCurrentSide: () => side,
 		isIdle: () => idle,
 		isDialogActive: () => dialog,
+		tryBeginBtwCommand,
 		matchesKeybinding: (data, binding) => manager.matches(data, binding),
 		dispatch,
 		now: () => now,
@@ -27,6 +29,7 @@ function createHarness(
 	return {
 		dispatch,
 		router,
+		tryBeginBtwCommand,
 		setIdle(value: boolean) {
 			idle = value;
 		},
@@ -43,6 +46,21 @@ function createHarness(
 }
 
 describe("BTW switch keybinding", () => {
+	it("suppresses a second shortcut while the first command is pending", () => {
+		// Given
+		const harness = createHarness();
+		harness.tryBeginBtwCommand.mockReturnValueOnce(true).mockReturnValueOnce(false);
+
+		// When
+		const first = harness.router.handleInput("\x1f");
+		const second = harness.router.handleInput("\x1f");
+
+		// Then
+		expect(first).toEqual({ consume: true });
+		expect(second).toEqual({ consume: true });
+		expect(harness.dispatch).toHaveBeenCalledOnce();
+	});
+
 	it("does not replace an already active dialog", () => {
 		// Given
 		const harness = createHarness({ dialog: true });

@@ -10,6 +10,7 @@ export function createBtwInputRouter(_input: {
 	isCurrentSide: () => boolean;
 	isIdle: () => boolean;
 	isDialogActive: () => boolean;
+	tryBeginBtwCommand: () => boolean;
 	matchesKeybinding: (data: string, binding: AppKeybinding) => boolean;
 	dispatch: (command: string) => void;
 	now?: () => number;
@@ -27,6 +28,7 @@ export function createBtwInputRouter(_input: {
 			if (input.matchesKeybinding(data, BTW_SWITCH_KEYBINDING)) {
 				resetInterruptPair();
 				if (input.isDialogActive()) return undefined;
+				if (!input.tryBeginBtwCommand()) return { consume: true };
 				input.dispatch("/btw");
 				return { consume: true };
 			}

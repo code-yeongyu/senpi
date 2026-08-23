@@ -1,6 +1,8 @@
 import type { BtwSessionCatalog } from "./session-catalog.ts";
 
-export type BtwPickerChoice = { type: "session"; sessionPath: string } | { type: "new"; parentSessionPath: string };
+export type BtwPickerChoice =
+	| { type: "session"; sessionPath: string; sessionId: string }
+	| { type: "new"; parentSessionPath: string; parentSessionId: string };
 
 export interface BtwPickerOption {
 	label: string;
@@ -9,11 +11,12 @@ export interface BtwPickerOption {
 
 export async function validateBtwPickerChoice(
 	choice: BtwPickerChoice,
-	exists: (sessionPath: string) => Promise<boolean>,
+	identify: (sessionPath: string) => Promise<string | undefined>,
 ): Promise<boolean> {
 	const sessionPath = choice.type === "session" ? choice.sessionPath : choice.parentSessionPath;
+	const expectedId = choice.type === "session" ? choice.sessionId : choice.parentSessionId;
 	try {
-		return await exists(sessionPath);
+		return (await identify(sessionPath)) === expectedId;
 	} catch {
 		return false;
 	}
@@ -32,6 +35,7 @@ export function buildBtwPickerOptions(catalog: BtwSessionCatalog, currentSession
 			choice: {
 				type: "session",
 				sessionPath: catalog.main.path,
+				sessionId: catalog.main.id,
 			},
 		});
 	}
@@ -44,6 +48,7 @@ export function buildBtwPickerOptions(catalog: BtwSessionCatalog, currentSession
 			choice: {
 				type: "session",
 				sessionPath: side.path,
+				sessionId: side.id,
 			},
 		});
 	}
@@ -53,6 +58,7 @@ export function buildBtwPickerOptions(catalog: BtwSessionCatalog, currentSession
 			choice: {
 				type: "new",
 				parentSessionPath: catalog.parentSessionPath,
+				parentSessionId: catalog.main.id,
 			},
 		});
 	}

@@ -65,10 +65,10 @@ describe("buildBtwPickerOptions", () => {
 			"New BTW",
 		]);
 		expect(options.map((option) => option.choice)).toEqual([
-			{ type: "session", sessionPath: "/sessions/main.jsonl" },
-			{ type: "session", sessionPath: "/sessions/side-1.jsonl" },
-			{ type: "session", sessionPath: "/sessions/side-2.jsonl" },
-			{ type: "new", parentSessionPath: "/sessions/main.jsonl" },
+			{ type: "session", sessionPath: "/sessions/main.jsonl", sessionId: "main" },
+			{ type: "session", sessionPath: "/sessions/side-1.jsonl", sessionId: "side-one-abcdef" },
+			{ type: "session", sessionPath: "/sessions/side-2.jsonl", sessionId: "side-two-uvwxyz" },
+			{ type: "new", parentSessionPath: "/sessions/main.jsonl", parentSessionId: "main" },
 		]);
 	});
 
@@ -87,8 +87,8 @@ describe("buildBtwPickerOptions", () => {
 		// Then
 		expect(new Set(sideOptions.map((option) => option.label)).size).toBe(2);
 		expect(sideOptions.map((option) => option.choice)).toEqual([
-			{ type: "session", sessionPath: "/sessions/side-1.jsonl" },
-			{ type: "session", sessionPath: "/sessions/side-2.jsonl" },
+			{ type: "session", sessionPath: "/sessions/side-1.jsonl", sessionId: "side-one-abcdef" },
+			{ type: "session", sessionPath: "/sessions/side-2.jsonl", sessionId: "side-two-uvwxyz" },
 		]);
 	});
 
@@ -112,22 +112,30 @@ describe("buildBtwPickerOptions", () => {
 describe("validateBtwPickerChoice", () => {
 	it("rejects a selected session or New BTW parent that disappeared", async () => {
 		// Given
-		const exists = async (path: string) => path === "/sessions/main.jsonl";
+		const identify = async (path: string) => (path === "/sessions/main.jsonl" ? "main" : undefined);
 
 		// When
 		const staleSide = await validateBtwPickerChoice(
-			{ type: "session", sessionPath: "/sessions/stale.jsonl" },
-			exists,
+			{ type: "session", sessionPath: "/sessions/stale.jsonl", sessionId: "stale" },
+			identify,
 		);
 		const staleParent = await validateBtwPickerChoice(
-			{ type: "new", parentSessionPath: "/sessions/deleted-main.jsonl" },
-			exists,
+			{ type: "new", parentSessionPath: "/sessions/deleted-main.jsonl", parentSessionId: "deleted-main" },
+			identify,
 		);
-		const main = await validateBtwPickerChoice({ type: "session", sessionPath: "/sessions/main.jsonl" }, exists);
+		const replacedMain = await validateBtwPickerChoice(
+			{ type: "session", sessionPath: "/sessions/main.jsonl", sessionId: "old-main" },
+			identify,
+		);
+		const main = await validateBtwPickerChoice(
+			{ type: "session", sessionPath: "/sessions/main.jsonl", sessionId: "main" },
+			identify,
+		);
 
 		// Then
 		expect(staleSide).toBe(false);
 		expect(staleParent).toBe(false);
+		expect(replacedMain).toBe(false);
 		expect(main).toBe(true);
 	});
 });

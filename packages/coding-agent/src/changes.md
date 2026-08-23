@@ -34,6 +34,8 @@
   surfaces. Interactive dialog gating follows the actual focused component, including auth flows.
 - Focused dialogs also retain destructive Ctrl+C. Duplicate retained labels include session
   identity, and direct parent return validates the destination session ID before side deletion.
+- BTW TUI dispatch uses idle/pending/running reservation to collapse concurrent shortcuts; picker
+  choices carry expected IDs and reject path-reuse replacements after selection.
 - `app.btw.switch` adds Ctrl+/, Ctrl+_, and Ctrl+7 defaults.
 - Interactive extension UI exposes active key matching and effective-key lookup for configurable
   terminal routing and visible fallback hints.

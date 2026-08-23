@@ -66,6 +66,10 @@ function createHarness(selections: Array<string | undefined> = []) {
 		createSide: vi.fn(async () => undefined),
 		buildParentContext: vi.fn(async () => "bounded context"),
 		sessionExists: vi.fn(async () => true),
+		sessionIdentity: vi.fn(async (_ctx, sessionPath) => {
+			if (sessionPath === loaded.main?.path) return loaded.main.id;
+			return loaded.sides.find((side) => side.path === sessionPath)?.id;
+		}),
 	};
 	return { ctx, dependencies, loaded, notify, select, switchSession, waitForIdle };
 }
@@ -180,10 +184,7 @@ describe("runBtwTuiCommand", () => {
 	it("refreshes after a selected side disappears instead of switching stale state", async () => {
 		// Given
 		const harness = createHarness(["BTW #1 — first", "BTW #1 — first"]);
-		vi.mocked(harness.dependencies.sessionExists)
-			.mockResolvedValueOnce(true)
-			.mockResolvedValueOnce(false)
-			.mockResolvedValueOnce(true);
+		vi.mocked(harness.dependencies.sessionIdentity).mockResolvedValueOnce(undefined).mockResolvedValueOnce("side-1");
 
 		// When
 		await runBtwTuiCommand("", harness.ctx, harness.dependencies);

@@ -12,6 +12,7 @@ export interface RunBtwTuiCommandDependencies {
 	createSide(input: CreateRetainedBtwSideInput): Promise<void>;
 	buildParentContext(ctx: ExtensionCommandContext, catalog: BtwSessionCatalog): Promise<string>;
 	sessionExists(sessionPath: string): Promise<boolean>;
+	sessionIdentity(ctx: ExtensionCommandContext, sessionPath: string): Promise<string | undefined>;
 }
 
 const MAX_PARENT_CONTEXT_CHARACTERS = 64_000;
@@ -78,6 +79,13 @@ export const defaultBtwTuiCommandDependencies: RunBtwTuiCommandDependencies = {
 	async sessionExists(sessionPath) {
 		return existsSync(sessionPath);
 	},
+	async sessionIdentity(ctx, sessionPath) {
+		try {
+			return ctx.inspectSession(sessionPath).id;
+		} catch {
+			return undefined;
+		}
+	},
 };
 
 export async function runBtwTuiCommand(
@@ -117,7 +125,11 @@ export async function runBtwTuiCommand(
 		if (selectedLabel === undefined) return;
 		const selected = options.find((option) => option.label === selectedLabel);
 		if (!selected) return;
-		if (!(await validateBtwPickerChoice(selected.choice, dependencies.sessionExists))) {
+		if (
+			!(await validateBtwPickerChoice(selected.choice, (sessionPath) =>
+				dependencies.sessionIdentity(ctx, sessionPath),
+			))
+		) {
 			ctx.ui.notify("That BTW session no longer exists. Refreshing the list.", "warning");
 			continue;
 		}
