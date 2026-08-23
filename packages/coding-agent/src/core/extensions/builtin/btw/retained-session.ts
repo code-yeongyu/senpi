@@ -66,7 +66,10 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 		input.ctx.ui.notify("BTW needs an active model before it can answer a question.", "warning");
 		return;
 	}
-	if (model && !input.ctx.modelRegistry.hasConfiguredAuth(model)) {
+	if (
+		model &&
+		(!input.ctx.modelRegistry.hasConfiguredAuth(model) || !(await input.ctx.modelRegistry.checkAuth(model)))
+	) {
 		input.ctx.ui.notify(
 			`BTW cannot use ${model.provider}/${model.id} until authentication is configured.`,
 			"warning",

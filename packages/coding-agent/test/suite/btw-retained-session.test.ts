@@ -60,6 +60,7 @@ function createHarness() {
 	const sendUserMessage = vi.fn(async (_content: string) => undefined);
 	const notify = vi.fn();
 	const hasConfiguredAuth = vi.fn(() => true);
+	const checkAuth = vi.fn(async () => true);
 	const newSession = vi.fn(async (options: Parameters<ExtensionCommandContext["newSession"]>[0]) => {
 		if (options?.setup) setups.push(options.setup);
 		if (options?.withSession) withSessions.push(options.withSession);
@@ -73,7 +74,7 @@ function createHarness() {
 			getEntries: () => [],
 		},
 		model: { provider: "faux", id: "faux-2" },
-		modelRegistry: { hasConfiguredAuth },
+		modelRegistry: { checkAuth, hasConfiguredAuth },
 		thinkingLevel: "high",
 		ui: { notify },
 		newSession,
@@ -102,6 +103,7 @@ function createHarness() {
 		newSession,
 		nextCtx,
 		notify,
+		checkAuth,
 		hasConfiguredAuth,
 		replacementActions,
 		sendUserMessage,
@@ -227,6 +229,26 @@ describe("createRetainedBtwSide", () => {
 		});
 
 		// Then
+		expect(harness.newSession).not.toHaveBeenCalled();
+		expect(harness.notify).toHaveBeenCalledOnce();
+	});
+
+	it("does not replace Main when the live provider auth check fails", async () => {
+		// Given
+		const harness = createHarness();
+		harness.checkAuth.mockResolvedValue(false);
+
+		// When
+		await createRetainedBtwSide({
+			ctx: harness.ctx,
+			catalog: catalog(0),
+			question: "must not orphan",
+			parentContext: "bounded parent context",
+		});
+
+		// Then
+		expect(harness.hasConfiguredAuth).toHaveBeenCalledOnce();
+		expect(harness.checkAuth).toHaveBeenCalledOnce();
 		expect(harness.newSession).not.toHaveBeenCalled();
 		expect(harness.notify).toHaveBeenCalledOnce();
 	});

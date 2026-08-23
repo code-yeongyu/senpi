@@ -98,6 +98,10 @@ export class ModelRegistry {
 		return this.authStorage.hasAuth(model.provider) || this.runtime.getProviderAuthStatus(model.provider).configured;
 	}
 
+	async checkAuth(model: Model<Api>): Promise<boolean> {
+		return (await this.runtime.checkAuth(model.provider)) !== undefined;
+	}
+
 	getUpstreamModelId(model: Model<Api>): string | undefined {
 		return this.runtime.getCompatibilityRequestConfig(model).upstreamModelId;
 	}
