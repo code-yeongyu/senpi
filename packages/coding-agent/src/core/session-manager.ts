@@ -1803,31 +1803,10 @@ export class SessionManager {
 		return undefined;
 	}
 
-	static inspectMetadata(sessionPath: string, maxBytes = 16 * 1024): SessionMetadataInfo | undefined {
+	static inspectMetadata(sessionPath: string): SessionMetadataInfo | undefined {
+		const header = readSessionHeaderForDiscovery(sessionPath);
+		if (!header) return undefined;
 		const stats = statSync(sessionPath);
-		if (stats.size === 0) return undefined;
-		const bytesToRead = Math.min(stats.size, maxBytes);
-		const buffer = Buffer.alloc(bytesToRead);
-		const fd = openSync(sessionPath, "r");
-		let bytesRead = 0;
-		try {
-			bytesRead = readSync(fd, buffer, 0, bytesToRead, 0);
-		} finally {
-			closeSync(fd);
-		}
-		const text = buffer.toString("utf8", 0, bytesRead);
-		const lineEnd = text.indexOf("\n");
-		if (lineEnd < 0 && bytesRead < stats.size) return undefined;
-		const firstLine = lineEnd >= 0 ? text.slice(0, lineEnd) : text;
-		const header = JSON.parse(firstLine) as Partial<SessionHeader>;
-		if (
-			header.type !== "session" ||
-			typeof header.id !== "string" ||
-			typeof header.timestamp !== "string" ||
-			typeof header.cwd !== "string"
-		) {
-			return undefined;
-		}
 		return {
 			path: sessionPath,
 			id: header.id,

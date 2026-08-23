@@ -15,7 +15,8 @@
 - `packages/coding-agent/src/core/sdk.ts`: public session creation carries retained setup and policy
   options.
 - `packages/coding-agent/src/core/session-manager.ts`: initialized persistence plus bounded
-  header/custom metadata discovery support retained catalogs without full transcript summaries.
+  header/custom metadata discovery support retained catalogs without full transcript summaries,
+  while reusing best-effort header parsing for malformed historical files.
 
 ### Why
 

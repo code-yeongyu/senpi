@@ -76,8 +76,15 @@ export async function loadBtwSessionCatalog(input: {
 	currentSessionPath: string;
 	listSessions: () => Promise<readonly BtwSessionListItem[]>;
 	readMetadata: (sessionPath: string) => Promise<BtwSideMetadata | undefined>;
+	readSessionInfo?: (sessionPath: string) => Promise<BtwSessionListItem | undefined>;
 }): Promise<BtwSessionCatalog> {
 	const sessions = (await input.listSessions()).filter((session) => session.cwd === input.cwd);
+	const ensureSession = async (sessionPath: string): Promise<void> => {
+		if (sessions.some((session) => samePath(session.path, sessionPath))) return;
+		const session = await input.readSessionInfo?.(sessionPath);
+		if (session?.cwd === input.cwd) sessions.push(session);
+	};
+	await ensureSession(input.currentSessionPath);
 	let currentMetadata: BtwSideMetadata | undefined;
 	try {
 		currentMetadata = await input.readMetadata(input.currentSessionPath);
@@ -85,6 +92,7 @@ export async function loadBtwSessionCatalog(input: {
 		currentMetadata = undefined;
 	}
 	const parentSessionPath = currentMetadata?.parentSessionPath ?? input.currentSessionPath;
+	await ensureSession(parentSessionPath);
 	const listedMain = sessions.find((session) => samePath(session.path, parentSessionPath));
 	const parentSessionId = currentMetadata?.parentSessionId ?? listedMain?.id;
 	const main = listedMain && (!currentMetadata || listedMain.id === parentSessionId) ? listedMain : undefined;

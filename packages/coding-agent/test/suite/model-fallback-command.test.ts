@@ -172,6 +172,7 @@ async function context(
 			context: sessionManager.buildSessionContext(),
 		}),
 		inspectSessionCustomData: () => undefined,
+		inspectSessionMetadata: () => undefined,
 		fork: async () => ({ cancelled: false }),
 		navigateTree: async () => ({ cancelled: false }),
 		switchSession: async () => ({ cancelled: false }),

@@ -41,6 +41,8 @@
 - ModelRegistry exposes live provider authentication checks; BTW requires one before replacing Main.
 - Header-only session listing removes full-summary scans from BTW catalog construction, and close
   restores the captured Main leaf even when side identity or unlink checks fail.
+- Metadata discovery skips malformed rows and separately inspects the active Main/parent path, so
+  explicit sessions outside the configured directory remain switchable.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

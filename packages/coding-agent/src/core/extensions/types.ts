@@ -586,6 +586,9 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	/** Inspect a bounded prefix for one persisted custom entry without loading the transcript. */
 	inspectSessionCustomData(sessionPath: string, customType: string): ExtensionSessionCustomData | undefined;
 
+	/** Inspect one session header without computing transcript summaries. */
+	inspectSessionMetadata(sessionPath: string): SessionMetadataInfo | undefined;
+
 	/** Fork from a specific entry, creating a new session file. */
 	fork(
 		entryId: string,

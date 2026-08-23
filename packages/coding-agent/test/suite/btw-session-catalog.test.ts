@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
 	BTW_SIDE_ENTRY_TYPE,
@@ -6,7 +9,7 @@ import {
 	loadBtwSessionCatalog,
 	readBtwSideMetadata,
 } from "../../src/core/extensions/builtin/btw/session-catalog.ts";
-import type { SessionEntry } from "../../src/core/session-manager.ts";
+import { type SessionEntry, SessionManager } from "../../src/core/session-manager.ts";
 
 function metadata(input: Partial<BtwSideMetadata> = {}): BtwSideMetadata {
 	return {
@@ -68,6 +71,38 @@ describe("BTW retained session metadata", () => {
 });
 
 describe("loadBtwSessionCatalog", () => {
+	it("seeds an external Main for both Main and side catalogs", async () => {
+		// Given
+		const main = session("/outside/main.jsonl", "External Main", "/repo", "external-main");
+		const side = session("/configured/side.jsonl", "BTW #1: external", "/repo", "side");
+		const sideMetadata = metadata({
+			parentSessionPath: main.path,
+			parentSessionId: main.id,
+		});
+		const readSessionInfo = async (path: string) => (path === main.path ? main : undefined);
+
+		// When
+		const fromMain = await loadBtwSessionCatalog({
+			cwd: "/repo",
+			currentSessionPath: main.path,
+			listSessions: async () => [],
+			readMetadata: async () => undefined,
+			readSessionInfo,
+		});
+		const fromSide = await loadBtwSessionCatalog({
+			cwd: "/repo",
+			currentSessionPath: side.path,
+			listSessions: async () => [side],
+			readMetadata: async (path) => (path === side.path ? sideMetadata : undefined),
+			readSessionInfo,
+		});
+
+		// Then
+		expect(fromMain.main?.id).toBe(main.id);
+		expect(fromSide.main?.id).toBe(main.id);
+		expect(fromSide.sides.map((item) => item.id)).toEqual([side.id]);
+	});
+
 	it("groups only same-cwd retained sides under their authoritative parent", async () => {
 		// Given
 		const entries = new Map<string, SessionEntry[]>([
@@ -175,5 +210,35 @@ describe("loadBtwSessionCatalog", () => {
 		// Then
 		expect(catalog.sides.map((side) => side.path)).toEqual(["/sessions/side.jsonl"]);
 		expect(catalog.skippedPaths).toEqual(["/sessions/stale.jsonl"]);
+	});
+});
+
+describe("SessionManager.listMetadata", () => {
+	it("skips malformed session files while retaining valid headers", async () => {
+		// Given
+		const directory = await mkdtemp(join(tmpdir(), "senpi-session-metadata-"));
+		const validPath = join(directory, "valid.jsonl");
+		const malformedPath = join(directory, "malformed.jsonl");
+		await writeFile(
+			validPath,
+			`${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: "valid-session",
+				timestamp: "2026-08-23T00:00:00.000Z",
+				cwd: "/repo",
+			})}\n`,
+		);
+		await writeFile(malformedPath, "{not-json}\n");
+
+		try {
+			// When
+			const sessions = await SessionManager.listMetadata("/repo", directory);
+
+			// Then
+			expect(sessions.map((item) => item.id)).toEqual(["valid-session"]);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
 	});
 });

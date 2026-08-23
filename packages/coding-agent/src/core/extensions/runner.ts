@@ -1215,6 +1215,10 @@ export class ExtensionRunner {
 			this.assertActive();
 			return SessionManager.inspectCustomData(sessionPath, customType);
 		};
+		context.inspectSessionMetadata = (sessionPath) => {
+			this.assertActive();
+			return SessionManager.inspectMetadata(sessionPath);
+		};
 		context.fork = (entryId, options) => {
 			this.assertActive();
 			return this.forkHandler(entryId, options);
