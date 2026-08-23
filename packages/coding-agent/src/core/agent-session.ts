@@ -176,7 +176,7 @@ import {
 	type SessionHeader,
 } from "./session-manager.ts";
 import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle } from "./session-title-generator.ts";
-import { isSessionToolUseDisabled } from "./session-tool-policy.ts";
+import { applySessionToolPolicyToPromptSkills, isSessionToolUseDisabled } from "./session-tool-policy.ts";
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import type { SettingsManager, SettingsSourceSelection } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
@@ -3034,7 +3034,10 @@ export class AgentSession {
 			}
 		}
 
-		const loadedSkills = this._resourceLoader.getSkills().skills;
+		const loadedSkills = applySessionToolPolicyToPromptSkills(
+			this.sessionManager.getEntries(),
+			this._resourceLoader.getSkills().skills,
+		);
 		const loadedContextFiles = this._resourceLoader.getAgentsFiles().agentsFiles;
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();

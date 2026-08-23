@@ -30,6 +30,10 @@ export function isDisabledSessionToolPolicy(policy: SessionToolPolicy): boolean 
 	return policy.version === 1 && policy.tools === "disabled";
 }
 
+export function applySessionToolPolicyToPromptSkills<T>(entries: readonly SessionToolPolicyEntry[], skills: T[]): T[] {
+	return isSessionToolUseDisabled(entries) ? [] : skills;
+}
+
 const PROVIDER_TOOL_KEYS = ["tools", "tool_choice", "toolChoice", "parallel_tool_calls", "parallelToolCalls"] as const;
 
 export function applySessionToolPolicyToProviderPayload(

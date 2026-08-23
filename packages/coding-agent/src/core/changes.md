@@ -7,7 +7,8 @@
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, session tool policy, and explicit session-directory preservation.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose typed session
-  discovery and inspection to command contexts.
+  discovery and inspection to command contexts; disabled-tool sessions omit loaded skills from
+  system-prompt options before read-tool guidance is formatted.
 - `packages/coding-agent/src/core/keybindings.ts`: BTW switching has configurable Ctrl+/, Ctrl+_,
   and Ctrl+7 defaults.
 - `packages/coding-agent/src/core/model-registry.ts`: retained creation can run the provider's live

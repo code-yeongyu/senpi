@@ -64,6 +64,7 @@
 - Switch and close reservations cross-gate each other, so one BTW session action owns replacement.
 - Switch, close, and Main return share one action-kind state. MCP startup skips attachment entirely
   under retained no-tools policy.
+- Ordinary loaded skills are removed from retained system-prompt options so no read-tool guidance leaks.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

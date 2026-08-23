@@ -1,10 +1,31 @@
 import { describe, expect, it } from "vitest";
 import {
+	applySessionToolPolicyToPromptSkills,
 	applySessionToolPolicyToProviderPayload,
 	SESSION_TOOL_POLICY_ENTRY_TYPE,
 } from "../../src/core/session-tool-policy.ts";
 
 describe("session tool policy provider enforcement", () => {
+	it("removes loaded skills from disabled session prompts", () => {
+		// Given
+		const entries = [
+			{
+				type: "custom" as const,
+				customType: SESSION_TOOL_POLICY_ENTRY_TYPE,
+				data: { version: 1, tools: "disabled" },
+			},
+		];
+		const skills = [{ name: "release", description: "release help" }];
+
+		// When
+		const disabled = applySessionToolPolicyToPromptSkills(entries, skills);
+		const allowed = applySessionToolPolicyToPromptSkills([], skills);
+
+		// Then
+		expect(disabled).toEqual([]);
+		expect(allowed).toBe(skills);
+	});
+
 	it("removes provider-native tools after extension payload transforms", () => {
 		// Given
 		const entries = [
