@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
 	clearOldToolResults,
 	collapseConsecutiveToolResults,
+	createContextReductionLatch,
 	microCompactAssistantText,
 	reduceContextMessages,
 	shouldApplyContextReduction,
@@ -384,6 +385,32 @@ describe("compaction context reduction behavior", () => {
 				latch,
 			});
 			expect(engagedAfter).toBe(false);
+			expect(latch.isLatched()).toBe(false);
+		});
+
+		it("resets latch when navigating to another session branch", () => {
+			const latch = createContextReductionLatch();
+			const contextWindow = 1_000_000;
+
+			// Latch engaged on large branch
+			shouldApplyContextReduction({
+				usageTokens: 550_000,
+				contextWindow,
+				latch,
+			});
+			expect(latch.isLatched()).toBe(true);
+
+			// User navigates to shorter branch (session_tree event triggers bumpGeneration)
+			latch.bumpGeneration();
+			expect(latch.isLatched()).toBe(false);
+
+			// Shorter branch with 200k usage (< 500k gate) does not run reduction
+			const engaged = shouldApplyContextReduction({
+				usageTokens: 200_000,
+				contextWindow,
+				latch,
+			});
+			expect(engaged).toBe(false);
 			expect(latch.isLatched()).toBe(false);
 		});
 	});

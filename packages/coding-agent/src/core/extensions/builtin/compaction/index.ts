@@ -719,6 +719,7 @@ export default function compactionExtension(
 	});
 
 	pi.on("model_select", (event, ctx) => {
+		contextReductionLatch.bumpGeneration();
 		if (lanePolicy.disablesSenpiCompaction(ctx)) {
 			invalidateSpeculativeCompaction(ctx);
 			return;
@@ -748,10 +749,8 @@ export default function compactionExtension(
 		}
 	});
 
-	pi.on("session_tree", (event) => {
-		if (event.newLeafId !== event.oldLeafId) {
-			contextReductionLatch.release();
-		}
+	pi.on("session_tree", () => {
+		contextReductionLatch.bumpGeneration();
 	});
 
 	pi.on("session_compact", async (event: SessionCompactEvent, ctx) => {
