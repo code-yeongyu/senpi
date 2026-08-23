@@ -3,6 +3,25 @@
 Injects the default `timeout` into every `bash` call and appends the "Bash Tool Timeout Policy"
 section to the system prompt.
 
+## Retained no-tools prompt suppression (2026-08-23)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/bash-timeout/index.ts`: the timeout policy
+  prompt returns nothing when the typed session policy disables tools.
+
+### Why
+
+- A retained side cannot execute bash and must not be instructed to tune an unavailable tool.
+
+### Why an extension could not handle it
+
+- This builtin owns the timeout-specific prompt contribution.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` guard in `index.ts`.
+
 ## Kill-deadline semantics (2026-08-07)
 
 ### What changed

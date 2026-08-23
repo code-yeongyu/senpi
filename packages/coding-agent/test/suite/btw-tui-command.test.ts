@@ -127,6 +127,21 @@ describe("runBtwTuiCommand", () => {
 		expect(harness.select).not.toHaveBeenCalled();
 	});
 
+	it("refuses inline creation when the original Main identity is unavailable", async () => {
+		// Given
+		const harness = createHarness();
+		harness.loaded.currentSide = harness.loaded.sides[0];
+		harness.loaded.main = undefined;
+
+		// When
+		await runBtwTuiCommand("must not orphan", harness.ctx, harness.dependencies);
+
+		// Then
+		expect(harness.notify).toHaveBeenCalledOnce();
+		expect(harness.dependencies.buildParentContext).not.toHaveBeenCalled();
+		expect(harness.dependencies.createSide).not.toHaveBeenCalled();
+	});
+
 	it("opens the native picker and switches to the selected retained side", async () => {
 		// Given
 		const harness = createHarness(["BTW #1 — first"]);

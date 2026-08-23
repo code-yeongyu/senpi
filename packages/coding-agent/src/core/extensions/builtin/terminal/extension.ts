@@ -241,8 +241,8 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		state.monitorNotifier?.noteActivity();
 	});
 
-	pi.on("before_agent_start", async (event) => {
-		if (state.steppedAside) return undefined;
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (state.steppedAside || ctx.isToolUseDisabled()) return undefined;
 		return { systemPrompt: `${event.systemPrompt}\n${TERMINAL_PROMPT_SECTION}` };
 	});
 

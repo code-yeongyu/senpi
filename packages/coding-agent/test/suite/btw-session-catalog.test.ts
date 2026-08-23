@@ -73,24 +73,25 @@ describe("BTW retained session metadata", () => {
 describe("loadBtwSessionCatalog", () => {
 	it("seeds an external Main for both Main and side catalogs", async () => {
 		// Given
-		const main = session("/outside/main.jsonl", "External Main", "/repo", "external-main");
-		const side = session("/configured/side.jsonl", "BTW #1: external", "/repo", "side");
+		const main = session("/outside/main.jsonl", "External Main", "/original/repo", "external-main");
+		const side = session("/configured/side.jsonl", "BTW #1: external", "/original/repo", "side");
 		const sideMetadata = metadata({
 			parentSessionPath: main.path,
 			parentSessionId: main.id,
 		});
-		const readSessionInfo = async (path: string) => (path === main.path ? main : undefined);
+		const readSessionInfo = async (path: string) =>
+			path === main.path ? main : path === side.path ? side : undefined;
 
 		// When
 		const fromMain = await loadBtwSessionCatalog({
-			cwd: "/repo",
+			cwd: "/recovered/repo",
 			currentSessionPath: main.path,
 			listSessions: async () => [],
 			readMetadata: async () => undefined,
 			readSessionInfo,
 		});
 		const fromSide = await loadBtwSessionCatalog({
-			cwd: "/repo",
+			cwd: "/recovered/repo",
 			currentSessionPath: side.path,
 			listSessions: async () => [side],
 			readMetadata: async (path) => (path === side.path ? sideMetadata : undefined),

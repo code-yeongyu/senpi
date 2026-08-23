@@ -54,6 +54,8 @@
   the active session and retained parent even when they live outside the configured session directory.
 - Return/close/picker Main preserve the configured session directory for external Main files.
   Dialog-owned Escape resets the idle return pair before the focused component handles cancellation.
+- Inline creation requires an identity-matched Main. Authoritative current/parent seeds survive cwd
+  recovery, and all builtin tool-specific prompt contributors honor the retained no-tools policy.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

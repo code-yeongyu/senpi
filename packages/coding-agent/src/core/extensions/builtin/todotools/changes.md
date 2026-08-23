@@ -1,5 +1,24 @@
 # todotools Fork Tracker
 
+## Retained no-tools prompt suppression (2026-08-23)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/index.ts`: task-management prompt
+  injection returns nothing when the typed session policy disables tools.
+
+### Why
+
+- Retained sides cannot call todo tools and must not be instructed to maintain tool state.
+
+### Why an extension could not handle it
+
+- The todotools builtin owns the task-management prompt contribution.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` guard in `index.ts`.
+
 ## Mirror Cursor native todos into senpi.todo-state (2026-08-19)
 
 Cursor resolves `todo` on the server and never runs local `execute()`, so the widget stayed empty. `message_end` now persists `arguments.todos` as `senpi.todo-state` when there is no local `op`.

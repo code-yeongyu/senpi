@@ -41,6 +41,7 @@ export function registerImageGenExtension(pi: ExtensionAPI, baseDir = IMAGEGEN_B
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		if (ctx.isToolUseDisabled()) return undefined;
 		if (!(await isImageGenActive(ctx))) return undefined;
 		return { systemPrompt: `${event.systemPrompt}\n${IMAGE_GEN_SECTION}` };
 	});

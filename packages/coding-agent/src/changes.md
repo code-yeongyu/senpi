@@ -45,6 +45,8 @@
   explicit sessions outside the configured directory remain switchable.
 - Returning to an external Main preserves the configured session storage directory, and Escape used
   to cancel a focused dialog cannot count toward the side's session-level return pair.
+- Inline creation stops after Main identity loss; missing-cwd recovery keeps authoritative session
+  rows; terminal/bash-timeout/todo/imagegen prompts are suppressed under retained no-tools policy.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

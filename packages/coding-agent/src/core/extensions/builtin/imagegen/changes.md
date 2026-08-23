@@ -1,5 +1,24 @@
 # imagegen builtin — changes
 
+## Retained no-tools prompt suppression (2026-08-23)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/index.ts`: image-generation prompt
+  injection returns before auth resolution when the typed session policy disables tools.
+
+### Why
+
+- Retained sides cannot call image-generation tools and must not advertise unavailable capability.
+
+### Why an extension could not handle it
+
+- The imagegen builtin owns its tool prompt and auth-driven activation.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` guard in `index.ts`.
+
 ## 2026-08-13 - Materialize nullable headers only at image requests
 
 ### What changed

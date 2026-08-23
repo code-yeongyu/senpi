@@ -110,6 +110,10 @@ export async function runBtwTuiCommand(
 	if (question) {
 		await ctx.waitForIdle();
 		const catalog = await dependencies.loadCatalog(ctx);
+		if (!catalog.main) {
+			ctx.ui.notify("BTW cannot create a side because the original Main session is unavailable.", "warning");
+			return;
+		}
 		await dependencies.createSide({
 			ctx,
 			catalog,
@@ -144,6 +148,10 @@ export async function runBtwTuiCommand(
 		if (selected.choice.type === "new") {
 			await ctx.waitForIdle();
 			const settledCatalog = await dependencies.loadCatalog(ctx);
+			if (!settledCatalog.main) {
+				ctx.ui.notify("BTW cannot create a side because the original Main session is unavailable.", "warning");
+				return;
+			}
 			await dependencies.createSide({
 				ctx,
 				catalog: settledCatalog,

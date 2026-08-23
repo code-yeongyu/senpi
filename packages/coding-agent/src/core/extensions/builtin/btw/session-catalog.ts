@@ -82,7 +82,7 @@ export async function loadBtwSessionCatalog(input: {
 	const ensureSession = async (sessionPath: string): Promise<void> => {
 		if (sessions.some((session) => samePath(session.path, sessionPath))) return;
 		const session = await input.readSessionInfo?.(sessionPath);
-		if (session?.cwd === input.cwd) sessions.push(session);
+		if (session) sessions.push(session);
 	};
 	await ensureSession(input.currentSessionPath);
 	let currentMetadata: BtwSideMetadata | undefined;

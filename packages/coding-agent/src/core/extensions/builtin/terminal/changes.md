@@ -1,5 +1,24 @@
 # terminal builtin extension — fork surface
 
+## Retained no-tools prompt suppression (2026-08-23)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension.ts`: the terminal prompt
+  returns nothing when the typed session policy disables tools.
+
+### Why
+
+- Retained sides expose no terminal tools and must not advertise terminal usage.
+
+### Why an extension could not handle it
+
+- The terminal builtin owns its tool prompt and stepped-aside state.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` guard in `extension.ts`.
+
 ## Align terminal bash environment guidance (2026-08-13)
 
 ### What changed
