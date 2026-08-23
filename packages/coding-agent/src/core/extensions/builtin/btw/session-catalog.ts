@@ -78,10 +78,21 @@ export async function loadBtwSessionCatalog(input: {
 	readMetadata: (sessionPath: string) => Promise<BtwSideMetadata | undefined>;
 	readSessionInfo?: (sessionPath: string) => Promise<BtwSessionListItem | undefined>;
 }): Promise<BtwSessionCatalog> {
-	const sessions = [...(await input.listSessions())];
+	const listedSessions = [...(await input.listSessions())];
+	const currentSessionInfo =
+		listedSessions.find((session) => samePath(session.path, input.currentSessionPath)) ??
+		(await input.readSessionInfo?.(input.currentSessionPath));
+	const allowedCwds = new Set([input.cwd]);
+	if (currentSessionInfo) allowedCwds.add(currentSessionInfo.cwd);
+	const sessions = listedSessions.filter((session) => allowedCwds.has(session.cwd));
+	if (currentSessionInfo && !sessions.some((session) => samePath(session.path, currentSessionInfo.path))) {
+		sessions.push(currentSessionInfo);
+	}
 	const ensureSession = async (sessionPath: string): Promise<void> => {
 		if (sessions.some((session) => samePath(session.path, sessionPath))) return;
-		const session = await input.readSessionInfo?.(sessionPath);
+		const session = samePath(sessionPath, input.currentSessionPath)
+			? currentSessionInfo
+			: await input.readSessionInfo?.(sessionPath);
 		if (session) sessions.push(session);
 	};
 	await ensureSession(input.currentSessionPath);
