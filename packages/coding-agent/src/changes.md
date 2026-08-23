@@ -32,6 +32,8 @@
   parent session identity as well as filesystem path.
 - Returning from a retained side restores Main's captured leaf across command, close, and picker
   surfaces. Interactive dialog gating follows the actual focused component, including auth flows.
+- Focused dialogs also retain destructive Ctrl+C. Duplicate retained labels include session
+  identity, and direct parent return validates the destination session ID before side deletion.
 - `app.btw.switch` adds Ctrl+/, Ctrl+_, and Ctrl+7 defaults.
 - Interactive extension UI exposes active key matching and effective-key lookup for configurable
   terminal routing and visible fallback hints.

@@ -51,6 +51,18 @@ export function readCurrentBtwSide(sessionManager: ReadonlySessionManager): Curr
 	return metadata ? { sessionPath, metadata } : undefined;
 }
 
+function hasMatchingBtwParent(ctx: ExtensionCommandContext, current: CurrentBtwSide): boolean {
+	try {
+		if (ctx.inspectSession(current.metadata.parentSessionPath).id === current.metadata.parentSessionId) {
+			return true;
+		}
+	} catch {
+		// Report the same unavailable-parent result for missing and mismatched destinations.
+	}
+	ctx.ui.notify("The original Main session is no longer available.", "warning");
+	return false;
+}
+
 export async function returnToBtwParent(input: {
 	ctx: ExtensionCommandContext;
 	current: CurrentBtwSide | undefined;
@@ -59,6 +71,7 @@ export async function returnToBtwParent(input: {
 		input.ctx.ui.notify("This is not a retained BTW session.", "warning");
 		return;
 	}
+	if (!hasMatchingBtwParent(input.ctx, input.current)) return;
 	const options = createBtwParentSwitchOptions(input.current.metadata);
 	if (options) {
 		await input.ctx.switchSession(input.current.metadata.parentSessionPath, options);
@@ -77,6 +90,7 @@ export async function closeRetainedBtwSide(input: {
 		input.ctx.ui.notify("This is not a retained BTW session.", "warning");
 		return;
 	}
+	if (!hasMatchingBtwParent(input.ctx, current)) return;
 	await input.ctx.switchSession(current.metadata.parentSessionPath, {
 		withSession: async (nextCtx) => {
 			const result = await input.deleteSessionFile(current.sessionPath);

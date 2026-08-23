@@ -166,6 +166,7 @@ async function context(
 		newSession: async () => ({ cancelled: false }),
 		listSessions: async () => [],
 		inspectSession: () => ({
+			id: sessionManager.getSessionId(),
 			entries: sessionManager.getEntries(),
 			context: sessionManager.buildSessionContext(),
 		}),

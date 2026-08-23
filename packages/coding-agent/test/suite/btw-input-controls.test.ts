@@ -55,6 +55,18 @@ describe("BTW switch keybinding", () => {
 		expect(harness.dispatch).not.toHaveBeenCalled();
 	});
 
+	it("yields destructive Ctrl+C to an active dialog", () => {
+		// Given
+		const harness = createHarness({ side: true, dialog: true });
+
+		// When
+		const disposition = harness.router.handleInput("\x03");
+
+		// Then
+		expect(disposition).toBeUndefined();
+		expect(harness.dispatch).not.toHaveBeenCalled();
+	});
+
 	it("opens the picker for Ctrl+/, Ctrl+_, and Ctrl+7", () => {
 		// Given
 		const harness = createHarness();

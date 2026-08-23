@@ -544,6 +544,7 @@ export interface SessionToolPolicy {
 }
 
 export interface ExtensionSessionInspection {
+	id: string;
 	entries: readonly SessionEntry[];
 	context: SessionContext;
 }

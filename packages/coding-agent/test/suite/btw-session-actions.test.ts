@@ -43,7 +43,7 @@ function manager(entries = sideEntries()): SessionManager {
 	} as unknown as SessionManager;
 }
 
-function createContext(options: { runWithSession?: boolean } = {}) {
+function createContext(options: { runWithSession?: boolean; parentSessionId?: string } = {}) {
 	const notify = vi.fn();
 	const navigateTree = vi.fn(async () => ({ cancelled: false }));
 	const switchSession = vi.fn(
@@ -65,6 +65,11 @@ function createContext(options: { runWithSession?: boolean } = {}) {
 	return {
 		ctx: {
 			sessionManager: manager(),
+			inspectSession: vi.fn(() => ({
+				id: options.parentSessionId ?? "main",
+				entries: [],
+				context: { messages: [] },
+			})),
 			switchSession,
 			ui: { notify },
 		} as unknown as ExtensionCommandContext,
@@ -95,6 +100,21 @@ describe("retained BTW session actions", () => {
 		expect(deleteSessionFile).toHaveBeenCalledOnce();
 		expect(deleteSessionFile).toHaveBeenCalledWith(SIDE_PATH);
 		expect(harness.navigateTree).toHaveBeenCalledWith("main-leaf", { summarize: false });
+	});
+
+	it("does not return to a reused parent path with a different session ID", async () => {
+		// Given
+		const harness = createContext({ parentSessionId: "replacement-main" });
+
+		// When
+		await returnToBtwParent({
+			ctx: harness.ctx,
+			current: readCurrentBtwSide(harness.ctx.sessionManager),
+		});
+
+		// Then
+		expect(harness.switchSession).not.toHaveBeenCalled();
+		expect(harness.notify).toHaveBeenCalledOnce();
 	});
 
 	it("returns to Main without deleting the retained side", async () => {
@@ -165,6 +185,23 @@ describe("retained BTW session actions", () => {
 
 		// Then
 		expect(harness.notify).toHaveBeenCalledWith(expect.stringContaining("permission denied"), "warning");
+	});
+
+	it("does not delete the side when the parent path belongs to another session ID", async () => {
+		// Given
+		const harness = createContext({ parentSessionId: "replacement-main" });
+		const deleteSessionFile = vi.fn();
+
+		// When
+		await closeRetainedBtwSide({
+			ctx: harness.ctx,
+			current: readCurrentBtwSide(harness.ctx.sessionManager),
+			deleteSessionFile,
+		});
+
+		// Then
+		expect(harness.switchSession).not.toHaveBeenCalled();
+		expect(deleteSessionFile).not.toHaveBeenCalled();
 	});
 
 	it("refuses destructive close when the current side has no parent path", async () => {

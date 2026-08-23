@@ -21,6 +21,11 @@ export async function validateBtwPickerChoice(
 
 export function buildBtwPickerOptions(catalog: BtwSessionCatalog, currentSessionPath: string): BtwPickerOption[] {
 	const options: BtwPickerOption[] = [];
+	const sideBaseLabels = catalog.sides.map((side) => `BTW #${side.metadata.ordinal} — ${side.metadata.summary}`);
+	const sideLabelCounts = new Map<string, number>();
+	for (const label of sideBaseLabels) {
+		sideLabelCounts.set(label, (sideLabelCounts.get(label) ?? 0) + 1);
+	}
 	if (catalog.main) {
 		options.push({
 			label: `Main — ${catalog.main.name?.trim() || "Main session"}`,
@@ -30,10 +35,12 @@ export function buildBtwPickerOptions(catalog: BtwSessionCatalog, currentSession
 			},
 		});
 	}
-	for (const side of catalog.sides) {
+	for (const [index, side] of catalog.sides.entries()) {
+		const baseLabel = sideBaseLabels[index]!;
+		const identity = (sideLabelCounts.get(baseLabel) ?? 0) > 1 ? ` · ${side.id}` : "";
 		const current = side.path === currentSessionPath ? " (current)" : "";
 		options.push({
-			label: `BTW #${side.metadata.ordinal} — ${side.metadata.summary}${current}`,
+			label: `${baseLabel}${identity}${current}`,
 			choice: {
 				type: "session",
 				sessionPath: side.path,

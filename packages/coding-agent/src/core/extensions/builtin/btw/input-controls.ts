@@ -36,6 +36,7 @@ export function createBtwInputRouter(_input: {
 			}
 			if (input.matchesKeybinding(data, "app.clear")) {
 				resetInterruptPair();
+				if (input.isDialogActive()) return undefined;
 				input.dispatch("/btw-close");
 				return { consume: true };
 			}

@@ -1199,6 +1199,7 @@ export class ExtensionRunner {
 			const manager = SessionManager.open(sessionPath);
 			const entries = manager.getEntries();
 			return {
+				id: manager.getSessionId(),
 				entries,
 				context:
 					options?.leafId === undefined

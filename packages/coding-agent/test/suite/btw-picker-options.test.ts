@@ -6,6 +6,7 @@ function catalog(): BtwSessionCatalog {
 	return {
 		parentSessionPath: "/sessions/main.jsonl",
 		main: {
+			id: "main",
 			path: "/sessions/main.jsonl",
 			cwd: "/repo",
 			name: "Main task",
@@ -14,6 +15,7 @@ function catalog(): BtwSessionCatalog {
 		currentSide: undefined,
 		sides: [
 			{
+				id: "side-one-abcdef",
 				path: "/sessions/side-1.jsonl",
 				cwd: "/repo",
 				name: "BTW #1: duplicate summary",
@@ -28,6 +30,7 @@ function catalog(): BtwSessionCatalog {
 				},
 			},
 			{
+				id: "side-two-uvwxyz",
 				path: "/sessions/side-2.jsonl",
 				cwd: "/repo",
 				name: "BTW #2: duplicate summary",
@@ -66,6 +69,26 @@ describe("buildBtwPickerOptions", () => {
 			{ type: "session", sessionPath: "/sessions/side-1.jsonl" },
 			{ type: "session", sessionPath: "/sessions/side-2.jsonl" },
 			{ type: "new", parentSessionPath: "/sessions/main.jsonl" },
+		]);
+	});
+
+	it("disambiguates cloned sides with identical ordinals and summaries", () => {
+		// Given
+		const loaded = catalog();
+		loaded.sides[1]!.metadata.ordinal = loaded.sides[0]!.metadata.ordinal;
+		loaded.sides[1]!.metadata.summary = loaded.sides[0]!.metadata.summary;
+
+		// When
+		const options = buildBtwPickerOptions(loaded, loaded.parentSessionPath);
+		const sideOptions = options.filter(
+			(option) => option.choice.type === "session" && option.choice.sessionPath !== loaded.parentSessionPath,
+		);
+
+		// Then
+		expect(new Set(sideOptions.map((option) => option.label)).size).toBe(2);
+		expect(sideOptions.map((option) => option.choice)).toEqual([
+			{ type: "session", sessionPath: "/sessions/side-1.jsonl" },
+			{ type: "session", sessionPath: "/sessions/side-2.jsonl" },
 		]);
 	});
 

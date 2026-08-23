@@ -202,6 +202,7 @@ describe("default BTW session discovery", () => {
 		const loaded = catalog();
 		const listSessions = vi.fn(async () => [loaded.main!, loaded.sides[0]!]);
 		const inspectSession = vi.fn((sessionPath: string) => ({
+			id: sessionPath === loaded.parentSessionPath ? "main" : "side-1",
 			entries:
 				sessionPath === loaded.sides[0]!.path
 					? [
@@ -271,6 +272,7 @@ describe("serializeBtwParentContext", () => {
 		const inspectSession = vi.fn((_sessionPath: string, options?: { leafId?: string | null }) => {
 			const entries = parent.getEntries();
 			return {
+				id: "main",
 				entries,
 				context:
 					options?.leafId === undefined
