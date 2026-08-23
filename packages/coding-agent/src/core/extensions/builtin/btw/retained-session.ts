@@ -65,6 +65,7 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 
 	await input.ctx.newSession({
 		parentSession: input.catalog.parentSessionPath,
+		persistInitializedSession: true,
 		sessionToolPolicy: {
 			version: 1,
 			tools: "disabled",
@@ -94,6 +95,8 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 				await nextCtx.sendUserMessage(question, {
 					expandPromptTemplates: false,
 				});
+			} else {
+				nextCtx.ui.notify(`Created ${name}.`, "info");
 			}
 		},
 	});

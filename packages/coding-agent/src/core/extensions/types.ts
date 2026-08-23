@@ -63,7 +63,9 @@ import type {
 	CompactionEntry,
 	CustomEntry,
 	ReadonlySessionManager,
+	SessionContext,
 	SessionEntry,
+	SessionInfo,
 	SessionManager,
 } from "../session-manager.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
@@ -536,6 +538,11 @@ export interface SessionToolPolicy {
 	tools: "disabled";
 }
 
+export interface ExtensionSessionInspection {
+	entries: readonly SessionEntry[];
+	context: SessionContext;
+}
+
 /**
  * Extended context for command handlers.
  * Includes session control methods only safe in user-initiated commands.
@@ -549,10 +556,17 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	/** Start a new session, optionally with initialization. */
 	newSession(options?: {
 		parentSession?: string;
+		persistInitializedSession?: boolean;
 		sessionToolPolicy?: SessionToolPolicy;
 		setup?: (sessionManager: SessionManager) => Promise<void>;
 		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 	}): Promise<{ cancelled: boolean }>;
+
+	/** List sessions for the current cwd and configured session directory. */
+	listSessions(): Promise<readonly SessionInfo[]>;
+
+	/** Inspect a persisted session, optionally resolving context from a specific leaf. */
+	inspectSession(sessionPath: string, options?: { leafId?: string | null }): ExtensionSessionInspection;
 
 	/** Fork from a specific entry, creating a new session file. */
 	fork(

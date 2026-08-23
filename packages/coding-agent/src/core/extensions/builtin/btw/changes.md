@@ -27,6 +27,9 @@
   dropping all parent context.
 - Inline and New BTW creation wait for Main to settle, then reload the catalog before snapshotting
   so the leaf and content describe the same completed turn.
+- The typed `newSession` contract flushes initialized sides before returning, so an empty New BTW
+  remains in the disk catalog. Discovery and parent inspection use typed command-context
+  capabilities instead of importing core session internals.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
-import { buildSessionContext, SessionManager } from "../../../session-manager.ts";
 import type { ExtensionCommandContext } from "../../types.ts";
 import { buildBtwPickerOptions, validateBtwPickerChoice } from "./picker.ts";
 import { type CreateRetainedBtwSideInput, createRetainedBtwSide } from "./retained-session.ts";
@@ -56,27 +55,22 @@ export function serializeBtwParentContext(messages: readonly { role: string; con
 
 export const defaultBtwTuiCommandDependencies: RunBtwTuiCommandDependencies = {
 	async loadCatalog(ctx) {
-		const sessionDir = ctx.sessionManager.getSessionDir();
 		return loadBtwSessionCatalog({
 			cwd: ctx.cwd,
 			currentSessionPath: ctx.sessionManager.getSessionFile() ?? "",
-			listSessions: () => SessionManager.list(ctx.cwd, sessionDir),
-			readEntries: async (sessionPath) => SessionManager.open(sessionPath).getEntries(),
+			listSessions: () => ctx.listSessions(),
+			readEntries: async (sessionPath) => ctx.inspectSession(sessionPath).entries,
 		});
 	},
 	createSide: createRetainedBtwSide,
 	async buildParentContext(ctx, catalog) {
 		const currentSessionPath = ctx.sessionManager.getSessionFile();
-		let snapshot: ReturnType<typeof buildSessionContext>;
+		let snapshot: ReturnType<typeof ctx.sessionManager.buildSessionContext>;
 		if (currentSessionPath === catalog.parentSessionPath) {
 			snapshot = ctx.sessionManager.buildSessionContext();
 		} else {
-			const parent = SessionManager.open(catalog.parentSessionPath);
 			const parentLeafId = catalog.currentSide?.metadata.parentLeafId;
-			snapshot =
-				parentLeafId === undefined
-					? parent.buildSessionContext()
-					: buildSessionContext(parent.getEntries(), parentLeafId);
+			snapshot = ctx.inspectSession(catalog.parentSessionPath, { leafId: parentLeafId }).context;
 		}
 		return serializeBtwParentContext(convertToLlm(filterContextExcludedMessages(snapshot.messages)));
 	},

@@ -14,7 +14,12 @@ import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type Extens
 import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
-import { getSessionContextEntryId, SESSION_CONTEXT_ENTRY_ID, type SessionManager } from "../session-manager.ts";
+import {
+	buildSessionContext,
+	getSessionContextEntryId,
+	SESSION_CONTEXT_ENTRY_ID,
+	SessionManager,
+} from "../session-manager.ts";
 import { applySessionToolPolicyToProviderPayload } from "../session-tool-policy.ts";
 import { SettingsManager } from "../settings-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
@@ -1180,6 +1185,22 @@ export class ExtensionRunner {
 		context.newSession = (options) => {
 			this.assertActive();
 			return this.newSessionHandler(options);
+		};
+		context.listSessions = () => {
+			this.assertActive();
+			return SessionManager.list(this.sessionManager.getCwd(), this.sessionManager.getSessionDir());
+		};
+		context.inspectSession = (sessionPath, options) => {
+			this.assertActive();
+			const manager = SessionManager.open(sessionPath);
+			const entries = manager.getEntries();
+			return {
+				entries,
+				context:
+					options?.leafId === undefined
+						? manager.buildSessionContext()
+						: buildSessionContext(entries, options.leafId),
+			};
 		};
 		context.fork = (entryId, options) => {
 			this.assertActive();

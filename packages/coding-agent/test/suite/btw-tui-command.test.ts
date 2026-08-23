@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BtwSessionCatalog } from "../../src/core/extensions/builtin/btw/session-catalog.ts";
+import { BTW_SIDE_ENTRY_TYPE, type BtwSessionCatalog } from "../../src/core/extensions/builtin/btw/session-catalog.ts";
 import {
 	defaultBtwTuiCommandDependencies,
 	type RunBtwTuiCommandDependencies,
@@ -7,7 +7,7 @@ import {
 	serializeBtwParentContext,
 } from "../../src/core/extensions/builtin/btw/tui-command.ts";
 import type { ExtensionCommandContext } from "../../src/core/extensions/types.ts";
-import { SessionManager } from "../../src/core/session-manager.ts";
+import { buildSessionContext, SessionManager } from "../../src/core/session-manager.ts";
 import { assistantMsg, userMsg } from "../utilities.ts";
 
 function catalog(): BtwSessionCatalog {
@@ -156,6 +156,47 @@ describe("runBtwTuiCommand", () => {
 	});
 });
 
+describe("default BTW session discovery", () => {
+	it("loads persisted sessions through typed command-context capabilities", async () => {
+		// Given
+		const loaded = catalog();
+		const listSessions = vi.fn(async () => [loaded.main!, loaded.sides[0]!]);
+		const inspectSession = vi.fn((sessionPath: string) => ({
+			entries:
+				sessionPath === loaded.sides[0]!.path
+					? [
+							{
+								id: "side-metadata",
+								parentId: null,
+								timestamp: "2026-08-23T00:00:01.000Z",
+								type: "custom" as const,
+								customType: BTW_SIDE_ENTRY_TYPE,
+								data: loaded.sides[0]!.metadata,
+							},
+						]
+					: [],
+			context: { messages: [] },
+		}));
+		const ctx = {
+			cwd: "/repo",
+			sessionManager: {
+				getSessionDir: () => "/sessions",
+				getSessionFile: () => loaded.parentSessionPath,
+			},
+			listSessions,
+			inspectSession,
+		} as unknown as ExtensionCommandContext;
+
+		// When
+		const discovered = await defaultBtwTuiCommandDependencies.loadCatalog(ctx);
+
+		// Then
+		expect(listSessions).toHaveBeenCalledOnce();
+		expect(inspectSession).toHaveBeenCalled();
+		expect(discovered.sides).toHaveLength(1);
+	});
+});
+
 describe("serializeBtwParentContext", () => {
 	it("uses Main's active leaf when Main is the visible session", async () => {
 		// Given
@@ -187,24 +228,31 @@ describe("serializeBtwParentContext", () => {
 		const loaded = catalog();
 		loaded.currentSide = loaded.sides[0];
 		loaded.currentSide!.metadata.parentLeafId = selectedLeaf;
+		const inspectSession = vi.fn((_sessionPath: string, options?: { leafId?: string | null }) => {
+			const entries = parent.getEntries();
+			return {
+				entries,
+				context:
+					options?.leafId === undefined
+						? parent.buildSessionContext()
+						: buildSessionContext(entries, options.leafId),
+			};
+		});
 		const ctx = {
 			sessionManager: {
 				getSessionFile: () => loaded.currentSide!.path,
 			},
+			inspectSession,
 		} as unknown as ExtensionCommandContext;
-		const open = vi.spyOn(SessionManager, "open").mockReturnValue(parent);
 
-		try {
-			// When
-			const snapshot = await defaultBtwTuiCommandDependencies.buildParentContext(ctx, loaded);
+		// When
+		const snapshot = await defaultBtwTuiCommandDependencies.buildParentContext(ctx, loaded);
 
-			// Then
-			expect(snapshot).toContain("selected branch");
-			expect(snapshot).toContain("selected answer");
-			expect(snapshot).not.toContain("abandoned branch");
-		} finally {
-			open.mockRestore();
-		}
+		// Then
+		expect(snapshot).toContain("selected branch");
+		expect(snapshot).toContain("selected answer");
+		expect(snapshot).not.toContain("abandoned branch");
+		expect(inspectSession).toHaveBeenCalledWith(loaded.parentSessionPath, { leafId: selectedLeaf });
 	});
 
 	it("truncates an oversized newest message instead of dropping all context", () => {

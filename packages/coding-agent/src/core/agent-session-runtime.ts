@@ -272,6 +272,7 @@ export class AgentSessionRuntime {
 
 	async newSession(options?: {
 		parentSession?: string;
+		persistInitializedSession?: boolean;
 		sessionToolPolicy?: SessionToolPolicy;
 		setup?: (sessionManager: SessionManager) => Promise<void>;
 		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
@@ -306,6 +307,9 @@ export class AgentSessionRuntime {
 		if (options?.setup) {
 			await options.setup(this.session.sessionManager);
 			this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
+		}
+		if (options?.persistInitializedSession) {
+			this.session.sessionManager.persistInitializedSession();
 		}
 		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };

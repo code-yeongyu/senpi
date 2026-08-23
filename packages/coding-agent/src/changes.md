@@ -17,6 +17,9 @@
   the catalog and snapshotting.
 - Session tool policy is enforced at `ExtensionRunner`'s final payload boundary, covering normal,
   compaction, and cache-keepalive provider requests after all extension transforms.
+- Extension command contexts expose typed session listing/inspection. `newSession` can opt into
+  flushing initialized metadata before returning, which keeps empty retained sides durable without
+  crossing the extension/core boundary.
 - `app.btw.switch` adds Ctrl+/, Ctrl+_, and Ctrl+7 defaults.
 - Interactive extension UI exposes active key matching and effective-key lookup for configurable
   terminal routing and visible fallback hints.

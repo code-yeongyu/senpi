@@ -991,6 +991,12 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
+	persistInitializedSession(): void {
+		if (!this.persist || !this.sessionFile || this.flushed) return;
+		this._rewriteFile();
+		this.flushed = true;
+	}
+
 	getResidentStoreStats(): ResidentStoreStats {
 		return this.residentStore.stats();
 	}

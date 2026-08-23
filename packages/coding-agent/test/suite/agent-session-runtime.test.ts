@@ -146,6 +146,28 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(observedNames.at(-1)).toBe("setup-visible");
 	});
 
+	it("persists an initialized new session without an assistant message when requested", async () => {
+		// Given
+		const { runtime } = await createRuntimeForTest(() => {});
+
+		// When
+		await runtime.newSession({
+			persistInitializedSession: true,
+			setup: async (sessionManager) => {
+				sessionManager.appendSessionInfo("empty retained side");
+			},
+		});
+
+		// Then
+		expect(runtime.session.sessionFile).toBeDefined();
+		expect(existsSync(runtime.session.sessionFile!)).toBe(true);
+		const ctx = runtime.session.createReplacedSessionContext();
+		const listed = await ctx.listSessions();
+		const inspected = ctx.inspectSession(runtime.session.sessionFile!);
+		expect(listed.some((session) => session.path === runtime.session.sessionFile)).toBe(true);
+		expect(inspected.entries.length).toBeGreaterThan(0);
+	});
+
 	it("exposes replacement-context setters for live model thinking and tools", async () => {
 		// Given
 		const { runtime, faux } = await createRuntimeForTest(() => {});

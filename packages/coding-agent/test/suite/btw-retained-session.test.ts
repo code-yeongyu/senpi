@@ -58,6 +58,7 @@ function createHarness() {
 	});
 	const setSessionThinkingLevel = vi.fn(() => replacementActions.push("thinking"));
 	const sendUserMessage = vi.fn(async (_content: string) => undefined);
+	const notify = vi.fn();
 	const newSession = vi.fn(async (options: Parameters<ExtensionCommandContext["newSession"]>[0]) => {
 		if (options?.setup) setups.push(options.setup);
 		if (options?.withSession) withSessions.push(options.withSession);
@@ -90,12 +91,14 @@ function createHarness() {
 		setActiveTools,
 		setSessionModel,
 		setSessionThinkingLevel,
+		ui: { notify },
 	} as unknown as ReplacedSessionContext;
 	return {
 		ctx,
 		manager,
 		newSession,
 		nextCtx,
+		notify,
 		replacementActions,
 		sendUserMessage,
 		setActiveTools,
@@ -161,6 +164,10 @@ describe("createRetainedBtwSide", () => {
 			{ version: 1, tools: "disabled" },
 			{ version: 1, tools: "disabled" },
 		]);
+		expect(harness.newSession.mock.calls.map(([options]) => options?.persistInitializedSession)).toEqual([
+			true,
+			true,
+		]);
 		const customEntryCalls = (harness.manager.appendCustomEntry as ReturnType<typeof vi.fn>).mock.calls;
 		expect(
 			customEntryCalls
@@ -199,6 +206,7 @@ describe("createRetainedBtwSide", () => {
 		// Then
 		expect(harness.replacementActions).toEqual(["tools", "model", "thinking"]);
 		expect(harness.sendUserMessage).not.toHaveBeenCalled();
+		expect(harness.notify).toHaveBeenCalledOnce();
 	});
 
 	it("creates a sibling under the root parent when invoked from an existing side", async () => {

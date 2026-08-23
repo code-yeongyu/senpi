@@ -114,13 +114,14 @@ async function context(
 ): Promise<ExtensionCommandContext> {
 	const settings = SettingsManager.create(dir);
 	const modelRegistry = createModelRegistry(registeredModels, availableModels ?? registeredModels);
+	const sessionManager = SessionManager.inMemory();
 	return {
 		ui: createUi(notices, choices),
 		mode: choices.length > 0 ? "tui" : "print",
 		hasUI: choices.length > 0,
 		cwd: dir,
 		agentDir: dir,
-		sessionManager: SessionManager.inMemory(),
+		sessionManager,
 		modelRegistry,
 		model: undefined,
 		serviceTier: undefined,
@@ -163,6 +164,11 @@ async function context(
 		getSystemPromptOptions: () => ({ cwd: dir }),
 		waitForIdle: async () => {},
 		newSession: async () => ({ cancelled: false }),
+		listSessions: async () => [],
+		inspectSession: () => ({
+			entries: sessionManager.getEntries(),
+			context: sessionManager.buildSessionContext(),
+		}),
 		fork: async () => ({ cancelled: false }),
 		navigateTree: async () => ({ cancelled: false }),
 		switchSession: async () => ({ cancelled: false }),
