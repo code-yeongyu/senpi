@@ -39,6 +39,7 @@ function sideEntries(): SessionEntry[] {
 function manager(entries = sideEntries()): SessionManager {
 	return {
 		getSessionId: () => "side",
+		getSessionDir: () => "/configured/sessions",
 		getSessionFile: () => SIDE_PATH,
 		getEntries: () => entries,
 	} as unknown as SessionManager;
@@ -99,7 +100,10 @@ describe("retained BTW session actions", () => {
 		// Then
 		expect(harness.switchSession).toHaveBeenCalledWith(
 			PARENT_PATH,
-			expect.objectContaining({ withSession: expect.any(Function) }),
+			expect.objectContaining({
+				sessionDir: "/configured/sessions",
+				withSession: expect.any(Function),
+			}),
 		);
 		expect(deleteSessionFile).toHaveBeenCalledOnce();
 		expect(deleteSessionFile).toHaveBeenCalledWith(SIDE_PATH);
@@ -170,6 +174,7 @@ describe("retained BTW session actions", () => {
 		// Then
 		expect(current).toEqual({
 			sessionId: "side",
+			sessionDir: "/configured/sessions",
 			sessionPath: SIDE_PATH,
 			metadata: sideMetadata(),
 		});

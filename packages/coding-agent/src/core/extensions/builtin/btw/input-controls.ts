@@ -50,6 +50,10 @@ export function createBtwInputRouter(_input: {
 				resetInterruptPair();
 				return undefined;
 			}
+			if (input.isDialogActive()) {
+				resetInterruptPair();
+				return undefined;
+			}
 			const pressedAt = now();
 			if (
 				firstIdleInterruptAt !== undefined &&

@@ -52,6 +52,8 @@
   restoration runs after every close attempt, including identity mismatch and unlink failure.
 - Header discovery skips malformed/unreadable files, and catalog construction independently seeds
   the active session and retained parent even when they live outside the configured session directory.
+- Return/close/picker Main preserve the configured session directory for external Main files.
+  Dialog-owned Escape resets the idle return pair before the focused component handles cancellation.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

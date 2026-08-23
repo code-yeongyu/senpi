@@ -155,7 +155,7 @@ export async function runBtwTuiCommand(
 		if (selected.choice.sessionPath !== currentSessionPath) {
 			const options =
 				selected.choice.sessionPath === catalog.parentSessionPath && catalog.currentSide
-					? createBtwParentSwitchOptions(catalog.currentSide.metadata)
+					? createBtwParentSwitchOptions(catalog.currentSide.metadata, ctx.sessionManager.getSessionDir())
 					: undefined;
 			if (options) {
 				await ctx.switchSession(selected.choice.sessionPath, options);

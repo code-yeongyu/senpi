@@ -243,6 +243,7 @@ export class AgentSessionRuntime {
 		sessionPath: string,
 		options?: {
 			cwdOverride?: string;
+			sessionDir?: string;
 			withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 			projectTrustContextFactory?: (cwd: string) => ProjectTrustContext;
 		},
@@ -253,7 +254,7 @@ export class AgentSessionRuntime {
 		}
 
 		const previousSessionFile = this.session.sessionFile;
-		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
+		const sessionManager = SessionManager.open(sessionPath, options?.sessionDir, options?.cwdOverride);
 		assertSessionCwdExists(sessionManager, this.cwd);
 		await this.teardownCurrent("resume", sessionManager.getSessionFile());
 		await this.apply(

@@ -51,6 +51,7 @@ function createHarness(selections: Array<string | undefined> = []) {
 		cwd: "/repo",
 		sessionManager: {
 			getSessionFile: () => "/sessions/main.jsonl",
+			getSessionDir: () => "/configured/sessions",
 		},
 		waitForIdle,
 		switchSession,
@@ -158,7 +159,10 @@ describe("runBtwTuiCommand", () => {
 		// Then
 		expect(harness.switchSession).toHaveBeenCalledWith(
 			"/sessions/main.jsonl",
-			expect.objectContaining({ withSession: expect.any(Function) }),
+			expect.objectContaining({
+				sessionDir: "/configured/sessions",
+				withSession: expect.any(Function),
+			}),
 		);
 		expect(navigateTree).toHaveBeenCalledWith("main-leaf", { summarize: false });
 	});

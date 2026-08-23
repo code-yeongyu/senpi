@@ -43,6 +43,8 @@
   restores the captured Main leaf even when side identity or unlink checks fail.
 - Metadata discovery skips malformed rows and separately inspects the active Main/parent path, so
   explicit sessions outside the configured directory remain switchable.
+- Returning to an external Main preserves the configured session storage directory, and Escape used
+  to cancel a focused dialog cannot count toward the side's session-level return pair.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

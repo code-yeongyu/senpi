@@ -5,6 +5,7 @@ import { type BtwSideMetadata, readBtwSideMetadata } from "./session-catalog.ts"
 
 export interface CurrentBtwSide {
 	sessionId: string;
+	sessionDir: string;
 	sessionPath: string;
 	metadata: BtwSideMetadata;
 }
@@ -15,17 +16,21 @@ export interface DeleteSessionFileResult {
 	error?: string;
 }
 
-export function createBtwParentSwitchOptions(metadata: BtwSideMetadata):
-	| {
-			withSession: (ctx: ExtensionCommandContext) => Promise<void>;
-	  }
-	| undefined {
+export function createBtwParentSwitchOptions(
+	metadata: BtwSideMetadata,
+	sessionDir: string,
+): {
+	sessionDir: string;
+	withSession?: (ctx: ExtensionCommandContext) => Promise<void>;
+} {
 	const parentLeafId = metadata.parentLeafId;
-	if (!parentLeafId) return undefined;
 	return {
-		withSession: async (ctx) => {
-			await ctx.navigateTree(parentLeafId, { summarize: false });
-		},
+		sessionDir,
+		withSession: parentLeafId
+			? async (ctx) => {
+					await ctx.navigateTree(parentLeafId, { summarize: false });
+				}
+			: undefined,
 	};
 }
 
@@ -52,6 +57,7 @@ export function readCurrentBtwSide(sessionManager: ReadonlySessionManager): Curr
 	return metadata
 		? {
 				sessionId: sessionManager.getSessionId(),
+				sessionDir: sessionManager.getSessionDir(),
 				sessionPath,
 				metadata,
 			}
@@ -79,12 +85,8 @@ export async function returnToBtwParent(input: {
 		return;
 	}
 	if (!hasMatchingBtwParent(input.ctx, input.current)) return;
-	const options = createBtwParentSwitchOptions(input.current.metadata);
-	if (options) {
-		await input.ctx.switchSession(input.current.metadata.parentSessionPath, options);
-	} else {
-		await input.ctx.switchSession(input.current.metadata.parentSessionPath);
-	}
+	const options = createBtwParentSwitchOptions(input.current.metadata, input.current.sessionDir);
+	await input.ctx.switchSession(input.current.metadata.parentSessionPath, options);
 }
 
 export async function closeRetainedBtwSide(input: {
@@ -99,6 +101,7 @@ export async function closeRetainedBtwSide(input: {
 	}
 	if (!hasMatchingBtwParent(input.ctx, current)) return;
 	await input.ctx.switchSession(current.metadata.parentSessionPath, {
+		sessionDir: current.sessionDir,
 		withSession: async (nextCtx) => {
 			let warning: string | undefined;
 			try {
@@ -115,7 +118,7 @@ export async function closeRetainedBtwSide(input: {
 				}
 			}
 			if (warning) nextCtx.ui.notify(warning, "warning");
-			await createBtwParentSwitchOptions(current.metadata)?.withSession(nextCtx);
+			await createBtwParentSwitchOptions(current.metadata, current.sessionDir).withSession?.(nextCtx);
 		},
 	});
 }

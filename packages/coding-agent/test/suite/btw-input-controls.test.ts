@@ -126,6 +126,22 @@ describe("BTW switch keybinding", () => {
 });
 
 describe("BTW side input controls", () => {
+	it("does not count dialog-cancel Escape toward the return pair", () => {
+		// Given
+		const harness = createHarness({ side: true, idle: true, dialog: true, now: 0 });
+
+		// When
+		const dialogEscape = harness.router.handleInput("\x1b");
+		harness.setDialog(false);
+		harness.setNow(500);
+		const firstSessionEscape = harness.router.handleInput("\x1b");
+
+		// Then
+		expect(dialogEscape).toBeUndefined();
+		expect(firstSessionEscape).toBeUndefined();
+		expect(harness.dispatch).not.toHaveBeenCalled();
+	});
+
 	it("returns to Main only on the second idle interrupt inside one second", () => {
 		// Given
 		const harness = createHarness({ side: true, idle: true, now: 10_000 });

@@ -6,7 +6,8 @@
 - `createExtensionUIContext()` now implements `matchesKeybinding()` and `getKeybindingKeys()` with
   the live interactive `KeybindingsManager`.
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: focus and raw-input routing
-  expose the active keybindings and actual focused dialog state.
+  expose the active keybindings and actual focused dialog state; resume forwards the configured
+  session directory through replacement.
 
 ### Why
 

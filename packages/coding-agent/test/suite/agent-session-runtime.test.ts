@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionFromServices,
@@ -343,8 +343,14 @@ describe("AgentSessionRuntime characterization", () => {
 
 		events.length = 0;
 
-		const switchResult = await runtime.switchSession(originalSessionFile!);
+		const configuredSessionDir = parse(secondSessionFile!).dir;
+		const openSpy = vi.spyOn(SessionManager, "open");
+		const switchResult = await runtime.switchSession(originalSessionFile!, {
+			sessionDir: configuredSessionDir,
+		});
 		expect(switchResult.cancelled).toBe(false);
+		expect(openSpy).toHaveBeenCalledWith(originalSessionFile!, configuredSessionDir, undefined);
+		openSpy.mockRestore();
 		await runtime.session.bindExtensions({});
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "resume", targetSessionFile: originalSessionFile },

@@ -7170,6 +7170,7 @@ export class InteractiveMode {
 		this.clearStatusIndicator();
 		try {
 			const result = await this.runtimeHost.switchSession(sessionPath, {
+				sessionDir: options?.sessionDir,
 				withSession: options?.withSession,
 				projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
 			});
@@ -7187,6 +7188,7 @@ export class InteractiveMode {
 				}
 				const result = await this.runtimeHost.switchSession(sessionPath, {
 					cwdOverride: selectedCwd,
+					sessionDir: options?.sessionDir,
 					withSession: options?.withSession,
 					projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
 				});

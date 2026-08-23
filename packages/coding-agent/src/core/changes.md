@@ -5,7 +5,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
-  setup, persistence, and session tool policy.
+  setup, persistence, session tool policy, and explicit session-directory preservation.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose typed session
   discovery and inspection to command contexts.
 - `packages/coding-agent/src/core/keybindings.ts`: BTW switching has configurable Ctrl+/, Ctrl+_,
