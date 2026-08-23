@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Enforce configurable active-context ceilings for compaction and preserve large-window request-shape stability across turns and session branches.
+
 ### Breaking Changes
 
 ### Fixed

@@ -1,5 +1,28 @@
 # Builtin compaction extension changes
 
+## 2026-08-23 - Active-budget policy and branch-scoped reduction latch
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/policy.ts` resolves a 384k active ceiling and 35k retention default for large-context models while honoring explicit overrides.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts` carries explicit-retention metadata into compaction preparation.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts` adds a sticky generation latch so request-shape reduction remains stable until compaction.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts` releases that latch when session-tree navigation changes the active branch and bumps it after accepted compaction.
+
+### Why
+
+- Large physical windows can exceed stable request budgets, and threshold oscillation or branch navigation must not leave request shaping stuck on history from a different active branch.
+
+### Why an extension could not handle it
+
+- This is the builtin compaction extension's own policy and context-rewrite lifecycle; no outer extension can safely coordinate its private speculative jobs and reduction latch.
+
+### Expected merge conflict zones
+
+- MEDIUM: `policy.ts` threshold/retention resolution, `speculative.ts` preparation settings, and `index.ts` session/context handlers.
+- LOW: `context-reduction.ts` latch helper.
+
+
 ## Skip Cursor compaction while the session is not idle (2026-08-19)
 
 Blocking and generated apply refuse `cursor` / `cursor-cli-oauth` when `!ctx.isIdle()`. Mid-run Cursor compact poisons `conversationId`. Idle `agent_end` / `pre_prompt` still compact.

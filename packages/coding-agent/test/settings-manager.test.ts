@@ -119,6 +119,26 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("compaction settings", () => {
+		it("preserves explicit context-budget overrides and marks normalized retention defaults", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ compaction: { maxContextTokens: 450_000, keepRecentTokens: 40_000 } }),
+			);
+
+			const configured = SettingsManager.create(projectDir, agentDir).getCompactionSettings();
+			expect(configured.maxContextTokens).toBe(450_000);
+			expect(configured.keepRecentTokens).toBe(40_000);
+			expect(configured.keepRecentTokensConfigured).toBe(true);
+
+			rmSync(join(agentDir, "settings.json"));
+			const normalized = SettingsManager.create(projectDir, agentDir).getCompactionSettings();
+			expect(normalized.keepRecentTokens).toBe(20_000);
+			expect(normalized.keepRecentTokensConfigured).toBe(false);
+			expect(normalized.maxContextTokens).toBeUndefined();
+		});
+	});
+
 	describe("preserves externally added settings", () => {
 		it("should preserve enabledModels when changing thinking level", async () => {
 			// Create initial settings file

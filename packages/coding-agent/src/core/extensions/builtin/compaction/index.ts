@@ -748,6 +748,12 @@ export default function compactionExtension(
 		}
 	});
 
+	pi.on("session_tree", (event) => {
+		if (event.newLeafId !== event.oldLeafId) {
+			contextReductionLatch.release();
+		}
+	});
+
 	pi.on("session_compact", async (event: SessionCompactEvent, ctx) => {
 		const compactEvent = event;
 		invalidateSpeculativeCompaction(ctx);

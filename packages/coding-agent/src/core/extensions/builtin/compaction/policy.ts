@@ -49,7 +49,10 @@ export function resolveContextBudgetPolicy(
 	const maxActiveContextTokens = Math.min(Math.max(0, contextWindow - reserveTokens), configuredCeiling);
 
 	const defaultKeepRecent = isLarge ? DEFAULT_1M_KEEP_RECENT : DEFAULT_STANDARD_KEEP_RECENT;
-	const keepRecentTokens = settings?.keepRecentTokens ?? defaultKeepRecent;
+	const keepRecentTokens =
+		settings?.keepRecentTokensConfigured === false
+			? defaultKeepRecent
+			: (settings?.keepRecentTokens ?? defaultKeepRecent);
 	const warmupFraction = settings?.speculativeFraction ?? DEFAULT_WARMUP_FRACTION;
 	const targetActiveFraction = DEFAULT_TARGET_ACTIVE_FRACTION;
 	const emergencyHardLimitTokens = Math.max(0, contextWindow - Math.floor(reserveTokens / 2));
@@ -153,11 +156,11 @@ export function computeEffectiveKeepRecentTokens(
 	contextWindow: number,
 	thresholdRatio: number,
 	margin = 0.05,
+	settingConfigured = true,
 ): number {
 	const isLarge = isLargeContextModel(contextWindow);
 	const defaultForModel = isLarge ? DEFAULT_1M_KEEP_RECENT : DEFAULT_STANDARD_KEEP_RECENT;
-	// If setting is passed and different from default fallback, respect it; otherwise use model default
-	const effectiveSetting = setting > 0 ? setting : defaultForModel;
+	const effectiveSetting = settingConfigured && setting > 0 ? setting : defaultForModel;
 	const capped = Math.floor(contextWindow * (1 - thresholdRatio - margin));
 	return Math.min(effectiveSetting, Math.max(MIN_EFFECTIVE_KEEP_RECENT_TOKENS, capped));
 }

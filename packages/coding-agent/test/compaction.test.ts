@@ -203,10 +203,18 @@ type BeforeAgentStartHandler = (
 ) => Promise<{ systemPrompt?: string } | undefined> | { systemPrompt?: string } | undefined;
 type ModelSelectHandler = (event: ModelSelectEvent, ctx: ExtensionContext) => Promise<unknown> | unknown;
 type MessageEndHandler = (event: MessageEndEvent, ctx: ExtensionContext) => Promise<unknown> | unknown;
+type ContextHandler = (event: { type: "context"; messages: AgentMessage[] }, ctx: ExtensionContext) => unknown;
+type SessionTreeHandler = (event: {
+	type: "session_tree";
+	newLeafId: string | null;
+	oldLeafId: string | null;
+}) => unknown;
 interface CapturedCompactionHandlers {
 	beforeAgentStart: BeforeAgentStartHandler;
+	context: ContextHandler;
 	messageEnd: MessageEndHandler;
 	modelSelect: ModelSelectHandler;
+	sessionTree: SessionTreeHandler;
 }
 
 function captureBeforeAgentStartHandler(options?: {
@@ -235,17 +243,31 @@ function captureBeforeAgentStartHandler(options?: {
 
 function captureCompactionHandlers(): CapturedCompactionHandlers {
 	let beforeAgentStart: BeforeAgentStartHandler | undefined;
+	let context: ContextHandler | undefined;
 	let messageEnd: MessageEndHandler | undefined;
 	let modelSelect: ModelSelectHandler | undefined;
+	let sessionTree: SessionTreeHandler | undefined;
 	const api: ExtensionAPI = Object.assign(Object.create(null), {
 		cwd: "/tmp/senpi-compaction-test",
-		on: (event: string, currentHandler: BeforeAgentStartHandler | MessageEndHandler | ModelSelectHandler) => {
+		on: (
+			event: string,
+			currentHandler:
+				| BeforeAgentStartHandler
+				| ContextHandler
+				| MessageEndHandler
+				| ModelSelectHandler
+				| SessionTreeHandler,
+		) => {
 			if (event === "before_agent_start") {
 				beforeAgentStart = currentHandler as BeforeAgentStartHandler;
+			} else if (event === "context") {
+				context = currentHandler as ContextHandler;
 			} else if (event === "message_end") {
 				messageEnd = currentHandler as MessageEndHandler;
 			} else if (event === "model_select") {
 				modelSelect = currentHandler as ModelSelectHandler;
+			} else if (event === "session_tree") {
+				sessionTree = currentHandler as SessionTreeHandler;
 			}
 		},
 		appendEntry: vi.fn(),
@@ -255,10 +277,10 @@ function captureCompactionHandlers(): CapturedCompactionHandlers {
 	});
 
 	compactionExtension(api);
-	if (!beforeAgentStart || !messageEnd || !modelSelect) {
+	if (!beforeAgentStart || !context || !messageEnd || !modelSelect || !sessionTree) {
 		throw new Error("builtin compaction handlers were not registered");
 	}
-	return { beforeAgentStart, messageEnd, modelSelect };
+	return { beforeAgentStart, context, messageEnd, modelSelect, sessionTree };
 }
 
 function createExtensionContext(overrides: Partial<ExtensionContext>): ExtensionContext {
@@ -271,6 +293,7 @@ function createExtensionContext(overrides: Partial<ExtensionContext>): Extension
 		isProjectTrusted: () => true,
 		sessionManager: Object.assign(Object.create(null), {
 			getEntries: () => [],
+			getBranch: () => [],
 		}) as ExtensionContext["sessionManager"],
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
 		model: undefined,
@@ -590,6 +613,7 @@ describe("shouldCompact", () => {
 
 		expect(shouldCompact(95000, 100000, settings)).toBe(true);
 		expect(shouldCompact(89000, 100000, settings)).toBe(false);
+		expect(shouldCompact(45_000, 100_000, { ...settings, maxContextTokens: 40_000 })).toBe(true);
 	});
 
 	it("should return false when disabled", () => {
@@ -1194,6 +1218,33 @@ describe("builtin compaction extension threshold regressions", () => {
 
 		// then
 		expect(order).toEqual(["begin-extension", "auth-start", "apply-called", "hook-returned"]);
+	});
+
+	it("releases the sticky context-reduction latch when the active session branch changes", () => {
+		const handlers = captureCompactionHandlers();
+		let usageTokens = 501_000;
+		const longAnswer = "historical answer ".repeat(500);
+		const recentAnswer = "recent protected answer ".repeat(700);
+		const messages = [
+			createUserMessage("branch payload"),
+			createAssistantMessage(longAnswer),
+			createUserMessage("recent prompt"),
+			createAssistantMessage(recentAnswer),
+		];
+		const ctx = createExtensionContext({
+			model: createAnthropicModel("claude-large", 1_000_000),
+			getContextUsage: () => ({ tokens: usageTokens, contextWindow: 1_000_000, percent: usageTokens / 10_000 }),
+		});
+
+		handlers.context({ type: "context", messages }, ctx);
+		usageTokens = 100_000;
+		const stillLatched = handlers.context({ type: "context", messages }, ctx) as { messages: AgentMessage[] };
+		const latchedText = JSON.stringify(stillLatched.messages);
+		expect(latchedText).not.toContain(longAnswer);
+
+		handlers.sessionTree({ type: "session_tree", oldLeafId: "old", newLeafId: "new" });
+		const afterNavigation = handlers.context({ type: "context", messages }, ctx) as { messages: AgentMessage[] };
+		expect(JSON.stringify(afterNavigation.messages)).toContain(longAnswer);
 	});
 
 	it("drops speculative compaction when a model switch happens before a blocking compaction route", async () => {

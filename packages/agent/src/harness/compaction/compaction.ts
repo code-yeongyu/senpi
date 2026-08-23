@@ -152,6 +152,8 @@ export interface CompactionSettings {
 	reserveTokens: number;
 	/** Approximate recent-context tokens to keep after compaction. */
 	keepRecentTokens: number;
+	/** Whether keepRecentTokens was explicitly configured rather than normalized from a fallback. */
+	keepRecentTokensConfigured?: boolean;
 	/** Explicit active context ceiling override. */
 	maxContextTokens?: number;
 }
@@ -248,7 +250,12 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
 /** Return whether context usage exceeds the configured compaction threshold. */
 export function shouldCompact(contextTokens: number, contextWindow: number, settings: CompactionSettings): boolean {
 	if (!settings.enabled) return false;
-	return contextTokens > contextWindow - settings.reserveTokens;
+	const physicalLimit = Math.max(0, contextWindow - settings.reserveTokens);
+	const configuredLimit =
+		settings.maxContextTokens !== undefined && settings.maxContextTokens > 0
+			? settings.maxContextTokens
+			: physicalLimit;
+	return contextTokens > Math.min(physicalLimit, configuredLimit);
 }
 
 const ESTIMATED_IMAGE_CHARS = 4800;

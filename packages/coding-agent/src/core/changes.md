@@ -1,5 +1,24 @@
 # changes
 
+## 2026-08-23 - Preserve explicit compaction budget configuration
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts` accepts and returns `compaction.maxContextTokens`, and records whether `keepRecentTokens` was explicitly configured rather than normalized from the legacy 20k fallback.
+
+### Why
+
+- Runtime policy needs to distinguish an intentional 20k retention override from an omitted setting so large-context models receive the new 35k default without discarding user configuration.
+
+### Why an extension could not handle it
+
+- Settings parsing and normalization occur in core before extension contexts receive the resolved compaction settings.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/settings-manager.ts` compaction settings interface and getters.
+
+
 ## 2026-08-22 - Retarget OpenAI automatic defaults to GPT-5.6 Sol
 
 ### What changed

@@ -178,6 +178,8 @@ describe("harness compaction", () => {
 		expect(shouldCompact(95000, 100000, settings)).toBe(true);
 		expect(shouldCompact(89000, 100000, settings)).toBe(false);
 		expect(shouldCompact(95000, 100000, { ...settings, enabled: false })).toBe(false);
+		expect(shouldCompact(45_000, 100_000, { ...settings, maxContextTokens: 40_000 })).toBe(true);
+		expect(shouldCompact(39_000, 100_000, { ...settings, maxContextTokens: 40_000 })).toBe(false);
 	});
 
 	it("finds a cut point based on token differences", () => {

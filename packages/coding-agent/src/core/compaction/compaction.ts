@@ -187,6 +187,8 @@ export interface CompactionSettings {
 	enabled: boolean;
 	reserveTokens: number;
 	keepRecentTokens: number;
+	/** Whether keepRecentTokens was explicitly configured rather than normalized from a fallback. */
+	keepRecentTokensConfigured?: boolean;
 	maxContextTokens?: number;
 	speculativeEnabled?: boolean;
 	speculativeFraction?: number;

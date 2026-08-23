@@ -21,6 +21,7 @@ describe("ContextBudgetPolicy & Compaction Thresholds (Phase 0-3 Matrices)", () 
 		enabled: true,
 		reserveTokens: 16_384,
 		keepRecentTokens: 20_000,
+		keepRecentTokensConfigured: false,
 	};
 
 	describe("Case A: 200k model compatibility", () => {
@@ -85,6 +86,7 @@ describe("ContextBudgetPolicy & Compaction Thresholds (Phase 0-3 Matrices)", () 
 				enabled: true,
 				reserveTokens: 20_000,
 				keepRecentTokens: 40_000,
+				keepRecentTokensConfigured: true,
 				maxContextTokens: 450_000,
 				speculativeFraction: 0.8,
 			};
