@@ -29,6 +29,7 @@ describe("BTW extension TUI controls", () => {
 		const ctx = {
 			mode: "tui",
 			isIdle: () => true,
+			resolveOwnCommandInvocationName: (name: string) => (name === "btw" ? "btw:2" : undefined),
 			sessionManager: {
 				getEntries: () => [],
 				getSessionFile: () => "/sessions/main.jsonl",
@@ -50,7 +51,7 @@ describe("BTW extension TUI controls", () => {
 
 		// Then
 		expect(disposition).toEqual({ consume: true });
-		expect(sendUserMessage).toHaveBeenCalledWith("/btw", {
+		expect(sendUserMessage).toHaveBeenCalledWith("/btw:2", {
 			expandPromptTemplates: true,
 		});
 	});
@@ -73,6 +74,7 @@ describe("BTW extension TUI controls", () => {
 		const ctx = {
 			mode: "tui",
 			isIdle: () => true,
+			resolveOwnCommandInvocationName: (name: string) => name,
 			sessionManager: {
 				getSessionId: () => "side",
 				getSessionDir: () => "/sessions",
@@ -134,6 +136,7 @@ describe("BTW extension TUI controls", () => {
 		const ctx = {
 			mode: "tui",
 			isIdle: () => true,
+			resolveOwnCommandInvocationName: (name: string) => name,
 			sessionManager: {
 				getSessionId: () => "side",
 				getSessionDir: () => "/sessions",

@@ -1061,6 +1061,16 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return isSessionToolUseDisabled(runner.sessionManager.getEntries());
 			},
+			resolveOwnCommandInvocationName: (name) => {
+				runner.assertActive();
+				if (!excludeBeforeProviderRequestExtensionPath) return undefined;
+				return runner
+					.resolveRegisteredCommands()
+					.find(
+						(command) =>
+							command.name === name && command.sourceInfo.path === excludeBeforeProviderRequestExtensionPath,
+					)?.invocationName;
+			},
 			isProjectTrusted: () => {
 				runner.assertActive();
 				return runner.isProjectTrustedFn();

@@ -65,6 +65,8 @@
 - Switch, close, and Main return share one action-kind state. MCP startup skips attachment entirely
   under retained no-tools policy.
 - Ordinary loaded skills are removed from retained system-prompt options so no read-tool guidance leaks.
+- Raw switch, close, and Main shortcuts resolve this builtin's collision-safe invocation name before
+  reserving or dispatching, so renamed commands cannot fall through as model prompts.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

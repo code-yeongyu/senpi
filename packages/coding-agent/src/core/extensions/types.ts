@@ -442,6 +442,8 @@ export interface ExtensionContext {
 	isIdle(): boolean;
 	/** Whether the current session forbids all tool use. */
 	isToolUseDisabled?(): boolean;
+	/** Resolve one command registered by this extension to its collision-safe invocation name. */
+	resolveOwnCommandInvocationName(name: string): string | undefined;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */

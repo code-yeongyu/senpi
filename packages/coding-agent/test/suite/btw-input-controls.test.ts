@@ -19,6 +19,7 @@ function createHarness(
 	const tryBeginBtwCommand = vi.fn(() => true);
 	const tryBeginBtwClose = vi.fn(() => true);
 	const tryBeginBtwMain = vi.fn(() => true);
+	const getBtwInvocationName = vi.fn((command: string) => command);
 	const router = createBtwInputRouter({
 		isCurrentSide: () => side,
 		isIdle: () => idle,
@@ -26,6 +27,7 @@ function createHarness(
 		tryBeginBtwCommand,
 		tryBeginBtwClose,
 		tryBeginBtwMain,
+		getBtwInvocationName,
 		matchesKeybinding: (data, binding) => manager.matches(data, binding),
 		dispatch,
 		now: () => now,
@@ -36,6 +38,7 @@ function createHarness(
 		tryBeginBtwCommand,
 		tryBeginBtwClose,
 		tryBeginBtwMain,
+		getBtwInvocationName,
 		setIdle(value: boolean) {
 			idle = value;
 		},

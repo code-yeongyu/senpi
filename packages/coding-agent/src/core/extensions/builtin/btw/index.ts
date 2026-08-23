@@ -1,7 +1,7 @@
 import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
 import { buildSessionContext } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { createBtwInputRouter } from "./input-controls.ts";
+import { type BtwSessionCommand, createBtwInputRouter } from "./input-controls.ts";
 import { BtwPanel } from "./panel.ts";
 import { applyBtwSideSessionPolicy } from "./retained-session.ts";
 import {
@@ -14,6 +14,11 @@ import { buildSideQueryContext, getSideQueryPromptContextWindow, runSideQuery } 
 import { defaultBtwTuiCommandDependencies, runBtwTuiCommand } from "./tui-command.ts";
 
 const WIDGET_KEY = "btw";
+const COMMAND_DESCRIPTIONS: Record<BtwSessionCommand, string> = {
+	btw: "Create or switch retained BTW side sessions",
+	"btw-close": "Delete the current retained BTW session and return to Main",
+	"btw-main": "Return from the current retained BTW session to Main",
+};
 const ESCAPE = "";
 
 interface ActiveBtw {
@@ -68,6 +73,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 			tryBeginBtwCommand: () => reserveSessionAction("switch"),
 			tryBeginBtwClose: () => reserveSessionAction("close"),
 			tryBeginBtwMain: () => reserveSessionAction("main"),
+			getBtwInvocationName: (command) => ctx.resolveOwnCommandInvocationName(command),
 			matchesKeybinding: (data, keybinding) => ctx.ui.matchesKeybinding?.(data, keybinding) ?? false,
 			dispatch: (command) => {
 				pi.sendUserMessage(command, { expandPromptTemplates: true });
@@ -89,7 +95,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("btw-main", {
-		description: "Return from the current retained BTW session to Main",
+		description: COMMAND_DESCRIPTIONS["btw-main"],
 		handler: async (_args, ctx) => {
 			if (!beginSessionAction("main")) return;
 			try {
@@ -104,7 +110,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("btw-close", {
-		description: "Delete the current retained BTW session and return to Main",
+		description: COMMAND_DESCRIPTIONS["btw-close"],
 		handler: async (_args, ctx) => {
 			if (!beginSessionAction("close")) return;
 			try {
@@ -120,7 +126,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("btw", {
-		description: "Create or switch retained BTW side sessions",
+		description: COMMAND_DESCRIPTIONS.btw,
 		argumentHint: "<question>",
 		handler: async (args, ctx) => {
 			if (ctx.mode === "tui" && ctx.hasUI) {

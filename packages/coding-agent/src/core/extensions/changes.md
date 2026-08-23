@@ -12,7 +12,9 @@
   protocol aliases through the host `KeybindingsManager` instead of hard-coded input sequences.
 - `packages/coding-agent/src/core/extensions/types.ts`: typed dialog, session discovery, inspection,
   replacement, session-directory preservation, unfiltered metadata listing, and tool-policy
-  capabilities.
+  capabilities, plus source-owned collision-safe command invocation lookup.
+- `packages/coding-agent/src/core/extensions/runner.ts`: event contexts resolve commands registered
+  by their own extension source path after collision suffixing.
 - `packages/coding-agent/src/core/extensions/index.ts`: exports the new public inspection result
   types.
 - `packages/coding-agent/src/core/extensions/runner.ts`: binds the typed capabilities to live host

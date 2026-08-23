@@ -720,6 +720,12 @@ describe("ExtensionRunner", () => {
 			expect(diagnostics).toEqual([]);
 			expect(runner.getCommand("shared-cmd:1")?.description).toBe("First command");
 			expect(runner.getCommand("shared-cmd:2")?.description).toBe("Second command");
+			expect(runner.createContext(commands[0]!.sourceInfo.path).resolveOwnCommandInvocationName("shared-cmd")).toBe(
+				"shared-cmd:1",
+			);
+			expect(runner.createContext(commands[1]!.sourceInfo.path).resolveOwnCommandInvocationName("shared-cmd")).toBe(
+				"shared-cmd:2",
+			);
 		});
 	});
 
