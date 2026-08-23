@@ -1,5 +1,25 @@
 # prompt-preset Extension Changes
 
+## Retained no-tools preset suppression (2026-08-23)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/index.ts`: model preset
+  replacement returns before model/settings resolution when the typed session policy disables tools.
+
+### Why
+
+- File-operation tuned presets advertise read, grep, and apply-patch tools that retained BTW sides
+  deliberately remove.
+
+### Why an extension could not handle it
+
+- The prompt-preset builtin owns late base-prompt replacement after AgentSession prompt construction.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` policy guard in `index.ts`.
+
 ## Grok 4.6 preset (2026-08-17)
 
 ### What changed

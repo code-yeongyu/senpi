@@ -56,6 +56,7 @@
 - Main return joins the same action mutex, and retained no-tools sessions skip MCP startup attachment.
 - Retained no-tools sessions omit ordinary skill guidance that would require the unavailable read tool.
 - BTW shortcuts dispatch collision-resolved builtin invocation names instead of hardcoded command text.
+- Model-specific prompt presets cannot reintroduce file-tool guidance in retained no-tools sessions.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

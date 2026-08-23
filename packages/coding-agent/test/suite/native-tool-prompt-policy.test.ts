@@ -6,6 +6,7 @@ import imageGenExtension from "../../src/core/extensions/builtin/imagegen/index.
 import { createMcpExtension } from "../../src/core/extensions/builtin/mcp/index.ts";
 import type { McpService } from "../../src/core/extensions/builtin/mcp/service.ts";
 import openaiWebSearchExtension from "../../src/core/extensions/builtin/openai-web-search/index.ts";
+import promptPresetExtension from "../../src/core/extensions/builtin/prompt-preset/index.ts";
 import { registerTerminalExtension } from "../../src/core/extensions/builtin/terminal/extension.ts";
 import todotoolsExtension from "../../src/core/extensions/builtin/todotools/index.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
@@ -13,7 +14,7 @@ import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/t
 const ENV_KEYS = ["PI_ANTHROPIC_BASH", "PI_ANTHROPIC_WEB_SEARCH", "PI_OPENAI_WEB_SEARCH"] as const;
 
 type BeforeAgentStartHandler = (
-	event: { systemPrompt: string },
+	event: { systemPrompt: string; systemPromptOptions?: Record<string, unknown> },
 	ctx: ExtensionContext,
 ) => Promise<{ systemPrompt: string } | undefined>;
 
@@ -55,6 +56,11 @@ afterEach(() => {
 
 describe("native tool prompt policy", () => {
 	const cases = [
+		{
+			name: "GPT prompt preset",
+			factory: promptPresetExtension,
+			model: { id: "gpt-5.6", provider: "openai", api: "openai-responses" },
+		},
 		{
 			name: "terminal",
 			factory: registerTerminalExtension,
@@ -105,12 +111,26 @@ describe("native tool prompt policy", () => {
 			if ("env" in testCase) process.env[testCase.env] = "1";
 			const handler = captureBeforeAgentStart(testCase.factory);
 			const ctx = {
+				cwd: "/repo",
 				model: testCase.model,
 				isToolUseDisabled: () => true,
 			} as unknown as ExtensionContext;
 
 			// When
-			const result = await handler({ systemPrompt: "system" }, ctx);
+			const result = await handler(
+				{
+					systemPrompt: "system",
+					systemPromptOptions: {
+						cwd: "/repo",
+						selectedTools: ["read", "grep", "apply_patch"],
+						toolSnippets: {},
+						promptGuidelines: [],
+						contextFiles: [],
+						skills: [],
+					},
+				},
+				ctx,
+			);
 
 			// Then
 			expect(result).toBeUndefined();

@@ -67,6 +67,7 @@
 - Ordinary loaded skills are removed from retained system-prompt options so no read-tool guidance leaks.
 - Raw switch, close, and Main shortcuts resolve this builtin's collision-safe invocation name before
   reserving or dispatching, so renamed commands cannot fall through as model prompts.
+- Model-specific prompt presets are suppressed under retained no-tools policy before replacement.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

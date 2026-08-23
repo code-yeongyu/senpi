@@ -70,6 +70,7 @@ function refreshHeader(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "mo
 
 export default function promptPresetExtension(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", async (event, ctx) => {
+		if (ctx.isToolUseDisabled?.()) return undefined;
 		const model = ctx.model;
 		if (!model) {
 			return undefined;
