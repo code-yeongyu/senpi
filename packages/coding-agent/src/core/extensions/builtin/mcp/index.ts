@@ -137,6 +137,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			return work;
 		});
 		pi.on("before_agent_start", async (event, ctx) => {
+			if (ctx.isToolUseDisabled()) return undefined;
 			try {
 				// Elicitation (todo 41): point mid-call forms at this session's UI.
 				service.setMcpElicitationUiProvider(() => ctx.ui);

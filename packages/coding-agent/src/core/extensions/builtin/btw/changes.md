@@ -58,6 +58,7 @@
   recovery, and all builtin tool-specific prompt contributors honor the retained no-tools policy.
 - Settled creation revalidates the active/selected parent ID. Recovered catalogs request unfiltered
   header candidates before exact parent matching, and imagegen skill discovery honors no-tools.
+- MCP instruction injection also short-circuits before attachment when the retained policy disables tools.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

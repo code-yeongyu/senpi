@@ -49,6 +49,7 @@
   rows; terminal/bash-timeout/todo/imagegen prompts are suppressed under retained no-tools policy.
 - Creation revalidates settled Main ID, recovered siblings bypass header-cwd prefiltering before
   exact parent matching, and imagegen skill discovery is suppressed when tools are disabled.
+- MCP session attachment and server-instruction injection are suppressed under retained no-tools policy.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import anthropicBashExtension from "../../src/core/extensions/builtin/anthropic-bash/index.ts";
 import anthropicWebSearchExtension from "../../src/core/extensions/builtin/anthropic-web-search/index.ts";
 import bashTimeoutExtension from "../../src/core/extensions/builtin/bash-timeout/index.ts";
 import imageGenExtension from "../../src/core/extensions/builtin/imagegen/index.ts";
+import { createMcpExtension } from "../../src/core/extensions/builtin/mcp/index.ts";
+import type { McpService } from "../../src/core/extensions/builtin/mcp/service.ts";
 import openaiWebSearchExtension from "../../src/core/extensions/builtin/openai-web-search/index.ts";
 import { registerTerminalExtension } from "../../src/core/extensions/builtin/terminal/extension.ts";
 import todotoolsExtension from "../../src/core/extensions/builtin/todotools/index.ts";
@@ -19,6 +21,12 @@ function captureHandler<T>(factory: (pi: ExtensionAPI) => void, eventName: strin
 	let captured: T | undefined;
 	const api = new Proxy(
 		{
+			events: {
+				emit() {},
+				on() {
+					return () => undefined;
+				},
+			},
 			on(registeredEvent: string, handler: unknown) {
 				if (registeredEvent === eventName) {
 					captured = handler as T;
@@ -121,5 +129,34 @@ describe("native tool prompt policy", () => {
 
 		// Then
 		expect(result).toBeUndefined();
+	});
+
+	it("does not attach or inject MCP instructions when session tools are disabled", async () => {
+		// Given
+		const attachSession = vi.fn(async () => undefined);
+		const service = new Proxy(
+			{ attachSession },
+			{
+				get(target, property) {
+					if (property in target) return target[property as keyof typeof target];
+					if (property === "onWireStatusChanged") return () => () => undefined;
+					return () => undefined;
+				},
+			},
+		) as unknown as McpService;
+		const handler = captureHandler<
+			(
+				event: { systemPrompt: string; systemPromptOptions: { skills: never[] } },
+				ctx: ExtensionContext,
+			) => Promise<{ systemPrompt: string } | undefined>
+		>(createMcpExtension(service), "before_agent_start");
+		const ctx = { isToolUseDisabled: () => true } as unknown as ExtensionContext;
+
+		// When
+		const result = await handler({ systemPrompt: "system", systemPromptOptions: { skills: [] } }, ctx);
+
+		// Then
+		expect(result).toBeUndefined();
+		expect(attachSession).not.toHaveBeenCalled();
 	});
 });

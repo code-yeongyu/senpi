@@ -1,5 +1,25 @@
 # mcp Extension Changes
 
+## Retained no-tools instruction suppression (2026-08-23)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: `before_agent_start` returns
+  before session attachment or instruction injection when the typed session policy disables tools.
+
+### Why
+
+- Retained BTW sides expose no MCP tools and must not receive server instructions that advertise
+  unavailable calls.
+
+### Why an extension could not handle it
+
+- The MCP builtin owns attachment, server-instruction collection, and prompt injection.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` policy guard in `index.ts`.
+
 ## Explicit pgrep match-all pattern for process-tree collection (2026-08-12)
 
 ### What changed
