@@ -160,7 +160,7 @@ export function computeEffectiveKeepRecentTokens(
 ): number {
 	const isLarge = isLargeContextModel(contextWindow);
 	const defaultForModel = isLarge ? DEFAULT_1M_KEEP_RECENT : DEFAULT_STANDARD_KEEP_RECENT;
-	const effectiveSetting = settingConfigured && setting > 0 ? setting : defaultForModel;
+	const effectiveSetting = settingConfigured ? setting : defaultForModel;
 	const capped = Math.floor(contextWindow * (1 - thresholdRatio - margin));
 	return Math.min(effectiveSetting, Math.max(MIN_EFFECTIVE_KEEP_RECENT_TOKENS, capped));
 }

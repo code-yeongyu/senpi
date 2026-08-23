@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	computeEffectiveBlockingThresholdTokens,
+	computeEffectiveKeepRecentTokens,
 	DEFAULT_1M_KEEP_RECENT,
 	resolveContextBudgetPolicy,
 	shouldStartSpeculativeCompaction,
@@ -81,6 +82,11 @@ describe("ContextBudgetPolicy & Compaction Thresholds (Phase 0-3 Matrices)", () 
 	});
 
 	describe("User overrides prioritization", () => {
+		it("preserves explicit zero keepRecentTokens during preparation", () => {
+			const thresholdRatio = 0.65;
+			expect(computeEffectiveKeepRecentTokens(0, 1_000_000, thresholdRatio, 0.05, true)).toBe(0);
+		});
+
 		it("respects explicit maxContextTokens and keepRecentTokens over defaults", () => {
 			const customSettings = {
 				enabled: true,
