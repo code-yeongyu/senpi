@@ -59,6 +59,56 @@ function isContentlessUserMessage(message: SentMessage): boolean {
 	return Array.isArray(message.content) && message.content.length === 0;
 }
 
+const VOLATILE_HOOK_CUSTOM_TYPES = new Set([
+	"omo-memory:notice",
+	"goal-continuation",
+	"mindy-team:context-block",
+	"senpi-task.usage",
+]);
+
+type HookInspectable = {
+	role: string;
+	content?: unknown;
+	customType?: unknown;
+	__piContextProvenance?: { customType?: unknown };
+};
+
+function messageText(message: HookInspectable): string {
+	const content = message.content;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((block) =>
+			block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block
+				? String(block.text)
+				: "",
+		)
+		.join("");
+}
+
+function hookCustomType(message: HookInspectable): string | undefined {
+	if (typeof message.customType === "string") return message.customType;
+	const provenance = message.__piContextProvenance;
+	if (provenance && typeof provenance.customType === "string") return provenance.customType;
+	return undefined;
+}
+
+/**
+ * Top-of-turn hook injections convert to user-role bodies. Hashing them makes a
+ * rewrite or prepend look like `sent_stream_diverged` and flatten to a cold
+ * seed. Exclude them the same way content-less user messages are excluded.
+ * convertToLlm drops customType, so content signatures are the live detector.
+ */
+function isVolatileHookMessage(message: HookInspectable): boolean {
+	const customType = hookCustomType(message);
+	if (customType && VOLATILE_HOOK_CUSTOM_TYPES.has(customType)) return true;
+	const text = messageText(message);
+	if (text.startsWith("<memory_notice>")) return true;
+	if (text.startsWith("<RULES>\n") || text.startsWith("<RULES>\r\n")) return true;
+	if (text.startsWith("<omo-senpi-task>")) return true;
+	return text.startsWith("Continue working toward the active thread goal.") && text.includes("<untrusted_objective>");
+}
+
 export function sentMessages(context: Context): SentMessage[] {
 	return context.messages.filter(isTransmittedMessage);
 }
@@ -70,6 +120,7 @@ export function sentMessages(context: Context): SentMessage[] {
  */
 export function isTransmittedMessage(message: { role: string }): message is SentMessage {
 	if (message.role !== "user" && message.role !== "toolResult") return false;
+	if (isVolatileHookMessage(message)) return false;
 	return !isContentlessUserMessage(message as SentMessage);
 }
 
