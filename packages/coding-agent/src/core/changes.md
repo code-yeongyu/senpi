@@ -1,5 +1,37 @@
 # changes
 
+## 2026-08-23 - retained BTW host session capabilities
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
+  setup, persistence, and session tool policy.
+- `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose typed session
+  discovery and inspection to command contexts.
+- `packages/coding-agent/src/core/keybindings.ts`: BTW switching has configurable Ctrl+/, Ctrl+_,
+  and Ctrl+7 defaults.
+- `packages/coding-agent/src/core/model-registry.ts`: retained creation can run the provider's live
+  asynchronous auth check before replacement.
+- `packages/coding-agent/src/core/sdk.ts`: public session creation carries retained setup and policy
+  options.
+- `packages/coding-agent/src/core/session-manager.ts`: initialized persistence plus bounded
+  header/custom metadata discovery support retained catalogs without full transcript summaries.
+
+### Why
+
+- Retained BTW sessions require atomic host replacement, safe model/auth transfer, terminal-aware
+  switching, durable metadata, and fast identity-preserving discovery.
+
+### Why an extension could not handle it
+
+- These capabilities own private session files, replacement state, model runtime authentication,
+  key parsing, and public SDK contracts that extensions can consume but cannot safely reimplement.
+
+### Expected merge conflict zones
+
+- MEDIUM: session replacement/action binding and session-manager discovery methods.
+- LOW: keybinding defaults, model-registry facade, and SDK option types.
+
 ## 2026-08-22 - Retarget OpenAI automatic defaults to GPT-5.6 Sol
 
 ### What changed
