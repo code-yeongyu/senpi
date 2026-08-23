@@ -1,5 +1,25 @@
 # claude-sdk-oauth
 
+## 2026-08-23 - Ignore volatile top-hook content in continuity hashes
+
+### What changed
+
+- `session-sync.ts`: `sentMessageHashes` digests omo-memory notices, goal-continuation, mindy-team context blocks, and senpi-task usage as `{ role, volatileHook }` instead of their bodies. `isTransmittedMessage` is unchanged so those messages still occupy a slot in `messages.slice(from)`.
+- Detection uses customType/provenance when present and content signatures after `convertToLlm` strips customType.
+- Regression: hook rewrite reattaches; a structural prepend or a genuine user rewrite still reports `sent_stream_diverged`.
+
+### Why
+
+Those hooks are rewritten every turn. Hashing their converted user-role bodies makes `decideFromBinding` report `sent_stream_diverged` and flatten to a cold seed. Dropping them from `isTransmittedMessage` would also drop them from `buildDeltaPromptBlocks(messages.slice(from))`, so a goal-continuation-only turn would send an empty delta. Same class as PR #791, but hash-only.
+
+### Why an extension could not handle it
+
+Continuity hashes are computed inside this provider before the request is serialized. An extension cannot change `sentMessageHashes`.
+
+### Expected merge conflict zones
+
+- `session-sync.ts` around `sentMessageHashes` / `isTransmittedMessage`.
+
 ## 2026-09-03 - Never resume an SDK session id the SDK never acknowledged
 
 ### What changed
@@ -23,6 +43,7 @@
 
 - LOW: `session-continuity.ts` `decideNativeContinuity` entry branch, `session-turn-attempt.ts` publish/catch paths, `session-registry-pump.ts` init/claim handling, the `ContinuityReason` union.
 ## 2026-09-03 - Map malformed content entries to text instead of broken image blocks
+
 
 ### What changed
 

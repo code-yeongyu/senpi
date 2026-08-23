@@ -93,15 +93,18 @@ describe("volatile hook continuity", () => {
 	];
 	const realEdit = [userMessage("task1-edited"), notice(8), toolResult("t1")];
 
-	it("does not treat converted hook signatures as transmitted", () => {
-		expect(isTransmittedMessage(notice(8))).toBe(false);
-		expect(isTransmittedMessage(goalContinuation(1))).toBe(false);
+	it("keeps converted hooks in the transmitted set but hashes them by kind, not body", () => {
+		expect(isTransmittedMessage(notice(8))).toBe(true);
+		expect(isTransmittedMessage(goalContinuation(1))).toBe(true);
 		expect(isTransmittedMessage(userMessage("task1"))).toBe(true);
 		expect(isTransmittedMessage(toolResult("t1"))).toBe(true);
 		expect(isTransmittedMessage(userMessage("Continue working toward the active thread goal"))).toBe(true);
+		expect(sentMessageHashes([notice(8)])).toEqual(sentMessageHashes([notice(186)]));
+		expect(sentMessageHashes([goalContinuation(1)])).toEqual(sentMessageHashes([goalContinuation(99)]));
+		expect(sentMessageHashes([userMessage("task1")])).not.toEqual(sentMessageHashes([userMessage("task1-edited")]));
 	});
 
-	it("reattaches after a hook rewrite or prepend, but still diverges on a real user rewrite", () => {
+	it("reattaches after a hook rewrite, but still diverges on prepend or a real user rewrite", () => {
 		const binding = bindingFrom(prior);
 		const input = {
 			entry: undefined,
@@ -115,19 +118,17 @@ describe("volatile hook continuity", () => {
 		expect(decideNativeContinuity({ ...input, currentHashes: hashesOf(rewrittenNotice) })).toEqual({
 			kind: "reattach",
 			sdkSessionId: "sdk-1",
-			from: 2,
+			from: 3,
 			reason: "registry_miss",
 		});
 		expect(decideNativeContinuity({ ...input, currentHashes: hashesOf(prependedNotice) })).toEqual({
-			kind: "reattach",
-			sdkSessionId: "sdk-1",
-			from: 2,
-			reason: "registry_miss",
+			kind: "flatten",
+			reason: "sent_stream_diverged",
 		});
 		expect(decideNativeContinuity({ ...input, currentHashes: hashesOf(appended) })).toEqual({
 			kind: "reattach",
 			sdkSessionId: "sdk-1",
-			from: 2,
+			from: 3,
 			reason: "registry_miss",
 		});
 		expect(decideNativeContinuity({ ...input, currentHashes: hashesOf(realEdit) })).toEqual({
@@ -149,7 +150,7 @@ describe("volatile hook continuity", () => {
 		};
 		expect(decideNativeContinuity({ ...input, currentHashes: hashesOf(rewrittenNotice) })).toEqual({
 			kind: "delta",
-			from: 2,
+			from: 3,
 		});
 		const edit = decideNativeContinuity({ ...input, currentHashes: hashesOf(realEdit) });
 		expect(edit.kind === "flatten" || edit.kind === "fork").toBe(true);

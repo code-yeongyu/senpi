@@ -94,19 +94,23 @@ function hookCustomType(message: HookInspectable): string | undefined {
 }
 
 /**
- * Top-of-turn hook injections convert to user-role bodies. Hashing them makes a
- * rewrite or prepend look like `sent_stream_diverged` and flatten to a cold
- * seed. Exclude them the same way content-less user messages are excluded.
+ * Top-of-turn hook injections convert to user-role bodies. Their *content*
+ * must not participate in continuity hashes (a rewrite would look like
+ * sent_stream_diverged and flatten). They still have to stay in the transmitted
+ * set: `from` indexes that same list when building the SDK delta payload.
  * convertToLlm drops customType, so content signatures are the live detector.
  */
-function isVolatileHookMessage(message: HookInspectable): boolean {
+function volatileHookKind(message: HookInspectable): string | undefined {
 	const customType = hookCustomType(message);
-	if (customType && VOLATILE_HOOK_CUSTOM_TYPES.has(customType)) return true;
+	if (customType && VOLATILE_HOOK_CUSTOM_TYPES.has(customType)) return customType;
 	const text = messageText(message);
-	if (text.startsWith("<memory_notice>")) return true;
-	if (text.startsWith("<RULES>\n") || text.startsWith("<RULES>\r\n")) return true;
-	if (text.startsWith("<omo-senpi-task>")) return true;
-	return text.startsWith("Continue working toward the active thread goal.") && text.includes("<untrusted_objective>");
+	if (text.startsWith("<memory_notice>")) return "omo-memory:notice";
+	if (text.startsWith("<RULES>\n") || text.startsWith("<RULES>\r\n")) return "mindy-team:context-block";
+	if (text.startsWith("<omo-senpi-task>")) return "senpi-task.usage";
+	if (text.startsWith("Continue working toward the active thread goal.") && text.includes("<untrusted_objective>")) {
+		return "goal-continuation";
+	}
+	return undefined;
 }
 
 export function sentMessages(context: Context): SentMessage[] {
@@ -120,7 +124,6 @@ export function sentMessages(context: Context): SentMessage[] {
  */
 export function isTransmittedMessage(message: { role: string }): message is SentMessage {
 	if (message.role !== "user" && message.role !== "toolResult") return false;
-	if (isVolatileHookMessage(message)) return false;
 	return !isContentlessUserMessage(message as SentMessage);
 }
 
@@ -129,8 +132,10 @@ export function isTransmittedMessage(message: { role: string }): message is Sent
  * list that disagrees with another caller's by forgetting the filter.
  */
 export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
-	const hashes = messages.filter(isTransmittedMessage).map((message) =>
-		digest(
+	const hashes = messages.filter(isTransmittedMessage).map((message) => {
+		const hook = volatileHookKind(message);
+		if (hook) return digest({ role: message.role, volatileHook: hook });
+		return digest(
 			message.role === "user"
 				? { role: message.role, content: message.content }
 				: {
@@ -139,8 +144,8 @@ export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
 						toolName: message.toolName,
 						content: message.content,
 					},
-		),
-	);
+		);
+	});
 	return hashes;
 }
 
