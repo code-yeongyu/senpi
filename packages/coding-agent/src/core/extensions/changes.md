@@ -11,7 +11,8 @@
 - The bridge accepts an `AppKeybinding`, so extensions resolve user configuration and terminal
   protocol aliases through the host `KeybindingsManager` instead of hard-coded input sequences.
 - `packages/coding-agent/src/core/extensions/types.ts`: typed dialog, session discovery, inspection,
-  replacement, session-directory preservation, and tool-policy capabilities.
+  replacement, session-directory preservation, unfiltered metadata listing, and tool-policy
+  capabilities.
 - `packages/coding-agent/src/core/extensions/index.ts`: exports the new public inspection result
   types.
 - `packages/coding-agent/src/core/extensions/runner.ts`: binds the typed capabilities to live host

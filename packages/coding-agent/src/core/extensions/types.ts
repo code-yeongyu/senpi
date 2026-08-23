@@ -578,7 +578,7 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	listSessions(): Promise<readonly SessionInfo[]>;
 
 	/** List session headers without computing transcript summaries. */
-	listSessionMetadata(): Promise<readonly SessionMetadataInfo[]>;
+	listSessionMetadata(options?: { filterCwd?: boolean }): Promise<readonly SessionMetadataInfo[]>;
 
 	/** Inspect a persisted session, optionally resolving context from a specific leaf. */
 	inspectSession(sessionPath: string, options?: { leafId?: string | null }): ExtensionSessionInspection;

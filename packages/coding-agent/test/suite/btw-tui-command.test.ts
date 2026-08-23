@@ -50,6 +50,7 @@ function createHarness(selections: Array<string | undefined> = []) {
 	const ctx = {
 		cwd: "/repo",
 		sessionManager: {
+			getSessionId: () => "main",
 			getSessionFile: () => "/sessions/main.jsonl",
 			getSessionDir: () => "/configured/sessions",
 		},
@@ -142,6 +143,20 @@ describe("runBtwTuiCommand", () => {
 		expect(harness.dependencies.createSide).not.toHaveBeenCalled();
 	});
 
+	it("refuses inline creation when the settled Main ID changed at the same path", async () => {
+		// Given
+		const harness = createHarness();
+		harness.loaded.main!.id = "replacement-main";
+
+		// When
+		await runBtwTuiCommand("must not orphan", harness.ctx, harness.dependencies);
+
+		// Then
+		expect(harness.notify).toHaveBeenCalledOnce();
+		expect(harness.dependencies.buildParentContext).not.toHaveBeenCalled();
+		expect(harness.dependencies.createSide).not.toHaveBeenCalled();
+	});
+
 	it("opens the native picker and switches to the selected retained side", async () => {
 		// Given
 		const harness = createHarness(["BTW #1 — first"]);
@@ -198,6 +213,21 @@ describe("runBtwTuiCommand", () => {
 		);
 		expect(harness.waitForIdle).toHaveBeenCalledOnce();
 		expect(harness.dependencies.loadCatalog).toHaveBeenCalledTimes(2);
+	});
+
+	it("refuses New BTW when Main is replaced while waiting for idle", async () => {
+		// Given
+		const harness = createHarness(["New BTW"]);
+		const settled = structuredClone(harness.loaded);
+		settled.main!.id = "replacement-main";
+		vi.mocked(harness.dependencies.loadCatalog).mockResolvedValueOnce(harness.loaded).mockResolvedValueOnce(settled);
+
+		// When
+		await runBtwTuiCommand("", harness.ctx, harness.dependencies);
+
+		// Then
+		expect(harness.notify).toHaveBeenCalledOnce();
+		expect(harness.dependencies.createSide).not.toHaveBeenCalled();
 	});
 
 	it("refreshes after a selected side disappears instead of switching stale state", async () => {
@@ -263,7 +293,7 @@ describe("default BTW session discovery", () => {
 		const discovered = await defaultBtwTuiCommandDependencies.loadCatalog(ctx);
 
 		// Then
-		expect(listSessionMetadata).toHaveBeenCalledOnce();
+		expect(listSessionMetadata).toHaveBeenCalledWith({ filterCwd: false });
 		expect(listSessions).not.toHaveBeenCalled();
 		expect(inspectSessionCustomData).toHaveBeenCalled();
 		expect(inspectSession).not.toHaveBeenCalled();

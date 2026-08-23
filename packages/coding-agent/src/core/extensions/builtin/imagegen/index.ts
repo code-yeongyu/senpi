@@ -35,6 +35,7 @@ export function registerImageGenExtension(pi: ExtensionAPI, baseDir = IMAGEGEN_B
 	pi.registerTool(generateImageTool);
 
 	pi.on("resources_discover", async (_event, ctx) => {
+		if (ctx.isToolUseDisabled()) return undefined;
 		if (!(await isImageGenActive(ctx))) return undefined;
 		const skillPath = bundledSkillPath(baseDir);
 		return skillPath === undefined ? undefined : { skillPaths: [skillPath] };

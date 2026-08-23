@@ -64,7 +64,7 @@ export const defaultBtwTuiCommandDependencies: RunBtwTuiCommandDependencies = {
 		return loadBtwSessionCatalog({
 			cwd: ctx.cwd,
 			currentSessionPath: ctx.sessionManager.getSessionFile() ?? "",
-			listSessions: () => ctx.listSessionMetadata(),
+			listSessions: () => ctx.listSessionMetadata({ filterCwd: false }),
 			readSessionInfo: async (sessionPath) => ctx.inspectSessionMetadata(sessionPath),
 			readMetadata: async (sessionPath) => {
 				const custom = ctx.inspectSessionCustomData(sessionPath, BTW_SIDE_ENTRY_TYPE);
@@ -110,7 +110,9 @@ export async function runBtwTuiCommand(
 	if (question) {
 		await ctx.waitForIdle();
 		const catalog = await dependencies.loadCatalog(ctx);
-		if (!catalog.main) {
+		const expectedParentSessionId =
+			catalog.currentSide?.metadata.parentSessionId ?? ctx.sessionManager.getSessionId();
+		if (!catalog.main || catalog.main.id !== expectedParentSessionId) {
 			ctx.ui.notify("BTW cannot create a side because the original Main session is unavailable.", "warning");
 			return;
 		}
@@ -148,7 +150,7 @@ export async function runBtwTuiCommand(
 		if (selected.choice.type === "new") {
 			await ctx.waitForIdle();
 			const settledCatalog = await dependencies.loadCatalog(ctx);
-			if (!settledCatalog.main) {
+			if (!settledCatalog.main || settledCatalog.main.id !== selected.choice.parentSessionId) {
 				ctx.ui.notify("BTW cannot create a side because the original Main session is unavailable.", "warning");
 				return;
 			}

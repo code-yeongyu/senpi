@@ -75,9 +75,16 @@ describe("loadBtwSessionCatalog", () => {
 		// Given
 		const main = session("/outside/main.jsonl", "External Main", "/original/repo", "external-main");
 		const side = session("/configured/side.jsonl", "BTW #1: external", "/original/repo", "side");
+		const sibling = session("/configured/sibling.jsonl", "BTW #2: external", "/original/repo", "sibling");
 		const sideMetadata = metadata({
 			parentSessionPath: main.path,
 			parentSessionId: main.id,
+		});
+		const siblingMetadata = metadata({
+			parentSessionPath: main.path,
+			parentSessionId: main.id,
+			ordinal: 2,
+			summary: "sibling",
 		});
 		const readSessionInfo = async (path: string) =>
 			path === main.path ? main : path === side.path ? side : undefined;
@@ -93,15 +100,16 @@ describe("loadBtwSessionCatalog", () => {
 		const fromSide = await loadBtwSessionCatalog({
 			cwd: "/recovered/repo",
 			currentSessionPath: side.path,
-			listSessions: async () => [side],
-			readMetadata: async (path) => (path === side.path ? sideMetadata : undefined),
+			listSessions: async () => [side, sibling],
+			readMetadata: async (path) =>
+				path === side.path ? sideMetadata : path === sibling.path ? siblingMetadata : undefined,
 			readSessionInfo,
 		});
 
 		// Then
 		expect(fromMain.main?.id).toBe(main.id);
 		expect(fromSide.main?.id).toBe(main.id);
-		expect(fromSide.sides.map((item) => item.id)).toEqual([side.id]);
+		expect(fromSide.sides.map((item) => item.id)).toEqual([side.id, sibling.id]);
 	});
 
 	it("groups only same-cwd retained sides under their authoritative parent", async () => {

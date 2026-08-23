@@ -1194,9 +1194,9 @@ export class ExtensionRunner {
 			this.assertActive();
 			return SessionManager.list(this.sessionManager.getCwd(), this.sessionManager.getSessionDir());
 		};
-		context.listSessionMetadata = () => {
+		context.listSessionMetadata = (options) => {
 			this.assertActive();
-			return SessionManager.listMetadata(this.sessionManager.getCwd(), this.sessionManager.getSessionDir());
+			return SessionManager.listMetadata(this.sessionManager.getCwd(), this.sessionManager.getSessionDir(), options);
 		};
 		context.inspectSession = (sessionPath, options) => {
 			this.assertActive();

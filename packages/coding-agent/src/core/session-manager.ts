@@ -1817,10 +1817,15 @@ export class SessionManager {
 		};
 	}
 
-	static async listMetadata(cwd: string, sessionDir?: string): Promise<SessionMetadataInfo[]> {
+	static async listMetadata(
+		cwd: string,
+		sessionDir?: string,
+		options?: { filterCwd?: boolean },
+	): Promise<SessionMetadataInfo[]> {
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
 		if (!existsSync(dir)) return [];
-		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
+		const filterCwd =
+			(options?.filterCwd ?? true) && sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
 		const resolvedCwd = resolvePath(cwd);
 		const names = await readdir(dir);
 		const sessions: SessionMetadataInfo[] = [];

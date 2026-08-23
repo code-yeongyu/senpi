@@ -47,6 +47,8 @@
   to cancel a focused dialog cannot count toward the side's session-level return pair.
 - Inline creation stops after Main identity loss; missing-cwd recovery keeps authoritative session
   rows; terminal/bash-timeout/todo/imagegen prompts are suppressed under retained no-tools policy.
+- Creation revalidates settled Main ID, recovered siblings bypass header-cwd prefiltering before
+  exact parent matching, and imagegen skill discovery is suppressed when tools are disabled.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

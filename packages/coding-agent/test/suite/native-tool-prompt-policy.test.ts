@@ -15,13 +15,13 @@ type BeforeAgentStartHandler = (
 	ctx: ExtensionContext,
 ) => Promise<{ systemPrompt: string } | undefined>;
 
-function captureBeforeAgentStart(factory: (pi: ExtensionAPI) => void): BeforeAgentStartHandler {
-	let captured: BeforeAgentStartHandler | undefined;
+function captureHandler<T>(factory: (pi: ExtensionAPI) => void, eventName: string): T {
+	let captured: T | undefined;
 	const api = new Proxy(
 		{
-			on(eventName: string, handler: unknown) {
-				if (eventName === "before_agent_start") {
-					captured = handler as BeforeAgentStartHandler;
+			on(registeredEvent: string, handler: unknown) {
+				if (registeredEvent === eventName) {
+					captured = handler as T;
 				}
 			},
 		},
@@ -33,8 +33,12 @@ function captureBeforeAgentStart(factory: (pi: ExtensionAPI) => void): BeforeAge
 		},
 	) as ExtensionAPI;
 	factory(api);
-	if (!captured) throw new Error("missing before_agent_start handler");
+	if (!captured) throw new Error(`missing ${eventName} handler`);
 	return captured;
+}
+
+function captureBeforeAgentStart(factory: (pi: ExtensionAPI) => void): BeforeAgentStartHandler {
+	return captureHandler(factory, "before_agent_start");
 }
 
 afterEach(() => {
@@ -104,4 +108,18 @@ describe("native tool prompt policy", () => {
 			expect(result).toBeUndefined();
 		});
 	}
+
+	it("does not discover the imagegen skill when session tools are disabled", async () => {
+		// Given
+		const handler = captureHandler<
+			(event: object, ctx: ExtensionContext) => Promise<{ skillPaths: string[] } | undefined>
+		>(imageGenExtension, "resources_discover");
+		const ctx = { isToolUseDisabled: () => true } as unknown as ExtensionContext;
+
+		// When
+		const result = await handler({}, ctx);
+
+		// Then
+		expect(result).toBeUndefined();
+	});
 });

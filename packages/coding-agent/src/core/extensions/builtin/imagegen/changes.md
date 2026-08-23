@@ -4,8 +4,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/imagegen/index.ts`: image-generation prompt
-  injection returns before auth resolution when the typed session policy disables tools.
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/index.ts`: image-generation prompt and
+  skill discovery both return before auth resolution when the typed session policy disables tools.
 
 ### Why
 

@@ -56,6 +56,8 @@
   Dialog-owned Escape resets the idle return pair before the focused component handles cancellation.
 - Inline creation requires an identity-matched Main. Authoritative current/parent seeds survive cwd
   recovery, and all builtin tool-specific prompt contributors honor the retained no-tools policy.
+- Settled creation revalidates the active/selected parent ID. Recovered catalogs request unfiltered
+  header candidates before exact parent matching, and imagegen skill discovery honors no-tools.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

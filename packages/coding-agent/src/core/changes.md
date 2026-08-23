@@ -16,7 +16,8 @@
   options.
 - `packages/coding-agent/src/core/session-manager.ts`: initialized persistence plus bounded
   header/custom metadata discovery support retained catalogs without full transcript summaries,
-  while reusing best-effort header parsing for malformed historical files.
+  while reusing best-effort header parsing for malformed historical files and allowing exact-parent
+  consumers to request unfiltered header candidates after cwd recovery.
 
 ### Why
 
