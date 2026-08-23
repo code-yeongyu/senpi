@@ -1,5 +1,26 @@
 # senpi-codemode fork changes
 
+## Detached-eval spill notices carry absolute paths (2026-08-23)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/detached-cell-notification.ts` now writes the plain absolute spill path into the oversized-output notice (`Buffered output overflowed; full output: <absolute path>`) instead of a `local://…` URI. The `localUri` helper and the unused `artifactsDir` parameter on `buildDetachedCellNotification` are gone; `DetachedNotificationQueue` no longer stores `artifactsDir`.
+- `test/eval-detach.test.ts` locks the contract: the notice must contain `join(artifactsDir, "local", "detached-eval-<id>.log")` and must not contain `local://`.
+
+### Why
+
+- `local://` is a kernel-helper scheme resolved from the session artifact root inside eval cells (`read()`/`write()` prelude helpers). The agent-facing `read` tool resolves plain paths only, so a model that followed the notice's `local://detached-eval-<id>.log` got `ENOENT: <cwd>/local:/detached-eval-<id>.log`. This reproduces the documented invariant: spill notices contain plain absolute paths, not a custom URI scheme.
+
+### Why an extension could not handle it
+
+- The spill notice text is composed inside this package's notification builder; no downstream hook can rewrite the notice before it is queued to the notifier.
+
+### Expected merge conflict zones
+
+- LOW in `src/tool/detached-cell-notification.ts` around the spill-notice composition and the removed helper.
+- LOW in `src/tool/detached-notification-queue.ts` around the constructor and flush mapping.
+- LOW in `test/eval-detach.test.ts` around the crash-spill assertions.
+
 ## Detached-cell notices deliver as internal custom messages (2026-08-23)
 
 ### What changed

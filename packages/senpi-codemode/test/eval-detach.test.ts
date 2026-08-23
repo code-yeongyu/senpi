@@ -310,7 +310,7 @@ describe("eval detached cells", () => {
 		expect(manager.busyFor("js")).toBeUndefined();
 	});
 
-	it("reports detached kernel crashes with the buffered tail and spills oversized notifications to local://", async () => {
+	it("reports detached kernel crashes with the buffered tail and spills oversized notifications to an absolute path", async () => {
 		vi.useFakeTimers();
 		const artifactsDir = await mkdtemp(join(tmpdir(), "senpi-codemode-detach-"));
 		directories.push(artifactsDir);
@@ -328,8 +328,12 @@ describe("eval detached cells", () => {
 
 		expect(recorder.notices).toHaveLength(1);
 		expect(recorder.notices[0]?.content).toContain("kernel crashed");
-		expect(recorder.notices[0]?.content).toContain("local://detached-eval-crashed-detached.log");
-		expect(existsSync(join(artifactsDir, "local", "detached-eval-crashed-detached.log"))).toBe(true);
+		// Spill notices must carry the absolute spill path — the agent read tool cannot
+		// resolve the local:// scheme (it is a kernel-helper-only scheme).
+		const spillPath = join(artifactsDir, "local", "detached-eval-crashed-detached.log");
+		expect(recorder.notices[0]?.content).toContain(spillPath);
+		expect(recorder.notices[0]?.content).not.toContain("local://");
+		expect(existsSync(spillPath)).toBe(true);
 	});
 });
 
