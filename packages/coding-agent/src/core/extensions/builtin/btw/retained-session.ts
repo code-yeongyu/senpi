@@ -47,10 +47,14 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 	const ordinal = nextBtwOrdinal(input.catalog);
 	const summary = summarizeBtwQuestion(question);
 	const createdAt = (input.now ?? (() => new Date()))().toISOString();
+	const parentLeafId = input.catalog.currentSide
+		? input.catalog.currentSide.metadata.parentLeafId
+		: input.ctx.sessionManager.getLeafId();
 	const metadata: BtwSideMetadata = {
 		version: 1,
 		parentSessionPath: input.catalog.parentSessionPath,
 		parentSessionId: input.catalog.currentSide?.metadata.parentSessionId ?? input.ctx.sessionManager.getSessionId(),
+		parentLeafId,
 		ordinal,
 		summary,
 		createdAt,

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
-import { SessionManager } from "../../../session-manager.ts";
+import { buildSessionContext, SessionManager } from "../../../session-manager.ts";
 import type { ExtensionCommandContext } from "../../types.ts";
 import { buildBtwPickerOptions, validateBtwPickerChoice } from "./picker.ts";
 import { type CreateRetainedBtwSideInput, createRetainedBtwSide } from "./retained-session.ts";
@@ -42,7 +42,12 @@ export function serializeBtwParentContext(messages: readonly { role: string; con
 		const message = messages[index];
 		if (!message) continue;
 		const line = `${message.role}: ${JSON.stringify(message.content)}`;
-		if (length + line.length + 1 > MAX_PARENT_CONTEXT_CHARACTERS) break;
+		if (length + line.length + 1 > MAX_PARENT_CONTEXT_CHARACTERS) {
+			if (lines.length === 0) {
+				lines.unshift(line.slice(0, MAX_PARENT_CONTEXT_CHARACTERS));
+			}
+			break;
+		}
 		lines.unshift(line);
 		length += line.length + 1;
 	}
@@ -62,10 +67,17 @@ export const defaultBtwTuiCommandDependencies: RunBtwTuiCommandDependencies = {
 	createSide: createRetainedBtwSide,
 	async buildParentContext(ctx, catalog) {
 		const currentSessionPath = ctx.sessionManager.getSessionFile();
-		const snapshot =
-			currentSessionPath === catalog.parentSessionPath
-				? ctx.sessionManager.buildSessionContext()
-				: SessionManager.open(catalog.parentSessionPath).buildSessionContext();
+		let snapshot: ReturnType<typeof buildSessionContext>;
+		if (currentSessionPath === catalog.parentSessionPath) {
+			snapshot = ctx.sessionManager.buildSessionContext();
+		} else {
+			const parent = SessionManager.open(catalog.parentSessionPath);
+			const parentLeafId = catalog.currentSide?.metadata.parentLeafId;
+			snapshot =
+				parentLeafId === undefined
+					? parent.buildSessionContext()
+					: buildSessionContext(parent.getEntries(), parentLeafId);
+		}
 		return serializeBtwParentContext(convertToLlm(filterContextExcludedMessages(snapshot.messages)));
 	},
 	async sessionExists(sessionPath) {

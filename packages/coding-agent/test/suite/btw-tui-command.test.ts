@@ -7,6 +7,8 @@ import {
 	serializeBtwParentContext,
 } from "../../src/core/extensions/builtin/btw/tui-command.ts";
 import type { ExtensionCommandContext } from "../../src/core/extensions/types.ts";
+import { SessionManager } from "../../src/core/session-manager.ts";
+import { assistantMsg, userMsg } from "../utilities.ts";
 
 function catalog(): BtwSessionCatalog {
 	return {
@@ -165,6 +167,48 @@ describe("serializeBtwParentContext", () => {
 
 		// Then
 		expect(snapshot).toContain("active leaf");
+	});
+
+	it("reuses the persisted Main leaf when creating from a retained side", async () => {
+		// Given
+		const parent = SessionManager.inMemory("/repo");
+		const selectedUser = parent.appendMessage(userMsg("selected branch"));
+		const selectedLeaf = parent.appendMessage(assistantMsg("selected answer"));
+		parent.branch(selectedUser);
+		parent.appendMessage(userMsg("abandoned branch"));
+		const loaded = catalog();
+		loaded.currentSide = loaded.sides[0];
+		loaded.currentSide!.metadata.parentLeafId = selectedLeaf;
+		const ctx = {
+			sessionManager: {
+				getSessionFile: () => loaded.currentSide!.path,
+			},
+		} as unknown as ExtensionCommandContext;
+		const open = vi.spyOn(SessionManager, "open").mockReturnValue(parent);
+
+		try {
+			// When
+			const snapshot = await defaultBtwTuiCommandDependencies.buildParentContext(ctx, loaded);
+
+			// Then
+			expect(snapshot).toContain("selected branch");
+			expect(snapshot).toContain("selected answer");
+			expect(snapshot).not.toContain("abandoned branch");
+		} finally {
+			open.mockRestore();
+		}
+	});
+
+	it("truncates an oversized newest message instead of dropping all context", () => {
+		// Given
+		const messages = [{ role: "user", content: `newest-${"x".repeat(70_000)}` }];
+
+		// When
+		const snapshot = serializeBtwParentContext(messages);
+
+		// Then
+		expect(snapshot).toContain("newest-");
+		expect(snapshot.length).toBeLessThanOrEqual(64_000);
 	});
 
 	it("keeps the newest complete messages inside the bounded snapshot", () => {

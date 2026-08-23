@@ -67,6 +67,7 @@ function createHarness() {
 		cwd: "/repo",
 		sessionManager: {
 			getSessionId: () => "main",
+			getLeafId: () => "main-active-leaf",
 			getEntries: () => [],
 		},
 		model: { provider: "faux", id: "faux-2" },
@@ -166,6 +167,11 @@ describe("createRetainedBtwSide", () => {
 				.filter(([customType]) => customType === BTW_SIDE_ENTRY_TYPE)
 				.map(([, value]) => value.ordinal),
 		).toEqual([1, 2]);
+		expect(
+			customEntryCalls
+				.filter(([customType]) => customType === BTW_SIDE_ENTRY_TYPE)
+				.map(([, value]) => value.parentLeafId),
+		).toEqual(["main-active-leaf", "main-active-leaf"]);
 		expect(harness.sendUserMessage.mock.calls.map(([question]) => question)).toEqual([
 			"first question",
 			"second question",
@@ -198,11 +204,13 @@ describe("createRetainedBtwSide", () => {
 	it("creates a sibling under the root parent when invoked from an existing side", async () => {
 		// Given
 		const harness = createHarness();
+		const loaded = catalog(2, 2);
+		loaded.currentSide!.metadata.parentLeafId = "persisted-main-leaf";
 
 		// When
 		await createRetainedBtwSide({
 			ctx: harness.ctx,
-			catalog: catalog(2, 2),
+			catalog: loaded,
 			question: "third from side",
 			parentContext: "root parent context",
 			now: () => new Date("2026-08-23T00:00:03.000Z"),
@@ -215,6 +223,7 @@ describe("createRetainedBtwSide", () => {
 			expect.any(String),
 			expect.objectContaining({
 				parentSessionPath: "/sessions/main.jsonl",
+				parentLeafId: "persisted-main-leaf",
 				ordinal: 3,
 				summary: "third from side",
 			}),

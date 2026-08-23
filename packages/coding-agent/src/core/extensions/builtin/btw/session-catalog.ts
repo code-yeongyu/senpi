@@ -6,6 +6,7 @@ export interface BtwSideMetadata {
 	version: 1;
 	parentSessionPath: string;
 	parentSessionId: string;
+	parentLeafId?: string | null;
 	ordinal: number;
 	summary: string;
 	createdAt: string;
@@ -42,6 +43,9 @@ function isBtwSideMetadata(value: unknown): value is BtwSideMetadata {
 		value.parentSessionPath.length > 0 &&
 		typeof value.parentSessionId === "string" &&
 		value.parentSessionId.length > 0 &&
+		(value.parentLeafId === undefined ||
+			value.parentLeafId === null ||
+			(typeof value.parentLeafId === "string" && value.parentLeafId.length > 0)) &&
 		typeof value.ordinal === "number" &&
 		Number.isInteger(value.ordinal) &&
 		value.ordinal > 0 &&

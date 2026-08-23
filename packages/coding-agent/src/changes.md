@@ -11,7 +11,9 @@
   extension/core boundary, forces later extension startup to keep the active set empty, and blocks
   Cursor exec registered-tool lookup. Final payload enforcement strips provider-native tools after
   every extension transform.
-- Main-side context snapshots follow Main's selected tree leaf rather than the file's physical tail.
+- Main-side context snapshots follow Main's selected tree leaf rather than the file's physical
+  tail; retained siblings inherit that persisted leaf, and an oversized newest message is
+  truncated instead of emptying the snapshot.
 - `app.btw.switch` adds Ctrl+/, Ctrl+_, and Ctrl+7 defaults.
 - Interactive extension UI exposes active key matching and effective-key lookup for configurable
   terminal routing and visible fallback hints.

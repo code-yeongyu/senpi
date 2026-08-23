@@ -21,7 +21,10 @@
   and rejects Cursor exec registered-tool lookup. Final provider payload enforcement removes
   provider-native tool definitions after every extension transform.
 - Parent snapshots use Main's active leaf when Main is visible, so a side never captures an
-  abandoned physical tail after tree navigation.
+  abandoned physical tail after tree navigation. The selected Main leaf is persisted in side
+  metadata and inherited by siblings created from a side.
+- A newest message larger than the 64k snapshot budget is truncated into the snapshot instead of
+  dropping all parent context.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why
