@@ -9,7 +9,9 @@
 - The fresh replacement context applies a retained side's captured model and thinking level before
   its first turn. A typed `newSession` policy capability persists the tool ban without crossing the
   extension/core boundary, forces later extension startup to keep the active set empty, and blocks
-  Cursor exec registered-tool lookup.
+  Cursor exec registered-tool lookup. Final payload enforcement strips provider-native tools after
+  every extension transform.
+- Main-side context snapshots follow Main's selected tree leaf rather than the file's physical tail.
 - `app.btw.switch` adds Ctrl+/, Ctrl+_, and Ctrl+7 defaults.
 - Interactive extension UI exposes active key matching and effective-key lookup for configurable
   terminal routing and visible fallback hints.

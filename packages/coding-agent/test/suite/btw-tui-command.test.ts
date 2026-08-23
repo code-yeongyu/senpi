@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BtwSessionCatalog } from "../../src/core/extensions/builtin/btw/session-catalog.ts";
 import {
+	defaultBtwTuiCommandDependencies,
 	type RunBtwTuiCommandDependencies,
 	runBtwTuiCommand,
 	serializeBtwParentContext,
@@ -146,6 +147,26 @@ describe("runBtwTuiCommand", () => {
 });
 
 describe("serializeBtwParentContext", () => {
+	it("uses Main's active leaf when Main is the visible session", async () => {
+		// Given
+		const loaded = catalog();
+		const ctx = {
+			sessionManager: {
+				getSessionFile: () => loaded.parentSessionPath,
+				getEntries: () => [],
+				buildSessionContext: () => ({
+					messages: [{ role: "user", content: [{ type: "text", text: "active leaf" }] }],
+				}),
+			},
+		} as unknown as ExtensionCommandContext;
+
+		// When
+		const snapshot = await defaultBtwTuiCommandDependencies.buildParentContext(ctx, loaded);
+
+		// Then
+		expect(snapshot).toContain("active leaf");
+	});
+
 	it("keeps the newest complete messages inside the bounded snapshot", () => {
 		// Given
 		const messages = [

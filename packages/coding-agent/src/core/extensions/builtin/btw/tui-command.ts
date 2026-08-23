@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
-import { buildSessionContext, SessionManager } from "../../../session-manager.ts";
+import { SessionManager } from "../../../session-manager.ts";
 import type { ExtensionCommandContext } from "../../types.ts";
 import { buildBtwPickerOptions, validateBtwPickerChoice } from "./picker.ts";
 import { type CreateRetainedBtwSideInput, createRetainedBtwSide } from "./retained-session.ts";
@@ -62,11 +62,10 @@ export const defaultBtwTuiCommandDependencies: RunBtwTuiCommandDependencies = {
 	createSide: createRetainedBtwSide,
 	async buildParentContext(ctx, catalog) {
 		const currentSessionPath = ctx.sessionManager.getSessionFile();
-		const entries =
+		const snapshot =
 			currentSessionPath === catalog.parentSessionPath
-				? ctx.sessionManager.getEntries()
-				: SessionManager.open(catalog.parentSessionPath).getEntries();
-		const snapshot = buildSessionContext(entries);
+				? ctx.sessionManager.buildSessionContext()
+				: SessionManager.open(catalog.parentSessionPath).buildSessionContext();
 		return serializeBtwParentContext(convertToLlm(filterContextExcludedMessages(snapshot.messages)));
 	},
 	async sessionExists(sessionPath) {

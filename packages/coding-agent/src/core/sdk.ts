@@ -25,6 +25,7 @@ import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
+import { applySessionToolPolicyToProviderPayload } from "./session-tool-policy.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import { getSupportedThinkingLevels } from "./thinking-levels.ts";
 import { time } from "./timings.ts";
@@ -418,10 +419,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		},
 		onPayload: async (payload, _model, request) => {
 			const runner = extensionRunnerRef.current;
-			if (!runner?.isActive || !runner.hasHandlers("before_provider_request")) {
-				return payload;
+			let transformed = payload;
+			if (runner?.isActive && runner.hasHandlers("before_provider_request")) {
+				transformed = await runner.emitBeforeProviderRequest(payload, undefined, request);
 			}
-			return runner.emitBeforeProviderRequest(payload, undefined, request);
+			return applySessionToolPolicyToProviderPayload(sessionManager.getEntries(), transformed);
 		},
 		onResponse: async (response, _model) => {
 			const runner = extensionRunnerRef.current;

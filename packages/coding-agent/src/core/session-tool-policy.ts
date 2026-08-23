@@ -29,3 +29,26 @@ export function isSessionToolUseDisabled(entries: readonly SessionToolPolicyEntr
 export function isDisabledSessionToolPolicy(policy: SessionToolPolicy): boolean {
 	return policy.version === 1 && policy.tools === "disabled";
 }
+
+const PROVIDER_TOOL_KEYS = ["tools", "tool_choice", "toolChoice", "parallel_tool_calls", "parallelToolCalls"] as const;
+
+export function applySessionToolPolicyToProviderPayload(
+	entries: readonly SessionToolPolicyEntry[],
+	payload: unknown,
+): unknown {
+	if (
+		!isSessionToolUseDisabled(entries) ||
+		typeof payload !== "object" ||
+		payload === null ||
+		Array.isArray(payload)
+	) {
+		return payload;
+	}
+	const record = payload as Record<string, unknown>;
+	if (!PROVIDER_TOOL_KEYS.some((key) => key in record)) return payload;
+	const transformed = { ...record };
+	for (const key of PROVIDER_TOOL_KEYS) {
+		delete transformed[key];
+	}
+	return transformed;
+}

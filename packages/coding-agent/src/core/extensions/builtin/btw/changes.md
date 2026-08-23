@@ -18,7 +18,10 @@
 - The fresh replacement context applies the captured model and thinking level before the first
   answer. The typed `newSession` policy capability persists a tool ban without crossing the
   extension/core boundary; it forces later MCP/tool-search activation to an empty effective set
-  and rejects Cursor exec registered-tool lookup.
+  and rejects Cursor exec registered-tool lookup. Final provider payload enforcement removes
+  provider-native tool definitions after every extension transform.
+- Parent snapshots use Main's active leaf when Main is visible, so a side never captures an
+  abandoned physical tail after tree navigation.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why
