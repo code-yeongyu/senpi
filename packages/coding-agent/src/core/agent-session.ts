@@ -5453,7 +5453,7 @@ export class AgentSession {
 				usageMessage?.role === "assistant" && this._isAssistantFromBeforeLatestCompaction(usageMessage)
 					? estimateMessagesTokens(providerMessages)
 					: estimate.tokens;
-			return contextTokens > model.contextWindow - settings.reserveTokens;
+			return shouldCompact(contextTokens, model.contextWindow, settings);
 		};
 
 		if (!settings.enabled || !isOversized()) return;

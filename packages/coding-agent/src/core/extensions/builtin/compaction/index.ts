@@ -719,6 +719,7 @@ export default function compactionExtension(
 	});
 
 	pi.on("model_select", (event, ctx) => {
+		contextReductionLatch.bumpGeneration();
 		if (lanePolicy.disablesSenpiCompaction(ctx)) {
 			invalidateSpeculativeCompaction(ctx);
 			return;
