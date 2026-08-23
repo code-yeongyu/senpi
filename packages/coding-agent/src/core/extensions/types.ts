@@ -146,6 +146,9 @@ export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: Keybindi
  * Each mode (interactive, RPC, print) provides its own implementation.
  */
 export interface ExtensionUIContext {
+	/** Whether an extension-owned dialog currently has focus. */
+	isDialogActive?(): boolean;
+
 	/** Show a selector and return the user's choice. */
 	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
@@ -436,6 +439,8 @@ export interface ExtensionContext {
 	thinkingLevel?: ThinkingLevel;
 	/** Whether the agent is idle (not streaming) */
 	isIdle(): boolean;
+	/** Whether the current session forbids all tool use. */
+	isToolUseDisabled?(): boolean;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */

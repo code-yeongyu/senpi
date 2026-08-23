@@ -83,6 +83,7 @@ export default function openaiImageGenExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		if (ctx.isToolUseDisabled?.()) return undefined;
 		await ensureFresh(ctx.model, ctx);
 		if (state.kind !== "native") return undefined;
 		return { systemPrompt: `${event.systemPrompt}\n${OPENAI_IMAGE_GEN_SECTION}` };

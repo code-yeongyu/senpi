@@ -84,6 +84,9 @@ export default function anthropicBashExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		if (ctx.isToolUseDisabled?.()) {
+			return undefined;
+		}
 		if (ctx.model?.api !== "anthropic-messages") {
 			return undefined;
 		}

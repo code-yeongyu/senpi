@@ -230,6 +230,9 @@ export default function anthropicWebSearchExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		if (ctx.isToolUseDisabled?.()) {
+			return undefined;
+		}
 		if (!supportsNativeAnthropicWebSearch(ctx.model)) {
 			return undefined;
 		}

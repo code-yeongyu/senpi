@@ -7,15 +7,19 @@ afterEach(() => {
 	setKittyProtocolActive(false);
 });
 
-function createHarness(options: { side?: boolean; idle?: boolean; now?: number; bindings?: KeybindingsConfig } = {}) {
+function createHarness(
+	options: { side?: boolean; idle?: boolean; dialog?: boolean; now?: number; bindings?: KeybindingsConfig } = {},
+) {
 	const manager = new KeybindingsManager(options.bindings);
 	let side = options.side ?? false;
 	let idle = options.idle ?? true;
+	let dialog = options.dialog ?? false;
 	let now = options.now ?? 0;
 	const dispatch = vi.fn();
 	const router = createBtwInputRouter({
 		isCurrentSide: () => side,
 		isIdle: () => idle,
+		isDialogActive: () => dialog,
 		matchesKeybinding: (data, binding) => manager.matches(data, binding),
 		dispatch,
 		now: () => now,
@@ -25,6 +29,9 @@ function createHarness(options: { side?: boolean; idle?: boolean; now?: number; 
 		router,
 		setIdle(value: boolean) {
 			idle = value;
+		},
+		setDialog(value: boolean) {
+			dialog = value;
 		},
 		setNow(value: number) {
 			now = value;
@@ -36,6 +43,18 @@ function createHarness(options: { side?: boolean; idle?: boolean; now?: number; 
 }
 
 describe("BTW switch keybinding", () => {
+	it("does not replace an already active dialog", () => {
+		// Given
+		const harness = createHarness({ dialog: true });
+
+		// When
+		const disposition = harness.router.handleInput("\x1f");
+
+		// Then
+		expect(disposition).toBeUndefined();
+		expect(harness.dispatch).not.toHaveBeenCalled();
+	});
+
 	it("opens the picker for Ctrl+/, Ctrl+_, and Ctrl+7", () => {
 		// Given
 		const harness = createHarness();

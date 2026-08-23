@@ -253,6 +253,9 @@ export default function openaiWebSearchExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		if (ctx.isToolUseDisabled?.()) {
+			return undefined;
+		}
 		if (!supportsNativeOpenAiWebSearch(ctx.model)) {
 			return undefined;
 		}

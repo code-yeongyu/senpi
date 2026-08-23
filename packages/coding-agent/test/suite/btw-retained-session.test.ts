@@ -59,6 +59,7 @@ function createHarness() {
 	const setSessionThinkingLevel = vi.fn(() => replacementActions.push("thinking"));
 	const sendUserMessage = vi.fn(async (_content: string) => undefined);
 	const notify = vi.fn();
+	const hasConfiguredAuth = vi.fn(() => true);
 	const newSession = vi.fn(async (options: Parameters<ExtensionCommandContext["newSession"]>[0]) => {
 		if (options?.setup) setups.push(options.setup);
 		if (options?.withSession) withSessions.push(options.withSession);
@@ -72,7 +73,9 @@ function createHarness() {
 			getEntries: () => [],
 		},
 		model: { provider: "faux", id: "faux-2" },
+		modelRegistry: { hasConfiguredAuth },
 		thinkingLevel: "high",
+		ui: { notify },
 		newSession,
 		waitForIdle: vi.fn(async () => undefined),
 	} as unknown as ExtensionCommandContext;
@@ -99,6 +102,7 @@ function createHarness() {
 		newSession,
 		nextCtx,
 		notify,
+		hasConfiguredAuth,
 		replacementActions,
 		sendUserMessage,
 		setActiveTools,
@@ -206,6 +210,24 @@ describe("createRetainedBtwSide", () => {
 		// Then
 		expect(harness.replacementActions).toEqual(["tools", "model", "thinking"]);
 		expect(harness.sendUserMessage).not.toHaveBeenCalled();
+		expect(harness.notify).toHaveBeenCalledOnce();
+	});
+
+	it("does not replace Main when the captured model has no configured auth", async () => {
+		// Given
+		const harness = createHarness();
+		harness.hasConfiguredAuth.mockReturnValue(false);
+
+		// When
+		await createRetainedBtwSide({
+			ctx: harness.ctx,
+			catalog: catalog(0),
+			question: "must not orphan",
+			parentContext: "bounded parent context",
+		});
+
+		// Then
+		expect(harness.newSession).not.toHaveBeenCalled();
 		expect(harness.notify).toHaveBeenCalledOnce();
 	});
 

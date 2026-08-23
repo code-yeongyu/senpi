@@ -62,6 +62,13 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 	const name = `BTW #${ordinal}: ${summary}`;
 	const model = input.ctx.model;
 	const thinkingLevel = input.ctx.thinkingLevel;
+	if (model && !input.ctx.modelRegistry.hasConfiguredAuth(model)) {
+		input.ctx.ui.notify(
+			`BTW cannot use ${model.provider}/${model.id} until authentication is configured.`,
+			"warning",
+		);
+		return;
+	}
 
 	await input.ctx.newSession({
 		parentSession: input.catalog.parentSessionPath,

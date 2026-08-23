@@ -22,6 +22,10 @@
   crossing the extension/core boundary.
 - BTW rejects a Main session path until its JSONL exists, not merely until the path has been
   allocated.
+- BTW switch input yields to an active extension dialog, and side creation validates captured model
+  authentication before replacing Main.
+- Native provider prompt contributors honor the typed session tool-policy flag, keeping retained
+  side prompts coherent with their empty provider/tool surfaces.
 - `app.btw.switch` adds Ctrl+/, Ctrl+_, and Ctrl+7 defaults.
 - Interactive extension UI exposes active key matching and effective-key lookup for configurable
   terminal routing and visible fallback hints.

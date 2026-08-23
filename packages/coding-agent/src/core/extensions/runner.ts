@@ -20,7 +20,7 @@ import {
 	SESSION_CONTEXT_ENTRY_ID,
 	SessionManager,
 } from "../session-manager.ts";
-import { applySessionToolPolicyToProviderPayload } from "../session-tool-policy.ts";
+import { applySessionToolPolicyToProviderPayload, isSessionToolUseDisabled } from "../session-tool-policy.ts";
 import { SettingsManager } from "../settings-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
@@ -1056,6 +1056,10 @@ export class ExtensionRunner {
 			isIdle: () => {
 				runner.assertActive();
 				return runner.isIdleFn();
+			},
+			isToolUseDisabled: () => {
+				runner.assertActive();
+				return isSessionToolUseDisabled(runner.sessionManager.getEntries());
 			},
 			isProjectTrusted: () => {
 				runner.assertActive();

@@ -45,6 +45,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 		const router = createBtwInputRouter({
 			isCurrentSide: () => readCurrentBtwSide(ctx.sessionManager) !== undefined,
 			isIdle: () => ctx.isIdle(),
+			isDialogActive: () => ctx.ui.isDialogActive?.() ?? false,
 			matchesKeybinding: (data, keybinding) => ctx.ui.matchesKeybinding?.(data, keybinding) ?? false,
 			dispatch: (command) => {
 				pi.sendUserMessage(command, { expandPromptTemplates: true });

@@ -31,6 +31,10 @@
   remains in the disk catalog. Discovery and parent inspection use typed command-context
   capabilities instead of importing core session internals.
 - An assigned Main session path must exist on disk before BTW can catalog or create retained sides.
+- The switch binding yields to any active extension dialog, and captured model authentication is
+  preflighted before Main can be replaced.
+- Native web-search, bash, and image prompt contributors consult the typed session tool-policy flag
+  and never advertise unavailable tools inside retained sides.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why
