@@ -158,6 +158,7 @@ export type {
 	SessionShutdownEvent,
 	// Events - Session
 	SessionStartEvent,
+	SessionToolPolicy,
 	SessionTreeEvent,
 	SetActiveToolsHandler,
 	SetLabelHandler,

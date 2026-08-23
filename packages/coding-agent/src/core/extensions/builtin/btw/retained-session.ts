@@ -1,4 +1,3 @@
-import { SESSION_TOOL_POLICY_ENTRY_TYPE, type SessionToolPolicy } from "../../../session-tool-policy.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../types.ts";
 import {
 	BTW_SIDE_ENTRY_TYPE,
@@ -62,12 +61,12 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 
 	await input.ctx.newSession({
 		parentSession: input.catalog.parentSessionPath,
+		sessionToolPolicy: {
+			version: 1,
+			tools: "disabled",
+		},
 		setup: async (sessionManager) => {
 			sessionManager.appendCustomEntry(BTW_SIDE_ENTRY_TYPE, metadata);
-			sessionManager.appendCustomEntry(SESSION_TOOL_POLICY_ENTRY_TYPE, {
-				version: 1,
-				tools: "disabled",
-			} satisfies SessionToolPolicy);
 			sessionManager.appendSessionInfo(name);
 			sessionManager.appendCustomMessageEntry(
 				BTW_PARENT_CONTEXT_ENTRY_TYPE,

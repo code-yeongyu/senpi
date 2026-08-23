@@ -7,8 +7,9 @@
 - The builtin BTW TUI path creates separate retained host sessions and uses native session
   selection/transcripts instead of the one-shot widget.
 - The fresh replacement context applies a retained side's captured model and thinking level before
-  its first turn. A persisted session tool policy forces later extension startup to keep the side's
-  effective active-tool set empty.
+  its first turn. A typed `newSession` policy capability persists the tool ban without crossing the
+  extension/core boundary, forces later extension startup to keep the active set empty, and blocks
+  Cursor exec registered-tool lookup.
 - `app.btw.switch` adds Ctrl+/, Ctrl+_, and Ctrl+7 defaults.
 - Interactive extension UI exposes active key matching and effective-key lookup for configurable
   terminal routing and visible fallback hints.

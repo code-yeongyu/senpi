@@ -16,8 +16,9 @@
 - Catalog reads revalidate selected paths, skip stale/corrupt rows, recover root scope from side
   metadata after reload, and keep failed deletions discoverable.
 - The fresh replacement context applies the captured model and thinking level before the first
-  answer. A persisted session tool policy forces every later MCP/tool-search activation back to an
-  empty effective set after BTW startup clears tools.
+  answer. The typed `newSession` policy capability persists a tool ban without crossing the
+  extension/core boundary; it forces later MCP/tool-search activation to an empty effective set
+  and rejects Cursor exec registered-tool lookup.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

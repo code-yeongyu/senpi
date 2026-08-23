@@ -166,16 +166,30 @@ describe("AgentSessionRuntime characterization", () => {
 	it("keeps a persisted disabled tool policy after later activation attempts", async () => {
 		// Given
 		const { runtime } = await createRuntimeForTest(() => {});
-		runtime.session.sessionManager.appendCustomEntry(SESSION_TOOL_POLICY_ENTRY_TYPE, {
-			version: 1,
-			tools: "disabled",
-		});
+		let activeTools: string[] | undefined;
+		let registeredRead: unknown;
 
 		// When
-		runtime.session.setActiveToolsByName(["read"]);
+		await runtime.newSession({
+			sessionToolPolicy: {
+				version: 1,
+				tools: "disabled",
+			},
+			withSession: async (ctx) => {
+				ctx.setActiveTools(["read"]);
+				activeTools = runtime.session.getActiveToolNames();
+				registeredRead = runtime.session.getRegisteredTool("read");
+			},
+		});
 
 		// Then
-		expect(runtime.session.getActiveToolNames()).toEqual([]);
+		expect(activeTools).toEqual([]);
+		expect(registeredRead).toBeUndefined();
+		expect(
+			runtime.session.sessionManager
+				.getEntries()
+				.some((entry) => entry.type === "custom" && entry.customType === SESSION_TOOL_POLICY_ENTRY_TYPE),
+		).toBe(true);
 	});
 
 	it("persists message_end assistant replacements to the session manager", async () => {

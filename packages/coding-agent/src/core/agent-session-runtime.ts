@@ -8,11 +8,13 @@ import type {
 	ReplacedSessionContext,
 	SessionShutdownEvent,
 	SessionStartEvent,
+	SessionToolPolicy,
 } from "./extensions/index.ts";
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import { SessionManager } from "./session-manager.ts";
+import { SESSION_TOOL_POLICY_ENTRY_TYPE } from "./session-tool-policy.ts";
 
 /**
  * Result returned by runtime creation.
@@ -270,6 +272,7 @@ export class AgentSessionRuntime {
 
 	async newSession(options?: {
 		parentSession?: string;
+		sessionToolPolicy?: SessionToolPolicy;
 		setup?: (sessionManager: SessionManager) => Promise<void>;
 		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 	}): Promise<{ cancelled: boolean }> {
@@ -285,6 +288,9 @@ export class AgentSessionRuntime {
 			: SessionManager.inMemory(this.cwd);
 		if (options?.parentSession) {
 			sessionManager.newSession({ parentSession: options.parentSession });
+		}
+		if (options?.sessionToolPolicy) {
+			sessionManager.appendCustomEntry(SESSION_TOOL_POLICY_ENTRY_TYPE, options.sessionToolPolicy);
 		}
 
 		await this.teardownCurrent("new", sessionManager.getSessionFile());

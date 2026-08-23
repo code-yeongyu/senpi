@@ -2831,6 +2831,9 @@ export class AgentSession {
 	 * channel regardless of which tools the request advertised.
 	 */
 	getRegisteredTool(name: string): AgentTool | undefined {
+		if (isSessionToolUseDisabled(this.sessionManager.getEntries())) {
+			return undefined;
+		}
 		return this._toolRegistry.get(name);
 	}
 

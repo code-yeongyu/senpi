@@ -14,7 +14,6 @@ import type {
 	ReplacedSessionContext,
 } from "../../src/core/extensions/types.ts";
 import type { SessionManager } from "../../src/core/session-manager.ts";
-import { SESSION_TOOL_POLICY_ENTRY_TYPE } from "../../src/core/session-tool-policy.ts";
 
 function catalog(sideCount = 0, currentSideOrdinal?: number): BtwSessionCatalog {
 	const sides = Array.from({ length: sideCount }, (_, index) => ({
@@ -157,13 +156,16 @@ describe("createRetainedBtwSide", () => {
 			"/sessions/main.jsonl",
 			"/sessions/main.jsonl",
 		]);
+		expect(harness.newSession.mock.calls.map(([options]) => options?.sessionToolPolicy)).toEqual([
+			{ version: 1, tools: "disabled" },
+			{ version: 1, tools: "disabled" },
+		]);
 		const customEntryCalls = (harness.manager.appendCustomEntry as ReturnType<typeof vi.fn>).mock.calls;
 		expect(
 			customEntryCalls
 				.filter(([customType]) => customType === BTW_SIDE_ENTRY_TYPE)
 				.map(([, value]) => value.ordinal),
 		).toEqual([1, 2]);
-		expect(customEntryCalls.filter(([customType]) => customType === SESSION_TOOL_POLICY_ENTRY_TYPE)).toHaveLength(2);
 		expect(harness.sendUserMessage.mock.calls.map(([question]) => question)).toEqual([
 			"first question",
 			"second question",

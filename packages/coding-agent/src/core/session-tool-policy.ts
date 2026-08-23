@@ -1,13 +1,14 @@
-import type { SessionEntry } from "./session-manager.ts";
+import type { SessionToolPolicy } from "./extensions/types.ts";
 
 export const SESSION_TOOL_POLICY_ENTRY_TYPE = "session-tool-policy";
 
-export interface SessionToolPolicy {
-	version: 1;
-	tools: "disabled";
+interface SessionToolPolicyEntry {
+	type: string;
+	customType?: string;
+	data?: unknown;
 }
 
-export function isSessionToolUseDisabled(entries: readonly SessionEntry[]): boolean {
+export function isSessionToolUseDisabled(entries: readonly SessionToolPolicyEntry[]): boolean {
 	for (const entry of entries) {
 		if (entry.type !== "custom" || entry.customType !== SESSION_TOOL_POLICY_ENTRY_TYPE) continue;
 		const data = entry.data;
@@ -23,4 +24,8 @@ export function isSessionToolUseDisabled(entries: readonly SessionEntry[]): bool
 		}
 	}
 	return false;
+}
+
+export function isDisabledSessionToolPolicy(policy: SessionToolPolicy): boolean {
+	return policy.version === 1 && policy.tools === "disabled";
 }

@@ -531,6 +531,11 @@ export interface ProviderRequestPreparation {
 	transformHeaders(headers: ProviderHeaders): Promise<ProviderHeaders>;
 }
 
+export interface SessionToolPolicy {
+	version: 1;
+	tools: "disabled";
+}
+
 /**
  * Extended context for command handlers.
  * Includes session control methods only safe in user-initiated commands.
@@ -544,6 +549,7 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	/** Start a new session, optionally with initialization. */
 	newSession(options?: {
 		parentSession?: string;
+		sessionToolPolicy?: SessionToolPolicy;
 		setup?: (sessionManager: SessionManager) => Promise<void>;
 		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 	}): Promise<{ cancelled: boolean }>;
