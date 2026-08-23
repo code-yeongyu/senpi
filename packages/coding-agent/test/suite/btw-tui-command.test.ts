@@ -83,6 +83,20 @@ describe("runBtwTuiCommand", () => {
 		expect(harness.dependencies.loadCatalog).not.toHaveBeenCalled();
 	});
 
+	it("refuses an assigned Main path before its JSONL exists", async () => {
+		// Given
+		const harness = createHarness();
+		vi.mocked(harness.dependencies.sessionExists).mockResolvedValue(false);
+
+		// When
+		await runBtwTuiCommand("orphan question", harness.ctx, harness.dependencies);
+
+		// Then
+		expect(harness.notify).toHaveBeenCalledWith("BTW is unavailable until the current session is saved.", "warning");
+		expect(harness.dependencies.createSide).not.toHaveBeenCalled();
+		expect(harness.dependencies.loadCatalog).not.toHaveBeenCalled();
+	});
+
 	it("creates a fresh retained side directly for an inline question", async () => {
 		// Given
 		const harness = createHarness();
@@ -143,7 +157,10 @@ describe("runBtwTuiCommand", () => {
 	it("refreshes after a selected side disappears instead of switching stale state", async () => {
 		// Given
 		const harness = createHarness(["BTW #1 — first", "BTW #1 — first"]);
-		vi.mocked(harness.dependencies.sessionExists).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+		vi.mocked(harness.dependencies.sessionExists)
+			.mockResolvedValueOnce(true)
+			.mockResolvedValueOnce(false)
+			.mockResolvedValueOnce(true);
 
 		// When
 		await runBtwTuiCommand("", harness.ctx, harness.dependencies);

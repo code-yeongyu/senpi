@@ -30,6 +30,7 @@
 - The typed `newSession` contract flushes initialized sides before returning, so an empty New BTW
   remains in the disk catalog. Discovery and parent inspection use typed command-context
   capabilities instead of importing core session internals.
+- An assigned Main session path must exist on disk before BTW can catalog or create retained sides.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

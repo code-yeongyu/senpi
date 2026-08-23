@@ -85,7 +85,7 @@ export async function runBtwTuiCommand(
 	dependencies: RunBtwTuiCommandDependencies,
 ): Promise<void> {
 	const currentSessionPath = ctx.sessionManager.getSessionFile();
-	if (!currentSessionPath) {
+	if (!currentSessionPath || !(await dependencies.sessionExists(currentSessionPath))) {
 		ctx.ui.notify("BTW is unavailable until the current session is saved.", "warning");
 		return;
 	}
