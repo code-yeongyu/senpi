@@ -152,6 +152,8 @@ export interface CompactionSettings {
 	reserveTokens: number;
 	/** Approximate recent-context tokens to keep after compaction. */
 	keepRecentTokens: number;
+	/** Explicit active context ceiling override. */
+	maxContextTokens?: number;
 }
 
 /** Default compaction settings used by the harness. */

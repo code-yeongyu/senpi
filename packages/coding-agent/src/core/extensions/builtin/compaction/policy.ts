@@ -9,10 +9,60 @@ const YIELD_ADJUSTMENT_RATIO = 0.05;
 const MIN_EFFECTIVE_KEEP_RECENT_TOKENS = 1024;
 
 export const SPECULATIVE_FRACTION = 0.75;
+export const DEFAULT_1M_CEILING = 384_000;
+export const DEFAULT_1M_KEEP_RECENT = 35_000;
+export const DEFAULT_STANDARD_KEEP_RECENT = 20_000;
+export const DEFAULT_WARMUP_FRACTION = 0.75;
+export const DEFAULT_TARGET_ACTIVE_FRACTION = 0.6;
+export const DEFAULT_RESERVE_TOKENS = 16_384;
+export const LARGE_WINDOW_THRESHOLD = 500_000;
+
+export interface ContextBudgetPolicy {
+	physicalContextWindow: number;
+	maxActiveContextTokens: number;
+	keepRecentTokens: number;
+	warmupFraction: number;
+	targetActiveFraction: number;
+	reserveTokens: number;
+	emergencyHardLimitTokens: number;
+}
 
 export interface CompactionYield {
 	savedTokens: number;
 	tokensBefore: number;
+}
+
+export function isLargeContextModel(contextWindow: number): boolean {
+	return contextWindow >= LARGE_WINDOW_THRESHOLD;
+}
+
+export function resolveContextBudgetPolicy(
+	contextWindow: number,
+	settings?: Partial<CompactionSettings>,
+): ContextBudgetPolicy {
+	const isLarge = isLargeContextModel(contextWindow);
+	const reserveTokens = settings?.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
+	const defaultCeiling = isLarge ? DEFAULT_1M_CEILING : Math.max(0, contextWindow - reserveTokens);
+	const configuredCeiling =
+		settings?.maxContextTokens && settings.maxContextTokens > 0 ? settings.maxContextTokens : defaultCeiling;
+
+	const maxActiveContextTokens = Math.min(Math.max(0, contextWindow - reserveTokens), configuredCeiling);
+
+	const defaultKeepRecent = isLarge ? DEFAULT_1M_KEEP_RECENT : DEFAULT_STANDARD_KEEP_RECENT;
+	const keepRecentTokens = settings?.keepRecentTokens ?? defaultKeepRecent;
+	const warmupFraction = settings?.speculativeFraction ?? DEFAULT_WARMUP_FRACTION;
+	const targetActiveFraction = DEFAULT_TARGET_ACTIVE_FRACTION;
+	const emergencyHardLimitTokens = Math.max(0, contextWindow - Math.floor(reserveTokens / 2));
+
+	return {
+		physicalContextWindow: contextWindow,
+		maxActiveContextTokens,
+		keepRecentTokens,
+		warmupFraction,
+		targetActiveFraction,
+		reserveTokens,
+		emergencyHardLimitTokens,
+	};
 }
 
 function clampThresholdRatio(ratio: number): number {
@@ -84,14 +134,32 @@ export function computeEffectiveThreshold(contextWindow: number, lastYield?: Com
 	return clampThresholdRatio(ratio);
 }
 
+export function computeEffectiveBlockingThresholdTokens(
+	contextWindow: number,
+	settings?: Partial<CompactionSettings>,
+	lastYield?: CompactionYield | number,
+): number {
+	const ratio = computeEffectiveThreshold(contextWindow, lastYield);
+	const ratioTokens = Math.floor(contextWindow * ratio);
+	if (isLargeContextModel(contextWindow) || (settings?.maxContextTokens && settings.maxContextTokens > 0)) {
+		const policy = resolveContextBudgetPolicy(contextWindow, settings);
+		return Math.min(ratioTokens, policy.maxActiveContextTokens);
+	}
+	return ratioTokens;
+}
+
 export function computeEffectiveKeepRecentTokens(
 	setting: number,
 	contextWindow: number,
 	thresholdRatio: number,
 	margin = 0.05,
 ): number {
+	const isLarge = isLargeContextModel(contextWindow);
+	const defaultForModel = isLarge ? DEFAULT_1M_KEEP_RECENT : DEFAULT_STANDARD_KEEP_RECENT;
+	// If setting is passed and different from default fallback, respect it; otherwise use model default
+	const effectiveSetting = setting > 0 ? setting : defaultForModel;
 	const capped = Math.floor(contextWindow * (1 - thresholdRatio - margin));
-	return Math.min(setting, Math.max(MIN_EFFECTIVE_KEEP_RECENT_TOKENS, capped));
+	return Math.min(effectiveSetting, Math.max(MIN_EFFECTIVE_KEEP_RECENT_TOKENS, capped));
 }
 
 export function shouldStartSpeculativeCompaction(
@@ -104,8 +172,10 @@ export function shouldStartSpeculativeCompaction(
 		return false;
 	}
 
-	const fraction = settings.speculativeFraction ?? SPECULATIVE_FRACTION;
-	return usage.tokens >= contextWindow * computeEffectiveThreshold(contextWindow, lastYield) * fraction;
+	const policy = resolveContextBudgetPolicy(contextWindow, settings);
+	const blockingThreshold = computeEffectiveBlockingThresholdTokens(contextWindow, settings, lastYield);
+	const warmupThreshold = Math.floor(blockingThreshold * policy.warmupFraction);
+	return usage.tokens >= warmupThreshold;
 }
 
 export function isAtHardLimit(
@@ -127,5 +197,6 @@ export function shouldTriggerCompaction(
 		return false;
 	}
 
-	return usage.tokens >= contextWindow * computeEffectiveThreshold(contextWindow, lastYield);
+	const blockingThreshold = computeEffectiveBlockingThresholdTokens(contextWindow, settings, lastYield);
+	return usage.tokens >= blockingThreshold;
 }
