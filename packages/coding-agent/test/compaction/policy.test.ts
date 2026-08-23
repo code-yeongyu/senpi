@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	computeEffectiveBlockingThresholdTokens,
+	computeEffectiveKeepRecentTokens,
 	DEFAULT_1M_KEEP_RECENT,
 	resolveContextBudgetPolicy,
 	shouldStartSpeculativeCompaction,
@@ -100,6 +101,13 @@ describe("ContextBudgetPolicy & Compaction Thresholds (Phase 0-3 Matrices)", () 
 			// 360k = 450k * 0.80
 			expect(shouldStartSpeculativeCompaction(usage(359_000, 1_000_000), 1_000_000, customSettings)).toBe(false);
 			expect(shouldStartSpeculativeCompaction(usage(361_000, 1_000_000), 1_000_000, customSettings)).toBe(true);
+		});
+
+		it("applies 35k default keepRecentTokens when omitted or undefined in computeEffectiveKeepRecentTokens", () => {
+			// 1M model with undefined setting gets 35k default
+			expect(computeEffectiveKeepRecentTokens(undefined, 1_000_000, 0.65)).toBe(35_000);
+			// 200k model with undefined setting gets 20k default
+			expect(computeEffectiveKeepRecentTokens(undefined, 200_000, 0.65)).toBe(20_000);
 		});
 	});
 });

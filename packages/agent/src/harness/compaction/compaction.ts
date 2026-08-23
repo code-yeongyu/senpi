@@ -248,7 +248,11 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
 /** Return whether context usage exceeds the configured compaction threshold. */
 export function shouldCompact(contextTokens: number, contextWindow: number, settings: CompactionSettings): boolean {
 	if (!settings.enabled) return false;
-	return contextTokens > contextWindow - settings.reserveTokens;
+	const activeCeiling =
+		settings.maxContextTokens && settings.maxContextTokens > 0
+			? Math.min(contextWindow - settings.reserveTokens, settings.maxContextTokens)
+			: contextWindow - settings.reserveTokens;
+	return contextTokens > activeCeiling;
 }
 
 const ESTIMATED_IMAGE_CHARS = 4800;

@@ -149,15 +149,17 @@ export function computeEffectiveBlockingThresholdTokens(
 }
 
 export function computeEffectiveKeepRecentTokens(
-	setting: number,
+	setting: number | undefined,
 	contextWindow: number,
 	thresholdRatio: number,
 	margin = 0.05,
 ): number {
 	const isLarge = isLargeContextModel(contextWindow);
 	const defaultForModel = isLarge ? DEFAULT_1M_KEEP_RECENT : DEFAULT_STANDARD_KEEP_RECENT;
-	// If setting is passed and different from default fallback, respect it; otherwise use model default
-	const effectiveSetting = setting > 0 ? setting : defaultForModel;
+	const effectiveSetting =
+		typeof setting === "number" && setting > 0 && !(isLarge && setting === DEFAULT_STANDARD_KEEP_RECENT)
+			? setting
+			: defaultForModel;
 	const capped = Math.floor(contextWindow * (1 - thresholdRatio - margin));
 	return Math.min(effectiveSetting, Math.max(MIN_EFFECTIVE_KEEP_RECENT_TOKENS, capped));
 }
