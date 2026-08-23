@@ -28,6 +28,8 @@
   side prompts coherent with their empty provider/tool surfaces.
 - Interactive extension dialog state includes selectors, inputs, and editors, preventing raw
   extension shortcuts from invisibly orphaning any of those pending flows.
+- BTW inline questions require an active model before replacement, and retained catalogs match
+  parent session identity as well as filesystem path.
 - `app.btw.switch` adds Ctrl+/, Ctrl+_, and Ctrl+7 defaults.
 - Interactive extension UI exposes active key matching and effective-key lookup for configurable
   terminal routing and visible fallback hints.

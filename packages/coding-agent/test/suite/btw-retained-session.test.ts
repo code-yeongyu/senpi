@@ -231,6 +231,24 @@ describe("createRetainedBtwSide", () => {
 		expect(harness.notify).toHaveBeenCalledOnce();
 	});
 
+	it("does not replace Main for an inline question without an active model", async () => {
+		// Given
+		const harness = createHarness();
+		harness.ctx.model = undefined;
+
+		// When
+		await createRetainedBtwSide({
+			ctx: harness.ctx,
+			catalog: catalog(0),
+			question: "must not orphan",
+			parentContext: "bounded parent context",
+		});
+
+		// Then
+		expect(harness.newSession).not.toHaveBeenCalled();
+		expect(harness.notify).toHaveBeenCalledOnce();
+	});
+
 	it("creates a sibling under the root parent when invoked from an existing side", async () => {
 		// Given
 		const harness = createHarness();

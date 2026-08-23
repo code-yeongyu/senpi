@@ -37,6 +37,8 @@
   and never advertise unavailable tools inside retained sides.
 - Active-dialog detection covers selectors, text inputs, and full extension editors before the BTW
   switch shortcut can dispatch.
+- Inline questions require an active model before replacement; catalog membership requires the
+  retained side's parent path and parent session ID to match Main.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

@@ -31,8 +31,14 @@ function customEntry(data: BtwSideMetadata): SessionEntry {
 	} as SessionEntry;
 }
 
-function session(path: string, name?: string, cwd = "/repo"): BtwSessionListItem {
+function session(
+	path: string,
+	name?: string,
+	cwd = "/repo",
+	id = path.endsWith("/main.jsonl") ? "main" : path,
+): BtwSessionListItem {
 	return {
+		id,
 		path,
 		cwd,
 		name,
@@ -101,6 +107,26 @@ describe("loadBtwSessionCatalog", () => {
 		expect(catalog.main?.path).toBe("/sessions/main.jsonl");
 		expect(catalog.sides.map((side) => side.path)).toEqual(["/sessions/side-1.jsonl", "/sessions/side-2.jsonl"]);
 		expect(catalog.sides.map((side) => side.metadata.ordinal)).toEqual([1, 2]);
+	});
+
+	it("excludes stale sides when a Main path is reused by a new session ID", async () => {
+		// Given
+		const staleMetadata = metadata({ parentSessionId: "old-main" });
+
+		// When
+		const catalog = await loadBtwSessionCatalog({
+			cwd: "/repo",
+			currentSessionPath: "/sessions/main.jsonl",
+			listSessions: async () => [
+				session("/sessions/main.jsonl", "Main", "/repo", "new-main"),
+				session("/sessions/side-1.jsonl", "BTW #1: stale"),
+			],
+			readEntries: async (path) => (path.endsWith("side-1.jsonl") ? [customEntry(staleMetadata)] : []),
+		});
+
+		// Then
+		expect(catalog.main?.id).toBe("new-main");
+		expect(catalog.sides).toEqual([]);
 	});
 
 	it("resolves the root parent when opened from a retained side", async () => {

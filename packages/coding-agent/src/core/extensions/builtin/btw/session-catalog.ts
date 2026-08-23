@@ -13,6 +13,7 @@ export interface BtwSideMetadata {
 }
 
 export interface BtwSessionListItem {
+	id: string;
 	path: string;
 	cwd: string;
 	name?: string;
@@ -83,7 +84,9 @@ export async function loadBtwSessionCatalog(input: {
 		currentMetadata = undefined;
 	}
 	const parentSessionPath = currentMetadata?.parentSessionPath ?? input.currentSessionPath;
-	const main = sessions.find((session) => samePath(session.path, parentSessionPath));
+	const listedMain = sessions.find((session) => samePath(session.path, parentSessionPath));
+	const parentSessionId = currentMetadata?.parentSessionId ?? listedMain?.id;
+	const main = listedMain && (!currentMetadata || listedMain.id === parentSessionId) ? listedMain : undefined;
 	const sides: BtwSideSession[] = [];
 	const skippedPaths: string[] = [];
 
@@ -91,7 +94,13 @@ export async function loadBtwSessionCatalog(input: {
 		if (samePath(session.path, parentSessionPath)) continue;
 		try {
 			const metadata = readBtwSideMetadata(await input.readEntries(session.path));
-			if (!metadata || !samePath(metadata.parentSessionPath, parentSessionPath)) continue;
+			if (
+				!metadata ||
+				!samePath(metadata.parentSessionPath, parentSessionPath) ||
+				metadata.parentSessionId !== parentSessionId
+			) {
+				continue;
+			}
 			sides.push({ ...session, metadata });
 		} catch {
 			skippedPaths.push(session.path);
@@ -100,6 +109,7 @@ export async function loadBtwSessionCatalog(input: {
 
 	if (currentMetadata && !sides.some((side) => samePath(side.path, input.currentSessionPath))) {
 		sides.push({
+			id: input.currentSessionPath,
 			path: input.currentSessionPath,
 			cwd: input.cwd,
 			name: `BTW #${currentMetadata.ordinal}: ${currentMetadata.summary}`,
