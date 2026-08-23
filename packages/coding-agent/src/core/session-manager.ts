@@ -243,6 +243,11 @@ export interface SessionInfo {
 	allMessagesText: string;
 }
 
+export interface SessionCustomDataInspection {
+	id: string;
+	data: unknown;
+}
+
 export type ReadonlySessionManager = Pick<
 	SessionManager,
 	| "getCwd"
@@ -1754,6 +1759,41 @@ export class SessionManager {
 	 * @param sessionDir Optional session directory. If omitted, uses default (~/.senpi/agent/sessions/<encoded-cwd>/).
 	 * @param onProgress Optional callback for progress updates (loaded, total)
 	 */
+	static inspectCustomData(
+		sessionPath: string,
+		customType: string,
+		maxBytes = 64 * 1024,
+	): SessionCustomDataInspection | undefined {
+		const size = statSync(sessionPath).size;
+		if (size === 0) return undefined;
+		const bytesToRead = Math.min(size, maxBytes);
+		const buffer = Buffer.alloc(bytesToRead);
+		const fd = openSync(sessionPath, "r");
+		let bytesRead = 0;
+		try {
+			bytesRead = readSync(fd, buffer, 0, bytesToRead, 0);
+		} finally {
+			closeSync(fd);
+		}
+		let text = buffer.toString("utf8", 0, bytesRead);
+		if (bytesRead < size && !text.endsWith("\n")) {
+			text = text.slice(0, text.lastIndexOf("\n") + 1);
+		}
+		let sessionId: string | undefined;
+		for (const line of text.split("\n")) {
+			if (!line) continue;
+			const record = JSON.parse(line) as Record<string, unknown>;
+			if (record.type === "session" && typeof record.id === "string") {
+				sessionId = record.id;
+				continue;
+			}
+			if (sessionId && record.type === "custom" && record.customType === customType) {
+				return { id: sessionId, data: record.data };
+			}
+		}
+		return undefined;
+	}
+
 	static async list(cwd: string, sessionDir?: string, onProgress?: SessionListProgress): Promise<SessionInfo[]> {
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
 		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);

@@ -85,6 +85,7 @@ export type {
 	ExtensionRpcRequestHandler,
 	// Runtime
 	ExtensionRuntime,
+	ExtensionSessionCustomData,
 	ExtensionSessionInspection,
 	ExtensionShortcut,
 	ExtensionUIContext,

@@ -4,6 +4,7 @@ import type { ExtensionCommandContext } from "../../types.ts";
 import { type BtwSideMetadata, readBtwSideMetadata } from "./session-catalog.ts";
 
 export interface CurrentBtwSide {
+	sessionId: string;
 	sessionPath: string;
 	metadata: BtwSideMetadata;
 }
@@ -48,7 +49,13 @@ export function readCurrentBtwSide(sessionManager: ReadonlySessionManager): Curr
 	const sessionPath = sessionManager.getSessionFile();
 	if (!sessionPath) return undefined;
 	const metadata = readBtwSideMetadata(sessionManager.getEntries());
-	return metadata ? { sessionPath, metadata } : undefined;
+	return metadata
+		? {
+				sessionId: sessionManager.getSessionId(),
+				sessionPath,
+				metadata,
+			}
+		: undefined;
 }
 
 function hasMatchingBtwParent(ctx: ExtensionCommandContext, current: CurrentBtwSide): boolean {
@@ -93,6 +100,15 @@ export async function closeRetainedBtwSide(input: {
 	if (!hasMatchingBtwParent(input.ctx, current)) return;
 	await input.ctx.switchSession(current.metadata.parentSessionPath, {
 		withSession: async (nextCtx) => {
+			try {
+				if (nextCtx.inspectSession(current.sessionPath).id !== current.sessionId) {
+					nextCtx.ui.notify("The visible BTW session changed before deletion.", "warning");
+					return;
+				}
+			} catch {
+				nextCtx.ui.notify("The visible BTW session is no longer available for deletion.", "warning");
+				return;
+			}
 			const result = await input.deleteSessionFile(current.sessionPath);
 			if (!result.ok) {
 				nextCtx.ui.notify(`Failed to delete BTW session: ${result.error ?? "unknown error"}`, "warning");

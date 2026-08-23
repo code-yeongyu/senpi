@@ -549,6 +549,11 @@ export interface ExtensionSessionInspection {
 	context: SessionContext;
 }
 
+export interface ExtensionSessionCustomData {
+	id: string;
+	data: unknown;
+}
+
 /**
  * Extended context for command handlers.
  * Includes session control methods only safe in user-initiated commands.
@@ -573,6 +578,9 @@ export interface ExtensionCommandContext extends ExtensionContext {
 
 	/** Inspect a persisted session, optionally resolving context from a specific leaf. */
 	inspectSession(sessionPath: string, options?: { leafId?: string | null }): ExtensionSessionInspection;
+
+	/** Inspect a bounded prefix for one persisted custom entry without loading the transcript. */
+	inspectSessionCustomData(sessionPath: string, customType: string): ExtensionSessionCustomData | undefined;
 
 	/** Fork from a specific entry, creating a new session file. */
 	fork(

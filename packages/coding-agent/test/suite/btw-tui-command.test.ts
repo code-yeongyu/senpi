@@ -219,6 +219,14 @@ describe("default BTW session discovery", () => {
 					: [],
 			context: { messages: [] },
 		}));
+		const inspectSessionCustomData = vi.fn((sessionPath: string) =>
+			sessionPath === loaded.sides[0]!.path
+				? {
+						id: loaded.sides[0]!.id,
+						data: loaded.sides[0]!.metadata,
+					}
+				: undefined,
+		);
 		const ctx = {
 			cwd: "/repo",
 			sessionManager: {
@@ -227,6 +235,7 @@ describe("default BTW session discovery", () => {
 			},
 			listSessions,
 			inspectSession,
+			inspectSessionCustomData,
 		} as unknown as ExtensionCommandContext;
 
 		// When
@@ -234,7 +243,8 @@ describe("default BTW session discovery", () => {
 
 		// Then
 		expect(listSessions).toHaveBeenCalledOnce();
-		expect(inspectSession).toHaveBeenCalled();
+		expect(inspectSessionCustomData).toHaveBeenCalled();
+		expect(inspectSession).not.toHaveBeenCalled();
 		expect(discovered.sides).toHaveLength(1);
 	});
 });

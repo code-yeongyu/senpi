@@ -170,6 +170,7 @@ async function context(
 			entries: sessionManager.getEntries(),
 			context: sessionManager.buildSessionContext(),
 		}),
+		inspectSessionCustomData: () => undefined,
 		fork: async () => ({ cancelled: false }),
 		navigateTree: async () => ({ cancelled: false }),
 		switchSession: async () => ({ cancelled: false }),

@@ -45,6 +45,8 @@
   return/close verify the destination Main ID before switching or deleting.
 - Raw switch dispatch reserves the TUI command before queueing, and picker choices carry expected
   session IDs for post-selection reinspection.
+- Close revalidates the visible side ID immediately before unlink. Catalog discovery reads only a
+  bounded custom-metadata prefix instead of parsing full transcripts.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

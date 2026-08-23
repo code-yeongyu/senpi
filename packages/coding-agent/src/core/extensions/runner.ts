@@ -1207,6 +1207,10 @@ export class ExtensionRunner {
 						: buildSessionContext(entries, options.leafId),
 			};
 		};
+		context.inspectSessionCustomData = (sessionPath, customType) => {
+			this.assertActive();
+			return SessionManager.inspectCustomData(sessionPath, customType);
+		};
 		context.fork = (entryId, options) => {
 			this.assertActive();
 			return this.forkHandler(entryId, options);

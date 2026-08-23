@@ -36,6 +36,8 @@
   identity, and direct parent return validates the destination session ID before side deletion.
 - BTW TUI dispatch uses idle/pending/running reservation to collapse concurrent shortcuts; picker
   choices carry expected IDs and reject path-reuse replacements after selection.
+- Side close reinspects the visible session ID immediately before unlink. BTW catalog discovery uses
+  bounded custom-entry inspection rather than full transcript parsing.
 - `app.btw.switch` adds Ctrl+/, Ctrl+_, and Ctrl+7 defaults.
 - Interactive extension UI exposes active key matching and effective-key lookup for configurable
   terminal routing and visible fallback hints.

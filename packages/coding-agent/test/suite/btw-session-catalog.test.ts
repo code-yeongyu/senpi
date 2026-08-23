@@ -100,7 +100,7 @@ describe("loadBtwSessionCatalog", () => {
 			cwd: "/repo",
 			currentSessionPath: "/sessions/main.jsonl",
 			listSessions,
-			readEntries: async (path) => entries.get(path) ?? [],
+			readMetadata: async (path) => readBtwSideMetadata(entries.get(path) ?? []),
 		});
 
 		// Then
@@ -121,7 +121,7 @@ describe("loadBtwSessionCatalog", () => {
 				session("/sessions/main.jsonl", "Main", "/repo", "new-main"),
 				session("/sessions/side-1.jsonl", "BTW #1: stale"),
 			],
-			readEntries: async (path) => (path.endsWith("side-1.jsonl") ? [customEntry(staleMetadata)] : []),
+			readMetadata: async (path) => (path.endsWith("side-1.jsonl") ? staleMetadata : undefined),
 		});
 
 		// Then
@@ -145,7 +145,7 @@ describe("loadBtwSessionCatalog", () => {
 				session("/sessions/main.jsonl", "Main"),
 				session("/sessions/side-2.jsonl", "BTW #2: second question"),
 			],
-			readEntries: async (path) => entries.get(path) ?? [],
+			readMetadata: async (path) => readBtwSideMetadata(entries.get(path) ?? []),
 		});
 
 		// Then
@@ -155,9 +155,9 @@ describe("loadBtwSessionCatalog", () => {
 
 	it("skips a stale row that disappears while metadata is loading", async () => {
 		// Given
-		const readEntries = vi.fn(async (path: string) => {
+		const readMetadata = vi.fn(async (path: string) => {
 			if (path.endsWith("stale.jsonl")) throw new Error("ENOENT");
-			return path.endsWith("side.jsonl") ? [customEntry(metadata())] : [];
+			return path.endsWith("side.jsonl") ? metadata() : undefined;
 		});
 
 		// When
@@ -169,7 +169,7 @@ describe("loadBtwSessionCatalog", () => {
 				session("/sessions/side.jsonl", "BTW #1: first question"),
 				session("/sessions/stale.jsonl", "BTW #2: stale"),
 			],
-			readEntries,
+			readMetadata,
 		});
 
 		// Then

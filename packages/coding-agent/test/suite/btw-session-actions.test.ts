@@ -38,14 +38,20 @@ function sideEntries(): SessionEntry[] {
 
 function manager(entries = sideEntries()): SessionManager {
 	return {
+		getSessionId: () => "side",
 		getSessionFile: () => SIDE_PATH,
 		getEntries: () => entries,
 	} as unknown as SessionManager;
 }
 
-function createContext(options: { runWithSession?: boolean; parentSessionId?: string } = {}) {
+function createContext(options: { runWithSession?: boolean; parentSessionId?: string; sideSessionId?: string } = {}) {
 	const notify = vi.fn();
 	const navigateTree = vi.fn(async () => ({ cancelled: false }));
+	const inspectSession = vi.fn((sessionPath: string) => ({
+		id: sessionPath === SIDE_PATH ? (options.sideSessionId ?? "side") : (options.parentSessionId ?? "main"),
+		entries: [],
+		context: { messages: [] },
+	}));
 	const switchSession = vi.fn(
 		async (
 			_path: string,
@@ -55,6 +61,7 @@ function createContext(options: { runWithSession?: boolean; parentSessionId?: st
 		) => {
 			if (options.runWithSession !== false) {
 				await switchOptions?.withSession?.({
+					inspectSession,
 					navigateTree,
 					ui: { notify },
 				} as unknown as ReplacedSessionContext);
@@ -65,16 +72,13 @@ function createContext(options: { runWithSession?: boolean; parentSessionId?: st
 	return {
 		ctx: {
 			sessionManager: manager(),
-			inspectSession: vi.fn(() => ({
-				id: options.parentSessionId ?? "main",
-				entries: [],
-				context: { messages: [] },
-			})),
+			inspectSession,
 			switchSession,
 			ui: { notify },
 		} as unknown as ExtensionCommandContext,
 		notify,
 		navigateTree,
+		inspectSession,
 		switchSession,
 	};
 }
@@ -137,6 +141,24 @@ describe("retained BTW session actions", () => {
 		expect(deleteSessionFile).not.toHaveBeenCalled();
 	});
 
+	it("does not delete a replacement side that reused the visible side path", async () => {
+		// Given
+		const harness = createContext({ sideSessionId: "replacement-side" });
+		const deleteSessionFile = vi.fn();
+
+		// When
+		await closeRetainedBtwSide({
+			ctx: harness.ctx,
+			current: readCurrentBtwSide(harness.ctx.sessionManager),
+			deleteSessionFile,
+		});
+
+		// Then
+		expect(harness.switchSession).toHaveBeenCalledOnce();
+		expect(deleteSessionFile).not.toHaveBeenCalled();
+		expect(harness.notify).toHaveBeenCalledOnce();
+	});
+
 	it("re-adopts side metadata after a fresh session-manager reload", () => {
 		// Given
 		const reloadedManager = manager(structuredClone(sideEntries()));
@@ -146,6 +168,7 @@ describe("retained BTW session actions", () => {
 
 		// Then
 		expect(current).toEqual({
+			sessionId: "side",
 			sessionPath: SIDE_PATH,
 			metadata: sideMetadata(),
 		});

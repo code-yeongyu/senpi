@@ -36,10 +36,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isBtwSideMetadata(value: unknown): value is BtwSideMetadata {
-	if (!isRecord(value)) return false;
-	return (
-		value.version === 1 &&
+export function parseBtwSideMetadata(value: unknown): BtwSideMetadata | undefined {
+	if (!isRecord(value)) return undefined;
+	return value.version === 1 &&
 		typeof value.parentSessionPath === "string" &&
 		value.parentSessionPath.length > 0 &&
 		typeof value.parentSessionId === "string" &&
@@ -54,14 +53,16 @@ function isBtwSideMetadata(value: unknown): value is BtwSideMetadata {
 		value.summary.length > 0 &&
 		typeof value.createdAt === "string" &&
 		!Number.isNaN(Date.parse(value.createdAt))
-	);
+		? (value as unknown as BtwSideMetadata)
+		: undefined;
 }
 
 export function readBtwSideMetadata(entries: readonly SessionEntry[]): BtwSideMetadata | undefined {
 	for (let index = entries.length - 1; index >= 0; index -= 1) {
 		const entry = entries[index];
 		if (entry?.type !== "custom" || entry.customType !== BTW_SIDE_ENTRY_TYPE) continue;
-		if (isBtwSideMetadata(entry.data)) return entry.data;
+		const metadata = parseBtwSideMetadata(entry.data);
+		if (metadata) return metadata;
 	}
 	return undefined;
 }
@@ -74,12 +75,12 @@ export async function loadBtwSessionCatalog(input: {
 	cwd: string;
 	currentSessionPath: string;
 	listSessions: () => Promise<readonly BtwSessionListItem[]>;
-	readEntries: (sessionPath: string) => Promise<readonly SessionEntry[]>;
+	readMetadata: (sessionPath: string) => Promise<BtwSideMetadata | undefined>;
 }): Promise<BtwSessionCatalog> {
 	const sessions = (await input.listSessions()).filter((session) => session.cwd === input.cwd);
 	let currentMetadata: BtwSideMetadata | undefined;
 	try {
-		currentMetadata = readBtwSideMetadata(await input.readEntries(input.currentSessionPath));
+		currentMetadata = await input.readMetadata(input.currentSessionPath);
 	} catch {
 		currentMetadata = undefined;
 	}
@@ -93,7 +94,7 @@ export async function loadBtwSessionCatalog(input: {
 	for (const session of sessions) {
 		if (samePath(session.path, parentSessionPath)) continue;
 		try {
-			const metadata = readBtwSideMetadata(await input.readEntries(session.path));
+			const metadata = await input.readMetadata(session.path);
 			if (
 				!metadata ||
 				!samePath(metadata.parentSessionPath, parentSessionPath) ||

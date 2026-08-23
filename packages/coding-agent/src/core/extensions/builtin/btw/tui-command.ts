@@ -4,8 +4,12 @@ import type { ExtensionCommandContext } from "../../types.ts";
 import { buildBtwPickerOptions, validateBtwPickerChoice } from "./picker.ts";
 import { type CreateRetainedBtwSideInput, createRetainedBtwSide } from "./retained-session.ts";
 import { createBtwParentSwitchOptions } from "./session-actions.ts";
-import type { BtwSessionCatalog } from "./session-catalog.ts";
-import { loadBtwSessionCatalog } from "./session-catalog.ts";
+import {
+	BTW_SIDE_ENTRY_TYPE,
+	type BtwSessionCatalog,
+	loadBtwSessionCatalog,
+	parseBtwSideMetadata,
+} from "./session-catalog.ts";
 
 export interface RunBtwTuiCommandDependencies {
 	loadCatalog(ctx: ExtensionCommandContext): Promise<BtwSessionCatalog>;
@@ -61,7 +65,10 @@ export const defaultBtwTuiCommandDependencies: RunBtwTuiCommandDependencies = {
 			cwd: ctx.cwd,
 			currentSessionPath: ctx.sessionManager.getSessionFile() ?? "",
 			listSessions: () => ctx.listSessions(),
-			readEntries: async (sessionPath) => ctx.inspectSession(sessionPath).entries,
+			readMetadata: async (sessionPath) => {
+				const custom = ctx.inspectSessionCustomData(sessionPath, BTW_SIDE_ENTRY_TYPE);
+				return parseBtwSideMetadata(custom?.data);
+			},
 		});
 	},
 	createSide: createRetainedBtwSide,
