@@ -6,6 +6,7 @@
 
 ### Fixed
 
+- Confirming an interactive cross-project `--session` resume with `y` or `yes` now forks the session into the current project instead of being overwritten by readline's close fallback and aborting ([#1098](https://github.com/code-yeongyu/senpi/pull/1098) by [@realsigridjin](https://github.com/realsigridjin)).
 - Webfetch now safely discards redirect response bodies under Bun 1.4.0's bare `undici`, which may omit `body.dump()`, by falling back to argument-free stream destruction instead of re-emitting cleanup failures as uncaught stream errors ([#1089](https://github.com/code-yeongyu/senpi/issues/1089)).
 
 ### Added
