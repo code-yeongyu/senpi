@@ -13,7 +13,8 @@
 - `packages/coding-agent/src/core/extensions/types.ts`: typed dialog, session discovery, inspection,
   replacement, session-directory preservation, unfiltered metadata listing, and tool-policy
   capabilities, plus source-owned collision-safe command invocation lookup and an optional
-  prompt-admission generation getter for hosts that support guarded replacement.
+  prompt-admission generation getter for hosts that support guarded replacement. Replacement
+  contexts also expose a prompt-start callback tied to actual host provider admission.
 - `packages/coding-agent/src/core/extensions/runner.ts`: event contexts resolve commands registered
   by their own extension source path after collision suffixing.
 - `packages/coding-agent/src/core/extensions/index.ts`: exports the new public inspection result

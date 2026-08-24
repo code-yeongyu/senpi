@@ -96,6 +96,8 @@
   generation, and replacement-pending narrowly recognizes the registered BTW close invocation.
 - Retained initial turns release their switch reservation after prompt admission so Ctrl+C can
   acquire and execute the destructive close while the first answer is still streaming.
+- Replacement-context prompts report actual provider admission after asynchronous preflight, and
+  BTW side deletion atomically quarantines and ID-validates the file before unlink.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

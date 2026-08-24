@@ -1,12 +1,16 @@
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
 	closeRetainedBtwSide,
+	deleteBtwSessionFile,
 	readCurrentBtwSide,
 	returnToBtwParent,
 } from "../../src/core/extensions/builtin/btw/session-actions.ts";
 import { BTW_SIDE_ENTRY_TYPE, type BtwSideMetadata } from "../../src/core/extensions/builtin/btw/session-catalog.ts";
 import type { ExtensionCommandContext, ReplacedSessionContext } from "../../src/core/extensions/types.ts";
-import type { SessionEntry, SessionManager } from "../../src/core/session-manager.ts";
+import { type SessionEntry, SessionManager } from "../../src/core/session-manager.ts";
 
 const SIDE_PATH = "/sessions/side-2.jsonl";
 const PARENT_PATH = "/sessions/main.jsonl";
@@ -122,7 +126,11 @@ describe("retained BTW session actions", () => {
 			}),
 		);
 		expect(deleteSessionFile).toHaveBeenCalledOnce();
-		expect(deleteSessionFile).toHaveBeenCalledWith(SIDE_PATH);
+		expect(deleteSessionFile).toHaveBeenCalledWith({
+			sessionPath: SIDE_PATH,
+			expectedSessionId: "side",
+			inspectSessionId: expect.any(Function),
+		});
 		expect(harness.navigateTree).toHaveBeenCalledWith("main-leaf", { summarize: false });
 		expect(harness.inspectSession).not.toHaveBeenCalled();
 		expect(harness.inspectSessionMetadata).toHaveBeenCalledWith(PARENT_PATH);
@@ -185,6 +193,127 @@ describe("retained BTW session actions", () => {
 		expect(deleteSessionFile).not.toHaveBeenCalled();
 		expect(harness.notify).toHaveBeenCalledOnce();
 		expect(harness.navigateTree).toHaveBeenCalledWith("main-leaf", { summarize: false });
+	});
+
+	it("preserves a replacement installed after side validation but before deletion", async () => {
+		// Given
+		const directory = mkdtempSync(join(tmpdir(), "btw-delete-race-"));
+		try {
+			const side = SessionManager.create(directory);
+			side.appendCustomEntry(BTW_SIDE_ENTRY_TYPE, sideMetadata());
+			side.persistInitializedSession();
+			const sidePath = side.getSessionFile()!;
+			const replacement = SessionManager.create(directory);
+			replacement.appendSessionInfo("replacement");
+			replacement.persistInitializedSession();
+			const replacementPath = replacement.getSessionFile()!;
+			const notify = vi.fn();
+			const navigateTree = vi.fn(async () => ({ cancelled: false }));
+			const inspectSessionMetadata = vi.fn((sessionPath: string) => {
+				if (sessionPath === PARENT_PATH) return { id: "main" };
+				return SessionManager.inspectMetadata(sessionPath);
+			});
+			const switchSession = vi.fn(
+				async (
+					_path: string,
+					options?: {
+						withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
+					},
+				) => {
+					await options?.withSession?.({
+						inspectSessionMetadata,
+						navigateTree,
+						ui: { notify },
+					} as unknown as ReplacedSessionContext);
+					return { cancelled: false };
+				},
+			);
+			const ctx = {
+				getSourceActivityGeneration: () => 1,
+				isIdle: () => true,
+				inspectSessionMetadata,
+				sessionManager: {
+					getSessionId: () => side.getSessionId(),
+					getLeafId: () => side.getLeafId(),
+				},
+				switchSession,
+				ui: { notify },
+			} as unknown as ExtensionCommandContext;
+			type DeleteRequest =
+				| string
+				| {
+						sessionPath: string;
+						expectedSessionId: string;
+						inspectSessionId: (sessionPath: string) => string | undefined;
+				  };
+			const invokeDelete = deleteBtwSessionFile as unknown as (
+				request: DeleteRequest,
+			) => Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string }>;
+			const deleteSessionFile = vi.fn(async (request: DeleteRequest) => {
+				copyFileSync(replacementPath, sidePath);
+				return invokeDelete(request);
+			});
+
+			// When
+			await closeRetainedBtwSide({
+				ctx,
+				current: {
+					sessionId: side.getSessionId(),
+					sessionDir: directory,
+					sessionPath: sidePath,
+					sourceLeafId: side.getLeafId(),
+					metadata: sideMetadata(),
+				},
+				deleteSessionFile,
+			});
+
+			// Then
+			expect(existsSync(sidePath)).toBe(true);
+			expect(SessionManager.inspectMetadata(sidePath)?.id).toBe(replacement.getSessionId());
+			expect(notify).toHaveBeenCalledWith(expect.stringContaining("changed before deletion"), "warning");
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("restores a replacement moved by the atomic deletion quarantine", async () => {
+		// Given
+		const directory = mkdtempSync(join(tmpdir(), "btw-delete-quarantine-"));
+		try {
+			const side = SessionManager.create(directory);
+			side.appendCustomEntry(BTW_SIDE_ENTRY_TYPE, sideMetadata());
+			side.persistInitializedSession();
+			const sidePath = side.getSessionFile()!;
+			const replacement = SessionManager.create(directory);
+			replacement.appendSessionInfo("replacement");
+			replacement.persistInitializedSession();
+			let inspectionCount = 0;
+
+			// When
+			const result = await deleteBtwSessionFile({
+				sessionPath: sidePath,
+				expectedSessionId: side.getSessionId(),
+				inspectSessionId: (sessionPath) => {
+					const sessionId = SessionManager.inspectMetadata(sessionPath)?.id;
+					inspectionCount++;
+					if (inspectionCount === 1) {
+						copyFileSync(replacement.getSessionFile()!, sidePath);
+					}
+					return sessionId;
+				},
+			});
+
+			// Then
+			expect(result).toEqual({
+				ok: false,
+				method: "unlink",
+				error: "The visible BTW session changed before deletion.",
+			});
+			expect(SessionManager.inspectMetadata(sidePath)?.id).toBe(replacement.getSessionId());
+			expect(readdirSync(directory).some((name) => name.includes(".btw-delete-"))).toBe(false);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
 	});
 
 	it("re-adopts side metadata after a fresh session-manager reload", () => {

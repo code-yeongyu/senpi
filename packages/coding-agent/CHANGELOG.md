@@ -37,6 +37,8 @@
   and a pending replacement admits only the registered BTW close command.
 - Retained BTW initial turns now release their switch reservation after prompt admission, allowing
   Ctrl+C to close a slow or hung first answer.
+- Retained prompt reservations now wait for actual provider admission, and destructive side
+  deletion preserves path-reused replacement sessions through atomic ID-bound quarantine.
 
 ### Added
 

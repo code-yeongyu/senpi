@@ -108,6 +108,10 @@
   generation; replacement-pending admits only the registered collision-safe BTW close command.
 - The switch reservation releases after the retained initial turn is admitted, allowing Ctrl+C to
   acquire the close reservation while a slow or hung first answer is still streaming.
+- Initial-turn admission is signaled by the host only at its real provider-start boundary, never
+  when asynchronous prompt preflight merely begins.
+- Side deletion rechecks the expected session ID, atomically quarantines the path, validates the
+  quarantined header, and restores path-reused replacements instead of unlinking them.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

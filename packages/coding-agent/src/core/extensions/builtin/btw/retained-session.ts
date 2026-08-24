@@ -130,11 +130,10 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 			}
 			if (thinkingLevel) nextCtx.setSessionThinkingLevel(thinkingLevel);
 			if (question) {
-				const initialTurn = nextCtx.sendUserMessage(question, {
+				await nextCtx.sendUserMessage(question, {
 					expandPromptTemplates: false,
+					onPromptStarted: input.onInitialTurnStarted,
 				});
-				input.onInitialTurnStarted?.();
-				await initialTurn;
 			} else {
 				nextCtx.ui.notify(`Created ${name}.`, "info");
 			}

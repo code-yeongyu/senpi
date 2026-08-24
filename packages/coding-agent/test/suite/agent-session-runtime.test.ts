@@ -1658,6 +1658,40 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
 
+	it("signals replaced prompt start only after asynchronous provider preflight", async () => {
+		// Given
+		let releasePreflight!: () => void;
+		const preflightReleased = new Promise<void>((resolve) => {
+			releasePreflight = resolve;
+		});
+		let preflightStarted!: () => void;
+		const preflightStartedPromise = new Promise<void>((resolve) => {
+			preflightStarted = resolve;
+		});
+		const { runtime } = await createRuntimeForTest((pi) => {
+			pi.on("before_agent_start", async () => {
+				preflightStarted();
+				await preflightReleased;
+			});
+		});
+		const onPromptStarted = vi.fn();
+		const context = runtime.session.createReplacedSessionContext();
+
+		// When
+		const turn = context.sendUserMessage("slow preflight", {
+			onPromptStarted,
+		} as Parameters<typeof context.sendUserMessage>[1] & {
+			onPromptStarted: () => void;
+		});
+		await preflightStartedPromise;
+
+		// Then
+		expect(onPromptStarted).not.toHaveBeenCalled();
+		releasePreflight();
+		await turn;
+		expect(onPromptStarted).toHaveBeenCalledOnce();
+	});
+
 	it("retains the effective cwd when recovering a cancelled switch", async () => {
 		// Given
 		let releaseShutdown!: () => void;

@@ -1,4 +1,6 @@
-import { unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { copyFile, rename, unlink } from "node:fs/promises";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";
 import type { ExtensionCommandContext, SessionSourceExpectation } from "../../types.ts";
 import { type BtwSideMetadata, readBtwSideMetadata } from "./session-catalog.ts";
@@ -15,6 +17,12 @@ export interface DeleteSessionFileResult {
 	ok: boolean;
 	method: "trash" | "unlink";
 	error?: string;
+}
+
+export interface DeleteBtwSessionFileInput {
+	sessionPath: string;
+	expectedSessionId: string;
+	inspectSessionId: (sessionPath: string) => string | undefined;
 }
 
 export function captureBtwSourceExpectation(
@@ -51,19 +59,67 @@ export function createBtwParentSwitchOptions(
 	};
 }
 
-export async function deleteBtwSessionFile(sessionPath: string): Promise<DeleteSessionFileResult> {
+function deletionFailure(error: unknown): DeleteSessionFileResult {
+	return {
+		ok: false,
+		method: "unlink",
+		error: error instanceof Error ? error.message : String(error),
+	};
+}
+
+function isFileError(error: unknown, code: string): boolean {
+	return typeof error === "object" && error !== null && "code" in error && error.code === code;
+}
+
+async function restoreQuarantinedSession(quarantinePath: string, sessionPath: string): Promise<string | undefined> {
 	try {
-		await unlink(sessionPath);
+		await copyFile(quarantinePath, sessionPath, constants.COPYFILE_EXCL);
+		await unlink(quarantinePath);
+		return undefined;
+	} catch (error) {
+		if (isFileError(error, "EEXIST")) {
+			return `A replacement appeared during deletion; preserved the quarantined session at ${quarantinePath}`;
+		}
+		return `Failed to restore the quarantined BTW session: ${error instanceof Error ? error.message : String(error)}`;
+	}
+}
+
+export async function deleteBtwSessionFile(input: DeleteBtwSessionFileInput): Promise<DeleteSessionFileResult> {
+	const changedMessage = "The visible BTW session changed before deletion.";
+	try {
+		if (input.inspectSessionId(input.sessionPath) !== input.expectedSessionId) {
+			return deletionFailure(changedMessage);
+		}
+	} catch {
+		return deletionFailure("The visible BTW session is no longer available for deletion.");
+	}
+
+	const quarantinePath = `${input.sessionPath}.btw-delete-${randomUUID()}`;
+	try {
+		await rename(input.sessionPath, quarantinePath);
+	} catch (error) {
+		if (isFileError(error, "ENOENT")) return { ok: true, method: "unlink" };
+		return deletionFailure(error);
+	}
+
+	let quarantinedSessionId: string | undefined;
+	try {
+		quarantinedSessionId = input.inspectSessionId(quarantinePath);
+	} catch {
+		const restoreError = await restoreQuarantinedSession(quarantinePath, input.sessionPath);
+		return deletionFailure(restoreError ?? "The quarantined BTW session could not be validated.");
+	}
+	if (quarantinedSessionId !== input.expectedSessionId) {
+		const restoreError = await restoreQuarantinedSession(quarantinePath, input.sessionPath);
+		return deletionFailure(restoreError ?? changedMessage);
+	}
+
+	try {
+		await unlink(quarantinePath);
 		return { ok: true, method: "unlink" };
 	} catch (error) {
-		if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
-			return { ok: true, method: "unlink" };
-		}
-		return {
-			ok: false,
-			method: "unlink",
-			error: error instanceof Error ? error.message : String(error),
-		};
+		const restoreError = await restoreQuarantinedSession(quarantinePath, input.sessionPath);
+		return deletionFailure(restoreError ?? error);
 	}
 }
 
@@ -114,7 +170,7 @@ export async function returnToBtwParent(input: {
 export async function closeRetainedBtwSide(input: {
 	ctx: ExtensionCommandContext;
 	current: CurrentBtwSide | undefined;
-	deleteSessionFile: (sessionPath: string) => Promise<DeleteSessionFileResult>;
+	deleteSessionFile: (input: DeleteBtwSessionFileInput) => Promise<DeleteSessionFileResult>;
 }): Promise<void> {
 	const current = input.current;
 	if (!current) {
@@ -140,7 +196,11 @@ export async function closeRetainedBtwSide(input: {
 				warning = "The visible BTW session is no longer available for deletion.";
 			}
 			if (!warning) {
-				const result = await input.deleteSessionFile(current.sessionPath);
+				const result = await input.deleteSessionFile({
+					sessionPath: current.sessionPath,
+					expectedSessionId: current.sessionId,
+					inspectSessionId: (sessionPath) => nextCtx.inspectSessionMetadata(sessionPath)?.id,
+				});
 				if (!result.ok) {
 					warning = `Failed to delete BTW session: ${result.error ?? "unknown error"}`;
 				}

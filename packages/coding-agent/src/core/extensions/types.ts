@@ -651,7 +651,12 @@ export interface ReplacedSessionContext extends ExtensionCommandContext {
 
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+		options?: {
+			deliverAs?: "steer" | "followUp";
+			expandPromptTemplates?: boolean;
+			/** Fires only when the host admits a new provider turn, never during asynchronous preflight. */
+			onPromptStarted?: () => void;
+		},
 	): Promise<void>;
 }
 

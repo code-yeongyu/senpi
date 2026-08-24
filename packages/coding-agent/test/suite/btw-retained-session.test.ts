@@ -59,7 +59,16 @@ function createHarness() {
 		return true;
 	});
 	const setSessionThinkingLevel = vi.fn(() => replacementActions.push("thinking"));
-	const sendUserMessage = vi.fn(async (_content: string) => undefined);
+	const sendUserMessage = vi.fn(
+		async (
+			_content: string,
+			options?: {
+				onPromptStarted?: () => void;
+			},
+		) => {
+			options?.onPromptStarted?.();
+		},
+	);
 	const notify = vi.fn();
 	const hasConfiguredAuth = vi.fn(() => true);
 	const checkAuth = vi.fn(async () => true);
@@ -102,9 +111,14 @@ function createHarness() {
 		appendThinkingLevelChange: vi.fn(),
 	} as unknown as SessionManager;
 	const nextCtx = {
-		sendUserMessage: async (content: string) => {
+		sendUserMessage: async (
+			content: string,
+			options?: {
+				onPromptStarted?: () => void;
+			},
+		) => {
 			replacementActions.push("send");
-			await sendUserMessage(content);
+			await sendUserMessage(content, options);
 		},
 		setActiveTools,
 		setSessionModel,
@@ -224,13 +238,18 @@ describe("createRetainedBtwSide", () => {
 	it("signals after the retained initial turn is admitted without awaiting settlement", async () => {
 		// Given
 		const harness = createHarness();
+		let admitInitialTurn: (() => void) | undefined;
+		const initialTurnAdmission = new Promise<void>((resolve) => {
+			admitInitialTurn = resolve;
+		});
 		let settleInitialTurn: (() => void) | undefined;
-		harness.sendUserMessage.mockImplementation(
-			() =>
-				new Promise<undefined>((resolve) => {
-					settleInitialTurn = () => resolve(undefined);
-				}),
-		);
+		harness.sendUserMessage.mockImplementation(async (_content, options) => {
+			await initialTurnAdmission;
+			options?.onPromptStarted?.();
+			await new Promise<undefined>((resolve) => {
+				settleInitialTurn = () => resolve(undefined);
+			});
+		});
 		const onInitialTurnStarted = vi.fn(() => harness.replacementActions.push("started"));
 		await createRetainedBtwSide({
 			ctx: harness.ctx,
@@ -243,6 +262,10 @@ describe("createRetainedBtwSide", () => {
 
 		// When
 		const replacement = harness.withSessions[0]?.(harness.nextCtx);
+		await Promise.resolve();
+		expect(onInitialTurnStarted).not.toHaveBeenCalled();
+		admitInitialTurn?.();
+		await Promise.resolve();
 		await Promise.resolve();
 
 		// Then

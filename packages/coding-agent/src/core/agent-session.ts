@@ -3987,6 +3987,7 @@ export class AgentSession {
 		options?: {
 			deliverAs?: "steer" | "followUp";
 			expandPromptTemplates?: boolean;
+			onPromptStarted?: () => void;
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
@@ -4046,8 +4047,10 @@ export class AgentSession {
 				source: "extension",
 				promptDisposition: (nextDisposition) => {
 					disposition = nextDisposition;
-					if (nextDisposition === "started") deferredTurnClaim?.resolve("started");
-					else if (nextDisposition === "queued") deferredTurnClaim?.resolve("delegated");
+					if (nextDisposition === "started") {
+						options?.onPromptStarted?.();
+						deferredTurnClaim?.resolve("started");
+					} else if (nextDisposition === "queued") deferredTurnClaim?.resolve("delegated");
 					resolveBindingPromptReadiness?.();
 				},
 				onSessionWorkReady: waitForExistingSessionWork
