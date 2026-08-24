@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { link as linkFile, rename as renameFile, stat as statFile, unlink as unlinkFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -199,11 +200,11 @@ describe("retained BTW session actions", () => {
 		// Given
 		const directory = mkdtempSync(join(tmpdir(), "btw-delete-race-"));
 		try {
-			const side = SessionManager.create(directory);
+			const side = SessionManager.create(directory, directory);
 			side.appendCustomEntry(BTW_SIDE_ENTRY_TYPE, sideMetadata());
 			side.persistInitializedSession();
 			const sidePath = side.getSessionFile()!;
-			const replacement = SessionManager.create(directory);
+			const replacement = SessionManager.create(directory, directory);
 			replacement.appendSessionInfo("replacement");
 			replacement.persistInitializedSession();
 			const replacementPath = replacement.getSessionFile()!;
@@ -250,7 +251,7 @@ describe("retained BTW session actions", () => {
 				request: DeleteRequest,
 			) => Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string }>;
 			const deleteSessionFile = vi.fn(async (request: DeleteRequest) => {
-				copyFileSync(replacementPath, sidePath);
+				renameSync(replacementPath, sidePath);
 				return invokeDelete(request);
 			});
 
@@ -276,41 +277,54 @@ describe("retained BTW session actions", () => {
 		}
 	});
 
-	it("restores a replacement moved by the atomic deletion quarantine", async () => {
+	it("restores a claimed replacement when its writer recreates the original path", async () => {
 		// Given
 		const directory = mkdtempSync(join(tmpdir(), "btw-delete-quarantine-"));
 		try {
-			const side = SessionManager.create(directory);
+			const side = SessionManager.create(directory, directory);
 			side.appendCustomEntry(BTW_SIDE_ENTRY_TYPE, sideMetadata());
 			side.persistInitializedSession();
 			const sidePath = side.getSessionFile()!;
-			const replacement = SessionManager.create(directory);
+			const replacement = SessionManager.create(directory, directory);
 			replacement.appendSessionInfo("replacement");
 			replacement.persistInitializedSession();
 			let inspectionCount = 0;
+			let recreatedPath = false;
 
 			// When
-			const result = await deleteBtwSessionFile({
-				sessionPath: sidePath,
-				expectedSessionId: side.getSessionId(),
-				inspectSessionId: (sessionPath) => {
-					const sessionId = SessionManager.inspectMetadata(sessionPath)?.id;
-					inspectionCount++;
-					if (inspectionCount === 1) {
-						copyFileSync(replacement.getSessionFile()!, sidePath);
-					}
-					return sessionId;
+			const result = await deleteBtwSessionFile(
+				{
+					sessionPath: sidePath,
+					expectedSessionId: side.getSessionId(),
+					inspectSessionId: (sessionPath) => {
+						const sessionId = SessionManager.inspectMetadata(sessionPath)?.id;
+						inspectionCount++;
+						if (inspectionCount === 1) {
+							renameSync(replacement.getSessionFile()!, sidePath);
+						}
+						return sessionId;
+					},
 				},
-			});
+				{
+					link: linkFile,
+					rename: async (source, destination) => {
+						await renameFile(source, destination);
+						if (source === sidePath && destination.includes(".btw-delete-") && !recreatedPath) {
+							recreatedPath = true;
+							writeFileSync(sidePath, '{"type":"message","message":{"role":"user"}}\n');
+						}
+					},
+					stat: (path) => statFile(path, { bigint: true }),
+					unlink: unlinkFile,
+				},
+			);
 
 			// Then
-			expect(result).toEqual({
-				ok: false,
-				method: "unlink",
-				error: "The visible BTW session changed before deletion.",
-			});
+			expect(result.ok).toBe(false);
+			expect(result.error).toContain("The visible BTW session changed before deletion.");
 			expect(SessionManager.inspectMetadata(sidePath)?.id).toBe(replacement.getSessionId());
 			expect(readdirSync(directory).some((name) => name.includes(".btw-delete-"))).toBe(false);
+			expect(readdirSync(directory).some((name) => name.includes(".btw-recovery-"))).toBe(true);
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}

@@ -1826,7 +1826,12 @@ export interface ExtensionAPI {
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+		options?: {
+			deliverAs?: "steer" | "followUp";
+			expandPromptTemplates?: boolean;
+			/** Called when the host rejects this fire-and-forget dispatch before command execution. */
+			onRejected?: () => void;
+		},
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
@@ -2134,7 +2139,11 @@ export type SendMessageHandler = <T = unknown>(
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
-	options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+	options?: {
+		deliverAs?: "steer" | "followUp";
+		expandPromptTemplates?: boolean;
+		onRejected?: () => void;
+	},
 ) => void;
 
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;

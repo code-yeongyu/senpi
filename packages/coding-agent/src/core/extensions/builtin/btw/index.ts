@@ -91,7 +91,22 @@ export default function btwExtension(pi: ExtensionAPI) {
 			getBtwInvocationName: (command) => ctx.resolveOwnCommandInvocationName?.(command),
 			matchesKeybinding: (data, keybinding) => ctx.ui.matchesKeybinding?.(data, keybinding) ?? false,
 			dispatch: (command) => {
-				pi.sendUserMessage(command, { expandPromptTemplates: true });
+				const actionKey = sessionActionKey(ctx);
+				const pendingState = sessionActionStates.get(actionKey);
+				const rollback = () => {
+					if (pendingState?.endsWith("-pending") && sessionActionStates.get(actionKey) === pendingState) {
+						sessionActionStates.delete(actionKey);
+					}
+				};
+				try {
+					pi.sendUserMessage(command, {
+						expandPromptTemplates: true,
+						onRejected: rollback,
+					});
+				} catch (error) {
+					rollback();
+					ctx.ui.notify(`BTW shortcut failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+				}
 			},
 		});
 		ctx.ui.onTerminalInput((data) => router.handleInput(data));

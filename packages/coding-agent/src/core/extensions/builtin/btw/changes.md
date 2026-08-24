@@ -110,8 +110,10 @@
   acquire the close reservation while a slow or hung first answer is still streaming.
 - Initial-turn admission is signaled by the host only at its real provider-start boundary, never
   when asynchronous prompt preflight merely begins.
-- Side deletion rechecks the expected session ID, atomically quarantines the path, validates the
-  quarantined header, and restores path-reused replacements instead of unlinking them.
+- Rejected fire-and-forget shortcut dispatch rolls back only its captured pending reservation, so
+  a replacement guard cannot permanently consume later BTW switch, close, or Main shortcuts.
+- Side deletion hard-links an atomic inode claim before validation, compares the moved directory
+  entry to that claim, and restores path-reused replacements without overwriting concurrent data.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

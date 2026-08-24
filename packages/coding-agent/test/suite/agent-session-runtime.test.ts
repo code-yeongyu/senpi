@@ -1658,6 +1658,52 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
 
+	it("reports fire-and-forget prompt rejection while replacement remains pending", async () => {
+		// Given
+		let currentApi!: ExtensionAPI;
+		const { runtime } = await createRuntimeForTest((pi) => {
+			currentApi = pi;
+		});
+		runtime.setRebindSession(async (session) => {
+			await session.bindExtensions({});
+		});
+		let releaseCallback!: () => void;
+		const callbackReleased = new Promise<void>((resolve) => {
+			releaseCallback = resolve;
+		});
+		let callbackStarted!: () => void;
+		const callbackStartedPromise = new Promise<void>((resolve) => {
+			callbackStarted = resolve;
+		});
+		const replacement = runtime.newSession({
+			withSession: async () => {
+				callbackStarted();
+				await callbackReleased;
+			},
+		});
+		await callbackStartedPromise;
+		const onRejected = vi.fn();
+		let rejectionReported!: () => void;
+		const rejectionReportedPromise = new Promise<void>((resolve) => {
+			rejectionReported = resolve;
+		});
+
+		// When
+		currentApi.sendUserMessage("blocked during replacement", {
+			onRejected: () => {
+				onRejected();
+				rejectionReported();
+			},
+		});
+		await rejectionReportedPromise;
+		releaseCallback();
+		await replacement;
+
+		// Then
+		expect(onRejected).toHaveBeenCalledOnce();
+		expect(runtime.session.isReplacementPending).toBe(false);
+	});
+
 	it("signals replaced prompt start only after asynchronous provider preflight", async () => {
 		// Given
 		let releasePreflight!: () => void;

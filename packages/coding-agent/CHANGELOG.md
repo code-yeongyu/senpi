@@ -38,7 +38,9 @@
 - Retained BTW initial turns now release their switch reservation after prompt admission, allowing
   Ctrl+C to close a slow or hung first answer.
 - Retained prompt reservations now wait for actual provider admission, and destructive side
-  deletion preserves path-reused replacement sessions through atomic ID-bound quarantine.
+  deletion preserves path-reused replacement sessions through an atomic ID-bound inode claim.
+- Rejected BTW shortcut dispatch no longer strands its reservation, and concurrent replacement
+  writers are restored without leaving valid sessions at hidden quarantine paths.
 
 ### Added
 

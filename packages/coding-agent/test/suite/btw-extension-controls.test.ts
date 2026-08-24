@@ -56,7 +56,58 @@ describe("BTW extension TUI controls", () => {
 		expect(disposition).toEqual({ consume: true });
 		expect(sendUserMessage).toHaveBeenCalledWith("/btw:2", {
 			expandPromptTemplates: true,
+			onRejected: expect.any(Function),
 		});
+	});
+
+	it("releases a shortcut reservation when host dispatch rejects before command execution", () => {
+		// Given
+		const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+		const sendUserMessage = vi.fn(
+			(
+				_message: string,
+				options?: {
+					onRejected?: () => void;
+				},
+			) => {
+				options?.onRejected?.();
+			},
+		);
+		const pi = {
+			on: vi.fn((event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => {
+				handlers.set(event, handler);
+			}),
+			registerCommand: vi.fn(),
+			sendUserMessage,
+			setActiveTools: vi.fn(),
+			getThinkingLevel: vi.fn(() => "off"),
+		} as unknown as ExtensionAPI;
+		btwExtension(pi);
+		let terminalHandler: ((data: string) => { consume?: boolean; data?: string } | undefined) | undefined;
+		const ctx = {
+			mode: "tui",
+			isIdle: () => true,
+			resolveOwnCommandInvocationName: (name: string) => name,
+			sessionManager: { getEntries: () => [], getSessionFile: () => "/sessions/main.jsonl" },
+			ui: {
+				matchesKeybinding: (data: string, binding: Parameters<KeybindingsManager["matches"]>[1]) =>
+					data === "\x1f" && binding === "app.btw.switch",
+				onTerminalInput: (handler: (data: string) => { consume?: boolean; data?: string } | undefined) => {
+					terminalHandler = handler;
+					return () => undefined;
+				},
+			},
+		} as unknown as ExtensionContext;
+		handlers.get("session_start")?.({ type: "session_start", reason: "startup" } satisfies SessionStartEvent, ctx);
+
+		// When
+		const firstDisposition = terminalHandler?.("\x1f");
+		const secondDisposition = terminalHandler?.("\x1f");
+
+		// Then
+		expect(firstDisposition).toEqual({ consume: true });
+		expect(secondDisposition).toEqual({ consume: true });
+		expect(sendUserMessage).toHaveBeenCalledTimes(2);
 	});
 
 	it("dispatches one close command for repeated raw Ctrl+C while close is pending", () => {
@@ -119,6 +170,7 @@ describe("BTW extension TUI controls", () => {
 		expect(sendUserMessage).toHaveBeenCalledOnce();
 		expect(sendUserMessage).toHaveBeenCalledWith("/btw-close", {
 			expandPromptTemplates: true,
+			onRejected: expect.any(Function),
 		});
 	});
 
@@ -188,6 +240,7 @@ describe("BTW extension TUI controls", () => {
 		expect(sendUserMessage).toHaveBeenCalledOnce();
 		expect(sendUserMessage).toHaveBeenCalledWith("/btw", {
 			expandPromptTemplates: true,
+			onRejected: expect.any(Function),
 		});
 	});
 
@@ -285,7 +338,10 @@ describe("BTW extension TUI controls", () => {
 		const closeDisposition = sideTerminal?.("close");
 
 		// Then
-		expect(mainSend).toHaveBeenCalledWith("/btw", { expandPromptTemplates: true });
+		expect(mainSend).toHaveBeenCalledWith("/btw", {
+			expandPromptTemplates: true,
+			onRejected: expect.any(Function),
+		});
 		expect(closeDisposition).toEqual({ consume: true });
 		expect(sideSend).not.toHaveBeenCalled();
 	});
@@ -431,6 +487,7 @@ describe("BTW extension TUI controls", () => {
 		expect(disposition).toEqual({ consume: true });
 		expect(sendUserMessage).toHaveBeenCalledWith("/btw-close", {
 			expandPromptTemplates: true,
+			onRejected: expect.any(Function),
 		});
 		expect(sideSwitch).toHaveBeenCalledOnce();
 	});

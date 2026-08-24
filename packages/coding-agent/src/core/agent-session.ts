@@ -3987,15 +3987,35 @@ export class AgentSession {
 		options?: {
 			deliverAs?: "steer" | "followUp";
 			expandPromptTemplates?: boolean;
+			onRejected?: () => void;
 			onPromptStarted?: () => void;
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
-		if (
-			typeof content !== "string" ||
-			!this.isReplacementCloseCommand(content, options?.expandPromptTemplates ?? false)
-		) {
-			this.assertReplacementTurnAllowed();
+		let rejectionReported = false;
+		const reportRejected = (): void => {
+			if (rejectionReported) return;
+			rejectionReported = true;
+			try {
+				options?.onRejected?.();
+			} catch (error) {
+				this._extensionRunner.emitError({
+					extensionPath: RUNTIME_EXTENSION_PATH,
+					event: "send_user_message_rejection_callback",
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		};
+		try {
+			if (
+				typeof content !== "string" ||
+				!this.isReplacementCloseCommand(content, options?.expandPromptTemplates ?? false)
+			) {
+				this.assertReplacementTurnAllowed();
+			}
+		} catch (error) {
+			reportRejected();
+			throw error;
 		}
 		const bindingPromptReadiness = this._extensionBindingPromptReadiness;
 		let resolveBindingPromptReadiness: (() => void) | undefined;
@@ -4030,6 +4050,7 @@ export class AgentSession {
 		} catch (error) {
 			deferredTurnClaim?.resolve("finished-without-start");
 			resolveBindingPromptReadiness?.();
+			reportRejected();
 			throw error;
 		}
 
@@ -4064,10 +4085,14 @@ export class AgentSession {
 			// Extension bindings invoke this method fire-and-forget, so a rejection
 			// before prompt() accepted the message must not silently drop it.
 			if (disposition === undefined) {
-				if (options?.deliverAs === "steer") {
-					await this._queueSteer(text, images);
-				} else {
-					await this._queueFollowUp(text, images);
+				try {
+					if (options?.deliverAs === "steer") {
+						await this._queueSteer(text, images);
+					} else {
+						await this._queueFollowUp(text, images);
+					}
+				} finally {
+					reportRejected();
 				}
 			}
 			throw error;
