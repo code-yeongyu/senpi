@@ -1,5 +1,20 @@
 # cursor-cli-oauth extension changes
 
+## 2026-08-24 - Keep provider tool protocol out of assistant text
+
+### What changed
+
+- `stream.ts`: Cursor `tool_call` events are no longer serialized into `<cursor-cli-tool>` assistant text. They also remain intentionally unmapped to host `toolCall` blocks because Cursor already executed them in its subprocess.
+- `stream.test.ts`: the tool-turn regression now proves that text deltas and stored assistant content contain only the model's final prose, with no provider tags, tool kind, arguments, or output.
+
+### Why
+
+- Rendering provider protocol as text mixed long JSON blobs into the TUI and persisted untrusted tool arguments/results in conversation context.
+
+### Why an extension could not handle it
+
+- The pollution happened inside the builtin provider before OmO or another extension received the assistant message, so the provider boundary is the only layer that can remove it without post-processing legitimate model prose.
+
 ## 2026-08-21 - Cache provider settings loads by mtime+size to cut lock convoy
 
 ### What changed

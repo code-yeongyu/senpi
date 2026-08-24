@@ -6,6 +6,7 @@
 
 ### Fixed
 
+- `cursor-cli-oauth` no longer mixes Cursor's internal tool-call protocol, arguments, and results into assistant text; Cursor still owns execution, while Senpi now stores and renders only the model's actual prose ([#1104](https://github.com/code-yeongyu/senpi/pull/1104), [OmO #7169](https://github.com/code-yeongyu/oh-my-openagent/issues/7169)).
 - Assistant text painted during smooth streaming no longer vanishes and bursts back: `syncTrailingAssistantText` now yields the streaming head to the reveal controller while it paces (smooth streaming on, no toolCall in the head), so the paced prefix and the full head can no longer overwrite each other mid-stream ([#1102](https://github.com/code-yeongyu/senpi/pull/1102)).
 - The goal continuation wait countdown no longer renders over the Working indicator during externally started turns; the `goal-wait` footer segment now hides while a turn runs and restores itself when the session parks again, leaving the cache-warm schedule and iteration accounting untouched ([#1100](https://github.com/code-yeongyu/senpi/pull/1100)).
 - Webfetch now safely discards redirect response bodies under Bun 1.4.0's bare `undici`, which may omit `body.dump()`, by falling back to argument-free stream destruction instead of re-emitting cleanup failures as uncaught stream errors ([#1089](https://github.com/code-yeongyu/senpi/issues/1089)).
