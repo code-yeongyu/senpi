@@ -5063,7 +5063,15 @@ export class InteractiveMode {
 
 	private syncTrailingAssistantText(message: AssistantMessage): void {
 		if (!this.streamingComponent) return;
-		this.streamingComponent.updateContent(assistantStreamingHeadMessage(message), true);
+		const head = assistantStreamingHeadMessage(message);
+		// Single writer: while smooth streaming paces the head (no toolCall block),
+		// streamingReveal owns the streaming component. Overwriting the full head
+		// here makes the next reveal tick repaint a shorter prefix (dual-write
+		// flicker). Once the reveal has stopped (message_end), it no longer paces
+		// and the final full paint below still lands.
+		if (!this.streamingReveal?.isPacingHead(head)) {
+			this.streamingComponent.updateContent(head, true);
+		}
 		const content = message.content;
 		const firstToolIndex = content.findIndex((block) => block.type === "toolCall");
 		if (firstToolIndex === -1) {

@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/t
 const STALE_CTX_MESSAGE =
 	"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().";
 
-const fakeCtx = { ui: { setStatus: () => {} } } as unknown as ExtensionContext;
+const fakeCtx = { isIdle: () => true, ui: { setStatus: () => {} } } as unknown as ExtensionContext;
 
 function activeGoal(): Goal {
 	return {
