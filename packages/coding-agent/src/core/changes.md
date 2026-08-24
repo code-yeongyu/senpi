@@ -31,7 +31,8 @@
   a zero-length or truncated owned file can be removed without touching a replacement. Cleanup
   first quarantines the visible path, validates the moved inode, and restores mismatches. The
   initialized JSONL write stays on the open claimed descriptor and validates the final pathname
-  identity before replacement can finish.
+  identity before replacement can finish; failed candidates detach pathname persistence before
+  awaited shutdown handlers run.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose typed session
   discovery and inspection to command contexts; disabled-tool sessions omit loaded skills from
   system-prompt options before read-tool guidance is formatted.

@@ -688,6 +688,7 @@ export class AgentSessionRuntime {
 			}
 		} catch (operationError) {
 			const recoveryErrors: unknown[] = [];
+			this.session.sessionManager.detachPersistenceWrites();
 			try {
 				await this.teardownCurrent("new", previousSessionFile);
 			} catch (error) {

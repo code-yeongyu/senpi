@@ -1045,6 +1045,10 @@ export class SessionManager {
 		this.flushed = true;
 	}
 
+	detachPersistenceWrites(): void {
+		this.persist = false;
+	}
+
 	getResidentStoreStats(): ResidentStoreStats {
 		return this.residentStore.stats();
 	}

@@ -80,7 +80,8 @@
   removes any inode-claimed partial file even without a parseable header, and restores the outgoing
   runtime before reporting the failure. Cleanup quarantines before inode validation so a path
   replacement between inspection and deletion is restored instead of unlinked. Persistence writes
-  through the still-open claim descriptor and rejects a pathname identity swap before activation.
+  through the still-open claim descriptor and rejects a pathname identity swap before activation;
+  the failed candidate disables persistence before its shutdown lifecycle.
 - Candidate identity is rechecked after removed-extension handlers, while source expectations let
   guarded new/resume operations reject active or leaf-changed sessions after async vetoes.
 - Source guards distinguish pre-existing streaming actions from activity begun during vetoes, and

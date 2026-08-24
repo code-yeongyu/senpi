@@ -284,7 +284,19 @@ describe("AgentSessionRuntime characterization", () => {
 	it("does not overwrite a replacement swapped in before the claimed persistence write", async () => {
 		// Given
 		const tempDir = join(tmpdir(), `pi-runtime-persistence-write-race-${Date.now()}`);
-		const { runtime } = await createRuntimeForTest(() => {}, { cwd: tempDir });
+		const shutdownMarker = "candidate-shutdown-contamination";
+		let shutdownCount = 0;
+		const { runtime } = await createRuntimeForTest(
+			(pi) => {
+				pi.on("session_shutdown", () => {
+					shutdownCount++;
+					if (shutdownCount === 2) {
+						pi.appendEntry("test_shutdown_marker", { value: shutdownMarker });
+					}
+				});
+			},
+			{ cwd: tempDir },
+		);
 		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
 		const replacement = SessionManager.create(tempDir, runtime.session.sessionManager.getSessionDir());
 		replacement.appendSessionInfo("write-race replacement");
@@ -292,13 +304,14 @@ describe("AgentSessionRuntime characterization", () => {
 		const replacementSessionFile = replacement.getSessionFile()!;
 		const replacementSessionId = replacement.getSessionId();
 		let failedSessionFile: string | undefined;
+		const persistInitializedSession = SessionManager.prototype.persistInitializedSession;
 		vi.spyOn(SessionManager.prototype, "persistInitializedSession").mockImplementationOnce(function (
 			this: SessionManager,
 			claimedFd?: number,
 		) {
 			failedSessionFile = this.getSessionFile();
 			renameSync(replacementSessionFile, failedSessionFile!);
-			writeFileSync(claimedFd ?? failedSessionFile!, "candidate persistence bytes\n");
+			persistInitializedSession.call(this, claimedFd);
 		});
 
 		// When
@@ -308,6 +321,7 @@ describe("AgentSessionRuntime characterization", () => {
 		await expect(operation).rejects.toThrow("changed during initialized persistence");
 		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
 		expect(SessionManager.inspectMetadata(failedSessionFile!)?.id).toBe(replacementSessionId);
+		expect(readFileSync(failedSessionFile!, "utf8")).not.toContain(shutdownMarker);
 	});
 
 	it("exposes replacement-context setters for live model thinking and tools", async () => {
