@@ -35,14 +35,14 @@ export function registerImageGenExtension(pi: ExtensionAPI, baseDir = IMAGEGEN_B
 	pi.registerTool(generateImageTool);
 
 	pi.on("resources_discover", async (_event, ctx) => {
-		if (ctx.isToolUseDisabled()) return undefined;
+		if (ctx.isToolUseDisabled?.()) return undefined;
 		if (!(await isImageGenActive(ctx))) return undefined;
 		const skillPath = bundledSkillPath(baseDir);
 		return skillPath === undefined ? undefined : { skillPaths: [skillPath] };
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (ctx.isToolUseDisabled()) return undefined;
+		if (ctx.isToolUseDisabled?.()) return undefined;
 		if (!(await isImageGenActive(ctx))) return undefined;
 		return { systemPrompt: `${event.systemPrompt}\n${IMAGE_GEN_SECTION}` };
 	});

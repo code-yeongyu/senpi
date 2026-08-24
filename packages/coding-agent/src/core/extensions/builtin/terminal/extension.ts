@@ -242,7 +242,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (state.steppedAside || ctx.isToolUseDisabled()) return undefined;
+		if (state.steppedAside || ctx.isToolUseDisabled?.()) return undefined;
 		return { systemPrompt: `${event.systemPrompt}\n${TERMINAL_PROMPT_SECTION}` };
 	});
 

@@ -40,7 +40,7 @@ function captureHandler<T>(factory: (pi: ExtensionAPI) => void, eventName: strin
 				return () => undefined;
 			},
 		},
-	) as ExtensionAPI;
+	) as unknown as ExtensionAPI;
 	factory(api);
 	if (!captured) throw new Error(`missing ${eventName} handler`);
 	return captured;

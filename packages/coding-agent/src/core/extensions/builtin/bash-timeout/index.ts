@@ -43,7 +43,7 @@ export default function bashTimeoutExtension(pi: ExtensionAPI): void {
 	};
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (ctx.isToolUseDisabled()) return undefined;
+		if (ctx.isToolUseDisabled?.()) return undefined;
 		return { systemPrompt: `${event.systemPrompt}${buildBashTimeoutPrompt(defaults, resolveWindow(ctx))}` };
 	});
 }

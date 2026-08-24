@@ -179,14 +179,21 @@ export async function runBtwTuiCommand(
 			continue;
 		}
 		await ctx.waitForIdle();
+		const expectedSessionId = selected.choice.sessionId;
 		const switchOptions =
 			selected.choice.sessionPath === catalog.parentSessionPath && catalog.currentSide
-				? createBtwParentSwitchOptions(catalog.currentSide.metadata, ctx.sessionManager.getSessionDir())
-				: undefined;
-		if (switchOptions) {
-			await ctx.switchSession(selected.choice.sessionPath, switchOptions);
-		} else {
-			await ctx.switchSession(selected.choice.sessionPath);
+				? {
+						...createBtwParentSwitchOptions(catalog.currentSide.metadata, ctx.sessionManager.getSessionDir()),
+						expectedSessionId,
+					}
+				: { expectedSessionId };
+		const switchResult = await ctx.switchSession(selected.choice.sessionPath, switchOptions);
+		if (
+			switchResult.cancelled &&
+			(await dependencies.sessionIdentity(ctx, selected.choice.sessionPath)) !== expectedSessionId
+		) {
+			ctx.ui.notify("That BTW session no longer exists. Refreshing the list.", "warning");
+			continue;
 		}
 		return;
 	}

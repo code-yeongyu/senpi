@@ -76,6 +76,8 @@
 - Retained creation rechecks idle state plus source session/leaf identity after auth and before replacement.
 - Parent context is built inside retained creation after its final idle wait and source leaf capture.
 - Existing picker targets wait idle, revalidate identity, wait idle again, then switch.
+- Picker switches carry the selected session ID through the host switch boundary, which reopens
+  and verifies the target after every asynchronous `session_before_switch` veto before teardown.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

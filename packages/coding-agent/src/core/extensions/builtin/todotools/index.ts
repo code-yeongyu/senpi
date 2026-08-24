@@ -67,7 +67,7 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (ctx.isToolUseDisabled()) return undefined;
+		if (ctx.isToolUseDisabled?.()) return undefined;
 		return {
 			systemPrompt: `${event.systemPrompt}\n${TASK_MANAGEMENT_SECTION}`,
 		};

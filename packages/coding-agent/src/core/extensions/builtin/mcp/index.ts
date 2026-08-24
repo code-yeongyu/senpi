@@ -126,7 +126,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			sink,
 		);
 		pi.on("session_start", (event, ctx) => {
-			if (ctx.isToolUseDisabled()) return;
+			if (ctx.isToolUseDisabled?.()) return;
 			const work = onSessionStart(event, ctx);
 			// Reload's runner.emit("session_start") is on the hot-reload critical path
 			// (~260ms when this awaits reconnect). Attach is already single-flight via
@@ -138,7 +138,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			return work;
 		});
 		pi.on("before_agent_start", async (event, ctx) => {
-			if (ctx.isToolUseDisabled()) return undefined;
+			if (ctx.isToolUseDisabled?.()) return undefined;
 			try {
 				// Elicitation (todo 41): point mid-call forms at this session's UI.
 				service.setMcpElicitationUiProvider(() => ctx.ui);

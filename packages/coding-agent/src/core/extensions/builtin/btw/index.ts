@@ -88,7 +88,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 			tryBeginBtwCommand: () => reserveSessionAction(sessionActionKey(ctx), "switch"),
 			tryBeginBtwClose: () => reserveSessionAction(sessionActionKey(ctx), "close"),
 			tryBeginBtwMain: () => reserveSessionAction(sessionActionKey(ctx), "main"),
-			getBtwInvocationName: (command) => ctx.resolveOwnCommandInvocationName(command),
+			getBtwInvocationName: (command) => ctx.resolveOwnCommandInvocationName?.(command),
 			matchesKeybinding: (data, keybinding) => ctx.ui.matchesKeybinding?.(data, keybinding) ?? false,
 			dispatch: (command) => {
 				pi.sendUserMessage(command, { expandPromptTemplates: true });

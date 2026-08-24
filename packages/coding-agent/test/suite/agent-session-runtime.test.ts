@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
@@ -391,6 +391,52 @@ describe("AgentSessionRuntime characterization", () => {
 		cancelReason = "resume";
 		const resumeResult = await runtime.switchSession(otherSessionFile!);
 		expect(resumeResult.cancelled).toBe(true);
+		expect(runtime.session.sessionFile).toBe(originalSessionFile);
+	});
+
+	it("rejects a target replaced while session_before_switch is pending", async () => {
+		// Given
+		let releaseBeforeSwitch!: () => void;
+		const beforeSwitchReleased = new Promise<void>((resolve) => {
+			releaseBeforeSwitch = resolve;
+		});
+		let beforeSwitchStarted!: () => void;
+		const beforeSwitchStartedPromise = new Promise<void>((resolve) => {
+			beforeSwitchStarted = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest((pi: ExtensionAPI) => {
+			pi.on("session_before_switch", async (event) => {
+				if (event.reason !== "resume") return;
+				beforeSwitchStarted();
+				await beforeSwitchReleased;
+			});
+		});
+		await runtime.session.prompt("hello");
+		const originalSessionFile = runtime.session.sessionFile;
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+		const targetSessionFile = target.getSessionFile()!;
+		const expectedSessionId = target.getSessionId();
+		const replacement = SessionManager.create(tempDir);
+		replacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "replacement" }],
+			timestamp: Date.now(),
+		});
+		replacement.persistInitializedSession();
+
+		// When
+		const switchPromise = runtime.switchSession(targetSessionFile, {
+			expectedSessionId,
+		} as Parameters<typeof runtime.switchSession>[1] & { expectedSessionId: string });
+		await beforeSwitchStartedPromise;
+		copyFileSync(replacement.getSessionFile()!, targetSessionFile);
+		releaseBeforeSwitch();
+		const result = await switchPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
 		expect(runtime.session.sessionFile).toBe(originalSessionFile);
 	});
 

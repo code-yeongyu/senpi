@@ -17,6 +17,7 @@ import type { SessionManager } from "../../src/core/session-manager.ts";
 
 function catalog(sideCount = 0, currentSideOrdinal?: number): BtwSessionCatalog {
 	const sides = Array.from({ length: sideCount }, (_, index) => ({
+		id: `side-${index + 1}`,
 		path: `/sessions/side-${index + 1}.jsonl`,
 		cwd: "/repo",
 		name: `BTW #${index + 1}: previous ${index + 1}`,
@@ -33,6 +34,7 @@ function catalog(sideCount = 0, currentSideOrdinal?: number): BtwSessionCatalog 
 	return {
 		parentSessionPath: "/sessions/main.jsonl",
 		main: {
+			id: "main",
 			path: "/sessions/main.jsonl",
 			cwd: "/repo",
 			name: "Main",

@@ -6,7 +6,7 @@ import {
 	runBtwTuiCommand,
 	serializeBtwParentContext,
 } from "../../src/core/extensions/builtin/btw/tui-command.ts";
-import type { ExtensionCommandContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionCommandContext, ReplacedSessionContext } from "../../src/core/extensions/types.ts";
 import { buildSessionContext, SessionManager } from "../../src/core/session-manager.ts";
 import { assistantMsg, userMsg } from "../utilities.ts";
 
@@ -46,7 +46,12 @@ function createHarness(selections: Array<string | undefined> = []) {
 	const select = vi.fn(async () => selections.shift());
 	const notify = vi.fn();
 	const waitForIdle = vi.fn(async () => undefined);
-	const switchSession = vi.fn(async () => ({ cancelled: false }));
+	const switchSession = vi.fn(
+		async (
+			_sessionPath: string,
+			_options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
+		): Promise<{ cancelled: boolean }> => ({ cancelled: false }),
+	);
 	const ctx = {
 		cwd: "/repo",
 		sessionManager: {
@@ -69,7 +74,7 @@ function createHarness(selections: Array<string | undefined> = []) {
 		buildParentContext: vi.fn(async () => "bounded context"),
 		sessionExists: vi.fn(async () => true),
 		sessionIdentity: vi.fn(async (_ctx, sessionPath) => {
-			if (sessionPath === loaded.main?.path) return loaded.main.id;
+			if (sessionPath === loaded.main?.path) return loaded.main?.id;
 			return loaded.sides.find((side) => side.path === sessionPath)?.id;
 		}),
 	};
@@ -121,7 +126,7 @@ describe("runBtwTuiCommand", () => {
 				buildParentContext: expect.any(Function),
 			}),
 		);
-		const createInput = harness.dependencies.createSide.mock.calls[0]?.[0];
+		const createInput = vi.mocked(harness.dependencies.createSide).mock.calls[0]?.[0];
 		await expect(createInput?.buildParentContext()).resolves.toBe("bounded context");
 		expect(harness.waitForIdle).toHaveBeenCalledOnce();
 		expect(harness.waitForIdle.mock.invocationCallOrder[0]).toBeLessThan(
@@ -172,7 +177,9 @@ describe("runBtwTuiCommand", () => {
 			"BTW #1 — first",
 			"New BTW",
 		]);
-		expect(harness.switchSession).toHaveBeenCalledWith("/sessions/side-1.jsonl");
+		expect(harness.switchSession).toHaveBeenCalledWith("/sessions/side-1.jsonl", {
+			expectedSessionId: "side-1",
+		});
 		expect(harness.waitForIdle).toHaveBeenCalledTimes(2);
 		expect(harness.waitForIdle.mock.invocationCallOrder[0]).toBeLessThan(
 			vi.mocked(harness.dependencies.sessionIdentity).mock.invocationCallOrder[0]!,
@@ -202,6 +209,7 @@ describe("runBtwTuiCommand", () => {
 		expect(harness.switchSession).toHaveBeenCalledWith(
 			"/sessions/main.jsonl",
 			expect.objectContaining({
+				expectedSessionId: "main",
 				sessionDir: "/configured/sessions",
 				withSession: expect.any(Function),
 			}),
@@ -223,7 +231,7 @@ describe("runBtwTuiCommand", () => {
 				buildParentContext: expect.any(Function),
 			}),
 		);
-		const createInput = harness.dependencies.createSide.mock.calls[0]?.[0];
+		const createInput = vi.mocked(harness.dependencies.createSide).mock.calls[0]?.[0];
 		await expect(createInput?.buildParentContext()).resolves.toBe("bounded context");
 		expect(harness.waitForIdle).toHaveBeenCalledOnce();
 		expect(harness.dependencies.loadCatalog).toHaveBeenCalledTimes(2);
@@ -269,7 +277,27 @@ describe("runBtwTuiCommand", () => {
 		expect(harness.dependencies.loadCatalog).toHaveBeenCalledTimes(2);
 		expect(harness.notify).toHaveBeenCalledWith(expect.stringContaining("no longer exists"), "warning");
 		expect(harness.switchSession).toHaveBeenCalledOnce();
-		expect(harness.switchSession).toHaveBeenCalledWith("/sessions/side-1.jsonl");
+		expect(harness.switchSession).toHaveBeenCalledWith("/sessions/side-1.jsonl", {
+			expectedSessionId: "side-1",
+		});
+	});
+
+	it("refreshes after the selected side is replaced during an async switch veto", async () => {
+		// Given
+		const harness = createHarness(["BTW #1 — first"]);
+		harness.switchSession.mockResolvedValueOnce({ cancelled: true });
+		vi.mocked(harness.dependencies.sessionIdentity)
+			.mockResolvedValueOnce("side-1")
+			.mockResolvedValueOnce("replacement-side");
+
+		// When
+		await runBtwTuiCommand("", harness.ctx, harness.dependencies);
+
+		// Then
+		expect(harness.switchSession).toHaveBeenCalledWith("/sessions/side-1.jsonl", {
+			expectedSessionId: "side-1",
+		});
+		expect(harness.notify).toHaveBeenCalledWith("That BTW session no longer exists. Refreshing the list.", "warning");
 	});
 });
 
