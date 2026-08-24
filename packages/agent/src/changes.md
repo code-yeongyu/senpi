@@ -1,5 +1,24 @@
 # Changes
 
+## 2026-08-23 - Harness compaction honors an active-context ceiling
+
+### What changed
+
+- `packages/agent/src/harness/compaction/compaction.ts` carries the optional `maxContextTokens` setting and applies it in the public `shouldCompact()` helper, bounded by the physical context window and reserve.
+
+### Why
+
+- Public harness consumers configuring a smaller active budget on a large-context model otherwise continued to compact only near the physical window limit.
+
+### Why an extension could not handle it
+
+- The exported harness threshold helper is evaluated by agent-core consumers outside the coding-agent extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/harness/compaction/compaction.ts` compaction settings and `shouldCompact()`.
+
+
 ## 2026-08-20 - End the turn when idle after completed Cursor tools
 
 ### What changed

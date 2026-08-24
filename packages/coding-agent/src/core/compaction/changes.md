@@ -1,5 +1,24 @@
 # changes.md — compaction
 
+## 2026-08-23 - Core compaction enforces configurable active-context ceilings
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts` adds `maxContextTokens` and explicit-retention metadata to compaction settings, and `shouldCompact()` caps large-context sessions at the resolved active budget.
+
+### Why
+
+- Physical model windows can be much larger than the stable request budget, so threshold decisions need a separate active-context ceiling while retaining user overrides.
+
+### Why an extension could not handle it
+
+- Core admission and queue recovery call `shouldCompact()` before extension compaction hooks can replace the threshold decision.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/compaction/compaction.ts` settings and `shouldCompact()`.
+
+
 ## 2026-08-20 - Ignore implausible billed usage for compaction threshold
 
 ### What changed

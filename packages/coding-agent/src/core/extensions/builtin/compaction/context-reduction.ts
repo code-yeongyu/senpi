@@ -144,19 +144,59 @@ export const BUILTIN_CONTEXT_REDUCTION_OPTIONS: ReduceContextOptions = {
 
 export const BUILTIN_CONTEXT_REDUCTION_GATE_RATIO = 0.5;
 
+export interface ContextPressure {
+	activeTokens: number | null;
+	requestBodyBytes: number | null;
+	nonReclaimableTokens?: number | null;
+	generation: number;
+}
+
+export interface ContextReductionLatch {
+	isLatched: () => boolean;
+	engage: () => void;
+	release: () => void;
+	getGeneration: () => number;
+	bumpGeneration: () => void;
+}
+
+export function createContextReductionLatch(): ContextReductionLatch {
+	let latched = false;
+	let generation = 0;
+	return {
+		isLatched: () => latched,
+		engage: () => {
+			latched = true;
+		},
+		release: () => {
+			latched = false;
+		},
+		getGeneration: () => generation,
+		bumpGeneration: () => {
+			generation += 1;
+			latched = false;
+		},
+	};
+}
+
 export interface ShouldApplyContextReductionInput {
 	usageTokens: number | null;
 	contextWindow: number;
 	gateRatio?: number;
 	isProviderNativeCompactionPath?: boolean;
+	latch?: ContextReductionLatch;
 }
 
 export function shouldApplyContextReduction(input: ShouldApplyContextReductionInput): boolean {
-	const gate = input.gateRatio ?? BUILTIN_CONTEXT_REDUCTION_GATE_RATIO;
 	if (input.isProviderNativeCompactionPath === true) return false;
+	if (input.latch?.isLatched()) return true;
 	if (input.usageTokens === null) return false;
 	if (input.contextWindow <= 0) return false;
-	return input.usageTokens >= input.contextWindow * gate;
+	const gate = input.gateRatio ?? BUILTIN_CONTEXT_REDUCTION_GATE_RATIO;
+	const shouldEngage = input.usageTokens >= input.contextWindow * gate;
+	if (shouldEngage && input.latch) {
+		input.latch.engage();
+	}
+	return shouldEngage;
 }
 
 function approxTextTokens(text: string): number {

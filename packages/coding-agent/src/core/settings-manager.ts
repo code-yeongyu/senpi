@@ -32,7 +32,8 @@ export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
 	reserveTokens?: number; // default: 16384
-	keepRecentTokens?: number; // default: 20000
+	keepRecentTokens?: number; // default: model-specific (35000 for large-context models, otherwise 20000)
+	maxContextTokens?: number; // default: 384000 for large-context models, otherwise contextWindow - reserveTokens
 	speculativeEnabled?: boolean; // default: true
 	speculativeFraction?: number; // default: 0.75
 	speculativeCooldownMs?: number; // default: 30000
@@ -1270,6 +1271,8 @@ export class SettingsManager {
 		enabled: boolean;
 		reserveTokens: number;
 		keepRecentTokens: number;
+		keepRecentTokensConfigured: boolean;
+		maxContextTokens?: number;
 		speculativeEnabled: boolean;
 		speculativeFraction: number;
 		speculativeCooldownMs: number;
@@ -1284,6 +1287,8 @@ export class SettingsManager {
 			enabled: this.getCompactionEnabled(),
 			reserveTokens: this.getCompactionReserveTokens(),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(),
+			keepRecentTokensConfigured: this.settings.compaction?.keepRecentTokens !== undefined,
+			maxContextTokens: this.settings.compaction?.maxContextTokens,
 			speculativeEnabled: this.settings.compaction?.speculativeEnabled ?? true,
 			speculativeFraction: this.settings.compaction?.speculativeFraction ?? 0.75,
 			speculativeCooldownMs: this.settings.compaction?.speculativeCooldownMs ?? 30000,

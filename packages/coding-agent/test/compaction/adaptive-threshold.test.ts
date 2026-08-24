@@ -5,6 +5,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
 import {
 	computeAdaptiveThresholdRatio,
+	computeEffectiveBlockingThresholdTokens,
 	computeEffectiveKeepRecentTokens,
 	computeEffectiveThreshold,
 	isAtHardLimit,
@@ -43,6 +44,32 @@ beforeAll(() => {
 });
 
 describe("compaction policy: adaptive threshold ratio", () => {
+	describe("Given the fixture transitions to a 1M-context model", () => {
+		it("Then the active ceiling is 384k and speculative warmup starts at 288k", () => {
+			const modelChange = adaptiveFixtureEntries.find(
+				(entry) => entry.type === "model_change" && entry.modelId === "faux-1m-active-ceiling",
+			);
+			expect(modelChange).toBeDefined();
+
+			const settings = { ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokensConfigured: false };
+			expect(computeEffectiveBlockingThresholdTokens(1_000_000, settings)).toBe(384_000);
+			expect(
+				shouldStartSpeculativeCompaction(
+					{ tokens: 287_999, contextWindow: 1_000_000, percent: null },
+					1_000_000,
+					settings,
+				),
+			).toBe(false);
+			expect(
+				shouldStartSpeculativeCompaction(
+					{ tokens: 288_000, contextWindow: 1_000_000, percent: null },
+					1_000_000,
+					settings,
+				),
+			).toBe(true);
+		});
+	});
+
 	describe("Given a faux model with context window 16000", () => {
 		describe("When the adaptive threshold ratio is computed for that window", () => {
 			it("Then the ratio equals 0.45", () => {

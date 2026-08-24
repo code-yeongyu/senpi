@@ -187,6 +187,9 @@ export interface CompactionSettings {
 	enabled: boolean;
 	reserveTokens: number;
 	keepRecentTokens: number;
+	/** Whether keepRecentTokens was explicitly configured rather than normalized from a fallback. */
+	keepRecentTokensConfigured?: boolean;
+	maxContextTokens?: number;
 	speculativeEnabled?: boolean;
 	speculativeFraction?: number;
 	speculativeCooldownMs?: number;
@@ -339,7 +342,12 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
  */
 export function shouldCompact(contextTokens: number, contextWindow: number, settings: CompactionSettings): boolean {
 	if (!settings.enabled) return false;
-	return contextTokens > contextWindow - settings.reserveTokens;
+	const isLarge = contextWindow >= 500_000;
+	const defaultCeiling = isLarge ? 384_000 : Math.max(0, contextWindow - settings.reserveTokens);
+	const configuredCeiling =
+		settings.maxContextTokens && settings.maxContextTokens > 0 ? settings.maxContextTokens : defaultCeiling;
+	const maxActive = Math.min(Math.max(0, contextWindow - settings.reserveTokens), configuredCeiling);
+	return contextTokens > maxActive;
 }
 
 // ============================================================================

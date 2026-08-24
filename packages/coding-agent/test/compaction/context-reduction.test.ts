@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
 	clearOldToolResults,
 	collapseConsecutiveToolResults,
+	createContextReductionLatch,
 	microCompactAssistantText,
 	reduceContextMessages,
 	shouldApplyContextReduction,
@@ -333,6 +334,84 @@ describe("compaction context reduction behavior", () => {
 				const last = result.messages[result.messages.length - 1] as AssistantMessage;
 				expect(firstText(last.content as { type: string; text?: string }[])).toBe("recent reply");
 			});
+		});
+	});
+
+	describe("Sticky generation latch and prefix hash stability", () => {
+		it("latches context reduction once engaged and preserves historical prefix shape across threshold oscillations", () => {
+			const {
+				createContextReductionLatch,
+				shouldApplyContextReduction,
+			} = require("../../src/core/extensions/builtin/compaction/context-reduction.ts");
+			const latch = createContextReductionLatch();
+			const contextWindow = 1_000_000;
+
+			// Turn 1: 501k (>= 500k gate) -> engages and latches
+			const engaged1 = shouldApplyContextReduction({
+				usageTokens: 501_000,
+				contextWindow,
+				latch,
+			});
+			expect(engaged1).toBe(true);
+			expect(latch.isLatched()).toBe(true);
+
+			// Turn 2: usage dips to 499k (< 500k gate), but latch is ON -> stays engaged
+			const engaged2 = shouldApplyContextReduction({
+				usageTokens: 499_000,
+				contextWindow,
+				latch,
+			});
+			expect(engaged2).toBe(true);
+			expect(latch.isLatched()).toBe(true);
+
+			// Turn 3: usage rises to 505k -> stays engaged
+			const engaged3 = shouldApplyContextReduction({
+				usageTokens: 505_000,
+				contextWindow,
+				latch,
+			});
+			expect(engaged3).toBe(true);
+			expect(latch.isLatched()).toBe(true);
+
+			// Compaction accepted & persisted -> generation bumps and latch resets
+			latch.bumpGeneration();
+			expect(latch.isLatched()).toBe(false);
+			expect(latch.getGeneration()).toBe(1);
+
+			// After compaction, usage is at 100k -> should NOT engage
+			const engagedAfter = shouldApplyContextReduction({
+				usageTokens: 100_000,
+				contextWindow,
+				latch,
+			});
+			expect(engagedAfter).toBe(false);
+			expect(latch.isLatched()).toBe(false);
+		});
+
+		it("resets latch when navigating to another session branch", () => {
+			const latch = createContextReductionLatch();
+			const contextWindow = 1_000_000;
+
+			// Latch engaged on large branch
+			shouldApplyContextReduction({
+				usageTokens: 550_000,
+				contextWindow,
+				latch,
+			});
+			expect(latch.isLatched()).toBe(true);
+
+			// User navigates to shorter branch (session_tree event triggers bumpGeneration)
+			latch.bumpGeneration();
+			expect(latch.isLatched()).toBe(false);
+
+			// Shorter branch with 200k usage (< 500k gate) does not run reduction
+			const engaged = shouldApplyContextReduction({
+				usageTokens: 200_000,
+				contextWindow,
+				latch,
+			});
+			expect(engaged).toBe(false);
+			expect(latch.isLatched()).toBe(false);
 		});
 	});
 });

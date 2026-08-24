@@ -15,6 +15,7 @@ import * as checkpointState from "./checkpoint-state.ts";
 import * as breaker from "./circuit-breaker.ts";
 import {
 	BUILTIN_CONTEXT_REDUCTION_OPTIONS,
+	createContextReductionLatch,
 	reduceContextMessages,
 	shouldApplyContextReduction,
 } from "./context-reduction.ts";
@@ -193,6 +194,7 @@ export default function compactionExtension(
 	const lanePolicy = createCompactionLanePolicy();
 	const restorationDirectiveState = checkpointState.createRestorationDirectiveState();
 	const emergencyPruneLatch = createEmergencyPruneLatch();
+	const contextReductionLatch = createContextReductionLatch();
 	const degradationState = createDegradationMonitorState();
 	const restorationState = state.restoration ?? restoration.createRestorationTrackerState();
 	state = { ...state, restoration: restorationState };
@@ -717,6 +719,7 @@ export default function compactionExtension(
 	});
 
 	pi.on("model_select", (event, ctx) => {
+		contextReductionLatch.bumpGeneration();
 		if (lanePolicy.disablesSenpiCompaction(ctx)) {
 			invalidateSpeculativeCompaction(ctx);
 			return;
@@ -746,10 +749,15 @@ export default function compactionExtension(
 		}
 	});
 
+	pi.on("session_tree", () => {
+		contextReductionLatch.bumpGeneration();
+	});
+
 	pi.on("session_compact", async (event: SessionCompactEvent, ctx) => {
 		const compactEvent = event;
 		invalidateSpeculativeCompaction(ctx);
 		if (compactEvent.accepted) {
+			contextReductionLatch.bumpGeneration();
 			persistAcceptedMetadata(compactEvent.requestId);
 			const branchEntries = ctx.sessionManager.getBranch();
 			const firstKeptIndex = branchEntries.findIndex(
@@ -874,6 +882,7 @@ export default function compactionExtension(
 			contextWindow,
 			isProviderNativeCompactionPath:
 				isOpenAiRemoteCompactionModel(ctx.model) || lanePolicy.disablesSenpiCompaction(ctx),
+			latch: contextReductionLatch,
 		})
 			? reduceContextMessages(event.messages, BUILTIN_CONTEXT_REDUCTION_OPTIONS).messages
 			: event.messages;

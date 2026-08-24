@@ -434,7 +434,13 @@ export function createSpeculativeCompactionSnapshot(
 	const thresholdRatio = computeEffectiveThreshold(contextWindow);
 	const preparation = prepareCompaction(branchEntries, {
 		...settings,
-		keepRecentTokens: computeEffectiveKeepRecentTokens(settings.keepRecentTokens, contextWindow, thresholdRatio),
+		keepRecentTokens: computeEffectiveKeepRecentTokens(
+			settings.keepRecentTokens,
+			contextWindow,
+			thresholdRatio,
+			undefined,
+			settings.keepRecentTokensConfigured !== false,
+		),
 	});
 	if (!preparation) return undefined;
 

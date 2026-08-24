@@ -12,7 +12,7 @@ Per-feature fixtures establish a **behavioral contract** between each subsystem 
 
 | # | Directory | File | Purpose | Entries |
 |---|-----------|------|---------|---------|
-| 1 | `adaptive-threshold/` | `16k-near-threshold.jsonl` | Context near 16k limit, triggers proactive compaction | 7 |
+| 1 | `adaptive-threshold/` | `16k-near-threshold.jsonl` | Context near 16k limit plus a 1M model transition that exercises the 384k active ceiling and 288k warmup | 8 |
 | 2 | `per-turn-cap/` | `four-back-to-back-compactions.jsonl` | Four compactions in one turn, tests absolute-cap admission | 11 |
 | 3 | `circuit-breaker/` | `three-failures-then-success.jsonl` | Three failed compactions then recovery | 11 |
 | 4 | `pre-prune/` | `oversized-with-pairs.jsonl` | Interleaved tool_call/tool_result with large content | 20 |
