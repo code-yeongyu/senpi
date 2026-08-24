@@ -41,6 +41,8 @@
   deletion preserves path-reused replacement sessions through an atomic ID-bound inode claim.
 - Rejected BTW shortcut dispatch no longer strands its reservation, and concurrent replacement
   writers are restored without leaving valid sessions at hidden quarantine paths.
+- User abort during an asynchronous `agent_settled` handler now rejects discarded deferred BTW
+  shortcuts and releases their pending reservation.
 
 ### Added
 

@@ -1704,6 +1704,40 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.isReplacementPending).toBe(false);
 	});
 
+	it("reports deferred fire-and-forget cancellation after user abort", async () => {
+		// Given
+		let releaseSettledHandler!: () => void;
+		const settledHandlerReleased = new Promise<void>((resolve) => {
+			releaseSettledHandler = resolve;
+		});
+		let deferredDispatchQueued!: () => void;
+		const deferredDispatchQueuedPromise = new Promise<void>((resolve) => {
+			deferredDispatchQueued = resolve;
+		});
+		const onRejected = vi.fn();
+		let queueOnce = true;
+		const { runtime } = await createRuntimeForTest((pi) => {
+			pi.on("agent_settled", async () => {
+				if (!queueOnce) return;
+				queueOnce = false;
+				pi.sendUserMessage("deferred after settlement", { onRejected });
+				deferredDispatchQueued();
+				await settledHandlerReleased;
+			});
+		});
+
+		// When
+		const turn = runtime.session.prompt("start settlement");
+		await deferredDispatchQueuedPromise;
+		await runtime.session.abort();
+		releaseSettledHandler();
+		await turn;
+
+		// Then
+		expect(onRejected).toHaveBeenCalledOnce();
+		expect(runtime.session.isIdle).toBe(true);
+	});
+
 	it("signals replaced prompt start only after asynchronous provider preflight", async () => {
 		// Given
 		let releasePreflight!: () => void;

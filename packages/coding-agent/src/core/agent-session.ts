@@ -4014,6 +4014,7 @@ export class AgentSession {
 				this.assertReplacementTurnAllowed();
 			}
 		} catch (error) {
+			deferredTurnClaim?.resolve("finished-without-start");
 			reportRejected();
 			throw error;
 		}
@@ -6300,12 +6301,23 @@ export class AgentSession {
 							error: err instanceof Error ? err.message : String(err),
 						});
 					};
+					const reportCancellation = () => {
+						try {
+							options?.onRejected?.();
+						} catch (error) {
+							runner.emitError({
+								extensionPath: RUNTIME_EXTENSION_PATH,
+								event: "send_user_message_rejection_callback",
+								error: error instanceof Error ? error.message : String(error),
+							});
+						}
+					};
 					// sendUserMessage always triggers a turn; register a settlement-deferred
 					// turn claim so agent_idle is not emitted before its deferred agent_start.
 					if (
 						this._agentSettledDelivery.deferTriggerTurn((claim) => {
 							this.sendUserMessage(content, options, claim).catch(reportError);
-						})
+						}, reportCancellation)
 					) {
 						return;
 					}

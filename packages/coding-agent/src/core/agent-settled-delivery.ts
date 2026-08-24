@@ -3,8 +3,10 @@ export type DeferredTurnDisposition = "started" | "delegated" | "finished-withou
 export class DeferredTurnClaim {
 	readonly disposition: Promise<DeferredTurnDisposition>;
 	#resolve: ((disposition: DeferredTurnDisposition) => void) | undefined;
+	#onCancelled: (() => void) | undefined;
 
-	constructor() {
+	constructor(onCancelled?: () => void) {
+		this.#onCancelled = onCancelled;
 		this.disposition = new Promise((resolve) => {
 			this.#resolve = resolve;
 		});
@@ -14,7 +16,19 @@ export class DeferredTurnClaim {
 		const resolve = this.#resolve;
 		if (!resolve) return;
 		this.#resolve = undefined;
+		this.#onCancelled = undefined;
 		resolve(disposition);
+	}
+
+	cancel(): void {
+		if (!this.#resolve) return;
+		const onCancelled = this.#onCancelled;
+		this.#onCancelled = undefined;
+		try {
+			onCancelled?.();
+		} finally {
+			this.resolve("finished-without-start");
+		}
 	}
 }
 
@@ -42,19 +56,22 @@ export class AgentSettledDelivery {
 		return true;
 	}
 
-	deferTriggerTurn(action: (claim: DeferredTurnClaim) => void): boolean {
+	deferTriggerTurn(action: (claim: DeferredTurnClaim) => void, onCancelled?: () => void): boolean {
 		if (this.#generation === undefined) return false;
-		const claim = new DeferredTurnClaim();
+		const claim = new DeferredTurnClaim(onCancelled);
 		this.#turnClaims.push(claim);
 		this.#actions.push(() => action(claim));
 		return true;
 	}
 
 	finish(userAbortGeneration: number): DeferredAgentSettledBatch {
-		const batch =
-			this.#generation === userAbortGeneration
-				? { actions: this.#actions, turnClaims: this.#turnClaims }
-				: { actions: [], turnClaims: [] };
+		const accepted = this.#generation === userAbortGeneration;
+		const batch = accepted
+			? { actions: this.#actions, turnClaims: this.#turnClaims }
+			: { actions: [], turnClaims: [] };
+		if (!accepted) {
+			for (const claim of this.#turnClaims) claim.cancel();
+		}
 		this.#generation = undefined;
 		this.#actions = [];
 		this.#turnClaims = [];
@@ -62,7 +79,7 @@ export class AgentSettledDelivery {
 	}
 
 	cancel(): void {
-		for (const claim of this.#turnClaims) claim.resolve("finished-without-start");
+		for (const claim of this.#turnClaims) claim.cancel();
 		this.#generation = undefined;
 		this.#actions = [];
 		this.#turnClaims = [];

@@ -112,6 +112,8 @@
   when asynchronous prompt preflight merely begins.
 - Rejected fire-and-forget shortcut dispatch rolls back only its captured pending reservation, so
   a replacement guard cannot permanently consume later BTW switch, close, or Main shortcuts.
+- Abort-generation cancellation of a settlement-deferred shortcut reports the same rejection,
+  releasing the pending reservation even when its command action never executes.
 - Side deletion hard-links an atomic inode claim before validation, compares the moved directory
   entry to that claim, and restores path-reused replacements without overwriting concurrent data.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
