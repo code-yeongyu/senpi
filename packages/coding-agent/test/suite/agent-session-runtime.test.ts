@@ -197,6 +197,35 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(inspected.entries.length).toBeGreaterThan(0);
 	});
 
+	it("recovers the outgoing runtime when initialized-session persistence fails", async () => {
+		// Given
+		const shutdownSessionIds: string[] = [];
+		const { runtime } = await createRuntimeForTest((pi) => {
+			pi.on("session_shutdown", (_event, ctx) => {
+				shutdownSessionIds.push(ctx.sessionManager.getSessionId());
+			});
+		});
+		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		vi.spyOn(SessionManager.prototype, "persistInitializedSession").mockImplementationOnce(() => {
+			throw new Error("disk full");
+		});
+
+		// When
+		const operation = runtime.newSession({
+			persistInitializedSession: true,
+			setup: async (sessionManager) => {
+				sessionManager.appendSessionInfo("unpersisted retained side");
+			},
+		});
+
+		// Then
+		await expect(operation).rejects.toThrow("disk full");
+		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(runtime.session.isReplacementPending).toBe(false);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+		expect(shutdownSessionIds).toHaveLength(2);
+	});
+
 	it("exposes replacement-context setters for live model thinking and tools", async () => {
 		// Given
 		const { runtime, faux } = await createRuntimeForTest(() => {});

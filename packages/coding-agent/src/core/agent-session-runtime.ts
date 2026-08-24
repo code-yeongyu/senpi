@@ -537,12 +537,41 @@ export class AgentSessionRuntime {
 			await this.recoverAfterCancelledTeardown({ ...previousSession, outgoingSnapshot });
 			return { cancelled: true };
 		}
-		if (options?.setup) {
-			await options.setup(this.session.sessionManager);
-			this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
-		}
-		if (options?.persistInitializedSession) {
-			this.session.sessionManager.persistInitializedSession();
+		try {
+			if (options?.setup) {
+				await options.setup(this.session.sessionManager);
+				this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
+			}
+			if (options?.persistInitializedSession) {
+				this.session.sessionManager.persistInitializedSession();
+			}
+		} catch (operationError) {
+			const failedSessionManager = this.session.sessionManager;
+			const recoveryErrors: unknown[] = [];
+			try {
+				await this.teardownCurrent("new", previousSessionFile);
+			} catch (error) {
+				recoveryErrors.push(error);
+			}
+			if (options?.persistInitializedSession) {
+				try {
+					this.removeOwnedPersistedSession(failedSessionManager);
+				} catch (error) {
+					recoveryErrors.push(error);
+				}
+			}
+			try {
+				await this.recoverAfterCancelledTeardown({ ...previousSession, outgoingSnapshot });
+			} catch (error) {
+				recoveryErrors.push(error);
+			}
+			if (recoveryErrors.length > 0) {
+				throw new AggregateError(
+					[operationError, ...recoveryErrors],
+					"Failed to recover after new-session setup or persistence failed",
+				);
+			}
+			throw operationError;
 		}
 		const finished = await this.finishSessionReplacement(
 			options?.withSession,

@@ -25,7 +25,9 @@
 ### What changed
 
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
-  setup, persistence, session tool policy, and explicit session-directory preservation.
+  setup, persistence, session tool policy, and explicit session-directory preservation. Failed
+  retained setup or initialized persistence shuts down the applied candidate and restores the
+  outgoing snapshot before the error propagates.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose typed session
   discovery and inspection to command contexts; disabled-tool sessions omit loaded skills from
   system-prompt options before read-tool guidance is formatted.

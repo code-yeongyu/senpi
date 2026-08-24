@@ -76,6 +76,8 @@
   cwd overrides survive rebinding, and replacement identities are checked after runtime creation.
 - Stale constructed candidates emit `session_shutdown` before disposal; recovery rechecks its
   persisted outgoing path after construction and falls back to the detached snapshot before rebind.
+- Failed retained setup or initialized-session persistence tears down the applied candidate,
+  removes any owned partial file, and restores the outgoing runtime before reporting the failure.
 - Candidate identity is rechecked after removed-extension handlers, while source expectations let
   guarded new/resume operations reject active or leaf-changed sessions after async vetoes.
 - Source guards distinguish pre-existing streaming actions from activity begun during vetoes, and
