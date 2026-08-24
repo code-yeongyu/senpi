@@ -35,6 +35,7 @@ import type {
 	ContinuingGoalContinuationVerdict,
 	DelayedContinuationKind,
 	GoalContinuationAdmission,
+	ProviderRecoveryOptions,
 	ResumptionChannelCounts,
 	SystemAbortOptions,
 } from "./monitor-continuation-types.ts";
@@ -80,6 +81,7 @@ export class MonitorAwareGoalContinuation {
 		| undefined;
 	#directInputHolds = new Set<string>();
 	#pendingSystemRecovery: SystemAbortOptions | undefined;
+	#pendingProviderRecovery: ProviderRecoveryOptions | undefined;
 
 	constructor(
 		pi: ExtensionAPI,
@@ -182,11 +184,47 @@ export class MonitorAwareGoalContinuation {
 		return options.goal;
 	}
 
+	async afterProviderFailure(options: ProviderRecoveryOptions): Promise<Goal | null> {
+		this.noteContinuationStarted();
+		if (options.goal?.id !== this.#goal?.id) this.#resetContinuationState();
+		this.#pendingProviderRecovery = undefined;
+		this.#ctx = options.ctx;
+		this.#goal = options.goal;
+		this.#lastAgentEndMessages = options.messages;
+		this.#lastTurnUsage = collectAssistantUsage([...options.messages]);
+		if (options.goal?.status !== "active") {
+			this.#resetContinuationState();
+			return options.goal;
+		}
+		if (!options.willRetry) this.#pendingProviderRecovery = options;
+		return options.goal;
+	}
+
 	async afterAgentSettled(): Promise<Goal | null | undefined> {
-		const pending = this.#pendingSystemRecovery;
+		const pendingSystem = this.#pendingSystemRecovery;
+		const pendingProvider = this.#pendingProviderRecovery;
 		this.#pendingSystemRecovery = undefined;
-		if (pending === undefined || pending.goal === null || pending.event.abortSource === "user") return undefined;
-		return (await this.#admitAndQueue(pending.ctx, pending.goal, "systemRecovery", pending.messages)).goal;
+		this.#pendingProviderRecovery = undefined;
+		if (pendingSystem !== undefined && pendingSystem.goal !== null && pendingSystem.event.abortSource !== "user") {
+			return (
+				await this.#admitAndQueue(pendingSystem.ctx, pendingSystem.goal, "systemRecovery", pendingSystem.messages)
+			).goal;
+		}
+		if (
+			pendingProvider === undefined ||
+			pendingProvider.goal === null ||
+			pendingProvider.event.abortSource === "user"
+		) {
+			return undefined;
+		}
+		return (
+			await this.#admitAndQueue(
+				pendingProvider.ctx,
+				pendingProvider.goal,
+				"providerRecovery",
+				pendingProvider.messages,
+			)
+		).goal;
 	}
 
 	syncGoal(goal: Goal | null): void {
@@ -258,6 +296,7 @@ export class MonitorAwareGoalContinuation {
 	/** An accepted real user prompt starts a grace-governed user turn. */
 	noteUserPrompt(): void {
 		this.#cancelTimer();
+		this.#pendingProviderRecovery = undefined;
 		this.#endedTurnWasUserInitiated = true;
 		this.#resetContinuationState();
 	}
@@ -570,6 +609,7 @@ export class MonitorAwareGoalContinuation {
 
 	#resetContinuationState(): void {
 		this.#pendingSystemRecovery = undefined;
+		this.#pendingProviderRecovery = undefined;
 		this.#consecutiveLengthRecoveries.clear();
 		this.#recentNormalizedOutputHashes = [];
 		this.#resetToollessContinuationStreak();

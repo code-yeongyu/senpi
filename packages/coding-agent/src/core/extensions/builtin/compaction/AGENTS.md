@@ -1,6 +1,6 @@
 # builtin/compaction
 
-Builtin extension #23 (last). Owns senpi's compaction pipeline: speculative compaction running in parallel with the next turn, blocking compaction at the hard context limit, proactive compaction near the soft limit, degradation monitoring, circuit breaker, absolute session cap, todo bridging, checkpoint state, restoration tracker, and tool-result truncation. Policy-rich; touch with policy tests in lock-step. See `changes.md` for the restoration tracker rationale.
+Builtin extension #20. Owns senpi's compaction *policy* (mechanics live in `core/compaction/`): speculative compaction running in parallel with the next turn, blocking compaction at the hard context limit, proactive compaction near the soft limit, degradation monitoring, circuit breaker, absolute session cap, todo bridging, checkpoint state, restoration tracker, and tool-result truncation. Policy-rich; touch with policy tests in lock-step. See `changes.md` for the restoration tracker rationale.
 
 ## FILES
 
@@ -28,6 +28,10 @@ compaction/
 ├── todo-bridge.ts            # Carries todos through compaction so the summary preserves them
 ├── restoration-tracker.ts    # Post-compact: re-injects skill + file context (fork-introduced)
 ├── prompts.ts                # Compaction summarization prompt + system message
+├── lane-policy.ts            # SDK-native lane detection; `external-owner` structured ownership
+├── deterministic-fallback.ts # Classification + construction when summarization fails outright
+├── summarization-retry.ts, transient-failure.ts, retained-message-safety.ts  # Retry/safety predicates
+├── openai-remote-{convert,model,schema,timeout,responses-v2}.ts  # Remote-route support modules
 └── changes.md                # Fork tracker (restoration tracker, extension hook wiring)
 ```
 
@@ -65,6 +69,9 @@ compaction/
 - Changing the `prompts.ts` summarization template without regenerating the relevant goldens.
 - Bypassing `tool-truncation.ts` for "small" tool results — the policy uses a global token budget; even small additions matter.
 - Mutating `restoration-tracker.ts` queue from a non-compaction hook.
+- Treating provider-owned SDK-native compaction as ordinary extension cancellation — `lane-policy.ts` must preserve `external-owner` ownership.
+- Letting an aborted compaction surface: aborts stand down silently (no circuit-breaker failure, no raw abort error, no `{cancel: true}` rejected-compact event).
+- Leaving idle warm-up continuations unfenced against retired extension generations — stale context access becomes an uncaught crash.
 
 ## NOTES
 

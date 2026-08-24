@@ -209,7 +209,7 @@ describe("issue #447: goal continuation guardrails", () => {
 		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({ status: "active", consecutiveContinuations: 1 });
 	});
 
-	it("blocks the goal when a terminal provider error has no retry remaining", async () => {
+	it("keeps the goal active and queues one provider recovery when a terminal provider error has no retry remaining", async () => {
 		const notices: string[] = [];
 		const harness = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "issue-447-terminal-error");
@@ -219,11 +219,11 @@ describe("issue #447: goal continuation guardrails", () => {
 		await runContinuationTurn(harness, ctx, assistantStopWithReason("error", "provider exhausted retries"), false);
 
 		expect(harness.sent).toHaveLength(0);
-		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({
-			status: "blocked",
-			blockedReason: "provider error ended the turn (retries exhausted)",
-		});
-		expect(notices).toContainEqual(expect.stringContaining("provider error ended the turn"));
+		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({ status: "active" });
+		expect(notices).toEqual([]);
+		await runGoalHandlers(harness.handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		await waitForSentCount(harness, 1);
+		expect(harness.sent[0]?.message.customType).toBe(GOAL_CONTINUATION_MESSAGE_TYPE);
 	});
 
 	it("does not replay hundreds of trailing continuations when the flooded session loads", async () => {

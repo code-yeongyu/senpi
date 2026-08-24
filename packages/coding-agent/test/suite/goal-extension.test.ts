@@ -326,7 +326,7 @@ describe("goal extension contract (budget-free)", () => {
 		expect(sent).toHaveLength(0);
 	});
 
-	it("blocks a goal when a provider error ends after retries are exhausted", async () => {
+	it("keeps a goal active when a provider error ends after retries are exhausted", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const notices: string[] = [];
 		const ctx = await makeNotifyingCtx(notices, "thread-terminal-provider-error");
@@ -342,15 +342,14 @@ describe("goal extension contract (budget-free)", () => {
 			ctx,
 		);
 
-		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
-			status: "blocked",
-			blockedReason: "provider error ended the turn (retries exhausted)",
-		});
-		expect(notices).toContainEqual(expect.stringContaining("provider error ended the turn (retries exhausted)"));
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({ status: "active" });
+		expect(notices).toEqual([]);
 		expect(sent).toHaveLength(0);
+		await runHandlers(handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		expect(sent).toHaveLength(1);
 	});
 
-	it("blocks a claude-sdk-oauth goal when every account is exhausted on a zero-token stop", async () => {
+	it("keeps a terminal provider error active and queues one recovery after settlement", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const notices: string[] = [];
 		const ctx = await makeNotifyingCtx(notices, "thread-sdk-oauth-exhausted");
@@ -379,11 +378,13 @@ describe("goal extension contract (budget-free)", () => {
 			ctx,
 		);
 
-		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
-			status: "blocked",
-			blockedReason: "provider error ended the turn (retries exhausted)",
-		});
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({ status: "active" });
 		expect(sent).toHaveLength(0);
+		await runHandlers(handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		expect(sent).toHaveLength(1);
+		expect(sent[0]?.message.customType).toBe("goal-continuation");
+		await runHandlers(handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		expect(sent).toHaveLength(1);
 	});
 
 	it("keeps a goal active while a provider-error retry is pending", async () => {
@@ -407,20 +408,22 @@ describe("goal extension contract (budget-free)", () => {
 		expect(sent).toHaveLength(0);
 	});
 
-	it("resumes a provider-error-blocked goal when the user sends a new message", async () => {
+	it("keeps persisted provider-error blocks resumable", async () => {
 		const { tools, handlers } = createGoalHarness();
 		const ctx = await makeCtx("thread-provider-error-resume");
 		await tools
 			.get("create_goal")
 			?.execute("c1", { objective: "Survive a provider outage" }, undefined, undefined, ctx);
 
-		await runHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
-		await runHandlers(
-			handlers,
-			"agent_end",
-			{ type: "agent_end", messages: [assistantMessageWithStopReason("error")], willRetry: false },
-			ctx,
-		);
+		await tools
+			.get("update_goal")
+			?.execute(
+				"u1",
+				{ status: "blocked", reason: "provider error ended the turn (retries exhausted)" },
+				undefined,
+				undefined,
+				ctx,
+			);
 		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("blocked");
 
 		await runHandlers(
@@ -502,8 +505,8 @@ describe("goal extension contract (budget-free)", () => {
 		});
 	});
 
-	it("blocks a provenance-free aborted turn after retries are exhausted", async () => {
-		const { tools, handlers } = createGoalHarness();
+	it("keeps a provenance-free aborted turn active for provider recovery", async () => {
+		const { tools, handlers, sent } = createGoalHarness();
 		const ctx = await makeCtx("thread-system-abort-provider-guard");
 		await tools
 			.get("create_goal")
@@ -522,10 +525,42 @@ describe("goal extension contract (budget-free)", () => {
 			ctx,
 		);
 
-		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
-			status: "blocked",
-			blockedReason: "provider error ended the turn (retries exhausted)",
-		});
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({ status: "active" });
+		expect(sent).toHaveLength(0);
+		await runHandlers(handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		expect(sent).toHaveLength(1);
+	});
+
+	it("cancels staged provider recovery when a user joins before settlement", async () => {
+		const { tools, handlers, sent } = createGoalHarness();
+		const ctx = await makeCtx("thread-provider-late-user");
+		await tools.get("create_goal")?.execute("c1", { objective: "Wait for the provider" }, undefined, undefined, ctx);
+		await runHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runHandlers(
+			handlers,
+			"agent_end",
+			{
+				type: "agent_end",
+				messages: [assistantMessageWithStopReason("aborted")],
+				aborted: true,
+				willRetry: false,
+			},
+			ctx,
+		);
+		await runHandlers(
+			handlers,
+			"input",
+			{ type: "input", inputId: "late-user", text: "retry", source: "interactive" },
+			ctx,
+		);
+		await runHandlers(
+			handlers,
+			"input_disposition",
+			{ type: "input_disposition", inputId: "late-user", disposition: "started" },
+			ctx,
+		);
+		await runHandlers(handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		expect(sent).toHaveLength(0);
 	});
 
 	it("rejects update_goal complete while todo tasks remain open, naming them", async () => {

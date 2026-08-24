@@ -1,5 +1,31 @@
 # core/tools changes
 
+## Read tool rejects local:// URIs with actionable guidance (2026-08-24)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: the execute path now guards the `local://` URI scheme
+  (`/^local:\/\//i`) before any path resolution and throws guidance naming the eval kernel `read()`/`write()`
+  helpers and the plain-absolute-path alternative, instead of resolving the URI as a relative path and failing
+  with `ENOENT <cwd>/local:/...`. Single-slash `local:/x` stays an ordinary relative path because a colon is legal
+  in macOS filenames.
+
+### Why
+
+- A 2026-08-24 session replayed a detached-eval spill notice pointing at `local://detached-eval-eval_5.log`
+  through the read tool; the scheme collapsed to a relative path and the tool returned a bare ENOENT with no
+  recovery hint. Deployed bundles still emit `local://` spill URIs and the eval prompt documents the scheme for
+  kernel helpers, so the read tool is a repeatable trap; the error itself now teaches the two working paths.
+
+### Why an extension could not handle it
+
+- The guard must run inside the built-in read tool's own execute path before `resolveReadPathAsync`; extension
+  filesystem-policy hooks only see already-canonicalized paths, so the raw scheme string never reaches them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/read.ts` execute prologue and the module constants block.
+
 ## Edit tool keeps filesystem policy and themed diff rendering after the 59a71b23 pin (2026-08-19)
 
 ### What changed

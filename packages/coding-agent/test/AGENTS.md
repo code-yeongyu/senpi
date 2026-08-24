@@ -5,18 +5,18 @@ Vitest coverage for the Senpi CLI, sessions, extensions, modes, transports, and 
 ## STRUCTURE
 
 ```text
-suite/             Preferred AgentSession/AgentSessionRuntime harness tests
-suite/regressions/ Issue-specific regressions
-mcp/               MCP transports, fixtures, security, lifecycle
-permission/        Permission-system behavior
-compaction/        Compaction mechanics and policy
+suite/             Preferred AgentSession/AgentSessionRuntime harness tests (own AGENTS.md)
+suite/regressions/ Issue-specific regressions (own AGENTS.md)
+mcp/               MCP transports, fixtures, security, lifecycle (own AGENTS.md)
+permission/        Permission-system behavior (own AGENTS.md)
+compaction/        Compaction mechanics and policy (own AGENTS.md)
 session-manager/   Persistence, branching, context construction
 dynamic-prompt/    Dynamic system-prompt + workstation fact coverage
 tool-pair-guard/   Provider payload tool-pair sanitization tests
 client/            RPC/app-server client coverage
 server/            App-server/server surface coverage
 extensions/        Extension loading and API behavior
-cursor-cli-oauth/  Cursor CLI OAuth provider-lane coverage (accounts, spawn, stream, failover)
+cursor-cli-oauth/  Cursor CLI OAuth provider-lane coverage (own AGENTS.md)
 tool-search/       Shared tool-catalog / `tool_search` exposure coverage
 grok/              Grok provider coverage
 ttsr/              Stream-rule (ttsr) extension coverage
@@ -25,7 +25,7 @@ helpers/           Shared subprocess/QA/fixture helpers
 benchmarks/        Perf-oriented probes (not part of the default correctness gate)
 examples/          Coverage for the shipped `examples/` extensions
 manual-qa/         Explicit manual QA scripts (not part of default suite)
-qa/app-server/     Real app-server surface drivers
+qa/app-server/     Real app-server surface drivers (own AGENTS.md)
 integration/       Explicitly gated real-provider tests
 fixtures/, goldens/ Shared deterministic inputs and snapshots
 model-runtime*.test.ts / models-store.test.ts / remote-catalog-provider.test.ts / runtime-credentials.test.ts
@@ -34,6 +34,11 @@ claude-sdk-oauth-*.test.ts
                    Flat cluster (51 files) at test/ root covering the Claude SDK
                    OAuth provider extension
 ```
+
+The flat `test/*.test.ts` root cluster (~350 files) is legacy/feature-focused placement.
+New lifecycle and extension coverage belongs in `suite/`, not at this root.
+Legacy root helpers: `test-harness.ts` (superseded), `utilities.ts`, `model-runtime-test-utils.ts`,
+`test-network-env.ts`, `test-theme-colors.ts`. `setup.ts` is the quarantine entry (see below).
 
 ## TEST RULES
 
@@ -66,7 +71,8 @@ claude-sdk-oauth-*.test.ts
 
 - Run every added or changed test file directly until green.
 - Run the narrow owning directory or package suite when shared harnesses, fixtures, or lifecycle behavior change.
+- Package runner is Vitest: `npm --prefix packages/coding-agent test -- --run <path>`.
 - Root `npm run check` is static validation and does not replace tests.
 
 ---
-Generated: 2026-08-22 | Commit: `a5eed4453`
+Generated: 2026-08-24 | Commit: `baf15a54d`

@@ -5,16 +5,28 @@ Runnable examples for the public Senpi SDK and extension API. Examples are docum
 ## STRUCTURE
 
 ```text
-extensions/        Tools, commands, UI, providers, hooks, resources
-extensions/*/      Multi-file examples and nested private workspaces
-sdk/               Programmatic SDK usage
-rpc-extension-ui.ts RPC-compatible extension UI example
-extensions/kimi-deferred-tools.ts  Deferred tool discovery/activation example
+extensions/          Single-file extension catalog (70+ files) + multi-file dirs
+extensions/*/        Multi-file examples; several are private nested workspaces
+sdk/                 Numbered SDK programs (01-minimal.ts ... 13-session-runtime.ts)
+rpc-extension-ui.ts  RPC-mode extension UI as standalone JSONL child process
 ```
+
+## WHERE TO LOOK
+
+| Task | First choice |
+|---|---|
+| Tool/flag/command/shortcut registration | `extensions/tools.ts`, `commands.ts`, `dynamic-tools.ts` |
+| Custom provider, OAuth, streaming | `extensions/custom-provider-anthropic/` |
+| UI widgets, overlays, editors | `extensions/overlay-*.ts`, `modal-editor.ts`, `widget-placement.ts` |
+| Session-entry persistence | `extensions/todo.ts`, `bookmark.ts`, `handoff.ts` |
+| Safety guards | `extensions/permission-gate.ts`, `protected-paths.ts`, `sandbox/` |
+| Full SDK composition | `sdk/12-full-control.ts`, `sdk/13-session-runtime.ts` |
+
+Largest examples carry real complexity, not toy scope: `extensions/overlay-qa-tests.ts` (~1.5k LOC), `extensions/subagent/index.ts` (~1k), `extensions/tic-tac-toe.ts` (~1k), `extensions/custom-provider-anthropic/index.ts` (~600). See `extensions/AGENTS.md` for the catalog map.
 
 ## CONVENTIONS
 
-- Import public package surfaces such as `@code-yeongyu/senpi` and `@earendil-works/pi-ai`; do not reach into `packages/coding-agent/src/core/` internals.
+- Import public package surfaces — `@code-yeongyu/senpi` (newer alias), `@earendil-works/pi-coding-agent` (lower level), `@earendil-works/pi-ai`/`pi-tui` — never `packages/coding-agent/src/core/` internals.
 - Keep examples small enough to teach one pattern, while preserving real error, cleanup, cancellation, and persistence behavior where relevant.
 - Extension factories have no top-level runtime side effects. Register work through the public `pi.*` API and lifecycle events.
 - New interactive examples should use configurable keybindings and themed TUI helpers. Existing demos may keep fixed controls when the control scheme is part of the example. Direct terminal writes belong only in examples explicitly teaching a terminal protocol; ordinary SDK examples may use normal stdout.
@@ -23,6 +35,9 @@ extensions/kimi-deferred-tools.ts  Deferred tool discovery/activation example
 - Deferred-tool examples preserve the Kimi flow: expose search first, activate via `pi.setActiveTools()`, and register lifecycle work in `session_start`.
 - Stateful examples persist reconstructable state in session entries or tool-result details so fork/resume behavior remains valid.
 - Nested example packages are private workspaces with exact-pinned dependencies. Treat their manifests and lock impact as production dependency changes.
+- Kebab-case filenames and slash-command names; camelCase named exports; one example per file default-exporting its extension factory.
+- UI examples guard on `ctx.hasUI` and clean up timers/child processes on `session_shutdown`; stateful atomic tools (games, questionnaires) set `executionMode: "sequential"`.
+- Tool schemas use TypeBox; handlers follow the `(toolCallId, params, signal, onUpdate, ctx)` shape.
 
 ## DOCUMENTATION CONTRACT
 

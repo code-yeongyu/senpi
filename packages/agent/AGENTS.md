@@ -14,14 +14,18 @@ src/types.ts                 App messages, events, state, conversion boundary
 src/proxy.ts                 Remote stream proxy
 src/index.ts                 Browser-safe public exports
 src/node.ts                  Node harness public exports
-src/harness/                 Compaction, sessions, skills, prompts, env adapters
-src/harness/tools/           Built-in tools: bash, edit, edit-diff, write, read,
-                             image, file-mutation-queue, path-utils, tool-context, index
+src/search/                  Scanning session search over readable storage
+src/harness/                 AgentHarness: lanes, sessions (own AGENTS.md),
+                             tools (own AGENTS.md), compaction, skills, prompt
+                             templates, env adapters
+src/harness/reducer.ts       Record-log validation and lane state reduction
+src/harness/telemetry.ts     Schema-first AI/harness telemetry spans
 src/harness/messages.ts      Harness message helpers
 src/harness/prompt-templates.ts  Prompt template expansion
 src/harness/system-prompt.ts System prompt assembly
 src/harness/skills.ts        Skill discovery and loading
 src/changes.md               Fork-specific behavior record
+scripts/generate-telemetry-docs.ts  Regenerates docs/telemetry-schema.md
 ```
 
 ## WHERE TO LOOK
@@ -33,8 +37,9 @@ src/changes.md               Fork-specific behavior record
 | Public message/event contract | `src/types.ts` |
 | Harness orchestration | `src/harness/agent-harness.ts` |
 | Node process and filesystem behavior | `src/harness/env/nodejs.ts` |
-| Session persistence | `src/harness/session/` (`repository.ts`, `jsonl-store.ts`, `memory-store.ts`, `array-session-reader.ts`, `fork.ts`, `keyed-operation-queue.ts`, `search-backend.ts`) |
-| Built-in tool behavior | `src/harness/tools/` |
+| Session persistence | `src/harness/session/` (`session.ts`, `state.ts`, `context.ts`, `types.ts`, `jsonl/`, `memory.ts`; own AGENTS.md) |
+| Session search | `src/search/scanning.ts`, contracts in `src/search/index.ts`; see `docs/search.md` |
+| Built-in tool behavior | `src/harness/tools/` (own AGENTS.md) |
 | SQLite session storage | `packages/session-backends/sqlite-node` (`@earendil-works/pi-storage-sqlite-node`) |
 | Compaction | `src/harness/compaction/` |
 
@@ -58,13 +63,14 @@ src/changes.md               Fork-specific behavior record
 
 - Run `npm test` from this package for agent-loop coverage.
 - Run `npm run test:harness` for harness/session/env changes.
+- Telemetry schema changes: `npm run generate-telemetry-docs` to rewrite `docs/telemetry-schema.md`, then `npm run check:telemetry-docs`; the generated file must never be edited by hand.
 - Runtime changes also require root `npm run check` and the root QA evidence gate.
-- Keep `README.md`, `docs/agent-harness.md`, `docs/harness.md`, `docs/harness-v2.md`, and `src/changes.md` aligned with public or fork-specific changes.
+- Keep `README.md`, `docs/harness.md`, `docs/search.md`, and `src/changes.md` aligned with public or fork-specific changes.
 
 ## NOTES
 
-- Session backend refactor: old `jsonl-repo`/`memory-repo`/`repo-utils` are gone. Storage is store-based (`jsonl-store.ts`, `memory-store.ts`, SQLite via `packages/session-backends/sqlite-node`) behind `repository.ts`.
+- Session storage: `SessionStorage` implementations (`jsonl/` `JsonlSessionStorage`/`JsonlSessionRepo`, `memory.ts` `InMemorySessionStorage`/`InMemorySessionRepo`) behind `Session` tree semantics in `session.ts`; SQLite backend in `packages/session-backends/sqlite-node`. New backends must pass `createSessionBackendConformance`, published as the `@earendil-works/pi-agent-core/session/testing` subpath.
 - Cursor exec bridging: `execHandlers`/`onToolResult` are installed only when `config.cursorExecHandlers` is set. Assistant `toolCall` blocks stamped `kCursorExecResolved` (`packages/ai/src/utils/block-symbols.ts`) were executed server-side and are never re-run locally; their buffered `toolResult`s are appended right after the assistant message, including on error/abort paths. Local exec work re-arms the idle watchdog via `AssistantMessageEventStream.trackLocalWork`.
 
 ---
-Generated: 2026-08-17 | Commit `abae968e8`
+Generated: 2026-08-24 | Commit `baf15a54d`

@@ -135,7 +135,14 @@ describe("goal continuation verdict", () => {
 			lastContinuationSignature: "goal-1:1/2:abc123",
 		});
 
-		for (const path of ["immediate", "monitorDelayed", "userGrace", "sessionStart", "systemRecovery"] as const) {
+		for (const path of [
+			"immediate",
+			"monitorDelayed",
+			"userGrace",
+			"sessionStart",
+			"systemRecovery",
+			"providerRecovery",
+		] as const) {
 			expect(evaluateGoalContinuation({ ...capped, path })).toEqual({ kind: "deny", reason: "cap" });
 		}
 		expect(
@@ -164,6 +171,12 @@ describe("goal continuation verdict", () => {
 				makeInput({ path: "systemRecovery", isIdle: false, lastStopReason: "error", ...overrides }),
 			),
 		).toEqual({ kind: "deny", reason });
+	});
+
+	it("keeps provider recovery eligible while the session is settling", () => {
+		expect(
+			evaluateGoalContinuation(makeInput({ path: "providerRecovery", isIdle: false, lastStopReason: "aborted" })),
+		).toMatchObject({ kind: "continue" });
 	});
 
 	it.each([

@@ -6,6 +6,7 @@
 
 ```text
 src/cli.ts, cli-main.ts, main.ts   Bootstrap, args, mode dispatch
+src/bun-runtime.ts              Bun-vs-Node runtime selection for bun-installed CLI (`SENPI_RUNTIME` pin)
 src/bun/cli.ts, src/bun/register-cursor-agent.ts   Bun-binary entry; static cursor-agent module install
 src/package-manager-cli.ts         install/update/config subcommands (incl. `senpi update --models`)
 src/core/agent-session.ts          Session lifecycle and runtime

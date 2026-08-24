@@ -69,7 +69,7 @@ import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
-import { AgentAbortProvenance } from "./agent-abort-provenance.ts";
+import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
 import {
 	AgentSettledDelivery,
 	type DeferredAgentSettledAction,
@@ -2722,6 +2722,11 @@ export class AgentSession {
 	/** Current retry attempt (0 if not retrying) */
 	get retryAttempt(): number {
 		return this._retryAttempt;
+	}
+
+	/** Abort owner for the current turn boundary, used by internal renderers. */
+	get currentAbortSource(): AgentAbortSource | undefined {
+		return this._abortProvenance.currentSource;
 	}
 
 	/**

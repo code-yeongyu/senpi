@@ -42,6 +42,9 @@ interface CompactReadClassification {
 }
 
 const COMPACT_RESOURCE_FILE_NAMES = new Set(["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
+const LOCAL_URI_SCHEME = /^local:\/\//i;
+const LOCAL_URI_GUIDANCE =
+	"local:// URIs resolve only inside eval cells via the kernel read()/write() helpers; the read tool takes filesystem paths. Re-read this with the eval read() helper, or retry with the plain absolute file path.";
 
 /**
  * Pluggable operations for the read tool.
@@ -231,6 +234,9 @@ export function createReadToolDefinition(
 			_onUpdate?,
 			ctx?,
 		) {
+			if (LOCAL_URI_SCHEME.test(path)) {
+				throw new Error(LOCAL_URI_GUIDANCE);
+			}
 			return new Promise<{ content: (TextContent | ImageContent)[]; details: ReadToolDetails | undefined }>(
 				(resolve, reject) => {
 					if (signal?.aborted) {

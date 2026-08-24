@@ -1,5 +1,23 @@
 # goal Extension Changes
 
+## 2026-08-24 - provider retry exhaustion uses guarded recovery
+
+### What changed
+
+- `index.ts`, `agent-end-continuation.ts`, `monitor-continuation.ts`, and `continuation.ts` keep active Goals active after terminal provider/watchdog failures and queue one guarded `providerRecovery` continuation after `agent_settled`. Explicit user aborts remain blocked; system aborts retain `systemRecovery`; the legacy provider-error blocked reason remains resumable.
+
+### Why
+
+- Provider retry exhaustion is infrastructure failure, not a user decision. The previous block stranded active Goals.
+
+### Why an extension could not handle it
+
+- Goal state transitions, settlement latches, and continuation admission are private to the builtin Goal extension.
+
+### Expected merge conflict zones
+
+- LOW: Goal agent-end routing and monitor continuation admission.
+
 ## Wait countdown hides while a turn runs (2026-08-24)
 
 ### What changed

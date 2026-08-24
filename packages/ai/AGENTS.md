@@ -1,8 +1,8 @@
 # packages/ai
 
-Generated: 2026-08-22. Commit `a5eed4453`.
+Generated: 2026-08-24. Commit `baf15a54d`.
 
-`@earendil-works/pi-ai` is the provider-neutral streaming, model, auth, tool-call, and image API used across the monorepo. Its root surface must remain browser-safe.
+`@earendil-works/pi-ai` is the provider-neutral streaming, model, auth, tool-call, and image API used across the monorepo. Its root surface must remain browser-safe. ESM, Node `>=24`, built with `tsc -p tsconfig.build.json` (`src/**/*.ts` -> `dist`).
 
 ## STRUCTURE
 
@@ -41,7 +41,8 @@ src/tool-call-middleware/       Text-encoded tool protocols
 src/utils/                      ~33 files; key: retry.ts, provider-retry.ts, retry-hint.ts, prompt-cache-ttl.ts, stop-details.ts, tool-call-id.ts, tool-schema-compat.ts
 scripts/generate-models.ts      Model catalog source of truth
 scripts/generate-image-models.ts Image catalog source of truth
-test/                           Faux-first and opt-in live tests
+test/                           Faux-first + opt-in live tests, ~53k LOC flat (own AGENTS.md; ditto test/tool-call-middleware/)
+bench/                          event-stream + model-registry micro-benchmarks
 ```
 
 ## MODEL DATA GENERATION
@@ -56,7 +57,8 @@ test/                           Faux-first and opt-in live tests
 - Provider factories and model catalogs live in `src/providers/`; wire protocol implementations live in `src/api/`.
 - `src/api/lazy.ts` exposes `lazyApi()`. API-specific `*.lazy.ts` wrappers are the documented dynamic-import boundary.
 - `src/providers/register-builtins.ts` registers compatibility behavior and currently imports only `src/compat.ts`; do not restore the old provider-loader architecture there.
-- Public provider and API wildcard subpaths are declared in `package.json`. Keep root exports browser-safe.
+- Public subpaths in `package.json`: `.`, `./compat`, `./oauth`, wildcard `./providers/*`, `./api/*`, `./utils/*`, plus `./node/provider-scope`, `./bedrock-provider` (root shim re-exporting `dist/`), `./bun-oauth`. Keep root exports browser-safe.
+- `sideEffects` is non-empty by design: `dist/compat.js`, `dist/images.js`, `dist/providers/images/register-builtins.js` register on import.
 - Message transforms return new structures; never mutate shared input messages.
 
 ## WHERE TO LOOK
@@ -90,3 +92,4 @@ test/                           Faux-first and opt-in live tests
 - Run `npm run check:browser-smoke` from the root for import/export boundary changes.
 - Runtime changes require root `npm run check` and real CLI QA evidence.
 - Read `src/changes.md` and the nearest child `AGENTS.md` before editing provider or middleware internals.
+- Live suites are opt-in through `test/live-api-gates.ts` (`PI_ENABLE_LIVE_API_TESTS` or a per-provider `PI_ENABLE_*` flag); see `test/AGENTS.md` before adding network coverage.

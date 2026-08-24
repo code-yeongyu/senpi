@@ -5,6 +5,7 @@
 ## STRUCTURE
 
 ```text
+src/index.ts                     Public barrel; ".", "./screen", "./registry", "./native" exports
 src/loader.ts, native-loader.ts  Native prebuild discovery and ABI checks
 src/session.ts                   Public session lifecycle
 src/session-native.ts            Native backend adapter
@@ -12,13 +13,16 @@ src/pipe-fallback.ts             child_process fallback when native is absent
 src/session-exit.ts              Exit settlement helpers
 src/registry*.ts                 Session registry and detached ownership
 src/screen.ts                    Headless terminal screen state
+src/quarantine.ts                macOS quarantine detection for prebuilds
 native/prebuilds/                Shipped platform binaries
 native/check-prebuild-fresh.mjs  Prebuild freshness gate
+test/fixtures/*.mjs              Native-addon child processes for callback/worker races
 ```
 
 ## INVARIANTS
 
 - The native ABI constant is intentionally independent of package CalVer. Keep it aligned with `crates/senpi-pty` exports.
+- macOS quarantine is probed via `xattr -p` before loading a prebuild. Detection must never clear the attribute; an unreadable attribute is non-rejecting.
 - Unsupported or missing native bindings select the pipe fallback with a diagnostic; fallback behavior must never be presented as a real PTY.
 - Exit notification settles exactly once across native exit, child exit, startup failure, kill, and disposal races.
 - `kill()` is idempotent and detached-child cleanup owns the full process tree.
@@ -29,6 +33,7 @@ native/check-prebuild-fresh.mjs  Prebuild freshness gate
 
 | Task | Path |
 |---|---|
+| Public API / subpath exports | `src/index.ts` |
 | Native loading/ABI | `src/loader.ts`, `src/native-loader.ts` |
 | Session lifecycle | `src/session.ts`, `src/session-exit.ts` |
 | Fallback process behavior | `src/pipe-fallback.ts` |

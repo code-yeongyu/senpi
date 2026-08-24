@@ -1,5 +1,25 @@
 # changes
 
+## 2026-08-24 - expose abort provenance to interactive rendering
+
+### What changed
+
+- `agent-abort-provenance.ts` exposes the current explicit abort owner across the active and settlement boundaries.
+- `agent-session.ts` exposes that owner through the read-only `currentAbortSource` getter for the interactive renderer.
+
+### Why
+
+- An assistant `stopReason: "aborted"` does not prove that the user cancelled. Provider retry watchdogs can produce the same terminal shape without explicit ownership, while user and system aborts are recorded by `AgentAbortProvenance`.
+- The renderer needs the existing provenance at message finalization so it can persist an accurate user, system, or provider label that remains correct when the transcript is replayed.
+
+### Why an extension could not handle it
+
+- Abort ownership is private AgentSession lifecycle state and the assistant message is finalized before the extension-visible `agent_end` event.
+
+### Expected merge conflict zones
+
+- LOW: `agent-abort-provenance.ts` source getter and the `AgentSession` read-only state getters.
+
 ## 2026-08-23 - retained BTW host session capabilities
 
 ### What changed

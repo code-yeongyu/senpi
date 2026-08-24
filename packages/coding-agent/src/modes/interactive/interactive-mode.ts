@@ -4391,7 +4391,11 @@ export class InteractiveMode {
 					this.toolArgsReveal.flushAll();
 					let errorMessage: string | undefined;
 					if (this.streamingMessage.stopReason === "aborted") {
-						errorMessage = abortedErrorLabel(undefined, this.session.retryAttempt);
+						errorMessage = abortedErrorLabel(
+							this.streamingMessage.errorMessage,
+							this.session.retryAttempt,
+							this.session.currentAbortSource,
+						);
 						this.streamingMessage.errorMessage = errorMessage;
 					}
 					this.syncTrailingAssistantText(this.streamingMessage);
@@ -5207,7 +5211,7 @@ export class InteractiveMode {
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
 							let errorMessage: string;
 							if (message.stopReason === "aborted") {
-								errorMessage = abortedErrorLabel(message.errorMessage, this.session.retryAttempt);
+								errorMessage = abortedErrorLabel(message.errorMessage, 0, undefined);
 							} else {
 								errorMessage = message.errorMessage || "Error";
 							}

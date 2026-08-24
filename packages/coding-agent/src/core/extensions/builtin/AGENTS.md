@@ -46,28 +46,22 @@
 | 38 | `tool-search` | `tool-search/` | Shared tool catalog + `tool_search` exposure tool; loads before MCP, which feeds its tools into the same catalog |
 | 39 | `mcp` | `mcp/` | Built-in MCP client: `mcpServers` config, stdio/http transports, `/mcp` commands, tool exposure policy — kept last so its provider-payload tap observes all co-resident builtin mutations; see `mcp/changes.md` |
 
-Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by resource-loader.ts) and 4 **global default extensions** (resolved fast-path): `diff`, `files`, `prompt-url-widget`, `tps` (in `globalDefaultExtensionFactories`).
-
-Shared non-factory modules in this directory:
-
-- `rule-activation/` — `appendRuleActivation` + renderer/types; consumed by `rules/` and `ttsr/`.
-- `monitor-state-event.ts` — `TerminalMonitorStateEvent` + guard; consumed by `goal/` and `terminal/`.
+Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by resource-loader.ts) and 4 **global default extensions** (resolved fast-path): `diff`, `files`, `prompt-url-widget`, `tps` (in `globalDefaultExtensionFactories`). Shared non-factory modules: `rule-activation/` (appendRuleActivation + renderer, consumed by `rules/` and `ttsr/`) and `monitor-state-event.ts` (consumed by `goal/` and `terminal/`).
 
 ## ADDING A NEW BUILTIN EXTENSION
 
 1. Create `builtin/<name>/index.ts` exporting `default function(pi: ExtensionAPI) { … }`. Single-file extensions go in `builtin/<name>.ts`.
 2. Add to `builtin/index.ts` import block + `builtinExtensions` array — pick registration order with intent.
 3. Add a regression test under `test/suite/<name>-extension.test.ts` using `test/suite/harness.ts`.
-4. If you modify upstream files (rare for new extensions), add a section to `<extension-dir>/changes.md`.
-5. Reach for `ExtensionContext` getters (the `ctx` parameter of event handlers); do NOT cross into `core/` directly.
+4. Reach for `ExtensionContext` getters (the `ctx` parameter of event handlers); do NOT cross into `core/` directly. If you modify upstream files (rare), add a section to `<extension-dir>/changes.md`.
 
 ## CONVENTIONS
 
 - **Subdirectory extensions** ship multi-file: `index.ts` + supporting `.ts` (`registry.ts`, `types.ts`, `parsers.ts`, etc.).
 - **Single-file extensions** are kept flat (`diff.ts`, `files.ts`, `redraws.ts`, `service-tier.ts`, `tps.ts`, `prompt-url-widget.ts`).
-- **`prompt-preset/`** has per-model files (`gpt-5.6.ts`, `claude-opus-4-8.ts`, …) and a shared `file-operations.ts` tuning block. New model = new preset file + entry in `presets.ts`. Models covered: gpt-5.x (incl. `gpt-5.3-codex`), claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, glm-5.3, deepseek-v4-{flash,flash-0731,pro}, grok-4.{5,6}, kimi-k2-{6,7}, kimi-k3.
+- **`prompt-preset/`** has per-model files plus a shared `file-operations.ts` tuning block; new model = new preset file + entry in `presets.ts`. See `prompt-preset/AGENTS.md` for the covered list.
 - **`permission-system/` is a full port** of opencode's permission flow.
-- **`compaction/`** is policy-rich (`policy.ts`, `speculative.ts`, `restoration-tracker.ts`, `circuit-breaker.ts`, `degradation-monitor.ts`, `per-turn-cap.ts`, `tool-truncation.ts`, `checkpoint-state.ts`, `context-reduction.ts`, `openai-remote.ts`, `repair-tool-pairs.ts`, `state.ts`, `todo-bridge.ts`, `prompts.ts`). Touch only with policy tests in lock-step.
+- **`compaction/`** is policy-rich — see `compaction/AGENTS.md` for the sub-policy map; touch only with policy tests in lock-step.
 - **External versions**: `external-versions.json` pins versions of sibling `../pi-extensions` packages used as vendored builtins; refresh with `packages/coding-agent/scripts/sync-builtin-extensions.mjs`.
 
 ## ANTI-PATTERNS
@@ -75,16 +69,12 @@ Shared non-factory modules in this directory:
 - Reordering `builtinExtensions` for cosmetic reasons — registration order is load-bearing for tools and permission hooks.
 - Expecting context inside the factory body — `ExtensionContext` only arrives as the `ctx` parameter of event handlers. Do side effects inside `pi.on("session_start", …)`.
 - Importing from `core/` directly — extensions must use the public `pi.*` API.
-- Adding a new builtin without a regression test in `test/suite/<name>-extension.test.ts`.
 - Splitting an existing single-file extension into a folder "for symmetry" — only split when there's actual code to split.
 
 ## NOTES
 
-- `permission-system/storage.ts` writes JSONL approval logs; don't change the line shape without a migration.
-- `compaction/restoration-tracker.ts` powers the post-compact context restoration feature — see `compaction/changes.md`.
-- `goal/elapsed-ticker.ts` drives the live 'Pursuing goal...' footer refresh on a one-second cadence.
 - MCP search exposure tool is `tool_search`, owned by the registered `tool-search` builtin (`builtin/tool-search/tool.ts`). Do not reintroduce `mcp_search` references anywhere.
-- Prompt presets routinely append the shared `file-operations.ts` tuning block. Mirror this when adding GPT-5.x presets — see `prompt-preset/changes.md` 2026-05-07.
+- Sub-directory detail lives in per-extension `AGENTS.md` files (compaction, mcp, goal, loop, terminal, permission-system, prompt-preset, gpt-apply-patch, claude-sdk-oauth, cursor-cli-oauth).
 
 ---
 Generated: 2026-08-22 | Commit: `a5eed4453`

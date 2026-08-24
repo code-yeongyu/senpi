@@ -1,4 +1,22 @@
 # changes
+
+## 2026-08-24 - provider aborts render with explicit provenance
+
+### What changed
+
+- `abortedErrorLabel` receives internal AgentSession abort provenance so user, system, and source-less provider failures render distinct labels in both streaming and replay/tool-result paths.
+
+### Why
+
+- Provider/watchdog exhaustion must not appear as generic `Operation aborted` or user-style retry cancellation.
+
+### Why an extension could not handle it
+
+- Abort ownership is private AgentSession state consumed by interactive rendering.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` aborted assistant rendering call sites.
 ## 2026-08-24 — streaming head stays single-written while smooth reveal paces (fixes dual-write flicker)
 
 ### What changed

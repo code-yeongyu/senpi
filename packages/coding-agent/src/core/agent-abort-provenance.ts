@@ -1,7 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AgentEndEvent } from "./extensions/types.ts";
 
-type AbortSource = NonNullable<AgentEndEvent["abortSource"]>;
+export type AgentAbortSource = NonNullable<AgentEndEvent["abortSource"]>;
 
 export type JoinedAbort = {
 	readonly abortCurrentAgent: boolean;
@@ -9,7 +9,7 @@ export type JoinedAbort = {
 };
 
 export class AgentAbortProvenance {
-	#source: AbortSource | undefined;
+	#source: AgentAbortSource | undefined;
 	#agentEndEvent: AgentEndEvent | undefined;
 	#settlingAgentEndEvent: AgentEndEvent | undefined;
 	#agentEndBoundaryOpen = false;
@@ -20,7 +20,11 @@ export class AgentAbortProvenance {
 		return this.#agentEndBoundaryOpen || this.#agentEndEvent !== undefined;
 	}
 
-	begin(source: AbortSource): boolean {
+	get currentSource(): AgentAbortSource | undefined {
+		return this.#source ?? this.#agentEndEvent?.abortSource ?? this.#settlingAgentEndEvent?.abortSource;
+	}
+
+	begin(source: AgentAbortSource): boolean {
 		this.#source = source;
 		this.#settlingAgentEndEvent = undefined;
 		this.#agentEndBoundaryOpen = false;
@@ -29,7 +33,7 @@ export class AgentAbortProvenance {
 		return source === "user";
 	}
 
-	join(source: AbortSource, isStreaming: boolean): JoinedAbort {
+	join(source: AgentAbortSource, isStreaming: boolean): JoinedAbort {
 		if (source === "user" && (this.#agentEndEvent !== undefined || this.#agentEndBoundaryOpen)) {
 			this.#source = "user";
 			if (!this.#lateUserJoinDelivered) this.#lateUserJoin = true;
@@ -89,7 +93,7 @@ export class AgentAbortProvenance {
 		this.#settlingAgentEndEvent = undefined;
 	}
 
-	joinOpenBoundary(source: AbortSource): JoinedAbort | undefined {
+	joinOpenBoundary(source: AgentAbortSource): JoinedAbort | undefined {
 		if (!this.#agentEndBoundaryOpen && this.#agentEndEvent === undefined) return undefined;
 		return this.join(source, false);
 	}
