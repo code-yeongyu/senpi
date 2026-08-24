@@ -26,6 +26,7 @@ import {
 } from "../src/core/extensions/runner.ts";
 import type {
 	ExtensionActions,
+	ExtensionCommandContext,
 	ExtensionContext,
 	ExtensionContextActions,
 	ExtensionUIContext,
@@ -42,6 +43,30 @@ describe("ExtensionRunner", () => {
 	let sessionManager: SessionManager;
 	let modelRegistry: ModelRegistry;
 	const defaultKeybindings = new KeybindingsManager().getEffectiveConfig();
+
+	it("keeps command action signatures aligned with the public command context", () => {
+		type ActionNewOptions = NonNullable<Parameters<ExtensionCommandContextActions["newSession"]>[0]>;
+		type ContextNewOptions = NonNullable<Parameters<ExtensionCommandContext["newSession"]>[0]>;
+		type ActionSwitchOptions = NonNullable<Parameters<ExtensionCommandContextActions["switchSession"]>[1]>;
+		type ContextSwitchOptions = NonNullable<Parameters<ExtensionCommandContext["switchSession"]>[1]>;
+		const actionNewGuardKeys: Array<keyof ActionNewOptions> = [
+			"expectedParentSessionId",
+			"expectedSource",
+			"persistInitializedSession",
+			"sessionToolPolicy",
+		];
+		const contextNewGuardKeys: Array<keyof ContextNewOptions> = [
+			"expectedParentSessionId",
+			"expectedSource",
+			"persistInitializedSession",
+			"sessionToolPolicy",
+		];
+		const actionSwitchGuardKeys: Array<keyof ActionSwitchOptions> = ["expectedSessionId", "expectedSource"];
+		const contextSwitchGuardKeys: Array<keyof ContextSwitchOptions> = ["expectedSessionId", "expectedSource"];
+
+		expect(actionNewGuardKeys).toEqual(contextNewGuardKeys);
+		expect(actionSwitchGuardKeys).toEqual(contextSwitchGuardKeys);
+	});
 
 	beforeEach(async () => {
 		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-runner-test-"));

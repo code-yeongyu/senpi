@@ -2354,28 +2354,12 @@ export interface LoadedHookSources {
  * Only needed for interactive mode where extension commands are invokable.
  */
 export interface ExtensionCommandContextActions {
-	waitForIdle: () => Promise<void>;
-	newSession: (options?: {
-		parentSession?: string;
-		setup?: (sessionManager: SessionManager) => Promise<void>;
-		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
-	}) => Promise<{ cancelled: boolean }>;
-	fork: (
-		entryId: string,
-		options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
-	) => Promise<{ cancelled: boolean }>;
-	navigateTree: (
-		targetId: string,
-		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
-	) => Promise<{ cancelled: boolean }>;
-	switchSession: (
-		sessionPath: string,
-		options?: {
-			sessionDir?: string;
-			withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
-		},
-	) => Promise<{ cancelled: boolean }>;
-	reload: () => Promise<void>;
+	waitForIdle: ExtensionCommandContext["waitForIdle"];
+	newSession: ExtensionCommandContext["newSession"];
+	fork: ExtensionCommandContext["fork"];
+	navigateTree: ExtensionCommandContext["navigateTree"];
+	switchSession: ExtensionCommandContext["switchSession"];
+	reload: ExtensionCommandContext["reload"];
 }
 
 /**

@@ -312,13 +312,20 @@ export class AgentSessionRuntime {
 		await this.finishSessionReplacement();
 	}
 
-	private async finishSessionReplacement(withSession?: (ctx: ReplacedSessionContext) => Promise<void>): Promise<void> {
+	private async finishSessionReplacement(
+		withSession?: (ctx: ReplacedSessionContext) => Promise<void>,
+		validateAfterRebind?: () => boolean,
+	): Promise<boolean> {
 		if (this.rebindSession) {
 			await this.rebindSession(this.session);
+		}
+		if (validateAfterRebind && !validateAfterRebind()) {
+			return false;
 		}
 		if (withSession) {
 			await withSession(this.session.createReplacedSessionContext());
 		}
+		return true;
 	}
 
 	async switchSession(
@@ -400,7 +407,21 @@ export class AgentSessionRuntime {
 			});
 			return { cancelled: true };
 		}
-		await this.finishSessionReplacement(options?.withSession);
+		const finished = await this.finishSessionReplacement(
+			options?.withSession,
+			options?.expectedSessionId
+				? () => this.matchesExpectedSessionFile(sessionPath, options.expectedSessionId)
+				: undefined,
+		);
+		if (!finished) {
+			await this.teardownCurrent("resume", previousSessionFile);
+			await this.recoverAfterCancelledTeardown({
+				...previousSession,
+				outgoingSnapshot,
+				projectTrustContextFactory: options?.projectTrustContextFactory,
+			});
+			return { cancelled: true };
+		}
 		return { cancelled: false };
 	}
 
@@ -471,7 +492,17 @@ export class AgentSessionRuntime {
 		if (options?.persistInitializedSession) {
 			this.session.sessionManager.persistInitializedSession();
 		}
-		await this.finishSessionReplacement(options?.withSession);
+		const finished = await this.finishSessionReplacement(
+			options?.withSession,
+			options?.expectedParentSessionId
+				? () => this.matchesExpectedSessionFile(options.parentSession, options.expectedParentSessionId)
+				: undefined,
+		);
+		if (!finished) {
+			await this.teardownCurrent("new", previousSessionFile);
+			await this.recoverAfterCancelledTeardown({ ...previousSession, outgoingSnapshot });
+			return { cancelled: true };
+		}
 		return { cancelled: false };
 	}
 

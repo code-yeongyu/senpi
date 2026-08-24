@@ -955,6 +955,53 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
 
+	it("rejects a parent replaced during host rebind before the new-session callback", async () => {
+		// Given
+		let releaseRebind!: () => void;
+		const rebindReleased = new Promise<void>((resolve) => {
+			releaseRebind = resolve;
+		});
+		let rebindStarted!: () => void;
+		const rebindStartedPromise = new Promise<void>((resolve) => {
+			rebindStarted = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest(() => {});
+		await runtime.session.prompt("hello");
+		const parentSession = runtime.session.sessionFile!;
+		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		const withSession = vi.fn();
+		runtime.setRebindSession(async (session) => {
+			await session.bindExtensions({});
+			if (session.sessionManager.getSessionId() === outgoingSessionId) return;
+			rebindStarted();
+			await rebindReleased;
+		});
+		const replacement = SessionManager.create(tempDir);
+		replacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "replacement" }],
+			timestamp: Date.now(),
+		});
+		replacement.persistInitializedSession();
+
+		// When
+		const newSessionPromise = runtime.newSession({
+			expectedParentSessionId: outgoingSessionId,
+			parentSession,
+			withSession,
+		});
+		await rebindStartedPromise;
+		copyFileSync(replacement.getSessionFile()!, parentSession);
+		releaseRebind();
+		const result = await newSessionPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(withSession).not.toHaveBeenCalled();
+		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
 	it("rejects a switch target replaced while session_shutdown is pending", async () => {
 		// Given
 		let releaseShutdown!: () => void;
@@ -1102,6 +1149,55 @@ describe("AgentSessionRuntime characterization", () => {
 
 		// Then
 		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
+	it("rejects a switch target replaced during host rebind before the replacement callback", async () => {
+		// Given
+		let releaseRebind!: () => void;
+		const rebindReleased = new Promise<void>((resolve) => {
+			releaseRebind = resolve;
+		});
+		let rebindStarted!: () => void;
+		const rebindStartedPromise = new Promise<void>((resolve) => {
+			rebindStarted = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest(() => {});
+		await runtime.session.prompt("hello");
+		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+		const targetSessionFile = target.getSessionFile()!;
+		const withSession = vi.fn();
+		runtime.setRebindSession(async (session) => {
+			await session.bindExtensions({});
+			if (session.sessionManager.getSessionId() !== target.getSessionId()) return;
+			rebindStarted();
+			await rebindReleased;
+		});
+		const replacement = SessionManager.create(tempDir);
+		replacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "replacement" }],
+			timestamp: Date.now(),
+		});
+		replacement.persistInitializedSession();
+
+		// When
+		const switchPromise = runtime.switchSession(targetSessionFile, {
+			expectedSessionId: target.getSessionId(),
+			withSession,
+		});
+		await rebindStartedPromise;
+		copyFileSync(replacement.getSessionFile()!, targetSessionFile);
+		releaseRebind();
+		const result = await switchPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(withSession).not.toHaveBeenCalled();
 		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});

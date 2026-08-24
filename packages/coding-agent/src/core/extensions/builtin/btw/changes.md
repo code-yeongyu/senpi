@@ -96,6 +96,8 @@
   once teardown starts, the outgoing session rejects new prompts until replacement completes.
 - A monotonic prompt-admission generation travels with source expectations, so a streaming-origin
   close cancels if any later queued or direct prompt is submitted while switch vetoes await.
+- Guarded identities revalidate after host rebind and before replacement callbacks; command-action
+  option types derive from the public context signatures so typed hosts retain every guard.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

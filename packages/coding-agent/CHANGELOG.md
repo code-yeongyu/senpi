@@ -25,6 +25,8 @@
   from starting on the outgoing session during shutdown handlers.
 - Streaming-origin BTW closes now track prompt-admission generation, preventing later queued or
   direct submissions during asynchronous switch vetoes from being aborted.
+- Guarded replacements now revalidate after host rebind before callbacks, and typed extension
+  command hosts inherit every public identity/source option.
 
 ### Added
 
