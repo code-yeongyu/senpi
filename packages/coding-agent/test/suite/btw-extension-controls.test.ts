@@ -1,11 +1,12 @@
 import { setKittyProtocolActive } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import btwExtension from "../../src/core/extensions/builtin/btw/index.ts";
+import btwExtension, { clearBtwSessionActionReservationsForTest } from "../../src/core/extensions/builtin/btw/index.ts";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
 
 afterEach(() => {
 	setKittyProtocolActive(false);
+	clearBtwSessionActionReservationsForTest();
 });
 
 describe("BTW extension TUI controls", () => {
@@ -184,5 +185,102 @@ describe("BTW extension TUI controls", () => {
 		expect(sendUserMessage).toHaveBeenCalledWith("/btw", {
 			expandPromptTemplates: true,
 		});
+	});
+
+	it("carries a pending switch reservation into the rebound side generation", () => {
+		// Given
+		const mainHandlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+		const mainSend = vi.fn();
+		btwExtension({
+			on: vi.fn((event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => {
+				mainHandlers.set(event, handler);
+			}),
+			registerCommand: vi.fn(),
+			sendUserMessage: mainSend,
+			setActiveTools: vi.fn(),
+			getThinkingLevel: vi.fn(() => "off"),
+		} as unknown as ExtensionAPI);
+		let mainTerminal: ((data: string) => { consume?: boolean; data?: string } | undefined) | undefined;
+		const mainCtx = {
+			mode: "tui",
+			isIdle: () => true,
+			resolveOwnCommandInvocationName: (name: string) => name,
+			sessionManager: {
+				getSessionId: () => "main",
+				getSessionDir: () => "/sessions",
+				getSessionFile: () => "/sessions/main.jsonl",
+				getEntries: () => [],
+			},
+			ui: {
+				matchesKeybinding: (data: string, binding: Parameters<KeybindingsManager["matches"]>[1]) =>
+					data === "switch" && binding === "app.btw.switch",
+				onTerminalInput: (handler: (data: string) => { consume?: boolean; data?: string } | undefined) => {
+					mainTerminal = handler;
+					return () => undefined;
+				},
+			},
+		} as unknown as ExtensionContext;
+		mainHandlers.get("session_start")?.(
+			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+			mainCtx,
+		);
+		mainTerminal?.("switch");
+
+		const sideHandlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+		const sideSend = vi.fn();
+		btwExtension({
+			on: vi.fn((event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => {
+				sideHandlers.set(event, handler);
+			}),
+			registerCommand: vi.fn(),
+			sendUserMessage: sideSend,
+			setActiveTools: vi.fn(),
+			getThinkingLevel: vi.fn(() => "off"),
+		} as unknown as ExtensionAPI);
+		let sideTerminal: ((data: string) => { consume?: boolean; data?: string } | undefined) | undefined;
+		const sideCtx = {
+			mode: "tui",
+			isIdle: () => false,
+			resolveOwnCommandInvocationName: (name: string) => name,
+			sessionManager: {
+				getSessionId: () => "side",
+				getSessionDir: () => "/sessions",
+				getSessionFile: () => "/sessions/side.jsonl",
+				getEntries: () => [
+					{
+						type: "custom",
+						customType: "btw-side",
+						data: {
+							version: 1,
+							parentSessionPath: "/sessions/main.jsonl",
+							parentSessionId: "main",
+							ordinal: 1,
+							summary: "side",
+							createdAt: "2026-08-23T00:00:00.000Z",
+						},
+					},
+				],
+			},
+			ui: {
+				matchesKeybinding: (data: string, binding: Parameters<KeybindingsManager["matches"]>[1]) =>
+					data === "close" && binding === "app.clear",
+				onTerminalInput: (handler: (data: string) => { consume?: boolean; data?: string } | undefined) => {
+					sideTerminal = handler;
+					return () => undefined;
+				},
+			},
+		} as unknown as ExtensionContext;
+		sideHandlers.get("session_start")?.(
+			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+			sideCtx,
+		);
+
+		// When
+		const closeDisposition = sideTerminal?.("close");
+
+		// Then
+		expect(mainSend).toHaveBeenCalledWith("/btw", { expandPromptTemplates: true });
+		expect(closeDisposition).toEqual({ consume: true });
+		expect(sideSend).not.toHaveBeenCalled();
 	});
 });

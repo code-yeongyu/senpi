@@ -95,6 +95,10 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("model_select", async (event, ctx) => {
+		if (ctx.isToolUseDisabled?.()) {
+			ctx.ui.setHeader(undefined);
+			return { systemPrompt: null };
+		}
 		refreshHeader(ctx, event);
 		// Returning null resets to the base prompt, which already carries the
 		// user's custom prompt and appends.

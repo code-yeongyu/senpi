@@ -71,6 +71,8 @@
 - New BTW creation requires selected and settled Main IDs to match the active visible parent ID.
 - Catalog custom-data scans prefilter rows by effective cwd plus the active session's persisted cwd.
 - Retained creation rechecks the parent header ID after auth and immediately before `newSession()`.
+- Parent-path keyed action reservations survive extension-runner rebind until replacement callbacks settle.
+- Disabled model selection resets prompt presets instead of reinstalling tool guidance.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

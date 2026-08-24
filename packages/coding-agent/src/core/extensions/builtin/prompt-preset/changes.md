@@ -5,7 +5,8 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/builtin/prompt-preset/index.ts`: model preset
-  replacement returns before model/settings resolution when the typed session policy disables tools.
+  replacement returns before model/settings resolution when the typed session policy disables tools;
+  model selection also clears the header and resets any installed preset.
 
 ### Why
 

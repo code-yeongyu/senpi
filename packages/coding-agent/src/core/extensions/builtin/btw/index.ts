@@ -28,27 +28,42 @@ interface ActiveBtw {
 	settled: boolean;
 }
 
+type SessionAction = "switch" | "close" | "main";
+type SessionActionState = "idle" | `${SessionAction}-pending` | `${SessionAction}-running`;
+const sessionActionStates = new Map<string, SessionActionState>();
+
+export function clearBtwSessionActionReservationsForTest(): void {
+	sessionActionStates.clear();
+}
+
+function sessionActionKey(ctx: ExtensionContext): string {
+	const currentSide = readCurrentBtwSide(ctx.sessionManager);
+	return (
+		currentSide?.metadata.parentSessionPath ??
+		ctx.sessionManager.getSessionFile() ??
+		`session:${ctx.sessionManager.getSessionId()}`
+	);
+}
+
+function reserveSessionAction(key: string, action: SessionAction): boolean {
+	if ((sessionActionStates.get(key) ?? "idle") !== "idle") return false;
+	sessionActionStates.set(key, `${action}-pending`);
+	return true;
+}
+
+function beginSessionAction(key: string, action: SessionAction): boolean {
+	const state = sessionActionStates.get(key) ?? "idle";
+	if (state !== "idle" && state !== `${action}-pending`) return false;
+	sessionActionStates.set(key, `${action}-running`);
+	return true;
+}
+
+function finishSessionAction(key: string, action: SessionAction): void {
+	if (sessionActionStates.get(key) === `${action}-running`) sessionActionStates.delete(key);
+}
+
 export default function btwExtension(pi: ExtensionAPI) {
 	let active: ActiveBtw | undefined;
-	type SessionAction = "switch" | "close" | "main";
-	type SessionActionState = "idle" | `${SessionAction}-pending` | `${SessionAction}-running`;
-	let sessionActionState: SessionActionState = "idle";
-
-	const reserveSessionAction = (action: SessionAction): boolean => {
-		if (sessionActionState !== "idle") return false;
-		sessionActionState = `${action}-pending`;
-		return true;
-	};
-
-	const beginSessionAction = (action: SessionAction): boolean => {
-		if (sessionActionState !== "idle" && sessionActionState !== `${action}-pending`) return false;
-		sessionActionState = `${action}-running`;
-		return true;
-	};
-
-	const finishSessionAction = (action: SessionAction): void => {
-		if (sessionActionState === `${action}-running`) sessionActionState = "idle";
-	};
 
 	function dismiss(ctx: ExtensionContext, options: { abort: boolean }): void {
 		const current = active;
@@ -70,9 +85,9 @@ export default function btwExtension(pi: ExtensionAPI) {
 			isCurrentSide: () => readCurrentBtwSide(ctx.sessionManager) !== undefined,
 			isIdle: () => ctx.isIdle(),
 			isDialogActive: () => ctx.ui.isDialogActive?.() ?? false,
-			tryBeginBtwCommand: () => reserveSessionAction("switch"),
-			tryBeginBtwClose: () => reserveSessionAction("close"),
-			tryBeginBtwMain: () => reserveSessionAction("main"),
+			tryBeginBtwCommand: () => reserveSessionAction(sessionActionKey(ctx), "switch"),
+			tryBeginBtwClose: () => reserveSessionAction(sessionActionKey(ctx), "close"),
+			tryBeginBtwMain: () => reserveSessionAction(sessionActionKey(ctx), "main"),
 			getBtwInvocationName: (command) => ctx.resolveOwnCommandInvocationName(command),
 			matchesKeybinding: (data, keybinding) => ctx.ui.matchesKeybinding?.(data, keybinding) ?? false,
 			dispatch: (command) => {
@@ -97,14 +112,15 @@ export default function btwExtension(pi: ExtensionAPI) {
 	pi.registerCommand("btw-main", {
 		description: COMMAND_DESCRIPTIONS["btw-main"],
 		handler: async (_args, ctx) => {
-			if (!beginSessionAction("main")) return;
+			const actionKey = sessionActionKey(ctx);
+			if (!beginSessionAction(actionKey, "main")) return;
 			try {
 				await returnToBtwParent({
 					ctx,
 					current: readCurrentBtwSide(ctx.sessionManager),
 				});
 			} finally {
-				finishSessionAction("main");
+				finishSessionAction(actionKey, "main");
 			}
 		},
 	});
@@ -112,7 +128,8 @@ export default function btwExtension(pi: ExtensionAPI) {
 	pi.registerCommand("btw-close", {
 		description: COMMAND_DESCRIPTIONS["btw-close"],
 		handler: async (_args, ctx) => {
-			if (!beginSessionAction("close")) return;
+			const actionKey = sessionActionKey(ctx);
+			if (!beginSessionAction(actionKey, "close")) return;
 			try {
 				await closeRetainedBtwSide({
 					ctx,
@@ -120,7 +137,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 					deleteSessionFile: deleteBtwSessionFile,
 				});
 			} finally {
-				finishSessionAction("close");
+				finishSessionAction(actionKey, "close");
 			}
 		},
 	});
@@ -130,7 +147,8 @@ export default function btwExtension(pi: ExtensionAPI) {
 		argumentHint: "<question>",
 		handler: async (args, ctx) => {
 			if (ctx.mode === "tui" && ctx.hasUI) {
-				if (!beginSessionAction("switch")) return;
+				const actionKey = sessionActionKey(ctx);
+				if (!beginSessionAction(actionKey, "switch")) return;
 				dismiss(ctx, { abort: true });
 				try {
 					await runBtwTuiCommand(args, ctx, defaultBtwTuiCommandDependencies);
@@ -138,7 +156,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 					const message = error instanceof Error ? error.message : String(error);
 					ctx.ui.notify(`/btw failed: ${message}`, "error");
 				} finally {
-					finishSessionAction("switch");
+					finishSessionAction(actionKey, "switch");
 				}
 				return;
 			}

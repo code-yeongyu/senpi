@@ -151,6 +151,38 @@ describe("native tool prompt policy", () => {
 		expect(result).toBeUndefined();
 	});
 
+	it("resets prompt presets when a disabled session selects a model", async () => {
+		// Given
+		const handler = captureHandler<
+			(
+				event: {
+					model: { id: string; provider: string; api: string };
+					systemPromptOptions: Record<string, unknown>;
+				},
+				ctx: ExtensionContext,
+			) => Promise<{ systemPrompt: null; systemPromptName?: string }>
+		>(promptPresetExtension, "model_select");
+		const setHeader = vi.fn();
+		const ctx = {
+			cwd: "/repo",
+			isToolUseDisabled: () => true,
+			ui: { setHeader },
+		} as unknown as ExtensionContext;
+
+		// When
+		const result = await handler(
+			{
+				model: { id: "gpt-5.6", provider: "openai", api: "openai-responses" },
+				systemPromptOptions: { cwd: "/repo", selectedTools: [] },
+			},
+			ctx,
+		);
+
+		// Then
+		expect(result).toEqual({ systemPrompt: null });
+		expect(setHeader).toHaveBeenCalledWith(undefined);
+	});
+
 	it("does not attach or inject MCP instructions when session tools are disabled", async () => {
 		// Given
 		const attachSession = vi.fn(async () => undefined);
