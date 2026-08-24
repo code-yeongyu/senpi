@@ -321,7 +321,7 @@ describe("cursor-cli-oauth stream mapping", () => {
 		});
 	});
 
-	it("renders tool frames as display-only blocks labelled as executed by the Cursor CLI", async () => {
+	it("keeps Cursor CLI tool protocol frames out of assistant text", async () => {
 		const directory = temporaryDirectory();
 		const deps: CursorCliStreamDeps = {
 			cwd: directory,
@@ -336,12 +336,12 @@ describe("cursor-cli-oauth stream mapping", () => {
 		const message = doneMessage(events);
 
 		expect(message.content.some((block) => block.type === "toolCall")).toBe(false);
-		const rendered = textBlocks(message).join("\n");
-		expect(rendered).toContain("executed by the Cursor CLI");
-		// Untrusted tool output stays inside the delimited display region.
-		const withoutDisplayRegions = rendered.replace(/<cursor-cli-tool>[\s\S]*?<\/cursor-cli-tool>/g, "");
-		expect(withoutDisplayRegions).not.toContain("tooltest-force-77");
-		expect(rendered).toContain("tooltest-force-77");
+		expect(textDeltas(events)).toEqual(["TOOLS OK"]);
+		expect(textBlocks(message)).toEqual(["TOOLS OK"]);
+		const rendered = textBlocks(message).join("");
+		expect(rendered).not.toContain("<cursor-cli-tool>");
+		expect(rendered).not.toContain("shellToolCall");
+		expect(rendered).not.toContain("tooltest-force-77");
 	});
 
 	it("surfaces a zero-exit turn with no assistant events as an error, never an empty success", async () => {
