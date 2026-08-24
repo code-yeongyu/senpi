@@ -340,8 +340,8 @@ async function promptConfirm(message: string): Promise<boolean> {
 			output: process.stdout,
 		});
 		rl.question(`${message} [y/N] `, (answer) => {
-			rl.close();
 			resolve(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
+			rl.close();
 		});
 		rl.on("close", () => resolve(false));
 	});

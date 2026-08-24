@@ -1,5 +1,25 @@
 # changes
 
+## 2026-08-24 - Preserve interactive cross-project session confirmations
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: settle an answered confirmation before closing readline so `y` and `yes` can reach the cross-project session fork.
+- `packages/coding-agent/test/suite/regressions/756-session-cross-project-resume.test.ts`: drive the real interactive `createSessionManager()` branch and verify that confirmation creates a fork in the current project.
+
+### Why
+
+- `rl.close()` emits `close` synchronously, so calling it before resolving the parsed answer let the fallback listener settle the promise as `false` and turned every affirmative response into `Aborted.`
+
+### Why an extension could not handle it
+
+- Cross-project session confirmation runs in the core CLI session-resolution path before extensions can take over.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts` `promptConfirm`
+- `packages/coding-agent/test/suite/regressions/756-session-cross-project-resume.test.ts`
+
 ## 2026-08-22 - emit agent_idle after settlement-deferred turns resolve
 
 ### What changed

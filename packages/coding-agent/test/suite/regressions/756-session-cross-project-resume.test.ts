@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -29,10 +29,12 @@ assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const cliPath = resolve(__dirname, "../../../src/cli.ts");
 const cliMainPath = resolve(__dirname, "../../../src/cli-main.ts");
+const mainPath = resolve(__dirname, "../../../src/main.ts");
 const rootTsconfigPath = resolve(__dirname, "../../../../..", "tsconfig.json");
 const SESSION_ID = "0197f6e4-4cf9-7f44-a2d8-f8f7f49ee9d3";
 const FORK_PROMPT = "Fork this session into current directory?";
 const CROSS_PROJECT_NOTICE = "Session found in different project:";
+const FORK_COMPLETE_SENTINEL = "SESSION_FORKED";
 const CHILD_TIMEOUT_MS = 15_000;
 const ANSI_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
 
@@ -120,11 +122,22 @@ function interactiveTtyArgs(fixture: CliFixture): string[] {
 	return ["--input-type=module", "-e", bootstrap];
 }
 
+function interactiveConfirmArgs(fixture: CliFixture): string[] {
+	const bootstrap = [
+		"process.stdin.isTTY = true;",
+		"process.stdout.isTTY = true;",
+		`const { createSessionManager } = await import(${JSON.stringify(pathToFileURL(mainPath).href)});`,
+		`await createSessionManager({ session: ${JSON.stringify(SESSION_ID)} }, ${JSON.stringify(fixture.projectDir)}, ${JSON.stringify(fixture.sessionDir)}, undefined, "interactive");`,
+		`process.stdout.write(${JSON.stringify(`${FORK_COMPLETE_SENTINEL}\n`)}, () => process.exit(0));`,
+	].join("\n");
+	return ["--input-type=module", "-e", bootstrap];
+}
+
 function stripAnsi(value: string): string {
 	return value.replace(ANSI_PATTERN, "");
 }
 
-async function runCli(args: string[], fixture: CliFixture): Promise<CliResult> {
+async function runCli(args: string[], fixture: CliFixture, stdinInput?: string): Promise<CliResult> {
 	const child = spawn(process.execPath, args, {
 		cwd: fixture.projectDir,
 		env: {
@@ -133,9 +146,12 @@ async function runCli(args: string[], fixture: CliFixture): Promise<CliResult> {
 			PI_OFFLINE: "1",
 			TSX_TSCONFIG_PATH: rootTsconfigPath,
 		},
-		stdio: ["ignore", "pipe", "pipe"],
+		stdio: [stdinInput === undefined ? "ignore" : "pipe", "pipe", "pipe"],
 	});
 	liveChildren.add(child);
+	if (stdinInput !== undefined) {
+		child.stdin?.write(stdinInput);
+	}
 
 	let captured = "";
 	child.stdout?.on("data", (chunk: Buffer) => {
@@ -189,5 +205,26 @@ describe("issue #756 cross-project --session resume", () => {
 		expect(result.output).toContain(CROSS_PROJECT_NOTICE);
 		expect(result.output).toContain(`--fork '${SESSION_ID}'`);
 		expect(result.output).not.toContain(FORK_PROMPT);
+	});
+
+	it("forks when an interactive confirmation answers yes", async () => {
+		const fixture = createFixture();
+
+		const result = await runCli(interactiveConfirmArgs(fixture), fixture, "y\n");
+
+		expect(result.timedOut).toBe(false);
+		expect(result.code).toBe(0);
+		expect(result.output).toContain(FORK_COMPLETE_SENTINEL);
+
+		const forkFiles = readdirSync(fixture.sessionDir).filter(
+			(name) => name.endsWith(".jsonl") && name !== `${SESSION_ID}.jsonl`,
+		);
+		expect(forkFiles).toHaveLength(1);
+		const header = JSON.parse(readFileSync(join(fixture.sessionDir, forkFiles[0]), "utf8").split("\n", 1)[0]) as {
+			cwd: string;
+			id: string;
+		};
+		expect(header.cwd).toBe(fixture.projectDir);
+		expect(header.id).not.toBe(SESSION_ID);
 	});
 });
