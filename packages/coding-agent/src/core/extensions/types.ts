@@ -440,6 +440,8 @@ export interface ExtensionContext {
 	thinkingLevel?: ThinkingLevel;
 	/** Whether the agent is idle (not streaming) */
 	isIdle(): boolean;
+	/** Monotonic prompt-admission generation for this session. */
+	getSourceActivityGeneration(): number;
 	/** Whether the current session forbids all tool use. */
 	isToolUseDisabled?(): boolean;
 	/** Resolve one command registered by this extension to its collision-safe invocation name. */
@@ -561,6 +563,7 @@ export interface SessionSourceExpectation {
 	sessionId: string;
 	leafId: string | null;
 	wasIdle: boolean;
+	activityGeneration: number;
 }
 
 /**
@@ -2301,6 +2304,7 @@ export interface ExtensionContextActions {
 	getScopedModels: () => readonly ScopedModel[];
 	getAgentDir?: () => string;
 	isIdle: () => boolean;
+	getSourceActivityGeneration?: () => number;
 	isProjectTrusted: () => boolean;
 	getSignal: () => AbortSignal | undefined;
 	abort: (source?: "user" | "system") => void;

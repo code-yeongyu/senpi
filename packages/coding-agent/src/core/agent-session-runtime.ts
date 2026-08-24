@@ -184,6 +184,7 @@ export class AgentSessionRuntime {
 	private matchesExpectedSource(expectedSource: SessionSourceExpectation | undefined): boolean {
 		if (!expectedSource) return true;
 		if (this.session.sessionManager.getSessionId() !== expectedSource.sessionId) return false;
+		if (this.session.sourceActivityGeneration !== expectedSource.activityGeneration) return false;
 		if (!expectedSource.wasIdle) return true;
 		return this.session.isIdle && this.session.sessionManager.getLeafId() === expectedSource.leafId;
 	}

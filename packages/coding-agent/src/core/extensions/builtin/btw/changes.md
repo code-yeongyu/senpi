@@ -94,6 +94,8 @@
   passes source ID/leaf expectations so activity begun during a switch veto cancels replacement.
 - Source expectations record whether the command began idle, preserving streaming Ctrl+C close;
   once teardown starts, the outgoing session rejects new prompts until replacement completes.
+- A monotonic prompt-admission generation travels with source expectations, so a streaming-origin
+  close cancels if any later queued or direct prompt is submitted while switch vetoes await.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

@@ -23,6 +23,8 @@
   activity or tree generation changes during asynchronous switch vetoes.
 - Streaming Ctrl+C close remains destructive, while guarded teardown prevents any later prompt
   from starting on the outgoing session during shutdown handlers.
+- Streaming-origin BTW closes now track prompt-admission generation, preventing later queued or
+  direct submissions during asynchronous switch vetoes from being aborted.
 
 ### Added
 

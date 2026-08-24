@@ -17,6 +17,17 @@ export interface DeleteSessionFileResult {
 	error?: string;
 }
 
+export function captureBtwSourceExpectation(
+	ctx: Pick<ExtensionCommandContext, "getSourceActivityGeneration" | "isIdle" | "sessionManager">,
+): SessionSourceExpectation {
+	return {
+		sessionId: ctx.sessionManager.getSessionId(),
+		leafId: ctx.sessionManager.getLeafId(),
+		wasIdle: ctx.isIdle(),
+		activityGeneration: ctx.getSourceActivityGeneration(),
+	};
+}
+
 export function createBtwParentSwitchOptions(
 	metadata: BtwSideMetadata,
 	sessionDir: string,
@@ -93,9 +104,9 @@ export async function returnToBtwParent(input: {
 	}
 	if (!hasMatchingBtwParent(input.ctx, input.current)) return;
 	const options = createBtwParentSwitchOptions(input.current.metadata, input.current.sessionDir, {
+		...captureBtwSourceExpectation(input.ctx),
 		sessionId: input.current.sessionId,
 		leafId: input.current.sourceLeafId,
-		wasIdle: input.ctx.isIdle(),
 	});
 	await input.ctx.switchSession(input.current.metadata.parentSessionPath, options);
 }
@@ -114,9 +125,9 @@ export async function closeRetainedBtwSide(input: {
 	await input.ctx.switchSession(current.metadata.parentSessionPath, {
 		expectedSessionId: current.metadata.parentSessionId,
 		expectedSource: {
+			...captureBtwSourceExpectation(input.ctx),
 			sessionId: current.sessionId,
 			leafId: current.sourceLeafId,
-			wasIdle: input.ctx.isIdle(),
 		},
 		sessionDir: current.sessionDir,
 		withSession: async (nextCtx) => {

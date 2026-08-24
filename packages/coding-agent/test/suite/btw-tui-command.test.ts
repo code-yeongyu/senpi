@@ -54,6 +54,7 @@ function createHarness(selections: Array<string | undefined> = []) {
 	);
 	const ctx = {
 		cwd: "/repo",
+		getSourceActivityGeneration: () => 1,
 		isIdle: () => true,
 		sessionManager: {
 			getSessionId: () => "main",
@@ -181,7 +182,7 @@ describe("runBtwTuiCommand", () => {
 		]);
 		expect(harness.switchSession).toHaveBeenCalledWith("/sessions/side-1.jsonl", {
 			expectedSessionId: "side-1",
-			expectedSource: { sessionId: "main", leafId: "main-leaf", wasIdle: true },
+			expectedSource: { sessionId: "main", leafId: "main-leaf", wasIdle: true, activityGeneration: 1 },
 		});
 		expect(harness.waitForIdle).toHaveBeenCalledTimes(2);
 		expect(harness.waitForIdle.mock.invocationCallOrder[0]).toBeLessThan(
@@ -213,7 +214,7 @@ describe("runBtwTuiCommand", () => {
 			"/sessions/main.jsonl",
 			expect.objectContaining({
 				expectedSessionId: "main",
-				expectedSource: { sessionId: "main", leafId: "main-leaf", wasIdle: true },
+				expectedSource: { sessionId: "main", leafId: "main-leaf", wasIdle: true, activityGeneration: 1 },
 				sessionDir: "/configured/sessions",
 				withSession: expect.any(Function),
 			}),
@@ -283,7 +284,7 @@ describe("runBtwTuiCommand", () => {
 		expect(harness.switchSession).toHaveBeenCalledOnce();
 		expect(harness.switchSession).toHaveBeenCalledWith("/sessions/side-1.jsonl", {
 			expectedSessionId: "side-1",
-			expectedSource: { sessionId: "main", leafId: "main-leaf", wasIdle: true },
+			expectedSource: { sessionId: "main", leafId: "main-leaf", wasIdle: true, activityGeneration: 1 },
 		});
 	});
 
@@ -301,7 +302,7 @@ describe("runBtwTuiCommand", () => {
 		// Then
 		expect(harness.switchSession).toHaveBeenCalledWith("/sessions/side-1.jsonl", {
 			expectedSessionId: "side-1",
-			expectedSource: { sessionId: "main", leafId: "main-leaf", wasIdle: true },
+			expectedSource: { sessionId: "main", leafId: "main-leaf", wasIdle: true, activityGeneration: 1 },
 		});
 		expect(harness.notify).toHaveBeenCalledWith("That BTW session no longer exists. Refreshing the list.", "warning");
 	});

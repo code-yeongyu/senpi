@@ -385,6 +385,7 @@ export class ExtensionRunner {
 	private getServiceTier: () => ServiceTier | undefined = () => undefined;
 	private getScopedModels: () => readonly ScopedModel[] = () => [];
 	private isIdleFn: () => boolean = () => true;
+	private getSourceActivityGenerationFn: () => number = () => 0;
 	private isProjectTrustedFn: () => boolean = () => true;
 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
 	private waitForIdleFn: () => Promise<void> = async () => {};
@@ -499,6 +500,9 @@ export class ExtensionRunner {
 		this.getServiceTier = contextActions.getServiceTier;
 		this.getScopedModels = contextActions.getScopedModels;
 		this.isIdleFn = contextActions.isIdle;
+		if (contextActions.getSourceActivityGeneration) {
+			this.getSourceActivityGenerationFn = contextActions.getSourceActivityGeneration;
+		}
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
 		this.getSignalFn = contextActions.getSignal;
 		this.abortFn = contextActions.abort;
@@ -1056,6 +1060,10 @@ export class ExtensionRunner {
 			isIdle: () => {
 				runner.assertActive();
 				return runner.isIdleFn();
+			},
+			getSourceActivityGeneration: () => {
+				runner.assertActive();
+				return runner.getSourceActivityGenerationFn();
 			},
 			isToolUseDisabled: () => {
 				runner.assertActive();

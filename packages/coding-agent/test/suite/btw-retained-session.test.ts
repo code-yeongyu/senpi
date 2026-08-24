@@ -87,6 +87,7 @@ function createHarness() {
 		model: { provider: "faux", id: "faux-2" },
 		modelRegistry: { checkAuth, hasConfiguredAuth },
 		thinkingLevel: "high",
+		getSourceActivityGeneration: () => 1,
 		isIdle,
 		ui: { notify },
 		inspectSessionMetadata,
@@ -187,8 +188,8 @@ describe("createRetainedBtwSide", () => {
 			"main",
 		]);
 		expect(harness.newSession.mock.calls.map(([options]) => options?.expectedSource)).toEqual([
-			{ sessionId: "main", leafId: "main-active-leaf", wasIdle: true },
-			{ sessionId: "main", leafId: "main-active-leaf", wasIdle: true },
+			{ sessionId: "main", leafId: "main-active-leaf", wasIdle: true, activityGeneration: 1 },
+			{ sessionId: "main", leafId: "main-active-leaf", wasIdle: true, activityGeneration: 1 },
 		]);
 		expect(harness.newSession.mock.calls.map(([options]) => options?.sessionToolPolicy)).toEqual([
 			{ version: 1, tools: "disabled" },

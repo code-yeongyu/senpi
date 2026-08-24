@@ -434,9 +434,19 @@ describe("AgentSessionRuntime characterization", () => {
 		// When
 		const switchPromise = runtime.switchSession(target.getSessionFile()!, {
 			expectedSessionId: target.getSessionId(),
-			expectedSource: { sessionId: sourceSessionId, leafId: sourceLeafId, wasIdle: true },
+			expectedSource: {
+				sessionId: sourceSessionId,
+				leafId: sourceLeafId,
+				wasIdle: true,
+				activityGeneration: runtime.session.sourceActivityGeneration,
+			},
 		} as Parameters<typeof runtime.switchSession>[1] & {
-			expectedSource: { sessionId: string; leafId: string | null; wasIdle: boolean };
+			expectedSource: {
+				sessionId: string;
+				leafId: string | null;
+				wasIdle: boolean;
+				activityGeneration: number;
+			};
 		});
 		await beforeSwitchStartedPromise;
 		let unsubscribeAgentStart = () => {};
@@ -485,10 +495,20 @@ describe("AgentSessionRuntime characterization", () => {
 		// When
 		const newSessionPromise = runtime.newSession({
 			expectedParentSessionId: sourceSessionId,
-			expectedSource: { sessionId: sourceSessionId, leafId: sourceLeafId, wasIdle: true },
+			expectedSource: {
+				sessionId: sourceSessionId,
+				leafId: sourceLeafId,
+				wasIdle: true,
+				activityGeneration: runtime.session.sourceActivityGeneration,
+			},
 			parentSession,
 		} as Parameters<typeof runtime.newSession>[0] & {
-			expectedSource: { sessionId: string; leafId: string | null; wasIdle: boolean };
+			expectedSource: {
+				sessionId: string;
+				leafId: string | null;
+				wasIdle: boolean;
+				activityGeneration: number;
+			};
 		});
 		await beforeSwitchStartedPromise;
 		let unsubscribeAgentStart = () => {};
@@ -529,6 +549,7 @@ describe("AgentSessionRuntime characterization", () => {
 			sessionId: runtime.session.sessionManager.getSessionId(),
 			leafId: runtime.session.sessionManager.getLeafId(),
 			wasIdle: false,
+			activityGeneration: runtime.session.sourceActivityGeneration,
 		};
 		const target = SessionManager.create(tempDir);
 		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
@@ -539,13 +560,85 @@ describe("AgentSessionRuntime characterization", () => {
 			expectedSessionId: target.getSessionId(),
 			expectedSource,
 		} as Parameters<typeof runtime.switchSession>[1] & {
-			expectedSource: { sessionId: string; leafId: string | null; wasIdle: boolean };
+			expectedSource: {
+				sessionId: string;
+				leafId: string | null;
+				wasIdle: boolean;
+				activityGeneration: number;
+			};
 		});
 		void activeTurn;
 
 		// Then
 		expect(result).toEqual({ cancelled: false });
 		expect(runtime.session.sessionManager.getSessionId()).toBe(target.getSessionId());
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
+	it("cancels a streaming-origin switch when a later user message appears during the veto", async () => {
+		// Given
+		let releaseBeforeSwitch!: () => void;
+		const beforeSwitchReleased = new Promise<void>((resolve) => {
+			releaseBeforeSwitch = resolve;
+		});
+		let beforeSwitchStarted!: () => void;
+		const beforeSwitchStartedPromise = new Promise<void>((resolve) => {
+			beforeSwitchStarted = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest((pi) => {
+			pi.on("session_before_switch", async (event) => {
+				if (event.reason !== "resume") return;
+				beforeSwitchStarted();
+				await beforeSwitchReleased;
+			});
+		});
+		let unsubscribeAgentStart = () => {};
+		const agentStarted = new Promise<void>((resolve) => {
+			unsubscribeAgentStart = runtime.session.subscribe((event) => {
+				if (event.type !== "agent_start") return;
+				unsubscribeAgentStart();
+				resolve();
+			});
+		});
+		const activeTurn = runtime.session.prompt("streaming turn");
+		await agentStarted;
+		const sourceSessionId = runtime.session.sessionManager.getSessionId();
+		const expectedSource = {
+			sessionId: sourceSessionId,
+			leafId: runtime.session.sessionManager.getLeafId(),
+			wasIdle: false,
+			activityGeneration: (
+				runtime.session as unknown as {
+					sourceActivityGeneration: number;
+				}
+			).sourceActivityGeneration,
+		};
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+
+		// When
+		const switchPromise = runtime.switchSession(target.getSessionFile()!, {
+			expectedSessionId: target.getSessionId(),
+			expectedSource,
+		} as Parameters<typeof runtime.switchSession>[1] & {
+			expectedSource: {
+				sessionId: string;
+				leafId: string | null;
+				wasIdle: boolean;
+				activityGeneration: number;
+			};
+		});
+		await beforeSwitchStartedPromise;
+		const laterTurn = runtime.session.prompt("later turn", { streamingBehavior: "followUp" });
+		releaseBeforeSwitch();
+		const result = await switchPromise;
+		void activeTurn;
+		void laterTurn;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionManager.getSessionId()).toBe(sourceSessionId);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
 
@@ -571,6 +664,7 @@ describe("AgentSessionRuntime characterization", () => {
 			sessionId: runtime.session.sessionManager.getSessionId(),
 			leafId: runtime.session.sessionManager.getLeafId(),
 			wasIdle: true,
+			activityGeneration: runtime.session.sourceActivityGeneration,
 		};
 		const target = SessionManager.create(tempDir);
 		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
@@ -579,7 +673,12 @@ describe("AgentSessionRuntime characterization", () => {
 			expectedSessionId: target.getSessionId(),
 			expectedSource,
 		} as Parameters<typeof runtime.switchSession>[1] & {
-			expectedSource: { sessionId: string; leafId: string | null; wasIdle: boolean };
+			expectedSource: {
+				sessionId: string;
+				leafId: string | null;
+				wasIdle: boolean;
+				activityGeneration: number;
+			};
 		});
 		await shutdownStartedPromise;
 

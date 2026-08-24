@@ -80,6 +80,8 @@
   guarded new/resume operations reject active or leaf-changed sessions after async vetoes.
 - Source guards distinguish pre-existing streaming actions from activity begun during vetoes, and
   AgentSession blocks new prompt admission after guarded teardown starts.
+- AgentSession exposes a monotonic prompt-admission generation through extension contexts; BTW
+  source guards use it to reject later queued/direct submissions during streaming switch vetoes.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

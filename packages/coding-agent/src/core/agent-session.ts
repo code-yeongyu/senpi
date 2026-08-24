@@ -842,6 +842,7 @@ export class AgentSession {
 	private readonly _messageEndsAwaitingPersistence = new Set<AgentMessage>();
 	private _isAgentRunActive = false;
 	private _replacementPending = false;
+	private _sourceActivityGeneration = 0;
 	private _toolExecutionDepth = 0;
 	private _promptStartPending = false;
 	private _nextInputId = 0;
@@ -2678,6 +2679,10 @@ export class AgentSession {
 		return this._replacementPending;
 	}
 
+	get sourceActivityGeneration(): number {
+		return this._sourceActivityGeneration;
+	}
+
 	beginReplacement(): void {
 		this._replacementPending = true;
 	}
@@ -3080,6 +3085,7 @@ export class AgentSession {
 		if (this._replacementPending) {
 			throw new Error("Session replacement is in progress");
 		}
+		this._sourceActivityGeneration++;
 		const throwIfCancelled = (): void => {
 			if (!options?.signal?.aborted) return;
 			const error = new Error("Prompt cancelled before acceptance");
@@ -6288,6 +6294,7 @@ export class AgentSession {
 				getServiceTier: () => this.serviceTier,
 				getScopedModels: () => this._scopedModels,
 				isIdle: () => this.isIdle,
+				getSourceActivityGeneration: () => this.sourceActivityGeneration,
 				getAgentDir: () => this._agentDir,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 				getSignal: () => this._extensionEventSignal ?? this.agent.signal,

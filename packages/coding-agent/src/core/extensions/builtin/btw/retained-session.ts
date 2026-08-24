@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../types.ts";
+import { captureBtwSourceExpectation } from "./session-actions.ts";
 import {
 	BTW_SIDE_ENTRY_TYPE,
 	type BtwSessionCatalog,
@@ -99,11 +100,7 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 
 	await input.ctx.newSession({
 		expectedParentSessionId: metadata.parentSessionId,
-		expectedSource: {
-			sessionId: sourceSessionId,
-			leafId: sourceLeafId,
-			wasIdle: input.ctx.isIdle(),
-		},
+		expectedSource: captureBtwSourceExpectation(input.ctx),
 		parentSession: input.catalog.parentSessionPath,
 		persistInitializedSession: true,
 		sessionToolPolicy: {

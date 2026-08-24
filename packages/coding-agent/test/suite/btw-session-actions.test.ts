@@ -82,6 +82,7 @@ function createContext(options: { runWithSession?: boolean; parentSessionId?: st
 	);
 	return {
 		ctx: {
+			getSourceActivityGeneration: () => 1,
 			isIdle: () => true,
 			sessionManager: manager(),
 			inspectSession,
@@ -115,7 +116,7 @@ describe("retained BTW session actions", () => {
 			PARENT_PATH,
 			expect.objectContaining({
 				expectedSessionId: "main",
-				expectedSource: { sessionId: "side", leafId: "side-leaf", wasIdle: true },
+				expectedSource: { sessionId: "side", leafId: "side-leaf", wasIdle: true, activityGeneration: 1 },
 				sessionDir: "/configured/sessions",
 				withSession: expect.any(Function),
 			}),
@@ -159,7 +160,7 @@ describe("retained BTW session actions", () => {
 			PARENT_PATH,
 			expect.objectContaining({
 				expectedSessionId: "main",
-				expectedSource: { sessionId: "side", leafId: "side-leaf", wasIdle: true },
+				expectedSource: { sessionId: "side", leafId: "side-leaf", wasIdle: true, activityGeneration: 1 },
 				withSession: expect.any(Function),
 			}),
 		);

@@ -3,7 +3,7 @@ import { convertToLlm, filterContextExcludedMessages } from "../../../messages.t
 import type { ExtensionCommandContext } from "../../types.ts";
 import { buildBtwPickerOptions, validateBtwPickerChoice } from "./picker.ts";
 import { type CreateRetainedBtwSideInput, createRetainedBtwSide } from "./retained-session.ts";
-import { createBtwParentSwitchOptions } from "./session-actions.ts";
+import { captureBtwSourceExpectation, createBtwParentSwitchOptions } from "./session-actions.ts";
 import {
 	BTW_SIDE_ENTRY_TYPE,
 	type BtwSessionCatalog,
@@ -188,11 +188,7 @@ export async function runBtwTuiCommand(
 		}
 		await ctx.waitForIdle();
 		const expectedSessionId = selected.choice.sessionId;
-		const expectedSource = {
-			sessionId: ctx.sessionManager.getSessionId(),
-			leafId: ctx.sessionManager.getLeafId(),
-			wasIdle: ctx.isIdle(),
-		};
+		const expectedSource = captureBtwSourceExpectation(ctx);
 		const switchOptions =
 			selected.choice.sessionPath === catalog.parentSessionPath && catalog.currentSide
 				? {
