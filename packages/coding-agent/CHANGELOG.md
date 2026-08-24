@@ -6,6 +6,18 @@
 
 ### Fixed
 
+### Added
+
+### Changed
+
+### Removed
+
+## [2026.8.24] - 2026-08-24
+
+### Breaking Changes
+
+### Fixed
+
 - Terminal provider failures and retry-watchdog cancellations no longer masquerade as user aborts or mechanically block an active Goal: the TUI now renders provider, system, and explicit user cancellation with distinct persisted labels, while exhausted provider retries stage one guarded post-settlement Goal recovery and explicit user aborts remain stopped.
 - The read tool now rejects `local://` URIs with actionable guidance instead of resolving them as relative paths and failing with a confusing `ENOENT <cwd>/local:/...`; the error names the eval kernel `read()` helper and the plain-absolute-path alternative, so agents following detached-eval spill notices recover in one step ([#1103](https://github.com/code-yeongyu/senpi/pull/1103)).
 - Assistant text painted during smooth streaming no longer vanishes and bursts back: `syncTrailingAssistantText` now yields the streaming head to the reveal controller while it paces (smooth streaming on, no toolCall in the head), so the paced prefix and the full head can no longer overwrite each other mid-stream ([#1102](https://github.com/code-yeongyu/senpi/pull/1102)).

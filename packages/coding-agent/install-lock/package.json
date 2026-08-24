@@ -1,10 +1,10 @@
 {
 	"name": "@code-yeongyu/senpi-install",
-	"version": "2026.8.23",
+	"version": "2026.8.24",
 	"private": true,
 	"description": "Lockfile root used by the Pi installer and updater.",
 	"dependencies": {
-		"@code-yeongyu/senpi": "2026.8.23"
+		"@code-yeongyu/senpi": "2026.8.24"
 	},
 	"overrides": {
 		"@hono/node-server": "2.1.1",

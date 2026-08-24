@@ -8,6 +8,18 @@
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [2026.8.24] - 2026-08-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
 - Updated the Bedrock runtime client to 3.1116.0 and the shared TypeBox runtime to 1.3.18.
 
 ### Fixed

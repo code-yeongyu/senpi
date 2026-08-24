@@ -10,6 +10,18 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.8.24] - 2026-08-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Detached eval cell overflow notices now point at the absolute spill file path (`…/local/detached-eval-<id>.log`) instead of a `local://detached-eval-<id>.log` URI. `local://` is resolved only by the in-cell kernel helpers, not by the agent `read` tool, so following the old notice failed with `ENOENT …/local:/detached-eval-<id>.log`. This restores the documented contract that spill notices carry plain absolute paths.
 
 ### Removed

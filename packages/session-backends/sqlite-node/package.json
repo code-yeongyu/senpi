@@ -35,8 +35,8 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^2026.8.23",
-		"@earendil-works/pi-agent-core": "^2026.8.23"
+		"@earendil-works/pi-ai": "^2026.8.24",
+		"@earendil-works/pi-agent-core": "^2026.8.24"
 	},
 	"devDependencies": {
 		"@vitest/coverage-v8": "4.1.11",
