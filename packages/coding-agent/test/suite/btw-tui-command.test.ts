@@ -173,6 +173,16 @@ describe("runBtwTuiCommand", () => {
 			"New BTW",
 		]);
 		expect(harness.switchSession).toHaveBeenCalledWith("/sessions/side-1.jsonl");
+		expect(harness.waitForIdle).toHaveBeenCalledTimes(2);
+		expect(harness.waitForIdle.mock.invocationCallOrder[0]).toBeLessThan(
+			vi.mocked(harness.dependencies.sessionIdentity).mock.invocationCallOrder[0]!,
+		);
+		expect(vi.mocked(harness.dependencies.sessionIdentity).mock.invocationCallOrder[0]).toBeLessThan(
+			harness.waitForIdle.mock.invocationCallOrder[1]!,
+		);
+		expect(harness.waitForIdle.mock.invocationCallOrder[1]).toBeLessThan(
+			harness.switchSession.mock.invocationCallOrder[0]!,
+		);
 	});
 
 	it("restores the captured Main leaf when Main is selected from a side", async () => {

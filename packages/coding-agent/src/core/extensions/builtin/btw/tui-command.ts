@@ -139,15 +139,15 @@ export async function runBtwTuiCommand(
 		if (selectedLabel === undefined) return;
 		const selected = options.find((option) => option.label === selectedLabel);
 		if (!selected) return;
-		if (
-			!(await validateBtwPickerChoice(selected.choice, (sessionPath) =>
-				dependencies.sessionIdentity(ctx, sessionPath),
-			))
-		) {
-			ctx.ui.notify("That BTW session no longer exists. Refreshing the list.", "warning");
-			continue;
-		}
 		if (selected.choice.type === "new") {
+			if (
+				!(await validateBtwPickerChoice(selected.choice, (sessionPath) =>
+					dependencies.sessionIdentity(ctx, sessionPath),
+				))
+			) {
+				ctx.ui.notify("That BTW session no longer exists. Refreshing the list.", "warning");
+				continue;
+			}
 			const activeParentSessionId =
 				catalog.currentSide?.metadata.parentSessionId ?? ctx.sessionManager.getSessionId();
 			if (selected.choice.parentSessionId !== activeParentSessionId) {
@@ -168,16 +168,25 @@ export async function runBtwTuiCommand(
 			});
 			return;
 		}
-		if (selected.choice.sessionPath !== currentSessionPath) {
-			const options =
-				selected.choice.sessionPath === catalog.parentSessionPath && catalog.currentSide
-					? createBtwParentSwitchOptions(catalog.currentSide.metadata, ctx.sessionManager.getSessionDir())
-					: undefined;
-			if (options) {
-				await ctx.switchSession(selected.choice.sessionPath, options);
-			} else {
-				await ctx.switchSession(selected.choice.sessionPath);
-			}
+		if (selected.choice.sessionPath === currentSessionPath) return;
+		await ctx.waitForIdle();
+		if (
+			!(await validateBtwPickerChoice(selected.choice, (sessionPath) =>
+				dependencies.sessionIdentity(ctx, sessionPath),
+			))
+		) {
+			ctx.ui.notify("That BTW session no longer exists. Refreshing the list.", "warning");
+			continue;
+		}
+		await ctx.waitForIdle();
+		const switchOptions =
+			selected.choice.sessionPath === catalog.parentSessionPath && catalog.currentSide
+				? createBtwParentSwitchOptions(catalog.currentSide.metadata, ctx.sessionManager.getSessionDir())
+				: undefined;
+		if (switchOptions) {
+			await ctx.switchSession(selected.choice.sessionPath, switchOptions);
+		} else {
+			await ctx.switchSession(selected.choice.sessionPath);
 		}
 		return;
 	}
