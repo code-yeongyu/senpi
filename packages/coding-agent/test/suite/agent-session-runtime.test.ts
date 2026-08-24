@@ -41,7 +41,7 @@ describe("AgentSessionRuntime characterization", () => {
 	async function createRuntimeForTest(
 		extensionFactory: ExtensionFactory,
 		options?: {
-			beforeCreateRuntime?: (sessionStartEvent: SessionStartEvent | undefined) => Promise<void>;
+			beforeCreateRuntime?: (input: Parameters<CreateAgentSessionRuntimeFactory>[0]) => Promise<void>;
 			bootstrapModel?: boolean;
 			bootstrapThinkingLevel?: boolean;
 			cwd?: string;
@@ -93,8 +93,9 @@ describe("AgentSessionRuntime characterization", () => {
 				noThemes: true,
 			},
 		};
-		const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
-			await options?.beforeCreateRuntime?.(sessionStartEvent);
+		const createRuntime: CreateAgentSessionRuntimeFactory = async (input) => {
+			await options?.beforeCreateRuntime?.(input);
+			const { cwd, sessionManager, sessionStartEvent } = input;
 			const services = await createAgentSessionServices({
 				...runtimeOptions,
 				cwd,
@@ -562,6 +563,7 @@ describe("AgentSessionRuntime characterization", () => {
 
 	it("rejects a parent replaced during new-session runtime construction", async () => {
 		// Given
+		let shutdownCount = 0;
 		let releaseConstruction!: () => void;
 		const constructionReleased = new Promise<void>((resolve) => {
 			releaseConstruction = resolve;
@@ -570,13 +572,20 @@ describe("AgentSessionRuntime characterization", () => {
 		const constructionBeganPromise = new Promise<void>((resolve) => {
 			constructionBegan = resolve;
 		});
-		const { runtime, tempDir } = await createRuntimeForTest(() => {}, {
-			beforeCreateRuntime: async (event) => {
-				if (event?.reason !== "new") return;
-				constructionBegan();
-				await constructionReleased;
+		const { runtime, tempDir } = await createRuntimeForTest(
+			(pi) => {
+				pi.on("session_shutdown", () => {
+					shutdownCount++;
+				});
 			},
-		});
+			{
+				beforeCreateRuntime: async (input) => {
+					if (input.sessionStartEvent?.reason !== "new") return;
+					constructionBegan();
+					await constructionReleased;
+				},
+			},
+		);
 		await runtime.session.prompt("hello");
 		const parentSession = runtime.session.sessionFile!;
 		const expectedParentSessionId = runtime.session.sessionManager.getSessionId();
@@ -602,6 +611,7 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(result).toEqual({ cancelled: true });
 		expect(runtime.session.sessionManager.getSessionId()).toBe(expectedParentSessionId);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
+		expect(shutdownCount).toBe(2);
 	});
 
 	it("rejects a switch target replaced while session_shutdown is pending", async () => {
@@ -651,6 +661,7 @@ describe("AgentSessionRuntime characterization", () => {
 
 	it("rejects a switch target replaced during runtime construction", async () => {
 		// Given
+		let shutdownCount = 0;
 		let releaseSessionStart!: () => void;
 		const sessionStartReleased = new Promise<void>((resolve) => {
 			releaseSessionStart = resolve;
@@ -659,13 +670,20 @@ describe("AgentSessionRuntime characterization", () => {
 		const sessionStartBeganPromise = new Promise<void>((resolve) => {
 			sessionStartBegan = resolve;
 		});
-		const { runtime, tempDir } = await createRuntimeForTest(() => {}, {
-			beforeCreateRuntime: async (event) => {
-				if (event?.reason !== "resume") return;
-				sessionStartBegan();
-				await sessionStartReleased;
+		const { runtime, tempDir } = await createRuntimeForTest(
+			(pi) => {
+				pi.on("session_shutdown", () => {
+					shutdownCount++;
+				});
 			},
-		});
+			{
+				beforeCreateRuntime: async (input) => {
+					if (input.sessionStartEvent?.reason !== "resume") return;
+					sessionStartBegan();
+					await sessionStartReleased;
+				},
+			},
+		);
 		await runtime.session.prompt("hello");
 		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
 		const target = SessionManager.create(tempDir);
@@ -692,6 +710,7 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(result).toEqual({ cancelled: true });
 		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
+		expect(shutdownCount).toBe(2);
 	});
 
 	it("retains the effective cwd when recovering a cancelled switch", async () => {
@@ -743,6 +762,94 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(result).toEqual({ cancelled: true });
 		expect(runtime.session.sessionManager.getCwd()).toBe(effectiveCwd);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
+	it("falls back to the detached snapshot when recovery path changes during construction", async () => {
+		// Given
+		let releaseShutdown!: () => void;
+		const shutdownReleased = new Promise<void>((resolve) => {
+			releaseShutdown = resolve;
+		});
+		let shutdownStarted!: () => void;
+		const shutdownStartedPromise = new Promise<void>((resolve) => {
+			shutdownStarted = resolve;
+		});
+		let releaseRecovery!: () => void;
+		const recoveryReleased = new Promise<void>((resolve) => {
+			releaseRecovery = resolve;
+		});
+		let recoveryStarted!: () => void;
+		const recoveryStartedPromise = new Promise<void>((resolve) => {
+			recoveryStarted = resolve;
+		});
+		let outgoingSessionId: string | undefined;
+		let blockRecovery = true;
+		let shutdownCount = 0;
+		const { runtime, tempDir } = await createRuntimeForTest(
+			(pi) => {
+				pi.on("session_shutdown", async (event) => {
+					shutdownCount++;
+					if (event.reason !== "resume" || shutdownCount !== 1) return;
+					shutdownStarted();
+					await shutdownReleased;
+				});
+			},
+			{
+				beforeCreateRuntime: async (input) => {
+					if (
+						!blockRecovery ||
+						input.sessionStartEvent?.reason !== "resume" ||
+						input.sessionManager.getSessionId() !== outgoingSessionId
+					) {
+						return;
+					}
+					blockRecovery = false;
+					recoveryStarted();
+					await recoveryReleased;
+				},
+			},
+		);
+		await runtime.session.prompt("hello");
+		const outgoingSessionFile = runtime.session.sessionFile!;
+		outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+		const targetSessionFile = target.getSessionFile()!;
+		const targetReplacement = SessionManager.create(tempDir);
+		targetReplacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "target replacement" }],
+			timestamp: Date.now(),
+		});
+		targetReplacement.persistInitializedSession();
+		const outgoingReplacement = SessionManager.create(tempDir);
+		outgoingReplacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "outgoing replacement" }],
+			timestamp: Date.now(),
+		});
+		outgoingReplacement.persistInitializedSession();
+
+		// When
+		const switchPromise = runtime.switchSession(targetSessionFile, {
+			expectedSessionId: target.getSessionId(),
+		});
+		await shutdownStartedPromise;
+		copyFileSync(targetReplacement.getSessionFile()!, targetSessionFile);
+		releaseShutdown();
+		await recoveryStartedPromise;
+		copyFileSync(outgoingReplacement.getSessionFile()!, outgoingSessionFile);
+		releaseRecovery();
+		const result = await switchPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(runtime.session.sessionManager.isPersisted()).toBe(false);
+		expect(runtime.session.sessionFile).toBeUndefined();
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+		expect(shutdownCount).toBe(2);
 	});
 
 	it("emits session_before_fork and session_start and honors cancellation", async () => {

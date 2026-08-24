@@ -74,6 +74,8 @@
   expected parent identities use header-only metadata inspection instead of full JSONL loading.
 - `SessionManager.cloneInMemory()` preserves detached identity/tree state for recovery, retained
   cwd overrides survive rebinding, and replacement identities are checked after runtime creation.
+- Stale constructed candidates emit `session_shutdown` before disposal; recovery rechecks its
+  persisted outgoing path after construction and falls back to the detached snapshot before rebind.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

@@ -88,6 +88,8 @@
   returning, and expected-parent checks read bounded header metadata rather than full transcripts.
 - Recovery snapshots preserve the outgoing ID, tree, and effective cwd when its path was reused;
   resume and new-session transitions revalidate again after asynchronous runtime construction.
+- Discarded candidate runtimes run their normal shutdown lifecycle before disposal, and persisted
+  recovery candidates revalidate after construction before the host rebinds them.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

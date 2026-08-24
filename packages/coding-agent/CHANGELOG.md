@@ -17,6 +17,8 @@
   checks use bounded session headers instead of loading complete transcripts.
 - Cancellation recovery preserves the outgoing session identity, tree, and effective cwd, while
   new/resume destinations are revalidated again after asynchronous runtime construction.
+- Stale candidate runtimes now run shutdown hooks before disposal, and recovered persisted sessions
+  are revalidated after construction before the host rebinds them.
 
 ### Added
 
