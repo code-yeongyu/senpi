@@ -1005,6 +1005,32 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
+	cloneInMemory(cwd: string = this.cwd): SessionManager {
+		const resolvedCwd = resolvePath(cwd);
+		const snapshotEntries = this.fileEntries.map((entry) => this.residentStore.materialize(entry));
+		const sourceHeader = snapshotEntries.find((entry) => entry.type === "session") as SessionHeader | undefined;
+		const clone = SessionManager.inMemory(resolvedCwd, {
+			id: this.sessionId,
+			parentSession: sourceHeader?.parentSession,
+		});
+		clone.residentStore.clear();
+		clone.fileEntries = snapshotEntries.map((entry) =>
+			clone.residentStore.externalize(
+				entry.type === "session"
+					? {
+							...entry,
+							cwd: resolvedCwd,
+							id: this.sessionId,
+						}
+					: entry,
+			),
+		);
+		clone._buildIndex();
+		clone.leafId = this.leafId;
+		clone.mutationCount++;
+		return clone;
+	}
+
 	persistInitializedSession(): void {
 		if (!this.persist || !this.sessionFile || this.flushed) return;
 		this._rewriteFile();

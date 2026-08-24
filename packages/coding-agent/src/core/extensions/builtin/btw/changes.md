@@ -86,6 +86,8 @@
   guarded switches reopen and verify their destination again after outgoing-session teardown.
 - A post-teardown identity cancellation recreates and rebinds a valid outgoing runtime before
   returning, and expected-parent checks read bounded header metadata rather than full transcripts.
+- Recovery snapshots preserve the outgoing ID, tree, and effective cwd when its path was reused;
+  resume and new-session transitions revalidate again after asynchronous runtime construction.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

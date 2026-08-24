@@ -15,6 +15,8 @@
   asynchronous veto and shutdown hooks, preventing stale session managers from being applied.
 - Identity cancellations after shutdown now leave a rebound live runtime, and retained parent
   checks use bounded session headers instead of loading complete transcripts.
+- Cancellation recovery preserves the outgoing session identity, tree, and effective cwd, while
+  new/resume destinations are revalidated again after asynchronous runtime construction.
 
 ### Added
 

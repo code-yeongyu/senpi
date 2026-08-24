@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
@@ -40,7 +40,12 @@ describe("AgentSessionRuntime characterization", () => {
 
 	async function createRuntimeForTest(
 		extensionFactory: ExtensionFactory,
-		options?: { cwd?: string; bootstrapModel?: boolean; bootstrapThinkingLevel?: boolean },
+		options?: {
+			beforeCreateRuntime?: (sessionStartEvent: SessionStartEvent | undefined) => Promise<void>;
+			bootstrapModel?: boolean;
+			bootstrapThinkingLevel?: boolean;
+			cwd?: string;
+		},
 	) {
 		const tempDir =
 			options?.cwd ?? join(tmpdir(), `pi-runtime-suite-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -89,6 +94,7 @@ describe("AgentSessionRuntime characterization", () => {
 			},
 		};
 		const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
+			await options?.beforeCreateRuntime?.(sessionStartEvent);
 			const services = await createAgentSessionServices({
 				...runtimeOptions,
 				cwd,
@@ -550,6 +556,52 @@ describe("AgentSessionRuntime characterization", () => {
 		// Then
 		expect(result).toEqual({ cancelled: true });
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
+		expect(runtime.session.sessionManager.getSessionId()).toBe(expectedParentSessionId);
+		expect(runtime.session.messages.some((message) => message.role === "assistant")).toBe(true);
+	});
+
+	it("rejects a parent replaced during new-session runtime construction", async () => {
+		// Given
+		let releaseConstruction!: () => void;
+		const constructionReleased = new Promise<void>((resolve) => {
+			releaseConstruction = resolve;
+		});
+		let constructionBegan!: () => void;
+		const constructionBeganPromise = new Promise<void>((resolve) => {
+			constructionBegan = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest(() => {}, {
+			beforeCreateRuntime: async (event) => {
+				if (event?.reason !== "new") return;
+				constructionBegan();
+				await constructionReleased;
+			},
+		});
+		await runtime.session.prompt("hello");
+		const parentSession = runtime.session.sessionFile!;
+		const expectedParentSessionId = runtime.session.sessionManager.getSessionId();
+		const replacement = SessionManager.create(tempDir);
+		replacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "replacement" }],
+			timestamp: Date.now(),
+		});
+		replacement.persistInitializedSession();
+
+		// When
+		const newSessionPromise = runtime.newSession({
+			expectedParentSessionId,
+			parentSession,
+		});
+		await constructionBeganPromise;
+		copyFileSync(replacement.getSessionFile()!, parentSession);
+		releaseConstruction();
+		const result = await newSessionPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionManager.getSessionId()).toBe(expectedParentSessionId);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
 
 	it("rejects a switch target replaced while session_shutdown is pending", async () => {
@@ -594,6 +646,102 @@ describe("AgentSessionRuntime characterization", () => {
 		// Then
 		expect(result).toEqual({ cancelled: true });
 		expect(runtime.session.sessionFile).toBe(originalSessionFile);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
+	it("rejects a switch target replaced during runtime construction", async () => {
+		// Given
+		let releaseSessionStart!: () => void;
+		const sessionStartReleased = new Promise<void>((resolve) => {
+			releaseSessionStart = resolve;
+		});
+		let sessionStartBegan!: () => void;
+		const sessionStartBeganPromise = new Promise<void>((resolve) => {
+			sessionStartBegan = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest(() => {}, {
+			beforeCreateRuntime: async (event) => {
+				if (event?.reason !== "resume") return;
+				sessionStartBegan();
+				await sessionStartReleased;
+			},
+		});
+		await runtime.session.prompt("hello");
+		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+		const targetSessionFile = target.getSessionFile()!;
+		const expectedSessionId = target.getSessionId();
+		const replacement = SessionManager.create(tempDir);
+		replacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "replacement" }],
+			timestamp: Date.now(),
+		});
+		replacement.persistInitializedSession();
+
+		// When
+		const switchPromise = runtime.switchSession(targetSessionFile, { expectedSessionId });
+		await sessionStartBeganPromise;
+		copyFileSync(replacement.getSessionFile()!, targetSessionFile);
+		releaseSessionStart();
+		const result = await switchPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
+	it("retains the effective cwd when recovering a cancelled switch", async () => {
+		// Given
+		let releaseShutdown!: () => void;
+		const shutdownReleased = new Promise<void>((resolve) => {
+			releaseShutdown = resolve;
+		});
+		let shutdownStarted!: () => void;
+		const shutdownStartedPromise = new Promise<void>((resolve) => {
+			shutdownStarted = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest((pi: ExtensionAPI) => {
+			pi.on("session_shutdown", async (event) => {
+				if (event.reason !== "resume") return;
+				shutdownStarted();
+				await shutdownReleased;
+			});
+		});
+		await runtime.session.prompt("hello");
+		const originalSessionFile = runtime.session.sessionFile!;
+		const effectiveCwd = runtime.session.sessionManager.getCwd();
+		const lines = readFileSync(originalSessionFile, "utf8").split("\n");
+		const header = JSON.parse(lines[0]!) as Record<string, unknown>;
+		header.cwd = join(tempDir, "missing-original-cwd");
+		lines[0] = JSON.stringify(header);
+		writeFileSync(originalSessionFile, lines.join("\n"));
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+		const targetSessionFile = target.getSessionFile()!;
+		const expectedSessionId = target.getSessionId();
+		const replacement = SessionManager.create(tempDir);
+		replacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "replacement" }],
+			timestamp: Date.now(),
+		});
+		replacement.persistInitializedSession();
+
+		// When
+		const switchPromise = runtime.switchSession(targetSessionFile, { expectedSessionId });
+		await shutdownStartedPromise;
+		copyFileSync(replacement.getSessionFile()!, targetSessionFile);
+		releaseShutdown();
+		const result = await switchPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionManager.getCwd()).toBe(effectiveCwd);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
 

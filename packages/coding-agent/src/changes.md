@@ -72,6 +72,8 @@
   shutdown phases; guarded resume also reopens its destination after teardown before applying it.
 - Post-teardown cancellation recovers and rebinds the outgoing runtime before returning, and
   expected parent identities use header-only metadata inspection instead of full JSONL loading.
+- `SessionManager.cloneInMemory()` preserves detached identity/tree state for recovery, retained
+  cwd overrides survive rebinding, and replacement identities are checked after runtime creation.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

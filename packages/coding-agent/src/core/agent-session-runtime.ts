@@ -197,10 +197,14 @@ export class AgentSessionRuntime {
 		return { cancelled: result?.cancel === true };
 	}
 
-	private async teardownCurrent(reason: SessionShutdownEvent["reason"], targetSessionFile?: string): Promise<void> {
+	private async teardownCurrent(
+		reason: SessionShutdownEvent["reason"],
+		targetSessionFile?: string,
+	): Promise<SessionManager> {
 		// Settle the active response before replacement so the outgoing turn and
 		// any completed tool results are persisted to the old session.
 		await this.session.abort();
+		const outgoingSnapshot = this.session.sessionManager.cloneInMemory();
 		const oldRunner = this.session.extensionRunner;
 		// Test hosts and partial runner implementations may lack identity introspection;
 		// skip removal reporting there rather than break the replacement itself.
@@ -218,6 +222,7 @@ export class AgentSessionRuntime {
 		});
 		this.beforeSessionInvalidate?.();
 		this.session.dispose();
+		return outgoingSnapshot;
 	}
 
 	private async reportRemovedExtensions(): Promise<void> {
@@ -242,19 +247,21 @@ export class AgentSessionRuntime {
 
 	private async recoverAfterCancelledTeardown(input: {
 		cwd: string;
+		outgoingSnapshot: SessionManager;
 		projectTrustContextFactory?: (cwd: string) => ProjectTrustContext;
 		sessionDir: string;
 		sessionFile: string | undefined;
 	}): Promise<void> {
-		let sessionManager: SessionManager;
-		if (input.sessionFile) {
+		let sessionManager = input.outgoingSnapshot;
+		if (
+			input.sessionFile &&
+			SessionManager.inspectMetadata(input.sessionFile)?.id === input.outgoingSnapshot.getSessionId()
+		) {
 			try {
-				sessionManager = SessionManager.open(input.sessionFile, input.sessionDir);
+				sessionManager = SessionManager.open(input.sessionFile, input.sessionDir, input.cwd);
 			} catch {
-				sessionManager = SessionManager.inMemory(input.cwd);
+				// Keep the detached outgoing snapshot when its persisted file is no longer readable.
 			}
-		} else {
-			sessionManager = SessionManager.inMemory(input.cwd);
 		}
 		await this.apply(
 			await this.createRuntime({
@@ -308,7 +315,7 @@ export class AgentSessionRuntime {
 			return { cancelled: true };
 		}
 		assertSessionCwdExists(sessionManager, this.cwd);
-		await this.teardownCurrent("resume", sessionManager.getSessionFile());
+		const outgoingSnapshot = await this.teardownCurrent("resume", sessionManager.getSessionFile());
 		if (options?.expectedSessionId) {
 			let refreshedSessionManager: SessionManager | undefined;
 			try {
@@ -323,22 +330,31 @@ export class AgentSessionRuntime {
 			if (!refreshedSessionManager) {
 				await this.recoverAfterCancelledTeardown({
 					...previousSession,
+					outgoingSnapshot,
 					projectTrustContextFactory: options.projectTrustContextFactory,
 				});
 				return { cancelled: true };
 			}
 			sessionManager = refreshedSessionManager;
 		}
-		await this.apply(
-			await this.createRuntime({
-				cwd: sessionManager.getCwd(),
-				agentDir: this.services.agentDir,
-				sessionManager,
-				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
-				projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
-				launchProfile: this._launchProfile,
-			}),
-		);
+		const replacement = await this.createRuntime({
+			cwd: sessionManager.getCwd(),
+			agentDir: this.services.agentDir,
+			sessionManager,
+			sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
+			projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
+			launchProfile: this._launchProfile,
+		});
+		if (options?.expectedSessionId && !this.matchesExpectedSessionFile(sessionPath, options.expectedSessionId)) {
+			replacement.session.dispose();
+			await this.recoverAfterCancelledTeardown({
+				...previousSession,
+				outgoingSnapshot,
+				projectTrustContextFactory: options.projectTrustContextFactory,
+			});
+			return { cancelled: true };
+		}
+		await this.apply(replacement);
 		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };
 	}
@@ -376,20 +392,24 @@ export class AgentSessionRuntime {
 			sessionManager.appendCustomEntry(SESSION_TOOL_POLICY_ENTRY_TYPE, options.sessionToolPolicy);
 		}
 
-		await this.teardownCurrent("new", sessionManager.getSessionFile());
+		const outgoingSnapshot = await this.teardownCurrent("new", sessionManager.getSessionFile());
 		if (!this.matchesExpectedSessionFile(options?.parentSession, options?.expectedParentSessionId)) {
-			await this.recoverAfterCancelledTeardown(previousSession);
+			await this.recoverAfterCancelledTeardown({ ...previousSession, outgoingSnapshot });
 			return { cancelled: true };
 		}
-		await this.apply(
-			await this.createRuntime({
-				cwd: this.cwd,
-				agentDir: this.services.agentDir,
-				sessionManager,
-				sessionStartEvent: { type: "session_start", reason: "new", previousSessionFile },
-				launchProfile: this._launchProfile,
-			}),
-		);
+		const replacement = await this.createRuntime({
+			cwd: this.cwd,
+			agentDir: this.services.agentDir,
+			sessionManager,
+			sessionStartEvent: { type: "session_start", reason: "new", previousSessionFile },
+			launchProfile: this._launchProfile,
+		});
+		if (!this.matchesExpectedSessionFile(options?.parentSession, options?.expectedParentSessionId)) {
+			replacement.session.dispose();
+			await this.recoverAfterCancelledTeardown({ ...previousSession, outgoingSnapshot });
+			return { cancelled: true };
+		}
+		await this.apply(replacement);
 		if (options?.setup) {
 			await options.setup(this.session.sessionManager);
 			this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
