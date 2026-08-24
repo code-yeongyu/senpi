@@ -842,7 +842,7 @@ export class AgentSession {
 	private readonly _messageEndsAwaitingPersistence = new Set<AgentMessage>();
 	private _isAgentRunActive = false;
 	private _replacementPending = false;
-	private _replacementCallbackDepth = 0;
+	private _replacementContextTurnDepth = 0;
 	private _sourceActivityGeneration = 0;
 	private _toolExecutionDepth = 0;
 	private _promptStartPending = false;
@@ -2692,17 +2692,17 @@ export class AgentSession {
 		this._replacementPending = false;
 	}
 
-	async runReplacementCallback<T>(callback: () => Promise<T>): Promise<T> {
-		this._replacementCallbackDepth++;
+	private runReplacementContextTurn<T>(callback: () => Promise<T>): Promise<T> {
+		this._replacementContextTurnDepth++;
 		try {
-			return await callback();
+			return callback();
 		} finally {
-			this._replacementCallbackDepth--;
+			this._replacementContextTurnDepth--;
 		}
 	}
 
 	private assertReplacementTurnAllowed(): void {
-		if (this._replacementPending && this._replacementCallbackDepth === 0) {
+		if (this._replacementPending && this._replacementContextTurnDepth === 0) {
 			throw new Error("Session replacement is in progress");
 		}
 	}
@@ -8033,8 +8033,10 @@ export class AgentSession {
 			{},
 			Object.getOwnPropertyDescriptors(this._extensionRunner.createCommandContext()),
 		) as ReplacedSessionContext;
-		context.sendMessage = (message, options) => this.sendCustomMessage(message, options);
-		context.sendUserMessage = (content, options) => this.sendUserMessage(content, options);
+		context.sendMessage = (message, options) =>
+			this.runReplacementContextTurn(() => this.sendCustomMessage(message, options));
+		context.sendUserMessage = (content, options) =>
+			this.runReplacementContextTurn(() => this.sendUserMessage(content, options));
 		context.setActiveTools = (toolNames) => this.setActiveToolsByName(toolNames);
 		context.setSessionModel = async (model) => {
 			if (!this._modelRuntime.hasConfiguredAuth(model.provider)) return false;

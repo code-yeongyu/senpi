@@ -31,6 +31,8 @@
   cancelled guarded creation removes its still-owned persisted side transcript.
 - Replacement locks now block extension-triggered turns outside callbacks, while cancelled-side
   cleanup atomically quarantines files and restores the outgoing runtime even when cleanup fails.
+- Replacement callback privilege is now method-scoped, and cancelled-side cleanup verifies
+  ownership both before and after quarantine to preserve already-active replacements.
 
 ### Added
 

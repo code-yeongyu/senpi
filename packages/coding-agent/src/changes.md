@@ -88,6 +88,8 @@
   rollback deletes the initialized side file only when its persisted ID still matches.
 - Replacement turn locks cover prompt/custom/user paths with callback-scoped privilege; cancelled
   file cleanup uses atomic quarantine and cannot prevent outgoing runtime recovery.
+- Replacement privilege is synchronous per context method rather than callback-wide, and side
+  cleanup performs pre-rename plus post-rename ownership validation.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

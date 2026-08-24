@@ -102,6 +102,8 @@
   cancelled guarded creation removes only its still-owned initialized side file.
 - Replacement locking covers extension-triggered turns with a scoped callback privilege; cancelled
   side cleanup atomically quarantines before validation/deletion and always restores runtime first.
+- Callback privilege is applied only to individual replacement-context method admission, and
+  cleanup checks ownership before quarantine while retaining the post-rename race check.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

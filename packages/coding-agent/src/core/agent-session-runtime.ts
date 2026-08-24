@@ -93,6 +93,7 @@ export class AgentSessionRuntime {
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
 	private readonly _launchProfile?: Readonly<AgentSessionLaunchProfile>;
+	private readonly renameSessionFile: (source: string, destination: string) => void;
 	private readonly unlinkSessionFile: (sessionFile: string) => void;
 	private _removedOnReplacement?: {
 		oldRunner: ExtensionRunner;
@@ -108,6 +109,7 @@ export class AgentSessionRuntime {
 		_modelFallbackMessage?: string,
 		launchProfile?: Readonly<AgentSessionLaunchProfile>,
 		unlinkSessionFile: (sessionFile: string) => void = unlinkSync,
+		renameSessionFile: (source: string, destination: string) => void = renameSync,
 	) {
 		this._session = _session;
 		this._services = _services;
@@ -116,6 +118,7 @@ export class AgentSessionRuntime {
 		this._modelFallbackMessage = _modelFallbackMessage;
 		this._launchProfile = launchProfile;
 		this.unlinkSessionFile = unlinkSessionFile;
+		this.renameSessionFile = renameSessionFile;
 	}
 
 	get services(): AgentSessionServices {
@@ -329,7 +332,7 @@ export class AgentSessionRuntime {
 		}
 		try {
 			if (withSession) {
-				await this.session.runReplacementCallback(() => withSession(this.session.createReplacedSessionContext()));
+				await withSession(this.session.createReplacedSessionContext());
 			}
 		} finally {
 			this.session.endReplacement();
@@ -340,9 +343,15 @@ export class AgentSessionRuntime {
 	private removeOwnedPersistedSession(sessionManager: SessionManager): void {
 		const sessionFile = sessionManager.getSessionFile();
 		if (!sessionFile) return;
+		try {
+			if (SessionManager.inspectMetadata(sessionFile)?.id !== sessionManager.getSessionId()) return;
+		} catch (error) {
+			if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return;
+			throw error;
+		}
 		const quarantinedFile = `${sessionFile}.cleanup-${randomUUID()}`;
 		try {
-			renameSync(sessionFile, quarantinedFile);
+			this.renameSessionFile(sessionFile, quarantinedFile);
 		} catch (error) {
 			if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return;
 			throw error;
@@ -725,6 +734,7 @@ export async function createAgentSessionRuntime(
 		sessionStartEvent?: SessionStartEvent;
 		launchProfile?: Readonly<AgentSessionLaunchProfile>;
 		unlinkSessionFile?: (sessionFile: string) => void;
+		renameSessionFile?: (source: string, destination: string) => void;
 	},
 ): Promise<AgentSessionRuntime> {
 	assertSessionCwdExists(options.sessionManager, options.cwd);
@@ -737,6 +747,7 @@ export async function createAgentSessionRuntime(
 		result.modelFallbackMessage,
 		options.launchProfile,
 		options.unlinkSessionFile,
+		options.renameSessionFile,
 	);
 }
 

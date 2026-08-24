@@ -4,6 +4,7 @@ import {
 	mkdirSync,
 	readFileSync,
 	realpathSync,
+	renameSync,
 	rmSync,
 	unlinkSync,
 	writeFileSync,
@@ -56,6 +57,7 @@ describe("AgentSessionRuntime characterization", () => {
 			cwd?: string;
 			includeExtensionFactory?: (input: Parameters<CreateAgentSessionRuntimeFactory>[0]) => boolean;
 			unlinkSessionFile?: (sessionFile: string) => void;
+			renameSessionFile?: (source: string, destination: string) => void;
 		},
 	) {
 		const tempDir =
@@ -133,6 +135,7 @@ describe("AgentSessionRuntime characterization", () => {
 			agentDir: tempDir,
 			sessionManager: SessionManager.create(tempDir),
 			unlinkSessionFile: options?.unlinkSessionFile,
+			renameSessionFile: options?.renameSessionFile,
 		});
 		await runtime.session.bindExtensions({});
 
@@ -1136,6 +1139,78 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
 
+	it("does not quarantine a replacement already using the cancelled side path", async () => {
+		// Given
+		let releaseRebind!: () => void;
+		const rebindReleased = new Promise<void>((resolve) => {
+			releaseRebind = resolve;
+		});
+		let rebindStarted!: () => void;
+		const rebindStartedPromise = new Promise<void>((resolve) => {
+			rebindStarted = resolve;
+		});
+		let createdSessionFile: string | undefined;
+		const { runtime, tempDir } = await createRuntimeForTest(() => {}, {
+			renameSessionFile: (source, destination) => {
+				renameSync(source, destination);
+				writeFileSync(
+					source,
+					`${JSON.stringify({
+						type: "message",
+						id: "late-append",
+						parentId: null,
+						timestamp: new Date().toISOString(),
+						message: { role: "user", content: [{ type: "text", text: "late append" }], timestamp: Date.now() },
+					})}\n`,
+				);
+			},
+		});
+		await runtime.session.prompt("hello");
+		const parentSession = runtime.session.sessionFile!;
+		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		runtime.setRebindSession(async (session) => {
+			await session.bindExtensions({});
+			if (session.sessionManager.getSessionId() === outgoingSessionId) return;
+			rebindStarted();
+			await rebindReleased;
+		});
+		const parentReplacement = SessionManager.create(tempDir);
+		parentReplacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "parent replacement" }],
+			timestamp: Date.now(),
+		});
+		parentReplacement.persistInitializedSession();
+		const sideReplacement = SessionManager.create(tempDir);
+		sideReplacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "side replacement" }],
+			timestamp: Date.now(),
+		});
+		sideReplacement.persistInitializedSession();
+
+		// When
+		const newSessionPromise = runtime.newSession({
+			expectedParentSessionId: outgoingSessionId,
+			parentSession,
+			persistInitializedSession: true,
+			setup: async (sessionManager) => {
+				createdSessionFile = sessionManager.getSessionFile();
+			},
+		});
+		await rebindStartedPromise;
+		copyFileSync(sideReplacement.getSessionFile()!, createdSessionFile!);
+		copyFileSync(parentReplacement.getSessionFile()!, parentSession);
+		releaseRebind();
+		const result = await newSessionPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(SessionManager.inspectMetadata(createdSessionFile!)?.id).toBe(sideReplacement.getSessionId());
+		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
 	it("rejects a switch target replaced while session_shutdown is pending", async () => {
 		// Given
 		let releaseShutdown!: () => void;
@@ -1338,6 +1413,14 @@ describe("AgentSessionRuntime characterization", () => {
 
 	it("keeps a replacement prompt-locked through host rebind and callback completion", async () => {
 		// Given
+		let releaseCallback!: () => void;
+		const callbackReleased = new Promise<void>((resolve) => {
+			releaseCallback = resolve;
+		});
+		let callbackStarted!: () => void;
+		const callbackStartedPromise = new Promise<void>((resolve) => {
+			callbackStarted = resolve;
+		});
 		const { runtime, tempDir } = await createRuntimeForTest(() => {});
 		await runtime.session.prompt("hello");
 		const target = SessionManager.create(tempDir);
@@ -1361,14 +1444,34 @@ describe("AgentSessionRuntime characterization", () => {
 		});
 		const withSession = vi.fn(async (ctx: ReplacedSessionContext) => {
 			expect(runtime.session.isReplacementPending).toBe(true);
+			callbackStarted();
+			await callbackReleased;
 			await ctx.sendUserMessage("callback-owned prompt");
 		});
 
 		// When
-		const result = await runtime.switchSession(target.getSessionFile()!, {
+		const switchPromise = runtime.switchSession(target.getSessionFile()!, {
 			expectedSessionId: target.getSessionId(),
 			withSession,
 		});
+		await callbackStartedPromise;
+		let result: { cancelled: boolean } | undefined;
+		try {
+			await expect(
+				runtime.session.sendCustomMessage(
+					{
+						customType: "concurrent-extension",
+						content: [{ type: "text", text: "concurrent" }],
+						display: false,
+						details: {},
+					},
+					{ triggerTurn: true },
+				),
+			).rejects.toThrow("Session replacement is in progress");
+		} finally {
+			releaseCallback();
+			result = await switchPromise;
+		}
 
 		// Then
 		expect(result).toEqual({ cancelled: false });
