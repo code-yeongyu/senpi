@@ -108,6 +108,7 @@ export async function runBtwTuiCommand(
 	args: string,
 	ctx: ExtensionCommandContext,
 	dependencies: RunBtwTuiCommandDependencies,
+	options?: { onInitialTurnStarted?: () => void },
 ): Promise<void> {
 	const currentSessionPath = ctx.sessionManager.getSessionFile();
 	if (!currentSessionPath || !(await dependencies.sessionExists(currentSessionPath))) {
@@ -129,6 +130,7 @@ export async function runBtwTuiCommand(
 			catalog,
 			question,
 			buildParentContext: () => dependencies.buildParentContext(ctx, catalog),
+			onInitialTurnStarted: options?.onInitialTurnStarted,
 		});
 		return;
 	}

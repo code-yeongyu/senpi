@@ -151,7 +151,9 @@ export default function btwExtension(pi: ExtensionAPI) {
 				if (!beginSessionAction(actionKey, "switch")) return;
 				dismiss(ctx, { abort: true });
 				try {
-					await runBtwTuiCommand(args, ctx, defaultBtwTuiCommandDependencies);
+					await runBtwTuiCommand(args, ctx, defaultBtwTuiCommandDependencies, {
+						onInitialTurnStarted: () => finishSessionAction(actionKey, "switch"),
+					});
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
 					ctx.ui.notify(`/btw failed: ${message}`, "error");

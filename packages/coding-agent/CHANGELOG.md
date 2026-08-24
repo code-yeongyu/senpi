@@ -35,6 +35,8 @@
   ownership both before and after quarantine to preserve already-active replacements.
 - Recovery now falls back on metadata errors, custom trigger turns count toward source generation,
   and a pending replacement admits only the registered BTW close command.
+- Retained BTW initial turns now release their switch reservation after prompt admission, allowing
+  Ctrl+C to close a slow or hung first answer.
 
 ### Added
 

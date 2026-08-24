@@ -24,7 +24,7 @@ export function captureBtwSourceExpectation(
 		sessionId: ctx.sessionManager.getSessionId(),
 		leafId: ctx.sessionManager.getLeafId(),
 		wasIdle: ctx.isIdle(),
-		activityGeneration: ctx.getSourceActivityGeneration(),
+		activityGeneration: ctx.getSourceActivityGeneration?.() ?? 0,
 	};
 }
 

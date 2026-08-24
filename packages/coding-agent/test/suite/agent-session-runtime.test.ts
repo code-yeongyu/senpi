@@ -21,6 +21,7 @@ import {
 	createAgentSessionServices,
 } from "../../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import type { ReplacedSessionContext } from "../../src/core/extensions/types.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { SESSION_TOOL_POLICY_ENTRY_TYPE } from "../../src/core/session-tool-policy.ts";
 import type {

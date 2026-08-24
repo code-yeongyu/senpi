@@ -82,6 +82,8 @@
   AgentSession blocks new prompt admission after guarded teardown starts.
 - AgentSession exposes a monotonic prompt-admission generation through extension contexts; BTW
   source guards use it to reject later queued/direct submissions during streaming switch vetoes.
+  The getter remains optional for external extension hosts, while Senpi supplies it on every live
+  command context.
 - Runtime identity checks now cover the awaited host-rebind phase before callbacks, and command
   action option types alias public context methods to prevent typed hosts dropping BTW guards.
 - Applied replacement sessions reject external prompts until callbacks finish; guarded creation
@@ -92,6 +94,8 @@
   cleanup performs pre-rename plus post-rename ownership validation.
 - Recovery catches bounded metadata failures, custom triggerTurn admissions increment source
   generation, and replacement-pending narrowly recognizes the registered BTW close invocation.
+- Retained initial turns release their switch reservation after prompt admission so Ctrl+C can
+  acquire and execute the destructive close while the first answer is still streaming.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

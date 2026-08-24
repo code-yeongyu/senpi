@@ -221,6 +221,37 @@ describe("createRetainedBtwSide", () => {
 		expect(contextCalls[0]?.[2]).toBe(false);
 	});
 
+	it("signals after the retained initial turn is admitted without awaiting settlement", async () => {
+		// Given
+		const harness = createHarness();
+		let settleInitialTurn: (() => void) | undefined;
+		harness.sendUserMessage.mockImplementation(
+			() =>
+				new Promise<undefined>((resolve) => {
+					settleInitialTurn = () => resolve(undefined);
+				}),
+		);
+		const onInitialTurnStarted = vi.fn(() => harness.replacementActions.push("started"));
+		await createRetainedBtwSide({
+			ctx: harness.ctx,
+			catalog: catalog(0),
+			question: "slow question",
+			buildParentContext: async () => "bounded parent context",
+			onInitialTurnStarted,
+		});
+		await harness.setups[0]?.(harness.manager);
+
+		// When
+		const replacement = harness.withSessions[0]?.(harness.nextCtx);
+		await Promise.resolve();
+
+		// Then
+		expect(harness.replacementActions).toEqual(["tools", "model", "thinking", "send", "started"]);
+		expect(onInitialTurnStarted).toHaveBeenCalledOnce();
+		settleInitialTurn?.();
+		await replacement;
+	});
+
 	it("builds the parent snapshot after the final idle wait", async () => {
 		// Given
 		const harness = createHarness();

@@ -106,6 +106,8 @@
   cleanup checks ownership before quarantine while retaining the post-rename race check.
 - Recovery metadata failures keep the detached snapshot; custom trigger turns advance source
   generation; replacement-pending admits only the registered collision-safe BTW close command.
+- The switch reservation releases after the retained initial turn is admitted, allowing Ctrl+C to
+  acquire the close reservation while a slow or hung first answer is still streaming.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

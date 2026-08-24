@@ -13,6 +13,7 @@ export interface CreateRetainedBtwSideInput {
 	catalog: BtwSessionCatalog;
 	question: string | undefined;
 	buildParentContext: () => Promise<string>;
+	onInitialTurnStarted?: () => void;
 	now?: () => Date;
 }
 
@@ -129,9 +130,11 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 			}
 			if (thinkingLevel) nextCtx.setSessionThinkingLevel(thinkingLevel);
 			if (question) {
-				await nextCtx.sendUserMessage(question, {
+				const initialTurn = nextCtx.sendUserMessage(question, {
 					expandPromptTemplates: false,
 				});
+				input.onInitialTurnStarted?.();
+				await initialTurn;
 			} else {
 				nextCtx.ui.notify(`Created ${name}.`, "info");
 			}

@@ -1,12 +1,14 @@
 import { setKittyProtocolActive } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import btwExtension, { clearBtwSessionActionReservationsForTest } from "../../src/core/extensions/builtin/btw/index.ts";
+import { defaultBtwTuiCommandDependencies } from "../../src/core/extensions/builtin/btw/tui-command.ts";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
 
 afterEach(() => {
 	setKittyProtocolActive(false);
 	clearBtwSessionActionReservationsForTest();
+	vi.restoreAllMocks();
 });
 
 describe("BTW extension TUI controls", () => {
@@ -286,5 +288,150 @@ describe("BTW extension TUI controls", () => {
 		expect(mainSend).toHaveBeenCalledWith("/btw", { expandPromptTemplates: true });
 		expect(closeDisposition).toEqual({ consume: true });
 		expect(sideSend).not.toHaveBeenCalled();
+	});
+
+	it("releases the switch reservation once the retained initial turn starts", async () => {
+		// Given
+		const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+		const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
+		let sideCtx: ExtensionContext;
+		let closePromise: Promise<void> | undefined;
+		const sendUserMessage = vi.fn((message: string) => {
+			if (message === "/btw-close") {
+				closePromise = commands.get("btw-close")?.handler("", sideCtx);
+			}
+		});
+		const pi = {
+			on: vi.fn((event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => {
+				handlers.set(event, handler);
+			}),
+			registerCommand: vi.fn(
+				(name: string, command: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) => {
+					commands.set(name, command);
+				},
+			),
+			sendUserMessage,
+			setActiveTools: vi.fn(),
+			getThinkingLevel: vi.fn(() => "off"),
+		} as unknown as ExtensionAPI;
+		btwExtension(pi);
+		let releaseInitialTurn: (() => void) | undefined;
+		const initialTurn = new Promise<void>((resolve) => {
+			releaseInitialTurn = resolve;
+		});
+		let markInitialTurnStarted: (() => void) | undefined;
+		const initialTurnStarted = new Promise<void>((resolve) => {
+			markInitialTurnStarted = resolve;
+		});
+		vi.spyOn(defaultBtwTuiCommandDependencies, "sessionExists").mockResolvedValue(true);
+		vi.spyOn(defaultBtwTuiCommandDependencies, "loadCatalog").mockResolvedValue({
+			parentSessionPath: "/sessions/main.jsonl",
+			main: {
+				id: "main",
+				path: "/sessions/main.jsonl",
+				cwd: "/repo",
+				name: "Main",
+				modified: new Date("2026-08-23T00:00:00.000Z"),
+			},
+			currentSide: undefined,
+			sides: [],
+			skippedPaths: [],
+		});
+		vi.spyOn(defaultBtwTuiCommandDependencies, "createSide").mockImplementation(async (input) => {
+			(
+				input as typeof input & {
+					onInitialTurnStarted?: () => void;
+				}
+			).onInitialTurnStarted?.();
+			markInitialTurnStarted?.();
+			await initialTurn;
+		});
+		const notify = vi.fn();
+		const mainCtx = {
+			mode: "tui",
+			hasUI: true,
+			waitForIdle: vi.fn(async () => undefined),
+			sessionManager: {
+				getSessionId: () => "main",
+				getLeafId: () => "main-leaf",
+				getSessionFile: () => "/sessions/main.jsonl",
+				getEntries: () => [],
+			},
+			ui: { notify },
+		} as unknown as ExtensionContext;
+		const btwPromise = commands.get("btw")?.handler("slow question", mainCtx);
+		await initialTurnStarted;
+
+		let terminalHandler: ((data: string) => { consume?: boolean; data?: string } | undefined) | undefined;
+		const sideSwitch = vi.fn(
+			async (
+				_sessionPath: string,
+				options?: {
+					withSession?: (ctx: ExtensionContext) => Promise<void>;
+				},
+			) => {
+				await options?.withSession?.({
+					inspectSessionMetadata: (sessionPath: string) => ({
+						id: sessionPath === "/sessions/side.jsonl" ? "replacement-side" : "main",
+					}),
+					navigateTree: vi.fn(async () => ({ cancelled: false })),
+					ui: { notify },
+				} as unknown as ExtensionContext);
+				return { cancelled: false };
+			},
+		);
+		sideCtx = {
+			mode: "tui",
+			isIdle: () => false,
+			getSourceActivityGeneration: () => 1,
+			resolveOwnCommandInvocationName: (name: string) => name,
+			inspectSessionMetadata: (sessionPath: string) => ({
+				id: sessionPath === "/sessions/main.jsonl" ? "main" : "side",
+			}),
+			switchSession: sideSwitch,
+			sessionManager: {
+				getSessionId: () => "side",
+				getLeafId: () => "side-leaf",
+				getSessionDir: () => "/sessions",
+				getSessionFile: () => "/sessions/side.jsonl",
+				getEntries: () => [
+					{
+						type: "custom",
+						customType: "btw-side",
+						data: {
+							version: 1,
+							parentSessionPath: "/sessions/main.jsonl",
+							parentSessionId: "main",
+							ordinal: 1,
+							summary: "slow question",
+							createdAt: "2026-08-23T00:00:00.000Z",
+						},
+					},
+				],
+			},
+			ui: {
+				matchesKeybinding: (data: string, binding: Parameters<KeybindingsManager["matches"]>[1]) =>
+					data === "\x03" && binding === "app.clear",
+				onTerminalInput: (handler: (data: string) => { consume?: boolean; data?: string } | undefined) => {
+					terminalHandler = handler;
+					return () => undefined;
+				},
+				notify,
+			},
+		} as unknown as ExtensionContext;
+		handlers.get("session_start")?.({ type: "session_start", reason: "resume" } satisfies SessionStartEvent, sideCtx);
+
+		// When
+		const disposition = terminalHandler?.("\x03");
+		releaseInitialTurn?.();
+		await btwPromise;
+		await closePromise;
+
+		// Then
+		expect(disposition).toEqual({ consume: true });
+		expect(sendUserMessage).toHaveBeenCalledWith("/btw-close", {
+			expandPromptTemplates: true,
+		});
+		expect(sideSwitch).toHaveBeenCalledOnce();
 	});
 });

@@ -441,7 +441,7 @@ export interface ExtensionContext {
 	/** Whether the agent is idle (not streaming) */
 	isIdle(): boolean;
 	/** Monotonic prompt-admission generation for this session. */
-	getSourceActivityGeneration(): number;
+	getSourceActivityGeneration?(): number;
 	/** Whether the current session forbids all tool use. */
 	isToolUseDisabled?(): boolean;
 	/** Resolve one command registered by this extension to its collision-safe invocation name. */

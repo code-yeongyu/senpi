@@ -27,6 +27,7 @@ import {
 import type {
 	ExtensionActions,
 	ExtensionCommandContext,
+	ExtensionCommandContextActions,
 	ExtensionContext,
 	ExtensionContextActions,
 	ExtensionUIContext,
