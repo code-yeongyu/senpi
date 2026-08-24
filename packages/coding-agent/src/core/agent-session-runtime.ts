@@ -170,6 +170,16 @@ export class AgentSessionRuntime {
 		return { cancelled: result?.cancel === true };
 	}
 
+	private matchesExpectedSessionFile(sessionPath: string | undefined, expectedSessionId: string | undefined): boolean {
+		if (expectedSessionId === undefined) return true;
+		if (sessionPath === undefined) return false;
+		try {
+			return SessionManager.open(sessionPath).getSessionId() === expectedSessionId;
+		} catch {
+			return false;
+		}
+	}
+
 	private async emitBeforeFork(
 		entryId: string,
 		options: { position: "before" | "at" },
@@ -255,12 +265,24 @@ export class AgentSessionRuntime {
 		}
 
 		const previousSessionFile = this.session.sessionFile;
-		const sessionManager = SessionManager.open(sessionPath, options?.sessionDir, options?.cwdOverride);
+		let sessionManager = SessionManager.open(sessionPath, options?.sessionDir, options?.cwdOverride);
 		if (options?.expectedSessionId && sessionManager.getSessionId() !== options.expectedSessionId) {
 			return { cancelled: true };
 		}
 		assertSessionCwdExists(sessionManager, this.cwd);
 		await this.teardownCurrent("resume", sessionManager.getSessionFile());
+		if (options?.expectedSessionId) {
+			try {
+				const refreshedSessionManager = SessionManager.open(sessionPath, options.sessionDir, options.cwdOverride);
+				if (refreshedSessionManager.getSessionId() !== options.expectedSessionId) {
+					return { cancelled: true };
+				}
+				assertSessionCwdExists(refreshedSessionManager, this.cwd);
+				sessionManager = refreshedSessionManager;
+			} catch {
+				return { cancelled: true };
+			}
+		}
 		await this.apply(
 			await this.createRuntime({
 				cwd: sessionManager.getCwd(),
@@ -276,6 +298,7 @@ export class AgentSessionRuntime {
 	}
 
 	async newSession(options?: {
+		expectedParentSessionId?: string;
 		parentSession?: string;
 		persistInitializedSession?: boolean;
 		sessionToolPolicy?: SessionToolPolicy;
@@ -285,6 +308,9 @@ export class AgentSessionRuntime {
 		const beforeResult = await this.emitBeforeSwitch("new");
 		if (beforeResult.cancelled) {
 			return beforeResult;
+		}
+		if (!this.matchesExpectedSessionFile(options?.parentSession, options?.expectedParentSessionId)) {
+			return { cancelled: true };
 		}
 
 		const previousSessionFile = this.session.sessionFile;
@@ -300,6 +326,9 @@ export class AgentSessionRuntime {
 		}
 
 		await this.teardownCurrent("new", sessionManager.getSessionFile());
+		if (!this.matchesExpectedSessionFile(options?.parentSession, options?.expectedParentSessionId)) {
+			return { cancelled: true };
+		}
 		await this.apply(
 			await this.createRuntime({
 				cwd: this.cwd,

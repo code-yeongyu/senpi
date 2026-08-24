@@ -68,6 +68,8 @@
   BTW uses it to reject and refresh a path-reused target before current-session teardown.
 - Direct BTW Main returns and closes pass the parent ID into that guard, while catalog discovery
   rejects current-path metadata whose persisted side ID differs from the live session.
+- New-session replacement accepts an expected parent ID and validates it after async veto and
+  shutdown phases; guarded resume also reopens its destination after teardown before applying it.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

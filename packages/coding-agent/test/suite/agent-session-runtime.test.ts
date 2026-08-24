@@ -440,6 +440,93 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.sessionFile).toBe(originalSessionFile);
 	});
 
+	it("rejects the current session replaced while a new-session veto is pending", async () => {
+		// Given
+		let releaseBeforeSwitch!: () => void;
+		const beforeSwitchReleased = new Promise<void>((resolve) => {
+			releaseBeforeSwitch = resolve;
+		});
+		let beforeSwitchStarted!: () => void;
+		const beforeSwitchStartedPromise = new Promise<void>((resolve) => {
+			beforeSwitchStarted = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest((pi: ExtensionAPI) => {
+			pi.on("session_before_switch", async (event) => {
+				if (event.reason !== "new") return;
+				beforeSwitchStarted();
+				await beforeSwitchReleased;
+			});
+		});
+		await runtime.session.prompt("hello");
+		const originalSessionFile = runtime.session.sessionFile!;
+		const expectedCurrentSessionId = runtime.session.sessionManager.getSessionId();
+		const replacement = SessionManager.create(tempDir);
+		replacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "replacement" }],
+			timestamp: Date.now(),
+		});
+		replacement.persistInitializedSession();
+
+		// When
+		const newSessionPromise = runtime.newSession({
+			expectedParentSessionId: expectedCurrentSessionId,
+			parentSession: originalSessionFile,
+		});
+		await beforeSwitchStartedPromise;
+		copyFileSync(replacement.getSessionFile()!, originalSessionFile);
+		releaseBeforeSwitch();
+		const result = await newSessionPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionFile).toBe(originalSessionFile);
+	});
+
+	it("rejects a switch target replaced while session_shutdown is pending", async () => {
+		// Given
+		let releaseShutdown!: () => void;
+		const shutdownReleased = new Promise<void>((resolve) => {
+			releaseShutdown = resolve;
+		});
+		let shutdownStarted!: () => void;
+		const shutdownStartedPromise = new Promise<void>((resolve) => {
+			shutdownStarted = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest((pi: ExtensionAPI) => {
+			pi.on("session_shutdown", async (event) => {
+				if (event.reason !== "resume") return;
+				shutdownStarted();
+				await shutdownReleased;
+			});
+		});
+		await runtime.session.prompt("hello");
+		const originalSessionFile = runtime.session.sessionFile;
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+		const targetSessionFile = target.getSessionFile()!;
+		const expectedSessionId = target.getSessionId();
+		const replacement = SessionManager.create(tempDir);
+		replacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "replacement" }],
+			timestamp: Date.now(),
+		});
+		replacement.persistInitializedSession();
+
+		// When
+		const switchPromise = runtime.switchSession(targetSessionFile, { expectedSessionId });
+		await shutdownStartedPromise;
+		copyFileSync(replacement.getSessionFile()!, targetSessionFile);
+		releaseShutdown();
+		const result = await switchPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionFile).toBe(originalSessionFile);
+	});
+
 	it("emits session_before_fork and session_start and honors cancellation", async () => {
 		const events: RecordedSessionEvent[] = [];
 		let cancelNextFork = false;

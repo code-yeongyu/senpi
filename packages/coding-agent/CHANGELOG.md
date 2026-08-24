@@ -11,6 +11,8 @@
   guards, preventing a replaced JSONL path from opening an unrelated session.
 - Direct BTW returns and catalog discovery now reject path-reused Main or active-side session
   files before switching, snapshotting, or deleting.
+- Retained BTW creation and switching now revalidate parent and destination identities after
+  asynchronous veto and shutdown hooks, preventing stale session managers from being applied.
 
 ### Added
 

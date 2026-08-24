@@ -82,6 +82,8 @@
   switch boundary.
 - Catalog discovery rejects current-path side metadata whose persisted header ID no longer matches
   the live session manager.
+- Retained creation carries the expected Main ID through new-session veto and shutdown hooks, while
+  guarded switches reopen and verify their destination again after outgoing-session teardown.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

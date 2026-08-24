@@ -569,6 +569,7 @@ export interface ExtensionCommandContext extends ExtensionContext {
 
 	/** Start a new session, optionally with initialization. */
 	newSession(options?: {
+		expectedParentSessionId?: string;
 		parentSession?: string;
 		persistInitializedSession?: boolean;
 		sessionToolPolicy?: SessionToolPolicy;

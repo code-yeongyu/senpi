@@ -182,6 +182,10 @@ describe("createRetainedBtwSide", () => {
 			"/sessions/main.jsonl",
 			"/sessions/main.jsonl",
 		]);
+		expect(harness.newSession.mock.calls.map(([options]) => options?.expectedParentSessionId)).toEqual([
+			"main",
+			"main",
+		]);
 		expect(harness.newSession.mock.calls.map(([options]) => options?.sessionToolPolicy)).toEqual([
 			{ version: 1, tools: "disabled" },
 			{ version: 1, tools: "disabled" },
