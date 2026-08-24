@@ -84,6 +84,8 @@
   source guards use it to reject later queued/direct submissions during streaming switch vetoes.
 - Runtime identity checks now cover the awaited host-rebind phase before callbacks, and command
   action option types alias public context methods to prevent typed hosts dropping BTW guards.
+- Applied replacement sessions reject external prompts until callbacks finish; guarded creation
+  rollback deletes the initialized side file only when its persisted ID still matches.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

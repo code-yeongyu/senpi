@@ -2687,6 +2687,10 @@ export class AgentSession {
 		this._replacementPending = true;
 	}
 
+	endReplacement(): void {
+		this._replacementPending = false;
+	}
+
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
 		return this.agent.state.systemPrompt;
@@ -3082,7 +3086,7 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
-		if (this._replacementPending) {
+		if (this._replacementPending && options?.source !== "extension") {
 			throw new Error("Session replacement is in progress");
 		}
 		this._sourceActivityGeneration++;

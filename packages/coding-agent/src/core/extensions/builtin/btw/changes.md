@@ -98,6 +98,8 @@
   close cancels if any later queued or direct prompt is submitted while switch vetoes await.
 - Guarded identities revalidate after host rebind and before replacement callbacks; command-action
   option types derive from the public context signatures so typed hosts retain every guard.
+- Replacement candidates stay externally prompt-locked through rebind/callback completion, and a
+  cancelled guarded creation removes only its still-owned initialized side file.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

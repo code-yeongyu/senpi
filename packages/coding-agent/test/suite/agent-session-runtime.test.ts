@@ -969,6 +969,7 @@ describe("AgentSessionRuntime characterization", () => {
 		await runtime.session.prompt("hello");
 		const parentSession = runtime.session.sessionFile!;
 		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		let createdSessionFile: string | undefined;
 		const withSession = vi.fn();
 		runtime.setRebindSession(async (session) => {
 			await session.bindExtensions({});
@@ -988,6 +989,10 @@ describe("AgentSessionRuntime characterization", () => {
 		const newSessionPromise = runtime.newSession({
 			expectedParentSessionId: outgoingSessionId,
 			parentSession,
+			persistInitializedSession: true,
+			setup: async (sessionManager) => {
+				createdSessionFile = sessionManager.getSessionFile();
+			},
 			withSession,
 		});
 		await rebindStartedPromise;
@@ -998,6 +1003,8 @@ describe("AgentSessionRuntime characterization", () => {
 		// Then
 		expect(result).toEqual({ cancelled: true });
 		expect(withSession).not.toHaveBeenCalled();
+		expect(createdSessionFile).toBeDefined();
+		expect(existsSync(createdSessionFile!)).toBe(false);
 		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
@@ -1199,6 +1206,35 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(result).toEqual({ cancelled: true });
 		expect(withSession).not.toHaveBeenCalled();
 		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
+	it("keeps a replacement prompt-locked through host rebind and callback completion", async () => {
+		// Given
+		const { runtime, tempDir } = await createRuntimeForTest(() => {});
+		await runtime.session.prompt("hello");
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+		runtime.setRebindSession(async (session) => {
+			await session.bindExtensions({});
+			expect(session.isReplacementPending).toBe(true);
+			await expect(session.prompt("early external prompt")).rejects.toThrow("Session replacement is in progress");
+		});
+		const withSession = vi.fn(async () => {
+			expect(runtime.session.isReplacementPending).toBe(true);
+		});
+
+		// When
+		const result = await runtime.switchSession(target.getSessionFile()!, {
+			expectedSessionId: target.getSessionId(),
+			withSession,
+		});
+
+		// Then
+		expect(result).toEqual({ cancelled: false });
+		expect(withSession).toHaveBeenCalledOnce();
+		expect(runtime.session.isReplacementPending).toBe(false);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
 

@@ -27,6 +27,8 @@
   direct submissions during asynchronous switch vetoes from being aborted.
 - Guarded replacements now revalidate after host rebind before callbacks, and typed extension
   command hosts inherit every public identity/source option.
+- Replacement sessions now block external prompt admission through callback completion, and
+  cancelled guarded creation removes its still-owned persisted side transcript.
 
 ### Added
 

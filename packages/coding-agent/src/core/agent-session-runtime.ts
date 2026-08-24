@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
@@ -261,6 +261,7 @@ export class AgentSessionRuntime {
 	}
 
 	private async apply(result: CreateAgentSessionRuntimeResult): Promise<void> {
+		result.session.beginReplacement();
 		this._session = result.session;
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
@@ -322,10 +323,26 @@ export class AgentSessionRuntime {
 		if (validateAfterRebind && !validateAfterRebind()) {
 			return false;
 		}
-		if (withSession) {
-			await withSession(this.session.createReplacedSessionContext());
+		try {
+			if (withSession) {
+				await withSession(this.session.createReplacedSessionContext());
+			}
+		} finally {
+			this.session.endReplacement();
 		}
 		return true;
+	}
+
+	private removeOwnedPersistedSession(sessionManager: SessionManager): void {
+		const sessionFile = sessionManager.getSessionFile();
+		if (!sessionFile) return;
+		try {
+			if (SessionManager.inspectMetadata(sessionFile)?.id !== sessionManager.getSessionId()) return;
+			unlinkSync(sessionFile);
+		} catch (error) {
+			if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return;
+			throw error;
+		}
 	}
 
 	async switchSession(
@@ -499,7 +516,11 @@ export class AgentSessionRuntime {
 				: undefined,
 		);
 		if (!finished) {
+			const cancelledSessionManager = this.session.sessionManager;
 			await this.teardownCurrent("new", previousSessionFile);
+			if (options?.persistInitializedSession) {
+				this.removeOwnedPersistedSession(cancelledSessionManager);
+			}
 			await this.recoverAfterCancelledTeardown({ ...previousSession, outgoingSnapshot });
 			return { cancelled: true };
 		}
