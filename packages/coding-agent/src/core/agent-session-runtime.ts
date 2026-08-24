@@ -7,6 +7,7 @@ import type {
 	ProjectTrustContext,
 	ReplacedSessionContext,
 	SessionShutdownEvent,
+	SessionSourceExpectation,
 	SessionStartEvent,
 	SessionToolPolicy,
 } from "./extensions/index.ts";
@@ -180,6 +181,15 @@ export class AgentSessionRuntime {
 		}
 	}
 
+	private matchesExpectedSource(expectedSource: SessionSourceExpectation | undefined): boolean {
+		if (!expectedSource) return true;
+		return (
+			this.session.isIdle &&
+			this.session.sessionManager.getSessionId() === expectedSource.sessionId &&
+			this.session.sessionManager.getLeafId() === expectedSource.leafId
+		);
+	}
+
 	private async emitBeforeFork(
 		entryId: string,
 		options: { position: "before" | "at" },
@@ -316,6 +326,7 @@ export class AgentSessionRuntime {
 		options?: {
 			cwdOverride?: string;
 			expectedSessionId?: string;
+			expectedSource?: SessionSourceExpectation;
 			sessionDir?: string;
 			withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 			projectTrustContextFactory?: (cwd: string) => ProjectTrustContext;
@@ -324,6 +335,9 @@ export class AgentSessionRuntime {
 		const beforeResult = await this.emitBeforeSwitch("resume", sessionPath);
 		if (beforeResult.cancelled) {
 			return beforeResult;
+		}
+		if (!this.matchesExpectedSource(options?.expectedSource)) {
+			return { cancelled: true };
 		}
 
 		const previousSessionFile = this.session.sessionFile;
@@ -377,12 +391,22 @@ export class AgentSessionRuntime {
 			return { cancelled: true };
 		}
 		await this.apply(replacement);
+		if (options?.expectedSessionId && !this.matchesExpectedSessionFile(sessionPath, options.expectedSessionId)) {
+			await this.teardownCurrent("resume", previousSessionFile);
+			await this.recoverAfterCancelledTeardown({
+				...previousSession,
+				outgoingSnapshot,
+				projectTrustContextFactory: options.projectTrustContextFactory,
+			});
+			return { cancelled: true };
+		}
 		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };
 	}
 
 	async newSession(options?: {
 		expectedParentSessionId?: string;
+		expectedSource?: SessionSourceExpectation;
 		parentSession?: string;
 		persistInitializedSession?: boolean;
 		sessionToolPolicy?: SessionToolPolicy;
@@ -392,6 +416,9 @@ export class AgentSessionRuntime {
 		const beforeResult = await this.emitBeforeSwitch("new");
 		if (beforeResult.cancelled) {
 			return beforeResult;
+		}
+		if (!this.matchesExpectedSource(options?.expectedSource)) {
+			return { cancelled: true };
 		}
 		if (!this.matchesExpectedSessionFile(options?.parentSession, options?.expectedParentSessionId)) {
 			return { cancelled: true };
@@ -432,6 +459,11 @@ export class AgentSessionRuntime {
 			return { cancelled: true };
 		}
 		await this.apply(replacement);
+		if (!this.matchesExpectedSessionFile(options?.parentSession, options?.expectedParentSessionId)) {
+			await this.teardownCurrent("new", previousSessionFile);
+			await this.recoverAfterCancelledTeardown({ ...previousSession, outgoingSnapshot });
+			return { cancelled: true };
+		}
 		if (options?.setup) {
 			await options.setup(this.session.sessionManager);
 			this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;

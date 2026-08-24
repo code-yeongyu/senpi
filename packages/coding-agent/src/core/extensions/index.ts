@@ -158,6 +158,7 @@ export type {
 	SessionEvent,
 	SessionInfoChangedEvent,
 	SessionShutdownEvent,
+	SessionSourceExpectation,
 	// Events - Session
 	SessionStartEvent,
 	SessionToolPolicy,

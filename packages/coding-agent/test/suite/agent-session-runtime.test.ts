@@ -45,6 +45,7 @@ describe("AgentSessionRuntime characterization", () => {
 			bootstrapModel?: boolean;
 			bootstrapThinkingLevel?: boolean;
 			cwd?: string;
+			includeExtensionFactory?: (input: Parameters<CreateAgentSessionRuntimeFactory>[0]) => boolean;
 		},
 	) {
 		const tempDir =
@@ -62,32 +63,29 @@ describe("AgentSessionRuntime characterization", () => {
 		const authStorage = AuthStorage.inMemory();
 		await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
 
+		const providerFactory: ExtensionFactory = (pi) => {
+			pi.registerProvider(faux.getModel().provider, {
+				baseUrl: faux.getModel().baseUrl,
+				apiKey: "faux-key",
+				api: faux.api,
+				models: faux.models.map((registeredModel) => ({
+					id: registeredModel.id,
+					name: registeredModel.name,
+					api: registeredModel.api,
+					reasoning: registeredModel.reasoning,
+					input: registeredModel.input,
+					cost: registeredModel.cost,
+					contextWindow: registeredModel.contextWindow,
+					maxTokens: registeredModel.maxTokens,
+				})),
+			});
+		};
 		const runtimeOptions = {
 			agentDir: tempDir,
 			authStorage,
 			model: options?.bootstrapModel === false ? undefined : faux.getModel(),
 			thinkingLevel: options?.bootstrapThinkingLevel === false ? undefined : undefined,
 			resourceLoaderOptions: {
-				extensionFactories: [
-					(pi: ExtensionAPI) => {
-						pi.registerProvider(faux.getModel().provider, {
-							baseUrl: faux.getModel().baseUrl,
-							apiKey: "faux-key",
-							api: faux.api,
-							models: faux.models.map((registeredModel) => ({
-								id: registeredModel.id,
-								name: registeredModel.name,
-								api: registeredModel.api,
-								reasoning: registeredModel.reasoning,
-								input: registeredModel.input,
-								cost: registeredModel.cost,
-								contextWindow: registeredModel.contextWindow,
-								maxTokens: registeredModel.maxTokens,
-							})),
-						});
-						extensionFactory(pi);
-					},
-				],
 				noSkills: true,
 				noPromptTemplates: true,
 				noThemes: true,
@@ -96,9 +94,17 @@ describe("AgentSessionRuntime characterization", () => {
 		const createRuntime: CreateAgentSessionRuntimeFactory = async (input) => {
 			await options?.beforeCreateRuntime?.(input);
 			const { cwd, sessionManager, sessionStartEvent } = input;
+			const extensionFactories = [providerFactory];
+			if (options?.includeExtensionFactory?.(input) ?? true) {
+				extensionFactories.push(extensionFactory);
+			}
 			const services = await createAgentSessionServices({
 				...runtimeOptions,
 				cwd,
+				resourceLoaderOptions: {
+					...runtimeOptions.resourceLoaderOptions,
+					extensionFactories,
+				},
 			});
 			return {
 				...(await createAgentSessionFromServices({
@@ -401,6 +407,111 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.sessionFile).toBe(originalSessionFile);
 	});
 
+	it("cancels resume when source activity starts during session_before_switch", async () => {
+		// Given
+		let releaseBeforeSwitch!: () => void;
+		const beforeSwitchReleased = new Promise<void>((resolve) => {
+			releaseBeforeSwitch = resolve;
+		});
+		let beforeSwitchStarted!: () => void;
+		const beforeSwitchStartedPromise = new Promise<void>((resolve) => {
+			beforeSwitchStarted = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest((pi) => {
+			pi.on("session_before_switch", async (event) => {
+				if (event.reason !== "resume") return;
+				beforeSwitchStarted();
+				await beforeSwitchReleased;
+			});
+		});
+		await runtime.session.prompt("hello");
+		const sourceSessionId = runtime.session.sessionManager.getSessionId();
+		const sourceLeafId = runtime.session.sessionManager.getLeafId();
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+
+		// When
+		const switchPromise = runtime.switchSession(target.getSessionFile()!, {
+			expectedSessionId: target.getSessionId(),
+			expectedSource: { sessionId: sourceSessionId, leafId: sourceLeafId },
+		} as Parameters<typeof runtime.switchSession>[1] & {
+			expectedSource: { sessionId: string; leafId: string | null };
+		});
+		await beforeSwitchStartedPromise;
+		let unsubscribeAgentStart = () => {};
+		const agentStarted = new Promise<void>((resolve) => {
+			unsubscribeAgentStart = runtime.session.subscribe((event) => {
+				if (event.type !== "agent_start") return;
+				unsubscribeAgentStart();
+				resolve();
+			});
+		});
+		const newerTurn = runtime.session.prompt("newer turn");
+		await agentStarted;
+		expect(runtime.session.isIdle).toBe(false);
+		releaseBeforeSwitch();
+		const result = await switchPromise;
+		void newerTurn;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionManager.getSessionId()).toBe(sourceSessionId);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
+	it("cancels new session when source activity starts during session_before_switch", async () => {
+		// Given
+		let releaseBeforeSwitch!: () => void;
+		const beforeSwitchReleased = new Promise<void>((resolve) => {
+			releaseBeforeSwitch = resolve;
+		});
+		let beforeSwitchStarted!: () => void;
+		const beforeSwitchStartedPromise = new Promise<void>((resolve) => {
+			beforeSwitchStarted = resolve;
+		});
+		const { runtime } = await createRuntimeForTest((pi) => {
+			pi.on("session_before_switch", async (event) => {
+				if (event.reason !== "new") return;
+				beforeSwitchStarted();
+				await beforeSwitchReleased;
+			});
+		});
+		await runtime.session.prompt("hello");
+		const parentSession = runtime.session.sessionFile!;
+		const sourceSessionId = runtime.session.sessionManager.getSessionId();
+		const sourceLeafId = runtime.session.sessionManager.getLeafId();
+
+		// When
+		const newSessionPromise = runtime.newSession({
+			expectedParentSessionId: sourceSessionId,
+			expectedSource: { sessionId: sourceSessionId, leafId: sourceLeafId },
+			parentSession,
+		} as Parameters<typeof runtime.newSession>[0] & {
+			expectedSource: { sessionId: string; leafId: string | null };
+		});
+		await beforeSwitchStartedPromise;
+		let unsubscribeAgentStart = () => {};
+		const agentStarted = new Promise<void>((resolve) => {
+			unsubscribeAgentStart = runtime.session.subscribe((event) => {
+				if (event.type !== "agent_start") return;
+				unsubscribeAgentStart();
+				resolve();
+			});
+		});
+		const newerTurn = runtime.session.prompt("newer turn");
+		await agentStarted;
+		expect(runtime.session.isIdle).toBe(false);
+		releaseBeforeSwitch();
+		const result = await newSessionPromise;
+		void newerTurn;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionManager.getSessionId()).toBe(sourceSessionId);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
 	it("rejects a target replaced while session_before_switch is pending", async () => {
 		// Given
 		let releaseBeforeSwitch!: () => void;
@@ -614,6 +725,56 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(shutdownCount).toBe(2);
 	});
 
+	it("rejects a parent replaced during new-session removed-extension handlers", async () => {
+		// Given
+		let releaseRemovedHandlers!: () => void;
+		const removedHandlersReleased = new Promise<void>((resolve) => {
+			releaseRemovedHandlers = resolve;
+		});
+		let removedHandlersStarted!: () => void;
+		const removedHandlersStartedPromise = new Promise<void>((resolve) => {
+			removedHandlersStarted = resolve;
+		});
+		let outgoingSessionId: string | undefined;
+		const { runtime, tempDir } = await createRuntimeForTest(
+			(pi) => {
+				pi.on("session_extensions_removed", async () => {
+					removedHandlersStarted();
+					await removedHandlersReleased;
+				});
+			},
+			{
+				includeExtensionFactory: (input) =>
+					outgoingSessionId === undefined || input.sessionManager.getSessionId() === outgoingSessionId,
+			},
+		);
+		await runtime.session.prompt("hello");
+		const parentSession = runtime.session.sessionFile!;
+		outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		const replacement = SessionManager.create(tempDir);
+		replacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "replacement" }],
+			timestamp: Date.now(),
+		});
+		replacement.persistInitializedSession();
+
+		// When
+		const newSessionPromise = runtime.newSession({
+			expectedParentSessionId: outgoingSessionId,
+			parentSession,
+		});
+		await removedHandlersStartedPromise;
+		copyFileSync(replacement.getSessionFile()!, parentSession);
+		releaseRemovedHandlers();
+		const result = await newSessionPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
 	it("rejects a switch target replaced while session_shutdown is pending", async () => {
 		// Given
 		let releaseShutdown!: () => void;
@@ -711,6 +872,58 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 		expect(shutdownCount).toBe(2);
+	});
+
+	it("rejects a switch target replaced during removed-extension handlers", async () => {
+		// Given
+		let releaseRemovedHandlers!: () => void;
+		const removedHandlersReleased = new Promise<void>((resolve) => {
+			releaseRemovedHandlers = resolve;
+		});
+		let removedHandlersStarted!: () => void;
+		const removedHandlersStartedPromise = new Promise<void>((resolve) => {
+			removedHandlersStarted = resolve;
+		});
+		let outgoingSessionId: string | undefined;
+		const { runtime, tempDir } = await createRuntimeForTest(
+			(pi) => {
+				pi.on("session_extensions_removed", async () => {
+					removedHandlersStarted();
+					await removedHandlersReleased;
+				});
+			},
+			{
+				includeExtensionFactory: (input) =>
+					outgoingSessionId === undefined || input.sessionManager.getSessionId() === outgoingSessionId,
+			},
+		);
+		await runtime.session.prompt("hello");
+		outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+		const targetSessionFile = target.getSessionFile()!;
+		const replacement = SessionManager.create(tempDir);
+		replacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "replacement" }],
+			timestamp: Date.now(),
+		});
+		replacement.persistInitializedSession();
+
+		// When
+		const switchPromise = runtime.switchSession(targetSessionFile, {
+			expectedSessionId: target.getSessionId(),
+		});
+		await removedHandlersStartedPromise;
+		copyFileSync(replacement.getSessionFile()!, targetSessionFile);
+		releaseRemovedHandlers();
+		const result = await switchPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
 
 	it("retains the effective cwd when recovering a cancelled switch", async () => {

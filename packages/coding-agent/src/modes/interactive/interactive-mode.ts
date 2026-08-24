@@ -7171,6 +7171,7 @@ export class InteractiveMode {
 		try {
 			const result = await this.runtimeHost.switchSession(sessionPath, {
 				expectedSessionId: options?.expectedSessionId,
+				expectedSource: options?.expectedSource,
 				sessionDir: options?.sessionDir,
 				withSession: options?.withSession,
 				projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
@@ -7190,6 +7191,7 @@ export class InteractiveMode {
 				const result = await this.runtimeHost.switchSession(sessionPath, {
 					cwdOverride: selectedCwd,
 					expectedSessionId: options?.expectedSessionId,
+					expectedSource: options?.expectedSource,
 					sessionDir: options?.sessionDir,
 					withSession: options?.withSession,
 					projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),

@@ -557,6 +557,11 @@ export interface ExtensionSessionCustomData {
 	data: unknown;
 }
 
+export interface SessionSourceExpectation {
+	sessionId: string;
+	leafId: string | null;
+}
+
 /**
  * Extended context for command handlers.
  * Includes session control methods only safe in user-initiated commands.
@@ -570,6 +575,7 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	/** Start a new session, optionally with initialization. */
 	newSession(options?: {
 		expectedParentSessionId?: string;
+		expectedSource?: SessionSourceExpectation;
 		parentSession?: string;
 		persistInitializedSession?: boolean;
 		sessionToolPolicy?: SessionToolPolicy;
@@ -609,6 +615,7 @@ export interface ExtensionCommandContext extends ExtensionContext {
 		sessionPath: string,
 		options?: {
 			expectedSessionId?: string;
+			expectedSource?: SessionSourceExpectation;
 			sessionDir?: string;
 			withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 		},

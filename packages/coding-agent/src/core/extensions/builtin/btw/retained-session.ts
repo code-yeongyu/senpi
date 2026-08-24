@@ -99,6 +99,10 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 
 	await input.ctx.newSession({
 		expectedParentSessionId: metadata.parentSessionId,
+		expectedSource: {
+			sessionId: sourceSessionId,
+			leafId: sourceLeafId,
+		},
 		parentSession: input.catalog.parentSessionPath,
 		persistInitializedSession: true,
 		sessionToolPolicy: {

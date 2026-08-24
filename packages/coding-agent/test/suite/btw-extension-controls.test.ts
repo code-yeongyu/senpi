@@ -78,6 +78,7 @@ describe("BTW extension TUI controls", () => {
 			resolveOwnCommandInvocationName: (name: string) => name,
 			sessionManager: {
 				getSessionId: () => "side",
+				getLeafId: () => "side-leaf",
 				getSessionDir: () => "/sessions",
 				getSessionFile: () => "/sessions/side.jsonl",
 				getEntries: () => [
@@ -140,6 +141,7 @@ describe("BTW extension TUI controls", () => {
 			resolveOwnCommandInvocationName: (name: string) => name,
 			sessionManager: {
 				getSessionId: () => "side",
+				getLeafId: () => "side-leaf",
 				getSessionDir: () => "/sessions",
 				getSessionFile: () => "/sessions/side.jsonl",
 				getEntries: () => [
@@ -207,6 +209,7 @@ describe("BTW extension TUI controls", () => {
 			resolveOwnCommandInvocationName: (name: string) => name,
 			sessionManager: {
 				getSessionId: () => "main",
+				getLeafId: () => "main-leaf",
 				getSessionDir: () => "/sessions",
 				getSessionFile: () => "/sessions/main.jsonl",
 				getEntries: () => [],
@@ -244,6 +247,7 @@ describe("BTW extension TUI controls", () => {
 			resolveOwnCommandInvocationName: (name: string) => name,
 			sessionManager: {
 				getSessionId: () => "side",
+				getLeafId: () => "side-leaf",
 				getSessionDir: () => "/sessions",
 				getSessionFile: () => "/sessions/side.jsonl",
 				getEntries: () => [

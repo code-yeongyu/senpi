@@ -19,6 +19,8 @@
   new/resume destinations are revalidated again after asynchronous runtime construction.
 - Stale candidate runtimes now run shutdown hooks before disposal, and recovered persisted sessions
   are revalidated after construction before the host rebinds them.
+- Retained replacements now revalidate after removed-extension handlers and cancel when source
+  activity or tree generation changes during asynchronous switch vetoes.
 
 ### Added
 

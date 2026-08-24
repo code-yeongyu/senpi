@@ -90,6 +90,8 @@
   resume and new-session transitions revalidate again after asynchronous runtime construction.
 - Discarded candidate runtimes run their normal shutdown lifecycle before disposal, and persisted
   recovery candidates revalidate after construction before the host rebinds them.
+- Expected target/parent identities are checked again after removed-extension handlers, and BTW
+  passes source ID/leaf expectations so activity begun during a switch veto cancels replacement.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

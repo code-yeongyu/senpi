@@ -39,6 +39,7 @@ function sideEntries(): SessionEntry[] {
 function manager(entries = sideEntries()): SessionManager {
 	return {
 		getSessionId: () => "side",
+		getLeafId: () => "side-leaf",
 		getSessionDir: () => "/configured/sessions",
 		getSessionFile: () => SIDE_PATH,
 		getEntries: () => entries,
@@ -113,6 +114,7 @@ describe("retained BTW session actions", () => {
 			PARENT_PATH,
 			expect.objectContaining({
 				expectedSessionId: "main",
+				expectedSource: { sessionId: "side", leafId: "side-leaf" },
 				sessionDir: "/configured/sessions",
 				withSession: expect.any(Function),
 			}),
@@ -156,6 +158,7 @@ describe("retained BTW session actions", () => {
 			PARENT_PATH,
 			expect.objectContaining({
 				expectedSessionId: "main",
+				expectedSource: { sessionId: "side", leafId: "side-leaf" },
 				withSession: expect.any(Function),
 			}),
 		);
@@ -192,6 +195,7 @@ describe("retained BTW session actions", () => {
 		// Then
 		expect(current).toEqual({
 			sessionId: "side",
+			sourceLeafId: "side-leaf",
 			sessionDir: "/configured/sessions",
 			sessionPath: SIDE_PATH,
 			metadata: sideMetadata(),

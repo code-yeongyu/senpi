@@ -188,13 +188,21 @@ export async function runBtwTuiCommand(
 		}
 		await ctx.waitForIdle();
 		const expectedSessionId = selected.choice.sessionId;
+		const expectedSource = {
+			sessionId: ctx.sessionManager.getSessionId(),
+			leafId: ctx.sessionManager.getLeafId(),
+		};
 		const switchOptions =
 			selected.choice.sessionPath === catalog.parentSessionPath && catalog.currentSide
 				? {
-						...createBtwParentSwitchOptions(catalog.currentSide.metadata, ctx.sessionManager.getSessionDir()),
+						...createBtwParentSwitchOptions(
+							catalog.currentSide.metadata,
+							ctx.sessionManager.getSessionDir(),
+							expectedSource,
+						),
 						expectedSessionId,
 					}
-				: { expectedSessionId };
+				: { expectedSessionId, expectedSource };
 		const switchResult = await ctx.switchSession(selected.choice.sessionPath, switchOptions);
 		if (
 			switchResult.cancelled &&

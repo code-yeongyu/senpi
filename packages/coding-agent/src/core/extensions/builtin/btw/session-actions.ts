@@ -1,12 +1,13 @@
 import { unlink } from "node:fs/promises";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";
-import type { ExtensionCommandContext } from "../../types.ts";
+import type { ExtensionCommandContext, SessionSourceExpectation } from "../../types.ts";
 import { type BtwSideMetadata, readBtwSideMetadata } from "./session-catalog.ts";
 
 export interface CurrentBtwSide {
 	sessionId: string;
 	sessionDir: string;
 	sessionPath: string;
+	sourceLeafId: string | null;
 	metadata: BtwSideMetadata;
 }
 
@@ -19,14 +20,17 @@ export interface DeleteSessionFileResult {
 export function createBtwParentSwitchOptions(
 	metadata: BtwSideMetadata,
 	sessionDir: string,
+	expectedSource?: SessionSourceExpectation,
 ): {
 	expectedSessionId: string;
+	expectedSource?: SessionSourceExpectation;
 	sessionDir: string;
 	withSession?: (ctx: ExtensionCommandContext) => Promise<void>;
 } {
 	const parentLeafId = metadata.parentLeafId;
 	return {
 		expectedSessionId: metadata.parentSessionId,
+		expectedSource,
 		sessionDir,
 		withSession: parentLeafId
 			? async (ctx) => {
@@ -61,6 +65,7 @@ export function readCurrentBtwSide(sessionManager: ReadonlySessionManager): Curr
 				sessionId: sessionManager.getSessionId(),
 				sessionDir: sessionManager.getSessionDir(),
 				sessionPath,
+				sourceLeafId: sessionManager.getLeafId(),
 				metadata,
 			}
 		: undefined;
@@ -87,7 +92,10 @@ export async function returnToBtwParent(input: {
 		return;
 	}
 	if (!hasMatchingBtwParent(input.ctx, input.current)) return;
-	const options = createBtwParentSwitchOptions(input.current.metadata, input.current.sessionDir);
+	const options = createBtwParentSwitchOptions(input.current.metadata, input.current.sessionDir, {
+		sessionId: input.current.sessionId,
+		leafId: input.current.sourceLeafId,
+	});
 	await input.ctx.switchSession(input.current.metadata.parentSessionPath, options);
 }
 
@@ -104,6 +112,10 @@ export async function closeRetainedBtwSide(input: {
 	if (!hasMatchingBtwParent(input.ctx, current)) return;
 	await input.ctx.switchSession(current.metadata.parentSessionPath, {
 		expectedSessionId: current.metadata.parentSessionId,
+		expectedSource: {
+			sessionId: current.sessionId,
+			leafId: current.sourceLeafId,
+		},
 		sessionDir: current.sessionDir,
 		withSession: async (nextCtx) => {
 			let warning: string | undefined;

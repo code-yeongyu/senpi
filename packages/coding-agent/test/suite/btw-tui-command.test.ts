@@ -56,6 +56,7 @@ function createHarness(selections: Array<string | undefined> = []) {
 		cwd: "/repo",
 		sessionManager: {
 			getSessionId: () => "main",
+			getLeafId: () => "main-leaf",
 			getSessionFile: () => "/sessions/main.jsonl",
 			getSessionDir: () => "/configured/sessions",
 		},
@@ -179,6 +180,7 @@ describe("runBtwTuiCommand", () => {
 		]);
 		expect(harness.switchSession).toHaveBeenCalledWith("/sessions/side-1.jsonl", {
 			expectedSessionId: "side-1",
+			expectedSource: { sessionId: "main", leafId: "main-leaf" },
 		});
 		expect(harness.waitForIdle).toHaveBeenCalledTimes(2);
 		expect(harness.waitForIdle.mock.invocationCallOrder[0]).toBeLessThan(
@@ -210,6 +212,7 @@ describe("runBtwTuiCommand", () => {
 			"/sessions/main.jsonl",
 			expect.objectContaining({
 				expectedSessionId: "main",
+				expectedSource: { sessionId: "main", leafId: "main-leaf" },
 				sessionDir: "/configured/sessions",
 				withSession: expect.any(Function),
 			}),
@@ -279,6 +282,7 @@ describe("runBtwTuiCommand", () => {
 		expect(harness.switchSession).toHaveBeenCalledOnce();
 		expect(harness.switchSession).toHaveBeenCalledWith("/sessions/side-1.jsonl", {
 			expectedSessionId: "side-1",
+			expectedSource: { sessionId: "main", leafId: "main-leaf" },
 		});
 	});
 
@@ -296,6 +300,7 @@ describe("runBtwTuiCommand", () => {
 		// Then
 		expect(harness.switchSession).toHaveBeenCalledWith("/sessions/side-1.jsonl", {
 			expectedSessionId: "side-1",
+			expectedSource: { sessionId: "main", leafId: "main-leaf" },
 		});
 		expect(harness.notify).toHaveBeenCalledWith("That BTW session no longer exists. Refreshing the list.", "warning");
 	});
