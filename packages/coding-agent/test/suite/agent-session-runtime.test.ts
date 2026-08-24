@@ -483,6 +483,75 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.sessionFile).toBe(originalSessionFile);
 	});
 
+	it("uses header-only metadata for expected parent identity checks", async () => {
+		// Given
+		const { runtime } = await createRuntimeForTest(() => {});
+		await runtime.session.prompt("hello");
+		const parentSession = runtime.session.sessionFile!;
+		const expectedParentSessionId = runtime.session.sessionManager.getSessionId();
+		const inspectMetadata = vi.spyOn(SessionManager, "inspectMetadata");
+		const open = vi.spyOn(SessionManager, "open");
+
+		try {
+			// When
+			const result = await runtime.newSession({
+				expectedParentSessionId,
+				parentSession,
+			});
+
+			// Then
+			expect(result).toEqual({ cancelled: false });
+			expect(inspectMetadata).toHaveBeenCalledWith(parentSession);
+			expect(open).not.toHaveBeenCalled();
+		} finally {
+			inspectMetadata.mockRestore();
+			open.mockRestore();
+		}
+	});
+
+	it("rebinds a live runtime when the parent is replaced during new-session shutdown", async () => {
+		// Given
+		let releaseShutdown!: () => void;
+		const shutdownReleased = new Promise<void>((resolve) => {
+			releaseShutdown = resolve;
+		});
+		let shutdownStarted!: () => void;
+		const shutdownStartedPromise = new Promise<void>((resolve) => {
+			shutdownStarted = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest((pi: ExtensionAPI) => {
+			pi.on("session_shutdown", async (event) => {
+				if (event.reason !== "new") return;
+				shutdownStarted();
+				await shutdownReleased;
+			});
+		});
+		await runtime.session.prompt("hello");
+		const originalSessionFile = runtime.session.sessionFile!;
+		const expectedParentSessionId = runtime.session.sessionManager.getSessionId();
+		const replacement = SessionManager.create(tempDir);
+		replacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "replacement" }],
+			timestamp: Date.now(),
+		});
+		replacement.persistInitializedSession();
+
+		// When
+		const newSessionPromise = runtime.newSession({
+			expectedParentSessionId,
+			parentSession: originalSessionFile,
+		});
+		await shutdownStartedPromise;
+		copyFileSync(replacement.getSessionFile()!, originalSessionFile);
+		releaseShutdown();
+		const result = await newSessionPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
 	it("rejects a switch target replaced while session_shutdown is pending", async () => {
 		// Given
 		let releaseShutdown!: () => void;
@@ -525,6 +594,7 @@ describe("AgentSessionRuntime characterization", () => {
 		// Then
 		expect(result).toEqual({ cancelled: true });
 		expect(runtime.session.sessionFile).toBe(originalSessionFile);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
 
 	it("emits session_before_fork and session_start and honors cancellation", async () => {

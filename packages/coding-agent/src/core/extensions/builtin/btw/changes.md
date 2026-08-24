@@ -84,6 +84,8 @@
   the live session manager.
 - Retained creation carries the expected Main ID through new-session veto and shutdown hooks, while
   guarded switches reopen and verify their destination again after outgoing-session teardown.
+- A post-teardown identity cancellation recreates and rebinds a valid outgoing runtime before
+  returning, and expected-parent checks read bounded header metadata rather than full transcripts.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

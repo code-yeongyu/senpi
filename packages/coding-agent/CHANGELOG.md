@@ -13,6 +13,8 @@
   files before switching, snapshotting, or deleting.
 - Retained BTW creation and switching now revalidate parent and destination identities after
   asynchronous veto and shutdown hooks, preventing stale session managers from being applied.
+- Identity cancellations after shutdown now leave a rebound live runtime, and retained parent
+  checks use bounded session headers instead of loading complete transcripts.
 
 ### Added
 
