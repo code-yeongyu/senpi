@@ -33,6 +33,8 @@
   cleanup atomically quarantines files and restores the outgoing runtime even when cleanup fails.
 - Replacement callback privilege is now method-scoped, and cancelled-side cleanup verifies
   ownership both before and after quarantine to preserve already-active replacements.
+- Recovery now falls back on metadata errors, custom trigger turns count toward source generation,
+  and a pending replacement admits only the registered BTW close command.
 
 ### Added
 

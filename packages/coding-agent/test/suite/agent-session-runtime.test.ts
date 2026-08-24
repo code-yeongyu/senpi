@@ -656,6 +656,69 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
 
+	it("cancels a streaming-origin switch when a custom trigger turn appears during the veto", async () => {
+		// Given
+		let releaseBeforeSwitch!: () => void;
+		const beforeSwitchReleased = new Promise<void>((resolve) => {
+			releaseBeforeSwitch = resolve;
+		});
+		let beforeSwitchStarted!: () => void;
+		const beforeSwitchStartedPromise = new Promise<void>((resolve) => {
+			beforeSwitchStarted = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest((pi) => {
+			pi.on("session_before_switch", async (event) => {
+				if (event.reason !== "resume") return;
+				beforeSwitchStarted();
+				await beforeSwitchReleased;
+			});
+		});
+		let unsubscribeAgentStart = () => {};
+		const agentStarted = new Promise<void>((resolve) => {
+			unsubscribeAgentStart = runtime.session.subscribe((event) => {
+				if (event.type !== "agent_start") return;
+				unsubscribeAgentStart();
+				resolve();
+			});
+		});
+		const activeTurn = runtime.session.prompt("streaming turn");
+		await agentStarted;
+		const sourceSessionId = runtime.session.sessionManager.getSessionId();
+		const expectedSource = {
+			sessionId: sourceSessionId,
+			leafId: runtime.session.sessionManager.getLeafId(),
+			wasIdle: false,
+			activityGeneration: runtime.session.sourceActivityGeneration,
+		};
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+
+		// When
+		const switchPromise = runtime.switchSession(target.getSessionFile()!, {
+			expectedSessionId: target.getSessionId(),
+			expectedSource,
+		});
+		await beforeSwitchStartedPromise;
+		await runtime.session.sendCustomMessage(
+			{
+				customType: "goal-continuation",
+				content: [{ type: "text", text: "continue" }],
+				display: false,
+				details: {},
+			},
+			{ triggerTurn: true },
+		);
+		releaseBeforeSwitch();
+		const result = await switchPromise;
+		void activeTurn;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionManager.getSessionId()).toBe(sourceSessionId);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
 	it("blocks new source prompts once guarded teardown begins", async () => {
 		// Given
 		let releaseShutdown!: () => void;
@@ -1256,6 +1319,68 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
 
+	it("falls back to the detached snapshot when outgoing metadata inspection fails during shutdown", async () => {
+		// Given
+		let releaseShutdown!: () => void;
+		const shutdownReleased = new Promise<void>((resolve) => {
+			releaseShutdown = resolve;
+		});
+		let shutdownStarted!: () => void;
+		const shutdownStartedPromise = new Promise<void>((resolve) => {
+			shutdownStarted = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest((pi) => {
+			pi.on("session_shutdown", async (event) => {
+				if (event.reason !== "resume") return;
+				shutdownStarted();
+				await shutdownReleased;
+			});
+		});
+		await runtime.session.prompt("hello");
+		const outgoingSessionFile = runtime.session.sessionFile!;
+		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		const inspectMetadata = SessionManager.inspectMetadata.bind(SessionManager);
+		let outgoingMetadataUnreadable = false;
+		const inspectSpy = vi.spyOn(SessionManager, "inspectMetadata").mockImplementation((sessionFile) => {
+			if (outgoingMetadataUnreadable && sessionFile === outgoingSessionFile) {
+				throw new Error("metadata unreadable");
+			}
+			return inspectMetadata(sessionFile);
+		});
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+		const targetSessionFile = target.getSessionFile()!;
+		const replacement = SessionManager.create(tempDir);
+		replacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "replacement" }],
+			timestamp: Date.now(),
+		});
+		replacement.persistInitializedSession();
+
+		// When
+		const switchPromise = runtime.switchSession(targetSessionFile, {
+			expectedSessionId: target.getSessionId(),
+		});
+		await shutdownStartedPromise;
+		copyFileSync(replacement.getSessionFile()!, targetSessionFile);
+		outgoingMetadataUnreadable = true;
+		releaseShutdown();
+		let result: { cancelled: boolean };
+		try {
+			result = await switchPromise;
+		} finally {
+			inspectSpy.mockRestore();
+		}
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(runtime.session.sessionManager.isPersisted()).toBe(false);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
 	it("rejects a switch target replaced during runtime construction", async () => {
 		// Given
 		let shutdownCount = 0;
@@ -1476,6 +1601,58 @@ describe("AgentSessionRuntime characterization", () => {
 		// Then
 		expect(result).toEqual({ cancelled: false });
 		expect(withSession).toHaveBeenCalledOnce();
+		expect(runtime.session.isReplacementPending).toBe(false);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
+	it("admits only the registered BTW close command while replacement remains pending", async () => {
+		// Given
+		let releaseCallback!: () => void;
+		const callbackReleased = new Promise<void>((resolve) => {
+			releaseCallback = resolve;
+		});
+		let callbackStarted!: () => void;
+		const callbackStartedPromise = new Promise<void>((resolve) => {
+			callbackStarted = resolve;
+		});
+		const closeHandled = vi.fn();
+		const { runtime } = await createRuntimeForTest((pi) => {
+			pi.registerCommand("btw-close", {
+				description: "Close retained BTW",
+				handler: async () => {
+					closeHandled();
+				},
+			});
+		});
+		const initialCloseCommand = runtime.session.extensionRunner
+			.getRegisteredCommands()
+			.find((command) => command.name === "btw-close");
+		expect(initialCloseCommand).toBeDefined();
+		runtime.setRebindSession(async (session) => {
+			await session.bindExtensions({});
+		});
+
+		// When
+		const newSessionPromise = runtime.newSession({
+			withSession: async () => {
+				callbackStarted();
+				await callbackReleased;
+			},
+		});
+		await callbackStartedPromise;
+		try {
+			const closeInvocation = runtime.session.extensionRunner
+				.getRegisteredCommands()
+				.find((command) => command.name === "btw-close")?.invocationName;
+			expect(closeInvocation).toBeDefined();
+			await runtime.session.sendUserMessage(`/${closeInvocation}`, { expandPromptTemplates: true });
+		} finally {
+			releaseCallback();
+		}
+		const result = await newSessionPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: false });
 		expect(runtime.session.isReplacementPending).toBe(false);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});

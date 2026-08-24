@@ -284,14 +284,13 @@ export class AgentSessionRuntime {
 		sessionFile: string | undefined;
 	}): Promise<void> {
 		let sessionManager = input.outgoingSnapshot;
-		if (
-			input.sessionFile &&
-			SessionManager.inspectMetadata(input.sessionFile)?.id === input.outgoingSnapshot.getSessionId()
-		) {
+		if (input.sessionFile) {
 			try {
-				sessionManager = SessionManager.open(input.sessionFile, input.sessionDir, input.cwd);
+				if (SessionManager.inspectMetadata(input.sessionFile)?.id === input.outgoingSnapshot.getSessionId()) {
+					sessionManager = SessionManager.open(input.sessionFile, input.sessionDir, input.cwd);
+				}
 			} catch {
-				// Keep the detached outgoing snapshot when its persisted file is no longer readable.
+				// Keep the detached outgoing snapshot when metadata or persisted content is unreadable.
 			}
 		}
 		const createRecoveryRuntime = (manager: SessionManager) =>

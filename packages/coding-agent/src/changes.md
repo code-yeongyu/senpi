@@ -90,6 +90,8 @@
   file cleanup uses atomic quarantine and cannot prevent outgoing runtime recovery.
 - Replacement privilege is synchronous per context method rather than callback-wide, and side
   cleanup performs pre-rename plus post-rename ownership validation.
+- Recovery catches bounded metadata failures, custom triggerTurn admissions increment source
+  generation, and replacement-pending narrowly recognizes the registered BTW close invocation.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

@@ -104,6 +104,8 @@
   side cleanup atomically quarantines before validation/deletion and always restores runtime first.
 - Callback privilege is applied only to individual replacement-context method admission, and
   cleanup checks ownership before quarantine while retaining the post-rename race check.
+- Recovery metadata failures keep the detached snapshot; custom trigger turns advance source
+  generation; replacement-pending admits only the registered collision-safe BTW close command.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

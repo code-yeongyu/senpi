@@ -2707,6 +2707,13 @@ export class AgentSession {
 		}
 	}
 
+	private isReplacementCloseCommand(text: string, expandPromptTemplates: boolean): boolean {
+		if (!this._replacementPending || !expandPromptTemplates || !text.startsWith("/")) return false;
+		const spaceIndex = text.indexOf(" ");
+		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+		return this._extensionRunner.getCommand(commandName)?.name === "btw-close";
+	}
+
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
 		return this.agent.state.systemPrompt;
@@ -3102,7 +3109,9 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
-		this.assertReplacementTurnAllowed();
+		if (!this.isReplacementCloseCommand(text, options?.expandPromptTemplates ?? true)) {
+			this.assertReplacementTurnAllowed();
+		}
 		this._sourceActivityGeneration++;
 		const throwIfCancelled = (): void => {
 			if (!options?.signal?.aborted) return;
@@ -3871,7 +3880,10 @@ export class AgentSession {
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
-		if (options?.triggerTurn) this.assertReplacementTurnAllowed();
+		if (options?.triggerTurn) {
+			this.assertReplacementTurnAllowed();
+			this._sourceActivityGeneration++;
+		}
 		const userAbortGeneration = this._userAbortGeneration;
 		const appMessage = {
 			role: "custom" as const,
@@ -3978,7 +3990,12 @@ export class AgentSession {
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
-		this.assertReplacementTurnAllowed();
+		if (
+			typeof content !== "string" ||
+			!this.isReplacementCloseCommand(content, options?.expandPromptTemplates ?? false)
+		) {
+			this.assertReplacementTurnAllowed();
+		}
 		const bindingPromptReadiness = this._extensionBindingPromptReadiness;
 		let resolveBindingPromptReadiness: (() => void) | undefined;
 		if (bindingPromptReadiness) {
