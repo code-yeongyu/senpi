@@ -29,6 +29,8 @@
   command hosts inherit every public identity/source option.
 - Replacement sessions now block external prompt admission through callback completion, and
   cancelled guarded creation removes its still-owned persisted side transcript.
+- Replacement locks now block extension-triggered turns outside callbacks, while cancelled-side
+  cleanup atomically quarantines files and restores the outgoing runtime even when cleanup fails.
 
 ### Added
 

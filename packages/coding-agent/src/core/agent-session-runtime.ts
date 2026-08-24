@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { copyFileSync, existsSync, linkSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
@@ -92,6 +93,7 @@ export class AgentSessionRuntime {
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
 	private readonly _launchProfile?: Readonly<AgentSessionLaunchProfile>;
+	private readonly unlinkSessionFile: (sessionFile: string) => void;
 	private _removedOnReplacement?: {
 		oldRunner: ExtensionRunner;
 		oldIdentities: Array<{ path: string; resolvedPath: string }>;
@@ -105,6 +107,7 @@ export class AgentSessionRuntime {
 		_diagnostics: AgentSessionRuntimeDiagnostic[] = [],
 		_modelFallbackMessage?: string,
 		launchProfile?: Readonly<AgentSessionLaunchProfile>,
+		unlinkSessionFile: (sessionFile: string) => void = unlinkSync,
 	) {
 		this._session = _session;
 		this._services = _services;
@@ -112,6 +115,7 @@ export class AgentSessionRuntime {
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
 		this._launchProfile = launchProfile;
+		this.unlinkSessionFile = unlinkSessionFile;
 	}
 
 	get services(): AgentSessionServices {
@@ -325,7 +329,7 @@ export class AgentSessionRuntime {
 		}
 		try {
 			if (withSession) {
-				await withSession(this.session.createReplacedSessionContext());
+				await this.session.runReplacementCallback(() => withSession(this.session.createReplacedSessionContext()));
 			}
 		} finally {
 			this.session.endReplacement();
@@ -336,11 +340,34 @@ export class AgentSessionRuntime {
 	private removeOwnedPersistedSession(sessionManager: SessionManager): void {
 		const sessionFile = sessionManager.getSessionFile();
 		if (!sessionFile) return;
+		const quarantinedFile = `${sessionFile}.cleanup-${randomUUID()}`;
 		try {
-			if (SessionManager.inspectMetadata(sessionFile)?.id !== sessionManager.getSessionId()) return;
-			unlinkSync(sessionFile);
+			renameSync(sessionFile, quarantinedFile);
 		} catch (error) {
 			if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return;
+			throw error;
+		}
+		const restoreQuarantinedFile = (): void => {
+			linkSync(quarantinedFile, sessionFile);
+			unlinkSync(quarantinedFile);
+		};
+		try {
+			if (SessionManager.inspectMetadata(quarantinedFile)?.id !== sessionManager.getSessionId()) {
+				restoreQuarantinedFile();
+				return;
+			}
+			this.unlinkSessionFile(quarantinedFile);
+		} catch (error) {
+			if (existsSync(quarantinedFile) && !existsSync(sessionFile)) {
+				try {
+					restoreQuarantinedFile();
+				} catch (restoreError) {
+					throw new AggregateError(
+						[error, restoreError],
+						`Failed to clean up or restore cancelled session ${sessionFile}`,
+					);
+				}
+			}
 			throw error;
 		}
 	}
@@ -518,10 +545,16 @@ export class AgentSessionRuntime {
 		if (!finished) {
 			const cancelledSessionManager = this.session.sessionManager;
 			await this.teardownCurrent("new", previousSessionFile);
+			let cleanupError: unknown;
 			if (options?.persistInitializedSession) {
-				this.removeOwnedPersistedSession(cancelledSessionManager);
+				try {
+					this.removeOwnedPersistedSession(cancelledSessionManager);
+				} catch (error) {
+					cleanupError = error;
+				}
 			}
 			await this.recoverAfterCancelledTeardown({ ...previousSession, outgoingSnapshot });
+			if (cleanupError) throw cleanupError;
 			return { cancelled: true };
 		}
 		return { cancelled: false };
@@ -691,6 +724,7 @@ export async function createAgentSessionRuntime(
 		sessionManager: SessionManager;
 		sessionStartEvent?: SessionStartEvent;
 		launchProfile?: Readonly<AgentSessionLaunchProfile>;
+		unlinkSessionFile?: (sessionFile: string) => void;
 	},
 ): Promise<AgentSessionRuntime> {
 	assertSessionCwdExists(options.sessionManager, options.cwd);
@@ -702,6 +736,7 @@ export async function createAgentSessionRuntime(
 		result.diagnostics,
 		result.modelFallbackMessage,
 		options.launchProfile,
+		options.unlinkSessionFile,
 	);
 }
 

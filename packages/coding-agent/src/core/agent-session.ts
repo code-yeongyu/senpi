@@ -842,6 +842,7 @@ export class AgentSession {
 	private readonly _messageEndsAwaitingPersistence = new Set<AgentMessage>();
 	private _isAgentRunActive = false;
 	private _replacementPending = false;
+	private _replacementCallbackDepth = 0;
 	private _sourceActivityGeneration = 0;
 	private _toolExecutionDepth = 0;
 	private _promptStartPending = false;
@@ -2691,6 +2692,21 @@ export class AgentSession {
 		this._replacementPending = false;
 	}
 
+	async runReplacementCallback<T>(callback: () => Promise<T>): Promise<T> {
+		this._replacementCallbackDepth++;
+		try {
+			return await callback();
+		} finally {
+			this._replacementCallbackDepth--;
+		}
+	}
+
+	private assertReplacementTurnAllowed(): void {
+		if (this._replacementPending && this._replacementCallbackDepth === 0) {
+			throw new Error("Session replacement is in progress");
+		}
+	}
+
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
 		return this.agent.state.systemPrompt;
@@ -3086,9 +3102,7 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
-		if (this._replacementPending && options?.source !== "extension") {
-			throw new Error("Session replacement is in progress");
-		}
+		this.assertReplacementTurnAllowed();
 		this._sourceActivityGeneration++;
 		const throwIfCancelled = (): void => {
 			if (!options?.signal?.aborted) return;
@@ -3857,6 +3871,7 @@ export class AgentSession {
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
+		if (options?.triggerTurn) this.assertReplacementTurnAllowed();
 		const userAbortGeneration = this._userAbortGeneration;
 		const appMessage = {
 			role: "custom" as const,
@@ -3963,6 +3978,7 @@ export class AgentSession {
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
+		this.assertReplacementTurnAllowed();
 		const bindingPromptReadiness = this._extensionBindingPromptReadiness;
 		let resolveBindingPromptReadiness: (() => void) | undefined;
 		if (bindingPromptReadiness) {

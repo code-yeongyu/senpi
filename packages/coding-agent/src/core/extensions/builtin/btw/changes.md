@@ -100,6 +100,8 @@
   option types derive from the public context signatures so typed hosts retain every guard.
 - Replacement candidates stay externally prompt-locked through rebind/callback completion, and a
   cancelled guarded creation removes only its still-owned initialized side file.
+- Replacement locking covers extension-triggered turns with a scoped callback privilege; cancelled
+  side cleanup atomically quarantines before validation/deletion and always restores runtime first.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

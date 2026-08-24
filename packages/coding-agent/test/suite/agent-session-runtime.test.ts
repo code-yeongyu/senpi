@@ -1,4 +1,13 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
@@ -46,6 +55,7 @@ describe("AgentSessionRuntime characterization", () => {
 			bootstrapThinkingLevel?: boolean;
 			cwd?: string;
 			includeExtensionFactory?: (input: Parameters<CreateAgentSessionRuntimeFactory>[0]) => boolean;
+			unlinkSessionFile?: (sessionFile: string) => void;
 		},
 	) {
 		const tempDir =
@@ -122,6 +132,7 @@ describe("AgentSessionRuntime characterization", () => {
 			cwd: tempDir,
 			agentDir: tempDir,
 			sessionManager: SessionManager.create(tempDir),
+			unlinkSessionFile: options?.unlinkSessionFile,
 		});
 		await runtime.session.bindExtensions({});
 
@@ -1009,6 +1020,122 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 	});
 
+	it("recovers the outgoing runtime before surfacing cancelled-side cleanup failure", async () => {
+		// Given
+		let releaseRebind!: () => void;
+		const rebindReleased = new Promise<void>((resolve) => {
+			releaseRebind = resolve;
+		});
+		let rebindStarted!: () => void;
+		const rebindStartedPromise = new Promise<void>((resolve) => {
+			rebindStarted = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest(() => {}, {
+			unlinkSessionFile: () => {
+				throw new Error("cleanup failed");
+			},
+		});
+		await runtime.session.prompt("hello");
+		const parentSession = runtime.session.sessionFile!;
+		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		runtime.setRebindSession(async (session) => {
+			await session.bindExtensions({});
+			if (session.sessionManager.getSessionId() === outgoingSessionId) return;
+			rebindStarted();
+			await rebindReleased;
+		});
+		const replacement = SessionManager.create(tempDir);
+		replacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "replacement" }],
+			timestamp: Date.now(),
+		});
+		replacement.persistInitializedSession();
+
+		// When
+		const newSessionPromise = runtime.newSession({
+			expectedParentSessionId: outgoingSessionId,
+			parentSession,
+			persistInitializedSession: true,
+		});
+		await rebindStartedPromise;
+		copyFileSync(replacement.getSessionFile()!, parentSession);
+		releaseRebind();
+
+		// Then
+		await expect(newSessionPromise).rejects.toThrow("cleanup failed");
+		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+		expect(runtime.session.isReplacementPending).toBe(false);
+	});
+
+	it("preserves a replacement that reuses the cancelled side path at deletion time", async () => {
+		// Given
+		let releaseRebind!: () => void;
+		const rebindReleased = new Promise<void>((resolve) => {
+			releaseRebind = resolve;
+		});
+		let rebindStarted!: () => void;
+		const rebindStartedPromise = new Promise<void>((resolve) => {
+			rebindStarted = resolve;
+		});
+		let createdSessionFile: string | undefined;
+		let sideReplacementFile: string | undefined;
+		const { runtime, tempDir } = await createRuntimeForTest(() => {}, {
+			unlinkSessionFile: (sessionFile) => {
+				if (createdSessionFile && sideReplacementFile) {
+					copyFileSync(sideReplacementFile, createdSessionFile);
+				}
+				unlinkSync(sessionFile);
+			},
+		});
+		await runtime.session.prompt("hello");
+		const parentSession = runtime.session.sessionFile!;
+		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		runtime.setRebindSession(async (session) => {
+			await session.bindExtensions({});
+			if (session.sessionManager.getSessionId() === outgoingSessionId) return;
+			rebindStarted();
+			await rebindReleased;
+		});
+		const parentReplacement = SessionManager.create(tempDir);
+		parentReplacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "parent replacement" }],
+			timestamp: Date.now(),
+		});
+		parentReplacement.persistInitializedSession();
+		const sideReplacement = SessionManager.create(tempDir);
+		sideReplacement.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "side replacement" }],
+			timestamp: Date.now(),
+		});
+		sideReplacement.persistInitializedSession();
+		sideReplacementFile = sideReplacement.getSessionFile();
+
+		// When
+		const newSessionPromise = runtime.newSession({
+			expectedParentSessionId: outgoingSessionId,
+			parentSession,
+			persistInitializedSession: true,
+			setup: async (sessionManager) => {
+				createdSessionFile = sessionManager.getSessionFile();
+			},
+		});
+		await rebindStartedPromise;
+		copyFileSync(parentReplacement.getSessionFile()!, parentSession);
+		releaseRebind();
+		const result = await newSessionPromise;
+
+		// Then
+		expect(result).toEqual({ cancelled: true });
+		expect(createdSessionFile).toBeDefined();
+		expect(SessionManager.inspectMetadata(createdSessionFile!)?.id).toBe(sideReplacement.getSessionId());
+		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
 	it("rejects a switch target replaced while session_shutdown is pending", async () => {
 		// Given
 		let releaseShutdown!: () => void;
@@ -1220,9 +1347,21 @@ describe("AgentSessionRuntime characterization", () => {
 			await session.bindExtensions({});
 			expect(session.isReplacementPending).toBe(true);
 			await expect(session.prompt("early external prompt")).rejects.toThrow("Session replacement is in progress");
+			await expect(
+				session.sendCustomMessage(
+					{
+						customType: "goal-continuation",
+						content: [{ type: "text", text: "continue" }],
+						display: false,
+						details: {},
+					},
+					{ triggerTurn: true },
+				),
+			).rejects.toThrow("Session replacement is in progress");
 		});
-		const withSession = vi.fn(async () => {
+		const withSession = vi.fn(async (ctx: ReplacedSessionContext) => {
 			expect(runtime.session.isReplacementPending).toBe(true);
+			await ctx.sendUserMessage("callback-owned prompt");
 		});
 
 		// When
