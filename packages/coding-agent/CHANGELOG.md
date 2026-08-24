@@ -9,6 +9,8 @@
 - Webfetch now safely discards redirect response bodies under Bun 1.4.0's bare `undici`, which may omit `body.dump()`, by falling back to argument-free stream destruction instead of re-emitting cleanup failures as uncaught stream errors ([#1089](https://github.com/code-yeongyu/senpi/issues/1089)).
 - Retained BTW picker switches now revalidate the selected session after asynchronous pre-switch
   guards, preventing a replaced JSONL path from opening an unrelated session.
+- Direct BTW returns and catalog discovery now reject path-reused Main or active-side session
+  files before switching, snapshotting, or deleting.
 
 ### Added
 

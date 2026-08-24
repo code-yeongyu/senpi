@@ -78,6 +78,10 @@
 - Existing picker targets wait idle, revalidate identity, wait idle again, then switch.
 - Picker switches carry the selected session ID through the host switch boundary, which reopens
   and verifies the target after every asynchronous `session_before_switch` veto before teardown.
+- Direct Main return and destructive close carry the expected Main ID through the same guarded
+  switch boundary.
+- Catalog discovery rejects current-path side metadata whose persisted header ID no longer matches
+  the live session manager.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

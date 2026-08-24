@@ -20,11 +20,13 @@ export function createBtwParentSwitchOptions(
 	metadata: BtwSideMetadata,
 	sessionDir: string,
 ): {
+	expectedSessionId: string;
 	sessionDir: string;
 	withSession?: (ctx: ExtensionCommandContext) => Promise<void>;
 } {
 	const parentLeafId = metadata.parentLeafId;
 	return {
+		expectedSessionId: metadata.parentSessionId,
 		sessionDir,
 		withSession: parentLeafId
 			? async (ctx) => {
@@ -101,6 +103,7 @@ export async function closeRetainedBtwSide(input: {
 	}
 	if (!hasMatchingBtwParent(input.ctx, current)) return;
 	await input.ctx.switchSession(current.metadata.parentSessionPath, {
+		expectedSessionId: current.metadata.parentSessionId,
 		sessionDir: current.sessionDir,
 		withSession: async (nextCtx) => {
 			let warning: string | undefined;

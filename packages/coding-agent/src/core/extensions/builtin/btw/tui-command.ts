@@ -61,13 +61,21 @@ export function serializeBtwParentContext(messages: readonly { role: string; con
 
 export const defaultBtwTuiCommandDependencies: RunBtwTuiCommandDependencies = {
 	async loadCatalog(ctx) {
+		const currentSessionPath = ctx.sessionManager.getSessionFile() ?? "";
 		return loadBtwSessionCatalog({
 			cwd: ctx.cwd,
-			currentSessionPath: ctx.sessionManager.getSessionFile() ?? "",
+			currentSessionPath,
 			listSessions: () => ctx.listSessionMetadata({ filterCwd: false }),
 			readSessionInfo: async (sessionPath) => ctx.inspectSessionMetadata(sessionPath),
 			readMetadata: async (sessionPath) => {
 				const custom = ctx.inspectSessionCustomData(sessionPath, BTW_SIDE_ENTRY_TYPE);
+				if (
+					sessionPath === currentSessionPath &&
+					custom !== undefined &&
+					custom.id !== ctx.sessionManager.getSessionId()
+				) {
+					return undefined;
+				}
 				return parseBtwSideMetadata(custom?.data);
 			},
 		});

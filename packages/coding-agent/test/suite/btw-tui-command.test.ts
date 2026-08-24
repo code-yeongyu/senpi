@@ -354,6 +354,41 @@ describe("default BTW session discovery", () => {
 		expect(inspectSession).not.toHaveBeenCalled();
 		expect(discovered.sides).toHaveLength(1);
 	});
+
+	it("rejects replacement metadata at the active side path", async () => {
+		// Given
+		const loaded = catalog();
+		const activeSide = loaded.sides[0]!;
+		const replacementSide = { ...activeSide, id: "replacement-side" };
+		const inspectSessionCustomData = vi.fn((sessionPath: string) =>
+			sessionPath === activeSide.path
+				? {
+						id: replacementSide.id,
+						data: activeSide.metadata,
+					}
+				: undefined,
+		);
+		const ctx = {
+			cwd: "/repo",
+			sessionManager: {
+				getSessionId: () => activeSide.id,
+				getSessionFile: () => activeSide.path,
+				getSessionDir: () => "/sessions",
+			},
+			listSessionMetadata: vi.fn(async () => [loaded.main!, replacementSide]),
+			inspectSessionMetadata: vi.fn((sessionPath: string) =>
+				sessionPath === loaded.main!.path ? loaded.main : replacementSide,
+			),
+			inspectSessionCustomData,
+		} as unknown as ExtensionCommandContext;
+
+		// When
+		const discovered = await defaultBtwTuiCommandDependencies.loadCatalog(ctx);
+
+		// Then
+		expect(discovered.currentSide).toBeUndefined();
+		expect(discovered.sides).toEqual([]);
+	});
 });
 
 describe("serializeBtwParentContext", () => {

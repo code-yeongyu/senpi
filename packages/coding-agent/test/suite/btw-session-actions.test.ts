@@ -64,6 +64,7 @@ function createContext(options: { runWithSession?: boolean; parentSessionId?: st
 		async (
 			_path: string,
 			switchOptions?: {
+				expectedSessionId?: string;
 				withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 			},
 		) => {
@@ -111,6 +112,7 @@ describe("retained BTW session actions", () => {
 		expect(harness.switchSession).toHaveBeenCalledWith(
 			PARENT_PATH,
 			expect.objectContaining({
+				expectedSessionId: "main",
 				sessionDir: "/configured/sessions",
 				withSession: expect.any(Function),
 			}),
@@ -152,7 +154,10 @@ describe("retained BTW session actions", () => {
 		// Then
 		expect(harness.switchSession).toHaveBeenCalledWith(
 			PARENT_PATH,
-			expect.objectContaining({ withSession: expect.any(Function) }),
+			expect.objectContaining({
+				expectedSessionId: "main",
+				withSession: expect.any(Function),
+			}),
 		);
 		expect(harness.navigateTree).toHaveBeenCalledWith("main-leaf", { summarize: false });
 		expect(deleteSessionFile).not.toHaveBeenCalled();

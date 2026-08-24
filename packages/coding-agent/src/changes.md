@@ -66,6 +66,8 @@
 - Picker session switches wait for idle before and after target identity validation.
 - Session switches can carry an expected destination ID through asynchronous pre-switch guards;
   BTW uses it to reject and refresh a path-reused target before current-session teardown.
+- Direct BTW Main returns and closes pass the parent ID into that guard, while catalog discovery
+  rejects current-path metadata whose persisted side ID differs from the live session.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed
