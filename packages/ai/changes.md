@@ -4,6 +4,24 @@
 > of divergences from the upstream pin (v0.84.2, `914cf1472e`) so its audited production paths carry a
 > canonical four-section record; it is dated by its underlying work.
 
+## Bedrock and TypeBox dependency refresh (2026-08-24)
+
+### What changed
+
+- `packages/ai/package.json`: `@aws-sdk/client-bedrock-runtime` 3.1115.0 -> 3.1116.0 and `typebox` 1.3.16 -> 1.3.18.
+
+### Why
+
+- These are compatible patch releases selected for the CalVer release. The Bedrock pin stays identical to coding-agent, and TypeBox stays identical across all shared runtime/protocol consumers.
+
+### Why an extension could not handle it
+
+- Provider clients and schema primitives are constructed below the extension boundary.
+
+### Expected merge conflict zones
+
+- MEDIUM: the exact dependency block in `packages/ai/package.json`.
+
 ## Dependency pin refresh and unused fork manifest entry removal (2026-08-20)
 
 ### What changed

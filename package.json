@@ -55,7 +55,7 @@
 		"check:model-data": "npm --prefix packages/ai run check:model-data"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.9",
+		"@biomejs/biome": "2.5.10",
 		"@types/node": "26.2.0",
 		"@typescript/native": "npm:@typescript/native-preview@7.0.0-dev.20260707.2",
 		"@typescript/typescript6": "6.0.2",

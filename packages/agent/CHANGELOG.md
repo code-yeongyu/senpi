@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Updated the shared TypeBox runtime to 1.3.18, keeping agent schemas aligned with the protocol, AI, coding-agent, and codemode packages.
+
 ### Fixed
 
 ### Removed

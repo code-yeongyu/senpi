@@ -1,5 +1,26 @@
 # Local fork changes
 
+## Release dependency refresh and lock regeneration (2026-08-24)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.238 -> 0.3.241, `@aws-sdk/client-bedrock-runtime` 3.1115.0 -> 3.1116.0, and `typebox` 1.3.16 -> 1.3.18.
+- The coding-agent publish dependency closure, install lock, and Claude Agent SDK platform lock were regenerated from the refreshed exact pins.
+
+### Why
+
+- These are the compatible dependency updates selected for the 2026.8.24 release. The generated locks are part of the published package contract and must match the manifest exactly.
+- The Discord-reported Bun 1.4 redirect cleanup failure is already fixed in the same release line by feature-detecting `body.dump()` and falling back to argument-free stream destruction.
+
+### Why an extension could not handle it
+
+- Package resolution and the redirect response-body cleanup helper both execute below the extension interception surface.
+
+### Expected merge conflict zones
+
+- HIGH: `package.json` and the generated publish/install/platform locks.
+- LOW: the redirect response-body compatibility helper and its regression test.
+
 ## models.json schema accepts the video input modality (2026-08-23)
 
 ### What changed

@@ -3,6 +3,34 @@
 Root tracker for repository-level divergence from upstream `badlogic/pi-mono`.
 Owns every audited production path whose nearest tracker is the repository root.
 
+## Release dependency refresh (2026-08-24)
+
+### What changed
+
+- `package.json`: `@biomejs/biome` 2.5.9 -> 2.5.10.
+- `packages/agent/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/ai/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/coding-agent/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/protocol/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/senpi-codemode/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/{ai,coding-agent}/package.json`: `@aws-sdk/client-bedrock-runtime` 3.1115.0 -> 3.1116.0.
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.238 -> 0.3.241.
+- Root and generated release locks were regenerated from those exact pins.
+
+### Why
+
+- These are the repository-audited patch-level or same-line upgrades available for the 2026.8.24 release. TypeBox must remain single-instanced across the shared protocol/runtime packages, and the Bedrock pin must remain identical in `ai` and `coding-agent`. The Claude Agent SDK update also requires regenerating its platform lock and the published/install dependency closures.
+- `@anthropic-ai/sdk` remains at 0.91.1 because the minimum peer-compatible 0.93.0 still introduces browser-breaking credential-chain imports, while 0.120.0 is likewise unsafe. Deliberate breaking holds remain unchanged for `openai` 6.26.0 and `signal-exit` 3.0.7.
+
+### Why an extension could not handle it
+
+- Dependency resolution, exact pins, generated release locks, and platform-package selection happen before the runtime and extension system load.
+
+### Expected merge conflict zones
+
+- HIGH: root and coding-agent dependency blocks and generated lock artifacts.
+- MEDIUM: the shared TypeBox pins across five package manifests.
+
 ## Dependency pin refresh, unused-dependency removal, and lock regeneration (2026-08-20)
 
 ### What changed
