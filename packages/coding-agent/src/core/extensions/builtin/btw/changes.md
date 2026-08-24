@@ -73,6 +73,7 @@
 - Retained creation rechecks the parent header ID after auth and immediately before `newSession()`.
 - Parent-path keyed action reservations survive extension-runner rebind until replacement callbacks settle.
 - Disabled model selection resets prompt presets instead of reinstalling tool guidance.
+- Retained creation rechecks idle state plus source session/leaf identity after auth and before replacement.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

@@ -61,6 +61,8 @@ function createHarness() {
 	const notify = vi.fn();
 	const hasConfiguredAuth = vi.fn(() => true);
 	const checkAuth = vi.fn(async () => true);
+	const getLeafId = vi.fn(() => "main-active-leaf");
+	const isIdle = vi.fn(() => true);
 	const inspectSessionMetadata = vi.fn((sessionPath: string) => ({
 		id: "main",
 		path: sessionPath,
@@ -77,12 +79,13 @@ function createHarness() {
 		cwd: "/repo",
 		sessionManager: {
 			getSessionId: () => "main",
-			getLeafId: () => "main-active-leaf",
+			getLeafId,
 			getEntries: () => [],
 		},
 		model: { provider: "faux", id: "faux-2" },
 		modelRegistry: { checkAuth, hasConfiguredAuth },
 		thinkingLevel: "high",
+		isIdle,
 		ui: { notify },
 		inspectSessionMetadata,
 		newSession,
@@ -113,7 +116,9 @@ function createHarness() {
 		notify,
 		checkAuth,
 		hasConfiguredAuth,
+		getLeafId,
 		inspectSessionMetadata,
+		isIdle,
 		replacementActions,
 		sendUserMessage,
 		setActiveTools,
@@ -287,6 +292,48 @@ describe("createRetainedBtwSide", () => {
 		// Then
 		expect(harness.checkAuth).toHaveBeenCalledOnce();
 		expect(harness.inspectSessionMetadata).toHaveBeenCalledWith("/sessions/main.jsonl");
+		expect(harness.newSession).not.toHaveBeenCalled();
+		expect(harness.notify).toHaveBeenCalledOnce();
+	});
+
+	it("does not replace Main when a newer turn is active after auth succeeds", async () => {
+		// Given
+		const harness = createHarness();
+		harness.checkAuth.mockImplementation(async () => {
+			harness.isIdle.mockReturnValue(false);
+			return true;
+		});
+
+		// When
+		await createRetainedBtwSide({
+			ctx: harness.ctx,
+			catalog: catalog(0),
+			question: "must not abort a newer turn",
+			parentContext: "bounded parent context",
+		});
+
+		// Then
+		expect(harness.newSession).not.toHaveBeenCalled();
+		expect(harness.notify).toHaveBeenCalledOnce();
+	});
+
+	it("does not replace Main when a newer turn completes during auth", async () => {
+		// Given
+		const harness = createHarness();
+		harness.checkAuth.mockImplementation(async () => {
+			harness.getLeafId.mockReturnValue("newer-main-leaf");
+			return true;
+		});
+
+		// When
+		await createRetainedBtwSide({
+			ctx: harness.ctx,
+			catalog: catalog(0),
+			question: "must not use a stale snapshot",
+			parentContext: "bounded parent context",
+		});
+
+		// Then
 		expect(harness.newSession).not.toHaveBeenCalled();
 		expect(harness.notify).toHaveBeenCalledOnce();
 	});

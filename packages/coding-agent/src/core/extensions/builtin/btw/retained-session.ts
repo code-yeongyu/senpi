@@ -43,17 +43,17 @@ export function summarizeBtwQuestion(question: string | undefined): string {
 
 export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): Promise<void> {
 	await input.ctx.waitForIdle();
+	const sourceSessionId = input.ctx.sessionManager.getSessionId();
+	const sourceLeafId = input.ctx.sessionManager.getLeafId();
 	const question = input.question?.trim() || undefined;
 	const ordinal = nextBtwOrdinal(input.catalog);
 	const summary = summarizeBtwQuestion(question);
 	const createdAt = (input.now ?? (() => new Date()))().toISOString();
-	const parentLeafId = input.catalog.currentSide
-		? input.catalog.currentSide.metadata.parentLeafId
-		: input.ctx.sessionManager.getLeafId();
+	const parentLeafId = input.catalog.currentSide ? input.catalog.currentSide.metadata.parentLeafId : sourceLeafId;
 	const metadata: BtwSideMetadata = {
 		version: 1,
 		parentSessionPath: input.catalog.parentSessionPath,
-		parentSessionId: input.catalog.currentSide?.metadata.parentSessionId ?? input.ctx.sessionManager.getSessionId(),
+		parentSessionId: input.catalog.currentSide?.metadata.parentSessionId ?? sourceSessionId,
 		parentLeafId,
 		ordinal,
 		summary,
@@ -84,6 +84,15 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 		}
 	} catch {
 		input.ctx.ui.notify("BTW cannot create a side because the original Main session is unavailable.", "warning");
+		return;
+	}
+
+	if (
+		!input.ctx.isIdle() ||
+		input.ctx.sessionManager.getSessionId() !== sourceSessionId ||
+		input.ctx.sessionManager.getLeafId() !== sourceLeafId
+	) {
+		input.ctx.ui.notify("BTW cannot create a side because the source session changed.", "warning");
 		return;
 	}
 
