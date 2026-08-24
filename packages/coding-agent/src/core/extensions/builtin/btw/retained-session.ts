@@ -102,6 +102,7 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 		expectedSource: {
 			sessionId: sourceSessionId,
 			leafId: sourceLeafId,
+			wasIdle: input.ctx.isIdle(),
 		},
 		parentSession: input.catalog.parentSessionPath,
 		persistInitializedSession: true,

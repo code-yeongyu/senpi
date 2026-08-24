@@ -187,8 +187,8 @@ describe("createRetainedBtwSide", () => {
 			"main",
 		]);
 		expect(harness.newSession.mock.calls.map(([options]) => options?.expectedSource)).toEqual([
-			{ sessionId: "main", leafId: "main-active-leaf" },
-			{ sessionId: "main", leafId: "main-active-leaf" },
+			{ sessionId: "main", leafId: "main-active-leaf", wasIdle: true },
+			{ sessionId: "main", leafId: "main-active-leaf", wasIdle: true },
 		]);
 		expect(harness.newSession.mock.calls.map(([options]) => options?.sessionToolPolicy)).toEqual([
 			{ version: 1, tools: "disabled" },

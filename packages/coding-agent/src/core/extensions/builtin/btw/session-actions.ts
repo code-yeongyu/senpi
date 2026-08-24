@@ -95,6 +95,7 @@ export async function returnToBtwParent(input: {
 	const options = createBtwParentSwitchOptions(input.current.metadata, input.current.sessionDir, {
 		sessionId: input.current.sessionId,
 		leafId: input.current.sourceLeafId,
+		wasIdle: input.ctx.isIdle(),
 	});
 	await input.ctx.switchSession(input.current.metadata.parentSessionPath, options);
 }
@@ -115,6 +116,7 @@ export async function closeRetainedBtwSide(input: {
 		expectedSource: {
 			sessionId: current.sessionId,
 			leafId: current.sourceLeafId,
+			wasIdle: input.ctx.isIdle(),
 		},
 		sessionDir: current.sessionDir,
 		withSession: async (nextCtx) => {

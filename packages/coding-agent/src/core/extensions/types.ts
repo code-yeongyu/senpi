@@ -560,6 +560,7 @@ export interface ExtensionSessionCustomData {
 export interface SessionSourceExpectation {
 	sessionId: string;
 	leafId: string | null;
+	wasIdle: boolean;
 }
 
 /**

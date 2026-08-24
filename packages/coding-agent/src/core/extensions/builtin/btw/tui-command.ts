@@ -191,6 +191,7 @@ export async function runBtwTuiCommand(
 		const expectedSource = {
 			sessionId: ctx.sessionManager.getSessionId(),
 			leafId: ctx.sessionManager.getLeafId(),
+			wasIdle: ctx.isIdle(),
 		};
 		const switchOptions =
 			selected.choice.sessionPath === catalog.parentSessionPath && catalog.currentSide

@@ -92,6 +92,8 @@
   recovery candidates revalidate after construction before the host rebinds them.
 - Expected target/parent identities are checked again after removed-extension handlers, and BTW
   passes source ID/leaf expectations so activity begun during a switch veto cancels replacement.
+- Source expectations record whether the command began idle, preserving streaming Ctrl+C close;
+  once teardown starts, the outgoing session rejects new prompts until replacement completes.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

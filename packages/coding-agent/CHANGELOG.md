@@ -21,6 +21,8 @@
   are revalidated after construction before the host rebinds them.
 - Retained replacements now revalidate after removed-extension handlers and cancel when source
   activity or tree generation changes during asynchronous switch vetoes.
+- Streaming Ctrl+C close remains destructive, while guarded teardown prevents any later prompt
+  from starting on the outgoing session during shutdown handlers.
 
 ### Added
 

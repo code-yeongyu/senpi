@@ -78,6 +78,8 @@
   persisted outgoing path after construction and falls back to the detached snapshot before rebind.
 - Candidate identity is rechecked after removed-extension handlers, while source expectations let
   guarded new/resume operations reject active or leaf-changed sessions after async vetoes.
+- Source guards distinguish pre-existing streaming actions from activity begun during vetoes, and
+  AgentSession blocks new prompt admission after guarded teardown starts.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

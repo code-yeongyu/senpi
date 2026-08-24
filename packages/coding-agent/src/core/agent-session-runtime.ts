@@ -183,11 +183,9 @@ export class AgentSessionRuntime {
 
 	private matchesExpectedSource(expectedSource: SessionSourceExpectation | undefined): boolean {
 		if (!expectedSource) return true;
-		return (
-			this.session.isIdle &&
-			this.session.sessionManager.getSessionId() === expectedSource.sessionId &&
-			this.session.sessionManager.getLeafId() === expectedSource.leafId
-		);
+		if (this.session.sessionManager.getSessionId() !== expectedSource.sessionId) return false;
+		if (!expectedSource.wasIdle) return true;
+		return this.session.isIdle && this.session.sessionManager.getLeafId() === expectedSource.leafId;
 	}
 
 	private async emitBeforeFork(
@@ -213,6 +211,7 @@ export class AgentSessionRuntime {
 	): Promise<SessionManager> {
 		// Settle the active response before replacement so the outgoing turn and
 		// any completed tool results are persisted to the old session.
+		this.session.beginReplacement();
 		await this.session.abort();
 		const outgoingSnapshot = this.session.sessionManager.cloneInMemory();
 		const oldRunner = this.session.extensionRunner;

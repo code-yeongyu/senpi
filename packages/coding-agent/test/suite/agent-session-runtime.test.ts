@@ -434,9 +434,9 @@ describe("AgentSessionRuntime characterization", () => {
 		// When
 		const switchPromise = runtime.switchSession(target.getSessionFile()!, {
 			expectedSessionId: target.getSessionId(),
-			expectedSource: { sessionId: sourceSessionId, leafId: sourceLeafId },
+			expectedSource: { sessionId: sourceSessionId, leafId: sourceLeafId, wasIdle: true },
 		} as Parameters<typeof runtime.switchSession>[1] & {
-			expectedSource: { sessionId: string; leafId: string | null };
+			expectedSource: { sessionId: string; leafId: string | null; wasIdle: boolean };
 		});
 		await beforeSwitchStartedPromise;
 		let unsubscribeAgentStart = () => {};
@@ -485,10 +485,10 @@ describe("AgentSessionRuntime characterization", () => {
 		// When
 		const newSessionPromise = runtime.newSession({
 			expectedParentSessionId: sourceSessionId,
-			expectedSource: { sessionId: sourceSessionId, leafId: sourceLeafId },
+			expectedSource: { sessionId: sourceSessionId, leafId: sourceLeafId, wasIdle: true },
 			parentSession,
 		} as Parameters<typeof runtime.newSession>[0] & {
-			expectedSource: { sessionId: string; leafId: string | null };
+			expectedSource: { sessionId: string; leafId: string | null; wasIdle: boolean };
 		});
 		await beforeSwitchStartedPromise;
 		let unsubscribeAgentStart = () => {};
@@ -510,6 +510,87 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(result).toEqual({ cancelled: true });
 		expect(runtime.session.sessionManager.getSessionId()).toBe(sourceSessionId);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
+	it("allows a guarded switch that was requested while the source was already streaming", async () => {
+		// Given
+		const { runtime, tempDir } = await createRuntimeForTest(() => {});
+		let unsubscribeAgentStart = () => {};
+		const agentStarted = new Promise<void>((resolve) => {
+			unsubscribeAgentStart = runtime.session.subscribe((event) => {
+				if (event.type !== "agent_start") return;
+				unsubscribeAgentStart();
+				resolve();
+			});
+		});
+		const activeTurn = runtime.session.prompt("streaming turn");
+		await agentStarted;
+		const expectedSource = {
+			sessionId: runtime.session.sessionManager.getSessionId(),
+			leafId: runtime.session.sessionManager.getLeafId(),
+			wasIdle: false,
+		};
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+
+		// When
+		const result = await runtime.switchSession(target.getSessionFile()!, {
+			expectedSessionId: target.getSessionId(),
+			expectedSource,
+		} as Parameters<typeof runtime.switchSession>[1] & {
+			expectedSource: { sessionId: string; leafId: string | null; wasIdle: boolean };
+		});
+		void activeTurn;
+
+		// Then
+		expect(result).toEqual({ cancelled: false });
+		expect(runtime.session.sessionManager.getSessionId()).toBe(target.getSessionId());
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+	});
+
+	it("blocks new source prompts once guarded teardown begins", async () => {
+		// Given
+		let releaseShutdown!: () => void;
+		const shutdownReleased = new Promise<void>((resolve) => {
+			releaseShutdown = resolve;
+		});
+		let shutdownStarted!: () => void;
+		const shutdownStartedPromise = new Promise<void>((resolve) => {
+			shutdownStarted = resolve;
+		});
+		const { runtime, tempDir } = await createRuntimeForTest((pi) => {
+			pi.on("session_shutdown", async (event) => {
+				if (event.reason !== "resume") return;
+				shutdownStarted();
+				await shutdownReleased;
+			});
+		});
+		await runtime.session.prompt("hello");
+		const expectedSource = {
+			sessionId: runtime.session.sessionManager.getSessionId(),
+			leafId: runtime.session.sessionManager.getLeafId(),
+			wasIdle: true,
+		};
+		const target = SessionManager.create(tempDir);
+		target.appendMessage({ role: "user", content: [{ type: "text", text: "target" }], timestamp: Date.now() });
+		target.persistInitializedSession();
+		const switchPromise = runtime.switchSession(target.getSessionFile()!, {
+			expectedSessionId: target.getSessionId(),
+			expectedSource,
+		} as Parameters<typeof runtime.switchSession>[1] & {
+			expectedSource: { sessionId: string; leafId: string | null; wasIdle: boolean };
+		});
+		await shutdownStartedPromise;
+
+		// When / Then
+		try {
+			expect((runtime.session as unknown as { isReplacementPending?: boolean }).isReplacementPending).toBe(true);
+			await expect(runtime.session.prompt("late turn")).rejects.toThrow("Session replacement is in progress");
+		} finally {
+			releaseShutdown();
+			await switchPromise;
+		}
 	});
 
 	it("rejects a target replaced while session_before_switch is pending", async () => {

@@ -841,6 +841,7 @@ export class AgentSession {
 	 */
 	private readonly _messageEndsAwaitingPersistence = new Set<AgentMessage>();
 	private _isAgentRunActive = false;
+	private _replacementPending = false;
 	private _toolExecutionDepth = 0;
 	private _promptStartPending = false;
 	private _nextInputId = 0;
@@ -2673,6 +2674,14 @@ export class AgentSession {
 		return !this._isAgentRunActive;
 	}
 
+	get isReplacementPending(): boolean {
+		return this._replacementPending;
+	}
+
+	beginReplacement(): void {
+		this._replacementPending = true;
+	}
+
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
 		return this.agent.state.systemPrompt;
@@ -3068,6 +3077,9 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		if (this._replacementPending) {
+			throw new Error("Session replacement is in progress");
+		}
 		const throwIfCancelled = (): void => {
 			if (!options?.signal?.aborted) return;
 			const error = new Error("Prompt cancelled before acceptance");
