@@ -61,6 +61,13 @@ function createHarness() {
 	const notify = vi.fn();
 	const hasConfiguredAuth = vi.fn(() => true);
 	const checkAuth = vi.fn(async () => true);
+	const inspectSessionMetadata = vi.fn((sessionPath: string) => ({
+		id: "main",
+		path: sessionPath,
+		cwd: "/repo",
+		created: new Date(0),
+		modified: new Date(0),
+	}));
 	const newSession = vi.fn(async (options: Parameters<ExtensionCommandContext["newSession"]>[0]) => {
 		if (options?.setup) setups.push(options.setup);
 		if (options?.withSession) withSessions.push(options.withSession);
@@ -77,6 +84,7 @@ function createHarness() {
 		modelRegistry: { checkAuth, hasConfiguredAuth },
 		thinkingLevel: "high",
 		ui: { notify },
+		inspectSessionMetadata,
 		newSession,
 		waitForIdle: vi.fn(async () => undefined),
 	} as unknown as ExtensionCommandContext;
@@ -105,6 +113,7 @@ function createHarness() {
 		notify,
 		checkAuth,
 		hasConfiguredAuth,
+		inspectSessionMetadata,
 		replacementActions,
 		sendUserMessage,
 		setActiveTools,
@@ -249,6 +258,35 @@ describe("createRetainedBtwSide", () => {
 		// Then
 		expect(harness.hasConfiguredAuth).toHaveBeenCalledOnce();
 		expect(harness.checkAuth).toHaveBeenCalledOnce();
+		expect(harness.newSession).not.toHaveBeenCalled();
+		expect(harness.notify).toHaveBeenCalledOnce();
+	});
+
+	it("does not replace Main when its identity changes after auth succeeds", async () => {
+		// Given
+		const harness = createHarness();
+		harness.checkAuth.mockImplementation(async () => {
+			harness.inspectSessionMetadata.mockReturnValue({
+				id: "replacement-main",
+				path: "/sessions/main.jsonl",
+				cwd: "/repo",
+				created: new Date(0),
+				modified: new Date(0),
+			});
+			return true;
+		});
+
+		// When
+		await createRetainedBtwSide({
+			ctx: harness.ctx,
+			catalog: catalog(0),
+			question: "must not orphan",
+			parentContext: "bounded parent context",
+		});
+
+		// Then
+		expect(harness.checkAuth).toHaveBeenCalledOnce();
+		expect(harness.inspectSessionMetadata).toHaveBeenCalledWith("/sessions/main.jsonl");
 		expect(harness.newSession).not.toHaveBeenCalled();
 		expect(harness.notify).toHaveBeenCalledOnce();
 	});

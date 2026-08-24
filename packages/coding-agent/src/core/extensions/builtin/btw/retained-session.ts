@@ -77,6 +77,16 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 		return;
 	}
 
+	try {
+		if (input.ctx.inspectSessionMetadata(input.catalog.parentSessionPath)?.id !== metadata.parentSessionId) {
+			input.ctx.ui.notify("BTW cannot create a side because the original Main session is unavailable.", "warning");
+			return;
+		}
+	} catch {
+		input.ctx.ui.notify("BTW cannot create a side because the original Main session is unavailable.", "warning");
+		return;
+	}
+
 	await input.ctx.newSession({
 		parentSession: input.catalog.parentSessionPath,
 		persistInitializedSession: true,

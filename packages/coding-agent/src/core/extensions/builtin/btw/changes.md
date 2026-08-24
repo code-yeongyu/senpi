@@ -70,6 +70,7 @@
 - Model-specific prompt presets are suppressed under retained no-tools policy before replacement.
 - New BTW creation requires selected and settled Main IDs to match the active visible parent ID.
 - Catalog custom-data scans prefilter rows by effective cwd plus the active session's persisted cwd.
+- Retained creation rechecks the parent header ID after auth and immediately before `newSession()`.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

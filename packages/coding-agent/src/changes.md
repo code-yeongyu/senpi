@@ -59,6 +59,7 @@
 - Model-specific prompt presets cannot reintroduce file-tool guidance in retained no-tools sessions.
 - New BTW rejects same-path Main replacement even when both catalog loads observe the replacement.
 - Shared session-directory catalog scans exclude unrelated cwd rows before custom-data inspection.
+- BTW creation rejects parent-path reuse that occurs during asynchronous authentication preflight.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed
