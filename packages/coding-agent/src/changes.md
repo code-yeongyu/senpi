@@ -62,6 +62,7 @@
 - BTW creation rejects parent-path reuse that occurs during asynchronous authentication preflight.
 - BTW action reservations persist across runner generations; disabled model selection resets presets.
 - BTW creation cannot replace a source that became active or advanced to a newer leaf during auth.
+- Retained parent snapshots are deferred until creation's final idle wait and source-leaf capture.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

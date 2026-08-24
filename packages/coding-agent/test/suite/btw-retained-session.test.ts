@@ -155,7 +155,7 @@ describe("createRetainedBtwSide", () => {
 		const harness = createHarness();
 		const base: Omit<CreateRetainedBtwSideInput, "catalog" | "question" | "now"> = {
 			ctx: harness.ctx,
-			parentContext: "bounded parent context",
+			buildParentContext: async () => "bounded parent context",
 		};
 
 		// When
@@ -210,6 +210,33 @@ describe("createRetainedBtwSide", () => {
 		expect(contextCalls[0]?.[2]).toBe(false);
 	});
 
+	it("builds the parent snapshot after the final idle wait", async () => {
+		// Given
+		const harness = createHarness();
+		const buildParentContext = vi.fn(async () => {
+			expect(harness.ctx.waitForIdle).toHaveBeenCalledOnce();
+			return "latest parent context";
+		});
+
+		// When
+		await createRetainedBtwSide({
+			ctx: harness.ctx,
+			catalog: catalog(0),
+			question: undefined,
+			buildParentContext,
+		});
+		await executeReplacement(harness, 0);
+
+		// Then
+		expect(buildParentContext).toHaveBeenCalledOnce();
+		expect(harness.manager.appendCustomMessageEntry).toHaveBeenCalledWith(
+			"btw-parent-context",
+			expect.stringContaining("latest parent context"),
+			false,
+			expect.any(Object),
+		);
+	});
+
 	it("applies captured runtime state even when a new side has no inline question", async () => {
 		// Given
 		const harness = createHarness();
@@ -219,7 +246,7 @@ describe("createRetainedBtwSide", () => {
 			ctx: harness.ctx,
 			catalog: catalog(0),
 			question: undefined,
-			parentContext: "bounded parent context",
+			buildParentContext: async () => "bounded parent context",
 		});
 		await executeReplacement(harness, 0);
 
@@ -239,7 +266,7 @@ describe("createRetainedBtwSide", () => {
 			ctx: harness.ctx,
 			catalog: catalog(0),
 			question: "must not orphan",
-			parentContext: "bounded parent context",
+			buildParentContext: async () => "bounded parent context",
 		});
 
 		// Then
@@ -257,7 +284,7 @@ describe("createRetainedBtwSide", () => {
 			ctx: harness.ctx,
 			catalog: catalog(0),
 			question: "must not orphan",
-			parentContext: "bounded parent context",
+			buildParentContext: async () => "bounded parent context",
 		});
 
 		// Then
@@ -286,7 +313,7 @@ describe("createRetainedBtwSide", () => {
 			ctx: harness.ctx,
 			catalog: catalog(0),
 			question: "must not orphan",
-			parentContext: "bounded parent context",
+			buildParentContext: async () => "bounded parent context",
 		});
 
 		// Then
@@ -309,7 +336,7 @@ describe("createRetainedBtwSide", () => {
 			ctx: harness.ctx,
 			catalog: catalog(0),
 			question: "must not abort a newer turn",
-			parentContext: "bounded parent context",
+			buildParentContext: async () => "bounded parent context",
 		});
 
 		// Then
@@ -330,7 +357,7 @@ describe("createRetainedBtwSide", () => {
 			ctx: harness.ctx,
 			catalog: catalog(0),
 			question: "must not use a stale snapshot",
-			parentContext: "bounded parent context",
+			buildParentContext: async () => "bounded parent context",
 		});
 
 		// Then
@@ -348,7 +375,7 @@ describe("createRetainedBtwSide", () => {
 			ctx: harness.ctx,
 			catalog: catalog(0),
 			question: "must not orphan",
-			parentContext: "bounded parent context",
+			buildParentContext: async () => "bounded parent context",
 		});
 
 		// Then
@@ -367,7 +394,7 @@ describe("createRetainedBtwSide", () => {
 			ctx: harness.ctx,
 			catalog: loaded,
 			question: "third from side",
-			parentContext: "root parent context",
+			buildParentContext: async () => "root parent context",
 			now: () => new Date("2026-08-23T00:00:03.000Z"),
 		});
 		await executeReplacement(harness, 0);

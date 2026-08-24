@@ -120,7 +120,7 @@ export async function runBtwTuiCommand(
 			ctx,
 			catalog,
 			question,
-			parentContext: await dependencies.buildParentContext(ctx, catalog),
+			buildParentContext: () => dependencies.buildParentContext(ctx, catalog),
 		});
 		return;
 	}
@@ -164,7 +164,7 @@ export async function runBtwTuiCommand(
 				ctx,
 				catalog: settledCatalog,
 				question: undefined,
-				parentContext: await dependencies.buildParentContext(ctx, settledCatalog),
+				buildParentContext: () => dependencies.buildParentContext(ctx, settledCatalog),
 			});
 			return;
 		}

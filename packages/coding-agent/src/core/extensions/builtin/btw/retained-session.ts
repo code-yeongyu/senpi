@@ -11,7 +11,7 @@ export interface CreateRetainedBtwSideInput {
 	ctx: ExtensionCommandContext;
 	catalog: BtwSessionCatalog;
 	question: string | undefined;
-	parentContext: string;
+	buildParentContext: () => Promise<string>;
 	now?: () => Date;
 }
 
@@ -45,6 +45,7 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 	await input.ctx.waitForIdle();
 	const sourceSessionId = input.ctx.sessionManager.getSessionId();
 	const sourceLeafId = input.ctx.sessionManager.getLeafId();
+	const parentContext = await input.buildParentContext();
 	const question = input.question?.trim() || undefined;
 	const ordinal = nextBtwOrdinal(input.catalog);
 	const summary = summarizeBtwQuestion(question);
@@ -112,7 +113,7 @@ export async function createRetainedBtwSide(input: CreateRetainedBtwSideInput): 
 					SIDE_QUERY_INSTRUCTION,
 					"",
 					"Context from Main at creation time:",
-					input.parentContext || "(No prior messages.)",
+					parentContext || "(No prior messages.)",
 				].join("\n"),
 				false,
 				metadata,

@@ -74,6 +74,7 @@
 - Parent-path keyed action reservations survive extension-runner rebind until replacement callbacks settle.
 - Disabled model selection resets prompt presets instead of reinstalling tool guidance.
 - Retained creation rechecks idle state plus source session/leaf identity after auth and before replacement.
+- Parent context is built inside retained creation after its final idle wait and source leaf capture.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
 
 ### Why

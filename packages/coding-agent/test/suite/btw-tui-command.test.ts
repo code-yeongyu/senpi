@@ -118,9 +118,11 @@ describe("runBtwTuiCommand", () => {
 				ctx: harness.ctx,
 				catalog: harness.loaded,
 				question: "next question",
-				parentContext: "bounded context",
+				buildParentContext: expect.any(Function),
 			}),
 		);
+		const createInput = harness.dependencies.createSide.mock.calls[0]?.[0];
+		await expect(createInput?.buildParentContext()).resolves.toBe("bounded context");
 		expect(harness.waitForIdle).toHaveBeenCalledOnce();
 		expect(harness.waitForIdle.mock.invocationCallOrder[0]).toBeLessThan(
 			vi.mocked(harness.dependencies.buildParentContext).mock.invocationCallOrder[0]!,
@@ -208,9 +210,11 @@ describe("runBtwTuiCommand", () => {
 		expect(harness.dependencies.createSide).toHaveBeenCalledWith(
 			expect.objectContaining({
 				question: undefined,
-				parentContext: "bounded context",
+				buildParentContext: expect.any(Function),
 			}),
 		);
+		const createInput = harness.dependencies.createSide.mock.calls[0]?.[0];
+		await expect(createInput?.buildParentContext()).resolves.toBe("bounded context");
 		expect(harness.waitForIdle).toHaveBeenCalledOnce();
 		expect(harness.dependencies.loadCatalog).toHaveBeenCalledTimes(2);
 	});
