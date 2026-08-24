@@ -65,23 +65,24 @@ export class AgentSettledDelivery {
 	}
 
 	finish(userAbortGeneration: number): DeferredAgentSettledBatch {
-		const accepted = this.#generation === userAbortGeneration;
-		const batch = accepted
-			? { actions: this.#actions, turnClaims: this.#turnClaims }
-			: { actions: [], turnClaims: [] };
-		if (!accepted) {
-			for (const claim of this.#turnClaims) claim.cancel();
-		}
+		const generation = this.#generation;
+		const actions = this.#actions;
+		const turnClaims = this.#turnClaims;
 		this.#generation = undefined;
 		this.#actions = [];
 		this.#turnClaims = [];
-		return batch;
+		const accepted = generation === userAbortGeneration;
+		if (!accepted) {
+			for (const claim of turnClaims) claim.cancel();
+		}
+		return accepted ? { actions, turnClaims } : { actions: [], turnClaims: [] };
 	}
 
 	cancel(): void {
-		for (const claim of this.#turnClaims) claim.cancel();
+		const turnClaims = this.#turnClaims;
 		this.#generation = undefined;
 		this.#actions = [];
 		this.#turnClaims = [];
+		for (const claim of turnClaims) claim.cancel();
 	}
 }

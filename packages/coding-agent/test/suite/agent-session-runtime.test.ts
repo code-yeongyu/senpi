@@ -20,6 +20,7 @@ import {
 	createAgentSessionRuntime,
 	createAgentSessionServices,
 } from "../../src/core/agent-session-runtime.ts";
+import { AgentSettledDelivery } from "../../src/core/agent-settled-delivery.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ReplacedSessionContext } from "../../src/core/extensions/types.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
@@ -1736,6 +1737,29 @@ describe("AgentSessionRuntime characterization", () => {
 		// Then
 		expect(onRejected).toHaveBeenCalledOnce();
 		expect(runtime.session.isIdle).toBe(true);
+	});
+
+	it("clears deferred delivery state before cancellation callbacks retry", () => {
+		// Given
+		const delivery = new AgentSettledDelivery();
+		const retriedAction = vi.fn();
+		let retryDeferred: boolean | undefined;
+		delivery.begin(1);
+		delivery.deferTriggerTurn(
+			() => undefined,
+			() => {
+				retryDeferred = delivery.defer(retriedAction);
+				if (!retryDeferred) retriedAction();
+			},
+		);
+
+		// When
+		const batch = delivery.finish(2);
+
+		// Then
+		expect(batch).toEqual({ actions: [], turnClaims: [] });
+		expect(retryDeferred).toBe(false);
+		expect(retriedAction).toHaveBeenCalledOnce();
 	});
 
 	it("signals replaced prompt start only after asynchronous provider preflight", async () => {

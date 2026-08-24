@@ -10,7 +10,8 @@
   discovery and inspection to command contexts; disabled-tool sessions omit loaded skills from
   system-prompt options before read-tool guidance is formatted.
 - `packages/coding-agent/src/core/agent-settled-delivery.ts`: abort-generation cancellation resolves
-  deferred turn claims and notifies rejected fire-and-forget dispatch before discarding actions.
+  deferred turn claims and notifies rejected fire-and-forget dispatch after first snapshotting and
+  clearing the old delivery generation, so callback retries cannot be recaptured or discarded.
 - `packages/coding-agent/src/core/keybindings.ts`: BTW switching has configurable Ctrl+/, Ctrl+_,
   and Ctrl+7 defaults.
 - `packages/coding-agent/src/core/model-registry.ts`: retained creation can run the provider's live

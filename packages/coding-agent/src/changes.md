@@ -102,6 +102,7 @@
   conditional side deletion preserves both a path-reused session and concurrent recreated data.
 - Settlement-deferred dispatch also reports cancellation when user-abort generation changes,
   resolving the deferred turn claim and releasing shortcut reservations for discarded actions.
+  Delivery state is cleared before callbacks so synchronous retries cannot be recaptured.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: replacement lifecycle carries typed
   setup, persistence, and session tool policy.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose the new typed

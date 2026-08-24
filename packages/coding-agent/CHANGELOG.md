@@ -42,7 +42,8 @@
 - Rejected BTW shortcut dispatch no longer strands its reservation, and concurrent replacement
   writers are restored without leaving valid sessions at hidden quarantine paths.
 - User abort during an asynchronous `agent_settled` handler now rejects discarded deferred BTW
-  shortcuts and releases their pending reservation.
+  shortcuts and releases their pending reservation after clearing the old delivery generation,
+  allowing synchronous retry without recapture or settlement hangs.
 
 ### Added
 

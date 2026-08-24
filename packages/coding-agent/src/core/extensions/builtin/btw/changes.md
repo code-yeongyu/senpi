@@ -114,6 +114,8 @@
   a replacement guard cannot permanently consume later BTW switch, close, or Main shortcuts.
 - Abort-generation cancellation of a settlement-deferred shortcut reports the same rejection,
   releasing the pending reservation even when its command action never executes.
+- Deferred delivery clears its old generation before that rollback callback, so any synchronous
+  retry dispatches into the live session instead of the discarded settlement batch.
 - Side deletion hard-links an atomic inode claim before validation, compares the moved directory
   entry to that claim, and restores path-reused replacements without overwriting concurrent data.
 - Non-TUI modes retain the existing parallel, read-only, one-shot provider query.
