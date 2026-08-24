@@ -233,6 +233,54 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(existsSync(failedSessionFile!)).toBe(false);
 	});
 
+	it("preserves a replacement swapped in during claimed persistence cleanup", async () => {
+		// Given
+		let failedSessionFile: string | undefined;
+		let replacementSessionFile: string | undefined;
+		let replacementInstalled = false;
+		const tempDir = join(tmpdir(), `pi-runtime-persistence-race-${Date.now()}`);
+		const { runtime } = await createRuntimeForTest(() => {}, {
+			cwd: tempDir,
+			renameSessionFile: (source, destination) => {
+				if (source === failedSessionFile && replacementSessionFile && !replacementInstalled) {
+					renameSync(replacementSessionFile, failedSessionFile);
+					replacementInstalled = true;
+				}
+				renameSync(source, destination);
+			},
+			unlinkSessionFile: (sessionFile) => {
+				if (sessionFile === failedSessionFile && replacementSessionFile && !replacementInstalled) {
+					renameSync(replacementSessionFile, failedSessionFile);
+					replacementInstalled = true;
+				}
+				unlinkSync(sessionFile);
+			},
+		});
+		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		const replacement = SessionManager.create(tempDir, runtime.session.sessionManager.getSessionDir());
+		replacement.appendSessionInfo("concurrent replacement");
+		replacement.persistInitializedSession();
+		replacementSessionFile = replacement.getSessionFile();
+		const replacementSessionId = replacement.getSessionId();
+		vi.spyOn(SessionManager.prototype, "persistInitializedSession").mockImplementationOnce(function (
+			this: SessionManager,
+		) {
+			failedSessionFile = this.getSessionFile();
+			writeFileSync(failedSessionFile!, '{"type":"session"');
+			throw new Error("disk full");
+		});
+
+		// When
+		const operation = runtime.newSession({ persistInitializedSession: true });
+
+		// Then
+		await expect(operation).rejects.toThrow("disk full");
+		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(replacementInstalled).toBe(true);
+		expect(existsSync(failedSessionFile!)).toBe(true);
+		expect(SessionManager.inspectMetadata(failedSessionFile!)?.id).toBe(replacementSessionId);
+	});
+
 	it("exposes replacement-context setters for live model thinking and tools", async () => {
 		// Given
 		const { runtime, faux } = await createRuntimeForTest(() => {});

@@ -426,14 +426,55 @@ export class AgentSessionRuntime {
 	}
 
 	private removeClaimedInitializedSessionFile(claim: InitializedSessionFileClaim): void {
+		const quarantinedFile = `${claim.sessionFile}.cleanup-${randomUUID()}`;
 		try {
-			const identity = statSync(claim.sessionFile);
-			if (identity.dev !== claim.dev || identity.ino !== claim.ino) return;
-			this.unlinkSessionFile(claim.sessionFile);
+			this.renameSessionFile(claim.sessionFile, quarantinedFile);
 		} catch (error) {
 			if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return;
 			throw error;
 		}
+
+		let identity: ReturnType<typeof statSync>;
+		try {
+			identity = statSync(quarantinedFile);
+		} catch (error) {
+			try {
+				this.restoreQuarantinedInitializedSessionFile(quarantinedFile, claim.sessionFile);
+			} catch (restoreError) {
+				throw new AggregateError(
+					[error, restoreError],
+					`Failed to inspect or restore initialized session ${claim.sessionFile}`,
+				);
+			}
+			throw error;
+		}
+		if (identity.dev !== claim.dev || identity.ino !== claim.ino) {
+			this.restoreQuarantinedInitializedSessionFile(quarantinedFile, claim.sessionFile);
+			return;
+		}
+		this.unlinkSessionFile(quarantinedFile);
+	}
+
+	private restoreQuarantinedInitializedSessionFile(quarantinedFile: string, sessionFile: string): void {
+		for (let attempt = 0; attempt < 32; attempt++) {
+			try {
+				linkSync(quarantinedFile, sessionFile);
+				unlinkSync(quarantinedFile);
+				return;
+			} catch (error) {
+				if (!(typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST")) {
+					throw error;
+				}
+			}
+			const recoveryFile = `${sessionFile}.recovery-${randomUUID()}`;
+			try {
+				this.renameSessionFile(sessionFile, recoveryFile);
+			} catch (error) {
+				if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") continue;
+				throw error;
+			}
+		}
+		throw new Error(`Failed to restore initialized session after repeated path recreation: ${sessionFile}`);
 	}
 
 	async switchSession(

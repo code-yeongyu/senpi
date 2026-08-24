@@ -47,7 +47,8 @@
   writers are restored without leaving valid sessions at hidden quarantine paths.
 - Retained BTW creation now restores the outgoing session when setup or initialized-session
   persistence fails, removing inode-owned headerless partial files instead of leaving prompts bound
-  to a replacement-pending candidate.
+  to a replacement-pending candidate; cleanup quarantines before identity validation so concurrent
+  path replacements survive.
 - User abort during an asynchronous `agent_settled` handler now rejects discarded deferred BTW
   shortcuts and releases their pending reservation after clearing the old delivery generation,
   allowing synchronous retry without recapture or settlement hangs.
