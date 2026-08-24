@@ -1,5 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, linkSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
+import {
+	closeSync,
+	copyFileSync,
+	existsSync,
+	fstatSync,
+	linkSync,
+	mkdirSync,
+	openSync,
+	renameSync,
+	statSync,
+	unlinkSync,
+} from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
@@ -35,6 +46,12 @@ export interface AgentSessionLaunchProfile {
 	permissionPreset?: string;
 	creationModel?: { provider: string; modelId: string };
 	initialThinkingLevel?: string;
+}
+
+interface InitializedSessionFileClaim {
+	sessionFile: string;
+	dev: number;
+	ino: number;
 }
 
 /**
@@ -380,6 +397,45 @@ export class AgentSessionRuntime {
 		}
 	}
 
+	private claimInitializedSessionFile(sessionManager: SessionManager): InitializedSessionFileClaim | undefined {
+		const sessionFile = sessionManager.getSessionFile();
+		if (!sessionFile) return undefined;
+		let created = false;
+		try {
+			const fd = openSync(sessionFile, "wx");
+			created = true;
+			try {
+				const identity = fstatSync(fd);
+				return { sessionFile, dev: identity.dev, ino: identity.ino };
+			} finally {
+				closeSync(fd);
+			}
+		} catch (error) {
+			if (created && existsSync(sessionFile)) {
+				try {
+					this.unlinkSessionFile(sessionFile);
+				} catch (cleanupError) {
+					throw new AggregateError(
+						[error, cleanupError],
+						`Failed to claim or clean up initialized session ${sessionFile}`,
+					);
+				}
+			}
+			throw error;
+		}
+	}
+
+	private removeClaimedInitializedSessionFile(claim: InitializedSessionFileClaim): void {
+		try {
+			const identity = statSync(claim.sessionFile);
+			if (identity.dev !== claim.dev || identity.ino !== claim.ino) return;
+			this.unlinkSessionFile(claim.sessionFile);
+		} catch (error) {
+			if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return;
+			throw error;
+		}
+	}
+
 	async switchSession(
 		sessionPath: string,
 		options?: {
@@ -537,16 +593,17 @@ export class AgentSessionRuntime {
 			await this.recoverAfterCancelledTeardown({ ...previousSession, outgoingSnapshot });
 			return { cancelled: true };
 		}
+		let initializedSessionFileClaim: InitializedSessionFileClaim | undefined;
 		try {
 			if (options?.setup) {
 				await options.setup(this.session.sessionManager);
 				this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
 			}
 			if (options?.persistInitializedSession) {
+				initializedSessionFileClaim = this.claimInitializedSessionFile(this.session.sessionManager);
 				this.session.sessionManager.persistInitializedSession();
 			}
 		} catch (operationError) {
-			const failedSessionManager = this.session.sessionManager;
 			const recoveryErrors: unknown[] = [];
 			try {
 				await this.teardownCurrent("new", previousSessionFile);
@@ -555,7 +612,7 @@ export class AgentSessionRuntime {
 			}
 			if (options?.persistInitializedSession) {
 				try {
-					this.removeOwnedPersistedSession(failedSessionManager);
+					if (initializedSessionFileClaim) this.removeClaimedInitializedSessionFile(initializedSessionFileClaim);
 				} catch (error) {
 					recoveryErrors.push(error);
 				}

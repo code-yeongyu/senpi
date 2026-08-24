@@ -206,7 +206,12 @@ describe("AgentSessionRuntime characterization", () => {
 			});
 		});
 		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
-		vi.spyOn(SessionManager.prototype, "persistInitializedSession").mockImplementationOnce(() => {
+		let failedSessionFile: string | undefined;
+		vi.spyOn(SessionManager.prototype, "persistInitializedSession").mockImplementationOnce(function (
+			this: SessionManager,
+		) {
+			failedSessionFile = this.getSessionFile();
+			writeFileSync(failedSessionFile!, '{"type":"session"');
 			throw new Error("disk full");
 		});
 
@@ -224,6 +229,8 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session.isReplacementPending).toBe(false);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 		expect(shutdownSessionIds).toHaveLength(2);
+		expect(failedSessionFile).toBeDefined();
+		expect(existsSync(failedSessionFile!)).toBe(false);
 	});
 
 	it("exposes replacement-context setters for live model thinking and tools", async () => {
