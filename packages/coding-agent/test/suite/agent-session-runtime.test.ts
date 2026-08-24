@@ -281,6 +281,35 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(SessionManager.inspectMetadata(failedSessionFile!)?.id).toBe(replacementSessionId);
 	});
 
+	it("does not overwrite a replacement swapped in before the claimed persistence write", async () => {
+		// Given
+		const tempDir = join(tmpdir(), `pi-runtime-persistence-write-race-${Date.now()}`);
+		const { runtime } = await createRuntimeForTest(() => {}, { cwd: tempDir });
+		const outgoingSessionId = runtime.session.sessionManager.getSessionId();
+		const replacement = SessionManager.create(tempDir, runtime.session.sessionManager.getSessionDir());
+		replacement.appendSessionInfo("write-race replacement");
+		replacement.persistInitializedSession();
+		const replacementSessionFile = replacement.getSessionFile()!;
+		const replacementSessionId = replacement.getSessionId();
+		let failedSessionFile: string | undefined;
+		vi.spyOn(SessionManager.prototype, "persistInitializedSession").mockImplementationOnce(function (
+			this: SessionManager,
+			claimedFd?: number,
+		) {
+			failedSessionFile = this.getSessionFile();
+			renameSync(replacementSessionFile, failedSessionFile!);
+			writeFileSync(claimedFd ?? failedSessionFile!, "candidate persistence bytes\n");
+		});
+
+		// When
+		const operation = runtime.newSession({ persistInitializedSession: true });
+
+		// Then
+		await expect(operation).rejects.toThrow("changed during initialized persistence");
+		expect(runtime.session.sessionManager.getSessionId()).toBe(outgoingSessionId);
+		expect(SessionManager.inspectMetadata(failedSessionFile!)?.id).toBe(replacementSessionId);
+	});
+
 	it("exposes replacement-context setters for live model thinking and tools", async () => {
 		// Given
 		const { runtime, faux } = await createRuntimeForTest(() => {});

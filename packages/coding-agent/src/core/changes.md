@@ -29,7 +29,9 @@
   retained setup or initialized persistence shuts down the applied candidate and restores the
   outgoing snapshot before the error propagates; persistence claims the candidate path by inode so
   a zero-length or truncated owned file can be removed without touching a replacement. Cleanup
-  first quarantines the visible path, validates the moved inode, and restores mismatches.
+  first quarantines the visible path, validates the moved inode, and restores mismatches. The
+  initialized JSONL write stays on the open claimed descriptor and validates the final pathname
+  identity before replacement can finish.
 - `packages/coding-agent/src/core/agent-session.ts`: replacement actions expose typed session
   discovery and inspection to command contexts; disabled-tool sessions omit loaded skills from
   system-prompt options before read-tool guidance is formatted.

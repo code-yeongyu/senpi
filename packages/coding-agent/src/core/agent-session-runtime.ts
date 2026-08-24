@@ -52,6 +52,7 @@ interface InitializedSessionFileClaim {
 	sessionFile: string;
 	dev: number;
 	ino: number;
+	fd?: number;
 }
 
 /**
@@ -401,16 +402,14 @@ export class AgentSessionRuntime {
 		const sessionFile = sessionManager.getSessionFile();
 		if (!sessionFile) return undefined;
 		let created = false;
+		let fd: number | undefined;
 		try {
-			const fd = openSync(sessionFile, "wx");
+			fd = openSync(sessionFile, "wx");
 			created = true;
-			try {
-				const identity = fstatSync(fd);
-				return { sessionFile, dev: identity.dev, ino: identity.ino };
-			} finally {
-				closeSync(fd);
-			}
+			const identity = fstatSync(fd);
+			return { sessionFile, dev: identity.dev, ino: identity.ino, fd };
 		} catch (error) {
+			if (fd !== undefined) closeSync(fd);
 			if (created && existsSync(sessionFile)) {
 				try {
 					this.unlinkSessionFile(sessionFile);
@@ -422,6 +421,45 @@ export class AgentSessionRuntime {
 				}
 			}
 			throw error;
+		}
+	}
+
+	private persistInitializedSessionThroughClaim(
+		sessionManager: SessionManager,
+		claim: InitializedSessionFileClaim,
+	): void {
+		const fd = claim.fd;
+		if (fd === undefined) throw new Error(`Initialized session claim is already closed: ${claim.sessionFile}`);
+		let persistenceError: unknown;
+		try {
+			sessionManager.persistInitializedSession(fd);
+		} catch (error) {
+			persistenceError = error;
+		}
+		claim.fd = undefined;
+		try {
+			closeSync(fd);
+		} catch (error) {
+			if (persistenceError) {
+				throw new AggregateError(
+					[persistenceError, error],
+					`Failed to persist or close initialized session ${claim.sessionFile}`,
+				);
+			}
+			throw error;
+		}
+		if (persistenceError) throw persistenceError;
+
+		let identity: ReturnType<typeof statSync>;
+		try {
+			identity = statSync(claim.sessionFile);
+		} catch (error) {
+			throw new Error(`Session path changed during initialized persistence: ${claim.sessionFile}`, {
+				cause: error,
+			});
+		}
+		if (identity.dev !== claim.dev || identity.ino !== claim.ino) {
+			throw new Error(`Session path changed during initialized persistence: ${claim.sessionFile}`);
 		}
 	}
 
@@ -642,7 +680,11 @@ export class AgentSessionRuntime {
 			}
 			if (options?.persistInitializedSession) {
 				initializedSessionFileClaim = this.claimInitializedSessionFile(this.session.sessionManager);
-				this.session.sessionManager.persistInitializedSession();
+				if (initializedSessionFileClaim) {
+					this.persistInitializedSessionThroughClaim(this.session.sessionManager, initializedSessionFileClaim);
+				} else {
+					this.session.sessionManager.persistInitializedSession();
+				}
 			}
 		} catch (operationError) {
 			const recoveryErrors: unknown[] = [];

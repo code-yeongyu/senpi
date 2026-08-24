@@ -973,11 +973,15 @@ export class SessionManager {
 		if (!this.persist || !this.sessionFile) return;
 		const fd = openSync(this.sessionFile, "w");
 		try {
-			for (const entry of this.fileEntries) {
-				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(entry))}\n`);
-			}
+			this._writeEntries(fd);
 		} finally {
 			closeSync(fd);
+		}
+	}
+
+	private _writeEntries(fd: number): void {
+		for (const entry of this.fileEntries) {
+			writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(entry))}\n`);
 		}
 	}
 
@@ -1031,9 +1035,13 @@ export class SessionManager {
 		return clone;
 	}
 
-	persistInitializedSession(): void {
+	persistInitializedSession(claimedFd?: number): void {
 		if (!this.persist || !this.sessionFile || this.flushed) return;
-		this._rewriteFile();
+		if (claimedFd === undefined) {
+			this._rewriteFile();
+		} else {
+			this._writeEntries(claimedFd);
+		}
 		this.flushed = true;
 	}
 
