@@ -4,6 +4,18 @@
 
 ### Breaking Changes
 
+### Fixed
+
+### Added
+
+### Changed
+
+### Removed
+
+## [2026.8.25] - 2026-08-25
+
+### Breaking Changes
+
 - Renamed the inherited `GoogleThinkingLevel` type to `GoogleApiThinkingLevel` and added `ResolvedGoogleThinkingLevel` for normalized adapter levels.
 ### Fixed
 

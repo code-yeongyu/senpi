@@ -4,6 +4,18 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.25] - 2026-08-25
+
+### Breaking Changes
+
 - Renamed `GoogleThinkingLevel` to `GoogleApiThinkingLevel` and added `ResolvedGoogleThinkingLevel` for normalized adapter levels.
 ### Added
 

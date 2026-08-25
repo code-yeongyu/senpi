@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-agent-core",
-	"version": "2026.8.24",
+	"version": "2026.8.25",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -35,8 +35,8 @@
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^2026.8.24",
-		"@earendil-works/pi-telemetry": "^2026.8.24",
+		"@earendil-works/pi-ai": "^2026.8.25",
+		"@earendil-works/pi-telemetry": "^2026.8.25",
 		"diff": "9.0.0",
 		"ignore": "7.0.6",
 		"typebox": "1.3.18",

@@ -10,6 +10,18 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.8.25] - 2026-08-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Fixed single-object `edit` tool inputs failing validation by accepting them as one-edit arrays ([#7835](https://github.com/earendil-works/pi/issues/7835)).
 - Fixed root Markdown files such as `README.md` and `AGENTS.md` in skill directories being reported as broken skills unless they declare valid skill frontmatter ([#7805](https://github.com/earendil-works/pi/issues/7805)).
 ### Removed
