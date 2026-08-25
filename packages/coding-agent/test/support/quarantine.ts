@@ -14,6 +14,31 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+/** Env var suffix every brand uses for its agent-state directory override. */
+const AGENT_DIR_ENV_SUFFIX = "_CODING_AGENT_DIR";
+
+/** Brand marker deciding which env lane wins in `brandEnvNames` (`OMO_` before `SENPI_`/`PI_`). */
+const BRAND_ENV_VAR = "SENPI_BRAND";
+
+/**
+ * Remove every ambient agent-directory lane and the brand marker from `env`.
+ *
+ * Quarantining only `SENPI_CODING_AGENT_DIR` is not enough: the omo launcher exports
+ * `OMO_CODING_AGENT_DIR` and `SENPI_BRAND` to every session, tool children inherit both, and
+ * with the omo brand active `brandEnvNames` resolves the `OMO_` lane first — so `getAgentDir()`
+ * returned the real `~/.omo/agent` inside the suite and `settings-tips.test.ts` wiped the live
+ * settings.json on 2026-08-25. Deleting the marker plus every `*_CODING_AGENT_DIR` lane (any
+ * current or future brand) makes the quarantined `SENPI_` lane the only possible answer.
+ */
+export function scrubAmbientAgentDirEnv(env: NodeJS.ProcessEnv = process.env): void {
+	for (const key of Object.keys(env)) {
+		if (key.endsWith(AGENT_DIR_ENV_SUFFIX)) {
+			delete env[key];
+		}
+	}
+	delete env[BRAND_ENV_VAR];
+}
+
 /**
  * Resolve the agent directory the test suite should run against.
  *
