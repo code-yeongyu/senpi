@@ -6,13 +6,7 @@
  */
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import {
-	estimateContextTokens as estimateProviderContextTokens,
-	type RetryCallbacks,
-	type RetryPolicy,
-	retryAssistantCall,
-	uuidv7,
-} from "@earendil-works/pi-ai";
+import { type RetryCallbacks, type RetryPolicy, retryAssistantCall, uuidv7 } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	Context,
@@ -23,6 +17,7 @@ import type {
 	Usage,
 } from "@earendil-works/pi-ai/compat";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
+import { estimateContextTokens as estimateProviderContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { convertToLlm, filterContextExcludedMessages, isContextExcludedCustomMessage } from "../messages.ts";
 import {
 	buildSessionContext,
@@ -56,7 +51,16 @@ function getAnthropicSummarizationFallback(model: Model<any>): readonly { model:
 		return undefined;
 	}
 	const allowedFallbackModels = (model as Model<"anthropic-messages">).compat?.allowedFallbackModels;
-	return allowedFallbackModels?.length ? [{ model: allowedFallbackModels[0] }] : undefined;
+	return allowedFallbackModels?.length
+		? [
+				{
+					model:
+						typeof allowedFallbackModels[0] === "string"
+							? allowedFallbackModels[0]
+							: allowedFallbackModels[0].model,
+				},
+			]
+		: undefined;
 }
 
 // ============================================================================
@@ -595,6 +599,13 @@ export function findCutPoint(
 // Summarization
 // ============================================================================
 
+export function getSummarizationFailure(response: AssistantMessage, label: string): string | undefined {
+	if (response.stopReason === "error") return `${label} failed: ${response.errorMessage || "Unknown error"}`;
+	if (response.stopReason === "length")
+		return `${label} failed: generation hit the token cap and the summary is incomplete`;
+	return undefined;
+}
+
 const SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
 
 Use this EXACT format:
@@ -967,9 +978,8 @@ export async function generateSummaryWithUsage(
 		callbacks,
 	);
 
-	if (response.stopReason === "error") {
-		throw new Error(`Summarization failed: ${response.errorMessage || "Unknown error"}`);
-	}
+	const failure = getSummarizationFailure(response, "Summarization");
+	if (failure) throw new Error(failure);
 	if (response.content.some((block) => block.type === "toolCall")) {
 		throw new Error("Summarization attempted to call a tool");
 	}
@@ -1353,9 +1363,8 @@ async function generateTurnPrefixSummary(
 		callbacks,
 	);
 
-	if (response.stopReason === "error") {
-		throw new Error(`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`);
-	}
+	const failure = getSummarizationFailure(response, "Turn prefix summarization");
+	if (failure) throw new Error(failure);
 	if (response.content.some((block) => block.type === "toolCall")) {
 		throw new Error("Turn prefix summarization attempted to call a tool");
 	}

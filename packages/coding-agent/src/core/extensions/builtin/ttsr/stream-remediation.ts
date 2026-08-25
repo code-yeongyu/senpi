@@ -11,7 +11,7 @@ import type { DetectionResolution } from "./types.ts";
 
 export interface StreamRemediationInput {
 	readonly resolution: DetectionResolution;
-	readonly streamKind: "text" | "thinking";
+	readonly streamKind: "text" | "thinking" | "tool";
 }
 
 export interface StreamRemediationOutcome {

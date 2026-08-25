@@ -2,6 +2,25 @@
 
 Tracker for `packages/evals` divergence from upstream `badlogic/pi-mono`.
 
+## Evals manifest re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/evals/package.json` keeps `@code-yeongyu/senpi-evals`, the senpi dependency, calver
+  workspace ranges, `@types/node` 26, and TypeScript 7.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The name/version/dependency blocks on every upstream release bump.
+
 ## vitest-evals harness bump (2026-08-20)
 
 ### What changed

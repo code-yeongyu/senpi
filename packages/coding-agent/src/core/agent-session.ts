@@ -31,7 +31,7 @@ import type {
 	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { prepareAgentToolCall } from "@earendil-works/pi-agent-core";
+import { ProviderRetryWatchdogAbortError, prepareAgentToolCall } from "@earendil-works/pi-agent-core";
 import { contentText, SERVER_FALLBACK_ABORTED_DIAGNOSTIC, type ThinkingSelection } from "@earendil-works/pi-ai";
 import type {
 	Api,
@@ -51,6 +51,7 @@ import {
 	isClassifierRefusal,
 	isContextOverflow,
 	isCursorPayloadResourceExhausted,
+	isCursorQuotaResourceExhausted,
 	isCursorZeroTokenResourceExhausted,
 	isProviderStreamStallError,
 	isProviderTimeoutError,
@@ -63,6 +64,7 @@ import {
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
 import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
+import { retryBackoffDelayMs } from "@earendil-works/pi-ai/utils/retry-profile/backoff";
 import { getAgentDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
@@ -522,6 +524,8 @@ export interface AgentSessionConfig {
 	agentDir?: string;
 	/** Clock override for fallback selector cooldowns (tests only). */
 	fallbackNow?: () => number;
+	/** Random source for retry jitter (tests only). */
+	retryRandom?: () => number;
 	/** Global model narrowing for selectors and startup model choice (from --models / enabledModels) */
 	scopedModels?: Array<{
 		model: Model<any>;
@@ -865,6 +869,7 @@ export class AgentSession {
 	private readonly _supersededCompactionLogAttemptIds = new Set<string>();
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
+	private _pendingCustomMessages: CustomMessage[] = [];
 	// Queues held while the first post-compaction response is classified. Agent
 	// core otherwise drains steering immediately before AgentSession can consume
 	// the stale-usage exemption and schedule the continuation itself.
@@ -904,6 +909,18 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+
+	/**
+	 * Resolve the effective retry profile for the current model's provider.
+	 * Falls back to the senpi-default profile when the provider declares none.
+	 */
+	private _resolveRetryProfile() {
+		const providerId = this.model?.provider;
+		const declared = providerId !== undefined ? this._modelRuntime.getProvider(providerId)?.retryPolicy : undefined;
+		return this.settingsManager.resolveRetryProfile(
+			providerId !== undefined ? { id: providerId, retryPolicy: declared } : undefined,
+		);
+	}
 	private _probePhase: ProbePhase = "idle";
 	private _hintDeadlineMs: number | undefined = undefined;
 	private _cumulativeHintedWaitMs = 0;
@@ -954,6 +971,7 @@ export class AgentSession {
 	private readonly _selectorCooldowns: SelectorCooldowns;
 	private readonly _probeBackScheduler: ProbeBackScheduler;
 	private readonly _fallbackNow: () => number;
+	private readonly _retryRandom: () => number;
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
@@ -1018,6 +1036,7 @@ export class AgentSession {
 		}
 		this._selectorCooldowns = new SelectorCooldowns(config.fallbackNow ?? (() => Date.now()));
 		this._fallbackNow = config.fallbackNow ?? (() => Date.now());
+		this._retryRandom = config.retryRandom ?? Math.random;
 		this._retryFallback = new RetryFallbackController({
 			getSettings: () => this.settingsManager.getRetryFallbackSettings(),
 			registry: this._modelRegistry,
@@ -1750,7 +1769,8 @@ export class AgentSession {
 			!lastAssistant ||
 			(!this._isRetryableError(lastAssistant) &&
 				!this._isHardErrorFallbackEligible(lastAssistant) &&
-				!isCursorZeroTokenResourceExhausted(lastAssistant))
+				!isCursorZeroTokenResourceExhausted(lastAssistant) &&
+				!isCursorQuotaResourceExhausted(lastAssistant, this.model?.contextWindow ?? 0))
 		) {
 			return;
 		}
@@ -1947,10 +1967,17 @@ export class AgentSession {
 		if (!settings.enabled) {
 			return false;
 		}
+		// The same-model budget comes from the resolved profile so a provider-declared
+		// budget (e.g. kimi-code's 9) is honoured; identical to settings.maxRetries for
+		// providers without a profile.
+		const turnMaxRetries = this._resolveRetryProfile().turn.maxRetries;
 
 		const retryableError = this._isRetryableError(lastAssistant);
 		if (isCursorZeroTokenResourceExhausted(lastAssistant)) {
 			return true;
+		}
+		if (isCursorQuotaResourceExhausted(lastAssistant, this.model?.contextWindow ?? 0)) {
+			return this._retryFallback.canTryFallback();
 		}
 		if (!retryableError && this._isHardErrorFallbackEligible(lastAssistant)) {
 			return true;
@@ -1961,10 +1988,10 @@ export class AgentSession {
 		}
 
 		if (isClassifierRefusal(lastAssistant)) {
-			return this._retryAttempt + 1 <= settings.maxRetries && this._retryFallback.canTryFallback();
+			return this._retryAttempt + 1 <= turnMaxRetries && this._retryFallback.canTryFallback();
 		}
 
-		if (this._retryAttempt + 1 > settings.maxRetries) {
+		if (this._retryAttempt + 1 > turnMaxRetries) {
 			return this._retryFallback.canTryFallback();
 		}
 
@@ -2121,10 +2148,11 @@ export class AgentSession {
 			const retryableError = this._isRetryableError(msg);
 			const hardErrorFallbackEligible = this._isHardErrorFallbackEligible(msg);
 			const cursorZeroTokenRe = isCursorZeroTokenResourceExhausted(msg);
+			const cursorQuotaRe = isCursorQuotaResourceExhausted(msg, this.model?.contextWindow ?? 0);
 			const retryCanAdmitProvider =
 				!userAbortSuppressedQueuedContinuation &&
 				this.settingsManager.getRetrySettings().enabled &&
-				(retryableError || hardErrorFallbackEligible || cursorZeroTokenRe);
+				(retryableError || hardErrorFallbackEligible || cursorZeroTokenRe || cursorQuotaRe);
 			let compactedBeforeRetry = false;
 			if (
 				retryCanAdmitProvider &&
@@ -2142,6 +2170,11 @@ export class AgentSession {
 			if (!retryContinuationBlocked && !userAbortSuppressedQueuedContinuation) {
 				if (cursorZeroTokenRe) {
 					retryOutcome = await this._handleRetryableError(msg, { sameModelRemint: true });
+				} else if (cursorQuotaRe) {
+					// Mid-turn Cursor errors may retain unpaired tool calls. Remove the
+					// failed assistant before provider fallback so replay stays valid.
+					this._retireFailedRetryAssistant(msg);
+					retryOutcome = await this._handleRetryableError(msg, { hardErrorFallback: true });
 				} else if (retryableError) {
 					retryOutcome = await this._handleRetryableError(msg);
 				} else if (hardErrorFallbackEligible) {
@@ -2165,6 +2198,9 @@ export class AgentSession {
 				retryOutcome === "not-handled" &&
 				(msg.stopReason === "error" || msg.stopReason === "aborted");
 
+			if (retryOutcome === "not-handled" && cursorQuotaRe && msg.errorMessage) {
+				msg.errorMessage = `${msg.errorMessage} (likely provider usage/quota exhaustion: conversation is well below the model context window)`;
+			}
 			if (retryOutcome === "not-handled" && this._retryAttempt > 0 && msg.errorMessage) {
 				const attempt = this._retryAttempt;
 				this._retryAttempt = 0;
@@ -2432,6 +2468,7 @@ export class AgentSession {
 			};
 			await this._extensionRunner.emit(extensionEvent);
 			this._turnIndex++;
+			this._flushPendingCustomMessages();
 		} else if (event.type === "message_start") {
 			const extensionEvent: MessageStartEvent = {
 				type: "message_start",
@@ -3958,22 +3995,34 @@ export class AgentSession {
 					throw error;
 				}
 				await this._promptAgent(appMessage, deferredTurnClaim);
+			} else if (this.isStreaming) {
+				this._pendingCustomMessages.push(appMessage);
 			} else {
-				this.agent.state.messages.push(appMessage);
-				this.sessionManager.appendCustomMessageEntry(
-					message.customType,
-					message.content,
-					message.display,
-					message.details,
-				);
-				this._incrementMessageRevision();
-				this._emit({ type: "message_start", message: appMessage });
-				this._emit({ type: "message_end", message: appMessage });
+				this._appendCustomMessage(appMessage);
 			}
 		} finally {
 			deferredTurnClaim?.resolve("finished-without-start");
 			finishSessionWork?.();
 		}
+	}
+
+	private _appendCustomMessage(appMessage: CustomMessage): void {
+		this.agent.state.messages.push(appMessage);
+		this.sessionManager.appendCustomMessageEntry(
+			appMessage.customType,
+			appMessage.content,
+			appMessage.display,
+			appMessage.details,
+		);
+		this._incrementMessageRevision();
+		this._emit({ type: "message_start", message: appMessage });
+		this._emit({ type: "message_end", message: appMessage });
+	}
+
+	private _flushPendingCustomMessages(): void {
+		const pending = this._pendingCustomMessages;
+		this._pendingCustomMessages = [];
+		for (const message of pending) this._appendCustomMessage(message);
 	}
 
 	/**
@@ -5714,9 +5763,7 @@ export class AgentSession {
 			} else {
 				const messages = filterContextExcludedMessages(this.agent.state.messages);
 				const estimate = estimateContextTokens(messages);
-				if (estimate.lastUsageIndex === null) {
-					if (!this._isRequiredCompactionError(assistantMessage)) return false;
-				} else {
+				if (estimate.lastUsageIndex !== null) {
 					// Verify the usage source is post-compaction. Kept pre-compaction messages
 					// have stale usage reflecting the old (larger) context and would falsely
 					// trigger compaction right after one just finished.
@@ -5898,7 +5945,15 @@ export class AgentSession {
 					}
 				},
 				getActiveSignal: () => this.agent.signal,
-				abortActive: () => this.agent.abort(),
+				abortActive: () =>
+					this.agent.abort(
+						new ProviderRetryWatchdogAbortError(
+							`Provider retry continuation watchdog timed out after ${retryTimeoutMs}ms` +
+								(this.agent.streamStartTimeoutMs === undefined
+									? " (stream-start guard disabled)"
+									: ` (stream-start guard: ${this.agent.streamStartTimeoutMs}ms)`),
+						),
+					),
 				timeoutMs: retryTimeoutMs,
 			});
 			return "continued";
@@ -6979,6 +7034,9 @@ export class AgentSession {
 		errorMessage: string,
 	): number | undefined {
 		const settings = this.settingsManager.getRetrySettings();
+		// Budget checks use the resolved profile (same value as settings.maxRetries
+		// for providers without a declared profile).
+		const turnMaxRetries = this._resolveRetryProfile().turn.maxRetries;
 		const hintSettings = this.settingsManager.getHintPolicySettings();
 		const finishTurn = (attempt: number, finalError: string | undefined) => {
 			const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
@@ -7015,7 +7073,7 @@ export class AgentSession {
 			return undefined;
 		}
 		this._retryAttempt++;
-		if (this._retryAttempt > settings.maxRetries) {
+		if (this._retryAttempt > turnMaxRetries) {
 			finishTurn(this._retryAttempt - 1, message.errorMessage);
 			return undefined;
 		}
@@ -7036,6 +7094,11 @@ export class AgentSession {
 			return "not-handled";
 		}
 
+		// Resolve the effective retry profile for the current provider.
+		// Profile-driven behaviour only diverges when a provider declares one;
+		// the senpi-default profile preserves today's tier routing exactly.
+		const retryProfile = this._resolveRetryProfile();
+
 		// Retry promise is created synchronously in _handleAgentEvent for agent_end.
 		// Keep a defensive fallback here in case a future refactor bypasses that path.
 		if (!this._retryPromise) {
@@ -7053,7 +7116,7 @@ export class AgentSession {
 		let hintTierDelayMs: number | undefined;
 		if (sameModelRemint) {
 			this._retryAttempt++;
-			if (this._retryAttempt > settings.maxRetries) {
+			if (this._retryAttempt > retryProfile.turn.maxRetries) {
 				if (this._retryAttempt > 1) {
 					this._emit({
 						type: "auto_retry_end",
@@ -7084,7 +7147,7 @@ export class AgentSession {
 		} else if (isRefusal) {
 			// Refusals are only retried through a new chain candidate. They never use
 			// same-model retries or the transient over-budget fallback escape hatch.
-			if (this._retryAttempt + 1 > settings.maxRetries) {
+			if (this._retryAttempt + 1 > retryProfile.turn.maxRetries) {
 				if (this._retryAttempt > 0) {
 					this._emit({
 						type: "auto_retry_end",
@@ -7124,8 +7187,8 @@ export class AgentSession {
 			this._retryAttempt++;
 		} else {
 			// A provider-stream stall is an ordinary transient failure: it consumes
-			// the same bounded same-model budget (`settings.maxRetries`) as every
-			// other retryable class and escalates to the fallback chain only when
+			// the same bounded same-model budget (the resolved profile's turn
+			// maxRetries) as every other retryable class and escalates to the fallback chain only when
 			// that budget is exhausted. It is excluded from 429-class tier routing
 			// because a stall carries no rate-limit markers or retry-after hint.
 			const stallError = isProviderStreamStallError(message);
@@ -7138,7 +7201,42 @@ export class AgentSession {
 				/rate.?limit|(?:^429(?=\s+\{)|(?:\bHTTP\/1\.[01]\s+|\bHTTP\s+|\bstatus(?:\s+code)?\s+|\berror\s+|\bcode\s+)429\b)|too many requests|resource.?exhausted/i.test(
 					errorMessage,
 				);
-			if (is429Class) {
+			// Profile-driven routing: "after-turn-budget" (Kimi) keeps 429s on the
+			// ordinary same-model budget; "tiered" (senpi default) uses hint tiers.
+			if (is429Class && retryProfile.fallback.rateLimited === "after-turn-budget") {
+				// Kimi profile: 429s consume the same-model budget like any transient.
+				// Mark tier-routed so the generic non-429 path below does not double-count.
+				is429TierRouted = true;
+				this._retryAttempt++;
+				if (this._retryAttempt > retryProfile.turn.maxRetries) {
+					switchedFallback = await this._retryFallback.tryFallback("transient", {
+						errorMessage,
+						retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
+					});
+					if (switchedFallback) {
+						this._retryAttempt = 1;
+					} else {
+						const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
+						if (exhaustedChainKey) {
+							this._emit({
+								type: "retry_fallback_exhausted",
+								chainKey: exhaustedChainKey,
+								lastError: errorMessage,
+							});
+						}
+						this._emit({
+							type: "auto_retry_end",
+							success: false,
+							attempt: this._retryAttempt - 1,
+							finalError: message.errorMessage,
+						});
+						this._retryAttempt = 0;
+						this._resetHintTierState();
+						this._resolveRetry();
+						return "not-handled";
+					}
+				}
+			} else if (is429Class) {
 				const hintMs = this._getProviderRetryDelayMs(errorMessage);
 				const hintSettings = this.settingsManager.getHintPolicySettings();
 				const tier = classifyRateLimitedWait(hintMs, hintSettings);
@@ -7156,7 +7254,7 @@ export class AgentSession {
 					}
 				} else if (tier === "tier1-in-turn") {
 					this._retryAttempt++;
-					if (this._retryAttempt > settings.maxRetries) {
+					if (this._retryAttempt > retryProfile.turn.maxRetries) {
 						// Budget exhausted within tier1; fall back.
 						switchedFallback = await this._retryFallback.tryFallback("transient", {
 							errorMessage,
@@ -7256,7 +7354,7 @@ export class AgentSession {
 			if (!is429TierRouted) {
 				this._retryAttempt++;
 			}
-			if (!is429TierRouted && this._retryAttempt > settings.maxRetries) {
+			if (!is429TierRouted && this._retryAttempt > retryProfile.turn.maxRetries) {
 				switchedFallback = await this._retryFallback.tryFallback("transient", {
 					errorMessage,
 					retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
@@ -7289,8 +7387,14 @@ export class AgentSession {
 
 		const providerDelayMs = isRefusal || hardErrorFallback ? undefined : this._getProviderRetryDelayMs(errorMessage);
 		const maxRetryDelayMs = this.settingsManager.getProviderRetrySettings().maxRetryDelayMs;
+		// Profile ceiling null (Kimi) bypasses the over-ceiling error path entirely.
+		const profileCeiling =
+			retryProfile.turn.serverHint.mode === "override"
+				? retryProfile.turn.serverHint.ceiling.maxDelayMs
+				: maxRetryDelayMs;
+		const effectiveMaxRetryDelayMs = profileCeiling ?? Number.MAX_SAFE_INTEGER;
 		// For 429-class failures the tier routing replaces the over-budget gate.
-		if (!is429TierRouted && providerDelayMs !== undefined && providerDelayMs > maxRetryDelayMs) {
+		if (!is429TierRouted && providerDelayMs !== undefined && providerDelayMs > effectiveMaxRetryDelayMs) {
 			// A wait this long means the model is unavailable rather than busy, so the
 			// configured chain beats failing the turn. The switch is gated: the over-budget
 			// branch above may have already switched on this same error, and hopping again
@@ -7326,18 +7430,27 @@ export class AgentSession {
 		// 429-tier delays already carry the exponential floor from nextInTurnDelayMs /
 		// degradeWithoutFallback; the non-tier branch keeps its own exponential fallback.
 		const nonTierProviderDelayMs = providerDelayMs === 0 ? undefined : providerDelayMs;
+		// Locally computed exponential goes through the profile's backoff policy
+		// (cap + jitter), sampled through the injectable retryRandom seam so tests
+		// stay deterministic; provider-derived hints on the non-429 path remain
+		// authoritative and fallback switches stay exact.
+		const localExponentialMs = retryBackoffDelayMs(
+			retryProfile.turn.backoff,
+			this._retryAttempt,
+			this._retryRandom(),
+		);
 		const delayMs = switchedFallback
 			? 0
 			: is429TierRouted
-				? (hintTierDelayMs ?? providerDelayMs ?? settings.baseDelayMs * 2 ** (this._retryAttempt - 1))
-				: (nonTierProviderDelayMs ?? settings.baseDelayMs * 2 ** (this._retryAttempt - 1));
+				? (hintTierDelayMs ?? providerDelayMs ?? localExponentialMs)
+				: (nonTierProviderDelayMs ?? localExponentialMs);
 		// Prepare before auto_retry_start so an immediate Esc can cancel the retry sleep.
 		this._retryAbortController = new AbortController();
 
 		this._emit({
 			type: "auto_retry_start",
 			attempt: this._retryAttempt,
-			maxAttempts: settings.maxRetries,
+			maxAttempts: retryProfile.turn.maxRetries,
 			delayMs,
 			errorMessage,
 		});

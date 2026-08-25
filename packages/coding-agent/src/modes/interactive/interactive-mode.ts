@@ -48,6 +48,7 @@ import {
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
+	APP_COMMAND,
 	APP_NAME,
 	APP_TITLE,
 	BRAND,
@@ -130,7 +131,7 @@ import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, getReleaseChangelogUrl } from "../../utils/version-check.ts";
-import { abortedErrorLabel } from "./aborted-error-label.ts";
+import { abortedMessageForRendering } from "./aborted-error-label.ts";
 import {
 	type CompactionQueuedMessage,
 	transferCompactionQueue,
@@ -416,7 +417,7 @@ export function formatResumeCommand(sessionManager: SessionManager): string | un
 	const sessionFile = sessionManager.getSessionFile();
 	if (!sessionFile || !fs.existsSync(sessionFile)) return undefined;
 
-	const args = [APP_NAME];
+	const args = [APP_COMMAND];
 	if (!sessionManager.usesDefaultSessionDir()) {
 		args.push("--session-dir", quoteIfNeeded(sessionManager.getSessionDir()));
 	}
@@ -663,6 +664,8 @@ export interface InteractiveModeOptions {
 	uiMode?: TuiMode;
 	/** Providers that were migrated to auth.json (shows warning) */
 	migratedProviders?: string[];
+	/** Runtime diagnostics collected during session creation. */
+	startupDiagnostics?: Array<{ type: "info" | "warning" | "error"; message: string }>;
 	/** Warning message if session model couldn't be restored */
 	modelFallbackMessage?: string;
 	/** Cwd to trust after reload if it gained a .pi directory during this implicitly trusted session. */
@@ -1582,6 +1585,7 @@ export class InteractiveMode {
 		// Show startup warnings
 		const {
 			migratedProviders,
+			startupDiagnostics,
 			modelFallbackMessage,
 			initialMessage,
 			initialImages,
@@ -1591,6 +1595,10 @@ export class InteractiveMode {
 
 		if (migratedProviders && migratedProviders.length > 0) {
 			this.showWarning(`Migrated credentials to auth.json: ${migratedProviders.join(", ")}`);
+		}
+		for (const diagnostic of startupDiagnostics ?? []) {
+			if (diagnostic.type === "warning") this.showWarning(diagnostic.message);
+			else if (diagnostic.type === "error") this.showError(diagnostic.message);
 		}
 
 		const modelsJsonError = this.session.modelRuntime.getError();
@@ -1652,6 +1660,10 @@ export class InteractiveMode {
 	}
 
 	private async checkTmuxSetup(): Promise<string | undefined> {
+		return this.checkTmuxKeyboardSetup();
+	}
+
+	private async checkTmuxKeyboardSetup(): Promise<string | undefined> {
 		if (!process.env.TMUX) return undefined;
 
 		const runTmux = (args: string[]): Promise<string | undefined> => {
@@ -4389,18 +4401,15 @@ export class InteractiveMode {
 						}
 					}
 					this.toolArgsReveal.flushAll();
-					let errorMessage: string | undefined;
-					if (this.streamingMessage.stopReason === "aborted") {
-						errorMessage = abortedErrorLabel(
-							this.streamingMessage.errorMessage,
-							this.session.retryAttempt,
-							this.session.currentAbortSource,
-						);
-						this.streamingMessage.errorMessage = errorMessage;
-					}
-					this.syncTrailingAssistantText(this.streamingMessage);
+					const renderedMessage = abortedMessageForRendering(
+						this.streamingMessage,
+						this.session.retryAttempt,
+						this.session.currentAbortSource,
+					);
+					let errorMessage = renderedMessage.errorMessage;
+					this.syncTrailingAssistantText(renderedMessage);
 					this.assistantTextSegments.clear();
-					this.addContinuityNotice(this.streamingMessage);
+					this.addContinuityNotice(renderedMessage);
 
 					if (this.streamingMessage.stopReason === "aborted" || this.streamingMessage.stopReason === "error") {
 						if (!errorMessage) {
@@ -5211,7 +5220,8 @@ export class InteractiveMode {
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
 							let errorMessage: string;
 							if (message.stopReason === "aborted") {
-								errorMessage = abortedErrorLabel(message.errorMessage, 0, undefined);
+								errorMessage =
+									abortedMessageForRendering(message, 0, undefined).errorMessage || "Provider request failed";
 							} else {
 								errorMessage = message.errorMessage || "Error";
 							}

@@ -1,5 +1,48 @@
 # Changes
 
+## Agent loop config surface re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/agent/src/agent.ts` keeps the fork run-loop surface on top of upstream: the
+  `buildProviderContext` re-export from `agent-loop.ts`, and the config passthroughs `timeoutMs`,
+  `streamStartTimeoutMs`, `removedToolHints`, `resolveUnknownToolCall`, `abortServerSideFallback`,
+  and `cursorExecHandlers`.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The `AgentConfig`/loop-config type blocks and the `agent-loop.ts` import list in
+  `packages/agent/src/agent.ts`.
+
+## 2026-08-25 - Preserve provider retry watchdog abort provenance
+
+### What changed
+
+- `packages/agent/src/agent.ts` accepts an abort reason and emits a provider-owned assistant abort for retry-watchdog cancellation.
+- `packages/agent/src/agent-loop.ts` preserves an explicit abort Error instead of replacing it with generic `Request was aborted` text.
+- `packages/agent/src/assistant-terminal-state.ts` stamps provider provenance where terminal stream failures are constructed.
+- `packages/agent/src/index.ts` exports the typed watchdog abort reason for session hosts.
+
+### Why
+
+- The session watchdog must carry the real provider stall cause through low-level Agent cancellation so retry classification and terminal reporting do not lose the provider failure.
+
+### Why an extension could not handle it
+
+- Abort reason propagation and assistant failure-message construction occur inside the browser-safe agent lifecycle.
+
+### Expected merge conflict zones
+
+- LOW: `agent.ts` abort API and `agent-loop.ts` event-reader cancellation path.
+
 ## 2026-08-20 - End the turn when idle after completed Cursor tools
 
 ### What changed

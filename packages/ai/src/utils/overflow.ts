@@ -155,7 +155,12 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 		const usage = message.usage;
 		const hasTokenEvidence =
 			(usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite) > 0;
-		if (!isNonOverflow && hasTokenEvidence && RESOURCE_EXHAUSTED_PATTERN.test(message.errorMessage)) {
+		if (
+			!isNonOverflow &&
+			hasTokenEvidence &&
+			RESOURCE_EXHAUSTED_PATTERN.test(message.errorMessage) &&
+			(contextWindow === undefined || contextWindow <= 0 || cursorZeroTokenCount(message) >= contextWindow * 0.5)
+		) {
 			return true;
 		}
 	}
@@ -219,6 +224,29 @@ export function isCursorPayloadResourceExhausted(
 		return false;
 	}
 	return !(cursorZeroTokenCount(message) > 0);
+}
+
+/**
+ * Detects Cursor's verified usage-pool exhaustion signature: a token-bearing
+ * `resource_exhausted` error while the conversation is well below the model
+ * context window.
+ */
+export function isCursorQuotaResourceExhausted(
+	message: {
+		stopReason?: string;
+		errorMessage?: string;
+		usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
+	},
+	contextWindow: number,
+): boolean {
+	const tokens = cursorZeroTokenCount(message);
+	return (
+		message.stopReason === "error" &&
+		RESOURCE_EXHAUSTED_PATTERN.test(message.errorMessage || "") &&
+		contextWindow > 0 &&
+		tokens > 0 &&
+		tokens < contextWindow * 0.5
+	);
 }
 
 export function isCursorZeroTokenResourceExhausted(message: {

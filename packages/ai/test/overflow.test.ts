@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AssistantMessage } from "../src/types.ts";
-import { isContextOverflow, isRecoverableLength } from "../src/utils/overflow.ts";
+import { isContextOverflow, isCursorQuotaResourceExhausted, isRecoverableLength } from "../src/utils/overflow.ts";
 
 function createErrorMessage(errorMessage: string): AssistantMessage {
 	return {
@@ -94,18 +94,43 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(rfcStyle, 200000)).toBe(true);
 	});
 
-	it("treats token-bearing resource_exhausted errors as context overflow", () => {
+	it("does not treat tiny token-bearing resource_exhausted usage as context overflow", () => {
 		const message = createErrorMessage("Connect error resource_exhausted");
 		message.usage.output = 12;
 		message.usage.totalTokens = 12;
-		expect(isContextOverflow(message, 200_000)).toBe(true);
+		expect(isContextOverflow(message, 200_000)).toBe(false);
 	});
 
-	it("treats token-bearing gRPC trailer resource_exhausted errors as context overflow", () => {
+	it("treats token-bearing resource_exhausted usage near the context window as overflow", () => {
 		const message = createErrorMessage("gRPC error 8: resource_exhausted");
-		message.usage.output = 3;
-		message.usage.totalTokens = 3;
-		expect(isContextOverflow(message, 200_000)).toBe(true);
+		message.usage.totalTokens = 600_000;
+		expect(isContextOverflow(message, 1_048_576)).toBe(true);
+	});
+
+	it("preserves legacy token-bearing resource_exhausted overflow detection without a context window", () => {
+		const message = createErrorMessage("Connect error resource_exhausted");
+		message.usage.totalTokens = 12;
+		expect(isContextOverflow(message)).toBe(true);
+	});
+
+	it("identifies Cursor usage-pool exhaustion below half the context window", () => {
+		const message = createErrorMessage("Connect error resource_exhausted: Error");
+		message.usage.totalTokens = 178_626;
+		expect(isContextOverflow(message, 1_048_576)).toBe(false);
+		expect(isCursorQuotaResourceExhausted(message, 1_048_576)).toBe(true);
+	});
+
+	it("does not identify Cursor context overflow as usage-pool exhaustion", () => {
+		const message = createErrorMessage("Connect error resource_exhausted: Error");
+		message.usage.totalTokens = 600_000;
+		expect(isCursorQuotaResourceExhausted(message, 1_048_576)).toBe(false);
+	});
+
+	it("does not identify zero-token or non-resource-exhausted errors as usage-pool exhaustion", () => {
+		const zeroToken = createErrorMessage("Connect error resource_exhausted: Error");
+		const nonResourceExhausted = createErrorMessage("Connect error unavailable");
+		expect(isCursorQuotaResourceExhausted(zeroToken, 1_048_576)).toBe(false);
+		expect(isCursorQuotaResourceExhausted(nonResourceExhausted, 1_048_576)).toBe(false);
 	});
 
 	it("keeps zero-token resource_exhausted errors out of overflow detection", () => {

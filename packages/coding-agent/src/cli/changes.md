@@ -1,5 +1,25 @@
 # changes
 
+## CLI argument surface re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts` keeps the fork flags on top of upstream's parser:
+  `--list-tips`, the gated `--grok-neo` chrome switch (via `grok-neo-gate.ts`), and
+  `--multi-session` for independently routed plain-RPC sessions over one stdio process.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The `Args` interface and the `parseArgs` flag chain in `packages/coding-agent/src/cli/args.ts`.
+
 ## Fork CLI flags and branded help retained over upstream 59a71b23 (2026-08-19)
 
 ### What changed

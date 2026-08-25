@@ -8,6 +8,7 @@ export const workspaceSourcePaths = {
 	aiCompat: fileURLToPath(new URL("./packages/ai/src/compat.ts", import.meta.url)),
 	aiOAuth: fileURLToPath(new URL("./packages/ai/src/oauth.ts", import.meta.url)),
 	aiProviders: fileURLToPath(new URL("./packages/ai/src/providers", import.meta.url)),
+	aiAuthPool: fileURLToPath(new URL("./packages/ai/src/auth", import.meta.url)),
 	agentIndex: fileURLToPath(new URL("./packages/agent/src/index.ts", import.meta.url)),
 	codingAgentIndex: fileURLToPath(new URL("./packages/coding-agent/src/index.ts", import.meta.url)),
 	tuiIndex: fileURLToPath(new URL("./packages/tui/src/index.ts", import.meta.url)),
@@ -28,6 +29,10 @@ export default defineConfig({
 			{
 				find: /^@earendil-works\/pi-ai\/utils\/(.+)$/,
 				replacement: fileURLToPath(new URL(`./packages/ai/src/utils/$1.ts`, import.meta.url)),
+			},
+			{
+				find: /^@earendil-works\/pi-ai\/auth\/(.+)$/,
+				replacement: `${workspaceSourcePaths.aiAuthPool}/$1.ts`,
 			},
 			{ find: /^@earendil-works\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
 			{ find: /^@earendil-works\/pi-tui$/, replacement: workspaceSourcePaths.tuiIndex },

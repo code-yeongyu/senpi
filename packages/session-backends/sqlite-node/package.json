@@ -1,7 +1,6 @@
 {
 	"name": "@earendil-works/pi-storage-sqlite-node",
 	"version": "0.83.0",
-	"private": true,
 	"description": "Node sqlite session backend for @earendil-works/pi-agent-core sessions",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -41,5 +40,6 @@
 	"devDependencies": {
 		"@vitest/coverage-v8": "4.1.11",
 		"vitest": "4.1.11"
-	}
+	},
+	"private": true
 }

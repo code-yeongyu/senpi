@@ -165,7 +165,7 @@ If you use pi for open source work and want to publish sessions for model, promp
 ## CLI Reference
 
 ```bash
-senpi [options] [@files...] [messages...]
+senpi [options] [--] [@files...] [messages...]
 ```
 
 ### Package Commands
@@ -294,6 +294,9 @@ senpi "List all .ts files in src/"
 
 # Non-interactive
 senpi -p "Summarize this codebase"
+
+# Prompt beginning with a dash
+senpi -p -- "- Summarize these points"
 
 # Non-interactive with piped stdin
 cat README.md | senpi -p "Summarize this text"

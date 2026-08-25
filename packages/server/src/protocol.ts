@@ -105,6 +105,7 @@ type _AiAssistantMessageFieldsAccountedFor = Assert<
 		| "stopDetails"
 		| "deferred"
 		| "errorMessage"
+		| "abortSource"
 		| "rawStopReason"
 		| "endTurn"
 		| "timestamp"

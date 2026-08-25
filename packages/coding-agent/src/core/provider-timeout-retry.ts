@@ -28,9 +28,12 @@ function reconcileWatchdogTimeoutMs(
 	streamRetryTimeoutMs: number | undefined,
 	streamStartTimeoutMs: number | undefined,
 ): number | undefined {
-	if (streamRetryTimeoutMs === undefined) return undefined;
+	if (streamRetryTimeoutMs === undefined || streamRetryTimeoutMs <= 0) return undefined;
 	if (streamStartTimeoutMs === undefined) return streamRetryTimeoutMs;
-	return Math.max(streamRetryTimeoutMs, streamStartTimeoutMs);
+	// This timer starts before the retry reaches its first reader.next(). A 10%
+	// proportional grace therefore makes the provider guard strictly win without
+	// imposing a magic absolute delay on short or long operator-configured guards.
+	return Math.max(streamRetryTimeoutMs, Math.ceil(streamStartTimeoutMs * 1.1));
 }
 
 export interface BoundedRetryContinuation {
@@ -57,16 +60,9 @@ export function createProviderTimeoutRetryPlan({
 	// continuation itself (see `runBoundedRetryContinuation`), which cancels a
 	// wedged retry without lying to the provider about its deadline.
 	//
-	// The cap is reconciled against the guards this same retry was granted. A cap
-	// shorter than the stream-start budget re-created the very defect the guards
-	// were kept for, one layer up: the continuation was aborted at 30s while the
-	// request still had 60s of its configured 90s budget left, so no attempt could
-	// ever finish and the bounded `retry.maxRetries` budget collapsed into the
-	// single "Aborted after 1 retry attempt" outcome. Raising the watchdog to the
-	// granted guard keeps the wedge protection (the guards themselves still fail a
-	// dead upstream, and the watchdog still cancels a retry that outlives them)
-	// while letting a slow-but-alive provider spend the budget it was configured
-	// with across the full retry budget.
+	// The cap is reconciled against the guards this same retry was granted. The
+	// grace above is required because this continuation starts its clock earlier
+	// than the provider stream-start reader.
 	return {
 		options: {
 			deferQueuedMessages: true,

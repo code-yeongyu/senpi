@@ -1,6 +1,7 @@
 import type { ProviderEnv } from "../types.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { formatThrownValue } from "../utils/diagnostics.ts";
+import { mergeRefreshed } from "./pool/slots.ts";
 import type {
 	ApiKeyAuth,
 	ApiKeyCredential,
@@ -169,7 +170,8 @@ async function resolveStoredOAuth(
 							signal,
 							AbortSignal.timeout(DEFAULT_OAUTH_REFRESH_TIMEOUT_MS),
 						]);
-						return await oauth.refresh(current, refreshSignal);
+						const refreshed = await oauth.refresh(current, refreshSignal);
+						return mergeRefreshed(current, refreshed);
 					} catch (error) {
 						throw new ModelsError("oauth", `OAuth refresh failed for ${providerId}`, { cause: error });
 					}

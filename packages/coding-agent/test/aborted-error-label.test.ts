@@ -1,5 +1,6 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { abortedErrorLabel } from "../src/modes/interactive/aborted-error-label.ts";
+import { abortedErrorLabel, abortedMessageForRendering } from "../src/modes/interactive/aborted-error-label.ts";
 
 describe("abortedErrorLabel", () => {
 	it("uses the persisted label when replaying an aborted message", () => {
@@ -39,6 +40,30 @@ describe("abortedErrorLabel", () => {
 			"Provider request failed: 429 usage limit reached",
 		);
 		expect(abortedErrorLabel("Provider request failed", 0, undefined)).toBe("Provider request failed");
+	});
+
+	it("renders a provider label without mutating the message", () => {
+		const message = {
+			role: "assistant",
+			content: [],
+			api: "openai-responses",
+			provider: "openai",
+			model: "test",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "aborted",
+			errorMessage: "Provider stream start timed out after 90000ms",
+			timestamp: 0,
+		} satisfies AssistantMessage;
+		const rendered = abortedMessageForRendering(message, 1, "provider");
+		expect(rendered.errorMessage).toContain("Provider stream start timed out");
+		expect(message.errorMessage).toBe("Provider stream start timed out after 90000ms");
 	});
 
 	it("includes a specific provider error without repeating generic abort wording", () => {

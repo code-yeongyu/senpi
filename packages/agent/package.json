@@ -1,6 +1,5 @@
 {
 	"name": "@earendil-works/pi-agent-core",
-	"private": true,
 	"version": "2026.8.24",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
@@ -65,5 +64,6 @@
 		"@vitest/coverage-v8": "4.1.11",
 		"typescript": "7.0.2",
 		"vitest": "4.1.11"
-	}
+	},
+	"private": true
 }

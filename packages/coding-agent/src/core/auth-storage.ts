@@ -18,13 +18,22 @@ import type {
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai";
 import { findEnvKeys, getEnvApiKey } from "@earendil-works/pi-ai";
+import {
+	appendLoginSlot,
+	type CredentialSlot,
+	listSlots,
+	type PooledCredential,
+	removeSlot,
+	upsertSlot,
+} from "@earendil-works/pi-ai/auth/pool/slots";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileRevision, normalizePath } from "../utils/paths.ts";
+import { stripBom } from "../utils/text.ts";
 import { FILE_STORAGE_LOCK_OPTIONS } from "./lockfile-policy.ts";
 import { isCommandConfigValue, resolveConfigValue } from "./resolve-config-value.ts";
 
@@ -47,6 +56,7 @@ type LockResult<T> = {
 	next?: string;
 };
 
+// The mode applies only on creation so administrator-managed modes and ACLs remain intact.
 const AUTH_FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
 
 type AuthFileReload = {
@@ -88,7 +98,6 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 	private ensureFileExists(): void {
 		if (!existsSync(this.authPath)) {
 			writeFileSync(this.authPath, "{}", AUTH_FILE_WRITE_OPTIONS);
-			chmodSync(this.authPath, 0o600);
 		}
 	}
 
@@ -131,7 +140,6 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			const { result, next } = fn(current);
 			if (next !== undefined) {
 				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
-				chmodSync(this.authPath, 0o600);
 			}
 			return result;
 		} finally {
@@ -212,7 +220,6 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			options?.signal?.throwIfAborted();
 			if (next !== undefined) {
 				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
-				chmodSync(this.authPath, 0o600);
 			}
 			throwIfCompromised();
 			return result;
@@ -241,7 +248,7 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 
 		let parsed: unknown;
 		try {
-			parsed = JSON.parse(readFileSync(this.authPath, "utf-8"));
+			parsed = JSON.parse(stripBom(readFileSync(this.authPath, "utf-8")));
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
 				this.data = {};
@@ -395,7 +402,7 @@ export class AuthStorage implements CredentialStore {
 		if (!content) {
 			return {};
 		}
-		return JSON.parse(content) as AuthStorageData;
+		return JSON.parse(stripBom(content)) as AuthStorageData;
 	}
 
 	private recordError(error: unknown): void {
@@ -447,7 +454,9 @@ export class AuthStorage implements CredentialStore {
 
 	set(provider: string, credential: Credential): void {
 		this.storage.withLock((content) => {
-			const nextData = { ...this.parseStorageData(content), [provider]: credential };
+			const currentData = this.parseStorageData(content);
+			const next = appendLoginSlot(currentData[provider], credential);
+			const nextData = { ...currentData, [provider]: next };
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
@@ -457,6 +466,32 @@ export class AuthStorage implements CredentialStore {
 		this.storage.withLock((content) => {
 			const nextData = { ...this.parseStorageData(content) };
 			delete nextData[provider];
+			this.data = nextData;
+			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
+		});
+	}
+
+	listSlots(provider: string): CredentialSlot[] {
+		return listSlots(this.data[provider] as PooledCredential | undefined);
+	}
+
+	setSlot(provider: string, slot: CredentialSlot): void {
+		this.storage.withLock((content) => {
+			const currentData = this.parseStorageData(content);
+			const next = upsertSlot(currentData[provider] as PooledCredential | undefined, slot);
+			const nextData = { ...currentData, [provider]: next };
+			this.data = nextData;
+			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
+		});
+	}
+
+	removeSlot(provider: string, name: string): void {
+		this.storage.withLock((content) => {
+			const currentData = this.parseStorageData(content);
+			const next = removeSlot(currentData[provider] as PooledCredential | undefined, name);
+			const nextData = { ...currentData };
+			if (next === undefined) delete nextData[provider];
+			else nextData[provider] = next;
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
@@ -716,7 +751,7 @@ export function readStoredCredential(
 	authPath: string = join(getAgentDir(), "auth.json"),
 ): Credential | undefined {
 	try {
-		const data = JSON.parse(readFileSync(normalizePath(authPath), "utf-8")) as AuthStorageData;
+		const data = JSON.parse(stripBom(readFileSync(normalizePath(authPath), "utf-8"))) as AuthStorageData;
 		return data[providerId];
 	} catch {
 		return undefined;

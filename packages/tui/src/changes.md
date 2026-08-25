@@ -1,5 +1,28 @@
 # TUI delta rendering fork changes
 
+## TUI runtime re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/tui/src/components/markdown.ts` keeps the fork LaTeX pipeline (`latex_block` /
+  `latex_inline` / `latex_literal` token kinds, `latexToUnicode`, formula length caps, and
+  word-boundary guards) on top of upstream's renderer.
+- `packages/tui/src/terminal.ts` keeps dead-terminal detection (EIO/EPIPE/ENOTCONN plus Bun's raw
+  errno-5 macOS tty shim) and the `PI_TUI_KEYBOARD_PROTOCOL` enhancement gate.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The token-scanner section of `packages/tui/src/components/markdown.ts` and the raw-mode setup in
+  `packages/tui/src/terminal.ts`.
+
 ## Alt-screen Kitty teardown keeps its disambiguated helper name after the 59a71b23 sync (2026-08-19)
 
 ### What changed

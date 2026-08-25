@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { fetchOpenGatewayModels } from "./generate-models-opengateway.ts";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
+import { getOpenRouterThinkingLevelMap, type OpenRouterReasoningMetadata } from "./openrouter-reasoning-options.ts";
 import {
 	CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
@@ -237,10 +238,12 @@ const NVIDIA_NIM_UNSUPPORTED_MODELS = new Set([
 ]);
 const ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = new Set(["glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v"]);
 const ZAI_GLM52_THINKING_LEVEL_MAP = {
+	off: "none",
 	minimal: null,
-	low: "high",
-	medium: "high",
+	low: null,
+	medium: null,
 	high: "high",
+	xhigh: null,
 	max: "max",
 } as const;
 const OPENCODE_GO_GLM52_THINKING_LEVEL_MAP = {
@@ -835,6 +838,32 @@ function applyAnthropicMessagesCompatMetadata(model: Model<Api>): void {
 	}
 }
 
+function isAnthropicFallbackMetadataModel(model: Model<Api>): model is Model<"anthropic-messages"> {
+	if (model.provider !== "anthropic" || model.api !== "anthropic-messages") return false;
+	return (
+		model.id in ANTHROPIC_ALLOWED_FALLBACK_MODELS ||
+		Object.values(ANTHROPIC_ALLOWED_FALLBACK_MODELS).some((fallbackModelIds) => fallbackModelIds.includes(model.id))
+	);
+}
+
+function applyAnthropicAllowedFallbackModelMetadata(models: readonly Model<"anthropic-messages">[]): void {
+	const modelsById = new Map(models.map((model) => [model.id, model]));
+	for (const [modelId, fallbackModelIds] of Object.entries(ANTHROPIC_ALLOWED_FALLBACK_MODELS)) {
+		const model = modelsById.get(modelId);
+		if (!model) continue;
+
+		const allowedFallbackModels = fallbackModelIds.flatMap((fallbackModelId) => {
+			const fallbackModel = modelsById.get(fallbackModelId);
+			return fallbackModel
+				? [{ provider: fallbackModel.provider, model: fallbackModel.id, cost: fallbackModel.cost }]
+				: [];
+		});
+		if (allowedFallbackModels.length > 0) {
+			mergeAnthropicMessagesCompat(model, { allowedFallbackModels });
+		}
+	}
+}
+
 function applyStrictToolCompatMetadata(model: Model<Api>): void {
 	if (
 		(model.provider === "openai" || model.provider === "cloudflare-ai-gateway") &&
@@ -1067,12 +1096,6 @@ function getAnthropicMessagesCompat(provider: string, modelId: string): Anthropi
 	if (EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS.has(`${provider}:${modelId}`)) {
 		compat.supportsEagerToolInputStreaming = false;
 	}
-	if (provider === "anthropic") {
-		const allowedFallbackModels = ANTHROPIC_ALLOWED_FALLBACK_MODELS[modelId];
-		if (allowedFallbackModels) {
-			compat.allowedFallbackModels = allowedFallbackModels;
-		}
-	}
 	if (provider === "xiaomi" || provider.startsWith("xiaomi-token-plan-")) {
 		compat.allowEmptySignature = true;
 	}
@@ -1259,6 +1282,65 @@ async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 		if (generatorOptions.strict) throw error;
 		return [];
 	}
+}
+
+function processZaiModels(data: ModelsDevCatalog): Model<Api>[] {
+	const variants = [
+		{
+			source: "zai-coding-plan",
+			provider: "zai",
+			baseUrl: "https://api.z.ai/api/coding/paas/v4",
+		},
+		{
+			source: "zhipuai-coding-plan",
+			provider: "zai-coding-cn",
+			baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+		},
+	] as const;
+	const models: Model<Api>[] = [];
+
+	for (const { source, provider, baseUrl } of variants) {
+		for (const [modelId, model] of Object.entries(data[source]?.models ?? {})) {
+			const m = model as ModelsDevModel;
+			if (m.tool_call !== true) continue;
+			const supportsImage = m.modalities?.input?.includes("image");
+
+			const isGlm52 = modelId === "glm-5.2" || modelId === "glm-5.2-highspeed";
+			const thinkingLevelMap = isGlm52
+				? { off: "none", minimal: null, low: null, medium: null, high: "high", xhigh: null, max: null }
+				: getEffortThinkingLevelMap(m.reasoning_options ?? []);
+			const supportsReasoningEffort = thinkingLevelMap !== undefined;
+			const referenceCost = data.zai?.models[modelId]?.cost ?? m.cost;
+
+			models.push({
+				id: modelId,
+				name: m.name || modelId,
+				api: "openai-completions",
+				provider,
+				baseUrl,
+				reasoning: m.reasoning === true,
+				...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+				input: supportsImage ? ["text", "image"] : ["text"],
+				cost: {
+					input: referenceCost?.input || 0,
+					output: referenceCost?.output || 0,
+					cacheRead: referenceCost?.cache_read || 0,
+					cacheWrite: referenceCost?.cache_write || 0,
+				},
+				compat: {
+					supportsDeveloperRole: false,
+					thinkingFormat: "zai",
+					...(supportsReasoningEffort ? { supportsReasoningEffort: true } : {}),
+					...(!ZAI_TOOL_STREAM_UNSUPPORTED_MODELS.has(modelId) ? { zaiToolStream: true } : {}),
+				},
+				contextWindow: m.limit?.context || 4096,
+				maxTokens: m.limit?.output || 4096,
+			});
+			recordModelsDevReasoningOptions(provider, modelId, m);
+		}
+	}
+
+	return models;
 }
 
 function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Api>[] {
@@ -1755,6 +1837,33 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
+		// Cloudflare Workers AI models are also addressable through the AI Gateway
+		// compatibility endpoint under the `workers-ai/` namespace.
+		if (data["cloudflare-workers-ai"]?.models) {
+			for (const [modelId, model] of Object.entries(data["cloudflare-workers-ai"].models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+				models.push({
+					id: `workers-ai/${modelId}`,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider: "cloudflare-ai-gateway",
+					baseUrl: CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+					compat: { sendSessionAffinityHeaders: true },
+				});
+			}
+		}
+
 		// Process xAi models
 		if (data.xai?.models) {
 			for (const [modelId, model] of Object.entries(data.xai.models)) {
@@ -1805,8 +1914,9 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				if (m.tool_call !== true) continue;
 				const supportsImage = m.modalities?.input?.includes("image");
 
-				const isGlm5x = modelId === "glm-5.2" || modelId === "glm-5.3";
-				const referenceCost = data.zai?.models[modelId]?.cost ?? m.cost;
+				const isGlm52 = modelId === "glm-5.2" || modelId === "glm-5.2-highspeed";
+				const isGlm5x = isGlm52 || modelId === "glm-5.3";
+				const referenceCost = modelId === "glm-5.2-highspeed" ? undefined : data.zai?.models[modelId]?.cost ?? m.cost;
 
 				models.push({
 					id: modelId,
@@ -1815,7 +1925,11 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider,
 					baseUrl,
 					reasoning: m.reasoning === true,
-					...(isGlm5x ? { thinkingLevelMap: ZAI_GLM52_THINKING_LEVEL_MAP } : {}),
+					...(isGlm52
+						? { thinkingLevelMap: ZAI_GLM52_THINKING_LEVEL_MAP }
+						: isGlm5x
+							? { thinkingLevelMap: getEffortThinkingLevelMap(m.reasoning_options ?? []) }
+							: {}),
 					input: supportsImage ? ["text", "image"] : ["text"],
 					cost: {
 						input: referenceCost?.input || 0,
@@ -3139,6 +3253,7 @@ async function generateModels() {
 		applyOpenAIToolSearchMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
 	}
+	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));
 
 	// Emit after metadata application so variants clone fully processed base models.
 	// Cost rates stay at base values: the openai-responses and openai-codex-responses

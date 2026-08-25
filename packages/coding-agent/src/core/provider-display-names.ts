@@ -27,7 +27,6 @@ export const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 	opengateway: "OpenGateway",
 	ollama: "Ollama Cloud",
 	openrouter: "OpenRouter",
-	radius: "Radius",
 	together: "Together AI",
 	"vercel-ai-gateway": "Vercel AI Gateway",
 	xai: "xAI",

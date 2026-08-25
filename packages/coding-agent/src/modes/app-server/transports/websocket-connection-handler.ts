@@ -25,6 +25,10 @@ export function createAppServerWebSocketConnectionHandler(options: {
 	readonly outboundQueueBytes?: number;
 }): AppServerWebSocketConnectionHandler {
 	const webSocketServer = new WebSocketServer({ noServer: true });
+	webSocketServer.on("error", (error: unknown) => {
+		const message = error instanceof Error ? error.message : String(error);
+		process.stderr.write(`app-server websocket server error: ${message}\n`);
+	});
 	const connections = new Set<WebSocket>();
 	let nextConnectionId = 1;
 	const handleUpgrade = (request: IncomingMessage, socket: Duplex, head: Buffer): void => {

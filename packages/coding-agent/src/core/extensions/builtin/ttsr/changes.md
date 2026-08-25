@@ -1,5 +1,28 @@
 # TTSR Fork Tracker
 
+## 2026-08-25 - Cover streamed tool-call arguments
+
+### What changed and why
+
+- TTSR now feeds `toolcall_delta` events into the same collapse, control-leak, and manager-rule watcher used by text and thinking streams, keyed by `tool:<contentIndex>`.
+- Tool-scoped rules resolve the tool name from the partial assistant content block, while text-only rules remain excluded from tool streams.
+- A mid-tool-call collapse aborts system-owned remediation, removes all tool-call blocks from the aborted generation before persistence because the generation's remaining calls are suspect, keeps the assistant message coherent, and sends the shared activation record plus hidden corrective nudge.
+- Control-token-leak detection intentionally runs on tool arguments as part of detector parity; the existing kill switches therefore cover the tool lane without special cases.
+
+### Why an extension-local change is required
+
+- `agent-session.ts` already forwards `toolcall_delta` through the public `message_update` event and already applies `message_end` replacements before persistence. The fix belongs in the TTSR extension watcher and remediation policy; no core or provider change is required.
+
+### Coverage and expected conflict zones
+
+- `test/ttsr/extension-wiring.test.ts` replays the incident payload through the faux provider, proves bounded abort and clean persistence, and preserves nudge/activation ownership.
+- `test/ttsr/detector-collapse.test.ts` covers tool-stream false-positive exemptions; `test/ttsr/manager.test.ts` covers tool-name matching and text-only exclusion.
+- LOW: `index.ts` message-update routing; LOW: `message-update.ts` stream projection; LOW: `watch.ts`, `types.ts`, and tool-call remediation in `remediation.ts`.
+
+### Deviation ledger correction
+
+| Tool-arg snapshot matching (`matcherDigest`) | Raw `toolcall_delta` JSON only | **Resolved for stream detection:** tool-call argument deltas now receive collapse/control-leak detection and `toolScopes` matching. Structured matcher digests and AST-adjacent path-aware argument snapshots remain deferred. |
+
 ## 2026-08-05 - One activation, one visible record
 
 ### What changed and why

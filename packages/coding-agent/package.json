@@ -1,14 +1,14 @@
 {
 	"name": "@code-yeongyu/senpi",
 	"version": "2026.8.24",
-	"private": true,
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
-		"name": "senpi",
-		"configDir": ".senpi"
+		"configDir": ".senpi",
+		"name": "senpi"
 	},
 	"bin": {
+		"pi": "dist/bundle/cli.js",
 		"senpi": "dist/cli.js"
 	},
 	"main": "./dist/index.js",
@@ -35,77 +35,71 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
 		"build": "tsc -p tsconfig.build.json && npm run copy-assets && shx chmod +x dist/cli.js dist/rpc-entry.js && shx cp dist/cli.js dist/senpi && shx chmod +x dist/senpi",
+		"build:unbundled": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js dist/rpc-entry.js && npm run copy-assets",
 		"build:binary": "npm --prefix ../tui run build && npm --prefix ../telemetry run build && npm --prefix ../ai run build && npm --prefix ../agent run build && npm --prefix ../protocol run build && npm --prefix ../client run build && npm --prefix ../pty run build && npm run build && node ../../scripts/prepare-bun-compile-assets.mjs && bun build --compile --compile-autoload-package-json --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names ./dist/bun/cli.js ./src/utils/image-resize-worker.ts ../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js --outfile dist/pi && npm run copy-binary-assets",
 		"copy-assets": "shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/ && shx mkdir -p dist/modes/interactive/assets && shx cp src/modes/interactive/assets/*.png dist/modes/interactive/assets/ && shx mkdir -p dist/core/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html/ && shx cp src/core/export-html/vendor/*.js dist/core/export-html/vendor/ && shx mkdir -p dist/core/extensions/builtin/imagegen/skill && shx cp src/core/extensions/builtin/imagegen/skill/SKILL.md dist/core/extensions/builtin/imagegen/skill/",
 		"copy-binary-assets": "shx cp package.json dist/ && shx cp README.md dist/ && shx cp CHANGELOG.md dist/ && shx mkdir -p dist/theme && shx cp src/modes/interactive/theme/*.json dist/theme/ && shx mkdir -p dist/assets && shx cp src/modes/interactive/assets/*.png dist/assets/ && shx mkdir -p dist/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/export-html/ && shx cp -r docs dist/ && shx cp -r examples dist/ && shx mkdir -p dist/node_modules && shx cp -r ../../node_modules/css-tree ../../node_modules/mdn-data ../../node_modules/source-map-js dist/node_modules/ && node ../../scripts/copy-codemode-sidecar.mjs dist && shx cp ../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm dist/ && shx mkdir -p dist/native/darwin dist/native/win32 && shx cp -r ../../packages/tui/native/darwin/prebuilds dist/native/darwin/ && shx cp -r ../../packages/tui/native/win32/prebuilds dist/native/win32/ && shx mkdir -p dist/core/extensions/builtin/imagegen/skill && shx cp src/core/extensions/builtin/imagegen/skill/SKILL.md dist/core/extensions/builtin/imagegen/skill/ && node ../../scripts/copy-pty-native.mjs",
-		"qa:app-server": "node scripts/qa-app-server/run-all.mjs",
 		"test": "vitest --run",
+		"shrinkwrap": "node ../../scripts/generate-coding-agent-shrinkwrap.mjs",
 		"prepublishOnly": "npm run clean && npm run build && npm run shrinkwrap",
-		"shrinkwrap": "node ../../scripts/generate-coding-agent-shrinkwrap.mjs"
+		"dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+		"qa:app-server": "node scripts/qa-app-server/run-all.mjs"
 	},
 	"dependencies": {
+		"@earendil-works/pi-agent-core": "^2026.8.24",
+		"@earendil-works/pi-ai": "^2026.8.24",
+		"@earendil-works/pi-client": "^2026.8.24",
+		"@earendil-works/pi-protocol": "^2026.8.24",
+		"@earendil-works/pi-tui": "^2026.8.24",
+		"@silvia-odwyer/photon-node": "0.3.4",
+		"chalk": "6.0.0",
+		"cross-spawn": "7.0.6",
+		"diff": "9.0.0",
+		"grok-mermaid": "0.2.3",
+		"highlight.js": "11.12.0",
+		"hosted-git-info": "10.1.1",
+		"ignore": "7.0.6",
+		"jiti": "2.7.0",
+		"minimatch": "10.2.6",
+		"proper-lockfile": "4.1.2",
+		"semver": "7.8.5",
+		"typebox": "1.3.18",
+		"undici": "8.10.0",
+		"yaml": "2.9.0",
 		"@anthropic-ai/claude-agent-sdk": "0.3.241",
 		"@anthropic-ai/sdk": "0.91.1",
 		"@aws-sdk/client-bedrock-runtime": "3.1116.0",
 		"@bufbuild/protobuf": "2.14.0",
 		"@code-yeongyu/senpi-codemode": "^2026.8.24",
-		"@earendil-works/pi-agent-core": "^2026.8.24",
-		"@earendil-works/pi-ai": "^2026.8.24",
-		"@earendil-works/pi-client": "^2026.8.24",
-		"@earendil-works/pi-protocol": "^2026.8.24",
 		"@earendil-works/pi-pty": "^2026.8.24",
-		"@earendil-works/pi-tui": "^2026.8.24",
 		"@modelcontextprotocol/sdk": "1.30.0",
 		"@mozilla/readability": "0.6.0",
 		"@opentelemetry/api": "1.9.1",
-		"@silvia-odwyer/photon-node": "0.3.4",
 		"@smithy/node-http-handler": "4.11.3",
 		"@smithy/types": "4.17.2",
-		"chalk": "6.0.0",
-		"cross-spawn": "7.0.6",
-		"diff": "9.0.0",
 		"get-east-asian-width": "1.6.0",
 		"glob": "13.0.6",
-		"grok-mermaid": "0.2.3",
-		"highlight.js": "11.12.0",
-		"hosted-git-info": "10.1.1",
 		"http-proxy-agent": "9.1.0",
 		"https-proxy-agent": "9.1.0",
-		"ignore": "7.0.6",
-		"jiti": "2.7.0",
 		"jsdom": "30.0.1",
 		"marked": "18.0.10",
-		"minimatch": "10.2.6",
 		"openai": "6.26.0",
 		"partial-json": "0.1.7",
 		"picomatch": "4.0.5",
-		"proper-lockfile": "4.1.2",
 		"proxy-from-env": "2.1.0",
-		"semver": "7.8.5",
 		"signal-exit": "3.0.7",
 		"turndown": "7.2.4",
-		"typebox": "1.3.18",
-		"undici": "8.10.0",
 		"ws": "8.21.3",
-		"yaml": "2.9.0",
 		"zod": "4.4.3"
 	},
-	"bundledDependencies": [
-		"@code-yeongyu/senpi-codemode",
-		"@earendil-works/pi-agent-core",
-		"@earendil-works/pi-ai",
-		"@earendil-works/pi-pty",
-		"@earendil-works/pi-tui"
-	],
 	"overrides": {
-		"@hono/node-server": "2.1.1",
 		"protobufjs": "7.6.5",
 		"rimraf": "6.1.3",
 		"gaxios": {
 			"rimraf": "6.1.3"
-		}
+		},
+		"@hono/node-server": "2.1.1"
 	},
 	"optionalDependencies": {
 		"@mariozechner/clipboard": "0.3.9"
@@ -113,16 +107,16 @@
 	"devDependencies": {
 		"@types/cross-spawn": "6.0.6",
 		"@types/hosted-git-info": "3.0.5",
-		"@types/jsdom": "30.0.0",
 		"@types/node": "26.2.0",
-		"@types/picomatch": "4.0.3",
 		"@types/proper-lockfile": "4.1.4",
 		"@types/semver": "7.8.0",
-		"@types/turndown": "5.0.6",
-		"@types/ws": "8.18.1",
 		"shx": "0.4.0",
 		"typescript": "7.0.2",
-		"vitest": "4.1.11"
+		"vitest": "4.1.11",
+		"@types/jsdom": "30.0.0",
+		"@types/picomatch": "4.0.3",
+		"@types/turndown": "5.0.6",
+		"@types/ws": "8.18.1"
 	},
 	"keywords": [
 		"coding-agent",
@@ -142,6 +136,14 @@
 	"engines": {
 		"node": ">=24.0.0"
 	},
+	"private": true,
+	"bundledDependencies": [
+		"@code-yeongyu/senpi-codemode",
+		"@earendil-works/pi-agent-core",
+		"@earendil-works/pi-ai",
+		"@earendil-works/pi-pty",
+		"@earendil-works/pi-tui"
+	],
 	"bundleDependencies": [
 		"@code-yeongyu/senpi-codemode",
 		"@earendil-works/pi-agent-core",

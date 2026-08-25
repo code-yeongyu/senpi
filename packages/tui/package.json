@@ -1,6 +1,5 @@
 {
 	"name": "@earendil-works/pi-tui",
-	"private": true,
 	"version": "2026.8.24",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",
@@ -10,9 +9,9 @@
 		"build": "tsc -p tsconfig.build.json",
 		"build:native:darwin": "native/darwin/build.sh",
 		"build:native:win32": "node native/win32/build.mjs",
-		"bench:frame-cost": "tsx bench/frame-cost.ts",
 		"test": "node --test --import tsx --import ./test/setup-multiplexer-env.mjs --test-reporter=dot --test-reporter-destination=stdout test/*.test.ts",
-		"prepublishOnly": "npm run clean && npm run build"
+		"prepublishOnly": "npm run clean && npm run build",
+		"bench:frame-cost": "tsx bench/frame-cost.ts"
 	},
 	"files": [
 		"dist/**/*",
@@ -53,5 +52,6 @@
 	"devDependencies": {
 		"@xterm/headless": "6.0.0",
 		"chalk": "6.0.0"
-	}
+	},
+	"private": true
 }

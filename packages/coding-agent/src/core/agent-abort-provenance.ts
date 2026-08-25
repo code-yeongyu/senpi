@@ -56,13 +56,18 @@ export class AgentAbortProvenance {
 		return { abortCurrentAgent: false, userOwned: false };
 	}
 
+	#findProviderAbortSource(messages: AgentMessage[]): Partial<Pick<AgentEndEvent, "abortSource">> {
+		const message = messages.at(-1);
+		return message?.role === "assistant" && message.abortSource === "provider" ? { abortSource: "provider" } : {};
+	}
+
 	beginAgentEnd(messages: AgentMessage[], willRetry: boolean, abortedWithoutSource: boolean): AgentEndEvent {
 		const event: AgentEndEvent = {
 			type: "agent_end",
 			messages,
 			willRetry,
 			...(this.#source !== undefined || abortedWithoutSource ? { aborted: true } : {}),
-			...(this.#source === undefined ? {} : { abortSource: this.#source }),
+			...(this.#source !== undefined ? { abortSource: this.#source } : this.#findProviderAbortSource(messages)),
 		};
 		this.#agentEndEvent = event;
 		this.#settlingAgentEndEvent = undefined;

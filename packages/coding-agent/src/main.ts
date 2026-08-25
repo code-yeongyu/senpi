@@ -737,9 +737,17 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	let appMode = resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
-	const shouldTakeOverStdout = appMode !== "interactive" && !isPlainRuntimeMetadataCommand(parsed);
+	const shouldTakeOverStdout =
+		appMode !== "interactive" && (!isPlainRuntimeMetadataCommand(parsed) || (parsed.help && parsed.mode === "json"));
 	if (shouldTakeOverStdout) {
 		takeOverStdout();
+	}
+	if (parsed.mode === "json") {
+		const log = console.log.bind(console);
+		console.log = (...args: unknown[]) => console.error(...args);
+		process.once("exit", () => {
+			console.log = log;
+		});
 	}
 
 	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {

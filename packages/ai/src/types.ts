@@ -365,6 +365,12 @@ export interface ImagesOptions extends ProviderRequestOptions<ImagesModel<Images
 
 export type ProviderImagesOptions = ImagesOptions & Record<string, unknown>;
 
+export interface AnthropicAllowedFallbackModel {
+	provider: ProviderId;
+	model: string;
+	cost: ModelCost;
+}
+
 export type AnthropicRefusalFallback = "default" | readonly { model: string }[];
 
 // Unified options with reasoning passed to streamSimple() and completeSimple()
@@ -543,6 +549,8 @@ export interface AssistantMessage {
 	stopDetails?: AssistantStopDetails;
 	deferred?: DeferredHandle;
 	errorMessage?: string;
+	/** Explicit owner for an abort initiated by the provider retry watchdog. */
+	abortSource?: "provider";
 	rawStopReason?: string;
 	/**
 	 * Provider indication of whether the model explicitly ended its turn.
@@ -827,7 +835,7 @@ export interface AnthropicMessagesCompat {
 	 * When absent or empty, callers must omit `fallbacks`; Anthropic rejects the
 	 * field for models with no permitted fallback targets.
 	 */
-	allowedFallbackModels?: string[];
+	allowedFallbackModels?: Array<AnthropicAllowedFallbackModel | string>;
 	/**
 	 * Whether the provider supports deferred tools loaded by `tool_reference`
 	 * blocks in tool results. Default: true for first-party Anthropic models

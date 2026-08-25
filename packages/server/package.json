@@ -1,7 +1,6 @@
 {
 	"name": "@code-yeongyu/senpi-server",
 	"version": "2026.8.24",
-	"private": true,
 	"description": "experimental server package for senpi",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -54,5 +53,6 @@
 	"devDependencies": {
 		"shx": "0.4.0",
 		"vitest": "4.1.11"
-	}
+	},
+	"private": true
 }

@@ -1,23 +1,17 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { LEAK_ERROR_MESSAGE, renderSystemInterrupt } from "./prompts.ts";
 import { TTSR_INJECTION_CUSTOM_TYPE } from "./types.ts";
 
 const TRUNCATION_MARKER = "[output interrupted by stream rule]";
 const TRANSPORT_TIMEOUT_ERROR_PATTERN = /^Request timed out\.?$/i;
 
-export interface TruncatableAssistantMessage {
-	readonly role: "assistant";
-	readonly content: unknown[];
-	readonly stopReason: string;
-	readonly errorMessage?: string;
-	readonly [key: string]: unknown;
-}
-
-export interface ErrorShellReplacement {
+export type TruncatableAssistantMessage = AssistantMessage;
+export type ErrorShellReplacement = {
 	readonly role: "assistant";
 	readonly content: never[];
 	readonly stopReason: "error";
 	readonly errorMessage: string;
-}
+};
 
 export interface TtsrNudgeMessage {
 	readonly customType: typeof TTSR_INJECTION_CUSTOM_TYPE;
@@ -26,26 +20,24 @@ export interface TtsrNudgeMessage {
 	readonly details: { readonly rules: readonly string[] };
 }
 
-type StreamKind = "text" | "thinking";
-
-interface MutableTruncateResult {
-	role: "assistant";
-	content: unknown[];
-	stopReason: string;
-	errorMessage?: string;
-	[key: string]: unknown;
-}
+type StreamKind = "text" | "thinking" | "tool";
 
 function streamBlockText(block: unknown, kind: StreamKind): string | undefined {
+	if (kind === "tool") return undefined;
 	if (typeof block !== "object" || block === null) return undefined;
 	if (!("type" in block) || block.type !== kind) return undefined;
 	const value: unknown = Reflect.get(block, kind);
 	return typeof value === "string" ? value : undefined;
 }
 
-function replaceStreamBlockText(block: unknown, kind: StreamKind, text: string): unknown {
-	if (typeof block !== "object" || block === null) return block;
-	return { ...block, [kind]: text };
+function replaceStreamBlockText(
+	block: AssistantMessage["content"][number],
+	kind: StreamKind,
+	text: string,
+): AssistantMessage["content"][number] {
+	if (kind === "text" && block.type === "text") return { ...block, text };
+	if (kind === "thinking" && block.type === "thinking") return { ...block, thinking: text };
+	return block;
 }
 
 export function buildTruncateReplacement(
@@ -53,9 +45,20 @@ export function buildTruncateReplacement(
 	garbageStartOffset: number,
 	streamKind: StreamKind,
 ): TruncatableAssistantMessage {
+	if (streamKind === "tool") {
+		const content = message.content.filter((block) => {
+			if (typeof block !== "object" || block === null || !("type" in block)) return true;
+			return block.type !== "toolCall";
+		});
+		return {
+			...message,
+			content: [...content, { type: "text", text: TRUNCATION_MARKER }],
+			stopReason: message.stopReason === "toolUse" ? "aborted" : message.stopReason,
+		};
+	}
 	let remaining = Math.max(0, garbageStartOffset);
 	let truncated = false;
-	const content: unknown[] = [];
+	const content: AssistantMessage["content"] = [];
 	for (const block of message.content) {
 		const text = streamBlockText(block, streamKind);
 		if (truncated && text !== undefined) continue;
@@ -68,7 +71,7 @@ export function buildTruncateReplacement(
 		truncated = true;
 	}
 	content.push({ type: "text", text: TRUNCATION_MARKER });
-	const result: MutableTruncateResult = { ...message, content };
+	const result: AssistantMessage = { ...message, content };
 	if (result.errorMessage !== undefined && TRANSPORT_TIMEOUT_ERROR_PATTERN.test(result.errorMessage)) {
 		delete result.errorMessage;
 	}

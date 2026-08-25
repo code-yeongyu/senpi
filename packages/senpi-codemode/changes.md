@@ -1,5 +1,21 @@
 # senpi-codemode fork changes
 
+## Session teardown failures stay out of lifecycle handler rejections (2026-08-25)
+
+### What changed
+
+- `SessionManagerProxy` catches inner-manager `dispose()` failures in `replace()` and `dispose()` and routes them through an injectable reporter (default: one `[senpi-codemode] session teardown failed: …` stderr line, AggregateError causes inlined) instead of propagating them to the caller.
+- `test/session-manager-proxy.test.ts` pins the contract: a replacement installs even when the outgoing manager's dispose rejects, `dispose()` resolves while reporting the failure, and a superseded replacement's dispose failure is contained.
+
+### Why
+
+- A kernel that misses its post-SIGKILL reap window (500ms in `subprocess-process.ts`) makes `subprocess-kernel.close()` throw `KernelRetirementError`; `DefaultCodemodeSessionManager` aggregates it into `Failed to dispose codemode session manager`, and the rejected `session_shutdown`/`session_before_switch` handler surfaced as a user-facing `extension_error` warning in RPC hosts (observed as a Work Log warning row in the omo desktop app). Teardown is best-effort — the interpreter is already SIGKILLed — so the failure is diagnostics, not a session error.
+- The inner manager keeps its throwing dispose contract (pinned in `session-manager-lifecycle.test.ts`); only the proxy boundary that lifecycle handlers call absorbs it.
+
+### Expected merge conflict zones
+
+- LOW in `src/extension/session-manager-proxy.ts` around `replace()`/`dispose()`.
+
 ## Detached-eval spill notices carry absolute paths (2026-08-23)
 
 ### What changed

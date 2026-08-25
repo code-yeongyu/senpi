@@ -1,5 +1,83 @@
 # changes
 
+## 2026-08-25 - Do not adopt unwired upstream settings submenu
+
+### What changed
+
+- Deliberately omit `packages/coding-agent/src/modes/interactive/components/settings-submenu.ts`; the fork uses its inline `WarningSettingsSubmenu` implementation.
+
+### Why
+
+- The upstream component has no imports in the fork and adding dead UI code would expand the runtime surface without behavior.
+
+### Why this lives in the fork
+
+- Settings submenu wiring is owned by the fork's settings selector implementation.
+
+### Expected merge conflict zones
+
+- LOW: interactive component additions during upstream syncs.
+
+## Interactive mode re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` keeps the fork chrome and
+  startup coordinator (brand/display version, loader indicator, `sanitizeTerminalLabel`, scoped
+  startup thinking, settings diagnostics) on top of upstream's rewrite.
+- `packages/coding-agent/src/modes/interactive/external-editor.ts` keeps the `launch-failed` result
+  status so EAGAIN-style spawn failures stay distinct from real editor exits.
+- `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts` keeps the fork
+  `xhigh` label ("Extended reasoning (~32k tokens or native xhigh effort)").
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` is a full-file conflict zone in
+  every sync; resolve toward the fork coordinator and re-apply upstream's incremental rendering fixes.
+
+## 2026-08-25 - Render provider abort labels without mutating messages
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` and `packages/coding-agent/src/modes/interactive/aborted-error-label.ts`: render provider watchdog labels from a copied assistant message while retaining the real provider cause in session state.
+
+### Why
+
+- UI labels must not overwrite `finalError`, transcript persistence, or replay data.
+
+### Why an extension could not handle it
+
+- Interactive message rendering owns this label-only presentation boundary.
+
+### Expected merge conflict zones
+
+- LOW: aborted assistant `message_end` rendering paths.
+
+## 2026-08-25 - resume hint uses the brand executable name
+
+### What changed
+
+- `interactive-mode.ts`: `formatResumeCommand()` starts the printed resume command with `APP_COMMAND` instead of `APP_NAME`, so quitting the TUI shows the real binary (`omo --session <id>`) when the brand display name differs.
+
+### Why
+
+- The quit hint is a copy-paste shell command. Printing the display brand (`OmO`) makes the hint fail when the executable is lowercase `omo`.
+
+### Why an extension could not handle it
+
+- The resume hint is assembled inside `InteractiveMode` teardown from session identity; extensions cannot replace that printed line.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` `formatResumeCommand()` argument list.
 ## 2026-08-24 - provider aborts render with explicit provenance
 
 ### What changed
@@ -2557,3 +2635,21 @@ The tip line was teaching a small slice of the product while most of the surface
   reload no longer destroys live extension footers/widgets/tickers.
   Regression: `test/interactive-tui.test.ts` ("handleReloadCommand extension
   UI lifecycle").
+
+## 2026-08-25 - reject upstream Radius interactive sharing surface
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-share.ts`: intentionally absent from Senpi; the upstream Radius session-share surface is rejected under the fork sharing policy.
+
+### Why
+
+- Senpi retains the fork's gist-based `/share` flow and `pi.dev` viewer rather than introducing Radius links.
+
+### Why an extension could not handle it
+
+- Interactive sharing command ownership and product policy are implemented in the core interactive mode, before an extension can replace the share surface.
+
+### Expected merge conflict zones
+
+- NONE: the upstream-only Radius session-share artifact remains excluded from the fork tree.
