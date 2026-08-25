@@ -259,6 +259,8 @@ describe("RPC session registry", () => {
 			({
 				sessionManager,
 				extensionRunner: { hasHandlers: () => false },
+				beginReplacement: () => {},
+				endReplacement: () => {},
 				abort: async () => {},
 				dispose: () => {},
 			}) as never;
