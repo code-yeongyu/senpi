@@ -40,7 +40,7 @@ Session runtime, model/provider stack, session persistence, settings, resources.
 - **Session state is event-driven**: typed discriminated event unions, abort signals, queues, barriers, deferred settlement. No polling.
 - **Provider/auth availability is capability-derived** — enumerate compatibility providers and inspect credentials/env; never hard-code availability from UI names.
 - **Persistence is lock-backed**: `proper-lockfile` for credentials and file model stores, revision checks, atomic/coalesced reloads. Settings writes are queued with self-write tracking.
-- **Branding propagates via `SENPI_BRAND`** then is scrubbed from spawned tool environments (`brand.ts`) so child engines never inherit it.
+- **Branding propagates via `SENPI_BRAND`**; `scrubBrandFromEnvironment()` (`brand.ts`) clears only the JS-level `process.env` view. Under Bun, `delete process.env.X` does not unsetenv for spawned children (verified 2026-08-25: a `Bun.spawn` child still sees the original value after the delete), so tool children inherit the full launcher env — `SENPI_BRAND`, `OMO_CODING_AGENT_DIR`, and `SENPI_CODING_AGENT_DIR` included. Never rely on the scrub to keep brand or agent-dir state out of subprocesses; pass an explicit sanitized `env` at spawn where that matters (the vitest quarantine in `test/setup.ts` is the model).
 - Bash output is sanitized (ANSI/binary), bounded, and spilled to a temp file when truncated. Preserve abort-signal and chunk callbacks.
 - Node imports use `node:` in newer files; `auth-storage.ts` retains bare `fs`/`path`. Mixed by history, not by accident.
 
