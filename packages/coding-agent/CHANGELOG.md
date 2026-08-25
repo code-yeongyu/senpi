@@ -10,6 +10,8 @@
 
 ### Changed
 
+- RPC child startup now lazy-loads the interactive TUI mode graph at mode dispatch, avoiding parsing interactive-only components for headless sessions while preserving the interactive path.
+
 ### Removed
 
 ## [2026.8.24] - 2026-08-24
