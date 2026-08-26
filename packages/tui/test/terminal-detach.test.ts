@@ -1,7 +1,11 @@
 import assert from "node:assert";
 import { describe as nodeDescribe, it as nodeIt } from "node:test";
 import { describe as vitestDescribe, it as vitestIt } from "vitest";
-import { ProcessTerminal } from "../src/terminal.ts";
+import {
+	__stdinErrorDispatcherInstalledForTests,
+	__stdinErrorSubscriberCountForTests,
+	ProcessTerminal,
+} from "../src/terminal.ts";
 
 const isVitest = process.env.VITEST === "true";
 type TestCallback = () => void | Promise<void>;
@@ -76,6 +80,8 @@ describe("ProcessTerminal stdin detach", () => {
 		const started = startTerminal();
 		try {
 			// When / Then: an unlistened "error" event would rethrow from emit().
+			assert.equal(__stdinErrorDispatcherInstalledForTests(), true);
+			assert.equal(__stdinErrorSubscriberCountForTests(), 1);
 			assert.doesNotThrow(() => process.stdin.emit("error", eioStringCode()));
 		} finally {
 			started.cleanup();
@@ -124,6 +130,8 @@ describe("ProcessTerminal stdin detach", () => {
 		// When: the grace window (250ms) has fully elapsed.
 		await new Promise((resolve) => setTimeout(resolve, 400));
 		// Then: no leaked listener remains, so EIO rethrows like any unlistened error.
+		assert.equal(__stdinErrorSubscriberCountForTests(), 0);
+		assert.equal(__stdinErrorDispatcherInstalledForTests(), false);
 		assert.throws(() => process.stdin.emit("error", eioStringCode()));
 	});
 });
