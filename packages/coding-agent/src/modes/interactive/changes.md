@@ -1,5 +1,23 @@
 # changes
 
+## 2026-08-26 - Route dead-terminal uncaught crashes to the silent emergency exit
+
+### What changed
+
+- `uncaughtCrash` in `interactive-mode.ts` classifies dead-terminal errors and routes them to `emergencyTerminalExit()` (silent 129) instead of printing the `exiting due to uncaughtException` banner and exiting 1. `isDeadTerminalError` now also accepts Bun's raw `errno: 5`/`-5` shape alongside string codes.
+
+### Why
+
+- A stdin read EIO from a detached terminal reached the last-resort handler while `isShuttingDown` was false and printed a crash banner to a terminal that was already gone; the dead-terminal path already existed for write errors and now covers uncaught throws too.
+
+### Why this lives in the fork
+
+- The signal/shutdown choreography (`emergencyTerminalExit`, drain ordering) is fork-owned.
+
+### Expected merge conflict zones
+
+- LOW: `uncaughtCrash` and `isDeadTerminalError` in `interactive-mode.ts` during upstream syncs.
+
 ## 2026-08-25 - Do not adopt unwired upstream settings submenu
 
 ### What changed

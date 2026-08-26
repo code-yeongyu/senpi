@@ -7,7 +7,7 @@
 ### Fixed
 
 - A goal continuation whose backstop timer fired after the session was replaced or reloaded no longer crashes the session with "This extension ctx is stale after session replacement or reload". The timer callback (and its own error handler) now treats a retired context as "no UI" instead of letting the stale-context error escape as an uncaught exception; unrelated delivery failures are still reported.
-
+- An uncaught dead-terminal error (e.g. a stdin read EIO after the controlling terminal detached) no longer prints the `exiting due to uncaughtException` banner and exits 1: `uncaughtCrash` routes it to the silent `emergencyTerminalExit()`, matching terminal write errors. `isDeadTerminalError` now also accepts Bun's raw `errno: 5`/`-5` shape.
 ### Added
 
 ### Changed

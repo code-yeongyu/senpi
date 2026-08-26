@@ -313,6 +313,8 @@ function isCompactionCostNotice(item: RenderSessionItem): item is CompactionCost
 }
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
+// Bun's macOS tty shim can report a dead terminal as raw positive errno 5 without a string code.
+const EIO_ERRNO = 5;
 const DEFAULT_RETRY_STATUS_REFRESH_INTERVAL_MS = 80;
 const LARGE_SESSION_RETRY_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS = 600;
@@ -385,11 +387,20 @@ function formatWorkingStatusShimmerText(text: string, intensity: number): string
 }
 
 function isDeadTerminalError(error: unknown): boolean {
-	if (!error || typeof error !== "object" || !("code" in error)) {
+	if (!error || typeof error !== "object") {
 		return false;
 	}
-	const code = (error as NodeJS.ErrnoException).code;
-	return code !== undefined && DEAD_TERMINAL_ERROR_CODES.has(code);
+	if ("code" in error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== undefined && DEAD_TERMINAL_ERROR_CODES.has(code)) {
+			return true;
+		}
+	}
+	if ("errno" in error) {
+		const errno = (error as NodeJS.ErrnoException).errno;
+		return errno === EIO_ERRNO || errno === -EIO_ERRNO;
+	}
+	return false;
 }
 
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
@@ -5505,6 +5516,13 @@ export class InteractiveMode {
 	private uncaughtCrash(error: Error, origin: "uncaughtException" | "unhandledRejection"): void {
 		if (this.isShuttingDown) {
 			process.exit(1);
+		}
+		if (isDeadTerminalError(error)) {
+			// The terminal died under the session (e.g. an stdin read EIO after
+			// the controlling terminal vanished or this pgrp lost the tty
+			// foreground). Same handling as terminal write errors: exit silently
+			// instead of printing a crash banner to a terminal that is gone.
+			this.emergencyTerminalExit();
 		}
 		if (isRecoverableInspectorVmImportError(error, origin)) {
 			this.showWarning(INSPECTOR_VM_IMPORT_WARNING);
