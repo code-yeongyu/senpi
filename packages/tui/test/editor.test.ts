@@ -2674,6 +2674,49 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), "/argtest two");
 		});
 
+		it("prioritizes @ suggestions whose labels match the typed query", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let markFinalRequestStarted!: () => void;
+			const finalRequestStarted = new Promise<void>((resolve) => {
+				markFinalRequestStarted = resolve;
+			});
+			let releaseFinalResponse!: () => void;
+			const finalResponseGate = new Promise<void>((resolve) => {
+				releaseFinalResponse = resolve;
+			});
+			const mockProvider: AutocompleteProvider = {
+				getSuggestions: async (lines, _cursorLine, cursorCol) => {
+					const prefix = (lines[0] || "").slice(0, cursorCol);
+					if (!prefix.startsWith("@")) return null;
+					if (prefix === "@open") {
+						markFinalRequestStarted();
+						await finalResponseGate;
+					}
+					return {
+						items: [
+							{ value: "/skill:open-demo-alpha", label: "open-demo-alpha" },
+							{ value: "@opencode.json", label: "opencode.json" },
+						],
+						prefix,
+					};
+				},
+				applyCompletion,
+			};
+			editor.setAutocompleteProvider(mockProvider);
+
+			for (const char of "@open") {
+				editor.handleInput(char);
+			}
+
+			await finalRequestStarted;
+			releaseFinalResponse();
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+			editor.handleInput("\r");
+			assert.strictEqual(editor.getText(), "/skill:open-demo-alpha");
+		});
+
 		it("highlights unique prefix match as user types (before full exact match)", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 

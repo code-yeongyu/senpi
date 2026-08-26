@@ -2342,22 +2342,25 @@ export class Editor implements Component, Focusable {
 	 *
 	 * Match priority:
 	 * 1. Exact match (prefix === item.value) -> always selected
-	 * 2. Prefix match -> first item whose value starts with prefix
+	 * 2. Prefix match -> first item whose value or @-query label starts with prefix
 	 * 3. No match -> -1 (keep default highlight)
-	 *
-	 * Matching is case-sensitive and checks item.value only.
 	 */
 	private getBestAutocompleteMatchIndex(items: Array<{ value: string; label: string }>, prefix: string): number {
 		if (!prefix) return -1;
 
 		let firstPrefixIndex = -1;
+		const atLabelPrefix = prefix.startsWith("@") ? prefix.slice(1) : null;
 
 		for (let i = 0; i < items.length; i++) {
-			const value = items[i]!.value;
+			const item = items[i]!;
+			const value = item.value;
 			if (value === prefix) {
 				return i; // Exact match always wins
 			}
-			if (firstPrefixIndex === -1 && value.startsWith(prefix)) {
+			if (
+				firstPrefixIndex === -1 &&
+				(value.startsWith(prefix) || (atLabelPrefix !== null && item.label.startsWith(atLabelPrefix)))
+			) {
 				firstPrefixIndex = i;
 			}
 		}

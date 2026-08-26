@@ -6,6 +6,7 @@ import { getDollarInvocationContext, getDollarInvocationSuggestions } from "./do
 import { getSlashCommandSuggestions } from "./slash-command-autocomplete.ts";
 
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
+const SKILL_COMMAND_PREFIX = "skill:";
 
 function toDisplayPath(value: string): string {
 	return value.replace(/\\/g, "/");
@@ -294,10 +295,12 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		const atPrefix = this.extractAtPrefix(textBeforeCursor);
 		if (atPrefix) {
 			const { rawPrefix, isQuotedPrefix } = parsePathPrefix(atPrefix);
-			const suggestions = await this.getFuzzyFileSuggestions(rawPrefix, {
+			const skillSuggestions = isQuotedPrefix ? [] : this.getAtSkillSuggestions(rawPrefix);
+			const fileSuggestions = await this.getFuzzyFileSuggestions(rawPrefix, {
 				isQuotedPrefix,
 				signal: options.signal,
 			});
+			const suggestions = [...skillSuggestions, ...fileSuggestions];
 			if (suggestions.length === 0) return null;
 
 			return {
@@ -506,6 +509,22 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				});
 			})
 		);
+	}
+
+	private getAtSkillSuggestions(query: string): AutocompleteItem[] {
+		const skillCommands = this.commands.filter((command) => {
+			const name = "name" in command ? command.name : command.value;
+			return name.startsWith(SKILL_COMMAND_PREFIX);
+		});
+		const skillQuery = query.toLowerCase().startsWith(SKILL_COMMAND_PREFIX)
+			? query
+			: `${SKILL_COMMAND_PREFIX}${query}`;
+
+		return getSlashCommandSuggestions(skillCommands, skillQuery).map((item) => ({
+			...item,
+			value: `/${item.value}`,
+			label: item.label.slice(SKILL_COMMAND_PREFIX.length),
+		}));
 	}
 
 	// Extract @ prefix for fuzzy file suggestions

@@ -1,5 +1,39 @@
 # TUI delta rendering fork changes
 
+## @ autocomplete includes executable skill commands (2026-08-26)
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: `CombinedAutocompleteProvider` now derives `skill:*`
+  entries from its existing command inventory when an unquoted `@` token is active, ranks them
+  through the existing slash-command matcher, and prepends them to file suggestions. Skill
+  selections carry `/skill:<name>` as their completion value, so the existing `@` application path
+  inserts an executable leading skill command while file and quoted-path completion stay unchanged.
+- `packages/tui/src/components/editor.ts`: `@` best-match selection now compares the trigger-stripped
+  query with visible item labels as well as comparing raw values. Executable skill values can
+  therefore stay selected and visible even though they begin with `/skill:` instead of `@`.
+
+### Why
+
+- Interactive mode already loads user skills and supplies them as `skill:*` commands, but the `@`
+  branch returned after file lookup and never surfaced that inventory. Users therefore saw files
+  only even though the same skills were available through `/skill:` and `$skill:`.
+
+### Why an extension could not handle it
+
+- `@` token extraction, candidate merging, completion replacement, and highlighted-item selection
+  are private TUI control flow. Extensions can wrap the provider but cannot amend the built-in
+  provider's file-only early return or editor best-match logic for every editor.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/autocomplete.ts` around the `@` branch in `getSuggestions()` and the
+  adjacent private skill-candidate mapper. Preserve upstream file-search and quoted-path behavior
+  while retaining the fork's executable skill entries.
+- LOW: `packages/tui/src/components/editor.ts` around `getBestAutocompleteMatchIndex()`. Preserve
+  exact/prefix value priority for every existing autocomplete surface before the additional
+  trigger-stripped `@` label comparison.
+
 ## TUI runtime re-diverges from upstream dcd4619 (2026-08-25)
 
 ### What changed

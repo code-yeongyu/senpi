@@ -114,6 +114,52 @@ describe("CombinedAutocompleteProvider", () => {
 		});
 	});
 
+	describe("@ skill suggestions", () => {
+		const skillCommands = [
+			{ name: "skill:open-demo-alpha", description: "Synthetic demo alpha" },
+			{ name: "skill:open-demo-beta", description: "Synthetic demo beta" },
+			{ name: "skill:open-demo-gamma", description: "Synthetic demo gamma" },
+		];
+
+		it("returns loaded skills for an @ query and inserts an executable skill command", async () => {
+			const provider = new CombinedAutocompleteProvider(skillCommands, "/tmp");
+			const line = "@open-demo-al";
+			const result = await getSuggestions(provider, [line], 0, line.length);
+
+			assert.deepStrictEqual(
+				result?.items.map((item) => item.value),
+				["/skill:open-demo-alpha"],
+			);
+			assert.strictEqual(result?.prefix, line);
+
+			const completion = provider.applyCompletion([line], 0, line.length, result!.items[0]!, result!.prefix);
+			assert.deepStrictEqual(completion.lines, ["/skill:open-demo-alpha "]);
+			assert.strictEqual(completion.cursorCol, "/skill:open-demo-alpha ".length);
+		});
+
+		it("keeps skill and file candidates in the same @ list", { skip: !isFdInstalled }, async () => {
+			const baseDir = mkdtempSync(join(tmpdir(), "pi-autocomplete-skill-files-"));
+			try {
+				setupFolder(baseDir, {
+					files: {
+						"README.md": "readme",
+					},
+				});
+				const provider = new CombinedAutocompleteProvider(skillCommands, baseDir, requireFdPath());
+
+				const result = await getSuggestions(provider, ["@"], 0, 1);
+				const values = result?.items.map((item) => item.value) ?? [];
+
+				assert.ok(values.includes("/skill:open-demo-alpha"));
+				assert.ok(values.includes("/skill:open-demo-beta"));
+				assert.ok(values.includes("/skill:open-demo-gamma"));
+				assert.ok(values.includes("@README.md"));
+			} finally {
+				rmSync(baseDir, { recursive: true, force: true });
+			}
+		});
+	});
+
 	describe("fd @ file suggestions", { skip: !isFdInstalled }, () => {
 		let rootDir = "";
 		let baseDir = "";
