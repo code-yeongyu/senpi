@@ -35,6 +35,24 @@
   body.
 - LOW: `packages/tui/test/terminal.test.ts` around the `ProcessTerminal stop` suite.
 
+## 2026-08-26 - Guard stdin EIO when the controlling terminal detaches
+
+### What changed
+
+- `packages/tui/src/terminal.ts` arms a `process.stdin` "error" guard from `ProcessTerminal.start()` until a 250ms grace window after `stop()`: a vanished or re-backgrounded controlling terminal fails the next stdin read with EIO, and without a listener the EventEmitter rethrew it as an uncaught exception that killed the agent process. The classifier owns EIO only — Node's `code: "EIO"` and Bun's raw `errno: 5`/`-5` shapes — and every other stdin error keeps its default EventEmitter propagation. EIO is swallowed without pausing the stream, so a pgrp that regains the tty foreground keeps accepting input.
+
+### Why
+
+- When omo's launcher chain dies (e.g. external SIGTERM), the orphaned engine's pending stdin read on the now-background tty fails with EIO and crashed the process through `uncaughtException` ("exiting due to uncaughtException: EIO read"). The same hazard was fixed upstream-style in gajae #3758; this port adapts it to the fork's `ProcessTerminal` and adds the numeric-errno shape from the shutdown-time classifier.
+
+### Why this lives in the fork
+
+- The crash topology (launcher chain + orphaned engine) and the Bun runtime shim are fork-owned; the fork's terminal lifecycle differs from upstream's.
+
+### Expected merge conflict zones
+
+- `ProcessTerminal.start()`/`stop()` in `packages/tui/src/terminal.ts` during upstream syncs.
+
 ## TUI runtime re-diverges from upstream dcd4619 (2026-08-25)
 
 ### What changed

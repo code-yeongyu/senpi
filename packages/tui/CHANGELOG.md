@@ -13,7 +13,7 @@
 - Fixed terminal shutdown still crashing with `setRawMode failed with errno: 5` under Bun, whose tty shim throws
   the errno only inside the message text with no `code` or `errno` property. Dead-terminal detection now also
   reads that message form for `EIO` and `EPIPE` while unrelated raw-mode failures keep propagating.
-
+- A vanished or re-backgrounded controlling terminal no longer kills the agent process: the next stdin read fails with EIO, and `process.stdin` had no `"error"` listener, so the EventEmitter rethrew it as an uncaught exception. `ProcessTerminal` now arms a stdin error guard from `start()` until a 250ms grace window after `stop()`, swallowing EIO (Node's `code: "EIO"` and Bun's raw `errno: 5`/`-5`) while every other stdin error keeps its default EventEmitter propagation.
 ### Removed
 
 ## [2026.8.26] - 2026-08-26

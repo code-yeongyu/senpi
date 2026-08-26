@@ -80,6 +80,52 @@ function isDeadTerminalError(error: unknown): boolean {
 	return DEAD_TERMINAL_ERRNOS.has(Number.parseInt(messageErrno[1]!, 10));
 }
 
+const STDIN_ERROR_HANDLER_GRACE_MS = 250;
+const stdinErrorSubscribers = new Set<(err: Error) => void>();
+
+export function __stdinErrorSubscriberCountForTests(): number {
+	return stdinErrorSubscribers.size;
+}
+export function __stdinErrorDispatcherInstalledForTests(): boolean {
+	return process.stdin.listeners("error").includes(dispatchStdinError);
+}
+
+/**
+ * A vanished or re-backgrounded controlling terminal fails the next stdin
+ * read with EIO; that is the only stdin error this module owns. Node reports
+ * it as code "EIO" (errno -5), Bun's macOS tty shim as a bare positive
+ * errno 5 — both shapes classify. Any other stdin failure (EBADF, EPIPE, an
+ * unexpected platform error) keeps its default EventEmitter propagation so it
+ * stays observable instead of being downgraded to a silently ignored error.
+ */
+function isTerminalDetachStdinError(err: Error): boolean {
+	if ((err as NodeJS.ErrnoException).code === "EIO") return true;
+	const errno = (err as NodeJS.ErrnoException).errno;
+	return errno === EIO_ERRNO || errno === -EIO_ERRNO;
+}
+
+const dispatchStdinError = (err: Error): void => {
+	if (!isTerminalDetachStdinError(err)) {
+		// Our listener must not be the reason a non-EIO error stops propagating.
+		// When no other "error" listener exists, EventEmitter would have thrown;
+		// rethrowing from inside emit() reproduces that exact contract.
+		const hasOtherListener = process.stdin.listeners("error").some((listener) => listener !== dispatchStdinError);
+		if (!hasOtherListener) throw err;
+		return;
+	}
+	for (const subscriber of stdinErrorSubscribers) subscriber(err);
+};
+
+function subscribeToStdinErrors(subscriber: (err: Error) => void): void {
+	if (stdinErrorSubscribers.size === 0) process.stdin.on("error", dispatchStdinError);
+	stdinErrorSubscribers.add(subscriber);
+}
+
+function unsubscribeFromStdinErrors(subscriber: (err: Error) => void): void {
+	stdinErrorSubscribers.delete(subscriber);
+	if (stdinErrorSubscribers.size === 0) process.stdin.removeListener("error", dispatchStdinError);
+}
+
 /**
  * Minimal terminal interface for TUI
  */
@@ -174,6 +220,8 @@ export class ProcessTerminal implements Terminal {
 	private keyboardProtocolBufferFlushTimer?: ReturnType<typeof setTimeout>;
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string | Buffer) => void;
+	private stdinErrorHandler?: (err: Error) => void;
+	private stdinErrorHandlerCleanupTimer?: ReturnType<typeof setTimeout>;
 	private progressInterval?: ReturnType<typeof setInterval>;
 	private writeLogPath = (() => {
 		const env = process.env.PI_TUI_WRITE_LOG || "";
@@ -265,6 +313,22 @@ export class ProcessTerminal implements Terminal {
 			process.stdin.setRawMode(true);
 		}
 		process.stdin.resume();
+
+		// stdin carries the same hazard as stdout: when the controlling PTY
+		// disappears (launcher killed, tmux pane closed, SSH dropped) or this
+		// pgrp loses the tty foreground, the next read fails with EIO.
+		// `process.stdin` is an EventEmitter, so an unobserved "error" event is
+		// rethrown as an uncaught exception that kills the whole agent process.
+		if (this.stdinErrorHandlerCleanupTimer) {
+			clearTimeout(this.stdinErrorHandlerCleanupTimer);
+			this.stdinErrorHandlerCleanupTimer = undefined;
+		}
+		if (!this.stdinErrorHandler) {
+			// Swallow only: the stream stays resumable, so if this pgrp regains
+			// the tty foreground the session keeps accepting input.
+			this.stdinErrorHandler = () => {};
+			subscribeToStdinErrors(this.stdinErrorHandler);
+		}
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		this.rawWrite("\x1b[?2004h");
@@ -579,6 +643,23 @@ export class ProcessTerminal implements Terminal {
 		}
 
 		this.removeExternalStdoutGuard();
+
+		this.scheduleStdinErrorHandlerCleanup();
+	}
+
+	private scheduleStdinErrorHandlerCleanup(): void {
+		if (!this.stdinErrorHandler || this.stdinErrorHandlerCleanupTimer) return;
+		// Keep the guard armed briefly past stop(): a late PTY failure racing
+		// the exit path must not crash the process after the TUI tore down.
+		const handler = this.stdinErrorHandler;
+		this.stdinErrorHandlerCleanupTimer = setTimeout(() => {
+			this.stdinErrorHandlerCleanupTimer = undefined;
+			if (this.stdinErrorHandler === handler) {
+				this.stdinErrorHandler = undefined;
+				unsubscribeFromStdinErrors(handler);
+			}
+		}, STDIN_ERROR_HANDLER_GRACE_MS);
+		this.stdinErrorHandlerCleanupTimer.unref();
 	}
 
 	write(data: string): void {
