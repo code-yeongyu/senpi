@@ -35,6 +35,13 @@ function defaultSupportsToolReferences(model: Model<"anthropic-messages">): bool
 	return major > 4 || (major === 4 && minor >= 5);
 }
 
+export function allowsAnthropicLongCacheRetention(model: Model<"anthropic-messages">): boolean {
+	return (
+		model.compat?.supportsLongCacheRetention ??
+		(isAnthropicApiBaseUrl(model.baseUrl) && getAnthropicCompat(model).supportsLongCacheRetention)
+	);
+}
+
 export function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
 ): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking">> {
@@ -346,9 +353,7 @@ export function resolvePromptCacheTtlSeconds(model: Model<Api>, env?: ProviderEn
 			const anthropicModel = model as Model<"anthropic-messages">;
 			const retention = resolveAnthropicCacheRetention(anthropicModel.cacheRetention, env, "short");
 			if (retention === "none") return undefined;
-			return retention === "long" &&
-				isAnthropicApiBaseUrl(anthropicModel.baseUrl) &&
-				getAnthropicCompat(anthropicModel).supportsLongCacheRetention
+			return retention === "long" && allowsAnthropicLongCacheRetention(anthropicModel)
 				? PROMPT_CACHE_TTL_LONG_SECONDS
 				: PROMPT_CACHE_TTL_SHORT_SECONDS;
 		}
