@@ -101,6 +101,12 @@ describe("volatile hook continuity", () => {
 		expect(isTransmittedMessage(userMessage("Continue working toward the active thread goal"))).toBe(true);
 		expect(sentMessageHashes([notice(8)])).toEqual(sentMessageHashes([notice(186)]));
 		expect(sentMessageHashes([goalContinuation(1)])).toEqual(sentMessageHashes([goalContinuation(99)]));
+		const mon1 = { role: "user" as const, content: [{ type: "text" as const, text: "job 1 finished" }], customType: "senpi-monitor:notification", timestamp: 1 };
+		const mon2 = { role: "user" as const, content: [{ type: "text" as const, text: "job 2 finished" }], customType: "senpi-monitor:notification", timestamp: 2 };
+		expect(sentMessageHashes([mon1])).toEqual(sentMessageHashes([mon2]));
+		const wake1 = { role: "user" as const, content: [{ type: "text" as const, text: "wake A" }], customType: "omo-senpi:wake", timestamp: 1 };
+		const wake2 = { role: "user" as const, content: [{ type: "text" as const, text: "wake B" }], customType: "omo-senpi:wake", timestamp: 2 };
+		expect(sentMessageHashes([wake1])).toEqual(sentMessageHashes([wake2]));
 		expect(sentMessageHashes([userMessage("task1")])).not.toEqual(sentMessageHashes([userMessage("task1-edited")]));
 	});
 

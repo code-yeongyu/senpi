@@ -64,6 +64,11 @@ const VOLATILE_HOOK_CUSTOM_TYPES = new Set([
 	"goal-continuation",
 	"mindy-team:context-block",
 	"senpi-task.usage",
+	"senpi-monitor:notification",
+	"omo-senpi:wake",
+	"senpi-terminal:notification",
+	"omo-ultrawork:directive",
+	"omo-mass-ulw:skill-pointer",
 ]);
 
 type HookInspectable = {
