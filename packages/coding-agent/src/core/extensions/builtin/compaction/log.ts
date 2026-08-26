@@ -27,11 +27,13 @@ const EVENTS = new Set([
 	"speculative_stale",
 	"speculative_invalidated",
 	"idle_trigger",
+	"idle_applied",
 	"blocking_started",
 	"warm_consumed",
 	"core_route_generated",
 	"skip_cap",
 	"skip_breaker",
+	"skip_cursor_mid_turn",
 	"threshold_trigger",
 	"hard_limit_trigger",
 	"emergency_prune",
@@ -51,11 +53,13 @@ export type CompactionLoggerEvent =
 	| "core_route_generated"
 	| "skip_cap"
 	| "skip_breaker"
+	| "skip_cursor_mid_turn"
 	| "threshold_trigger"
 	| "hard_limit_trigger"
 	| "emergency_prune"
 	| "ineffective_counted"
 	| "idle_trigger"
+	| "idle_applied"
 	| "summary_failed"
 	| "remote_aborted"
 	| "blocking_aborted";

@@ -540,3 +540,21 @@ loader's auto-activation of newly registered tools.
   `@modelcontextprotocol/sdk` dependency.
 - NONE for `extensions/types.ts` (untouched); `builtin/mcp/` itself does not
   exist upstream.
+
+## Non-blocking reconnect on hot reload (2026-08-20)
+
+### What changed
+
+- The `session_start` handler still starts `attach()` immediately, but when `event.reason === "reload"` it no longer awaits it; errors keep flowing through `wrapAsync` -> the extension error sink. `startup`/omitted reasons await exactly as before.
+
+### Why
+
+- Hot reload awaits every `session_start` handler; MCP reconnect measured ~260ms per reload on the critical path. Attach is single-flight (`attachPromise` + `McpService` attach queue) and `before_agent_start` already awaits `attachPromise`, so tools are still connected before any agent turn needs them.
+
+### Why an extension could not handle it
+
+- The handler lives in this builtin; only it can decide not to await its own reconnect.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` `session_start` registration block; new `test/suite/mcp-reload-deferral.test.ts`.

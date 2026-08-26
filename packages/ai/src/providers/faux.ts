@@ -80,6 +80,7 @@ export function fauxAssistantMessage(
 		stopReason?: AssistantMessage["stopReason"];
 		deferred?: DeferredHandle;
 		errorMessage?: string;
+		abortSource?: AssistantMessage["abortSource"];
 		stopDetails?: AssistantMessage["stopDetails"];
 		responseId?: string;
 		timestamp?: number;
@@ -96,6 +97,7 @@ export function fauxAssistantMessage(
 		stopDetails: options.stopDetails,
 		deferred: options.deferred,
 		errorMessage: options.errorMessage,
+		abortSource: options.abortSource,
 		responseId: options.responseId,
 		timestamp: options.timestamp ?? Date.now(),
 	};

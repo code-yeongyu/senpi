@@ -1,5 +1,11 @@
 import { createServer, type IncomingHttpHeaders } from "node:http";
-import { type Context, type Model, type Provider, streamSimpleOpenAICompletions } from "@earendil-works/pi-ai/compat";
+import {
+	type Context,
+	type Model,
+	type Provider,
+	type SimpleStreamOptions,
+	streamSimpleOpenAICompletions,
+} from "@earendil-works/pi-ai/compat";
 import { expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
@@ -45,12 +51,14 @@ function providerFor(selected: Model<"openai-completions">, onStream: () => void
 		const wireModel = { ...selected, id: "upstream-nonclaude-model" } satisfies Model<"openai-completions">;
 		return streamSimpleOpenAICompletions(wireModel, context, options);
 	};
+	const runGeneric: Provider["stream"] = (model, context, options) =>
+		run(model, context, options as SimpleStreamOptions | undefined);
 	return {
 		id: selected.provider,
 		name: "Retry boundary",
 		auth: { apiKey: { name: "test", resolve: async () => ({ auth: { apiKey: "test" }, source: "test" }) } },
 		getModels: () => [selected],
-		stream: run,
+		stream: runGeneric,
 		streamSimple: run,
 	};
 }

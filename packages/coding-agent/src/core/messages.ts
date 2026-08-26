@@ -28,35 +28,22 @@ export const GOAL_CONTINUATION_MESSAGE_TYPE = "goal-continuation";
 /**
  * Per-type exclusion must remain false: compaction and branch summarization
  * inspect entries independently, where excluding this type would hide the live
- * goal-continuation message. Whole-context filtering below removes only stale
- * goal-continuation entries while retaining the last triggering message.
+ * goal-continuation message.
  */
 export function isContextExcludedCustomMessage(_customType: string): boolean {
 	return false;
 }
 
-function keepLatestGoalContinuationMessage(messages: AgentMessage[]): AgentMessage[] {
-	let lastGoalContinuationIndex = -1;
-
-	for (let index = 0; index < messages.length; index++) {
-		const message = messages[index];
-		if (message.role === "custom" && message.customType === GOAL_CONTINUATION_MESSAGE_TYPE) {
-			lastGoalContinuationIndex = index;
-		}
-	}
-
-	if (lastGoalContinuationIndex === -1) return messages;
-
-	return messages.filter(
-		(message, index) =>
-			index === lastGoalContinuationIndex ||
-			message.role !== "custom" ||
-			message.customType !== GOAL_CONTINUATION_MESSAGE_TYPE,
-	);
-}
-
+/**
+ * Whole-context filtering is deliberately a no-op. Goal continuations are
+ * append-only: dropping an already-sent continuation would rewrite a
+ * provider-visible turn, so request N would stop being a prefix of request N+1
+ * and every cached token ahead of the edit would be invalidated (full re-read,
+ * cost spike, 429 storms in team mode). Continuation history is bounded by
+ * normal compaction instead of by per-request deletion.
+ */
 export function filterContextExcludedMessages(messages: AgentMessage[]): AgentMessage[] {
-	return keepLatestGoalContinuationMessage(messages);
+	return messages;
 }
 
 /**
@@ -186,7 +173,9 @@ export function createCustomMessage(
 export function convertToLlm(messages: AgentMessage[]): Message[] {
 	const withContextProvenance = <T extends Message>(source: AgentMessage, target: T): T =>
 		copyContextProvenance(source, target);
-	return keepLatestGoalContinuationMessage(messages)
+	// Continuations are append-only here too: the transport array must extend the
+	// previous request verbatim to keep the provider's cache prefix valid.
+	return messages
 		.map((m): Message | undefined => {
 			switch (m.role) {
 				case "bashExecution":

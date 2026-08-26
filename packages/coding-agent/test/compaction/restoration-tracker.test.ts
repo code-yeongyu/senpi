@@ -20,6 +20,9 @@ import type {
 } from "../../src/core/extensions/index.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
 import { createInMemoryExtensionSessionSettings } from "../helpers/extension-session-settings.ts";
+import { createTempAgentDir } from "../support/temp-agent-dir.ts";
+
+const AGENT_DIR = createTempAgentDir();
 
 interface RestorationGateHarness {
 	toolCall: ExtensionHandler<ToolCallEvent, ToolCallEventResult>;
@@ -79,7 +82,7 @@ function createGateExtensionContext(settings: CompactionSettings): ExtensionCont
 			notify: vi.fn(),
 		}) as ExtensionContext["ui"],
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager,
 		modelRegistry: {} as ExtensionContext["modelRegistry"],

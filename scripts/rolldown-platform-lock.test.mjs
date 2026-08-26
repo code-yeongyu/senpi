@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 
 const root = join(import.meta.dirname, "..");
-const rolldownVersion = "1.0.3";
+const rolldownVersion = "1.2.4";
 
 function readJson(path) {
 	return JSON.parse(readFileSync(path, "utf8"));

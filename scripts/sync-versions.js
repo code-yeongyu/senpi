@@ -13,7 +13,7 @@ import { resolveRegistryPackages } from "./registry-packages.mjs";
 const GENERATED_PACKAGE_SUFFIXES = [join("coding-agent", "install-lock")];
 // Fork-specific: `@earendil-works/pi-storage-sqlite-node` follows upstream's independent
 // semver line (see scripts/publish.mjs), so it stays out of this fork's CalVer lockstep
-// validation and its dependency pins are left alone.
+// validation while its dependencies still follow the current workspace package versions.
 const INDEPENDENT_VERSION_PACKAGE_NAMES = new Set([
 	"@earendil-works/pi-storage-sqlite-node",
 ]);
@@ -38,10 +38,12 @@ const workspacePackages = findPackageDirectories(packageRoot)
 		const path = join(directory, "package.json");
 		const data = JSON.parse(readFileSync(path, "utf8"));
 		return { data, name: data.name, path };
-	})
-	.filter((pkg) => !INDEPENDENT_VERSION_PACKAGE_NAMES.has(pkg.data.name));
-const publishedPackages = resolveRegistryPackages(workspacePackages);
-const versionMap = new Map(workspacePackages.map((pkg) => [pkg.data.name, pkg.data.version]));
+	});
+const lockstepPackages = workspacePackages.filter(
+	(pkg) => !INDEPENDENT_VERSION_PACKAGE_NAMES.has(pkg.data.name),
+);
+const publishedPackages = resolveRegistryPackages(lockstepPackages);
+const versionMap = new Map(lockstepPackages.map((pkg) => [pkg.data.name, pkg.data.version]));
 
 console.log("Current versions:");
 for (const pkg of [...publishedPackages].sort((a, b) => a.data.name.localeCompare(b.data.name))) {

@@ -173,6 +173,13 @@ export function buildBaseOptions(
 /** Tokens always left for the answer when a thinking budget shares the response ceiling. */
 export const MIN_ANSWER_TOKENS = 1024;
 
+export const DEFAULT_THINKING_BUDGETS: ThinkingBudgets = {
+	minimal: 1024,
+	low: 2048,
+	medium: 8192,
+	high: 16384,
+};
+
 export function clampReasoning(effort: ThinkingLevel | undefined): Exclude<ThinkingLevel, "xhigh" | "max"> | undefined {
 	if (effort === "xhigh" || effort === "max") return "high";
 	return effort;
@@ -192,6 +199,17 @@ export function clampMaxForOpenAI(
 	return effort;
 }
 
+export function thinkingBudgetForLevel(reasoningLevel: ThinkingLevel, customBudgets?: ThinkingBudgets): number {
+	const budgets = { ...DEFAULT_THINKING_BUDGETS, ...customBudgets };
+	const level = clampReasoning(reasoningLevel)!;
+	return budgets[level]!;
+}
+
+/** Cap a thinking budget so at least MIN_ANSWER_TOKENS remain under a shared response ceiling. */
+export function clampThinkingBudgetToAnswerRoom(thinkingBudget: number, ceiling: number): number {
+	return Math.min(thinkingBudget, Math.max(0, ceiling - MIN_ANSWER_TOKENS));
+}
+
 export function adjustMaxTokensForThinking(
 	// Undefined means no explicit caller cap. Use the model cap and fit thinking inside it.
 	baseMaxTokens: number | undefined,
@@ -199,24 +217,17 @@ export function adjustMaxTokensForThinking(
 	reasoningLevel: ThinkingLevel,
 	customBudgets?: ThinkingBudgets,
 ): { maxTokens: number; thinkingBudget: number } {
-	const defaultBudgets: ThinkingBudgets = {
-		minimal: 1024,
-		low: 2048,
-		medium: 8192,
-		high: 16384,
-	};
-	const budgets = { ...defaultBudgets, ...customBudgets };
-
+	// Fork: an absent/unresolvable level means "no thinking", not a NaN budget.
 	const level = clampReasoning(reasoningLevel);
 	if (!level) {
 		return { maxTokens: baseMaxTokens ?? modelMaxTokens, thinkingBudget: 0 };
 	}
-	let thinkingBudget = budgets[level]!;
+	let thinkingBudget = thinkingBudgetForLevel(level, customBudgets);
 	const maxTokens =
 		baseMaxTokens === undefined ? modelMaxTokens : Math.min(baseMaxTokens + thinkingBudget, modelMaxTokens);
 
 	if (maxTokens <= thinkingBudget) {
-		thinkingBudget = Math.max(0, maxTokens - MIN_ANSWER_TOKENS);
+		thinkingBudget = clampThinkingBudgetToAnswerRoom(thinkingBudget, maxTokens);
 	}
 
 	return { maxTokens, thinkingBudget };

@@ -1,6 +1,5 @@
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { type AuthenticatedAttemptInput, queryWithAuthLane } from "./auth-lane.ts";
-import { BoundedAsyncQueue, SESSION_STREAM_QUEUE_CAPACITY } from "./bounded-queue.ts";
 import { buildPromptBlocks } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks, serializedPayloadBytes } from "./prompt-directive-dedupe.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
@@ -14,25 +13,23 @@ import {
 	sanitizeTerminalFailure,
 	stageContinuityDecision,
 } from "./session-observability.ts";
-import { bindingFromEntry, getBinding, reattachSession, rememberBinding } from "./session-reattach.ts";
+import { bindingFromEntry, getBinding, reattachSession } from "./session-reattach.ts";
 import {
 	type ClaudeSdkOauthSessionEntry,
 	closeSession,
 	getOrCreateSession,
 	getSession,
-	isCurrentGeneration,
 	isIdleExpired,
-	sessionRegistry,
 } from "./session-registry.ts";
-import { submitSessionTurn } from "./session-registry-pump.ts";
+import { admitRestoredBinding } from "./session-restored-admission.ts";
 import {
 	buildDeltaPromptBlocks,
 	configFingerprint,
-	recordSyncedStream,
 	sentHashesForEntry,
 	sentMessageHashes,
 	sentMessages,
 } from "./session-sync.ts";
+import { createSessionTurnAttempt } from "./session-turn-attempt.ts";
 import type { ClaudeSdkOauthProviderSettings } from "./settings.ts";
 
 export type ResidentSessionStreamInput = {
@@ -50,59 +47,6 @@ export type ResidentSessionStreamInput = {
 
 function userMessage(content: SDKUserMessage["message"]["content"]): SDKUserMessage["message"] {
 	return { role: "user", content } as SDKUserMessage["message"];
-}
-
-function successfulTurn(messages: readonly SDKMessage[]): boolean {
-	return messages.some((message) => message.type === "result" && message.subtype === "success");
-}
-
-function recordAssistantUuid(entry: ClaudeSdkOauthSessionEntry, sentCount: number, message: SDKMessage): void {
-	if (message.type === "assistant" && message.parent_tool_use_id === null) {
-		entry.assistantUuidByIndex.set(sentCount, message.uuid);
-	}
-}
-
-function turnAttempt(
-	entry: ClaudeSdkOauthSessionEntry,
-	message: SDKUserMessage["message"],
-	hashes: readonly string[],
-	signal: AbortSignal | undefined,
-	staged: ReturnType<typeof stageContinuityDecision>,
-) {
-	const generation = entry.generation;
-	return {
-		messages: (async function* (): AsyncGenerator<SDKMessage> {
-			const queue = new BoundedAsyncQueue<SDKMessage>(SESSION_STREAM_QUEUE_CAPACITY);
-			const completion = submitSessionTurn(sessionRegistry, entry, {
-				message,
-				signal,
-				onMessage: (sdkMessage) => {
-					recordAssistantUuid(entry, hashes.length, sdkMessage);
-					queue.push(sdkMessage);
-				},
-			});
-			void completion.then(
-				() => queue.close(),
-				(error: unknown) => queue.fail(error),
-			);
-			try {
-				for await (const sdkMessage of queue) yield sdkMessage;
-				const turn = await completion;
-				if (!turn.aborted && successfulTurn(turn.messages)) {
-					recordSyncedStream(entry, hashes);
-					rememberBinding(bindingFromEntry(entry, hashes));
-				}
-			} finally {
-				// Every admitted turn reports exactly one decision, including one that
-				// ended by abort or interrupt failure.
-				staged.emit();
-			}
-		})(),
-		discard: (): void => {
-			if (isCurrentGeneration(entry.senpiSessionId, generation))
-				closeSession(entry.senpiSessionId, "attempt_discarded");
-		},
-	};
 }
 
 const OBSERVED_KIND: Record<ContinuityDecision["kind"], "incremental" | "resume" | "cold-seed"> = {
@@ -132,21 +76,22 @@ function entrySnapshot(entry: ClaudeSdkOauthSessionEntry, hashes: readonly strin
 async function createResidentAttempt(
 	input: ResidentSessionStreamInput,
 	auth: AuthenticatedAttemptInput,
-): Promise<ReturnType<typeof turnAttempt>> {
+): Promise<ReturnType<typeof createSessionTurnAttempt>> {
 	const sessionId = input.streamOptions.sessionId!;
 	const messages = sentMessages(input.context);
 	const hashes = sentMessageHashes(messages);
 	const existing = getSession(sessionId);
 	const fingerprint = configFingerprint(auth.options, input.context, auth.authLane, auth.accountName);
 	const residentHashes = existing ? (sentHashesForEntry(existing) ?? hashes) : hashes;
+	const { binding, transcriptAvailable } = await admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane);
 	const decision = decideNativeContinuity({
 		entry: existing ? entrySnapshot(existing, residentHashes) : undefined,
-		binding: getBinding(sessionId),
+		binding,
 		currentHashes: hashes,
 		accountName: auth.accountName,
 		modelId: input.model.id,
 		fingerprint,
-		transcriptAvailable: true,
+		transcriptAvailable,
 		idleExpired: existing ? isIdleExpired(existing) : false,
 	});
 	const firstTurn = existing === undefined && getBinding(sessionId) === undefined && hashes.length <= 1;
@@ -163,13 +108,17 @@ async function createResidentAttempt(
 	} else if (decision.kind === "reattach" || decision.kind === "fork") {
 		const source = getBinding(sessionId) ?? (existing ? bindingFromEntry(existing, residentHashes) : undefined);
 		const binding = source
-			? {
-					...source,
+			? (({ sentPrefixHash: _persistedPrefix, ...rest }) => ({
+					...rest,
 					sentCount: decision.from,
-					sentHashes: source.sentHashes.slice(0, decision.from),
+					sentHashes: hashes.slice(0, decision.from),
 					assistantUuidByIndex: (source.assistantUuidByIndex ?? []).filter(([index]) => index <= decision.from),
+					accountName: auth.accountName,
+					modelId: input.model.id,
+					systemPromptHash: fingerprint.systemPromptHash,
+					toolsetHash: fingerprint.toolsetHash,
 					...(decision.kind === "fork" ? { lastAssistantUuid: decision.atUuid } : {}),
-				}
+				}))(source)
 			: undefined;
 		try {
 			if (!binding) throw new Error("Claude SDK OAuth continuity binding is unavailable");
@@ -230,7 +179,7 @@ async function createResidentAttempt(
 		// cause pending for the next admission.
 		() => consumePendingCloseCause(sessionId),
 	);
-	return turnAttempt(entry, userMessage(blocks), hashes, input.streamOptions.signal, staged);
+	return createSessionTurnAttempt(entry, userMessage(blocks), hashes, input.streamOptions.signal, staged);
 }
 
 export async function* residentSessionMessages(input: ResidentSessionStreamInput): AsyncGenerator<SDKMessage> {

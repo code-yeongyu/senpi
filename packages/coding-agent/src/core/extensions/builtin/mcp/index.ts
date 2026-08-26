@@ -120,10 +120,22 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			})();
 			return attachPromise;
 		};
-		pi.on(
-			"session_start",
-			wrapAsync("mcp.session_start", (event, ctx) => attach(event, ctx), sink),
+		const onSessionStart = wrapAsync(
+			"mcp.session_start",
+			(event: SessionStartEvent, ctx: ExtensionContext) => attach(event, ctx),
+			sink,
 		);
+		pi.on("session_start", (event, ctx) => {
+			const work = onSessionStart(event, ctx);
+			// Reload's runner.emit("session_start") is on the hot-reload critical path
+			// (~260ms when this awaits reconnect). Attach is already single-flight via
+			// attachPromise + service.#attachQueue; before_agent_start awaits it.
+			if (event.reason === "reload") {
+				void work;
+				return;
+			}
+			return work;
+		});
 		pi.on("before_agent_start", async (event, ctx) => {
 			try {
 				// Elicitation (todo 41): point mid-call forms at this session's UI.

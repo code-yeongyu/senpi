@@ -1,5 +1,6 @@
 import type { KnownProvider, Model } from "@earendil-works/pi-ai";
 import { getModels } from "@earendil-works/pi-ai/compat";
+import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { describe, expect, test, vi } from "vitest";
 import {
 	defaultModelPerProvider,
@@ -696,8 +697,8 @@ describe("resolveCliModel", () => {
 
 describe("default model selection", () => {
 	test("openai defaults track current models", () => {
-		expect(defaultModelPerProvider.openai).toBe("gpt-5.5");
-		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.5");
+		expect(defaultModelPerProvider.openai).toBe("gpt-5.6-sol");
+		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.6-sol");
 	});
 
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {
@@ -705,7 +706,7 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["zai-coding-cn"]).toBe("glm-5.2");
 		expect(defaultModelPerProvider.minimax).toBe("MiniMax-M2.7");
 		expect(defaultModelPerProvider["minimax-cn"]).toBe("MiniMax-M2.7");
-		expect(defaultModelPerProvider.cerebras).toBe("zai-glm-4.7");
+		expect(defaultModelPerProvider.cerebras).toBe("gpt-oss-120b");
 		expect(defaultModelPerProvider["ant-ling"]).toBe("Ring-2.6-1T");
 	});
 
@@ -721,12 +722,26 @@ describe("default model selection", () => {
 		}
 	});
 
+	test("built-in defaults exist in generated provider catalogs", () => {
+		for (const provider of getBuiltinProviders()) {
+			const defaultId = defaultModelPerProvider[provider];
+			expect(
+				getBuiltinModels(provider).some((model) => model.id === defaultId),
+				`${provider} default ${defaultId} should exist in its generated catalog`,
+			).toBe(true);
+		}
+	});
+
 	test("ai-gateway default tracks current model", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
 	});
 
 	test("ollama defaults to its current coding model", () => {
 		expect(defaultModelPerProvider.ollama).toBe("qwen3.5:397b");
+	});
+
+	test("xai default tracks current model", () => {
+		expect(defaultModelPerProvider.xai).toBe("grok-4.5");
 	});
 
 	test("qwen token plan individual default tracks current model", () => {
@@ -916,8 +931,8 @@ describe("default model selection", () => {
 		};
 		const custom: Model<"anthropic-messages"> = {
 			...openAiDefault,
-			id: "custom-model",
-			provider: "custom",
+			id: "grok-4.5",
+			provider: "xai",
 		};
 		const runtime = {
 			getModels: () => [openAiDefault, custom],
@@ -942,8 +957,8 @@ describe("default model selection", () => {
 		const settings = await findInitialModel({
 			scopedModels: [],
 			isContinuing: false,
-			defaultProvider: "custom",
-			defaultModelId: "custom-model",
+			defaultProvider: "xai",
+			defaultModelId: "grok-4.5",
 			modelRuntime: runtime,
 		});
 		const providerDefault = await findInitialModel({
@@ -953,7 +968,7 @@ describe("default model selection", () => {
 		});
 		const firstAvailableRuntime = {
 			...runtime,
-			getAvailable: async () => [custom],
+			getAvailable: async () => [openAiDefault],
 		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
 		const firstAvailable = await findInitialModel({
 			scopedModels: [],

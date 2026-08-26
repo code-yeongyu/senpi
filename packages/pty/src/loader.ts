@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isQuarantinedNativeFile } from "./quarantine.ts";
 
 export type NativePtyRuntime = "node" | "bun";
 
@@ -57,8 +58,15 @@ export interface NativePtyCandidatePathOptions {
 
 export type NativePtyRequireBinding = (modulePath: string) => unknown;
 
+/**
+ * Reports whether a candidate prebuild carries macOS `com.apple.quarantine`.
+ * Injectable so tests can exercise the guard without a quarantined artifact.
+ */
+export type NativePtyQuarantineProbe = (modulePath: string) => boolean;
+
 export interface NativePtyLoaderOptions extends NativePtyCandidatePathOptions {
 	readonly requireBinding?: NativePtyRequireBinding;
+	readonly isQuarantined?: NativePtyQuarantineProbe;
 }
 
 const cjsRequire = createRequire(import.meta.url);
@@ -123,9 +131,20 @@ export function loadNativePty(options: NativePtyLoaderOptions = {}): NativePtyLo
 	const host = getNativePtyHost(options.platform, options.arch);
 	const attemptedPaths = getNativePtyCandidatePaths({ ...options, runtime });
 	const requireBinding = options.requireBinding ?? cjsRequire;
+	const platform = options.platform ?? process.platform;
+	const isQuarantined = options.isQuarantined ?? (platform === "darwin" ? isQuarantinedNativeFile : undefined);
 	const causes: string[] = [];
 
 	for (const modulePath of attemptedPaths) {
+		// `dlopen()` on a quarantined, non-notarized addon hands control to Gatekeeper,
+		// which blocks the process behind a "could not verify ... free of malware" dialog
+		// instead of returning an error. Detect that state first and keep the diagnostic
+		// path, so the caller degrades to the pipe fallback rather than hanging.
+		if (isQuarantined?.(modulePath) === true) {
+			causes.push(`${modulePath}: blocked because com.apple.quarantine is present (macOS Gatekeeper)`);
+			continue;
+		}
+
 		try {
 			const native = requireBinding(modulePath);
 			return {

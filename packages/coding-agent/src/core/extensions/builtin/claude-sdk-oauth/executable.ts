@@ -6,17 +6,17 @@ export type ExecutableDeps = {
 	arch: string;
 	env: (name: string) => string | undefined;
 	resolve: (spec: string) => string;
+	isMusl?: () => boolean;
 	isCompiledBun?: () => boolean;
 	extractFromBunfs?: (embeddedPath: string) => string;
 };
 
-export function claudeCodeExecutableCandidates(platform: string, arch: string): string[] {
+export function claudeCodeExecutableCandidates(platform: string, arch: string, preferMusl = false): string[] {
 	const ext = platform === "win32" ? ".exe" : "";
 	if (platform === "linux") {
-		return [
-			`@anthropic-ai/claude-agent-sdk-linux-${arch}-musl/claude${ext}`,
-			`@anthropic-ai/claude-agent-sdk-linux-${arch}/claude${ext}`,
-		];
+		const glibc = `@anthropic-ai/claude-agent-sdk-linux-${arch}/claude${ext}`;
+		const musl = `@anthropic-ai/claude-agent-sdk-linux-${arch}-musl/claude${ext}`;
+		return preferMusl ? [musl, glibc] : [glibc, musl];
 	}
 	return [`@anthropic-ai/claude-agent-sdk-${platform}-${arch}/claude${ext}`];
 }
@@ -36,7 +36,11 @@ export function resolveClaudeCodeExecutable(deps: ExecutableDeps): string {
 	const override = deps.env("CLAUDE_CODE_EXECUTABLE");
 	if (override) return override;
 
-	const candidates = claudeCodeExecutableCandidates(deps.platform, deps.arch);
+	const candidates = claudeCodeExecutableCandidates(
+		deps.platform,
+		deps.arch,
+		deps.platform === "linux" && deps.isMusl?.() === true,
+	);
 
 	if (deps.isCompiledBun?.() && deps.extractFromBunfs) {
 		const embedded = firstResolvable(candidates, deps.resolve);
@@ -63,11 +67,21 @@ let defaultRequire: ReturnType<typeof createRequire> | null = null;
 const isCompiledBunBinary =
 	import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN") || import.meta.url.includes("%7EBUN");
 
+function isMuslLinuxRuntime(): boolean {
+	if (process.platform !== "linux" || typeof process.report?.getReport !== "function") return false;
+	const report = process.report.getReport();
+	if (report === null || !("header" in report) || typeof report.header !== "object" || report.header === null) {
+		return false;
+	}
+	return !("glibcVersionRuntime" in report.header) || report.header.glibcVersionRuntime === undefined;
+}
+
 export function defaultExecutableDeps(): ExecutableDeps {
 	return {
 		platform: process.platform,
 		arch: process.arch,
 		env: (name) => process.env[name],
+		isMusl: isMuslLinuxRuntime,
 		isCompiledBun: () => isCompiledBunBinary,
 		extractFromBunfs,
 		resolve: (spec) => {

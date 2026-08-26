@@ -196,19 +196,24 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		if (!bridge) throw new Error("codemode bridge server is not running");
 		const configuredPoolWidth = this.#options.settings.parallelPoolWidth;
 		const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
+		// localRoots must be computed BEFORE the js branch: the JS kernel resolves local://
+		// from its worker init connection exactly like the subprocess kernels resolve it from
+		// theirs. Computing it after the early return left js cells with no local root at all.
+		const localRoots =
+			this.#options.localRoots ??
+			(this.#options.artifactsDir ? { local: join(this.#options.artifactsDir, "local") } : undefined);
 		if (language === "js") {
 			return new JavaScriptKernel({
 				sessionId: this.#options.sessionId,
 				cwd: this.#options.cwd,
 				parallelPoolWidth,
 				onMessage,
+				...(localRoots ? { localRoots: { ...localRoots } } : {}),
+				...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
 			});
 		}
 		const detected = this.#options.availability[language].detected;
 		if (!detected.ok) throw new Error(`No ${language} interpreter is available`);
-		const localRoots =
-			this.#options.localRoots ??
-			(this.#options.artifactsDir ? { local: join(this.#options.artifactsDir, "local") } : undefined);
 		const connection = {
 			port: bridge.port,
 			token: bridge.token,

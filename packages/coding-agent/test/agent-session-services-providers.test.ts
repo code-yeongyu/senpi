@@ -77,7 +77,12 @@ describe("createAgentSessionServices provider registration order", () => {
 	it("flushes mixed pre-bind registrations in call order (native then legacy)", async () => {
 		const applied = await recordRegistrations(nativeRegistration("ord-native"), legacyRegistration("ord-legacy"));
 
-		expect(applied).toEqual(["native:ord-native", "config:ord-legacy", "config:claude-sdk-oauth"]);
+		expect(applied).toEqual([
+			"native:ord-native",
+			"config:ord-legacy",
+			"config:claude-sdk-oauth",
+			"config:cursor-cli-oauth",
+		]);
 	});
 
 	it("flushes mixed pre-bind registrations in call order (legacy then native)", async () => {
@@ -92,6 +97,7 @@ describe("createAgentSessionServices provider registration order", () => {
 			"native:ord-native",
 			"config:ord-legacy-last",
 			"config:claude-sdk-oauth",
+			"config:cursor-cli-oauth",
 		]);
 	});
 });

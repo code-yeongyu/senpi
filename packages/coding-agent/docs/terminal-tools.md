@@ -12,7 +12,7 @@ platform/runtime).
 |------|---------|
 | `bash` | Run a command in a PTY. `run_in_background: true` starts a persistent session and returns a `bash_id` immediately. Foreground `timeout` (seconds) is a kill deadline. |
 | `bash_output` | Peek at a session without blocking: new output since the last read, or the status line. `filter` regex-filters lines; `view: "screen"` returns the rendered xterm grid. |
-| `monitor` | Watch a long-running command (`description`, `command`, `filter?`, `timeout_ms?`, `persistent?`) and inject matching stdout lines as coalesced events. While watches are live, the interactive footer shows a brief `watching …` status (descriptions, count, paused markers). |
+| `monitor` | Watch a long-running command (`description`, `command`, `filter?`, `timeout_ms?`, `persistent?`) and inject matching PTY output lines as coalesced events. While watches are live, the interactive footer shows a brief `watching …` status (descriptions, count, paused markers). |
 | `bash_input` | Send stdin (`input`) or named keys (`keys: ["ctrl+c"]`, `["enter"]`, `["up"]`) to steer a REPL or interrupt a process. |
 | `bash_resize` | Resize a session's PTY (`cols`, `rows`) so full-screen TUIs reflow. |
 | `kill_bash` | Tree-kill one session (`bash_id`) or all (`all: true`), leaving no orphans. |
@@ -29,6 +29,92 @@ Typical flow: start with `run_in_background: true`, watch for patterns with `mon
 peek with `bash_output`, steer with `bash_input`, then `kill_bash` when done. Completion
 arrives as a notification carrying the exit code and output tail, so a follow-up
 `bash_output` read is only needed when the tail is not enough.
+
+## Monitor recipes
+
+Each recipe shapes the command so the interesting moment becomes one clean,
+newline-terminated line. Sleep loops live inside the monitored command.
+
+### Dev-server readiness gate
+
+```js
+monitor({ description: "dev server ready",
+  command: "until curl -fsS http://localhost:3000/health; do sleep 1; done; printf 'READY\n'",
+  filter: "^READY$" })
+```
+
+Expected event: one `READY` line, then the exit summary. Follow-up: hit the
+server. Nothing outlives the watch, so no cleanup.
+
+### Long test or build with a pass/fail sentinel
+
+```js
+monitor({ description: "full test suite",
+  command: "if npx vitest run; then printf 'OK\n'; else code=$?; printf 'FAILED_%s\n' \"$code\"; exit \"$code\"; fi",
+  filter: "^(OK|FAILED_)" })
+```
+
+Expected event: `OK` or `FAILED_<code>` plus the exit summary. On `FAILED_`,
+read the tail with `bash_output` and fix; on `OK`, move on.
+
+### QA error stream from a log
+
+```js
+monitor({ description: "app error watch",
+  command: "tail -n 0 -F app.log | grep --line-buffered -E 'ERROR|FATAL'",
+  persistent: true })
+```
+
+Expected events: each new ERROR/FATAL line as it lands. Follow-up: investigate
+the failure it names. `tail -F` never exits, so `kill_bash` the `bash_id` when
+the QA pass ends.
+
+### CI / PR check watch
+
+```js
+monitor({ description: "PR checks",
+  command: "gh pr checks 1052 --watch 2>&1",
+  filter: "fail|pass|All checks" })
+```
+
+Expected event: the verdict line when checks settle, then the summary. Merge on
+pass, pull the failing job's log on fail. The command exits by itself.
+
+### File or port transition
+
+```js
+monitor({ description: "artifact written",
+  command: "until test -f dist/app.tar.gz; do sleep 2; done; printf 'READY\n'",
+  filter: "^READY$" })
+```
+
+Same shape works for ports: `until nc -z localhost 5432; do sleep 1; done;
+printf 'READY\n'`. Expected event: `READY`, then exit. Consume the artifact
+or connect.
+
+### Child-agent sentinel watch
+
+```js
+monitor({ description: "subtask done",
+  command: "until grep -q '^status=done$' /tmp/task.status 2>/dev/null; do sleep 5; done; printf 'READY\n'",
+  filter: "^READY$" })
+```
+
+Expected event: `READY` once the child flips its status file. Read the child's
+results and integrate. Exits on its own; no cleanup.
+
+### Anti-patterns
+
+| Anti-pattern | Do instead |
+|---|---|
+| Sleeping in your own turn between polls | Put the sleep loop inside the monitor command |
+| Spinning on `bash_output` reads | Register a monitor; peek only to steer |
+| Filterless watch on a chatty command | Shape output at the source, then narrow with `filter` |
+| Expecting `filter` to stop the command | `filter` gates events only; make the command exit on the condition |
+| `persistent: true` with `timeout_ms` | The timeout is ignored when persistent; pick one |
+| Sentinel printed without a trailing newline | Sentinels must be newline-terminated: `printf 'READY\n'` |
+| Monitoring sub-minute deterministic work | Run it directly in the foreground |
+| Rearming a monitor that was never paused | Rearm only a `bash_id` named in a pause notice |
 
 ## Mutual exclusion with native Anthropic bash
 

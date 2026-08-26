@@ -2,6 +2,7 @@
 
 `@code-yeongyu/senpi-codemode` is a source-only Senpi extension that registers
 the persistent-kernel `eval` tool for JavaScript, Python, Ruby, and Julia.
+Deeper guides: `src/tool/AGENTS.md`, `src/kernels/AGENTS.md`, `test/AGENTS.md`.
 
 ## STRUCTURE
 
@@ -12,10 +13,7 @@ src/interpreters/                Interpreter availability detection (detect.ts)
 src/config/                      Settings schema, defaults, env overrides
 src/extension/                   Session generations and kernel ownership
 src/tool/                        Eval schema, cell execution, status events, rendering
-src/kernels/js/                  Worker-backed persistent JavaScript kernel
-src/kernels/py/                  Python process and transport
-src/kernels/rb/, kernels/jl/     Optional subprocess kernels
-src/kernels/shared/              Shared subprocess lifecycle and queues
+src/kernels/                     Persistent kernels: js (worker), py/rb/jl (subprocess), shared lifecycle
 src/bridge/                      Loopback bearer-auth protocol and server
 src/bridges/                     Host adapters for agent(), output(), structured schemas
 src/output/                      OutputSink, truncation metadata, artifact-path handling
@@ -27,34 +25,24 @@ test/                            Vitest contracts and the omp parity ledger
 
 ## INVARIANTS
 
-- `eval` is registered at extension load and re-registered at `session_start`
-  after settings, interpreter availability, and active task-tool names resolve.
-- Eval prompt dialect is selected from the active model id; GPT models receive a
+- `eval` registers at extension load and re-registers at `session_start` after settings, interpreter availability, and task-tool names resolve.
+- Eval prompt dialect comes from the active model id; GPT models receive the
   terse composition-forward dialect that documents detached-cell completion.
-  Host/workstation context is explicit; renderer/status semantics are structured.
-- Session generations fence old kernels and callbacks. A retired generation
-  must not emit into a newer session.
-- Kernels persist state per language, while per-cell callbacks are rebound for
-  each execution.
-- Eval runs require a `summary` written in the user's conversational language.
-  Detached cells are labeled with that summary; the old `title` field is dropped.
-- Every cell settles exactly once across success, error, timeout, abort, bridge
-  failure, and kernel crash.
+- Session generations fence old kernels and callbacks; a retired generation
+  never emits into a newer session.
+- Kernels persist state per language; per-cell callbacks rebind per execution.
+- Evals require a `summary` in the user's conversational language; detached cells carry it and the old `title` field stays dropped.
+- Every cell settles exactly once: success, error, timeout, abort, bridge failure, kernel crash.
 - Timeout and abort cleanup retires child work before ownership is released.
-- The host bridge binds loopback only, requires a per-session bearer token,
-  limits request bodies, and aborts work on disconnect.
-- `agent()` and `output()` use configured active tool names through
-  `pi.executeTool`. Do not import an orchestration workspace package here.
-- `local://` resolves under the extension-owned session artifact root. Spill
-  notices contain plain absolute paths, not a custom URI scheme.
+- The bridge binds loopback only, requires a per-session bearer token, limits
+  request bodies, and aborts work on disconnect.
+- `agent()` and `output()` use configured active tool names via `pi.executeTool`; never import an orchestration workspace package here.
+- `local://` resolves under the extension-owned session artifact root; spill notices use plain absolute paths.
 - Status events stay structured from kernel protocol through `EvalToolDetails`
-  and render output. Preserve agent-progress coalescing semantics.
-- Nested tool-call rendering is bounded and rendering-only: no session messages,
-  no extension events, and no toggle.
-- Optional interpreters are capability gaps, not installation failures;
-  JavaScript remains available on supported Node versions.
-- This package targets Node 24 or newer. Do not introduce Bun-only APIs,
-  `@oh-my-opencode` imports, or a `budget` helper.
+  to render output; preserve agent-progress coalescing.
+- Nested tool-call rendering is bounded and rendering-only: no session messages, no extension events, no toggle.
+- Optional interpreters are capability gaps, not installation failures; JavaScript remains available on supported Node versions.
+- Target Node 24+. No Bun-only APIs, `@oh-my-opencode` imports, or `budget`.
 
 ## WHERE TO LOOK
 
@@ -62,38 +50,31 @@ test/                            Vitest contracts and the omp parity ledger
 | --- | --- |
 | Register or narrow eval | `src/index.ts`, `src/tool/eval-tool.ts` |
 | Prompt behavior | `src/prompt/eval-prompt.ts` |
-| Call/result rendering | `src/tool/render.ts` |
-| Cell settlement and output | `src/tool/cell-handler.ts`, `src/output/` |
-| Detached cells | `src/tool/detached-cell-manager.ts`, `detached-cell-notification.ts`, `detached-cell-snapshot.ts`, `detached-cell-state.ts`, `detached-eval-result.ts`, `detached-notification-queue.ts`, `cell-runtime.ts` |
+| Cell execution, settlement, rendering | `src/tool/` (see `src/tool/AGENTS.md`) |
 | Interpreter detection | `src/interpreters/detect.ts` |
 | Session and kernel ownership | `src/extension/session-manager.ts`, `src/index.ts` |
 | Bridge auth and protocol | `src/bridge/` |
 | Agent/output task composition | `src/bridges/` |
-| JavaScript lifecycle and imports | `src/kernels/js/` |
-| Subprocess lifecycle | `src/kernels/shared/` and each language directory |
+| Kernel runtimes, subprocess lifecycle | `src/kernels/` (see `src/kernels/AGENTS.md`) |
+| Output sink and artifacts | `src/output/`, `src/tool/cell-handler.ts` |
 | Status and TUI/HTML rendering | `src/tool/status-events.ts`, `src/tool/render.ts` |
+| Tests and port coverage | `test/`, `test/PARITY.md` (see `test/AGENTS.md`) |
 | Real-surface QA | `scripts/qa-*.ts` |
-| Port coverage mapping | `test/PARITY.md` |
 
 ## QUALITY GATES
 
 - Add or update a focused Vitest contract before changing runtime behavior; run
   it red, then green.
 - Run `npm test` from this package and `npm run check` from the repository root
-  before committing code or packaging changes.
-- Run the relevant `scripts/qa-*.ts` driver when changing a kernel, bridge,
-  extension lifecycle, output sink, or renderer. Capture evidence without
-  tokens, headers, cookies, or raw environment dumps.
-- Keep TypeScript erasable and strict: no `any`, assertions, non-null
-  assertions, ignored diagnostics, or dynamic imports outside documented
-  boundaries.
-- Keep renderer imports out of `src/output/`; output collection is a runtime
-  layer and must not create a renderer dependency cycle.
-- Direct dependencies are exact-pinned. Refresh locks with
-  `npm install --ignore-scripts`; use `PI_ALLOW_LOCKFILE_CHANGE=1` only when the
-  lockfile policy permits the intentional change.
-- Documentation must describe the current tool contract. Update README settings
+  before committing.
+- Run the relevant `scripts/qa-*.ts` driver for kernel, bridge, extension,
+  output, or renderer changes; capture evidence without secrets.
+- TypeScript stays erasable and strict: no `any`, assertions, non-null
+  assertions, ignored diagnostics, or undocumented dynamic imports.
+- Renderer imports stay out of `src/output/` — no renderer dependency cycle.
+- Direct dependencies stay exact-pinned; lock refreshes follow root lockfile policy.
+- Documentation must describe the current tool contract; update README settings
   and helper tables with every user-visible surface change.
 
 ---
-Generated: 2026-08-07 | Commit `4f26b8282`
+Generated: 2026-08-24 | Commit `baf15a54d`

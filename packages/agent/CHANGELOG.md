@@ -6,6 +6,232 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.26-2] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.26] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.25] - 2026-08-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed single-object `edit` tool inputs failing validation by accepting them as one-edit arrays ([#7835](https://github.com/earendil-works/pi/issues/7835)).
+- Fixed root Markdown files such as `README.md` and `AGENTS.md` in skill directories being reported as broken skills unless they declare valid skill frontmatter ([#7805](https://github.com/earendil-works/pi/issues/7805)).
+### Removed
+
+## [2026.8.24] - 2026-08-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Updated the shared TypeBox runtime to 1.3.18, keeping agent schemas aligned with the protocol, AI, coding-agent, and codemode packages.
+
+### Fixed
+
+### Removed
+
+## [2026.8.23] - 2026-08-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.22-2] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.22] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21-3] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21-2] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.20-2] - 2026-08-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.20] - 2026-08-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Provider idle after completed Cursor tools (or buffered exec results) now ends the turn as `stop` instead of hanging until `StreamIdleTimeoutError` ([#999](https://github.com/code-yeongyu/senpi/pull/999) by [@leeseunguk](https://github.com/leeseunguk)).
+- Cursor often ends a turn as `stop` while the assistant message still contains toolCall blocks. Those turns now continue as `toolUse` so pending tools run instead of being dropped ([#1016](https://github.com/code-yeongyu/senpi/pull/1016) by [@leeseunguk](https://github.com/leeseunguk)).
+- Cursor exec handler factories now receive the owning run's abort signal instead of the per-request
+  idle-timeout controller, so native Cursor exec tool calls pass the run-ownership check again instead
+  of failing every call with `Tool execution has no active run` ([#1002](https://github.com/code-yeongyu/senpi/pull/1002) by [@HeiTuz](https://github.com/HeiTuz)).
+
+### Removed
+
+## [2026.8.19] - 2026-08-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Aborting a run now releases a tool call that ignores its abort signal and never settles. Tool execution races the run's abort signal instead of awaiting the tool alone, so the run reaches `agent_end` and the session goes idle instead of hanging with an unresponsive ESC while the TUI shows `Running <tool>` ([#970](https://github.com/code-yeongyu/senpi/pull/970)).
+
+### Removed
+
+## [2026.8.18-3] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+- `ThinkingSelection` provenance now travels from agent state through `createLoopConfig`, mid-run
+  `prepareNextTurn` updates (undefined leaves unchanged, null clears), and the remote proxy's
+  serializable options, letting providers distinguish an explicit user choice from the
+  always-materialized effective reasoning level.
+
+### Changed
+
+- `AgentLoopConfig.cursorExecHandlers` additionally accepts a factory taking the owning run's abort signal, so
+  a host bridge can bind each Cursor exec stream to the run that opened it. The plain-object form is unchanged.
+
+### Fixed
+
+### Removed
+
+## [2026.8.18-2] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Late Cursor exec-bridge lifecycle events that settle after an abort or timeout are tied to their originating run, so they neither raise an unhandled `Agent listener invoked outside active run` error nor leak into a replacement run ([#935](https://github.com/code-yeongyu/senpi/pull/935)).
+
+### Removed
+
+## [2026.8.18] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.17] - 2026-08-17
+
+### Breaking Changes
+
+### Added
+
 - The agent loop understands Cursor's server-driven tool execution: tool calls the `cursor-agent` provider already executed mid-stream (marked `kCursorExecResolved`) are never re-executed, their provider-buffered results are appended right after the assistant message (also on error/abort paths so calls never end up unpaired), and the stream idle watchdog re-arms while the provider reports pending local tool work instead of aborting a healthy request. `AgentOptions.cursorExecHandlers` carries the host's exec bridge onto the loop config, and `Agent.emitExternalEvent()` lets bridge-run tools surface `tool_execution_*` lifecycle events ([#910](https://github.com/code-yeongyu/senpi/pull/910)).
 
 ### Changed

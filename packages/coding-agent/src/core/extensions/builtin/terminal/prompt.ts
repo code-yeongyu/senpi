@@ -14,11 +14,13 @@ manual \`&\` backgrounding — use the built-in session tools:
   \`view: "screen"\`. Completion arrives as a notification carrying the exit code and output
   tail — peeking is for steering, never for waiting.
 - \`monitor({ description, command, filter?, timeout_ms?, persistent? })\` subscribes you to a
-  command: its stdout lines arrive as injected events while you keep working. Shape the command
-  by notifications needed: exit-on-condition for one completion event; emit-per-occurrence
-  (\`tail -f | grep --line-buffered\`, a polling loop inside the command) for a stream. Filter
-  noise at the command source, stop with \`kill_bash\`, and use
-  \`monitor({ action: "rearm", bash_id })\` only after a wake-budget pause.
+  command: newline-terminated PTY output lines (stderr included) matching \`filter\` arrive as
+  injected events while you keep working; command exit always delivers a summary. One-shot
+  gate: wait inside the command and print one sentinel (\`until <cond>; do sleep 1; done;
+  printf 'READY\\n'\`). Stream: \`tail -n 0 -F | grep --line-buffered\`. Filter noise at the
+  source and stop with \`kill_bash\`. Identical updates are deduped; enough monitor-only wakes
+  pause ALL monitors - completion still wakes the session, and
+  \`monitor({ action: "rearm", bash_id })\` resumes intermediate events.
 - \`bash_input({ bash_id, input, keys, submit })\` sends stdin or named keys (e.g.
   \`["ctrl+c"]\`, \`["enter"]\`) to steer a REPL or interrupt a process.
 - \`bash_resize({ bash_id, cols, rows })\` resizes the PTY so full-screen programs reflow.

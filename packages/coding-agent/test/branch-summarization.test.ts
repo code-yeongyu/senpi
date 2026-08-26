@@ -39,10 +39,13 @@ function createModel(): Model<"anthropic-messages"> {
 	};
 }
 
-function createAssistantResponse(text: string): AssistantMessage {
+function createAssistantResponse(
+	text: string,
+	content: AssistantMessage["content"] = [{ type: "text", text }],
+): AssistantMessage {
 	return {
 		role: "assistant",
-		content: [{ type: "text", text }],
+		content,
 		api: "anthropic-messages",
 		provider: "anthropic",
 		model: "claude-sonnet-4-5",
@@ -126,5 +129,30 @@ describe("branch summarization custom messages", () => {
 		expect(promptText).toContain("Investigate compaction regression.");
 		expect(promptText).toContain("I am checking branch summarization.");
 		expect(promptText).toContain("Remember the branch-specific observation.");
+		expect(streamSimpleMock.mock.calls[0][2]).toMatchObject({
+			toolChoice: "none",
+		});
+	});
+
+	it("rejects tool calls from branch summaries", async () => {
+		streamSimpleMock.mockReturnValue(
+			createSummaryStream(
+				createAssistantResponse("", [
+					{
+						type: "toolCall",
+						id: "tool-call-1",
+						name: "read",
+						arguments: { path: "README.md" },
+					},
+				]),
+			),
+		);
+
+		const result = await generateBranchSummary(createEntries(), {
+			model: createModel(),
+			signal: new AbortController().signal,
+		});
+
+		expect(result.error).toBe("Branch summarization attempted to call a tool");
 	});
 });

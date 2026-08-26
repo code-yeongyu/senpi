@@ -8,7 +8,7 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-napi = "=3.10.3"
-napi-derive = "=3.5.9"
-napi-build = "=2.3.2"
+napi = "=3.12.1"
+napi-derive = "=3.6.3"
+napi-build = "=2.4.1"
 portable-pty = "=0.9.0"

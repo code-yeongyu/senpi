@@ -43,6 +43,7 @@ export {
 export * from "./agent.ts";
 // Loop functions
 export * from "./agent-loop.ts";
+export { ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
 export * from "./harness/agent-harness.ts";
 export {
 	type BranchPreparation,

@@ -444,3 +444,21 @@ events.
 `RpcExtensionEvent`, so capability-enabled SDK consumers can narrow and validate generic extension
 records. The extension and RPC guides document `pi.rpc.emit`, capability environment variables, the
 wire shape, multi-session tagging, and payload validation responsibilities.
+
+## 2026-08-25 - Preserve upstream RPC public queue API
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts` and `packages/coding-agent/src/modes/rpc/rpc-types.ts` expose upstream queue-clearing commands while retaining fork RPC protocol structure.
+
+### Why
+
+- RPC command and response unions are a consumer-facing wire contract.
+
+### Why this lives in the fork
+
+- The RPC protocol is defined at the coding-agent public boundary.
+
+### Expected merge conflict zones
+
+- RPC command unions, response unions, and client methods.

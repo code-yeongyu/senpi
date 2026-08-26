@@ -53,10 +53,10 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
         with:
-          bun-version: canary
+          bun-version: '1.4.0'
 
-      - name: Assert bun canary channel
-        run: bash scripts/assert-bun-canary.sh
+      - name: Assert bun 1.4 toolchain
+        run: bash scripts/assert-bun-toolchain.sh
 
       - name: Install dependencies
         run: npm install --ignore-scripts --no-audit --no-fund

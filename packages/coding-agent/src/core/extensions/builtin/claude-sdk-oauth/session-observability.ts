@@ -47,6 +47,7 @@ export type ContinuityReason =
 	| "abort_timeout"
 	| "extensions_removed"
 	| "session_shutdown"
+	| "timeout_retry"
 	| "other";
 
 export type ContinuityObservation = {
@@ -96,6 +97,7 @@ const SANITIZED_REASONS = new Set<string>([
 	"abort_timeout",
 	"extensions_removed",
 	"session_shutdown",
+	"timeout_retry",
 	"other",
 ]);
 

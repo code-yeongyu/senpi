@@ -285,16 +285,6 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 		expect(getSession("compact-session")).toMatchObject({ pendingForkReason: "compaction" });
 	});
 
-	it("records a fork boundary before fork idempotently", async () => {
-		const extension = fakeExtension();
-		registerSessionRegistry(extension.api);
-		createEntry("fork-session");
-
-		await emitTwice(extension, "session_before_fork", { type: "session_before_fork" }, "fork-session");
-
-		expect(getSession("fork-session")).toMatchObject({ pendingForkReason: "fork" });
-	});
-
 	it("records tree branch boundaries without tainting", async () => {
 		const extension = fakeExtension();
 		registerSessionRegistry(extension.api);
@@ -352,7 +342,6 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 		claudeSdkOauthExtension(extension.api);
 
 		expect(extension.handlers.get("session_compact")).toHaveLength(1);
-		expect(extension.handlers.get("session_before_fork")).toHaveLength(1);
 		expect(extension.handlers.get("session_tree")).toHaveLength(1);
 		expect(extension.handlers.get("model_select")).toHaveLength(1);
 		expect(extension.handlers.get("thinking_level_select")).toHaveLength(1);

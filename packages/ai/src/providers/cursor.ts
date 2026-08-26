@@ -1,6 +1,8 @@
 import { cursorAgentApi, loadCursorAgentModule } from "../api/cursor-agent.lazy.ts";
 import { lazyOAuth } from "../auth/helpers.ts";
 import { loadCursorOAuth } from "../auth/oauth/load.ts";
+import { normalizeCursorCatalog } from "../cursor/catalog-grouping.ts";
+import { regroupStoredCursorModels } from "../cursor/store-migration.ts";
 import { createProvider, type Provider, type RefreshModelsContext } from "../models.ts";
 import type { Model } from "../types.ts";
 
@@ -22,22 +24,48 @@ async function fetchCursorModels(context: RefreshModelsContext): Promise<Model<"
 	if (discovered === null) {
 		throw new Error("Could not load Cursor model catalog from GetUsableModels");
 	}
-	return discovered.map(
-		(model): Model<"cursor-agent"> => ({
+	const normalized = normalizeCursorCatalog(
+		discovered.map((model) => ({
 			id: model.id,
 			name: model.name,
+			input: model.input,
+			cursorMaxMode: model.cursorMaxMode,
+		})),
+	);
+	const maxTokensByVariant = new Map(discovered.map((model) => [model.id, model.maxTokens]));
+	return normalized.map((entry): Model<"cursor-agent"> => {
+		const representative = entry.representativeVariantId ?? entry.legacyAliases[0] ?? entry.id;
+		const maxTokens = maxTokensByVariant.get(representative) ?? maxTokensByVariant.get(entry.id) ?? 64000;
+		return {
+			id: entry.id,
+			name: entry.name,
 			api: "cursor-agent",
 			provider: "cursor",
 			baseUrl: CURSOR_BASE_URL,
-			reasoning: model.reasoning,
-			input: model.input,
+			reasoning: entry.reasoning,
+			...(entry.thinkingLevelMap ? { thinkingLevelMap: entry.thinkingLevelMap } : {}),
+			input: entry.input,
 			// Subscription-billed: Cursor reports no per-token pricing here.
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: model.contextWindow,
-			maxTokens: model.maxTokens,
-			...(model.cursorMaxMode ? { compat: { cursorMaxMode: true } } : {}),
-		}),
-	);
+			contextWindow: entry.window,
+			maxTokens,
+			...(entry.representativeVariantId !== undefined && entry.representativeVariantId !== entry.id
+				? { upstreamModelId: entry.representativeVariantId }
+				: {}),
+			compat: {
+				...(entry.cursorMaxMode ? { cursorMaxMode: true } : {}),
+				...(entry.capabilityId !== undefined && entry.representativeVariantId !== undefined
+					? {
+							cursorReasoning: {
+								capabilityId: entry.capabilityId,
+								...(entry.thinkingMode !== undefined ? { thinkingMode: entry.thinkingMode } : {}),
+								representativeVariantId: entry.representativeVariantId,
+							},
+						}
+					: {}),
+			},
+		};
+	});
 }
 
 /**
@@ -54,6 +82,7 @@ export function cursorProvider(): Provider<"cursor-agent"> {
 		id: "cursor",
 		name: "Cursor",
 		baseUrl: CURSOR_BASE_URL,
+		restoreModels: (models) => regroupStoredCursorModels(models),
 		auth: {
 			oauth: lazyOAuth({
 				name: "Cursor (Pro/Ultra/Teams)",

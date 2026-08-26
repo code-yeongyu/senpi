@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
 import { MOCK_API_KEY, MOCK_PROVIDER, startFakeModelServer } from "./helpers/rpc-fake-model.ts";
 import { hermeticProviderEnv } from "./helpers/rpc-hermetic.ts";
+import { assertWorkspaceBuildPrerequisite } from "./support/workspace-build-prerequisite.ts";
+
+assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 

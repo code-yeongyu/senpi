@@ -59,15 +59,25 @@ function isContentlessUserMessage(message: SentMessage): boolean {
 }
 
 export function sentMessages(context: Context): SentMessage[] {
-	const messages = context.messages.filter(
-		(message): message is SentMessage =>
-			(message.role === "user" || message.role === "toolResult") && !isContentlessUserMessage(message),
-	);
-	return messages;
+	return context.messages.filter(isTransmittedMessage);
 }
 
+/**
+ * The one selection rule for "message the provider was sent". Branch-derived and
+ * context-derived hashes MUST share it: a content-less user message that only one
+ * side skips shifts every later index and reports a false divergence.
+ */
+export function isTransmittedMessage(message: { role: string }): message is SentMessage {
+	if (message.role !== "user" && message.role !== "toolResult") return false;
+	return !isContentlessUserMessage(message as SentMessage);
+}
+
+/**
+ * Applies the transmitted-message rule itself, so no caller can produce a hash
+ * list that disagrees with another caller's by forgetting the filter.
+ */
 export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
-	const hashes = messages.map((message) =>
+	const hashes = messages.filter(isTransmittedMessage).map((message) =>
 		digest(
 			message.role === "user"
 				? { role: message.role, content: message.content }
@@ -82,7 +92,7 @@ export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
 	return hashes;
 }
 
-function prefixDigest(hashes: readonly string[], count = hashes.length): string {
+export function sentHashPrefixDigest(hashes: readonly string[], count = hashes.length): string {
 	return digest(hashes.slice(0, count));
 }
 
@@ -96,7 +106,7 @@ export function recordSyncedStream(entry: ClaudeSdkOauthSessionEntry, hashes: re
 	const copy = [...hashes];
 	sentHashesByEntry.set(entry, copy);
 	entry.sentCount = copy.length;
-	entry.syncedPrefixHash = prefixDigest(copy);
+	entry.syncedPrefixHash = sentHashPrefixDigest(copy);
 	entry.branchInfo = null;
 }
 

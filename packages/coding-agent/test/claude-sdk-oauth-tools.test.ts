@@ -42,8 +42,8 @@ describe("Claude SDK OAuth tool integration", () => {
 		expect(resolveSdkTools({ messages: [] }).sdkTools).toEqual(BUILTIN_SDK_TOOLS);
 	});
 
-	it("builds one in-process custom-tools MCP server for active custom tools", () => {
-		const servers = buildCustomToolServers([tool("repoSearch")]);
+	it("builds one in-process custom-tools MCP server for active custom tools", async () => {
+		const servers = await buildCustomToolServers([tool("repoSearch")]);
 		expect(Object.keys(servers ?? {})).toEqual(["custom-tools"]);
 	});
 

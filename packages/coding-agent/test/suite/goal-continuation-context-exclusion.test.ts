@@ -5,7 +5,6 @@ import { prepareBranchEntries } from "../../src/core/compaction/branch-summariza
 import {
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
-	estimateTokens,
 	prepareCompaction,
 } from "../../src/core/compaction/compaction.ts";
 import {
@@ -51,7 +50,27 @@ function continuationContents(messages: AgentMessage[]): string[] {
 	);
 }
 
-describe("goal-continuation context exclusion", () => {
+function fixtureAssistantMessage(text: string, timestamp: number): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: "anthropic-messages",
+		provider: "anthropic",
+		model: "fixture-model",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp,
+	};
+}
+
+describe("goal-continuation context retention", () => {
 	test.each([
 		{ name: "zero", messages: [] as AgentMessage[], expected: [] as string[] },
 		{
@@ -62,37 +81,64 @@ describe("goal-continuation context exclusion", () => {
 		{
 			name: "many",
 			messages: [
-				goalContinuation("stale continuation one", 1),
-				goalContinuation("stale continuation two", 2),
-				goalContinuation("live continuation", 3),
+				goalContinuation("continuation one", 1),
+				goalContinuation("continuation two", 2),
+				goalContinuation("continuation three", 3),
 			] as AgentMessage[],
-			expected: ["live continuation"],
+			expected: ["continuation one", "continuation two", "continuation three"],
 		},
-	])("keeps only the last continuation when the array has $name", ({ messages, expected }) => {
+	])("retains every continuation when the array has $name", ({ messages, expected }) => {
 		expect(continuationContents(filterContextExcludedMessages(messages))).toEqual(expected);
 		expect(convertToLlm(messages).map(llmText)).toEqual(expected);
+	});
+
+	test("keeps an interleaved continuation history append-only and in order", () => {
+		// The cache prefix of request N must survive verbatim into request N+1, so an
+		// earlier continuation may never be dropped once the provider has seen it.
+		const messages: AgentMessage[] = [
+			{ role: "user", content: "user-0", timestamp: 1 },
+			goalContinuation("continuation-1", 2),
+			fixtureAssistantMessage("assistant-1", 3),
+			goalContinuation("continuation-2", 4),
+		];
+
+		const filtered = filterContextExcludedMessages(messages);
+
+		expect(filtered).toEqual(messages);
+		expect(convertToLlm(messages).map(llmText)).toEqual([
+			"user-0",
+			"continuation-1",
+			"assistant-1",
+			"continuation-2",
+		]);
 	});
 
 	test("keeps non-goal messages and their ordering unchanged", () => {
 		const messages: AgentMessage[] = [
 			{ role: "user", content: "before", timestamp: 1 },
-			goalContinuation("stale continuation", 2),
+			goalContinuation("earlier continuation", 2),
 			customMessage("non-goal custom", 3),
-			goalContinuation("live continuation", 4),
+			goalContinuation("latest continuation", 4),
 			{ role: "user", content: "after", timestamp: 5 },
 		];
 
 		const filtered = filterContextExcludedMessages(messages);
 
-		expect(filtered).toEqual([messages[0], messages[2], messages[3], messages[4]]);
-		expect(convertToLlm(messages).map(llmText)).toEqual(["before", "non-goal custom", "live continuation", "after"]);
+		expect(filtered).toEqual(messages);
+		expect(convertToLlm(messages).map(llmText)).toEqual([
+			"before",
+			"earlier continuation",
+			"non-goal custom",
+			"latest continuation",
+			"after",
+		]);
 	});
 
 	test("is idempotent across filtering and conversion", () => {
 		const messages: AgentMessage[] = [
-			goalContinuation("stale continuation", 1),
+			goalContinuation("earlier continuation", 1),
 			customMessage("non-goal custom", 2),
-			goalContinuation("live continuation", 3),
+			goalContinuation("latest continuation", 3),
 		];
 
 		const filtered = filterContextExcludedMessages(messages);
@@ -104,27 +150,8 @@ describe("goal-continuation context exclusion", () => {
 
 describe("goal-continuation call-site consistency (300-message fixture)", () => {
 	const FIXTURE_CONTINUATIONS = 300;
+	const FIRST_CONTINUATION = "goal continuation 0";
 	const LIVE_CONTINUATION = `goal continuation ${FIXTURE_CONTINUATIONS - 1}`;
-
-	function fixtureAssistantMessage(text: string, timestamp: number): AssistantMessage {
-		return {
-			role: "assistant",
-			content: [{ type: "text", text }],
-			api: "anthropic-messages",
-			provider: "anthropic",
-			model: "fixture-model",
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-			stopReason: "stop",
-			timestamp,
-		};
-	}
 
 	function buildMassFixture(): AgentMessage[] {
 		const messages: AgentMessage[] = [];
@@ -171,19 +198,20 @@ describe("goal-continuation call-site consistency (300-message fixture)", () => 
 		return entries;
 	}
 
-	test("convertToLlm emits exactly one continuation-derived user message from 300", () => {
+	test("convertToLlm emits all 300 continuation-derived user messages in order", () => {
 		const fixture = buildMassFixture();
 
 		const converted = convertToLlm(fixture);
 
-		expect(converted).toHaveLength(fixture.length - (FIXTURE_CONTINUATIONS - 1));
+		expect(converted).toHaveLength(fixture.length);
 		const continuationDerived = converted.filter((message) => llmText(message).startsWith("goal continuation"));
-		expect(continuationDerived).toHaveLength(1);
-		expect(continuationDerived[0].role).toBe("user");
-		expect(llmText(continuationDerived[0])).toBe(LIVE_CONTINUATION);
+		expect(continuationDerived).toHaveLength(FIXTURE_CONTINUATIONS);
+		expect(continuationDerived.every((message) => message.role === "user")).toBe(true);
+		expect(llmText(continuationDerived[0])).toBe(FIRST_CONTINUATION);
+		expect(llmText(continuationDerived[FIXTURE_CONTINUATIONS - 1])).toBe(LIVE_CONTINUATION);
 	});
 
-	test("estimateContextTokens over the filtered fixture drops the same 299 continuations", () => {
+	test("filterContextExcludedMessages does not undercount the transport conversion", () => {
 		const fixture = buildMassFixture();
 		const continuations = fixture.filter(
 			(message) => message.role === "custom" && message.customType === GOAL_CONTINUATION_MESSAGE_TYPE,
@@ -192,18 +220,16 @@ describe("goal-continuation call-site consistency (300-message fixture)", () => 
 
 		const filtered = filterContextExcludedMessages(fixture);
 
-		expect(filtered).toHaveLength(fixture.length - (FIXTURE_CONTINUATIONS - 1));
-		expect(continuationContents(filtered)).toEqual([LIVE_CONTINUATION]);
+		expect(filtered).toHaveLength(fixture.length);
+		expect(continuationContents(filtered)).toEqual(continuationContents(fixture));
 
-		const unfilteredTokens = estimateContextTokens(fixture).tokens;
-		const filteredTokens = estimateContextTokens(filtered).tokens;
-		const staleTokens = continuations.slice(0, -1).reduce((sum, message) => sum + estimateTokens(message), 0);
-
-		expect(filteredTokens).toBeLessThan(unfilteredTokens);
-		expect(unfilteredTokens - filteredTokens).toBe(staleTokens);
+		// Token accounting must match what the provider actually receives; any
+		// context-side drop would understate the request the transport builds.
+		expect(estimateContextTokens(filtered).tokens).toBe(estimateContextTokens(fixture).tokens);
+		expect(convertToLlm(filtered)).toHaveLength(convertToLlm(fixture).length);
 	});
 
-	test("prepareCompaction applies the same filter to the flooded fixture without error", () => {
+	test("prepareCompaction still succeeds on the flooded fixture and counts every continuation", () => {
 		const entries = buildMassFixtureEntries();
 		const settings = { ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 100 };
 
@@ -211,10 +237,9 @@ describe("goal-continuation call-site consistency (300-message fixture)", () => 
 
 		expect(preparation).toBeDefined();
 		const contextMessages = buildSessionContext(entries).messages;
-		const expectedFilteredTokens = estimateContextTokens(filterContextExcludedMessages(contextMessages)).tokens;
 		const unfilteredTokens = estimateContextTokens(contextMessages).tokens;
-		expect(preparation!.tokensBefore).toBe(expectedFilteredTokens);
-		expect(preparation!.tokensBefore).toBeLessThan(unfilteredTokens);
+		expect(estimateContextTokens(filterContextExcludedMessages(contextMessages)).tokens).toBe(unfilteredTokens);
+		expect(preparation!.tokensBefore).toBe(unfilteredTokens);
 	});
 
 	test("branch summarization still sees every goal-continuation entry", () => {
@@ -229,7 +254,7 @@ describe("goal-continuation call-site consistency (300-message fixture)", () => 
 		);
 		expect(visibleContinuations).toHaveLength(FIXTURE_CONTINUATIONS);
 		const visibleContents = visibleContinuations.map((message) => message.content);
-		expect(visibleContents).toContain("goal continuation 0");
+		expect(visibleContents).toContain(FIRST_CONTINUATION);
 		expect(visibleContents).toContain(LIVE_CONTINUATION);
 	});
 });

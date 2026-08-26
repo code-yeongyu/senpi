@@ -1,5 +1,115 @@
 # changes
 
+## CLI argument surface re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts` keeps the fork flags on top of upstream's parser:
+  `--list-tips`, the gated `--grok-neo` chrome switch (via `grok-neo-gate.ts`), and
+  `--multi-session` for independently routed plain-RPC sessions over one stdio process.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The `Args` interface and the `parseArgs` flag chain in `packages/coding-agent/src/cli/args.ts`.
+
+## Fork CLI flags and branded help retained over upstream 59a71b23 (2026-08-19)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts` stays divergent from upstream
+  `59a71b235dadb4ad0d67557a8abb0aaa093e68b4` after the pin advance: `parseArgs()` keeps the fork flags
+  `--list-tips`, `--multi-session`, and the gated `--grok-neo` (accepted only when `isGrokNeoEnabled()` from
+  `grok-neo-gate.ts` allows it, with the matching help row emitted conditionally), and `printHelp()` takes the
+  `grokNeoEnabled` parameter that drives that row.
+- `args.ts` help text remains branded and fork-scoped: commands render through `APP_NAME` (including
+  `senpi update [source|self|senpi]`), the `list`/`config` rows carry the fork's `--approve`/`--no-approve`
+  arguments, the `app-server` command and daemon rows plus their usage examples are listed, `--theme` documents
+  register-not-select semantics, and the environment block keeps `OLLAMA_API_KEY`, `OPENGATEWAY_API_KEY`,
+  `ALIBABA_TOKEN_PLAN_API_KEY`, and the `PI_RULES_*` caps.
+
+### Why
+
+- The flags and help rows describe fork-only runtime surfaces (tips catalog, grok chrome, multi-session RPC host,
+  app-server transport, fork-only providers, rules limits) that the new upstream tree has no equivalent for, so
+  taking upstream's parser and help template verbatim would silently drop working CLI entry points.
+
+### Why an extension could not handle it
+
+- Argument parsing and the top-level help surface run before extension flags are registered; extension-provided
+  flags are appended to this template, not able to replace it.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `printHelp()` template literal (upstream edits command/option/environment rows frequently);
+  LOW: the `Args` interface fields and the flag branches in the `parseArgs()` scan loop.
+
+## Repository audit baseline for the CLI tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`, tag v0.84.2). It assigns every audited production path whose exact
+  nearest tracker is this file, summarizing each fork delta; the dated history below it remains authoritative for the
+  feature narrative.
+- `packages/coding-agent/src/cli/args.ts`: `--list-tips`, the gated `--grok-neo` flag and help row (via
+  `grok-neo-gate.ts`), `--multi-session`, app-server command/usage/example rows, the `--theme` register-not-select
+  wording, and environment-help rows for `OLLAMA_API_KEY`, `OPENGATEWAY_API_KEY`, `ALIBABA_TOKEN_PLAN_API_KEY`, and
+  the `PI_RULES_*` limits.
+- `packages/coding-agent/src/cli/config-selector.ts` and `packages/coding-agent/src/cli/startup-ui.ts`: startup TUIs
+  construct `TUI` over `ProcessTerminal` with the external-stdout guard so stray startup `console.log` output is
+  hidden and redacted into the debug log (2026-07-04 entry below).
+- `packages/coding-agent/src/cli/project-trust.ts`: `toExtensionMode()` maps the `app-server` app mode to the `print`
+  extension mode instead of falling through.
+- `packages/coding-agent/src/cli/list-models.ts`: returns early when the listing signal already aborted and reads the
+  registry snapshot via `getModels()` instead of an async availability expansion.
+- `packages/coding-agent/src/cli/initial-message.ts`: `initialTitlePrompt` extraction (own entry below).
+
+### Why
+
+- The pre-backfill audit reported these paths as uncovered because the entries that describe them predate the
+  canonical four-section format (their conflict-zone headings carried suffixes) or never named the exact path. This
+  inventory closes that gap without rewriting accurate history below.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository policy enforced by repository scripts before any extension loader exists; the paths
+  themselves are pre-extension CLI surfaces.
+
+### Expected merge conflict zones
+
+- NONE for this inventory: the tracker merges to `ours` and the path list is pin-relative.
+
+## First-prompt session title capture in initial-message assembly (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/cli/initial-message.ts`: `InitialMessageResult` gained `initialTitlePrompt`.
+  `buildInitialMessage()` keeps the first CLI message available as the title prompt when the initial prompt has no
+  private context — no piped stdin, no `@file` text, no attached images — while still folding that message into the
+  initial prompt it returns. `main.ts` threads the value into interactive mode's `sessionTitlePrompt`.
+
+### Why
+
+- Auto title generation previously had no clean candidate for a plain one-message launch; reusing the first prompt
+  gives the session a meaningful title without exposing stdin or file context that may be private.
+
+### Why an extension could not handle it
+
+- The initial message is assembled before the session and its extension runner exist; the title prompt must ride the
+  same pre-session result object.
+
+### Expected merge conflict zones
+
+- LOW: the `InitialMessageResult` interface and the title-prompt derivation in `buildInitialMessage()`.
+
 ## `OPENGATEWAY_API_KEY` in `--help` environment list (2026-08-12)
 
 ### What changed
@@ -15,9 +125,6 @@
 ### Expected merge conflict zones
 
 - LOW: `args.ts` environment-variable help rows.
-
-
-||||||| parent of 30188918f (fix(coding-agent): list PI_RULES settings in help)
 
 ## PI_RULES environment settings in top-level help (2026-08-03)
 

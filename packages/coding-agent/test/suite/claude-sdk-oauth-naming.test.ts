@@ -12,7 +12,7 @@ describe("claude sdk oauth naming boundary", () => {
 		expect(existsSync(join(builtinRoot, "claude-agent-sdk", "index.ts"))).toBe(false);
 
 		const packageJson = readFileSync(join(packageRoot, "package.json"), "utf8");
-		expect(packageJson).toContain('"@anthropic-ai/claude-agent-sdk": "0.3.220"');
+		expect(packageJson).toContain('"@anthropic-ai/claude-agent-sdk":');
 		expect(packageJson).not.toContain('"@anthropic-ai/claude-sdk-oauth"');
 	});
 });

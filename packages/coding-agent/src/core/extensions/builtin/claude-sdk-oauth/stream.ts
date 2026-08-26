@@ -14,7 +14,8 @@ import { defaultExecutableDeps, resolveClaudeCodeExecutable } from "./executable
 import { buildClaudeSdkOauthQueryOptions } from "./options.ts";
 import { buildPromptBlocks, buildPromptStream } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks } from "./prompt-directive-dedupe.ts";
-import { getSdkBoundary, type SdkQueryHandle } from "./sdk-boundary.ts";
+import { refusalError } from "./refusal.ts";
+import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
 import { residentSessionMessages } from "./session-stream.ts";
 import { loadClaudeSdkOauthProviderSettingsFromDisk } from "./settings.ts";
@@ -58,13 +59,16 @@ export function streamClaudeSdkOauth(
 		else options?.signal?.addEventListener("abort", onAbort, { once: true });
 
 		try {
+			// Resident before the synchronous SDK member below (getSdkBoundary().query)
+			// reads it - see sdk-boundary.lazy.ts.
+			await loadClaudeAgentSdk();
 			const resolvedTools = resolveSdkTools(context);
 			const affinityKey = options?.affinitySessionId ?? options?.sessionId;
 			const sessionKey = options?.sessionId ? toolWatch.sessionKey(options.sessionId) : undefined;
 			if (sessionKey) toolWatch.reconcileWithContext(sessionKey, context);
 			const toolWatchNote = toolWatch.buildPromptNote(sessionKey, context, resolvedTools.customToolNameToSdk);
 			const providerSettings = loadClaudeSdkOauthProviderSettingsFromDisk(process.cwd());
-			const mcpServers = buildCustomToolServers(resolvedTools.customTools);
+			const mcpServers = await buildCustomToolServers(resolvedTools.customTools);
 			const executable = resolveClaudeCodeExecutable(defaultExecutableDeps());
 			const buildOptions = (authLane: Parameters<typeof buildClaudeSdkOauthQueryOptions>[0]["authLane"]) => {
 				const queryOptions = buildClaudeSdkOauthQueryOptions({
@@ -148,6 +152,8 @@ export function streamClaudeSdkOauth(
 					});
 
 			for await (const message of messages) {
+				const refusal = refusalError(message);
+				if (refusal) throw refusal;
 				if (!started) {
 					stream.push({ type: "start", partial: output });
 					started = true;
@@ -209,6 +215,8 @@ export function streamClaudeSdkOauth(
 				});
 			}
 		} catch (error) {
+			// no-excuse-ok: catch
+			// Provider boundary converts every thrown SDK value into the stream error contract.
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = withAuthGuidance(error, errorMessage(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });

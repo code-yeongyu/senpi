@@ -1,5 +1,739 @@
 # changes
 
+## 2026-08-26 - Record uncaught crashes in the brand debug log
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `uncaughtCrash` calls
+  `appendUncaughtCrashLog(origin, error)` immediately before `restoreInteractiveStderr()`, wrapped
+  in a `try {} catch {}` so a failed log write cannot alter the crash path. Ordering, exit code,
+  and the stderr banner are unchanged.
+- `emergencyTerminalExit()` takes a required `{ origin, error }` crash context and makes the same
+  guarded `appendUncaughtCrashLog` call before its unguarded cleanup, so the silent exit-129 path
+  also leaves a record. Both call sites supply it: the dead-terminal branch of `uncaughtCrash`
+  (`dead-terminal <origin>`) and the stdout/stderr `terminalErrorHandler` (`dead-terminal stdio
+  error`). The parameter is required rather than optional so no future caller can reintroduce a
+  silent exit with no record.
+
+### Why
+
+- `uncaughtCrash` restores the real stderr and prints the banner to the terminal, so a crash only
+  ever existed in terminal scrollback. When the terminal is closed — or when the crash *is* a
+  terminal/EIO failure — the diagnosis has zero evidence; the 2026-08-26 EIO investigation found no
+  crash record in the brand debug log for exactly this reason. Writing before the terminal handoff
+  means the record survives the very failures that destroy the scrollback.
+- The dead-terminal class is the worst case and needed `emergencyTerminalExit` covered too: it exits
+  129 with no banner *by design* (the terminal is gone), so before this the entire EIO crash class
+  — the one the investigation was chasing — produced no output anywhere at all. Verified against a
+  real detached pty: closing the master under a live session now records
+  `uncaught crash (dead-terminal stdio error)` with the full `EIO: i/o error, write` stack, where
+  the same run previously left the log file non-existent.
+
+### Why an extension could not handle it
+
+- The handler is the process-level `uncaughtException` listener the interactive mode installs, and
+  it exits the process a few statements later. No extension hook runs inside that window, and an
+  extension's own `process.on("uncaughtException")` would be appended after this prepended listener,
+  i.e. after `process.exit(1)`. `emergencyTerminalExit` is stricter still: it is reached from the
+  stdout/stderr `error` handler and exits synchronously, so nothing outside core runs at all.
+
+### Expected merge conflict zones
+
+- LOW: `uncaughtCrash` and `emergencyTerminalExit` bodies in `interactive-mode.ts` (guarded calls,
+  one import, and the `emergencyTerminalExit` signature plus its two call sites).
+
+## 2026-08-26 - Append canonical user message after compaction rebuild
+
+### What changed
+
+- `interactive-mode.ts` `renderPendingUserEcho`'s `removePending()` returns the container end when
+  the pending echo component is already gone (indexOf -1), so `replace()` appends the canonical
+  user message instead of splicing it in before the last child.
+
+### Why
+
+- The `compaction_end` handler clears the chat container and rebuilds it with the compaction
+  summary last. The stale echo handle then computed insertionIndex -1, and `splice(-1, 0, ...)`
+  inserted the canonical user message above the compaction block, inverting the session-canonical
+  order (compaction precedes the user message).
+
+### Why this lives in the fork
+
+- The optimistic pending user echo is a fork-owned chrome feature; upstream has no reconciliation
+  path to fix.
+
+### Expected merge conflict zones
+
+- LOW: `renderPendingUserEcho` internals during upstream syncs.
+
+## 2026-08-26 - Route dead-terminal uncaught crashes to the silent emergency exit
+
+### What changed
+
+- `uncaughtCrash` in `interactive-mode.ts` classifies dead-terminal errors and routes them to `emergencyTerminalExit()` (silent 129) instead of printing the `exiting due to uncaughtException` banner and exiting 1. `isDeadTerminalError` now also accepts Bun's raw `errno: 5`/`-5` shape alongside string codes.
+
+### Why
+
+- A stdin read EIO from a detached terminal reached the last-resort handler while `isShuttingDown` was false and printed a crash banner to a terminal that was already gone; the dead-terminal path already existed for write errors and now covers uncaught throws too.
+
+### Why this lives in the fork
+
+- The signal/shutdown choreography (`emergencyTerminalExit`, drain ordering) is fork-owned.
+
+### Expected merge conflict zones
+
+- LOW: `uncaughtCrash` and `isDeadTerminalError` in `interactive-mode.ts` during upstream syncs.
+
+## 2026-08-25 - Do not adopt unwired upstream settings submenu
+
+### What changed
+
+- Deliberately omit `packages/coding-agent/src/modes/interactive/components/settings-submenu.ts`; the fork uses its inline `WarningSettingsSubmenu` implementation.
+
+### Why
+
+- The upstream component has no imports in the fork and adding dead UI code would expand the runtime surface without behavior.
+
+### Why this lives in the fork
+
+- Settings submenu wiring is owned by the fork's settings selector implementation.
+
+### Expected merge conflict zones
+
+- LOW: interactive component additions during upstream syncs.
+
+## Interactive mode re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` keeps the fork chrome and
+  startup coordinator (brand/display version, loader indicator, `sanitizeTerminalLabel`, scoped
+  startup thinking, settings diagnostics) on top of upstream's rewrite.
+- `packages/coding-agent/src/modes/interactive/external-editor.ts` keeps the `launch-failed` result
+  status so EAGAIN-style spawn failures stay distinct from real editor exits.
+- `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts` keeps the fork
+  `xhigh` label ("Extended reasoning (~32k tokens or native xhigh effort)").
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` is a full-file conflict zone in
+  every sync; resolve toward the fork coordinator and re-apply upstream's incremental rendering fixes.
+
+## 2026-08-25 - Render provider abort labels without mutating messages
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` and `packages/coding-agent/src/modes/interactive/aborted-error-label.ts`: render provider watchdog labels from a copied assistant message while retaining the real provider cause in session state.
+
+### Why
+
+- UI labels must not overwrite `finalError`, transcript persistence, or replay data.
+
+### Why an extension could not handle it
+
+- Interactive message rendering owns this label-only presentation boundary.
+
+### Expected merge conflict zones
+
+- LOW: aborted assistant `message_end` rendering paths.
+
+## 2026-08-25 - resume hint uses the brand executable name
+
+### What changed
+
+- `interactive-mode.ts`: `formatResumeCommand()` starts the printed resume command with `APP_COMMAND` instead of `APP_NAME`, so quitting the TUI shows the real binary (`omo --session <id>`) when the brand display name differs.
+
+### Why
+
+- The quit hint is a copy-paste shell command. Printing the display brand (`OmO`) makes the hint fail when the executable is lowercase `omo`.
+
+### Why an extension could not handle it
+
+- The resume hint is assembled inside `InteractiveMode` teardown from session identity; extensions cannot replace that printed line.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` `formatResumeCommand()` argument list.
+## 2026-08-24 - provider aborts render with explicit provenance
+
+### What changed
+
+- `abortedErrorLabel` receives internal AgentSession abort provenance so user, system, and source-less provider failures render distinct labels in both streaming and replay/tool-result paths.
+
+### Why
+
+- Provider/watchdog exhaustion must not appear as generic `Operation aborted` or user-style retry cancellation.
+
+### Why an extension could not handle it
+
+- Abort ownership is private AgentSession state consumed by interactive rendering.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` aborted assistant rendering call sites.
+## 2026-08-24 — streaming head stays single-written while smooth reveal paces (fixes dual-write flicker)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `syncTrailingAssistantText` no longer overwrites the streaming head component while `streamingReveal.isPacingHead(head)` is true (smooth streaming on, no toolCall block in the head, component bound). The full-head write still lands when smooth streaming is off, when the head carries a toolCall (the reveal dumps full immediately there), and after the reveal stops at `message_end`. Trailing-segment logic is unchanged.
+- `packages/coding-agent/src/modes/interactive/streaming-reveal.ts`: new `isPacingHead(message)` — the single ownership query for the pacing condition.
+- `packages/coding-agent/test/tui-streaming-head-single-writer.test.ts`: regression test asserting the streaming component's painted text never shrinks before `message_end` with smooth streaming on (mutation-verified).
+
+### Why
+
+- Every assistant `message_update` wrote the head twice: `streamingReveal.setTarget(head)` painted the paced prefix, then `syncTrailingAssistantText` overwrote the component with the full head, and the next reveal tick repainted the shorter prefix. Painted text visibly vanished and burst back (lengths oscillated `[0, 116, 0, 168, ...]` in the regression capture), and the full/prefix height churn tripped the above-viewport scrollback replay, producing the vertical jumping reported after the 2026.8.22 line shipped.
+
+### Why an extension could not handle it
+
+- The streaming component, reveal pacing state, and per-update write ordering are private `InteractiveMode`/`StreamingRevealController` render state; extensions observe session events only.
+
+### Expected merge conflict zones
+
+- HIGH: `syncTrailingAssistantText` and the `message_update` handler in `packages/coding-agent/src/modes/interactive/interactive-mode.ts` (same hunk as the #1064 segment work).
+- LOW: `packages/coding-agent/src/modes/interactive/streaming-reveal.ts` around the new `isPacingHead` query.
+
+## 2026-08-22 - working dock stays painted across queued turn boundaries
+
+### What changed
+
+- `interactive-mode.ts`: `agent_end` keeps the working status mounted; the dock clears on the new core `agent_idle` event (not `agent_settled`) only when no locally buffered input is waiting. An `agentIdle` latch is set on `agent_idle` and cleared on `agent_start`. The main input loop composes the optimistic-echo `promptDisposition` so a buffered prompt that resolves `handled` (for example a `UserPromptSubmit` hook block) clears the retained dock while idle; the prompt-admission catch still clears it when a dequeued prompt throws before `agent_start`.
+- `clearStatusIndicator` measures the outgoing status container before clearing and uses that height for the regular-mode clear-on-shrink idle placeholder, capped to the terminal height. `IdleStatus` now accepts a reserved height while retaining its two-row default.
+
+### Why
+
+- Clearing the four-row working dock at `agent_end` and remounting it at the next `agent_start` moved the editor/footer between adjacent agentic turns. Clearing on the public `agent_settled` was still too early: settlement-deferred continuations (TTSR, loop-guard, goal recovery) start a turn after that event, re-bouncing the dock, and a locally buffered prompt consumed with `action: "handled"` never produced another lifecycle event to clear it. `agent_idle` fires only after deferred turns resolve with no run started, giving one race-free cleanup boundary. The old hardcoded two-row idle placeholder also allowed a four-row dock to shrink by two rows during clear-on-shrink rendering.
+
+### Why an extension could not handle it
+
+- Agent lifecycle rendering, locally buffered prompt admission, status-container ownership, and clear-on-shrink placeholders are private `InteractiveMode` state.
+
+### Expected merge conflict zones
+
+- `interactive-mode.ts` around the main input-loop disposition composition, `clearStatusIndicator`, and the `agent_start`/`agent_settled`/`agent_idle` handlers.
+- `components/status-indicator.ts` around `IdleStatus`.
+
+## 2026-08-21 — assistant text segments keep their painted position between tool cards (fixes #1064)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `syncTrailingAssistantText` no longer reabsorbs trailing assistant text into the streaming head when the next toolCall arrives. The streaming component now owns only the content through the FIRST toolCall (`assistantStreamingHeadMessage`, also used for the reveal target and the `message_start` reveal begin); every text run after the first toolCall is painted by its own persistent `AssistantMessageComponent`, keyed by its start block index, inserted before the following tool card (or appended at the end) and updated in place while live. `agent_end` and the session-rebuild path detach/clear those segments through `detachAssistantTextSegments()`; `message_end` keeps them as the final layout.
+- Removed `packages/coding-agent/src/modes/interactive/split-trailing-assistant-text.ts` (dead after the rewrite) and its `990-trailing-assistant-text` test. The trailing-below-last-card behavior that fix delivered is preserved and now covered, together with the chronological invariant, by `packages/coding-agent/test/suite/regressions/1064-assistant-text-segment-teleport.test.ts`.
+
+### Why
+
+- The split/trailing approach painted text after the last toolCall below the tool cards, then detached it and folded its text back into the streaming component — which renders ABOVE every tool card — as soon as the next toolCall arrived. Every narration/tool boundary therefore teleported a painted text block upward across a tool card, so turns with many tool calls made the transcript visibly shake up and down (field report 2026-08-21, after the 2026.8.20 line shipped). Middle segments also stayed permanently above every tool card, so even the settled layout was not chronological.
+
+### Why an extension could not handle it
+
+- The streaming component, tool-card insertion order, and per-message component ownership are private `InteractiveMode` render state. Extensions observe session events only and cannot decide where a painted component lives inside the transcript container.
+
+### Expected merge conflict zones
+
+- HIGH: `syncTrailingAssistantText`, the `message_start`/`message_update` reveal-target wiring, and the `agent_end` cleanup in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`; any upstream refactor of the streaming render path collides here.
+- LOW: the removed `split-trailing-assistant-text.ts` (fork-added file, now deleted; upstream never carried it).
+
+## 2026-08-21 - Queued input renders as waiting state, not as a sent message
+
+### What changed
+
+- `interactive-mode.ts`: `OptimisticUserEchoController.promptOptions` now keeps an optimistic pending user bubble only when its prompt's `promptDisposition` is `started`. `queued` (steer/follow-up while streaming) and `handled` dispositions unpaint the bubble, so waiting input renders exclusively through `updatePendingMessagesDisplay` (dim `Steering:`/`Follow-up:` lines + dequeue hint) until canonical delivery, matching upstream pi semantics where user messages appear only at `message_start`.
+- `interactive-mode.ts`: `queueCompactionMessage` no longer begins an optimistic echo. Compaction-queued input has no prompt lifecycle until transfer, so its echo could never be resolved by a disposition (the `deliverQueued` transfer path never fires one), leaving a phantom sent-looking message forever.
+
+### Why
+
+- The optimistic echo feature (2026-08-21 below) made prompts submitted while the agent was streaming look already sent at their submission position; the queued/waiting state disappeared and message ordering diverged from actual delivery order. Reported against omo-ai 5.0.0-0.beta.14 (senpi v2026.8.21/-2).
+
+### Why an extension could not handle it
+
+- Same seam as the original feature: pending-echo records and their reconciliation are interactive-mode internals.
+
+### Expected merge conflict zones
+
+- `interactive-mode.ts` `OptimisticUserEchoController.promptOptions` and `queueCompactionMessage`.
+
+
+## 2026-08-21 - Model selection releases the selector before the auth round trip
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `selectModelFromUi` now calls `done?.()` and `ui.requestRender()` *before* awaiting `session.setModel(model)`, instead of only after it resolves. The error path no longer double-releases.
+
+### Why
+
+- `ModelSelectorComponent.handleSelect` disposes the overlay synchronously on Enter, but the selector was only released after `setModel` resolved. `AgentSession._setModel` awaits `modelRuntime.checkAuth(provider)` as its first step, which for subscription-OAuth providers (Cursor) is a network round trip. Between Enter and that resolution the TUI held a torn-down-but-unreleased overlay with no repaint, so the screen appeared frozen on the old model while the switch was in flight.
+
+### Why an extension could not handle it
+
+- Selector lifecycle and overlay release are interactive-mode internals with no extension seam.
+
+### Expected merge conflict zones
+
+- `interactive-mode.ts` around `selectModelFromUi` (line ~6460).
+
+
+## 2026-08-21 - Optimistic pending user echo
+
+### What changed
+
+- `interactive-mode.ts`: Enter submissions now paint a TUI-local pending user bubble immediately, mark it eligible only after its own `promptDisposition` is `queued` or `started`, and replace it only when an eligible canonical user `message_start` arrives. Foreign user events are appended normally. Rejected and handled inputs unpaint their own pending bubble, and compaction queue cleanup removes only the queue records it owns.
+- `compaction-queue-transfer.ts`: queued compaction records carry the TUI-local pending echo id without entering session messages or persistence.
+- `packages/coding-agent/test/suite/optimistic-pending-user-echo.test.ts`: covers foreign user events, immediate rendering, exactly-once replacement, rejection/handled cleanup, FIFO queue reconciliation, and render-only persistence.
+
+### Why
+
+- Interactive input previously waited behind session admission gates before its user bubble appeared, creating a measured 0.45s p50 perceived submit delay. The TUI must distinguish its own accepted prompt lifecycle from extension and RPC prompts that can emit user events into the same session.
+
+### Why an extension could not handle it
+
+- Pending records must be created before AgentSession admission and reconciled with private interactive rendering at canonical `message_start`; extensions cannot identify or replace these built-in TUI components without persisting a fake message.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` submit handlers, user `message_start` reconciliation, and compaction queue reset/transfer paths.
+- `packages/coding-agent/src/modes/interactive/compaction-queue-transfer.ts` pending echo metadata.
+
+## 2026-08-20 - Resumed transcripts paint the visible tail first
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the chat transcript now uses `ProgressiveTranscriptContainer`.
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: the first frame renders a bounded tail of real message/tool components, then warms earlier components in bounded macrotask chunks and requests one exact full-history repaint.
+
+### Why
+
+- Resuming a large session eagerly Markdown-rendered every persisted component before the first useful frame. Thousands of off-screen messages could block the TUI for hundreds of milliseconds even though the user initially sees only the transcript tail.
+- Progressive hydration preserves the exact full output and component styling while moving off-screen cache warming out of the input-critical path.
+
+### Why an extension could not handle it
+
+- Initial transcript component construction, chat-container ownership, clearing, disposal, and renderer invalidation are private `InteractiveMode` lifecycle state; extensions cannot replace the built-in transcript container.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` chat-container import and constructor.
+- LOW: the new progressive transcript container is a fork-owned component.
+
+## 2026-08-20 - Trailing assistant text renders below the last tool card
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: split trailing text/thinking after the last `toolCall` onto a sibling `AssistantMessageComponent` placed after the tool cards.
+- `packages/coding-agent/src/modes/interactive/split-trailing-assistant-text.ts`: extract head (through last toolCall) vs tail (trailing text/thinking).
+
+### Why
+
+- All assistant text lived in the first `AssistantMessageComponent` above the tool stack. Text after the last `toolCall` updated that blob, so a pending eval hid the approval question.
+
+### Why an extension could not handle it
+
+- Layout of streaming assistant messages and tool cards is inside InteractiveMode; no extension hook sits between `message_update` / `message_end` and the chat container.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` `message_update` / `message_end`.
+- `packages/coding-agent/src/modes/interactive/split-trailing-assistant-text.ts`
+## 2026-08-20 - Late tool_execution_end still draws a TUI card
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: on `tool_execution_end`, create a tool execution card when `pendingTools` misses the id, then reveal and update the result.
+
+### Why
+
+- Cursor can emit `tool_execution_end` without a matching start card, so the result never appeared in the TUI.
+
+### Why an extension could not handle it
+
+- Tool-execution cards are constructed inside InteractiveMode from session events; no extension hook sits between `tool_execution_end` and the chat container.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` `tool_execution_end` case.
+
+## Large-session retry indicator cadence (2026-08-20)
+
+### What changed
+
+- Retry status indicators now reuse the existing large-session cadence policy instead of advancing their decorative spinner every 80 ms.
+- Sessions below the 1,000-entry boundary retain the existing animated retry indicator, while large sessions keep the independent one-second retry countdown visible.
+
+### Why
+
+- Every retry spinner frame requests a whole-TUI render. During provider rate-limit waits, large persisted sessions could spend an entire JavaScript core repeatedly rebuilding the transcript even though the network retry itself was sleeping.
+
+### Why an extension could not handle it
+
+- Retry lifecycle events, persisted session entry counts, status-indicator construction, and TUI render scheduling are owned by the built-in interactive runtime.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` around `showRetryStatusIndicator()`.
+- LOW: `components/status-indicator.ts` around the retry indicator constructor.
+- LOW: `interactive-tui.test.ts` around retry status cadence coverage.
+
+## Canonical interactive notice cards (2026-08-20)
+
+### What changed
+
+- Loaded-resource diagnostics, version and package updates, risky-model and high-reasoning warnings, debug-log completion, and the Earendil announcement text now render through `buildNoticeBox`.
+- Existing notice text, diagnostic severity, changelog hyperlink behavior, package lists, and the optional Earendil image remain intact.
+
+### Why
+
+- These multi-line notice cards used independent borders and foreground styling, so they diverged from the shared transcript notice background and title contract.
+
+### Why an extension could not handle it
+
+- These surfaces are constructed directly by `InteractiveMode` or its built-in announcement component; extensions cannot replace their internal TUI components after insertion.
+
+### Expected merge conflict zones
+
+- MEDIUM: `interactive-mode.ts` loaded-resource diagnostics and notification helpers; LOW: `components/earendil-announcement.ts` textual banner construction.
+
+## Trailing assistant text renders below the last tool card (2026-08-19)
+
+Text that arrives after the last `toolCall` is split onto a sibling `AssistantMessageComponent` placed after the tool cards. Approval questions no longer hide above a pending eval stack.
+
+Conflict zone: `interactive-mode.ts` `message_update` / `message_end`.
+
+## Interactive chrome, queued-input recovery, and smooth-streaming settings after the 59a71b23 pin (2026-08-19)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` stays
+  divergent from upstream pin
+  `59a71b235dadb4ad0d67557a8abb0aaa093e68b4`. It keeps the fork's
+  compaction queue recovery: on `compaction_end` a completed compaction
+  flushes the queue, a `willRetry` outcome defers admission and reports
+  "will send with the next turn" with a `compaction_queue_deferred` session
+  log, and a compaction that neither completed nor will retry restores the
+  held messages into the editor (`restoreQueuedMessagesToEditor()`) with a
+  `compaction_queue_restored` log — where upstream only clears the queue.
+  Image-bearing submissions during compaction are still dropped with a
+  visible status because the queue carries text only.
+- `interactive-mode.ts` also keeps the pluggable chrome
+  (`InteractiveChrome`/`GrokChrome`, chrome-owned editor, footer, welcome
+  content and root arrangement), the `StreamingRevealController` smooth
+  streaming path with `applySmoothStreamingRenderFps()`, the tips runtime
+  (`TIP_DEFINITIONS`, startup/working tips, `recordTipShown()`), the
+  shimmering working-status and tool-hook status rows with `APP_TITLE`
+  terminal titles, keybindings-file editing, and extension notice boxes.
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`
+  keeps the fork's `Smooth streaming` and `Streaming fps` rows in
+  `SettingsConfig`/`SettingsCallbacks` (with the 30/60/90/120 value list and
+  `onSmoothStreamingChange`/`onSmoothStreamingFpsChange` dispatch) and the
+  `xhigh` thinking description that names native xhigh effort, both absent
+  from the new pinned tree.
+
+### Why
+
+- Queued steering input is user text that must never be silently discarded
+  when compaction fails or retries; the chrome, tips, smooth streaming, and
+  status animation are fork product surfaces, and the settings selector must
+  expose the fork-only settings that back them.
+
+### Why an extension could not handle it
+
+- The compaction queue, chrome selection, and streaming reveal are private
+  `InteractiveMode` state driven by session events; the settings selector is
+  a built-in TUI component wired directly to `SettingsManager`.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `compaction_end` case in the session-event switch of
+  `interactive-mode.ts`, and its constructor/render wiring where chrome and
+  streaming reveal are installed.
+- LOW: the settings row list and switch arms in `settings-selector.ts`.
+
+## Pasted image markers keep canonical numbering and survive undo with their payloads (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`:
+  `reconcilePendingImages()` now clears and refills the SAME `pendingImages`
+  map instead of reassigning it, so `handleClipboardPaste`'s by-reference handoff
+  into `attachClipboardImage` can never write into an orphaned map;
+  `subscribeImageMarkers()` wires the editor's new
+  `snapshotAttachmentState`/`restoreAttachmentState` hooks so undo restores
+  the payload map alongside the marker text; `queueCompactionSubmission()`
+  (called from the submit handler's steer branch and `handleFollowUp`)
+  consumes image-bearing submissions during compaction with a visible drop
+  status and strips their dead literal markers from the queued text.
+- Regression coverage: `test/interactive-mode-clipboard-paste.test.ts` and
+  `test/interactive-mode-image-submission.test.ts` now drive a REAL pi-tui
+  `Editor` through the REAL paste/notify/submit path (two in-order pastes,
+  paste-before-marker, delete+undo payload restore, compaction drops).
+
+### Why
+
+- The second paste in a turn destroyed its own image:
+  `insertImageMarker()` fired `onImageMarkersChanged` synchronously, the
+  reconciler replaced the map's identity, and the subsequent
+  `pendingImages.set(id, ...)` wrote into the orphaned map - shipping
+  `[Image #1][Image #2]` with one image. An out-of-order paste (Home then
+  paste) shipped `[Image #2][Image #1]` and mispaired the survivor, so
+  `look_at("[Image #1]")` resolved to the wrong attachment or threw. Undo
+  after a whole-marker delete restored the marker text but not its payload,
+  permanently destroying that image. Alt+Enter during compaction consumed and
+  silently discarded pasted images.
+
+### Why an extension could not handle it
+
+- `pendingImages`, the marker notification wiring, and the compaction queue
+  are private `InteractiveMode` composer state; extensions receive neither the
+  marker-id stream nor a hook into the submit/compaction decision points.
+
+### Expected merge conflict zones
+
+- MEDIUM: `reconcilePendingImages()` and `subscribeImageMarkers()` in
+  `interactive-mode.ts` (adjacent to the paste handler wiring), and
+  `queueCompactionSubmission()` next to `queueCompactionMessage()`.
+
+## Native Cursor login refreshes the CLI fallback lane in the same session (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`:
+  `completeProviderAuthentication()` refreshes both `cursor` and
+  `cursor-cli-oauth` after native Cursor login. Every other provider remains
+  scoped to its own id, and the existing network/abort/warning behavior is
+  unchanged.
+
+### Why
+
+- The fallback lane now bootstraps automatically from the native Cursor OAuth
+  credential. Refreshing only `cursor` after `/login cursor` left the CLI
+  provider unavailable until a later model-availability refresh or restart.
+
+### Why an extension could not handle it
+
+- The post-login refresh controller and provider list are private
+  `InteractiveMode` lifecycle state; the fallback extension receives no
+  callback that can extend the native provider's completed login refresh.
+
+### Expected merge conflict zones
+
+- LOW: the provider-list construction immediately before the existing
+  `modelRuntime.refresh()` call.
+
+## Extension widget updates preserve stacking order (2026-08-18)
+
+### What changed
+
+- `setExtensionWidget()` in `interactive-mode.ts` no longer deletes and re-appends the updated key on every call. It now removes the key only from the OTHER placement map, disposes the replaced component, and writes through `Map.set`, which keeps an existing key at its insertion position. Removal (`content === undefined`) still deletes from both maps, and a placement change still appends the key at the end of the new placement.
+- Regression coverage: `test/interactive-mode-widget-order.test.ts` drives the real `setExtensionWidget` / `renderWidgets` / `renderWidgetContainer` methods and pins that belowEditor and aboveEditor stacking order survives content updates, removals, and placement moves.
+
+### Why
+
+- Every widget refresh used to move the refreshed key to the end of its placement map, so two live widgets with independent refresh timers swapped vertical positions on every paint. With omo-senpi's `omo-task` (250 ms live refresh) and `omo-dag` (1 s live refresh) widgets both active, the below-editor region visibly bounced up and down several times per second.
+
+### Why this cannot be expressed externally
+
+- The stacking maps and `renderWidgets()` are private core state; extensions can only call `setWidget`, not control where an update lands.
+
+### Expected merge conflict zones
+
+- LOW: the body of `setExtensionWidget()` in `interactive-mode.ts` only.
+
+## Post-login provider catalog refresh explicitly allows network discovery (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`:
+  `completeProviderAuthentication()` now passes `allowNetwork: true` to its
+  existing provider-scoped, 15-second background refresh after successful
+  OAuth/API-key login.
+
+### Why
+
+- Ordinary interactive runtimes default model networking off. The post-login
+  refresh inherited that default, so dynamic providers such as native Cursor
+  stored valid credentials but restored only cached models instead of
+  fetching the authenticated account catalog immediately.
+
+### Why an extension could not handle it
+
+- Login completion, its bounded refresh controller, and the status/warning UI
+  are private `InteractiveMode` lifecycle code. Provider extensions cannot
+  alter the options on the core refresh that runs after their login returns.
+
+### Expected merge conflict zones
+
+- LOW: the single `modelRuntime.refresh()` option object inside
+  `completeProviderAuthentication()`.
+
+## Repository-wide changes.md audit backfill for interactive rendering, selectors, and editor surfaces (2026-08-17)
+
+### What changed
+
+- Backfill from the repository-wide changes.md audit (pin `914cf147`, tag v0.84.2): this entry names every upstream-owned interactive production path that still diverges from the pinned upstream tree. Detailed behavioral history stays in the dated entries of this file; the entries added by this backfill carry the rest.
+- Transcript renderers: `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` (incremental descriptor reconciliation, per-section thinking-duration headers, compact provider-native web-search rendering, descriptor extraction into `assistant-render-descriptors.ts`), `packages/coding-agent/src/modes/interactive/components/tool-execution.ts` (lifecycle/renderer/images split, todo-strike reveal, animation teardown), `packages/coding-agent/src/modes/interactive/components/bash-execution.ts` (bash syntax highlighting in the command header), and `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts` (OpenAI remote compaction details plus display-only escape sanitization).
+- Selectors: `packages/coding-agent/src/modes/interactive/components/model-selector.ts` (ranked search with favorites-first partition and frozen favorite ordering), `packages/coding-agent/src/modes/interactive/components/extension-selector.ts` (windowed option lists), `packages/coding-agent/src/modes/interactive/components/settings-selector.ts` (smooth-streaming and streaming-fps controls), `packages/coding-agent/src/modes/interactive/components/status-indicator.ts` (bounded single-row compaction progress with the compact-label collapse), `packages/coding-agent/src/modes/interactive/components/tree-selector.ts` (providerNative content blocks count as non-empty text), `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts` (extended xhigh wording), and `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts` (still consumed directly for scoped-model configuration; its components-barrel export moved to the favorites selector and the residual diff is comment/format churn).
+- Editor and footer surfaces: `packages/coding-agent/src/modes/interactive/components/custom-editor.ts` (prompt marker and padding floor), `packages/coding-agent/src/modes/interactive/components/diff.ts` (intra-line highlighting with the single-span fast path), `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts` (`escape` displays as `esc`), `packages/coding-agent/src/modes/interactive/components/footer.ts` (anchor-pinned width ladder, fast-mode glyph, abbreviated tokens; OmO badge removed), `packages/coding-agent/src/modes/interactive/components/index.ts` (exports `FavoriteModelsSelectorComponent`, drops `ScopedModelsSelectorComponent`), `packages/coding-agent/src/modes/interactive/external-editor.ts` (launch-failure discrimination plus the `editFileInExternalEditor()` seam), and `packages/coding-agent/src/modes/interactive/theme/theme.ts` (grok-night/grok-day built-in themes, theme proxy through `Reflect.get`).
+
+### Why
+
+- Merges resolve tracker files to `ours`, so every divergent upstream-owned path needs an entry in its exact nearest tracker that names it; the audit and the next upstream sync read this inventory instead of silently dropping fork behavior.
+
+### Why an extension could not handle it
+
+- These files are the built-in interactive renderer, selector, editor, and theme surfaces themselves. Extension hooks compose around them but cannot replace their private render paths, selector callbacks, or settings writes.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`, `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`, `packages/coding-agent/src/modes/interactive/components/footer.ts`, and `packages/coding-agent/src/modes/interactive/components/model-selector.ts` (heavily rewritten render paths).
+- LOW: the remaining component files, `packages/coding-agent/src/modes/interactive/external-editor.ts`, and the builtin-theme loading in `packages/coding-agent/src/modes/interactive/theme/theme.ts`.
+
+## Custom editor keeps its prompt marker and configured padding (2026-08-17)
+
+Landed 2026-08-03 (commits 5573069b1 and ce53fc60d).
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/custom-editor.ts`: the composer reserves a prompt gutter of at least two columns (`promptPaddingX = max(2, configured)`) while `getPaddingX()`/`setPaddingX()` report and accept the configured value, so `paddingX: 0` no longer erases the gutter and custom editors keep the padding they were handed (companion to the `paddingX` propagation on pi-tui's `EditorComponent`).
+- `render()` draws the themed `❯` prompt marker on the first content row and keeps it there when the draft wraps; the marker is skipped only for the history-scroll `↑` row and terminals narrower than five columns.
+
+### Why
+
+- A small or zero `paddingX` collapsed the prompt gutter entirely, and the chevron drifted off the first row on wrapped drafts, leaving the composer without a stable prompt anchor.
+
+### Why an extension could not handle it
+
+- The prompt marker and padding are drawn inside the built-in `CustomEditor` render override; extensions supply editor components but cannot re-anchor the default composer's gutter.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/components/custom-editor.ts` constructor, padding accessors, and `render()` override.
+
+## Single-span fast path for intra-line diffs (2026-08-17)
+
+Landed 2026-06-16 (commit 1da1ab5e4).
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/diff.ts`: `renderIntraLineDiff()` tries `renderIntraLineDiffFastPath()` first — identical lines return immediately, and a single replacement span (found by trimming the common prefix and suffix) renders directly as prefix plus inverse removed/added text — falling back to the exported `renderIntraLineDiffWithDiffWords()` (`Diff.diffWords`) only for multi-span edits. `LONG_LINE_FAST_PATH_LIMIT` (500) is exported for the bench and focused tests.
+- Coverage: `packages/coding-agent/test/diff-intraline-fastpath.test.ts`, `packages/coding-agent/test/diff-intraline-no-diffwords.test.ts`, and `packages/coding-agent/bench/word-diff.ts` against the pinned `bench/baseline/word-diff-baseline.json`.
+
+### Why
+
+- Most edit-tool diffs change one span per line; routing every line through `diffWords` dominated diff rendering time for large edits.
+
+### Why an extension could not handle it
+
+- Intra-line highlighting is computed by the built-in diff component before any extension result renderer sees the tool output.
+
+### Expected merge conflict zones
+
+- LOW/MEDIUM: `packages/coding-agent/src/modes/interactive/components/diff.ts` around the fast-path helpers and the exported seams.
+
+## Key hints display `escape` as `esc` (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts`: `keyText()`/`keyHint()` resolve display names through `KEY_DISPLAY_ALIASES` (`escape` → `esc`) before the existing macOS `alt` → `option` rule, so hints read `esc to cancel` while bindings keep matching the canonical `escape` id.
+
+### Why
+
+- The spelled-out `escape` widened single-row hints (compaction cancel hints, selector footers) beyond the key users actually press.
+
+### Why an extension could not handle it
+
+- Key display formatting is the shared helper every built-in hint row renders through; the alias must stay consistent across all of them.
+
+### Expected merge conflict zones
+
+- LOW: the `KEY_DISPLAY_ALIASES` map and `formatKeyPart()` in `packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts`.
+
+## Model selector search text helper removed (2026-08-17)
+
+Landed 2026-08-09 (commit 444f900d0).
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/model-search.ts`: `getModelSelectorSearchText()` is deleted. `/model` search ranks through `rankModelSearchItems` (see "model selector search ranking and frozen ordering"), which left the selector-specific concatenated-string builder with no consumers; `getModelSearchText()` remains for command autocomplete.
+
+### Why
+
+- Dead helpers in the shared search module invite the next editor to rank through the retired path that mis-ordered `opus` queries.
+
+### Why an extension could not handle it
+
+- The helper was private interactive-mode search plumbing; no extension consumed it.
+
+### Expected merge conflict zones
+
+- LOW: the deletion site in `packages/coding-agent/src/modes/interactive/model-search.ts`; an upstream sync restoring it conflicts trivially.
+
+## Renderer-only hosts: startup guards the default editor and stop defers exit output (2026-08-17)
+
+Landed 2026-08-16 (commit 03f46f57e, shipped in PR #892; see the focus-routing entry in `packages/tui/src/changes.md`).
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: startup wires the `app.clear`, Ctrl-D, and startup-submit handlers on `defaultEditor` only when a base editor exists, because renderer-only lifecycle hosts may mount the chrome tree without constructing one. `stop(fullscreenExitOutput?)` no longer eagerly reads the fullscreen-exit setting at default-parameter evaluation; the value resolves as `fullscreenExitOutput ?? this.settingsManager.getFullscreenExitOutput()` when the TUI is actually stopped.
+
+### Why
+
+- The v0.84.2 sync introduced renderer-only hosts; assuming a default editor and reading settings eagerly broke both paths outside the classic editor lifecycle.
+
+### Why an extension could not handle it
+
+- Startup wiring and `stop()` are `InteractiveMode` lifecycle internals that run before and after extension hooks.
+
+### Expected merge conflict zones
+
+- LOW: the `defaultEditor` guard block and the `stop()` signature/default resolution in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
+
+## OmO Native footer badge removed (2026-08-17)
+
+Landed 2026-08-10 (commit c416335e9). Supersedes every copy of "Footer prepends (OmO Native) badge when the OMO native stack is active (2026-07-28)" in this file.
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the `(OmO Native)` anchor segment and its `footerData.isOmoNative()` feed are gone; the footer renders no OmO-specific coupling. The width-elision ladder, fast-mode glyph, and the rest of the fork footer behavior are unchanged.
+- The supporting `detectOmoNativeInstall()` module and its tests were deleted with the badge (the core-side data-provider cleanup is tracked by `packages/coding-agent/src/core/changes.md`).
+
+### Why
+
+- The badge coupled the brand-neutral footer to OmO-specific install detection that no longer carries product meaning; removing it deletes the detection path instead of leaving it dark.
+
+### Why an extension could not handle it
+
+- Footer segment composition is built into the interactive footer renderer; an extension cannot remove a built-in anchor segment.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/components/footer.ts` around the (already removed) anchor construction.
+
+## Grok slash-menu colors resolve through chrome tokens (2026-08-17)
+
+Landed 2026-07-26 (commit ed353b365).
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/grok/chrome-tokens.ts` and `packages/coding-agent/src/modes/interactive/grok/chrome.ts`: the grok chrome colors slash-menu selection prefixes, primary text, and descriptions through chrome tokens backed by the active theme, composing each row via the pi-tui `SelectListTheme.renderRow` seam (see the renderRow entry in `packages/tui/src/changes.md`) instead of inline hex literals.
+- Coverage: `packages/coding-agent/test/grok/chrome.test.ts` pins the token-resolved rows.
+
+### Why
+
+- The mixed command/skill picker needed grok-night and grok-day to color the same rows differently without forking the shared select list.
+
+### Why an extension could not handle it
+
+- Chrome tokens are consumed inside the built-in interactive chrome strategy before extension UI contributions are composed.
+
+### Expected merge conflict zones
+
+- LOW: the token additions in `packages/coding-agent/src/modes/interactive/grok/chrome-tokens.ts` and the composer wiring in `packages/coding-agent/src/modes/interactive/grok/chrome.ts` (fork-only directory).
+
 ## Custom-editor Enter submissions are no longer dropped (2026-08-16)
 
 ### What changed
@@ -566,6 +1300,10 @@ Supersedes "Favorite patterns survive a persist while providers are unavailable 
 
 ## Footer prepends (OmO Native) badge when the OMO native stack is active (2026-07-28)
 
+> SUPERSEDED by "OmO Native footer badge removed (2026-08-17)". Retained for history: the `(OmO Native)` anchor
+> segment, its `footerData.isOmoNative()` feed, and `detectOmoNativeInstall()` were removed on 2026-08-10 (commit
+> c416335e9), so this badge no longer renders. The width-elision ladder it participated in is unchanged.
+
 ### What changed
 
 - `components/footer.ts`: `render()` prepends an `(OmO Native)` anchor segment (colored `success`) as the leftmost footer element when `footerData.isOmoNative()` returns true, before pwd and branch. The badge participates in the existing width-elision ladder as an anchor (never dropped, only elided with pwd when space is exhausted).
@@ -792,6 +1530,10 @@ The tip line was teaching a small slice of the product while most of the surface
 
 ## Footer prepends (OmO Native) badge when the OMO native stack is active (2026-07-28)
 
+> SUPERSEDED by "OmO Native footer badge removed (2026-08-17)". Retained for history: the `(OmO Native)` anchor
+> segment, its `footerData.isOmoNative()` feed, and `detectOmoNativeInstall()` were removed on 2026-08-10 (commit
+> c416335e9), so this badge no longer renders. The width-elision ladder it participated in is unchanged.
+
 ### What changed
 
 - `components/footer.ts`: `render()` prepends an `(OmO Native)` anchor segment (colored `success`) as the leftmost footer element when `footerData.isOmoNative()` returns true, before pwd and branch. The badge participates in the existing width-elision ladder as an anchor (never dropped, only elided with pwd when space is exhausted).
@@ -961,6 +1703,10 @@ The tip line was teaching a small slice of the product while most of the surface
 ### Expected merge conflict zones
 
 ## Footer prepends (OmO Native) badge when the OMO native stack is active (2026-07-28)
+
+> SUPERSEDED by "OmO Native footer badge removed (2026-08-17)". Retained for history: the `(OmO Native)` anchor
+> segment, its `footerData.isOmoNative()` feed, and `detectOmoNativeInstall()` were removed on 2026-08-10 (commit
+> c416335e9), so this badge no longer renders. The width-elision ladder it participated in is unchanged.
 
 ### What changed
 
@@ -1915,3 +2661,55 @@ The tip line was teaching a small slice of the product while most of the surface
 - Changed `src/modes/interactive/interactive-mode.ts` and `compaction-queue-transfer.ts` so every terminal `compaction_end` flushes the TUI compaction queue: accepted compactions keep prompt-admission delivery, while failed/rejected/aborted ones route queued input through the native steer/followUp queues (`deferAdmission`) with a visible held-count status and a `compaction_queue_deferred` session-log event. Previously the queue was flushed only on success, so messages typed during a failing compaction were silently parked forever and lost on session switch (field report 2026-07-30).
 - This was changed in core UI because the compaction queue and `compaction_end` handling are internal `InteractiveMode` state; extensions cannot observe or drain that queue.
 - Expected merge-conflict zone on upstream sync: the `compaction_end` handler and `flushCompactionQueue()` in `src/modes/interactive/interactive-mode.ts`, plus `compaction-queue-transfer.ts` transfer options.
+
+## Pasted clipboard images ride the submission channel as attachments (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleClipboardPaste()` now attaches the pasted image instead of inserting its temp path. When the editor is image-aware it calls `insertImageMarker()`, stores the processed bytes in a `pendingImages` map keyed by marker id, and keeps that map aligned with the visible `[Image #N]` numbers through `onImageMarkersChanged` (`reconcilePendingImages`). On submit, `takeSubmissionImages()` reads only the submitted text plus `pendingImages` (never live editor state) to build the ordered `images: ImageContent[]` carried on the user message, with a pre-resolved path for flows whose `setText("")` prune chain would otherwise destroy the payloads before resolution.
+- `packages/coding-agent/src/modes/interactive/editor-paste-transfer.ts`: `transferEditorContent()` now moves the image-marker registry snapshot alongside the text and paste state, returns `{ imageMarkersTransferred }`, and strips `[Image #N]` markers (collapsing leftover whitespace) when the destination editor cannot own them, so the caller can drop the orphaned payloads instead of shipping a dead literal marker with a live attachment behind it.
+
+### Why
+
+- Inserting the raw `pi-clipboard-*.png` path leaked local temp paths into the composer and the transcript, and nothing carried the image bytes to the model. Markers plus a keyed payload map let one user turn carry both text and image parts in reading order.
+
+### Why an extension could not handle it
+
+- The submission pipeline, the editor wiring, and the pending-payload lifecycle are private `InteractiveMode` state; an extension receives no callback that can attach bytes to a submitted user message or re-key payloads when markers are renumbered.
+
+### Expected merge conflict zones
+
+- MEDIUM: the paste handler, submit path, and editor wiring in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
+- LOW: `packages/coding-agent/src/modes/interactive/editor-paste-transfer.ts` (small transfer helper, additive return value).
+
+## 2026-08-20 — render-stall fixes: mode-switch detach + reload-scoped extension UI reset
+
+- `switchTuiMode()` now moves components to the new renderer with
+  `detachAll()` instead of `clear()`. Clearing disposed the live components
+  (tool spinners, reveals, extension widgets) and remounted the dead
+  instances, killing every interval they owned: the TUI froze until an input
+  event forced a frame. Regression: `test/interactive-tui.test.ts`
+  ("switchTuiMode component lifecycle").
+- `handleReloadCommand()` resets extension UI inside reload()'s
+  `beforeSessionStart` callback instead of up front, so a vetoed or failed
+  reload no longer destroys live extension footers/widgets/tickers.
+  Regression: `test/interactive-tui.test.ts` ("handleReloadCommand extension
+  UI lifecycle").
+
+## 2026-08-25 - reject upstream Radius interactive sharing surface
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-share.ts`: intentionally absent from Senpi; the upstream Radius session-share surface is rejected under the fork sharing policy.
+
+### Why
+
+- Senpi retains the fork's gist-based `/share` flow and `pi.dev` viewer rather than introducing Radius links.
+
+### Why an extension could not handle it
+
+- Interactive sharing command ownership and product policy are implemented in the core interactive mode, before an extension can replace the share surface.
+
+### Expected merge conflict zones
+
+- NONE: the upstream-only Radius session-share artifact remains excluded from the fork tree.

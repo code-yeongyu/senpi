@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { defineTool } from "../../../types.ts";
 
-import { htmlToMarkdown, htmlToText } from "./content.ts";
+import { htmlToMarkdown, htmlToText } from "./content.lazy.ts";
 import { clampTimeout, fetchUrl, type WebfetchFormat } from "./fetcher.ts";
 
 const WEBFETCH_FORMATS = ["markdown", "text", "html"] as const;
@@ -129,10 +129,10 @@ export const webfetch = defineTool<typeof Params, WebfetchRenderDetails>({
 		let converted = false;
 
 		if (isHtml && format === "markdown") {
-			text = htmlToMarkdown(raw, fetched.url);
+			text = await htmlToMarkdown(raw, fetched.url);
 			converted = true;
 		} else if (isHtml && format === "text") {
-			text = htmlToText(raw, fetched.url);
+			text = await htmlToText(raw, fetched.url);
 			converted = true;
 		}
 

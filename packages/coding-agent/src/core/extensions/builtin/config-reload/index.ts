@@ -99,6 +99,7 @@ type PendingChange = {
 
 type ReloadHandoff = {
 	readonly hashesAtRequest: ReadonlyMap<string, string>;
+	readonly settingsContentsAtRequest: ReadonlyMap<string, string>;
 	readonly requestedAt: number;
 	readonly changes: readonly { readonly registrationId: string; readonly paths: readonly string[] }[];
 };
@@ -172,7 +173,6 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	let activeTargets: ActiveTarget[] = [];
 	let currentContext: ExtensionContext | undefined;
 	let started = false;
-	let tornDown = false;
 	let reloadInFlight = false;
 	let deferredNoticeShown = false;
 	let unavailableReloadLogged = false;
@@ -181,8 +181,12 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	const vetoDeferral = new ReloadVetoDeferral();
 	let changeChain: Promise<void> = Promise.resolve();
 
+	// The engine goes inert the moment close() is called; its unsubscribe loop can
+	// take seconds per watcher, and session_shutdown is awaited by the reload flow.
 	const closeWatchers = (): void => {
-		engine?.close();
+		engine?.close().catch((error: unknown) => {
+			logger.error("watcher_error", { path: "watcher teardown", message: errorMessage(error) });
+		});
 		engine = undefined;
 		activeTargets = [];
 	};
@@ -386,24 +390,23 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		const changes = pendingChanges(pending);
 		const paths = uniquePaths(changes.flatMap((change) => change.paths));
 		reloadInFlight = true;
-		tornDown = false;
 		reloadHandoffs.set(handoffKey(ctx), {
 			hashesAtRequest: engine?.getBaselineSnapshot() ?? new Map<string, string>(),
+			settingsContentsAtRequest: new Map(settingsContents),
 			requestedAt: Date.now(),
 			changes,
 		});
 		ctx.ui.notify(`Hot-reloading: ${formatPaths(paths)}`, "info");
 		logger.info("reload_requested", { reason: "config changed", paths });
 
+		const handoffKeyForReload = handoffKey(ctx);
 		try {
 			await ctx.requestReload();
-			if (!tornDown) {
-				reloadInFlight = false;
-				reloadHandoffs.delete(handoffKey(ctx));
-			}
+			reloadInFlight = false;
+			reloadHandoffs.delete(handoffKeyForReload);
 		} catch (error) {
 			reloadInFlight = false;
-			reloadHandoffs.delete(handoffKey(ctx));
+			reloadHandoffs.delete(handoffKeyForReload);
 			logger.error("watcher_error", { path: "reload", message: errorMessage(error) });
 		}
 	};
@@ -442,6 +445,8 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 
 		const changedPaths = compareSnapshots(handoff.hashesAtRequest, engine?.getBaselineSnapshot() ?? new Map());
 		if (changedPaths.length > 0) {
+			settingsContents.clear();
+			for (const [path, content] of handoff.settingsContentsAtRequest) settingsContents.set(path, content);
 			enqueueChange({ changedPaths, created: [], deleted: [] });
 			await changeChain;
 		}
@@ -451,7 +456,6 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	eventUnsubscribes.push(pi.events.on(CONFIG_WATCH_UNREGISTER, handleUnregistration));
 
 	pi.on("session_start", async (event, ctx) => {
-		tornDown = false;
 		started = true;
 		currentContext = ctx;
 		rebuildWatchers(ctx);
@@ -472,7 +476,6 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	});
 	pi.on("session_shutdown", (event) => {
 		const closingContext = currentContext;
-		tornDown = true;
 		started = false;
 		currentContext = undefined;
 		closeWatchers();
@@ -887,25 +890,26 @@ function registrationFingerprint(registration: ConfigWatchRegistration): string 
 	});
 }
 
-function isProtectedAgentPath(candidate: string, agentDir: string): boolean {
-	const authPath = resolve(agentDir, "auth.json");
-	const sessionsPath = resolve(agentDir, "sessions");
-	const logsPath = resolve(agentDir, "logs");
-	return isWithin(candidate, authPath) || isWithin(candidate, sessionsPath) || isWithin(candidate, logsPath);
-}
-
-// A watch rooted exactly at the agent directory is safe when every filter is
-// root-anchored (a leading `/` matches only an immediate child of the watch root,
-// never a nested path) and none of those anchored names resolves into a protected
-// path. Unfiltered targets, unanchored filters, and any protected filter stay
-// fail-closed.
-function isSafeFilteredAgentDirTarget(target: ConfigWatchTarget, resolvedPath: string, agentDir: string): boolean {
-	if (target.kind !== "dir" || resolvedPath !== resolve(agentDir)) return false;
+// A directory target that covers a protected path is safe when every filter is
+// root-anchored (a leading `/` matches only a path relative to the watch root,
+// never a suffix at any depth) and none of those anchored paths intersects a
+// protected path in either direction. Unfiltered targets, unanchored filters,
+// and any protected filter stay fail-closed.
+function isSafeFilteredProtectedTarget(
+	target: ConfigWatchTarget,
+	resolvedPath: string,
+	protectedPaths: readonly string[],
+): boolean {
+	if (target.kind !== "dir") return false;
+	if (protectedPaths.some((protectedPath) => isWithin(resolvedPath, protectedPath))) return false;
 	const filterGlobs = target.filterGlobs;
 	if (!filterGlobs || filterGlobs.length === 0) return false;
 	return filterGlobs.every((glob) => {
 		if (!glob.startsWith("/")) return false;
-		return !isProtectedAgentPath(resolve(resolvedPath, glob.slice(1)), agentDir);
+		const filteredPath = resolve(resolvedPath, glob.slice(1));
+		return protectedPaths.every(
+			(protectedPath) => !isWithin(filteredPath, protectedPath) && !isWithin(protectedPath, filteredPath),
+		);
 	});
 }
 
@@ -914,18 +918,11 @@ function registrationHasRestrictedTarget(
 	cwd: string,
 	agentDir: string,
 ): boolean {
-	const authPath = resolve(agentDir, "auth.json");
-	const sessionsPath = resolve(agentDir, "sessions");
-	const logsPath = resolve(agentDir, "logs");
+	const protectedPaths = [resolve(agentDir, "auth.json"), resolve(agentDir, "sessions"), resolve(agentDir, "logs")];
 	return registration.targets.some((target) => {
 		const path = resolvePath(target.path, cwd, { trim: true });
-		if (isSafeFilteredAgentDirTarget(target, path, agentDir)) return false;
-		return (
-			isWithin(path, authPath) ||
-			isWithin(authPath, path) ||
-			isWithin(path, sessionsPath) ||
-			isWithin(path, logsPath)
-		);
+		if (isSafeFilteredProtectedTarget(target, path, protectedPaths)) return false;
+		return protectedPaths.some((protectedPath) => isWithin(path, protectedPath) || isWithin(protectedPath, path));
 	});
 }
 

@@ -83,7 +83,7 @@ export function probeWebSocket(
 			}
 			finish(readInitializeProbe(data.toString("utf8")));
 		});
-		socket.once("error", () => finish(undefined));
+		socket.on("error", () => finish(undefined));
 		socket.once("close", () => finish(undefined));
 	});
 }

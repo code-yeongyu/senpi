@@ -1076,18 +1076,17 @@ export default function(pi: ExtensionAPI) {
 		it("should prefer explicit CLI extensions over discovered extensions when commands and tools conflict", async () => {
 			const globalExtDir = join(agentDir, "extensions");
 			mkdirSync(globalExtDir, { recursive: true });
-			const explicitExtPath = join(tempDir, "explicit-extension.ts");
+			const globalExtPath = join(globalExtDir, "global.js");
+			const explicitExtPath = join(tempDir, "explicit-extension.js");
 
 			writeFileSync(
-				join(globalExtDir, "global.ts"),
+				globalExtPath,
 				`
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-export default function(pi: ExtensionAPI) {
+export default function(pi) {
   pi.registerTool({
     name: "duplicate-tool",
     description: "global tool",
-    parameters: Type.Object({}),
+    parameters: { type: "object", properties: {} },
     execute: async () => ({ result: "global" }),
   });
   pi.registerCommand("deploy", {
@@ -1100,13 +1099,11 @@ export default function(pi: ExtensionAPI) {
 			writeFileSync(
 				explicitExtPath,
 				`
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-export default function(pi: ExtensionAPI) {
+export default function(pi) {
   pi.registerTool({
     name: "duplicate-tool",
     description: "explicit tool",
-    parameters: Type.Object({}),
+    parameters: { type: "object", properties: {} },
     execute: async () => ({ result: "explicit" }),
   });
   pi.registerCommand("deploy", {
@@ -1123,23 +1120,15 @@ export default function(pi: ExtensionAPI) {
 			});
 			await loader.reload();
 
-			const extensionsResult = loader.getExtensions();
-			expect(nonBuiltinExtensions(extensionsResult.extensions)[0]?.path).toBe(explicitExtPath);
-
-			const sessionManager = SessionManager.inMemory();
-			const authStorage = AuthStorage.create(join(tempDir, "auth-explicit.json"));
-			const modelRegistry = await createModelRegistry(authStorage);
-			const runner = new ExtensionRunner(
-				extensionsResult.extensions,
-				extensionsResult.runtime,
-				cwd,
-				sessionManager,
-				modelRegistry,
-			);
-
-			expect(runner.getCommand("deploy:1")?.description).toBe("explicit command");
-			expect(runner.getCommand("deploy:2")?.description).toBe("global command");
-			expect(runner.getToolDefinition("duplicate-tool")?.description).toBe("explicit tool");
+			const loadedExtensions = nonBuiltinExtensions(loader.getExtensions().extensions);
+			expect(loadedExtensions.map((extension) => extension.path)).toEqual([explicitExtPath, globalExtPath]);
+			expect(loadedExtensions.map((extension) => extension.commands.get("deploy")?.description)).toEqual([
+				"explicit command",
+				"global command",
+			]);
+			expect(
+				loadedExtensions.map((extension) => extension.tools.get("duplicate-tool")?.definition.description),
+			).toEqual(["explicit tool", "global tool"]);
 		});
 	});
 

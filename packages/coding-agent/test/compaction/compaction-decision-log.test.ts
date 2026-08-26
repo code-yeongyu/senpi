@@ -4,6 +4,9 @@ import {
 	type CompactionLoggerEvent,
 	createCompactionLogger,
 } from "../../src/core/extensions/builtin/compaction/log.ts";
+import { createTempAgentDir } from "../support/temp-agent-dir.ts";
+
+const LOG_DIR = createTempAgentDir("senpi-compaction-decision-log-");
 
 const EVENTS = [
 	"speculative_started",
@@ -68,7 +71,7 @@ describe("compaction decision log", () => {
 		["summary_failed", { origin: "speculative", requestId: "req-14", reason: "transient", durationMs: 77 }],
 	] as const)("Given %s When logging Then it emits allowlisted fields only", (event, data) => {
 		const sink: string[] = [];
-		const logger = createCompactionLogger("/tmp/senpi-compaction-decision-log", {
+		const logger = createCompactionLogger(LOG_DIR, {
 			sink: (line) => sink.push(line),
 			mirrorToStderr: false,
 		});
@@ -109,7 +112,7 @@ describe("compaction decision log", () => {
 
 	it("Given injected sink When logging Then it preserves the allowlisted payload", () => {
 		const sink: string[] = [];
-		const logger = createCompactionLogger("/tmp/senpi-compaction-decision-log-sink", {
+		const logger = createCompactionLogger(LOG_DIR, {
 			sink: (line) => sink.push(line),
 			mirrorToStderr: false,
 		});

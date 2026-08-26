@@ -1,4 +1,13 @@
 import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocomplete.ts";
+import {
+	type EditorImageState,
+	formatImageMarker,
+	IMAGE_MARKER_REGEX,
+	type ImageMarkerCanonicalization,
+	ImageMarkerRegistry,
+	imageMarkerId,
+	isImageMarker,
+} from "../image-markers.ts";
 import { getKeybindings } from "../keybindings.ts";
 import { decodePrintableKey, matchesKey } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
@@ -7,7 +16,7 @@ import {
 	isPasteMarker,
 	PasteMarkerRegistry,
 	pasteMarkerId,
-	segmentWithPasteMarkers,
+	segmentWithMarkers,
 } from "../paste-markers.ts";
 import { type Component, CURSOR_MARKER, type Focusable, type TUI } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
@@ -24,6 +33,24 @@ import { SelectList, type SelectListLayoutOptions, type SelectListTheme } from "
 
 const graphemeSegmenter = getGraphemeSegmenter();
 const wordSegmenter = getWordSegmenter();
+
+/** Which atomic marker family a segment belongs to, if any. */
+export type MarkerKind = "paste" | "image";
+
+/** Atomic-marker predicate covering every marker family the editor treats as one grapheme. */
+function isAtomicMarker(segment: string): boolean {
+	return isPasteMarker(segment) || isImageMarker(segment);
+}
+
+function markerKind(segment: string): MarkerKind | undefined {
+	if (isPasteMarker(segment)) return "paste";
+	if (isImageMarker(segment)) return "image";
+	return undefined;
+}
+
+function containsMarkerPrefix(text: string): boolean {
+	return text.includes("[paste #") || text.includes("[Image #");
+}
 
 /**
  * Represents a chunk of text for word-wrap layout.
@@ -105,7 +132,7 @@ export function wordWrapLine(line: string, maxWidth: number, preSegmented?: Intl
 	if (!line || maxWidth <= 0) {
 		return [{ text: "", startIndex: 0, endIndex: 0 }];
 	}
-	if (preSegmented === undefined && !/\s/.test(line) && !line.includes("[paste #") && isPrintableAsciiText(line)) {
+	if (preSegmented === undefined && !/\s/.test(line) && !containsMarkerPrefix(line) && isPrintableAsciiText(line)) {
 		return wordWrapAsciiLine(line, maxWidth);
 	}
 
@@ -130,7 +157,7 @@ export function wordWrapLine(line: string, maxWidth: number, preSegmented?: Intl
 		const grapheme = seg.segment;
 		const gWidth = visibleWidth(grapheme);
 		const charIndex = seg.index;
-		const isWs = !isPasteMarker(grapheme) && isWhitespaceChar(grapheme);
+		const isWs = !isAtomicMarker(grapheme) && isWhitespaceChar(grapheme);
 
 		// Overflow check before advancing.
 		if (currentWidth + gWidth > maxWidth) {
@@ -179,12 +206,12 @@ export function wordWrapLine(line: string, maxWidth: number, preSegmented?: Intl
 		// or at a boundary where either side is CJK (CJK allows breaking
 		// between any adjacent characters).
 		const next = segments[i + 1];
-		if (isWs && next && (isPasteMarker(next.segment) || !isWhitespaceChar(next.segment))) {
+		if (isWs && next && (isAtomicMarker(next.segment) || !isWhitespaceChar(next.segment))) {
 			wrapOppIndex = next.index;
 			wrapOppWidth = currentWidth;
 		} else if (!isWs && next && !isWhitespaceChar(next.segment)) {
-			const isCjk = !isPasteMarker(grapheme) && cjkBreakRegex.test(grapheme);
-			const nextIsCjk = !isPasteMarker(next.segment) && cjkBreakRegex.test(next.segment);
+			const isCjk = !isAtomicMarker(grapheme) && cjkBreakRegex.test(grapheme);
+			const nextIsCjk = !isAtomicMarker(next.segment) && cjkBreakRegex.test(next.segment);
 			if (isCjk || nextIsCjk) {
 				wrapOppIndex = next.index;
 				wrapOppWidth = currentWidth;
@@ -205,10 +232,13 @@ interface EditorState {
 	cursorCol: number;
 }
 
-/** Undo snapshot: editor text state plus the paste registry. */
+/** Undo snapshot: editor text state plus the paste and image registries. */
 interface EditorSnapshot {
 	state: EditorState;
 	pasteState: EditorPasteState;
+	imageState: EditorImageState;
+	/** Opaque attachment payload snapshot captured from the owner, restored on undo. */
+	attachmentState?: unknown;
 }
 
 interface LayoutLine {
@@ -306,6 +336,9 @@ export class Editor implements Component, Focusable {
 	// Paste tracking for large pastes
 	private pasteMarkers = new PasteMarkerRegistry();
 
+	// Atomic `[Image #N]` markers; ids only, the owner keeps the image payload
+	private imageMarkers = new ImageMarkerRegistry();
+
 	// Bracketed paste mode buffering
 	private pasteBuffer: string = "";
 	private isInPaste: boolean = false;
@@ -338,6 +371,32 @@ export class Editor implements Component, Focusable {
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
+	/**
+	 * Fired whenever image markers are added, removed, pruned or renumbered.
+	 * Carries the marker ids in text reading order so the owner can keep its
+	 * payload map aligned with the visible numbers.
+	 *
+	 * The reported ids are the ids the OWNER CURRENTLY KEYS ITS PAYLOADS BY -
+	 * i.e. the PRE-renumber ids - and the visible numbers are always canonical
+	 * 1..k in reading order after the change, so the owner re-keys payload
+	 * `order[i]` onto slot `i + 1`.
+	 */
+	public onImageMarkersChanged?: (order: number[]) => void;
+	/**
+	 * Owner hook: capture the attachment payloads keyed by marker id so an undo
+	 * can restore them alongside the editor snapshot. The value is stored
+	 * opaquely - image bytes never cross into the editor - and is handed back
+	 * through {@link restoreAttachmentState} when the matching snapshot is
+	 * popped. Return `undefined` to store nothing (restores are skipped).
+	 */
+	public snapshotAttachmentState?: () => unknown;
+	/**
+	 * Owner hook: restore the attachment payloads captured by
+	 * {@link snapshotAttachmentState} for the snapshot an undo just popped.
+	 * Called BEFORE {@link onImageMarkersChanged} fires for that undo so the
+	 * reconcile pass maps the restored payloads, not the post-delete ones.
+	 */
+	public restoreAttachmentState?: (state: unknown) => void;
 	public disableSubmit: boolean = false;
 
 	constructor(tui: TUI, theme: EditorTheme, options: EditorOptions = {}) {
@@ -350,13 +409,22 @@ export class Editor implements Component, Focusable {
 		this.autocompleteMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
 	}
 
-	/** Segment text with paste-marker awareness, only merging exact canonical markers. */
+	/** Segment text with marker awareness, only merging exact canonical markers. */
 	private segment(text: string, mode: "word" | "grapheme"): Iterable<Intl.SegmentData> {
-		return segmentWithPasteMarkers(
+		return segmentWithMarkers(
 			text,
 			mode === "word" ? wordSegmenter : graphemeSegmenter,
-			this.pasteMarkers.authorizedMarkers(text),
+			this.authorizedMarkers(text),
 		);
+	}
+
+	/** Union of every marker family that must segment as one atomic grapheme. */
+	private authorizedMarkers(text: string): ReadonlySet<string> {
+		const imageMarkers = this.imageMarkers.authorizedMarkers(text);
+		if (imageMarkers.size === 0) return this.pasteMarkers.authorizedMarkers(text);
+		const merged = new Set(this.pasteMarkers.authorizedMarkers(text));
+		for (const marker of imageMarkers) merged.add(marker);
+		return merged;
 	}
 
 	private removePasteMarker(id: number): boolean {
@@ -364,6 +432,39 @@ export class Editor implements Component, Focusable {
 		if (!removal.removed) return false;
 		this.state.lines = removal.text.split("\n");
 		return true;
+	}
+
+	/** Removes an image marker whole, applying the registry's renumbered text. */
+	private removeImageMarker(id: number): boolean {
+		// The reported order is in PRE-renumber ids: the owner keys its payloads by the
+		// numbers it was handed, so it needs the surviving originals - `[2]` after
+		// deleting `[Image #1]` - to remap them onto the new 1..k display numbers.
+		const survivors = this.imageMarkers.ids(this.getText()).filter((entryId) => entryId !== id);
+		const removal = this.imageMarkers.remove(id, this.getText());
+		if (!removal.removed) return false;
+		this.state.lines = removal.text.split("\n");
+		this.onImageMarkersChanged?.(survivors);
+		return true;
+	}
+
+	/** Removes whichever marker family `segment` belongs to; returns false when it is not a marker. */
+	private removeMarkerSegment(segment: string): boolean {
+		switch (markerKind(segment)) {
+			case "paste": {
+				const id = pasteMarkerId(segment);
+				return id !== undefined && this.removePasteMarker(id);
+			}
+			case "image": {
+				const id = imageMarkerId(segment);
+				return id !== undefined && this.removeImageMarker(id);
+			}
+			default:
+				return false;
+		}
+	}
+
+	private notifyImageMarkersChanged(): void {
+		this.onImageMarkersChanged?.(this.imageMarkers.ids(this.getText()));
 	}
 
 	getPaddingX(): number {
@@ -491,7 +592,7 @@ export class Editor implements Component, Focusable {
 		}
 
 		const width = isPrintableAsciiText(line) ? line.length : visibleWidth(line);
-		if (line.includes("[paste #")) {
+		if (containsMarkerPrefix(line)) {
 			return {
 				width,
 				chunks:
@@ -1061,7 +1162,17 @@ export class Editor implements Component, Focusable {
 			this.pushUndoSnapshot();
 		}
 		this.pasteMarkers.prune(normalized, previousText);
+		const previousImageOrder = this.imageMarkers.ids(previousText);
+		this.imageMarkers.prune(normalized, previousText);
 		this.setTextInternal(normalized);
+		// A prune can leave a gap (e.g. only id 2 surviving); renumber so the
+		// visible numbers stay 1..k in reading order.
+		const canonicalization = this.imageMarkers.canonicalize(normalized);
+		this.applyCanonicalizedText(canonicalization);
+		const imageOrder = canonicalization.order;
+		if (previousImageOrder.length !== imageOrder.length || previousImageOrder.some((id, i) => id !== imageOrder[i])) {
+			this.onImageMarkersChanged?.(imageOrder);
+		}
 	}
 
 	/**
@@ -1080,6 +1191,86 @@ export class Editor implements Component, Focusable {
 	 */
 	setPasteState(state: EditorPasteState): void {
 		this.pasteMarkers.install(state, this.getText());
+	}
+
+	/**
+	 * Snapshot the image-marker registry (ids only, never image payloads) so
+	 * markers can be transferred to another editor instance alongside getText().
+	 */
+	getImageMarkerState(): EditorImageState {
+		return this.imageMarkers.snapshot();
+	}
+
+	/**
+	 * Install an image-marker registry snapshot taken from another editor
+	 * instance. Call after setText() with the source editor's raw text: ids whose
+	 * markers are absent from the current text are dropped, and the id counter is
+	 * raised so future marker ids cannot collide.
+	 */
+	setImageMarkerState(state: EditorImageState): void {
+		this.imageMarkers.install(state, this.getText());
+	}
+
+	/**
+	 * Insert the next canonical `[Image #N]` marker at the cursor and return its id.
+	 * This is atomic for undo - a single undo restores the entire pre-insert state,
+	 * registry included - matching the insertTextAtCursor() contract.
+	 *
+	 * The text is canonicalized before returning: the insertion counter only
+	 * produces reading-order numbers when the cursor sat after every existing
+	 * marker, so a paste in front of an earlier marker renumbers the visible
+	 * markers to stay 1..k in reading order. The returned id is the marker's
+	 * FINAL canonical number (its 1-based reading position), which is the slot
+	 * the owner must key its payload under; the notification fires with the
+	 * PRE-renumber ids, so that slot is guaranteed vacant by the time this
+	 * returns and a caller registering its payload right after cannot orphan
+	 * or overwrite a surviving payload.
+	 */
+	insertImageMarker(): number {
+		this.cancelAutocomplete();
+		this.pushUndoSnapshot();
+		this.lastAction = null;
+		this.exitHistoryBrowsing();
+		const marker = this.imageMarkers.add();
+		this.insertTextAtCursorInternal(marker);
+		const canonicalization = this.imageMarkers.canonicalize(this.getText());
+		this.applyCanonicalizedText(canonicalization);
+		const insertionId = imageMarkerId(marker)!;
+		// An id missing from the order means the inserted marker duplicates a
+		// hand-typed literal, so the registry treats both occurrences as
+		// unauthorized; keep the insertion id so first-occurrence-wins still
+		// attaches the payload at submit.
+		const finalId = canonicalization.order.includes(insertionId)
+			? canonicalization.order.indexOf(insertionId) + 1
+			: insertionId;
+		this.onImageMarkersChanged?.(canonicalization.order);
+		return finalId;
+	}
+
+	/**
+	 * Rewrite the buffer with a canonicalized marker numbering, preserving the
+	 * cursor by folding the length delta of every marker rewrite that ended at
+	 * or before the cursor on the cursor's line (markers never span lines, and
+	 * rewrites never change the line count).
+	 */
+	private applyCanonicalizedText(canonicalization: ImageMarkerCanonicalization): void {
+		if (canonicalization.text === this.getText()) return;
+		const oldLine = this.state.lines[this.state.cursorLine] ?? "";
+		const cursorCol = this.state.cursorCol;
+		const renumbered = new Map<number, number>();
+		for (const [index, id] of canonicalization.order.entries()) {
+			renumbered.set(id, index + 1);
+		}
+		let delta = 0;
+		for (const match of oldLine.matchAll(IMAGE_MARKER_REGEX)) {
+			const end = (match.index ?? 0) + match[0].length;
+			if (end > cursorCol) break;
+			const newId = renumbered.get(Number.parseInt(match[1] ?? "0", 10));
+			if (newId === undefined) continue;
+			delta += formatImageMarker(newId).length - match[0].length;
+		}
+		this.state.lines = canonicalization.text.split("\n");
+		this.setCursorCol(Math.max(0, cursorCol + delta));
 	}
 
 	/**
@@ -1315,6 +1506,8 @@ export class Editor implements Component, Focusable {
 
 		this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
 		this.pasteMarkers.clear();
+		// Marker numbering is turn-local: ids restart at 1 for the next submission.
+		this.imageMarkers.clear();
 		this.exitHistoryBrowsing();
 		this.scrollOffset = 0;
 		this.undoStack.clear();
@@ -1339,9 +1532,7 @@ export class Editor implements Component, Focusable {
 			const graphemes = [...this.segment(beforeCursor, "grapheme")];
 			const lastGrapheme = graphemes[graphemes.length - 1];
 			const graphemeLength = lastGrapheme ? lastGrapheme.segment.length : 1;
-			const targetId = pasteMarkerId(lastGrapheme?.segment ?? "");
-			if (targetId !== undefined) {
-				this.removePasteMarker(targetId);
+			if (this.removeMarkerSegment(lastGrapheme?.segment ?? "")) {
 				this.setCursorCol(Math.max(0, this.state.cursorCol - graphemeLength));
 			} else {
 				line = this.state.lines[this.state.cursorLine] || "";
@@ -1715,10 +1906,7 @@ export class Editor implements Component, Focusable {
 			// Find the first grapheme at cursor
 			const graphemes = [...this.segment(afterCursor, "grapheme")];
 			const firstGrapheme = graphemes[0];
-			const markerId =
-				firstGrapheme && isPasteMarker(firstGrapheme.segment) ? pasteMarkerId(firstGrapheme.segment) : undefined;
-			if (markerId !== undefined) {
-				this.removePasteMarker(markerId);
+			if (this.removeMarkerSegment(firstGrapheme?.segment ?? "")) {
 				this.onChange?.(this.getText());
 				return;
 			}
@@ -1918,7 +2106,7 @@ export class Editor implements Component, Focusable {
 		this.setCursorCol(
 			findWordBackward(currentLine, this.state.cursorCol, {
 				segment: (text) => this.segment(text, "word"),
-				isAtomicSegment: isPasteMarker,
+				isAtomicSegment: isAtomicMarker,
 			}),
 		);
 	}
@@ -2048,6 +2236,8 @@ export class Editor implements Component, Focusable {
 		this.undoStack.push({
 			state: this.state,
 			pasteState: this.pasteMarkers.snapshot(),
+			imageState: this.imageMarkers.snapshot(),
+			attachmentState: this.snapshotAttachmentState?.(),
 		});
 	}
 
@@ -2057,11 +2247,20 @@ export class Editor implements Component, Focusable {
 		if (!snapshot) return;
 		Object.assign(this.state, snapshot.state);
 		this.pasteMarkers.restore(snapshot.pasteState);
+		this.imageMarkers.restore(snapshot.imageState);
+		// Restore the owner's payload snapshot BEFORE the marker-order
+		// notification: the reconcile pass maps payloads by the restored ids, so
+		// restoring after it would re-key the post-delete survivors onto the
+		// restored marker set and permanently drop the deleted marker's image.
+		if (snapshot.attachmentState !== undefined) {
+			this.restoreAttachmentState?.(snapshot.attachmentState);
+		}
 		this.lastAction = null;
 		this.preferredVisualCol = null;
 		if (this.onChange) {
 			this.onChange(this.getText());
 		}
+		this.notifyImageMarkersChanged();
 	}
 
 	/**
@@ -2114,7 +2313,7 @@ export class Editor implements Component, Focusable {
 		this.setCursorCol(
 			findWordForward(currentLine, this.state.cursorCol, {
 				segment: (text) => this.segment(text, "word"),
-				isAtomicSegment: isPasteMarker,
+				isAtomicSegment: isAtomicMarker,
 			}),
 		);
 	}

@@ -1,5 +1,84 @@
 # senpi-codemode fork changes
 
+## Session teardown failures stay out of lifecycle handler rejections (2026-08-25)
+
+### What changed
+
+- `SessionManagerProxy` catches inner-manager `dispose()` failures in `replace()` and `dispose()` and routes them through an injectable reporter (default: one `[senpi-codemode] session teardown failed: …` stderr line, AggregateError causes inlined) instead of propagating them to the caller.
+- `test/session-manager-proxy.test.ts` pins the contract: a replacement installs even when the outgoing manager's dispose rejects, `dispose()` resolves while reporting the failure, and a superseded replacement's dispose failure is contained.
+
+### Why
+
+- A kernel that misses its post-SIGKILL reap window (500ms in `subprocess-process.ts`) makes `subprocess-kernel.close()` throw `KernelRetirementError`; `DefaultCodemodeSessionManager` aggregates it into `Failed to dispose codemode session manager`, and the rejected `session_shutdown`/`session_before_switch` handler surfaced as a user-facing `extension_error` warning in RPC hosts (observed as a Work Log warning row in the omo desktop app). Teardown is best-effort — the interpreter is already SIGKILLed — so the failure is diagnostics, not a session error.
+- The inner manager keeps its throwing dispose contract (pinned in `session-manager-lifecycle.test.ts`); only the proxy boundary that lifecycle handlers call absorbs it.
+
+### Expected merge conflict zones
+
+- LOW in `src/extension/session-manager-proxy.ts` around `replace()`/`dispose()`.
+
+## Detached-eval spill notices carry absolute paths (2026-08-23)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/detached-cell-notification.ts` now writes the plain absolute spill path into the oversized-output notice (`Buffered output overflowed; full output: <absolute path>`) instead of a `local://…` URI. The `localUri` helper and the unused `artifactsDir` parameter on `buildDetachedCellNotification` are gone; `DetachedNotificationQueue` no longer stores `artifactsDir`.
+- `test/eval-detach.test.ts` locks the contract: the notice must contain `join(artifactsDir, "local", "detached-eval-<id>.log")` and must not contain `local://`.
+
+### Why
+
+- `local://` is a kernel-helper scheme resolved from the session artifact root inside eval cells (`read()`/`write()` prelude helpers). The agent-facing `read` tool resolves plain paths only, so a model that followed the notice's `local://detached-eval-<id>.log` got `ENOENT: <cwd>/local:/detached-eval-<id>.log`. This reproduces the documented invariant: spill notices contain plain absolute paths, not a custom URI scheme.
+
+### Why an extension could not handle it
+
+- The spill notice text is composed inside this package's notification builder; no downstream hook can rewrite the notice before it is queued to the notifier.
+
+### Expected merge conflict zones
+
+- LOW in `src/tool/detached-cell-notification.ts` around the spill-notice composition and the removed helper.
+- LOW in `src/tool/detached-notification-queue.ts` around the constructor and flush mapping.
+- LOW in `test/eval-detach.test.ts` around the crash-spill assertions.
+
+## Detached-cell notices deliver as internal custom messages (2026-08-23)
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/eval-notifier.ts` now delivers detached-cell completion notices through `sendMessage` with the new `EVAL_NOTIFICATION_CUSTOM_TYPE` (`senpi-codemode:notification`) and `display: false`, instead of `sendUserMessage`. Wake/next-turn mode still selects `steer` vs `followUp`, and delivery stays once-per-cell per session generation.
+- `CodemodeExtensionAPI` requires `sendMessage` in place of `sendUserMessage`; the host binding forwards to `pi.sendMessage`.
+
+### Why
+
+- `sendUserMessage` enqueues into the same steering queue that holds real user input, and that queue carries no provenance. A host projecting it (the OmO desktop composer) rendered the raw `<system-reminder>Detached eval cell ... cancelled.` notice under its STEERING heading as if the user had typed and queued it.
+- The sibling injectors already solved this: terminal (`senpi-terminal:notification`), monitor (`senpi-monitor:notification`), and loop-guard notices all use `sendMessage` with a `customType`, documented as "deliver a model-visible notification without rendering synthetic user input". The eval notifier was the sole caller still using the user-input door, so this aligns it with the existing contract rather than adding a new mechanism.
+
+### Why an extension could not handle it
+
+- The notifier is owned by this package and constructed during its extension factory wiring; the delivery door it calls is chosen inside `senpiCodemode`, so no downstream extension can redirect it.
+
+### Expected merge conflict zones
+
+- LOW in `src/extension/eval-notifier.ts` around the deps interface and the notify body.
+- LOW in `src/index.ts` around the `CodemodeExtensionAPI` surface and the notifier construction.
+- LOW in the codemode test fakes that implement the host API surface.
+
+## Subprocess readiness gates cell execution (2026-08-21)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts` now keeps Ruby and Julia cells queued until the active subprocess emits `ready`; only then does it write the `run` frame and arm that cell's timeout.
+- An `init-failed` frame now fails queued work immediately as a kernel startup error instead of leaving it to an unrelated cell timeout.
+
+### Why
+
+- The shared kernel previously sent `init` and immediately started the first cell's timeout without observing readiness. Under load, interpreter and prelude startup could consume the entire cell budget, time out the state-setting cell, restart into a clean process, and make the following state-read cell fail nondeterministically.
+
+### Why an extension could not handle it
+
+- Subprocess generation ownership, protocol readiness, run queue dispatch, and timeout arming are private to the shared kernel implementation; an extension cannot safely order those lifecycle transitions from outside the package.
+
+### Expected merge conflict zones
+
+- LOW in `packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts` around process startup and protocol-message dispatch.
+- LOW in the Ruby subprocess lifecycle tests that now emit the protocol readiness event explicitly.
+
 ## Eval completion throughput badge (2026-08-17)
 
 ### What changed
@@ -10,8 +89,10 @@
 - `EvalToolDetails` carries `wallDurationMs` and `toolCallCount` alongside the existing
   kernel-reported `durationMs`; the renderer uses wall time for final elapsed and throughput while
   preserving kernel duration for consumers that need interpreter timing.
-- Zero calls over zero elapsed time render `0.00 calls/s`; positive calls without a positive wall
-  duration render `n/a calls/s`, so the TUI never displays `Infinity` or `NaN`.
+- A cell that initiated no tool calls renders no throughput badge at all: both the count and the
+  rate segments are dropped, so the header reads `eval py done ✓ · <1s` instead of
+  `eval py done ✓ · 0 calls · 0.00 calls/s · <1s`. Positive calls without a positive wall duration
+  render `n/a calls/s`, so the TUI never displays `Infinity` or `NaN`.
 - Partial, pending, running, error, and synthetic multi-cell frames do not show a misleading final
   aggregate. The legacy no-cells result path renders the same final metadata when the new fields are
   available and preserves old output when they are absent.

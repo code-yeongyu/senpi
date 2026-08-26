@@ -51,6 +51,18 @@ describe("build-all", () => {
 		assert.ok(index("packages/server") > index("packages/coding-agent"));
 	});
 
+	it("keeps every explicitly built package inside the pnpm workspace", () => {
+		// Given
+		const pnpmWorkspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
+
+		// When
+		const nestedBuildPackages = BUILD_PHASES.flat().filter((path) => path.split("/").length > 2);
+
+		// Then
+		assert.deepEqual(nestedBuildPackages, ["packages/session-backends/sqlite-node"]);
+		assert.match(pnpmWorkspace, /^  - "packages\/session-backends\/\*"$|^  - packages\/session-backends\/\*$/m);
+	});
+
 	it("builds pty beside tui in the first native-adjacent phase", () => {
 		// Given
 		const packageJson = JSON.parse(readFileSync(join(root, "packages/pty/package.json"), "utf8"));

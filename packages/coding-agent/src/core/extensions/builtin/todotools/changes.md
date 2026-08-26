@@ -1,5 +1,11 @@
 # todotools Fork Tracker
 
+## Mirror Cursor native todos into senpi.todo-state (2026-08-19)
+
+Cursor resolves `todo` on the server and never runs local `execute()`, so the widget stayed empty. `message_end` now persists `arguments.todos` as `senpi.todo-state` when there is no local `op`.
+
+Conflict zone: `todotools/index.ts` `message_end`.
+
 ## 2026-07-31 - Animate same-phase completions in the todo sidebar
 
 ### What changed

@@ -8,6 +8,7 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import { KIMI_CODE_RETRY_PROFILE } from "@earendil-works/pi-ai/utils/retry-profile/profiles";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
@@ -80,6 +81,7 @@ describe("createAgentSession stream options", () => {
 		settings: Partial<Settings>,
 		requestOptions: SimpleStreamOptions = {},
 		extensionSource?: string,
+		retryPolicy?: typeof KIMI_CODE_RETRY_PROFILE,
 	): Promise<SimpleStreamOptions | undefined> {
 		const model = createModel(api);
 		const settingsManager = SettingsManager.inMemory(settings);
@@ -97,6 +99,7 @@ describe("createAgentSession stream options", () => {
 		modelRegistry.registerProvider(model.provider, {
 			api,
 			headers: { "x-provider": "provider" },
+			...(retryPolicy !== undefined ? { retryPolicy } : {}),
 			streamSimple: (_model, _context, providerOptions) => {
 				capturedOptions = providerOptions;
 				return createDoneStream(api);
@@ -214,6 +217,22 @@ describe("createAgentSession stream options", () => {
 		});
 
 		expect(options?.maxRetries).toBe(2);
+		expect(options?.maxRetryDelayMs).toBe(3000);
+	});
+
+	it("a declared profile with a disabled providerRequest stage sends zero transport retries", async () => {
+		// The kimi-code profile disables the transport stage so user
+		// retry.provider.maxRetries cannot hand it a hidden second budget on top
+		// of the turn stage's own 9.
+		const options = await captureStreamOptions(
+			"anthropic-messages",
+			{ retry: { provider: { maxRetries: 2, maxRetryDelayMs: 3000 } } },
+			{},
+			undefined,
+			KIMI_CODE_RETRY_PROFILE,
+		);
+
+		expect(options?.maxRetries).toBe(0);
 		expect(options?.maxRetryDelayMs).toBe(3000);
 	});
 

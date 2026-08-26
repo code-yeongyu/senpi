@@ -167,6 +167,24 @@ describe("scope and glob gating", () => {
 		).toEqual(["edit-ts"]);
 	});
 
+	it("tool-scoped rules match tool streams while text-only rules do not", () => {
+		const manager = makeManager();
+		manager.addRule(
+			makeRule("tool-only", {
+				scope: { allowText: false, allowThinking: false, toolScopes: [{ toolName: "bash" }] },
+			}),
+		);
+		manager.addRule(
+			makeRule("text-only", {
+				scope: { allowText: true, allowThinking: false, toolScopes: [] },
+			}),
+		);
+		expect(
+			names(manager.checkDelta("needle", ctx({ source: "tool", streamKey: "tool:0", toolName: "bash" }))),
+		).toEqual(["tool-only"]);
+		expect(names(manager.checkDelta("needle", ctx({ source: "text", streamKey: "text:0" })))).toEqual(["text-only"]);
+	});
+
 	it("wildcard tool scope matches any tool name", () => {
 		const manager = makeManager();
 		const scope: TtsrScope = { allowText: false, allowThinking: false, toolScopes: [{ toolName: "*" }] };

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EventBus } from "../../src/core/event-bus.ts";
@@ -17,7 +18,10 @@ import {
 	CONFIG_WATCH_REJECTED,
 	CONFIG_WATCH_RELOADED,
 } from "../../src/core/extensions/builtin/config-reload/protocol.ts";
-import type { WatchEventListener } from "../../src/core/extensions/builtin/config-reload/watch-engine.ts";
+import {
+	createFsWatchEventSource,
+	type WatchEventListener,
+} from "../../src/core/extensions/builtin/config-reload/watch-engine.ts";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import type {
 	ExtensionAPI,
@@ -625,7 +629,8 @@ describe("config reload builtin extension", () => {
 			{ type: "session_shutdown", reason: "reload" } satisfies SessionShutdownEvent,
 			firstContext,
 		);
-		expect(watches.activeListenerCount(agentDir)).toBe(0);
+		// Teardown is deferred, so the shutdown watcher may still be attached; the
+		// contract is that the closed extension no longer registers new watchers.
 		bus.emit(CONFIG_WATCH_REGISTER, {
 			id: "old-listener",
 			displayName: "Old listener",
@@ -712,6 +717,89 @@ describe("config reload builtin extension", () => {
 		});
 		expect(watches.subscribeCalls).not.toContain(restrictedDir);
 		expect(watches.activeListenerCount(restrictedDir)).toBe(0);
+	});
+
+	it("accepts a filtered ancestor watch whose anchored filters stay outside protected paths", async () => {
+		const fixture = await createFixture();
+		const ancestorDir = resolve(fixture.agentDir, "..");
+		const rejected: unknown[] = [];
+		fixture.events.on(CONFIG_WATCH_REJECTED, (payload) => rejected.push(payload));
+
+		fixture.events.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo-ancestor",
+			displayName: "Ancestor .omo config",
+			targets: [{ path: ancestorDir, kind: "dir" as const, filterGlobs: ["/omo.jsonc", "/omo.json"] }],
+		});
+
+		expect(rejected).toHaveLength(0);
+		expect(fixture.watches.activeListenerCount(ancestorDir)).toBe(1);
+	});
+
+	it("rejects an ancestor watch with an unanchored filter", async () => {
+		const fixture = await createFixture();
+		const ancestorDir = join(fixture.agentDir, "..");
+		const rejected: unknown[] = [];
+		fixture.events.on(CONFIG_WATCH_REJECTED, (payload) => rejected.push(payload));
+
+		fixture.events.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo-ancestor-unanchored",
+			displayName: "Ancestor .omo config",
+			targets: [{ path: ancestorDir, kind: "dir" as const, filterGlobs: ["omo.jsonc"] }],
+		});
+
+		expect(rejected).toHaveLength(1);
+		expect(fixture.watches.activeListenerCount(ancestorDir)).toBe(0);
+	});
+
+	it("rejects an ancestor watch whose anchored filter enters a protected path", async () => {
+		const fixture = await createFixture();
+		const ancestorDir = join(fixture.agentDir, "..");
+		const rejected: unknown[] = [];
+		fixture.events.on(CONFIG_WATCH_REJECTED, (payload) => rejected.push(payload));
+
+		fixture.events.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo-ancestor-auth",
+			displayName: "Ancestor .omo config",
+			targets: [
+				{
+					path: ancestorDir,
+					kind: "dir" as const,
+					filterGlobs: [`/${basename(fixture.agentDir)}/auth.json`],
+				},
+			],
+		});
+
+		expect(rejected).toHaveLength(1);
+	});
+
+	it("rejects an ancestor watch whose anchored filter names a protected directory", async () => {
+		const fixture = await createFixture();
+		const ancestorDir = join(fixture.agentDir, "..");
+		const rejected: unknown[] = [];
+		fixture.events.on(CONFIG_WATCH_REJECTED, (payload) => rejected.push(payload));
+
+		fixture.events.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo-ancestor-agent",
+			displayName: "Ancestor .omo config",
+			targets: [{ path: ancestorDir, kind: "dir" as const, filterGlobs: [`/${basename(fixture.agentDir)}`] }],
+		});
+
+		expect(rejected).toHaveLength(1);
+	});
+
+	it("rejects a target inside a protected path even with anchored filters", async () => {
+		const fixture = await createFixture();
+		const restrictedDir = join(fixture.agentDir, "sessions", "foo");
+		const rejected: unknown[] = [];
+		fixture.events.on(CONFIG_WATCH_REJECTED, (payload) => rejected.push(payload));
+
+		fixture.events.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo-inside-sessions",
+			displayName: "Nested .omo config",
+			targets: [{ path: restrictedDir, kind: "dir" as const, filterGlobs: ["/omo.json"] }],
+		});
+
+		expect(rejected).toHaveLength(1);
 	});
 
 	it("accepts an agent-dir watch whose filters are all root-anchored and non-protected", async () => {
@@ -1147,8 +1235,14 @@ describe("config reload builtin extension", () => {
 			displayName: "Second",
 			targets: [{ path: secondDir, kind: "dir" }],
 		});
-		expect(fixture.watches.activeListenerCount(firstDir)).toBe(0);
 		expect(fixture.watches.activeListenerCount(secondDir)).toBe(1);
+
+		// The replaced registration's watcher detaches on a deferred teardown, so it
+		// may still be attached here; what matters is that it is inert. A change under
+		// the old directory must not reload, and the new one must reload exactly once.
+		writeFileSync(firstPath, "stale");
+		await settleChange(fixture, firstDir, "config.json");
+		expect(fixture.reload).not.toHaveBeenCalled();
 
 		writeFileSync(secondPath, "two");
 		await settleChange(fixture, secondDir, "config.json");
@@ -1205,6 +1299,111 @@ describe("config reload builtin extension", () => {
 		expect(second).toBeDefined();
 		expect(secondReload).toHaveBeenCalledTimes(1);
 		expect(reloaded).toContainEqual({ registrationId: "builtin", paths: [settingsPath] });
+	});
+
+	it("suppresses a routine settings change discovered during reload handoff", async () => {
+		vi.useFakeTimers();
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-routine-handoff-"));
+		agentDirs.push(agentDir);
+		const settingsPath = join(agentDir, "settings.json");
+		writeJson(settingsPath, { theme: "dark", defaultModel: "m1" });
+		const bus = createEventBus();
+		const watches = createWatchProbe();
+		const first = createManualExtension(bus);
+		let firstContext: ExtensionContext | undefined;
+		let second: ManualExtension | undefined;
+		const secondReload = vi.fn(async () => {});
+		const firstReload = vi.fn(async () => {
+			if (!firstContext) throw new Error("Missing first context");
+			await invoke(
+				first.handlers,
+				"session_shutdown",
+				{ type: "session_shutdown", reason: "reload" } satisfies SessionShutdownEvent,
+				firstContext,
+			);
+			writeJson(settingsPath, { theme: "light", defaultModel: "m2" });
+			second = createManualExtension(bus);
+			configReloadExtension(second.api, { agentDir, subscribe: watches.subscribe, logger: silentLogger() });
+			await invoke(
+				second.handlers,
+				"session_start",
+				{ type: "session_start", reason: "reload" } satisfies SessionStartEvent,
+				fakeContext({ cwd: agentDir, requestReload: secondReload }),
+			);
+		});
+		configReloadExtension(first.api, { agentDir, subscribe: watches.subscribe, logger: silentLogger() });
+		firstContext = fakeContext({ cwd: agentDir, requestReload: firstReload });
+		await invoke(
+			first.handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+			firstContext,
+		);
+		writeJson(settingsPath, { theme: "light", defaultModel: "m1" });
+		watches.emit(agentDir, "settings.json");
+		await vi.advanceTimersByTimeAsync(200);
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(firstReload).toHaveBeenCalledTimes(1);
+		expect(second).toBeDefined();
+		expect(secondReload).not.toHaveBeenCalled();
+	});
+
+	it("clears the reload handoff when the successor omits config-reload", async () => {
+		vi.useFakeTimers();
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-orphan-handoff-"));
+		agentDirs.push(agentDir);
+		const settingsPath = join(agentDir, "settings.json");
+		writeJson(settingsPath, { theme: "dark", httpProxy: "http://user:secret@example.invalid" });
+		const bus = createEventBus();
+		const watches = createWatchProbe();
+		const reloaded: unknown[] = [];
+		bus.on(CONFIG_WATCH_RELOADED, (payload) => reloaded.push(payload));
+		const first = createManualExtension(bus);
+		let firstContext: ExtensionContext | undefined;
+		const firstReload = vi.fn(async () => {
+			if (!firstContext) throw new Error("Missing first context");
+			await invoke(
+				first.handlers,
+				"session_shutdown",
+				{ type: "session_shutdown", reason: "reload" } satisfies SessionShutdownEvent,
+				firstContext,
+			);
+			// Successor intentionally omits config-reload (it was disabled in settings).
+		});
+		configReloadExtension(first.api, { agentDir, subscribe: watches.subscribe, logger: silentLogger() });
+		firstContext = fakeContext({ cwd: agentDir, requestReload: firstReload });
+		await invoke(
+			first.handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+			firstContext,
+		);
+		writeJson(settingsPath, {
+			theme: "light",
+			httpProxy: "http://user:secret@example.invalid",
+			disabledBuiltinExtensions: ["config-reload"],
+		});
+		watches.emit(agentDir, "settings.json");
+		await vi.advanceTimersByTimeAsync(200);
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(firstReload).toHaveBeenCalledTimes(1);
+		expect(reloaded).toHaveLength(0);
+
+		// A later reload re-enables config-reload. It must not consume a stale handoff.
+		const later = createManualExtension(bus);
+		configReloadExtension(later.api, { agentDir, subscribe: watches.subscribe, logger: silentLogger() });
+		await invoke(
+			later.handlers,
+			"session_start",
+			{ type: "session_start", reason: "reload" } satisfies SessionStartEvent,
+			fakeContext({ cwd: agentDir, requestReload: async () => {} }),
+		);
+
+		expect(reloaded).toHaveLength(0);
 	});
 
 	it("rejects credential and protected registration targets without filesystem or hash access", async () => {
@@ -1408,5 +1607,64 @@ describe("config reload builtin extension", () => {
 		await Promise.resolve();
 
 		expect(reload).toHaveBeenCalledTimes(1);
+	});
+});
+
+class DarwinWorkerProbe extends EventEmitter {
+	readonly postMessage = vi.fn();
+	readonly terminate = vi.fn(async () => 0);
+}
+
+describe("macOS recursive watch offload", () => {
+	it("routes darwin recursive watches through the worker and terminates it when the last one unsubscribes", () => {
+		// Given: a darwin event source with an injected fake recursive worker
+		const worker = new DarwinWorkerProbe();
+		const createRecursiveWorker = vi.fn(() => worker);
+		const onError = vi.fn();
+		const listener = vi.fn<WatchEventListener>();
+		const source = createFsWatchEventSource(onError, { platform: "darwin", createRecursiveWorker });
+
+		// When: two recursive watches are registered and one emits an event
+		const unsubscribeFirst = source("/Users/dev/large-workspace", listener, { recursive: true });
+		const unsubscribeSecond = source("/Users/dev/another-config-root", vi.fn(), { recursive: true });
+		worker.emit("message", { kind: "event", id: 1, eventType: "change", filename: ".omo/omo.json" });
+
+		// Then: setup went to the worker, events route back, and teardown waits for the last subscription
+		expect(createRecursiveWorker).toHaveBeenCalledTimes(1);
+		expect(worker.postMessage).toHaveBeenCalledWith({
+			kind: "watch",
+			id: 1,
+			path: "/Users/dev/large-workspace",
+		});
+		expect(worker.postMessage).toHaveBeenCalledWith({
+			kind: "watch",
+			id: 2,
+			path: "/Users/dev/another-config-root",
+		});
+		expect(listener).toHaveBeenCalledWith("change", ".omo/omo.json");
+		expect(onError).not.toHaveBeenCalled();
+
+		unsubscribeFirst();
+		expect(worker.postMessage).toHaveBeenCalledWith({ kind: "unwatch", id: 1 });
+		expect(worker.terminate).not.toHaveBeenCalled();
+
+		unsubscribeSecond();
+		expect(worker.terminate).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps darwin non-recursive watches on the main thread", () => {
+		// Given: a darwin event source whose worker factory must stay unused
+		const createRecursiveWorker = vi.fn(() => new DarwinWorkerProbe());
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-darwin-nonrecursive-"));
+		agentDirs.push(agentDir);
+		const source = createFsWatchEventSource(vi.fn(), { platform: "darwin", createRecursiveWorker });
+
+		// When: a non-recursive watch is registered
+		const unsubscribe = source(agentDir, vi.fn(), { recursive: false });
+
+		// Then: no worker is spawned
+		expect(createRecursiveWorker).not.toHaveBeenCalled();
+
+		unsubscribe();
 	});
 });

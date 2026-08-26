@@ -33,7 +33,9 @@ export const monitorSchema = Type.Object({
 			description: "Create (required): shell command to run and watch in a PTY-backed monitor session.",
 		}),
 	),
-	filter: Type.Optional(Type.String({ description: "Only stdout lines matching this regex become monitor events." })),
+	filter: Type.Optional(
+		Type.String({ description: "Only PTY output lines matching this regex become monitor events." }),
+	),
 	timeout_ms: Type.Optional(
 		Type.Number({
 			minimum: 1,
@@ -112,10 +114,12 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 		name: TERMINAL_MONITOR_TOOL,
 		label: "monitor",
 		description:
-			"Subscribe to events from a command instead of polling for them: each stdout line arrives as an injected event while you keep working. Updates identical to a monitor's previous batch are dropped, so a watcher reprinting unchanged status does not re-wake the session. Returns a bash_id immediately; peek with bash_output, stop with kill_bash.",
-		promptSnippet: "Subscribe to a command's stdout lines as injected events instead of polling",
+			"Subscribe to a command's output instead of polling: newline-terminated PTY output lines (stderr merged) that match filter arrive as injected events while you keep working; command exit always delivers a summary event. Identical consecutive line-only update batches are deduped, so a watcher reprinting unchanged status does not re-wake the session. Returns a bash_id immediately; peek with bash_output, stop with kill_bash.",
+		promptSnippet: "Subscribe to a command's PTY output lines as injected events instead of polling",
 		promptGuidelines: [
 			"Waiting on observable state (CI checks, builds, log patterns, deploys) means a monitor, never a foreground sleep/poll loop.",
+			"Shape the command for the events you need: one-shot gate = `until <cond>; do sleep 1; done; printf 'READY\\n'` with filter ^READY$; stream = `tail -n 0 -F <log> | grep --line-buffered <pat>` with persistent: true, then kill_bash.",
+			"Sleep loops belong INSIDE the monitor command, never in your turn: about to sleep, re-poll bash_output, or foreground-block on a long command means register a monitor and keep working.",
 		],
 		parameters: monitorSchema,
 		renderCall: renderMonitorCall,

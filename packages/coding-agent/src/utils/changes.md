@@ -1,5 +1,140 @@
 # changes
 
+## Utils re-diverge from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts` keeps `ShellKind` classification, the
+  `SENPI_GIT_BASH_PATH` override, and PTY-aware invocation argument selection.
+- `packages/coding-agent/src/utils/syntax-highlight.ts` keeps upstream's per-language lazy
+  registration but rewrites every import to the extensionless exported subpaths
+  (`highlight.js/lib/core`, `highlight.js/lib/languages/*`): the fork pins highlight.js 11, whose
+  strict `exports` map rejects upstream's `.js`-suffixed deep paths (written against v10) — the
+  exact failure that broke every CI test job on this PR before the rewrite.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The import block of `packages/coding-agent/src/utils/syntax-highlight.ts` whenever upstream edits
+  its language set (fork must keep extensionless specifiers while highlight.js 11 is pinned).
+
+## Repository audit baseline for the utils tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`, tag v0.84.2). It assigns every audited production path whose exact
+  nearest tracker is this file, summarizing each fork delta; the dated history below it remains authoritative for the
+  feature narrative. `packages/coding-agent/src/utils/tools-manager.ts` is already covered by the 2026-08-13 entry
+  below.
+- `packages/coding-agent/src/utils/child-process.ts`: abort-aware `waitForChildProcess` and post-exit stdout drain
+  (dated entries below).
+- `packages/coding-agent/src/utils/shell.ts`: synchronous Windows process-tree kill, shell-kind resolution for
+  persistent terminals, and the sanitize fast path (dated entries below).
+- `packages/coding-agent/src/utils/fs-watch.ts`: optional recursive-watch options (2026-07-21 entry below).
+- `packages/coding-agent/src/utils/paths.ts`: shared `shortenPath()` display helper (2026-05-24 entry below).
+- `packages/coding-agent/src/utils/version-check.ts` and `packages/coding-agent/src/utils/pi-user-agent.ts`:
+  brand-aware update channel and outbound identity (own entry below).
+- `packages/coding-agent/src/utils/clipboard-image.ts`: equivalent optional-chaining guard on the native image check
+  (own entry below).
+- `packages/coding-agent/src/utils/highlight-js-lib-index.d.ts`: deleted ambient module declaration, with
+  `packages/coding-agent/src/utils/syntax-highlight.ts` importing the typed package entry instead (own entry below).
+
+### Why
+
+- The pre-backfill audit reported these paths uncovered because the entries that describe them predate the canonical
+  four-section format (their conflict-zone headings carried suffixes) or never named the exact path. This inventory
+  closes that gap without rewriting accurate history below.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository policy enforced by repository scripts before any extension loader exists; the paths
+  themselves are shared leaf utilities beneath the extension API.
+
+### Expected merge conflict zones
+
+- NONE for this inventory: the tracker merges to `ours` and the path list is pin-relative.
+
+## Brand-aware update channel and outbound identity (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/utils/version-check.ts`: latest-version checks query the npm registry
+  (`registry.npmjs.org` package documents, or a brand update channel's dist-tags endpoint) instead of the engine's
+  release site; `readAvailableVersion()` reads whichever document shape was fetched. Version comparison gained a
+  Senpi CalVer comparator (`YYYY.M.D` with an optional hotfix component) ahead of the semver fallback, release notes
+  link to the senpi changelog tag or the brand's changelog template, and the offline/skip gates read brand-scoped
+  environment values. A brand without an update channel skips the check entirely: the engine's own releases are not
+  installable from inside a branded distribution.
+- `packages/coding-agent/src/utils/pi-user-agent.ts`: the update-check user agent identifies as
+  `BRAND?.userAgent ?? APP_NAME` and defaults its version argument to `DISPLAY_VERSION`.
+
+### Why
+
+- `senpi update` and startup update checks must compare against senpi or brand releases, never upstream engine
+  releases, and CalVer hotfix segments do not order under plain semver comparison.
+
+### Why an extension could not handle it
+
+- Startup version checks run from core utilities before extensions load; an extension cannot redirect the fetch
+  target or rewrite the user agent of a check that has already fired.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/utils/version-check.ts` endpoint selection and version comparator.
+- LOW: `packages/coding-agent/src/utils/pi-user-agent.ts` identity line.
+
+## Clipboard native-read equivalent guard (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/utils/clipboard-image.ts`: the native backend's image check collapsed
+  `!clipboard || !clipboard.hasImage()` into the equivalent `!clipboard?.hasImage()`.
+
+### Why
+
+- Optional-chaining parity with the fork's erasable-syntax tree; behavior is unchanged — a missing native backend
+  and a backend reporting no image both still return no image.
+
+### Why an extension could not handle it
+
+- Clipboard image decoding is a shared leaf utility consumed by core input paths; extensions call into it rather than
+  around it.
+
+### Expected merge conflict zones
+
+- LOW: the single guard line in the native clipboard read.
+
+## Removed highlight.js ambient module declaration (2026-08-17)
+
+### What changed
+
+- Deleted `packages/coding-agent/src/utils/highlight-js-lib-index.d.ts`, the hand-written ambient declaration that
+  typed a deep `lib/index.js` import.
+- `packages/coding-agent/src/utils/syntax-highlight.ts` imports `hljs` from the package's typed entry point instead,
+  so the highlight interface comes from upstream types rather than a fork copy.
+
+### Why
+
+- The declaration existed only to type an untyped deep import; the package entry is typed, and maintaining a fork
+  declaration let it drift from the real highlight API.
+
+### Why an extension could not handle it
+
+- Module typing is compile-time; extensions cannot supply ambient declarations for the host package build.
+
+### Expected merge conflict zones
+
+- LOW: the import line in `packages/coding-agent/src/utils/syntax-highlight.ts`; the deletion is clean unless
+  upstream edits the removed file.
+
 ## Brand-aware offline package management (2026-08-13)
 
 ### What changed

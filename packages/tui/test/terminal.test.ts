@@ -391,6 +391,87 @@ describe("ProcessTerminal stop", () => {
 
 	it("does not throw when raw-mode restoration fails during stop", () => {
 		// Given
+		const eio = Object.assign(new Error("setRawMode failed with errno: 5"), { errno: 5 });
+		const harness = setupTerminalStopHarness(false, () => {
+			throw eio;
+		});
+
+		try {
+			// When / Then
+			assert.doesNotThrow(() => harness.terminal.stop());
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("does not throw when Bun reports the dead terminal only in the message", () => {
+		// Given
+		const bunShimEio = new Error("setRawMode failed with errno: 5");
+		const harness = setupTerminalStopHarness(false, () => {
+			throw bunShimEio;
+		});
+
+		try {
+			// When / Then
+			assert.doesNotThrow(() => harness.terminal.stop());
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("does not throw when the message carries the EPIPE errno", () => {
+		// Given
+		const bunShimEpipe = new Error("setRawMode failed with errno: 32");
+		const harness = setupTerminalStopHarness(false, () => {
+			throw bunShimEpipe;
+		});
+
+		try {
+			// When / Then
+			assert.doesNotThrow(() => harness.terminal.stop());
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("rethrows raw-mode failures whose message carries no dead-terminal errno", () => {
+		// Given
+		const unrelated = new Error("boom");
+		const harness = setupTerminalStopHarness(false, () => {
+			throw unrelated;
+		});
+
+		try {
+			// When / Then
+			assert.throws(
+				() => harness.terminal.stop(),
+				(error: unknown) => error === unrelated,
+			);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("rethrows raw-mode failures carrying a non-dead errno in the message", () => {
+		// Given
+		const unrelated = new Error("setRawMode failed with errno: 22");
+		const harness = setupTerminalStopHarness(false, () => {
+			throw unrelated;
+		});
+
+		try {
+			// When / Then
+			assert.throws(
+				() => harness.terminal.stop(),
+				(error: unknown) => error === unrelated,
+			);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("does not throw when Node reports the dead terminal by error code", () => {
+		// Given
 		const eio = Object.assign(new Error("setRawMode failed"), { code: "EIO" });
 		const harness = setupTerminalStopHarness(false, () => {
 			throw eio;

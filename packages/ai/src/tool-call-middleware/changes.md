@@ -1,6 +1,69 @@
 # Tool Call Middleware Changes
 
-# Tool Call Middleware Changes
+## 2026-08-23 - Kimi XTML sep-less channel marker leak
+
+### What changed and why
+
+- Kimi models leak XTML channel markers into visible text when tool calling
+  fails mid-think: session 01a02505 (message 84281a4b, `kimi-k3-ultrafast-unlocked`)
+  ended a user-visible text block with the literal `<|close|>think\n` because the
+  marker arrives without its trailing `<|sep|>`. Both defenses missed it: the
+  stream recovery parser only recognized `<|sep|>`-terminated markers (the
+  fallback re-emitted the marker bytes as 2-char text slices), and
+  `recoverKimiXtmlThinking()` never scanned `text` blocks at all.
+- `markers.ts` now owns a single shared `XTML_CHANNEL_MARKER_PATTERN` consumed by
+  BOTH the stream parser and the message-level recovery, so the two paths cannot
+  drift again: a marker is `<|open|>`/`<|close|>` + optional channel name
+  (`call`/`argument` reserved for structural opens) + optional `<|sep|>`,
+  terminated by `<|sep|>`, a non-word character, or end of stream; a bare
+  `<|sep|>` is also a marker. `matchXtmlChannelMarker()` anchors it for the
+  streaming state machine.
+- `recovery-stream.ts` holds a buffer that could still grow into a longer marker
+  (name run, partial `<|sep|>`) instead of emitting bytes, defers to structural
+  `<|open|>call `/`<|open|>argument ` opens before generic matching, runs behind
+  a recovery code mask so fenced/inline code keeps marker-shaped literals, and
+  strips held complete markers at `finish()` rather than flushing them.
+- `thinking-recovery.ts` additionally strips markers from `text` blocks (same
+  code-mask treatment). Text-block stripping is silent: the
+  `kimi_xtml_thinking_recovery` diagnostic still fires only for thinking-channel
+  recovery, keeping the runtime-boundary diagnostics contract stable.
+- A word run after a marker is absorbed into the channel name
+  (`<|close|>thinkafter` strips whole), which is the only self-consistent reading
+  of the protocol; incomplete junk like `<|clo` still flushes as plain text.
+
+## 2026-08-18 - Wire-alias tool-name resolution in invoke recovery
+
+### What changed and why
+
+- Upstream gateways disguise tool names on the wire: ccapi-cf Pascal-cases
+  `todo` to `Todo`, and CC-pool layers expose non-native tools as
+  `mcp_<hash>-<Name>` (observed live: `mcp_49f0-Todo`). Reverse mapping only
+  rewrites native `tool_use` blocks, so a leaked text invoke keeps the wire
+  alias and the recovery resolver vetoed it as an unknown tool, emitting the
+  raw XML as literal text (incident: session 01a01381, event 1214,
+  `ccapi-clb/claude-opus-5`, stop_reason `tool_use` with zero tool calls).
+- `createToolResolver` now falls back to an alias map that strips CC-SDK
+  `mcp__server__tool` prefixes, hashed `mcp_<hash>-` prefixes, and collapses
+  remaining separators/case onto the registered name's alphanumerics.
+- The fallback runs only after exact and case-insensitive matching miss, so
+  existing precedence is unchanged. Two registered tools collapsing onto the
+  same alias key resolve to neither (mirrors the insensitive-map collision
+  rule), keeping hallucinated names as literal text.
+
+## 2026-08-18 - Cursor exec marker preservation
+
+### What changed and why
+
+- Recovery stream snapshots now retain enumerable symbol-keyed metadata on native
+  content blocks. This preserves Cursor's `kCursorExecResolved` marker through
+  Claude/Kimi model recovery so the agent loop does not execute an already-resolved
+  tool call a second time (fixes #938).
+- String-keyed snapshot cloning and recovered text-tool behavior are unchanged.
+
+### Why the extension system could not handle this
+
+- The marker must survive the provider-neutral model recovery wrapper before the
+  agent loop or extensions consume the assistant stream.
 
 ## 2026-08-09 - Claude missing-angle ANTML invoke recovery
 

@@ -4,6 +4,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
+import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-prerequisite.ts";
+
+assertWorkspaceBuildPrerequisite(import.meta.url);
 
 /**
  * Regression: `senpi --mode rpc --multi-session` entered `runMultiSessionHost()`

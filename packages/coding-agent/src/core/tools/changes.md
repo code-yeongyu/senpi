@@ -1,5 +1,173 @@
 # core/tools changes
 
+## Tooling layer re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts` keeps syntax-highlighted output, display-text
+  normalization, and the process-tree kill abort controller that stops preserved output tails.
+- `packages/coding-agent/src/core/tools/edit-diff.ts` keeps the extracted `unified-diff.ts` patch
+  builder in place of upstream's direct `diff` usage.
+- `packages/coding-agent/src/core/tools/edit.ts` keeps filesystem-policy checks and themed
+  `renderToolDiff` rendering.
+- `packages/coding-agent/src/core/tools/index.ts` keeps the single tool-factory path (upstream
+  re-adds a parallel `createToolDefinition` switch).
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- Tool render/import blocks in `packages/coding-agent/src/core/tools/bash.ts` and
+  `packages/coding-agent/src/core/tools/edit.ts`.
+
+## Read tool rejects local:// URIs with actionable guidance (2026-08-24)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: the execute path now guards the `local://` URI scheme
+  (`/^local:\/\//i`) before any path resolution and throws guidance naming the eval kernel `read()`/`write()`
+  helpers and the plain-absolute-path alternative, instead of resolving the URI as a relative path and failing
+  with `ENOENT <cwd>/local:/...`. Single-slash `local:/x` stays an ordinary relative path because a colon is legal
+  in macOS filenames.
+
+### Why
+
+- A 2026-08-24 session replayed a detached-eval spill notice pointing at `local://detached-eval-eval_5.log`
+  through the read tool; the scheme collapsed to a relative path and the tool returned a bare ENOENT with no
+  recovery hint. Deployed bundles still emit `local://` spill URIs and the eval prompt documents the scheme for
+  kernel helpers, so the read tool is a repeatable trap; the error itself now teaches the two working paths.
+
+### Why an extension could not handle it
+
+- The guard must run inside the built-in read tool's own execute path before `resolveReadPathAsync`; extension
+  filesystem-policy hooks only see already-canonicalized paths, so the raw scheme string never reaches them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/read.ts` execute prologue and the module constants block.
+
+## Edit tool keeps filesystem policy and themed diff rendering after the 59a71b23 pin (2026-08-19)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/edit.ts` stays divergent from upstream pin
+  `59a71b235dadb4ad0d67557a8abb0aaa093e68b4`: `EditToolOptions` keeps `filesystemPolicy`, and the executor still
+  consults the extension-registered checker (`operation: "write"`, canonical target from
+  `canonicalizeFilesystemPath()`, `toolName: "edit"`) after path resolution and before any file access, throwing
+  the policy reason as the tool error and re-checking abort afterwards.
+- `edit.ts` keeps rendering through the fork's `renderToolDiff()` from `./diff-render.ts` (theme-aware, and passed
+  the edited `file_path` in both the preview and result paths) instead of upstream's direct
+  `renderDiff()` import from the interactive diff component, and keeps `component.detachAll()` in place of
+  `component.clear()` for the call and result containers.
+
+### Why
+
+- Filesystem policy is a fork capability enforced inside each built-in executor so it cannot be bypassed by
+  Unicode/symlink path variants or by permission approval, and the fork's tool diff renderer is theme-driven and
+  lives in `core/tools` to keep the tool layer independent of interactive-mode components.
+
+### Why an extension could not handle it
+
+- `tool_call` observes user arguments before this executor canonicalizes the target, and it runs inside permission
+  handling where unrestricted approval can allow the call; the enforcement point must stay in the executor. The
+  render path is the built-in tool's own component construction.
+
+### Expected merge conflict zones
+
+- LOW-MEDIUM: the imports at the top of `edit.ts` (upstream pulls `renderDiff` from the interactive component) and
+  the policy check block at the start of the execute function.
+
+## Repository audit baseline for the core/tools tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`). The audited production paths whose exact nearest tracker is this file:
+  `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/edit.ts`,
+  `packages/coding-agent/src/core/tools/edit-diff.ts`, `packages/coding-agent/src/core/tools/write.ts`,
+  `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/grep.ts`,
+  `packages/coding-agent/src/core/tools/find.ts`, `packages/coding-agent/src/core/tools/ls.ts`,
+  `packages/coding-agent/src/core/tools/index.ts`, `packages/coding-agent/src/core/tools/output-accumulator.ts`, and
+  `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`.
+- Per-file divergence history for the bash tool (prompt tuning, timeout validation, abort/timeout kill, elapsed and
+  syntax-highlight rendering), the shared diff renderer, source-backed write results, Node 26 path typing, and the
+  extension filesystem policy is preserved in the dated entries below.
+
+### Why
+
+- The audit requires every upstream-owned production divergence to be covered by one entry with all four canonical
+  sections in its exact nearest tracker. Earlier entries in this file use a non-canonical conflict-zone heading and
+  bare tool names, so paths they describe were reported uncovered; this inventory closes that gap without rewriting
+  accurate history.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository policy enforced by repository scripts before any extension loader exists.
+
+### Expected merge conflict zones
+
+- NONE: this tracker merges to `ours`; the inventory names pin-relative paths so it survives edits below.
+
+## Pruned tool factory surface and freeform passthrough (2026-08-17)
+
+### What changed
+
+- `index.ts`: removed the per-name factory helpers `createToolDefinition()`, `createTool()`,
+  `createCodingToolDefinitions()`, `createReadOnlyToolDefinitions()`, and `createAllTools()`; callers use
+  `createAllToolDefinitions()`, `createReadOnlyTools()`, or the per-tool `create*ToolDefinition()` factories
+  directly.
+- `tool-definition-wrapper.ts`: `wrapToolDefinition()` and `createToolDefinitionFromAgentTool()` forward the
+  `freeform` flag from the underlying definition/tool, so wrapped tools keep their freeform-input contract.
+
+### Why
+
+- The switch-based helpers duplicated the explicit factory lists and drifted from them as tools were added; every
+  consumer in the fork already resolved tools through the map or the per-tool factories. The `freeform` flag existed
+  on tool definitions and agent tools but was silently dropped by wrapping, breaking freeform tools (patch-style
+  text input) registered through the wrapper.
+
+### Why an extension could not handle it
+
+- These are the module's own export surface and the wrapper every built-in tool definition passes through; both sit
+  beneath the extension registration API.
+
+### Expected merge conflict zones
+
+- MEDIUM: `index.ts` export list — upstream may add helpers back; keep the fork's explicit-list style.
+- LOW: the `freeform` line in each wrapper spread.
+
+## Bounded decoded tail window for streaming tool output (2026-08-17)
+
+### What changed
+
+- `output-accumulator.ts`: rolling-tail maintenance moved into fork-owned `tail-window.ts` (`TailWindow` with the
+  same `maxBytes * 2` rolling bound, UTF-8 continuation-byte-safe trimming, and line-boundary tracking); snapshots
+  read `tail.text()` and trim to the first newline when the window starts mid-line.
+- `output-accumulator.ts`: new `appendText()` accepts already-decoded strings (text producers skip the TextDecoder);
+  `append(Buffer)` decodes once and both paths feed one `appendDecodedText(text, bytes)` accounting point;
+  `closeTempFile()` takes ownership of the temp-file stream before awaiting finish so a second close is a no-op.
+
+### Why
+
+- The inline tail trim kept a decoded string, a byte count, and a line-boundary flag in three places that could
+  disagree after multi-byte splits; string producers (steered/exec bridges) had to round-trip through Buffer to
+  accumulate output; and closing the temp file twice could double-settle the write promise.
+
+### Why an extension could not handle it
+
+- The accumulator is the output path of the built-in bash/exec tools; extensions receive already-truncated results
+  and cannot bound the buffering that precedes them.
+
+### Expected merge conflict zones
+
+- LOW: `output-accumulator.ts` tail/snapshot methods; NONE: `tail-window.ts` is fork-owned.
+
 ## Node 26 path-type compatibility (2026-08-13)
 
 ### What changed

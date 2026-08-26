@@ -216,7 +216,6 @@ export class ModelRuntime implements Models {
 			envValue("OFFLINE") === undefined && options.allowModelNetwork === true,
 			options.modelRefreshTimeoutMs ?? 15_000,
 		);
-		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
 		const refreshFromNetwork = runtime.modelNetworkEnabled && options.allowModelNetwork === true;
 		const controller =
@@ -264,26 +263,8 @@ export class ModelRuntime implements Models {
 			options.allowModelNetwork ?? false,
 			options.modelRefreshTimeoutMs ?? 15_000,
 		);
-		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
 		return runtime;
-	}
-
-	private configureRadiusProviders(): void {
-		this.builtins.clear();
-		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
-		for (const providerId of this.config.getProviderIds()) {
-			const config = this.config.getProvider(providerId);
-			if (config?.oauth !== "radius" || !config.baseUrl) continue;
-			this.builtins.set(
-				providerId,
-				builtinProviderCatalog.radiusProvider({
-					id: providerId,
-					name: config.name ?? providerId,
-					gateway: config.baseUrl.replace(/\/v1\/?$/u, ""),
-				}),
-			);
-		}
 	}
 
 	private providerIds(): Set<string> {
@@ -533,6 +514,22 @@ export class ModelRuntime implements Models {
 		return this.snapshot.configuredProviders.has(providerId);
 	}
 
+	/**
+	 * Deterministic fallback-expansion gate declared by the provider's own
+	 * registration. Only a definitive `false` excludes; providers without the
+	 * hook, and hooks that throw, stay eligible so expansion never shrinks on
+	 * uncertainty.
+	 */
+	isFallbackEligible(providerId: string): boolean {
+		const hook = this.extensionProviders.get(providerId)?.fallbackEligible;
+		if (typeof hook !== "function") return true;
+		try {
+			return hook() !== false;
+		} catch {
+			return true;
+		}
+	}
+
 	getAuth(providerId: string, overrides?: ModelRuntimeAuthOverrides): Promise<AuthResult | undefined>;
 	getAuth(model: Model<Api>, overrides?: ModelRuntimeAuthOverrides): Promise<AuthResult | undefined>;
 	async getAuth(
@@ -778,7 +775,6 @@ export class ModelRuntime implements Models {
 
 	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		this.config = await ModelConfig.load(this.modelsPath);
-		this.configureRadiusProviders();
 		if (options.providers) {
 			for (const providerId of new Set(options.providers)) this.recomposeProvider(providerId);
 			this.updateModelSnapshot();
@@ -825,6 +821,13 @@ export class ModelRuntime implements Models {
 	 * usable without a manual refresh. Offline policy restores from the store only and never
 	 * touches the network.
 	 */
+	private shouldSkipRegistrationRefresh(providerId: string): boolean {
+		return (
+			this.hasFreshAvailabilitySnapshot() &&
+			(this.nativeExtensionProviders.has(providerId) || this.extensionProviders.has(providerId))
+		);
+	}
+
 	private refreshAfterRegistration(): Promise<ModelsRefreshResult> {
 		if (!this.modelNetworkEnabled) return this.refresh({ allowNetwork: false });
 		const controller = new AbortController();
@@ -832,8 +835,9 @@ export class ModelRuntime implements Models {
 		return this.refresh({ allowNetwork: true, signal: controller.signal }).finally(() => clearTimeout(timeout));
 	}
 
-	registerNativeProvider(provider: Provider): Promise<ModelsRefreshResult> {
+	registerNativeProvider(provider: Provider, options?: { refresh?: boolean }): Promise<ModelsRefreshResult> {
 		if (!provider.id.trim()) throw new Error("Provider id must not be empty.");
+		const alreadyFresh = this.shouldSkipRegistrationRefresh(provider.id);
 		this.extensionProviders.delete(provider.id);
 		this.nativeExtensionProviders.set(provider.id, provider);
 		this.recomposeProvider(provider.id);
@@ -841,13 +845,21 @@ export class ModelRuntime implements Models {
 		if (composedOAuth) this.credentials.registerOAuthProvider(provider.id, composedOAuth);
 		else this.credentials.unregisterOAuthProvider(provider.id);
 		this.updateModelSnapshot();
+		if (alreadyFresh || options?.refresh === false) {
+			return Promise.resolve({ aborted: false, errors: new Map() });
+		}
 		return this.refreshAfterRegistration();
 	}
 
-	registerProvider(providerId: string, config: ProviderConfigInput): Promise<ModelsRefreshResult> {
+	registerProvider(
+		providerId: string,
+		config: ProviderConfigInput,
+		options?: { refresh?: boolean },
+	): Promise<ModelsRefreshResult> {
 		// Validate the incoming registration on its own, like the legacy registry:
 		// a broken re-registration must throw without touching the stored config.
 		validateExtensionProvider(providerId, this.builtins.get(providerId), this.config.getProvider(providerId), config);
+		const alreadyFresh = this.shouldSkipRegistrationRefresh(providerId);
 		this.nativeExtensionProviders.delete(providerId);
 		// Re-registration merges defined values over the previous registration and
 		// preserves undefined ones, matching the legacy ModelRegistry contract.
@@ -881,6 +893,9 @@ export class ModelRuntime implements Models {
 				configuredProviders,
 				available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
 			};
+		}
+		if (alreadyFresh || options?.refresh === false) {
+			return Promise.resolve({ aborted: false, errors: new Map() });
 		}
 		return this.refreshAfterRegistration();
 	}

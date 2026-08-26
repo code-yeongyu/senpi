@@ -24,8 +24,8 @@ describe("goal state after a system-owned abort", () => {
 			const harness = createGoalHarness();
 			const { tools, handlers, sent, events } = harness;
 			const ctx = await makeGoalContext(notices, "thread-system-abort-monitor");
-			await tools.get("create_goal")?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
 			await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+			await tools.get("create_goal")?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
 			events.emit("terminal_monitor_state", { activeCount: 1 });
 			await events.flush();
 			await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);

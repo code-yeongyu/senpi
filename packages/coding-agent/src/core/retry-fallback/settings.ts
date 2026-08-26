@@ -3,7 +3,7 @@ import type { FallbackChains } from "./chains.ts";
 export interface ProviderRetrySettings {
 	timeoutMs?: number;
 	streamStartTimeoutMs?: number;
-	streamRetryTimeoutMs?: number; // first-request liveness cap after a provider timeout; default: 30000, 0 disables
+	streamRetryTimeoutMs?: number; // retry-continuation watchdog cap after a provider timeout; reconciled to max(cap, streamStartTimeoutMs) so a granted stream-start budget is never cut short; default: 30000, 0 disables
 	maxRetries?: number;
 	maxRetryDelayMs?: number;
 }
@@ -13,6 +13,7 @@ export interface RetrySettings {
 	maxRetries?: number;
 	baseDelayMs?: number;
 	provider?: ProviderRetrySettings;
+	providers?: Record<string, import("./profile-override.ts").RetryPolicyOverride>;
 	modelFallback?: boolean;
 	fallbackChains?: Record<string, string[]>;
 	fallbackRevertPolicy?: "cooldown-expiry" | "never";

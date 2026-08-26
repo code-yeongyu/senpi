@@ -3,6 +3,8 @@ export type CompactionQueuedMessage = {
 	readonly mode: "steer" | "followUp";
 	/** Global recovery order reserved when the TUI accepts the input. */
 	readonly enqueueOrder?: number;
+	/** TUI-local render record; never enters AgentSession or persistence. */
+	readonly pendingEchoId?: string;
 };
 
 export type PromptDisposition = "handled" | "queued" | "started";

@@ -111,6 +111,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/package.json" },
 				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/index.ts" },
 				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py/prelude.py" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/node_modules/@babel/parser/package.json" },
 				{ path: "package/node_modules/cross-spawn/package.json" },
 				{ path: "package/node_modules/@modelcontextprotocol/sdk/package.json" },
 			],
@@ -157,7 +158,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 		);
 	});
 
-	it("accepts senpi package metadata that includes bundled workspace entrypoints", () => {
+	it("rejects senpi package metadata that omits the codemode Babel parser", () => {
 		// Given
 		const hostPrebuild = nativePrebuildFile(nativePrebuildTarget());
 		const packed = {
@@ -182,7 +183,10 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 		};
 
 		// When / Then
-		assert.doesNotThrow(() => assertSenpiPackedWorkspaceFiles(packed));
+		assert.throws(
+			() => assertSenpiPackedWorkspaceFiles(packed),
+			/missing bundled workspace files: .*senpi-codemode\/node_modules\/@babel\/parser\/package\.json/,
+		);
 	});
 
 	it("accepts npm dry-run package metadata with unprefixed paths", () => {
@@ -206,6 +210,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "node_modules/@code-yeongyu/senpi-codemode/package.json" },
 				{ path: "node_modules/@code-yeongyu/senpi-codemode/src/index.ts" },
 				{ path: "node_modules/@code-yeongyu/senpi-codemode/src/kernels/py/prelude.py" },
+				{ path: "node_modules/@code-yeongyu/senpi-codemode/node_modules/@babel/parser/package.json" },
 			],
 		};
 
@@ -257,6 +262,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/package.json" },
 				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/index.ts" },
 				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py/prelude.py" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/node_modules/@babel/parser/package.json" },
 			],
 		};
 
@@ -291,6 +297,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/package.json" },
 				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/index.ts" },
 				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py/prelude.py" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/node_modules/@babel/parser/package.json" },
 			],
 		};
 

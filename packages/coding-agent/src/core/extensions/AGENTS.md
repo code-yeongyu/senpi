@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/extensions
 
-The extension system. **The fork's most important architectural surface** — every fork feature that *can* be an extension *is* one. `types.ts` is ~1844 lines of public API contract. Treat changes here as breaking until proven otherwise.
+The extension system. **The fork's most important architectural surface** — every fork feature that *can* be an extension *is* one. `types.ts` is ~2367 lines of public API contract. Treat changes here as breaking until proven otherwise.
 
 ## FILES
 
@@ -8,14 +8,15 @@ The extension system. **The fork's most important architectural surface** — ev
 extensions/
 ├── types.ts             # Public API: ExtensionAPI, Extension, ExtensionContext, ExtensionUIContext,
 │                        # ExtensionEvent union (30+ events), all *EventResult types, ToolDefinition.
-│                        # ~1844 LOC — VERY HIGH merge-conflict risk on every upstream sync.
+│                        # ~2367 LOC — VERY HIGH merge-conflict risk on every upstream sync.
 ├── loader.ts            # Discovery + jiti-based TS import. Shared importer per `loadExtensions()` batch
 │                        # (perf fix 2026-05-08). Aliases `@mariozechner/pi-*` → workspace packages.
 ├── runner.ts            # ExtensionRunner — owns the runtime, dispatches events, holds shutdown handlers,
 │                        # exposes `bindCore()` to wire `pi.*` stubs to real implementations.
 ├── wrapper.ts           # 30-line wrapper utility used to track extension origin per UI message
 ├── index.ts             # Re-exports from runner/loader/types
-├── builtin/             # 32 builtin extensions + 4 global defaults + bundled codemode (`core/resource-loader.ts`) — see builtin/AGENTS.md
+├── notice/              # Shared extension notice surface (spec.ts, box.ts, adapters.ts) reused by builtin renderers
+├── builtin/             # 39 builtin extensions + 4 global defaults + bundled codemode (`core/resource-loader.ts`) — see builtin/AGENTS.md
 └── changes.md           # Fork tracker — DENSE. Every public-API change must add a section.
 ```
 
@@ -62,9 +63,9 @@ extensions/
 
 ## NOTES
 
-- The ~1844-line `types.ts` is "the API"; treat its diffs like a public package release.
+- The ~2367-line `types.ts` is "the API"; treat its diffs like a public package release.
 - `ToolRenderContext` now includes `imageProtocol` (terminal image protocol, or null when images can't render) and `hasResult` (lets a call renderer yield to the result renderer).
 - `changes.md` already documents major fork-introduced APIs: `ModelSelectEventResult`, `SystemPromptChangeEvent`, `getCompactionSettings`, lazy/shared jiti, default-extension factory resolver. Read it before extending.
 
 ---
-Generated: 2026-08-07 | Commit: `4f26b8282`
+Generated: 2026-08-22 | Commit: `a5eed4453`

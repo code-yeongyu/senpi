@@ -368,6 +368,46 @@ describe("eval completed-cell throughput badge", () => {
 		expect(text).toContain("eval py done ✓ · 2 calls · 1.00 calls/s · 2s · timeout 420s");
 	});
 
+	it("Given zero tool calls when rendered finally then header omits the calls and calls-per-second segments", () => {
+		// Given
+		const givenResult = evalResult(
+			{
+				language: "py",
+				durationMs: 1_250,
+				toolCallCount: 0,
+				wallDurationMs: 0,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "work()",
+						language: "py",
+						output: "ok",
+						status: "complete",
+						durationMs: 1_250,
+					},
+				],
+			},
+			"ok",
+		);
+
+		// When
+		const text = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: false },
+			undefined,
+			resultContext({ args: { language: "py", code: "work()", summary: "throughput" } }),
+		)
+			.render(120)
+			.join("\n");
+
+		// Then
+		expect(text).not.toContain("calls/s");
+		expect(text).not.toContain("0 calls");
+		expect(text).toContain("eval py done ✓ · <1s");
+	});
+
 	it("Given singular tool-call count when rendered then call noun stays singular", () => {
 		// Given
 		const givenResult = evalResult(

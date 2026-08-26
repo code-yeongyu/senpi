@@ -1,17 +1,26 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Transport } from "@earendil-works/pi-ai";
+import { SENPI_DEFAULT_RETRY_PROFILE } from "@earendil-works/pi-ai/utils/retry-profile/profiles";
+import type {
+	RetryPolicyProfile,
+	RetryStagePolicy,
+	RetryTieredHintStrategy,
+} from "@earendil-works/pi-ai/utils/retry-profile/types";
 import type { TuiMode as RendererTuiMode, ScrollViewScrollbar } from "@earendil-works/pi-tui";
 import { createHash, randomUUID } from "crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { stripBom } from "../utils/text.ts";
 import { envValue } from "./brand.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import { FILE_STORAGE_LOCK_OPTIONS } from "./lockfile-policy.ts";
+import type { RetryPolicyOverride } from "./retry-fallback/profile-override.ts";
+import { validateRetryProviderOverrides } from "./retry-fallback/profile-override.ts";
 import {
 	type ResolvedHintPolicySettings,
 	type ResolvedRetryFallbackSettings,
@@ -21,7 +30,10 @@ import {
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
 
-export type { ProviderRetrySettings, RetrySettings } from "./retry-fallback/settings.ts";
+export type {
+	ProviderRetrySettings,
+	RetrySettings,
+} from "./retry-fallback/settings.ts";
 
 export const DEFAULT_STREAM_START_TIMEOUT_MS = 90_000;
 export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
@@ -182,7 +194,7 @@ export interface Settings {
 	hideThinkingBlock?: boolean;
 	smoothStreaming?: boolean; // default: true
 	smoothStreamingFps?: number; // default: 60, clamped to 30-120 when read
-	showCacheMissNotices?: boolean; // default: false - show transcript notices for significant prompt-cache misses
+	showCacheMissNotices?: boolean; // default: false - show prompt-cache miss and compaction cost notices
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: boolean;
@@ -292,6 +304,7 @@ export type SettingsSourceListener = (source: SettingsSourceSelection) => void;
 
 /** Parse JSON or JSONC without changing comment-like text inside strings. */
 export function parseSettingsJson(content: string): Record<string, unknown> {
+	content = stripBom(content);
 	const withoutComments: string[] = [];
 	let inString = false;
 	let escaped = false;
@@ -451,7 +464,12 @@ export function resolveSettingsSource(
 	const directory = getSettingsDirectory(cwd, agentDir, scope, homeDir);
 	const jsoncPath = join(directory, "settings.jsonc");
 	if (existsSync(jsoncPath)) {
-		return { path: jsoncPath, format: "jsonc", reason: "explicit-jsonc", scope };
+		return {
+			path: jsoncPath,
+			format: "jsonc",
+			reason: "explicit-jsonc",
+			scope,
+		};
 	}
 	const jsonPath = join(directory, "settings.json");
 	if (existsSync(jsonPath)) {
@@ -489,7 +507,18 @@ export interface SettingsStorage {
 
 export interface SettingsError {
 	scope: SettingsScope;
+	path?: string;
 	error: Error;
+}
+
+type SettingsPaths = Partial<Record<SettingsScope, string>>;
+
+function toSettingsError(scope: SettingsScope, error: unknown, path?: string): SettingsError {
+	return {
+		scope,
+		...(path ? { path } : {}),
+		error: error instanceof Error ? error : new Error(String(error)),
+	};
 }
 
 export class FileSettingsStorage implements SettingsStorage {
@@ -533,10 +562,11 @@ export class FileSettingsStorage implements SettingsStorage {
 					throw error;
 				}
 				lastError = error;
-				const start = Date.now();
-				while (Date.now() - start < delayMs) {
-					// Sleep synchronously to avoid changing callers to async.
-				}
+				// Atomics.wait sleeps the thread without spinning, so contended lock retries
+				// no longer burn a CPU core per waiter (root cause of the TUI freeze under
+				// provider-error storms). Stays synchronous to keep callers unchanged.
+				const sleeper = new Int32Array(new SharedArrayBuffer(4));
+				Atomics.wait(sleeper, 0, 0, delayMs);
 			}
 		}
 
@@ -547,36 +577,40 @@ export class FileSettingsStorage implements SettingsStorage {
 		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
 		const dir = dirname(path);
 
-		let release: (() => void) | undefined;
+		// Read without the lock: writers publish atomically via temp+rename below, so
+		// a reader can never observe partial content. Read-only callers therefore skip
+		// lock acquisition entirely (no lock churn, no lock-dir filesystem events).
+		const current = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+		let next = fn(current);
+		if (next === undefined) {
+			return;
+		}
+		// Only create directory when we actually need to write
+		if (!existsSync(dir)) {
+			mkdirSync(dir, { recursive: true });
+		}
+		const release = this.acquireLockSyncWithRetry(path);
 		try {
-			// Only create directory and lock if file exists or we need to write
-			let current: string | undefined;
-			if (existsSync(path)) {
-				release = this.acquireLockSyncWithRetry(path);
-				current = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+			const underLock = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+			if (underLock !== current) {
+				// Lost a write race: re-merge against the winner's content under the lock.
+				next = fn(underLock);
 			}
-			let next = fn(current);
 			if (next !== undefined) {
-				// Only create directory when we actually need to write
-				if (!existsSync(dir)) {
-					mkdirSync(dir, { recursive: true });
-				}
-				if (!release) {
-					release = this.acquireLockSyncWithRetry(path);
-					if (existsSync(path)) {
-						// Lost the first-write race: re-merge against the winner's content under the lock.
-						next = fn(readFileSync(path, "utf-8"));
-					}
-				}
-				if (next !== undefined) {
-					writeFileSync(path, next, "utf-8");
+				// Publish atomically: write a same-directory temp file, then rename over
+				// the settings path so lock-free readers never see a torn write.
+				const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+				try {
+					writeFileSync(tempPath, next, "utf-8");
 					recordSelfWrite(path, next);
+					renameSync(tempPath, path);
+				} catch (error) {
+					rmSync(tempPath, { force: true });
+					throw error;
 				}
 			}
 		} finally {
-			if (release) {
-				release();
-			}
+			release();
 		}
 	}
 }
@@ -613,6 +647,7 @@ export class SettingsManager {
 	private projectSettingsLoadError: Error | null = null; // Track if project settings file had parse errors
 	private writeQueue: Promise<void> = Promise.resolve();
 	private errors: SettingsError[];
+	private settingsPaths: SettingsPaths;
 	private selectedSources = new Map<SettingsScope, SettingsSourceSelection>();
 	private sourceListeners: SettingsSourceListener[] = [];
 
@@ -625,6 +660,7 @@ export class SettingsManager {
 		initialErrors: SettingsError[] = [],
 		projectTrusted = true,
 		initialSources: readonly SettingsSourceSelection[] = [],
+		settingsPaths: SettingsPaths = {},
 	) {
 		this.storage = storage;
 		this.globalSettings = initialGlobal;
@@ -633,6 +669,7 @@ export class SettingsManager {
 		this.globalSettingsLoadError = globalLoadError;
 		this.projectSettingsLoadError = projectLoadError;
 		this.errors = [...initialErrors];
+		this.settingsPaths = settingsPaths;
 		for (const source of initialSources) this.selectedSources.set(source.scope, source);
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
 	}
@@ -651,18 +688,25 @@ export class SettingsManager {
 	static fromStorage(storage: SettingsStorage, options: SettingsManagerCreateOptions = {}): SettingsManager {
 		const projectTrusted = options.projectTrusted ?? true;
 		const initialSources: SettingsSourceSelection[] = [];
+		const settingsPaths: SettingsPaths = {};
 		const globalSource = storage.selectSource?.("global");
-		if (globalSource) initialSources.push(globalSource);
+		if (globalSource) {
+			initialSources.push(globalSource);
+			settingsPaths.global = globalSource.path;
+		}
 		const globalLoad = SettingsManager.tryLoadFromStorage(storage, "global");
 		const projectSource = projectTrusted ? storage.selectSource?.("project") : undefined;
-		if (projectSource) initialSources.push(projectSource);
+		if (projectSource) {
+			initialSources.push(projectSource);
+			settingsPaths.project = projectSource.path;
+		}
 		const projectLoad = SettingsManager.tryLoadFromStorage(storage, "project", projectTrusted);
 		const initialErrors: SettingsError[] = [];
 		if (globalLoad.error) {
-			initialErrors.push({ scope: "global", error: globalLoad.error });
+			initialErrors.push(toSettingsError("global", globalLoad.error, settingsPaths.global));
 		}
 		if (projectLoad.error) {
-			initialErrors.push({ scope: "project", error: projectLoad.error });
+			initialErrors.push(toSettingsError("project", projectLoad.error, settingsPaths.project));
 		}
 
 		return new SettingsManager(
@@ -674,6 +718,7 @@ export class SettingsManager {
 			initialErrors,
 			projectTrusted,
 			initialSources,
+			settingsPaths,
 		);
 	}
 
@@ -708,7 +753,10 @@ export class SettingsManager {
 		projectTrusted = true,
 	): { settings: Settings; error: Error | null } {
 		try {
-			return { settings: SettingsManager.loadFromStorage(storage, scope, projectTrusted), error: null };
+			return {
+				settings: SettingsManager.loadFromStorage(storage, scope, projectTrusted),
+				error: null,
+			};
 		} catch (error) {
 			return { settings: {}, error: error as Error };
 		}
@@ -919,7 +967,7 @@ export class SettingsManager {
 
 	private recordError(scope: SettingsScope, error: unknown): void {
 		const normalizedError = error instanceof Error ? error : new Error(String(error));
-		this.errors.push({ scope, error: normalizedError });
+		this.errors.push(toSettingsError(scope, normalizedError, this.settingsPaths[scope]));
 	}
 
 	private clearModifiedScope(scope: SettingsScope): void {
@@ -1125,6 +1173,10 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getAllModelThinkingLevels(): Record<string, ThinkingLevel> {
+		return { ...(this.settings.modelThinkingLevels ?? {}) };
+	}
+
 	/** Thinking level last set for this exact model, or undefined when unknown/invalid on disk. */
 	getModelThinkingLevel(provider: string, modelId: string): ThinkingLevel | undefined {
 		return readModelMemoryEntry(
@@ -1304,7 +1356,11 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getRetrySettings(): { enabled: boolean; maxRetries: number; baseDelayMs: number } {
+	getRetrySettings(): {
+		enabled: boolean;
+		maxRetries: number;
+		baseDelayMs: number;
+	} {
 		return {
 			enabled: this.getRetryEnabled(),
 			maxRetries: this.settings.retry?.maxRetries ?? 3,
@@ -1351,7 +1407,10 @@ export class SettingsManager {
 			this.globalSettings.retry = {};
 		}
 		const chains = this.getGlobalFallbackChains();
-		this.globalSettings.retry.fallbackChains = { ...chains, [key]: [...entries] };
+		this.globalSettings.retry.fallbackChains = {
+			...chains,
+			[key]: [...entries],
+		};
 		this.markModified("retry", "fallbackChains");
 		this.save();
 	}
@@ -1415,12 +1474,82 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getProviderRetrySettings(): { timeoutMs?: number; maxRetries?: number; maxRetryDelayMs: number } {
+	getProviderRetrySettings(): {
+		timeoutMs?: number;
+		maxRetries?: number;
+		maxRetryDelayMs: number;
+	} {
 		return {
 			timeoutMs: this.settings.retry?.provider?.timeoutMs,
 			maxRetries: this.settings.retry?.provider?.maxRetries,
 			maxRetryDelayMs: this.settings.retry?.provider?.maxRetryDelayMs ?? 60000,
 		};
+	}
+
+	/**
+	 * Resolve the effective retry profile for a provider. Precedence:
+	 * 1) SENPI_DEFAULT_RETRY_PROFILE is the base.
+	 * 2) A provider-declared retryPolicy replaces the base entirely.
+	 * 3) User global retry.maxRetries / retry.baseDelayMs apply ONLY when the
+	 *    provider declared NO profile (they must not silently re-tune one).
+	 * 4) Validated retry.providers.<id> patches scheduling knobs last.
+	 * 5) retry.enabled === false is a hard gate: resolved turn.enabled is false.
+	 */
+	resolveRetryProfile(provider: { id: string; retryPolicy?: RetryPolicyProfile } | undefined): RetryPolicyProfile {
+		const base = provider?.retryPolicy ?? SENPI_DEFAULT_RETRY_PROFILE;
+		const declared = provider?.retryPolicy !== undefined;
+
+		const turnBackoff = { ...base.turn.backoff };
+		if (!declared) {
+			if (this.settings.retry?.maxRetries !== undefined) {
+				turnBackoff.baseDelayMs = this.settings.retry.baseDelayMs ?? turnBackoff.baseDelayMs;
+			}
+		}
+
+		let turnMaxRetries = base.turn.maxRetries;
+		let turnBaseDelayMs = turnBackoff.baseDelayMs;
+		if (!declared) {
+			if (this.settings.retry?.maxRetries !== undefined) turnMaxRetries = this.settings.retry.maxRetries;
+			if (this.settings.retry?.baseDelayMs !== undefined) turnBaseDelayMs = this.settings.retry.baseDelayMs;
+		}
+
+		const providerOverride = this._resolveRetryProviderOverride(provider?.id);
+		if (providerOverride?.turn?.maxRetries !== undefined) turnMaxRetries = providerOverride.turn.maxRetries;
+		if (providerOverride?.turn?.baseDelayMs !== undefined) turnBaseDelayMs = providerOverride.turn.baseDelayMs;
+
+		const turnEnabled = this.getRetryEnabled() ? (providerOverride?.turn?.enabled ?? base.turn.enabled) : false;
+
+		const tierStrategy: RetryTieredHintStrategy =
+			base.turn.serverHint.mode === "tiered"
+				? base.turn.serverHint.strategy
+				: () => {
+						throw new Error("not tiered");
+					};
+
+		const turn: RetryStagePolicy = {
+			enabled: turnEnabled,
+			maxRetries: turnMaxRetries,
+			backoff: { ...base.turn.backoff, baseDelayMs: turnBaseDelayMs },
+			extractServerHint: base.turn.extractServerHint,
+			serverHint:
+				base.turn.serverHint.mode === "tiered" ? { mode: "tiered", strategy: tierStrategy } : base.turn.serverHint,
+			classify: base.turn.classify,
+		};
+
+		return {
+			id: base.id,
+			providerRequest: base.providerRequest,
+			turn,
+			fallback: base.fallback,
+		};
+	}
+
+	private _resolveRetryProviderOverride(providerId: string | undefined): RetryPolicyOverride | undefined {
+		if (providerId === undefined) return undefined;
+		const raw = this.settings.retry?.providers;
+		if (raw === undefined) return undefined;
+		const { overrides } = validateRetryProviderOverrides(raw, new Set([providerId]));
+		return overrides[providerId];
 	}
 
 	/**

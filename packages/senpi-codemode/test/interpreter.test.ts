@@ -22,6 +22,7 @@ describe("interpreter detection", () => {
 	it("falls through per-platform candidates and rejects empty Store-alias output", async () => {
 		const detector = createInterpreterDetector({
 			platform: "win32",
+			resolveCommandPath: () => undefined,
 			execFile: stubProbe(
 				new Map([
 					["python --version", ""],
@@ -36,6 +37,7 @@ describe("interpreter detection", () => {
 	it("returns unavailable for missing and timed-out interpreters without throwing", async () => {
 		const detector = createInterpreterDetector({
 			platform: "linux",
+			resolveCommandPath: () => undefined,
 			execFile: stubProbe(
 				new Map([
 					["ruby --version", new Error("ENOENT")],
@@ -56,6 +58,7 @@ describe("interpreter detection", () => {
 		// the skip-if-absent jl tests hid it.
 		const detector = createInterpreterDetector({
 			platform: "linux",
+			resolveCommandPath: () => undefined,
 			execFile: stubProbe(new Map([["julia --version", "julia version 1.12.6"]])),
 		});
 
@@ -70,6 +73,7 @@ describe("interpreter detection", () => {
 				probes += 1;
 				return { stdout: "Python 3.11.9", stderr: "" };
 			},
+			resolveCommandPath: () => undefined,
 		});
 
 		await expect(detector.detect("py")).resolves.toEqual({ ok: true, path: "python3", version: "3.11.9" });
@@ -88,6 +92,7 @@ describe("interpreter detection", () => {
 				]),
 			),
 			nodeVersion: "24.1.0",
+			resolveCommandPath: () => undefined,
 		});
 
 		const availability = await getInterpreterAvailability(

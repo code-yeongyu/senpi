@@ -1,5 +1,6 @@
 import type { AgentEndEvent, ExtensionContext } from "../../types.ts";
 import type { MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
+import { didTerminalProviderErrorEndTurn } from "./terminal-provider-error.ts";
 import type { Goal } from "./types.ts";
 
 interface GoalAgentEndOptions {
@@ -14,6 +15,15 @@ export async function continueGoalAfterAgentEnd(
 ): Promise<Goal | null> {
 	if (options.event.aborted === true && options.event.abortSource === "system") {
 		return monitor.afterSystemAbort({
+			ctx: options.ctx,
+			event: options.event,
+			goal: options.goal,
+			messages: options.event.messages,
+			willRetry: options.event.willRetry === true,
+		});
+	}
+	if (didTerminalProviderErrorEndTurn(options.event)) {
+		return monitor.afterProviderFailure({
 			ctx: options.ctx,
 			event: options.event,
 			goal: options.goal,

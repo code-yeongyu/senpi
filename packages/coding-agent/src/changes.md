@@ -1,5 +1,654 @@
 # changes
 
+## 2026-08-25 - Keep JSON startup logging off stdout
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` takes over stdout for JSON `--help` and redirects `console.log` to stderr for the lifetime of JSON-mode execution, restoring the original logger on process exit.
+
+### Why
+
+- Machine-readable JSON output must remain clean while startup diagnostics and trusted chatter continue to be visible on stderr.
+
+### Why an extension could not handle it
+
+- CLI mode selection and stdout ownership happen before extensions load and are process-wide runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: JSON-mode startup setup around `resolveAppMode()` and stdout takeover.
+
+## Coding-agent entry surfaces re-diverge from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/config.ts` keeps the bun global-launcher repair command, brand-profile
+  and `envValue` plumbing, nearest-parent config discovery, and multi-step self-update commands.
+- `packages/coding-agent/src/index.ts` keeps the fork public surface: `sanitizeTerminalLabel`,
+  `OAuthCredential`, `CacheFriendlySummaryOptions`, the filesystem-policy and extension-RPC contract types, and notice primitives.
+- `packages/coding-agent/src/migrations.ts` keeps the fork migration chain (brand-dir,
+  extension-system, legacy-senpi dirs) in place of upstream's commands-to-prompts migration.
+- `packages/coding-agent/src/package-manager-cli.ts` keeps senpi-branded update help text and the
+  removable `omo-local-update` beta hook.
+- `packages/coding-agent/src/main.ts` keeps the fork stdout contract for JSON mode: stdout takeover
+  also applies to `--help` in JSON mode, and `console.log` is redirected to stderr for the process
+  lifetime so machine-readable stdout stays clean of stray logging.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- Export lists in `packages/coding-agent/src/index.ts`, the migration registry in
+  `packages/coding-agent/src/migrations.ts`, and update-help templates in
+  `packages/coding-agent/src/package-manager-cli.ts`.
+
+## Preserve zero-usage context estimation for auto-compaction (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: allow the fork-owned estimated context size to drive threshold compaction even when no prior assistant usage index exists.
+
+### Why
+
+- The fork's zero-usage regression guard depends on message estimation; upstream's no-usage early return silently disables compaction for malformed or provider-zero usage responses.
+
+### Why an extension could not handle it
+
+- Automatic compaction admission is internal session state evaluated before extension compaction hooks run.
+
+### Expected merge conflict zones
+
+- HIGH: `_checkCompaction` threshold accounting and fork compaction safeguards.
+
+## Restore fork settings paths and interactive startup seams after upstream merge (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: preserve fork `.senpi` settings discovery while adopting upstream BOM-tolerant parsing and path-bearing diagnostics.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: retain the fork's testable tmux-keyboard startup seam while adopting the upstream startup warning flow.
+
+### Why
+
+- The fork's branded config directory and interactive startup contracts are production behavior; allowing upstream `.pi` assumptions or an unmocked method call breaks settings persistence and startup diagnostics.
+
+### Why an extension could not handle it
+
+- Settings source selection and interactive startup dispatch run before extensions are loaded.
+
+### Expected merge conflict zones
+
+- HIGH: settings source resolution, error reporting, and interactive startup checks.
+
+## Preserve highlight.js package export compatibility after upstream merge (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/utils/syntax-highlight.ts`: use highlight.js package-export subpaths compatible with the fork's pinned 11.12.0 release, including the root package for lazy grammar loading.
+
+### Why
+
+- Upstream's source import suffixes are not exported by highlight.js 11.12.0 under Node and Vite, preventing child-process startup and causing the test prerequisite to fail.
+
+### Why an extension could not handle it
+
+- Syntax-highlighter module resolution happens during CLI and TUI module loading, before extensions are initialized.
+
+### Expected merge conflict zones
+
+- MEDIUM: highlight.js imports and deferred grammar loading in the syntax-highlighting utility.
+
+## 2026-08-25 - brand executable name for shell-command contexts
+
+### What changed
+
+- `packages/coding-agent/src/config.ts`: exports `APP_COMMAND` from `BRAND?.command`, falling back to `APP_NAME`, so shell-command strings can use the real binary when it differs from the display name.
+
+### Why
+
+- A brand can present as `OmO` while the installed executable is `omo`. Resume hints and other copy-paste commands must name the binary the shell can run.
+
+### Why an extension could not handle it
+
+- Brand identity constants are resolved at module load, before the extension loader exists; every later command-line interpolation reads these exports.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/config.ts` identity constants next to `APP_NAME`.
+
+## 2026-08-25 - Lazy-load the interactive mode at the CLI mode seam
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: RPC and print mode imports remain eager, while `InteractiveMode` is loaded dynamically only after the final mode is known to be interactive.
+
+### Why
+
+- RPC children are headless and never construct the interactive TUI. Keeping the interactive mode import in the shared static mode barrel made the full component tree parse during RPC startup. The dynamic boundary removes that interactive-only work from the RPC boot path while preserving the same interactive import immediately before its first use.
+
+### Why an extension could not handle it
+
+- Mode selection and entry-module loading happen before extensions are loaded; only the CLI coordinator can keep an unused mode graph out of the RPC child entry.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/main.ts` mode imports and the final interactive dispatch branch.
+
+## 2026-08-22 - emit agent_idle after settlement-deferred turns resolve
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-settled-delivery.ts`: added `DeferredTurnClaim` / `DeferredTurnDisposition` (`started` / `delegated` / `finished-without-start`) and `deferTriggerTurn`, so a settlement-deferred `sendMessage(..., { triggerTurn: true })` declares whether it actually started a run. Claims resolve at the `_promptAgent` admission boundary.
+- `packages/coding-agent/src/core/agent-session.ts`: after the deferred-action loop in `_emitAgentSettled`, an out-of-band check waits for all deferred turn dispositions, skips emission when any turn `started`, waits for delegated session work to drain, verifies the settlement epoch is still current, and emits `{ type: "agent_idle" }` only when no agent run or session work is active. Both settlement-deferred turn APIs register a claim: `sendMessage(..., { triggerTurn: true })` via `deferTriggerTurn`, and `sendUserMessage` (which always triggers a turn) via a claim resolved from its prompt disposition. `agent_settled` ordering is unchanged for existing subscribers.
+
+### Why
+
+- The TUI cleared its working-status dock on the public `agent_settled`, but settlement-deferred continuations (TTSR, loop-guard, goal recovery) start a turn *after* that event, so the dock was removed and immediately remounted - the same vertical bounce the jitter fix exists to eliminate. `_isAgentRunActive` alone cannot decide this at the deferred-action loop because a deferred `sendCustomMessage` can be suspended at compaction/provider admission before reaching `_promptAgent`. `agent_idle` is the single race-free boundary for final cleanup.
+
+### Why an extension could not handle it
+
+- Settlement-deferred turn admission and the settlement epoch are private `AgentSession` / `AgentSettledDelivery` state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts` `_emitAgentSettled`, `_promptAgent`, and the `AgentEvent` union.
+- `packages/coding-agent/src/core/agent-settled-delivery.ts`.
+
+## 2026-08-22 - Bun-installed CLIs re-exec onto the Bun runtime
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts` now runs a runtime check as its first statement, before `enableStartupCompileCache()`: it realpaths `process.argv[1]`, asks the fork-only `packages/coding-agent/src/bun-runtime.ts` decision function whether this process should run under Bun, and on a positive decision `spawnSync`s the installed `bun` binary with the same script and arguments, propagates the child's signal or exit status, and exits without loading the rest of the entry flow.
+
+### Why
+
+- `bun install -g` links the CLI into `~/.bun/bin`, but the shebang still selects Node, so users who installed with Bun silently ran on the Node runtime. The check has to precede compile-cache setup so a re-exec never pays for Node-only startup work, and it honors `SENPI_RUNTIME=node`/`bun`, keeps debugger runs on Node, and never re-execs when `process.versions.bun` is already set.
+
+### Why an extension could not handle it
+
+- Runtime selection happens before any extension, session, or engine module is loaded; by the time an extension could run, the process is already committed to its interpreter.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the first statements of `packages/coding-agent/src/cli.ts`, immediately above the existing `enableStartupCompileCache()` call.
+
+## 2026-08-20 - Cursor 0-token RE stays on the same model and shrinks
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: 0-token Cursor `resource_exhausted` retries with `sameModelRemint` instead of 429/k3 fallback; overflow compact uses Cursor keep-recent-0 settings; too-small compact truncates to the last user turn.
+
+### Why
+
+- `resource.?exhausted` was classified as a 429 transient fallback, and overflow compact that saved <1% still retried the same Cursor payload.
+
+### Why an extension could not handle it
+
+- Retry fallback and pre-prompt compaction are core AgentSession admission paths.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts` `_handleRetryableError`, `_executeCompaction`, `_isHardErrorFallbackEligible`.
+
+## Public notice renderer primitives (2026-08-20)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` now exports `buildNoticeBox`, `noticeMessageRenderer`, `noticeEntryRenderer`, and the `NoticeSpec`, `NoticeLine`, and `NoticeTone` types.
+
+### Why
+
+- Extensions and package consumers need the same notice-card contract as built-in transcript surfaces instead of recreating its background, title, and detail styling.
+
+### Why an extension could not handle it
+
+- The package entry point owns the supported public API; an extension cannot export additional symbols from it.
+
+### Expected merge conflict zones
+
+- LOW: the notice export block in `packages/coding-agent/src/index.ts`.
+
+## 2026-08-19 - Session title uses session-model auth
+
+### What changed
+
+- `_generateSessionTitle` now calls `_getSummarizationRequestAuth(model)` instead of `_getCompactionRequestAuth(model)`.
+
+### Why
+
+- Compaction auth can be remapped to another provider (see #974). Title generation still streams with the **session** model, so a remapped key produces `session_title_generation` `unauthenticated` on Cursor while the main turn works.
+
+### Why an extension could not handle it
+
+- Title generation is private session lifecycle. There is no extension hook for the title complete auth.
+
+### Conflict zone
+
+- `packages/coding-agent/src/core/agent-session.ts` `_generateSessionTitle`.
+
+## 2026-08-19 - Skip Cursor compaction while a Run is live
+
+### What changed
+
+- `compactBeforeNextAdmission` no-ops for `cursor` / `cursor-cli-oauth`.
+- Blocking and generated compaction refuse those providers while `!ctx.isIdle()`.
+
+### Why
+
+- Cursor rebuilds full conversation state each hop. Mid-turn compact desyncs `conversationId` and the next hop returns 0-token `resource_exhausted` (session 01a01879).
+
+### Conflict zone
+
+- `packages/coding-agent/src/core/agent-session.ts` `compactBeforeNextAdmission`
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts` `applyBlockingCompaction`
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts` `applyGeneratedCompaction`
+
+## 2026-08-19 - Ignore implausible Cursor usage for compaction threshold
+
+### What changed
+
+- `_resolveThresholdContextTokens` uses `resolveThresholdContextTokens`: if the local estimate is at least 50k and billed usage is more than 8× that estimate, compact against the estimate.
+
+### Why
+
+- Complements the billed-cacheRead guard. When no checkpoint arrived, a 4M `cacheRead` still must not beat a 149k transcript estimate.
+
+### Conflict zone
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`
+- `packages/coding-agent/src/core/agent-session.ts` `_resolveThresholdContextTokens`
+
+## In-process CLI fast path when no isolation is required (2026-08-20)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts` no longer always re-spawns Node to run the agent. It now decides
+  with `requiresIsolatedProcess()` — `process.execArgv.length > 0 || hasInheritedInspectorOption()`.
+  When false (the overwhelmingly common launch), it loads the agent with a dynamic
+  `await import("./cli-main.ts")` in the launcher process itself. When true, the previous child spawn
+  is kept byte-for-byte, including `releaseInheritedInspectorForChild()`, `process.execArgv`
+  forwarding, `stdio: "inherit"`, exit-code forwarding, and signal re-raise via
+  `process.kill(process.pid, signal)`.
+- The former `runFullCli()` is renamed `spawnFullCli()` and is now reached only on the isolation path;
+  the fast path has no result to forward, because `cli-main` runs `main()` at module scope and already
+  owns `process.exitCode` and any `process.exit()` of its own.
+- `packages/coding-agent/src/inspector-policy.ts` exports the previously private
+  `hasInheritedInspectorOption()` (unchanged logic: `--inspect*` in `process.execArgv`, or `--inspect`
+  inside `NODE_OPTIONS`) so `cli.ts` decides with exactly the predicate that governs the existing
+  Inspector handoff, rather than a second, drifting copy of it.
+- Ordering with the compile cache (merged separately, same day) is preserved and is load-bearing:
+  `enableStartupCompileCache()` still runs as the first statement, BEFORE the dynamic import, so on the
+  fast path the dynamically imported engine graph is itself compile-cached in-process, and on the
+  isolation path `NODE_COMPILE_CACHE` is still published for the child to inherit. The comment on that
+  call now states both roles.
+- The two documented reasons for the respawn were re-verified. Inspector socket handoff still requires
+  a separate process and is preserved. Brand env isolation does NOT: `cli-main.ts` calls
+  `scrubBrandFromEnvironment()` itself (`src/core/brand.ts`), so an in-process load scrubs this
+  process's environment before anything the agent later spawns can inherit it.
+
+### Why
+
+- The respawn cost a full Node process launch plus a duplicated entry-module graph on every single
+  launch, for isolation that almost no launch needs. Measured on this fork's built dist (Apple M4 Pro,
+  node v26.7.0, hyperfine 15 runs, 3 warmup): `node dist/cli.js --help` 1.206 s ± 0.049 -> 1.131 s ±
+  0.036 (-75 ms, -6.2%). The untouched control `dist/cli-main.js --help` is unchanged across the same
+  pair of builds, and after the change `cli.js` is faster than `cli-main.js` itself — the launcher no
+  longer pays for a second process. System CPU per launch drops 0.513 s -> 0.397 s (12-run
+  `/usr/bin/time` means), which is where an eliminated spawn is expected to show up.
+
+### Why an extension could not handle it
+
+- This is the process structure of the entrypoint itself: the decision happens in `cli.ts` before any
+  session, extension loader, or extension API exists, and it determines which process the extension
+  loader will eventually run in.
+
+### Expected merge conflict zones
+
+- MEDIUM: `runFullCli()`/`spawnFullCli()` and the trailing dispatch in `packages/coding-agent/src/cli.ts`.
+  Upstream owns this entrypoint and reshapes it periodically; a conflict here should be resolved by
+  re-applying the `requiresIsolatedProcess()` branch around whatever spawn body upstream ends up with,
+  keeping the spawn path unchanged.
+- LOW: the `hasInheritedInspectorOption` export in `packages/coding-agent/src/inspector-policy.ts`
+  (export keyword only; the function body is untouched).
+- LOW: the `enableStartupCompileCache()` call comment in `cli.ts`, shared with the compile-cache entry
+  below.
+
+## Node module compile cache for CLI startup (2026-08-20)
+
+### What changed
+
+- `packages/coding-agent/src/compile-cache.ts` (new, fork-only): `enableStartupCompileCache()` enables
+  Node's on-disk V8 module compile cache and publishes the resolved BASE cache directory into
+  `process.env.NODE_COMPILE_CACHE` so child processes inherit the same cache. Node's programmatic
+  `enableCompileCache()` does not export that variable itself, and the value published must be the base
+  directory (not `getCompileCacheDir()`, which already contains Node's versioned segment — handing it
+  back double-nests the child's cache and it misses every parent entry). The API is read off the
+  `node:module` namespace rather than imported by name: a named import of a missing export is a
+  link-time `SyntaxError` no runtime guard can catch, and the bun-compiled binary runs this file.
+- `packages/coding-agent/src/cli.ts` calls it as the first statement after imports (after the existing
+  `valid-cwd.ts` first-import guard): `cli.ts` spawns `cli-main` as a child, and that child loads the
+  full engine graph, so inheritance is what makes the cache reach the process that pays the compile cost.
+- `packages/coding-agent/src/cli-main.ts` calls it first as well, so direct `cli-main` invocations (the
+  bun binary, tests) benefit when no launcher published a directory; when one did, the call keeps the
+  existing value.
+- Guards: never overrides a pre-set `NODE_COMPILE_CACHE`; `NODE_DISABLE_COMPILE_CACHE=1` stays honored
+  (the call is skipped or Node reports failure and nothing is published); any failure degrades to plain
+  compilation instead of failing startup.
+
+### Why
+
+- Cold profiling attributes roughly a quarter of CLI boot CPU to V8 compiling the ~800ms module graph;
+- with the cache warm, repeated launches skip that compilation. Measured on this fork's built dist
+  (Apple M4 Pro, node v26.7.0): `cli-main --help` user CPU -11% to -14%, net user+sys -3% (the cache
+  read IO eats part of the compile saving; wall-clock gains appear on an otherwise idle machine).
+- The first launch after enabling still compiles and writes the cache (cache population), so this is a
+  warm-start optimization only.
+
+### Why an extension could not handle it
+
+- The cache must be enabled before the engine's module graph starts loading, and `NODE_COMPILE_CACHE`
+  must be in the environment before `cli.ts` spawns the `cli-main` child — both happen in the
+  entrypoints, before the extension loader exists.
+
+### Expected merge conflict zones
+
+- LOW: the first-statement call and its import in `cli.ts` and `cli-main.ts` (upstream may reshuffle
+  entrypoint imports; the `valid-cwd.ts` first-import ordering is pinned by test and must stay first).
+  `compile-cache.ts` is fork-only with no upstream counterpart.
+
+## Entry surface and CLI coordinator re-diverge from upstream 59a71b23 (2026-08-19)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` keeps the fork's wider public surface after the sync to upstream
+  `59a71b235dadb4ad0d67557a8abb0aaa093e68b4`: it re-exports `sanitizeTerminalLabel` from
+  `@earendil-works/pi-tui`, the `OAuthCredential` type from `core/auth-storage.ts`, and the fork-only extension
+  contracts `ExtensionRpcRequestHandler`, `FilesystemOperation`/`FilesystemPolicy`/`FilesystemPolicyChecker`/
+  `FilesystemPolicyDecision`/`FilesystemPolicyRequest`, `InputDispositionEvent`, and `McpServerDeclaration`, plus
+  the RPC client event types `RpcClientEvent` and `RpcExtensionEvent`.
+- `packages/coding-agent/src/main.ts` keeps the fork startup coordinator on top of upstream's version: the
+  `app-server` app mode and `handleAppServerCommand()` dispatch (with `toProjectTrustMode()` mapping it to the
+  `print` trust mode), the `--multi-session` plain-RPC host (which pre-calls `initTheme()` because
+  `runMultiSessionHost()` never returns), `--list-tips`, the codex-style startup loading indicator paused around
+  project-trust prompts, `--grok-neo` chrome selection with the non-persistent `grok-night` theme fallback,
+  branded `envValue("OFFLINE")`/`envValue("STARTUP_BENCHMARK")` reads and `DISPLAY_VERSION`, `--list-models`
+  resolved from services before the runtime is built, auth-storage diagnostics drained per phase,
+  `initialTitlePrompt`/auto-title wiring, `initialModelProvenance`/`thinkingSelection` propagation, the
+  `promptConfirm()` stdin-EOF close handler, and the non-interactive fail-fast for cross-project session forks.
+
+### Why
+
+- These are fork product surfaces (app-server transport, multi-session RPC host, senpi branding and version
+  display, grok chrome, tips, model provenance) that upstream does not ship; the merge with the new pin restores
+  upstream's leaner entry point around them, so the files remain divergent by design after the pin advance.
+
+### Why an extension could not handle it
+
+- Both files run before any extension exists: `index.ts` is the module surface extensions import, and `main.ts`
+  parses argv, resolves trust, and constructs the runtime that later loads extensions.
+
+### Expected merge conflict zones
+
+- MEDIUM: `main.ts` `main()` startup ordering (list-models/list-tips early exits, loading indicator, runtime
+  factory) and `resolveAppMode()`/`createSessionManager()`; LOW: the alphabetized export blocks in `index.ts`.
+
+## 2026-08-18 - Cursor reasoning-level startup wiring
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: startup carries the resolved thinking selection (CLI `--thinking`,
+  `:suffix` model patterns, favorites, legacy cursor variant ids) into session state so the first turn's
+  provider request encodes the user's actual choice.
+
+### Why
+
+- Cursor models encode reasoning on the wire; a defaulted level must not be mistaken for an explicit one.
+
+### Why an extension could not handle it
+
+- CLI argument resolution and initial session construction are core startup surfaces.
+
+### Expected merge conflict zones
+
+- `main.ts` model/thinking option resolution block.
+
+## Repository audit baseline for the src tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`, tag v0.84.2). It assigns every audited production path whose exact
+  nearest tracker is this file, so the audit gate resolves each divergence even where the per-feature history below
+  predates the gate. `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/main.ts` are already covered by
+  dated entries below.
+- Entrypoints: `packages/coding-agent/src/bun/cli.ts` (Bun-binary entry now loads the full bootstrap and registers the
+  cursor-agent module), `packages/coding-agent/src/rpc-entry.ts` (RPC entry scrubs the brand environment and exports
+  the branded `AI_AGENT` identity).
+- Brand and config resolution: `packages/coding-agent/src/config.ts` — brand-profile consumption for identity constants,
+  flat-layout agent-directory resolution with nearest-parent discovery, brand-scoped environment reads, and the Bun
+  self-update launcher-repair step (own entry below).
+- Startup migrations: `packages/coding-agent/src/migrations.ts` — brand engine-state copy-forward plus the fork
+  extension-system and legacy-directory migrations replacing upstream's inline commands-to-prompts path (own entry
+  below).
+- Public surface: `packages/coding-agent/src/index.ts` re-exports the extension RPC handler, filesystem-policy,
+  input-disposition, MCP-declaration, and RPC-client event types; `packages/coding-agent/src/modes/index.ts`
+  re-exports `RpcClientEvent` and `RpcExtensionEvent`.
+- Mode and client deltas: `packages/coding-agent/src/modes/print-mode.ts` (one-shot prompts pass
+  `sessionTitlePrompt: false`, the final assistant message is selected with `findLast` so trailing non-assistant
+  entries cannot mask it, provider-native content renders in text mode, and the run waits for settled session work
+  before exiting), `packages/coding-agent/src/client/transcript.ts` (equivalent optional-chaining guard on transcript
+  progress application), `packages/coding-agent/src/package-manager-cli.ts` (branded `update`/`list`/`config` help
+  surface, brand update-channel redirect that defers to the parent package, and the removable omo-local-update beta
+  worker flag).
+- Local provider: `packages/coding-agent/src/extensions/llama/provider.ts` keeps sleeping llama.cpp runners
+  discoverable (own entry below).
+
+### Why
+
+- The pre-backfill audit reported these paths uncovered: the entries that described them either predate the canonical
+  four-section format or never named the exact path. This inventory closes that gap without rewriting the accurate
+  per-feature history below.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository and release policy, not runtime behavior; it is enforced by repository scripts before
+  any extension loader exists.
+
+### Expected merge conflict zones
+
+- NONE: this tracker file merges to `ours` on upstream sync; the inventory intentionally names pin-relative paths so
+  it stays valid as entries below change.
+
+## Brand profile, config-directory resolution, and engine-state migration (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/config.ts`: consumes a `BrandProfile` injected once per process — `APP_NAME`, `APP_TITLE`,
+  and `CONFIG_DIR_NAME` resolve the brand ahead of the package's `piConfig` metadata, `DISPLAY_VERSION` separates the
+  brand-facing version from the engine `VERSION` used for update comparisons, `CONFIG_FLAT_LAYOUT` marks brands that
+  keep agent state directly under the config directory, and `ENV_PREFIX` builds `ENV_AGENT_DIR`/`ENV_SESSION_DIR`
+  while legacy prefixes stay readable.
+- `packages/coding-agent/src/config.ts`: environment reads go through brand-scoped `envValue()` (`PACKAGE_DIR`,
+  `SHARE_VIEWER_URL`, `CODING_AGENT_DIR`) instead of raw `PI_*` literals; `resolveAgentDir()` adds nearest-parent
+  config discovery with a flat-layout `settings.json` sentinel; Bun self-update composes a launcher-repair step and
+  binary-download guidance points at the senpi releases page.
+- `packages/coding-agent/src/migrations.ts`: `runMigrations()` runs `migrateEngineStateForBrand()` first — a
+  copy-forward (never a move) of the engine's `~/.senpi/agent` state into a flat-layout brand directory, guarded by
+  the `.migrated-from-senpi` marker and skipping regenerable entries — then the fork's `migrateLegacySenpiDirs()` and
+  `migrateExtensionSystem()`, replacing upstream's inline commands-to-prompts and deprecated-directory checks that
+  now live in `extension-system-migration.ts`.
+
+### Why
+
+- A rebranded distribution reads different config and state locations than the engine install it replaces; resolving
+  them once keeps every downstream consumer brand-correct, and copying (not moving) engine state keeps a standalone
+  engine install on the same machine intact.
+- Environment prefixes and display versions are brand identity, not feature behavior, so they must not be hardcoded
+  per call site.
+
+### Why an extension could not handle it
+
+- Config-path, brand, and environment resolution happen at module load and bootstrap, before the extension loader
+  exists; startup migrations run once over directories extensions never see.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/config.ts` identity constants and `resolveAgentDir()`.
+- MEDIUM: `packages/coding-agent/src/migrations.ts` `runMigrations()` ordering; upstream may reshape its own
+  command/prompt migrations.
+
+## Split CLI bootstrap: thin launcher, full engine child, branded entries (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts` is now a thin bootstrap: it imports the deleted-cwd guard first, answers
+  `--version`/`-v` directly from `DISPLAY_VERSION` without loading the engine, detects package-manager subcommands,
+  and when a package-manager install is missing its bundled workspace dependencies routes through the bootstrap
+  self-update handler before spawning the full CLI as a child process with the parent's `execArgv`, propagating the
+  child's exit signal.
+- `packages/coding-agent/src/cli-main.ts` is the relocated full bootstrap (early inspector-import recovery, brand
+  scrubbing, `PI_CODING_AGENT` marker, HTTP dispatcher configuration) that awaits `main()`.
+- `packages/coding-agent/src/bun/cli.ts` registers Bun OAuth flows, restores the sandbox environment, registers the
+  Bedrock and cursor-agent modules, then loads the full bootstrap instead of the thin launcher.
+- `packages/coding-agent/src/rpc-entry.ts` keeps its dedicated RPC dispatch but now scrubs the brand environment and
+  sets `AI_AGENT` to `APP_NAME` instead of the hardcoded engine name.
+
+### Why
+
+- A broken or half-updated global install must offer a self-repair path instead of dying on module resolution, and
+  version or package-manager queries should not pay full engine startup. RPC host processes need their own process
+  identity and a clean brand environment so nested engine runs keep the engine's identity.
+
+### Why an extension could not handle it
+
+- These are pre-runtime entrypoints: extensions load only after `main()` has bootstrapped settings and the resource
+  loader, so no extension can restructure process spawning, environment scrubbing, or self-repair.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/cli.ts` was substantially rewritten relative to upstream's direct `main()` call.
+- MEDIUM: `packages/coding-agent/src/cli-main.ts` bootstrap ordering.
+- LOW: the registration lines in `packages/coding-agent/src/bun/cli.ts` and the identity lines in
+  `packages/coding-agent/src/rpc-entry.ts`.
+
+## Deleted-cwd bootstrap guard (2026-08-17)
+
+### What changed
+
+- New fork-only first-import guard `packages/coding-agent/src/valid-cwd.ts`: when the shell's working directory no
+  longer exists (a removed worktree or checkout), it changes to the home directory with a stderr notice before any
+  other module loads. `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/cli-main.ts` import it as
+  their first statement.
+
+### Why
+
+- Node boots with a stale cwd handle and only throws `uv_cwd` when something evaluates `process.cwd()`; the bundled
+  agent SDK does that during module evaluation, before user code could recover, so a deleted cwd crashed the CLI at
+  import time with no guidance.
+
+### Why an extension could not handle it
+
+- The guard must run before every other import, including the SDK's module evaluation; the extension loader does not
+  exist yet.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/valid-cwd.ts` is fork-only; the first-import lines in the entrypoints may conflict
+  with upstream import reshuffles.
+
+## llama.cpp local provider keeps sleeping runners discoverable (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/llama/provider.ts`: the router-fed `setCatalog()` keeps models whose runner
+  status is `loaded` OR `sleeping`, because the llama.cpp router wakes sleeping runners on demand; the persisted
+  `refreshModels()` snapshot still filters to `loaded` only. Credential resolution accepts a stored server URL, the
+  `LLAMA_BASE_URL` environment, or the default local server, with an optional API key.
+
+### Why
+
+- A model whose runner was asleep but wakeable disappeared from the model list, so users could not select exactly
+  the local models the router exists to wake on demand.
+
+### Why an extension could not handle it
+
+- The provider is a builtin registered with the model runtime; catalog filtering happens inside the provider's own
+  model snapshot, which the runtime reads before any extension can post-process it.
+
+### Expected merge conflict zones
+
+- LOW: the status filter in `setCatalog()` and the credential-resolution chain.
+
+## APP_NAME process identity and first-prompt session titles (2026-08-17)
+
+### What changed
+
+- Process identity is derived from the resolved brand: `process.title` is `APP_NAME` in `packages/coding-agent/src/cli.ts`,
+  `packages/coding-agent/src/cli-main.ts`, and `packages/coding-agent/src/bun/cli.ts`, and `${APP_NAME}-rpc` in
+  `packages/coding-agent/src/rpc-entry.ts`; `AI_AGENT` and inherited brand environment variables are set or scrubbed
+  per entrypoint so nested engine runs keep the engine's own identity.
+- Session titles: `buildInitialMessage()` in `packages/coding-agent/src/cli/initial-message.ts` returns the first CLI
+  message as `initialTitlePrompt` when the initial prompt carries no private context (no piped stdin, no `@file` text,
+  no attached images); `main.ts` threads it into interactive mode, which passes it as `sessionTitlePrompt` so the
+  session is titled from the user's actual prompt. One-shot print mode passes `sessionTitlePrompt: false` instead.
+
+### Why
+
+- Process lists, logs, and RPC host spawns must distinguish branded runs (and RPC hosts) from the upstream engine,
+  and an auto-generated title that ignored a plain first prompt produced generic titles for the most common launch
+  shape.
+
+### Why an extension could not handle it
+
+- `process.title`, brand scrubbing, and argv-to-options wiring all execute in the entrypoints before the extension
+  loader exists; the title prompt must be captured before the session consumes the initial message.
+
+### Expected merge conflict zones
+
+- LOW: per-entrypoint title and environment lines; the `sessionTitlePrompt` threading in `main.ts` and interactive
+  mode.
+
+## Retry-exhausted provider timeouts release retained steering (2026-08-17)
+
+### What changed
+
+- `core/agent-session.ts`: when a managed provider-timeout retry exhausts its retry/fallback budget, the retry owner
+  now hands steering or follow-up input that was deliberately deferred from the retry request to the existing
+  scheduled-continuation path. Successful retries keep their current queue behavior, and generic terminal
+  provider errors or aborts still park queued work.
+- Queue ownership follows the retry continuation that actually deferred the queue (recorded when the
+  provider-timeout retry plan schedules its continuation), not the class of the final error: a timeout retry that
+  ends in a different retryable failure still releases its deferred queue, while late steering queued during an
+  ordinary non-deferring retry stays parked. User aborts — in flight or during the retry backoff sleep — keep
+  retained input parked; a cancelled backoff reports a distinct outcome from budget exhaustion.
+- Coverage: `test/suite/regressions/provider-idle-steering.test.ts` proves a provider timeout, one failed managed
+  retry, and a steer queued during `auto_retry_start` produce an automatic third request without another prompt.
+  `.agents/skills/senpi-qa/scripts/mock-loop-stream-start-timeout-steering.mjs` drives the same sequence through the
+  real RPC CLI and actual stream-start watchdogs.
+
+### Why
+
+- Provider-timeout retries use `deferQueuedMessages: true` so steering cannot be consumed by another retry request
+  that has not demonstrated responsiveness. If that retry also failed and no fallback remained, the generic Agent
+  terminal-error policy correctly parked the queue, but the coding-agent retry owner had already finished and no
+  lifecycle owner remained to admit it. The queued message therefore ran only after an unrelated later prompt.
+
+### Why an extension could not do this
+
+- Retry attempt accounting, provider-timeout continuation options, terminal `agent_end` admission, compaction
+  revalidation, and queued-message ownership are coordinated inside `AgentSession` before extension callbacks can
+  safely claim or release the queue.
+
+### Expected merge conflict zones
+
+- HIGH: `core/agent-session.ts` around `_processAgentEvent()` retry/compaction continuation admission.
+- LOW: additive coverage in `test/suite/regressions/provider-idle-steering.test.ts` and the Senpi QA scenario.
+
 ## Custom-editor submit callbacks preserve the authoritative value (2026-08-16)
 
 ### What changed
@@ -1866,3 +2515,21 @@ The retry budget, abortable retry sleep, provider continuation, and active model
 ### Why extension system couldn't handle this
 
 The instrumented transitions (`_emit`, queue internals, `RequiredCompactionError` admission, the TUI compaction queue, clipboard catch) are private `AgentSession`/`InteractiveMode` state with no extension-visible hook carrying the needed fields; field debugging of "stuck forever" sessions (Discord report 2026-07-30) requires a single post-hoc timeline in the logs directory.
+
+## 2026-08-25 - Upstream public runtime surface sync coverage
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/index.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, and `packages/coding-agent/src/modes/rpc/rpc-types.ts` preserve the fork session behavior and public exports while adopting upstream RPC queue clearing and event additions.
+
+### Why
+
+- These runtime and public API paths are directly changed by the upstream sync and require exact nearest-tracker coverage.
+
+### Why this lives in the fork
+
+- Session orchestration and public API exports execute before extension code can compensate for divergence.
+
+### Expected merge conflict zones
+
+- Agent-session event handling, coding-agent barrel exports, and RPC command/client/response unions.

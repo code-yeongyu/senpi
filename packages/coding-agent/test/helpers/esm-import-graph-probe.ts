@@ -48,25 +48,39 @@ function ensureBuiltDependencyLink(repoRoot: string): () => void {
 	}
 }
 
+/**
+ * Records the static-import graph Node actually walks while importing
+ * `entryPath`, using the same loader-hook probe as
+ * `probeModelRuntimeImport`. Deferred (`await import(...)`) modules never
+ * appear, so the result is the startup graph a cold CLI process pays for.
+ */
+export function probeImportGraph(repoRoot: string, entryPath: string): ImportGraphProbeResult {
+	return runImportProbe(repoRoot, resolve(entryPath), "pi-import-graph-");
+}
+
 export function probeModelRuntimeImport(repoRoot: string, target: "source" | "built"): ImportGraphProbeResult {
-	const scratch = mkdtempSync(join(tmpdir(), "pi-model-runtime-import-"));
+	const targetPath =
+		target === "source"
+			? join(repoRoot, "packages/coding-agent/src/core/model-runtime.ts")
+			: join(repoRoot, "packages/coding-agent/dist/core/model-runtime.js");
+	return runImportProbe(repoRoot, resolve(targetPath), "pi-model-runtime-import-");
+}
+
+function runImportProbe(repoRoot: string, targetPath: string, scratchPrefix: string): ImportGraphProbeResult {
+	const scratch = mkdtempSync(join(tmpdir(), scratchPrefix));
 	const logPath = join(scratch, "graph.jsonl");
 	writeFileSync(join(scratch, "hook.mjs"), hookSource);
 	writeFileSync(join(scratch, "register.mjs"), registerSource);
 	writeFileSync(join(scratch, "driver.mjs"), driverSource);
 	const cleanupLink = ensureBuiltDependencyLink(repoRoot);
 	try {
-		const targetPath =
-			target === "source"
-				? join(repoRoot, "packages/coding-agent/src/core/model-runtime.ts")
-				: join(repoRoot, "packages/coding-agent/dist/core/model-runtime.js");
-		const args = ["--import", join(scratch, "register.mjs"), join(scratch, "driver.mjs"), resolve(targetPath)];
+		const args = ["--import", join(scratch, "register.mjs"), join(scratch, "driver.mjs"), targetPath];
 		const child = spawnSync(process.execPath, args, {
 			cwd: repoRoot,
 			env: { ...process.env, PI_IMPORT_GRAPH_LOG: logPath },
 			encoding: "utf8",
 		});
-		if (child.status !== 0) throw new Error(`Import probe failed (${target}): ${child.stderr || child.stdout}`);
+		if (child.status !== 0) throw new Error(`Import probe failed (${targetPath}): ${child.stderr || child.stdout}`);
 		const output = JSON.parse(child.stdout.trim()) as { globalsAdded: string[] };
 		const entries = readFileSync(logPath, "utf8")
 			.trim()

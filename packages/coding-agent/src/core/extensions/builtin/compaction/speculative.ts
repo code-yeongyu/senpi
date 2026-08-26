@@ -80,6 +80,7 @@ export interface SpeculativeCompactionContext {
 	getMessageRevision(): number;
 	getSystemPrompt?(): string;
 	prepareProviderRequest?(messages: AgentMessage[]): Promise<ProviderRequestPreparation>;
+	isIdle?(): boolean;
 	applyCompaction(
 		precomputed: CompactionResult,
 		options: {
@@ -636,6 +637,10 @@ export async function applyGeneratedCompaction(
 	compaction: CompactionResult | undefined,
 	signal?: AbortSignal,
 ): Promise<SpeculativeCompactionResult> {
+	const provider = context.model?.provider;
+	if ((provider === "cursor" || provider === "cursor-cli-oauth") && context.isIdle && !context.isIdle()) {
+		return { applied: false, reason: "rejected" };
+	}
 	if (!snapshot || !compaction) return { applied: false, reason: "unavailable" };
 
 	if (snapshot.generation !== getCurrentGeneration()) {

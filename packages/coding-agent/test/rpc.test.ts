@@ -9,6 +9,9 @@ import {
 	startHermeticRpcSession,
 	waitForSessionWrites,
 } from "./helpers/rpc-hermetic.ts";
+import { assertWorkspaceBuildPrerequisite } from "./support/workspace-build-prerequisite.ts";
+
+assertWorkspaceBuildPrerequisite(import.meta.url);
 
 describe("RPC mode", () => {
 	let session: RpcHermeticSession | undefined;

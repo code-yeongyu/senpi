@@ -19,6 +19,7 @@ export type FallbackModelLookup =
 			getAll(): Model<Api>[];
 			isUsingOAuth?(model: Model<Api>): boolean;
 			hasConfiguredAuth?(model: Model<Api>): boolean;
+			isFallbackEligible?(model: Model<Api>): boolean;
 	  };
 
 function availableModels(lookup: FallbackModelLookup): Model<Api>[] {
@@ -34,12 +35,17 @@ function authTiers(lookup: FallbackModelLookup): FallbackAuthTiers {
 	const registry = lookup as {
 		isUsingOAuth?(model: Model<Api>): boolean;
 		hasConfiguredAuth?(model: Model<Api>): boolean;
+		isFallbackEligible?(model: Model<Api>): boolean;
 	};
 	return {
 		isUsingOAuth: (model) => registry.isUsingOAuth?.(model) === true,
 		hasConfiguredAuth:
 			typeof registry.hasConfiguredAuth === "function"
 				? (model) => registry.hasConfiguredAuth?.(model) === true
+				: undefined,
+		isFallbackEligible:
+			typeof registry.isFallbackEligible === "function"
+				? (model) => registry.isFallbackEligible?.(model) !== false
 				: undefined,
 	};
 }

@@ -10,6 +10,7 @@ import type {
 	Model,
 	SimpleStreamOptions,
 	TextContent,
+	ThinkingSelection,
 	Tool,
 	ToolResultMessage,
 	Usage,
@@ -145,6 +146,8 @@ export interface AgentLoopTurnUpdate {
 	model?: Model<any>;
 	/** Thinking level for the next provider request. */
 	thinkingLevel?: ThinkingLevel;
+	/** Thinking selection for the next provider request: undefined leaves it unchanged, null clears it. */
+	thinkingSelection?: ThinkingSelection | null;
 	/** Whether the next provider request should abort a server-selected fallback. */
 	abortServerSideFallback?: boolean;
 }
@@ -164,7 +167,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * paired `ToolResultMessage` for emission right after the assistant
 	 * message. Other providers ignore this field.
 	 */
-	cursorExecHandlers?: CursorExecHandlers;
+	cursorExecHandlers?: CursorExecHandlers | ((runSignal: AbortSignal) => CursorExecHandlers);
 
 	/**
 	 * Maximum time in milliseconds to wait for the FIRST provider stream event.
@@ -394,6 +397,11 @@ export interface AgentState {
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
 	thinkingLevel: ThinkingLevel;
+	/**
+	 * Provenance-bearing thinking selection, when the user or a legacy variant
+	 * alias explicitly chose a level. Absent for defaulted effective levels.
+	 */
+	thinkingSelection?: ThinkingSelection;
 	/** Available tools. Assigning a new array copies the top-level array. */
 	set tools(tools: AgentTool<any>[]);
 	get tools(): AgentTool<any>[];

@@ -11,7 +11,12 @@ const RECOVER_INSPECTOR_VM_IMPORT = envValue("RECOVER_INSPECTOR_VM_IMPORT") === 
 export const INSPECTOR_VM_IMPORT_WARNING =
 	"Node Inspector dynamic import is unsupported; use require() or a target-side loader. Senpi kept running.";
 
-function hasInheritedInspectorOption(): boolean {
+/**
+ * Report whether this process inherited an Inspector option, either as an exec argument or
+ * through NODE_OPTIONS. Such a run owns a debugger socket that has to be handed to the process
+ * running the agent, which is what makes the child spawn in `cli.ts` load-bearing there.
+ */
+export function hasInheritedInspectorOption(): boolean {
 	return (
 		process.execArgv.some((argument) => argument.startsWith("--inspect")) ||
 		process.env.NODE_OPTIONS?.includes("--inspect") === true

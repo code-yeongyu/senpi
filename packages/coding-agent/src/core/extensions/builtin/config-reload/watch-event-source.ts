@@ -84,7 +84,13 @@ function isRecursiveWatchMessage(message: unknown): message is RecursiveWatchMes
 	);
 }
 
-/** Production event source. Linux recursive setup runs off the interactive main thread. */
+/**
+ * Platforms whose recursive fs.watch handles are expensive to create and tear down on the
+ * interactive main thread: inotify tree walks on Linux, FSEvents stream teardown on macOS.
+ */
+const WORKER_OFFLOADED_RECURSIVE_PLATFORMS: ReadonlySet<NodeJS.Platform> = new Set(["linux", "darwin"]);
+
+/** Production event source. Recursive setup and teardown run off the interactive main thread. */
 export function createFsWatchEventSource(
 	onError: (error: unknown, path: string) => void = () => {},
 	options: FsWatchEventSourceOptions = {},
@@ -114,7 +120,7 @@ export function createFsWatchEventSource(
 	};
 
 	return (path, listener, watchOptions) => {
-		if ((options.platform ?? process.platform) === "linux" && watchOptions?.recursive) {
+		if (WORKER_OFFLOADED_RECURSIVE_PLATFORMS.has(options.platform ?? process.platform) && watchOptions?.recursive) {
 			const id = nextSubscriptionId++;
 			const worker = ensureRecursiveWorker();
 			recursiveSubscriptions.set(id, { path, listener });

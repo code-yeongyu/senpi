@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { LoopGuardDetection } from "../../src/core/extensions/builtin/loop-guard/detectors.ts";
 import loopGuardExtension from "../../src/core/extensions/builtin/loop-guard/index.ts";
-import { LOOP_GUARD_NOTICE_CUSTOM_TYPE } from "../../src/core/extensions/builtin/loop-guard/notice.ts";
+import {
+	buildLoopGuardBlockReason,
+	LOOP_GUARD_NOTICE_CUSTOM_TYPE,
+} from "../../src/core/extensions/builtin/loop-guard/notice.ts";
 import { renderLoopGuardNotice } from "../../src/core/extensions/builtin/loop-guard/renderer.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 import { initTheme, theme } from "../../src/modes/interactive/theme/theme.ts";
@@ -56,6 +59,23 @@ function userInput(fire: LoopGuardHarness["fire"], source: "interactive" | "rpc"
 }
 
 describe("loop-guard extension", () => {
+	it("gives polling tools a terminal recovery action instead of argument mutation", () => {
+		const reason = buildLoopGuardBlockReason("bash_output", 1);
+		const normalized = reason.toLowerCase();
+
+		expect(normalized).toContain("arm a monitor");
+		expect(normalized).toContain("stop polling");
+		expect(normalized).not.toContain("change an argument");
+	});
+
+	it("keeps non-polling recovery actionable without requiring a monitor", () => {
+		const reason = buildLoopGuardBlockReason("read", 1);
+		const normalized = reason.toLowerCase();
+
+		expect(normalized).toContain("re-plan");
+		expect(normalized).not.toContain("monitor");
+	});
+
 	it("registers the notice renderer under the notice custom type", () => {
 		const harness = createLoopGuardHarness();
 		expect(harness.renderers.get(LOOP_GUARD_NOTICE_CUSTOM_TYPE)).toBe(renderLoopGuardNotice);

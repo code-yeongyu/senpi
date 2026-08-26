@@ -27,6 +27,8 @@ import type { AssistantMessage } from "../types.ts";
  * - DS4: "Prompt has X tokens, but the configured context size is Y tokens"
  * - Cerebras: "400/413 status code (no body)"
  * - Gateways: "413 Request body too large" / "Request Entity Too Large" / "Payload Too Large" (byte-size overflow)
+ * - kiro-lb gateways: "Request payload is 1095225 bytes, over the 1085435 byte limit Kiro accepts." / "Request payload is N tokens, over the M token limit Kiro accepts." (HTTP 400 local payload guard)
+ * - Kiro upstream via kiro-lb: "Model context limit reached. Conversation size exceeds model capacity." (CONTENT_LENGTH_EXCEEDS_THRESHOLD token overflow)
  * - Mistral: "Prompt contains X tokens ... too large for model with Y maximum context length"
  * - z.ai: Does NOT error, accepts overflow silently - handled via usage.input > contextWindow
  * - Xiaomi MiMo: Truncates input to fill contextWindow exactly, then returns finish_reason "length"
@@ -62,6 +64,8 @@ const OVERFLOW_PATTERNS = [
 	/token limit exceeded/i, // Generic fallback
 	/^4(?:00|13)\s*(?:status code)?\s*\(no body\)/i, // Cerebras: 400/413 with no body
 	/(?:request[ _])?(?:body|entity|payload)[_ ]too[_ ]large/i, // Gateway HTTP 413 byte-size rejections ("Request body too large", "Request Entity Too Large", "body_too_large", "Payload Too Large"). Substring-anchored by design (JSON bodies lack an adjacent status code); a non-context size rejection (e.g. an oversized image) can over-match, which costs one bounded shrink-retry, never a wedge.
+	/Request payload is \d+ (?:bytes, over the \d+ byte|tokens, over the \d+ token) limit Kiro accepts\./, // kiro-lb local byte/token payload guard (HTTP 400; Anthropic uses invalid_request_error, OpenAI uses detail).
+	/Model context limit reached\. Conversation size exceeds model capacity\./, // kiro-lb enhancement of Kiro CONTENT_LENGTH_EXCEEDS_THRESHOLD
 ];
 
 /**
@@ -78,6 +82,17 @@ const NON_OVERFLOW_PATTERNS = [
 	/rate limit/i, // Generic rate limiting
 	/too many requests/i, // Generic HTTP 429 style
 ];
+
+/**
+ * Cursor's api2.cursor.sh surfaces a context overflow as a bare gRPC
+ * `resource_exhausted` end-stream — the same wording its backend uses for
+ * quota and poisoned-conversation rejections. Token evidence disambiguates:
+ * a request that already streamed or billed tokens overflowed mid-flight,
+ * while a zero-token rejection is a quota/conversation failure that must stay
+ * on the rate-limit path (the cursor client rotates the conversation id for
+ * those and retry handling supplies the backoff).
+ */
+const RESOURCE_EXHAUSTED_PATTERN = /resource.?exhausted/i;
 
 /**
  * Check if an assistant message represents a context overflow error.
@@ -141,6 +156,17 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 		if (!isNonOverflow && OVERFLOW_PATTERNS.some((p) => p.test(message.errorMessage!))) {
 			return true;
 		}
+		const usage = message.usage;
+		const hasTokenEvidence =
+			(usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite) > 0;
+		if (
+			!isNonOverflow &&
+			hasTokenEvidence &&
+			RESOURCE_EXHAUSTED_PATTERN.test(message.errorMessage) &&
+			(contextWindow === undefined || contextWindow <= 0 || cursorZeroTokenCount(message) >= contextWindow * 0.5)
+		) {
+			return true;
+		}
 	}
 
 	// Case 2: Silent overflow (z.ai style) - successful but usage exceeds context
@@ -178,4 +204,81 @@ export function isRecoverableLength(message: AssistantMessage, desiredMaxOutput:
  */
 export function getOverflowPatterns(): RegExp[] {
 	return [...OVERFLOW_PATTERNS];
+}
+
+function cursorZeroTokenCount(message: {
+	usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
+}): number {
+	const usage = message.usage;
+	if (!usage) return 0;
+	return (
+		usage.totalTokens || (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0)
+	);
+}
+
+export function isCursorPayloadResourceExhausted(
+	message: {
+		stopReason?: string;
+		errorMessage?: string;
+		usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
+	},
+	_estimateTokens: number,
+): boolean {
+	if (message.stopReason !== "error" || !/resource.?exhausted/i.test(message.errorMessage || "")) {
+		return false;
+	}
+	return !(cursorZeroTokenCount(message) > 0);
+}
+
+/**
+ * Detects Cursor's verified usage-pool exhaustion signature: a token-bearing
+ * `resource_exhausted` error while the conversation is well below the model
+ * context window.
+ */
+export function isCursorQuotaResourceExhausted(
+	message: {
+		stopReason?: string;
+		errorMessage?: string;
+		usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
+	},
+	contextWindow: number,
+): boolean {
+	const tokens = cursorZeroTokenCount(message);
+	return (
+		message.stopReason === "error" &&
+		RESOURCE_EXHAUSTED_PATTERN.test(message.errorMessage || "") &&
+		contextWindow > 0 &&
+		tokens > 0 &&
+		tokens < contextWindow * 0.5
+	);
+}
+
+export function isCursorZeroTokenResourceExhausted(message: {
+	stopReason?: string;
+	errorMessage?: string;
+	usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
+}): boolean {
+	if (message.stopReason !== "error" || !/resource.?exhausted/i.test(message.errorMessage || "")) {
+		return false;
+	}
+	return !(cursorZeroTokenCount(message) > 0);
+}
+
+export function shouldSkipProviderFallbackForCursorZeroRe(options: { sameModelRemint?: boolean } | undefined): boolean {
+	return options?.sameModelRemint === true;
+}
+
+export function shouldRetryOverflowWithoutCompact(compacted: boolean, errorMessage: string): boolean {
+	if (compacted) return false;
+	return /Nothing to compact/i.test(errorMessage || "");
+}
+
+export function cursorOverflowCompactionSettings<T extends { keepRecentTokens?: number; restorationEnabled?: boolean }>(
+	settings: T,
+	provider: string | undefined,
+	reason: string | undefined,
+): T {
+	if (reason !== "overflow") return settings;
+	if (provider !== "cursor" && provider !== "cursor-cli-oauth") return settings;
+	return { ...settings, keepRecentTokens: 0, restorationEnabled: false };
 }

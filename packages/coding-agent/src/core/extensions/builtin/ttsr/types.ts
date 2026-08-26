@@ -40,7 +40,7 @@ export const DEFAULT_TTSR_SETTINGS: TtsrSettings = {
 };
 
 export interface DetectorContext {
-	readonly source: Exclude<TtsrStreamSource, "tool">;
+	readonly source: TtsrStreamSource;
 	readonly streamKey: string;
 	readonly generation: number;
 }

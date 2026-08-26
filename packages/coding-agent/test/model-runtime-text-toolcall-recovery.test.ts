@@ -13,6 +13,9 @@ import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { probeModelRuntimeImport } from "./helpers/esm-import-graph-probe.ts";
 import { registerModelRuntimeRecoveryRetryBoundaryCase } from "./model-runtime-recovery-retry-boundaries.ts";
 import { registerModelRuntimeRecoveryBoundaryCases } from "./model-runtime-text-toolcall-recovery-boundaries.ts";
+import { assertWorkspaceBuildPrerequisite } from "./support/workspace-build-prerequisite.ts";
+
+assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const leak = '<invoke name="Echo"><parameter name="value">hello</parameter></invoke>';
 const tools: Context["tools"] = [

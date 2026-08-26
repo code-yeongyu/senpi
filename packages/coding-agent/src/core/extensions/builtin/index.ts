@@ -7,6 +7,7 @@ import cacheKeepAliveExtension from "./cache-keepalive/index.ts";
 import claudeSdkOauthExtension from "./claude-sdk-oauth/index.ts";
 import compactionExtension from "./compaction/index.ts";
 import configReloadExtension from "./config-reload/index.ts";
+import cursorCliOauthExtension from "./cursor-cli-oauth/index.ts";
 import diffExtension from "./diff.ts";
 import filesExtension from "./files.ts";
 import goalExtension from "./goal/index.ts";
@@ -17,6 +18,7 @@ import hooksExtension from "./hooks/index.ts";
 import imageGenExtension from "./imagegen/index.ts";
 import importReproExtension from "./import-repro.ts";
 import lookAtExtension from "./look-at/index.ts";
+import loopExtension from "./loop/index.ts";
 import loopGuardExtension from "./loop-guard/index.ts";
 import mcpExtension from "./mcp/index.ts";
 import modelFallbackExtension from "./model-fallback/index.ts";
@@ -56,6 +58,8 @@ export const globalDefaultExtensionFactories = {
 } satisfies Record<(typeof globalDefaultExtensionIds)[number], ExtensionFactory>;
 
 export const builtinExtensions: BuiltinExtensionFactory[] = [
+	// Loop guard owns the first veto opportunity so repeated calls never re-run hooks or permission prompts.
+	{ id: "loop-guard", factory: loopGuardExtension },
 	{ id: "hooks", factory: hooksExtension },
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
@@ -90,12 +94,13 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "nested-agents-md", factory: nestedAgentsMdExtension },
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },
+	{ id: "loop", factory: loopExtension },
 	{ id: "cache-keepalive", factory: cacheKeepAliveExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
 	{ id: "claude-sdk-oauth", factory: claudeSdkOauthExtension },
-	// Loop guard is a pure observer of tool_execution_start; it never mutates payloads, so it slots before config-reload and leaves MCP last.
-	{ id: "loop-guard", factory: loopGuardExtension },
+	// Registers unconditionally and reports executable/auth state through its oauth check, so it stays beside the other provider lane.
+	{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension },
 	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before catalog feeders observe them.
 	{ id: "config-reload", factory: configReloadExtension },
 	// Shared catalog wiring loads before MCP, which feeds its tools into the shared catalog as the final builtin.

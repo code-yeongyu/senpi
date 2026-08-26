@@ -695,7 +695,13 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	private handleRightClickPaste(event: SgrMouseEvent): boolean {
-		if (!this.onRightClickPaste || process.platform !== "win32" || event.release || event.button !== 2) {
+		if (
+			!this.onRightClickPaste ||
+			process.platform !== "win32" ||
+			process.env.TERM_PROGRAM?.toLowerCase() === "vscode" ||
+			event.release ||
+			event.button !== 2
+		) {
 			return false;
 		}
 		try {

@@ -1,6 +1,6 @@
 import type { Tool } from "@earendil-works/pi-ai";
 import { jsonSchemaToZodShape } from "./custom-tools-schema.ts";
-import { getSdkBoundary, type SdkBoundary } from "./sdk-boundary.ts";
+import { getSdkBoundary, loadClaudeAgentSdk, type SdkBoundary } from "./sdk-boundary.ts";
 import { CUSTOM_TOOLS_MCP_SERVER_NAME, TOOL_EXECUTION_DENIED_MESSAGE } from "./tools.ts";
 
 type CustomToolsMcpServer = ReturnType<SdkBoundary["createSdkMcpServer"]>;
@@ -16,8 +16,13 @@ export async function denyCustomToolExecution() {
  * Exposes senpi-only tools to Claude Code's planner. The SDK handler is deliberately
  * unusable: senpi receives the matching streamed tool call and executes it itself.
  */
-export function buildCustomToolServers(customTools: readonly Tool[]): Record<string, CustomToolsMcpServer> | undefined {
+export async function buildCustomToolServers(
+	customTools: readonly Tool[],
+): Promise<Record<string, CustomToolsMcpServer> | undefined> {
 	if (customTools.length === 0) return undefined;
+	// `createSdkMcpServer` is a synchronous SDK member behind a lazy boundary;
+	// awaiting here is what makes this call site self-sufficient.
+	await loadClaudeAgentSdk();
 	const server = getSdkBoundary().createSdkMcpServer({
 		name: CUSTOM_TOOLS_MCP_SERVER_NAME,
 		version: "1.0.0",

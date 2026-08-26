@@ -93,7 +93,7 @@ export function createOAuthConfig(deps: {
 	readCurrent: CurrentCredentialReader;
 	readAnthropicCredential?: () => Promise<{ access: string; refresh: string; expires: number } | undefined>;
 	readAmbientAuthStatus?: (signal?: AbortSignal) => Promise<boolean>;
-	readSettings?: () => { tokenInjection?: "oauth-slots" | "config-dir" | "ambient" } | undefined;
+	readSettings?: () => { tokenInjection?: "oauth-slots" | "config-dir" | "ambient"; enabled?: boolean } | undefined;
 	loginFlow?: OAuthAuth;
 }): OAuthConfigShape {
 	const claudeEnvironment = async (ctx: AuthContext): Promise<Record<string, string>> => {
@@ -112,9 +112,14 @@ export function createOAuthConfig(deps: {
 		const effectiveEnvironment = environment ?? (await claudeEnvironment(ctx));
 		const environmentTokenCount = Object.values(effectiveEnvironment).filter(Boolean).length;
 		const accountCount = storedAccounts.length + environmentTokenCount;
-		const lane = deps.readSettings?.()?.tokenInjection ?? (accountCount > 0 ? "oauth-slots" : "ambient");
+		const settings = deps.readSettings?.();
+		const lane = settings?.tokenInjection ?? (accountCount > 0 ? "oauth-slots" : "ambient");
 		if (lane === "ambient") {
 			if (environmentTokenCount > 0) return true;
+			// A logged-in host Claude CLI is not senpi-side consent: spending the
+			// user's Claude subscription requires an explicit opt-in. Stored
+			// accounts and env tokens above are opt-ins in themselves.
+			if (settings?.enabled !== true) return false;
 			return (deps.readAmbientAuthStatus ?? readAmbientClaudeAuthStatus)(signal);
 		}
 		return accountCount > 0;

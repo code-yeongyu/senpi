@@ -29,7 +29,7 @@ describe("provider timeout retry plan", () => {
 		});
 	});
 
-	it("bounds the retry continuation with the liveness cap without shortening provider guards", () => {
+	it("never cancels the retry before the stream-start budget it granted", () => {
 		const plan = createProviderTimeoutRetryPlan({
 			message: stallMessage(),
 			streamRetryTimeoutMs: STREAM_RETRY_TIMEOUT_MS,
@@ -37,7 +37,22 @@ describe("provider timeout retry plan", () => {
 			streamStartTimeoutMs: STREAM_START_TIMEOUT_MS,
 		});
 
-		expect(plan.watchdogTimeoutMs).toBe(STREAM_RETRY_TIMEOUT_MS);
+		// The continuation watchdog must outlast the guard the same retry was handed,
+		// otherwise the retry is aborted on a deadline it was never given and the
+		// bounded retry budget collapses to a single attempt.
+		expect(plan.watchdogTimeoutMs).toBeGreaterThanOrEqual(STREAM_START_TIMEOUT_MS);
+	});
+
+	it("keeps a liveness cap that already outlasts the granted guards", () => {
+		const generousCapMs = STREAM_START_TIMEOUT_MS * 2;
+		const plan = createProviderTimeoutRetryPlan({
+			message: stallMessage(),
+			streamRetryTimeoutMs: generousCapMs,
+			timeoutMs: IDLE_TIMEOUT_MS,
+			streamStartTimeoutMs: STREAM_START_TIMEOUT_MS,
+		});
+
+		expect(plan.watchdogTimeoutMs).toBe(generousCapMs);
 	});
 
 	it("never re-enables a disabled provider guard", () => {
@@ -49,7 +64,40 @@ describe("provider timeout retry plan", () => {
 		});
 
 		expect(plan.options).toEqual({ deferQueuedMessages: true });
+		// With no provider guard to outlast, the configured cap is the only bound.
 		expect(plan.watchdogTimeoutMs).toBe(STREAM_RETRY_TIMEOUT_MS);
+	});
+
+	it("reconciles the cap against a stream-start guard reported with no idle guard", () => {
+		const plan = createProviderTimeoutRetryPlan({
+			message: stallMessage(),
+			streamRetryTimeoutMs: STREAM_RETRY_TIMEOUT_MS,
+			timeoutMs: undefined,
+			streamStartTimeoutMs: STREAM_START_TIMEOUT_MS,
+		});
+
+		expect(plan.watchdogTimeoutMs).toBeGreaterThan(STREAM_START_TIMEOUT_MS);
+	});
+
+	it("disables the cap when the operator disabled it, even with guards configured", () => {
+		const plan = createProviderTimeoutRetryPlan({
+			message: stallMessage(),
+			streamRetryTimeoutMs: undefined,
+			timeoutMs: IDLE_TIMEOUT_MS,
+			streamStartTimeoutMs: STREAM_START_TIMEOUT_MS,
+		});
+
+		expect(plan.watchdogTimeoutMs).toBeUndefined();
+	});
+
+	it("keeps the zero opt-out disabled", () => {
+		const plan = createProviderTimeoutRetryPlan({
+			message: stallMessage(),
+			streamRetryTimeoutMs: 0,
+			timeoutMs: IDLE_TIMEOUT_MS,
+			streamStartTimeoutMs: STREAM_START_TIMEOUT_MS,
+		});
+		expect(plan.watchdogTimeoutMs).toBeUndefined();
 	});
 
 	it("ignores messages that are not provider timeouts", () => {

@@ -54,7 +54,11 @@ describe("risky main-model warning", () => {
 		(selectedModel) => {
 			const fakeThis = {
 				chatContainer: new Container(),
+				toolOutputExpanded: false,
 				ui: { requestRender: vi.fn() },
+				showNoticeBox(spec: unknown): void {
+					(InteractiveMode as any).prototype.showNoticeBox.call(fakeThis, spec);
+				},
 			};
 
 			warningMethod().call(fakeThis, selectedModel);
@@ -64,7 +68,7 @@ describe("risky main-model warning", () => {
 			expect(plain).toContain(RISKY_MAIN_MODEL_WARNING);
 			expect(plain).toContain("Risky model warning");
 			expect(rendered).toContain(theme.getFgAnsi("error"));
-			expect(fakeThis.chatContainer.children).toHaveLength(4);
+			expect(fakeThis.chatContainer.children).toHaveLength(2);
 			expect(fakeThis.ui.requestRender).toHaveBeenCalledExactlyOnceWith();
 		},
 	);

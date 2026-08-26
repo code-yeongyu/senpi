@@ -11,11 +11,13 @@ type WiringFixture = {
 	activeToolExecutionTerminalTitle: string | undefined;
 	activeToolExecutions: Map<string, string>;
 	applyTerminalTitle: () => void;
+	assistantTextSegments: Map<number, unknown>;
 	chatContainer: { removeChild: (component: unknown) => void };
 	clearActiveToolExecutionStatus: () => void;
 	clearPendingTools: () => void;
 	clearStatusIndicator: (kind: "working") => void;
 	clearToolHookStatuses: () => void;
+	detachAssistantTextSegments: () => void;
 	footer: { invalidate: () => void };
 	handleToolExecutionEnd: (event: Extract<AgentSessionEvent, { type: "tool_execution_end" }>) => void;
 	isInitialized: true;
@@ -35,6 +37,7 @@ type WiringFixture = {
 type InteractiveModeMethods = {
 	handleEvent(this: WiringFixture, event: AgentSessionEvent): Promise<void>;
 	handleToolExecutionEnd(this: WiringFixture, event: Extract<AgentSessionEvent, { type: "tool_execution_end" }>): void;
+	detachAssistantTextSegments(this: WiringFixture): void;
 };
 
 const interactiveModeMethods = InteractiveMode.prototype as unknown as InteractiveModeMethods;
@@ -53,11 +56,13 @@ function createFixture(smoothStreaming: () => boolean, component: ToolComponent)
 		activeToolExecutionTerminalTitle: undefined,
 		activeToolExecutions: new Map(),
 		applyTerminalTitle: vi.fn(),
+		assistantTextSegments: new Map(),
 		chatContainer: { removeChild: vi.fn() },
 		clearActiveToolExecutionStatus: vi.fn(),
 		clearPendingTools: vi.fn(),
 		clearStatusIndicator: vi.fn(),
 		clearToolHookStatuses: vi.fn(),
+		detachAssistantTextSegments: interactiveModeMethods.detachAssistantTextSegments,
 		footer: { invalidate: vi.fn() },
 		handleToolExecutionEnd: interactiveModeMethods.handleToolExecutionEnd,
 		isInitialized: true,

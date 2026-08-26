@@ -1,3 +1,4 @@
+import type { ImageContent } from "@earendil-works/pi-ai/compat";
 import { Editor, type EditorComponent, type EditorPasteState, setKeybindings } from "@earendil-works/pi-tui";
 import { beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { Container, TUI } from "../../../../tui/src/tui.ts";
@@ -24,6 +25,11 @@ type SetCustomEditorComponentThis = {
 	keybindings: KeybindingsManager;
 	ui: TUI;
 	getExpandedEditorText: () => string;
+	// setCustomEditorComponent also hands image markers over (and drops orphaned
+	// payloads when the destination cannot own them), so the borrowed receiver
+	// must model those members - see 0001-editor-image-marker-transfer.test.ts.
+	pendingImages: Map<number, ImageContent>;
+	subscribeImageMarkers: (editor: EditorComponent) => void;
 	disposeActiveSelector(): void;
 };
 
@@ -63,6 +69,11 @@ function makeFakeThis(): SetCustomEditorComponentThis {
 		keybindings: new KeybindingsManager(),
 		ui,
 		getExpandedEditorText: prototypeMethod<(this: SetCustomEditorComponentThis) => string>("getExpandedEditorText"),
+		pendingImages: new Map<number, ImageContent>(),
+		subscribeImageMarkers:
+			prototypeMethod<(this: SetCustomEditorComponentThis, editor: EditorComponent) => void>(
+				"subscribeImageMarkers",
+			),
 		disposeActiveSelector: () => {},
 	};
 	fakeThis.editorContainer.addChild(defaultEditor);

@@ -1,20 +1,24 @@
 # packages/ai/src/providers
 
-Generated: 2026-08-07. Commit `4f26b8282`.
+Generated: 2026-08-24. Commit `baf15a54d`.
 
-This directory owns provider factories, catalogs, provider metadata, and the faux test provider. API wire implementations, option translation, and message transforms live in sibling `../api/`.
+This directory owns provider factories, catalogs, provider metadata, and the faux test provider. API wire implementations, option translation, and message transforms live in sibling `../api/`. 41 provider factories, 41 matching `*.models.ts` catalogs, 41 `data/` JSONs — the three counts move together or generation is broken.
 
 ## FILE MAP
 
 ```text
-register-builtins.ts     Compatibility registration through src/compat.ts
-all.ts                   Builtin provider/model aggregation
+register-builtins.ts     One line: `import "../compat.ts"` — that is the whole contract
+all.ts                   Builtin provider/model aggregation: builtinProviders, builtinModels,
+                         builtinImagesProviders, builtinImagesModels, getBuiltinProvider(s)/Model(s);
+                         also re-exports the data/.manifest.json generation timestamp
 faux.ts                  Deterministic public test provider
 *-models.ts              Provider model/catalog helpers where present
-images/                  Image-provider metadata and factories
+images/register-builtins.ts  Image API registration; holds its own lazy module promises per images
+                         provider and returns a lazy-load-error AssistantImages instead of throwing
 radius.ts                Dynamic Radius provider with persisted model refresh
 radius-config.ts         Radius gateway/model catalog loading
-data/                    38 provider JSONs + .manifest.json — committed generated artifacts
+data/                    41 provider JSONs + .manifest.json (schemaVersion 3, sha256 per file +
+                         structureHash) — committed generated artifacts, never hand-edited
 data-json.d.ts           Typed import shim for data/ JSON
 ollama.ts                Dynamic provider, no .models.ts; runtime catalog via /api/tags
 cloudflare-auth.ts       Cloudflare auth split out of the two Cloudflare providers
@@ -44,7 +48,8 @@ Newer providers on disk (each `<name>.ts` + `<name>.models.ts`): ant-ling, kimi-
 - Every API stream must preserve tool calls, thinking blocks, usage accounting, stop reasons, setup errors, and abort semantics.
 - Default tests run with zero credentials. Use the faux provider for deterministic event sequences.
 - Keep image providers structurally separate under `images/`.
-- `data/` is committed generated source; never hand-edit. Regenerate with `npm run hydrate-model-data`, validate with `npm run check:model-data`.
+- `data/` is committed generated source; never hand-edit. Regenerate with `npm run hydrate-model-data`, validate with `npm run check:model-data` (contract in `packages/ai/scripts/AGENTS.md`).
+- Every `*.models.ts` opens with "Do not edit manually - run `npm run generate-models` to update" and flattens its JSON through `../model-catalog.ts`.
 
 ## ANTI-PATTERNS
 

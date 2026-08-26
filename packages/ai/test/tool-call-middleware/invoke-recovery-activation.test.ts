@@ -37,6 +37,23 @@ function createMalformedRecoveryModel(value: unknown): Model<"openai-completions
 }
 
 describe("invoke recovery activation", () => {
+	it("does not activate ANTML recovery on cursor-agent Claude ids", () => {
+		const cursorFable: Model<"cursor-agent"> = {
+			id: "claude-fable-5-medium",
+			name: "claude-fable-5-medium",
+			api: "cursor-agent",
+			provider: "cursor",
+			baseUrl: "https://api2.cursor.sh",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200000,
+			maxTokens: 8192,
+		};
+		expect(shouldRecoverTextToolCalls(cursorFable)).toBe(false);
+		expect(shouldRecoverTextToolCalls({ ...cursorFable, recoverTextToolCalls: true })).toBe(true);
+	});
+
 	it("matches the locked Claude-family identifiers across APIs", () => {
 		for (const id of [
 			"claude-opus-4-8",

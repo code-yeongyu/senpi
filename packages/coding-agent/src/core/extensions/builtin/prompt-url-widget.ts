@@ -1,5 +1,4 @@
-import { Container, Text } from "@earendil-works/pi-tui";
-import { DynamicBorder } from "../../../modes/interactive/components/dynamic-border.ts";
+import { buildNoticeBox } from "../notice/index.ts";
 import type { ExtensionAPI, ExtensionContext } from "../types.ts";
 
 const PR_PROMPT_PATTERN = /^\s*You are given one or more GitHub PR URLs:\s*(\S+)/im;
@@ -61,20 +60,18 @@ function formatAuthor(author?: GhMetadata["author"]): string | undefined {
 
 export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 	const setWidget = (ctx: ExtensionContext, match: PromptMatch, title?: string, authorText?: string) => {
-		ctx.ui.setWidget("prompt-url", (_tui, thm) => {
-			const titleText = title ? thm.fg("accent", title) : thm.fg("accent", match.url);
-			const authorLine = authorText ? thm.fg("muted", authorText) : undefined;
-			const urlLine = thm.fg("dim", match.url);
-
-			const lines = [titleText];
-			if (authorLine) lines.push(authorLine);
-			lines.push(urlLine);
-
-			const container = new Container();
-			container.addChild(new DynamicBorder((s: string) => thm.fg("muted", s)));
-			container.addChild(new Text(lines.join("\n"), 1, 0));
-			return container;
-		});
+		ctx.ui.setWidget("prompt-url", (_tui, thm) =>
+			buildNoticeBox(
+				{
+					title: title ?? match.url,
+					tone: "accent",
+					why: authorText ?? "Prompt URL detected.",
+					extra: [{ text: match.url, tone: "dim" }],
+				},
+				{ expanded: false },
+				thm,
+			),
+		);
 	};
 
 	const applySessionName = (_ctx: ExtensionContext, match: PromptMatch, title?: string) => {

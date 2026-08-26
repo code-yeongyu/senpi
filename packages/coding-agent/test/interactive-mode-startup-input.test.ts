@@ -6,6 +6,16 @@ vi.mock("../src/utils/version-check.ts", () => ({
 	getReleaseChangelogUrl: vi.fn((version: string) => `https://example.invalid/releases/${version}`),
 }));
 
+type EchoControllerStub = ReturnType<typeof createEchoControllerStub>;
+
+function createEchoControllerStub() {
+	return {
+		begin: vi.fn(() => "pending-test"),
+		promptOptions: vi.fn(() => ({ preflightResult: vi.fn(), promptDisposition: vi.fn() })),
+		reject: vi.fn(),
+	};
+}
+
 type SubmitContext = {
 	defaultEditor: { onSubmit?: (text: string) => void | Promise<void> };
 	editor: {
@@ -22,13 +32,16 @@ type SubmitContext = {
 	hideShortcutOverlay: () => void;
 	isExtensionCommand: (text: string) => boolean;
 	lastEditorText: string;
-	onInputCallback?: (text: string) => void;
-	pendingUserInputs: string[];
+	onInputCallback?: (input: { text: string; images?: unknown[]; pendingEchoId: string }) => void;
+	pendingUserInputs: { text: string; images?: unknown[]; pendingEchoId: string }[];
+	pendingImages: Map<number, unknown>;
+	optimisticUserEchoes: EchoControllerStub;
+	takeSubmissionImages: (submittedText: string) => unknown[];
 };
 
 type InputContext = {
-	onInputCallback?: (text: string) => void;
-	pendingUserInputs: string[];
+	onInputCallback?: (input: { text: string; images?: unknown[]; pendingEchoId?: string }) => void;
+	pendingUserInputs: { text: string; images?: unknown[]; pendingEchoId?: string }[];
 };
 
 type StartupSubmitContext = {
@@ -37,6 +50,7 @@ type StartupSubmitContext = {
 };
 
 type RunContext = {
+	optimisticUserEchoes: EchoControllerStub;
 	init: () => Promise<void>;
 	version: string;
 	options: Record<string, never>;
@@ -48,7 +62,15 @@ type RunContext = {
 	checkForPackageUpdates: () => Promise<string[]>;
 	checkTmuxSetup: () => Promise<string | undefined>;
 	maybeWarnAboutAnthropicSubscriptionAuth: () => Promise<void>;
-	getUserInput: () => Promise<string>;
+	getUserInput: () => Promise<{ text: string; images?: unknown[]; pendingEchoId: string }>;
+	buildMainLoopPromptOptions: (userInput: { text: string; images?: unknown[]; pendingEchoId: string }) => {
+		streamingBehavior: "steer";
+		preflightResult: (s: boolean) => void;
+		promptDisposition: (d: string) => void;
+	};
+	clearStatusIndicator: (kind?: string) => void;
+	ui: { requestRender: () => void };
+	agentIdle: boolean;
 	showNewVersionNotification: (version: string) => void;
 	showPackageUpdateNotification: (packages: string[]) => void;
 	showRiskyMainModelWarning: () => void;
@@ -59,14 +81,19 @@ type RunContext = {
 type InteractiveModePrivate = {
 	handleStartupSubmit(this: StartupSubmitContext, text: string): void;
 	setupEditorSubmitHandler(this: SubmitContext): void;
-	getUserInput(this: InputContext): Promise<string>;
+	getUserInput(this: InputContext): Promise<{ text: string; images?: unknown[] }>;
+	takeSubmissionImages(this: SubmitContext, submittedText: string): unknown[];
+	buildMainLoopPromptOptions(
+		this: RunContext,
+		userInput: { text: string; images?: unknown[]; pendingEchoId: string },
+	): { streamingBehavior: "steer"; preflightResult: (s: boolean) => void; promptDisposition: (d: string) => void };
 	run(this: RunContext): Promise<void>;
 };
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrivate;
 
 function createSubmitContext(): SubmitContext {
-	return {
+	const context: SubmitContext = {
 		defaultEditor: {},
 		editor: {
 			addToHistory: vi.fn(),
@@ -83,7 +110,14 @@ function createSubmitContext(): SubmitContext {
 		isExtensionCommand: vi.fn(() => false),
 		lastEditorText: "",
 		pendingUserInputs: [],
+		pendingImages: new Map(),
+		optimisticUserEchoes: createEchoControllerStub(),
+		takeSubmissionImages: vi.fn(() => []),
 	};
+	// Borrowed receiver: resolve markers with the REAL production helper (its
+	// only dependencies are the pendingImages map above).
+	context.takeSubmissionImages = interactiveModePrototype.takeSubmissionImages.bind(context);
+	return context;
 }
 
 describe("InteractiveMode startup input", () => {
@@ -105,17 +139,19 @@ describe("InteractiveMode startup input", () => {
 
 		await context.defaultEditor.onSubmit?.(" early prompt ");
 
-		expect(context.pendingUserInputs).toEqual(["early prompt"]);
+		expect(context.pendingUserInputs).toEqual([{ text: "early prompt", pendingEchoId: "pending-test" }]);
 		expect(context.flushPendingBashComponents).toHaveBeenCalledTimes(1);
 		expect(context.editor.addToHistory).toHaveBeenCalledWith("early prompt");
 	});
 
 	it("returns queued startup input before installing a new input callback", async () => {
 		const context: InputContext = {
-			pendingUserInputs: ["queued prompt"],
+			pendingUserInputs: [{ text: "queued prompt" }],
 		};
 
-		await expect(interactiveModePrototype.getUserInput.call(context)).resolves.toBe("queued prompt");
+		await expect(interactiveModePrototype.getUserInput.call(context)).resolves.toEqual({
+			text: "queued prompt",
+		});
 		expect(context.onInputCallback).toBeUndefined();
 		expect(context.pendingUserInputs).toEqual([]);
 	});
@@ -125,10 +161,11 @@ describe("InteractiveMode startup input", () => {
 		const stopMainLoop = new Error("stop interactive loop");
 		const prompt = vi.fn(async (_text: string, _options?: unknown) => {});
 		const getUserInput = vi
-			.fn<() => Promise<string>>()
-			.mockResolvedValueOnce("queued prompt")
+			.fn<() => Promise<{ text: string; images?: unknown[]; pendingEchoId: string }>>()
+			.mockResolvedValueOnce({ text: "queued prompt", pendingEchoId: "pending-test" })
 			.mockRejectedValueOnce(stopMainLoop);
 		const context: RunContext = {
+			optimisticUserEchoes: createEchoControllerStub(),
 			init: vi.fn(async () => {}),
 			version: "test",
 			options: {},
@@ -141,6 +178,11 @@ describe("InteractiveMode startup input", () => {
 			checkTmuxSetup: vi.fn(async () => undefined),
 			maybeWarnAboutAnthropicSubscriptionAuth: vi.fn(async () => {}),
 			getUserInput,
+			buildMainLoopPromptOptions: (userInput: { text: string; images?: unknown[]; pendingEchoId: string }) =>
+				interactiveModePrototype.buildMainLoopPromptOptions.call(context, userInput),
+			clearStatusIndicator: vi.fn(),
+			ui: { requestRender: vi.fn() },
+			agentIdle: false,
 			showNewVersionNotification: vi.fn(),
 			showPackageUpdateNotification: vi.fn(),
 			showRiskyMainModelWarning: vi.fn(),
@@ -153,6 +195,13 @@ describe("InteractiveMode startup input", () => {
 
 		// Then dispatch retains steer intent in case a continuation became active.
 		expect(prompt).toHaveBeenCalledTimes(1);
-		expect(prompt).toHaveBeenCalledWith("queued prompt", { streamingBehavior: "steer" });
+		expect(prompt).toHaveBeenCalledWith(
+			"queued prompt",
+			expect.objectContaining({
+				streamingBehavior: "steer",
+				preflightResult: expect.any(Function),
+				promptDisposition: expect.any(Function),
+			}),
+		);
 	});
 });

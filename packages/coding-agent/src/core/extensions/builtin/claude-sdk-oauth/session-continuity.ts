@@ -1,4 +1,5 @@
 import type { ContinuityReason } from "./session-observability.ts";
+import { sentHashPrefixDigest } from "./session-sync.ts";
 
 export type ContinuityEntrySnapshot = {
 	sdkSessionId: string;
@@ -18,11 +19,14 @@ export type ContinuityBindingSnapshot = {
 	sdkSessionId: string;
 	sentCount: number;
 	sentHashes: readonly string[];
+	sentPrefixHash?: string;
 	lastAssistantUuid: string | null;
 	accountName: string;
 	modelId: string;
 	systemPromptHash: string;
 	toolsetHash: string;
+	/** Sent-stream digest of a turn that was pushed but never answered (retry checkpoint). */
+	unansweredTurnDigest?: string;
 };
 
 export type ContinuityDecisionInput = {
@@ -46,8 +50,6 @@ export type ContinuityDecision =
 const PENDING_FORK_REASONS: Readonly<Record<string, ContinuityReason>> = {
 	assistant_rewritten: "assistant_rewritten",
 	compaction: "tainted_compaction",
-	fork: "tainted_fork",
-	abort: "tainted_abort",
 };
 
 function commonPrefixLength(left: readonly string[], right: readonly string[]): number {
@@ -86,7 +88,10 @@ function forkOrFlatten(
 	};
 }
 
-function identityDrift(input: ContinuityDecisionInput, entry: ContinuityEntrySnapshot): ContinuityReason | null {
+function identityDrift(
+	input: ContinuityDecisionInput,
+	entry: Pick<ContinuityEntrySnapshot, "accountName" | "modelId" | "systemPromptHash" | "toolsetHash">,
+): ContinuityReason | null {
 	if (entry.accountName !== input.accountName) return "account_changed";
 	if (entry.modelId !== input.modelId) return "model_changed";
 	if (entry.systemPromptHash !== input.fingerprint.systemPromptHash) return "options_changed";
@@ -94,8 +99,62 @@ function identityDrift(input: ContinuityDecisionInput, entry: ContinuityEntrySna
 	return null;
 }
 
+/**
+ * Same-turn retry after a stream-start timeout: the abandoned attempt already
+ * appended its user message to the lineage, so re-attaching would append it a
+ * SECOND time and re-bill the whole conversation. Forking at the pre-turn
+ * assistant boundary rewinds past the un-answered message, so the retry's
+ * request byte-layout matches the failed attempt's (prefix cache read).
+ * Requires the FULL current turn to hash-match the checkpoint, so a different
+ * turn falls through to the ordinary branches below.
+ */
+function retryCheckpointDecision(
+	input: ContinuityDecisionInput,
+	binding: ContinuityBindingSnapshot,
+): ContinuityDecision | undefined {
+	if (binding.unansweredTurnDigest === undefined) return undefined;
+	if (sentHashPrefixDigest(input.currentHashes, input.currentHashes.length) !== binding.unansweredTurnDigest) {
+		return undefined;
+	}
+	if (input.currentHashes.length < binding.sentCount) return undefined;
+	const prefixMatches =
+		binding.sentPrefixHash !== undefined
+			? sentHashPrefixDigest(input.currentHashes, binding.sentCount) === binding.sentPrefixHash
+			: commonPrefixLength(binding.sentHashes, input.currentHashes) === binding.sentCount;
+	if (!prefixMatches) return undefined;
+	if (!binding.lastAssistantUuid) return { kind: "flatten", reason: "timeout_retry" };
+	return {
+		kind: "fork",
+		sdkSessionId: binding.sdkSessionId,
+		atUuid: binding.lastAssistantUuid,
+		from: binding.sentCount,
+		reason: "timeout_retry",
+	};
+}
+
 function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBindingSnapshot): ContinuityDecision {
 	if (!input.transcriptAvailable) return { kind: "flatten", reason: "transcript_missing" };
+	const drift = identityDrift(input, binding);
+	if (drift) return { kind: "flatten", reason: drift };
+	const retry = retryCheckpointDecision(input, binding);
+	if (retry) return retry;
+	if (binding.sentPrefixHash !== undefined) {
+		const prefixMatches =
+			input.currentHashes.length >= binding.sentCount &&
+			sentHashPrefixDigest(input.currentHashes, binding.sentCount) === binding.sentPrefixHash;
+		if (prefixMatches) {
+			return {
+				kind: "reattach",
+				sdkSessionId: binding.sdkSessionId,
+				from: binding.sentCount,
+				reason: "registry_miss",
+			};
+		}
+		return {
+			kind: "flatten",
+			reason: input.currentHashes.length < binding.sentCount ? "history_rolled_back" : "sent_stream_diverged",
+		};
+	}
 	const shared = commonPrefixLength(binding.sentHashes, input.currentHashes);
 	if (shared === binding.sentCount) {
 		return { kind: "reattach", sdkSessionId: binding.sdkSessionId, from: binding.sentCount, reason: "registry_miss" };

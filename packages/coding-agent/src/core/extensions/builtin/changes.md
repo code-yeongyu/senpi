@@ -1,5 +1,157 @@
 # Builtin extensions changes
 
+## Repository audit baseline for the builtin extensions tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`). The audited production paths whose exact nearest tracker is this file:
+  `packages/coding-agent/src/core/extensions/builtin/import-repro.ts` and
+  `packages/coding-agent/src/core/extensions/builtin/redraws.ts` (both renamed out of upstream `.pi/extensions/`).
+- Every other builtin extension and shared module in this directory is fork-only (absent from the pinned upstream
+  tree) and exempt from the audit; their per-feature history lives in the dated entries below and in each extension's
+  own `changes.md`.
+
+### Why
+
+- The audit requires every upstream-owned production divergence to be covered by one entry with all four canonical
+  sections in its exact nearest tracker. The pre-existing entries below use flat bullets without canonical section
+  headings, so both renamed paths were reported uncovered; this inventory closes that gap without rewriting accurate
+  history.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository and release policy, not runtime behavior; it is enforced by repository scripts before
+  any extension loader exists.
+
+### Expected merge conflict zones
+
+- NONE: this tracker is fork-only (upstream has no counterpart file); the inventory names pin-relative paths so it
+  stays valid as entries below change.
+
+## /loop builtin extension registered (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: one registration entry adds the fork-only `/loop`
+  builtin extension (recurring and self-paced scheduled prompts, ported from Claude Code) to the builtin factory
+  list. The extension itself lives entirely under `builtin/loop/**`; its design is documented in
+  `builtin/loop/AGENTS.md`. Both paths are fork-only at pin `914cf1472e715297caa30db4b9535d534a9eb718` (upstream has
+  no `builtin/` registry file or loop tree), so the audit exempts them; this entry records the registration
+  divergence as feature history.
+
+### Why
+
+- The loop extension must be registered for every session like the other builtins (goal, todo, terminal), and the
+  registration list in `builtin/index.ts` is the only file outside `builtin/loop/**` this feature touches.
+
+### Why an extension could not handle it
+
+- It is an extension; builtin registration is the one hook the extension cannot provide for itself, and
+  `builtin/index.ts` is the only place builtins are wired into the loader.
+
+### Expected merge conflict zones
+
+- NONE: `builtin/index.ts` is fork-only (upstream has no counterpart file); the change is one import and one
+  factory-list entry on adjacent lines.
+
+## /tui redraw diagnostic relocated in-tree (2026-08-17)
+
+### What changed
+
+- `redraws.ts`: upstream's `.pi/extensions/redraws.ts` project extension is now the in-tree builtin
+  `packages/coding-agent/src/core/extensions/builtin/redraws.ts` (registered from `builtin/index.ts`), and its
+  `ExtensionAPI` import resolves relatively via `../types.ts` instead of the published
+  `@earendil-works/pi-coding-agent` package.
+- Behavior is unchanged: `/tui` renders one custom UI frame to read `tui.fullRedraws`, then notifies
+  `TUI full redraws: <count>` — the diagnostic for how many full redraws the TUI has performed.
+
+### Why
+
+- The fork does not carry upstream's `.pi` project-extension directory; as a builtin the diagnostic ships with the
+  agent and is registered for every session instead of depending on project-local discovery.
+
+### Why an extension could not handle it
+
+- It already is an extension; the tracked divergence is the file's location and import style, which only the
+  repository layout controls.
+
+### Expected merge conflict zones
+
+- LOW: the `redraws.ts` import header (upstream still ships the file under `.pi/extensions/`); the command body is
+  upstream-owned.
+
+## Upstream .pi prompt-url-widget and TPS extensions relocated in-tree (2026-08-17)
+
+### What changed
+
+- `.pi/extensions/prompt-url-widget.ts` (deleted at the pin) lives on as the fork builtin
+  `packages/coding-agent/src/core/extensions/builtin/prompt-url-widget.ts`, resolved through the global default
+  extension factory fast path rather than `.pi` discovery; `DynamicBorder` now imports from the interactive-mode
+  component (`../../../modes/interactive/components/dynamic-border.ts`) instead of the published package, and the
+  GitHub security-advisory draft branch of the upstream widget was dropped (PR/issue prompt patterns remain).
+- `.pi/extensions/tps.ts` (deleted at the pin) lives on as the fork builtin
+  `packages/coding-agent/src/core/extensions/builtin/tps.ts`: assistant elapsed time is accumulated per
+  `message_start`/`message_end` pair on the monotonic `performance.now()` clock, so a wall-clock jump backward can no
+  longer suppress a valid TPS notice, and the turn notification uses the concise cache-hit form (entries below:
+  2026-08-06, 2026-07-31).
+
+### Why
+
+- The fork does not carry upstream's `.pi` project-extension directory, and both widgets are expected in every
+  session; the in-tree builtin/global-default surface keeps them pinned to the fork's runtime instead of drifting
+  with a project-local checkout.
+
+### Why an extension could not handle it
+
+- Both already are extensions; the tracked divergence is the relocation of upstream-owned paths (deletion of
+  `.pi/extensions/prompt-url-widget.ts` and `.pi/extensions/tps.ts` plus fork-only destination files), which only the
+  repository layout controls.
+
+### Expected merge conflict zones
+
+- NONE in-tree: the destination files are fork-only. Upstream continues to evolve the `.pi` originals; on sync, port
+  deliberate upstream fixes into the builtin copies rather than restoring the `.pi` files.
+
+## Missing apply_patch extension seams (2026-08-17)
+
+### What changed
+
+- Records as tracker inventory the seams the `gpt-apply-patch` builtin compensates for because the host provides no
+  extension hook there: there is no builtin-extension seam between app-server projection of a completed `apply_patch`
+  result and its persistence into the session transcript, so completed-result retention is a fixed documented budget
+  inside the tool (complete unified patches retained only up to 16 KiB per file; omission instead of an invalid
+  partial diff — `gpt-apply-patch/changes.md`, 2026-08-02).
+- Core consumers instead learned the tool's shape: compaction's `extractFileOpsFromMessage()` recognizes `apply_patch`
+  calls and records patched paths as edited (compaction tracker, 2026-08-17), because no extension seam exposes a
+  builtin tool's file mutations to core file-operation accounting.
+
+### Why
+
+- `apply_patch` deliberately replaces `edit`/`write` in the active tool set for eligible wire modes; host surfaces
+  that assumed those core tools (projection, persistence, file-op extraction) need either a new seam or an explicit
+  in-tool contract. The fork chose documented fixed contracts over host seams that would exist for exactly one
+  builtin.
+
+### Why an extension could not handle it
+
+- These are seams the host would have to provide — a post-projection pre-persistence hook and core file-operation
+  extraction; an extension cannot insert itself into a pipeline position the runner never dispatches.
+
+### Expected merge conflict zones
+
+- NONE: documents contracts in fork-owned builtin files (`gpt-apply-patch/`) and cross-references sibling trackers; no
+  upstream file changes.
+
+## cursor-cli-oauth: register the Cursor CLI fallback lane (2026-08-17)
+
+- `index.ts` imports the `cursor-cli-oauth` extension and registers it in `builtinExtensions` beside `claude-sdk-oauth`, one `BuiltinExtensionFactory` entry: `{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension }`.
+- Registration is unconditional and probing-free: the factory registers the provider immediately with an offline static model catalog (the probe-backed catalog replaces it asynchronously) and reports executable/auth state through its oauth `check`, so the registry itself never blocks on, waits for, or conditions the entry on the external `cursor-agent` binary.
+- Why beside `claude-sdk-oauth`: both are provider-lane extensions whose only ordering requirement is "present before model-catalog feeders observe them"; neither mutates another extension's state, so their relative order is not load-bearing (same slot as the existing entry).
+- Positioning (plan addendum): the native Cursor provider (`cursor`, api2.cursor.sh protobuf transport shipped in v2026.8.16) stays the first-party primary path; this lane is the documented fallback for when the native path does not work well or Cursor's own agent harness is explicitly wanted.
+- Why an extension boundary could not avoid this edit: `builtinExtensions` is a core-owned array with no self-registration hook - a builtin provider cannot join the registry from outside this file. This one entry is the lane's entire footprint here; all behavior lives under `cursor-cli-oauth/` (see that directory's `changes.md`/`AGENTS.md`; the display-name row is recorded in `core/changes.md`).
+- Expected merge conflict zones: MEDIUM in `index.ts` at the import cluster and the registry array — every new builtin lane edits the same two hunks.
+
 ## service-tier: per-model /fast persistence across sessions (2026-08-16)
 
 - `/fast [on|off]` now persists the choice per model in settings `modelServiceTiers` (global scope, nested-key write so concurrent sessions merge safely), so fast mode survives a restart instead of dying with the session. No-arg `/fast` keeps the established toggle UX; argument completions are `on` and `off`.
@@ -25,6 +177,30 @@
 - Effort completions are dynamic: the ladder is read from the live model (tracked via `session_start`/`model_select`, since completion callbacks receive only a prefix) and suppressed entirely for non-graded models.
 - Coverage: `test/suite/reasoning-commands.test.ts` (41 cases) pins every user-facing string verbatim across all four capability classes, plus malformed input (wrong case, extra args, unicode, whitespace-only, `off` as an effort) and a mid-session model switch.
 - Expected merge conflict zones: LOW in `builtin/index.ts` at the import block and the registration array entry after `service-tier`.
+
+## loop-guard: hard escalation uses the existing pre-tool and system-abort APIs (2026-08-17)
+
+- Loop-guard moved to the first builtin slot and now combines its
+  `tool_execution_start` observation with the existing vetoable `tool_call`
+  hook. Two ignored identical-loop reminders arm blocking after the current
+  turn; three blocked repeats claim a shared wake-source lease, show a
+  transcript/UI warning, and interrupt with a system abort. Settlement then
+  triggers a hidden recovery message as a fresh provider user-role turn and
+  releases the lease when that turn starts. Similar/cycle warnings remain
+  non-blocking.
+- The implementation stays extension-only: no `types.ts`, runner, agent-loop,
+  or public extension API changes. Existing error-result and system-abort
+  contracts preserve active Goals; shared wake-source plus continuation-hold
+  events prevent immediate and timer-driven duplicate Goal recovery.
+- Why the registration move is required: `ExtensionRunner.emitToolCall`
+  returns on the first blocker. Repeated calls must be stopped before
+  settings-configured PreToolUse hooks and permission prompts repeat their own
+  work.
+- Coverage: focused loop-guard hard-escalation and Goal-isolation suites,
+  saturation detector coverage, package TypeScript, and real CLI QA.
+- Expected merge conflict zones: MEDIUM in `builtin/index.ts` at the first
+  registration slot; LOW in the loop-guard directory and focused tests; NONE
+  in public APIs or Goal production code.
 
 ## import-repro: guard /ir against mid-run and mid-compaction dispatch (2026-08-09)
 

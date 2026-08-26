@@ -1,5 +1,252 @@
 # Core Extensions Changes
 
+## Extension contracts re-diverge from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/index.ts` keeps fork exports: MCP server declarations,
+  tool-hook lifecycle types, execute-tool contracts, filesystem policy, and extension RPC handlers.
+- `packages/coding-agent/src/core/extensions/loader.ts` keeps the `@code-yeongyu/senpi` bundled
+  alias, extension RPC event-bus channels, MCP declaration validation, and the cwd-scoped cache.
+- `packages/coding-agent/src/core/extensions/types.ts` keeps service tiers, compaction
+  reasons/rejection causes, warm-anchor snapshots, and initial-model provenance on the extension API.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- Export lists of `packages/coding-agent/src/core/extensions/index.ts` and the type unions in
+  `packages/coding-agent/src/core/extensions/types.ts`.
+
+## 2026-08-25 - Expose provider watchdog abort ownership
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: adds `"provider"` to `AgentEndEvent.abortSource`.
+
+### Why
+
+- Extensions must distinguish provider watchdog cancellation from user and system aborts when handling terminal turns.
+
+### Why an extension could not handle it
+
+- This is the extension event contract itself and must be typed by the host before handlers run.
+
+### Expected merge conflict zones
+
+- LOW: `AgentEndEvent.abortSource` in `types.ts`.
+
+## 2026-08-19 - ProviderConfig.fallbackEligible: deterministic gate for implicit fallback expansion
+
+### What changed
+
+- `types.ts` (`ProviderConfig`) and `core/provider-composer.ts` (`ProviderConfigInput`) gained optional
+  `fallbackEligible?(): boolean`. A provider registration may declare its lane deterministically unusable
+  (for example an unacknowledged approval gate); bare-family fallback expansion then skips it while the
+  provider stays registered, explicitly selectable, and visible to `/login`.
+- `core/model-runtime.ts` exposes `isFallbackEligible(providerId)` (hookless providers and throwing hooks
+  stay eligible), `core/model-registry.ts` forwards it per model, and `core/retry-fallback/`
+  (`expansion.ts`, `chains.ts`, `controller.ts`) filters bare expansion on a definitive `false` only.
+- `builtin/cursor-cli-oauth` declares ineligibility while the kill switch is set or the unacknowledged
+  `--force` gate guarantees a refusal (`cursorCliForceRefusalPending`, shared with the execution policy).
+  `builtin/claude-sdk-oauth` declares ineligibility under its verbatim `enabled: false` kill switch.
+
+### Why
+
+- Bare expansion ranked OAuth-credential providers first but never asked whether the lane could execute.
+  A credentialed cursor-cli-oauth lane whose `noApprovalAcknowledgedAt` was never set ranked tier 0,
+  entered shipped default chains (`claude-opus-5:xhigh`), and every fallback hop into it hard-errored
+  with the acknowledgement message - a guaranteed-refusal lane consumed a slot it could never serve.
+
+### Why an extension could not handle it
+
+- Expansion runs inside `core/retry-fallback/` against the model registry; no extension hook observes or
+  filters chain canonicalization. The eligibility signal itself, however, stays extension-owned via the
+  new registration field.
+
+### Expected merge conflict zones
+
+- `types.ts` end of `ProviderConfig`; `provider-composer.ts` end of `ProviderConfigInput`;
+  `model-runtime.ts` near `hasConfiguredAuth`; `retry-fallback/expansion.ts` `FallbackAuthTiers` and the
+  `rankFamilyModels` filter loop; `retry-fallback/chains.ts` `FallbackModelLookup`/`authTiers`.
+
+## Extension-system overlays retained over upstream 59a71b23 (2026-08-19)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` keeps the fork extension contract on top of upstream pin
+  `59a71b235dadb4ad0d67557a8abb0aaa093e68b4`: the `app-server` `ExtensionMode`, the filesystem-policy types
+  (`FilesystemOperation`, `FilesystemPolicyRequest`, `FilesystemPolicyDecision`, `FilesystemPolicy`,
+  `FilesystemPolicyChecker`), `ServiceTier` and the `-fast` tier surface, the compaction contract
+  (`CompactionReason`, `CompactionRejectionCause`, `ApplyCompactionOptions` with `expectedWarmAnchor`,
+  begin/update/end options), `ExtensionSessionSettings` for retry fallback, `executeTool` with
+  `ExecuteToolError`/`ExecuteToolErrorCode`, lazy tool activation and removed-tool hints, MCP server
+  declarations, the `rpc` emit/handle surface, hook-source and tool-hook-status accessors, and
+  `prepareProviderRequest`.
+- `packages/coding-agent/src/core/extensions/loader.ts` keeps the fork loader: per-cwd LRU factory cache
+  (`extensionCacheByCwd`, `MAX_EXTENSION_CACHE_CWD_ENTRIES`) instead of upstream's single global cwd cache, the
+  `@code-yeongyu/senpi` virtual module and alias, bundled-then-workspace-then-source entry resolution
+  (`resolveWorkspaceOrBundled`) with a `require.resolve` fallback where `import.meta.resolve` is unavailable,
+  `alias: getAliases()` also applied on the TypeScript source runtime, one shared jiti importer per batch, the
+  injectable `ExtensionFactoryResolver`, `drainPendingProviderRegistrations()` order-stamped provider queues, the
+  reserved `tool_search` tool name, and the registration surfaces for lazy activators, removed-tool hints,
+  filesystem policies, MCP servers, `executeTool`, session model/thinking/fast-mode setters, and RPC
+  emit/handle. Upstream's Node SEA extension-loading branch (`isNodeSeaBinary` → virtual modules,
+  `tryNative: false`) arrived with this sync and is preserved.
+- `packages/coding-agent/src/core/extensions/index.ts` keeps re-exporting those fork-only members
+  (`McpServerDeclaration`, tool-hook lifecycle types, `ExecuteTool*`, filesystem-policy types,
+  `ExtensionRpcRequestHandler`, `InputDispositionEvent`, `ModelSelectEventResult`, `SystemPromptChangeEvent`,
+  `ExecuteToolError`, `RUNTIME_EXTENSION_PATH`).
+
+### Why
+
+- The fork owns extension lifecycle and its public API: multi-session hosts need per-cwd factory caching, the
+  senpi package name must resolve for extensions written against it, and fork features (filesystem policy, MCP
+  declarations, tool hooks, service tiers, compaction admission, extension RPC) have no upstream contract. The pin
+  advance restored upstream's narrower loader and types around them, so these overlays remain divergent.
+
+### Why an extension could not handle it
+
+- This is the loader and the type contract extensions are written against; both must exist before any extension
+  code runs.
+
+### Expected merge conflict zones
+
+- MEDIUM: `loader.ts` `getAliases()`/`createExtensionModuleImporter()` (upstream changes runtime detection here,
+  as this sync's SEA branch did) and `createExtensionAPI()` registration list; `types.ts` `ExtensionContext` and
+  `ExtensionAPI` member lists.
+- LOW: `index.ts` alphabetized re-export blocks.
+
+## Repository audit baseline for the extensions tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`). The audited production paths whose exact nearest tracker is this file:
+  `packages/coding-agent/src/core/extensions/index.ts`, `packages/coding-agent/src/core/extensions/loader.ts`,
+  `packages/coding-agent/src/core/extensions/runner.ts`, and `packages/coding-agent/src/core/extensions/types.ts`.
+- Per-file divergence history for the public API surface (events, context getters, RPC, lazy activation, compaction
+  admission) is preserved in the dated entries below; fork-only additions in this directory (`AGENTS.md`, `wrapper.ts`,
+  `notice/`) are absent from the pinned upstream tree and therefore exempt from the audit.
+
+### Why
+
+- The audit requires every upstream-owned production divergence to be covered by one entry with all four canonical
+  sections in its exact nearest tracker. Most entries below predate the gate and are not parseable in canonical form,
+  so this inventory anchors the four modified files without rewriting accurate history.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository and release policy, not runtime behavior; it is enforced by repository scripts before
+  any extension loader exists.
+
+### Expected merge conflict zones
+
+- NONE: this tracker is fork-only (upstream has no counterpart file); the inventory names pin-relative paths so it
+  stays valid as entries below change.
+
+## Extension loader per-CWD LRU factory cache and Senpi alias (2026-08-17)
+
+### What changed
+
+- `loader.ts`: the extension factory cache is scoped per working directory. Upstream kept one global `extensionCache`
+  plus a single `extensionCacheCwd`; any different cwd cleared the entire cache and bumped one global generation. The
+  fork replaces that with `extensionCacheByCwd`, a map of per-cwd `ExtensionCacheEntry` (`cwd`, `generation`,
+  `factories`) bounded by `MAX_EXTENSION_CACHE_CWD_ENTRIES = 16`: a cache hit re-inserts the entry to mark it most
+  recently used, a miss evicts the least recently used cwd, and each new entry is stamped from the monotonic
+  `nextExtensionCacheGeneration` so `isCurrentCacheToken()` still rejects factories held by an evicted or cleared
+  entry. `clearExtensionCache()` drops all entries; `loadExtensionsCached()` remains the cached entry point and
+  `loadExtensions()` keeps fresh-source semantics (`moduleCache: false`, one shared jiti importer per batch).
+- `loader.ts`: `@code-yeongyu/senpi` is a first-class alias for the coding-agent package — mapped to the bundled
+  module in `VIRTUAL_MODULES` and to the resolved dist-or-source entry in `getAliases()` — alongside the existing
+  `@earendil-works/pi-coding-agent` and `@mariozechner/pi-coding-agent` spellings.
+
+### Why
+
+- The module-level cache is process state shared by every session a host runs; with upstream's clear-on-switch
+  behavior, a host alternating sessions across project roots re-paid jiti's per-extension TypeScript resolution cost
+  on every cwd change. A bounded per-cwd LRU keeps recently used roots warm without unbounded growth.
+- Extensions published under the fork's package name import `@code-yeongyu/senpi`; without the alias jiti resolves
+  that specifier from the extension's own `node_modules`, pulling a duplicate runtime and breaking identity
+  expectations — the same failure mode the `@mariozechner/pi-*` alias exists to prevent.
+
+### Why an extension could not handle it
+
+- The cache and alias table live inside the loader that resolves extension factories themselves; no extension can
+  observe or replace its own import-path resolution.
+
+### Expected merge conflict zones
+
+- MEDIUM: `loader.ts` cache block (`MAX_EXTENSION_CACHE_CWD_ENTRIES`, `ExtensionCacheEntry`, `useExtensionCacheCwd()`,
+  `loadExtensionModule()`) — upstream still maintains the single-slot cache there.
+- LOW: the two `@code-yeongyu/senpi` lines in `VIRTUAL_MODULES` and `getAliases()`; additive keys beside upstream's.
+
+## Runner tool-hook lifecycle and status reporting (2026-08-17)
+
+### What changed
+
+- `runner.ts`: every `tool_call` (`PreToolUse`) and `tool_result` (`PostToolUse`) handler invocation is wrapped in a
+  lifecycle run. `beginToolHookRun()` assigns `hookRunId` (`<toolCallId>:<hookName>:<run index>`), emits a `start`
+  event, and hands the handler a context whose `ctx.updateToolHookStatus(update)` emits `update` events with a
+  sanitized message; the run closes with an `end` event carrying terminal status `completed`, `blocked` (a
+  `ToolCallEventResult.block` veto won), or `failed` (handler threw) plus the error message.
+- `runner.ts`: hosts observe the stream through `setToolHookLifecycleObserver()` receiving
+  `ExtensionToolHookLifecycleEvent`. Default status text comes from `getToolHookStatusMessage()` — `running <extension
+  name>`, or the compaction/tool-result-size checks the builtin hooks extension performs — and
+  `sanitizedToolHookStatusMessage()` bounds every message to 79 characters after stripping ANSI, control characters,
+  and collapsed whitespace.
+
+### Why
+
+- Interactive hosts had no per-hook progress signal while PreToolUse/PostToolUse handlers ran, so a slow permission or
+  compaction hook was indistinguishable from a hung tool call. Lifecycle phases plus a bounded, sanitized status line
+  let the host surface which extension hook is running and how the run ended.
+
+### Why an extension could not handle it
+
+- The stream must be emitted by the runner that dispatches the hooks; an extension cannot observe another extension's
+  hook dispatch or reach the host's status surface for it.
+
+### Expected merge conflict zones
+
+- MEDIUM: `runner.ts` `emitToolCall()` / `emitToolResult()` handler loops and the `beginToolHookRun()` block —
+  upstream owns the dispatch loops and rewrites them when event-result shapes change.
+- LOW: `ExtensionToolHookLifecycleEvent` / `ExtensionToolHookLifecycleObserver` / `setToolHookLifecycleObserver()`;
+  fork-owned additive surface.
+
+## Extension RPC event forwarding onto the shared session bus (2026-08-17)
+
+### What changed
+
+- `loader.ts`: `pi.rpc.emit(name, data)` (absent from the pinned upstream loader) validates a non-empty trimmed name
+  and publishes an `ExtensionRpcEvent` (`{ name, data }`) on the session's shared event bus under the reserved
+  `EXTENSION_RPC_EVENT_CHANNEL` exported from `core/event-bus.ts`, so extension-originated events reach RPC hosts
+  through one named channel instead of each extension writing to a transport. `pi.rpc.handle()` /
+  `ExtensionRunner.requestRpc()` form the request/response counterpart (2026-08-12 entries below).
+- `pi.events.emit/on` keep forwarding extension-local pub/sub onto the same shared bus with generation-tracked
+  subscriptions that `runtime.invalidate()` tears down (upstream-owned contract, unchanged).
+
+### Why
+
+- Extensions needed a first-class way to raise events that RPC/TUI consumers observe without the extension holding a
+  transport, and hosts needed one channel contract to subscribe to rather than per-extension delivery paths.
+
+### Why an extension could not handle it
+
+- The event bus is constructed by core before extensions load and handed into `loadExtensions()`; only the loader can
+  wire each extension's `rpc` surface onto it.
+
+### Expected merge conflict zones
+
+- LOW: `loader.ts` `createExtensionAPI()` `rpc` arm and the `EXTENSION_RPC_EVENT_CHANNEL` import; the channel constant
+  itself is fork-owned in `core/event-bus.ts` (core tracker, 2026-08-17).
+
 ## 2026-08-17 - getSystemPromptOptions exposed on the base ExtensionContext
 
 ### What changed

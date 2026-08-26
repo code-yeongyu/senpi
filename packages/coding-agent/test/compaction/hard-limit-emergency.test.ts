@@ -20,6 +20,9 @@ import type {
 } from "../../src/core/extensions/index.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { createInMemoryExtensionSessionSettings } from "../helpers/extension-session-settings.ts";
+import { createTempAgentDir } from "../support/temp-agent-dir.ts";
+
+const AGENT_DIR = createTempAgentDir();
 
 const registrations: Array<{ unregister: () => void }> = [];
 
@@ -96,7 +99,7 @@ function createContext(contextWindow: number, maxTokens = contextWindow, compact
 		mode: "print",
 		ui: Object.create(null) as ExtensionContext["ui"],
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager,
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
@@ -150,7 +153,7 @@ function createCompactionContext(): ExtensionContext {
 		mode: "print",
 		ui: Object.create(null) as ExtensionContext["ui"],
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager,
 		modelRegistry,

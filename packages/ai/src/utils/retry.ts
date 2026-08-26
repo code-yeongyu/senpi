@@ -144,6 +144,14 @@ export interface RetryPolicy {
 	maxRetries: number;
 	/** Base delay in ms. Per-attempt delay is `baseDelayMs * 2^(attempt-1)` before jitter. */
 	baseDelayMs: number;
+	/** Injectable source used for Codex-style +/-10% backoff jitter. */
+	random?: () => number;
+}
+
+export function retryDelayMs(baseDelayMs: number, attempt: number, random: () => number = Math.random): number {
+	const scheduledDelayMs = baseDelayMs * 2 ** (attempt - 1);
+	const sample = Math.min(1, Math.max(0, random()));
+	return Math.round(scheduledDelayMs * (0.9 + sample * 0.2));
 }
 
 /** Optional callbacks emitted by {@link retryAssistantCall} around each retry. */
@@ -236,7 +244,7 @@ export async function retryTransientCall<T>(
 
 			attempt++;
 			lastRetry = { attempt, errorMessage: errorMessageOf(error) };
-			const delayMs = policy!.baseDelayMs * 2 ** (attempt - 1);
+			const delayMs = retryDelayMs(policy!.baseDelayMs, attempt, policy!.random);
 			await callbacks?.onRetryScheduled?.(attempt, maxAttempts, delayMs, lastRetry.errorMessage);
 
 			try {
@@ -306,7 +314,7 @@ export async function retryAssistantCall(
 
 		attempt++;
 		lastRetry = { attempt, errorMessage: response.errorMessage || "Unknown error" };
-		const delayMs = policy!.baseDelayMs * 2 ** (attempt - 1);
+		const delayMs = retryDelayMs(policy!.baseDelayMs, attempt, policy!.random);
 		await callbacks?.onRetryScheduled?.(attempt, maxAttempts, delayMs, lastRetry.errorMessage);
 
 		// Normalize aborts during retry backoff to the same AssistantMessage shape as
@@ -365,6 +373,7 @@ export function isProviderStreamStallError(message: AssistantMessage): boolean {
  * failures are ordinary error responses.
  */
 export function isProviderTimeoutError(message: AssistantMessage): boolean {
+	if (message.abortSource === "provider") return true;
 	if (isProviderStreamStallError(message)) return true;
 	if (message.stopReason !== "error" && message.stopReason !== "aborted") return false;
 	return PROVIDER_TRANSPORT_TIMEOUT_ERROR_PATTERN.test(message.errorMessage ?? "");
@@ -377,7 +386,20 @@ export function isProviderTimeoutError(message: AssistantMessage): boolean {
  * failures that must decide between degrading and surfacing loudly).
  */
 export function isRetryableErrorMessage(errorMessage: string): boolean {
-	if (!errorMessage) return false;
-	if (NON_RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage)) return false;
-	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
+	return classifyErrorMessage(errorMessage) === "retryable";
+}
+
+/**
+ * Tri-state form of {@link isRetryableErrorMessage}. The regexes only carry
+ * three outcomes — a non-retryable match, a retryable match, or no match at
+ * all — and callers that hold structured failure facts (status codes, provider
+ * error codes) need to distinguish "the regexes say terminal" from "the
+ * regexes say nothing" so they can consult the structured facts only in the
+ * latter case. Non-retryable still outranks retryable, exactly as before.
+ */
+export function classifyErrorMessage(errorMessage: string): "non-retryable" | "retryable" | "unknown" {
+	if (!errorMessage) return "unknown";
+	if (NON_RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage)) return "non-retryable";
+	if (RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage)) return "retryable";
+	return "unknown";
 }

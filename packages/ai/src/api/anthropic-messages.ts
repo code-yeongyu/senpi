@@ -10,6 +10,7 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages.js";
 import { calculateCost } from "../models.ts";
 import type {
+	AnthropicRefusalFallback,
 	Api,
 	AssistantMessage,
 	AssistantStopDetails,
@@ -34,6 +35,7 @@ import type {
 import { isVideoMimeType } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
+import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
@@ -42,6 +44,7 @@ import { getAnthropicCompat, isAnthropicApiBaseUrl } from "../utils/prompt-cache
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry-hint.ts";
+import { normalizeAnthropicRetryFailure } from "../utils/retry-profile/failure.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import {
 	applyServerFallbackAbort,
@@ -226,6 +229,10 @@ export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export type AnthropicThinkingDisplay = "summarized" | "omitted";
 
+type MessageCreateParamsStreamingWithFallbacks = MessageCreateParamsStreaming & {
+	fallbacks?: AnthropicRefusalFallback;
+};
+
 const FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
 const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
 const COMPUTER_USE_BETA_PREFIX = "computer-use-";
@@ -267,6 +274,7 @@ const UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS = [
 	"opus-4-8",
 	"opus-4.8",
 ] as const;
+const SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
 type UnsignedThinkingReplay = "text" | "empty-signature";
 
@@ -340,6 +348,8 @@ export interface AnthropicOptions extends StreamOptions {
 	 * Default: true.
 	 */
 	interleavedThinking?: boolean;
+	/** Anthropic server-side fallback for eligible refusal stop reasons. */
+	refusalFallbacks?: AnthropicRefusalFallback;
 	/**
 	 * Anthropic tool choice behavior. String values map to Anthropic's built-in
 	 * choices; `{ type: "tool", name }` forces a specific tool.
@@ -365,16 +375,10 @@ function mergeHeaders(...headerSources: (Record<string, string | null> | undefin
 }
 
 function mergeClientHeaders(
-	model: Model<"anthropic-messages">,
+	_model: Model<"anthropic-messages">,
 	...headerSources: (Record<string, string | null> | undefined)[]
 ): Record<string, string | null> {
-	const merged = mergeHeaders(...headerSources);
-	if (model.provider === "kimi-coding") {
-		for (const name of Object.keys(merged)) {
-			if (name.toLowerCase() === "user-agent") delete merged[name];
-		}
-		merged["User-Agent"] = getPiUserAgent();
-	}
+	const merged = mergeHeaders({ "User-Agent": getPiUserAgent() }, ...headerSources);
 	return merged;
 }
 
@@ -1248,6 +1252,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 		try {
 			let client: Anthropic;
 			let isOAuth: boolean;
+			let usageModel = model;
 
 			if (options?.client) {
 				client = options.client;
@@ -1278,6 +1283,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					apiKey,
 					options?.interleavedThinking ?? true,
 					shouldUseFineGrainedToolStreamingBeta(model, context),
+					options?.refusalFallbacks !== undefined,
 					optionsHeaders,
 					options?.fetch,
 					copilotDynamicHeaders,
@@ -1357,6 +1363,18 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			for await (const event of iterateAnthropicEvents(response, requestSignal)) {
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
+					output.model = event.message.model;
+					const fallback =
+						output.model === model.id
+							? undefined
+							: model.compat?.allowedFallbackModels?.find(
+									(candidate) =>
+										typeof candidate !== "string" &&
+										candidate.provider === model.provider &&
+										candidate.model === output.model,
+								);
+					const fallbackCost = typeof fallback === "string" ? undefined : fallback?.cost;
+					usageModel = fallbackCost ? { ...model, id: output.model, cost: fallbackCost } : model;
 					// Capture initial token usage from message_start event
 					// This ensures we have input token counts even if the stream is aborted early
 					output.usage.input = event.message.usage.input_tokens || 0;
@@ -1565,7 +1583,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
-					calculateCost(model, output.usage);
+					calculateCost(usageModel, output.usage);
 				}
 			}
 
@@ -1619,6 +1637,18 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					}
 				}
 			}
+			const failure = normalizeAnthropicRetryFailure(error);
+			appendAssistantMessageDiagnostic(output, {
+				type: "provider_retry_failure",
+				timestamp: Date.now(),
+				details: {
+					kind: failure.kind,
+					...(failure.statusCode !== undefined ? { statusCode: failure.statusCode } : {}),
+					...(failure.providerCodes !== undefined ? { providerCodes: failure.providerCodes } : {}),
+					...(failure.retryAfterMs !== undefined ? { retryAfterMs: failure.retryAfterMs } : {}),
+					...(failure.shouldRetry !== undefined ? { shouldRetry: failure.shouldRetry } : {}),
+				},
+			});
 			output.errorMessage = errorMessage;
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
@@ -1724,9 +1754,15 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	const apiKey = options?.apiKey;
 	assertRequestAuth(model.provider, apiKey, providerHeadersToRecord(options?.headers));
 
-	const base = buildBaseOptions(model, context, options, options?.apiKey);
+	const base = {
+		...buildBaseOptions(model, context, options, options?.apiKey),
+		toolChoice: options?.toolChoice,
+	} satisfies AnthropicOptions;
 	if (!options?.reasoning) {
-		return stream(model, context, { ...base, thinkingEnabled: false } satisfies AnthropicOptions);
+		return stream(model, context, {
+			...base,
+			thinkingEnabled: false,
+		} satisfies AnthropicOptions);
 	}
 
 	// For models with adaptive thinking: use an effort level.
@@ -1768,6 +1804,7 @@ function createClient(
 	apiKey: string | undefined,
 	interleavedThinking: boolean,
 	useFineGrainedToolStreamingBeta: boolean,
+	useServerSideFallbackBeta: boolean,
 	optionsHeaders?: Record<string, string>,
 	fetch?: typeof globalThis.fetch,
 	dynamicHeaders?: Record<string, string>,
@@ -1782,6 +1819,9 @@ function createClient(
 	}
 	if (needsInterleavedBeta) {
 		betaFeatures.push(INTERLEAVED_THINKING_BETA);
+	}
+	if (useServerSideFallbackBeta) {
+		betaFeatures.push(SERVER_SIDE_FALLBACK_BETA);
 	}
 
 	if (model.provider === "cloudflare-ai-gateway") {
@@ -1924,7 +1964,7 @@ function buildParams(
 	isOAuthToken: boolean,
 	options?: AnthropicOptions,
 	unsignedThinkingReplay = getAnthropicCompat(model).unsignedThinkingReplay,
-): MessageCreateParamsStreaming {
+): MessageCreateParamsStreamingWithFallbacks {
 	const compat = getAnthropicCompat(model);
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention ?? model.cacheRetention, options?.env);
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId, {
@@ -1951,7 +1991,7 @@ function buildParams(
 		deferredTools = [];
 	}
 	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
-	const params: MessageCreateParamsStreaming = {
+	const params: MessageCreateParamsStreamingWithFallbacks = {
 		model: model.id,
 		messages: convertMessages(
 			transformedMessages,
@@ -2080,6 +2120,10 @@ function buildParams(
 	}
 
 	applyExtraBodyToAnthropicParams(params, options?.extraBody);
+
+	if (options?.refusalFallbacks !== undefined) {
+		params.fallbacks = options.refusalFallbacks;
+	}
 
 	return params;
 }

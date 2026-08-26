@@ -1,6 +1,6 @@
 # packages/ai/src/auth
 
-Generated: 2026-08-17. Commit `abae968e8`.
+Generated: 2026-08-24. Commit `baf15a54d`.
 
 Credential storage, auth contexts, provider auth resolution, and bundled OAuth flows. Everything here must stay browser-safe; Node access goes through injected/lazy boundaries only.
 
@@ -39,6 +39,8 @@ xai.ts               xAI flow
 - One credential per provider id in the store. Persistent stores are injected by the app, never assumed.
 - OAuth flows register through `registerBundledOAuthFlowLoaders`; don't import flow modules eagerly from browser-reachable code.
 - Auth resolution order in `helpers.ts` (stored credential, then env) is load-bearing; don't reorder.
+- `oauth/openai-codex.ts` and `oauth/radius.ts` carry `// NEVER convert to top-level imports - breaks browser/Vite builds` on their dynamic imports. Keep both the imports and the comments.
+- `resolveProviderAuth` / `resolveProviderAuthWithSignal` in `resolve.ts` is the cross-provider choke point (credential, env, OAuth refresh, error paths); it raises `ModelsError` with a `ModelsErrorCode`, not bare `Error`.
 
 ## WHERE TO LOOK
 
@@ -48,3 +50,4 @@ xai.ts               xAI flow
 | Header semantics | `headers.ts` |
 | Credential persistence | `credential-store.ts` + app-side injected store |
 | Env-vs-credential precedence | `helpers.ts`, `resolve.ts` |
+| Codex auth token helpers shared with `../api/` | `../utils/openai-codex-auth.ts` |

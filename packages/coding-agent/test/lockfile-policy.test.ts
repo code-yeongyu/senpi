@@ -38,7 +38,9 @@ describe("file storage lock policy", () => {
 			const authBackend = new FileAuthStorageBackend(authPath);
 			authBackend.withLock((current) => ({ result: current }));
 			await authBackend.withLockAsync(async (current) => ({ result: current }));
-			new FileSettingsStorage(directory, agentDir).withLock("global", () => undefined);
+			// Reads are lock-free since the atomic temp+rename publish, so the settings
+			// lock policy is observable only through a write-returning callback.
+			new FileSettingsStorage(directory, agentDir).withLock("global", () => "{}");
 
 			// #then
 			expect(syncOptions).toHaveLength(2);

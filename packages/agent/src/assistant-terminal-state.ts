@@ -1,4 +1,11 @@
-import { type AssistantMessage, type AssistantMessageEvent, isClassifierRefusal } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	type AssistantMessageEvent,
+	type CursorExecResolvedCarrier,
+	isClassifierRefusal,
+	isCursorExecResolved,
+	type ToolResultMessage,
+} from "@earendil-works/pi-ai";
 import type { AgentLoopConfig } from "./types.ts";
 
 const EMPTY_USAGE = {
@@ -12,8 +19,43 @@ const EMPTY_USAGE = {
 
 type TerminalAssistantMessageEvent = Extract<AssistantMessageEvent, { type: "done" | "error" }>;
 
+export class ProviderRetryWatchdogAbortError extends Error {
+	readonly providerCause: string;
+
+	constructor(providerCause: string) {
+		super(providerCause);
+		this.providerCause = providerCause;
+		this.name = "ProviderRetryWatchdogAbortError";
+	}
+}
+
+export function promoteStopWithPendingToolCalls(message: AssistantMessage): AssistantMessage {
+	if (message.stopReason !== "stop") return message;
+	if (!message.content.some((block) => block.type === "toolCall")) return message;
+	return { ...message, stopReason: "toolUse" };
+}
+
 export function shouldTerminateAssistantTurn(message: AssistantMessage): boolean {
 	return message.stopReason === "error" || message.stopReason === "aborted" || isClassifierRefusal(message);
+}
+
+export function isStreamIdleTimeoutError(error: unknown): boolean {
+	return error instanceof Error && error.name === "StreamIdleTimeoutError";
+}
+
+/**
+ * After tools already finished (Cursor exec-resolved or buffered results),
+ * a silent provider is a finished turn, not a failed one.
+ */
+export function shouldFinalizeIdleAsStop(
+	partialMessage: AssistantMessage | null,
+	providerToolResults: readonly ToolResultMessage[],
+): boolean {
+	if (!partialMessage) return false;
+	const toolCalls = partialMessage.content.filter((block) => block.type === "toolCall");
+	if (toolCalls.length === 0) return false;
+	if (providerToolResults.length > 0) return true;
+	return toolCalls.every((block) => isCursorExecResolved(block as CursorExecResolvedCarrier));
 }
 
 export function createTerminalFailureAssistantMessage(
@@ -35,6 +77,7 @@ export function createTerminalFailureAssistantMessage(
 		usage: partialMessage?.usage ?? EMPTY_USAGE,
 		stopReason: reason,
 		errorMessage: errorMessage || (reason === "aborted" ? "Request was aborted" : "Error"),
+		...(error instanceof ProviderRetryWatchdogAbortError ? { abortSource: "provider" as const } : {}),
 		timestamp: partialMessage?.timestamp ?? Date.now(),
 	};
 }

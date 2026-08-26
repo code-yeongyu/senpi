@@ -46,8 +46,14 @@ describe("npm publish dependency graph", () => {
 		}
 		for (const workspace of INDEPENDENT_UPSTREAM_WORKSPACES) {
 			const manifest = readJson(join(repoRoot, workspace.packageJsonPath));
+			const aiManifest = readJson(join(repoRoot, "packages/ai/package.json"));
+			const agentManifest = readJson(join(repoRoot, "packages/agent/package.json"));
 			assert.equal(manifest.private, true, `${workspace.packageName} must remain excluded from fork publishing`);
 			assert.doesNotMatch(publishScript, new RegExp(`name: "${workspace.packageName}"`));
+			assert.equal(manifest.dependencies["@earendil-works/pi-agent-core"], `^${agentManifest.version}`);
+			assert.equal(manifest.dependencies["@earendil-works/pi-ai"], `^${aiManifest.version}`);
+			assert.equal(manifest.devDependencies["@earendil-works/pi-agent-core"], undefined);
+			assert.equal(manifest.devDependencies["@earendil-works/pi-ai"], undefined);
 		}
 		for (const packageName of OWNED_REGISTRY_ALIASES) {
 			assert.match(publishScript, new RegExp(`name: "${packageName}"`));

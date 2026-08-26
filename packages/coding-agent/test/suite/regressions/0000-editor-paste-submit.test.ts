@@ -18,6 +18,12 @@ type CustomEditorThis = {
 	ui: TUI;
 	getExpandedEditorText: () => string;
 	disposeActiveSelector(): void;
+	// setCustomEditorComponent reconciles the pasted-image payloads against the
+	// destination editor's markers. The fixture supplies the real map and borrows
+	// the real methods so this exercises production plumbing, not a stub.
+	pendingImages: Map<number, unknown>;
+	subscribeImageMarkers: unknown;
+	reconcilePendingImages: unknown;
 };
 
 function prototypeMethod<T>(name: string): T {
@@ -47,6 +53,9 @@ function makeFakeThis(): CustomEditorThis {
 		ui,
 		getExpandedEditorText: prototypeMethod<(this: CustomEditorThis) => string>("getExpandedEditorText"),
 		disposeActiveSelector: () => {},
+		pendingImages: new Map<number, unknown>(),
+		subscribeImageMarkers: prototypeMethod<unknown>("subscribeImageMarkers"),
+		reconcilePendingImages: prototypeMethod<unknown>("reconcilePendingImages"),
 	};
 	fakeThis.editorContainer.addChild(defaultEditor);
 	return fakeThis;

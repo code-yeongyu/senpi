@@ -3,13 +3,12 @@
  * Handles TUI rendering and user interaction, delegating business logic to AgentSession.
  */
 
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
-import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/compat";
+import type { AssistantMessage, ImageContent, Message, Model, TextContent, Usage } from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -49,6 +48,7 @@ import {
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
+	APP_COMMAND,
 	APP_NAME,
 	APP_TITLE,
 	BRAND,
@@ -86,9 +86,9 @@ import type {
 	ProjectTrustContext,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
-import { buildNoticeBox, type NoticeSpec } from "../../core/extensions/notice/index.ts";
+import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
-import { appendHiddenTuiStdout } from "../../core/hidden-stdout-log.ts";
+import { appendHiddenTuiStdout, appendUncaughtCrashLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
@@ -122,15 +122,16 @@ import {
 } from "../../inspector-policy.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
-import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
+import { readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
+import { processImage } from "../../utils/image-process.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, getReleaseChangelogUrl } from "../../utils/version-check.ts";
-import { abortedErrorLabel } from "./aborted-error-label.ts";
+import { abortedMessageForRendering } from "./aborted-error-label.ts";
 import {
 	type CompactionQueuedMessage,
 	transferCompactionQueue,
@@ -168,6 +169,11 @@ import {
 	formatAuthSelectorProviderType,
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
+import {
+	DEFAULT_TAIL_BUDGET,
+	DEFAULT_WARM_CHUNK_SIZE,
+	ProgressiveTranscriptContainer,
+} from "./components/progressive-transcript-container.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -235,6 +241,12 @@ interface Expandable {
 	setExpanded(expanded: boolean): void;
 }
 
+function llamaCppPostLoginGuidance(actionLabel: string, loadedModelCount: number): string {
+	return loadedModelCount === 0
+		? `${actionLabel}. No llama.cpp models are loaded. Use /llama to load a model, then /model to select it.`
+		: `${actionLabel}. Use /model to select a loaded llama.cpp model, or /llama to manage models.`;
+}
+
 function isExpandable(obj: unknown): obj is Expandable {
 	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
 }
@@ -284,13 +296,27 @@ function formatToolHookTerminalTitle(event: ToolHookStatusStartEvent): string {
 	return `${APP_TITLE} - ${hookName}: ${statusMessage}`;
 }
 
-type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" }>;
+type CompactionCostNotice = {
+	type: "compaction_cost";
+	kind: "compaction" | "branch_summary";
+	usage: Usage;
+};
+
+type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" }> | CompactionCostNotice;
 
 function isCustomSessionEntry(item: RenderSessionItem): item is Extract<SessionEntry, { type: "custom" }> {
 	return "type" in item && item.type === "custom";
 }
 
+function isCompactionCostNotice(item: RenderSessionItem): item is CompactionCostNotice {
+	return "type" in item && item.type === "compaction_cost";
+}
+
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
+// Bun's macOS tty shim can report a dead terminal as raw positive errno 5 without a string code.
+const EIO_ERRNO = 5;
+const DEFAULT_RETRY_STATUS_REFRESH_INTERVAL_MS = 80;
+const LARGE_SESSION_RETRY_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS = 600;
 const DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS = 32;
 const LARGE_SESSION_WORKING_STATUS_REFRESH_INTERVAL_MS = 60_000;
@@ -298,10 +324,26 @@ const LARGE_SESSION_WORKING_STATUS_MESSAGE_INTERVAL_MS = 1_000;
 const FALLBACK_STATUS_KEY = "fallback";
 const RGB_FOREGROUND_PATTERN = /\x1b\[38;2;(\d+);(\d+);(\d+)m/;
 
-const DARK_DEFAULT_WORKING_TEXT_RGB: WorkingStatusRgbColor = { r: 229, g: 229, b: 231 };
-const LIGHT_DEFAULT_WORKING_TEXT_RGB: WorkingStatusRgbColor = { r: 17, g: 17, b: 17 };
-const DARK_DEFAULT_WORKING_BASE_RGB: WorkingStatusRgbColor = { r: 102, g: 102, b: 102 };
-const LIGHT_DEFAULT_WORKING_BASE_RGB: WorkingStatusRgbColor = { r: 118, g: 118, b: 118 };
+const DARK_DEFAULT_WORKING_TEXT_RGB: WorkingStatusRgbColor = {
+	r: 229,
+	g: 229,
+	b: 231,
+};
+const LIGHT_DEFAULT_WORKING_TEXT_RGB: WorkingStatusRgbColor = {
+	r: 17,
+	g: 17,
+	b: 17,
+};
+const DARK_DEFAULT_WORKING_BASE_RGB: WorkingStatusRgbColor = {
+	r: 102,
+	g: 102,
+	b: 102,
+};
+const LIGHT_DEFAULT_WORKING_BASE_RGB: WorkingStatusRgbColor = {
+	r: 118,
+	g: 118,
+	b: 118,
+};
 
 function parseAnsiRgbForeground(ansi: string): WorkingStatusRgbColor | undefined {
 	const match = RGB_FOREGROUND_PATTERN.exec(ansi);
@@ -345,11 +387,20 @@ function formatWorkingStatusShimmerText(text: string, intensity: number): string
 }
 
 function isDeadTerminalError(error: unknown): boolean {
-	if (!error || typeof error !== "object" || !("code" in error)) {
+	if (!error || typeof error !== "object") {
 		return false;
 	}
-	const code = (error as NodeJS.ErrnoException).code;
-	return code !== undefined && DEAD_TERMINAL_ERROR_CODES.has(code);
+	if ("code" in error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== undefined && DEAD_TERMINAL_ERROR_CODES.has(code)) {
+			return true;
+		}
+	}
+	if ("errno" in error) {
+		const errno = (error as NodeJS.ErrnoException).errno;
+		return errno === EIO_ERRNO || errno === -EIO_ERRNO;
+	}
+	return false;
 }
 
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
@@ -377,7 +428,7 @@ export function formatResumeCommand(sessionManager: SessionManager): string | un
 	const sessionFile = sessionManager.getSessionFile();
 	if (!sessionFile || !fs.existsSync(sessionFile)) return undefined;
 
-	const args = [APP_NAME];
+	const args = [APP_COMMAND];
 	if (!sessionManager.usesDefaultSessionDir()) {
 		args.push("--session-dir", quoteIfNeeded(sessionManager.getSessionDir()));
 	}
@@ -448,6 +499,174 @@ function formatLoginProviderCompletionDescription(provider: LoginProviderComplet
 	return provider.name === provider.id ? authTypes : `${provider.name} · ${authTypes}`;
 }
 
+type OptimisticUserEchoRenderHandle = {
+	replace(message: AgentMessage): void;
+	remove(): void;
+};
+
+type OptimisticUserEchoRecord = {
+	readonly id: string;
+	readonly handle: OptimisticUserEchoRenderHandle;
+	eligibleForCanonicalStart: boolean;
+};
+
+/**
+ * Content the streaming component owns: everything through the FIRST toolCall.
+ * Text painted between tool cards lives in persistent per-segment components
+ * below the cards (regression 1064), so the head must never reabsorb it.
+ */
+function assistantStreamingHeadMessage(message: AssistantMessage): AssistantMessage {
+	const firstToolIndex = message.content.findIndex((block) => block.type === "toolCall");
+	if (firstToolIndex === -1) return message;
+	return { ...message, content: message.content.slice(0, firstToolIndex + 1) };
+}
+
+/** Coordinates render-only user echoes with AgentSession's canonical input lifecycle. */
+export class OptimisticUserEchoController {
+	private nextId = 0;
+	private readonly pending: OptimisticUserEchoRecord[] = [];
+	private readonly render: (text: string) => OptimisticUserEchoRenderHandle;
+
+	constructor(render: (text: string) => OptimisticUserEchoRenderHandle) {
+		this.render = render;
+	}
+
+	begin(text: string): string {
+		const id = `pending-user-${++this.nextId}`;
+		this.pending.push({ id, handle: this.render(text), eligibleForCanonicalStart: false });
+		return id;
+	}
+
+	promptOptions(id: string): {
+		preflightResult: (success: boolean) => void;
+		promptDisposition: (disposition: "handled" | "queued" | "started") => void;
+	} {
+		return {
+			preflightResult: (success) => {
+				if (!success) this.reject(id);
+			},
+			promptDisposition: (disposition) => {
+				const record = this.pending.find((candidate) => candidate.id === id);
+				if (!record) return;
+				// Only a prompt that actually STARTED keeps its optimistic echo; queued
+				// (steer/follow-up) input must render as the pending-queue waiting state,
+				// matching upstream pi where user messages appear only at canonical
+				// message_start and queued text lives in the pending display.
+				if (disposition === "started") record.eligibleForCanonicalStart = true;
+				else this.reject(id);
+			},
+		};
+	}
+
+	reject(id: string): void {
+		const index = this.pending.findIndex((record) => record.id === id);
+		if (index === -1) return;
+		const [record] = this.pending.splice(index, 1);
+		record?.handle.remove();
+	}
+
+	remove(id: string): void {
+		this.reject(id);
+	}
+
+	replaceNext(message: AgentMessage): boolean {
+		const first = this.pending[0];
+		if (!first?.eligibleForCanonicalStart) return false;
+		const [record] = this.pending.splice(0, 1);
+		if (!record) return false;
+		record.handle.replace(message);
+		return true;
+	}
+}
+
+/** A user submission: editor text plus the images resolved from its `[Image #N]` markers. */
+interface InteractiveUserInput {
+	text: string;
+	images?: ImageContent[];
+	pendingEchoId: string;
+}
+
+/** Local copy of pi-tui's image-marker pattern so submission scanning never mutates a shared /g regex. */
+const IMAGE_MARKER_PATTERN = /\[Image #([1-9]\d*)\]/g;
+
+/**
+ * The InteractiveMode collaborators {@link attachClipboardImage} needs. Passed
+ * explicitly (rather than as `this`) so the paste handler stays a free function
+ * on the prototype and remains callable with a minimal borrowed receiver.
+ */
+interface ClipboardImageDeps {
+	editor: EditorComponent;
+	pendingImages: Map<number, ImageContent>;
+	settings: { getBlockImages(): boolean; getImageAutoResize(): boolean };
+	/** True while the compaction queue is active; the queue carries text only, so pasted images are dropped with a visible status. */
+	isCompacting: () => boolean;
+	showStatus: (message: string) => void;
+	requestRender: () => void;
+}
+
+/**
+ * Attach a clipboard bitmap as an in-memory image behind an atomic
+ * `[Image #N]` marker. Returns false when nothing was attached, so the caller
+ * falls through to the plain-text clipboard path.
+ *
+ * The bytes deliberately never touch the filesystem: writing a temp file and
+ * inserting its path as literal text (the previous behavior) shipped an
+ * unreadable `/var/folders/.../pi-clipboard-<uuid>.png` string to the model and
+ * attached no image at all.
+ */
+async function attachClipboardImage(
+	deps: ClipboardImageDeps,
+	image: { bytes: Uint8Array; mimeType: string },
+): Promise<boolean> {
+	if (deps.settings.getBlockImages()) {
+		// Pinned behavior: nothing is attached and nothing is inserted, but the
+		// paste is never a silent no-op - the user must learn why their screenshot
+		// vanished, and which setting to flip.
+		deps.showStatus("Image paste blocked by the images.blockImages setting");
+		return false;
+	}
+	if (!deps.editor.insertImageMarker) {
+		// A marker-unaware editor cannot keep the marker atomic, and a dead literal
+		// `[Image #N]` with a live payload behind it would misnumber every other
+		// attachment at submit.
+		deps.showStatus("Image paste is not supported by the active editor");
+		return false;
+	}
+	if (deps.isCompacting()) {
+		// The compaction queue carries text only; an attachment queued behind
+		// compaction would be silently lost at delivery, so drop it here with a
+		// visible status. Consume the paste (true) - the clipboard holds a
+		// bitmap, so the plain-text fallback has nothing useful to insert.
+		deps.showStatus(
+			"Image paste dropped: messages sent during compaction cannot carry images - paste again after compaction finishes",
+		);
+		return true;
+	}
+
+	const processed = await processImage(image.bytes, image.mimeType, {
+		autoResizeImages: deps.settings.getImageAutoResize(),
+	});
+	if (!processed.ok) {
+		deps.showStatus(processed.message);
+		return false;
+	}
+
+	// insertImageMarker fires onImageMarkersChanged (with the pre-renumber
+	// ids) synchronously and only then returns the marker's FINAL canonical id,
+	// whose slot the reconcile pass just vacated - so this write can neither
+	// land in an orphaned map (reconcile mutates pendingImages in place) nor
+	// overwrite a surviving payload (the new marker had no payload when the
+	// reconcile ran, so nothing was keyed onto its slot).
+	const id = deps.editor.insertImageMarker();
+	deps.pendingImages.set(id, {
+		type: "image",
+		data: processed.data,
+		mimeType: processed.mimeType,
+	});
+	deps.requestRender();
+	return true;
+}
+
 /**
  * Options for InteractiveMode initialization.
  */
@@ -456,6 +675,8 @@ export interface InteractiveModeOptions {
 	uiMode?: TuiMode;
 	/** Providers that were migrated to auth.json (shows warning) */
 	migratedProviders?: string[];
+	/** Runtime diagnostics collected during session creation. */
+	startupDiagnostics?: Array<{ type: "info" | "warning" | "error"; message: string }>;
 	/** Warning message if session model couldn't be restored */
 	modelFallbackMessage?: string;
 	/** Cwd to trust after reload if it gained a .pi directory during this implicitly trusted session. */
@@ -584,8 +805,28 @@ export class InteractiveMode {
 	private keybindings: KeybindingsManager;
 	private version: string;
 	private isInitialized = false;
-	private onInputCallback?: (text: string) => void;
-	private pendingUserInputs: string[] = [];
+	private onInputCallback?: (input: InteractiveUserInput) => void;
+	private pendingUserInputs: InteractiveUserInput[] = [];
+	private agentIdle = false;
+	private readonly optimisticUserEchoes: OptimisticUserEchoController;
+	/**
+	 * Clipboard images pasted into the composer, keyed by their visible
+	 * `[Image #N]` marker number. The editor stores marker ids only, so these
+	 * bytes must live here (and survive an editor swap, which discards the
+	 * editor instance). Kept aligned with the displayed numbers by
+	 * {@link reconcilePendingImages}.
+	 */
+	private pendingImages = new Map<number, ImageContent>();
+	/**
+	 * Images pre-resolved by handleFollowUp's non-streaming branch, which hands
+	 * off through the public string-only `onSubmit(text)` API. Set BEFORE that
+	 * path's `setText("")` (whose prune chain destroys pendingImages) and
+	 * captured-then-cleared UNCONDITIONALLY at the submit-handler entry: slash,
+	 * extension and bash submissions return before the consuming branch, and a
+	 * field cleared only after use would leak a stale image into a later
+	 * ordinary submission that never references it.
+	 */
+	private preResolvedSubmissionImages?: ImageContent[];
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
 	private readonly idleStatus = new IdleStatus();
 	private workingMessage: string | undefined = undefined;
@@ -616,6 +857,7 @@ export class InteractiveMode {
 
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
+	private readonly assistantTextSegments = new Map<number, AssistantMessageComponent>();
 	private streamingMessage: AssistantMessage | undefined = undefined;
 	private readonly streamingReveal: StreamingRevealController;
 	private readonly toolArgsReveal: ToolArgsRevealController;
@@ -726,6 +968,7 @@ export class InteractiveMode {
 
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
+		this.optimisticUserEchoes = new OptimisticUserEchoController((text) => this.renderPendingUserEcho(text));
 		const tuiMode = options.tuiMode ?? this.settingsManager.getTuiMode();
 		this.options = { ...options, tuiMode };
 		this.chrome = options.chrome === "grok" ? new GrokChrome() : options.chrome;
@@ -766,7 +1009,14 @@ export class InteractiveMode {
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
-		this.chatContainer = new Container();
+		// Resuming a long session paints a bounded, fully-styled tail first and warms
+		// the earlier history in background chunks, so /resume is not blocked on
+		// Markdown-rendering every persisted message before the first frame.
+		this.chatContainer = new ProgressiveTranscriptContainer({
+			tailBudget: DEFAULT_TAIL_BUDGET,
+			warmChunkSize: DEFAULT_WARM_CHUNK_SIZE,
+			requestRender: () => this.ui.requestRender(),
+		});
 		this.documentContainer = new Container();
 		this.documentContainer.addChild(this.headerContainer);
 		this.documentContainer.addChild(this.loadedResourcesContainer);
@@ -1032,7 +1282,11 @@ export class InteractiveMode {
 
 		previousUi.stop({ preserveScreen: true });
 		previousUi.setFocus(null);
-		previousUi.clear();
+		// Detach, not clear: the same live components (spinners, reveals, extension
+		// widgets) are remounted on nextUi below. clear() would dispose them,
+		// killing every interval they own while they keep rendering static frames
+		// forever — the TUI then never self-repaints until an input event forces one.
+		previousUi.detachAll();
 		if (TuiLayouts.isViewportTUI(previousUi)) previousUi.setLayoutRoot(undefined);
 
 		const nextUi = createInteractiveTui({
@@ -1108,7 +1362,13 @@ export class InteractiveMode {
 			{ component: this.footerContainer, shrink: 1, minSize: 1 },
 		]);
 		this.fullscreenLayoutRoot = new TuiLayouts.VStack([
-			{ component: this.transcriptScrollView, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+			{
+				component: this.transcriptScrollView,
+				basis: 0,
+				grow: 1,
+				shrink: 1,
+				minSize: 1,
+			},
 			{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
 		]);
 		const rootComponents = [
@@ -1336,6 +1596,7 @@ export class InteractiveMode {
 		// Show startup warnings
 		const {
 			migratedProviders,
+			startupDiagnostics,
 			modelFallbackMessage,
 			initialMessage,
 			initialImages,
@@ -1345,6 +1606,10 @@ export class InteractiveMode {
 
 		if (migratedProviders && migratedProviders.length > 0) {
 			this.showWarning(`Migrated credentials to auth.json: ${migratedProviders.join(", ")}`);
+		}
+		for (const diagnostic of startupDiagnostics ?? []) {
+			if (diagnostic.type === "warning") this.showWarning(diagnostic.message);
+			else if (diagnostic.type === "error") this.showError(diagnostic.message);
 		}
 
 		const modelsJsonError = this.session.modelRuntime.getError();
@@ -1391,8 +1656,10 @@ export class InteractiveMode {
 		while (true) {
 			const userInput = await this.getUserInput();
 			try {
-				await this.session.prompt(userInput, { streamingBehavior: "steer" });
+				await this.session.prompt(userInput.text, this.buildMainLoopPromptOptions(userInput));
 			} catch (error: unknown) {
+				this.optimisticUserEchoes.reject(userInput.pendingEchoId);
+				this.clearStatusIndicator("working");
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
 			}
@@ -1404,6 +1671,10 @@ export class InteractiveMode {
 	}
 
 	private async checkTmuxSetup(): Promise<string | undefined> {
+		return this.checkTmuxKeyboardSetup();
+	}
+
+	private async checkTmuxKeyboardSetup(): Promise<string | undefined> {
 		if (!process.env.TMUX) return undefined;
 
 		const runTmux = (args: string[]): Promise<string | undefined> => {
@@ -1576,7 +1847,10 @@ export class InteractiveMode {
 		}
 
 		const seeded = seedKeybindingsFile(configPath, this.keybindings);
-		const edit = await editFileInExternalEditor({ command: editorCommand, path: configPath });
+		const edit = await editFileInExternalEditor({
+			command: editorCommand,
+			path: configPath,
+		});
 		if (edit.status === "launch-failed") {
 			// The editor never ran, so a file we just seeded carries no user content.
 			if (seeded) fs.rmSync(configPath, { force: true });
@@ -1798,7 +2072,11 @@ export class InteractiveMode {
 		}
 
 		if (source === "cli") {
-			return { label: "path", scopeLabel: scope === "temporary" ? "temp" : undefined, color: "muted" };
+			return {
+				label: "path",
+				scopeLabel: scope === "temporary" ? "temp" : undefined,
+				color: "muted",
+			};
 		}
 
 		const scopeLabel =
@@ -1915,8 +2193,11 @@ export class InteractiveMode {
 		return this.formatDisplayPath(p);
 	}
 
-	private formatDiagnostics(diagnostics: readonly ResourceDiagnostic[], sourceInfos: Map<string, SourceInfo>): string {
-		const lines: string[] = [];
+	private formatDiagnostics(
+		diagnostics: readonly ResourceDiagnostic[],
+		sourceInfos: Map<string, SourceInfo>,
+	): NoticeLine[] {
+		const lines: NoticeLine[] = [];
 
 		// Group collision diagnostics by name
 		const collisions = new Map<string, ResourceDiagnostic[]>();
@@ -1936,36 +2217,33 @@ export class InteractiveMode {
 		for (const [name, collisionList] of collisions) {
 			const first = collisionList[0]?.collision;
 			if (!first) continue;
-			lines.push(theme.fg("warning", `  "${name}" collision:`));
-			lines.push(
-				theme.fg(
-					"dim",
-					`    ${theme.fg("success", "✓")} ${this.formatPathWithSource(first.winnerPath, this.findSourceInfoForPath(first.winnerPath, sourceInfos))}`,
-				),
-			);
+			lines.push({ text: `  "${name}" collision:`, tone: "warning" });
+			lines.push({
+				text: `    ✓ ${this.formatPathWithSource(first.winnerPath, this.findSourceInfoForPath(first.winnerPath, sourceInfos))}`,
+				tone: "warning",
+			});
 			for (const d of collisionList) {
 				if (d.collision) {
-					lines.push(
-						theme.fg(
-							"dim",
-							`    ${theme.fg("warning", "✗")} ${this.formatPathWithSource(d.collision.loserPath, this.findSourceInfoForPath(d.collision.loserPath, sourceInfos))} (skipped)`,
-						),
-					);
+					lines.push({
+						text: `    ✗ ${this.formatPathWithSource(d.collision.loserPath, this.findSourceInfoForPath(d.collision.loserPath, sourceInfos))} (skipped)`,
+						tone: "warning",
+					});
 				}
 			}
 		}
 
 		for (const d of otherDiagnostics) {
+			const tone = d.type === "error" ? "error" : "warning";
 			if (d.path) {
 				const formattedPath = this.formatPathWithSource(d.path, this.findSourceInfoForPath(d.path, sourceInfos));
-				lines.push(theme.fg(d.type === "error" ? "error" : "warning", `  ${formattedPath}`));
-				lines.push(theme.fg(d.type === "error" ? "error" : "warning", `    ${d.message}`));
+				lines.push({ text: `  ${formattedPath}`, tone });
+				lines.push({ text: `    ${d.message}`, tone });
 			} else {
-				lines.push(theme.fg(d.type === "error" ? "error" : "warning", `  ${d.message}`));
+				lines.push({ text: `  ${d.message}`, tone });
 			}
 		}
 
-		return lines.join("\n");
+		return lines;
 	}
 
 	private showLoadedResources(options?: {
@@ -2063,7 +2341,10 @@ export class InteractiveMode {
 			const skills = skillsResult.skills;
 			if (skills.length > 0) {
 				const groups = this.buildScopeGroups(
-					skills.map((skill) => ({ path: skill.filePath, sourceInfo: skill.sourceInfo })),
+					skills.map((skill) => ({
+						path: skill.filePath,
+						sourceInfo: skill.sourceInfo,
+					})),
 				);
 				const skillList = this.formatScopeGroups(groups, {
 					formatPath: (item) => this.formatDisplayPath(item.path),
@@ -2076,7 +2357,10 @@ export class InteractiveMode {
 			const templates = this.session.promptTemplates;
 			if (templates.length > 0) {
 				const groups = this.buildScopeGroups(
-					templates.map((template) => ({ path: template.filePath, sourceInfo: template.sourceInfo })),
+					templates.map((template) => ({
+						path: template.filePath,
+						sourceInfo: template.sourceInfo,
+					})),
 				);
 				const templateByPath = new Map(templates.map((t) => [t.filePath, t]));
 				const templateList = this.formatScopeGroups(groups, {
@@ -2129,29 +2413,41 @@ export class InteractiveMode {
 		}
 
 		if (showDiagnostics) {
-			const skillDiagnostics = skillsResult.diagnostics;
-			if (skillDiagnostics.length > 0) {
-				const warningLines = this.formatDiagnostics(skillDiagnostics, sourceInfos);
+			const addDiagnosticNotice = (title: string, diagnostics: readonly ResourceDiagnostic[]): void => {
 				this.loadedResourcesContainer.addChild(
-					new Text(`${theme.fg("warning", "[Skill conflicts]")}\n${warningLines}`, 0, 0),
+					buildNoticeBox(
+						{
+							title,
+							tone: "warning",
+							why: "Conflicting or invalid loaded resources were found.",
+							extra: this.formatDiagnostics(diagnostics, sourceInfos),
+						},
+						{ expanded: this.toolOutputExpanded },
+						theme,
+					),
 				);
 				this.loadedResourcesContainer.addChild(new Spacer(1));
+			};
+
+			const skillDiagnostics = skillsResult.diagnostics;
+			if (skillDiagnostics.length > 0) {
+				addDiagnosticNotice("Skill conflicts", skillDiagnostics);
 			}
 
 			const promptDiagnostics = promptsResult.diagnostics;
 			if (promptDiagnostics.length > 0) {
-				const warningLines = this.formatDiagnostics(promptDiagnostics, sourceInfos);
-				this.loadedResourcesContainer.addChild(
-					new Text(`${theme.fg("warning", "[Prompt conflicts]")}\n${warningLines}`, 0, 0),
-				);
-				this.loadedResourcesContainer.addChild(new Spacer(1));
+				addDiagnosticNotice("Prompt conflicts", promptDiagnostics);
 			}
 
 			const extensionDiagnostics: ResourceDiagnostic[] = [];
 			const extensionErrors = this.session.resourceLoader.getExtensions().errors;
 			if (extensionErrors.length > 0) {
 				for (const error of extensionErrors) {
-					extensionDiagnostics.push({ type: "error", message: error.error, path: error.path });
+					extensionDiagnostics.push({
+						type: "error",
+						message: error.error,
+						path: error.path,
+					});
 				}
 			}
 
@@ -2163,20 +2459,12 @@ export class InteractiveMode {
 			extensionDiagnostics.push(...shortcutDiagnostics);
 
 			if (extensionDiagnostics.length > 0) {
-				const warningLines = this.formatDiagnostics(extensionDiagnostics, sourceInfos);
-				this.loadedResourcesContainer.addChild(
-					new Text(`${theme.fg("warning", "[Extension issues]")}\n${warningLines}`, 0, 0),
-				);
-				this.loadedResourcesContainer.addChild(new Spacer(1));
+				addDiagnosticNotice("Extension issues", extensionDiagnostics);
 			}
 
 			const themeDiagnostics = themesResult.diagnostics;
 			if (themeDiagnostics.length > 0) {
-				const warningLines = this.formatDiagnostics(themeDiagnostics, sourceInfos);
-				this.loadedResourcesContainer.addChild(
-					new Text(`${theme.fg("warning", "[Theme conflicts]")}\n${warningLines}`, 0, 0),
-				);
-				this.loadedResourcesContainer.addChild(new Spacer(1));
+				addDiagnosticNotice("Theme conflicts", themeDiagnostics);
 			}
 		}
 	}
@@ -2338,6 +2626,7 @@ export class InteractiveMode {
 		this.toolResultReveal.stop();
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
+		this.assistantTextSegments.clear();
 		this.clearPendingTools();
 		this.clearToolHookStatuses();
 		this.renderInitialMessages();
@@ -2702,13 +2991,18 @@ export class InteractiveMode {
 		}
 		const hadActiveStatusIndicator = this.activeStatusIndicator !== undefined;
 		const isClearingWorking = this.activeStatusIndicator?.kind === "working";
+		const shouldReserveHeight =
+			hadActiveStatusIndicator && this.options.tuiMode === "regular" && this.ui.getClearOnShrink();
+		const renderedHeight = shouldReserveHeight ? this.statusContainer.render(this.ui.terminal.columns).length : 0;
 		this.activeStatusIndicator?.dispose();
 		this.activeStatusIndicator = undefined;
 		if (isClearingWorking) {
 			this.workingStartedAt = undefined;
 		}
 		this.statusContainer.clear();
-		if (hadActiveStatusIndicator && this.options.tuiMode === "regular" && this.ui.getClearOnShrink()) {
+		if (shouldReserveHeight) {
+			const idleHeight = Math.min(this.ui.terminal.rows, Math.max(1, renderedHeight || 2));
+			this.idleStatus.setHeight(idleHeight);
 			this.statusContainer.addChild(this.idleStatus);
 		}
 	}
@@ -2768,16 +3062,18 @@ export class InteractiveMode {
 		options?: ExtensionWidgetOptions,
 	): void {
 		const placement = options?.placement ?? "aboveEditor";
-		const removeExisting = (map: Map<string, Component & { dispose?(): void }>) => {
+		const targetMap = placement === "belowEditor" ? this.extensionWidgetsBelow : this.extensionWidgetsAbove;
+		const otherMap = placement === "belowEditor" ? this.extensionWidgetsAbove : this.extensionWidgetsBelow;
+		const removeFrom = (map: Map<string, Component & { dispose?(): void }>) => {
 			const existing = map.get(key);
 			if (existing?.dispose) existing.dispose();
 			map.delete(key);
 		};
 
-		removeExisting(this.extensionWidgetsAbove);
-		removeExisting(this.extensionWidgetsBelow);
+		removeFrom(otherMap);
 
 		if (content === undefined) {
+			removeFrom(targetMap);
 			this.renderWidgets();
 			return;
 		}
@@ -2799,7 +3095,10 @@ export class InteractiveMode {
 			component = content(this.ui, theme);
 		}
 
-		const targetMap = placement === "belowEditor" ? this.extensionWidgetsBelow : this.extensionWidgetsAbove;
+		// Map.set on an existing key keeps its insertion position, so a refreshing widget stays
+		// put instead of moving past its neighbours and reshuffling the stacking order each paint.
+		const existing = targetMap.get(key);
+		if (existing?.dispose) existing.dispose();
 		targetMap.set(key, component);
 		this.renderWidgets();
 	}
@@ -2960,7 +3259,10 @@ export class InteractiveMode {
 	private addExtensionTerminalInputListener(
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined,
 	): () => void {
-		const subscription = { handler, unsubscribe: this.ui.addInputListener(handler) };
+		const subscription = {
+			handler,
+			unsubscribe: this.ui.addInputListener(handler),
+		};
 		this.extensionTerminalInputSubscriptions.add(subscription);
 		return () => {
 			subscription.unsubscribe();
@@ -3090,7 +3392,11 @@ export class InteractiveMode {
 					this.hideExtensionSelector();
 					resolve(undefined);
 				},
-				{ tui: this.ui, timeout: opts?.timeout, onToggleToolsExpanded: () => this.toggleToolOutputExpansion() },
+				{
+					tui: this.ui,
+					timeout: opts?.timeout,
+					onToggleToolsExpanded: () => this.toggleToolOutputExpansion(),
+				},
 			);
 
 			this.disposeActiveSelector();
@@ -3271,8 +3577,13 @@ export class InteractiveMode {
 			};
 			newEditor.onChange = this.defaultEditor.onChange;
 
-			// Copy text (and any collapsed paste markers) from previous editor
-			transferEditorContent(this.editor, newEditor);
+			// Copy text (and any collapsed paste/image markers) from previous editor.
+			// Image payloads live on this instance, so they must be dropped when the
+			// destination cannot own their markers.
+			if (!transferEditorContent(this.editor, newEditor).imageMarkersTransferred) {
+				this.pendingImages.clear();
+			}
+			this.subscribeImageMarkers(newEditor);
 
 			// Copy appearance settings if supported
 			if (newEditor.borderColor !== undefined) {
@@ -3329,7 +3640,10 @@ export class InteractiveMode {
 			// hand-off, and a setText round-trip would be pure churn on the
 			// user's draft.
 			if (this.editor !== this.defaultEditor) {
-				transferEditorContent(this.editor, this.defaultEditor);
+				if (!transferEditorContent(this.editor, this.defaultEditor).imageMarkersTransferred) {
+					this.pendingImages.clear();
+				}
+				this.subscribeImageMarkers(this.defaultEditor);
 			}
 			this.editor = this.defaultEditor;
 		}
@@ -3532,8 +3846,12 @@ export class InteractiveMode {
 			this.updateShortcutOverlay(text);
 		};
 
-		// Handle clipboard paste (triggered on Ctrl+V). Images are attached by path;
-		// otherwise, paste plain text from the system clipboard.
+		// Keep pendingImages aligned with the markers the editor displays.
+		this.subscribeImageMarkers(this.defaultEditor);
+
+		// Handle clipboard paste (triggered on Ctrl+V). Images are attached in
+		// memory behind an atomic `[Image #N]` marker; otherwise, paste plain text
+		// from the system clipboard.
 		this.defaultEditor.onPasteImage = () => {
 			this.lastInputWasPaste = true;
 			void this.handleClipboardPaste();
@@ -3563,17 +3881,20 @@ export class InteractiveMode {
 	private async handleClipboardPaste(): Promise<void> {
 		try {
 			const image = await readClipboardImage();
-			if (image) {
-				const tmpDir = os.tmpdir();
-				const ext = extensionForImageMimeType(image.mimeType) ?? "png";
-				const fileName = `pi-clipboard-${crypto.randomUUID()}.${ext}`;
-				const filePath = path.join(tmpDir, fileName);
-				fs.writeFileSync(filePath, Buffer.from(image.bytes));
-
-				this.editor.insertTextAtCursor?.(filePath);
-				this.ui.requestRender();
-				return;
-			}
+			const attached =
+				image &&
+				(await attachClipboardImage(
+					{
+						editor: this.editor,
+						pendingImages: this.pendingImages,
+						settings: this.settingsManager,
+						isCompacting: () => (this.session as { isCompacting?: boolean } | undefined)?.isCompacting === true,
+						showStatus: (message) => this.showStatus(message),
+						requestRender: () => this.ui.requestRender(),
+					},
+					image,
+				));
+			if (attached) return;
 
 			const text = await readClipboardText();
 			if (text) {
@@ -3582,9 +3903,85 @@ export class InteractiveMode {
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			this.getSessionLogger().warn("clipboard_error", { op: "paste", error: message });
+			this.getSessionLogger().warn("clipboard_error", {
+				op: "paste",
+				error: message,
+			});
 			this.showStatus(`Clipboard paste failed: ${sanitizeTuiErrorMessage(message)}`);
 		}
+	}
+
+	/** Route an editor's image-marker changes into {@link reconcilePendingImages}. */
+	private subscribeImageMarkers(editor: EditorComponent): void {
+		if (!editor.insertImageMarker) return;
+		editor.onImageMarkersChanged = (order) => this.reconcilePendingImages(order);
+		// The editor's undo stack restores marker TEXT and registry ids, but the
+		// payloads live HERE; mirror them into every undo snapshot so undo restores
+		// both halves of the pairing. Without this, deleting a marker re-keys the
+		// survivors onto its number and a later undo re-displays the deleted marker
+		// with no (or the wrong) payload behind it.
+		editor.snapshotAttachmentState = () => new Map(this.pendingImages);
+		editor.restoreAttachmentState = (state) => {
+			if (!(state instanceof Map)) return;
+			this.pendingImages.clear();
+			for (const [key, image] of state) {
+				this.pendingImages.set(key, image as ImageContent);
+			}
+		};
+	}
+
+	/**
+	 * Re-key {@link pendingImages} onto the marker numbers the editor now
+	 * displays. `order` lists the SURVIVING marker ids (pre-renumber, i.e. the
+	 * keys the payloads currently sit under) in text reading order, and the
+	 * editor keeps the visible numbers canonical 1..k in reading order, so a
+	 * payload's new key is its position in that list. Ids absent from `order`
+	 * are dropped; reported ids with no payload (a hand-typed marker) are skipped
+	 * without consuming anyone else's slot.
+	 *
+	 * The map is mutated IN PLACE, never replaced: handleClipboardPaste hands
+	 * this.pendingImages by reference into attachClipboardImage's deps, and a
+	 * fresh identity would orphan that reference - the second paste in a turn
+	 * then wrote into the dead map and silently destroyed its image.
+	 */
+	private reconcilePendingImages(order: number[]): void {
+		if (this.pendingImages.size === 0) return;
+		const reconciled = new Map<number, ImageContent>();
+		order.forEach((id, index) => {
+			const image = this.pendingImages.get(id);
+			if (image) reconciled.set(index + 1, image);
+		});
+		this.pendingImages.clear();
+		for (const [key, image] of reconciled) {
+			this.pendingImages.set(key, image);
+		}
+	}
+
+	/**
+	 * Resolve the `[Image #N]` markers in `submittedText` (in READING order)
+	 * into the image array submitted alongside it, then clear
+	 * {@link pendingImages}.
+	 *
+	 * Reads ONLY the submitted text plus pendingImages - never live editor
+	 * state: pi-tui's `Editor.submitValue()` resets the editor and clears its
+	 * registries BEFORE `onSubmit` fires. A marker with no pending payload (a
+	 * hand-typed `[Image #N]`, or the second half of a kill/yank duplicate) is
+	 * passed through untouched and consumes no slot; a payload-bearing
+	 * marker's FIRST occurrence wins. Slots are assigned 1..k in reading
+	 * order, so the Nth marker in the final text is `images[N-1]`.
+	 */
+	private takeSubmissionImages(submittedText: string): ImageContent[] {
+		const images: ImageContent[] = [];
+		const consumed = new Set<number>();
+		for (const match of submittedText.matchAll(IMAGE_MARKER_PATTERN)) {
+			const id = Number.parseInt(match[1] ?? "0", 10);
+			if (consumed.has(id)) continue;
+			consumed.add(id);
+			const image = this.pendingImages.get(id);
+			if (image) images.push(image);
+		}
+		this.pendingImages.clear();
+		return images;
 	}
 
 	private getSessionLogger(): SessionLogger {
@@ -3599,6 +3996,14 @@ export class InteractiveMode {
 
 	private setupEditorSubmitHandler(): void {
 		this.defaultEditor.onSubmit = async (text: string) => {
+			// Capture-then-clear BEFORE any branch: handleFollowUp's non-streaming
+			// path pre-resolves images and hands off here, but slash / extension /
+			// bash submissions return before the consuming branches below. Clearing
+			// only after use would leak a stale array into a later ordinary
+			// submission whose text never references it.
+			const preResolvedImages = this.preResolvedSubmissionImages;
+			this.preResolvedSubmissionImages = undefined;
+
 			this.hideShortcutOverlay();
 			this.lastEditorText = "";
 			text = text.trim();
@@ -3746,7 +4151,13 @@ export class InteractiveMode {
 			if (this.isExtensionCommand(text)) {
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
-				await this.session.prompt(text);
+				const pendingEchoId = this.optimisticUserEchoes.begin(text);
+				try {
+					await this.session.prompt(text, this.optimisticUserEchoes.promptOptions(pendingEchoId));
+				} catch (error) {
+					this.optimisticUserEchoes.reject(pendingEchoId);
+					throw error;
+				}
 				return;
 			}
 
@@ -3781,9 +4192,15 @@ export class InteractiveMode {
 				if (this.isExtensionCommand(text)) {
 					this.editor.addToHistory?.(text);
 					this.editor.setText("");
-					await this.session.prompt(text);
+					const pendingEchoId = this.optimisticUserEchoes.begin(text);
+					try {
+						await this.session.prompt(text, this.optimisticUserEchoes.promptOptions(pendingEchoId));
+					} catch (error) {
+						this.optimisticUserEchoes.reject(pendingEchoId);
+						throw error;
+					}
 				} else {
-					this.queueCompactionMessage(text, "steer");
+					this.queueCompactionSubmission(text, "steer");
 				}
 				return;
 			}
@@ -3794,9 +4211,22 @@ export class InteractiveMode {
 			// behavior here applies only to ordinary text, prompt template expansion,
 			// and queueing.
 			if (this.session.isStreaming) {
+				// Resolve BEFORE setText(""): the editor's prune chain fires
+				// onImageMarkersChanged([]) and destroys pendingImages.
+				const images = preResolvedImages ?? this.takeSubmissionImages(text);
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
-				await this.session.prompt(text, { streamingBehavior: "steer" });
+				const pendingEchoId = this.optimisticUserEchoes.begin(text);
+				try {
+					await this.session.prompt(text, {
+						streamingBehavior: "steer",
+						...(images.length > 0 ? { images } : {}),
+						...this.optimisticUserEchoes.promptOptions(pendingEchoId),
+					});
+				} catch (error) {
+					this.optimisticUserEchoes.reject(pendingEchoId);
+					throw error;
+				}
 				this.updatePendingMessagesDisplay();
 				this.ui.requestRender();
 				return;
@@ -3806,10 +4236,14 @@ export class InteractiveMode {
 			// First, move any pending bash components to chat
 			this.flushPendingBashComponents();
 
+			const images = preResolvedImages ?? this.takeSubmissionImages(text);
+			const pendingEchoId = this.optimisticUserEchoes.begin(text);
+			const submission: InteractiveUserInput =
+				images.length > 0 ? { text, images, pendingEchoId } : { text, pendingEchoId };
 			if (this.onInputCallback) {
-				this.onInputCallback(text);
+				this.onInputCallback(submission);
 			} else {
-				this.pendingUserInputs.push(text);
+				this.pendingUserInputs.push(submission);
 			}
 			this.editor.addToHistory?.(text);
 		};
@@ -3830,6 +4264,7 @@ export class InteractiveMode {
 
 		switch (event.type) {
 			case "agent_start":
+				this.agentIdle = false;
 				this.clearPendingTools();
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
@@ -3906,7 +4341,7 @@ export class InteractiveMode {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
-					this.addMessageToChat(event.message);
+					if (!this.optimisticUserEchoes.replaceNext(event.message)) this.addMessageToChat(event.message);
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
@@ -3921,7 +4356,10 @@ export class InteractiveMode {
 					this.streamingComponent.setExpanded(this.toolOutputExpanded);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
-					this.streamingReveal.begin(this.streamingComponent, this.streamingMessage);
+					this.streamingReveal.begin(
+						this.streamingComponent,
+						assistantStreamingHeadMessage(this.streamingMessage),
+					);
 					this.requestStreamingRender();
 				}
 				break;
@@ -3929,7 +4367,7 @@ export class InteractiveMode {
 			case "message_update":
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
-					this.streamingReveal.setTarget(this.streamingMessage);
+					this.streamingReveal.setTarget(assistantStreamingHeadMessage(event.message));
 
 					for (const content of this.streamingMessage.content) {
 						if (content.type === "toolCall") {
@@ -3949,6 +4387,7 @@ export class InteractiveMode {
 							}
 						}
 					}
+					this.syncTrailingAssistantText(event.message);
 					this.ui.requestRender();
 				}
 				break;
@@ -3966,13 +4405,15 @@ export class InteractiveMode {
 						}
 					}
 					this.toolArgsReveal.flushAll();
-					let errorMessage: string | undefined;
-					if (this.streamingMessage.stopReason === "aborted") {
-						errorMessage = abortedErrorLabel(undefined, this.session.retryAttempt);
-						this.streamingMessage.errorMessage = errorMessage;
-					}
-					this.streamingComponent.updateContent(this.streamingMessage, false);
-					this.addContinuityNotice(this.streamingMessage);
+					const renderedMessage = abortedMessageForRendering(
+						this.streamingMessage,
+						this.session.retryAttempt,
+						this.session.currentAbortSource,
+					);
+					let errorMessage = renderedMessage.errorMessage;
+					this.syncTrailingAssistantText(renderedMessage);
+					this.assistantTextSegments.clear();
+					this.addContinuityNotice(renderedMessage);
 
 					if (this.streamingMessage.stopReason === "aborted" || this.streamingMessage.stopReason === "error") {
 						if (!errorMessage) {
@@ -4032,7 +4473,9 @@ export class InteractiveMode {
 					}
 					const activity = readToolProgress(event.partialResult.details)?.activity;
 					if (activity) {
-						const label = formatActiveToolWorkingLabel(event.toolName, { command: activity });
+						const label = formatActiveToolWorkingLabel(event.toolName, {
+							command: activity,
+						});
 						this.activeToolExecutions.set(event.toolCallId, label);
 						this.workingMessage = label;
 						this.activeToolExecutionTerminalTitle = `${APP_TITLE} - ${label}`;
@@ -4047,13 +4490,17 @@ export class InteractiveMode {
 			case "tool_execution_end": {
 				this.handleToolExecutionEnd(event);
 				this.toolArgsReveal.finish(event.toolCallId);
-				const component = this.pendingTools.get(event.toolCallId);
-				if (component) {
-					this.toolResultReveal.finish(event.toolCallId);
-					component.updateResult({ ...event.result, isError: event.isError });
-					this.pendingTools.delete(event.toolCallId);
-					this.ui.requestRender();
+				let component = this.pendingTools.get(event.toolCallId);
+				if (!component) {
+					component = this.createToolExecutionComponent(event.toolName, event.toolCallId, {});
+					component.setExpanded(this.toolOutputExpanded);
+					this.chatContainer.addChild(component);
+					this.pendingTools.set(event.toolCallId, component);
 				}
+				this.toolResultReveal.finish(event.toolCallId);
+				component.updateResult({ ...event.result, isError: event.isError });
+				this.pendingTools.delete(event.toolCallId);
+				this.ui.requestRender();
 				break;
 			}
 
@@ -4061,7 +4508,6 @@ export class InteractiveMode {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
 				}
-				this.clearStatusIndicator("working");
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
 				this.streamingReveal.stop();
@@ -4071,6 +4517,7 @@ export class InteractiveMode {
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 				}
+				this.detachAssistantTextSegments();
 				this.clearPendingTools();
 
 				this.ui.requestRender();
@@ -4078,6 +4525,14 @@ export class InteractiveMode {
 
 			case "agent_settled":
 				await this.checkShutdownRequested();
+				break;
+
+			case "agent_idle":
+				this.agentIdle = true;
+				if (this.pendingUserInputs.length === 0) {
+					this.clearStatusIndicator("working");
+				}
+				this.ui.requestRender();
 				break;
 
 			case "continuation_error":
@@ -4139,16 +4594,39 @@ export class InteractiveMode {
 						this.showStatus("Auto-compaction cancelled");
 					}
 				} else if (event.result) {
+					// Compaction event consumers in the fork are session-backed and do not
+					// necessarily expose InteractiveMode's SessionManager convenience getter.
+					// Keep the structural fallback for focused handler consumers while using
+					// the session-owned manager on the real TUI path.
+					const sessionManager = this.session.sessionManager ?? this.sessionManager;
+					const entries = sessionManager.buildContextEntries();
+					if (entries[0]?.type !== "compaction") {
+						throw new Error("Completed compaction is missing from the session context");
+					}
 					this.chatContainer.clear();
-					this.rebuildChatFromMessages();
-					this.addMessageToChat(
-						createCompactionSummaryMessage(
-							sanitizeTerminalLabel(event.result.summary),
-							event.result.tokensBefore,
-							new Date().toISOString(),
-							event.result.details,
-						),
+					const summaryMessage = createCompactionSummaryMessage(
+						sanitizeTerminalLabel(event.result.summary),
+						event.result.tokensBefore,
+						new Date().toISOString(),
+						event.result.details,
 					);
+					if (typeof this.renderSessionEntries === "function") {
+						// The latest compaction is prepended for model context; append it below at its chronological position.
+						this.renderSessionEntries(entries.slice(1));
+						this.addMessageToChat(summaryMessage);
+						if (event.result.usage) {
+							this.addCompactionCostNotice({
+								type: "compaction_cost",
+								kind: "compaction",
+								usage: event.result.usage,
+							});
+						}
+					} else {
+						// Fork-owned compaction consumers expose the established rebuild helper,
+						// not InteractiveMode's private entry renderer.
+						this.rebuildChatFromMessages();
+						this.addMessageToChat(summaryMessage);
+					}
 					this.footer.invalidate();
 				} else if (event.errorMessage) {
 					const errorMessage = sanitizeTerminalLabel(event.errorMessage);
@@ -4180,7 +4658,10 @@ export class InteractiveMode {
 				// over-threshold context would just repeat the failure.
 				const compactionSucceeded = event.accepted === true || event.result !== undefined;
 				if (compactionSucceeded) {
-					void this.flushCompactionQueue({ willRetry: event.willRetry, deferAdmission: false });
+					void this.flushCompactionQueue({
+						willRetry: event.willRetry,
+						deferAdmission: false,
+					});
 				} else if (event.willRetry === true) {
 					const heldCount = this.compactionQueuedMessages.length;
 					if (heldCount > 0) {
@@ -4194,7 +4675,10 @@ export class InteractiveMode {
 							`${heldCount} queued message${heldCount === 1 ? "" : "s"} will send with the next turn (compaction will retry)`,
 						);
 					}
-					void this.flushCompactionQueue({ willRetry: true, deferAdmission: true });
+					void this.flushCompactionQueue({
+						willRetry: true,
+						deferAdmission: true,
+					});
 				} else {
 					const restoredCount = this.restoreQueuedMessagesToEditor();
 					if (restoredCount > 0) {
@@ -4307,10 +4791,7 @@ export class InteractiveMode {
 
 			case "summarization_retry_scheduled": {
 				this.showError(event.errorMessage);
-				this.showStatusIndicator(
-					new RetryStatusIndicator(this.ui, event.attempt, event.maxAttempts, event.delayMs),
-				);
-				this.ui.requestRender();
+				this.showSummarizationRetryStatusIndicator(event);
 				break;
 			}
 
@@ -4357,7 +4838,26 @@ export class InteractiveMode {
 	}
 
 	private showRetryStatusIndicator(event: Extract<AgentSessionEvent, { type: "auto_retry_start" }>): void {
-		this.showStatusIndicator(new RetryStatusIndicator(this.ui, event.attempt, event.maxAttempts, event.delayMs));
+		this.showRetryStatusIndicatorWithCadence(event);
+	}
+
+	private showSummarizationRetryStatusIndicator(
+		event: Extract<AgentSessionEvent, { type: "summarization_retry_scheduled" }>,
+	): void {
+		this.showRetryStatusIndicatorWithCadence(event);
+	}
+
+	private showRetryStatusIndicatorWithCadence(event: { attempt: number; maxAttempts: number; delayMs: number }): void {
+		const refreshIntervalMs = largeSessionWorkingStatusInterval(
+			this.sessionManager.getEntries().length,
+			DEFAULT_RETRY_STATUS_REFRESH_INTERVAL_MS,
+			LARGE_SESSION_RETRY_STATUS_REFRESH_INTERVAL_MS,
+		);
+		const indicator =
+			refreshIntervalMs === DEFAULT_RETRY_STATUS_REFRESH_INTERVAL_MS ? undefined : { intervalMs: refreshIntervalMs };
+		this.showStatusIndicator(
+			new RetryStatusIndicator(this.ui, event.attempt, event.maxAttempts, event.delayMs, indicator),
+		);
 		this.ui.requestRender();
 	}
 
@@ -4431,6 +4931,46 @@ export class InteractiveMode {
 		}
 
 		this.chatContainer.addChild(component);
+	}
+
+	private renderPendingUserEcho(text: string): OptimisticUserEchoRenderHandle {
+		const spacer = this.chatContainer.children.length > 0 ? new Spacer(1) : undefined;
+		if (spacer) this.chatContainer.addChild(spacer);
+		const component = new UserMessageComponent(
+			text,
+			this.getMarkdownThemeWithSettings(),
+			this.outputPad,
+			this.getMarkdownTransformers(),
+		);
+		this.chatContainer.addChild(component);
+		this.ui.requestRender();
+
+		const removePending = (): number => {
+			const componentIndex = this.chatContainer.children.indexOf(component);
+			if (componentIndex === -1) {
+				return this.chatContainer.children.length;
+			}
+			const spacerIndex = spacer ? this.chatContainer.children.indexOf(spacer) : -1;
+			const insertionIndex = spacerIndex >= 0 ? spacerIndex : componentIndex;
+			if (spacerIndex >= 0 && spacer) this.chatContainer.removeChild(spacer);
+			this.chatContainer.removeChild(component);
+			return insertionIndex;
+		};
+		return {
+			replace: (message) => {
+				const insertionIndex = removePending();
+				const appendIndex = this.chatContainer.children.length;
+				this.addMessageToChat(message);
+				const canonicalChildren = this.chatContainer.children.splice(appendIndex);
+				if (!spacer && canonicalChildren[0] instanceof Spacer) canonicalChildren.shift()?.dispose?.();
+				this.chatContainer.children.splice(insertionIndex, 0, ...canonicalChildren);
+				this.ui.requestRender();
+			},
+			remove: () => {
+				removePending();
+				this.ui.requestRender();
+			},
+		};
 	}
 
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
@@ -4542,6 +5082,74 @@ export class InteractiveMode {
 		}
 	}
 
+	private syncTrailingAssistantText(message: AssistantMessage): void {
+		if (!this.streamingComponent) return;
+		const head = assistantStreamingHeadMessage(message);
+		// Single writer: while smooth streaming paces the head (no toolCall block),
+		// streamingReveal owns the streaming component. Overwriting the full head
+		// here makes the next reveal tick repaint a shorter prefix (dual-write
+		// flicker). Once the reveal has stopped (message_end), it no longer paces
+		// and the final full paint below still lands.
+		if (!this.streamingReveal?.isPacingHead(head)) {
+			this.streamingComponent.updateContent(head, true);
+		}
+		const content = message.content;
+		const firstToolIndex = content.findIndex((block) => block.type === "toolCall");
+		if (firstToolIndex === -1) {
+			this.detachAssistantTextSegments();
+			return;
+		}
+		let index = firstToolIndex + 1;
+		while (index < content.length) {
+			if (content[index]?.type === "toolCall") {
+				index += 1;
+				continue;
+			}
+			const runStart = index;
+			const runBlocks: AssistantMessage["content"] = [];
+			while (index < content.length && content[index]?.type !== "toolCall") {
+				const runBlock = content[index];
+				if (runBlock) runBlocks.push(runBlock);
+				index += 1;
+			}
+			const runMessage: AssistantMessage = { ...message, content: runBlocks };
+			const existing = this.assistantTextSegments.get(runStart);
+			if (existing) {
+				existing.updateContent(runMessage, true);
+				continue;
+			}
+			const segment = new AssistantMessageComponent(
+				runMessage,
+				this.hideThinkingBlock,
+				this.getMarkdownThemeWithSettings(),
+				this.hiddenThinkingLabel,
+				this.outputPad,
+				this.getMarkdownTransformers(),
+			);
+			segment.setExpanded(this.toolOutputExpanded);
+			this.assistantTextSegments.set(runStart, segment);
+			const followingToolCall = content.slice(index).find((block) => block.type === "toolCall");
+			const followingToolCallId = followingToolCall?.type === "toolCall" ? followingToolCall.id : undefined;
+			const followingToolComponent = followingToolCallId ? this.pendingTools.get(followingToolCallId) : undefined;
+			const anchorIndex = followingToolComponent ? this.chatContainer.children.indexOf(followingToolComponent) : -1;
+			if (anchorIndex >= 0) this.chatContainer.children.splice(anchorIndex, 0, segment);
+			else this.chatContainer.addChild(segment);
+		}
+		for (const [runStart, segment] of this.assistantTextSegments) {
+			if (runStart >= content.length || content[runStart]?.type === "toolCall") {
+				this.chatContainer.detachChild(segment);
+				this.assistantTextSegments.delete(runStart);
+			}
+		}
+	}
+
+	private detachAssistantTextSegments(): void {
+		for (const segment of this.assistantTextSegments.values()) {
+			this.chatContainer.detachChild(segment);
+		}
+		this.assistantTextSegments.clear();
+	}
+
 	private createToolExecutionComponent(toolName: string, toolCallId: string, args: unknown): ToolExecutionComponent {
 		if (this.chrome) {
 			return new ToolExecutionComponent(
@@ -4601,6 +5209,10 @@ export class InteractiveMode {
 				this.addCustomEntryToChat(item);
 				continue;
 			}
+			if (isCompactionCostNotice(item)) {
+				this.addCompactionCostNotice(item);
+				continue;
+			}
 
 			const message = item;
 			// Assistant messages need special handling for tool calls
@@ -4616,11 +5228,15 @@ export class InteractiveMode {
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
 							let errorMessage: string;
 							if (message.stopReason === "aborted") {
-								errorMessage = abortedErrorLabel(message.errorMessage, this.session.retryAttempt);
+								errorMessage =
+									abortedMessageForRendering(message, 0, undefined).errorMessage || "Provider request failed";
 							} else {
 								errorMessage = message.errorMessage || "Error";
 							}
-							component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
+							component.updateResult({
+								content: [{ type: "text", text: errorMessage }],
+								isError: true,
+							});
 						} else {
 							renderedPendingTools.set(content.id, component);
 						}
@@ -4667,9 +5283,30 @@ export class InteractiveMode {
 			if (entry.type === "custom") {
 				return [entry];
 			}
-			return sessionEntryToContextMessages(entry);
+			const messages = sessionEntryToContextMessages(entry);
+			if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage && messages.length > 0) {
+				return [...messages, { type: "compaction_cost", kind: entry.type, usage: entry.usage }];
+			}
+			return messages;
 		});
 		this.renderSessionItems(items, options);
+	}
+
+	/**
+	 * Render billing usage for a compaction or branch summary. The notice is derived
+	 * from persisted summary usage and is not stored as a separate session entry.
+	 */
+	private addCompactionCostNotice(notice: CompactionCostNotice): void {
+		if (!this.settingsManager.getShowCacheMissNotices()) return;
+
+		const { usage } = notice;
+		const tokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+		const cost = usage.cost.total >= 0.01 ? ` (~$${usage.cost.total.toFixed(2)})` : "";
+		const label = notice.kind === "compaction" ? "Compaction" : "Branch summary";
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(
+			new Text(theme.fg("warning", `${label}: ${formatTokens(tokens)} tokens billed${cost}`), 1, 0),
+		);
 	}
 
 	/**
@@ -4745,18 +5382,47 @@ export class InteractiveMode {
 		);
 	}
 
-	async getUserInput(): Promise<string> {
+	async getUserInput(): Promise<InteractiveUserInput> {
 		const queuedInput = this.pendingUserInputs.shift();
 		if (queuedInput !== undefined) {
 			return queuedInput;
 		}
 
 		return new Promise((resolve) => {
-			this.onInputCallback = (text: string) => {
+			this.onInputCallback = (input) => {
 				this.onInputCallback = undefined;
-				resolve(text);
+				resolve(input);
 			};
 		});
+	}
+
+	// Build the session.prompt options for a main-loop submission. The optimistic echo
+	// keeps only a prompt that actually started; a buffered prompt consumed by an input
+	// extension with action "handled" clears the retained working dock, but only once
+	// agent_idle has fired (the agentIdle latch) so a settlement-deferred continuation
+	// still in admission keeps its dock.
+	private buildMainLoopPromptOptions(userInput: InteractiveUserInput): {
+		streamingBehavior: "steer";
+		images?: InteractiveUserInput["images"];
+		preflightResult: (success: boolean) => void;
+		promptDisposition: (disposition: "handled" | "queued" | "started") => void;
+	} {
+		const echoOptions = this.optimisticUserEchoes.promptOptions(userInput.pendingEchoId);
+		return {
+			streamingBehavior: "steer",
+			...(userInput.images ? { images: userInput.images } : {}),
+			preflightResult: echoOptions.preflightResult,
+			promptDisposition: (disposition) => {
+				echoOptions.promptDisposition(disposition);
+				// Clear the retained dock on a handled prompt only when it was the last
+				// buffered input; a still-queued follow-up remounts it on agent_start, so
+				// clearing here would bounce the editor/footer.
+				if (disposition === "handled" && this.agentIdle && this.pendingUserInputs.length === 0) {
+					this.clearStatusIndicator("working");
+					this.ui.requestRender();
+				}
+			},
+		};
 	}
 
 	private rebuildChatFromMessages(): void {
@@ -4831,8 +5497,16 @@ export class InteractiveMode {
 		process.exit(0);
 	}
 
-	private emergencyTerminalExit(): never {
+	private emergencyTerminalExit(crash: { origin: string; error: unknown }): never {
 		this.isShuttingDown = true;
+		// This exit is silent by design (the terminal is gone, so a banner would go
+		// nowhere), which makes the debug log the ONLY surface that can record this
+		// crash class — exactly the EIO case that left the 2026-08-26 diagnosis with no
+		// evidence. Write before the cleanup below, which is unguarded and could throw.
+		// A logging failure must never alter the exit path.
+		try {
+			appendUncaughtCrashLog(crash.origin, crash.error);
+		} catch {}
 		this.unregisterSignalHandlers();
 		killTrackedDetachedChildren();
 		// The terminal is gone. Do not run normal shutdown because TUI and
@@ -4855,6 +5529,13 @@ export class InteractiveMode {
 		if (this.isShuttingDown) {
 			process.exit(1);
 		}
+		if (isDeadTerminalError(error)) {
+			// The terminal died under the session (e.g. an stdin read EIO after
+			// the controlling terminal vanished or this pgrp lost the tty
+			// foreground). Same handling as terminal write errors: exit silently
+			// instead of printing a crash banner to a terminal that is gone.
+			this.emergencyTerminalExit({ origin: `dead-terminal ${origin}`, error });
+		}
 		if (isRecoverableInspectorVmImportError(error, origin)) {
 			this.showWarning(INSPECTOR_VM_IMPORT_WARNING);
 			return;
@@ -4868,6 +5549,12 @@ export class InteractiveMode {
 		} catch {}
 		try {
 			this.ui.stop();
+		} catch {}
+		// Record the crash before the terminal handoff: the banner below only reaches
+		// terminal scrollback, which is gone when the terminal is closed or is itself
+		// the thing that failed. A logging failure must never alter the crash path.
+		try {
+			appendUncaughtCrashLog(origin, error);
 		} catch {}
 		restoreInteractiveStderr();
 		console.error(`${APP_NAME} exiting due to uncaughtException:`);
@@ -4906,7 +5593,7 @@ export class InteractiveMode {
 
 		const terminalErrorHandler = (error: Error) => {
 			if (isDeadTerminalError(error)) {
-				this.emergencyTerminalExit();
+				this.emergencyTerminalExit({ origin: "dead-terminal stdio error", error });
 			}
 			throw error;
 		};
@@ -4985,17 +5672,26 @@ export class InteractiveMode {
 		// does NOT pass through onSubmit, so the isExtensionCommand check below is the
 		// live dispatch point here: commands go straight to AgentSession.prompt(),
 		// which runs them immediately even while compaction is active, while ordinary
-		// text is queued for delivery after compaction settles.
+		// text is queued for delivery after compaction settles. Image attachments
+		// are consumed and dropped VISIBLY inside queueCompactionSubmission - the
+		// queue is text-only, so resolving them here and queueing the text with a
+		// dead marker would lose the images without telling the user.
 		if (this.session.isCompacting) {
 			if (this.isExtensionCommand(text)) {
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
 				await this.session.prompt(text);
 			} else {
-				this.queueCompactionMessage(text, "followUp");
+				this.queueCompactionSubmission(text, "followUp");
 			}
 			return;
 		}
+
+		// Resolve attachments BEFORE any setText("") below: the editor's prune
+		// chain fires onImageMarkersChanged([]) and the reconciler destroys
+		// pendingImages, so resolving after the clear would ship a literal
+		// `[Image #N]` with no attachment behind it.
+		const images = this.takeSubmissionImages(text);
 
 		// Alt+Enter queues a follow-up message (waits until agent finishes).
 		// Extension commands never reach this branch: the compaction branch above
@@ -5005,12 +5701,27 @@ export class InteractiveMode {
 		if (this.session.isStreaming) {
 			this.editor.addToHistory?.(text);
 			this.editor.setText("");
-			await this.session.prompt(text, { streamingBehavior: "followUp" });
+			const pendingEchoId = this.optimisticUserEchoes.begin(text);
+			try {
+				await this.session.prompt(text, {
+					streamingBehavior: "followUp",
+					...(images.length > 0 ? { images } : {}),
+					...this.optimisticUserEchoes.promptOptions(pendingEchoId),
+				});
+			} catch (error) {
+				this.optimisticUserEchoes.reject(pendingEchoId);
+				throw error;
+			}
 			this.updatePendingMessagesDisplay();
 			this.ui.requestRender();
 		}
 		// If not streaming, Alt+Enter acts like regular Enter (trigger onSubmit)
 		else if (this.editor.onSubmit) {
+			// The public `onSubmit(text: string)` API cannot be widened, so hand
+			// the pre-resolved images over out-of-band; the submit handler
+			// captures-and-clears the field at entry and delivers them through the
+			// widened main-loop channel.
+			this.preResolvedSubmissionImages = images.length > 0 ? images : undefined;
 			this.editor.setText("");
 			this.editor.onSubmit(text);
 		}
@@ -5159,7 +5870,12 @@ export class InteractiveMode {
 			why: sanitizeTuiErrorMessage(spec.why),
 			...(spec.extra === undefined
 				? {}
-				: { extra: spec.extra.map((line) => ({ ...line, text: sanitizeTuiErrorMessage(line.text) })) }),
+				: {
+						extra: spec.extra.map((line) => ({
+							...line,
+							text: sanitizeTuiErrorMessage(line.text),
+						})),
+					}),
 			...(spec.expandedLine === undefined ? {} : { expandedLine: sanitizeTuiErrorMessage(spec.expandedLine) }),
 		};
 		this.chatContainer.addChild(new Spacer(1));
@@ -5174,41 +5890,21 @@ export class InteractiveMode {
 	}
 
 	showNewVersionNotification(newVersion: string): void {
-		const action = theme.fg("accent", BRAND?.update?.command ?? `${APP_NAME} update`);
-		const updateInstruction = theme.fg("muted", `New version ${newVersion} is available. Run `) + action;
+		const action = BRAND?.update?.command ?? `${APP_NAME} update`;
 		const changelogUrl = getReleaseChangelogUrl(newVersion);
-		const changelogLink = getCapabilities().hyperlinks
-			? hyperlink(theme.fg("accent", changelogUrl), changelogUrl)
-			: theme.fg("accent", changelogUrl);
-		const changelogLine = theme.fg("muted", "Changelog: ") + changelogLink;
-
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
-		this.chatContainer.addChild(
-			new Text(
-				`${theme.bold(theme.fg("warning", "Update Available"))}\n${updateInstruction}\n${changelogLine}`,
-				1,
-				0,
-			),
-		);
-		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
-		this.ui.requestRender();
+		const changelogLink = getCapabilities().hyperlinks ? hyperlink(changelogUrl, changelogUrl) : changelogUrl;
+		this.showNoticeBox({
+			title: "Update Available",
+			tone: "warning",
+			why: `New version ${newVersion} is available. Run ${action}`,
+			extra: [{ text: `Changelog: ${changelogLink}`, tone: "accent" }],
+		});
 	}
 
 	showRiskyMainModelWarning(model: Model<any> | undefined): void {
 		if (!model || !isRiskyMainModel(model)) return;
 
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("error", text)));
-		this.chatContainer.addChild(
-			new Text(
-				`${theme.bold(theme.fg("error", "Risky model warning"))}\n${theme.fg("error", RISKY_MAIN_MODEL_WARNING)}`,
-				1,
-				0,
-			),
-		);
-		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("error", text)));
-		this.ui.requestRender();
+		this.showNoticeBox({ title: "Risky model warning", tone: "error", why: RISKY_MAIN_MODEL_WARNING });
 	}
 
 	showSettingsSourceSelected(event: Extract<AgentSessionEvent, { type: "settings_source_selected" }>): void {
@@ -5220,35 +5916,24 @@ export class InteractiveMode {
 			{ id: event.modelId, provider: event.provider },
 			event.thinkingLevel,
 		);
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("error", text)));
-		this.chatContainer.addChild(
-			new Text(
-				`${theme.bold(theme.fg("error", title))}\n${body.map((line) => theme.fg("error", line)).join("\n")}`,
-				1,
-				0,
-			),
-		);
-		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("error", text)));
-		this.ui.requestRender();
+		this.showNoticeBox({
+			title,
+			tone: "error",
+			why: body[0] ?? "High reasoning may affect reliability or cost.",
+			extra: body.slice(1).map((text) => ({ text, tone: "error" })),
+		});
 	}
 
 	showPackageUpdateNotification(packages: string[]): void {
-		const action = theme.fg("accent", `${APP_NAME} update --extensions`);
-		const updateInstruction = theme.fg("muted", "Package updates are available. Run ") + action;
-		const packageLines = packages.map((pkg) => `- ${pkg}`).join("\n");
-
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
-		this.chatContainer.addChild(
-			new Text(
-				`${theme.bold(theme.fg("warning", "Package Updates Available"))}\n${updateInstruction}\n${theme.fg("muted", "Packages:")}\n${packageLines}`,
-				1,
-				0,
-			),
-		);
-		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
-		this.ui.requestRender();
+		this.showNoticeBox({
+			title: "Package Updates Available",
+			tone: "warning",
+			why: `Package updates are available. Run ${APP_NAME} update --extensions`,
+			extra: [
+				{ text: "Packages:", tone: "dim" },
+				...packages.map((pkg) => ({ text: `- ${pkg}`, tone: "dim" as const })),
+			],
+		});
 	}
 
 	/**
@@ -5277,12 +5962,20 @@ export class InteractiveMode {
 	private clearAllQueues(options: { abortWillFollow: boolean } = { abortWillFollow: false }): {
 		steering: string[];
 		followUp: string[];
-		ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;
+		ordered: Array<{
+			text: string;
+			mode: "steer" | "followUp";
+			enqueueOrder: number;
+		}>;
 	} {
 		const clearedNative = this.session.clearQueue(options);
 		const { steering, followUp } = clearedNative;
 		const nativeMessages = clearedNative.ordered ?? [
-			...steering.map((text, enqueueOrder) => ({ text, mode: "steer" as const, enqueueOrder })),
+			...steering.map((text, enqueueOrder) => ({
+				text,
+				mode: "steer" as const,
+				enqueueOrder,
+			})),
 			...followUp.map((text, index) => ({
 				text,
 				mode: "followUp" as const,
@@ -5296,6 +5989,9 @@ export class InteractiveMode {
 		this.compactionInFlightMessages = [];
 		this.compactionTransferAbortControllers.clear();
 		this.compactionQueuedMessages = [];
+		for (const message of compactionMessages) {
+			if (message.pendingEchoId) this.optimisticUserEchoes?.remove(message.pendingEchoId);
+		}
 		const fallbackOrder = nativeMessages.reduce((maximum, message) => Math.max(maximum, message.enqueueOrder), 0);
 		const ordered = [
 			...nativeMessages,
@@ -5312,7 +6008,10 @@ export class InteractiveMode {
 			followUp: string[];
 			ordered: typeof ordered;
 		};
-		Object.defineProperty(cleared, "ordered", { value: ordered, enumerable: false });
+		Object.defineProperty(cleared, "ordered", {
+			value: ordered,
+			enumerable: false,
+		});
 		return cleared;
 	}
 
@@ -5336,7 +6035,9 @@ export class InteractiveMode {
 	}
 
 	private restoreQueuedMessagesToEditor(options?: { abort?: boolean; currentText?: string }): number {
-		const { steering, followUp, ordered } = this.clearAllQueues({ abortWillFollow: options?.abort === true });
+		const { steering, followUp, ordered } = this.clearAllQueues({
+			abortWillFollow: options?.abort === true,
+		});
 		const allQueued = ordered?.map((message) => message.text) ?? [...steering, ...followUp];
 		if (allQueued.length === 0) {
 			this.updatePendingMessagesDisplay();
@@ -5366,7 +6067,9 @@ export class InteractiveMode {
 	 * - The helper never auto-prompts restored queue text; the user decides whether to send it.
 	 */
 	private async abortAndFireQueuedMessages(): Promise<number> {
-		const { steering, followUp, ordered } = this.clearAllQueues({ abortWillFollow: true });
+		const { steering, followUp, ordered } = this.clearAllQueues({
+			abortWillFollow: true,
+		});
 		const allQueued = ordered?.map((message) => message.text) ?? [...steering, ...followUp];
 		this.updatePendingMessagesDisplay();
 		await this.session.abort();
@@ -5382,13 +6085,50 @@ export class InteractiveMode {
 		return allQueued.length;
 	}
 
-	private queueCompactionMessage(text: string, mode: "steer" | "followUp"): void {
-		this.compactionQueuedMessages.push({ text, mode, enqueueOrder: this.session.reserveQueuedInputOrder() });
-		this.getSessionLogger().debug("compaction_queue_enqueue", { mode, count: this.compactionQueuedMessages.length });
+	private queueCompactionMessage(text: string, mode: "steer" | "followUp", droppedImageCount = 0): void {
+		// No optimistic echo here: compaction-queued input is waiting state and must
+		// render only in the pending-messages display until it is actually delivered.
+		this.compactionQueuedMessages.push({
+			text,
+			mode,
+			enqueueOrder: this.session.reserveQueuedInputOrder(),
+		});
+		this.getSessionLogger().debug("compaction_queue_enqueue", {
+			mode,
+			count: this.compactionQueuedMessages.length,
+		});
 		this.editor.addToHistory?.(text);
 		this.editor.setText("");
 		this.updatePendingMessagesDisplay();
-		this.showStatus("Queued message for after compaction");
+		this.showStatus(
+			droppedImageCount > 0
+				? `Queued message for after compaction; dropped ${droppedImageCount} image${droppedImageCount > 1 ? "s" : ""}: messages sent during compaction cannot carry images - paste again after compaction finishes`
+				: "Queued message for after compaction",
+		);
+	}
+
+	/**
+	 * Queue a user submission for delivery after compaction. The compaction
+	 * queue carries text only, so pasted attachments are dropped here -
+	 * VISIBLY, never silently, mirroring attachClipboardImage's paste-time
+	 * contract - and their `[Image #N]` markers are stripped, because a queued
+	 * literal marker has no payload behind it and would ship an unreadable
+	 * `[Image #N]` string to the model once the queue drains.
+	 */
+	private queueCompactionSubmission(text: string, mode: "steer" | "followUp"): void {
+		const images = this.takeSubmissionImages(text);
+		if (images.length === 0) {
+			this.queueCompactionMessage(text, mode);
+			return;
+		}
+		const queued = text.replace(IMAGE_MARKER_PATTERN, "").trim();
+		if (queued) {
+			this.queueCompactionMessage(queued, mode, images.length);
+			return;
+		}
+		this.showStatus(
+			`Dropped ${images.length} image${images.length > 1 ? "s" : ""}: messages sent during compaction cannot carry images - paste again after compaction finishes`,
+		);
 	}
 
 	private hasRegisteredCommand(command: string): boolean {
@@ -5443,16 +6183,37 @@ export class InteractiveMode {
 						return restorable.length;
 					},
 					isCommand: (message) => this.isExtensionCommand(message.text),
-					deliverCommand: (message) => session.prompt(message.text),
+					deliverCommand: async (message) => {
+						const pendingEchoId = message.pendingEchoId;
+						try {
+							await session.prompt(
+								message.text,
+								pendingEchoId ? this.optimisticUserEchoes.promptOptions(pendingEchoId) : undefined,
+							);
+						} catch (error) {
+							if (pendingEchoId) this.optimisticUserEchoes.reject(pendingEchoId);
+							throw error;
+						}
+					},
 					deliverFirstPrompt: (message) =>
 						waitForPromptDisposition(
-							(preflightResult, promptDisposition) =>
-								session.prompt(message.text, {
+							(preflightResult, promptDisposition) => {
+								const echoOptions = message.pendingEchoId
+									? this.optimisticUserEchoes.promptOptions(message.pendingEchoId)
+									: undefined;
+								return session.prompt(message.text, {
 									streamingBehavior: message.mode,
-									preflightResult,
-									promptDisposition,
+									preflightResult: (success) => {
+										echoOptions?.preflightResult(success);
+										preflightResult(success);
+									},
+									promptDisposition: (disposition) => {
+										echoOptions?.promptDisposition(disposition);
+										promptDisposition(disposition);
+									},
 									signal: this.compactionTransferAbortControllers.get(message)?.signal,
-								}),
+								});
+							},
 							(error) => {
 								if ((this.compactionQueueGeneration ?? 0) !== generation || this.session !== session) return;
 								this.showError(
@@ -5465,8 +6226,12 @@ export class InteractiveMode {
 							return message.mode === "followUp" ? session.followUp(message.text) : session.steer(message.text);
 						}
 						return message.mode === "followUp"
-							? session.followUp(message.text, undefined, { enqueueOrder: message.enqueueOrder })
-							: session.steer(message.text, undefined, { enqueueOrder: message.enqueueOrder });
+							? session.followUp(message.text, undefined, {
+									enqueueOrder: message.enqueueOrder,
+								})
+							: session.steer(message.text, undefined, {
+									enqueueOrder: message.enqueueOrder,
+								});
 					},
 					reportFailure: (error, undeliveredCount) => {
 						this.showError(
@@ -5515,7 +6280,11 @@ export class InteractiveMode {
 	 * @param create Factory that receives a `done` callback and returns the component and focus target
 	 */
 	private showSelector(
-		create: (done: () => void) => { component: Component; focus: Component; dispose?: () => void },
+		create: (done: () => void) => {
+			component: Component;
+			focus: Component;
+			dispose?: () => void;
+		},
 	): void {
 		const token = {};
 		let dispose: (() => void) | undefined;
@@ -5833,11 +6602,15 @@ export class InteractiveMode {
 	}
 
 	private async selectModelFromUi(model: Model<any>, done?: () => void): Promise<void> {
+		// The selector overlay is already disposed on Enter, so releasing it only
+		// after setModel resolves leaves a stale frozen frame for the whole provider
+		// auth round trip. Release and repaint first, then apply the switch.
+		done?.();
+		this.ui?.requestRender();
 		try {
 			const systemPromptChange = await this.session.setModel(model);
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
-			done?.();
 			const systemPromptStr = systemPromptChange?.systemPromptName
 				? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
 				: "";
@@ -5846,7 +6619,6 @@ export class InteractiveMode {
 			void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
 			this.checkDaxnutsEasterEgg(model);
 		} catch (error) {
-			done?.();
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}
@@ -5893,7 +6665,10 @@ export class InteractiveMode {
 		favoriteIds: FavoriteModelIds,
 		candidateModels: readonly Model<any>[],
 		persist: boolean,
-		patternSnapshot: { storedPatterns: string[]; patternResolutions: PatternResolution[] },
+		patternSnapshot: {
+			storedPatterns: string[];
+			patternResolutions: PatternResolution[];
+		},
 	): Promise<void> {
 		const { storedPatterns, patternResolutions } = patternSnapshot;
 		const mergedPatterns = mergeFavoritePatternsForPersist({
@@ -6033,7 +6808,11 @@ export class InteractiveMode {
 					},
 				},
 			);
-			return { component: selector, focus: selector, dispose: () => selector.dispose() };
+			return {
+				component: selector,
+				focus: selector,
+				dispose: () => selector.dispose(),
+			};
 		});
 	}
 
@@ -6506,7 +7285,11 @@ export class InteractiveMode {
 	}
 
 	private async getLogoutProviderOptions(): Promise<AuthSelectorProvider[]> {
-		return (await this.session.modelRuntime.listCredentials({ signal: AbortSignal.timeout(15_000) }))
+		return (
+			await this.session.modelRuntime.listCredentials({
+				signal: AbortSignal.timeout(15_000),
+			})
+		)
 			.map(({ providerId, type }) => ({
 				id: providerId,
 				name: this.session.modelRuntime.getProvider(providerId)?.name ?? providerId,
@@ -6737,7 +7520,10 @@ export class InteractiveMode {
 		if (isUnknownModel(previousModel)) {
 			const availableModels = this.session.modelRuntime.getAvailableSnapshot();
 			const providerModels = availableModels.filter((model) => model.provider === providerId);
-			if (!hasDefaultModelProvider(providerId)) {
+			// Matches LLAMA_PROVIDER_ID from extensions/llama/provider.ts; kept inline to avoid coupling interactive mode to the built-in extension.
+			if (providerId === "llama.cpp") {
+				selectionError = llamaCppPostLoginGuidance(actionLabel, providerModels.length);
+			} else if (!hasDefaultModelProvider(providerId)) {
 				selectionError = `${actionLabel}, but no default model is configured for provider "${providerId}". Use /model to select a model.`;
 			} else if (providerModels.length === 0) {
 				selectionError = `${actionLabel}, but no models are available for that provider. Use /model to select a model.`;
@@ -6780,8 +7566,13 @@ export class InteractiveMode {
 
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), 15_000);
+		const refreshProviders = providerId === "cursor" ? [providerId, "cursor-cli-oauth"] : [providerId];
 		void this.session.modelRuntime
-			.refresh({ providers: [providerId], signal: controller.signal })
+			.refresh({
+				allowNetwork: true,
+				providers: refreshProviders,
+				signal: controller.signal,
+			})
 			.then((result) => {
 				if (result.aborted) {
 					this.showWarning(`${actionLabel}, but its model catalog refresh timed out; using cached models.`);
@@ -7012,8 +7803,6 @@ export class InteractiveMode {
 			return;
 		}
 
-		this.resetExtensionUI();
-
 		const reloadBox = new Container();
 		const borderColor = (s: string) => theme.fg("border", s);
 		reloadBox.addChild(new DynamicBorder(borderColor));
@@ -7048,6 +7837,13 @@ export class InteractiveMode {
 			if (chatRestoredBeforeSessionStart) {
 				return;
 			}
+			// Reset extension UI only once the reload is actually proceeding (this
+			// callback runs after reload()'s internal veto re-check, right before the
+			// new runner's session_start re-registers extension UI). Resetting before
+			// reload() destroyed live extension footers/widgets/tickers on a vetoed
+			// or failed reload with nothing left to restore them, so the TUI stopped
+			// self-repainting until an input event forced a frame.
+			this.resetExtensionUI();
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 			this.outputPad = this.settingsManager.getOutputPad();
 			this.rebuildChatFromMessages();
@@ -7056,7 +7852,9 @@ export class InteractiveMode {
 		};
 
 		try {
-			const reloadResult = await this.session.reload({ beforeSessionStart: restoreChatBeforeSessionStart });
+			const reloadResult = await this.session.reload({
+				beforeSessionStart: restoreChatBeforeSessionStart,
+			});
 			if (reloadResult.cancelled) {
 				dismissReloadBox(previousEditor as Component);
 				reloadBoxDismissed = true;
@@ -7195,7 +7993,9 @@ export class InteractiveMode {
 	private async handleShareCommand(): Promise<void> {
 		// Check if gh is available and logged in
 		try {
-			const authResult = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });
+			const authResult = spawnSync("gh", ["auth", "status"], {
+				encoding: "utf-8",
+			});
 			if (authResult.status !== 0) {
 				this.showError("GitHub CLI is not logged in. Run 'gh auth login' first.");
 				return;
@@ -7243,7 +8043,11 @@ export class InteractiveMode {
 		};
 
 		try {
-			const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
+			const result = await new Promise<{
+				stdout: string;
+				stderr: string;
+				code: number | null;
+			}>((resolve) => {
 				proc = spawn("gh", ["gist", "create", "--public=false", tmpFile]);
 				let stdout = "";
 				let stderr = "";
@@ -7585,11 +8389,7 @@ export class InteractiveMode {
 		fs.mkdirSync(path.dirname(debugLogPath), { recursive: true });
 		fs.writeFileSync(debugLogPath, debugData);
 
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(
-			new Text(`${theme.fg("accent", "✓ Debug log written")}\n${theme.fg("muted", debugLogPath)}`, 1, 1),
-		);
-		this.ui.requestRender();
+		this.showNoticeBox({ title: "✓ Debug log written", tone: "success", why: debugLogPath });
 	}
 
 	private handleArminSaysHi(): void {

@@ -1,0 +1,90 @@
+ - Preserve rich detached eval peeks from the bundled codemode extension,
+   including the submitted code and title, live output, phase, structured
+   status events, nested tool-call summaries, elapsed duration, and structured
+   displays. Terminal settlement is first-writer-wins and an explicit
+   cancellation remains authoritative over a late kernel completion
+   (#603 (https://github.com/code-yeongyu/senpi/pull/603)).
+
+ - Surface failed and partially failed apply_patch operations as actual tool
+   errors to both the model loop and interactive renderer. Complete failures no
+   longer remain styled as a successful or indefinitely applying patch, while
+   partial results retain successful diffs together with concrete recovery
+   guidance for the failed operations
+   (#605 (https://github.com/code-yeongyu/senpi/pull/605)).
+
+ - Suppress byte-identical monitor notification batches before they wake an
+   idle session. Repeated status redraws from commands such as
+   gh pr checks --watch no longer replay the full agent context every refresh;
+   genuinely changed output still resets duplicate suppression, and explicit
+   rearm keeps its existing wake-budget semantics
+   (#612 (https://github.com/code-yeongyu/senpi/pull/612)).
+
+ - Respect an explicitly saved system defaultModel when the
+   recommended-models builtin starts. Automatic recommendation switching now
+   applies only to implicit provider-default and first-available fallback
+   selections; models chosen through saved settings, CLI input, or scoped
+   configuration are kept without a notification or persistence write that
+   could overwrite the user's choice
+   (#625 (https://github.com/code-yeongyu/senpi/pull/625)).
+
+ ### Removed
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Settings: settings.json (JSON)
+
+
+ Do exactly this, narrating between every step: say "STEP-ONE-NARRATION", then use the bash tool to
+ run echo CARD-A, then say "STEP-TWO-NARRATION", then use the bash tool to run echo CARD-B, then
+ say "STEP-THREE-NARRATION", then use the bash tool to run echo CARD-C, then say "FINAL-NARRATION".
+ Do not skip any narration line.
+
+
+ I read this as a change ask to execute a fixed narration/command sequence - I'll interleave the
+ four narration lines with three echo commands. I'll stop when FINAL-NARRATION has been said after
+ CARD-C runs.
+
+ STEP-ONE-NARRATION
+
+
+ $ echo CARD-A
+
+ CARD-A
+
+ Took <1s
+
+
+ STEP-TWO-NARRATION
+
+
+ $ echo CARD-B
+
+ CARD-B
+
+ Took <1s
+
+
+ STEP-THREE-NARRATION
+
+
+ $ echo CARD-C
+
+ CARD-C
+
+ Took <1s
+
+
+ FINAL-NARRATION
+
+ All three commands ran: echo CARD-A → CARD-A, echo CARD-B → CARD-B, echo CARD-C → CARD-C, with
+ each narration line delivered in order.
+
+ TPS 110.8 tok/s. Cache hit 25.0%, 4.0s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/tmp/senpi-jitter-qa2 • … • 52K/1M (5.2%) (auto)             (anthropic) claude-opus-5:xhigh
+
+
+

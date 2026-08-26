@@ -1,0 +1,131 @@
+import { describe, expect, it, vi } from "vitest";
+import { armExecHeartbeat } from "../src/api/cursor-agent/exec-lifecycle.ts";
+import {
+	findControlFrames,
+	runExecLifecycleScenario,
+	runStreamHealthScenario,
+	runTurnTerminationScenario,
+} from "./cursor-agent-exec-lifecycle-harness.ts";
+
+export function registerCursorExecLifecycleTests(): void {
+	describe("cursor-agent exec heartbeat scheduler", () => {
+		it("serializes writes and never rearms after completion", async () => {
+			vi.useFakeTimers();
+			try {
+				let writes = 0;
+				const completions: Array<(error?: Error | null) => void> = [];
+				const stop = armExecHeartbeat({
+					intervalMs: 3000,
+					isClosed: () => false,
+					writeHeartbeat: (onComplete) => {
+						writes += 1;
+						completions.push(onComplete);
+					},
+				});
+
+				expect(writes).toBe(0);
+				await vi.advanceTimersByTimeAsync(3000);
+				expect(writes).toBe(1);
+				await vi.advanceTimersByTimeAsync(9000);
+				expect(writes).toBe(1);
+
+				const firstCompletion = completions.shift();
+				if (!firstCompletion) throw new Error("Expected first heartbeat write callback");
+				firstCompletion();
+				await vi.advanceTimersByTimeAsync(2999);
+				expect(writes).toBe(1);
+				await vi.advanceTimersByTimeAsync(1);
+				expect(writes).toBe(2);
+
+				stop();
+				const secondCompletion = completions.shift();
+				if (!secondCompletion) throw new Error("Expected second heartbeat write callback");
+				secondCompletion();
+				await vi.advanceTimersByTimeAsync(6000);
+				expect(writes).toBe(2);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+	});
+
+	describe("cursor-agent stream health and resume", () => {
+		it("keeps heartbeat-only streams alive past the meaningful-frame window", async () => {
+			const { attempts, message } = await runStreamHealthScenario("heartbeatOnly");
+			expect(attempts).toBe(1);
+			expect(message.stopReason).toBe("stop");
+			expect(message.content).toEqual([expect.objectContaining({ type: "text", text: "alive" })]);
+		});
+
+		it("resumes from a checkpoint after a silent mid-turn stall", async () => {
+			const { actions, attempts, message } = await runStreamHealthScenario("checkpointResume");
+			expect(attempts).toBe(2);
+			expect(actions).toEqual(["userMessageAction", "resumeAction"]);
+			expect(message.stopReason).toBe("stop");
+		});
+
+		it("surfaces the last stall after the retry budget is exhausted", async () => {
+			const { attempts, message } = await runStreamHealthScenario("retryExhaustion");
+			expect(attempts).toBe(2);
+			expect(message.stopReason).toBe("error");
+			expect(message.errorMessage).toContain("inbound stream stalled");
+		});
+	});
+
+	describe("cursor-agent turn termination", () => {
+		it("completes after turnEnded while the server keeps the stream open", async () => {
+			const message = await runTurnTerminationScenario("turnEndedOpen");
+			expect(message.stopReason).toBe("stop");
+		});
+
+		it("fails a silent mid-turn stream instead of hanging", async () => {
+			const message = await runTurnTerminationScenario("silentMidTurn");
+			expect(message.stopReason).toBe("error");
+			expect(message.errorMessage).toContain("inbound stream stalled");
+		});
+	});
+
+	describe("cursor-agent exec lifecycle", () => {
+		it("closes the exec stream after a successful readResult", async () => {
+			const { frames, message } = await runExecLifecycleScenario("success");
+			expect(findControlFrames(frames, "streamClose", 7)).toHaveLength(1);
+			expect(message.stopReason).toBe("stop");
+		});
+
+		it("closes the exec stream after a typed read rejection", async () => {
+			const { frames, message } = await runExecLifecycleScenario("rejection");
+			expect(findControlFrames(frames, "streamClose", 8)).toHaveLength(1);
+			expect(message.stopReason).toBe("stop");
+		});
+
+		it("heartbeats a pending exec and stops after completion", async () => {
+			const { frames, message } = await runExecLifecycleScenario("pending");
+			expect(findControlFrames(frames, "heartbeat", 9)).toHaveLength(1);
+			expect(findControlFrames(frames, "streamClose", 9)).toHaveLength(1);
+			expect(message.stopReason).toBe("stop");
+		});
+
+		it("preserves unknown-frame throw then streamClose fallback", async () => {
+			const { frames, message } = await runExecLifecycleScenario("unknown");
+			expect(findControlFrames(frames, "throw", 10)).toHaveLength(1);
+			expect(findControlFrames(frames, "streamClose", 10)).toHaveLength(1);
+			expect(message.stopReason).toBe("stop");
+		});
+
+		it("closes a shell stream exactly once", async () => {
+			const { frames, message } = await runExecLifecycleScenario("shellStream");
+			expect(findControlFrames(frames, "streamClose", 11)).toHaveLength(1);
+			expect(message.stopReason).toBe("stop");
+		});
+
+		it("throws then closes when recognized exec dispatch rejects unexpectedly", async () => {
+			const { frames, message } = await runExecLifecycleScenario("dispatchFailure");
+			const thrown = findControlFrames(frames, "throw", 12);
+			const closes = findControlFrames(frames, "streamClose", 12);
+			expect(thrown).toHaveLength(1);
+			expect(closes).toHaveLength(1);
+			expect(frames.indexOf(thrown[0])).toBeLessThan(frames.indexOf(closes[0]));
+			expect(message.stopReason).toBe("stop");
+		});
+	});
+}

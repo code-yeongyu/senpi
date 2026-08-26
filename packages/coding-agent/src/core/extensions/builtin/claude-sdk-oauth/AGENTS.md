@@ -17,7 +17,8 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 | `session-stream.ts` | Resident-lane attempts (`createResidentAttempt`), flatten serialization + directive dedupe |
 | `session-continuity.ts` | `decideNativeContinuity` decision table: `delta` / `reattach` / `fork` / `flatten` / `bootstrap` |
 | `session-registry.ts` | Resident SDK query registry: idle reaping, eviction, state transitions (with `session-registry-state/pump/wiring.ts`) |
-| `session-binding.ts` | Branch-local binding checkpoint for restart-time resume verification |
+| `session-binding.ts` | Branch marker + committed-assistant anchor for trusted restart bindings |
+| `session-binding-store.ts` | Strict, private, fixed-size sidecar that owns persisted SDK lineage capabilities |
 | `session-commit-boundary.ts` | `message_end` commit boundary; divergence decided against the SDK ledger, not in-flight staging |
 | `session-observability.ts` | `ContinuityObservation` (kind, reason, delta count, `payloadBytes`, `collapsedDirectives`), `session.log` events |
 | `system-prompt.ts` | `systemPromptMode` handling (`full` default, `preset-append` deprecated, `override` from file); no array-splitting, the CLI joins arrays |
@@ -30,7 +31,7 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 
 ## INVARIANTS (from changes.md)
 
-- Resume-first: every query replacement re-attaches with `resume`; flatten is a last resort for a missing transcript or unusable binding. A live session is never abandoned for a flattened re-send.
+- Resume-first: every live query replacement re-attaches with `resume`; persisted restarts reattach only when the private sidecar, session marker, committed assistant, identity, prefix, and SDK transcript agree. A live session is never abandoned for a flattened re-send.
 - The SDK ledger is authoritative for divergence; decide at the `message_end` commit boundary. Result-only turns are a supported shape, not divergence.
 - Fork point is the last assistant boundary strictly before the divergence.
 - Non-fork reattach passes `resume` and must omit `sessionId` (the SDK rejects the pair). Fork adds `resumeSessionAt` + `forkSession`.
@@ -45,7 +46,7 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 
 ## TESTS
 
-Flat cluster at `test/claude-sdk-oauth-*.test.ts` (35 files at this commit): accounts, affinity, auth-lane, binding, continuity decisions, failover, custom-tools schema, guidance, login, model switch, observability, and more. Keep edited test files below the 250-pure-LOC ceiling (see 2026-07-31 rename entry).
+Flat cluster at `test/claude-sdk-oauth-*.test.ts` (51 files): accounts, affinity, auth-lane, binding, continuity decisions, failover, custom-tools schema, guidance, login, model switch, observability, and more. Keep edited test files below the 250-pure-LOC ceiling (see 2026-07-31 rename entry).
 
 ## MERGE RISK
 

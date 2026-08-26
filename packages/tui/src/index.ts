@@ -71,6 +71,18 @@ export {
 export type { EditorComponent } from "./editor-component.ts";
 // Fuzzy matching
 export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.ts";
+// Atomic image markers (ids only - never image bytes)
+export {
+	type EditorImageState,
+	formatImageMarker,
+	IMAGE_MARKER_REGEX,
+	IMAGE_MARKER_SINGLE,
+	type ImageMarkerCanonicalization,
+	ImageMarkerRegistry,
+	type ImageMarkerRemoval,
+	imageMarkerId,
+	isImageMarker,
+} from "./image-markers.ts";
 // Keybindings
 export {
 	getKeybindings,

@@ -1,4 +1,6 @@
-import type { Options } from "./sdk-boundary.ts";
+import type { ClaudeSdkOauthAuthLane } from "./options.ts";
+import type { Options, SessionMessage } from "./sdk-boundary.ts";
+import { getSdkBoundary, loadClaudeAgentSdk } from "./sdk-boundary.ts";
 import { type ClaudeSdkOauthSessionEntry, closeSession, getOrCreateSession } from "./session-registry.ts";
 import { recordSyncedStream } from "./session-sync.ts";
 
@@ -7,6 +9,7 @@ export type ContinuityBinding = {
 	sdkSessionId: string;
 	sentCount: number;
 	sentHashes: readonly string[];
+	sentPrefixHash?: string;
 	lastAssistantUuid: string | null;
 	accountName: string;
 	modelId: string;
@@ -14,6 +17,14 @@ export type ContinuityBinding = {
 	toolsetHash: string;
 	/** Assistant boundaries kept as entries so a later fork still has a resume point. */
 	assistantUuidByIndex?: readonly (readonly [number, string])[];
+	/**
+	 * Digest of the FULL sent stream an attempt pushed but never got answered
+	 * (stream-start timeout abort/failure). Purely in-memory: it lets the SAME
+	 * turn's retry fork at the pre-turn boundary instead of re-appending its user
+	 * message to a lineage that already carries it. Never persisted — the sidecar
+	 * schema is fixed at schemaVersion 1 and restart retries are out of scope.
+	 */
+	unansweredTurnDigest?: string;
 };
 
 export type ReattachInput = {
@@ -27,6 +38,14 @@ const bindings = new Map<string, ContinuityBinding>();
 
 export type AbortOutcome = "keep" | "reattach";
 
+function cloneBinding(binding: ContinuityBinding): ContinuityBinding {
+	return {
+		...binding,
+		sentHashes: [...binding.sentHashes],
+		assistantUuidByIndex: binding.assistantUuidByIndex?.map(([index, uuid]) => [index, uuid]),
+	};
+}
+
 export function evaluateAbortOutcome(receipt: unknown): AbortOutcome {
 	if (!receipt || typeof receipt !== "object") return "reattach";
 	const queued = (receipt as { still_queued?: unknown }).still_queued;
@@ -34,11 +53,12 @@ export function evaluateAbortOutcome(receipt: unknown): AbortOutcome {
 }
 
 export function rememberBinding(binding: ContinuityBinding): void {
-	bindings.set(binding.senpiSessionId, { ...binding, sentHashes: [...binding.sentHashes] });
+	bindings.set(binding.senpiSessionId, cloneBinding(binding));
 }
 
 export function getBinding(senpiSessionId: string): ContinuityBinding | undefined {
-	return bindings.get(senpiSessionId);
+	const binding = bindings.get(senpiSessionId);
+	return binding ? cloneBinding(binding) : undefined;
 }
 
 export function forgetBinding(senpiSessionId: string): void {
@@ -73,6 +93,31 @@ export function bindingFromEntry(
 	};
 }
 
+export async function verifyRestoredTranscript(
+	binding: ContinuityBinding,
+	cwd: string,
+	authLane: ClaudeSdkOauthAuthLane,
+): Promise<boolean> {
+	if (authLane === "config-dir") return false;
+	let messages: SessionMessage[];
+	try {
+		messages = await getSdkBoundary().getSessionMessages(binding.sdkSessionId, { dir: cwd });
+	} catch (error) {
+		if (error instanceof Error) return false;
+		throw error;
+	}
+	if (messages.length === 0 || messages.some((message) => message.session_id !== binding.sdkSessionId)) {
+		return false;
+	}
+	if (binding.lastAssistantUuid === null) return true;
+	return messages.some(
+		(message) =>
+			message.type === "assistant" &&
+			message.uuid === binding.lastAssistantUuid &&
+			message.parent_tool_use_id === null,
+	);
+}
+
 async function awaitInitialization(entry: ClaudeSdkOauthSessionEntry, signal?: AbortSignal): Promise<void> {
 	const initialize = entry.query.initializationResult;
 	if (!initialize) return;
@@ -97,6 +142,9 @@ async function awaitInitialization(entry: ClaudeSdkOauthSessionEntry, signal?: A
  * (sdk.d.ts:1805-1808) and would otherwise silently start an unrelated session.
  */
 export async function reattachSession(input: ReattachInput): Promise<ClaudeSdkOauthSessionEntry> {
+	// getOrCreateSession() reaches the synchronous SDK `query` through the
+	// session-registry boundary - see sdk-boundary.lazy.ts.
+	await loadClaudeAgentSdk();
 	const { binding, atUuid } = input;
 	closeSession(binding.senpiSessionId, "reattach");
 	const entry = getOrCreateSession({

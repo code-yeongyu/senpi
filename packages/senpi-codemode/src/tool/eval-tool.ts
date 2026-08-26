@@ -98,8 +98,10 @@ async function runEvalCell(
 	const bridgeAbortController = new AbortController();
 	const cellSignal = AbortSignal.any([invocation.signal, bridgeAbortController.signal]);
 	const bridgeContext: ExtensionContext = { ...invocation.ctx, signal: cellSignal };
+	const runtime = options.runtimes?.[invocation.input.language];
 	const state: CellState = {
 		input: invocation.input,
+		...(runtime === undefined ? {} : { runtime }),
 		startedAt: Date.now(),
 		signal: cellSignal,
 		onUpdate: invocation.onUpdate,

@@ -1,5 +1,23 @@
 # changes
 
+## Force daemon children onto Node and contain ws server errors (2026-08-25)
+
+### What changed
+
+- `modes/app-server/daemon.ts` launches detached daemon children with Node and sets `SENPI_RUNTIME=node` when the parent is Bun.
+
+### Why
+
+- Bun's WebSocket backend emits an unhandled error during daemon probe/status lifecycle; the fork's daemon contract requires stable Node runtime behavior.
+
+### Why an extension could not handle it
+
+- Detached daemon runtime selection occurs before the child application server initializes.
+
+### Expected merge conflict zones
+
+- MEDIUM: detached daemon spawn arguments and runtime environment.
+
 ## Registry-owned thread teardown (2026-08-13)
 
 ### What changed

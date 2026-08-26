@@ -1,7 +1,7 @@
 import { Container } from "@earendil-works/pi-tui";
 import type { Theme } from "../../../../../modes/interactive/theme/theme.ts";
+import { buildNoticeBox, type NoticeLine } from "../../../notice/index.ts";
 import type { LoadedRule, RuleDiagnostic } from "../rules/types.ts";
-import { DynamicBorder } from "./dynamic-border.ts";
 
 export interface RulesBannerProps {
 	ruleCount: number;
@@ -27,44 +27,41 @@ export class RulesBanner extends Container {
 }
 
 export function renderBannerLines(props: RulesBannerProps, theme: Theme, width: number): string[] {
-	const lines: string[] = [];
-	const border = new DynamicBorder((str) => theme.fg("border", str));
-
 	if (props.ruleCount === 0) {
-		lines.push(...border.render(width));
-		lines.push(`${theme.bold(theme.fg("accent", "[pi-rules]"))} No rules discovered`);
-		lines.push(...border.render(width));
-		return lines;
+		return buildNoticeBox(
+			{
+				title: "[pi-rules] No rules discovered",
+				tone: "accent",
+				why: "No rules were discovered.",
+			},
+			{ expanded: false },
+			theme,
+		).render(width);
 	}
 
-	lines.push(...border.render(width));
-	lines.push(
-		`${theme.bold(theme.fg("accent", "[pi-rules]"))} ${theme.fg("muted", `${props.ruleCount} active rules`)}`,
-	);
-	lines.push("");
-
-	if (props.topRules) {
-		for (const rule of props.topRules) {
-			const hasDiagnostic = props.diagnostics.some((diagnostic) => diagnostic.source === rule.relativePath);
-			const indicator = hasDiagnostic ? theme.fg("error", "⚠") : theme.fg("success", "●");
-
-			let annotation = "";
-			if (typeof rule.matchReason === "object" && rule.matchReason.kind === "glob") {
-				annotation = ` ${theme.fg("muted", rule.matchReason.pattern)}`;
-			}
-
-			lines.push(`  ${indicator} ${rule.relativePath}${annotation}`);
-		}
-	}
-
+	const extra: NoticeLine[] = (props.topRules ?? []).map((rule) => {
+		const hasDiagnostic = props.diagnostics.some((diagnostic) => diagnostic.source === rule.relativePath);
+		const annotation =
+			typeof rule.matchReason === "object" && rule.matchReason.kind === "glob" ? ` ${rule.matchReason.pattern}` : "";
+		return {
+			text: `  ${hasDiagnostic ? "⚠" : "●"} ${rule.relativePath}${annotation}`,
+			tone: hasDiagnostic ? ("error" as const) : ("success" as const),
+		};
+	});
 	if (props.diagnostics.length > 0) {
-		lines.push(`  ${theme.fg("warning", `⚠ ${props.diagnostics.length} warning(s)`)}`);
+		extra.push({ text: `  ⚠ ${props.diagnostics.length} warning(s)`, tone: "warning" });
 	}
 
-	lines.push("");
-	lines.push(...border.render(width));
-
-	return lines;
+	return buildNoticeBox(
+		{
+			title: `[pi-rules] ${props.ruleCount} active rules`,
+			tone: "accent",
+			why: `${props.ruleCount} active rules were discovered.`,
+			extra,
+		},
+		{ expanded: false },
+		theme,
+	).render(width);
 }
 
 export interface StatusLineInput {

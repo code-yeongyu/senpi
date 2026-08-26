@@ -9,6 +9,11 @@ interactive-mode.ts     Main lifecycle and event-to-UI coordinator
 startup-tools.ts        Non-blocking fd/rg capability probe
 working-status.ts       Animated working text/frames
 session-info-format.ts  Session/cost/token summaries
+streaming-reveal*.ts    Paced reveal of streamed assistant content
+tool-args-reveal.ts, tool-result-reveal.ts, tool-progress.ts  Progressive tool call/result surfaces
+model-search.ts, model-search-rank.ts, model-catalog-refresh.ts  Model picker search/rank/refresh
+tips/                   Startup/working tip registry, scheduler, and catalog/ tip sets
+grok/                   Grok chrome/palette/welcome-card render surfaces
 components/             Messages, tools, footer, selectors, dialogs, editor
 theme/                  JSON themes copied into builds
 assets/                 Branding assets copied into builds
@@ -26,6 +31,8 @@ changes.md              Fork-specific interactive behavior
 | Footer/status | `components/footer.ts` |
 | Model and favorites UI | selector components plus `interactive-mode.ts` |
 | Theme behavior | `theme/` and `components/theme-selector.ts` |
+| Streaming reveal pacing | `streaming-reveal.ts`, `streaming-reveal-pacing.ts`, `streaming-reveal-content.ts` |
+| Startup/working tips | `tips/registry.ts`, `tips/scheduler.ts`, `tips/catalog/` |
 
 ## INVARIANTS
 

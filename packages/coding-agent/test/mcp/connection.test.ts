@@ -1,8 +1,7 @@
-import { execFile } from "node:child_process";
+import { readFileSync, watch } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import type { McpServerConfig } from "../../src/core/extensions/builtin/mcp/config-schema.ts";
 import {
@@ -15,7 +14,6 @@ import { stdioFixtureCommand } from "./fixtures/spawn-fixture.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
 const connections: ServerConnection[] = [];
-const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
 	for (const connection of connections.splice(0).reverse()) {
@@ -50,21 +48,28 @@ describe("ServerConnection state machine", () => {
 	it("keeps stale slow-start connect results from overwriting a newer reload generation", async () => {
 		const root = await tmpRoot("stale");
 		const counterFile = join(root, "spawns.txt");
-		const connection = createConnection("stale", root, [
-			"--tools",
-			"1",
-			"--slow-start",
-			"250",
-			"--spawn-counter-file",
-			counterFile,
-		]);
+		const pidFile = join(root, "pid.txt");
+		await writeFile(pidFile, "");
+		// Keep the fixture's successful handshake and connect timeout unreachable.
+		// The PID-file watcher below proves the child has spawned before the reload
+		// generation is bumped, without racing a scheduler-dependent delay.
+		const connection = createConnection(
+			"stale",
+			root,
+			["--tools", "1", "--slow-start", "30000", "--spawn-counter-file", counterFile, "--pid-file", pidFile],
+			{ connectTimeoutMs: 60_000 },
+		);
 		connections.push(connection);
 		const events = collectEvents(connection);
+		const spawned = waitForPidWrite(pidFile);
+		const idle = waitForState(connection, "idle");
 
 		const pending = connection.connect();
-		await waitForCounter(counterFile, 1);
+		const rejected = expect(pending).rejects.toThrow(/superseded/i);
+		const pid = await spawned;
 		await connection.bumpGeneration();
-		await expect(pending).rejects.toThrow(/superseded/i);
+		await idle;
+		await rejected;
 
 		expect(connection.state).toBe("idle");
 		expect(connection.lastError).toBeUndefined();
@@ -74,55 +79,53 @@ describe("ServerConnection state machine", () => {
 			"connecting->idle",
 		]);
 		expect(events.tools).toEqual([]);
-		await assertNoFixtureProcessArg(counterFile);
+		assertProcessDead(pid);
 	});
 
 	it("disposes an in-flight wedged connect before the connect timeout leaks a fixture process", async () => {
 		const root = await tmpRoot("dispose-pending");
-		const counterFile = join(root, "spawns.txt");
-		const connection = createConnection("dispose-pending", root, [
-			"--wedge",
-			"--spawn-counter-file",
-			counterFile,
-			"--slow-start",
-			"10000",
-		]);
+		const pidFile = join(root, "pid.txt");
+		await writeFile(pidFile, "");
+		const connection = createConnection("dispose-pending", root, ["--wedge", "--pid-file", pidFile], {
+			connectTimeoutMs: 60_000,
+		});
 		connections.push(connection);
+		const spawned = waitForPidWrite(pidFile);
+		const disabled = waitForState(connection, "disabled");
 
 		const pending = connection.connect();
-		await waitForCounter(counterFile, 1);
-		const disposeStartedAt = Date.now();
+		const rejected = expect(pending).rejects.toThrow(/failed during connect|closed|superseded/i);
+		const pid = await spawned;
 		await connection.dispose();
-		const disposeElapsedMs = Date.now() - disposeStartedAt;
-		await expect(pending).rejects.toThrow(/failed during connect|closed|superseded/i);
+		const disabledEvent = await disabled;
+		await rejected;
 
-		expect(disposeElapsedMs).toBeLessThan(1500);
+		expect(disabledEvent.previousState).toBe("connecting");
 		expect(connection.state).toBe("disabled");
-		await assertNoFixtureProcessArg(counterFile);
+		assertProcessDead(pid);
 	});
 
 	it("disables an in-flight wedged connect before the connect timeout leaks a fixture process", async () => {
 		const root = await tmpRoot("disable-pending");
-		const counterFile = join(root, "spawns.txt");
-		const connection = createConnection("disable-pending", root, [
-			"--wedge",
-			"--spawn-counter-file",
-			counterFile,
-			"--slow-start",
-			"10000",
-		]);
+		const pidFile = join(root, "pid.txt");
+		await writeFile(pidFile, "");
+		const connection = createConnection("disable-pending", root, ["--wedge", "--pid-file", pidFile], {
+			connectTimeoutMs: 60_000,
+		});
 		connections.push(connection);
+		const spawned = waitForPidWrite(pidFile);
+		const disabled = waitForState(connection, "disabled");
 
 		const pending = connection.connect();
-		await waitForCounter(counterFile, 1);
-		const disableStartedAt = Date.now();
+		const rejected = expect(pending).rejects.toThrow(/failed during connect|closed|superseded/i);
+		const pid = await spawned;
 		await connection.disable();
-		const disableElapsedMs = Date.now() - disableStartedAt;
-		await expect(pending).rejects.toThrow(/failed during connect|closed|superseded/i);
+		const disabledEvent = await disabled;
+		await rejected;
 
-		expect(disableElapsedMs).toBeLessThan(1500);
+		expect(disabledEvent.previousState).toBe("connecting");
 		expect(connection.state).toBe("disabled");
-		await assertNoFixtureProcessArg(counterFile);
+		assertProcessDead(pid);
 	});
 
 	it("moves failed connects to degraded and retains the last error for status", async () => {
@@ -202,10 +205,15 @@ describe("ServerConnection state machine", () => {
 	});
 });
 
-function createConnection(serverName: string, logDir: string, fixtureArgs: string[]): ServerConnection {
+function createConnection(
+	serverName: string,
+	logDir: string,
+	fixtureArgs: string[],
+	configOverrides: Partial<McpServerConfig> = {},
+): ServerConnection {
 	const fixture = stdioFixtureCommand();
 	return new ServerConnection({
-		config: serverConfig({ args: [...fixture.args, ...fixtureArgs], command: fixture.command }),
+		config: serverConfig({ args: [...fixture.args, ...fixtureArgs], command: fixture.command, ...configOverrides }),
 		logger: createMcpLogger(serverName, { logDir }),
 		serverName,
 	});
@@ -237,31 +245,59 @@ async function readCounter(file: string): Promise<number> {
 	return Number(raw.trim());
 }
 
-async function waitForCounter(file: string, expected: number): Promise<void> {
-	const deadline = Date.now() + 1500;
-	let lastError: unknown;
-	while (Date.now() < deadline) {
-		try {
-			if ((await readCounter(file)) === expected) return;
-		} catch (error) {
-			lastError = error;
-		}
-		await new Promise((resolve) => setTimeout(resolve, 25));
-	}
-	throw lastError instanceof Error ? lastError : new Error(`counter did not reach ${expected}: ${file}`);
+function waitForPidWrite(file: string): Promise<number> {
+	return new Promise<number>((resolve, reject) => {
+		const signal = AbortSignal.timeout(10_000);
+		const watcher = watch(file, { signal }, () => {
+			const raw = readFileSync(file, "utf8").trim();
+			if (raw.length === 0) return;
+			const pid = Number(raw);
+			if (!Number.isInteger(pid) || pid <= 0) {
+				watcher.close();
+				reject(new Error(`fixture wrote invalid pid: ${raw}`));
+				return;
+			}
+			watcher.close();
+			resolve(pid);
+		});
+		signal.addEventListener("abort", () => reject(new Error(`fixture did not write pid: ${file}`)), { once: true });
+	});
 }
 
-async function assertNoFixtureProcessArg(arg: string): Promise<void> {
-	const deadline = Date.now() + 1500;
-	while (Date.now() < deadline) {
-		const { stdout } = await execFileAsync("ps", ["-axo", "command="]);
-		const hasFixture = stdout
-			.split("\n")
-			.some((line) => line.includes("test/mcp/fixtures/stdio-server.ts") && line.includes(arg));
-		if (!hasFixture) return;
-		await new Promise((resolve) => setTimeout(resolve, 25));
+function waitForState(
+	connection: ServerConnection,
+	expected: ServerConnectionStateChangedEvent["state"],
+): Promise<ServerConnectionStateChangedEvent> {
+	return new Promise<ServerConnectionStateChangedEvent>((resolve, reject) => {
+		const signal = AbortSignal.timeout(10_000);
+		const unsubscribe = connection.onStateChange((event) => {
+			if (event.state !== expected) return;
+			unsubscribe();
+			resolve(event);
+		});
+		signal.addEventListener(
+			"abort",
+			() => {
+				unsubscribe();
+				reject(new Error(`${connection.serverName} did not reach ${expected}`));
+			},
+			{ once: true },
+		);
+	});
+}
+
+function assertProcessDead(pid: number): void {
+	try {
+		process.kill(pid, 0);
+	} catch (error) {
+		if (isNodeErrorCode(error, "ESRCH")) return;
+		throw error;
 	}
-	throw new Error(`fixture process still alive for arg: ${arg}`);
+	throw new Error(`fixture process still alive: ${pid}`);
+}
+
+function isNodeErrorCode(error: unknown, code: string): error is Error & { code: string } {
+	return error instanceof Error && "code" in error && error.code === code;
 }
 
 function serverConfig(overrides: Partial<McpServerConfig> = {}): McpServerConfig {

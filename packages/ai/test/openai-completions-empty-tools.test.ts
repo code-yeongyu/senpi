@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
 
 // Empty tools arrays must NOT be serialized as `tools: []` — some OpenAI-compatible
@@ -57,6 +57,10 @@ describe("openai-completions empty tools handling", () => {
 	beforeEach(() => {
 		mockState.lastParams = undefined;
 		mockState.lastClientOptions = undefined;
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
 	});
 
 	it("omits tools field when context.tools is an empty array", async () => {
@@ -161,9 +165,9 @@ describe("openai-completions empty tools handling", () => {
 	});
 
 	it("uses conservative OpenAI-compatible fields for Cloudflare AI Gateway /compat models", async () => {
-		process.env.CLOUDFLARE_API_KEY = "cf-token";
-		process.env.CLOUDFLARE_ACCOUNT_ID = "account-id";
-		process.env.CLOUDFLARE_GATEWAY_ID = "gateway-id";
+		vi.stubEnv("CLOUDFLARE_API_KEY", "cf-token");
+		vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "account-id");
+		vi.stubEnv("CLOUDFLARE_GATEWAY_ID", "gateway-id");
 		const model = getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6")!;
 
 		await streamSimple(
@@ -198,9 +202,9 @@ describe("openai-completions empty tools handling", () => {
 	});
 
 	it("resolves Cloudflare AI Gateway base URL through provider auth", async () => {
-		process.env.CLOUDFLARE_API_KEY = "cf-token";
-		process.env.CLOUDFLARE_ACCOUNT_ID = "account-id";
-		process.env.CLOUDFLARE_GATEWAY_ID = "gateway-id";
+		vi.stubEnv("CLOUDFLARE_API_KEY", "cf-token");
+		vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "account-id");
+		vi.stubEnv("CLOUDFLARE_GATEWAY_ID", "gateway-id");
 		const model = getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6")!;
 
 		await streamSimple(model, {
@@ -212,9 +216,9 @@ describe("openai-completions empty tools handling", () => {
 	});
 
 	it("preserves inline upstream Authorization for Cloudflare AI Gateway BYOK requests", async () => {
-		process.env.CLOUDFLARE_API_KEY = "cf-token";
-		process.env.CLOUDFLARE_ACCOUNT_ID = "account-id";
-		process.env.CLOUDFLARE_GATEWAY_ID = "gateway-id";
+		vi.stubEnv("CLOUDFLARE_API_KEY", "cf-token");
+		vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "account-id");
+		vi.stubEnv("CLOUDFLARE_GATEWAY_ID", "gateway-id");
 		const model = getModel("cloudflare-ai-gateway", "gpt-5.1")!;
 
 		await streamSimple(
@@ -231,9 +235,9 @@ describe("openai-completions empty tools handling", () => {
 	});
 
 	it("sends session affinity headers for Workers AI through Cloudflare AI Gateway", async () => {
-		process.env.CLOUDFLARE_API_KEY = "cf-token";
-		process.env.CLOUDFLARE_ACCOUNT_ID = "account-id";
-		process.env.CLOUDFLARE_GATEWAY_ID = "gateway-id";
+		vi.stubEnv("CLOUDFLARE_API_KEY", "cf-token");
+		vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "account-id");
+		vi.stubEnv("CLOUDFLARE_GATEWAY_ID", "gateway-id");
 		const workersModel = getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6")!;
 
 		await streamSimple(

@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/extensions/builtin/mcp
 
-Fork-native builtin MCP client. Registration #23 in `builtin/index.ts` — kept last so its provider-payload tap observes all co-resident builtin mutations. Entry: `index.ts` exports `default function mcpExtension(pi: ExtensionAPI): void`. `changes.md` is the active fork ledger; every divergence from upstream MCP SDK behavior goes there.
+Fork-native builtin MCP client. Registration #39 in `builtin/index.ts` — kept last so its provider-payload tap observes all co-resident builtin mutations. Entry: `index.ts` exports `default function mcpExtension(pi: ExtensionAPI): void`. `changes.md` is the active fork ledger; every divergence from upstream MCP SDK behavior goes there.
 
 ## SUBTREES
 

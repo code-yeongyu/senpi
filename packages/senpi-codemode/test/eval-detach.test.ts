@@ -91,6 +91,36 @@ describe("eval detached cells", () => {
 		await manager.flushNotifications();
 	});
 
+	it("detaches a cell parked in a bridge call that never resumes", async () => {
+		vi.useFakeTimers();
+		const recorder = new NotificationRecorder();
+		const manager = new EvalDetachedCellManager({ notifier: recorder });
+		// The cell pauses its watchdog for a host tool call (e.g. dag-wait) that never sends timeout-resume.
+		const kernel = new FakeKernel([{ type: "status", event: { op: "timeout-pause" } }]);
+		const tool = createTool(manager, [["js", kernel]]);
+
+		const started = kernel.deferNextRun();
+		const execution = tool.execute(
+			"stuck-bridge-cell",
+			{ language: "js", code: "await tool.dag_wait({})", summary: "stuck bridge", on_timeout: "detach" },
+			undefined,
+			undefined,
+			interactiveContext(),
+		);
+		await started;
+
+		// Before the fix the paused watchdog was cleared outright, so this cell stayed pending forever
+		// and the agent loop never got its turn back.
+		await vi.advanceTimersByTimeAsync(600_000);
+
+		const detached = await execution;
+		expect(textOf(detached)).toContain("stuck-bridge-cell");
+		expect(manager.busyFor("js")).toMatchObject({ cellId: "stuck-bridge-cell", state: "detached" });
+
+		await manager.stop("stuck-bridge-cell");
+		await manager.flushNotifications();
+	});
+
 	it("injects one completion notification with buffered output, final value, and state-persistence guidance", async () => {
 		vi.useFakeTimers();
 		const recorder = new NotificationRecorder();
@@ -280,7 +310,7 @@ describe("eval detached cells", () => {
 		expect(manager.busyFor("js")).toBeUndefined();
 	});
 
-	it("reports detached kernel crashes with the buffered tail and spills oversized notifications to local://", async () => {
+	it("reports detached kernel crashes with the buffered tail and spills oversized notifications to an absolute path", async () => {
 		vi.useFakeTimers();
 		const artifactsDir = await mkdtemp(join(tmpdir(), "senpi-codemode-detach-"));
 		directories.push(artifactsDir);
@@ -298,8 +328,12 @@ describe("eval detached cells", () => {
 
 		expect(recorder.notices).toHaveLength(1);
 		expect(recorder.notices[0]?.content).toContain("kernel crashed");
-		expect(recorder.notices[0]?.content).toContain("local://detached-eval-crashed-detached.log");
-		expect(existsSync(join(artifactsDir, "local", "detached-eval-crashed-detached.log"))).toBe(true);
+		// Spill notices must carry the absolute spill path — the agent read tool cannot
+		// resolve the local:// scheme (it is a kernel-helper-only scheme).
+		const spillPath = join(artifactsDir, "local", "detached-eval-crashed-detached.log");
+		expect(recorder.notices[0]?.content).toContain(spillPath);
+		expect(recorder.notices[0]?.content).not.toContain("local://");
+		expect(existsSync(spillPath)).toBe(true);
 	});
 });
 

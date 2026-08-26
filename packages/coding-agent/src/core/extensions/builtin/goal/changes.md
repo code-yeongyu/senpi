@@ -1,5 +1,199 @@
 # goal Extension Changes
 
+## 2026-08-26 - continuation timer survives a retired extension context
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`
+  routes every `hasUI` read through a new private `#ctxHasUI(ctx)` helper that
+  treats the stale-ctx error (`stale-context.ts`) as "no UI" and rethrows
+  anything else. The three affected reads are `#armTimer`'s pre-arm wait-ticker
+  sync, the `setTimeout` callback's own `catch` handler, and the toolless stall
+  notice in `#buildContinuationContent`. The timer callback additionally drops a
+  rejection that is itself a stale-ctx error, since that is the expected outcome
+  after a session replacement. Covered by
+  `test/suite/goal-ticker-stale-context.test.ts`.
+
+### Why
+
+- `ctx.hasUI` is an `assertActive()`-guarded getter, so a context retired by
+  session replacement or reload THROWS rather than returning false. The existing
+  `this.#ctx?.hasUI` optional chaining only guarded the `undefined` that
+  `dispose()` leaves behind, not the stale object left when a session is replaced
+  without disposing this monitor. Because the read happened inside a bare
+  `setTimeout` callback, the throw escaped as an uncaughtException and killed the
+  session (reported in the wild from `runner.js` `assertActive` via `hasUI`).
+
+### Why an extension could not handle it
+
+- The armed continuation timer, the retained `#ctx`, and the continuation
+  admission path are all private state inside the builtin Goal extension; no
+  external hook observes or wraps that callback.
+
+### Expected merge conflict zones
+
+- LOW in `monitor-continuation.ts` around `#armTimer` and
+  `#buildContinuationContent` where the `hasUI` reads are now helper calls.
+
+## 2026-08-24 - provider retry exhaustion uses guarded recovery
+
+### What changed
+
+- `index.ts`, `agent-end-continuation.ts`, `monitor-continuation.ts`, and `continuation.ts` keep active Goals active after terminal provider/watchdog failures and queue one guarded `providerRecovery` continuation after `agent_settled`. Explicit user aborts remain blocked; system aborts retain `systemRecovery`; the legacy provider-error blocked reason remains resumable.
+
+### Why
+
+- Provider retry exhaustion is infrastructure failure, not a user decision. The previous block stranded active Goals.
+
+### Why an extension could not handle it
+
+- Goal state transitions, settlement latches, and continuation admission are private to the builtin Goal extension.
+
+### Expected merge conflict zones
+
+- LOW: Goal agent-end routing and monitor continuation admission.
+
+## Wait countdown hides while a turn runs (2026-08-24)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/wait-ticker.ts`
+  `GoalWaitTicker.tick` now renders `undefined` (clearing the `goal-wait`
+  footer segment) whenever `ctx.isIdle()` is false, and re-renders the
+  countdown on the next idle tick. The armed continuation timer, its
+  cache-TTL deadline, and the cache-warm iteration accounting are untouched;
+  only the render follows session idleness.
+
+### Why
+
+- A turn started by a channel the goal continuation did not deliver (a
+  monitor event, a task completion notification, a scheduled wakeup) left the
+  parked wait countdown rendering over the Working indicator for the whole
+  turn — observed live: `▰▰▰▱… goal continues in 2m 55s · 1 bash on duty`
+  beside `Working (1m 10s)`. The label was doubly false: the goal was being
+  pursued, not waited on, and the timer would no-op on `!ctx.isIdle()` when
+  it fired.
+- Cancelling the timer on foreign turn starts was rejected: the monitor wait
+  schedule is cache-TTL-driven, so re-arming at the next agent_end resets
+  the wake clock and corrupts cache-warm iteration accounting (proven by
+  `goal-cache-warmup.test.ts`).
+
+### Why an extension could not handle it
+
+- The ticker and its render seam live inside the builtin goal extension
+  itself; the idleness contract of its footer segment is the extension's own
+  display logic, not a capability another extension can provide.
+
+### Expected merge conflict zones
+
+- None upstream: `wait-ticker.ts` is a fork-only file with no pi-mono
+  counterpart.
+
+## Cache-warm ready time renders in the local timezone (2026-08-22)
+
+### What changed
+
+- `cache-warm.ts` gains `formatWakeTimestamp(dueAtMs)`: it formats the expected
+  wake time in the user's local system timezone via `Intl.DateTimeFormat`
+  (`en-CA`, `hourCycle: "h23"`, short `timeZoneName`), producing
+  `2026-08-22 16:51 GMT+9`-style stamps, and falls back to the legacy
+  `<iso> UTC` shape when local formatting throws or returns incomplete parts.
+- `cache-warm-renderer.ts` `formatExpectedWake` now delegates to
+  `formatWakeTimestamp` instead of pinning `toISOString()` UTC output.
+
+### Why
+
+- The cache-warm notice showed `ready 2026-08-22 07:51 UTC (4m 30s)` regardless
+  of the user's timezone, forcing mental conversion on every wait. Users read
+  the line to know when the goal resumes; local time with a zone label answers
+  directly, and UTC remains the fallback for platforms without ICU timezone
+  data.
+
+### Why an extension could not handle it
+
+- The renderer and its formatting helpers live inside the builtin goal
+  extension itself; the change is the extension's own display logic, not a new
+  capability another extension could provide.
+
+### Expected merge conflict zones
+
+- None upstream: `cache-warm.ts` and `cache-warm-renderer.ts` are fork-only
+  files with no pi-mono counterpart.
+
+## Reload re-engages active goals instead of parking them (2026-08-18, fixes #934)
+
+### What changed
+
+- `session_start` with reason `"reload"` now routes through
+  `reload-reengagement.ts` (`reengageGoalAfterReload`) instead of skipping every
+  goal. A non-active goal (paused/blocked/complete) is still skipped, so a
+  reload never auto-starts an agent the user stopped. An active goal with live
+  wake sources re-arms the monitor-delayed backstop via the new
+  `MonitorAwareGoalContinuation.rearmMonitorBackstop`; an active goal without
+  wake sources queues a continuation through the existing sessionStart
+  admission, trailing-flood suppression included.
+- `MonitorAwareGoalContinuation` gains `hasActiveWakeSources()` and
+  `rearmMonitorBackstop(goal)`. The terminal builtin's reload `session_start`
+  replays its monitor snapshots before Goal's handler runs (builtin order is
+  load-bearing), so live-channel counts are already restored when the
+  re-engagement decision reads them.
+
+### Why
+
+- A config reload retires the extension generation: `session_shutdown` disposes
+  the continuation monitor, cancelling every armed timer (user grace, monitor
+  backstop) with it. The 2026-07-27 guard then skipped re-engagement for ANY
+  goal on reload, so an active goal mid-wait parked until the next user
+  message; wake-source drain could not self-heal because drain-fire requires a
+  scheduled monitor-kind continuation that never existed post-reload.
+- The guard's protective case is already covered by status: every user stop
+  marks the goal blocked via `session_abort` / `agent_end` abortSource "user",
+  and the continuation evaluator denies non-active goals. Skipping active goals
+  as well was over-broad and produced the reported stall.
+
+### Why an extension could not handle it
+
+- The continuation timers, wake-source counts, and the reload admission
+  decision are private to this builtin's monitor and `session_start` handler;
+  an external extension cannot re-arm a disposed timer or observe the reload
+  reason with the goal's continuation state.
+
+### Expected merge conflict zones
+
+- LOW in `index.ts` around the `session_start` reload branch; LOW in
+  `monitor-continuation.ts` around the new public accessors; LOW in the new
+  `reload-reengagement.ts`.
+
+## External continuation holds pause Goal monitor recovery until release (2026-08-18)
+
+### What changed
+
+- Goal now subscribes to the shared `continuation_hold_state` event through a
+  focused channel-subscription module. An active source maps to the existing
+  `holdDirectInput("external:<source>")` mechanism; release maps to
+  `resolveDirectInput(..., false)`.
+- Existing terminal-monitor and `wake_source_state` subscriptions moved into
+  the same helper without changing their count or timer semantics.
+
+### Why
+
+- A wake source deliberately schedules periodic Goal continuation while work is
+  live. Loop-guard's post-recovery hard stop needs the opposite contract:
+  preserve the active Goal but prevent every automatic continuation until real
+  input releases ownership.
+
+### Why an extension could not handle it
+
+- The continuation timer and direct-input hold set are private to Goal. A
+  generic event is the narrow boundary that lets another builtin claim and
+  release terminal ownership without importing Goal internals or changing Goal
+  status.
+
+### Expected merge conflict zones
+
+- LOW in `monitor-continuation.ts` channel subscription wiring; LOW in the new
+  `channel-state-subscriptions.ts`; LOW in wake-source tests.
+
 ## Claude SDK OAuth account exhaustion blocks the goal (2026-08-14)
 
 ### What changed
@@ -1045,3 +1239,15 @@ codex-aligned tool naming, and budget-driven behavior removed. An optional
 - LOW in `types.ts` around the `SessionEvent` union and `on()` overloads (additive).
 - LOW in `agent-session.ts` around `abort()` and the `AgentSessionEvent` union (additive).
 - LOW in `goal/index.ts` around the session_start handler and the new session_abort handler.
+
+## 2026-08-20 — tickers retire on stale extension contexts
+
+`GoalWaitTicker`/`GoalElapsedTicker` previously relied on `index.ts` render
+callbacks that swallowed the stale-ctx error thrown after session
+replacement/reload, so a ticker holding a retired ctx kept ticking forever
+while rendering nothing — the footer elapsed/countdown froze and the TUI lost
+its only periodic repaint source in idle sessions. Both tickers now detect the
+stale-ctx error (`stale-context.ts`) inside `tick()` and retire (clear the
+interval, drop the ctx); `GoalWaitTicker.stop()` tolerates a stale ctx on its
+final clear render. A later `sync()` with a live ctx re-arms them. Covered by
+`test/suite/goal-ticker-stale-context.test.ts`.
