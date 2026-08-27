@@ -38,6 +38,26 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 
 - LOW: the `Args` fields, parse branch, and help rows in `args.ts`.
 
+## `NEURALWATT_API_KEY` in `--help` environment list (2026-08-21)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: added `NEURALWATT_API_KEY` to the environment-variable table
+  printed by `--help`, next to the other provider key rows (after `KIMI_API_KEY`, before the
+  `CLOUDFLARE_*` group).
+
+### Why
+
+- The help output is the discoverable list of credentials the CLI reads. A provider whose key is
+  detected (via `env-api-keys.ts`) but undocumented is invisible to anyone not reading source.
+
+### Why an extension could not handle it
+
+- `--help` is rendered during argument parsing, before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: one added row in the help env-var block.
 
 ## Fork CLI flags and branded help retained over upstream 59a71b23 (2026-08-19)
 

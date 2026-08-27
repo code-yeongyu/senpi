@@ -439,6 +439,32 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 
 - `settings-manager.ts` around `acquireLockSyncWithRetry` (line ~527). `retry-fallback/controller.ts` around `nextCandidate`/`hasConfiguredChain` and the new `canonicalChains` private method.
 
+## 2026-08-21 - Neuralwatt model selection defaults
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: added the `neuralwatt` entry to the provider
+  default-model map, selecting `kimi-k2.6-fast` (cheap, non-reasoning). The value is the bare catalog
+  id because neuralwatt model ids are unprefixed, unlike gateway providers whose ids carry an
+  `owner/model` shape; `findInitialModel` matches `m.id === defaultId` with no prefix stripping.
+- `packages/coding-agent/src/core/provider-display-names.ts`: added the `neuralwatt` -> `Neuralwatt`
+  display name used by `/login` and the model picker.
+
+### Why
+
+- Both maps hang off `KnownProvider` from `packages/ai` (`defaultModelPerProvider` is typed
+  `Record<KnownProvider, string>`; omitting the entry is a compile error once the union grows), so they
+  are part of provider registration rather than an optional nicety.
+
+### Why an extension could not handle it
+
+- Default-model resolution and display naming run inside the model runtime that extensions consume;
+  an extension observes the resolved model but cannot supply the default before resolution.
+
+### Expected merge conflict zones
+
+- LOW: one added line in each map. `model-resolver.ts` inserts after the `moonshotai-cn` run;
+  `provider-display-names.ts` is alphabetically ordered (`moonshotai-cn` < `neuralwatt` < `nvidia`).
 
 ## 2026-08-20 - Resume picker caches exact streaming summaries
 

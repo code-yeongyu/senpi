@@ -31,6 +31,9 @@
 		},
 		"ALIBABA_TOKEN_PLAN_API_KEY": {
 			"description": "(Optional) Alibaba Cloud Model Studio Token Plan API key (ap-southeast-1)."
+		},
+		"NEURALWATT_API_KEY": {
+			"description": "(Optional) Neuralwatt API key (Neuralwatt's OpenAI-compatible inference endpoint)."
 		}
 	},
 	"customizations": {

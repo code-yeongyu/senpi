@@ -52,6 +52,7 @@ export type KnownProvider =
 	| "anthropic"
 	| "google"
 	| "google-vertex"
+	| "neuralwatt"
 	| "openai"
 	| "azure-openai-responses"
 	| "openai-codex"

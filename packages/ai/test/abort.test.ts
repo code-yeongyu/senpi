@@ -266,6 +266,18 @@ describe("AI Providers Abort Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.NEURALWATT_API_KEY)("Neuralwatt Provider Abort", () => {
+		const llm = getModel("neuralwatt", "kimi-k2.6-fast");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+	});
+
 	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan Provider Abort", () => {
 		const llm = getModel("alibaba-token-plan", "qwen3.7-max");
 

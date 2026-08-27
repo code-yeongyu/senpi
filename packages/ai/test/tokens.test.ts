@@ -288,6 +288,14 @@ describe("Token Statistics on Abort", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.NEURALWATT_API_KEY)("Neuralwatt Provider", () => {
+		const llm = getModel("neuralwatt", "kimi-k2.6-fast");
+
+		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			await testTokensOnAbort(llm);
+		});
+	});
+
 	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)("Alibaba Token Plan Provider", () => {
 		const llm = getModel("alibaba-token-plan", "qwen3.7-max");
 

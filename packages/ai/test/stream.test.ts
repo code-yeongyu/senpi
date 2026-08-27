@@ -1204,6 +1204,34 @@ describe("Generate E2E Tests", () => {
 		},
 	);
 
+	describe.skipIf(!process.env.NEURALWATT_API_KEY)("Neuralwatt Provider (GLM 5.2 Flex via OpenAI Completions)", () => {
+		const llm = getModel("neuralwatt", "glm-5.2-flex");
+		const thinkingOptions = {
+			thinkingEnabled: true,
+			reasoningEffort: "high",
+		} satisfies StreamOptionsWithExtras;
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			await handleThinking(llm, thinkingOptions);
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, thinkingOptions);
+		});
+	});
+
 	describe.skipIf(!process.env.ALIBABA_TOKEN_PLAN_API_KEY)(
 		"Alibaba Token Plan Provider (Qwen3.7 Max via OpenAI Completions)",
 		() => {

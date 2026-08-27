@@ -84,6 +84,7 @@ export function getApiKeyEnvVars(provider: string): readonly string[] | undefine
 	const envMap: Record<string, string> = {
 		"alibaba-token-plan": "ALIBABA_TOKEN_PLAN_API_KEY",
 		"ant-ling": "ANT_LING_API_KEY",
+		neuralwatt: "NEURALWATT_API_KEY",
 		"qwen-token-plan": "QWEN_TOKEN_PLAN_API_KEY",
 		"qwen-token-plan-cn": "QWEN_TOKEN_PLAN_CN_API_KEY",
 		"qwen-token-plan-individual": "QWEN_TOKEN_PLAN_API_KEY",
