@@ -55,8 +55,10 @@ export interface Args {
 	projectTrustOverride?: boolean;
 	/** Launch the experimental grok interactive chrome. */
 	grokNeo?: boolean;
-	/** Serve independently routed plain-RPC sessions over one stdio process. */
+	/** Serve independently routed plain-RPC sessions over one host. */
 	multiSession?: boolean;
+	/** Multi-session RPC listener: stdio://, unix://, unix:///path, or a socket path. */
+	listen?: string;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
@@ -87,7 +89,16 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 
-		if (arg === "--help" || arg === "-h") {
+		if (arg === "--") {
+			for (const positionalArg of args.slice(i + 1)) {
+				if (positionalArg.startsWith("@")) {
+					result.fileArgs.push(positionalArg.slice(1));
+				} else {
+					result.messages.push(positionalArg);
+				}
+			}
+			break;
+		} else if (arg === "--help" || arg === "-h") {
 			result.help = true;
 		} else if (arg === "--version" || arg === "-v") {
 			result.version = true;
@@ -227,6 +238,15 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.grokNeo = true;
 		} else if (arg === "--multi-session") {
 			result.multiSession = true;
+		} else if (arg === "--listen" && result.mode === "rpc") {
+			const value = args[i + 1];
+			if (value === undefined || value.startsWith("--")) {
+				result.diagnostics.push({ type: "error", message: "--listen requires a value" });
+			} else {
+				result.listen = value;
+				result.multiSession = true;
+				i++;
+			}
 		} else if (arg.startsWith("@")) {
 			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (arg.startsWith("--")) {
@@ -270,7 +290,7 @@ export function printHelp(extensionFlags?: ExtensionFlag[], grokNeoEnabled = isG
 	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
 
 ${chalk.bold("Usage:")}
-  ${APP_NAME} [options] [@files...] [messages...]
+  ${APP_NAME} [options] [--] [@files...] [messages...]
 
 ${chalk.bold("Commands:")}
   ${APP_NAME} install <source> [-l]     Install extension source and add to settings
@@ -331,7 +351,9 @@ ${chalk.bold("Options:")}
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
-${grokNeoOptionsText}  --help, -h                     Show this help
+${grokNeoOptionsText}  --multi-session               Serve multiple routed RPC sessions
+  --listen <address>            RPC listener: stdio://, unix://, unix:///path, or a socket path
+  --help, -h                     Show this help
   --version, -v                  Show version number
 
 Extensions can register additional flags (e.g., --plan from plan-mode extension).${extensionFlagsText}
@@ -354,6 +376,9 @@ ${chalk.bold("Examples:")}
 
   # Non-interactive mode (process and exit)
   ${APP_NAME} -p "List all .ts files in src/"
+
+  # Prompt beginning with a dash
+  ${APP_NAME} -p -- "- Summarize these points"
 
   # Multiple messages (interactive)
   ${APP_NAME} "Read package.json" "What dependencies do we have?"
@@ -457,12 +482,13 @@ ${chalk.bold("Environment Variables:")}
   PI_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
 
 ${chalk.bold("Built-in Tool Names:")}
-  read   - Read file contents
-  bash   - Execute bash commands
-  edit   - Edit files with find/replace
-  write  - Write files (creates/overwrites)
-  grep   - Search file contents (read-only, off by default)
-  find   - Find files by glob pattern (read-only, off by default)
-  ls     - List directory contents (read-only, off by default)
+  read       - Read file contents
+  bash       - Execute bash commands
+  powershell - Execute PowerShell commands on Windows
+  edit       - Edit files with find/replace
+  write      - Write files (creates/overwrites)
+  grep       - Search file contents (read-only, off by default)
+  find       - Find files by glob pattern (read-only, off by default)
+  ls         - List directory contents (read-only, off by default)
 `);
 }

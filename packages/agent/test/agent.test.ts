@@ -1,10 +1,4 @@
-import {
-	type AssistantMessage,
-	type AssistantMessageEvent,
-	EventStream,
-	getModel,
-	type Message,
-} from "@earendil-works/pi-ai/compat";
+import { type AssistantMessage, type AssistantMessageEvent, EventStream, getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -176,54 +170,6 @@ describe("Agent", () => {
 		expect(agent.state.systemPrompt).toBe("You are a helpful assistant.");
 		expect(agent.state.model).toBe(customModel);
 		expect(agent.state.thinkingLevel).toBe("low");
-	});
-
-	it("builds provider context through configured transforms", async () => {
-		const sourceMessages: AgentMessage[] = [
-			{ role: "user", content: "discard", timestamp: 1 },
-			{ role: "user", content: "keep", timestamp: 2 },
-		];
-		const transformedMessages: AgentMessage[] = [sourceMessages[1]];
-		const callOrder: string[] = [];
-		const abortController = new AbortController();
-		let transformInput: AgentMessage[] | undefined;
-		let convertInput: AgentMessage[] | undefined;
-		const agent = new Agent({
-			streamFn: unusedStreamFunction,
-			transformContext: async (messages, signal) => {
-				callOrder.push("transform");
-				transformInput = messages;
-				expect(signal).toBe(abortController.signal);
-				return transformedMessages;
-			},
-			convertToLlm: async (messages) => {
-				callOrder.push("convert");
-				convertInput = messages;
-				return messages.filter(
-					(message): message is Message =>
-						message.role === "user" || message.role === "assistant" || message.role === "toolResult",
-				);
-			},
-		});
-		const tools: AgentTool[] = [];
-
-		const context = await agent.buildProviderContext(
-			{
-				systemPrompt: "System prompt",
-				messages: sourceMessages,
-				tools,
-			},
-			abortController.signal,
-		);
-
-		expect(callOrder).toEqual(["transform", "convert"]);
-		expect(transformInput).toBe(sourceMessages);
-		expect(convertInput).toBe(transformedMessages);
-		expect(context).toEqual({
-			systemPrompt: "System prompt",
-			messages: transformedMessages,
-			tools,
-		});
 	});
 
 	it("should subscribe to events", () => {

@@ -30,6 +30,11 @@ task-tool names are known.
 - TUI and HTML-export rendering for syntax-highlighted cells, status rows,
   task progress, structured display values, truncation warnings, and image
   fallbacks.
+- Runtime identity badges in eval headers — `eval py (3.14.7, ~/.venv/bin/python3)`,
+  `eval js (node 26.7.0, /opt/…/bin/node)` — with the same `runtime` info on
+  `EvalToolDetails` and its `cells` for RPC consumers; interpreter detection
+  resolves absolute executable paths, and the eval prompt host line names the
+  JS runtime (`node`/`bun`).
 - JavaScript import rewriting for supported local modules and package imports
   in the persistent Node.js worker.
 - GPT models receive a terse `eval` prompt dialect that prioritizes composing

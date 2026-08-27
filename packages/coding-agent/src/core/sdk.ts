@@ -35,6 +35,7 @@ import {
 	createFindTool,
 	createGrepTool,
 	createLsTool,
+	createPowerShellTool,
 	createReadOnlyTools,
 	createReadTool,
 	createWriteTool,
@@ -155,6 +156,7 @@ export {
 	createFindTool,
 	createGrepTool,
 	createLsTool,
+	createPowerShellTool,
 	createReadOnlyTools,
 	createReadTool,
 	createWriteTool,
@@ -299,12 +301,19 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			defaultProvider: settingsManager.getDefaultProvider(),
 			defaultModelId: settingsManager.getDefaultModel(),
 			defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
+			modelThinkingLevels: settingsManager.getAllModelThinkingLevels(),
 			modelRuntime,
 		});
 		model = result.model;
 		initialModelProvenance = result.provenance;
-		initialResolvedThinkingLevel = result.thinkingLevel;
-		initialThinkingSelection = result.thinkingSelection;
+		const selectedModel = model;
+		const scopedSelection = selectedModel
+			? scopedModels.find(
+					(entry) => entry.model.provider === selectedModel.provider && entry.model.id === selectedModel.id,
+				)
+			: undefined;
+		initialResolvedThinkingLevel = scopedSelection?.thinkingLevel ?? result.thinkingLevel;
+		initialThinkingSelection = scopedSelection?.thinkingSelection ?? result.thinkingSelection;
 		if (!model) {
 			modelFallbackMessage = formatNoModelsAvailableMessage();
 		} else if (modelFallbackMessage) {
@@ -397,11 +406,22 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
 			const headerRunner = extensionRunnerRef.current;
+			// A provider-declared profile owns the transport retry budget: a disabled
+			// providerRequest stage sends 0 so user retry.provider.* cannot hand it a
+			// hidden second budget. Providers without a declared profile keep the
+			// user's retry.provider.maxRetries transport knob exactly as before.
+			const declaredPolicy = model.provider ? modelRuntime.getProvider(model.provider)?.retryPolicy : undefined;
+			const profileMaxRetries =
+				declaredPolicy === undefined
+					? providerRetrySettings.maxRetries
+					: declaredPolicy.providerRequest.enabled
+						? declaredPolicy.providerRequest.maxRetries
+						: 0;
 			return modelRuntime.streamSimple(model, context, {
 				...options,
 				timeoutMs,
 				websocketConnectTimeoutMs,
-				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
+				maxRetries: options?.maxRetries ?? profileMaxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
 				transformHeaders: async (requestHeaders) => {
 					const headers = mergeProviderAttributionHeaders(

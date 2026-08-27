@@ -86,6 +86,29 @@ describe("retry fallback hard errors", () => {
 		expect(harness.eventsOfType("auto_retry_end").filter((event) => event.success)).toEqual([]);
 	});
 
+	it("emits fallback exhaustion when a hard-error chain has no next candidate", async () => {
+		const harness = await createHarness({
+			settings: { retry: { enabled: true, baseDelayMs: 1 } },
+		});
+		harnesses.push(harness);
+		const internals = harness.session as unknown as {
+			_retryFallback: { exhaustedChainKey: string; tryFallback: () => Promise<boolean> };
+			_handleRetryableError: (
+				message: ReturnType<typeof fauxAssistantMessage>,
+				options: { hardErrorFallback: boolean },
+			) => Promise<string>;
+		};
+		Object.defineProperty(internals._retryFallback, "exhaustedChainKey", { value: primary, configurable: true });
+		internals._retryFallback.tryFallback = async () => false;
+
+		await internals._handleRetryableError(
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: insufficientQuota }),
+			{ hardErrorFallback: true },
+		);
+
+		expect(harness.eventsOfType("retry_fallback_exhausted")).toMatchObject([{ chainKey: primary }]);
+	});
+
 	it("settles an insufficient-quota error without a configured fallback", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, baseDelayMs: 1 } } });
 		harnesses.push(harness);

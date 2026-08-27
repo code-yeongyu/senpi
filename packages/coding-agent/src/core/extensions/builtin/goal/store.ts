@@ -71,6 +71,7 @@ export async function createGoal(ref: GoalStoreRef, objective: string, tokenBudg
 			tokensUsed: 0,
 			timeUsedSeconds: 0,
 			consecutiveContinuations: 0,
+			unattendedContinuations: 0,
 			createdAt: now,
 			updatedAt: now,
 			lastStartedAt: now,
@@ -112,6 +113,7 @@ export async function updateGoal(
 				tokensUsed: 0,
 				timeUsedSeconds: 0,
 				consecutiveContinuations: 0,
+				unattendedContinuations: 0,
 				createdAt: now,
 				updatedAt: now,
 				...(tokenBudget === undefined ? {} : { tokenBudget }),
@@ -132,6 +134,7 @@ export async function updateGoal(
 		);
 		if (next.status !== current.status) {
 			next.consecutiveContinuations = 0;
+			next.unattendedContinuations = 0;
 			delete next.lastContinuationSignature;
 		}
 		if (tokenBudget === undefined) delete next.tokenBudget;
@@ -189,6 +192,7 @@ export async function recordContinuationDelivered(
 	ref: GoalStoreRef,
 	signature: string,
 	expectedGoalId?: string,
+	options: { countUnattended?: boolean } = {},
 ): Promise<Goal | null> {
 	return enqueueGoalMutation(ref, async () => {
 		const goal = await readGoalFile(ref);
@@ -196,6 +200,7 @@ export async function recordContinuationDelivered(
 		const next: Goal = {
 			...goal,
 			consecutiveContinuations: (goal.consecutiveContinuations ?? 0) + 1,
+			unattendedContinuations: (goal.unattendedContinuations ?? 0) + (options.countUnattended === false ? 0 : 1),
 			lastContinuationSignature: signature,
 		};
 		await writeGoalFile(ref, next);
@@ -203,11 +208,15 @@ export async function recordContinuationDelivered(
 	});
 }
 
-export async function resetContinuationStreak(ref: GoalStoreRef): Promise<Goal | null> {
+export async function resetContinuationStreak(
+	ref: GoalStoreRef,
+	options: { unattended?: boolean } = {},
+): Promise<Goal | null> {
 	return enqueueGoalMutation(ref, async () => {
 		const goal = await readGoalFile(ref);
 		if (!goal) return goal;
 		const next: Goal = { ...goal, consecutiveContinuations: 0 };
+		if (options.unattended === true) next.unattendedContinuations = 0;
 		delete next.lastContinuationSignature;
 		await writeGoalFile(ref, next);
 		return next;

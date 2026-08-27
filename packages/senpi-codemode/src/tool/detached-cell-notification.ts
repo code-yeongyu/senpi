@@ -12,7 +12,6 @@ export function detachedNotificationSpillPath(artifactsDir: string | undefined, 
 export async function buildDetachedCellNotification(
 	snapshot: EvalDetachedCellSnapshot,
 	spillPath: string | undefined,
-	artifactsDir: string | undefined,
 ): Promise<EvalDetachedCellNotification> {
 	const body = notificationBody(snapshot);
 	const overflow = Buffer.byteLength(body, "utf8") > NOTIFICATION_TAIL_BYTES;
@@ -21,7 +20,9 @@ export async function buildDetachedCellNotification(
 		try {
 			await mkdir(dirname(spillPath), { recursive: true });
 			await writeFile(spillPath, body, "utf8");
-			spillNotice = `\nBuffered output overflowed; full output: ${localUri(spillPath, artifactsDir)}`;
+			// The agent read tool resolves plain paths only, so the notice must carry
+			// the absolute spill path, never the kernel-helper local:// scheme.
+			spillNotice = `\nBuffered output overflowed; full output: ${spillPath}`;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			spillNotice = `\nBuffered output overflow could not be spilled: ${message}`;
@@ -82,12 +83,6 @@ function stateNoteOf(cell: EvalDetachedCellSnapshot): string {
 
 function safeCellId(cellId: string): string {
 	return cellId.replace(/[^a-zA-Z0-9_-]/gu, "_");
-}
-
-function localUri(path: string, artifactsDir: string | undefined): string {
-	if (artifactsDir === undefined) return `local://${path}`;
-	const root = join(artifactsDir, "local");
-	return path.startsWith(`${root}/`) ? `local://${path.slice(root.length + 1)}` : `local://${path}`;
 }
 
 function truncateTailUtf8(text: string, maxBytes: number): string {

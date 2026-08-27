@@ -1,8 +1,8 @@
 # packages/ai/src/api
 
-Generated: 2026-08-17. Commit `abae968e8`.
+Generated: 2026-08-24. Commit `baf15a54d`.
 
-Provider wire protocol implementations and stream adapters. Each provider ships as a concrete module plus a `.lazy.ts` wrapper that uses `lazyApi()` from `lazy.ts`.
+Provider wire protocol implementations and stream adapters. Each provider ships as a concrete module plus a `.lazy.ts` wrapper that uses `lazyApi()` from `lazy.ts`. 44 files at this level, ~19.5k LOC; the three largest (`cursor-agent.ts` 4.5k, `openai-completions.ts` 1.8k, `openai-codex-responses.ts` 1.7k) hold the streaming state machines.
 
 ## MODULE PAIRS
 
@@ -20,10 +20,11 @@ Provider wire protocol implementations and stream adapters. Each provider ships 
 | `mistral-conversations.ts` | `mistral-conversations.lazy.ts` |
 | `pi-messages.ts` | `pi-messages.lazy.ts` |
 | `openrouter-images.ts` | `openrouter-images.lazy.ts` |
+| `openai-images.ts` | `openai-images.lazy.ts` |
 
-Utility modules with no lazy wrapper: `cloudflare.ts`, `github-copilot-headers.ts`, `openai-prompt-cache.ts`, `anthropic-tool-pairs.ts` (browser-safe Anthropic tool_use/tool_result pair sanitizer; final pre-submit pass), `openai-client-auth.ts` (shared client-auth resolution from credential headers), `constrained-sampling.ts` (JSON-schema-driven constrained sampling helpers).
+Utility modules with no lazy wrapper: `cloudflare.ts`, `cloudflare-gateway-binding.ts` (`createGatewayBindingFetch` — routes gateway HTTPS URLs to the Workers AI binding; pre-authenticated in-account via a sentinel header that must be stripped before send), `github-copilot-headers.ts`, `openai-prompt-cache.ts`, `warm-prompt-cache.ts` (`warmPromptCache` pre-flight), `anthropic-tool-pairs.ts` (browser-safe Anthropic tool_use/tool_result pair sanitizer; final pre-submit pass), `openai-client-auth.ts` (shared client-auth resolution from credential headers), `constrained-sampling.ts` (JSON-schema-driven constrained sampling helpers), `cursor-conversation-rotation.ts` (Node-only; rotates a poisoned Cursor conversation up to `MAX_CURSOR_CONVERSATION_ROTATIONS`), `cursor-task-args.ts` (usable-task-arg predicates).
 
-`cursor-agent/` subdir: `types.ts` (exec-handler contracts), `pi-args.ts` (arg translators shared with `cursor-exec-bridge.ts` in coding-agent — display blocks and executed args must stay identical), `exec-modern.ts` (wire result builders for modern exec frames), `deterministic-id.ts` (stable UUID-shape ids), and `gen/agent_pb.ts` (generated protobuf-es schema; regenerate with `buf generate` from `packages/ai/proto/cursor/agent.proto`, then `node scripts/transform-cursor-agent-proto.mjs <in> <out>`; never hand-edit). `cursor-agent.ts` is Node-only: it is reached exclusively through `cursor-agent.lazy.ts`, and the Bun binary overrides it statically via `packages/ai/src/cursor-agent-provider.ts` plus `packages/coding-agent/src/bun/register-cursor-agent.ts` (imported before any Cursor provider use).
+`cursor-agent/` subdir: `types.ts` (exec-handler contracts), `pi-args.ts` (arg translators shared with `cursor-exec-bridge.ts` in coding-agent — display blocks and executed args must stay identical), `exec-modern.ts` (wire result builders for modern exec frames), `exec-lifecycle.ts` (one exec-scoped heartbeat armed at a time; next timer starts only after the current write callback succeeds), `stream-retry.ts` (`CursorRetryableStreamError` with `stall` | `transport` | `clean-end` causes), `reasoning-params.ts` (renders the resolved `src/cursor/` selection descriptor into protobuf `RequestedModel` fields), `deterministic-id.ts` (stable UUID-shape ids), and `gen/agent_pb.ts` (19.6k LOC generated protobuf-es schema; regenerate with `buf generate` from `packages/ai/proto/cursor/agent.proto`, then `node scripts/transform-cursor-agent-proto.mjs <in> <out>`; never hand-edit, and never reuse a field number that would decode into unknown fields). `cursor-agent.ts` is Node-only: it is reached exclusively through `cursor-agent.lazy.ts`, and the Bun binary overrides it statically via `packages/ai/src/cursor-agent-provider.ts` plus `packages/coding-agent/src/bun/register-cursor-agent.ts` (imported before any Cursor provider use).
 
 `openai-codex-responses/` subdir: `fallback-state.ts` (WebSocket fallback state + cooldown), `reasoning.ts` (Codex reasoning summary normalizer).
 
@@ -41,7 +42,8 @@ Utility modules with no lazy wrapper: `cloudflare.ts`, `github-copilot-headers.t
   `image_generation_call` items are structurally reconciled here (not from the installed SDK type): partial-image
   events are ignored, terminal output can backfill a missing done frame, and final base64 is aggregate-capped before
   provider-native content leaves the parser.
-- `google-shared.ts`: shared logic for both `google-generative-ai.ts` and `google-vertex.ts`.
+- `google-shared.ts`: shared logic for both `google-generative-ai.ts` and `google-vertex.ts` — message/tool conversion, thinking-level resolution and clamping, thought-signature retention, stop-reason mapping, `retryGoogleRequest`.
+- `openai-completions.ts` usage accounting: do not subtract cache writes from cached tokens for spec-compliant providers. Cache read and cache write stay separate counters.
 
 ## PROVIDERSTREAMS CONTRACT
 
@@ -55,5 +57,6 @@ All files in this directory are wildcarded in `package.json` under the `./api/*`
 
 - No ordinary dynamic imports in concrete modules; all dynamic loading goes through `.lazy.ts` wrappers.
 - Don't duplicate shared conversion logic in a single adapter; put it in `simple-options.ts`, `transform-messages.ts`, `openai-responses-shared.ts`, or `google-shared.ts`.
-- Don't hand-edit `src/models.generated.ts`; regenerate with `scripts/generate-models.ts`.
+- Don't hand-edit `src/models.generated.ts`; regenerate with `scripts/generate-models.ts` (see `scripts/AGENTS.md`).
 - Don't add top-level Node built-in imports to any module consumed in browser builds.
+- Don't sanitize by sending: unsupported native tools, thinking modes, and Cursor schema keys are stripped before the request, and reserved headers (`authorization`/`host` for Bedrock; `content-length`/`host`/the gateway auth sentinel for Cloudflare) are removed rather than forwarded.

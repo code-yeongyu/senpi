@@ -63,6 +63,14 @@ type RunContext = {
 	checkTmuxSetup: () => Promise<string | undefined>;
 	maybeWarnAboutAnthropicSubscriptionAuth: () => Promise<void>;
 	getUserInput: () => Promise<{ text: string; images?: unknown[]; pendingEchoId: string }>;
+	buildMainLoopPromptOptions: (userInput: { text: string; images?: unknown[]; pendingEchoId: string }) => {
+		streamingBehavior: "steer";
+		preflightResult: (s: boolean) => void;
+		promptDisposition: (d: string) => void;
+	};
+	clearStatusIndicator: (kind?: string) => void;
+	ui: { requestRender: () => void };
+	agentIdle: boolean;
 	showNewVersionNotification: (version: string) => void;
 	showPackageUpdateNotification: (packages: string[]) => void;
 	showRiskyMainModelWarning: () => void;
@@ -75,6 +83,10 @@ type InteractiveModePrivate = {
 	setupEditorSubmitHandler(this: SubmitContext): void;
 	getUserInput(this: InputContext): Promise<{ text: string; images?: unknown[] }>;
 	takeSubmissionImages(this: SubmitContext, submittedText: string): unknown[];
+	buildMainLoopPromptOptions(
+		this: RunContext,
+		userInput: { text: string; images?: unknown[]; pendingEchoId: string },
+	): { streamingBehavior: "steer"; preflightResult: (s: boolean) => void; promptDisposition: (d: string) => void };
 	run(this: RunContext): Promise<void>;
 };
 
@@ -166,6 +178,11 @@ describe("InteractiveMode startup input", () => {
 			checkTmuxSetup: vi.fn(async () => undefined),
 			maybeWarnAboutAnthropicSubscriptionAuth: vi.fn(async () => {}),
 			getUserInput,
+			buildMainLoopPromptOptions: (userInput: { text: string; images?: unknown[]; pendingEchoId: string }) =>
+				interactiveModePrototype.buildMainLoopPromptOptions.call(context, userInput),
+			clearStatusIndicator: vi.fn(),
+			ui: { requestRender: vi.fn() },
+			agentIdle: false,
 			showNewVersionNotification: vi.fn(),
 			showPackageUpdateNotification: vi.fn(),
 			showRiskyMainModelWarning: vi.fn(),

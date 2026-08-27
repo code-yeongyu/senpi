@@ -3,7 +3,8 @@ import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore 
 
 /**
  * Default in-memory credential store. Apps inject persistent stores.
- * Keyed by `Provider.id`, one credential per provider; see `CredentialStore`.
+ * Keyed by `Provider.id`, one entry per provider (possibly a pooled one);
+ * see `CredentialStore`.
  * Writes are serialized per provider through a promise chain.
  */
 export class InMemoryCredentialStore implements CredentialStore {

@@ -93,7 +93,7 @@ export class EvalDetachedCellManager {
 		this.#artifactsDir = options.artifactsDir;
 		this.#onStatusChange = options.onStatusChange;
 		this.#onWakeSourceState = options.onWakeSourceState;
-		this.#notificationQueue = new DetachedNotificationQueue(options.notifier, options.artifactsDir);
+		this.#notificationQueue = new DetachedNotificationQueue(options.notifier);
 		this.#now = options.now ?? Date.now;
 		this.#hardLimitSeconds = options.hardLimitSeconds ?? DEFAULT_HARD_LIMIT_SECONDS;
 	}

@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import type { TLocalizedValidationError } from "typebox/error";
 import { stripJsonComments } from "../utils/json.ts";
 import { normalizePath } from "../utils/paths.ts";
+import { stripBom } from "../utils/text.ts";
 import {
 	type ModelsJson,
 	type ModelsJsonProvider,
@@ -84,6 +85,7 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	supportsDeveloperRole: Type.Optional(Type.Boolean()),
 	supportsReasoningEffort: Type.Optional(Type.Boolean()),
 	supportsUsageInStreaming: Type.Optional(Type.Boolean()),
+	supportsFinishReason: Type.Optional(Type.Boolean()),
 	maxTokensField: Type.Optional(Type.Union([Type.Literal("max_completion_tokens"), Type.Literal("max_tokens")])),
 	requiresToolResultName: Type.Optional(Type.Boolean()),
 	requiresAssistantAfterToolResult: Type.Optional(Type.Boolean()),
@@ -201,8 +203,7 @@ const ProviderConfigSchema = Type.Object({
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	apiKey: Type.Optional(Type.String({ minLength: 1 })),
 	api: Type.Optional(Type.String({ minLength: 1 })),
-	oauth: Type.Optional(Type.Literal("radius")),
-	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+		headers: Type.Optional(Type.Record(Type.String(), Type.String())),
 	compat: Type.Optional(ProviderCompatSchema),
 	authHeader: Type.Optional(Type.Boolean()),
 	models: Type.Optional(Type.Array(ModelDefinitionSchema)),
@@ -286,6 +287,8 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	supportsDeveloperRole: Type.Optional(Type.Boolean()),
 	supportsReasoningEffort: Type.Optional(Type.Boolean()),
 	supportsUsageInStreaming: Type.Optional(Type.Boolean()),
+	supportsFinishReason: Type.Optional(Type.Boolean()),
+	supportsFinishReason: Type.Optional(Type.Boolean()),
 	maxTokensField: Type.Optional(Type.Union([Type.Literal("max_completion_tokens"), Type.Literal("max_tokens")])),
 	requiresToolResultName: Type.Optional(Type.Boolean()),
 	requiresAssistantAfterToolResult: Type.Optional(Type.Boolean()),
@@ -408,8 +411,7 @@ const ProviderConfigSchema = Type.Object({
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	apiKey: Type.Optional(Type.String({ minLength: 1 })),
 	api: Type.Optional(Type.String({ minLength: 1 })),
-	oauth: Type.Optional(Type.Literal("radius")),
-	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+		headers: Type.Optional(Type.Record(Type.String(), Type.String())),
 	compat: Type.Optional(ProviderCompatSchema),
 	authHeader: Type.Optional(Type.Boolean()),
 	models: Type.Optional(Type.Array(ModelDefinitionSchema)),
@@ -465,7 +467,7 @@ export class ModelConfig {
 	private static parse(content: string, path: string): ModelConfig {
 		let parsed: unknown;
 		try {
-			parsed = JSON.parse(stripJsonComments(content));
+			parsed = JSON.parse(stripJsonComments(stripBom(content)));
 		} catch (error) {
 			return new ModelConfig(
 				new Map(),

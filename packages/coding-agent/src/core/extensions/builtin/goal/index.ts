@@ -6,7 +6,6 @@ import { GOAL_CACHE_WARMUP_ENTRY_TYPE } from "./cache-warm.ts";
 import { renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
 import { registerGoalCommand } from "./command-registration.ts";
 import { GOAL_CONTINUATION_CAP } from "./continuation.ts";
-import { continuationCapRecoveryHint, PROVIDER_ERROR_BLOCKED_REASON } from "./continuation-recovery.ts";
 import { GoalDirectInputLifecycle } from "./direct-input-lifecycle.ts";
 import { GoalElapsedTicker } from "./elapsed-ticker.ts";
 import { formatGoalForTool, goalStatusLabel } from "./format.ts";
@@ -18,7 +17,6 @@ import { isStaleExtensionContextError } from "./stale-context.ts";
 import { accountGoalUsage, readGoal, updateGoal } from "./store.ts";
 import { GOAL_STORE_CHANGED_EVENT, isGoalStoreChangedEvent } from "./store-changed-event.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
-import { didTerminalProviderErrorEndTurn } from "./terminal-provider-error.ts";
 import { staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
 import { registerGoalTools } from "./tool-registration.ts";
 import { TurnUsageTracker } from "./turn-usage.ts";
@@ -230,18 +228,6 @@ export default function goalExtension(pi: ExtensionAPI): void {
 				{ status: "blocked", reason: "user interrupted the turn" },
 				"model",
 			);
-		} else if (didTerminalProviderErrorEndTurn(event) && goal?.status === "active") {
-			goal = await updateGoal(
-				goalStoreRef(ctx),
-				{ status: "blocked", reason: PROVIDER_ERROR_BLOCKED_REASON },
-				"model",
-			);
-			if (ctx.hasUI) {
-				ctx.ui.notify(
-					`Goal ${goalStatusLabel(goal.status)}\n${formatGoalForTool(goal)}\n${continuationCapRecoveryHint(PROVIDER_ERROR_BLOCKED_REASON)}`,
-					"warning",
-				);
-			}
 		}
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);

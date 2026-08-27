@@ -455,6 +455,7 @@ describe("AgentSession retry and event characterization", () => {
 			"turn_end",
 			"agent_end",
 			"agent_settled",
+			"agent_idle",
 		]);
 	});
 
@@ -501,6 +502,7 @@ describe("AgentSession retry and event characterization", () => {
 			"turn_end",
 			"agent_end",
 			"agent_settled",
+			"agent_idle",
 		]);
 	});
 
@@ -532,7 +534,8 @@ describe("AgentSession retry and event characterization", () => {
 		await harness.session.prompt("hi");
 
 		expect(harness.eventsOfType("agent_end")).toHaveLength(1);
-		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_settled");
+		await harness.session.waitForIdle();
+		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_idle");
 	});
 
 	it("delivers retry_probe_scheduled to a subscribed listener with payload intact", async () => {
@@ -652,7 +655,8 @@ describe("AgentSession retry and event characterization", () => {
 		await promptPromise;
 
 		expect(harness.eventsOfType("agent_end")).toHaveLength(1);
-		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_settled");
+		await harness.session.waitForIdle();
+		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_idle");
 		const lastMessage = harness.session.messages[harness.session.messages.length - 1];
 		expect(lastMessage?.role).toBe("assistant");
 		if (lastMessage?.role === "assistant") {

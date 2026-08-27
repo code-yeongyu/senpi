@@ -1,5 +1,86 @@
 # Changes
 
+## 2026-08-27 - Optional postMutate seam inside the file mutation queue
+
+### What changed
+
+- `packages/agent/src/harness/tools/tool-context.ts` adds an optional `postMutate` hook to
+  `ExecutionToolContext` plus the `PostMutateContext`, `PostMutateResult`, and `PostMutateHook`
+  contracts describing it.
+- `packages/agent/src/harness/tools/post-mutate.ts` (fork-only) runs the hook and degrades a
+  rejecting hook into an appended warning note, so a landed write is never discarded.
+- `packages/agent/src/harness/tools/write.ts` invokes the hook inside the `withFileMutationQueue`
+  callback right after `env.writeFile` succeeds and appends the returned note to the success text.
+- `packages/agent/src/harness/tools/edit.ts` invokes the hook in the same position and re-reads the
+  file whenever the hook may have touched it (`changed: true`, or the hook rejected after a partial
+  rewrite) so the returned diff, unified patch, and first-changed-line describe the bytes actually
+  on disk. A hook that leaves the file unreadable is reported as a note on the successful edit
+  rather than as an edit failure, because the edit itself already landed.
+- `packages/agent/src/harness/tools/index.ts` exports the new post-mutate types.
+
+### Why
+
+Fork tooling (formatters, codegen, normalizers) must observe and adjust a file as an atomic part of
+the mutation that produced it. A `tool_result` extension hook runs outside the mutation queue, so a
+concurrent same-path mutation can interleave and the edit tool's diff metadata can describe bytes
+that are no longer on disk. Placing the seam inside the queue slot makes the post-write step
+unobservable to other mutations and lets edit report the committed content.
+
+### Why an extension could not handle it
+
+`withFileMutationQueue` is internal to the harness tool implementations; no extension hook executes
+inside a queue slot, and the edit tool computes its diff metadata before any extension sees the
+result.
+
+### Expected merge conflict zones
+
+- LOW: the `execute` bodies of `write.ts` and `edit.ts` (post-`writeFile` lines), the
+  `ExecutionToolContext` declaration in `tool-context.ts`, and the `tool-context.ts` export block in
+  `index.ts`.
+
+## Agent loop config surface re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/agent/src/agent.ts` keeps the fork run-loop surface on top of upstream: the
+  `buildProviderContext` re-export from `agent-loop.ts`, and the config passthroughs `timeoutMs`,
+  `streamStartTimeoutMs`, `removedToolHints`, `resolveUnknownToolCall`, `abortServerSideFallback`,
+  and `cursorExecHandlers`.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The `AgentConfig`/loop-config type blocks and the `agent-loop.ts` import list in
+  `packages/agent/src/agent.ts`.
+
+## 2026-08-25 - Preserve provider retry watchdog abort provenance
+
+### What changed
+
+- `packages/agent/src/agent.ts` accepts an abort reason and emits a provider-owned assistant abort for retry-watchdog cancellation.
+- `packages/agent/src/agent-loop.ts` preserves an explicit abort Error instead of replacing it with generic `Request was aborted` text.
+- `packages/agent/src/assistant-terminal-state.ts` stamps provider provenance where terminal stream failures are constructed.
+- `packages/agent/src/index.ts` exports the typed watchdog abort reason for session hosts.
+
+### Why
+
+- The session watchdog must carry the real provider stall cause through low-level Agent cancellation so retry classification and terminal reporting do not lose the provider failure.
+
+### Why an extension could not handle it
+
+- Abort reason propagation and assistant failure-message construction occur inside the browser-safe agent lifecycle.
+
+### Expected merge conflict zones
+
+- LOW: `agent.ts` abort API and `agent-loop.ts` event-reader cancellation path.
+
 ## 2026-08-20 - End the turn when idle after completed Cursor tools
 
 ### What changed

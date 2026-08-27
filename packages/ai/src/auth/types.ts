@@ -48,8 +48,9 @@ export interface AuthOperationOptions {
 }
 
 /**
- * App-owned credential storage, keyed by `Provider.id`, one credential per
- * provider. `modify` is the only write path, so every mutation is a
+ * App-owned credential storage, keyed by `Provider.id`, one entry per
+ * provider; an entry may pool sibling slots under `accounts` while its flat
+ * fields remain a valid credential. `modify` is the only write path, so every mutation is a
  * serialized read-modify-write; `Models.getAuth()` runs OAuth refresh inside
  * `modify` so concurrent requests cannot double-refresh a rotated token. The
  * app persists a credential after login via

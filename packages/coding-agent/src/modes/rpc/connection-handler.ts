@@ -18,19 +18,20 @@
 import * as crypto from "node:crypto";
 import { basename, dirname, extname } from "node:path";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
+import { VERSION } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { buildLoginProviderInfos } from "../../core/auth-providers.ts";
 import {
+	getCredentialAccounts,
+	pinCredentialAccount,
+	removeCredentialAccount,
+} from "../../core/credential-accounts.ts";
+import {
 	emitProviderAccountsChanged,
 	subscribeProviderAccountEvents,
 } from "../../core/extensions/builtin/claude-sdk-oauth/account-events.ts";
-import {
-	CLAUDE_SDK_OAUTH_PROVIDER_ID,
-	getProviderAccounts,
-	pinProviderAccount,
-	removeProviderAccount,
-} from "../../core/extensions/builtin/claude-sdk-oauth/account-management.ts";
+import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../../core/extensions/builtin/claude-sdk-oauth/account-management.ts";
 import {
 	isMcpControlInventoryChanged,
 	MCP_CONTROL_INVENTORY_CHANGED_EVENT,
@@ -732,7 +733,12 @@ export function createRpcConnectionHandler(
 					type: "response",
 					command: "get_protocol_info",
 					success: true,
-					data: { protocolVersion: 1, capabilities: ["multi_session"], mode: "classic" },
+					data: {
+						protocolVersion: 1,
+						serverVersion: VERSION,
+						capabilities: [...new Set(["multi_session", ...(options.capabilities ?? [])])],
+						mode: "classic",
+					},
 				};
 			case "open_session":
 				return error(id, "open_session", "multi_session_disabled");
@@ -786,6 +792,10 @@ export function createRpcConnectionHandler(
 			case "abort": {
 				await session.abort();
 				return success(id, "abort");
+			}
+
+			case "clear_queue": {
+				return success(id, "clear_queue", session.clearQueue());
 			}
 
 			case "new_session": {
@@ -1134,17 +1144,17 @@ export function createRpcConnectionHandler(
 			}
 
 			case "get_provider_accounts": {
-				const accounts = getProviderAccounts(session.modelRegistry.authStorage, command.provider);
+				const accounts = await getCredentialAccounts(session.modelRegistry.authStorage, command.provider);
 				return success(id, "get_provider_accounts", { accounts });
 			}
 
 			case "account_pin": {
-				await pinProviderAccount(session.modelRegistry.authStorage, command.provider, command.name);
+				await pinCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
 				return success(id, "account_pin");
 			}
 
 			case "account_remove": {
-				await removeProviderAccount(session.modelRegistry.authStorage, command.provider, command.name);
+				await removeCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
 				return success(id, "account_remove");
 			}
 

@@ -23,6 +23,7 @@ import {
 	transformContext,
 	wrapStreamWithToolCallMiddleware,
 } from "@earendil-works/pi-ai";
+import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
 import { composeApiKeyAuth, configuredApiKey, configuredHeaders, withConfiguredAuth } from "./provider-api-key-auth.ts";
 import { configuredHeaderAuthStatus, type HeaderAuthStatusSource } from "./provider-header-auth.ts";
@@ -66,6 +67,7 @@ export interface ProviderConfigInput {
 	extraBody?: Record<string, unknown>;
 	authHeader?: boolean;
 	oauth?: ExtensionOAuthConfig;
+	retryPolicy?: RetryPolicyProfile;
 	models?: Array<{
 		id: string;
 		name: string;
@@ -218,9 +220,6 @@ function applyModelsJson(
 	config: ModelsJsonProvider | undefined,
 ): Model<Api>[] {
 	if (!config) return [...baseModels];
-	if (config.oauth && !config.baseUrl) {
-		throw new Error(`Provider ${providerId}: "baseUrl" is required when "oauth" is set.`);
-	}
 	const hasOverrides = config.modelOverrides && Object.keys(config.modelOverrides).length > 0;
 	if (
 		!config.models?.length &&
@@ -232,7 +231,6 @@ function applyModelsJson(
 		!config.whitelist &&
 		!config.blacklist &&
 		!config.apiKey &&
-		!config.oauth &&
 		config.authHeader === undefined
 	) {
 		throw new Error(
@@ -244,7 +242,7 @@ function applyModelsJson(
 	const configuredBaseModels = providerId === "ollama" && config.models?.length ? [] : baseModels;
 	const models: Model<Api>[] = configuredBaseModels.map((model) => ({
 		...model,
-		baseUrl: config.oauth === "radius" ? model.baseUrl : (config.baseUrl ?? model.baseUrl),
+		baseUrl: config.baseUrl ?? model.baseUrl,
 		compat: mergeCompat(model.compat, config.compat),
 	}));
 	for (const definition of config.models ?? []) {
@@ -414,7 +412,6 @@ export function composeModelProvider(
 	const oauth = composeOAuthAuth(providerId, base, config, extension);
 	if (!apiKey && !oauth) throw new Error(`Provider ${providerId}: no authentication method configured.`);
 	// The documented local `ollama` models.json catalog must not invoke the Cloud builtin's refresh with its
-	// placeholder key. Other dynamic providers (notably custom Radius gateways) keep their provider-owned refresh.
 	const refreshBase = providerId === "ollama" && config?.models?.length ? undefined : base?.refreshModels?.bind(base);
 
 	const supportsBaseApi = (model: Model<Api>) => base?.getModels().some((entry) => entry.api === model.api) ?? false;
@@ -457,6 +454,8 @@ export function composeModelProvider(
 		name: extension?.name ?? config?.name ?? base?.name ?? extension?.oauth?.name ?? providerId,
 		baseUrl: extension?.baseUrl ?? config?.baseUrl ?? base?.baseUrl,
 		headers: base?.headers,
+		// Composed providers must not silently drop provider-declared retry profiles.
+		retryPolicy: extension?.retryPolicy ?? base?.retryPolicy,
 		auth: { ...(apiKey ? { apiKey } : {}), ...(oauth ? { oauth } : {}) },
 		getModels,
 		refreshModels:

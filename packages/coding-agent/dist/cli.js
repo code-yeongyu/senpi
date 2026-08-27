@@ -1,13 +1,56 @@
 #!/usr/bin/env node
 import "./valid-cwd.js";
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.js";
 import { enableStartupCompileCache } from "./compile-cache.js";
 import { APP_NAME, DISPLAY_VERSION, getPackageDir } from "./config.js";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.js";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.js";
+/**
+ * Hand a Bun-installed CLI to Bun before anything else runs.
+ *
+ * `bun install -g` links this script into `~/.bun/bin`, but the shebang still starts it on Node,
+ * so a user who chose Bun silently gets the Node runtime. Re-exec through the Bun binary when the
+ * script really lives in Bun's global tree (or `SENPI_RUNTIME=bun` asks for it). This runs before
+ * `enableStartupCompileCache()` on purpose: a re-exec must not pay for Node's compile-cache setup.
+ * Node `execArgv` is deliberately dropped — those flags belong to the Node process, not to Bun.
+ */
+function reexecUnderBunIfNeeded() {
+    const options = processBunRuntimeOptions(existsSync, realpathSync);
+    let scriptRealPath = process.argv[1] ?? fileURLToPath(import.meta.url);
+    try {
+        // `~/.bun/bin/<name>` is a symlink into the global tree, so the link target is what has
+        // to be classified and re-executed. A path that cannot be resolved is simply used as-is;
+        // runtime selection must never be the reason startup fails.
+        scriptRealPath = realpathSync(scriptRealPath);
+    }
+    catch { }
+    const decision = resolveBunReexec({
+        scriptRealPath,
+        versions: process.versions,
+        hasInheritedInspectorOption: hasInheritedInspectorOption(),
+        options,
+    });
+    if (decision.action === "stay") {
+        return false;
+    }
+    const result = spawnSync(decision.bunPath, [scriptRealPath, ...process.argv.slice(2)], {
+        stdio: "inherit",
+        windowsHide: true,
+    });
+    if (result.signal) {
+        process.kill(process.pid, result.signal);
+        return true;
+    }
+    process.exitCode = result.status ?? 1;
+    return true;
+}
+if (reexecUnderBunIfNeeded()) {
+    process.exit();
+}
 // Must run before cli-main is loaded, by either path: it caches the engine graph this process
 // imports on the fast path below, and it publishes NODE_COMPILE_CACHE so a spawned cli-main child
 // inherits this process's cache directory instead of resolving and re-filling its own.

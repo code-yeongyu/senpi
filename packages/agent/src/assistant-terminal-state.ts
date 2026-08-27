@@ -19,6 +19,16 @@ const EMPTY_USAGE = {
 
 type TerminalAssistantMessageEvent = Extract<AssistantMessageEvent, { type: "done" | "error" }>;
 
+export class ProviderRetryWatchdogAbortError extends Error {
+	readonly providerCause: string;
+
+	constructor(providerCause: string) {
+		super(providerCause);
+		this.providerCause = providerCause;
+		this.name = "ProviderRetryWatchdogAbortError";
+	}
+}
+
 export function promoteStopWithPendingToolCalls(message: AssistantMessage): AssistantMessage {
 	if (message.stopReason !== "stop") return message;
 	if (!message.content.some((block) => block.type === "toolCall")) return message;
@@ -67,6 +77,7 @@ export function createTerminalFailureAssistantMessage(
 		usage: partialMessage?.usage ?? EMPTY_USAGE,
 		stopReason: reason,
 		errorMessage: errorMessage || (reason === "aborted" ? "Request was aborted" : "Error"),
+		...(error instanceof ProviderRetryWatchdogAbortError ? { abortSource: "provider" as const } : {}),
 		timestamp: partialMessage?.timestamp ?? Date.now(),
 	};
 }

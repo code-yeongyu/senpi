@@ -12,6 +12,111 @@
 
 ### Removed
 
+## [2026.8.27] - 2026-08-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed Windows Terminal/ConPTY resize redraws erasing terminal scrollback with `ESC[3J` ([#1145](https://github.com/code-yeongyu/senpi/issues/1145)).
+
+### Removed
+
+## [2026.8.26-2] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed terminal shutdown still crashing with `setRawMode failed with errno: 5` under Bun, whose tty shim throws
+  the errno only inside the message text with no `code` or `errno` property. Dead-terminal detection now also
+  reads that message form for `EIO` and `EPIPE` while unrelated raw-mode failures keep propagating.
+- A vanished or re-backgrounded controlling terminal no longer kills the agent process: the next stdin read fails with EIO, and `process.stdin` had no `"error"` listener, so the EventEmitter rethrew it as an uncaught exception. `ProcessTerminal` now arms a stdin error guard from `start()` until a 250ms grace window after `stop()`, swallowing EIO (Node's `code: "EIO"` and Bun's raw `errno: 5`/`-5`) while every other stdin error keeps its default EventEmitter propagation.
+### Removed
+
+## [2026.8.26] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.25] - 2026-08-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed duplicate fullscreen right-click paste in VS Code-based terminals on Windows ([#8186](https://github.com/earendil-works/pi/issues/8186)).
+- Fixed padded text exceeding narrow terminal widths ([#8252](https://github.com/earendil-works/pi/issues/8252)).
+- Fixed wrapped Markdown table links leaking color into borders and neighboring cells, including tables inside blockquotes ([#8335](https://github.com/earendil-works/pi/issues/8335)).
+### Removed
+
+## [2026.8.24] - 2026-08-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.23] - 2026-08-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.22-2] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.22] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.8.21-3] - 2026-08-21
 
 ### Breaking Changes

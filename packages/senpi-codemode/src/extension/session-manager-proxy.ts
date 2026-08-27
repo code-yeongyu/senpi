@@ -21,12 +21,30 @@ export class CodemodeSessionNotStartedError extends Error {
 	}
 }
 
+const defaultTeardownFailureReporter = (error: unknown): void => {
+	globalThis.process.stderr.write(`[senpi-codemode] ${describeTeardownFailure(error)}\n`);
+};
+
+function describeTeardownFailure(error: unknown): string {
+	const message = error instanceof Error ? error.message : String(error);
+	if (error instanceof AggregateError && error.errors.length > 0) {
+		const causes = error.errors.map((cause) => (cause instanceof Error ? cause.message : String(cause))).join("; ");
+		return `session teardown failed: ${message} (${causes})`;
+	}
+	return `session teardown failed: ${message}`;
+}
+
 export class SessionManagerProxy implements CodemodeSessionManager, EvalExecutionTracker {
 	#current: CodemodeSessionManager | undefined;
 	#generation = 0;
 	#started = false;
 	#acceptingExecutions = false;
 	readonly #executions = new Set<TrackedExecution>();
+	readonly #onTeardownFailure: (error: unknown) => void;
+
+	constructor(onTeardownFailure: (error: unknown) => void = defaultTeardownFailureReporter) {
+		this.#onTeardownFailure = onTeardownFailure;
+	}
 
 	beginReplacement(): number {
 		this.#generation++;
@@ -37,19 +55,19 @@ export class SessionManagerProxy implements CodemodeSessionManager, EvalExecutio
 
 	async replace(generation: number, next: CodemodeSessionManager): Promise<boolean> {
 		if (generation !== this.#generation) {
-			await next.dispose();
+			await this.#disposeQuietly(next);
 			return false;
 		}
 		await this.#settleExecutions();
 		if (generation !== this.#generation) {
-			await next.dispose();
+			await this.#disposeQuietly(next);
 			return false;
 		}
 		const current = this.#current;
 		this.#current = undefined;
-		await current?.dispose();
+		await this.#disposeQuietly(current);
 		if (generation !== this.#generation) {
-			await next.dispose();
+			await this.#disposeQuietly(next);
 			return false;
 		}
 		this.#current = next;
@@ -100,7 +118,23 @@ export class SessionManagerProxy implements CodemodeSessionManager, EvalExecutio
 		await this.#settleExecutions();
 		const current = this.#current;
 		this.#current = undefined;
-		await current?.dispose();
+		await this.#disposeQuietly(current);
+	}
+
+	/**
+	 * Session teardown is best-effort: a kernel or bridge that fails to confirm
+	 * close (e.g. a SIGKILLed interpreter missing its reap window throws
+	 * KernelRetirementError into the manager's dispose AggregateError) must not
+	 * reject the session lifecycle handler that triggered the teardown — the
+	 * extension host surfaces such rejections as user-facing extension errors.
+	 */
+	async #disposeQuietly(manager: CodemodeSessionManager | undefined): Promise<void> {
+		if (manager === undefined) return;
+		try {
+			await manager.dispose();
+		} catch (error) {
+			this.#onTeardownFailure(error);
+		}
 	}
 
 	#abortExecutions(): void {

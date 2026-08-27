@@ -1,4 +1,243 @@
 # changes
+
+## Footer shows the active credential account (2026-08-27)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: when the active provider pools more than one credential slot, the footer's provider prefix becomes `(provider@account)` - the pinned slot when present, else the session's HRW winner computed with the same sha256 hash the rotation engine uses. Flat single credentials render exactly as before, and a credential-storage read failure never breaks footer rendering. Exported `accountFooterSuffix` keeps the logic unit-testable.
+
+### Why
+
+- With rotation on by default, the operator needs to see WHICH account a session is riding without opening /account; mirroring the provider-only-when->1 rule keeps single-account setups noise-free.
+
+### Why an extension could not handle it
+
+- The footer is a core interactive component; extensions cannot compose its right-side segments.
+
+### Expected merge conflict zones
+
+- LOW: right-side prefix composition in `formatSegments`.
+
+## 2026-08-26 - Record uncaught crashes in the brand debug log
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `uncaughtCrash` calls
+  `appendUncaughtCrashLog(origin, error)` immediately before `restoreInteractiveStderr()`, wrapped
+  in a `try {} catch {}` so a failed log write cannot alter the crash path. Ordering, exit code,
+  and the stderr banner are unchanged.
+- `emergencyTerminalExit()` takes a required `{ origin, error }` crash context and makes the same
+  guarded `appendUncaughtCrashLog` call before its unguarded cleanup, so the silent exit-129 path
+  also leaves a record. Both call sites supply it: the dead-terminal branch of `uncaughtCrash`
+  (`dead-terminal <origin>`) and the stdout/stderr `terminalErrorHandler` (`dead-terminal stdio
+  error`). The parameter is required rather than optional so no future caller can reintroduce a
+  silent exit with no record.
+
+### Why
+
+- `uncaughtCrash` restores the real stderr and prints the banner to the terminal, so a crash only
+  ever existed in terminal scrollback. When the terminal is closed — or when the crash *is* a
+  terminal/EIO failure — the diagnosis has zero evidence; the 2026-08-26 EIO investigation found no
+  crash record in the brand debug log for exactly this reason. Writing before the terminal handoff
+  means the record survives the very failures that destroy the scrollback.
+- The dead-terminal class is the worst case and needed `emergencyTerminalExit` covered too: it exits
+  129 with no banner *by design* (the terminal is gone), so before this the entire EIO crash class
+  — the one the investigation was chasing — produced no output anywhere at all. Verified against a
+  real detached pty: closing the master under a live session now records
+  `uncaught crash (dead-terminal stdio error)` with the full `EIO: i/o error, write` stack, where
+  the same run previously left the log file non-existent.
+
+### Why an extension could not handle it
+
+- The handler is the process-level `uncaughtException` listener the interactive mode installs, and
+  it exits the process a few statements later. No extension hook runs inside that window, and an
+  extension's own `process.on("uncaughtException")` would be appended after this prepended listener,
+  i.e. after `process.exit(1)`. `emergencyTerminalExit` is stricter still: it is reached from the
+  stdout/stderr `error` handler and exits synchronously, so nothing outside core runs at all.
+
+### Expected merge conflict zones
+
+- LOW: `uncaughtCrash` and `emergencyTerminalExit` bodies in `interactive-mode.ts` (guarded calls,
+  one import, and the `emergencyTerminalExit` signature plus its two call sites).
+
+## 2026-08-26 - Append canonical user message after compaction rebuild
+
+### What changed
+
+- `interactive-mode.ts` `renderPendingUserEcho`'s `removePending()` returns the container end when
+  the pending echo component is already gone (indexOf -1), so `replace()` appends the canonical
+  user message instead of splicing it in before the last child.
+
+### Why
+
+- The `compaction_end` handler clears the chat container and rebuilds it with the compaction
+  summary last. The stale echo handle then computed insertionIndex -1, and `splice(-1, 0, ...)`
+  inserted the canonical user message above the compaction block, inverting the session-canonical
+  order (compaction precedes the user message).
+
+### Why this lives in the fork
+
+- The optimistic pending user echo is a fork-owned chrome feature; upstream has no reconciliation
+  path to fix.
+
+### Expected merge conflict zones
+
+- LOW: `renderPendingUserEcho` internals during upstream syncs.
+
+## 2026-08-26 - Route dead-terminal uncaught crashes to the silent emergency exit
+
+### What changed
+
+- `uncaughtCrash` in `interactive-mode.ts` classifies dead-terminal errors and routes them to `emergencyTerminalExit()` (silent 129) instead of printing the `exiting due to uncaughtException` banner and exiting 1. `isDeadTerminalError` now also accepts Bun's raw `errno: 5`/`-5` shape alongside string codes.
+
+### Why
+
+- A stdin read EIO from a detached terminal reached the last-resort handler while `isShuttingDown` was false and printed a crash banner to a terminal that was already gone; the dead-terminal path already existed for write errors and now covers uncaught throws too.
+
+### Why this lives in the fork
+
+- The signal/shutdown choreography (`emergencyTerminalExit`, drain ordering) is fork-owned.
+
+### Expected merge conflict zones
+
+- LOW: `uncaughtCrash` and `isDeadTerminalError` in `interactive-mode.ts` during upstream syncs.
+
+## 2026-08-25 - Do not adopt unwired upstream settings submenu
+
+### What changed
+
+- Deliberately omit `packages/coding-agent/src/modes/interactive/components/settings-submenu.ts`; the fork uses its inline `WarningSettingsSubmenu` implementation.
+
+### Why
+
+- The upstream component has no imports in the fork and adding dead UI code would expand the runtime surface without behavior.
+
+### Why this lives in the fork
+
+- Settings submenu wiring is owned by the fork's settings selector implementation.
+
+### Expected merge conflict zones
+
+- LOW: interactive component additions during upstream syncs.
+
+## Interactive mode re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` keeps the fork chrome and
+  startup coordinator (brand/display version, loader indicator, `sanitizeTerminalLabel`, scoped
+  startup thinking, settings diagnostics) on top of upstream's rewrite.
+- `packages/coding-agent/src/modes/interactive/external-editor.ts` keeps the `launch-failed` result
+  status so EAGAIN-style spawn failures stay distinct from real editor exits.
+- `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts` keeps the fork
+  `xhigh` label ("Extended reasoning (~32k tokens or native xhigh effort)").
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` is a full-file conflict zone in
+  every sync; resolve toward the fork coordinator and re-apply upstream's incremental rendering fixes.
+
+## 2026-08-25 - Render provider abort labels without mutating messages
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` and `packages/coding-agent/src/modes/interactive/aborted-error-label.ts`: render provider watchdog labels from a copied assistant message while retaining the real provider cause in session state.
+
+### Why
+
+- UI labels must not overwrite `finalError`, transcript persistence, or replay data.
+
+### Why an extension could not handle it
+
+- Interactive message rendering owns this label-only presentation boundary.
+
+### Expected merge conflict zones
+
+- LOW: aborted assistant `message_end` rendering paths.
+
+## 2026-08-25 - resume hint uses the brand executable name
+
+### What changed
+
+- `interactive-mode.ts`: `formatResumeCommand()` starts the printed resume command with `APP_COMMAND` instead of `APP_NAME`, so quitting the TUI shows the real binary (`omo --session <id>`) when the brand display name differs.
+
+### Why
+
+- The quit hint is a copy-paste shell command. Printing the display brand (`OmO`) makes the hint fail when the executable is lowercase `omo`.
+
+### Why an extension could not handle it
+
+- The resume hint is assembled inside `InteractiveMode` teardown from session identity; extensions cannot replace that printed line.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` `formatResumeCommand()` argument list.
+## 2026-08-24 - provider aborts render with explicit provenance
+
+### What changed
+
+- `abortedErrorLabel` receives internal AgentSession abort provenance so user, system, and source-less provider failures render distinct labels in both streaming and replay/tool-result paths.
+
+### Why
+
+- Provider/watchdog exhaustion must not appear as generic `Operation aborted` or user-style retry cancellation.
+
+### Why an extension could not handle it
+
+- Abort ownership is private AgentSession state consumed by interactive rendering.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` aborted assistant rendering call sites.
+## 2026-08-24 — streaming head stays single-written while smooth reveal paces (fixes dual-write flicker)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `syncTrailingAssistantText` no longer overwrites the streaming head component while `streamingReveal.isPacingHead(head)` is true (smooth streaming on, no toolCall block in the head, component bound). The full-head write still lands when smooth streaming is off, when the head carries a toolCall (the reveal dumps full immediately there), and after the reveal stops at `message_end`. Trailing-segment logic is unchanged.
+- `packages/coding-agent/src/modes/interactive/streaming-reveal.ts`: new `isPacingHead(message)` — the single ownership query for the pacing condition.
+- `packages/coding-agent/test/tui-streaming-head-single-writer.test.ts`: regression test asserting the streaming component's painted text never shrinks before `message_end` with smooth streaming on (mutation-verified).
+
+### Why
+
+- Every assistant `message_update` wrote the head twice: `streamingReveal.setTarget(head)` painted the paced prefix, then `syncTrailingAssistantText` overwrote the component with the full head, and the next reveal tick repainted the shorter prefix. Painted text visibly vanished and burst back (lengths oscillated `[0, 116, 0, 168, ...]` in the regression capture), and the full/prefix height churn tripped the above-viewport scrollback replay, producing the vertical jumping reported after the 2026.8.22 line shipped.
+
+### Why an extension could not handle it
+
+- The streaming component, reveal pacing state, and per-update write ordering are private `InteractiveMode`/`StreamingRevealController` render state; extensions observe session events only.
+
+### Expected merge conflict zones
+
+- HIGH: `syncTrailingAssistantText` and the `message_update` handler in `packages/coding-agent/src/modes/interactive/interactive-mode.ts` (same hunk as the #1064 segment work).
+- LOW: `packages/coding-agent/src/modes/interactive/streaming-reveal.ts` around the new `isPacingHead` query.
+
+## 2026-08-22 - working dock stays painted across queued turn boundaries
+
+### What changed
+
+- `interactive-mode.ts`: `agent_end` keeps the working status mounted; the dock clears on the new core `agent_idle` event (not `agent_settled`) only when no locally buffered input is waiting. An `agentIdle` latch is set on `agent_idle` and cleared on `agent_start`. The main input loop composes the optimistic-echo `promptDisposition` so a buffered prompt that resolves `handled` (for example a `UserPromptSubmit` hook block) clears the retained dock while idle; the prompt-admission catch still clears it when a dequeued prompt throws before `agent_start`.
+- `clearStatusIndicator` measures the outgoing status container before clearing and uses that height for the regular-mode clear-on-shrink idle placeholder, capped to the terminal height. `IdleStatus` now accepts a reserved height while retaining its two-row default.
+
+### Why
+
+- Clearing the four-row working dock at `agent_end` and remounting it at the next `agent_start` moved the editor/footer between adjacent agentic turns. Clearing on the public `agent_settled` was still too early: settlement-deferred continuations (TTSR, loop-guard, goal recovery) start a turn after that event, re-bouncing the dock, and a locally buffered prompt consumed with `action: "handled"` never produced another lifecycle event to clear it. `agent_idle` fires only after deferred turns resolve with no run started, giving one race-free cleanup boundary. The old hardcoded two-row idle placeholder also allowed a four-row dock to shrink by two rows during clear-on-shrink rendering.
+
+### Why an extension could not handle it
+
+- Agent lifecycle rendering, locally buffered prompt admission, status-container ownership, and clear-on-shrink placeholders are private `InteractiveMode` state.
+
+### Expected merge conflict zones
+
+- `interactive-mode.ts` around the main input-loop disposition composition, `clearStatusIndicator`, and the `agent_start`/`agent_settled`/`agent_idle` handlers.
+- `components/status-indicator.ts` around `IdleStatus`.
+
 ## 2026-08-21 — assistant text segments keep their painted position between tool cards (fixes #1064)
 
 ### What changed
@@ -2474,3 +2713,41 @@ The tip line was teaching a small slice of the product while most of the surface
   reload no longer destroys live extension footers/widgets/tickers.
   Regression: `test/interactive-tui.test.ts` ("handleReloadCommand extension
   UI lifecycle").
+
+## 2026-08-25 - reject upstream Radius interactive sharing surface
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-share.ts`: intentionally absent from Senpi; the upstream Radius session-share surface is rejected under the fork sharing policy.
+
+### Why
+
+- Senpi retains the fork's gist-based `/share` flow and `pi.dev` viewer rather than introducing Radius links.
+
+### Why an extension could not handle it
+
+- Interactive sharing command ownership and product policy are implemented in the core interactive mode, before an extension can replace the share surface.
+
+### Expected merge conflict zones
+
+- NONE: the upstream-only Radius session-share artifact remains excluded from the fork tree.
+
+## 2026-08-27 - render JSON tool results as a styled key-value fallback
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution-fallback.ts`: `createToolResultFallback()` now inspects the rendered text output before styling it. When the trimmed text starts with `{` or `[`, parses as JSON, and yields a non-null object or array, the fallback renders a bounded `key: value` view (keys in `muted`, string values in `toolOutput`, numbers/booleans in `accent`, `null` in `dim`) with 2-space indentation per nesting level. Anything else — prose, logs, malformed JSON — keeps the previous `theme.fg("toolOutput", output)` path byte for byte.
+- The view is bounded so a large payload cannot flood the transcript: max nesting depth 3 (deeper containers collapse to a truncated compact `JSON.stringify`), max 24 rendered rows followed by a single dim `… N more` line, and string values truncated to 100 characters with a trailing ellipsis. The function still returns the same `Text` component type as before.
+- `packages/coding-agent/test/tool-execution-fallback-json.test.ts`: new regression suite covering nested objects, prose passthrough, malformed-JSON passthrough, row/string bounds, and top-level primitive arrays.
+
+### Why
+
+- Tools without a `renderResult` hook — MCP-wrapped tools and third-party extensions in particular — commonly return their payload as a JSON string. The fallback dumped that raw string into the transcript, so a single call could paste an unreadable one-line blob across the viewport. A bounded key-value view keeps the same information scannable without asking every tool author to ship a renderer.
+
+### Why an extension could not handle it
+
+- This is the renderer of last resort inside `ToolExecutionComponent` for tools that have no renderer. An extension can only supply `renderResult` for its own tools; it has no hook covering results produced by other extensions or by MCP-bridged tools, which is exactly the population that hits this path.
+
+### Expected merge conflict zones
+
+- LOW: `createToolResultFallback()` in `packages/coding-agent/src/modes/interactive/components/tool-execution-fallback.ts` (additive helpers plus a two-line branch in one small function).

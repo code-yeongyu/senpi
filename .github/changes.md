@@ -1,5 +1,26 @@
 # changes
 
+## Release workflow re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml` keeps the fork release pipeline on top of upstream's: the
+  `dry_run` input (build/validate without release upload or npm publish dispatch), the fork's
+  pinned `actions/checkout` revision, the Bun `1.4.0` compiler pin with the canary-vs-target-artifact
+  rationale, and the `Report Bun compiler version` diagnostic step.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- Any upstream edit to `.github/workflows/build-binaries.yml` job steps or the Bun version pin.
+
 ## Changelog-gate labels and base SHA move to env (2026-08-17)
 
 ### What changed

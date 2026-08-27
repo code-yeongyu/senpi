@@ -161,7 +161,12 @@ export interface CursorAgentOptions extends StreamOptions {
 	thinkingSelection?: ThinkingSelection;
 	/** Override stream health bounds for deterministic provider integration tests. */
 	streamHealthFailThresholdMs?: number;
+	/** @deprecated Accepted for compatibility; heartbeat/checkpoint frames are always liveness. */
 	streamHealthHeartbeatOnlyThresholdMs?: number;
+	/** Maximum pre-completion stall/transport retries (default 10). */
+	streamStallMaxRetries?: number;
+	/** Fixed retry delay for tests; production uses exponential backoff plus jitter. */
+	streamStallRetryDelayMs?: number;
 	/** Override the post-turn exec drain bound for deterministic tests. */
 	turnEndDrainTimeoutMs?: number;
 }

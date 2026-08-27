@@ -8,6 +8,7 @@ import {
 	isKernelToHostMessage,
 	type KernelToHostMessage,
 } from "../../bridge/protocol.ts";
+import { type CodemodeRuntimeAssetEnvironment, resolveCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import {
 	defaultSpawn,
 	hardKill,
@@ -47,6 +48,18 @@ export interface PythonTransportOptions {
 
 const hardKillWaitMs = 500;
 
+export interface PythonPreludePathOptions extends CodemodeRuntimeAssetEnvironment {
+	readonly localPath?: string;
+}
+
+export function resolvePythonPreludePath(options: PythonPreludePathOptions = {}): string {
+	return resolveCodemodeRuntimeAsset(
+		options.localPath ?? join(dirname(fileURLToPath(import.meta.url)), "prelude.py"),
+		join("kernels", "py", "prelude.py"),
+		options,
+	);
+}
+
 export class PythonKernelTransport {
 	readonly #options: PythonTransportOptions;
 	readonly #child: KernelChild;
@@ -64,7 +77,7 @@ export class PythonKernelTransport {
 	}
 
 	static async start(options: PythonTransportOptions): Promise<PythonKernelTransport> {
-		const scriptPath = join(dirname(fileURLToPath(import.meta.url)), "prelude.py");
+		const scriptPath = resolvePythonPreludePath();
 		const invocation = splitCommand(options.interpreterPath);
 		const spawnOptions: KernelSpawnOptions = {
 			command: invocation.command,

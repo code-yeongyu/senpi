@@ -46,7 +46,7 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 
 ## TESTS
 
-Flat cluster at `test/claude-sdk-oauth-*.test.ts` (35 files at this commit): accounts, affinity, auth-lane, binding, continuity decisions, failover, custom-tools schema, guidance, login, model switch, observability, and more. Keep edited test files below the 250-pure-LOC ceiling (see 2026-07-31 rename entry).
+Flat cluster at `test/claude-sdk-oauth-*.test.ts` (51 files): accounts, affinity, auth-lane, binding, continuity decisions, failover, custom-tools schema, guidance, login, model switch, observability, and more. Keep edited test files below the 250-pure-LOC ceiling (see 2026-07-31 rename entry).
 
 ## MERGE RISK
 

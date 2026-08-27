@@ -127,6 +127,51 @@ export function formatWakeDuration(ms: number): string {
 	return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`;
 }
 
+/**
+ * Wake timestamp shown in cache-warm notices. Rendered in the user's local
+ * system timezone with its short zone label (for example `GMT+9`); falls back
+ * to the legacy UTC shape when local timezone formatting is unavailable.
+ */
+export function formatWakeTimestamp(dueAtMs: number): string {
+	const date = new Date(dueAtMs);
+	const local = formatLocalWakeTimestamp(date);
+	if (local !== undefined) return local;
+	return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+function formatLocalWakeTimestamp(date: Date): string | undefined {
+	try {
+		const parts = new Intl.DateTimeFormat("en-CA", {
+			year: "numeric",
+			month: "2-digit",
+			day: "2-digit",
+			hour: "2-digit",
+			minute: "2-digit",
+			hourCycle: "h23",
+			timeZoneName: "short",
+		}).formatToParts(date);
+		const read = (type: string): string | undefined => parts.find((part) => part.type === type)?.value;
+		const year = read("year");
+		const month = read("month");
+		const day = read("day");
+		const hour = read("hour");
+		const minute = read("minute");
+		if (
+			year === undefined ||
+			month === undefined ||
+			day === undefined ||
+			hour === undefined ||
+			minute === undefined
+		) {
+			return undefined;
+		}
+		const zone = read("timeZoneName");
+		return `${year}-${month}-${day} ${hour}:${minute}${zone === undefined ? "" : ` ${zone}`}`;
+	} catch {
+		return undefined;
+	}
+}
+
 export function formatCacheTtl(seconds: number): string {
 	if (seconds % 3600 === 0) return `${seconds / 3600}h`;
 	if (seconds % 60 === 0) return `${seconds / 60}m`;

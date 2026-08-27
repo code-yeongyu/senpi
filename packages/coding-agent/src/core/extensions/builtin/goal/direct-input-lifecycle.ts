@@ -63,7 +63,7 @@ export class GoalDirectInputLifecycle {
 		if (currentGoal?.id !== candidate.goalId) return;
 
 		if (currentGoal.status === "blocked" && isMechanicalContinuationBlock(currentGoal.blockedReason)) {
-			await resetContinuationStreak(ref);
+			await resetContinuationStreak(ref, { unattended: true });
 			const reactivated = await updateGoal(ref, { status: "active" }, "user");
 			this.#dependencies.beginAgentGoalAccounting(reactivated);
 			this.#dependencies.refreshGoalUi(ctx, reactivated);
@@ -71,7 +71,7 @@ export class GoalDirectInputLifecycle {
 		}
 
 		if (currentGoal.status !== "active") return;
-		const reset = await resetContinuationStreak(ref);
+		const reset = await resetContinuationStreak(ref, { unattended: true });
 		if (reset !== null) this.#dependencies.refreshGoalUi(ctx, reset);
 		if (this.#suppressedLoadResumeArmed) {
 			this.#suppressedLoadResumeArmed = false;

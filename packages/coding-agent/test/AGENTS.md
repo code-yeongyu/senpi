@@ -5,30 +5,40 @@ Vitest coverage for the Senpi CLI, sessions, extensions, modes, transports, and 
 ## STRUCTURE
 
 ```text
-suite/             Preferred AgentSession/AgentSessionRuntime harness tests
-suite/regressions/ Issue-specific regressions
-mcp/               MCP transports, fixtures, security, lifecycle
-permission/        Permission-system behavior
-compaction/        Compaction mechanics and policy
+suite/             Preferred AgentSession/AgentSessionRuntime harness tests (own AGENTS.md)
+suite/regressions/ Issue-specific regressions (own AGENTS.md)
+mcp/               MCP transports, fixtures, security, lifecycle (own AGENTS.md)
+permission/        Permission-system behavior (own AGENTS.md)
+compaction/        Compaction mechanics and policy (own AGENTS.md)
 session-manager/   Persistence, branching, context construction
 dynamic-prompt/    Dynamic system-prompt + workstation fact coverage
 tool-pair-guard/   Provider payload tool-pair sanitization tests
 client/            RPC/app-server client coverage
+server/            App-server/server surface coverage
 extensions/        Extension loading and API behavior
+cursor-cli-oauth/  Cursor CLI OAuth provider-lane coverage (own AGENTS.md)
+tool-search/       Shared tool-catalog / `tool_search` exposure coverage
 grok/              Grok provider coverage
 ttsr/              Stream-rule (ttsr) extension coverage
 support/           Shared test support modules
 helpers/           Shared subprocess/QA/fixture helpers
+benchmarks/        Perf-oriented probes (not part of the default correctness gate)
+examples/          Coverage for the shipped `examples/` extensions
 manual-qa/         Explicit manual QA scripts (not part of default suite)
-qa/app-server/     Real app-server surface drivers
+qa/app-server/     Real app-server surface drivers (own AGENTS.md)
 integration/       Explicitly gated real-provider tests
 fixtures/, goldens/ Shared deterministic inputs and snapshots
 model-runtime*.test.ts / models-store.test.ts / remote-catalog-provider.test.ts / runtime-credentials.test.ts
                    Model/catalog/auth runtime coverage
 claude-sdk-oauth-*.test.ts
-                   Flat cluster (33+ files) at test/ root covering the Claude SDK
+                   Flat cluster (51 files) at test/ root covering the Claude SDK
                    OAuth provider extension
 ```
+
+The flat `test/*.test.ts` root cluster (~350 files) is legacy/feature-focused placement.
+New lifecycle and extension coverage belongs in `suite/`, not at this root.
+Legacy root helpers: `test-harness.ts` (superseded), `utilities.ts`, `model-runtime-test-utils.ts`,
+`test-network-env.ts`, `test-theme-colors.ts`. `setup.ts` is the quarantine entry (see below).
 
 ## TEST RULES
 
@@ -44,10 +54,11 @@ claude-sdk-oauth-*.test.ts
 
 ## QUARANTINE CONTRACT (load-bearing)
 
-`test/setup.ts` resolves the agent directory through `test/support/quarantine.ts`'s `resolveQuarantineAgentDir`. The quarantine **always wins** over an inherited `SENPI_CODING_AGENT_DIR`, opting out only with an explicit `SENPI_TEST_USE_REAL_AGENT_DIR=1` paired with the target dir. This is not a courtesy — it is a safety boundary.
+`test/setup.ts` resolves the agent directory through `test/support/quarantine.ts`'s `resolveQuarantineAgentDir`, then calls `scrubAmbientAgentDirEnv` to delete the brand marker (`SENPI_BRAND`) and **every** `*_CODING_AGENT_DIR` lane before pinning the quarantined `SENPI_CODING_AGENT_DIR`. The quarantine **always wins** over any inherited agent-dir env, opting out only with an explicit `SENPI_TEST_USE_REAL_AGENT_DIR=1` paired with the target dir. This is not a courtesy — it is a safety boundary.
 
-- The omo launcher (`omo-ai/bin/lib/launcher.js` → `senpiEnvironment`) sets `SENPI_CODING_AGENT_DIR` for **every** spawned child session. Any `vitest` run launched from inside an omo agent session inherits a value pointing at the user's REAL `~/.omo/agent`.
-- Before this guard always won, an inherited env made the whole suite run against the real config and tests deleted `~/.omo/agent/settings.json` (proven live 2026-08-18: favorite-guard ENOENT crashes matched suite-run windows exactly). Never reintroduce an `if (!process.env.SENPI_CODING_AGENT_DIR)` short-circuit here.
+- The omo launcher (`omo-ai/bin/lib/launcher.js` → `senpiEnvironment`) sets `OMO_CODING_AGENT_DIR`, `SENPI_CODING_AGENT_DIR`, and `SENPI_BRAND` for **every** spawned child session, and tool children inherit all three. Any `vitest` run launched from inside an omo agent session inherits values pointing at the user's REAL `~/.omo/agent`.
+- Guarding only the `SENPI_` lane is not enough: with the omo brand active, `brandEnvNames` resolves `OMO_CODING_AGENT_DIR` first, so `getAgentDir()` bypassed the quarantine and `settings-tips.test.ts` wiped the live `~/.omo/agent/settings.json` again on 2026-08-25 (reproduced pre-fix against a decoy dir; post-fix the decoy stays intact). The scrub of all lanes plus the brand marker is what closes this; never narrow it back to a single-lane guard, and never reintroduce an `if (!process.env.SENPI_CODING_AGENT_DIR)` short-circuit here.
+- Before this guard always won, an inherited env made the whole suite run against the real config and tests deleted `~/.omo/agent/settings.json` (proven live 2026-08-18: favorite-guard ENOENT crashes matched suite-run windows exactly).
 - To target a specific real directory in a test, pass the agent dir explicitly to `SettingsManager.create` / `SessionManager.create` rather than relying on the ambient env. Use `SENPI_TEST_USE_REAL_AGENT_DIR=1` only for the rare whole-suite opt-in.
 - Tests that spawn the CLI as a subprocess must set `SENPI_CODING_AGENT_DIR` to a temp dir in the child env explicitly (see `test/helpers/rpc-hermetic.ts`); never let the child inherit an unguarded ambient value.
 
@@ -61,7 +72,8 @@ claude-sdk-oauth-*.test.ts
 
 - Run every added or changed test file directly until green.
 - Run the narrow owning directory or package suite when shared harnesses, fixtures, or lifecycle behavior change.
+- Package runner is Vitest: `npm --prefix packages/coding-agent test -- --run <path>`.
 - Root `npm run check` is static validation and does not replace tests.
 
 ---
-Generated: 2026-08-07 | Commit: `4f26b8282`
+Generated: 2026-08-24 | Commit: `baf15a54d`

@@ -1,7 +1,6 @@
 {
 	"name": "@earendil-works/pi-agent-core",
-	"private": true,
-	"version": "2026.8.21-3",
+	"version": "2026.8.27",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -36,11 +35,11 @@
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^2026.8.21-3",
-		"@earendil-works/pi-telemetry": "^2026.8.21-3",
+		"@earendil-works/pi-ai": "^2026.8.27",
+		"@earendil-works/pi-telemetry": "^2026.8.27",
 		"diff": "9.0.0",
 		"ignore": "7.0.6",
-		"typebox": "1.3.16",
+		"typebox": "1.3.18",
 		"yaml": "2.9.0"
 	},
 	"keywords": [
@@ -65,5 +64,6 @@
 		"@vitest/coverage-v8": "4.1.11",
 		"typescript": "7.0.2",
 		"vitest": "4.1.11"
-	}
+	},
+	"private": true
 }

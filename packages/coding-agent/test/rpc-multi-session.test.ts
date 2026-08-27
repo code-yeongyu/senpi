@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import { VERSION } from "../src/config.ts";
 import {
 	RPC_ERROR_MISSING_SESSION_ID,
 	RPC_ERROR_MULTI_SESSION_DISABLED,
@@ -32,6 +33,9 @@ describe("multi-session RPC routing", () => {
 			error: RPC_ERROR_UNKNOWN_SESSION,
 		});
 		expect(
+			await routerFor().handle({ id: "live-without-binding", type: "prompt", message: "hello", sessionId: "known" }),
+		).toMatchObject({ error: RPC_ERROR_UNKNOWN_SESSION });
+		expect(
 			await routerFor("closing").handle({ id: "p", type: "prompt", message: "hello", sessionId: "known" }),
 		).toMatchObject({ error: RPC_ERROR_SESSION_CLOSING });
 	});
@@ -42,7 +46,7 @@ describe("multi-session RPC routing", () => {
 			type: "response",
 			command: "get_protocol_info",
 			success: true,
-			data: { protocolVersion: 1, capabilities: ["multi_session"], mode: "multi" },
+			data: { protocolVersion: 1, serverVersion: VERSION, capabilities: ["multi_session"], mode: "multi" },
 		});
 	});
 

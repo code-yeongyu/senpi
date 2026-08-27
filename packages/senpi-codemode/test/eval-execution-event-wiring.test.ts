@@ -50,7 +50,7 @@ class WiringPi {
 			details: {},
 		};
 	}
-	sendUserMessage(): void {}
+	sendMessage(): void {}
 	async emit(event: string, payload: unknown, ctx: ExtensionContext): Promise<void> {
 		for (const entry of this.handlers.filter((handler) => handler.event === event)) await entry.handler(payload, ctx);
 	}

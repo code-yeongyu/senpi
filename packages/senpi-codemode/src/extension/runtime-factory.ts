@@ -14,7 +14,8 @@ import {
 	type InterpreterAvailability,
 } from "../interpreters/detect.ts";
 import { resolveSessionArtifactsDir } from "../output/streaming-output.ts";
-import type { EnabledEvalLanguages, EvalLanguage } from "../tool/types.ts";
+import type { EnabledEvalLanguages, EvalLanguage, EvalRuntimes } from "../tool/types.ts";
+import { jsRuntimeInfo, runtimesFromAvailability } from "./runtime-info.ts";
 import {
 	type CodemodeSessionManager,
 	type CreateCodemodeSessionManagerOptions,
@@ -39,6 +40,7 @@ export type SessionRuntime = {
 	readonly parallelPoolWidth: number;
 	readonly manager: CodemodeSessionManager;
 	readonly enabledLanguages: EnabledEvalLanguages;
+	readonly runtimes: EvalRuntimes;
 	readonly settings: ResolvedCodemodeSettings;
 	readonly artifactsDir: string;
 	readonly executeTool: AgentExecuteTool;
@@ -82,6 +84,7 @@ export async function createRuntime(
 		parallelPoolWidth,
 		manager,
 		enabledLanguages,
+		runtimes: runtimesFromAvailability(availability, jsRuntimeInfo()),
 		settings,
 		artifactsDir: artifacts.dir,
 		executeTool,

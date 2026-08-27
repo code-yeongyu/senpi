@@ -8,9 +8,22 @@ export const GOAL_CONTINUATION_CAP = 8;
 export const GOAL_STALL_TOOLLESS_THRESHOLD = 3;
 export const GOAL_REPETITION_HASH_STREAK = 3;
 export const GOAL_LENGTH_RECOVERY_LIMIT = 1;
+/**
+ * Hard budget of automatic continuations without accepted direct user input (#1139).
+ * Progress and tool use never refill it: only direct input does. Stays above the
+ * #447 distinct-progress pin (50) and an 8-hour monitor-backstop cadence
+ * (~120 deliveries at 240s), below the observed 289-continuation incident run.
+ */
+export const GOAL_UNATTENDED_CONTINUATION_LIMIT = 150;
 export const GOAL_USER_GRACE_DELAY_MS = 10_000;
 
-export type GoalContinuationPath = "immediate" | "monitorDelayed" | "userGrace" | "sessionStart" | "systemRecovery";
+export type GoalContinuationPath =
+	| "immediate"
+	| "monitorDelayed"
+	| "userGrace"
+	| "sessionStart"
+	| "systemRecovery"
+	| "providerRecovery";
 
 export type GoalContinuationInput = {
 	readonly goal: Goal | null;
@@ -31,7 +44,7 @@ export type GoalContinuationVerdict =
 	| { kind: "continue"; prompt: "full" | "minimal"; stallNotice: boolean }
 	| {
 			kind: "deny";
-			reason: "not-eligible" | "single-flight" | "cap" | "stale" | "repetition" | "length-exhausted";
+			reason: "not-eligible" | "single-flight" | "cap" | "stale" | "repetition" | "length-exhausted" | "unattended";
 	  };
 
 export function shouldQueueGoalContinuationWhenIdle(
@@ -88,6 +101,7 @@ export function evaluateGoalContinuation(input: GoalContinuationInput): GoalCont
 	if (input.continuationPending) return { kind: "deny", reason: "single-flight" };
 	if (hasRepeatedNormalizedOutputHash(input.recentNormalizedOutputHashes))
 		return { kind: "deny", reason: "repetition" };
+	if (isUnattendedBudgetExhausted(input)) return { kind: "deny", reason: "unattended" };
 	if (input.consecutiveContinuations >= GOAL_CONTINUATION_CAP) {
 		return { kind: "deny", reason: "cap" };
 	}
@@ -155,11 +169,17 @@ export function continuationTurnUsedTools(messages: readonly AgentMessage[]): bo
 
 function isEligibleForGoalContinuation(input: GoalContinuationInput): boolean {
 	if (input.goal?.status !== "active" || input.hasPendingMessages) return false;
-	if (input.path === "systemRecovery") return true;
+	if (input.path === "systemRecovery" || input.path === "providerRecovery") return true;
 	if (input.path === "immediate") {
 		return input.lastStopReason !== undefined && isContinuableStopReason(input.lastStopReason);
 	}
 	return input.isIdle;
+}
+
+/** Monitor-delayed deliveries are exempt: armed-wake waiting is by-design and rate-limited by the cache-aware timer. */
+function isUnattendedBudgetExhausted(input: GoalContinuationInput): boolean {
+	if (input.path === "monitorDelayed") return false;
+	return (input.goal?.unattendedContinuations ?? 0) >= GOAL_UNATTENDED_CONTINUATION_LIMIT;
 }
 
 function hasRepeatedNormalizedOutputHash(hashes: readonly string[]): boolean {

@@ -6,10 +6,12 @@
 
 ```text
 src/cli.ts, cli-main.ts, main.ts   Bootstrap, args, mode dispatch
+src/bun-runtime.ts              Bun-vs-Node runtime selection for bun-installed CLI (`SENPI_RUNTIME` pin)
 src/bun/cli.ts, src/bun/register-cursor-agent.ts   Bun-binary entry; static cursor-agent module install
 src/package-manager-cli.ts         install/update/config subcommands (incl. `senpi update --models`)
 src/core/agent-session.ts          Session lifecycle and runtime
 src/core/cursor-exec-bridge.ts     Maps Cursor exec frames to session tools (cursorExecHandlers wiring)
+src/core/cursor-exec-bridge-session.ts  Per-session Cursor exec bridge state
 src/core/agent-abort-provenance.ts Abort ownership across retries and event dispatch
 src/core/agent-settled-delivery.ts Cancellable extension messages after settlement
 src/core/dynamic-prompt/           Dynamic system-prompt assembly + workstation facts
@@ -25,6 +27,7 @@ src/core/retry-fallback/           Model fallback chains + billing classificatio
 src/core/project-trust.ts, trust-manager.ts  Project trust decisions
 src/core/resource-loader.ts        Bundled extension/resource resolution
 src/core/session-resident-store.ts Session-resident state store
+src/core/session-discovery.ts, session-record.ts, session-summary*.ts  Session listing, record shape, summary cache/LRU
 src/core/extensions/               Public extension API and loader
 src/core/extensions/builtin/       In-tree fork extensions; bundled extensions (e.g. codemode) resolved via resource-loader.ts
 src/core/tools/                    Upstream-parity built-in tools
@@ -32,7 +35,8 @@ src/core/compaction/               Core compaction mechanics
 src/modes/interactive/             TUI mode and components
 src/modes/app-server/              App-server transport and RPC registry; runtime.ts
                                    wiring, search/ fuzzy file search
-src/modes/rpc/                     JSONL RPC mode/client/types and the ordered command
+src/modes/rpc/                     JSONL RPC mode/client/types, shared Unix-socket multi-session host,
+                                   ensureHost handshake, lifecycle supervisor/watchdog, and the ordered command
                                    surface (get_commands / commands_changed)
 src/modes/print-mode.ts            One-shot mode
 test/suite/harness.ts              Preferred faux-provider harness
@@ -85,4 +89,4 @@ src/changes.md                     Root fork-change record
 - Keep `src/changes.md`, nested `changes.md`, public docs, and examples aligned with fork behavior.
 
 ---
-Generated: 2026-08-17 | Commit: `abae968e8`
+Generated: 2026-08-22 | Commit: `a5eed4453`

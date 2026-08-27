@@ -225,12 +225,16 @@ describe("RPC auth and connection handler contracts", () => {
 		await collected.waitFor((message) => message.type === "auth_login_end" && message.success === true);
 		expect(await changed).toEqual({ type: "auth_accounts_changed", provider: CLAUDE_SDK_OAUTH_PROVIDER_ID });
 
+		// Account management is provider-neutral: a provider with no stored
+		// credential and no numbered env slots simply has no accounts. It is no
+		// longer refused outright, which is what confined pools to one lane.
 		await handler.handleInputLine(
 			JSON.stringify({ id: "unknown-provider", type: "get_provider_accounts", provider: "unknown-provider" }),
 		);
 		expect(await collected.waitFor((message) => message.id === "unknown-provider")).toMatchObject({
-			success: false,
-			error: "Provider account management is unavailable for: unknown-provider",
+			success: true,
+			command: "get_provider_accounts",
+			data: { accounts: [] },
 		});
 
 		await handler.handleInputLine(

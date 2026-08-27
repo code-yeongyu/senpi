@@ -92,7 +92,12 @@ function getPromptResponses(outputLines: string[], id: string): ParsedOutputLine
 	);
 }
 
-async function createRuntimeHost(options: { withAuth: boolean; holdResponse?: boolean; model?: Model<any> }): Promise<{
+async function createRuntimeHost(options: {
+	withAuth: boolean;
+	holdResponse?: boolean;
+	responseDelayMs?: number;
+	model?: Model<any>;
+}): Promise<{
 	runtimeHost: AgentSessionRuntime;
 	cleanup: () => Promise<void>;
 }> {
@@ -116,7 +121,10 @@ async function createRuntimeHost(options: { withAuth: boolean; holdResponse?: bo
 			queueMicrotask(() => {
 				stream.push({ type: "start", partial: createAssistantMessage("") });
 				if (!options.holdResponse) {
-					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
+					const finish = () =>
+						stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
+					if (options.responseDelayMs !== undefined) setTimeout(finish, options.responseDelayMs);
+					else finish();
 				}
 			});
 			return stream;
@@ -166,7 +174,12 @@ async function createRuntimeHost(options: { withAuth: boolean; holdResponse?: bo
 	};
 }
 
-async function startRpcMode(options: { withAuth: boolean; holdResponse?: boolean; model?: Model<any> }): Promise<{
+async function startRpcMode(options: {
+	withAuth: boolean;
+	holdResponse?: boolean;
+	responseDelayMs?: number;
+	model?: Model<any>;
+}): Promise<{
 	lineHandler: (line: string) => void;
 	cleanup: () => Promise<void>;
 }> {
@@ -273,6 +286,61 @@ describe("RPC prompt response semantics", () => {
 					command: "prompt",
 					success: true,
 				});
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("returns and clears queued steering and follow-up messages", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 500 });
+
+		try {
+			lineHandler(JSON.stringify({ id: "clear-start", type: "prompt", message: "Start" }));
+			await vi.waitFor(() => {
+				expect(getPromptResponses(rpcIo.outputLines, "clear-start")).toHaveLength(1);
+			});
+
+			lineHandler(
+				JSON.stringify({
+					id: "clear-steering",
+					type: "prompt",
+					message: "Change direction",
+					streamingBehavior: "steer",
+				}),
+			);
+			await vi.waitFor(() => {
+				expect(getPromptResponses(rpcIo.outputLines, "clear-steering")).toHaveLength(1);
+			});
+
+			lineHandler(
+				JSON.stringify({
+					id: "clear-follow-up",
+					type: "prompt",
+					message: "Summarize when finished",
+					streamingBehavior: "followUp",
+				}),
+			);
+			await vi.waitFor(() => {
+				expect(getPromptResponses(rpcIo.outputLines, "clear-follow-up")).toHaveLength(1);
+			});
+
+			lineHandler(JSON.stringify({ id: "clear", type: "clear_queue" }));
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
+					id: "clear",
+					type: "response",
+					command: "clear_queue",
+					success: true,
+					data: {
+						steering: ["Change direction"],
+						followUp: ["Summarize when finished"],
+					},
+				});
+			});
+
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines).filter((record) => record.type === "agent_end")).toHaveLength(1);
 			});
 		} finally {
 			await cleanup();

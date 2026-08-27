@@ -9,7 +9,7 @@ import { createHarness, type Harness } from "./harness.ts";
 
 type AgentEndSnapshot = {
 	aborted: boolean | undefined;
-	abortSource: "user" | "system" | undefined;
+	abortSource: "user" | "system" | "provider" | undefined;
 	status: GoalStatus | undefined;
 	tokensUsed: number | undefined;
 	pendingMessages: boolean;

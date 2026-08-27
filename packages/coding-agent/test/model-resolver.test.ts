@@ -697,8 +697,8 @@ describe("resolveCliModel", () => {
 
 describe("default model selection", () => {
 	test("openai defaults track current models", () => {
-		expect(defaultModelPerProvider.openai).toBe("gpt-5.5");
-		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.5");
+		expect(defaultModelPerProvider.openai).toBe("gpt-5.6-sol");
+		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.6-sol");
 	});
 
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {
@@ -931,8 +931,8 @@ describe("default model selection", () => {
 		};
 		const custom: Model<"anthropic-messages"> = {
 			...openAiDefault,
-			id: "custom-model",
-			provider: "custom",
+			id: "grok-4.5",
+			provider: "xai",
 		};
 		const runtime = {
 			getModels: () => [openAiDefault, custom],
@@ -957,8 +957,8 @@ describe("default model selection", () => {
 		const settings = await findInitialModel({
 			scopedModels: [],
 			isContinuing: false,
-			defaultProvider: "custom",
-			defaultModelId: "custom-model",
+			defaultProvider: "xai",
+			defaultModelId: "grok-4.5",
 			modelRuntime: runtime,
 		});
 		const providerDefault = await findInitialModel({
@@ -968,7 +968,7 @@ describe("default model selection", () => {
 		});
 		const firstAvailableRuntime = {
 			...runtime,
-			getAvailable: async () => [custom],
+			getAvailable: async () => [openAiDefault],
 		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
 		const firstAvailable = await findInitialModel({
 			scopedModels: [],

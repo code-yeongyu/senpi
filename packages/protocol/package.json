@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-protocol",
-	"version": "2026.8.21-3",
+	"version": "2026.8.27",
 	"description": "Transport-neutral CBOR protocol for remote pi sessions",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -39,7 +39,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"typebox": "1.3.16"
+		"typebox": "1.3.18"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",

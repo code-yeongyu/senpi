@@ -47,10 +47,13 @@ class FakePi {
 	async executeTool(): Promise<never> {
 		throw new Error("nested tool execution was not expected");
 	}
-	sendUserMessage(content: string, options?: { readonly deliverAs?: "steer" | "followUp" }): void {
-		this.messages.push(content);
-		this.deliveries.push({ content, deliverAs: options?.deliverAs });
-		this.#nextMessage.resolve(content);
+	sendMessage(
+		message: { customType: string; content: string; display: boolean },
+		options?: { readonly deliverAs?: "steer" | "followUp" },
+	): void {
+		this.messages.push(message.content);
+		this.deliveries.push({ content: message.content, deliverAs: options?.deliverAs });
+		this.#nextMessage.resolve(message.content);
 	}
 	nextMessage(): Promise<string> {
 		return this.#nextMessage.promise;

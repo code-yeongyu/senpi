@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { serializeJsonLine } from "./jsonl.ts";
 
 type RawWriter = (chunk: string) => void;
@@ -17,6 +18,7 @@ type QueueNode = {
 
 type RecordQueue = {
 	sessionId?: string;
+	targetId?: string;
 	head?: QueueNode;
 	tail?: QueueNode;
 	latestByKey: Map<string, QueueNode>;
@@ -61,8 +63,15 @@ function toolUpdateKey(value: RpcRecord): string | undefined {
  * by itself: coalescing records from different sessions would obscure the
  * scheduling boundary and violate D9.
  */
+export interface SessionEventWriterConnection {
+	readonly writeRaw: RawWriter;
+	readonly waitForBackpressure: BackpressureWaiter;
+}
+
 export class SessionEventWriter {
 	private readonly queues = new Map<string, RecordQueue>();
+	private readonly connections = new Map<string, SessionEventWriterConnection>();
+	private readonly connectionContext = new AsyncLocalStorage<string>();
 	private readonly controlQueue: RecordQueue = { latestByKey: new Map(), ready: false };
 	private readonly readyQueues: RecordQueue[] = [];
 	private readonly sealedSessions = new Set<string>();
@@ -108,21 +117,43 @@ export class SessionEventWriter {
 		return bytes;
 	}
 
-	/** Queue one session-owned response, event, or extension UI request. */
+	registerConnection(id: string, connection: SessionEventWriterConnection): void {
+		this.connections.set(id, connection);
+	}
+
+	unregisterConnection(id: string): void {
+		this.connections.delete(id);
+	}
+
+	/** Execute a connection's command with its response destination in context. */
+	withConnection<T>(id: string, task: () => T): T {
+		return this.connectionContext.run(id, task);
+	}
+
+	/** Queue a session record. Lifecycle/events are broadcast; responses/UI are targeted. */
 	enqueue(sessionId: string, value: object): boolean {
 		if (this.sealedSessions.has(sessionId)) return false;
-		this.appendSessionRecord(sessionId, { ...value, sessionId });
+		const targetId = this.connectionContext.getStore();
+		const record = value as RpcRecord;
+		const isTargeted = record.type === "response" || record.type === "extension_ui_request";
+		const targets = isTargeted ? [targetId] : this.connections.size > 0 ? [...this.connections.keys()] : [undefined];
+		for (const target of targets) {
+			if (target !== undefined && !this.connections.has(target)) continue;
+			this.appendSessionRecord(sessionId, { ...value, sessionId }, target);
+		}
 		this.requestFlush();
 		return true;
 	}
 
-	/** Queue one untagged host-control response without compaction. */
+	/** Queue one untagged host-control response for the current connection. */
 	enqueueControl(value: object): Promise<void> {
 		if (this.failure !== undefined) return Promise.reject(this.failure);
+		const targetId = this.connectionContext.getStore();
+		const queue = targetId === undefined ? this.controlQueue : this.connectionQueue(targetId);
 		const completion = new Promise<void>((resolve, reject) => {
-			this.append(this.controlQueue, { ...value }, undefined, resolve, reject);
+			this.append(queue, { ...value }, undefined, resolve, reject);
 		});
-		this.markReady(this.controlQueue);
+		this.markReady(queue);
 		this.requestFlush();
 		return completion;
 	}
@@ -135,7 +166,12 @@ export class SessionEventWriter {
 	closeSession(sessionId: string, response: object): void {
 		if (this.sealedSessions.has(sessionId)) return;
 		this.sealedSessions.add(sessionId);
-		this.appendSessionRecord(sessionId, { ...response, sessionId });
+		const targetId = this.connectionContext.getStore();
+		const lifecycle = { type: "session_closed", sessionId };
+		for (const connectionId of this.connections.keys()) {
+			this.appendSessionRecord(sessionId, lifecycle, connectionId);
+		}
+		this.appendSessionRecord(sessionId, { ...response, sessionId }, targetId);
 		this.requestFlush();
 	}
 
@@ -183,9 +219,16 @@ export class SessionEventWriter {
 			try {
 				// D9: exactly one complete record per raw write. The next lane is not
 				// selected until this record has cleared stdout backpressure.
-				this.writeRaw(serializeJsonLine(node.value));
-				if (this.waitForBackpressure) await this.waitForBackpressure();
-				node.resolve?.();
+				const connection = queue.targetId ? this.connections.get(queue.targetId) : undefined;
+				const writeRaw = connection?.writeRaw ?? this.writeRaw;
+				const waitForBackpressure = connection?.waitForBackpressure ?? this.waitForBackpressure;
+				if (!connection && queue.targetId) {
+					node.resolve?.();
+				} else {
+					writeRaw(serializeJsonLine(node.value));
+					if (waitForBackpressure) await waitForBackpressure();
+					node.resolve?.();
+				}
 			} catch (cause) {
 				node.reject?.(cause);
 				throw cause;
@@ -195,17 +238,30 @@ export class SessionEventWriter {
 
 			if (queue.head) {
 				this.markReady(queue);
-			} else if (queue.sessionId) {
-				this.queues.delete(queue.sessionId);
+			} else if (queue.sessionId || queue.targetId) {
+				for (const [key, candidate] of this.queues) {
+					if (candidate === queue) this.queues.delete(key);
+				}
 			}
 		}
 	}
 
-	private appendSessionRecord(sessionId: string, value: RpcRecord): void {
-		let queue = this.queues.get(sessionId);
+	private connectionQueue(targetId: string): RecordQueue {
+		const key = `connection:${targetId}`;
+		let queue = this.queues.get(key);
 		if (!queue) {
-			queue = { sessionId, latestByKey: new Map(), ready: false };
-			this.queues.set(sessionId, queue);
+			queue = { targetId, latestByKey: new Map(), ready: false };
+			this.queues.set(key, queue);
+		}
+		return queue;
+	}
+
+	private appendSessionRecord(sessionId: string, value: RpcRecord, targetId?: string): void {
+		const key = `${targetId ?? "default"}:${sessionId}`;
+		let queue = this.queues.get(key);
+		if (!queue) {
+			queue = { sessionId, targetId, latestByKey: new Map(), ready: false };
+			this.queues.set(key, queue);
 		}
 
 		const delta = compactDelta(value);

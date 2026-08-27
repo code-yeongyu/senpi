@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { type CompactionLoggerData, createCompactionLogger } from "../../src/core/extensions/builtin/compaction/log.ts";
+import { createTempAgentDir } from "../support/temp-agent-dir.ts";
 
 describe("compaction logger", () => {
 	afterEach(() => {
@@ -9,7 +10,7 @@ describe("compaction logger", () => {
 	});
 
 	it("Given disabled mirror env When logging Then it stays silent on stderr and writes JSONL", () => {
-		const dir = "/tmp/senpi-compaction-log-disabled";
+		const dir = createTempAgentDir("senpi-compaction-log-disabled-");
 		const error = vi.spyOn(console, "error").mockImplementation(() => {});
 		const sink: string[] = [];
 		const logger = createCompactionLogger(dir, { sink: (line) => sink.push(line), mirrorToStderr: false });
@@ -33,7 +34,7 @@ describe("compaction logger", () => {
 	});
 
 	it("Given a writable log file When logging Then it rotates past the maxBytes override", () => {
-		const dir = "/tmp/senpi-compaction-log-rotate";
+		const dir = createTempAgentDir("senpi-compaction-log-rotate-");
 		const sink: string[] = [];
 		const logger = createCompactionLogger(dir, { sink: (line) => sink.push(line), maxBytes: 1 });
 
@@ -46,7 +47,7 @@ describe("compaction logger", () => {
 	});
 
 	it("Given debug env When logging Then it mirrors to stderr", () => {
-		const dir = "/tmp/senpi-compaction-log-debug";
+		const dir = createTempAgentDir("senpi-compaction-log-debug-");
 		vi.stubEnv("SENPI_COMPACTION_DEBUG", "1");
 		const error = vi.spyOn(console, "error").mockImplementation(() => {});
 		const logger = createCompactionLogger(dir);
@@ -57,7 +58,7 @@ describe("compaction logger", () => {
 	});
 
 	it("Given circular data When logging Then it never throws", () => {
-		const dir = "/tmp/senpi-compaction-log-circular";
+		const dir = createTempAgentDir("senpi-compaction-log-circular-");
 		const logger = createCompactionLogger(dir, { sink: () => {} });
 		const circular: Record<string, unknown> = { origin: "blocking" };
 		circular.reason = circular;
@@ -66,7 +67,7 @@ describe("compaction logger", () => {
 	});
 
 	it("Given disallowed fields When logging Then only allowlisted data is emitted", () => {
-		const dir = "/tmp/senpi-compaction-log-allowlist";
+		const dir = createTempAgentDir("senpi-compaction-log-allowlist-");
 		const sink: string[] = [];
 		const logger = createCompactionLogger(dir, { sink: (line) => sink.push(line) });
 
@@ -91,7 +92,7 @@ describe("compaction logger", () => {
 	});
 
 	it("Given the idle warm-up trigger When logging Then the idle_trigger event is emitted", () => {
-		const dir = "/tmp/senpi-compaction-log-idle";
+		const dir = createTempAgentDir("senpi-compaction-log-idle-");
 		const sink: string[] = [];
 		const logger = createCompactionLogger(dir, { sink: (line) => sink.push(line), mirrorToStderr: false });
 

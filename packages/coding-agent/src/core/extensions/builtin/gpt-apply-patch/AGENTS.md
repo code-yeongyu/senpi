@@ -1,6 +1,6 @@
 # builtin/gpt-apply-patch
 
-Builtin extension #2. For `gpt-*` models on Responses-family APIs, swaps `write` / `edit` for a freeform Codex-style `apply_patch` tool with a Lark-style grammar; for `gpt-*` models on `openai-completions`, exposes `apply_patch` as a plain JSON function tool instead. Applies multi-file patches (add / update / delete / move). Keeps standard edit tools for all other models and APIs. Largest single builtin (18 files).
+Builtin extension #4. For `gpt-*` models on Responses-family APIs, swaps `write` / `edit` for a freeform Codex-style `apply_patch` tool with a Lark-style grammar; for `gpt-*` models on `openai-completions`, exposes `apply_patch` as a plain JSON function tool instead. Applies multi-file patches (add / update / delete / move). Keeps standard edit tools for all other models and APIs. Largest single builtin (18 files).
 
 ## FILES
 

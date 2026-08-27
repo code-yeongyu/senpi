@@ -149,6 +149,24 @@
 
 - LOW: `index.ts` `registrationHasRestrictedTarget` and the new `isSafeFilteredAgentDirTarget`; LOW in `config-reload-extension.test.ts`.
 
+## Accept filtered ancestor config-watch targets safely (2026-08-26)
+
+### What changed
+
+- Generalized the protected-path registration guard so directory targets covering the agent directory are accepted when every filter glob is root-anchored and each resolved path stays outside protected paths in both directions. Targets inside protected paths, unfiltered targets, unanchored filters, and filters naming protected paths remain rejected.
+
+### Why
+
+- Issue code-yeongyu/oh-my-openagent#7064: the default `~/.omo/agent` layout made the omo extension's user-config watch target at `~/.omo` rejected, even though its anchored `/omo.jsonc` and `/omo.json` filters are confined to safe files.
+
+### Why an extension could not handle it
+
+- The protected-target guard runs inside this builtin during registration intake, before an external extension's filtered watch can be stored or watched.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` protected-target filtering and `config-reload-extension.test.ts` restricted-registration coverage.
+
 ## Off-main-thread recursive watchers on macOS and non-blocking teardown (2026-08-20)
 
 ### What changed

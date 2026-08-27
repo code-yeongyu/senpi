@@ -9,6 +9,7 @@ import { claimAbort, createGenerationState, markUserCancelled } from "./coordina
 import { REPETITIVE_TURNS_RULE_NAME } from "./detectors/repetitive-turns.ts";
 import { discoverTtsrRulesSync } from "./discovery.ts";
 import { TtsrManager } from "./manager.ts";
+import { getTtsrStreamDelta } from "./message-update.ts";
 import { REPETITIVE_TURNS_RULE_CONTENT } from "./prompts.ts";
 import { buildNudgeMessage, type TtsrNudgeMessage } from "./remediation.ts";
 import { collectAssistantText, RepetitiveTurnsLane, readPersistedAssistantTexts } from "./repetitive-turns-lane.ts";
@@ -25,7 +26,7 @@ import { StreamWatcher } from "./watch.ts";
 
 interface PendingRemediation {
 	readonly resolution: DetectionResolution;
-	readonly streamKind: "text" | "thinking";
+	readonly streamKind: "text" | "thinking" | "tool";
 }
 
 interface PendingRuleNudge {
@@ -186,11 +187,10 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 	pi.on("message_update", (event: MessageUpdateEvent, ctx) => {
 		ensureInitialized(ctx);
 		if (disabled || manager === null || watcher === null) return;
-		const deltaEvent = event.assistantMessageEvent;
-		if (deltaEvent.type !== "text_delta" && deltaEvent.type !== "thinking_delta") return;
-		const source = deltaEvent.type === "text_delta" ? "text" : "thinking";
-		const streamKey = `${source}:${String(deltaEvent.contentIndex)}`;
-		const outcome = watcher.handleDelta(source, streamKey, deltaEvent.delta, generation);
+		const streamDelta = getTtsrStreamDelta(event);
+		if (streamDelta === null) return;
+		const { source, streamKey, delta, toolName } = streamDelta;
+		const outcome = watcher.handleDelta(source, streamKey, delta, generation, toolName);
 		if (outcome.resolution !== null && claimAbort(genState, outcome.resolution)) {
 			pendingRemediation = { resolution: outcome.resolution, streamKind: source };
 			ctx.abort("system");
@@ -198,7 +198,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		}
 		if (source === "text") {
 			const canArm = pendingRuleNudge === null && !genState.abortClaimed;
-			if (repetitiveTurns.observeTextDelta(deltaEvent.delta, canArm) && !genState.abortClaimed) {
+			if (repetitiveTurns.observeTextDelta(delta, canArm) && !genState.abortClaimed) {
 				genState.abortClaimed = true;
 				genState.abortOwner = "collapse-repetition";
 				genState.selfAbortAt = Date.now();
@@ -247,7 +247,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 					pendingNudge = outcome.nudge;
 				}
 				const merged = { ...event.message, ...outcome.replacement };
-				return { message: merged as unknown as typeof event.message };
+				return { message: merged };
 			} catch (error) {
 				pi.appendEntry("ttsr-remediation-error", {
 					message: error instanceof Error ? error.message : String(error),

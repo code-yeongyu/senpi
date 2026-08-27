@@ -1,6 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { Container, Text } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import * as interactiveModeModule from "../../src/modes/interactive/interactive-mode.ts";
+import { getMarkdownTheme, initTheme } from "../../src/modes/interactive/theme/theme.ts";
 
 type RenderHandle = {
 	replace(message: AgentMessage): void;
@@ -234,5 +236,47 @@ describe("optimistic pending user echo", () => {
 
 		expect(rendered).toHaveLength(1);
 		expect(persisted).toEqual([]);
+	});
+
+	it("appends the canonical user message after a compaction rebuild that destroyed the pending echo", () => {
+		initTheme("dark");
+		const chatContainer = new Container();
+		chatContainer.addChild(new Text("prior history"));
+		const compactionSummary = new Text("compaction-summary");
+		const canonicalUser = new Text("canonical-user");
+
+		const fakeThis = {
+			chatContainer,
+			ui: { requestRender: vi.fn() },
+			outputPad: 1,
+			getMarkdownThemeWithSettings: () => getMarkdownTheme(),
+			getMarkdownTransformers: () => [],
+			addMessageToChat(_message: AgentMessage) {
+				chatContainer.addChild(canonicalUser);
+			},
+		};
+
+		const renderPendingUserEcho = Reflect.get(
+			interactiveModeModule.InteractiveMode.prototype,
+			"renderPendingUserEcho",
+		);
+		if (typeof renderPendingUserEcho !== "function") {
+			throw new Error("InteractiveMode.renderPendingUserEcho is missing");
+		}
+
+		const Controller = getControllerConstructor();
+		const controller = new Controller((text: string) => renderPendingUserEcho.call(fakeThis, text));
+		const id = controller.begin("paint me now");
+		controller.promptOptions(id).promptDisposition("started");
+
+		chatContainer.clear();
+		chatContainer.addChild(compactionSummary);
+
+		const canonical = userMessage("canonical after compaction");
+		expect(controller.replaceNext(canonical)).toBe(true);
+
+		const compactionIndex = chatContainer.children.indexOf(compactionSummary);
+		const userIndex = chatContainer.children.indexOf(canonicalUser);
+		expect(userIndex).toBeGreaterThan(compactionIndex);
 	});
 });

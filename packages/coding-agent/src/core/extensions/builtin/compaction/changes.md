@@ -1,5 +1,66 @@
 # Builtin compaction extension changes
 
+## Apply idle warm compaction during the idle gap (2026-08-26)
+
+### What changed
+
+- `index.ts` adds an idle-apply watcher (`armIdleApply`) on the speculative job started by the
+  `agent_end` idle trigger (and by the idle warm-up retry timer). When generation completes while
+  the session is still idle and over threshold, the summary is applied immediately through the
+  shared `applyGeneratedCompaction` guards instead of being held warm until the next
+  `before_agent_start`. A new `sessionIdleSinceAgentEnd` flag fences the watcher; it is cleared by
+  `before_agent_start` and `session_shutdown`. Stale or refused applies keep the warm hold, so the
+  next prompt consumes the job exactly as before.
+- `log.ts` adds the `idle_applied` debug event.
+- `test/compaction/idle-compaction.test.ts` updates the two idle warm-up tests to the new contract:
+  one apply at idle, never replayed on the following prompt.
+
+### Why
+
+- Holding the warm summary until the next submit made the user watch their own prompt wait behind
+  a compaction they could not see coming; the [compaction] block rendered at submit time even
+  though generation had finished minutes earlier. Applying during the idle gap renders the block
+  first and lets the next message stack below it.
+
+### Why an extension could not handle it
+
+- The speculative job registry, idle retry timer, and apply admission are private policy inside
+  this builtin; external extensions cannot observe or consume the warm job.
+
+### Expected merge conflict zones
+
+- MEDIUM: `index.ts` `agent_end` / `before_agent_start` handlers during upstream syncs.
+
+## Bound todo snapshots and keep successful compaction admission open (2026-08-25)
+
+### What changed
+
+- `todo-bridge.ts` now snapshots only the latest todo phases from the active branch instead of
+  persisting every historical `senpi.todo-state` session envelope. Restore checks use the same
+  branch-local current state, and legacy snapshots containing raw custom entries are normalized
+  to their latest todo payload before any restore message is emitted.
+- `per-turn-cap.ts` retains successful-compaction counters as telemetry but no longer rejects a
+  long-lived session after ten accepted compactions. The independent circuit breaker remains
+  responsible for repeated failed or ineffective attempts.
+
+### Why
+
+- Repeated snapshots recursively retained the full todo-state history, growing from kilobytes to
+  megabytes and immediately refilling context after compaction.
+- The absolute success cap then permanently rejected threshold, overflow, manual, and pre-prompt
+  compaction routes after ten effective compactions, leaving no in-session recovery path.
+
+### Why an extension could not handle it
+
+- Snapshot capture/restore and admission accounting are private policy inside this builtin.
+  External extensions cannot replace the persisted metadata payload or override this builtin's
+  pre-compaction rejection decision.
+
+### Expected merge conflict zones
+
+- LOW: `todo-bridge.ts` around snapshot parsing, current-state capture, and restore suppression.
+- LOW: `per-turn-cap.ts` around the former absolute-cap exports and admission predicate.
+
 ## Skip Cursor compaction while the session is not idle (2026-08-19)
 
 Blocking and generated apply refuse `cursor` / `cursor-cli-oauth` when `!ctx.isIdle()`. Mid-run Cursor compact poisons `conversationId`. Idle `agent_end` / `pre_prompt` still compact.

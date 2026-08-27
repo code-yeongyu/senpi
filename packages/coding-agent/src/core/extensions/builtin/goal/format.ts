@@ -52,6 +52,18 @@ export function formatGoalForTool(goal: Goal | null): string {
 	return lines.join("\n");
 }
 
+export type GoalToolRenderDetails = {
+	goal: GoalToolSnapshot | null;
+	notice?: string;
+};
+
+export function goalToolRenderDetails(goal: Goal | null, notice?: string): GoalToolRenderDetails {
+	return {
+		goal: goal === null ? null : goalToolSnapshot(goal),
+		...(notice === undefined ? {} : { notice }),
+	};
+}
+
 export function goalToolResponse(goal: Goal | null): GoalToolResponse {
 	return { goal: goal === null ? null : goalToolSnapshot(goal) };
 }

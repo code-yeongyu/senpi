@@ -51,12 +51,12 @@ const NON_PRIORITY_MODEL_IDS = [
 ] as const;
 
 describe("OpenAI -fast priority-tier catalog variants", () => {
-	it("defaults GPT-5.6 Sol variants to a 400k context window", () => {
+	it("defaults GPT-5.6 Sol variants to a 650k context window", () => {
 		for (const provider of ["openai", "openai-codex"] as const) {
 			for (const id of GPT_56_SOL_MODEL_IDS) {
 				const model = getModel(provider, id);
 				expect(model, `${provider}/${id} should exist`).toBeDefined();
-				expect(model!.contextWindow, `${provider}/${id}`).toBe(400_000);
+				expect(model!.contextWindow, `${provider}/${id}`).toBe(650_000);
 			}
 		}
 	});

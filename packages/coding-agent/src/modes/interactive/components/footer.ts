@@ -1,4 +1,8 @@
+import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import type { Credential } from "@earendil-works/pi-ai";
+import { rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
+import { listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
@@ -32,6 +36,23 @@ export function formatTokens(count: number): string {
 	if (n < 1_000_000_000) return `${Math.round(n / 1_000_000)}M`;
 	if (n < 10_000_000_000) return `${trim1(n / 1_000_000_000)}B`;
 	return `${Math.round(n / 1_000_000_000)}B`;
+}
+
+/**
+ * Mirrors the provider-shown-only-when->1 rule for accounts: the active account
+ * name appears only when the provider actually pools more than one slot. The
+ * pick shown is the pin when present, else the session's HRW winner - the same
+ * hash the rotation engine uses, so the footer names the slot that will serve.
+ */
+export function accountFooterSuffix(credential: Credential | undefined, sessionId: string): string {
+	const slots = listSlots(credential);
+	if (slots.length < 2) return "";
+	const pinned = Object.entries(credential ?? {}).find(([key]) => key === "pinned")?.[1];
+	if (typeof pinned === "string" && slots.some((slot) => slot.name === pinned)) return `@${pinned}`;
+	const winner = rendezvousOrder(sessionId, slots, (input) =>
+		createHash("sha256").update(input).digest().readBigUInt64BE(0),
+	)[0];
+	return winner === undefined ? "" : `@${winner.name}`;
 }
 
 /** Format with up to 1 decimal place, dropping trailing `.0`. */
@@ -187,8 +208,21 @@ export class FooterComponent implements Component {
 			minimalRight = thinkingLevel === "off" ? `${minimalRight}:off` : `${minimalRight}:${thinkingLevel}`;
 		}
 		const minimal: FooterSegment = { plain: minimalRight, colored: colorRightSide(minimalRight) };
+		let accountSuffix = "";
+		if (state.model) {
+			try {
+				accountSuffix = accountFooterSuffix(
+					this.session.modelRegistry.authStorage.get(state.model.provider),
+					this.session.sessionManager.getSessionId(),
+				);
+			} catch {
+				// The footer must render even when credential storage is unreadable.
+			}
+		}
 		const providerPrefix =
-			this.footerData.getAvailableProviderCount() > 1 && state.model ? `(${state.model.provider}) ` : "";
+			(this.footerData.getAvailableProviderCount() > 1 || accountSuffix !== "") && state.model
+				? `(${state.model.provider}${accountSuffix}) `
+				: "";
 		const full: FooterSegment | undefined = providerPrefix
 			? { plain: `${providerPrefix}${minimalRight}`, colored: colorRightSide(`${providerPrefix}${minimalRight}`) }
 			: undefined;

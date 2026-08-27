@@ -1,5 +1,18 @@
 # loop-guard changes
 
+## loop-guard: give polling blocks a terminal recovery action (2026-08-25)
+
+- Block reasons for `bash_output` and `task_output` now tell the agent to stop
+  polling, arm a monitor or rely on a supported completion notification when
+  waiting is appropriate, and otherwise re-plan.
+- Other blocked tools keep generic reuse, stop, re-plan, or alternate-tool
+  guidance without implying that a monitor exists.
+- Why: the previous generic instruction to change an argument deliberately
+  allowed same-target polling to evade identical-loop escalation.
+- Tests cover the polling and non-polling recovery branches.
+- Expected merge conflict zones: LOW in `notice.ts` and this tracker entry;
+  NONE in public extension APIs.
+
 ## loop-guard: block ignored identical loops and interrupt persistent hard stops (2026-08-17)
 
 - Exact identical loops now hard-escalate after two admitted reminders. The

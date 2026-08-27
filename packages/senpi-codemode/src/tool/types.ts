@@ -140,6 +140,15 @@ export interface EvalToolCallSummary {
 
 export type EvalStatusEvent = { readonly op: string } & Readonly<Record<string, unknown>>;
 
+/** Identity of the runtime executing a kernel: interpreter or JS host. */
+export interface EvalRuntimeInfo {
+	readonly name: string;
+	readonly version: string;
+	readonly path?: string;
+}
+
+export type EvalRuntimes = Readonly<Partial<Record<EvalLanguage, EvalRuntimeInfo>>>;
+
 export type EvalDisplayOutput =
 	| { readonly type: "json"; readonly data: unknown }
 	| { readonly type: "image"; readonly data: string; readonly mimeType: string }
@@ -152,9 +161,12 @@ export type EvalCellResult = {
 	readonly code: string;
 	readonly language: EvalLanguage;
 	readonly output: string;
+	readonly runtime?: EvalRuntimeInfo;
 	readonly status: "pending" | "running" | "detached" | "complete" | "error" | "cancelled";
 	readonly exitCode?: number;
 	readonly durationMs?: number;
+	/** Epoch ms when the cell started; lets renderers tick elapsed time between update events. */
+	readonly startedAt?: number;
 	readonly statusEvents?: readonly EvalStatusEvent[];
 	readonly hasMarkdown?: boolean;
 };
@@ -162,6 +174,7 @@ export type EvalCellResult = {
 export interface EvalToolDetails {
 	readonly language: EvalLanguage;
 	readonly languages?: readonly EvalLanguage[];
+	readonly runtime?: EvalRuntimeInfo;
 	readonly summary?: string;
 	readonly durationMs: number;
 	/** True wall-clock elapsed time since the cell started; `durationMs` stays kernel-reported. */

@@ -28,6 +28,28 @@ function normalizePath(path) {
 	return path.replaceAll("\\", "/");
 }
 
+// @anthropic-ai/sdk >=0.93.0 ships a Node-only credentials subsystem
+// (config profiles, identity-token files, user OAuth) that reaches `node:fs`
+// and `node:path` through dynamic `await import(...)` calls the SDK guards at
+// runtime, so browsers never execute them. esbuild still hard-errors on the
+// unresolvable builtins when bundling for the browser. The claude-agent-sdk
+// peer floor forces >=0.93.0, so this is upstream's documented browser story
+// rather than something we can pin our way out of.
+//
+// Scoped deliberately to importers inside node_modules/@anthropic-ai/sdk: the
+// guardrail must keep failing when senpi's own browser-facing code imports a
+// Node builtin.
+const anthropicSdkImporterMarker = "node_modules/@anthropic-ai/sdk/";
+const anthropicSdkNodeBuiltinsPlugin = {
+	name: "anthropic-sdk-node-builtins",
+	setup(build) {
+		build.onResolve({ filter: /^node:/ }, (args) => {
+			if (!normalizePath(args.importer).includes(anthropicSdkImporterMarker)) return;
+			return { path: args.path, external: true };
+		});
+	},
+};
+
 function findInput(inputs, suffix) {
 	return Object.keys(inputs).find((input) => {
 		const normalized = normalizePath(input);
@@ -48,7 +70,7 @@ try {
 		format: "esm",
 		logLevel: "silent",
 		outfile: outputPath,
-		plugins: [generatedCatalogDataPlugin],
+		plugins: [generatedCatalogDataPlugin, anthropicSdkNodeBuiltinsPlugin],
 	});
 
 	const agentTreeshakeBuild = await build({
@@ -59,7 +81,7 @@ try {
 		logLevel: "silent",
 		metafile: true,
 		outfile: agentTreeshakeOutputPath,
-		plugins: [generatedCatalogDataPlugin],
+		plugins: [generatedCatalogDataPlugin, anthropicSdkNodeBuiltinsPlugin],
 		write: false,
 	});
 	const inputs = agentTreeshakeBuild.metafile.inputs;

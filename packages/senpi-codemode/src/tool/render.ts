@@ -19,6 +19,7 @@ import {
 	JSON_TREE_SCALAR_LEN_EXPANDED,
 	renderJsonTreeLines,
 } from "./json-tree.ts";
+import { formatRuntimeBadge } from "./runtime-label.ts";
 import { codePointPrefix, formatDuration, renderToolCallWidget } from "./tool-widgets.ts";
 import type {
 	EvalCellResult,
@@ -69,12 +70,36 @@ const TOOL_CALL_PREVIEW_COUNT = 5;
 const TOOL_CALL_COLLAPSED_VISUAL_LINES = 4;
 const TOOL_CALL_COLLAPSED_ERROR_CODE_POINTS = 512;
 const TOOL_ERROR_OMISSION_MARKER = "[tool error omitted]";
+const LIVE_ELAPSED_TICK_MS = 1_000;
 
 class PlainTextComponent implements EvalRenderComponent {
 	#blocks: readonly RenderBlock[] = [];
+	#ticker: ReturnType<typeof setInterval> | undefined;
 
 	setBlocks(blocks: readonly RenderBlock[]): void {
 		this.#blocks = blocks;
+	}
+
+	/**
+	 * The host only animates tool rows for streaming args, `task`, and results carrying
+	 * `details.progress`; an eval row matches none of them, so nothing repaints it between
+	 * update events. While a cell is non-terminal this drives the repaint itself so the
+	 * header's elapsed time advances, and it emits no tool updates or RPC traffic.
+	 */
+	syncLiveTicker(isLive: boolean, invalidate: () => void): void {
+		if (!isLive) {
+			this.stopLiveTicker();
+			return;
+		}
+		if (this.#ticker !== undefined) return;
+		this.#ticker = setInterval(invalidate, LIVE_ELAPSED_TICK_MS);
+		this.#ticker.unref?.();
+	}
+
+	stopLiveTicker(): void {
+		if (this.#ticker === undefined) return;
+		clearInterval(this.#ticker);
+		this.#ticker = undefined;
 	}
 
 	render(width: number): string[] {
@@ -107,6 +132,16 @@ function componentFor(context: RenderContext | ResultRenderContext): PlainTextCo
 	const existing = context.lastComponent;
 	if (existing instanceof PlainTextComponent) return existing;
 	return new PlainTextComponent();
+}
+
+/** Render-time clock; tests inject a fixed value so elapsed output never depends on wall time. */
+function renderNow(context: RenderContext | ResultRenderContext): number {
+	const injected: unknown = Reflect.get(context, "now");
+	return typeof injected === "number" && Number.isFinite(injected) ? injected : Date.now();
+}
+
+function hasLiveCell(details: EvalToolDetails | undefined): boolean {
+	return (details?.cells ?? []).some((cell) => isLiveCellStatus(cell.status) && cell.startedAt !== undefined);
 }
 
 function style(theme: Theme | undefined, color: ThemeColor, text: string): string {
@@ -187,6 +222,8 @@ type RenderEnvironment = {
 	readonly spinnerFrame: number | undefined;
 	readonly width: number;
 	readonly meta: TruncationMeta | undefined;
+	/** Render-time clock, injected so elapsed time is deterministic under test. */
+	readonly now: number;
 };
 type CellBadges = {
 	readonly reset: boolean;
@@ -231,6 +268,10 @@ function spinner(frame: number | undefined): string {
 	return SPINNER_FRAMES.at((frame ?? 0) % SPINNER_FRAMES.length) ?? SPINNER_FRAMES[0];
 }
 
+function isLiveCellStatus(status: CellStatus): boolean {
+	return status === "pending" || status === "running" || status === "detached";
+}
+
 function cellPresentation(status: CellStatus, spinnerFrame: number | undefined): StatusPresentation {
 	switch (status) {
 		case "pending":
@@ -259,12 +300,21 @@ function renderPrefixed(text: string, environment: RenderEnvironment, prefixStyl
 	);
 }
 
+// A running cell only receives updates on output/status events, so a stored duration
+// freezes between them. Non-terminal cells therefore derive elapsed time from the
+// render-time clock; terminal cells keep their settled duration verbatim.
+function cellElapsedMs(cell: EvalCellResult, environment: RenderEnvironment): number | undefined {
+	if (!isLiveCellStatus(cell.status) || cell.startedAt === undefined) return cell.durationMs;
+	return Math.max(0, environment.now - cell.startedAt);
+}
+
 function cellHeader(cell: EvalCellResult, environment: RenderEnvironment, badges: CellBadges): string {
 	const presentation = cellPresentation(cell.status, environment.spinnerFrame);
-	let header = `eval ${cell.language} ${presentation.label} ${presentation.icon}`;
+	const runtimeBadge = cell.runtime === undefined ? "" : ` (${formatRuntimeBadge(cell.language, cell.runtime)})`;
+	let header = `eval ${cell.language}${runtimeBadge} ${presentation.label} ${presentation.icon}`;
 	const throughputBadge = badges.throughput === undefined ? undefined : formatThroughputBadge(badges.throughput);
 	if (throughputBadge !== undefined) header += ` · ${throughputBadge}`;
-	const elapsedMs = badges.throughput?.wallDurationMs ?? cell.durationMs;
+	const elapsedMs = badges.throughput?.wallDurationMs ?? cellElapsedMs(cell, environment);
 	if (elapsedMs !== undefined) header += ` · ${formatDuration(elapsedMs)}`;
 	if (badges.reset) header += " · reset";
 	if (badges.timeout !== undefined) header += ` · timeout ${badges.timeout}s`;
@@ -780,7 +830,9 @@ function resultHeader(
 			color = "error";
 			break;
 	}
-	return style(theme, color, `eval ${details?.language ?? "?"} ${status}`);
+	const runtimeBadge =
+		details?.runtime === undefined ? "" : ` (${formatRuntimeBadge(details.language, details.runtime)})`;
+	return style(theme, color, `eval ${details?.language ?? "?"}${runtimeBadge} ${status}`);
 }
 
 function resultMetadata(
@@ -843,6 +895,7 @@ export function renderEvalCall(
 					spinnerFrame: context.spinnerFrame,
 					width,
 					meta: undefined,
+					now: renderNow(context),
 				};
 				const cell: EvalCellResult = {
 					index: 0,
@@ -873,6 +926,7 @@ export function renderEvalResult(
 	const details = result.details;
 	const expanded = options.expanded || context.expanded;
 	const imageProtocol = context.imageProtocol ?? null;
+	component.syncLiveTicker(hasLiveCell(details), context.invalidate);
 	if (details?.cells !== undefined && details.cells.length > 0) {
 		const blocks: RenderBlock[] = [
 			{
@@ -885,6 +939,7 @@ export function renderEvalResult(
 							spinnerFrame: context.spinnerFrame,
 							width,
 							meta: details.meta,
+							now: renderNow(context),
 						},
 						args: context.args,
 						showImageFallback: context.showImages && imageProtocol === null,
@@ -936,6 +991,7 @@ export function renderEvalResult(
 						spinnerFrame: context.spinnerFrame,
 						width,
 						meta: details?.meta,
+						now: renderNow(context),
 					};
 					return [
 						...renderStatusEvents(nonAgentEvents, environment),
@@ -957,6 +1013,7 @@ export function renderEvalResult(
 						spinnerFrame: context.spinnerFrame,
 						width,
 						meta: details?.meta,
+						now: renderNow(context),
 					}),
 			},
 		);

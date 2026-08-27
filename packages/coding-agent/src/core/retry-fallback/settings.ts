@@ -13,6 +13,7 @@ export interface RetrySettings {
 	maxRetries?: number;
 	baseDelayMs?: number;
 	provider?: ProviderRetrySettings;
+	providers?: Record<string, import("./profile-override.ts").RetryPolicyOverride>;
 	modelFallback?: boolean;
 	fallbackChains?: Record<string, string[]>;
 	fallbackRevertPolicy?: "cooldown-expiry" | "never";

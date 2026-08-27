@@ -17,6 +17,7 @@ import {
 	type DeferredCancelOptions,
 	type DeferredFetchOptions,
 	type DeferredHandle,
+	getApiKeyEnvVars,
 	lazyStream,
 	type Model,
 	type Models,
@@ -43,6 +44,7 @@ import { APP_NAME, BRAND, getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
 import { envValue } from "./brand.ts";
+import type { RotationSources } from "./credential-pool/rotation-stream.ts";
 import { ModelConfig } from "./model-config.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
 import {
@@ -93,6 +95,45 @@ export interface ModelRuntimeAuthOverrides extends AuthOperationOptions {
 	env?: Record<string, string>;
 	/** Require this much remaining OAuth-token validity; defaults to five minutes. */
 	minOAuthValidityMs?: number;
+	/** Resolve against one named slot of a pooled credential instead of the flat projection. */
+	slotName?: string;
+}
+
+/**
+ * Stream options plus the coding-agent-only affinity key. It is declared here
+ * rather than widening the engine's `StreamOptions`: a stable key (the session
+ * id) keeps one conversation on one credential slot, and its absence simply
+ * distributes requests instead of concentrating them.
+ */
+export type CredentialRotationStreamOptions = StreamOptions & ModelsRequestTransforms & { affinityKey?: string };
+
+/**
+ * Cheap pre-check answering "could this provider hold more than one credential
+ * at all?" without loading the credential pool. A stored entry pools only
+ * through `accounts`; env slots participate only when nothing is stored, and a
+ * lone primary variable is still a single credential.
+ */
+function mightHoldEnvCredentialPool(providerId: string, env: (name: string) => string | undefined): boolean {
+	const envVars = getApiKeyEnvVars(providerId);
+	const primary = envVars?.find((name) => name.endsWith("_API_KEY")) ?? envVars?.[0];
+	if (primary === undefined) return false;
+	let found = env(primary) ? 1 : 0;
+	for (let index = 2; index <= 16 && found < 2; index++) {
+		if (env(`${primary}_${index}`)) found++;
+	}
+	return found > 1;
+}
+
+function mightHoldCredentialPool(
+	providerId: string,
+	credential: Credential | undefined,
+	env: (name: string) => string | undefined,
+): boolean {
+	if (credential) {
+		const accounts = Object.entries(credential).find(([key]) => key === "accounts")?.[1];
+		return Array.isArray(accounts) && accounts.length > 1;
+	}
+	return mightHoldEnvCredentialPool(providerId, env);
 }
 
 export type CredentialSynchronizationOperation = "login" | "logout" | "setRuntimeApiKey" | "removeRuntimeApiKey";
@@ -169,6 +210,18 @@ export class ModelRuntime implements Models {
 	private readonly providerAvailabilitySeq = new Map<string, number>();
 	private availabilityError: string | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
+	/**
+	 * The credential pool is loaded lazily and only for a provider that actually
+	 * has more than one slot. Importing it eagerly would pull the pool's schema
+	 * validator - and its module-level global registry - into every consumer of
+	 * ModelRuntime, which the import-graph guard forbids.
+	 */
+	private credentialPoolModules:
+		| Promise<{
+				rotation: typeof import("./credential-pool/rotation-stream.ts");
+				repository: InstanceType<typeof import("./credential-pool/state-store.ts").CredentialSlotRepository>;
+		  }>
+		| undefined;
 	private constructor(
 		credentials: RuntimeCredentials,
 		config: ModelConfig,
@@ -216,7 +269,6 @@ export class ModelRuntime implements Models {
 			envValue("OFFLINE") === undefined && options.allowModelNetwork === true,
 			options.modelRefreshTimeoutMs ?? 15_000,
 		);
-		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
 		const refreshFromNetwork = runtime.modelNetworkEnabled && options.allowModelNetwork === true;
 		const controller =
@@ -264,26 +316,8 @@ export class ModelRuntime implements Models {
 			options.allowModelNetwork ?? false,
 			options.modelRefreshTimeoutMs ?? 15_000,
 		);
-		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
 		return runtime;
-	}
-
-	private configureRadiusProviders(): void {
-		this.builtins.clear();
-		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
-		for (const providerId of this.config.getProviderIds()) {
-			const config = this.config.getProvider(providerId);
-			if (config?.oauth !== "radius" || !config.baseUrl) continue;
-			this.builtins.set(
-				providerId,
-				builtinProviderCatalog.radiusProvider({
-					id: providerId,
-					name: config.name ?? providerId,
-					gateway: config.baseUrl.replace(/\/v1\/?$/u, ""),
-				}),
-			);
-		}
 	}
 
 	private providerIds(): Set<string> {
@@ -655,6 +689,7 @@ export class ModelRuntime implements Models {
 	private async prepareRequest<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(
 		model: Model<Api>,
 		options: TOptions | undefined,
+		slotAuth?: { apiKey?: string; slotName?: string },
 	): Promise<{
 		provider: Provider;
 		model: Model<Api>;
@@ -663,9 +698,10 @@ export class ModelRuntime implements Models {
 		const provider = this.models.getProvider(model.provider);
 		if (!provider) throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
 		const resolution = await this.getAuth(model, {
-			apiKey: options?.apiKey,
+			apiKey: slotAuth?.apiKey ?? options?.apiKey,
 			env: options?.env,
 			signal: options?.signal,
+			...(slotAuth?.slotName === undefined ? {} : { slotName: slotAuth.slotName }),
 		});
 		if (!resolution) throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
 
@@ -697,12 +733,62 @@ export class ModelRuntime implements Models {
 			model: requestModel,
 			options: {
 				...providerOptions,
-				apiKey: providerOptions.apiKey ?? resolution.auth.apiKey,
+				apiKey: slotAuth?.apiKey ?? providerOptions.apiKey ?? resolution.auth.apiKey,
 				headers,
 				extraBody,
 				env,
 			} as Omit<TOptions, "transformHeaders"> & ProviderRequestOptions,
 		};
+	}
+
+	/**
+	 * Rotation engages only for a provider that actually holds more than one
+	 * credential slot and only when nothing pins the request to one credential
+	 * (a runtime key or an explicit per-request apiKey). Every single-credential
+	 * user therefore keeps byte-identical request behavior.
+	 */
+	private loadCredentialPool(): NonNullable<typeof this.credentialPoolModules> {
+		this.credentialPoolModules ??= (async () => {
+			const [rotation, stateStore] = await Promise.all([
+				import("./credential-pool/rotation-stream.ts"),
+				import("./credential-pool/state-store.ts"),
+			]);
+			return { rotation, repository: new stateStore.CredentialSlotRepository() };
+		})();
+		return this.credentialPoolModules;
+	}
+
+	/**
+	 * Fully synchronous admission check. A provider that cannot possibly hold a
+	 * pool must not even reach the async rotation path: awaiting an async method
+	 * costs a microtask hop, which would reorder an ordinary request's provider
+	 * call relative to the untouched `streamSimple` path.
+	 */
+	private couldRotateCredentials(model: Model<Api>, options: CredentialRotationStreamOptions | undefined): boolean {
+		if (options?.apiKey !== undefined) return false;
+		if (this.credentials.hasRuntimeApiKey(model.provider)) return false;
+		if (this.config.getProvider(model.provider)?.credentials?.rotation === false) return false;
+		const env = (name: string) => options?.env?.[name] ?? process.env[name];
+		if (this.snapshot.storedProviders.has(model.provider)) return true;
+		return mightHoldEnvCredentialPool(model.provider, env);
+	}
+
+	private async credentialRotationSources(
+		model: Model<Api>,
+		options: CredentialRotationStreamOptions | undefined,
+	): Promise<RotationSources | undefined> {
+		const env = (name: string) => options?.env?.[name] ?? process.env[name];
+		const credential = await this.credentials.read(model.provider, { signal: options?.signal });
+		if (!mightHoldCredentialPool(model.provider, credential, env)) return undefined;
+		const pool = await this.loadCredentialPool();
+		const sources: RotationSources = {
+			providerId: model.provider,
+			credential,
+			env,
+			repository: pool.repository,
+		};
+		const slots = await pool.rotation.listRotationSlots(sources);
+		return slots.length > 1 ? sources : undefined;
 	}
 
 	stream<TApi extends Api>(
@@ -711,10 +797,33 @@ export class ModelRuntime implements Models {
 		options?: ModelsApiStreamOptions<TApi>,
 	): AssistantMessageEventStream {
 		return lazyStream(model, async () => {
-			const prepared = await this.prepareRequest(
-				model,
-				options as (StreamOptions & ModelsRequestTransforms) | undefined,
-			);
+			const streamOptions = options as CredentialRotationStreamOptions | undefined;
+			const sources = this.couldRotateCredentials(model, streamOptions)
+				? await this.credentialRotationSources(model, streamOptions)
+				: undefined;
+			if (sources) {
+				const { rotation } = await this.loadCredentialPool();
+				return rotation.streamWithCredentialRotation({
+					sources,
+					...(streamOptions?.affinityKey === undefined ? {} : { affinityKey: streamOptions.affinityKey }),
+					runAttempt: async (slot) => {
+						const prepared = await this.prepareRequest(
+							model,
+							streamOptions,
+							slot.lane === "env"
+								? { ...(slot.envKey === undefined ? {} : { apiKey: slot.envKey }) }
+								: { slotName: slot.name },
+						);
+						const attempt = prepared.provider.stream(
+							prepared.model as Model<TApi>,
+							context,
+							withPayloadRequestMetadata(prepared.options, prepared.model) as ApiStreamOptions<TApi>,
+						);
+						return wrapStreamWithModelRecovery(attempt, model, context.tools ?? []);
+					},
+				});
+			}
+			const prepared = await this.prepareRequest(model, streamOptions);
 			const inner = prepared.provider.stream(
 				prepared.model as Model<TApi>,
 				context,
@@ -794,7 +903,6 @@ export class ModelRuntime implements Models {
 
 	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		this.config = await ModelConfig.load(this.modelsPath);
-		this.configureRadiusProviders();
 		if (options.providers) {
 			for (const providerId of new Set(options.providers)) this.recomposeProvider(providerId);
 			this.updateModelSnapshot();

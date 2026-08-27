@@ -1,6 +1,35 @@
 # Tool Call Middleware Changes
 
-# Tool Call Middleware Changes
+## 2026-08-23 - Kimi XTML sep-less channel marker leak
+
+### What changed and why
+
+- Kimi models leak XTML channel markers into visible text when tool calling
+  fails mid-think: session 01a02505 (message 84281a4b, `kimi-k3-ultrafast-unlocked`)
+  ended a user-visible text block with the literal `<|close|>think\n` because the
+  marker arrives without its trailing `<|sep|>`. Both defenses missed it: the
+  stream recovery parser only recognized `<|sep|>`-terminated markers (the
+  fallback re-emitted the marker bytes as 2-char text slices), and
+  `recoverKimiXtmlThinking()` never scanned `text` blocks at all.
+- `markers.ts` now owns a single shared `XTML_CHANNEL_MARKER_PATTERN` consumed by
+  BOTH the stream parser and the message-level recovery, so the two paths cannot
+  drift again: a marker is `<|open|>`/`<|close|>` + optional channel name
+  (`call`/`argument` reserved for structural opens) + optional `<|sep|>`,
+  terminated by `<|sep|>`, a non-word character, or end of stream; a bare
+  `<|sep|>` is also a marker. `matchXtmlChannelMarker()` anchors it for the
+  streaming state machine.
+- `recovery-stream.ts` holds a buffer that could still grow into a longer marker
+  (name run, partial `<|sep|>`) instead of emitting bytes, defers to structural
+  `<|open|>call `/`<|open|>argument ` opens before generic matching, runs behind
+  a recovery code mask so fenced/inline code keeps marker-shaped literals, and
+  strips held complete markers at `finish()` rather than flushing them.
+- `thinking-recovery.ts` additionally strips markers from `text` blocks (same
+  code-mask treatment). Text-block stripping is silent: the
+  `kimi_xtml_thinking_recovery` diagnostic still fires only for thinking-channel
+  recovery, keeping the runtime-boundary diagnostics contract stable.
+- A word run after a marker is absorbed into the channel name
+  (`<|close|>thinkafter` strips whole), which is the only self-consistent reading
+  of the protocol; incomplete junk like `<|clo` still flushes as plain text.
 
 ## 2026-08-18 - Wire-alias tool-name resolution in invoke recovery
 

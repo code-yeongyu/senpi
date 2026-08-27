@@ -3,6 +3,7 @@ import { armExecHeartbeat } from "../src/api/cursor-agent/exec-lifecycle.ts";
 import {
 	findControlFrames,
 	runExecLifecycleScenario,
+	runStreamHealthScenario,
 	runTurnTerminationScenario,
 } from "./cursor-agent-exec-lifecycle-harness.ts";
 
@@ -45,6 +46,29 @@ export function registerCursorExecLifecycleTests(): void {
 			} finally {
 				vi.useRealTimers();
 			}
+		});
+	});
+
+	describe("cursor-agent stream health and resume", () => {
+		it("keeps heartbeat-only streams alive past the meaningful-frame window", async () => {
+			const { attempts, message } = await runStreamHealthScenario("heartbeatOnly");
+			expect(attempts).toBe(1);
+			expect(message.stopReason).toBe("stop");
+			expect(message.content).toEqual([expect.objectContaining({ type: "text", text: "alive" })]);
+		});
+
+		it("resumes from a checkpoint after a silent mid-turn stall", async () => {
+			const { actions, attempts, message } = await runStreamHealthScenario("checkpointResume");
+			expect(attempts).toBe(2);
+			expect(actions).toEqual(["userMessageAction", "resumeAction"]);
+			expect(message.stopReason).toBe("stop");
+		});
+
+		it("surfaces the last stall after the retry budget is exhausted", async () => {
+			const { attempts, message } = await runStreamHealthScenario("retryExhaustion");
+			expect(attempts).toBe(2);
+			expect(message.stopReason).toBe("error");
+			expect(message.errorMessage).toContain("inbound stream stalled");
 		});
 	});
 

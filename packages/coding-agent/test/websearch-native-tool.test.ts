@@ -10,6 +10,9 @@ import type {
 import type { ExtensionContext } from "../src/core/extensions/types.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { createInMemoryExtensionSessionSettings } from "./helpers/extension-session-settings.ts";
+import { createTempAgentDir } from "./support/temp-agent-dir.ts";
+
+const AGENT_DIR = createTempAgentDir();
 
 function successfulSearchResponse(): Response {
 	return new Response(
@@ -41,7 +44,7 @@ function toolContext(model: Model<Api> | undefined, modelRegistry: ModelRegistry
 		mode: "print",
 		hasUI: false,
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		sessionManager: Object.create(null) as ExtensionContext["sessionManager"],
 		modelRegistry,
 		model,

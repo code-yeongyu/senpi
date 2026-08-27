@@ -31,6 +31,8 @@ export interface BrandUpdateChannel {
 export interface BrandProfile {
 	/** Product name shown to users and to the model. */
 	readonly name: string;
+	/** Executable name used in shell-command contexts when it differs from the display name. */
+	readonly command?: string;
 	/** Version shown in the header, terminal titles and `--version`. */
 	readonly displayVersion?: string;
 	/** Config directory name, e.g. `.omo`. */
@@ -114,6 +116,7 @@ export function parseBrandProfile(raw: string | undefined): BrandProfile | undef
 
 	return {
 		name,
+		command: readString(source, "command"),
 		displayVersion: readString(source, "displayVersion"),
 		configDir,
 		flatLayout: source.flatLayout === true,

@@ -3,6 +3,97 @@
 Root tracker for repository-level divergence from upstream `badlogic/pi-mono`.
 Owns every audited production path whose nearest tracker is the repository root.
 
+## @anthropic-ai/sdk peer alignment (2026-08-26)
+
+### What changed
+
+- `package.json` bumps the pinned `@anthropic-ai/sdk` from `0.91.1` to `0.120.0` so the pin satisfies `@anthropic-ai/claude-agent-sdk@0.3.241`'s `>=0.93.0` peer range.
+
+### Why
+
+- Every bun install printed `warn: incorrect peer dependency "@anthropic-ai/sdk@0.91.1"`; the SDK floor moved to 0.93.0 when the agent SDK gained its credentials subsystem.
+
+### Why this lives in the fork
+
+- The root pin set is fork-owned dependency policy; upstream does not pin these packages together.
+
+### Expected merge conflict zones
+
+- LOW: `package.json` root dependency pins during upstream syncs.
+
+## Root config and package identities re-diverge from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `biome.json` keeps the fork lint surface: schema `2.5.10`, `preset: "recommended"` syntax, and the
+  `**/api/cursor-agent/gen` and `**/.codegraph` exclusions.
+- `packages/agent/package.json` keeps the senpi calver (`2026.8.24`), `tsc` build (upstream uses
+  `tsgo`), and the fork dependency set (`diff` 9, `typebox` 1.3.18, calver workspace ranges).
+- `packages/session-backends/sqlite-node/package.json` keeps the fork package name
+  `@earendil-works/pi-storage-sqlite-node`, `tsc` build, and vitest `4.1.11`.
+- `packages/telemetry/package.json` keeps calver, `@types/node` 26, vitest `4.1.11`, and `private: true`.
+- `packages/tui/package.json` keeps calver, `tsc` build, the `--import tsx` + multiplexer-env test
+  loader, node `>=24`, `marked` 18.0.10, and the `bench:frame-cost` script.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- Version/name/scripts blocks of every listed `package.json` on each upstream release bump; `biome.json`
+  whenever upstream migrates Biome versions.
+
+## Vitest source alias for ai auth subpaths (2026-08-25)
+
+### What changed
+
+- `vitest.base.ts`: added a resolve alias mapping `@earendil-works/pi-ai/auth/*` to `packages/ai/src/auth/*.ts` so vitest resolves the new `auth/pool/slots` subpath to source during tests.
+
+### Why
+
+- Workspace tests import `@earendil-works/pi-ai/auth/pool/slots`; without a source alias vitest resolves to the built `dist`, which does not exist for the new module, breaking test runs.
+
+### Why an extension could not handle it
+
+- Test runner aliasing is repository-level tooling configuration.
+
+### Expected merge conflict zones
+
+- LOW: single additive alias line in `vitest.base.ts`.
+
+## Release dependency refresh (2026-08-24)
+
+### What changed
+
+- `package.json`: `@biomejs/biome` 2.5.9 -> 2.5.10.
+- `packages/agent/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/ai/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/coding-agent/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/protocol/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/senpi-codemode/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/{ai,coding-agent}/package.json`: `@aws-sdk/client-bedrock-runtime` 3.1115.0 -> 3.1116.0.
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.238 -> 0.3.241.
+- Root and generated release locks were regenerated from those exact pins.
+
+### Why
+
+- These are the repository-audited patch-level or same-line upgrades available for the 2026.8.24 release. TypeBox must remain single-instanced across the shared protocol/runtime packages, and the Bedrock pin must remain identical in `ai` and `coding-agent`. The Claude Agent SDK update also requires regenerating its platform lock and the published/install dependency closures.
+- `@anthropic-ai/sdk` remains at 0.91.1 because the minimum peer-compatible 0.93.0 still introduces browser-breaking credential-chain imports, while 0.120.0 is likewise unsafe. Deliberate breaking holds remain unchanged for `openai` 6.26.0 and `signal-exit` 3.0.7.
+
+### Why an extension could not handle it
+
+- Dependency resolution, exact pins, generated release locks, and platform-package selection happen before the runtime and extension system load.
+
+### Expected merge conflict zones
+
+- HIGH: root and coding-agent dependency blocks and generated lock artifacts.
+- MEDIUM: the shared TypeBox pins across five package manifests.
+
 ## Dependency pin refresh, unused-dependency removal, and lock regeneration (2026-08-20)
 
 ### What changed

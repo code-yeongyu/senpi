@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { setKittyProtocolActive } from "./keys.ts";
 import { isNativeModifierPressed } from "./native-modifiers.ts";
+import { getNativeModuleCandidates } from "./native-module-path.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
 
 const cjsRequire = createRequire(import.meta.url);
@@ -14,6 +14,16 @@ const TERMINAL_PROGRESS_CLEAR_SEQUENCE = "\x1b]9;4;0\x07";
 const NATIVE_SHIFT_ENTER_SEQUENCE = "\x1b[13;2u";
 const DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS = 7;
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
+// Bun's macOS tty shim can report synchronous ioctl EIO as raw positive errno 5 without a string code.
+const EIO_ERRNO = 5;
+// Bun's tty shim can also drop both properties and leave the errno only in the message text
+// (`new Error("setRawMode failed with errno: 5")` - no `code`, no `errno`), so the numeric
+// fallback has to read the message. Restricted to errno values that are stable across darwin
+// and linux: EIO (5) and EPIPE (32). ENOTCONN is deliberately excluded because its number
+// differs per platform (57 on darwin, 107 on linux) and a wrong guess would swallow a live error.
+const EPIPE_ERRNO = 32;
+const DEAD_TERMINAL_ERRNOS = new Set([EIO_ERRNO, EPIPE_ERRNO]);
+const ERRNO_IN_MESSAGE_PATTERN = /errno:\s*(\d+)/;
 const KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS = 150;
 const KITTY_KEYBOARD_PROTOCOL_QUERY = `\x1b[>${DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1b[?u\x1b[c`;
 
@@ -62,12 +72,58 @@ export function keyboardEnhancementEnabled(): boolean {
 }
 
 function isDeadTerminalError(error: unknown): boolean {
-	return (
-		error instanceof Error &&
-		"code" in error &&
-		typeof error.code === "string" &&
-		DEAD_TERMINAL_ERROR_CODES.has(error.code)
-	);
+	if (!(error instanceof Error)) return false;
+	if ("code" in error && typeof error.code === "string") return DEAD_TERMINAL_ERROR_CODES.has(error.code);
+	if ("errno" in error && error.errno === EIO_ERRNO) return true;
+	const messageErrno = ERRNO_IN_MESSAGE_PATTERN.exec(error.message);
+	if (!messageErrno) return false;
+	return DEAD_TERMINAL_ERRNOS.has(Number.parseInt(messageErrno[1]!, 10));
+}
+
+const STDIN_ERROR_HANDLER_GRACE_MS = 250;
+const stdinErrorSubscribers = new Set<(err: Error) => void>();
+
+export function __stdinErrorSubscriberCountForTests(): number {
+	return stdinErrorSubscribers.size;
+}
+export function __stdinErrorDispatcherInstalledForTests(): boolean {
+	return process.stdin.listeners("error").includes(dispatchStdinError);
+}
+
+/**
+ * A vanished or re-backgrounded controlling terminal fails the next stdin
+ * read with EIO; that is the only stdin error this module owns. Node reports
+ * it as code "EIO" (errno -5), Bun's macOS tty shim as a bare positive
+ * errno 5 — both shapes classify. Any other stdin failure (EBADF, EPIPE, an
+ * unexpected platform error) keeps its default EventEmitter propagation so it
+ * stays observable instead of being downgraded to a silently ignored error.
+ */
+function isTerminalDetachStdinError(err: Error): boolean {
+	if ((err as NodeJS.ErrnoException).code === "EIO") return true;
+	const errno = (err as NodeJS.ErrnoException).errno;
+	return errno === EIO_ERRNO || errno === -EIO_ERRNO;
+}
+
+const dispatchStdinError = (err: Error): void => {
+	if (!isTerminalDetachStdinError(err)) {
+		// Our listener must not be the reason a non-EIO error stops propagating.
+		// When no other "error" listener exists, EventEmitter would have thrown;
+		// rethrowing from inside emit() reproduces that exact contract.
+		const hasOtherListener = process.stdin.listeners("error").some((listener) => listener !== dispatchStdinError);
+		if (!hasOtherListener) throw err;
+		return;
+	}
+	for (const subscriber of stdinErrorSubscribers) subscriber(err);
+};
+
+function subscribeToStdinErrors(subscriber: (err: Error) => void): void {
+	if (stdinErrorSubscribers.size === 0) process.stdin.on("error", dispatchStdinError);
+	stdinErrorSubscribers.add(subscriber);
+}
+
+function unsubscribeFromStdinErrors(subscriber: (err: Error) => void): void {
+	stdinErrorSubscribers.delete(subscriber);
+	if (stdinErrorSubscribers.size === 0) process.stdin.removeListener("error", dispatchStdinError);
 }
 
 /**
@@ -164,6 +220,8 @@ export class ProcessTerminal implements Terminal {
 	private keyboardProtocolBufferFlushTimer?: ReturnType<typeof setTimeout>;
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string | Buffer) => void;
+	private stdinErrorHandler?: (err: Error) => void;
+	private stdinErrorHandlerCleanupTimer?: ReturnType<typeof setTimeout>;
 	private progressInterval?: ReturnType<typeof setInterval>;
 	private writeLogPath = (() => {
 		const env = process.env.PI_TUI_WRITE_LOG || "";
@@ -255,6 +313,22 @@ export class ProcessTerminal implements Terminal {
 			process.stdin.setRawMode(true);
 		}
 		process.stdin.resume();
+
+		// stdin carries the same hazard as stdout: when the controlling PTY
+		// disappears (launcher killed, tmux pane closed, SSH dropped) or this
+		// pgrp loses the tty foreground, the next read fails with EIO.
+		// `process.stdin` is an EventEmitter, so an unobserved "error" event is
+		// rethrown as an uncaught exception that kills the whole agent process.
+		if (this.stdinErrorHandlerCleanupTimer) {
+			clearTimeout(this.stdinErrorHandlerCleanupTimer);
+			this.stdinErrorHandlerCleanupTimer = undefined;
+		}
+		if (!this.stdinErrorHandler) {
+			// Swallow only: the stream stays resumable, so if this pgrp regains
+			// the tty foreground the session keeps accepting input.
+			this.stdinErrorHandler = () => {};
+			subscribeToStdinErrors(this.stdinErrorHandler);
+		}
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		this.rawWrite("\x1b[?2004h");
@@ -462,16 +536,10 @@ export class ProcessTerminal implements Terminal {
 			if (arch !== "x64" && arch !== "arm64") return;
 
 			// Dynamic require so non-Windows and bundled/browser paths never load the
-			// native helper. In the npm package native/ is next to dist/; in compiled
-			// binary archives native/ is copied next to the executable.
-			const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+			// native helper. Installed packages resolve it from pi-tui; standalone
+			// binaries resolve the copy next to the executable.
 			const nativePath = path.join("native", "win32", "prebuilds", `win32-${arch}`, "win32-console-mode.node");
-			const candidates = [
-				path.join(moduleDir, "..", nativePath),
-				path.join(moduleDir, nativePath),
-				path.join(path.dirname(process.execPath), nativePath),
-			];
-			for (const modulePath of candidates) {
+			for (const modulePath of getNativeModuleCandidates(nativePath)) {
 				try {
 					const helper = cjsRequire(modulePath) as { enableVirtualTerminalInput?: () => boolean };
 					helper.enableVirtualTerminalInput?.();
@@ -575,6 +643,23 @@ export class ProcessTerminal implements Terminal {
 		}
 
 		this.removeExternalStdoutGuard();
+
+		this.scheduleStdinErrorHandlerCleanup();
+	}
+
+	private scheduleStdinErrorHandlerCleanup(): void {
+		if (!this.stdinErrorHandler || this.stdinErrorHandlerCleanupTimer) return;
+		// Keep the guard armed briefly past stop(): a late PTY failure racing
+		// the exit path must not crash the process after the TUI tore down.
+		const handler = this.stdinErrorHandler;
+		this.stdinErrorHandlerCleanupTimer = setTimeout(() => {
+			this.stdinErrorHandlerCleanupTimer = undefined;
+			if (this.stdinErrorHandler === handler) {
+				this.stdinErrorHandler = undefined;
+				unsubscribeFromStdinErrors(handler);
+			}
+		}, STDIN_ERROR_HANDLER_GRACE_MS);
+		this.stdinErrorHandlerCleanupTimer.unref();
 	}
 
 	write(data: string): void {

@@ -358,7 +358,7 @@ describe("cursor-agent wire protocol", () => {
 			stream.end();
 		});
 
-		const { message } = await collectStream(baseUrl, { apiKey: "test-token" });
+		const { message } = await collectStream(baseUrl, { apiKey: "test-token", streamStallMaxRetries: 0 });
 		expect(message.stopReason).toBe("error");
 		expect(message.errorMessage).toContain("ended before turnEnded");
 		// Partial content is preserved on the error message.

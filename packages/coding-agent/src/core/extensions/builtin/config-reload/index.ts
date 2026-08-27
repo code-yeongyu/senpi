@@ -890,25 +890,26 @@ function registrationFingerprint(registration: ConfigWatchRegistration): string 
 	});
 }
 
-function isProtectedAgentPath(candidate: string, agentDir: string): boolean {
-	const authPath = resolve(agentDir, "auth.json");
-	const sessionsPath = resolve(agentDir, "sessions");
-	const logsPath = resolve(agentDir, "logs");
-	return isWithin(candidate, authPath) || isWithin(candidate, sessionsPath) || isWithin(candidate, logsPath);
-}
-
-// A watch rooted exactly at the agent directory is safe when every filter is
-// root-anchored (a leading `/` matches only an immediate child of the watch root,
-// never a nested path) and none of those anchored names resolves into a protected
-// path. Unfiltered targets, unanchored filters, and any protected filter stay
-// fail-closed.
-function isSafeFilteredAgentDirTarget(target: ConfigWatchTarget, resolvedPath: string, agentDir: string): boolean {
-	if (target.kind !== "dir" || resolvedPath !== resolve(agentDir)) return false;
+// A directory target that covers a protected path is safe when every filter is
+// root-anchored (a leading `/` matches only a path relative to the watch root,
+// never a suffix at any depth) and none of those anchored paths intersects a
+// protected path in either direction. Unfiltered targets, unanchored filters,
+// and any protected filter stay fail-closed.
+function isSafeFilteredProtectedTarget(
+	target: ConfigWatchTarget,
+	resolvedPath: string,
+	protectedPaths: readonly string[],
+): boolean {
+	if (target.kind !== "dir") return false;
+	if (protectedPaths.some((protectedPath) => isWithin(resolvedPath, protectedPath))) return false;
 	const filterGlobs = target.filterGlobs;
 	if (!filterGlobs || filterGlobs.length === 0) return false;
 	return filterGlobs.every((glob) => {
 		if (!glob.startsWith("/")) return false;
-		return !isProtectedAgentPath(resolve(resolvedPath, glob.slice(1)), agentDir);
+		const filteredPath = resolve(resolvedPath, glob.slice(1));
+		return protectedPaths.every(
+			(protectedPath) => !isWithin(filteredPath, protectedPath) && !isWithin(protectedPath, filteredPath),
+		);
 	});
 }
 
@@ -917,18 +918,11 @@ function registrationHasRestrictedTarget(
 	cwd: string,
 	agentDir: string,
 ): boolean {
-	const authPath = resolve(agentDir, "auth.json");
-	const sessionsPath = resolve(agentDir, "sessions");
-	const logsPath = resolve(agentDir, "logs");
+	const protectedPaths = [resolve(agentDir, "auth.json"), resolve(agentDir, "sessions"), resolve(agentDir, "logs")];
 	return registration.targets.some((target) => {
 		const path = resolvePath(target.path, cwd, { trim: true });
-		if (isSafeFilteredAgentDirTarget(target, path, agentDir)) return false;
-		return (
-			isWithin(path, authPath) ||
-			isWithin(authPath, path) ||
-			isWithin(path, sessionsPath) ||
-			isWithin(path, logsPath)
-		);
+		if (isSafeFilteredProtectedTarget(target, path, protectedPaths)) return false;
+		return protectedPaths.some((protectedPath) => isWithin(path, protectedPath) || isWithin(protectedPath, path));
 	});
 }
 

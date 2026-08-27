@@ -51,6 +51,8 @@ export class OutputAccumulator {
 
 	private tempFilePath: string | undefined;
 	private tempFileStream: WriteStream | undefined;
+	private tempFileError: Error | undefined;
+	private tempFileErrorListener: ((error: Error) => void) | undefined;
 
 	constructor(options: OutputAccumulatorOptions = {}) {
 		this.maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
@@ -143,18 +145,34 @@ export class OutputAccumulator {
 		if (!stream) {
 			return;
 		}
+		if (this.tempFileError) {
+			if (this.tempFileErrorListener) stream.off("error", this.tempFileErrorListener);
+			stream.destroy();
+			throw this.tempFileError;
+		}
 
 		await new Promise<void>((resolve, reject) => {
-			const onError = (error: Error) => {
-				stream.off("finish", onFinish);
-				reject(error);
-			};
-			const onFinish = () => {
+			let settled = false;
+			const cleanup = () => {
 				stream.off("error", onError);
-				resolve();
+				if (this.tempFileErrorListener) stream.off("error", this.tempFileErrorListener);
+				stream.off("close", onClose);
 			};
-			stream.once("error", onError);
-			stream.once("finish", onFinish);
+			const settle = (error?: Error) => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				if (error) reject(error);
+				else resolve();
+			};
+			const onError = (error: Error) => {
+				this.tempFileError ??= error;
+			};
+			const onClose = () => {
+				settle(this.tempFileError);
+			};
+			stream.on("error", onError);
+			stream.once("close", onClose);
 			stream.end();
 		});
 	}
@@ -211,6 +229,10 @@ export class OutputAccumulator {
 		}
 		this.tempFilePath = defaultTempFilePath(this.tempFilePrefix);
 		this.tempFileStream = createWriteStream(this.tempFilePath);
+		this.tempFileErrorListener = (error) => {
+			this.tempFileError ??= error;
+		};
+		this.tempFileStream.on("error", this.tempFileErrorListener);
 		for (const chunk of this.rawChunks) {
 			this.tempFileStream.write(chunk);
 		}

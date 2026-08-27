@@ -57,7 +57,7 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 				continue;
 			}
 			const phases = phasesFromCursorTodos(block.arguments?.todos);
-			if (phases.length === 0) {
+			if (phases === undefined) {
 				continue;
 			}
 			setCurrentPhases(phases);

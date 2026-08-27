@@ -76,7 +76,7 @@ describe("provider timeout retry plan", () => {
 			streamStartTimeoutMs: STREAM_START_TIMEOUT_MS,
 		});
 
-		expect(plan.watchdogTimeoutMs).toBeGreaterThanOrEqual(STREAM_START_TIMEOUT_MS);
+		expect(plan.watchdogTimeoutMs).toBeGreaterThan(STREAM_START_TIMEOUT_MS);
 	});
 
 	it("disables the cap when the operator disabled it, even with guards configured", () => {
@@ -87,6 +87,16 @@ describe("provider timeout retry plan", () => {
 			streamStartTimeoutMs: STREAM_START_TIMEOUT_MS,
 		});
 
+		expect(plan.watchdogTimeoutMs).toBeUndefined();
+	});
+
+	it("keeps the zero opt-out disabled", () => {
+		const plan = createProviderTimeoutRetryPlan({
+			message: stallMessage(),
+			streamRetryTimeoutMs: 0,
+			timeoutMs: IDLE_TIMEOUT_MS,
+			streamStartTimeoutMs: STREAM_START_TIMEOUT_MS,
+		});
 		expect(plan.watchdogTimeoutMs).toBeUndefined();
 	});
 

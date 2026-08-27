@@ -1,13 +1,14 @@
 import { Type } from "typebox";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { formatGoalToolResponse } from "./format.ts";
+import { formatGoalToolResponse, type GoalToolRenderDetails, goalToolRenderDetails } from "./format.ts";
+import { renderGoalToolCall, renderGoalToolResult } from "./renderers.ts";
 import { createGoal, objectiveFullTextFileName, readGoal, updateGoal } from "./store.ts";
 import { openTodoCompletionError, openTodoTaskContents } from "./todo-gate.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
 import { MODEL_SETTABLE_GOAL_STATUS_VALUES } from "./types.ts";
 import { objectiveTruncationNotice, validateObjective } from "./validation.ts";
 
-type GoalToolResult = AgentToolResult<Record<string, never>>;
+type GoalToolResult = AgentToolResult<GoalToolRenderDetails>;
 
 export type GoalToolRegistrationDeps = {
 	readonly goalStoreRef: (ctx: ExtensionContext) => GoalStoreRef;
@@ -45,13 +46,13 @@ export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDe
 			const goal = await createGoal(ref, params.objective);
 			deps.beginAgentGoalAccounting(goal);
 			deps.refreshGoalUi(ctx, goal);
-			return toolText(
-				formatGoalToolResponse(
-					goal,
-					validatedObjective.truncated ? objectiveTruncationNotice(objectiveFullTextFileName(ref)) : undefined,
-				),
-			);
+			const notice = validatedObjective.truncated
+				? objectiveTruncationNotice(objectiveFullTextFileName(ref))
+				: undefined;
+			return toolText(formatGoalToolResponse(goal, notice), goalToolRenderDetails(goal, notice));
 		},
+		renderCall: (args, theme) => renderGoalToolCall("create_goal", args, theme),
+		renderResult: (result, options, theme) => renderGoalToolResult(result, options, theme),
 	});
 
 	pi.registerTool({
@@ -94,8 +95,10 @@ export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDe
 			if (goal.status === "blocked") deps.markGoalBlockedThisTurn(goal);
 			else deps.markGoalCompletedThisTurn(goal);
 			deps.refreshGoalUi(ctx, goal);
-			return toolText(formatGoalToolResponse(goal));
+			return toolText(formatGoalToolResponse(goal), goalToolRenderDetails(goal));
 		},
+		renderCall: (args, theme) => renderGoalToolCall("update_goal", args, theme),
+		renderResult: (result, options, theme) => renderGoalToolResult(result, options, theme),
 	});
 
 	pi.registerTool({
@@ -106,11 +109,13 @@ export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDe
 		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
 			const goal = await deps.accountCurrentAgentTurn(ctx, "active");
 			deps.refreshGoalUi(ctx, goal);
-			return toolText(formatGoalToolResponse(goal));
+			return toolText(formatGoalToolResponse(goal), goalToolRenderDetails(goal));
 		},
+		renderCall: (args, theme) => renderGoalToolCall("get_goal", args, theme),
+		renderResult: (result, options, theme) => renderGoalToolResult(result, options, theme),
 	});
 }
 
-function toolText(text: string): GoalToolResult {
-	return { content: [{ type: "text" as const, text }], details: {} };
+function toolText(text: string, details: GoalToolRenderDetails): GoalToolResult {
+	return { content: [{ type: "text" as const, text }], details };
 }

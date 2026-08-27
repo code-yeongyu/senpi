@@ -7,6 +7,7 @@ import type { AssistantMessage, Message, Model, ToolResultMessage } from "../src
 
 export type ExecMode = "success" | "rejection" | "pending" | "unknown" | "shellStream" | "dispatchFailure";
 export type TurnTerminationMode = "turnEndedOpen" | "silentMidTurn";
+export type StreamHealthMode = "heartbeatOnly" | "checkpointResume" | "retryExhaustion";
 type ClientFrame = ReturnType<typeof fromBinary<typeof AgentClientMessageSchema>>;
 
 const EXEC_IDS: Record<ExecMode, number> = {
@@ -18,7 +19,7 @@ const EXEC_IDS: Record<ExecMode, number> = {
 	dispatchFailure: 12,
 };
 
-class ClientFrameReader {
+export class ClientFrameReader {
 	#buffer: Buffer = Buffer.alloc(0);
 	readonly messages: ClientFrame[] = [];
 	#waiters = new Set<() => void>();
@@ -80,6 +81,24 @@ function turnEndedFrame(): Buffer {
 	});
 }
 
+function heartbeatFrame(): Buffer {
+	return serverFrame({
+		message: { case: "interactionUpdate", value: { message: { case: "heartbeat", value: {} } } },
+	});
+}
+
+function textDeltaFrame(text: string): Buffer {
+	return serverFrame({
+		message: { case: "interactionUpdate", value: { message: { case: "textDelta", value: { text } } } },
+	});
+}
+
+function checkpointFrame(): Buffer {
+	return serverFrame({
+		message: { case: "conversationCheckpointUpdate", value: {} },
+	});
+}
+
 function toolResult(toolCallId: string, text: string): ToolResultMessage {
 	return {
 		role: "toolResult",
@@ -97,6 +116,76 @@ async function observeServerTask(task: Promise<void>): Promise<unknown> {
 		return undefined;
 	} catch (error) {
 		return error instanceof Error ? error : new Error(String(error));
+	}
+}
+
+export async function runStreamHealthScenario(mode: StreamHealthMode): Promise<{
+	readonly attempts: number;
+	readonly actions: readonly ("userMessageAction" | "resumeAction" | undefined)[];
+	readonly message: AssistantMessage;
+}> {
+	const server = http2.createServer();
+	const sessions = new Set<http2.ServerHttp2Session>();
+	const actions: ("userMessageAction" | "resumeAction" | undefined)[] = [];
+	let attempts = 0;
+	server.on("session", (session) => {
+		sessions.add(session);
+		session.once("close", () => sessions.delete(session));
+	});
+	server.on("stream", (httpStream: http2.ServerHttp2Stream) => {
+		attempts += 1;
+		const attempt = attempts;
+		const reader = new ClientFrameReader();
+		httpStream.on("data", (chunk: Buffer) => reader.feed(chunk));
+		httpStream.respond({ ":status": 200, "content-type": "application/connect+proto" });
+		void (async () => {
+			const runRequest = await reader.waitFor(() =>
+				reader.messages.find((item) => item.message.case === "runRequest"),
+			);
+			if (runRequest.message.case !== "runRequest") throw new Error("Expected runRequest");
+			const actionCase = runRequest.message.value.action?.action.case;
+			actions.push(actionCase === "userMessageAction" || actionCase === "resumeAction" ? actionCase : undefined);
+			if (mode === "heartbeatOnly") {
+				for (let index = 0; index < 5; index += 1) {
+					httpStream.write(heartbeatFrame());
+					await new Promise<void>((resolve) => setTimeout(resolve, 20));
+				}
+				httpStream.write(textDeltaFrame("alive"));
+				httpStream.write(turnEndedFrame());
+				return;
+			}
+			if (mode === "checkpointResume" && attempt === 1) {
+				httpStream.write(checkpointFrame());
+				return;
+			}
+			if (mode === "checkpointResume") {
+				httpStream.write(turnEndedFrame());
+			}
+		})().catch(() => httpStream.destroy());
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address();
+	if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+	try {
+		const cursorStream = streamCursorAgent(
+			buildModel(`http://127.0.0.1:${address.port}`),
+			{ messages: [{ role: "user", content: "hello", timestamp: 0 }] satisfies Message[] },
+			{
+				apiKey: "test-token",
+				streamHealthFailThresholdMs: 50,
+				streamHealthHeartbeatOnlyThresholdMs: 50,
+				streamStallMaxRetries: mode === "retryExhaustion" ? 1 : 10,
+				streamStallRetryDelayMs: 1,
+				turnEndDrainTimeoutMs: 50,
+			} satisfies CursorAgentOptions,
+		);
+		for await (const _event of cursorStream) {
+			// Drain the public stream while the fake server drives retry behavior.
+		}
+		return { attempts, actions, message: await cursorStream.result() };
+	} finally {
+		for (const session of sessions) session.destroy();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
 	}
 }
 
@@ -123,6 +212,7 @@ export async function runTurnTerminationScenario(mode: TurnTerminationMode): Pro
 				apiKey: "test-token",
 				streamHealthFailThresholdMs: 50,
 				streamHealthHeartbeatOnlyThresholdMs: 150,
+				streamStallMaxRetries: 0,
 				turnEndDrainTimeoutMs: 50,
 			} satisfies CursorAgentOptions,
 		);

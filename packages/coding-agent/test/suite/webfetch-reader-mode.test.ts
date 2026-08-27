@@ -176,6 +176,34 @@ describe("webfetch reader-mode cleanup", () => {
 		expect(headerValue(challengeHeaders, "sec-ch-ua-platform")).toBe('"Windows"');
 	});
 
+	it("#given one redirect #when fetching #then returns the final response body", async () => {
+		// given
+		const visitedPaths: string[] = [];
+		const server = await createFixtureServer((request, response) => {
+			visitedPaths.push(request.url ?? "");
+			if (request.url === "/start") {
+				response.writeHead(302, {
+					location: "/final",
+					"content-type": "text/plain; charset=utf-8",
+				});
+				response.end("redirecting");
+				return;
+			}
+
+			response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+			response.end("<html><body><h1>Redirect Complete</h1><p>Final page.</p></body></html>");
+		});
+
+		// when
+		const result = await executeWebfetch({ url: `${server.baseUrl}/start`, format: "markdown" });
+		const text = textContent(result);
+
+		// then
+		expect(text).toContain("# Redirect Complete");
+		expect(text).toContain("Final page.");
+		expect(visitedPaths).toEqual(["/start", "/final"]);
+	});
+
 	it("#given too many redirects #when fetching #then returns the final redirect response body", async () => {
 		// given
 		const server = await createFixtureServer((_request, response) => {

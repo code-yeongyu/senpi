@@ -1,5 +1,108 @@
 # Local fork changes
 
+## Bun-compiled runtime assets (2026-08-27)
+
+### What changed
+
+- Bun-compiled coding-agent binaries now embed the imagegen bundled skill through the builtin's file-asset import; Node distributions continue to use the copied `dist` asset.
+
+### Why
+
+- Copying the skill into `dist` does not add it to Bun's compile graph, so compiled binaries lost the skill while emitting a missing-skill diagnostic.
+
+### Why an extension could not handle it
+
+- The compiled asset graph and builtin resource path are established by the package build and extension implementation before an extension can provide resources.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/imagegen/index.ts` and its asset declaration.
+
+
+## @anthropic-ai/sdk peer alignment (2026-08-26)
+
+### What changed
+
+- `packages/coding-agent/package.json` bumps `@anthropic-ai/sdk` `0.91.1` -> `0.120.0` so the pin satisfies the `@anthropic-ai/claude-agent-sdk@0.3.241` peer range (`>=0.93.0`).
+
+### Why
+
+- Eliminates the install-time `incorrect peer dependency` warning users reported; audited additive-only API surface changes.
+
+### Why this lives in the fork
+
+- The exact-version pin set is fork-owned dependency policy.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/package.json` dependency pins during upstream syncs.
+
+## Package identity re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/package.json` keeps the senpi identity: `@code-yeongyu/senpi`, calver
+  `2026.8.24`, `.senpi` configDir, the `senpi` bin alongside `pi`, and the fork rpc-entry export path.
+- `packages/coding-agent/install-lock/package.json` keeps `@code-yeongyu/senpi-install`, the senpi
+  dependency pin, `rimraf` 6.1.3, and `@hono/node-server`.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- Name/version/bin/exports blocks of both manifests on every upstream release.
+
+## Release dependency refresh and lock regeneration (2026-08-24)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.238 -> 0.3.241, `@aws-sdk/client-bedrock-runtime` 3.1115.0 -> 3.1116.0, and `typebox` 1.3.16 -> 1.3.18.
+- The coding-agent publish dependency closure, install lock, and Claude Agent SDK platform lock were regenerated from the refreshed exact pins.
+
+### Why
+
+- These are the compatible dependency updates selected for the 2026.8.24 release. The generated locks are part of the published package contract and must match the manifest exactly.
+- The Discord-reported Bun 1.4 redirect cleanup failure is already fixed in the same release line by feature-detecting `body.dump()` and falling back to argument-free stream destruction.
+
+### Why an extension could not handle it
+
+- Package resolution and the redirect response-body cleanup helper both execute below the extension interception surface.
+
+### Expected merge conflict zones
+
+- HIGH: `package.json` and the generated publish/install/platform locks.
+- LOW: the redirect response-body compatibility helper and its regression test.
+
+## 2026-08-25 — Attach compatible shared RPC hosts
+
+`ensureHost` now attaches to any compatible RPC socket, including a host started by another client surface, while retaining typed refusal for incompatible unmanaged owners. Hosts senpi starts continue to use canonical `host.pid` and `settings.json` state; attached hosts are not lifecycle-managed.
+
+## models.json schema accepts the video input modality (2026-08-23)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-config-schema.ts`: the `input` unions of `ModelDefinitionSchema` and `ModelOverrideSchema` now accept `video` in addition to `text` and `image`.
+- `packages/coding-agent/test/suite/regressions/0002-models-json-video-input.test.ts`: failing-first regression covering `models[]` acceptance, `modelOverrides` acceptance, and continued `audio` rejection (`audio` exists nowhere in the runtime type).
+- `packages/coding-agent/CHANGELOG.md`: [Unreleased] entry referencing PR #1087.
+
+### Why
+
+- The fork types `Model.input` as `("text" | "image" | "video")[]` (`packages/ai/src/model.ts`) and ships builtin `kimi-coding` k3 declaring `["text","image","video"]`, but the user-facing models.json schema was never extended when video support landed. Any user provider declaring video failed validation, and `ModelConfig.loadSync` rejects the entire file on any schema error — unregistering every user-defined provider and surfacing only a misleading fallback-chain "roles are unsupported" warning downstream. Upstream pi-mono is consistently `text|image` in both the type and the schema, so this gap is fork-introduced; this change closes it on the schema side only. The all-or-nothing rejection semantics and the fallback-warning wording are deliberately untouched (separate design concerns).
+
+### Why an extension could not handle it
+
+- The schema is the load-time gate for every user provider; extensions run after `ModelConfig` has already accepted or rejected the file.
+
+### Expected merge conflict zones
+
+- LOW: two single-line unions in `model-config-schema.ts`; upstream has not touched this schema since the fork split it from `model-config.ts`.
+
 ## Coding-agent dependency refresh and generated install-lock update (2026-08-20)
 
 ### What changed

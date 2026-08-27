@@ -5,7 +5,7 @@ import type {
 	EvalDetachedCellState,
 } from "./detached-cell-manager.ts";
 import { interruptionStateNote } from "./interrupt-note.ts";
-import type { EvalCellResult, EvalControlInput, EvalToolDetails, EvalToolInput } from "./types.ts";
+import type { EvalCellResult, EvalControlInput, EvalLanguage, EvalToolDetails, EvalToolInput } from "./types.ts";
 
 export async function executeEvalControl(
 	cellManager: EvalDetachedCellManager,
@@ -101,10 +101,16 @@ export function resultForDetachedState(
 	};
 }
 
-export function detachedKernelBusyError(snapshot: EvalDetachedCellSnapshot): Error {
+export function detachedKernelBusyError(
+	snapshot: EvalDetachedCellSnapshot,
+	idleLanguages: readonly EvalLanguage[] = [],
+): Error {
 	const tail = snapshot.outputTail.length === 0 ? "(no output yet)" : snapshot.outputTail;
+	const peek = `eval({ action: "peek", cell_id: "${snapshot.cellId}" })`;
+	const idleHint =
+		idleLanguages.length === 0 ? "" : ` or continue this step in an idle kernel: ${idleLanguages.join(", ")}`;
 	return new Error(
-		`The ${snapshot.language} eval kernel is busy running detached cell ${snapshot.cellId}. Do not re-run it; use eval({ action: "peek", cell_id: "${snapshot.cellId}" }). Current output tail:\n${tail}`,
+		`The ${snapshot.language} eval kernel is busy running detached cell ${snapshot.cellId} - peek with ${peek}${idleHint}. Do not re-run the busy cell. Current output tail:\n${tail}`,
 	);
 }
 

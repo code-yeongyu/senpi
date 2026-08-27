@@ -25,7 +25,7 @@ Fields:
 - \`reset\` (optional) — wipe this language's kernel first. Per-language: a \`py\` reset never touches the JS VM.
 - \`action\` (optional) — defaults to \`"run"\`. A detached cell returns its id: use \`eval({ action: "peek", cell_id })\` for buffered output/state or \`eval({ action: "stop", cell_id })\` to cancel it.
 
-A detached cell keeps its language kernel busy while it finishes. Do not re-run a detached cell: the same-language busy error names its cell id and output tail; another language can continue. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
+A detached cell keeps its language kernel busy while it finishes; another language can continue. Do not re-run a detached cell: the same-language busy error names its cell id and output tail. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
 
 Live event loop: use top-level \`await\` directly; \`asyncio.run(…)\` raises "cannot be called from a running event loop".
 JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.
@@ -89,27 +89,27 @@ Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into th
 ### First call — set up once
 \`\`\`json
 {
-  "language": "py",
+  "language": "js",
   "summary": "Count all TypeScript source files under src/ excluding tests",
-  "code": "from pathlib import Path\\nfrom collections import Counter\\nfiles = [p for p in Path('src').rglob('*.ts') if 'test' not in p.parts]\\nprint(len(files))"
+  "code": "import { readdir } from 'node:fs/promises'\\nimport { extname } from 'node:path'\\nconst files = (await readdir('src', { recursive: true })).filter(f => extname(f) === '.ts' && !f.includes('test'))\\nprint(files.length)"
 }
 \`\`\`
 
-### Second call — reuse \`files\`, batch-read in one cell
+### Second call — reuse \`files\`, fan out session tools in parallel
 \`\`\`json
 {
-  "language": "py",
-  "summary": "Find which files reference legacyClient so we know what to migrate",
-  "code": "hits = Counter()\\nfor p in files:\\n    hits[p.name] = read(p).count('legacyClient')\\ndisplay({k: v for k, v in hits.items() if v})"
+  "language": "js",
+  "summary": "Grep legacyClient per directory in one cell",
+  "code": "const dirs = [...new Set(files.map(f => f.split('/')[0]))]\\nconst hits = await Promise.all(dirs.map(d => tool.grep({ pattern: 'legacyClient', path: d })))\\ndisplay(hits.map(h => h.matches?.length ?? 0))"
 }
 \`\`\`
 
-### Third call — reuse results, fan out session tools in parallel
+### JS kernel is busy with a detached cell — continue in py
 \`\`\`json
 {
   "language": "py",
-  "summary": "Confirm exact callsite lines in each directory to plan the refactor",
-  "code": "dirs = ['src/core', 'src/tools']\\ndisplay(parallel([lambda d=d: tool.grep({'pattern': 'legacyClient', 'path': d}) for d in dirs]))"
+  "summary": "Aggregate legacyClient hits while JS is busy",
+  "code": "from pathlib import Path\\nprint(sum('legacyClient' in read(p) for p in Path('src').rglob('*.ts')))"
 }
 \`\`\`
 </examples>",
@@ -146,7 +146,7 @@ Fields:
 - \`reset\` (optional) — wipe this language's kernel first.
 - \`action\` (optional) — defaults to \`"run"\`. A detached cell returns its id: use \`eval({ action: "peek", cell_id })\` for buffered output/state or \`eval({ action: "stop", cell_id })\` to cancel it.
 
-A detached cell keeps its language kernel busy while it finishes. Do not re-run a detached cell: the same-language busy error names its cell id and output tail; another language can continue. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
+A detached cell keeps its language kernel busy while it finishes; another language can continue. Do not re-run a detached cell: the same-language busy error names its cell id and output tail. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
 
 JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.
 
@@ -188,7 +188,27 @@ phase(title) → None
 
 <critical>
 Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read.
-</critical>",
+</critical>
+
+<examples>
+### First call — set up once
+\`\`\`json
+{
+  "language": "js",
+  "summary": "Count all TypeScript source files under src/ excluding tests",
+  "code": "import { readdir } from 'node:fs/promises'\\nimport { extname } from 'node:path'\\nconst files = (await readdir('src', { recursive: true })).filter(f => extname(f) === '.ts' && !f.includes('test'))\\nprint(files.length)"
+}
+\`\`\`
+
+### Second call — reuse \`files\`, fan out session tools in parallel
+\`\`\`json
+{
+  "language": "js",
+  "summary": "Grep legacyClient per directory in one cell",
+  "code": "const dirs = [...new Set(files.map(f => f.split('/')[0]))]\\nconst hits = await Promise.all(dirs.map(d => tool.grep({ pattern: 'legacyClient', path: d })))\\ndisplay(hits.map(h => h.matches?.length ?? 0))"
+}
+\`\`\`
+</examples>",
   "promptGuidelines": [
     "**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",
     "Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
@@ -222,7 +242,7 @@ Fields:
 - \`reset\` (optional) — wipe this language's kernel first. Per-language: a \`py\` reset never touches the JS VM.
 - \`action\` (optional) — defaults to \`"run"\`. A detached cell returns its id: use \`eval({ action: "peek", cell_id })\` for buffered output/state or \`eval({ action: "stop", cell_id })\` to cancel it.
 
-A detached cell keeps its language kernel busy while it finishes. Do not re-run a detached cell: the same-language busy error names its cell id and output tail; another language can continue. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
+A detached cell keeps its language kernel busy while it finishes; another language can continue. Do not re-run a detached cell: the same-language busy error names its cell id and output tail. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
 
 Live event loop: use top-level \`await\` directly; \`asyncio.run(…)\` raises "cannot be called from a running event loop".
 JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.
@@ -271,27 +291,27 @@ Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into th
 ### First call — set up once
 \`\`\`json
 {
-  "language": "py",
+  "language": "js",
   "summary": "Count all TypeScript source files under src/ excluding tests",
-  "code": "from pathlib import Path\\nfrom collections import Counter\\nfiles = [p for p in Path('src').rglob('*.ts') if 'test' not in p.parts]\\nprint(len(files))"
+  "code": "import { readdir } from 'node:fs/promises'\\nimport { extname } from 'node:path'\\nconst files = (await readdir('src', { recursive: true })).filter(f => extname(f) === '.ts' && !f.includes('test'))\\nprint(files.length)"
 }
 \`\`\`
 
-### Second call — reuse \`files\`, batch-read in one cell
+### Second call — reuse \`files\`, fan out session tools in parallel
 \`\`\`json
 {
-  "language": "py",
-  "summary": "Find which files reference legacyClient so we know what to migrate",
-  "code": "hits = Counter()\\nfor p in files:\\n    hits[p.name] = read(p).count('legacyClient')\\ndisplay({k: v for k, v in hits.items() if v})"
+  "language": "js",
+  "summary": "Grep legacyClient per directory in one cell",
+  "code": "const dirs = [...new Set(files.map(f => f.split('/')[0]))]\\nconst hits = await Promise.all(dirs.map(d => tool.grep({ pattern: 'legacyClient', path: d })))\\ndisplay(hits.map(h => h.matches?.length ?? 0))"
 }
 \`\`\`
 
-### Third call — reuse results, fan out session tools in parallel
+### JS kernel is busy with a detached cell — continue in py
 \`\`\`json
 {
   "language": "py",
-  "summary": "Confirm exact callsite lines in each directory to plan the refactor",
-  "code": "dirs = ['src/core', 'src/tools']\\ndisplay(parallel([lambda d=d: tool.grep({'pattern': 'legacyClient', 'path': d}) for d in dirs]))"
+  "summary": "Aggregate legacyClient hits while JS is busy",
+  "code": "from pathlib import Path\\nprint(sum('legacyClient' in read(p) for p in Path('src').rglob('*.ts')))"
 }
 \`\`\`
 </examples>",

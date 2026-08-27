@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EventBus } from "../../src/core/event-bus.ts";
@@ -717,6 +717,89 @@ describe("config reload builtin extension", () => {
 		});
 		expect(watches.subscribeCalls).not.toContain(restrictedDir);
 		expect(watches.activeListenerCount(restrictedDir)).toBe(0);
+	});
+
+	it("accepts a filtered ancestor watch whose anchored filters stay outside protected paths", async () => {
+		const fixture = await createFixture();
+		const ancestorDir = resolve(fixture.agentDir, "..");
+		const rejected: unknown[] = [];
+		fixture.events.on(CONFIG_WATCH_REJECTED, (payload) => rejected.push(payload));
+
+		fixture.events.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo-ancestor",
+			displayName: "Ancestor .omo config",
+			targets: [{ path: ancestorDir, kind: "dir" as const, filterGlobs: ["/omo.jsonc", "/omo.json"] }],
+		});
+
+		expect(rejected).toHaveLength(0);
+		expect(fixture.watches.activeListenerCount(ancestorDir)).toBe(1);
+	});
+
+	it("rejects an ancestor watch with an unanchored filter", async () => {
+		const fixture = await createFixture();
+		const ancestorDir = join(fixture.agentDir, "..");
+		const rejected: unknown[] = [];
+		fixture.events.on(CONFIG_WATCH_REJECTED, (payload) => rejected.push(payload));
+
+		fixture.events.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo-ancestor-unanchored",
+			displayName: "Ancestor .omo config",
+			targets: [{ path: ancestorDir, kind: "dir" as const, filterGlobs: ["omo.jsonc"] }],
+		});
+
+		expect(rejected).toHaveLength(1);
+		expect(fixture.watches.activeListenerCount(ancestorDir)).toBe(0);
+	});
+
+	it("rejects an ancestor watch whose anchored filter enters a protected path", async () => {
+		const fixture = await createFixture();
+		const ancestorDir = join(fixture.agentDir, "..");
+		const rejected: unknown[] = [];
+		fixture.events.on(CONFIG_WATCH_REJECTED, (payload) => rejected.push(payload));
+
+		fixture.events.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo-ancestor-auth",
+			displayName: "Ancestor .omo config",
+			targets: [
+				{
+					path: ancestorDir,
+					kind: "dir" as const,
+					filterGlobs: [`/${basename(fixture.agentDir)}/auth.json`],
+				},
+			],
+		});
+
+		expect(rejected).toHaveLength(1);
+	});
+
+	it("rejects an ancestor watch whose anchored filter names a protected directory", async () => {
+		const fixture = await createFixture();
+		const ancestorDir = join(fixture.agentDir, "..");
+		const rejected: unknown[] = [];
+		fixture.events.on(CONFIG_WATCH_REJECTED, (payload) => rejected.push(payload));
+
+		fixture.events.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo-ancestor-agent",
+			displayName: "Ancestor .omo config",
+			targets: [{ path: ancestorDir, kind: "dir" as const, filterGlobs: [`/${basename(fixture.agentDir)}`] }],
+		});
+
+		expect(rejected).toHaveLength(1);
+	});
+
+	it("rejects a target inside a protected path even with anchored filters", async () => {
+		const fixture = await createFixture();
+		const restrictedDir = join(fixture.agentDir, "sessions", "foo");
+		const rejected: unknown[] = [];
+		fixture.events.on(CONFIG_WATCH_REJECTED, (payload) => rejected.push(payload));
+
+		fixture.events.emit(CONFIG_WATCH_REGISTER, {
+			id: "omo-inside-sessions",
+			displayName: "Nested .omo config",
+			targets: [{ path: restrictedDir, kind: "dir" as const, filterGlobs: ["/omo.json"] }],
+		});
+
+		expect(rejected).toHaveLength(1);
 	});
 
 	it("accepts an agent-dir watch whose filters are all root-anchored and non-protected", async () => {

@@ -165,12 +165,22 @@ export class BranchSummaryStatusIndicator extends StatusIndicator {
 }
 
 export class IdleStatus implements Component {
+	private height: number;
+
+	constructor(height = 2) {
+		this.height = height;
+	}
+
+	setHeight(height: number): void {
+		this.height = height;
+	}
+
 	invalidate(): void {
 		// No cached state to invalidate.
 	}
 
 	render(width: number): string[] {
 		const emptyLine = " ".repeat(width);
-		return [emptyLine, emptyLine];
+		return Array.from({ length: this.height }, () => emptyLine);
 	}
 }

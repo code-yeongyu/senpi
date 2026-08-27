@@ -8,7 +8,147 @@
 
 ### Changed
 
+- GPT-5.6 Sol model catalog entries now advertise a 650,000-token context window for direct OpenAI and ChatGPT OAuth providers; Terra and Luna remain at 272,000.
+
 ### Fixed
+
+### Removed
+
+## [2026.8.27] - 2026-08-27
+
+- Duplicate cursor exec tool-call ids no longer brick Anthropic resumes: exec-frame ids are uniquified before block synthesis (Cursor reuses one parent id across compound-tool sub-frames, e.g. StrReplace → read + write), and the Anthropic pre-submit sanitizer repairs already-corrupted transcripts by renaming duplicate `tool_use` ids payload-wide and remapping their `tool_result` blocks in call order (previously such sessions failed every request with `tool_use ids must be unique`).
+
+### Breaking Changes
+
+### Added
+
+- Credential pool engine under `@earendil-works/pi-ai/auth/pool/*`: HRW slot selection with an injected hasher (`select`), a three-way in-lane failure taxonomy (`classify`), and a slot failover runner (`failover`) that rotates accounts only before committed output and marks post-output failures with the turn-retry suppression prefix.
+- `AuthResolutionOverrides.slotName` resolves provider auth against one named credential slot, refreshing exactly that slot under the store lock while siblings and the flat downgrade projection stay untouched.
+- `getApiKeyEnvVars` is exported so consumers can generalize over the canonical provider-id to API-key env-var mapping instead of re-deriving it.
+
+### Changed
+
+- Credential storage doc comments describe pooled entries: one entry per provider, optionally pooling sibling slots under `accounts` while the flat fields remain a valid credential.
+
+### Fixed
+
+### Removed
+
+## [2026.8.26-2] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Classify kiro-lb gateway byte/token payload-cap and enhanced upstream context-limit rejections as context overflow so the agent shrinks its input and retries instead of failing the session on HTTP 400s.
+
+### Removed
+
+## [2026.8.26] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.25] - 2026-08-25
+
+### Breaking Changes
+
+- Renamed `GoogleThinkingLevel` to `GoogleApiThinkingLevel` and added `ResolvedGoogleThinkingLevel` for normalized adapter levels.
+### Added
+
+- Added provider-neutral `toolChoice` support to simple stream requests.
+- Added automatic Anthropic server-side refusal fallback for supported first-party models, including returned-model usage pricing ([#8017](https://github.com/earendil-works/pi/issues/8017)).
+- Added configurable OpenAI-compatible thinking-token budget fields for vLLM, Qwen/SGLang, and llama.cpp servers ([#8275](https://github.com/earendil-works/pi/pull/8275) by [@bnsd55](https://github.com/bnsd55)).
+- Added China-specific ZAI Coding Plan models, including GLM-4.6V vision support, and API-equivalent usage cost estimates for models with published PAYG prices ([#8220](https://github.com/earendil-works/pi/issues/8220)).
+- Added `deepseek-v4-pro-0813` to the Qwen Token Plan Individual catalog ([#8194](https://github.com/earendil-works/pi/issues/8194)).
+- Credential pool slot algebra under `@earendil-works/pi-ai/auth/pool/slots`: a stored credential can hold sibling slots, and `listSlots` / `upsertSlot` / `removeSlot` / `pinSlot` define slot-preserving mutation. A credential without an `accounts` array reads as a one-slot pool with no write-back, and a pooled entry keeps its flat top-level credential so older builds keep authenticating.
+- `Models.logout` accepts `slotId` to remove exactly one credential slot; calling it without a slot keeps today's remove-everything behavior.
+
+### Changed
+
+- Changed built-in xAI models to use the Responses API with encrypted reasoning replay and made Grok 4.6 the default xAI model ([#8124](https://github.com/earendil-works/pi/pull/8124) by [@Jaaneek](https://github.com/Jaaneek)).
+- Changed the Anthropic, Azure OpenAI, Google Generative AI, Google Vertex, Mistral, OpenAI Chat Completions, and OpenAI Responses adapters to send Pi's default `User-Agent` unless overridden ([#8305](https://github.com/earendil-works/pi/issues/8305)).
+### Fixed
+
+- Fixed OpenAI-compatible Chat Completions reasoning replay to preserve and resend assistant-level `reasoning_details` (`reasoning.text`, `reasoning.summary`, and `reasoning.encrypted`) verbatim and in order ([#7994](https://github.com/earendil-works/pi/issues/7994)).
+- Fixed Anthropic server-side fallback responses being priced with the requested model instead of the returned fallback model ([#8285](https://github.com/earendil-works/pi/issues/8285)).
+- Fixed GitHub Copilot login triggering model-policy rate limits by limiting policy updates, retrying model discovery once, and honoring server retry delays ([#7850](https://github.com/earendil-works/pi/issues/7850)).
+- Fixed Amazon Bedrock dropping and failing to replay opaque redacted reasoning from non-Anthropic models ([#8314](https://github.com/earendil-works/pi/pull/8314) by [@seiji](https://github.com/seiji)).
+- Fixed Z.AI Coding Plan models deriving incomplete reasoning-effort metadata, including missing GLM-5.3 low, high, and max levels ([#8336](https://github.com/earendil-works/pi/issues/8336)).
+- Fixed DeepSeek V4 Flash on OpenCode and OpenCode Go omitting its supported low thinking level ([#8181](https://github.com/earendil-works/pi/pull/8181) by [@tianshuang](https://github.com/tianshuang)).
+- Fixed Azure OpenAI Responses ignoring `toolChoice` in provider-specific stream requests.
+- Fixed Amazon Bedrock `after_provider_response`/`onResponse` to forward the raw response headers instead of only the synthesized request id header ([#8234](https://github.com/earendil-works/pi/issues/8234)).
+- Fixed Kimi OpenAI-compatible usage reporting so top-level `cached_tokens` count as cache reads instead of normal input tokens ([#8075](https://github.com/earendil-works/pi/issues/8075)).
+- Fixed Google Generative AI and Vertex AI custom models ignoring `thinkingLevelMap`, which dropped extended thinking controls ([#8135](https://github.com/earendil-works/pi/issues/8135)).
+- Fixed Xiaomi model catalog generation retaining shut-down MiMo V2 model names after models.dev marked them deprecated ([#8187](https://github.com/earendil-works/pi/issues/8187)).
+- Cursor `resource_exhausted` errors with token usage below half the model context window are now classified as usage-pool exhaustion instead of context overflow, while zero-token errors and legacy no-window detection remain unchanged.
+
+### Removed
+
+## [2026.8.24] - 2026-08-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Updated the Bedrock runtime client to 3.1116.0 and the shared TypeBox runtime to 1.3.18.
+
+### Fixed
+
+### Removed
+
+## [2026.8.23] - 2026-08-23
+
+### Breaking Changes
+
+### Added
+
+- Cursor Composer models receive an operating prefix as their own leading system blob, carrying this client's native tool vocabulary and completion rules in place of the Cursor-harness habits they were trained on. Other Cursor models keep their existing request shape.
+
+### Changed
+
+### Fixed
+
+- Kimi XTML channel markers no longer reach user-visible assistant text when a leaked marker arrives without its trailing `<|sep|>` (seen live as a text block ending in the literal `<|close|>think` newline). One shared channel-marker grammar now backs both the stream recovery parser and message-level thinking recovery, which also strips markers from `text` blocks while keeping code-span literals intact ([#1092](https://github.com/code-yeongyu/senpi/pull/1092)).
+
+### Removed
+
+## [2026.8.22-2] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.22] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Cursor streams no longer fail while the server keeps sending heartbeats or checkpoints: the provider now matches the official Cursor CLI's stream recovery, refreshing its 30s health deadline on every inbound frame and silently retrying pre-`turnEnded` stalls or transport deaths with bounded backoff, resuming from the latest conversation checkpoint with the originally pinned model. Long-running local tools and long `xhigh` thinking turns previously died with `Cursor stream ended before turnEnded: inbound stream stalled` and immediately rotated the fallback chain.
 
 ### Removed
 

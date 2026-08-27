@@ -70,21 +70,21 @@ type EvalPromptExample = {
 const REUSE_CHAIN_EXAMPLES = [
 	{
 		caption: "First call — set up once",
-		language: "py",
+		language: "js",
 		summary: "Count all TypeScript source files under src/ excluding tests",
-		code: "from pathlib import Path\nfrom collections import Counter\nfiles = [p for p in Path('src').rglob('*.ts') if 'test' not in p.parts]\nprint(len(files))",
+		code: "import { readdir } from 'node:fs/promises'\nimport { extname } from 'node:path'\nconst files = (await readdir('src', { recursive: true })).filter(f => extname(f) === '.ts' && !f.includes('test'))\nprint(files.length)",
 	},
 	{
-		caption: "Second call — reuse `files`, batch-read in one cell",
-		language: "py",
-		summary: "Find which files reference legacyClient so we know what to migrate",
-		code: "hits = Counter()\nfor p in files:\n    hits[p.name] = read(p).count('legacyClient')\ndisplay({k: v for k, v in hits.items() if v})",
+		caption: "Second call — reuse `files`, fan out session tools in parallel",
+		language: "js",
+		summary: "Grep legacyClient per directory in one cell",
+		code: "const dirs = [...new Set(files.map(f => f.split('/')[0]))]\nconst hits = await Promise.all(dirs.map(d => tool.grep({ pattern: 'legacyClient', path: d })))\ndisplay(hits.map(h => h.matches?.length ?? 0))",
 	},
 	{
-		caption: "Third call — reuse results, fan out session tools in parallel",
+		caption: "JS kernel is busy with a detached cell — continue in py",
 		language: "py",
-		summary: "Confirm exact callsite lines in each directory to plan the refactor",
-		code: "dirs = ['src/core', 'src/tools']\ndisplay(parallel([lambda d=d: tool.grep({'pattern': 'legacyClient', 'path': d}) for d in dirs]))",
+		summary: "Aggregate legacyClient hits while JS is busy",
+		code: "from pathlib import Path\nprint(sum('legacyClient' in read(p) for p in Path('src').rglob('*.ts')))",
 	},
 ] as const satisfies readonly EvalPromptExample[];
 
@@ -129,7 +129,7 @@ Fields:
 - \`reset\` (optional) — wipe this language's kernel first.{{#ifAll py js}} Per-language: a \`py\` reset never touches the JS VM.{{/ifAll}}
 - \`action\` (optional) — defaults to \`"run"\`. A detached cell returns its id: use \`eval({ action: "peek", cell_id })\` for buffered output/state or \`eval({ action: "stop", cell_id })\` to cancel it.
 
-A detached cell keeps its language kernel busy while it finishes. Do not re-run a detached cell: the same-language busy error names its cell id and output tail; another language can continue. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
+A detached cell keeps its language kernel busy while it finishes; another language can continue. Do not re-run a detached cell: the same-language busy error names its cell id and output tail. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
 
 {{#if py}}Live event loop: use top-level \`await\` directly; \`asyncio.run(…)\` raises "cannot be called from a running event loop".{{/if}}
 {{#if js}}JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.{{/if}}

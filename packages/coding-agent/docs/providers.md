@@ -304,6 +304,54 @@ credential under the provider you select; an environment variable is shared by b
 
 The file is created with `0600` permissions (user read/write only). Auth file credentials take priority over environment variables.
 
+#### Multiple accounts per provider
+
+Any provider can hold more than one credential. The quickest way is numbered environment variables
+over the provider's primary key variable - a gap in the numbering is fine:
+
+```bash
+export OPENAI_API_KEY="sk-first"
+export OPENAI_API_KEY_2="sk-second"   # any provider: ANTHROPIC_API_KEY_2, GEMINI_API_KEY_2, ...
+```
+
+Stored credentials pool through an `accounts` array. The flat top-level fields always stay a valid
+credential (older binaries keep authenticating with them), and each slot's `name` is its stable
+identity:
+
+```json
+{
+  "openai": {
+    "type": "api_key",
+    "key": "sk-first",
+    "accounts": [
+      { "name": "default", "key": "sk-first", "source": "login" },
+      { "name": "work", "key": "sk-second", "source": "login" }
+    ],
+    "pinned": "work"
+  }
+}
+```
+
+With more than one account, requests rotate automatically: a session sticks to one account
+(session-affine selection), and a rate-limited or auth-failed account fails over to a healthy
+sibling **within the same provider and model** before the model fallback chain is consulted -
+credential rotation changes which account serves the request, never which model answers it.
+Rotation never happens after a response has started streaming. Cooldowns persist in
+`~/.senpi/agent/credential-pool-state.json` (health only - never key material).
+
+Manage accounts with `/account <provider> [list | pin <name> | unpin | remove <name>]`, and tune
+behavior per provider in `models.json`:
+
+```json
+{
+  "providers": {
+    "openai": {
+      "credentials": { "rotation": true, "affinity": true, "cooldownBaseMs": 60000 }
+    }
+  }
+}
+```
+
 API key credentials can also include provider-scoped environment values. These values are used before process environment variables when resolving the credential key, provider/model headers, and provider configuration such as Cloudflare account IDs, Azure OpenAI settings, Vertex project/location, Bedrock settings, `PI_CACHE_RETENTION`, and `HTTP_PROXY`/`HTTPS_PROXY`.
 
 ```json

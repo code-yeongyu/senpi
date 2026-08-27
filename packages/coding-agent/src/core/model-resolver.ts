@@ -34,19 +34,18 @@ export interface AvailableModelsSource {
 type ModelScopeSource = ModelRuntime | ModelRegistry | AvailableModelsSource;
 
 /** Default model IDs for each known provider */
-export const defaultModelPerProvider: Record<KnownProvider, string> = {
+export const defaultModelPerProvider: Record<string, string> = {
 	"alibaba-token-plan": "qwen3.7-max",
 	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
 	"ant-ling": "Ring-2.6-1T",
 	anthropic: "claude-opus-4-8",
-	openai: "gpt-5.5",
+	openai: "gpt-5.6-sol",
 	"azure-openai-responses": "gpt-5.4",
-	"openai-codex": "gpt-5.5",
+	"openai-codex": "gpt-5.6-sol",
 	ollama: "qwen3.5:397b",
 	// Cursor ships no models until its chat protocol is ported; "auto" matches
 	// the Cursor agent's native model auto-selection once models exist.
 	cursor: "auto",
-	radius: "auto",
 	nvidia: "nvidia/nemotron-3-super-120b-a12b",
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",
@@ -876,6 +875,7 @@ export async function findInitialModel(options: {
 	defaultProvider?: string;
 	defaultModelId?: string;
 	defaultThinkingLevel?: ThinkingLevel;
+	modelThinkingLevels?: Record<string, ThinkingLevel>;
 	modelRuntime: ModelRuntime;
 }): Promise<InitialModelResult> {
 	const { cliProvider, cliModel, scopedModels, isContinuing, defaultProvider, defaultModelId, modelRuntime } = options;
@@ -906,9 +906,11 @@ export async function findInitialModel(options: {
 
 	// 2. Use first model from scoped models (skip if continuing/resuming)
 	if (scopedModels.length > 0 && !isContinuing) {
+		const scopedModel = scopedModels[0];
+		const perModel = options.modelThinkingLevels?.[`${scopedModel.model.provider}/${scopedModel.model.id}`];
 		return {
 			model: scopedModels[0].model,
-			thinkingLevel: scopedModels[0].thinkingLevel,
+			thinkingLevel: perModel ?? scopedModels[0].thinkingLevel,
 			thinkingSelection: scopedModels[0].thinkingSelection,
 			fallbackMessage: undefined,
 			provenance: "scoped",

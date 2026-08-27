@@ -3,6 +3,7 @@ import { Container, isViewportTUI, Text } from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { FullscreenExitOutput, TuiMode } from "../src/core/settings-manager.ts";
+import { IdleStatus } from "../src/modes/interactive/components/status-indicator.ts";
 import {
 	createInteractiveTui,
 	createInteractiveTuiReference,
@@ -356,8 +357,8 @@ type ClearStatusContext = {
 	activeStatusIndicator: { kind: "working"; dispose: () => void } | undefined;
 	statusContainer: Container;
 	options: { tuiMode?: TuiMode };
-	ui: { getClearOnShrink: () => boolean };
-	idleStatus: Component;
+	ui: { getClearOnShrink: () => boolean; terminal: { columns: number; rows: number } };
+	idleStatus: IdleStatus;
 };
 
 type InteractiveModePrototype = {
@@ -367,24 +368,26 @@ type InteractiveModePrototype = {
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrototype;
 
 describe("clear-on-shrink status spacing", () => {
-	it("reserves status height only on the main-screen renderer", () => {
-		for (const [tuiMode, expectedChildren] of [
-			["regular", 1],
-			["fullscreen", 0],
-		] as const) {
+	it("reserves the measured status height only on the main-screen renderer", () => {
+		for (const tuiMode of ["regular", "fullscreen"] as const) {
 			const dispose = vi.fn();
+			const statusContainer = new Container();
+			for (const line of ["one", "two", "three", "four"]) {
+				statusContainer.addChild(new Text(line, 0, 0));
+			}
+			const outgoingHeight = statusContainer.render(80).length;
 			const context: ClearStatusContext = {
 				activeStatusIndicator: { kind: "working", dispose },
-				statusContainer: new Container(),
+				statusContainer,
 				options: { tuiMode },
-				ui: { getClearOnShrink: () => true },
-				idleStatus: new Text("", 0, 0),
+				ui: { getClearOnShrink: () => true, terminal: { columns: 80, rows: 24 } },
+				idleStatus: new IdleStatus(),
 			};
 
 			interactiveModePrototype.clearStatusIndicator.call(context);
 
 			expect(dispose).toHaveBeenCalledOnce();
-			expect(context.statusContainer.children).toHaveLength(expectedChildren);
+			expect(context.statusContainer.render(80).length).toBe(tuiMode === "regular" ? outgoingHeight : 0);
 		}
 	});
 });

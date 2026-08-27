@@ -67,7 +67,12 @@ export function createEvalTool(options: CreateEvalToolOptions): ToolDefinition<E
 					`Unsupported eval language "${request.language}". Enabled languages: ${languages.join(", ")}`,
 				);
 			const busy = cellManager.busyFor(request.language);
-			if (busy !== undefined) throw detachedKernelBusyError(busy);
+			if (busy !== undefined) {
+				const idleLanguages = languages.filter(
+					(language) => language !== request.language && cellManager.busyFor(language) === undefined,
+				);
+				throw detachedKernelBusyError(busy, idleLanguages);
+			}
 			options.executionTracker?.assertEvalExecutionAllowed();
 			const lifecycleController = new AbortController();
 			const combinedSignal = signal
@@ -98,8 +103,10 @@ async function runEvalCell(
 	const bridgeAbortController = new AbortController();
 	const cellSignal = AbortSignal.any([invocation.signal, bridgeAbortController.signal]);
 	const bridgeContext: ExtensionContext = { ...invocation.ctx, signal: cellSignal };
+	const runtime = options.runtimes?.[invocation.input.language];
 	const state: CellState = {
 		input: invocation.input,
+		...(runtime === undefined ? {} : { runtime }),
 		startedAt: Date.now(),
 		signal: cellSignal,
 		onUpdate: invocation.onUpdate,

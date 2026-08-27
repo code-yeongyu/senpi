@@ -4,6 +4,7 @@ import {
 	formatCacheTtl,
 	formatSavedUsd,
 	formatWakeDuration,
+	formatWakeTimestamp,
 	formatWarmTokenCount,
 	type GoalCacheWarmupEntryData,
 } from "./cache-warm.ts";
@@ -55,8 +56,7 @@ function whyLine(data: GoalCacheWarmupEntryData): string {
 
 function formatExpectedWake(dueAtMs: number | undefined, elapsedMs: number): string {
 	if (dueAtMs === undefined || !Number.isFinite(dueAtMs)) return `waited ${formatWakeDuration(elapsedMs)}`;
-	const timestamp = new Date(dueAtMs).toISOString().slice(0, 16).replace("T", " ");
-	return `ready ${timestamp} UTC (${formatWakeDuration(elapsedMs)})`;
+	return `ready ${formatWakeTimestamp(dueAtMs)} (${formatWakeDuration(elapsedMs)})`;
 }
 
 function expandedLine(data: GoalCacheWarmupEntryData): string {

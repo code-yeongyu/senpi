@@ -6,7 +6,7 @@ Public documentation for `@code-yeongyu/senpi`. Shipped inside the npm package: 
 ## Navigation manifest
 
 `docs.json` has two top-level keys: `navigation` (ordered section and page list) and `redirects`.
-Page paths are relative to this directory.
+Sections are `{ "title", "items": [{ "title", "path" }] }`; page paths are relative to this directory.
 
 - Every new `.md` file needs an entry in `docs.json` under `navigation`.
 - Renamed or moved pages need a `redirects` entry to avoid broken links.
@@ -29,6 +29,8 @@ These pages must track their implementation counterparts. Treat them as specs, n
 | `app-server.md` | `packages/coding-agent/src/modes/app-server/` |
 | `json.md` | JSONL wire format and record shapes |
 | `session-format.md` | Session file structure and field types |
+| `extensions.md` | Public extension API in `src/core/extensions/`; largest page — API tables must match `types.ts` |
+| `release-guide.md` | Release tooling; canonical check/build/test/lock command sequences |
 
 Preserve LF line endings and exact field names in these pages. Field spellings and JSONL record
 structures are asserted by tests; prose-only rewording can still break them.

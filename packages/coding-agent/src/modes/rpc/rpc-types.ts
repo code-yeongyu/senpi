@@ -35,6 +35,7 @@ type RpcSessionCommand =
 	| { id?: string; type: "steer"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "follow_up"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "abort" }
+	| { id?: string; type: "clear_queue" }
 	| { id?: string; type: "new_session"; parentSession?: string }
 
 	// State
@@ -246,7 +247,12 @@ export type RpcResponse =
 			type: "response";
 			command: "get_protocol_info";
 			success: true;
-			data: { protocolVersion: 1; capabilities: ["multi_session"]; mode: "classic" | "multi" };
+			data: {
+				protocolVersion: 1;
+				serverVersion: string;
+				capabilities: string[];
+				mode: "classic" | "multi";
+			};
 	  }
 	| {
 			id?: string;
@@ -277,6 +283,13 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "steer"; success: true }
 	| { id?: string; type: "response"; command: "follow_up"; success: true }
 	| { id?: string; type: "response"; command: "abort"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "clear_queue";
+			success: true;
+			data: { steering: string[]; followUp: string[] };
+	  }
 	| { id?: string; type: "response"; command: "new_session"; success: true; data: { cancelled: boolean } }
 
 	// State

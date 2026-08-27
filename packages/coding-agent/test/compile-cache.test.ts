@@ -85,7 +85,7 @@ describe("startup compile cache", () => {
 		});
 
 		test("#when no cache directory is configured #then the seam still publishes an inheritable default", () => {
-			const result = runDriver({ NODE_COMPILE_CACHE: undefined });
+			const result = runDriver({ NODE_COMPILE_CACHE: undefined, TMPDIR: hostDir });
 
 			expect(result.status, result.stderr).toBe(0);
 			const report = parseReport(result.stdout);

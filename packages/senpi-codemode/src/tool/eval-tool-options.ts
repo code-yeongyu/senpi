@@ -11,6 +11,7 @@ import type {
 	EnabledEvalLanguages,
 	EvalInputSchema,
 	EvalKernelManager,
+	EvalRuntimes,
 	EvalToolDetails,
 	EvalToolInput,
 	ExecuteTool,
@@ -38,6 +39,8 @@ export interface CreateEvalToolOptions {
 	readonly spawnDefaultAgent?: string;
 	readonly modelId?: string;
 	readonly hostLine?: string;
+	/** Display identity of each language's runtime, shown in headers and details. */
+	readonly runtimes?: EvalRuntimes;
 }
 
 export interface EvalCellInvocation {

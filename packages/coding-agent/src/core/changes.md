@@ -1,5 +1,387 @@
 # changes
 
+## 2026-08-27 - Default retry policy phase-2 close-out (docs)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/profile-override.ts`: the `retry.providers.<providerId>` override surface accepts per-provider scheduling-knob overrides validated against `RetryStageOverride` (fields: `enabled`, `maxRetries`, `baseDelayMs`, `growthFactor`, `perAttemptCapMs`, `jitter`, `serverHintMaxDelayMs`). An entire provider entry is rejected atomically when any knob is invalid.
+- Recommended settings snippet for users who configure no fallback chain and want a larger same-model budget:
+  ```jsonc
+  {
+    // Raise the turn retry budget for a single-provider setup.
+    // maxRetries must be a non-negative safe integer.
+    "retry": {
+      "providers": {
+        "<providerId>": {
+          "turn": {
+            "maxRetries": 5
+          }
+        }
+      }
+    }
+  }
+  ```
+- The default same-model turn retry budget stays at 3 retries. This is an intentional non-change: the budget was reviewed during phase-2 close and kept at its existing value for all providers that don't declare their own profile.
+- No new kimi-code observability or telemetry surface was adopted.
+- Regression coverage: `packages/coding-agent/test/suite/regressions/retry-default-no-kimi-leak.test.ts` guards senpi-default against kimi semantics leaking in (no-hint 429 first-failure fallback, 1258000ms hint tier routing, billing 429 pinned fallback, abort during backoff single `auto_retry_end`).
+- Tracked in `packages/ai/src/changes.md` and `packages/coding-agent/src/core/changes.md`.
+
+### Why
+
+- Users running a single provider without a fallback chain benefit from a higher retry budget, but the default stays conservative (3) to avoid masking persistent failures when fallback providers are available. The snippet documents the exact override path so users don't have to read the validation source.
+
+### Why an extension could not handle it
+
+- `retry.providers` overrides are resolved inside `resolveRetryProfile` in `packages/coding-agent/src/core/settings-manager.ts`, before any extension hook. The validation and merge happen at settings load time.
+
+### Expected merge conflict zones
+
+- NONE: doc-only section append; no code files touched.
+
+## Provider-neutral credential accounts (2026-08-27)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts` (new): provider-neutral account surface over the pool slot algebra - `getCredentialAccounts`/`summarizeCredentialAccounts` list stored slots (env slots only when nothing is stored, mirroring resolution precedence), `pinCredentialAccount` pins/unpins, `removeCredentialAccount` removes a stored slot and drops its sidecar health (env-backed accounts refuse removal). Blocked state reads BOTH sources: a slot's own persisted `blockedUntil`/`blockReason` and the pool sidecar. Mutations emit `emitProviderAccountsChanged` so subscribed clients re-read. Summaries carry names and health only, never key material.
+- `packages/coding-agent/src/main.ts`: `auth check --json` now includes a non-secret `accounts` array (name/source/blocked/pinned) for the checked provider; enrichment failures never turn a readable auth state into an error.
+
+### Why
+
+- Account management was confined to the claude-sdk-oauth lane (`assertManagedProvider` hard-rejected every other provider). Generic multi-credential pools need one surface that works for every provider, and scripts consuming `auth check --json` need account visibility without parsing auth.json.
+
+### Why an extension could not handle it
+
+- The RPC and app-server consumers dispatch these operations inside core connection handling; an extension cannot replace their imports, and account listing needs the auth storage and pool sidecar wiring that live in core.
+
+### Expected merge conflict zones
+
+- LOW: `main.ts` auth-check output composition (one enrichment block); `credential-accounts.ts` is fork-new.
+
+## 2026-08-27 - Credential pool: health sidecar, policy schema, env slots, in-lane rotation
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/state-store.ts` (new): file-locked health sidecar at `<agent-dir>/credential-pool-state.json` (mode 0600, `FILE_STORAGE_LOCK_OPTIONS`) holding ONLY health - absolute cooldown deadlines, permanent auth/billing blocks, half-open probe leases, `lastSuccessAt`, and HMAC-derived env-slot revisions. `CredentialSlotRepository.mutateSlotState` is an atomic read-modify-write with a `stateVersion` increment; `acquireHalfOpenLease` transitions an elapsed cooldown to half-open for exactly one probing caller. An unreadable or schema-invalid document resets to fresh state rather than failing auth resolution.
+- `packages/coding-agent/src/core/credential-pool/classify.ts` (new): concrete provider-error taxonomy over `normalizeProviderError` and the existing 429 retry-hint parser. 401/invalid-key and account-scoped 403 block permanently and fail over; bare 403 fails the request; 429 fails over with a per-slot exponential cooldown floored (never overridden) by the server hint and capped at 48h; billing/quota-exhausted disables the account; 5xx/529/overload/network retry the SAME slot without blocking it; overflow, invalid model, 400, 404, malformed stream, and abort fail the request.
+- `packages/coding-agent/src/core/credential-pool/failover.ts` (new): `runCredentialFailover` re-reads slots before each distinct-credential attempt (so a newly added slot participates), runs at most one failover attempt per slot per request, settles a failed stream before starting the next, persists the block BEFORE selecting a replacement, and requires an `isCommittedOutput` predicate whose contract is default-DENY. Committed output bars rotation and the rethrow carries the existing `senpi:no-turn-retry:` marker.
+- `packages/coding-agent/src/core/credential-pool/env-slots.ts` (new): numbered env credential slots for any provider (`<VAR>`, `<VAR>_2` .. `<VAR>_16`), gap-tolerant, over the canonical `getApiKeyEnvVars` mapping.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts` (new): lists a provider's rotation slots with sidecar health overlaid (stored lane when a credential exists, env lane otherwise), selects by sha256 HRW over the request affinity key, and persists blocks per lane. An env slot's persisted health applies only while its HMAC revision still matches the current value.
+- `packages/coding-agent/src/core/model-runtime.ts`: `ModelRuntime.stream` engages that rotation only when the provider actually holds more than one slot and nothing pins the request to a single credential (runtime key, explicit per-request `apiKey`, or `credentials.rotation: false`); `prepareRequest` accepts a per-attempt slot override, and `ModelRuntimeAuthOverrides.slotName` plumbs slot-scoped resolution.
+- `packages/coding-agent/src/core/model-config-schema.ts`: per-provider `credentials` policy block (`additionalProperties: false`) with `rotation`/`affinity` toggles, cooldown bounds, and named slot references to env vars or command values; `CREDENTIAL_POLICY_DEFAULTS` re-exports the engine constants so schema and runtime cannot drift.
+
+### Why
+
+- Multi-credential rotation needs durable per-slot health that survives restart with absolute deadlines, a taxonomy that distinguishes credential-scoped from provider-scoped faults (blocking a healthy credential for a provider outage only destroys prompt-cache locality), and a request-level runner that exhausts a lane's slots before the model fallback chain above it is consulted. Health cannot live in `auth.json`: that file is credential material under its own lock, and mixing volatile block state into it would rewrite user credentials on every rate limit.
+
+### Why an extension could not handle it
+
+- `ModelRuntime.stream` is the one place where a request's provider auth is resolved and the provider stream is constructed; per-attempt credential selection has to happen inside it. The sidecar likewise needs `getAgentDir()` and the shared file-storage lock policy, neither of which is reachable through the extension API.
+
+### Expected merge conflict zones
+
+- MEDIUM: `model-runtime.ts` `prepareRequest`/`stream` (upstream-owned request construction; the rotation branch is additive and the single-credential path is unchanged).
+- LOW: `model-config-schema.ts` provider block (one optional property); the `credential-pool/` directory is fork-new with no upstream counterpart.
+
+## 2026-08-26 - Capture bash spill-file errors before the first write
+
+### What changed
+
+- `packages/coding-agent/src/core/bash-executor.ts`: attaches an `error` listener as soon as the
+  full-output `WriteStream` is created, records the first failure, and rejects the bash execution
+  through the terminal `close` boundary even when a late filesystem close failure follows `finish`.
+- The close helper waits for `close`, preserves the first storage failure, and removes its error and
+  close listeners after settlement so a stream cannot resolve successfully before final storage state
+  is known or retain listeners after cleanup.
+- Successful command finalization now runs outside the command-execution catch, so an already-set
+  abort signal cannot reinterpret a spill close failure as a successful cancelled result.
+- Decoder flushing and output preparation now close the spill stream before propagating a callback
+  or formatting failure; if cleanup also fails, both errors are preserved in an `AggregateError`.
+
+### Why
+
+- A full `/tmp` or exhausted user quota can make the spill stream emit `ENOSPC` or `EDQUOT` while
+  command output is still arriving, or during the final filesystem close after `finish`. The close
+  path must therefore wait for `close`, rather than treating `finish` as durable completion; the first
+  storage failure is reported instead of returning a successful result with an incomplete path.
+
+### Why an extension could not handle it
+
+- The stream is created and written inside the core bash executor before extension result hooks
+  receive control.
+
+### Expected merge conflict zones
+
+- LOW: the temp-file stream creation and close lifecycle in `bash-executor.ts`.
+
+## 2026-08-26 - Continue provider fallback after failed required compaction
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: Cursor token-bearing quota `resource_exhausted`
+  and eligible hard-error failures now advance the provider fallback chain when required pre-retry
+  compaction is rejected (`retryContinuationBlocked` no longer covers those two classes). Ordinary
+  transient retries remain compaction-blocked, and zero-token Cursor `resource_exhausted` keeps its
+  compact-before-rotate contract.
+- `packages/coding-agent/src/core/agent-session.ts`: the hard-error fallback not-switched path now
+  emits `retry_fallback_exhausted` when the configured chain has no usable candidate, mirroring the
+  refusal path.
+
+### Why
+
+- Cursor usage-pool exhaustion surfaces as `resource_exhausted` that also demands required
+  compaction; the compaction generator runs on the same dead lane and always fails, so the old
+  blocking wedged the turn ("Compaction rejected: compaction generator failed" then "Retry failed
+  after 1 attempts") and the fallback chain never advanced to the next provider.
+- The silent not-switched path gave the TUI no signal about why no fallback hop happened.
+
+### Why an extension could not handle it
+
+- `retryContinuationBlocked`, required-compaction admission, and fallback dispatch ordering are
+  private `AgentSession` agent_end lifecycle state; extensions observe compaction and fallback
+  events only after the core has already made the dispatch decision.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts` agent_end retry/compaction dispatch
+  block and the `_handleRetryableError` hard-error branch.
+
+## 2026-08-26 - Uncaught-crash writer on the debug-log lane
+
+### What changed
+
+- `packages/coding-agent/src/core/hidden-stdout-log.ts`: factored the existing append (timestamp
+  header + `redactSensitiveOutput` + `0o600` debug log) into a private `appendDebugLogEntry` and
+  added the sibling `appendUncaughtCrashLog(origin, error)`, which writes the distinct
+  `uncaught crash (<origin>)` header plus the error identity and stack. `appendHiddenTuiStdout`
+  keeps its exact `hidden stdout while TUI active` header and empty-chunk skip.
+
+### Why
+
+- The interactive crash handler needed a redacted, permission-locked lane into the brand debug log,
+  and the hidden-stdout writer already owned that lane. A distinct header keeps crash records
+  greppable and prevents them from being read as suppressed TUI stdout.
+
+### Why an extension could not handle it
+
+- Fork-only file (absent from the pinned upstream tree); it is the core writer for the brand debug
+  log and runs inside the fatal crash path, where no extension code executes.
+
+### Expected merge conflict zones
+
+- NONE: the file does not exist upstream.
+
+## 2026-08-26 - Reject no-progress manual compaction before active abort
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSession.compact()` now runs the existing
+  `prepareCompaction()` check before claiming manual admission or aborting an active agent run.
+- A no-progress request still emits balanced manual `compaction_start` / failed `compaction_end`
+  events and the existing `session_compact_failed` hook, but it leaves the active continuation alive.
+
+### Why
+
+- A manual compaction request can arrive after automatic tool-result compaction has committed but
+  while that same turn's next provider call is streaming. The old order aborted the provider
+  continuation first and only then discovered that the pre-abort branch had nothing left to
+  summarize, terminally ending otherwise healthy goal work.
+
+### Why an extension could not handle it
+
+- Manual compaction admission, active-agent abort ownership, and the pre-abort branch snapshot are
+  private `AgentSession` lifecycle state. An extension observes compaction hooks only after the core
+  has already admitted the operation.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/core/agent-session.ts` around the public `compact()` entry point.
+
+## 2026-08-23 - Provider-declared retry policy profiles (session wiring)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: forwards `retryPolicy` through provider composition (`extension?.retryPolicy ?? base?.retryPolicy`) so composed providers never silently drop provider-declared retry profiles. `ProviderConfigInput` gained the `retryPolicy` field for config-layer injection.
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: `RetrySettings` gained `providers?: Record<string, RetryPolicyOverride>` for per-provider scheduling-knob overrides.
+- `packages/coding-agent/src/core/retry-fallback/profile-override.ts` (new): `validateRetryProviderOverrides` returns warnings (never throws, never mutates) for the `retry.providers.<id>` map, rejecting an entire provider entry atomically when any knob is invalid, and warning once on unknown provider ids.
+- `packages/coding-agent/src/core/settings-manager.ts`: `resolveRetryProfile(provider)` resolves the effective profile with documented precedence: shipped senpi-default -> provider-declared profile -> user global (no-profile providers only) -> `retry.providers.<id>` -> `retry.enabled` hard gate.
+- `packages/coding-agent/src/core/agent-session.ts`: `_handleRetryableError` resolves the profile once per failure. `fallback.rateLimited` decides 429 routing ("tiered" keeps today's hint tiers, "after-turn-budget" routes 429s through the ordinary same-model budget). Profile ceiling null bypasses the over-ceiling error path. The kimi routing marks `is429TierRouted` to prevent double-counting with the generic non-429 path. Every same-model budget check (`_willRetryAfterAgentEnd`, `_degradeRateLimitedWithoutFallback`, and all `_handleRetryableError` branches incl. the `auto_retry_start.maxAttempts` field) reads the resolved profile's `turn.maxRetries` — identical to `settings.maxRetries` for providers without a declared profile, and the declared budget (kimi-code's 9) otherwise.
+- `packages/coding-agent/src/core/sdk.ts`: `streamFn` resolves the profile's `providerRequest` stage for `maxRetries`/`maxRetryDelayMs`; a profile with `providerRequest.enabled === false` sends `maxRetries: 0`.
+
+### Why
+
+- The kimi-coding provider needs kimi-code's own retry policy (10 attempts, uncapped server hints, no immediate 429 fallback) while every other provider keeps senpi's existing behavior byte-identical. The profile resolution happens at the session's failure-handling loop so classification, delay, and fallback routing stay consistent.
+
+### Why an extension could not handle it
+
+- The retry decision happens inside the session's own failure-handling loop before any extension hook, and must also cover the transport stage in `sdk.ts`. An extension observing the error after the fact cannot influence the same-model budget, tier routing, or the over-ceiling gate.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/settings-manager.ts` getters region (new `resolveRetryProfile` sibling method).
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts` `_handleRetryableError` profile routing and over-ceiling gate.
+- MEDIUM: `packages/coding-agent/src/core/sdk.ts` `streamFn` provider-request stage resolution.
+- LOW: `packages/coding-agent/src/core/provider-composer.ts` field forwarding (append-only).
+- LOW: `packages/coding-agent/src/core/retry-fallback/settings.ts` + `profile-override.ts` (new module, no upstream owner).
+
+## Core runtime re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` keeps the fork session runtime (prepared tool
+  calls, server-fallback-aborted diagnostics, thinking selection, settlement/idle lifecycle).
+- `packages/coding-agent/src/core/auth-storage.ts` keeps OAuth auth events, interactions, prompts,
+  and login callbacks on the credential store surface.
+- `packages/coding-agent/src/core/footer-data-provider.ts` keeps the polling fallback armed when
+  `fs.watch` creation fails (descriptor limits, unsupported filesystems).
+- `packages/coding-agent/src/core/keybindings.ts` keeps `app.history.search` (ctrl+r) and
+  `app.models.toggleFavorite` (ctrl+f) with their record guards.
+- `packages/coding-agent/src/core/model-config.ts` keeps the extracted `model-config-schema.ts`
+  validation module and `samplingParams` passthrough.
+- `packages/coding-agent/src/core/model-resolver.ts` keeps scoped-model resolution, service tiers,
+  initial-model provenance, and the `AvailableModelsSource` snapshot interface.
+- `packages/coding-agent/src/core/model-runtime.ts` keeps wire identity, payload request metadata,
+  and remote-catalog provider routing.
+- `packages/coding-agent/src/core/package-manager.ts` and `packages/coding-agent/src/core/pi-manifest.ts`
+  keep the `hooks` resource type and branded `envValue("OFFLINE")` reads.
+- `packages/coding-agent/src/core/provider-composer.ts` keeps the extracted api-key/header auth
+  composition modules and tool-call middleware wrapping.
+- `packages/coding-agent/src/core/resource-loader.ts` keeps bundled shim banners, builtin extension
+  factories, and the cwd-scoped extension cache.
+- `packages/coding-agent/src/core/sdk.ts` keeps auth storage, the cursor exec bridge, transport
+  image budgets, model registry wiring, and initial-model provenance.
+- `packages/coding-agent/src/core/session-manager.ts` keeps the session-discovery/resident-store
+  split and the inlined UUIDv7 (upstream depends on the `uuid` package).
+- `packages/coding-agent/src/core/settings-manager.ts` keeps retry/hint policy settings, lockfile
+  policy, nearest-parent config, and atomic settings writes.
+- `packages/coding-agent/src/core/slash-commands.ts` keeps `/favorite-models` and the `/exit` alias.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/settings-manager.ts`,
+  and `packages/coding-agent/src/core/session-manager.ts` are the highest-churn files in every sync;
+  expect import-block and constructor-wiring conflicts there first.
+
+## 2026-08-23 - Slot-preserving credential writes for multi-account pools
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts` (new, exported as `@earendil-works/pi-ai/auth/pool/slots`): pure slot algebra over a provider credential - `listSlots`, `findSlot`, `upsertSlot`, `removeSlot`, `pinSlot`, `assertValidSlotName`. A stored credential with no `accounts` array is read as a one-slot pool named `default` derived from its flat fields, without writing anything back. `upsertSlot` replaces or appends one slot and leaves every sibling, the pin, and the flat top-level credential untouched. `removeSlot` drops the provider entry once its last slot is gone and clears a pin naming the removed slot.
+- `packages/coding-agent/src/core/auth-storage.ts`: added `listSlots`, `setSlot`, and `removeSlot` delegating to that module; `set()` now appends to a pool (generated `login-N` slot, siblings preserved) instead of replacing the provider entry, so the RPC `login_api_key` path no longer destroys sibling slots; flat providers keep today's whole-write shape (imported via the new vitest source alias for `@earendil-works/pi-ai/auth/*` in `vitest.base.ts`). Each write runs inside the existing `storage.withLock` read-modify-write and rebuilds the provider entry from the locked content, so unrelated providers and sibling slots survive.
+
+### Why
+
+- `set()` replaces a whole provider entry and `remove()` deletes it, so any provider holding more than one credential lost every sibling the moment one slot was written. Multi-account support needs a write path that preserves siblings before any pooled data can exist. The flat top-level credential is deliberately retained on a pooled entry so a senpi build that predates pools still authenticates from it.
+
+### Why an extension could not handle it
+
+- `AuthStorage` is the app-owned `CredentialStore` implementation and the only holder of the `auth.json` lock; slot-preserving semantics must live inside that locked read-modify-write, which no extension can enter.
+
+### Expected merge conflict zones
+
+- LOW: the new methods sit immediately after `remove()` in `packages/coding-agent/src/core/auth-storage.ts`; `credential-slots.ts` is a new file with no upstream counterpart.
+
+## 2026-08-25 - Fall back on Cursor usage-pool exhaustion
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: admits token-bearing Cursor `resource_exhausted` failures as a dedicated fallback class, retires failed assistants before fallback, and annotates terminal no-fallback errors with the likely usage-pool cause.
+
+### Why
+
+- Cursor quota exhaustion was misclassified as overflow and entered compaction loops; mid-turn tool calls also require explicit retry admission outside the generic hard-error gate.
+
+### Why an extension could not handle it
+
+- Retry admission, assistant retirement, and provider fallback are private AgentSession lifecycle boundaries.
+
+### Expected merge conflict zones
+
+- HIGH: Cursor retry admission and fallback dispatch in `packages/coding-agent/src/core/agent-session.ts`.
+
+## 2026-08-25 - Harden watchdog abort accounting and retry jitter
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: carries watchdog provenance and applies injected jitter while preserving provider hints and 429 floors.
+- `packages/coding-agent/src/core/extensions/types.ts`: includes provider abort ownership in `agent_end`.
+
+### Why
+
+- Watchdog aborts must remain retryable and consume the configured budget; delay jitter must not alter provider hints or the 429 exponential floor.
+
+### Why an extension could not handle it
+
+- Session retry admission and lifecycle event typing are core boundaries with no extension seam.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts` retry scheduling and `packages/coding-agent/src/core/extensions/types.ts` event contract.
+## 2026-08-24 - expose abort provenance to interactive rendering
+
+### What changed
+
+- `agent-abort-provenance.ts` exposes the current explicit abort owner across the active and settlement boundaries.
+- `agent-session.ts` exposes that owner through the read-only `currentAbortSource` getter for the interactive renderer.
+
+### Why
+
+- An assistant `stopReason: "aborted"` does not prove that the user cancelled. Provider retry watchdogs can produce the same terminal shape without explicit ownership, while user and system aborts are recorded by `AgentAbortProvenance`.
+- The renderer needs the existing provenance at message finalization so it can persist an accurate user, system, or provider label that remains correct when the transcript is replayed.
+
+### Why an extension could not handle it
+
+- Abort ownership is private AgentSession lifecycle state and the assistant message is finalized before the extension-visible `agent_end` event.
+
+### Expected merge conflict zones
+
+- LOW: `agent-abort-provenance.ts` source getter and the `AgentSession` read-only state getters.
+
+## 2026-08-22 - Retarget OpenAI automatic defaults to GPT-5.6 Sol
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: retargeted the `openai` and `openai-codex` provider defaults from `gpt-5.5` to `gpt-5.6-sol` while retaining GPT-5.5 in catalogs and explicit settings resolution.
+
+### Why
+
+- Automatic startup recommendation should follow the current recommended GPT-5.6 Sol model; saved GPT-5.5 selections remain explicitly selectable.
+
+### Why an extension could not handle it
+
+- `defaultModelPerProvider` is consumed by core initial-model resolution before extension recommendations are applied.
+
+### Expected merge conflict zones
+
+- LOW: the OpenAI provider entries in `packages/coding-agent/src/core/model-resolver.ts`.
+
+## 2026-08-22 - emit agent_idle after settlement-deferred turns resolve
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-settled-delivery.ts`: added `DeferredTurnClaim` / `DeferredTurnDisposition` (`started` / `delegated` / `finished-without-start`) and `deferTriggerTurn`, so a settlement-deferred turn request declares whether it actually started a run. Claims resolve at the `_promptAgent` admission boundary.
+- `packages/coding-agent/src/core/agent-session.ts`: after the deferred-action loop in `_emitAgentSettled`, an out-of-band check waits for all deferred turn dispositions, skips emission when any turn `started`, waits for delegated session work to drain, verifies the settlement epoch is still current, and emits `{ type: "agent_idle" }` only when no agent run or session work is active. Both settlement-deferred turn APIs register a claim: `sendMessage(..., { triggerTurn: true })` via `deferTriggerTurn`, and `sendUserMessage` (which always triggers a turn) via a claim resolved from its prompt disposition; its content normalization is wrapped so a throwing iterator/getter resolves the claim instead of hanging the idle wait. `agent_settled` ordering is unchanged for existing subscribers.
+
+### Why
+
+- The TUI cleared its working-status dock on the public `agent_settled`, but settlement-deferred continuations (TTSR, loop-guard, goal recovery) start a turn *after* that event, so the dock was removed and immediately remounted - the same vertical bounce the jitter fix exists to eliminate. `_isAgentRunActive` alone cannot decide this at the deferred-action loop because a deferred `sendCustomMessage`/`sendUserMessage` can be suspended at compaction/provider admission before reaching `_promptAgent`, and a throwing content normalization could leave the claim unresolved forever. `agent_idle` is the single race-free boundary for final cleanup.
+
+### Why an extension could not handle it
+
+- Settlement-deferred turn admission, the settlement epoch, and the deferred-turn claim lifecycle are private `AgentSession` / `AgentSettledDelivery` state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts` `_emitAgentSettled`, `_promptAgent`, `sendCustomMessage`, `sendUserMessage`, and the `AgentEvent` union.
+- `packages/coding-agent/src/core/agent-settled-delivery.ts`.
+
 ## 2026-08-21 - Auth-storage lock retry sleeps instead of spinning
 
 ### What changed
@@ -441,6 +823,36 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 - `core/agent-session.ts` `sendCustomMessage` wait condition, and the goal extension `session_start`
   suppressed-load branch in `core/extensions/builtin/goal/index.ts`.
 
+
+## 2026-08-25 - Harden provider retry watchdog ownership and backoff
+
+### What changed
+
+- `core/provider-timeout-retry.ts`: gives the retry-continuation watchdog a proportional 10% grace beyond the granted stream-start guard, preserving `0`/`undefined` opt-out behavior.
+- `packages/coding-agent/src/core/agent-session.ts`: mark watchdog aborts as provider-owned and retain the real watchdog cause for retry classification and terminal reporting; retry delays use injected +/-10% jitter.
+- `packages/coding-agent/src/core/agent-abort-provenance.ts`: carries provider abort ownership through `agent_end`.
+- `packages/coding-agent/src/core/extensions/types.ts`: adds provider abort ownership to the public `agent_end` event type.
+- `packages/coding-agent/src/core/agent-session.ts`: apply injected retry jitter while preserving provider hints and 429 exponential floors.
+- `modes/interactive/interactive-mode.ts` and `modes/interactive/aborted-error-label.ts`: render labels without mutating persisted messages.
+- `modes/interactive/interactive-mode.ts` and `modes/interactive/aborted-error-label.ts`: render abort labels from a copied message rather than mutating session state.
+
+### Why
+
+- The watchdog starts before the retried request starts its stream-start timer, so equal deadlines deterministically laundered a retryable stall into an unclassifiable abort and discarded remaining retry budget.
+- Codex-style jitter prevents synchronized retry storms while provider Retry-After hints remain lower bounds.
+
+### Why an extension could not handle it
+
+- Retry watchdog ownership, Agent abort propagation, session retry accounting, and message finalization are core lifecycle boundaries with no extension seam.
+
+### Policy note
+
+- Non-429 provider retry hints remain authoritative. Jitter applies only when no provider hint is present; 429-tier scheduling remains deterministic so its exponential floor remains a true floor.
+
+### Expected merge conflict zones
+
+- HIGH: `core/provider-timeout-retry.ts`, `core/agent-session.ts`, and `packages/agent/src/{agent.ts,agent-loop.ts}`.
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/extensions/types.ts`, and interactive aborted-label rendering.
 
 ## 2026-08-18 - Retry continuation watchdog reconciled with the guards it grants
 
@@ -3530,3 +3942,39 @@ extension reloads. Test extension results preserve the same ownership contract.
 The trusted/untrusted extension result composition now carries forward the shared event bus used by
 both pre-trust and remaining extensions. Dropping it caused `ExtensionRunner` to allocate an
 unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring projects.
+
+## 2026-08-25 - reject upstream Radius session sharing artifacts
+
+### What changed
+
+- `packages/coding-agent/src/core/radius.ts`: intentionally absent from Senpi; upstream Radius sharing is rejected under the fork sharing policy.
+
+### Why
+
+- Senpi retains its gist-based `/share` flow and `pi.dev` viewer instead of adopting the upstream Radius service.
+
+### Why an extension could not handle it
+
+- Sharing implementation ownership is a core product policy decision, not an extension-level adaptation.
+
+### Expected merge conflict zones
+
+- NONE: the upstream-only Radius artifact remains excluded from the fork tree.
+
+## 2026-08-25 - Preserve upstream session event behavior
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` retains fork queue and compaction behavior while adopting upstream custom-message ordering.
+
+### Why
+
+- Session event ordering is a provider and persistence runtime contract.
+
+### Why this lives in the fork
+
+- Agent session orchestration executes below extension interception.
+
+### Expected merge conflict zones
+
+- Agent event dispatch and custom-message queue handling.

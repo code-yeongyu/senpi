@@ -2,6 +2,7 @@ import { anthropicMessagesApi } from "../api/anthropic-messages.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
 import { loadKimiCodingOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
+import { KIMI_CODE_RETRY_PROFILE } from "../utils/retry-profile/profiles.ts";
 import { KIMI_CODING_MODELS } from "./kimi-coding.models.ts";
 
 export function kimiCodingProvider(): Provider<"anthropic-messages"> {
@@ -20,5 +21,8 @@ export function kimiCodingProvider(): Provider<"anthropic-messages"> {
 		},
 		models: Object.values(KIMI_CODING_MODELS),
 		api: anthropicMessagesApi(),
+		// Same upstream service (api.kimi.com/coding, protocol anthropic) as the
+		// kimi-code CLI, so its own retry policy applies verbatim.
+		retryPolicy: KIMI_CODE_RETRY_PROFILE,
 	});
 }

@@ -1,8 +1,142 @@
 # changes.md — ai
 
+## Credential pool export wildcard (2026-08-27)
+
+### What changed
+
+- `packages/ai/package.json`: the `./auth/pool/slots` export entry became the wildcard `./auth/pool/*` so the new `select`, `classify`, and `failover` pool modules resolve through the package export map alongside `slots`.
+
+### Why
+
+- The credential pool engine ships as separate browser-safe modules; consumers (including `packages/coding-agent`) import them by subpath.
+
+### Why an extension could not handle it
+
+- Package export maps are packaging surface owned by the package itself.
+
+### Expected merge conflict zones
+
+- LOW: one wildcard line in the `exports` map.
+
+## @anthropic-ai/sdk peer alignment (2026-08-26)
+
+### What changed
+
+- `packages/ai/package.json` bumps `@anthropic-ai/sdk` `0.91.1` -> `0.120.0` in lockstep with the root and coding-agent pins. All imported types/classes were audited symbol-by-symbol against the 0.120.0 tarball; the widened `RefusalStopDetails.category` and `StopReason` unions are additive and unread here.
+
+### Why
+
+- The old pin violated `@anthropic-ai/claude-agent-sdk@0.3.241`'s `>=0.93.0` peer requirement and warned on every bun install.
+
+### Why this lives in the fork
+
+- The exact-version pin discipline is fork-owned; upstream tracks a caret range.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/package.json` dependency pins during upstream syncs.
+
+## 2026-08-25 - Keep Cloudflare AI Gateway provider divergence covered
+
+### What changed
+
+- Keep `packages/ai/src/providers/cloudflare-ai-gateway.ts` with the fork's Cloudflare AI Gateway provider registration and Workers AI model mapping.
+
+### Why
+
+- The provider is part of the fork's supported gateway surface and must remain covered by the nearest changes tracker during upstream synchronization.
+
+### Why this lives in the fork
+
+- Provider registration and model routing are package-owned runtime behavior below the extension boundary.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/providers/cloudflare-ai-gateway.ts` and adjacent provider registration during upstream syncs.
+
+## AI package manifest and model generator re-diverge from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/ai/package.json` keeps the calver version, the `./utils/*` and `./node/provider-scope`
+  export subpaths, and `tsx`-driven generator scripts (upstream invokes them with plain `node`).
+- `packages/ai/scripts/generate-models.ts` keeps the fork catalog sources: the OpenGateway fetcher
+  import, `KIMI_K3_THINKING_LEVEL_MAP`, the Kimi coding stable models, and
+  `ZAI_GLM52_THINKING_LEVEL_MAP` — the ZAI map was dropped by this merge's resolution while its
+  usage survived, which broke the `generate` CI job; this sync restores the pre-merge definition
+  verbatim.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The provider-constant block near the top of `packages/ai/scripts/generate-models.ts` (the exact
+  zone that silently dropped the ZAI map in this merge) and the `exports`/`scripts` blocks of
+  `packages/ai/package.json`.
+
+## Preserve OpenAI completions reasoning details after upstream merge (2026-08-25)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: retain structured reasoning details from thinking signatures and legacy encrypted tool-call signatures when constructing assistant messages.
+
+### Why
+
+- The fork's merged adapter computed these details but dropped them before serialization, regressing the upstream reasoning-details contract and fork provider compatibility.
+
+### Why an extension could not handle it
+
+- Assistant message serialization occurs inside the provider adapter before extension hooks can observe or modify the request.
+
+### Expected merge conflict zones
+
+- MEDIUM: assistant-message conversion and reasoning-detail preservation in the OpenAI Completions adapter.
+
 > Audit backfill (2026-08-17): the entry below was recorded during the repository-wide changes.md audit
 > of divergences from the upstream pin (v0.84.2, `914cf1472e`) so its audited production paths carry a
 > canonical four-section record; it is dated by its underlying work.
+
+## Credential pool slot export map (2026-08-25)
+
+### What changed
+
+- `packages/ai/package.json`: added an `exports` entry for `./auth/pool/slots` so consumers (including `packages/coding-agent`) can import the browser-safe credential pool slot algebra module.
+
+### Why
+
+- The slot algebra module introduced for multi-credential pools must be reachable through the package export map; without the subpath export, workspace consumers cannot resolve it.
+
+### Why an extension could not handle it
+
+- Package export maps are build/packaging surface owned by the package itself.
+
+### Expected merge conflict zones
+
+- LOW: single additive line in the `exports` map.
+
+## Bedrock and TypeBox dependency refresh (2026-08-24)
+
+### What changed
+
+- `packages/ai/package.json`: `@aws-sdk/client-bedrock-runtime` 3.1115.0 -> 3.1116.0 and `typebox` 1.3.16 -> 1.3.18.
+
+### Why
+
+- These are compatible patch releases selected for the CalVer release. The Bedrock pin stays identical to coding-agent, and TypeBox stays identical across all shared runtime/protocol consumers.
+
+### Why an extension could not handle it
+
+- Provider clients and schema primitives are constructed below the extension boundary.
+
+### Expected merge conflict zones
+
+- MEDIUM: the exact dependency block in `packages/ai/package.json`.
 
 ## Dependency pin refresh and unused fork manifest entry removal (2026-08-20)
 
@@ -78,12 +212,12 @@
 - LOW: the export-map subpath entries and the generated `src/providers/data/*.json` snapshots that a
   strict regeneration rewrites.
 
-## Default GPT-5.6 Sol catalogs to 400k context (2026-08-18)
+## Default GPT-5.6 Sol catalogs to 650k context (2026-08-27)
 
 ### What changed
 
-- `scripts/generate-models.ts`: direct `openai` and ChatGPT OAuth `openai-codex` entries for `gpt-5.6-sol`
-  now default to a 400,000-token context window. Their generated `-fast` variants inherit the same limit.
+- `packages/ai/scripts/generate-models.ts`: direct `openai` and ChatGPT OAuth `openai-codex` entries for `gpt-5.6-sol`
+  now default to a 650,000-token context window. Their generated `-fast` variants inherit the same limit.
 - `test/openai-fast-models.test.ts`: covers both providers and both base/fast Sol IDs.
 - `src/providers/data/*.json`: regenerated committed catalog data and manifest carry the new default.
 - The same reviewed regeneration refreshed Vercel AI Gateway's `alibaba/qwen3.8-27b` pricing from zero-value
@@ -92,9 +226,9 @@
 ### Why
 
 - The GPT-5.6 Sol service can accept up to a 1M context, but the default Senpi catalog should reserve a
-  400k operating window instead of inheriting the generic 272k OpenAI short-tier cap or advertising the
+  650k operating window instead of inheriting the generic 272k OpenAI short-tier cap or advertising the
   full service maximum.
-- Luna and Terra remain at their existing defaults; this is intentionally scoped to Sol and Sol Fast.
+- Terra and Luna remain at their existing 272k defaults; this change is intentionally scoped to Sol and Sol Fast.
 - The Vercel Qwen price change is retained because generated provider data is an atomic snapshot of the
   upstream sources at generation time; keeping a stale per-model value would make the checked-in artifact
   disagree with a fresh strict regeneration.
@@ -655,3 +789,39 @@ These failures are in upstream `packages/ai` live integration tests, not in the 
 ### Expected merge conflict zones
 
 - `package.json` `scripts` blocks and `devDependencies` anywhere upstream still references `tsgo` or `@typescript/native-preview`.
+
+## 2026-08-25 - Upstream provider and reasoning sync coverage
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`, `packages/ai/src/api/openai-completions.ts`, and `packages/ai/src/providers/cloudflare-ai-gateway.ts` adopt the upstream model metadata, reasoning replay, and provider typing updates while retaining fork behavior.
+
+### Why
+
+- The upstream sync changes provider generation and wire behavior that must remain tracked by the nearest fork tracker.
+
+### Why this lives in the fork
+
+- Provider generation and adapter serialization execute below the extension boundary.
+
+### Expected merge conflict zones
+
+- Generator provider loops and OpenAI/Cloudflare adapter declarations.
+
+## 2026-08-25 - Preserve generated ZAI pricing during upstream sync
+
+### What changed
+
+- `packages/ai/src/providers/data/zai.json` and `packages/ai/src/providers/data/zai-coding-cn.json` retain fork API-equivalent reference pricing for Coding Plan models.
+
+### Why
+
+- Generated catalogs must preserve the fork's pricing contract after upstream regeneration.
+
+### Why this lives in the fork
+
+- Catalog values are consumed directly by provider model resolution and cannot be corrected by extensions.
+
+### Expected merge conflict zones
+
+- Generated ZAI provider catalog entries and the model generator's reference-cost selection.

@@ -6,6 +6,108 @@
 
 ### Added
 
+- Harness tool contexts accept an optional `postMutate` hook. It runs inside the file mutation queue immediately after `write` or `edit` commits its bytes, so a formatter or normalizer can adjust the file as an atomic part of the same mutation. `edit` recomputes its diff and unified patch against the post-hook file contents whenever the hook may have touched the file, and a rejecting hook is reported as an appended warning note rather than discarding the landed write. Tool behavior is unchanged when no hook is supplied.
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.27] - 2026-08-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.26-2] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.26] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.25] - 2026-08-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed single-object `edit` tool inputs failing validation by accepting them as one-edit arrays ([#7835](https://github.com/earendil-works/pi/issues/7835)).
+- Fixed root Markdown files such as `README.md` and `AGENTS.md` in skill directories being reported as broken skills unless they declare valid skill frontmatter ([#7805](https://github.com/earendil-works/pi/issues/7805)).
+### Removed
+
+## [2026.8.24] - 2026-08-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Updated the shared TypeBox runtime to 1.3.18, keeping agent schemas aligned with the protocol, AI, coding-agent, and codemode packages.
+
+### Fixed
+
+### Removed
+
+## [2026.8.23] - 2026-08-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.22-2] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.22] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
 ### Changed
 
 ### Fixed

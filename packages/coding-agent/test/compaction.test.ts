@@ -5,6 +5,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createInMemoryExtensionSessionSettings } from "./helpers/extension-session-settings.ts";
+import { createTempAgentDir } from "./support/temp-agent-dir.ts";
 
 const { completeMock } = vi.hoisted(() => ({
 	completeMock: vi.fn(),
@@ -68,6 +69,8 @@ import {
 	type SessionMessageEntry,
 	type ThinkingLevelChangeEntry,
 } from "../src/core/session-manager.ts";
+
+const AGENT_DIR = createTempAgentDir();
 
 // ============================================================================
 // Test fixtures
@@ -267,7 +270,7 @@ function createExtensionContext(overrides: Partial<ExtensionContext>): Extension
 		mode: "print",
 		ui: {} as ExtensionContext["ui"],
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager: Object.assign(Object.create(null), {
 			getEntries: () => [],

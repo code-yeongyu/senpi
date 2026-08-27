@@ -1,6 +1,6 @@
 # builtin/prompt-preset
 
-Builtin extension #3. On `before_agent_start` and `model_select`, picks a system prompt preset by **model family** (gpt-5.x through gpt-5.6, claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, glm-5.3, deepseek-v4-{flash,flash-0731,pro}, kimi-k2-{6,7}, kimi-k3) and falls back to the senpi dynamic prompt when nothing matches. Renders the active preset name in the startup header. After 2026-04-30, presets are thin wrappers around `buildDynamicSystemPrompt()` carrying only model-specific tuning.
+Builtin extension #7. On `before_agent_start` and `model_select`, picks a system prompt preset by **model family** (gpt-5.x through gpt-5.6, claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, glm-5.3, deepseek-v4-{flash,flash-0731,pro}, kimi-k2-{6,7}, kimi-k3) and falls back to the senpi dynamic prompt when nothing matches. Renders the active preset name in the startup header. After 2026-04-30, presets are thin wrappers around `buildDynamicSystemPrompt()` carrying only model-specific tuning.
 
 ## FILES
 
@@ -19,18 +19,13 @@ prompt-preset/
 ├── gpt-5.6.ts           # GPT-5.6 series preset (sol/terra/luna) — dieted full-core rewrite via `corePrompt`; Hephaestus-parity autonomous deep worker (implement-don't-propose, Manual QA Gate, binding stop contract: declared per-turn stop condition + Stop Goal) under GPT-5.6 simplify-first doctrine; also owns `GPT56_EXECUTION_RULES` — typed execution-discipline rule data (eval-first code-cell routing, maximum parallel batching, over-call bias, in-kernel reduction, stay-direct exceptions, subagent fan-out, finest-grain todos, test-first, atomic commits, LSP symbol routing) rendered one directive per point of use
 ├── claude-fable-5.ts    # Claude Fable 5 preset — dieted full-core rewrite via `corePrompt` (Fable 5 prompting guide; binding stop contract)
 ├── claude-opus-5.ts     # Claude Opus 5 preset — dieted full-core rewrite via `corePrompt` (Opus 5 prompting-guide behaviors; binding stop contract)
-├── claude-opus-4-5.ts   # Claude Opus 4.5 preset
-├── claude-opus-4-6.ts   # Claude Opus 4.6 preset
-├── claude-opus-4-7.ts   # Claude Opus 4.7 preset
-├── claude-opus-4-8.ts   # Claude Opus 4.8 preset
-├── glm-5-2.ts           # GLM 5.2 preset
-├── glm-5-3.ts           # GLM 5.3 preset
+├── claude-opus-4-{5,6,7,8}.ts  # Per-snapshot Opus 4.x presets (claude-opus-4-5.ts … 4-8.ts)
+├── glm-5-{2,3}.ts       # GLM 5.2 / 5.3 presets (glm-5-2.ts, glm-5-3.ts)
 ├── deepseek-v4.ts       # Shared DeepSeek V4 rule data (`DEEPSEEK_V4_RULES`) + tuning builders (directive authority, todo discipline, missing-info, settled-reading, reasoning-aim)
 ├── deepseek-v4-flash.ts # DeepSeek V4 Flash preset (thin tuningSection over the shared core)
 ├── deepseek-v4-flash-0731.ts # DeepSeek V4 Flash 0731 snapshot preset — dated snapshot resolves before the generic flash alias
 ├── deepseek-v4-pro.ts   # DeepSeek V4 Pro preset (deep-reasoner calibration)
-├── kimi-k2-6.ts         # Kimi K2.6 preset
-├── kimi-k2-7.ts         # Kimi K2.7 preset
+├── kimi-k2-{6,7}.ts     # Kimi K2.6 / K2.7 presets (kimi-k2-6.ts, kimi-k2-7.ts)
 ├── kimi-k3.ts           # Kimi K3 preset — full-core rewrite via `corePrompt` (K3 tuning merged into a leaner Kimi-shaped core; K2-family loop discipline + Opus 4.8/Fable 5 distillation traits) + binding stop contract (declared stop condition in the routing line)
 └── changes.md           # Fork tracker (model-family rename 2026-04-30, file-operations 2026-05-07)
 ```

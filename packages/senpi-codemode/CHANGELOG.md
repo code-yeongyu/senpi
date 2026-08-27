@@ -10,6 +10,120 @@
 
 ### Fixed
 
+- JavaScript and Python eval kernels resolve worker and prelude assets from the executable sidecar in Bun-compiled distributions instead of passing unusable `$bunfs` paths to `Worker` and `python3`.
+
+### Removed
+
+## [2026.8.27] - 2026-08-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Eval tool description examples are now a JS-first mixed set: set up once in JavaScript, fan out batched `Promise.all` session-tool calls in the next cell, then hop to Python when the JS kernel is busy with a detached cell. The detach paragraph now states in the same sentence that another language can continue.
+
+### Fixed
+
+- Detached-eval same-language busy errors now name each idle enabled kernel and tell the agent to continue the step there (`continue this step in an idle kernel: js`), instead of only pointing at peek and the output tail. A busy Python kernel no longer reads as "eval is unavailable", which previously sent agents to `bash`+`python3` while JavaScript (or another idle kernel) was free. Single-language sessions and fully-busy sessions omit the idle-kernel claim.
+- JavaScript eval cells now persist only top-level declarations, including destructuring bindings and uninitialized variables, without rewriting declaration-shaped text inside literals or comments.
+- Eval completion and detached-cell handling retain explicit lifecycle observability: nested tool counts, wall/kernel timing, detach state, `peek`, `stop`, hard limits, and crash recovery remain bounded and machine-readable for hosts and telemetry consumers.
+
+### Removed
+
+## [2026.8.26-2] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.26] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.25] - 2026-08-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.24] - 2026-08-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Detached eval cell overflow notices now point at the absolute spill file path (`…/local/detached-eval-<id>.log`) instead of a `local://detached-eval-<id>.log` URI. `local://` is resolved only by the in-cell kernel helpers, not by the agent `read` tool, so following the old notice failed with `ENOENT …/local:/detached-eval-<id>.log`. This restores the documented contract that spill notices carry plain absolute paths.
+
+### Removed
+
+## [2026.8.23] - 2026-08-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Detached eval cell completion notices no longer enter the user-input steering queue. They were delivered via `sendUserMessage`, so hosts projecting that queue (e.g. the OmO desktop composer) rendered the raw `<system-reminder>Detached eval cell …</system-reminder>` notice under the STEERING heading as if the user had typed and queued it. Notices now deliver via `sendMessage` with `customType: "senpi-codemode:notification"` and `display: false` — model-visible, never painted as user input — matching the terminal and monitor notification contract.
+
+### Removed
+
+## [2026.8.22-2] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+- Eval headers now display the kernel runtime identity, e.g. `eval py (3.14.7, ~/.venv/bin/python3)` and `eval js (node 26.7.0, /opt/…/bin/node)`; the same `runtime` info rides `EvalToolDetails` and its `cells` so RPC consumers receive it, interpreter detection resolves absolute executable paths from PATH, and the eval prompt host line names the JS runtime (`node`/`bun` with version).
+
+### Changed
+
+- Running eval cell headers now tick their elapsed time in real time (`eval py running · 13s`) instead of freezing between kernel update events; the renderer derives elapsed time from a render-time clock while a cell is pending/running/detached and repaints once per second, while settled cells keep their exact final duration. `EvalCellResult` gains an additive `startedAt` so RPC consumers can compute the same live value.
+
+### Fixed
+
+- A host tool call from inside an eval cell no longer suspends the cell's timeout indefinitely. The idle watchdog previously cleared its timer for the entire duration of a bridge call, so a call that never returned (e.g. an awaited `dag-wait`) left the cell pending — and the agent loop parked, queueing user messages invisibly — until the 1800s hard limit. The pause is now bounded by a max pause grace (default 600s, floored at the cell's own `timeout`): a long bridge call such as a 5-minute build still runs to completion, but a stuck one now trips the cell's `on_timeout` handling and releases the loop.
+
+### Removed
+
+## [2026.8.22] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Ruby and Julia eval cells now wait for the subprocess `ready` signal before execution timeouts begin, so interpreter startup under load cannot time out a state-setting cell and silently restart the kernel before the next cell runs.
 
 ### Removed

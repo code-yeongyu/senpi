@@ -225,6 +225,12 @@ export default function compactionExtension(
 
 	let idleWarmupTimer: ReturnType<typeof setTimeout> | undefined;
 	let idleWarmupAttempt = 0;
+	// True from the `agent_end` idle trigger until the next turn starts (or the
+	// session shuts down). The idle-apply watcher below is fenced on it so a
+	// summary that lands after the user has already prompted is never applied
+	// out from under the turn that is starting; the warm-consume path in
+	// `before_agent_start` owns the job from that point on.
+	let sessionIdleSinceAgentEnd = false;
 
 	function cancelIdleWarmupRetry(): void {
 		if (idleWarmupTimer === undefined) return;
@@ -302,8 +308,62 @@ export default function compactionExtension(
 				invalidateSpeculativeCompaction(ctx);
 				startSpeculativeCompaction(ctx, idle.IDLE_COMPACTION_INSTRUCTIONS);
 				armIdleWarmupRetry(ctx);
+				armIdleApply(ctx);
 			}, idleRetry.IDLE_WARMUP_RETRY_DELAY_MS);
 		});
+	}
+
+	/**
+	 * Apply the idle warm summary as soon as it finishes generating, while the
+	 * session is still idle. Holding it warm until the next `before_agent_start`
+	 * makes the user watch their own prompt wait behind a compaction they could
+	 * not see coming; applying during the idle gap renders the [compaction] block
+	 * first and lets the next message stack below it.
+	 *
+	 * Every guard is re-read at continuation time, because generation takes long
+	 * enough for all of them to change: the session may no longer be idle, the
+	 * job may have been invalidated or claimed, the context may have dropped
+	 * below the threshold, the lane may have been handed to the SDK, or the
+	 * breaker may have tripped. A refused apply (stale anchor/revision) silently
+	 * keeps the warm hold, so the next prompt consumes it exactly as before.
+	 */
+	function armIdleApply(ctx: ExtensionContext): void {
+		const job = speculativeJob;
+		if (!job) return;
+		// Never throws out of the continuation: a retired context, a refused apply,
+		// or a provider failure all resolve into a silent stand-down.
+		void job.promise
+			.then(async (compaction) => {
+				if (!compaction) return;
+				if (speculativeJob !== job) return;
+				if (!sessionIdleSinceAgentEnd) return;
+				if (isContextRetired(ctx)) return;
+				if (!ctx.isIdle()) return;
+				if (lanePolicy.disablesSenpiCompaction(ctx)) return;
+				if (breaker.isTripped(state, Date.now())) return;
+				if (cap.shouldRejectByCap(state).cancel) return;
+				const usage = ctx.getContextUsage();
+				const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+				if (
+					!usage ||
+					!policy.shouldTriggerCompaction(
+						usage,
+						contextWindow,
+						ctx.getCompactionSettings(),
+						state.lastYield ?? undefined,
+					)
+				) {
+					return;
+				}
+				const result = await applyGeneratedCompaction(ctx, job.snapshot, () => speculativeGeneration, compaction);
+				if (!result.applied) return;
+				// The job is consumed: clearing it here is also what stands the idle
+				// retry watcher down for this generation.
+				if (speculativeJob === job) speculativeJob = undefined;
+				cancelIdleWarmupRetry();
+				getLogger(ctx).debug("idle_applied", { generation: job.generation, origin: "speculative" });
+			})
+			.catch(() => {});
 	}
 
 	function isSameModelIdentity(
@@ -807,6 +867,7 @@ export default function compactionExtension(
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		sessionIdleSinceAgentEnd = false;
 		cancelIdleWarmupRetry();
 		const message = checkpointState.attachRestorationDirective(
 			restorationDirectiveState,
@@ -951,8 +1012,10 @@ export default function compactionExtension(
 		) {
 			getLogger(ctx).debug("idle_trigger", { contextWindow, tokens: usage?.tokens ?? 0 });
 			idleWarmupAttempt = 0;
+			sessionIdleSinceAgentEnd = true;
 			startSpeculativeCompaction(ctx, idle.IDLE_COMPACTION_INSTRUCTIONS);
 			armIdleWarmupRetry(ctx);
+			armIdleApply(ctx);
 		}
 	});
 
@@ -982,6 +1045,7 @@ export default function compactionExtension(
 	// warm-up watcher down here rather than leaving a timer armed against a
 	// context that is about to start throwing on every read.
 	pi.on("session_shutdown", () => {
+		sessionIdleSinceAgentEnd = false;
 		cancelIdleWarmupRetry();
 		idleWarmupAttempt = 0;
 		speculativeJob?.controller.abort();

@@ -1,5 +1,44 @@
 # imagegen builtin — changes
 
+## Bun-compiled skill asset (2026-08-27)
+
+### What changed
+
+- Bun-compiled binaries now resolve the bundled skill through a file-asset import, while Node continues using the copied adjacent skill file.
+
+### Why
+
+- The skill is copied into `dist` for Node execution but was not embedded in the Bun compile graph, leaving compiled binaries without imagegen guidance.
+
+### Why an extension could not handle it
+
+- The skill path is resolved inside the builtin's resource-discovery handler, so no downstream extension can restore an asset absent from the compiled module graph.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` asset resolution branch.
+
+
+## RPC-safe missing-skill diagnostics (2026-08-27)
+
+### What changed
+
+- Missing bundled-skill diagnostics now route to stderr instead of stdout.
+- Added regression coverage proving the notice is emitted once without writing to stdout.
+
+### Why
+
+- Bun-compiled RPC binaries can legitimately lack the optional skill file at the module URL. Writing that diagnostic to stdout corrupts the NDJSON RPC wire.
+
+### Why an extension could not handle it
+
+- The diagnostic is emitted inside the builtin extension's resource-discovery path before any downstream extension can redirect the stream.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` missing-skill branch and `test/imagegen-skill-gating.test.ts` diagnostic assertions.
+
+
 ## 2026-08-13 - Materialize nullable headers only at image requests
 
 ### What changed

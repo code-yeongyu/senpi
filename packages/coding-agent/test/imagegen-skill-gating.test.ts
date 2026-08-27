@@ -106,12 +106,14 @@ describe("imagegen skill contribution", () => {
 		const errors: string[] = [];
 		runner.onError((error) => errors.push(error.error));
 		const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		const resources = await runner.emitResourcesDiscover(cwd, "reload");
 		await runner.emitResourcesDiscover(cwd, "reload");
 
 		expect(resources.skillPaths).toEqual([]);
 		expect(errors).toEqual([]);
-		expect(debug).toHaveBeenCalledTimes(1);
+		expect(debug).not.toHaveBeenCalled();
+		expect(error).toHaveBeenCalledTimes(1);
 	});
 });

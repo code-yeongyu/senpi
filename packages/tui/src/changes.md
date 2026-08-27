@@ -1,5 +1,100 @@
 # TUI delta rendering fork changes
 
+## 2026-08-27 - Preserve Windows Terminal scrollback during resize redraws
+
+### What changed
+
+- `packages/tui/src/tui.ts`: Windows full redraws continue to clear and repaint the visible screen, but no longer emit `ESC[3J`, which deletes the user's terminal scrollback buffer on ConPTY. Non-Windows non-multiplexer redraws retain their existing scrollback-clearing behavior.
+
+### Why
+
+- Windows Terminal's ConPTY resize and focus transitions can trigger a full redraw outside a multiplexer. Clearing scrollback is destructive and makes prior session output unrecoverable when the user returns to the terminal window.
+
+### Why this lives in the fork
+
+- The platform-specific redraw guard belongs in the TUI renderer's `fullRender()` path, where screen clearing and scrollback deletion are emitted together.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/tui.ts` around `TuiBase.doRender()` and the `fullRender()` scrollback-clear guard.
+- LOW: `packages/tui/test/mux-scrollback.test.ts` around resize scrollback emission assertions.
+
+## Dead-terminal detection reads Bun's errno-in-message shape (2026-08-26)
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: `isDeadTerminalError()` gains a third, last-resort branch that parses a
+  trailing `errno: <n>` out of the error message. It fires only when that number is a dead-terminal errno
+  that is stable across darwin and linux — `EIO` (5) and `EPIPE` (32). `ENOTCONN` is deliberately left out of
+  the numeric set because its value differs per platform (57 on darwin, 107 on linux). The existing string
+  `code` and numeric `errno` branches are unchanged and still win first, and any error that matches none of
+  the three branches still propagates out of `ProcessTerminal.stop()`.
+- `test/terminal.test.ts` pins the real Bun shape (a bare `new Error("setRawMode failed with errno: 5")`
+  with neither `code` nor `errno`), the `errno: 32` message form, and two rethrow fences: an unrelated
+  `new Error("boom")` and a live-but-unrelated `errno: 22` message.
+
+### Why
+
+- Bun 1.4.0's tty shim throws a plain `Error` for a failed `setRawMode()` ioctl: `code` and `errno` are both
+  absent and the number survives only in the message text (verified locally:
+  `{"isError":true,"hasCode":false,"hasErrno":false,"msg":"setRawMode failed with errno: 5"}`). The previous
+  classifier recognized only the two property shapes, so on a dead SSH/PTY peer the exception escaped
+  `ProcessTerminal.stop()` into `Tui.stop()` and `stopInteractiveTui()`, aborting shutdown and hanging the
+  session with `error: setRawMode failed with errno: 5`.
+
+### Why this lives in the fork
+
+- Raw-mode ownership and teardown are private `ProcessTerminal` lifecycle responsibilities running inside the
+  shutdown path. No extension surface sits between the saved raw-mode state and the stdin ioctl, so the
+  classification has to happen where the throw occurs.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/terminal.ts` around the dead-terminal errno constants and the `isDeadTerminalError()`
+  body.
+- LOW: `packages/tui/test/terminal.test.ts` around the `ProcessTerminal stop` suite.
+
+## 2026-08-26 - Guard stdin EIO when the controlling terminal detaches
+
+### What changed
+
+- `packages/tui/src/terminal.ts` arms a `process.stdin` "error" guard from `ProcessTerminal.start()` until a 250ms grace window after `stop()`: a vanished or re-backgrounded controlling terminal fails the next stdin read with EIO, and without a listener the EventEmitter rethrew it as an uncaught exception that killed the agent process. The classifier owns EIO only — Node's `code: "EIO"` and Bun's raw `errno: 5`/`-5` shapes — and every other stdin error keeps its default EventEmitter propagation. EIO is swallowed without pausing the stream, so a pgrp that regains the tty foreground keeps accepting input.
+
+### Why
+
+- When omo's launcher chain dies (e.g. external SIGTERM), the orphaned engine's pending stdin read on the now-background tty fails with EIO and crashed the process through `uncaughtException` ("exiting due to uncaughtException: EIO read"). The same hazard was fixed upstream-style in gajae #3758; this port adapts it to the fork's `ProcessTerminal` and adds the numeric-errno shape from the shutdown-time classifier.
+
+### Why this lives in the fork
+
+- The crash topology (launcher chain + orphaned engine) and the Bun runtime shim are fork-owned; the fork's terminal lifecycle differs from upstream's.
+
+### Expected merge conflict zones
+
+- `ProcessTerminal.start()`/`stop()` in `packages/tui/src/terminal.ts` during upstream syncs.
+
+## TUI runtime re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/tui/src/components/markdown.ts` keeps the fork LaTeX pipeline (`latex_block` /
+  `latex_inline` / `latex_literal` token kinds, `latexToUnicode`, formula length caps, and
+  word-boundary guards) on top of upstream's renderer.
+- `packages/tui/src/terminal.ts` keeps dead-terminal detection (EIO/EPIPE/ENOTCONN plus Bun's raw
+  errno-5 macOS tty shim) and the `PI_TUI_KEYBOARD_PROTOCOL` enhancement gate.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The token-scanner section of `packages/tui/src/components/markdown.ts` and the raw-mode setup in
+  `packages/tui/src/terminal.ts`.
+
 ## Alt-screen Kitty teardown keeps its disambiguated helper name after the 59a71b23 sync (2026-08-19)
 
 ### What changed
@@ -287,8 +382,12 @@ Landed 2026-08-16 (commit 03f46f57e, shipped in PR #892).
 
 ### What changed
 
-- `ProcessTerminal.stop()` still restores the raw-mode state captured by `start()`, but now treats `EIO`, `EPIPE`,
+- `packages/tui/src/terminal.ts`: `ProcessTerminal.stop()` still restores the raw-mode state captured by `start()`, but now treats `EIO`, `EPIPE`,
   and `ENOTCONN` from the teardown-time `setRawMode()` call as a dead terminal instead of crashing the exiting CLI.
+- The EIO classifier accepts both Node's string `code: "EIO"` shape and Bun's macOS raw positive `errno: 5`
+  shape, using numeric errno only when no string code is available.
+- The separate coding-agent classifier handles asynchronous stdout/stderr stream `error` events; this numeric fallback
+  stays scoped to the synchronous stdin `setRawMode()` ioctl that produced the observed Bun error shape.
 - Unexpected raw-mode restoration errors still propagate so shutdown does not hide unrelated defects.
 - `test/terminal.test.ts` covers successful restoration, the dead-terminal `EIO` regression, and unexpected-error
   propagation.

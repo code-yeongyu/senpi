@@ -1,6 +1,7 @@
 export const CONTINUATION_CAP_BLOCKED_REASON = "continuation cap reached";
 export const REPETITION_BLOCKED_REASON = "repeated assistant output";
 export const LENGTH_EXHAUSTED_BLOCKED_REASON = "output truncation repeated";
+export const UNATTENDED_CONTINUATION_BLOCKED_REASON = "unattended continuation limit reached";
 export const PROVIDER_ERROR_BLOCKED_REASON = "provider error ended the turn (retries exhausted)";
 
 // Mechanical blocks are stops the runtime imposed on itself, not decisions the
@@ -12,6 +13,7 @@ const MECHANICAL_CONTINUATION_BLOCKS: readonly string[] = [
 	CONTINUATION_CAP_BLOCKED_REASON,
 	REPETITION_BLOCKED_REASON,
 	LENGTH_EXHAUSTED_BLOCKED_REASON,
+	UNATTENDED_CONTINUATION_BLOCKED_REASON,
 	PROVIDER_ERROR_BLOCKED_REASON,
 ];
 

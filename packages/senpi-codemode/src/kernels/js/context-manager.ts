@@ -1,5 +1,8 @@
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { KernelInterruptHandle } from "../../tool/types.ts";
+import { type CodemodeRuntimeAssetEnvironment, resolveCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import { createInlineWorker, type WorkerLike } from "./inline-worker.ts";
 import {
 	assertJavaScriptKernelOpen,
@@ -15,6 +18,15 @@ import { bridgeError, spawnNodeWorker, WorkerStartupCancelledError, waitForReady
 
 export { JavaScriptKernelClosedError, type JavaScriptKernelMode, type JavaScriptRunInput } from "./kernel-contract.ts";
 export type { JavaScriptKernelOptions } from "./local-module-loader.ts";
+
+export interface JavaScriptWorkerEntryUrlOptions extends CodemodeRuntimeAssetEnvironment {
+	readonly localPath?: string;
+}
+
+export function resolveJsWorkerEntryUrl(options: JavaScriptWorkerEntryUrlOptions = {}): URL {
+	const localPath = options.localPath ?? join(dirname(fileURLToPath(import.meta.url)), "worker-entry.js");
+	return pathToFileURL(resolveCodemodeRuntimeAsset(localPath, join("kernels", "js", "worker-entry.js"), options));
+}
 
 export class JavaScriptKernel {
 	readonly #options: JavaScriptKernelOptions;
@@ -161,7 +173,7 @@ export class JavaScriptKernel {
 
 	#spawnWorker(): WorkerLike {
 		try {
-			const url = this.#options.workerEntryUrl ?? new URL("./worker-entry.js", import.meta.url);
+			const url = this.#options.workerEntryUrl ?? resolveJsWorkerEntryUrl();
 			return spawnNodeWorker(url, this.#options.cwd, this.#options.parallelPoolWidth);
 		} catch (error) {
 			if (!(error instanceof Error)) throw error;

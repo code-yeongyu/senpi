@@ -1,5 +1,82 @@
 # core/tools changes
 
+## Output spill streams capture early storage failures (2026-08-26)
+
+### What changed
+
+- `output-accumulator.ts`: attaches an `error` listener when its full-output `WriteStream` is
+  created, records the first failure, and rejects `closeTempFile()` through the terminal `close`
+  boundary, including when a filesystem close failure follows `finish`.
+- `closeTempFile()` preserves the first storage failure and removes its error and close listeners
+  after settlement, preventing a premature success or post-completion listener leak.
+
+### Why
+
+- Bash output can cross the in-memory limit while `/tmp` is quota-exhausted. The stream previously
+  had no listener until `closeTempFile()`, so an early `EDQUOT`/`ENOSPC` event reached
+  `uncaughtException` and killed the TUI. A late filesystem close failure could also arrive after
+  `finish`; waiting for `close` ensures the normal tool promise owns either failure.
+
+### Why an extension could not handle it
+
+- The built-in shell tool writes the spill stream before extension result hooks run.
+
+### Expected merge conflict zones
+
+- LOW: `output-accumulator.ts` stream creation and close lifecycle.
+
+## Tooling layer re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts` keeps syntax-highlighted output, display-text
+  normalization, and the process-tree kill abort controller that stops preserved output tails.
+- `packages/coding-agent/src/core/tools/edit-diff.ts` keeps the extracted `unified-diff.ts` patch
+  builder in place of upstream's direct `diff` usage.
+- `packages/coding-agent/src/core/tools/edit.ts` keeps filesystem-policy checks and themed
+  `renderToolDiff` rendering.
+- `packages/coding-agent/src/core/tools/index.ts` keeps the single tool-factory path (upstream
+  re-adds a parallel `createToolDefinition` switch).
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- Tool render/import blocks in `packages/coding-agent/src/core/tools/bash.ts` and
+  `packages/coding-agent/src/core/tools/edit.ts`.
+
+## Read tool rejects local:// URIs with actionable guidance (2026-08-24)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: the execute path now guards the `local://` URI scheme
+  (`/^local:\/\//i`) before any path resolution and throws guidance naming the eval kernel `read()`/`write()`
+  helpers and the plain-absolute-path alternative, instead of resolving the URI as a relative path and failing
+  with `ENOENT <cwd>/local:/...`. Single-slash `local:/x` stays an ordinary relative path because a colon is legal
+  in macOS filenames.
+
+### Why
+
+- A 2026-08-24 session replayed a detached-eval spill notice pointing at `local://detached-eval-eval_5.log`
+  through the read tool; the scheme collapsed to a relative path and the tool returned a bare ENOENT with no
+  recovery hint. Deployed bundles still emit `local://` spill URIs and the eval prompt documents the scheme for
+  kernel helpers, so the read tool is a repeatable trap; the error itself now teaches the two working paths.
+
+### Why an extension could not handle it
+
+- The guard must run inside the built-in read tool's own execute path before `resolveReadPathAsync`; extension
+  filesystem-policy hooks only see already-canonicalized paths, so the raw scheme string never reaches them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/read.ts` execute prologue and the module constants block.
+
 ## Edit tool keeps filesystem policy and themed diff rendering after the 59a71b23 pin (2026-08-19)
 
 ### What changed

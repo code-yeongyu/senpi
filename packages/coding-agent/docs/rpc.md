@@ -1,5 +1,7 @@
 # RPC Mode
 
+The shared Unix socket host uses `<agentDir>/rpc-host-daemon/host.pid` and `settings.json` as its ownership state. Clients attach to a compatible existing host regardless of which client surface started it; only incompatible unmanaged owners are refused.
+
 RPC mode enables headless operation of the coding agent via a JSON protocol over stdin/stdout. This is useful for embedding the agent in other applications, IDEs, or custom UIs.
 
 **Note for Node.js/TypeScript users**: If you're building a Node.js application, consider using `AgentSession` directly from `@code-yeongyu/senpi` instead of spawning a subprocess. See [`src/core/agent-session.ts`](../src/core/agent-session.ts) for the API. For a subprocess-based TypeScript client, see [`src/modes/rpc/rpc-client.ts`](../src/modes/rpc/rpc-client.ts).
@@ -38,16 +40,66 @@ Multi-session mode lets one `senpi --mode rpc` process serve several independent
 ### Starting multi-session mode
 
 ```bash
+# Shared JSONL over stdio (legacy multi-session host)
 senpi --mode rpc --multi-session [options]
+
+# One shared host over a Unix socket; each accepted connection has its own JSONL feed
+senpi --mode rpc --listen unix:///tmp/senpi-rpc.sock [options]
+senpi --mode rpc --listen /tmp/senpi-rpc.sock [options]
 ```
 
+`--listen unix://` selects the default per-agent socket path. Unix abstract socket names may be supplied as
+`unix://@name` where supported by the host platform. Socket mode accepts concurrent connections while retaining one
+process-global session registry.
+
+Socket event visibility is an all-sessions broadcast: every connected client receives lifecycle and agent events from
+every open session, each tagged with its routing `sessionId`. Correlated responses and extension UI requests are sent
+only to the connection that issued the command. This lets a non-owner observe a foreign turn without requiring a
+separate subscription protocol.
+
 Startup: `senpi --mode rpc --multi-session` → NO default session is constructed (no default `AgentSessionRuntime`, no default extension/watcher load). Classic `senpi --mode rpc` is byte-identical to today. Mode is fixed at process start; there is no runtime transition.
+
+### Interactive sessions and shared-host opt-out
+
+Interactive launches use the shared RPC host by default when a persisted session is available. A cold start takes approximately 1.3 seconds on the first launch; warm attachment to an existing compatible host is fast. To use the local runtime directly for a launch, set `SENPI_DISABLE_SHARED_HOST=1`. This uses the same local fallback runtime and does not change RPC socket behavior for other clients.
+
+### Shared host lifecycle (cold start + idle exit)
+
+The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route.
+
+Hosts started through `ensureHost()` are wrapped by a lifecycle supervisor that owns the public socket and spawns the
+real RPC host on a private internal hop. The policy lives in `<agentDir>/rpc-host-daemon/settings.json`:
+
+```json
+{ "socket": "…/rpc.sock", "capabilities": ["extension_events", "custom_unsupported"], "coldStart": "transient", "idleExitMs": 900000 }
+```
+
+- `coldStart` — `transient` (default): the host exists for the current login session and idle-exits. `persistent`:
+  no idle exit; the host stays until it is stopped or dies.
+- `idleExitMs` — idle-exit window in milliseconds, default `900000` (15 minutes).
+
+Environment overrides beat the file, and invalid values fall through to the next source: `SENPI_RPC_HOST_COLD_START`
+(`transient`|`persistent`) and `SENPI_RPC_HOST_IDLE_EXIT_MS` (positive integer milliseconds).
+
+The host exits only after the window elapses with NO attached client connections and NO active turns — continuously.
+Any connection or agent turn resets the window, so a busy host never exits, and the exit itself is clean: the RPC host
+receives SIGTERM first, flushes pending output, removes its socket, and the supervisor then removes `host.pid` and
+`settings.json` (the stderr log stays for diagnostics). After an idle exit, the next `ensureHost()` transparently
+starts a fresh host. `get_protocol_info` over the public socket behaves exactly as before; the supervisor is
+wire-transparent.
+
+The RPC host can never outlive its supervisor. It is spawned with an extra inherited pipe on fd 3 whose write end the
+supervisor holds and never writes to; the kernel closes that end whenever the supervisor dies — including `SIGKILL`, an
+OOM kill, or a crash, where no signal handler runs — so the host reads EOF, shuts down cleanly and removes its private
+internal directory. The supervisor also exports `SENPI_RPC_HOST_WATCH_PPID` as a polling fallback. Both bindings are
+set only by the supervisor: a host started any other way (plain `senpi --mode rpc --listen …`, embedders, hand-started
+hosts) sees neither variable and is unaffected. A host whose supervisor is alive is never touched by this binding.
 
 ### D1 normative table (multi-session mode)
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
-| `get_protocol_info` | - | `{ protocolVersion: 1, capabilities: ["multi_session"], mode: "classic"\|"multi" }` | Answered in BOTH modes; side-effect-free; THE capability probe. |
+| `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi" }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session` plus the negotiated launch capabilities. |
 | `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). |
 | `close_session` | `sessionId` | `{}` | Aborts active work, awaits agent idle + settled persistence, flushes queued events, detaches subscriptions; its response is the LAST record tagged with that handle — no events after (test-pinned). |
 | `list_sessions` | - | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status }] }` | Includes `opening`/`closing` entries with their status. |
@@ -210,6 +262,29 @@ Response:
 ```json
 {"type": "response", "command": "abort", "success": true}
 ```
+
+#### clear_queue
+
+Remove queued steering and follow-up messages and return their text.
+
+```json
+{"type": "clear_queue"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "clear_queue",
+  "success": true,
+  "data": {
+    "steering": ["Change direction"],
+    "followUp": ["Summarize when finished"]
+  }
+}
+```
+
+To implement interactive Esc behavior, send `clear_queue` before `abort`, then restore the returned text in the client editor. `abort` continues queued messages when they remain in the session.
 
 #### new_session
 
@@ -1246,7 +1321,7 @@ The `assistantMessageEvent` field contains one of these delta types:
 | `thinking_start` | Thinking block started |
 | `thinking_delta` | Thinking content chunk |
 | `thinking_end` | Thinking block ended |
-| `toolcall_start` | Tool call started |
+| `toolcall_start` | Tool call started (includes `id` and `toolName`) |
 | `toolcall_delta` | Tool call arguments chunk |
 | `toolcall_end` | Tool call ended (includes full `toolCall` object) |
 
@@ -1261,11 +1336,17 @@ Example streaming a text response:
 The top-level `usage` field contains the latest cumulative provider-reported usage. It may remain
 zero until completion when a provider does not report usage during streaming.
 
+Example starting a tool call:
+```json
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"toolcall_start","contentIndex":1,"id":"call_abc123","toolName":"write"}}
+```
+
 `message_update` intentionally omits the former cumulative `message` field and
 `assistantMessageEvent.partial`. Clients that need a live partial message must assemble it
 from `message_start` and subsequent events using `contentIndex`. Treat `message_end.message`
-as authoritative. For tool calls, buffer `toolcall_delta.delta`; `toolcall_end.toolCall`
-contains the completed call.
+as authoritative. For tool calls, `toolcall_start` provides the call `id` and `toolName`;
+buffer `toolcall_delta.delta` for arguments. `toolcall_end.toolCall` contains the completed
+call.
 
 ### bash_execution_update
 

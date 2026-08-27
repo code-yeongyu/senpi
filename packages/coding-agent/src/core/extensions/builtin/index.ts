@@ -1,4 +1,5 @@
 import type { ExtensionFactory } from "../types.ts";
+import accountExtension from "./account/index.ts";
 import anthropicBashExtension from "./anthropic-bash/index.ts";
 import anthropicWebSearchExtension from "./anthropic-web-search/index.ts";
 import bashTimeoutExtension from "./bash-timeout/index.ts";
@@ -98,6 +99,9 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "cache-keepalive", factory: cacheKeepAliveExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
+	// Provider-neutral account listing; sits before the provider lanes so their
+	// dedicated commands (claude-account, cursor accounts) keep their own names.
+	{ id: "account", factory: accountExtension },
 	{ id: "claude-sdk-oauth", factory: claudeSdkOauthExtension },
 	// Registers unconditionally and reports executable/auth state through its oauth check, so it stays beside the other provider lane.
 	{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension },

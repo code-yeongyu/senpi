@@ -1,13 +1,17 @@
 import type { Tool } from "../../../types.ts";
+import { createRecoveryCodeMask } from "../../recovery-code-mask.ts";
 import type { ParserOptions, StreamParserEvent } from "../../types.ts";
 import type { RecoveryStreamParser } from "../anthropic-xml/recovery-stream.ts";
 import {
 	getPartialXtmlSuffix,
+	matchXtmlChannelMarker,
 	parseXtmlAttributes,
 	XTML_ARGUMENT_CLOSE,
 	XTML_ARGUMENT_OPEN,
 	XTML_CALL_CLOSE,
 	XTML_CALL_OPEN,
+	XTML_CLOSE_PREFIX,
+	XTML_OPEN_PREFIX,
 	XTML_SEP,
 	XTML_TOOLS_CLOSE,
 	XTML_TOOLS_OPEN,
@@ -23,24 +27,32 @@ type ParserMode =
 	| "argument-value"
 	| "discard-call";
 
-const CHANNEL_MARKER_PATTERN = /^<\|(?:open|close)\|>(?:[a-zA-Z_][a-zA-Z0-9_]*)?<\|sep\|>/;
-const OPEN_PREFIX = "<|open|>";
-const CLOSE_PREFIX = "<|close|>";
+const MARKER_PREFIXES = [XTML_OPEN_PREFIX, XTML_CLOSE_PREFIX, XTML_SEP] as const;
 
-function couldBeMarkerPrefix(tail: string): boolean {
-	if (OPEN_PREFIX.startsWith(tail) || CLOSE_PREFIX.startsWith(tail)) return true;
-	for (const prefix of [OPEN_PREFIX, CLOSE_PREFIX]) {
-		if (!tail.startsWith(prefix)) continue;
-		const rest = tail.slice(prefix.length);
-		const angleIndex = rest.indexOf("<");
-		if (angleIndex === -1) return /^[a-zA-Z0-9_]*$/.test(rest);
-		if (!/^(?:[a-zA-Z_][a-zA-Z0-9_]*)?$/.test(rest.slice(0, angleIndex))) return false;
-		return XTML_SEP.startsWith(rest.slice(angleIndex));
-	}
-	return false;
+function findMarkerStart(text: string): number | undefined {
+	return MARKER_PREFIXES.map((prefix) => text.indexOf(prefix))
+		.filter((index) => index !== -1)
+		.sort((a, b) => a - b)[0];
+}
+
+function couldExtendMarker(buffer: string, marker: string): boolean {
+	if (marker.endsWith(XTML_SEP)) return false;
+	const rest = buffer.slice(marker.length);
+	return rest.length === 0 || XTML_SEP.startsWith(rest);
+}
+
+const STRUCTURAL_MARKER_OPENS = [XTML_CALL_OPEN, XTML_ARGUMENT_OPEN] as const;
+
+function startsCompleteStructuralMarker(buffer: string): boolean {
+	return STRUCTURAL_MARKER_OPENS.some((open) => buffer.startsWith(open));
+}
+
+function startsPartialStructuralMarker(buffer: string): boolean {
+	return STRUCTURAL_MARKER_OPENS.some((open) => buffer.length < open.length && open.startsWith(buffer));
 }
 
 export function createXtmlRecoveryStreamParser(tools: readonly Tool[], options?: ParserOptions): RecoveryStreamParser {
+	const mask = createRecoveryCodeMask();
 	let buffer = "";
 	let mode: ParserMode = "text";
 	let callIndex = -1;
@@ -82,11 +94,9 @@ export function createXtmlRecoveryStreamParser(tools: readonly Tool[], options?:
 	}
 
 	function processText(events: StreamParserEvent[]): boolean {
-		const openIndex = buffer.indexOf(OPEN_PREFIX);
-		const closeIndex = buffer.indexOf(CLOSE_PREFIX);
-		const markerIndex = [openIndex, closeIndex].filter((index) => index !== -1).sort((a, b) => a - b)[0];
+		const markerIndex = findMarkerStart(buffer);
 		if (markerIndex === undefined) {
-			const partial = getPartialXtmlSuffix(buffer, [OPEN_PREFIX, CLOSE_PREFIX]);
+			const partial = getPartialXtmlSuffix(buffer, MARKER_PREFIXES);
 			const flushable = partial ? buffer.slice(0, -partial.length) : buffer;
 			if (flushable) events.push({ type: "text", text: flushable });
 			buffer = partial;
@@ -97,14 +107,18 @@ export function createXtmlRecoveryStreamParser(tools: readonly Tool[], options?:
 			buffer = buffer.slice(markerIndex);
 			return true;
 		}
-		const markerMatch = CHANNEL_MARKER_PATTERN.exec(buffer);
-		if (markerMatch) {
-			const marker = markerMatch[0];
+		if (startsCompleteStructuralMarker(buffer)) {
+			mode = "tools";
+			return true;
+		}
+		if (startsPartialStructuralMarker(buffer)) return false;
+		const marker = matchXtmlChannelMarker(buffer);
+		if (marker) {
+			if (couldExtendMarker(buffer, marker)) return false;
 			buffer = buffer.slice(marker.length);
 			if (marker === XTML_TOOLS_OPEN) mode = "tools";
 			return true;
 		}
-		if (couldBeMarkerPrefix(buffer)) return false;
 		events.push({ type: "text", text: buffer.slice(0, 2) });
 		buffer = buffer.slice(2);
 		return true;
@@ -189,12 +203,27 @@ export function createXtmlRecoveryStreamParser(tools: readonly Tool[], options?:
 		}
 	}
 
+	function consume(segments: readonly { readonly text: string; readonly scan: boolean }[]): StreamParserEvent[] {
+		const events: StreamParserEvent[] = [];
+		for (const segment of segments) {
+			if (segment.scan) {
+				buffer += segment.text;
+				process(events);
+				continue;
+			}
+			if (mode === "text" && buffer) {
+				events.push({ type: "text", text: buffer });
+				buffer = "";
+			}
+			if (mode === "text") events.push({ type: "text", text: segment.text });
+			else buffer += segment.text;
+		}
+		return events;
+	}
+
 	return {
 		feed(textDelta: string): StreamParserEvent[] {
-			buffer += textDelta;
-			const events: StreamParserEvent[] = [];
-			process(events);
-			return events;
+			return consume(mask.feed(textDelta));
 		},
 		interrupt(): StreamParserEvent[] {
 			const events: StreamParserEvent[] = [];
@@ -205,9 +234,16 @@ export function createXtmlRecoveryStreamParser(tools: readonly Tool[], options?:
 			return events;
 		},
 		finish(): StreamParserEvent[] {
-			const events: StreamParserEvent[] = [];
+			const events: StreamParserEvent[] = consume(mask.finish());
 			if (mode === "text") {
-				if (buffer) events.push({ type: "text", text: buffer });
+				let rest = buffer;
+				for (;;) {
+					const marker = matchXtmlChannelMarker(rest);
+					if (!marker) break;
+					rest = rest.slice(marker.length);
+				}
+				if (XTML_SEP.startsWith(rest) && rest.length > 0) rest = "";
+				if (rest) events.push({ type: "text", text: rest });
 			} else if (callStarted) {
 				endCall(events, true);
 			}

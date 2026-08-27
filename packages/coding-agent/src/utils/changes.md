@@ -1,5 +1,30 @@
 # changes
 
+## Utils re-diverge from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts` keeps `ShellKind` classification, the
+  `SENPI_GIT_BASH_PATH` override, and PTY-aware invocation argument selection.
+- `packages/coding-agent/src/utils/syntax-highlight.ts` keeps upstream's per-language lazy
+  registration but rewrites every import to the extensionless exported subpaths
+  (`highlight.js/lib/core`, `highlight.js/lib/languages/*`): the fork pins highlight.js 11, whose
+  strict `exports` map rejects upstream's `.js`-suffixed deep paths (written against v10) — the
+  exact failure that broke every CI test job on this PR before the rewrite.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The import block of `packages/coding-agent/src/utils/syntax-highlight.ts` whenever upstream edits
+  its language set (fork must keep extensionless specifiers while highlight.js 11 is pinned).
+
 ## Repository audit baseline for the utils tracker (2026-08-17)
 
 ### What changed

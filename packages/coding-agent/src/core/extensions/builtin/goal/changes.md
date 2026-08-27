@@ -1,5 +1,184 @@
 # goal Extension Changes
 
+## 2026-08-27 - TUI widget rendering for goal tool results
+
+### What changed
+
+- `renderers.ts` (new): `renderGoalToolCall` / `renderGoalToolResult` render the goal tools as
+  a widget instead of the raw `JSON.stringify({goal:...})` dump — status-colored header
+  (glyph + status + compact tokens + elapsed), objective preview (collapsed: first two
+  non-empty lines, 120-col shorten, `… +N more lines`) or the full objective plus
+  `created/updated` ISO timestamps (expanded), a `⚠ <blockedReason>` line, and the
+  objective-truncation notice. Falls back to parsing the legacy JSON text when `details`
+  are absent (old sessions), and to the raw text when nothing parses.
+- `format.ts`: adds `GoalToolRenderDetails` + `goalToolRenderDetails()` so tool results
+  carry the snapshot in `details` for the renderer.
+- `tool-registration.ts`: `create_goal` / `update_goal` / `get_goal` register
+  `renderCall`/`renderResult` and attach the render details. The model-facing JSON text
+  result is unchanged.
+- Tests: `test/goal-renderers.test.ts`.
+
+## 2026-08-27 - unattended continuation backstop (#1139)
+
+### What changed
+
+- `types.ts` adds the persisted `Goal.unattendedContinuations` counter;
+  `persistence.ts` sanitizes it like the other continuation state.
+- `store.ts` increments it on every counted `recordContinuationDelivered`
+  (new `countUnattended` option, default on), zeroes it on any status
+  transition alongside `consecutiveContinuations`, and
+  `resetContinuationStreak(ref, { unattended: true })` clears it on accepted
+  direct user input (`direct-input-lifecycle.ts`, both branches).
+- `continuation.ts` adds `GOAL_UNATTENDED_CONTINUATION_LIMIT = 150` and a new
+  `"unattended"` deny reason: any counted path
+  (immediate/userGrace/sessionStart/systemRecovery/providerRecovery) is denied
+  once the budget is exhausted; `monitorDelayed` is exempt because armed-wake
+  waiting is by-design and rate-limited by the cache-aware timer.
+- `continuation-recovery.ts` / `lifecycle-helpers.ts` map the deny to a new
+  mechanical block reason `unattended continuation limit reached`, so the
+  existing "Send any message to resume" recovery applies.
+  `goal_continuation_guard_tripped` now also carries `unattendedContinuations`.
+
+### Why
+
+- #539/#567 progress semantics reset the persisted streak on any tool use or
+  changed narration, so a stalled agent that varies its status text
+  self-authorizes continuations forever (observed: 289 continuations without
+  direct input, 122 consecutive zero-tool turns, 45.7M tokens). The limit sits
+  above the #447 distinct-progress pin (50) and an 8-hour monitor-backstop
+  cadence (~120 deliveries at 240s), below the observed incident run.
+
+### Why an extension could not handle it
+
+- Delivery accounting, the persisted goal store, and continuation admission are
+  private state inside the builtin Goal extension; no external hook can veto an
+  admission or observe per-delivery accounting.
+
+### Expected merge conflict zones
+
+- LOW in `continuation.ts` (constants + verdict union), `store.ts`
+  (continuation mutators), and `lifecycle-helpers.ts` (guard mapping).
+
+## 2026-08-26 - continuation timer survives a retired extension context
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`
+  routes every `hasUI` read through a new private `#ctxHasUI(ctx)` helper that
+  treats the stale-ctx error (`stale-context.ts`) as "no UI" and rethrows
+  anything else. The three affected reads are `#armTimer`'s pre-arm wait-ticker
+  sync, the `setTimeout` callback's own `catch` handler, and the toolless stall
+  notice in `#buildContinuationContent`. The timer callback additionally drops a
+  rejection that is itself a stale-ctx error, since that is the expected outcome
+  after a session replacement. Covered by
+  `test/suite/goal-ticker-stale-context.test.ts`.
+
+### Why
+
+- `ctx.hasUI` is an `assertActive()`-guarded getter, so a context retired by
+  session replacement or reload THROWS rather than returning false. The existing
+  `this.#ctx?.hasUI` optional chaining only guarded the `undefined` that
+  `dispose()` leaves behind, not the stale object left when a session is replaced
+  without disposing this monitor. Because the read happened inside a bare
+  `setTimeout` callback, the throw escaped as an uncaughtException and killed the
+  session (reported in the wild from `runner.js` `assertActive` via `hasUI`).
+
+### Why an extension could not handle it
+
+- The armed continuation timer, the retained `#ctx`, and the continuation
+  admission path are all private state inside the builtin Goal extension; no
+  external hook observes or wraps that callback.
+
+### Expected merge conflict zones
+
+- LOW in `monitor-continuation.ts` around `#armTimer` and
+  `#buildContinuationContent` where the `hasUI` reads are now helper calls.
+
+## 2026-08-24 - provider retry exhaustion uses guarded recovery
+
+### What changed
+
+- `index.ts`, `agent-end-continuation.ts`, `monitor-continuation.ts`, and `continuation.ts` keep active Goals active after terminal provider/watchdog failures and queue one guarded `providerRecovery` continuation after `agent_settled`. Explicit user aborts remain blocked; system aborts retain `systemRecovery`; the legacy provider-error blocked reason remains resumable.
+
+### Why
+
+- Provider retry exhaustion is infrastructure failure, not a user decision. The previous block stranded active Goals.
+
+### Why an extension could not handle it
+
+- Goal state transitions, settlement latches, and continuation admission are private to the builtin Goal extension.
+
+### Expected merge conflict zones
+
+- LOW: Goal agent-end routing and monitor continuation admission.
+
+## Wait countdown hides while a turn runs (2026-08-24)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/wait-ticker.ts`
+  `GoalWaitTicker.tick` now renders `undefined` (clearing the `goal-wait`
+  footer segment) whenever `ctx.isIdle()` is false, and re-renders the
+  countdown on the next idle tick. The armed continuation timer, its
+  cache-TTL deadline, and the cache-warm iteration accounting are untouched;
+  only the render follows session idleness.
+
+### Why
+
+- A turn started by a channel the goal continuation did not deliver (a
+  monitor event, a task completion notification, a scheduled wakeup) left the
+  parked wait countdown rendering over the Working indicator for the whole
+  turn — observed live: `▰▰▰▱… goal continues in 2m 55s · 1 bash on duty`
+  beside `Working (1m 10s)`. The label was doubly false: the goal was being
+  pursued, not waited on, and the timer would no-op on `!ctx.isIdle()` when
+  it fired.
+- Cancelling the timer on foreign turn starts was rejected: the monitor wait
+  schedule is cache-TTL-driven, so re-arming at the next agent_end resets
+  the wake clock and corrupts cache-warm iteration accounting (proven by
+  `goal-cache-warmup.test.ts`).
+
+### Why an extension could not handle it
+
+- The ticker and its render seam live inside the builtin goal extension
+  itself; the idleness contract of its footer segment is the extension's own
+  display logic, not a capability another extension can provide.
+
+### Expected merge conflict zones
+
+- None upstream: `wait-ticker.ts` is a fork-only file with no pi-mono
+  counterpart.
+
+## Cache-warm ready time renders in the local timezone (2026-08-22)
+
+### What changed
+
+- `cache-warm.ts` gains `formatWakeTimestamp(dueAtMs)`: it formats the expected
+  wake time in the user's local system timezone via `Intl.DateTimeFormat`
+  (`en-CA`, `hourCycle: "h23"`, short `timeZoneName`), producing
+  `2026-08-22 16:51 GMT+9`-style stamps, and falls back to the legacy
+  `<iso> UTC` shape when local formatting throws or returns incomplete parts.
+- `cache-warm-renderer.ts` `formatExpectedWake` now delegates to
+  `formatWakeTimestamp` instead of pinning `toISOString()` UTC output.
+
+### Why
+
+- The cache-warm notice showed `ready 2026-08-22 07:51 UTC (4m 30s)` regardless
+  of the user's timezone, forcing mental conversion on every wait. Users read
+  the line to know when the goal resumes; local time with a zone label answers
+  directly, and UTC remains the fallback for platforms without ICU timezone
+  data.
+
+### Why an extension could not handle it
+
+- The renderer and its formatting helpers live inside the builtin goal
+  extension itself; the change is the extension's own display logic, not a new
+  capability another extension could provide.
+
+### Expected merge conflict zones
+
+- None upstream: `cache-warm.ts` and `cache-warm-renderer.ts` are fork-only
+  files with no pi-mono counterpart.
+
 ## Reload re-engages active goals instead of parking them (2026-08-18, fixes #934)
 
 ### What changed

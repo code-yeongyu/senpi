@@ -6,6 +6,7 @@ import {
 	isRetryableAssistantError,
 	type RetryPolicy,
 	retryAssistantCall,
+	retryDelayMs,
 } from "../src/utils/retry.ts";
 
 const openAIExplicitRetryMessage =
@@ -38,6 +39,20 @@ const nonCanonicalModelRequestRejectionMessages = [
 ] as const;
 
 describe("provider retry classification", () => {
+	it("applies bounded injectable Codex-style jitter", () => {
+		expect(retryDelayMs(1_000, 1, () => 0)).toBe(900);
+		expect(retryDelayMs(1_000, 1, () => 1)).toBe(1_100);
+	});
+
+	it("keeps provider retry hints above the jittered schedule", () => {
+		const hinted = 1_050;
+		expect(
+			Math.max(
+				hinted,
+				retryDelayMs(1_000, 1, () => 0),
+			),
+		).toBe(hinted);
+	});
 	it("matches explicit provider retry guidance", () => {
 		expect(
 			isRetryableAssistantError(
@@ -54,6 +69,23 @@ describe("provider retry classification", () => {
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: nvidiaNIMResourceExhaustedMessage }),
 			),
 		).toBe(true);
+	});
+
+	it("classifies only explicitly provider-owned aborts as provider timeouts", () => {
+		expect(
+			isProviderTimeoutError(
+				fauxAssistantMessage("", {
+					stopReason: "aborted",
+					errorMessage: "Request was aborted",
+					abortSource: "provider",
+				}),
+			),
+		).toBe(true);
+		expect(
+			isProviderTimeoutError(
+				fauxAssistantMessage("", { stopReason: "aborted", errorMessage: "Request was aborted" }),
+			),
+		).toBe(false);
 	});
 
 	it("classifies agent-loop stream timeout errors as retryable", () => {

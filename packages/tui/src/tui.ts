@@ -2032,7 +2032,7 @@ export abstract class TuiBase extends Container {
 			if (clear) {
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
 				buffer += "\x1b[2J\x1b[H";
-				if (clearScrollback && !preserveMuxScrollback) {
+				if (clearScrollback && !preserveMuxScrollback && process.platform !== "win32") {
 					buffer += "\x1b[3J";
 				}
 			} else {

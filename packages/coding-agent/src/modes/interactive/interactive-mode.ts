@@ -48,6 +48,7 @@ import {
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
+	APP_COMMAND,
 	APP_NAME,
 	APP_TITLE,
 	BRAND,
@@ -87,7 +88,7 @@ import type {
 } from "../../core/extensions/index.ts";
 import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
-import { appendHiddenTuiStdout } from "../../core/hidden-stdout-log.ts";
+import { appendHiddenTuiStdout, appendUncaughtCrashLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
@@ -130,7 +131,7 @@ import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, getReleaseChangelogUrl } from "../../utils/version-check.ts";
-import { abortedErrorLabel } from "./aborted-error-label.ts";
+import { abortedMessageForRendering } from "./aborted-error-label.ts";
 import {
 	type CompactionQueuedMessage,
 	transferCompactionQueue,
@@ -312,6 +313,8 @@ function isCompactionCostNotice(item: RenderSessionItem): item is CompactionCost
 }
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
+// Bun's macOS tty shim can report a dead terminal as raw positive errno 5 without a string code.
+const EIO_ERRNO = 5;
 const DEFAULT_RETRY_STATUS_REFRESH_INTERVAL_MS = 80;
 const LARGE_SESSION_RETRY_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS = 600;
@@ -384,11 +387,20 @@ function formatWorkingStatusShimmerText(text: string, intensity: number): string
 }
 
 function isDeadTerminalError(error: unknown): boolean {
-	if (!error || typeof error !== "object" || !("code" in error)) {
+	if (!error || typeof error !== "object") {
 		return false;
 	}
-	const code = (error as NodeJS.ErrnoException).code;
-	return code !== undefined && DEAD_TERMINAL_ERROR_CODES.has(code);
+	if ("code" in error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== undefined && DEAD_TERMINAL_ERROR_CODES.has(code)) {
+			return true;
+		}
+	}
+	if ("errno" in error) {
+		const errno = (error as NodeJS.ErrnoException).errno;
+		return errno === EIO_ERRNO || errno === -EIO_ERRNO;
+	}
+	return false;
 }
 
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
@@ -416,7 +428,7 @@ export function formatResumeCommand(sessionManager: SessionManager): string | un
 	const sessionFile = sessionManager.getSessionFile();
 	if (!sessionFile || !fs.existsSync(sessionFile)) return undefined;
 
-	const args = [APP_NAME];
+	const args = [APP_COMMAND];
 	if (!sessionManager.usesDefaultSessionDir()) {
 		args.push("--session-dir", quoteIfNeeded(sessionManager.getSessionDir()));
 	}
@@ -663,6 +675,8 @@ export interface InteractiveModeOptions {
 	uiMode?: TuiMode;
 	/** Providers that were migrated to auth.json (shows warning) */
 	migratedProviders?: string[];
+	/** Runtime diagnostics collected during session creation. */
+	startupDiagnostics?: Array<{ type: "info" | "warning" | "error"; message: string }>;
 	/** Warning message if session model couldn't be restored */
 	modelFallbackMessage?: string;
 	/** Cwd to trust after reload if it gained a .pi directory during this implicitly trusted session. */
@@ -793,6 +807,7 @@ export class InteractiveMode {
 	private isInitialized = false;
 	private onInputCallback?: (input: InteractiveUserInput) => void;
 	private pendingUserInputs: InteractiveUserInput[] = [];
+	private agentIdle = false;
 	private readonly optimisticUserEchoes: OptimisticUserEchoController;
 	/**
 	 * Clipboard images pasted into the composer, keyed by their visible
@@ -1581,6 +1596,7 @@ export class InteractiveMode {
 		// Show startup warnings
 		const {
 			migratedProviders,
+			startupDiagnostics,
 			modelFallbackMessage,
 			initialMessage,
 			initialImages,
@@ -1590,6 +1606,10 @@ export class InteractiveMode {
 
 		if (migratedProviders && migratedProviders.length > 0) {
 			this.showWarning(`Migrated credentials to auth.json: ${migratedProviders.join(", ")}`);
+		}
+		for (const diagnostic of startupDiagnostics ?? []) {
+			if (diagnostic.type === "warning") this.showWarning(diagnostic.message);
+			else if (diagnostic.type === "error") this.showError(diagnostic.message);
 		}
 
 		const modelsJsonError = this.session.modelRuntime.getError();
@@ -1636,13 +1656,10 @@ export class InteractiveMode {
 		while (true) {
 			const userInput = await this.getUserInput();
 			try {
-				await this.session.prompt(userInput.text, {
-					streamingBehavior: "steer",
-					...(userInput.images ? { images: userInput.images } : {}),
-					...this.optimisticUserEchoes.promptOptions(userInput.pendingEchoId),
-				});
+				await this.session.prompt(userInput.text, this.buildMainLoopPromptOptions(userInput));
 			} catch (error: unknown) {
 				this.optimisticUserEchoes.reject(userInput.pendingEchoId);
+				this.clearStatusIndicator("working");
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
 			}
@@ -1654,6 +1671,10 @@ export class InteractiveMode {
 	}
 
 	private async checkTmuxSetup(): Promise<string | undefined> {
+		return this.checkTmuxKeyboardSetup();
+	}
+
+	private async checkTmuxKeyboardSetup(): Promise<string | undefined> {
 		if (!process.env.TMUX) return undefined;
 
 		const runTmux = (args: string[]): Promise<string | undefined> => {
@@ -2970,13 +2991,18 @@ export class InteractiveMode {
 		}
 		const hadActiveStatusIndicator = this.activeStatusIndicator !== undefined;
 		const isClearingWorking = this.activeStatusIndicator?.kind === "working";
+		const shouldReserveHeight =
+			hadActiveStatusIndicator && this.options.tuiMode === "regular" && this.ui.getClearOnShrink();
+		const renderedHeight = shouldReserveHeight ? this.statusContainer.render(this.ui.terminal.columns).length : 0;
 		this.activeStatusIndicator?.dispose();
 		this.activeStatusIndicator = undefined;
 		if (isClearingWorking) {
 			this.workingStartedAt = undefined;
 		}
 		this.statusContainer.clear();
-		if (hadActiveStatusIndicator && this.options.tuiMode === "regular" && this.ui.getClearOnShrink()) {
+		if (shouldReserveHeight) {
+			const idleHeight = Math.min(this.ui.terminal.rows, Math.max(1, renderedHeight || 2));
+			this.idleStatus.setHeight(idleHeight);
 			this.statusContainer.addChild(this.idleStatus);
 		}
 	}
@@ -4238,6 +4264,7 @@ export class InteractiveMode {
 
 		switch (event.type) {
 			case "agent_start":
+				this.agentIdle = false;
 				this.clearPendingTools();
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
@@ -4378,14 +4405,15 @@ export class InteractiveMode {
 						}
 					}
 					this.toolArgsReveal.flushAll();
-					let errorMessage: string | undefined;
-					if (this.streamingMessage.stopReason === "aborted") {
-						errorMessage = abortedErrorLabel(undefined, this.session.retryAttempt);
-						this.streamingMessage.errorMessage = errorMessage;
-					}
-					this.syncTrailingAssistantText(this.streamingMessage);
+					const renderedMessage = abortedMessageForRendering(
+						this.streamingMessage,
+						this.session.retryAttempt,
+						this.session.currentAbortSource,
+					);
+					let errorMessage = renderedMessage.errorMessage;
+					this.syncTrailingAssistantText(renderedMessage);
 					this.assistantTextSegments.clear();
-					this.addContinuityNotice(this.streamingMessage);
+					this.addContinuityNotice(renderedMessage);
 
 					if (this.streamingMessage.stopReason === "aborted" || this.streamingMessage.stopReason === "error") {
 						if (!errorMessage) {
@@ -4480,7 +4508,6 @@ export class InteractiveMode {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
 				}
-				this.clearStatusIndicator("working");
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
 				this.streamingReveal.stop();
@@ -4498,6 +4525,14 @@ export class InteractiveMode {
 
 			case "agent_settled":
 				await this.checkShutdownRequested();
+				break;
+
+			case "agent_idle":
+				this.agentIdle = true;
+				if (this.pendingUserInputs.length === 0) {
+					this.clearStatusIndicator("working");
+				}
+				this.ui.requestRender();
 				break;
 
 			case "continuation_error":
@@ -4912,8 +4947,12 @@ export class InteractiveMode {
 
 		const removePending = (): number => {
 			const componentIndex = this.chatContainer.children.indexOf(component);
-			const insertionIndex = spacer ? this.chatContainer.children.indexOf(spacer) : componentIndex;
-			if (spacer) this.chatContainer.removeChild(spacer);
+			if (componentIndex === -1) {
+				return this.chatContainer.children.length;
+			}
+			const spacerIndex = spacer ? this.chatContainer.children.indexOf(spacer) : -1;
+			const insertionIndex = spacerIndex >= 0 ? spacerIndex : componentIndex;
+			if (spacerIndex >= 0 && spacer) this.chatContainer.removeChild(spacer);
 			this.chatContainer.removeChild(component);
 			return insertionIndex;
 		};
@@ -5045,7 +5084,15 @@ export class InteractiveMode {
 
 	private syncTrailingAssistantText(message: AssistantMessage): void {
 		if (!this.streamingComponent) return;
-		this.streamingComponent.updateContent(assistantStreamingHeadMessage(message), true);
+		const head = assistantStreamingHeadMessage(message);
+		// Single writer: while smooth streaming paces the head (no toolCall block),
+		// streamingReveal owns the streaming component. Overwriting the full head
+		// here makes the next reveal tick repaint a shorter prefix (dual-write
+		// flicker). Once the reveal has stopped (message_end), it no longer paces
+		// and the final full paint below still lands.
+		if (!this.streamingReveal?.isPacingHead(head)) {
+			this.streamingComponent.updateContent(head, true);
+		}
 		const content = message.content;
 		const firstToolIndex = content.findIndex((block) => block.type === "toolCall");
 		if (firstToolIndex === -1) {
@@ -5181,7 +5228,8 @@ export class InteractiveMode {
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
 							let errorMessage: string;
 							if (message.stopReason === "aborted") {
-								errorMessage = abortedErrorLabel(message.errorMessage, this.session.retryAttempt);
+								errorMessage =
+									abortedMessageForRendering(message, 0, undefined).errorMessage || "Provider request failed";
 							} else {
 								errorMessage = message.errorMessage || "Error";
 							}
@@ -5348,6 +5396,35 @@ export class InteractiveMode {
 		});
 	}
 
+	// Build the session.prompt options for a main-loop submission. The optimistic echo
+	// keeps only a prompt that actually started; a buffered prompt consumed by an input
+	// extension with action "handled" clears the retained working dock, but only once
+	// agent_idle has fired (the agentIdle latch) so a settlement-deferred continuation
+	// still in admission keeps its dock.
+	private buildMainLoopPromptOptions(userInput: InteractiveUserInput): {
+		streamingBehavior: "steer";
+		images?: InteractiveUserInput["images"];
+		preflightResult: (success: boolean) => void;
+		promptDisposition: (disposition: "handled" | "queued" | "started") => void;
+	} {
+		const echoOptions = this.optimisticUserEchoes.promptOptions(userInput.pendingEchoId);
+		return {
+			streamingBehavior: "steer",
+			...(userInput.images ? { images: userInput.images } : {}),
+			preflightResult: echoOptions.preflightResult,
+			promptDisposition: (disposition) => {
+				echoOptions.promptDisposition(disposition);
+				// Clear the retained dock on a handled prompt only when it was the last
+				// buffered input; a still-queued follow-up remounts it on agent_start, so
+				// clearing here would bounce the editor/footer.
+				if (disposition === "handled" && this.agentIdle && this.pendingUserInputs.length === 0) {
+					this.clearStatusIndicator("working");
+					this.ui.requestRender();
+				}
+			},
+		};
+	}
+
 	private rebuildChatFromMessages(): void {
 		this.chatContainer.clear();
 		this.renderSessionEntries(this.sessionManager.buildContextEntries());
@@ -5420,8 +5497,16 @@ export class InteractiveMode {
 		process.exit(0);
 	}
 
-	private emergencyTerminalExit(): never {
+	private emergencyTerminalExit(crash: { origin: string; error: unknown }): never {
 		this.isShuttingDown = true;
+		// This exit is silent by design (the terminal is gone, so a banner would go
+		// nowhere), which makes the debug log the ONLY surface that can record this
+		// crash class — exactly the EIO case that left the 2026-08-26 diagnosis with no
+		// evidence. Write before the cleanup below, which is unguarded and could throw.
+		// A logging failure must never alter the exit path.
+		try {
+			appendUncaughtCrashLog(crash.origin, crash.error);
+		} catch {}
 		this.unregisterSignalHandlers();
 		killTrackedDetachedChildren();
 		// The terminal is gone. Do not run normal shutdown because TUI and
@@ -5444,6 +5529,13 @@ export class InteractiveMode {
 		if (this.isShuttingDown) {
 			process.exit(1);
 		}
+		if (isDeadTerminalError(error)) {
+			// The terminal died under the session (e.g. an stdin read EIO after
+			// the controlling terminal vanished or this pgrp lost the tty
+			// foreground). Same handling as terminal write errors: exit silently
+			// instead of printing a crash banner to a terminal that is gone.
+			this.emergencyTerminalExit({ origin: `dead-terminal ${origin}`, error });
+		}
 		if (isRecoverableInspectorVmImportError(error, origin)) {
 			this.showWarning(INSPECTOR_VM_IMPORT_WARNING);
 			return;
@@ -5457,6 +5549,12 @@ export class InteractiveMode {
 		} catch {}
 		try {
 			this.ui.stop();
+		} catch {}
+		// Record the crash before the terminal handoff: the banner below only reaches
+		// terminal scrollback, which is gone when the terminal is closed or is itself
+		// the thing that failed. A logging failure must never alter the crash path.
+		try {
+			appendUncaughtCrashLog(origin, error);
 		} catch {}
 		restoreInteractiveStderr();
 		console.error(`${APP_NAME} exiting due to uncaughtException:`);
@@ -5495,7 +5593,7 @@ export class InteractiveMode {
 
 		const terminalErrorHandler = (error: Error) => {
 			if (isDeadTerminalError(error)) {
-				this.emergencyTerminalExit();
+				this.emergencyTerminalExit({ origin: "dead-terminal stdio error", error });
 			}
 			throw error;
 		};

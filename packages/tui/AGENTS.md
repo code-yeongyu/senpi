@@ -1,6 +1,6 @@
 # packages/tui
 
-Commit: `abae968e8` (2026-08-17)
+Commit: `baf15a54d` (2026-08-24)
 
 `@earendil-works/pi-tui` is the standalone terminal renderer/editor library used by Senpi interactive mode. Rendering uses synchronized, differential frames and must preserve terminal ownership boundaries.
 
@@ -20,22 +20,19 @@ src/components/v-stack.ts   VStack; h-stack.ts HStack; spacer.ts Spacer
 src/components/scroll-view.ts  ScrollView with scrollbar options
 src/keybindings.ts          Configurable default bindings
 src/keys.ts                 Key parsing and matching
+src/utils.ts                Width, wrapping, ANSI segmentation, output normalization
 src/stdin-buffer.ts         Paste/input framing
 src/terminal-image.ts       Kitty/iTerm image paths
 src/dollar-invocation-autocomplete.ts  $-invocation suggestions for the editor
 src/changes.md              Fork render behavior
 test/*.test.ts              Node test-runner coverage
-bench/frame-cost.ts         Frame cost benchmark (see test/frame-cost-harness.test.ts)
+bench/                      frame-cost, editor-layout, markdown-render benchmarks
+native/                     Optional Darwin/Win32 modifier binaries (prebuilt, lazy-loaded)
 ```
-
-Root `tui-plan.md` is the design doc for the alternate-screen layout system (landed 2026-07-31).
-
-Public exports include `VStack`, `HStack`, `ScrollView`, `Spacer`, `TuiAltScreen`, `TuiMainScreen`, `Container`, `CURSOR_MARKER`, `isViewportTUI`, and `ViewportTUI` (see `src/index.ts`).
 
 ## RENDERING CONTRACT
 
-- Balanced synchronized-output and autowrap frame guards are mandatory on every render path.
-- Stable-width streaming updates must remain differential and must not introduce clear-screen operations.
+- Balanced synchronized-output/autowrap frame guards on every render path; stable-width streaming updates stay differential with no clear-screen operations.
 - Resize, recovery, scrollback replay, multiplexer, and image branches may legitimately repaint or clear when their contracts require it.
 - `start()` and `stop()` reset queued render state so stale scheduled frames cannot leak across lifecycles.
 - `ProcessTerminal` owns external stdout while running; components must not write around it.
@@ -47,17 +44,14 @@ Public exports include `VStack`, `HStack`, `ScrollView`, `Spacer`, `TuiAltScreen
 
 | Task | File |
 |---|---|
-| Flicker, cursor, viewport | `src/tui.ts` |
+| Flicker, cursor, viewport (`isViewportTUI`, `VIEWPORT_TUI`) | `src/tui.ts` |
 | Alt-screen rendering, scroll wheel/keys routing | `src/tui-alt-screen.ts` |
 | Layout rects, clipping, scrollbar geometry | `src/layout.ts`, `src/layout-node.ts` |
 | Stack sizing, scrollable regions | `src/components/stack.ts`, `src/components/scroll-view.ts` |
-| Viewport contract checks | `src/tui.ts` (`isViewportTUI`, `VIEWPORT_TUI`) |
-| Terminal lifecycle/title | `src/terminal.ts` |
-| Child process terminal | `src/terminal.ts` (`ProcessTerminal`) |
+| Terminal lifecycle/title, child process terminal | `src/terminal.ts` (`ProcessTerminal`) |
 | Key parsing/defaults | `src/keys.ts`, `src/keybindings.ts` |
 | Paste handling | `src/stdin-buffer.ts` |
-| Width/wrapping | `src/utils.ts` |
-| Terminal-output normalization/tab width | `src/utils.ts` (`normalizeTerminalOutput`, `visibleWidth`) and `src/tui.ts` |
+| Width/wrapping, output normalization, tab width | `src/utils.ts` (`normalizeTerminalOutput`, `visibleWidth`) |
 | Images | `src/terminal-image.ts` |
 | $-invocation autocomplete | `src/dollar-invocation-autocomplete.ts`, `src/autocomplete.ts` (`CombinedAutocompleteProvider`) |
 
@@ -82,3 +76,4 @@ Public exports include `VStack`, `HStack`, `ScrollView`, `Spacer`, `TuiAltScreen
 - Rendering changes must include focused headless-terminal assertions and preserve flicker budgets.
 - Runtime changes require root `npm run check`, `senpi-qa` TUI smoke evidence, and visual terminal QA.
 - Read `src/changes.md` before altering renderer or loader behavior.
+- Native modifier binaries: `npm run build:native:darwin`; `npm run build:native:win32` (toolchain via `PI_TUI_WIN32_TOOLCHAIN=msvc|mingw`).

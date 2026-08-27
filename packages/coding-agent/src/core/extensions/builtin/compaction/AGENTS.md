@@ -1,6 +1,6 @@
 # builtin/compaction
 
-Builtin extension #23 (last). Owns senpi's compaction pipeline: speculative compaction running in parallel with the next turn, blocking compaction at the hard context limit, proactive compaction near the soft limit, degradation monitoring, circuit breaker, absolute session cap, todo bridging, checkpoint state, restoration tracker, and tool-result truncation. Policy-rich; touch with policy tests in lock-step. See `changes.md` for the restoration tracker rationale.
+Builtin extension #20. Owns senpi's compaction *policy* (mechanics live in `core/compaction/`): speculative compaction running in parallel with the next turn, blocking compaction at the hard context limit, proactive compaction near the soft limit, degradation monitoring, circuit breaker, absolute session cap, todo bridging, checkpoint state, restoration tracker, and tool-result truncation. Policy-rich; touch with policy tests in lock-step. See `changes.md` for the restoration tracker rationale.
 
 ## FILES
 
@@ -28,6 +28,10 @@ compaction/
 ├── todo-bridge.ts            # Carries todos through compaction so the summary preserves them
 ├── restoration-tracker.ts    # Post-compact: re-injects skill + file context (fork-introduced)
 ├── prompts.ts                # Compaction summarization prompt + system message
+├── lane-policy.ts            # SDK-native lane detection; `external-owner` structured ownership
+├── deterministic-fallback.ts # Classification + construction when summarization fails outright
+├── summarization-retry.ts, transient-failure.ts, retained-message-safety.ts  # Retry/safety predicates
+├── openai-remote-{convert,model,schema,timeout,responses-v2}.ts  # Remote-route support modules
 └── changes.md                # Fork tracker (restoration tracker, extension hook wiring)
 ```
 
@@ -49,7 +53,7 @@ compaction/
 2. **Context assembly** (`context` event): below the emergency threshold, tool results pass through untouched; once the assembled context exceeds the hard threshold, `speculative.ts` applies the `tool-truncation.ts` emergency valve before old-message pruning.
 3. **Context reduction** (`context` event): near the limit, `context-reduction.ts` applies deterministic no-LLM reductions; after any pruning, `repair-tool-pairs.ts` patches orphaned tool-call/result pairs.
 4. **Provider call**: on a provider context-overflow error, `core/agent-session.ts` detects it via `isContextOverflow` (`packages/ai/src/utils/overflow.ts`), cancels the turn, runs blocking compaction, and auto-retries once. On OpenAI Responses models, compaction routes through `openai-remote.ts` instead of local summarization.
-5. **Post-turn**: `circuit-breaker.ts` + `per-turn-cap.ts` gate any further auto-compaction; `degradation-monitor.ts` watches for post-compact quality drop. When the turn ends and the context is over the soft threshold (`idle.ts`), summary generation warms at `agent_end`; a transient warm-up failure is retried while the session stays idle (`idle-retry.ts`, bounded attempts + delay, fenced on the observed job); the next `before_agent_start` applies the warm result through normal admission, keeping the provider call off the user's critical path without committing an idle transcript boundary. The warm-up is skipped when the run will auto-continue (`willRetry`), was aborted, in one-shot (`print`/`json`) mode, or `idleCompactionEnabled` is false.
+5. **Post-turn**: `circuit-breaker.ts` + `per-turn-cap.ts` gate any further auto-compaction; `degradation-monitor.ts` watches for post-compact quality drop. When the turn ends and the context is over the soft threshold (`idle.ts`), summary generation warms at `agent_end`; a transient warm-up failure is retried while the session stays idle (`idle-retry.ts`, bounded attempts + delay, fenced on the observed job); when generation completes while the session is still idle, the warm result is applied immediately (`armIdleApply` in `index.ts`, fenced on the idle flag, lane, breaker, cap, and a fresh threshold check), so the [compaction] block renders during the idle gap and the next message stacks below it. A stale or refused apply keeps the warm hold and the next `before_agent_start` consumes it through normal admission, exactly as before. The warm-up is skipped when the run will auto-continue (`willRetry`), was aborted, in one-shot (`print`/`json`) mode, or `idleCompactionEnabled` is false.
 6. **Compact event**: `checkpoint-state.ts` snapshots, `todo-bridge.ts` injects todos, `restoration-tracker.ts` queues re-injections for the first post-compact turn.
 
 ## CONVENTIONS
@@ -65,6 +69,9 @@ compaction/
 - Changing the `prompts.ts` summarization template without regenerating the relevant goldens.
 - Bypassing `tool-truncation.ts` for "small" tool results — the policy uses a global token budget; even small additions matter.
 - Mutating `restoration-tracker.ts` queue from a non-compaction hook.
+- Treating provider-owned SDK-native compaction as ordinary extension cancellation — `lane-policy.ts` must preserve `external-owner` ownership.
+- Letting an aborted compaction surface: aborts stand down silently (no circuit-breaker failure, no raw abort error, no `{cancel: true}` rejected-compact event).
+- Leaving idle warm-up continuations unfenced against retired extension generations — stale context access becomes an uncaught crash.
 
 ## NOTES
 
