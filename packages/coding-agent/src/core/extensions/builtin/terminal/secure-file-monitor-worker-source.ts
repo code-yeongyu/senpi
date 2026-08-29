@@ -70,7 +70,7 @@ const stopSources = () => {
 	watcher = undefined;
 };
 const ensureSources = () => {
-	if (!watcher) {
+	if (process.platform !== "win32" && !watcher) {
 		try {
 			watcher = watch(process.cwd(), { encoding: "utf8", persistent: false }, scheduleAll);
 			watcher.on("error", () => {

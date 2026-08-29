@@ -65,8 +65,10 @@ describe("terminal monitor tool", () => {
 		process.env.SENPI_PTY_FORCE_PIPE = "1";
 		manager = new TerminalManager();
 		sink = new EventSink();
+		const monitorRegistry = new MonitorRegistry((event) => sink.push(event));
 		ctx = {
 			manager,
+			monitorRegistry,
 			cwd: process.cwd(),
 			defaultCols: 120,
 			defaultRows: 40,
@@ -76,6 +78,7 @@ describe("terminal monitor tool", () => {
 	});
 
 	afterEach(async () => {
+		await ctx.monitorRegistry?.teardown();
 		await manager.teardown();
 		if (savedForcePipe === undefined) delete process.env.SENPI_PTY_FORCE_PIPE;
 		else process.env.SENPI_PTY_FORCE_PIPE = savedForcePipe;
@@ -141,7 +144,7 @@ describe("terminal monitor tool", () => {
 	it("rejects native watches without a lifecycle-owned registry", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "senpi-monitor-file-"));
 		try {
-			const result = await createMonitorTool(ctx).execute("monitor-no-registry", {
+			const result = await createMonitorTool({ ...ctx, monitorRegistry: undefined }).execute("monitor-no-registry", {
 				description: "missing owner",
 				path: join(dir, "claim.json"),
 				event: "create",
@@ -482,7 +485,8 @@ describe("terminal monitor tool", () => {
 
 	it("emits a final summary when a wake-budget-paused monitor exits", async () => {
 		const registry = new MonitorRegistry((event) => sink.push(event));
-		const tool = createMonitorTool({ ...ctx, monitorRegistry: registry });
+		const toolCtx = { ...ctx, monitorRegistry: registry };
+		const tool = createMonitorTool(toolCtx);
 		const ended = sink.waitFor(
 			(event) => event.type === "summary",
 			"paused monitor completion",
@@ -493,14 +497,15 @@ describe("terminal monitor tool", () => {
 		if (!bashId) throw new Error("Monitor did not return a bash_id");
 
 		registry.pauseAll();
-		await createKillBashTool(ctx).execute("kill-paused", { bash_id: bashId });
+		await createKillBashTool(toolCtx).execute("kill-paused", { bash_id: bashId });
 		expect(summaryEvent(await ended).summary).toContain("killed");
 	});
 
 	it("rearms a wake-budget-paused monitor and notifies the session delivery controller", async () => {
 		let rearmedId: string | undefined;
 		const registry = new MonitorRegistry((event) => sink.push(event));
-		const tool = createMonitorTool({ ...ctx, monitorRegistry: registry, onMonitorRearmed: (id) => (rearmedId = id) });
+		const toolCtx = { ...ctx, monitorRegistry: registry, onMonitorRearmed: (id: string) => (rearmedId = id) };
+		const tool = createMonitorTool(toolCtx);
 		const ended = sink.waitFor((event) => event.type === "summary", "rearmed monitor completion");
 		const started = await tool.execute("monitor-paused", { description: "paused", command: "sleep 30" });
 		const bashId = /ID: (bash_\d+)/.exec(firstText(started))?.[1];
@@ -510,7 +515,7 @@ describe("terminal monitor tool", () => {
 		const rearmed = await tool.execute("monitor-resume", { action: "rearm", bash_id: bashId });
 		expect(firstText(rearmed)).toContain("re-armed");
 		expect(rearmedId).toBe(bashId);
-		await createKillBashTool(ctx).execute("kill-rearmed", { bash_id: bashId });
+		await createKillBashTool(toolCtx).execute("kill-rearmed", { bash_id: bashId });
 		expect(summaryEvent(await ended).summary).toContain("killed");
 	});
 
