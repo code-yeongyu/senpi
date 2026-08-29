@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SecureFileMonitorWorkerPool } from "../../src/core/extensions/builtin/terminal/secure-file-monitor-worker.ts";
+import { sanitizeSecureWorkerEnvironment } from "../../src/core/extensions/builtin/terminal/secure-file-monitor-worker-boundary.ts";
 
 const malformedReadyWorker = `
 console.log(JSON.stringify({ type: "ready", device: "not-a-bigint", inode: "1" }));
@@ -66,6 +67,23 @@ function withDeadline<T>(promise: Promise<T>, label: string, timeoutMs: number):
 }
 
 describe("secure file monitor worker failure bounds", () => {
+	it("allowlists the worker environment instead of inheriting loader variables", () => {
+		expect(
+			sanitizeSecureWorkerEnvironment({
+				DYLD_INSERT_LIBRARIES: "./watched-directory.dylib",
+				LD_PRELOAD: "./watched-directory.so",
+				NODE_OPTIONS: "--require ./preload.cjs",
+				PATH: "/watched-directory",
+				SECRET: "must-not-cross-the-boundary",
+				SystemRoot: "C:\\Windows",
+				windir: "C:\\Windows",
+			}),
+		).toEqual({
+			SYSTEMROOT: "C:\\Windows",
+			WINDIR: "C:\\Windows",
+		});
+	});
+
 	it("rejects malformed ready identity values without wedging registration", async () => {
 		const root = await realpath(await mkdtemp(join(tmpdir(), "senpi-monitor-malformed-ready-")));
 		const identity = await stat(root, { bigint: true });

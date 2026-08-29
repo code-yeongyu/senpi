@@ -1,8 +1,41 @@
+import { accessSync, constants } from "node:fs";
+import { delimiter, extname, isAbsolute, join } from "node:path";
 import type {
 	RegisterSecureFileMonitorOptions,
 	SecureFileMonitorWorkerEvent,
 	SecureWorkerResponse,
 } from "./secure-file-monitor-worker-protocol.ts";
+
+export function resolveSecureWorkerExecutable(
+	executable: string,
+	environment: Readonly<NodeJS.ProcessEnv> = process.env,
+	platform: NodeJS.Platform = process.platform,
+): string {
+	if (isAbsolute(executable)) return executable;
+	if (executable.includes("/") || executable.includes("\\")) {
+		throw new Error("Secure file monitor worker executable must be absolute.");
+	}
+	const searchPath = Object.entries(environment).find(([key]) => key.toUpperCase() === "PATH")?.[1];
+	const extensions =
+		platform === "win32" && extname(executable).length === 0
+			? (Object.entries(environment).find(([key]) => key.toUpperCase() === "PATHEXT")?.[1] ?? ".COM;.EXE;.BAT;.CMD")
+					.split(";")
+					.filter((extension) => extension.length > 0)
+			: [""];
+	for (const directory of searchPath?.split(delimiter) ?? []) {
+		if (!isAbsolute(directory)) continue;
+		for (const extension of extensions) {
+			const candidate = join(directory, `${executable}${extension}`);
+			try {
+				accessSync(candidate, constants.X_OK);
+				return candidate;
+			} catch {
+				// Keep searching trusted absolute PATH entries.
+			}
+		}
+	}
+	throw new Error(`Secure file monitor worker executable not found: ${executable}`);
+}
 
 export function deliverSecureWorkerEvent(
 	onEvent: RegisterSecureFileMonitorOptions["onEvent"],
@@ -30,9 +63,12 @@ export function deliverSecureWorkerEvent(
 export function sanitizeSecureWorkerEnvironment(
 	environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): NodeJS.ProcessEnv {
-	const sanitized = { ...environment };
-	for (const key of Object.keys(sanitized)) {
-		if (["BUN_OPTIONS", "NODE_OPTIONS", "NODE_PATH"].includes(key.toUpperCase())) delete sanitized[key];
+	const sanitized: NodeJS.ProcessEnv = {};
+	for (const [key, value] of Object.entries(environment)) {
+		const normalizedKey = key.toUpperCase();
+		if ((normalizedKey === "SYSTEMROOT" || normalizedKey === "WINDIR") && value !== undefined) {
+			sanitized[normalizedKey] = value;
+		}
 	}
 	return sanitized;
 }

@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import {
 	deliverSecureWorkerEvent,
 	parseSecureWorkerResponse,
+	resolveSecureWorkerExecutable,
 	sanitizeSecureWorkerEnvironment,
 } from "./secure-file-monitor-worker-boundary.ts";
 import { resolveDefaultWorkerCommand } from "./secure-file-monitor-worker-command.ts";
@@ -42,7 +43,8 @@ export class SecureFileMonitorWorkerConnection {
 	constructor(directory: string, options: SecureFileMonitorWorkerPoolOptions) {
 		this.#onError = options.onError;
 		this.#requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-		const [executable, ...args] = options.workerCommand ?? resolveDefaultWorkerCommand();
+		const [workerExecutable, ...args] = options.workerCommand ?? resolveDefaultWorkerCommand();
+		const executable = resolveSecureWorkerExecutable(workerExecutable);
 		this.#child = spawn(executable, args, {
 			cwd: directory,
 			env: sanitizeSecureWorkerEnvironment(),

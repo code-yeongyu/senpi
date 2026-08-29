@@ -268,6 +268,52 @@ describe("PipeFallbackSession Windows process-tree cleanup", () => {
 			stdout: "DIRECT_FALLBACK_SETTLED\n",
 		});
 	});
+
+	it("falls back to a direct kill when taskkill exits nonzero", () => {
+		const moduleUrl = new URL("../src/pipe-fallback.ts", import.meta.url).href;
+		const script = `
+			const { chmod, mkdtemp, rm, writeFile } = await import("node:fs/promises");
+			const { tmpdir } = await import("node:os");
+			const { join } = await import("node:path");
+			const fakeBin = await mkdtemp(join(tmpdir(), "senpi-taskkill-"));
+			const taskkill = join(fakeBin, "taskkill.exe");
+			await writeFile(taskkill, "#!/bin/sh\\nexit 1\\n");
+			await chmod(taskkill, 0o755);
+			Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+			process.env.PATH = fakeBin;
+			const { PipeFallbackSession } = await import(${JSON.stringify(moduleUrl)});
+			const session = new PipeFallbackSession({
+				command: process.execPath,
+				args: ["-e", "setInterval(() => {}, 1000)"],
+			}).start();
+			const timeout = setTimeout(() => {
+				process.stderr.write("PIPE_FALLBACK_TASKKILL_NONZERO_TIMEOUT\\n");
+				process.exit(2);
+			}, 2000);
+			session.kill("SIGTERM");
+			await session.waitExit();
+			clearTimeout(timeout);
+			await rm(fakeBin, { recursive: true, force: true });
+			process.stdout.write("NONZERO_FALLBACK_SETTLED\\n");
+		`;
+
+		const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+			encoding: "utf8",
+			timeout: 5000,
+		});
+
+		expect({
+			signal: result.signal,
+			status: result.status,
+			stderr: result.stderr,
+			stdout: result.stdout,
+		}).toEqual({
+			signal: null,
+			status: 0,
+			stderr: "",
+			stdout: "NONZERO_FALLBACK_SETTLED\n",
+		});
+	});
 });
 
 describe("terminateChildTree", () => {

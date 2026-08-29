@@ -255,8 +255,15 @@ export class PipeFallbackSession {
 					stdio: "ignore",
 					windowsHide: true,
 				});
-				killer.once("error", () => {
+				let fallbackSent = false;
+				const fallback = () => {
+					if (fallbackSent || this.exitResult !== null) return;
+					fallbackSent = true;
 					terminateChildTree(child, signal);
+				};
+				killer.once("error", fallback);
+				killer.once("close", (code) => {
+					if (code !== 0) fallback();
 				});
 				return { ok: true, note: `Terminated child_process pipe fallback process tree (pid ${pid}).` };
 			} catch {
