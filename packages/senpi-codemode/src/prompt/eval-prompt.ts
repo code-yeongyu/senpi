@@ -163,7 +163,7 @@ tool_schema(name?) → dict
 completion(prompt, model?="default", system?=None, schema?=None) → str | dict
     Oneshot, stateless (no history/tools). \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → structured output, parsed object.
 {{#if spawns}}agent(prompt, agent?="{{spawnDefaultAgent}}", model?=None, label?=None, schema?=None, handle?=False) → str | dict
-    Run a subagent → final output. \`agent\` picks another discovered agent; omit it to use \`{{spawnDefaultAgent}}\`. \`schema\` as in completion(). Background via \`local://\` files named in the prompt. \`handle\` → DAG node dict { text, output, handle: \`agent://<id>\`, id, agent } (parsed under \`data\` when \`schema\` set).
+    Run a subagent → final output. \`agent\` picks another discovered agent; omit it to use \`{{spawnDefaultAgent}}\`. \`schema\` as in completion(). Background via \`local://\` files named in the prompt. \`handle\` → workflow node dict { text, output, handle: \`agent://<id>\`, id, agent } (parsed under \`data\` when \`schema\` set).
 {{#if js}}    JS: options are ONE trailing object — agent(prompt, { agent, schema, handle }).
 {{/if}}{{/if}}parallel(thunks) → list
     Thunks through a bounded pool (wide as a \`task\` batch — don't pre-shrink), input order kept; returns when all finish, a throwing thunk propagates.
@@ -176,14 +176,14 @@ phase(title) → None
 \`\`\`
 </prelude>
 {{#if spawns}}
-<dag>
-Pipe handles through stage helpers to build a dependency graph — acyclic waves:
+<workflow>
+Define the workflow spec IN CODE: partition the work into logically distinct steps, one node per step, then wire them as acyclic waves — never hand-author the graph as a single opaque call.
 - **Name nodes.** Capture each \`agent(…, {{#if py}}handle=True{{/if}}{{#if js}}{ handle: true }{{/if}}{{#if jl}}handle=true{{/if}})\` result; carries \`handle\` (\`agent://<id>\`) + \`output\`.
 - **Wire edges by reference.** Put an upstream node's \`handle\`/\`output\` in the dependent stage's prompt — large transcript never re-inlined. Bulk: \`write("local://<name>.md", …)\`, pass the URI.
 - **\`pipeline(items, *stages)\` = staged waves**, barrier between stages (every item clears stage N before any enters N+1). **\`parallel(thunks)\` = one wave** of independent nodes.
 - **Isolate failure.** A raising node re-raises the lowest-index error, aborts its wave; wrap risky nodes in try/except so a failure degrades only its dependent subtree, independent branches finish.
 - **Acyclic only.** A node never waits on its own descendant.
-</dag>
+</workflow>
 {{/if}}
 
 <critical>

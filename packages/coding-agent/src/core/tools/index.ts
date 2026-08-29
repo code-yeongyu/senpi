@@ -104,6 +104,15 @@ export const allToolNames: Set<ToolName> = new Set([
 	"ls",
 ]);
 
+// TEMPORARY: tools listed here are built and stay resolvable through getRegisteredTool, but are
+// withheld from the MODEL-facing surface - they are dropped from the prompt-bearing tool
+// definitions and from the active tool names, so the model can neither see nor call them.
+// Programmatic callers that resolve a tool by name (notably the Cursor exec bridge, which drives
+// its own native read/bash/grep/ls frames regardless of what the request advertised) keep working.
+// `grep` is withheld while search routing is evaluated; restoring it is deleting the entry from
+// this set. Keep this set empty in the steady state.
+export const temporarilyDisabledToolNames: ReadonlySet<string> = new Set<ToolName>(["grep"]);
+
 export interface ToolsOptions {
 	read?: ReadToolOptions;
 	bash?: BashToolOptions;

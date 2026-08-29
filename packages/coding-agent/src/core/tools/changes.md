@@ -1,5 +1,31 @@
 # core/tools changes
 
+## grep is temporarily withheld from the model-facing tool surface (2026-08-29)
+
+### What changed
+
+- `index.ts`: added `temporarilyDisabledToolNames`, currently holding `grep`. Tools named here are
+  still constructed by `createAllToolDefinitions` and stay resolvable through
+  `AgentSession.getRegisteredTool`, but are dropped from the prompt-bearing tool definitions and
+  from the active tool names, so the model can neither see nor call them.
+
+### Why
+
+- Search routing is being re-evaluated and the model should not reach for `grep` in the meantime.
+  This is a withholding, not a removal: every grep code path stays intact, and restoring the tool
+  is deleting its entry from the set.
+
+### Why an extension could not handle it
+
+- The withheld set has to be applied where the session materializes its tool surface; an extension
+  cannot remove a builtin from the prompt-bearing definitions or the active tool names.
+
+### Expected merge conflict zones
+
+- `index.ts`: the `temporarilyDisabledToolNames` export sits directly below `allToolNames`, so an
+  upstream change that adds or removes a builtin tool name will conflict there. Resolve by keeping
+  both the upstream tool-name edit and this set; the set is intended to be emptied, not carried.
+
 ## Output spill streams capture early storage failures (2026-08-26)
 
 ### What changed

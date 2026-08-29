@@ -12,6 +12,11 @@
 
 ### Changed
 
+- `grep` is temporarily withheld from the model-facing tool surface. It no longer appears in the
+  system prompt or the active tool names, so the model can neither see nor call it. The tool is
+  still built and stays resolvable by name for programmatic callers such as the Cursor exec bridge,
+  and restoring it is removing its entry from `temporarilyDisabledToolNames`.
+
 ### Fixed
 
 ### Removed

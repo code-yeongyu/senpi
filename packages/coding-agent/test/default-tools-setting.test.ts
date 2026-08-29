@@ -56,16 +56,16 @@ describe("defaultTools setting", () => {
 	}
 
 	it("uses the configured list as the initial built-in selection", async () => {
-		const session = await createSession(["grep", "find"]);
+		const session = await createSession(["ls", "find"]);
 
 		expect(
 			session
 				.getAllTools()
 				.map((tool) => tool.name)
 				.sort(),
-		).toEqual(["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"]);
-		expect(session.getActiveToolNames()).toEqual(["grep", "find"]);
-		expect(session.systemPrompt).toContain("- grep:");
+		).toEqual(["bash", "edit", "find", "ls", "powershell", "read", "write"]);
+		expect(session.getActiveToolNames()).toEqual(["ls", "find"]);
+		expect(session.systemPrompt).toContain("- ls:");
 		expect(session.systemPrompt).not.toContain("- read:");
 		session.dispose();
 	});
@@ -81,7 +81,7 @@ describe("defaultTools setting", () => {
 
 	it("keeps extension and SDK custom tools enabled", async () => {
 		const session = await createSession(
-			["grep"],
+			["find"],
 			{
 				customTools: [
 					{
@@ -116,7 +116,7 @@ describe("defaultTools setting", () => {
 		);
 		await session.bindExtensions({});
 
-		expect(session.getActiveToolNames().sort()).toEqual(["dynamic_tool", "grep", "sdk_tool", "static_tool"]);
+		expect(session.getActiveToolNames().sort()).toEqual(["dynamic_tool", "find", "sdk_tool", "static_tool"]);
 		expect(session.getAllTools().map((tool) => tool.name)).toEqual(
 			expect.arrayContaining(["read", "dynamic_tool", "sdk_tool", "static_tool"]),
 		);
@@ -124,12 +124,12 @@ describe("defaultTools setting", () => {
 	});
 
 	it("preserves explicit tool option precedence", async () => {
-		const allowlistedSession = await createSession(["grep"], { tools: ["read"] });
+		const allowlistedSession = await createSession(["find"], { tools: ["read"] });
 		expect(allowlistedSession.getActiveToolNames()).toEqual(["read"]);
 		allowlistedSession.dispose();
 
-		const excludedSession = await createSession(["read", "grep"], { excludeTools: ["read"] });
-		expect(excludedSession.getActiveToolNames()).toEqual(["grep"]);
+		const excludedSession = await createSession(["read", "find"], { excludeTools: ["read"] });
+		expect(excludedSession.getActiveToolNames()).toEqual(["find"]);
 		excludedSession.dispose();
 
 		const toolLessSession = await createSession(["read"], { noTools: "all" });
@@ -152,7 +152,7 @@ describe("defaultTools setting", () => {
 				.getAllTools()
 				.map((tool) => tool.name)
 				.sort(),
-		).toEqual(["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"]);
+		).toEqual(["bash", "edit", "find", "ls", "powershell", "read", "write"]);
 		expect(session.getActiveToolNames()).toEqual(["ls"]);
 		session.dispose();
 	});

@@ -1,5 +1,40 @@
 # changes
 
+## 2026-08-29 - Withheld tools are filtered at the advertisement seam
+
+### What changed
+
+- `agent-session.ts`: names in `temporarilyDisabledToolNames` are dropped from `definitionRegistry`
+  (which becomes `_toolDefinitions`, and therefore the prompt snippets and guidelines) and from the
+  DEFAULT `nextActiveToolNames` selection. `_baseToolDefinitions` stays unfiltered, so
+  `_toolRegistry` remains whole, and an explicit `activeToolNames` request still activates the tool.
+
+### Why
+
+- Filtering `_baseToolDefinitions` also emptied `_toolRegistry`, which `getRegisteredTool` serves.
+  That method is documented to resolve "from the full registry ... independent of the active set"
+  precisely because the Cursor exec bridge drives its own native read/bash/grep/ls frames regardless
+  of what the request advertised, so every Cursor grep frame would have answered
+  `Tool "grep" is not available in this session`. Withholding now happens only where the
+  model-facing surface is derived, leaving programmatic name-based resolution working.
+- The active-name filter applies to the default selection only. A caller that passes
+  `activeToolNames` has named the tool deliberately; overriding that would have broken
+  `filesystem-policy`'s contract that policies reach all six built-in file tools, and the
+  `defaultTools` explicit-precedence guard.
+
+### Why an extension could not handle it
+
+- `_toolDefinitions`, `_toolRegistry`, and the active tool names are private session state built in
+  one pass inside `AgentSession`; no extension hook runs between their construction and first use,
+  so the split between the advertised surface and the resolvable registry can only be made here.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the `definitionRegistry` construction and the `nextActiveToolNames` filter
+  both gained a `temporarilyDisabledToolNames` guard alongside the existing `isAllowedTool` call.
+  Upstream edits to either filter will conflict; keep the upstream predicate change and re-apply
+  the withheld-name guard next to it.
+
 - Model runtime credential admission counts the combined canonical environment and policy slot lane, admitting rotation for more than one live slot without acquiring leases during preflight.
 
 ## 2026-08-28 - Credential pool parity follow-ups

@@ -75,10 +75,10 @@ describe("buildEvalPrompt", () => {
 		// Then: task-only helpers and the DAG are exposed only when callable.
 		expect(withoutSpawns).not.toContain("agent(");
 		expect(withoutSpawns).not.toContain("output(*ids");
-		expect(withoutSpawns).not.toContain("<dag>");
+		expect(withoutSpawns).not.toContain("<workflow>");
 		expect(withSpawns).toContain('agent(prompt, agent?="researcher"');
 		expect(withSpawns).toContain('output(*ids, format?="raw"');
-		expect(withSpawns).toContain("<dag>");
+		expect(withSpawns).toContain("<workflow>");
 		expect(withSpawns).toContain("omit it to use `researcher`");
 	});
 

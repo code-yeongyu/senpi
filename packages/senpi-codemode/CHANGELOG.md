@@ -8,6 +8,10 @@
 
 ### Changed
 
+- The eval prompt's dependency-graph section is now `<workflow>` and states its contract directly:
+  define the workflow spec in code, one node per logically distinct step, rather than hand-authoring
+  the graph as a single opaque call.
+
 ### Fixed
 
 ### Removed

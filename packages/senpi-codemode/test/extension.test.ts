@@ -232,7 +232,7 @@ describe("senpi-codemode extension factory", () => {
 		}
 	});
 
-	it("exposes agent()/output()/<dag> in the registered description when the task tool is active", async () => {
+	it("exposes agent()/output()/<workflow> in the registered description when the task tool is active", async () => {
 		// Given a session where the `task` tool is registered alongside eval
 		const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-spawns-"));
 		await mkdir(join(cwd, ".senpi"), { recursive: true });
@@ -255,14 +255,14 @@ describe("senpi-codemode extension factory", () => {
 			if (!tool) throw new Error("eval tool was not registered");
 			expect(tool.description).toContain("agent(");
 			expect(tool.description).toContain("output(");
-			expect(tool.description).toContain("<dag>");
+			expect(tool.description).toContain("<workflow>");
 		} finally {
 			await emit(pi, "session_shutdown", {}, ctx);
 			await rm(cwd, { recursive: true, force: true });
 		}
 	});
 
-	it("omits agent()/output()/<dag> from the registered description when no task tool is active", async () => {
+	it("omits agent()/output()/<workflow> from the registered description when no task tool is active", async () => {
 		// Given a session with no `task` tool registered
 		const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-nospawns-"));
 		await mkdir(join(cwd, ".senpi"), { recursive: true });
@@ -283,7 +283,7 @@ describe("senpi-codemode extension factory", () => {
 			const tool = pi.registeredTool;
 			if (!tool) throw new Error("eval tool was not registered");
 			expect(tool.description).not.toContain("agent(");
-			expect(tool.description).not.toContain("<dag>");
+			expect(tool.description).not.toContain("<workflow>");
 		} finally {
 			await emit(pi, "session_shutdown", {}, ctx);
 			await rm(cwd, { recursive: true, force: true });
