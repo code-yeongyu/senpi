@@ -1,5 +1,35 @@
 # Permission System Builtin Extension
 
+## Native monitor authorization and immutable parent binding (2026-08-28)
+
+### What changed
+
+- Added `packages/coding-agent/src/core/extensions/builtin/permission-system/monitor-file-path.ts` to bind a requested monitor path to its logical parent, canonical parent, canonical target, and parent device/inode during permission parsing.
+- Native monitor `read` requests now include both logical and canonical targets, while canonical external targets continue to request `external_directory`; unresolved parents request opaque sentinel-scoped external approval before any distinguishable resolution failure can be exposed.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/config.ts` allows the non-executing `monitor_control` permission in workspace and read-only presets.
+- Execution rejects path mutation, logical-parent retargeting, canonical-parent replacement, non-directory parents, and changed filesystem identity before watcher registration.
+- Focused tests cover symlinked external parents, canonical read rules, execution-time replacement, and event-time retargeting.
+
+### Why
+
+Authorizing only the logical target allowed canonical `read` deny rules to be skipped, and retaining only a canonical pathname left completion messages vulnerable to logical symlink retargeting. Binding and checking both views makes permission approval match the path later reported to the caller.
+
+### Why an extension could not handle it
+
+The permission parser must attach the approved binding to the exact tool-input object before execution, and the terminal runtime must consume that binding after approval and on every event. This crosses the permission hook and tool execution boundary by design.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/config.ts`
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/monitor-file-path.ts`
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/monitor.ts`
+- `packages/coding-agent/src/core/extensions/builtin/terminal/file-monitor-registry.ts`
+- `packages/coding-agent/test/suite/terminal-monitor.test.ts`
+- `packages/coding-agent/test/suite/file-monitor-registry.test.ts`
+- `packages/coding-agent/test/permission/config.test.ts`
+- `packages/coding-agent/test/permission/parsers.test.ts`
+
 ## Overview
 Full port of opencode's permission system to senpi-mono as a builtin extension.
 

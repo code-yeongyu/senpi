@@ -1,5 +1,25 @@
 # changes
 
+## Hidden secure file-monitor worker bootstrap (2026-08-29)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts` recognizes `--internal-file-monitor-worker` before Bun re-exec, package bootstrap, or normal CLI dispatch and loads only the secure worker route.
+- `packages/coding-agent/src/bun/cli.ts` exposes the same hidden route so compiled Bun executables can spawn themselves as directory-bound monitor workers.
+
+### Why
+
+- Secure native file monitoring needs a child whose process working directory retains the approved directory object across pathname rename/symlink replacement. Node can execute the worker source directly, while a compiled Bun binary must re-enter its own statically included CLI route.
+
+### Why an extension could not handle it
+
+- A compiled standalone executable can only select this mode before the normal CLI graph starts; the terminal extension cannot add a new process-entry branch after dispatch.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli.ts`
+- `packages/coding-agent/src/bun/cli.ts`
+
 ## Honor --auto-title-sessions outside interactive mode (2026-08-28)
 
 ### What changed

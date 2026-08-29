@@ -37,13 +37,13 @@ function surfaceLines(name: string, text: string): Array<{ name: string; line: n
 }
 
 function stubTerminalCtx(): TerminalToolContext {
-	return {
+	return Object.assign({} as TerminalToolContext, {
 		manager: { get: () => undefined },
 		cwd: process.cwd(),
 		defaultCols: 120,
 		defaultRows: 40,
 		getEnv: () => process.env,
-	} as unknown as TerminalToolContext;
+	});
 }
 
 type PromptSurfaceTool = {
@@ -109,6 +109,16 @@ describe("stale wait-idiom consistency gate", () => {
 		expect(TERMINAL_PROMPT_SECTION).toContain("monitor(");
 		expect(TERMINAL_PROMPT_SECTION.toLowerCase()).toContain("notification");
 		expect(TERMINAL_PROMPT_SECTION).not.toContain("wait_for");
+	});
+
+	it("the terminal prompt routes file artifacts to native monitor fields", () => {
+		expect(TERMINAL_PROMPT_SECTION).toContain("path:");
+		expect(TERMINAL_PROMPT_SECTION).toContain('event: "create"');
+		expect(
+			surfaceLines("terminal/prompt.ts TERMINAL_PROMPT_SECTION", TERMINAL_PROMPT_SECTION).filter(({ text }) =>
+				/until\s+test\s+-f/.test(text),
+			),
+		).toEqual([]);
 	});
 
 	it("the bash tool surface routes waits to the monitor tool", () => {

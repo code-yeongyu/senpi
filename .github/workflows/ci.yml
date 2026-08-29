@@ -208,13 +208,14 @@ jobs:
       # The persistent-terminal TS runtime + tool suite must pass on all three OS. Native
       # ConPTY/PTY behavior is proven separately by the Native Prebuilds cargo job; here the
       # loader falls back to the child_process pipe backend when no host prebuild is present,
-      # so these tests exercise the cross-OS TS layer (loader, session, screen, tools).
+      # so these tests exercise the cross-OS TS layer (loader, session, screen, tools,
+      # native file watching, and secure worker lifecycle).
       - name: PTY package tests
         run: npm run test --workspace @earendil-works/pi-pty
 
       - name: Terminal extension + shell resolution tests
         shell: bash
-        run: npx vitest run test/suite/terminal-extension.test.ts test/suite/terminal-settings-notify.test.ts test/suite/shell-config-kind.test.ts
+        run: npx vitest run test/suite/terminal-extension.test.ts test/suite/terminal-settings-notify.test.ts test/suite/shell-config-kind.test.ts test/suite/file-monitor-fallback.test.ts test/suite/secure-file-monitor-worker-concurrency.test.ts test/suite/secure-file-monitor-worker-failures.test.ts test/suite/secure-file-monitor-worker.test.ts test/suite/secure-file-monitor-kill.test.ts test/suite/terminal-manager-capacity.test.ts test/suite/terminal-monitor.test.ts test/suite/terminal-reload-survival.test.ts
         working-directory: packages/coding-agent
 
   inspector-handoff:

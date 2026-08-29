@@ -11,8 +11,13 @@ terminal/
 ├── manager.ts           # TerminalManager: session map ownership
 ├── runtime-session.ts   # TerminalRuntimeSession: one live PTY
 ├── session-bundle.ts    # TerminalSessionBundle: reload parking/claiming across extension generations
-├── monitor-registry.ts  # MonitorRegistry: registered watches over session output
-├── monitor-notify.ts    # Event → notification delivery (283 LOC, largest non-tool file)
+├── monitor-registry.ts  # Aggregate command/native monitor lifecycle, capacity, snapshots
+├── monitor-types.ts     # Shared command-monitor event, snapshot, and registration types
+├── file-monitor-registry.ts # Native watch_N facade + aggregate lifecycle ownership
+├── file-monitor-{legacy,secure}.ts # Injectable legacy and anchored-worker backends
+├── file-monitor-{runtime,types,cleanup}.ts # Fingerprints, contracts, and cleanup helpers
+├── secure-file-monitor-worker*.ts # Pooled cwd-anchored fs.watch/stat worker and NDJSON protocol
+├── monitor-notify.ts    # Event → notification delivery and wake-budget handling
 ├── monitor-status*.ts   # Footer status text + 1s unref'd ticker
 ├── notify.ts            # TerminalNotifier
 ├── output-format.ts     # Output shaping/sanitization
@@ -29,7 +34,8 @@ terminal/
 |---|---|
 | Change PTY spawn/exec behavior | `tools/bash.ts`, `tools/spawn.ts` |
 | Change auto-detach window (~60s foreground) | `tools/foreground-detach.ts`, `tools/foreground-window.ts` |
-| Add/change a monitor condition | `tools/monitor.ts` + `monitor-registry.ts` |
+| Add/change a command monitor | `tools/monitor.ts` + `monitor-registry.ts` |
+| Add/change a native file monitor | `tools/monitor.ts` + `file-monitor-{registry,legacy,secure}.ts` + `secure-file-monitor-worker*.ts` |
 | Change how monitor wakes the session | `monitor-notify.ts` |
 | Change footer terminal status | `monitor-status.ts`, `monitor-status-ticker.ts` |
 | Change defaults (size, scrollback, caps) | `shared.ts` |
@@ -38,7 +44,10 @@ terminal/
 ## CONVENTIONS
 
 - **Monitor is the wait mechanism.** Observable state changes are delivered as events that wake the session; `bash_output` is for peeking, not waiting.
-- **Companion tools stay active together** with `bash` and are synchronized with extension lifecycle and session-reload bundles — a companion tool without a live PTY is a bug.
+- **Companion tools share one lifecycle bundle.** PTY commands and native `watch_N` file monitors survive reload through `session-bundle.ts`; native watches do not require a live PTY but do require the bundle-owned `MonitorRegistry`.
+- Native file monitors bind both the requested logical parent and its approved canonical directory identity. Production target inspection runs basename-only inside a pooled child whose retained `cwd` is bigint-identity checked before activation; every outcome also revalidates the logical binding before publication.
+- Source-Bun sessions launch the fixed worker source with the repository-required Node runtime, not Bun, so a watched directory's `bunfig.toml` cannot inject preloads; standalone Bun executables re-enter only the hidden worker route.
+- Parked monitor output bounds line noise without evicting completion summaries, and buffers background exits up to the configured terminal capacity.
 - Tool output is capped at 2,000 lines / 50 KiB and sanitized before it reaches the model; monitor status refreshes on a 1-second unref'd interval.
 - TypeBox schemas are **flat root objects, never root unions** (`tools/monitor.ts` is the reference) — several provider conversions rebuild schemas from top-level `properties` and a root `anyOf` arrives empty.
 - Environment overrides are injected for tests rather than mutating `process.env`.
@@ -48,10 +57,10 @@ terminal/
 
 - Using `tmux` for long-running/interactive work through terminal `bash` — the PTY session is the mechanism.
 - Polling with `sleep`, foreground wait loops, or repeated `bash_output` while waiting on observable state.
-- Letting a companion tool dangle without a live PTY `bash`, or letting an output observer interfere with session ingest.
+- Letting a command monitor's PTY dangle, or letting an output observer interfere with session ingest. Native `watch_N` monitors intentionally have no PTY.
 - Assuming the injected `timeout` kills a background session — it never does; use `kill_bash`.
 
 ## NOTES
 
-- `changes.md` records `wait_for`, `block`, and `timeout` as **deprecated ghost schema parameters**: still accepted for compatibility, but not the current control model. Do not build new behavior on them.
+- Historical `wait_for`, `block`, and per-tool ghost `timeout` parameters were removed from companion schemas. Unknown keys may pass provider validation, but terminal tools ignore them; current calls must use the documented fields.
 - The default bash timeout itself is owned by `builtin/bash-timeout/`, not here; terminal consumes the resolved value.

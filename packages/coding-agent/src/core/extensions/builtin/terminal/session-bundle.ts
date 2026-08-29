@@ -1,7 +1,10 @@
 import type { WakeSourceStateItem } from "../monitor-state-event.ts";
+import { runAllAsyncCleanup } from "./file-monitor-cleanup.ts";
+import type { FileMonitorRegistryDependencies } from "./file-monitor-registry.ts";
 import { TerminalManager, type TerminalManagerOptions } from "./manager.ts";
 import { type MonitorEvent, MonitorRegistry, type MonitorSnapshotEntry } from "./monitor-registry.ts";
 import type { TerminalRuntimeSession } from "./runtime-session.ts";
+import { DEFAULT_MAX_SESSIONS } from "./shared.ts";
 
 export interface TerminalEventSinks {
 	readonly onMonitorEvent: (event: MonitorEvent) => void;
@@ -10,8 +13,11 @@ export interface TerminalEventSinks {
 	readonly onBackgroundExit: (id: string, runtime: TerminalRuntimeSession) => void;
 }
 
+export interface TerminalSessionBundleOptions extends TerminalManagerOptions {
+	readonly fileMonitor?: FileMonitorRegistryDependencies;
+}
+
 const MAX_PARKED_MONITOR_EVENTS = 100;
-const MAX_PARKED_EXITS = 32;
 
 /**
  * The long-lived terminal runtime for one agent session: the PTY session manager plus
@@ -23,17 +29,28 @@ const MAX_PARKED_EXITS = 32;
 export class TerminalSessionBundle {
 	readonly manager: TerminalManager;
 	readonly monitors: MonitorRegistry;
+	readonly #maxParkedExits: number;
 	#sinks: TerminalEventSinks | null = null;
 	#parkedMonitorEvents: MonitorEvent[] = [];
+	#parkedMonitorLineCount = 0;
 	#parkedExits = new Map<string, TerminalRuntimeSession>();
 	#backgrounds = new Map<string, WakeSourceStateItem>();
 	#torndown = false;
 
-	constructor(options: TerminalManagerOptions) {
-		this.manager = new TerminalManager(options);
-		this.monitors = new MonitorRegistry((event) => this.#dispatchMonitorEvent(event), {
-			onChange: (snapshot) => this.#sinks?.onMonitorState(snapshot),
+	constructor(options: TerminalSessionBundleOptions) {
+		this.#maxParkedExits = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
+		let monitors: MonitorRegistry | undefined;
+		this.manager = new TerminalManager({
+			...options,
+			getExternalSessionCount: () => monitors?.fileCount ?? 0,
 		});
+		monitors = new MonitorRegistry((event) => this.#dispatchMonitorEvent(event), {
+			getTerminalSessionCount: () => this.manager.capacityCount,
+			maxSessions: options.maxSessions ?? DEFAULT_MAX_SESSIONS,
+			onChange: (snapshot) => this.#sinks?.onMonitorState(snapshot),
+			fileMonitor: options.fileMonitor,
+		});
+		this.monitors = monitors;
 	}
 
 	/** Install live sinks, re-publish channel state, and flush everything buffered while parked. */
@@ -42,6 +59,7 @@ export class TerminalSessionBundle {
 		this.#sinks = sinks;
 		const parkedMonitorEvents = this.#parkedMonitorEvents;
 		this.#parkedMonitorEvents = [];
+		this.#parkedMonitorLineCount = 0;
 		const parkedExits = [...this.#parkedExits];
 		this.#parkedExits.clear();
 		sinks.onMonitorState(this.monitors.snapshot());
@@ -71,22 +89,28 @@ export class TerminalSessionBundle {
 			this.#sinks.onBackgroundExit(id, runtime);
 			return;
 		}
-		if (this.#parkedExits.size >= MAX_PARKED_EXITS) return;
+		if (this.#parkedExits.size >= this.#maxParkedExits) return;
 		this.#parkedExits.set(id, runtime);
 	}
 
 	async teardown(): Promise<void> {
 		if (this.#torndown) return;
-		this.#parkedMonitorEvents = [];
-		this.#parkedExits.clear();
-		this.monitors.dispose();
-		if (this.#backgrounds.size > 0) {
-			this.#backgrounds.clear();
-			this.#sinks?.onBackgroundState([]);
-		}
 		this.#torndown = true;
-		this.#sinks = null;
-		await this.manager.teardown();
+		this.#parkedMonitorEvents = [];
+		this.#parkedMonitorLineCount = 0;
+		this.#parkedExits.clear();
+		const hadBackgrounds = this.#backgrounds.size > 0;
+		this.#backgrounds.clear();
+		await runAllAsyncCleanup([
+			() => this.monitors.teardown(),
+			() => {
+				if (hadBackgrounds) this.#sinks?.onBackgroundState([]);
+			},
+			() => {
+				this.#sinks = null;
+			},
+			() => this.manager.teardown(),
+		]);
 	}
 
 	#dispatchMonitorEvent(event: MonitorEvent): void {
@@ -96,7 +120,14 @@ export class TerminalSessionBundle {
 			return;
 		}
 		this.#parkedMonitorEvents.push(event);
-		if (this.#parkedMonitorEvents.length > MAX_PARKED_MONITOR_EVENTS) this.#parkedMonitorEvents.shift();
+		if (event.type !== "line") return;
+		this.#parkedMonitorLineCount += 1;
+		if (this.#parkedMonitorLineCount <= MAX_PARKED_MONITOR_EVENTS) return;
+		const oldestLineIndex = this.#parkedMonitorEvents.findIndex((candidate) => candidate.type === "line");
+		if (oldestLineIndex >= 0) {
+			this.#parkedMonitorEvents.splice(oldestLineIndex, 1);
+			this.#parkedMonitorLineCount -= 1;
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TerminalNotifier, type TerminalNotifierDeps } from "../../src/core/extensions/builtin/terminal/notify.ts";
 import type { TerminalRuntimeSession } from "../../src/core/extensions/builtin/terminal/runtime-session.ts";
 import {
+	MAX_TERMINAL_SESSIONS,
 	resolveTerminalSettings,
 	TERMINAL_SETTINGS_DEFAULTS,
 } from "../../src/core/extensions/builtin/terminal/settings.ts";
@@ -65,6 +66,10 @@ describe("terminal settings resolver", () => {
 		expect(resolved.maxSessions).toBe(32); // 0 is invalid → default
 		expect(resolved.notify).toBe("off");
 		expect(resolved.timeoutAction).toBe("background"); // invalid → default
+	});
+
+	it("caps configured terminal resources at the hard safety limit", () => {
+		expect(resolveTerminalSettings({ maxSessions: Number.MAX_SAFE_INTEGER }).maxSessions).toBe(MAX_TERMINAL_SESSIONS);
 	});
 
 	it("resolves bounded monitor-delivery settings", () => {

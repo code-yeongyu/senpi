@@ -1,6 +1,8 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
-import { MonitorRegistry } from "../monitor-registry.ts";
+import { resolveMonitorFilePathForExecution } from "../../permission-system/monitor-file-path.ts";
+import { FileMonitorRegistrationError } from "../file-monitor-registry.ts";
+import { MonitorRegistry, MonitorRegistryCapacityError } from "../monitor-registry.ts";
 import { DEFAULT_COLS, DEFAULT_ROWS, TERMINAL_MONITOR_TOOL } from "../shared.ts";
 import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
 import { renderMonitorCall } from "./render.ts";
@@ -30,7 +32,19 @@ export const monitorSchema = Type.Object({
 	),
 	command: Type.Optional(
 		Type.String({
-			description: "Create (required): shell command to run and watch in a PTY-backed monitor session.",
+			description:
+				"Create: shell command to run and watch in a PTY-backed monitor session. Mutually exclusive with path.",
+		}),
+	),
+	path: Type.Optional(
+		Type.String({
+			minLength: 1,
+			description: "Create: file path to watch natively without shell polling. Mutually exclusive with command.",
+		}),
+	),
+	event: Type.Optional(
+		StringEnum(["create", "modify"] as const, {
+			description: "Path watch event. Defaults to create.",
 		}),
 	),
 	filter: Type.Optional(
@@ -44,13 +58,16 @@ export const monitorSchema = Type.Object({
 		}),
 	),
 	persistent: Type.Optional(
-		Type.Boolean({ description: "Keep watching until the command exits or kill_bash stops its bash_id." }),
+		Type.Boolean({ description: "Command watches only: keep watching until command exit or kill_bash." }),
 	),
-	bash_id: Type.Optional(Type.String({ description: "Rearm (required): paused monitor bash_id to resume." })),
+	bash_id: Type.Optional(
+		Type.String({ description: "Rearm (required): paused monitor id (bash_N or watch_N) to resume." }),
+	),
 });
 export type MonitorInput = Static<typeof monitorSchema>;
 
 type MonitorCreateInput = MonitorInput & { description: string; command: string };
+type FileMonitorCreateInput = MonitorInput & { description: string; path: string };
 
 function isCreateInput(input: MonitorInput): input is MonitorCreateInput {
 	return (
@@ -58,6 +75,15 @@ function isCreateInput(input: MonitorInput): input is MonitorCreateInput {
 		input.description.length > 0 &&
 		typeof input.command === "string" &&
 		input.command.length > 0
+	);
+}
+
+function isFileCreateInput(input: MonitorInput): input is FileMonitorCreateInput {
+	return (
+		typeof input.description === "string" &&
+		input.description.length > 0 &&
+		typeof input.path === "string" &&
+		input.path.length > 0
 	);
 }
 
@@ -82,6 +108,12 @@ async function createMonitor(
 	input: MonitorCreateInput,
 	execCtx: { cwd?: string } | undefined,
 ): Promise<TerminalToolResult> {
+	try {
+		registry.assertCapacity();
+	} catch (error) {
+		if (error instanceof MonitorRegistryCapacityError) return errorResult(error.message);
+		throw error;
+	}
 	let filter: RegExp | undefined;
 	try {
 		filter = compileFilter(input.filter);
@@ -96,9 +128,53 @@ async function createMonitor(
 		cwd: execCtx?.cwd,
 		...(input.persistent ? {} : { timeoutMs: resolveTimeoutMs(input.timeout_ms) }),
 	});
-	ctx.onMonitorRearmed?.(id);
-	registry.register({ id, description: input.description, runtime, filter });
+	try {
+		registry.register({
+			id,
+			description: input.description,
+			runtime,
+			filter,
+			onBeforeEvents: ctx.onMonitorRearmed,
+		});
+	} catch (error) {
+		await ctx.manager.stop(id);
+		if (error instanceof MonitorRegistryCapacityError) return errorResult(error.message);
+		throw error;
+	}
 	return textResult(`Monitor started with ID: ${id}`, { details: { bash_id: id, monitor: true } });
+}
+
+async function createFileMonitor(
+	ctx: TerminalToolContext,
+	registry: MonitorRegistry,
+	input: FileMonitorCreateInput,
+	execCtx: { cwd?: string } | undefined,
+): Promise<TerminalToolResult> {
+	const resolution = resolveMonitorFilePathForExecution(input, input.path, execCtx?.cwd ?? ctx.cwd);
+	if (!resolution.ok) return errorResult(resolution.message);
+	try {
+		const id = await registry.registerFile({
+			description: input.description,
+			path: resolution.value.canonicalPath,
+			displayPath: resolution.value.logicalAbsolutePath,
+			logicalParent: resolution.value.logicalParent,
+			parentIdentity: {
+				device: resolution.value.parentDevice,
+				inode: resolution.value.parentInode,
+			},
+			event: input.event ?? "create",
+			timeoutMs: resolveTimeoutMs(input.timeout_ms),
+			onBeforeWatch: ctx.onMonitorRearmed,
+		});
+		return textResult(`Monitor started with ID: ${id}`, {
+			details: { bash_id: id, monitor: true, watch_id: id },
+		});
+	} catch (error) {
+		if (error instanceof FileMonitorRegistrationError || error instanceof MonitorRegistryCapacityError) {
+			return errorResult(error.message);
+		}
+		throw error;
+	}
 }
 
 /** Build the PTY-backed monitor tool. Monitor handles share TerminalManager's bash_N namespace. */
@@ -114,10 +190,11 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 		name: TERMINAL_MONITOR_TOOL,
 		label: "monitor",
 		description:
-			"Subscribe to a command's output instead of polling: newline-terminated PTY output lines (stderr merged) that match filter arrive as injected events while you keep working; command exit always delivers a summary event. Identical consecutive line-only update batches are deduped, so a watcher reprinting unchanged status does not re-wake the session. Returns a bash_id immediately; peek with bash_output, stop with kill_bash.",
-		promptSnippet: "Subscribe to a command's PTY output lines as injected events instead of polling",
+			"Subscribe to command output or a native file create/modify event instead of polling. Command watches stream matching PTY lines and always summarize exit; path watches emit once and end. Identical consecutive line-only batches are deduped.",
+		promptSnippet: "Subscribe to command output or native file events instead of polling",
 		promptGuidelines: [
 			"Waiting on observable state (CI checks, builds, log patterns, deploys) means a monitor, never a foreground sleep/poll loop.",
+			"Artifact file creation or modification means `path` plus `event`; use this instead of `until test -f ...; do sleep ...`.",
 			"Shape the command for the events you need: one-shot gate = `until <cond>; do sleep 1; done; printf 'READY\\n'` with filter ^READY$; stream = `tail -n 0 -F <log> | grep --line-buffered <pat>` with persistent: true, then kill_bash.",
 			"Sleep loops belong INSIDE the monitor command, never in your turn: about to sleep, re-poll bash_output, or foreground-block on a long command means register a monitor and keep working.",
 		],
@@ -130,8 +207,12 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 			_onUpdate?: undefined,
 			execCtx?: { cwd?: string },
 		): Promise<TerminalToolResult> {
-			const registry = getRegistry();
 			if (input.action === "rearm") {
+				const createOnlyField = (
+					["description", "command", "path", "event", "filter", "timeout_ms", "persistent"] as const
+				).find((field) => input[field] !== undefined);
+				if (createOnlyField) return errorResult(`monitor rearm does not accept ${createOnlyField}.`);
+				const registry = getRegistry();
 				const bashId = input.bash_id;
 				if (bashId === undefined || bashId.length === 0) return errorResult("monitor rearm requires bash_id.");
 				const outcome = registry.rearm(bashId);
@@ -140,10 +221,23 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 				ctx.onMonitorRearmed?.(bashId);
 				return textResult(`Monitor ${bashId} re-armed.`);
 			}
-			if (!isCreateInput(input)) {
-				return errorResult("monitor requires description and command to start a watcher.");
+			const commandInput = isCreateInput(input);
+			const fileInput = isFileCreateInput(input);
+			if (commandInput && fileInput) {
+				return errorResult("monitor accepts either command or path, not both.");
 			}
-			return createMonitor(ctx, registry, input, execCtx);
+			if (fileInput) {
+				if (input.filter !== undefined) return errorResult("monitor filter is only supported with command.");
+				if (input.persistent) return errorResult("persistent file monitors are not supported.");
+				const registry = ctx.monitorRegistry;
+				if (!registry) return errorResult("Native file monitors require a lifecycle-owned monitor registry.");
+				return createFileMonitor(ctx, registry, input, execCtx);
+			}
+			if (commandInput) {
+				if (input.event !== undefined) return errorResult("monitor event is only supported with path.");
+				return createMonitor(ctx, getRegistry(), input, execCtx);
+			}
+			return errorResult("monitor requires description and command or path to start a watcher.");
 		},
 	};
 }

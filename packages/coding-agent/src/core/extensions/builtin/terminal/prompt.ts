@@ -15,16 +15,23 @@ manual \`&\` backgrounding — use the built-in session tools:
   tail — peeking is for steering, never for waiting.
 - \`monitor({ description, command, filter?, timeout_ms?, persistent? })\` subscribes you to a
   command: newline-terminated PTY output lines (stderr included) matching \`filter\` arrive as
-  injected events while you keep working; command exit always delivers a summary. One-shot
-  gate: wait inside the command and print one sentinel (\`until <cond>; do sleep 1; done;
-  printf 'READY\\n'\`). Stream: \`tail -n 0 -F | grep --line-buffered\`. Filter noise at the
-  source and stop with \`kill_bash\`. Identical updates are deduped; enough monitor-only wakes
-  pause ALL monitors - completion still wakes the session, and
+  injected events while you keep working; command exit always delivers a summary.
+- \`monitor({ description, path, event: "create" | "modify", timeout_ms? })\` subscribes to one
+  file transition with native events plus an internal stat recheck, but no shell polling process.
+  Use this form for artifact creation or replacement on supported local filesystems. Example:
+  \`monitor({ description: "artifact ready", path: "dist/app.tar.gz", event: "create" })\`.
+  If Node cannot register its native watcher for a filesystem, use a bounded command gate with an
+  explicit completion sentinel instead.
+- For non-file conditions, use a one-shot command gate that prints one sentinel
+  (\`until <cond>; do sleep 1; done; printf 'READY\\n'\`). Stream command output with
+  \`tail -n 0 -F | grep --line-buffered\`. Filter noise at the source. Identical updates are
+  deduped; enough monitor-only wakes pause ALL monitors - completion still wakes the session, and
   \`monitor({ action: "rearm", bash_id })\` resumes intermediate events.
 - \`bash_input({ bash_id, input, keys, submit })\` sends stdin or named keys (e.g.
   \`["ctrl+c"]\`, \`["enter"]\`) to steer a REPL or interrupt a process.
 - \`bash_resize({ bash_id, cols, rows })\` resizes the PTY so full-screen programs reflow.
-- \`kill_bash({ bash_id })\` (or \`{ all: true }\`) tears the session tree down with no orphans.
+- \`kill_bash({ bash_id })\` accepts either a \`bash_N\` terminal id or \`watch_N\` native monitor
+  id. \`{ all: true }\` clears both kinds with no orphans.
 
 Typical flow: start with \`run_in_background: true\`, watch for patterns with
 \`monitor({ command, filter })\`, peek with \`bash_output\`, steer with \`bash_input\`, then

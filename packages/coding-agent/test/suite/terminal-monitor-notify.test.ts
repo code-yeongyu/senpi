@@ -150,6 +150,7 @@ describe("terminal monitor event delivery", () => {
 		expect(sent).toHaveLength(1);
 
 		const manager = new TerminalManager();
+		const order: string[] = [];
 		const savedForcePipe = process.env.SENPI_PTY_FORCE_PIPE;
 		process.env.SENPI_PTY_FORCE_PIPE = "1";
 		try {
@@ -158,13 +159,17 @@ describe("terminal monitor event delivery", () => {
 				resolveSummary = resolve;
 			});
 			const registry = new MonitorRegistry((event) => {
+				order.push(event.type);
 				notifier.notifyEvent(event);
 				if (event.type === "summary") resolveSummary?.();
 			});
 			const ctx = {
 				manager,
 				monitorRegistry: registry,
-				onMonitorRearmed: (id: string) => notifier.rearm(id),
+				onMonitorRearmed: (id: string) => {
+					order.push(`rearm:${id}`);
+					notifier.rearm(id);
+				},
 				cwd: process.cwd(),
 				defaultCols: 120,
 				defaultRows: 40,
@@ -182,6 +187,7 @@ describe("terminal monitor event delivery", () => {
 			expect(sent[1]?.message.content).toContain("Monitor event(fresh completion): done");
 			expect(sent[1]?.message.content).toContain("watcher completed (exit code 0)");
 			expect(sent[1]?.options).toMatchObject({ triggerTurn: true });
+			expect(order).toEqual(["rearm:bash_1", "line", "summary"]);
 		} finally {
 			await manager.teardown();
 			if (savedForcePipe === undefined) delete process.env.SENPI_PTY_FORCE_PIPE;

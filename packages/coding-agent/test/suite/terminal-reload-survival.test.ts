@@ -1,10 +1,18 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerTerminalExtension } from "../../src/core/extensions/builtin/terminal/extension.ts";
+import type { FileMonitorWatch } from "../../src/core/extensions/builtin/terminal/file-monitor-runtime.ts";
+import type { MonitorEvent } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
+import type { TerminalRuntimeSession } from "../../src/core/extensions/builtin/terminal/runtime-session.ts";
+import {
+	type TerminalEventSinks,
+	TerminalSessionBundle,
+} from "../../src/core/extensions/builtin/terminal/session-bundle.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 import { initTheme, theme } from "../../src/modes/interactive/theme/theme.ts";
+import { FakeWatcher } from "./native-file-monitor-harness.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
 
@@ -32,13 +40,22 @@ interface FakeRunner {
 	waitForMessage(predicate: (content: string) => boolean, label: string): Promise<string>;
 }
 
+function monitorSinks(events: MonitorEvent[]): TerminalEventSinks {
+	return {
+		onMonitorEvent: (event) => events.push(event),
+		onMonitorState: () => {},
+		onBackgroundState: () => {},
+		onBackgroundExit: () => {},
+	};
+}
+
 function createRunner(): FakeRunner {
 	const handlers = new Map<string, Handler[]>();
 	const tools = new Map<string, ToolLike>();
 	const sentMessages: string[] = [];
 	const listeners = new Set<(content: string) => void>();
 	let activeTools: string[] = [];
-	const pi = {
+	const pi = Object.assign({} as ExtensionAPI, {
 		registerTool: (tool: ToolLike) => {
 			tools.set(tool.name, tool);
 		},
@@ -56,7 +73,7 @@ function createRunner(): FakeRunner {
 		setActiveTools: (next: string[]) => {
 			activeTools = next;
 		},
-	} as unknown as ExtensionAPI;
+	});
 	return {
 		pi,
 		tools,
@@ -89,13 +106,13 @@ function createRunner(): FakeRunner {
 }
 
 function makeCtx(runner: FakeRunner, cwd: string, sessionId: string): ExtensionContext {
-	return {
+	return Object.assign({} as ExtensionContext, {
 		cwd,
 		mode: "tui",
 		model: { id: "test-model", api: "openai-completions" },
 		ui: { setStatus: runner.setStatus, notify: () => {}, theme },
 		sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined },
-	} as unknown as ExtensionContext;
+	});
 }
 
 function firstText(result: ToolResultLike): string {
@@ -106,6 +123,29 @@ function extractBashId(text: string): string {
 	const match = /ID: (bash_\d+)/.exec(text);
 	if (!match?.[1]) throw new Error(`No bash id in tool result: ${text}`);
 	return match[1];
+}
+
+function extractWatchId(text: string): string {
+	const match = /ID: (watch_\d+)/.exec(text);
+	if (!match?.[1]) throw new Error(`No watch id in tool result: ${text}`);
+	return match[1];
+}
+
+function waitForFile(path: string, label: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const watcher = watch(dirname(path), settleIfPresent);
+		const timeout = setTimeout(() => {
+			watcher.close();
+			reject(new Error(`Timed out waiting for ${label}`));
+		}, 8000);
+		function settleIfPresent(): void {
+			if (!existsSync(path)) return;
+			clearTimeout(timeout);
+			watcher.close();
+			resolve();
+		}
+		settleIfPresent();
+	});
 }
 
 describe("terminal extension — background state survives reload", () => {
@@ -165,13 +205,33 @@ describe("terminal extension — background state survives reload", () => {
 	it("keeps a monitor watching and re-publishes its footer status across reload (C1)", async () => {
 		const gen1 = await startGeneration("startup");
 		const trigger = join(tmp, "fire-c1");
+		const ready = join(tmp, "ready-c1");
+		const waitScript = join(tmp, "wait-for-trigger.mjs");
+		writeFileSync(
+			waitScript,
+			[
+				'import { existsSync, watch, writeFileSync } from "node:fs";',
+				'import { dirname } from "node:path";',
+				"const [trigger, ready] = process.argv.slice(2);",
+				"const complete = () => {",
+				"\tif (!existsSync(trigger)) return;",
+				"\twatcher.close();",
+				'\tprocess.stdout.write("event-after-reload\\n");',
+				"};",
+				"const watcher = watch(dirname(trigger), complete);",
+				'writeFileSync(ready, "ready");',
+				"complete();",
+			].join("\n"),
+		);
+		const workerReady = waitForFile(ready, "reload-survival worker readiness");
 		const created = await gen1.runner.tools.get("monitor")?.execute("c1", {
 			description: "reload survivor watch",
-			command: `sh -c 'while [ ! -e "${trigger}" ]; do sleep 0.05; done; echo event-after-reload'`,
+			command: `${JSON.stringify(process.execPath)} ${JSON.stringify(waitScript)} ${JSON.stringify(trigger)} ${JSON.stringify(ready)}`,
 			persistent: true,
 		});
 		expect(created?.isError).toBeFalsy();
 		extractBashId(firstText(created ?? { content: [] }));
+		await workerReady;
 
 		const gen2 = await reloadInto(gen1);
 
@@ -181,7 +241,7 @@ describe("terminal extension — background state survives reload", () => {
 			(content) => content.includes("event-after-reload"),
 			"post-reload monitor line on the new runner",
 		);
-		writeFileSync(trigger, "");
+		writeFileSync(trigger, "go\n");
 		expect(await delivered).toContain("reload survivor watch");
 	});
 
@@ -203,6 +263,119 @@ describe("terminal extension — background state survives reload", () => {
 		const peekedText = firstText(peeked ?? { content: [] });
 		expect(peekedText).toContain("status: running");
 		expect(peekedText).toContain("alive-before-reload");
+	});
+
+	it("keeps a native watch addressable across reload and cancels it from the new generation", async () => {
+		const gen1 = await startGeneration("startup");
+		const created = await gen1.runner.tools.get("monitor")?.execute("native-reload", {
+			description: "native reload survivor",
+			path: join(tmp, "native-reload.json"),
+			event: "create",
+		});
+		expect(created?.isError).toBeFalsy();
+		const watchId = extractWatchId(firstText(created ?? { content: [] }));
+
+		const gen2 = await reloadInto(gen1);
+		expect(gen2.runner.setStatus).toHaveBeenCalledWith("monitors", expect.stringContaining("native reload survivor"));
+
+		const killed = await gen2.runner.tools.get("kill_bash")?.execute("native-reload-kill", { bash_id: watchId });
+		expect(killed?.isError).toBeFalsy();
+		expect(firstText(killed ?? { content: [] })).toContain(`Killed ${watchId}`);
+		expect(gen2.runner.setStatus).toHaveBeenCalledWith("monitors", undefined);
+	});
+
+	it("delivers native file events through the rebound sinks after reload", async () => {
+		const target = join(realpathSync(tmp), "native-delivery.json");
+		let watcher: FakeWatcher | undefined;
+		const fileMonitor: FileMonitorWatch = (_path, _options, listener) => {
+			watcher = new FakeWatcher(listener);
+			return watcher;
+		};
+		const bundle = new TerminalSessionBundle({ fileMonitor: { watch: fileMonitor } });
+		const oldEvents: MonitorEvent[] = [];
+		const reboundEvents: MonitorEvent[] = [];
+		bundle.bind(monitorSinks(oldEvents));
+		await bundle.monitors.registerFile({
+			description: "reload delivery",
+			path: target,
+			event: "create",
+			timeoutMs: 5000,
+		});
+
+		try {
+			bundle.park();
+			bundle.bind(monitorSinks(reboundEvents));
+			writeFileSync(target, "{}");
+			watcher?.emit("native-delivery.json");
+			await Promise.resolve();
+
+			expect(oldEvents).toEqual([]);
+			expect(reboundEvents).toEqual([
+				expect.objectContaining({ type: "line", line: `created ${target}` }),
+				expect.objectContaining({ type: "summary", summary: expect.stringContaining("completed") }),
+			]);
+		} finally {
+			await bundle.teardown();
+		}
+	});
+
+	it("never evicts parked completion summaries behind line events", async () => {
+		const canonicalTmp = realpathSync(tmp);
+		const watchers: FakeWatcher[] = [];
+		const fileMonitor: FileMonitorWatch = (_path, _options, listener) => {
+			const watcher = new FakeWatcher(listener);
+			watchers.push(watcher);
+			return watcher;
+		};
+		const bundle = new TerminalSessionBundle({ maxSessions: 128, fileMonitor: { watch: fileMonitor } });
+		const reboundEvents: MonitorEvent[] = [];
+		bundle.bind(monitorSinks([]));
+
+		try {
+			for (let index = 0; index < 101; index += 1) {
+				await bundle.monitors.registerFile({
+					description: `parked file ${index}`,
+					path: join(canonicalTmp, `parked-${index}.json`),
+					event: "create",
+					timeoutMs: 5000,
+				});
+			}
+			bundle.park();
+			for (let index = 0; index < watchers.length; index += 1) {
+				writeFileSync(join(canonicalTmp, `parked-${index}.json`), "{}");
+				watchers[index]?.emit(`parked-${index}.json`);
+				await Promise.resolve();
+			}
+			expect(bundle.monitors.snapshot()).toEqual([]);
+
+			bundle.bind(monitorSinks(reboundEvents));
+			expect(reboundEvents.filter((event) => event.type === "summary")).toHaveLength(101);
+		} finally {
+			await bundle.teardown();
+		}
+	});
+
+	it("retains every parked background exit up to configured capacity", async () => {
+		const bundle = new TerminalSessionBundle({ maxSessions: 64 });
+		const exits: string[] = [];
+		bundle.park();
+
+		for (let index = 0; index < 40; index += 1) {
+			const id = `bash_${index + 1}`;
+			const runtime = {} as TerminalRuntimeSession;
+			bundle.notifyBackgroundStart(id, `background ${index}`);
+			bundle.notifyBackgroundExit(id, runtime);
+		}
+		bundle.bind({
+			...monitorSinks([]),
+			onBackgroundExit: (id) => exits.push(id),
+		});
+
+		try {
+			expect(exits).toHaveLength(40);
+		} finally {
+			await bundle.teardown();
+		}
 	});
 
 	it("routes a post-reload background completion notification through the new runner (C3)", async () => {

@@ -14,6 +14,7 @@ const PERMISSION_PRESET_RULES: Record<PermissionPresetName, Ruleset> = {
 		{ permission: "grep", pattern: "*", action: "allow" },
 		{ permission: "edit", pattern: "*", action: "allow" },
 		{ permission: "bash", pattern: "*", action: "allow" },
+		{ permission: "monitor_control", pattern: "*", action: "allow" },
 		{ permission: "external_directory", pattern: "*", action: "ask" },
 	],
 	"read-only": [
@@ -23,6 +24,7 @@ const PERMISSION_PRESET_RULES: Record<PermissionPresetName, Ruleset> = {
 		{ permission: "grep", pattern: "*", action: "allow" },
 		{ permission: "edit", pattern: "*", action: "ask" },
 		{ permission: "bash", pattern: "*", action: "ask" },
+		{ permission: "monitor_control", pattern: "*", action: "allow" },
 		{ permission: "external_directory", pattern: "*", action: "ask" },
 	],
 	ask: [{ permission: "*", pattern: "*", action: "ask" }],

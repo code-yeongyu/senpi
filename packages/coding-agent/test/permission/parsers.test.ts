@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	createBuiltinParserRegistry,
@@ -172,6 +175,59 @@ describe("permission parsers", () => {
 
 				// then
 				expect(result).toEqual([{ permission: "bash", patterns: ["cat"], always: ["cat", "cat *"] }]);
+			});
+		});
+
+		describe("monitor", () => {
+			it("uses a dedicated permission for valid rearm requests", () => {
+				const result = registry.parse("monitor", { action: "rearm", bash_id: "watch_1" }, cwd);
+
+				expect(result).toEqual([{ permission: "monitor_control", patterns: ["watch_1"], always: ["watch_1"] }]);
+			});
+
+			it("does not prompt for malformed rearm requests", () => {
+				const result = registry.parse(
+					"monitor",
+					{ action: "rearm", bash_id: "watch_1", path: "package.json" },
+					cwd,
+				);
+
+				expect(result).toEqual([]);
+			});
+
+			it("gates indistinguishable unresolved symlink parents behind external permission", () => {
+				const root = mkdtempSync(join(tmpdir(), "senpi-monitor-permission-"));
+				const workspace = join(root, "workspace");
+				const external = join(root, "external");
+				mkdirSync(workspace);
+				mkdirSync(external);
+				const presentTarget = join(external, "present-secret");
+				writeFileSync(presentTarget, "secret");
+				const presentLink = join(workspace, "present");
+				const absentLink = join(workspace, "absent");
+				symlinkSync(presentTarget, presentLink);
+				symlinkSync(join(external, "absent-secret"), absentLink);
+
+				try {
+					for (const path of [join(presentLink, "artifact"), join(absentLink, "artifact")]) {
+						const result = registry.parse(
+							"monitor",
+							{ description: "artifact", path, event: "create" },
+							workspace,
+						);
+						expect(result).toEqual([
+							{ permission: "read", patterns: [path], always: [path] },
+							{
+								permission: "external_directory",
+								patterns: ["<unresolved-monitor-parent>"],
+								always: ["<unresolved-monitor-parent>"],
+							},
+						]);
+						expect(JSON.stringify(result)).not.toContain(external);
+					}
+				} finally {
+					rmSync(root, { recursive: true, force: true });
+				}
 			});
 		});
 

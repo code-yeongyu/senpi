@@ -17,6 +17,7 @@ permission-system/
 ├── storage.ts          # JSONL persistence (CONTRACT — don't change line shape)
 ├── arity.ts            # Bash command prefix parser
 ├── parsers.ts          # Tool input parser registry (paths, globs, apply_patch bodies)
+├── monitor-file-path.ts # Native monitor logical/canonical approval binding
 ├── prompt.ts           # TUI permission prompt
 ├── non-interactive.ts  # No-UI fallback (print/json/rpc modes)
 ├── events.ts           # permission_asked / permission_replied events

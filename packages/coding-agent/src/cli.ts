@@ -7,8 +7,17 @@ import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
 import { APP_NAME, DISPLAY_VERSION, getPackageDir } from "./config.ts";
+import { SECURE_FILE_MONITOR_WORKER_FLAG } from "./core/extensions/builtin/terminal/secure-file-monitor-worker-source.ts";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
+
+if (process.argv[2] === SECURE_FILE_MONITOR_WORKER_FLAG) {
+	const { runSecureFileMonitorWorkerChild } = await import(
+		"./core/extensions/builtin/terminal/secure-file-monitor-worker-source.ts"
+	);
+	runSecureFileMonitorWorkerChild();
+	await new Promise<never>(() => {});
+}
 
 /**
  * Hand a Bun-installed CLI to Bun before anything else runs.

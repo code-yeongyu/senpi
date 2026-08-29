@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import registerTerminalExtension from "../../src/core/extensions/builtin/terminal/index.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -116,6 +119,62 @@ describe("terminal monitor liveness event", () => {
 			}
 		} finally {
 			unsubscribe();
+		}
+	});
+
+	it("publishes and clears native watch state through kill_bash", async () => {
+		const states: MonitorStateEvent[] = [];
+		const dir = await mkdtemp(join(tmpdir(), "senpi-monitor-state-"));
+		const harness = await createHarness({
+			extensionFactories: [
+				registerTerminalExtension,
+				(pi) => {
+					pi.on("session_start", () => {
+						pi.events.on("terminal_monitor_state", (data) => {
+							if (
+								typeof data === "object" &&
+								data !== null &&
+								"activeCount" in data &&
+								typeof data.activeCount === "number"
+							) {
+								const monitors =
+									"monitors" in data && Array.isArray(data.monitors)
+										? (data.monitors as MonitorStateEvent["monitors"])
+										: undefined;
+								states.push({ activeCount: data.activeCount, ...(monitors === undefined ? {} : { monitors }) });
+							}
+						});
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		try {
+			await harness.session.bindExtensions({});
+			const started = await harness.session.executeTool("monitor", {
+				description: "native liveness test",
+				path: join(dir, "doneclaim.json"),
+				event: "create",
+			});
+			const watchId = /watch_\d+/.exec(resultText(started))?.[0];
+			if (!watchId) throw new Error("Monitor did not return a native watch id");
+			expect(states).toContainEqual({
+				activeCount: 1,
+				monitors: [
+					{
+						id: watchId,
+						description: "native liveness test",
+						paused: false,
+						startedAtMs: expect.any(Number),
+					},
+				],
+			});
+
+			await harness.session.executeTool("kill_bash", { bash_id: watchId });
+			expect(states.at(-1)).toEqual({ activeCount: 0, monitors: [] });
+		} finally {
+			await rm(dir, { recursive: true, force: true });
 		}
 	});
 });

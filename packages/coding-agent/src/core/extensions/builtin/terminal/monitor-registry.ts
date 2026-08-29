@@ -1,56 +1,31 @@
-import type { TerminalRuntimeSession } from "./runtime-session.ts";
+import { runAllAsyncCleanup, runAllCleanup } from "./file-monitor-cleanup.ts";
+import {
+	type FileMonitorEvent,
+	FileMonitorRegistry,
+	type RegisterFileMonitorOptions,
+} from "./file-monitor-registry.ts";
+import type {
+	MonitorEvent,
+	MonitorRearmResult,
+	MonitorRecord,
+	MonitorRegistryOptions,
+	MonitorSnapshotEntry,
+	RegisterMonitorOptions,
+} from "./monitor-types.ts";
+import { DEFAULT_MAX_SESSIONS } from "./shared.ts";
 import { describeExit } from "./tools/spawn.ts";
 
-export interface MonitorLineEvent {
-	readonly type: "line";
-	readonly id: string;
-	readonly description: string;
-	readonly line: string;
-}
+export class MonitorRegistryCapacityError extends Error {}
 
-export interface MonitorSummaryEvent {
-	readonly type: "summary";
-	readonly id: string;
-	readonly description: string;
-	readonly summary: string;
-}
-
-export type MonitorEvent = MonitorLineEvent | MonitorSummaryEvent;
-
-export type MonitorRearmResult = "rearmed" | "not_paused" | "not_found";
-
-export interface MonitorSnapshotEntry {
-	readonly id: string;
-	readonly description: string;
-	readonly paused: boolean;
-	/** Epoch milliseconds when the watch registered; feeds the footer's live elapsed label. */
-	readonly startedAtMs: number;
-}
-
-export interface MonitorRegistryOptions {
-	/** Observes every registry transition (register/pause/rearm/settle/dispose) with the live snapshot. */
-	readonly onChange?: (snapshot: readonly MonitorSnapshotEntry[]) => void;
-}
-
-export interface RegisterMonitorOptions {
-	readonly id: string;
-	readonly description: string;
-	readonly runtime: TerminalRuntimeSession;
-	readonly filter?: RegExp;
-}
-
-interface MonitorRecord {
-	readonly id: string;
-	readonly description: string;
-	readonly startedAtMs: number;
-	readonly runtime: TerminalRuntimeSession;
-	readonly filter: RegExp | undefined;
-	lineBuffer: string;
-	paused: boolean;
-	settled: boolean;
-	unsubscribeOutput: (() => void) | undefined;
-	unsubscribeExit: (() => void) | undefined;
-}
+export type {
+	MonitorEvent,
+	MonitorLineEvent,
+	MonitorRearmResult,
+	MonitorRegistryOptions,
+	MonitorSnapshotEntry,
+	MonitorSummaryEvent,
+	RegisterMonitorOptions,
+} from "./monitor-types.ts";
 
 /**
  * Tracks active monitor sessions alongside the terminal manager's existing bash-id registry.
@@ -61,22 +36,49 @@ export class MonitorRegistry {
 	readonly #records = new Map<string, MonitorRecord>();
 	readonly #emit: (event: MonitorEvent) => void;
 	readonly #onChange: ((snapshot: readonly MonitorSnapshotEntry[]) => void) | undefined;
+	readonly #files: FileMonitorRegistry;
+	readonly #getTerminalSessionCount: (() => number) | undefined;
+	readonly #maxSessions: number;
 
 	constructor(emit: (event: MonitorEvent) => void, options?: MonitorRegistryOptions) {
 		this.#emit = emit;
+		this.#getTerminalSessionCount = options?.getTerminalSessionCount;
 		this.#onChange = options?.onChange;
+		this.#maxSessions = options?.maxSessions ?? DEFAULT_MAX_SESSIONS;
+		this.#files = new FileMonitorRegistry({
+			emitLine: (id, description, line) => this.#emit({ type: "line", id, description, line }),
+			emitSummary: (id, description, summary) => this.#emit({ type: "summary", id, description, summary }),
+			onChange: () => this.#notifyChange(),
+			maxSessions: options?.maxSessions ?? DEFAULT_MAX_SESSIONS,
+			...options?.fileMonitor,
+		});
 	}
 
 	snapshot(): readonly MonitorSnapshotEntry[] {
-		return [...this.#records.values()].map((record) => ({
-			id: record.id,
-			description: record.description,
-			paused: record.paused,
-			startedAtMs: record.startedAtMs,
-		}));
+		return [
+			...[...this.#records.values()].map((record) => ({
+				id: record.id,
+				description: record.description,
+				paused: record.paused,
+				startedAtMs: record.startedAtMs,
+			})),
+			...this.#files.snapshot(),
+		];
+	}
+
+	get fileCount(): number {
+		return this.#files.capacityCount;
 	}
 
 	register(options: RegisterMonitorOptions): void {
+		if (this.#getTerminalSessionCount) {
+			if (this.#resourceCount() > this.#maxSessions) {
+				throw new MonitorRegistryCapacityError(`Monitor capacity reached (${this.#maxSessions}).`);
+			}
+		} else {
+			this.assertCapacity();
+		}
+		options.onBeforeEvents?.(options.id);
 		const record: MonitorRecord = {
 			id: options.id,
 			description: options.description,
@@ -89,15 +91,47 @@ export class MonitorRegistry {
 			unsubscribeOutput: undefined,
 			unsubscribeExit: undefined,
 		};
-		this.#records.set(record.id, record);
-		this.#notifyChange();
+		let statePublicationAttempted = false;
+		try {
+			this.#records.set(record.id, record);
+			statePublicationAttempted = true;
+			this.#notifyChange();
 
-		// Runtime output is already bounded. Read what was produced before monitor registration,
-		// then subscribe synchronously so a fast watcher cannot lose its first line.
-		this.#consume(record, record.runtime.fullOutput());
-		record.unsubscribeOutput = record.runtime.onOutput((chunk) => this.#consume(record, chunk));
-		record.unsubscribeExit = record.runtime.session.onExit(() => this.#settle(record));
-		if (record.runtime.exited) this.#settle(record);
+			// Runtime output is already bounded. Read what was produced before monitor registration,
+			// then subscribe synchronously so a fast watcher cannot lose its first line.
+			this.#consume(record, record.runtime.fullOutput());
+			record.unsubscribeOutput = record.runtime.onOutput((chunk) => this.#consume(record, chunk));
+			record.unsubscribeExit = record.runtime.session.onExit(() => this.#settle(record));
+			if (record.runtime.exited) this.#settle(record);
+		} catch (error) {
+			this.#records.delete(record.id);
+			const failure = error instanceof Error ? error : new Error(String(error));
+			try {
+				runAllCleanup([
+					() => this.#disposeRecord(record),
+					...(statePublicationAttempted ? [() => this.#notifyChange()] : []),
+				]);
+			} catch (rollbackError) {
+				throw new AggregateError([failure, rollbackError], "Monitor registration rollback failed.");
+			}
+			throw failure;
+		}
+	}
+
+	async registerFile(
+		options: Omit<RegisterFileMonitorOptions, "event"> & { readonly event: FileMonitorEvent },
+	): Promise<string> {
+		this.assertCapacity();
+		return await this.#files.register(options);
+	}
+
+	hasCapacity(): boolean {
+		return this.#resourceCount() < this.#maxSessions;
+	}
+
+	assertCapacity(): void {
+		if (this.hasCapacity()) return;
+		throw new MonitorRegistryCapacityError(`Monitor capacity reached (${this.#maxSessions}).`);
 	}
 
 	pauseAll(): string[] {
@@ -107,27 +141,58 @@ export class MonitorRegistry {
 			record.paused = true;
 			paused.push(record.id);
 		}
-		if (paused.length > 0) this.#notifyChange();
-		return paused;
+		const filePaused = this.#files.pauseAll();
+		if (paused.length > 0 || filePaused.length > 0) this.#notifyChange();
+		return [...paused, ...filePaused];
 	}
 
 	rearm(id: string): MonitorRearmResult {
 		const record = this.#records.get(id);
-		if (!record) return "not_found";
+		if (!record) {
+			const result = this.#files.rearm(id);
+			if (result === "rearmed") this.#notifyChange();
+			return result;
+		}
 		if (!record.paused) return "not_paused";
 		record.paused = false;
 		this.#notifyChange();
 		return "rearmed";
 	}
 
+	async stopFile(id: string): Promise<boolean> {
+		return await this.#files.stop(id);
+	}
+
+	async stopAllFiles(): Promise<number> {
+		return await this.#files.stopAll();
+	}
+
 	dispose(): void {
-		for (const record of this.#records.values()) this.#disposeRecord(record);
+		const records = [...this.#records.values()];
 		this.#records.clear();
-		this.#notifyChange();
+		runAllCleanup([
+			...records.map((record) => () => this.#disposeRecord(record)),
+			() => this.#files.dispose(),
+			() => this.#notifyChange(),
+		]);
+	}
+
+	async teardown(): Promise<void> {
+		const records = [...this.#records.values()];
+		this.#records.clear();
+		await runAllAsyncCleanup([
+			...records.map((record) => async () => this.#disposeRecord(record)),
+			async () => await this.#files.teardown(),
+			async () => this.#notifyChange(),
+		]);
 	}
 
 	#notifyChange(): void {
 		this.#onChange?.(this.snapshot());
+	}
+
+	#resourceCount(): number {
+		return (this.#getTerminalSessionCount?.() ?? this.#records.size) + this.#files.capacityCount;
 	}
 
 	#consume(record: MonitorRecord, chunk: string): void {

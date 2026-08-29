@@ -1,6 +1,7 @@
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { BashArity } from "../permission-system/arity.ts";
 import { extractExternalPaths, isExternalPath } from "../permission-system/external-dir.ts";
+import { bindMonitorFilePath } from "../permission-system/monitor-file-path.ts";
 import type { Request } from "../permission-system/types.ts";
 
 /** Simplified permission request without ID/session metadata */
@@ -12,6 +13,8 @@ export type ToolPermissionParser = (
 	input: Record<string, unknown>,
 	cwd: string,
 ) => PermissionRequest[];
+
+const UNRESOLVED_MONITOR_PARENT_PATTERN = "<unresolved-monitor-parent>";
 
 function fallbackPermissionRequest(permission: string): PermissionRequest {
 	return {
@@ -138,7 +141,47 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 
 	registry.register("bash", parseBashLikePermission("command"));
 	registry.register("bash_input", parseBashLikePermission("input"));
-	registry.register("monitor", parseBashLikePermission("command"));
+	const parseMonitorCommandPermission = parseBashLikePermission("command");
+	registry.register("monitor", (toolName, input, cwd) => {
+		if (getString(input, "action") === "rearm") {
+			const bashId = getString(input, "bash_id");
+			const hasCreateField = ["description", "command", "path", "event", "filter", "timeout_ms", "persistent"].some(
+				(field) => input[field] !== undefined,
+			);
+			if (!bashId || hasCreateField) return [];
+			return [{ permission: "monitor_control", patterns: [bashId], always: [bashId] }];
+		}
+		const filePath = getString(input, "path");
+		if (!filePath) return parseMonitorCommandPermission(toolName, input, cwd);
+		const resolution = bindMonitorFilePath(input, filePath, cwd);
+		if (!resolution.ok) {
+			return [
+				{
+					permission: "read",
+					patterns: [filePath],
+					always: [filePath],
+				},
+				{
+					permission: "external_directory",
+					patterns: [UNRESOLVED_MONITOR_PARENT_PATTERN],
+					always: [UNRESOLVED_MONITOR_PARENT_PATTERN],
+				},
+			];
+		}
+		const readPaths = [...new Set([filePath, resolution.value.canonicalPath])];
+		return withExternalDirectoryRequests(
+			[
+				{
+					permission: "read",
+					patterns: readPaths,
+					always: readPaths,
+				},
+			],
+			[resolution.value.canonicalPath],
+			cwd,
+			"file",
+		);
+	});
 
 	const editParser: ToolPermissionParser = () => {
 		return [fallbackPermissionRequest("edit")];

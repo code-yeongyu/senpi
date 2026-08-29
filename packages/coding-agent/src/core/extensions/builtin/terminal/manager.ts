@@ -10,6 +10,7 @@ import { DEFAULT_MAX_SESSIONS } from "./shared.ts";
 export { SessionRegistryCapacityError } from "@earendil-works/pi-pty";
 
 export interface TerminalManagerOptions {
+	readonly getExternalSessionCount?: () => number;
 	readonly maxSessions?: number;
 	readonly scrollback?: number;
 }
@@ -28,12 +29,17 @@ export interface CreatedTerminalSession {
 export class TerminalManager {
 	private readonly registry: SessionRegistry<TerminalSession>;
 	private readonly runtimes = new Map<string, TerminalRuntimeSession>();
+	private readonly getExternalSessionCount: () => number;
+	private readonly maxSessions: number;
 	private readonly scrollback?: number;
+	private pendingCreates = 0;
 
 	constructor(options: TerminalManagerOptions = {}) {
+		this.maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
 		this.registry = new SessionRegistry<TerminalSession>({
-			maxSessions: options.maxSessions ?? DEFAULT_MAX_SESSIONS,
+			maxSessions: this.maxSessions,
 		});
+		this.getExternalSessionCount = options.getExternalSessionCount ?? (() => 0);
 		this.scrollback = options.scrollback;
 	}
 
@@ -41,21 +47,41 @@ export class TerminalManager {
 		return this.runtimes.size;
 	}
 
+	get activeSize(): number {
+		return this.registry.list().filter((entry) => entry.state !== "exited").length;
+	}
+
+	get capacityCount(): number {
+		return this.activeSize + this.pendingCreates;
+	}
+
 	/** Spawn a new terminal session and register it under an allocated `bash_N` id. */
 	async create(command: string, options: TerminalSessionOptions): Promise<CreatedTerminalSession> {
-		const runtimeOptions: TerminalRuntimeOptions = { ...options, scrollback: this.scrollback };
-		const runtime = new TerminalRuntimeSession(command, runtimeOptions);
-		let entry: { id: string };
-		try {
-			entry = await this.registry.create({ command, session: runtime.session });
-		} catch (error) {
-			runtime.dispose();
-			runtime.session.kill();
-			throw error;
+		if (this.capacityCount + this.getExternalSessionCount() >= this.maxSessions) {
+			throw new SessionRegistryCapacityError(this.maxSessions);
 		}
-		this.runtimes.set(entry.id, runtime);
-		this.reconcileRuntimes();
-		return { id: entry.id, runtime };
+		this.pendingCreates += 1;
+		try {
+			const runtimeOptions: TerminalRuntimeOptions = { ...options, scrollback: this.scrollback };
+			const runtime = new TerminalRuntimeSession(command, runtimeOptions);
+			let entry: { id: string };
+			try {
+				entry = await this.registry.create({ command, session: runtime.session });
+				if (this.activeSize + this.pendingCreates - 1 + this.getExternalSessionCount() > this.maxSessions) {
+					await this.registry.stop(entry.id);
+					throw new SessionRegistryCapacityError(this.maxSessions);
+				}
+			} catch (error) {
+				runtime.dispose();
+				runtime.session.kill();
+				throw error;
+			}
+			this.runtimes.set(entry.id, runtime);
+			this.reconcileRuntimes();
+			return { id: entry.id, runtime };
+		} finally {
+			this.pendingCreates -= 1;
+		}
 	}
 
 	/** Look up a live-or-exited session, refreshing its LRU timestamp. */

@@ -3,6 +3,7 @@ import { DEFAULT_COLS, DEFAULT_MAX_SESSIONS, DEFAULT_ROWS, DEFAULT_SCROLLBACK } 
 
 export type TimeoutAction = "background" | "kill";
 export type NotifyMode = "wake" | "next-turn" | "off";
+export const MAX_TERMINAL_SESSIONS = 256;
 
 export interface MonitorDeliverySettings {
 	readonly coalesceWindowMs: number;
@@ -59,7 +60,7 @@ export function resolveTerminalSettings(raw: TerminalSettings | undefined): Reso
 		defaultCols: positiveInt(raw.defaultCols, TERMINAL_SETTINGS_DEFAULTS.defaultCols),
 		defaultRows: positiveInt(raw.defaultRows, TERMINAL_SETTINGS_DEFAULTS.defaultRows),
 		scrollback: nonNegativeInt(raw.scrollback, TERMINAL_SETTINGS_DEFAULTS.scrollback),
-		maxSessions: positiveInt(raw.maxSessions, TERMINAL_SETTINGS_DEFAULTS.maxSessions),
+		maxSessions: positiveInt(raw.maxSessions, TERMINAL_SETTINGS_DEFAULTS.maxSessions, MAX_TERMINAL_SESSIONS),
 		timeoutAction: oneOf(raw.timeoutAction, ["background", "kill"], TERMINAL_SETTINGS_DEFAULTS.timeoutAction),
 		notify: oneOf(raw.notify, ["wake", "next-turn", "off"], TERMINAL_SETTINGS_DEFAULTS.notify),
 		monitor: {

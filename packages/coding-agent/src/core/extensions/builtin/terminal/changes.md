@@ -1,5 +1,42 @@
 # terminal builtin extension — fork surface
 
+## Reload-safe native file-event monitors (2026-08-28)
+
+### What changed
+
+- Added the `packages/coding-agent/src/core/extensions/builtin/terminal/file-monitor-{registry,legacy,secure,runtime,types,cleanup}.ts` and `secure-file-monitor-worker*.ts` modules for bounded native `path` + `event` watches that return `watch_N`, with synchronous injected-test and asynchronous anchored-worker lifecycles split into focused modules.
+- Production watches use one pooled child per approved directory identity. The worker retains that directory as its process `cwd`, completes a bigint device/inode handshake before target inspection, and performs basename-only `lstat` operations so parent rename/symlink ABA replacement cannot redirect reads to an unapproved directory.
+- Each directory worker shares one `fs.watch(".")` wake hint and one one-second anchored stat recheck across its targets. Watch registration/runtime failures leave polling active, and every deadline performs one final reconciliation before reporting a timeout.
+- Routed native watches through `packages/coding-agent/src/core/extensions/builtin/terminal/monitor-registry.ts`, `packages/coding-agent/src/core/extensions/builtin/terminal/session-bundle.ts`, `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`, and `packages/coding-agent/src/core/extensions/builtin/terminal/tools/kill-bash.ts` so command and file monitors share reload, pause/rearm, state, aggregate monitor capacity, cancellation, and teardown.
+- Rearm state resets before a native watcher can emit a registration-race completion.
+- Native results expose both `bash_id` and `watch_id`; file fingerprints include device and inode identity.
+- `packages/coding-agent/test/suite/native-file-monitor-harness.ts`, the `secure-file-monitor-worker*.test.ts` files, `file-monitor-*.test.ts`, `terminal-manager-capacity.test.ts`, `terminal-monitor.test.ts`, and `terminal-reload-survival.test.ts` cover anchored ABA resistance, worker startup/crash/forced cleanup, reconciliation and stat fallback, transactional registration, concurrent admission, cancellation, rebinding, and lossless reload delivery with bounded event-driven waits.
+
+### Why
+
+File artifacts were previously observed through shell polling loops. Native one-shot watches avoid idle processes and context churn while preserving the established event-delivery model. The tighter lifecycle and identity checks prevent stale reload sinks, uncancellable fallback watches, and path-rebinding confusion.
+
+### Why an extension could not handle it
+
+The terminal extension owns the implementation, but the change necessarily modifies its shared monitor registry, session bundle, permission-facing tool contract, footer/state event, and cancellation surfaces. No narrower leaf module owns all of those lifecycle seams.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/monitor.ts`
+- `packages/coding-agent/src/core/extensions/builtin/terminal/monitor-registry.ts`
+- `packages/coding-agent/src/core/extensions/builtin/terminal/manager.ts`
+- `packages/coding-agent/src/core/extensions/builtin/terminal/session-bundle.ts`
+- `packages/coding-agent/src/core/extensions/builtin/terminal/settings.ts`
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/kill-bash.ts`
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`
+- `packages/coding-agent/src/core/extensions/builtin/terminal/file-monitor*.ts`
+- `packages/coding-agent/src/core/extensions/builtin/terminal/secure-file-monitor-worker*.ts`
+- `packages/coding-agent/test/suite/file-monitor-registry-transaction.test.ts`
+- `packages/coding-agent/test/suite/file-monitor-registry.test.ts`
+- `packages/coding-agent/test/suite/secure-file-monitor-worker.test.ts`
+- `packages/coding-agent/test/suite/terminal-monitor*.test.ts`
+- `packages/coding-agent/test/suite/terminal-reload-survival.test.ts`
+
 ## Monitor snapshots cross the RPC wire (2026-08-28)
 
 ### What changed

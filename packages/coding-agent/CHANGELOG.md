@@ -6,6 +6,10 @@
 
 ### Added
 
+- `monitor` now supports one-shot native file create/modify watches with `watch_N`
+  lifecycle controls, shared terminal-monitor capacity, stat polling for silently
+  dropped filesystem events, and canonical-directory permission checks.
+
 ### Changed
 
 ### Fixed
