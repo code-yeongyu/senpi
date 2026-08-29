@@ -9,6 +9,7 @@ import {
 	MonitorRegistry,
 	type MonitorSummaryEvent,
 } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
+import type { TerminalRuntimeSession } from "../../src/core/extensions/builtin/terminal/runtime-session.ts";
 import type { TerminalToolContext } from "../../src/core/extensions/builtin/terminal/tools/context.ts";
 import { createKillBashTool } from "../../src/core/extensions/builtin/terminal/tools/kill-bash.ts";
 import {
@@ -427,6 +428,40 @@ describe("terminal monitor tool", () => {
 		const killed = await createKillBashTool(ctx).execute("kill-monitor", { bash_id: bashId });
 		expect(firstText(killed)).toContain(`Killed ${bashId}`);
 		expect(summaryEvent(await ended).summary).toContain("killed");
+	});
+
+	it("settles a killed monitor when manager stop returns before process exit", async () => {
+		const registry = new MonitorRegistry((event) => sink.push(event));
+		const runtime = {
+			exited: false,
+			exitResult: null,
+			fullOutput: () => "",
+			onOutput: () => () => {},
+			session: { onExit: () => () => {} },
+		} as unknown as TerminalRuntimeSession;
+		registry.register({
+			id: "bash_1",
+			description: "late close",
+			runtime,
+		});
+		const slowManager = {
+			get: (id: string) => (id === "bash_1" ? runtime : null),
+			stop: async () => true,
+		} as unknown as TerminalManager;
+		const killed = await createKillBashTool({ ...ctx, manager: slowManager, monitorRegistry: registry }).execute(
+			"kill-late-close",
+			{ bash_id: "bash_1" },
+		);
+
+		expect(firstText(killed)).toContain("Killed bash_1");
+		expect(registry.snapshot()).toEqual([]);
+		expect(sink.events).toContainEqual(
+			expect.objectContaining({
+				type: "summary",
+				id: "bash_1",
+				summary: "watcher killed",
+			}),
+		);
 	});
 
 	it("keeps the terminal manager reusable after kill-all", async () => {

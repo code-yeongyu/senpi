@@ -19,6 +19,7 @@ export function createKillBashTool(ctx: TerminalToolContext) {
 		async execute(_toolCallId: string, input: KillBashInput, _signal?: AbortSignal): Promise<TerminalToolResult> {
 			if (input.all) {
 				const terminalCount = ctx.manager.size;
+				const terminalIds = ctx.manager.list().map(({ id }) => id);
 				let fileCount = 0;
 				const errors: Error[] = [];
 				try {
@@ -29,6 +30,7 @@ export function createKillBashTool(ctx: TerminalToolContext) {
 				}
 				try {
 					await ctx.manager.stopAll();
+					for (const id of terminalIds) ctx.monitorRegistry?.settleKilled(id);
 				} catch (error) {
 					if (!(error instanceof Error)) throw error;
 					errors.push(error);
@@ -42,6 +44,7 @@ export function createKillBashTool(ctx: TerminalToolContext) {
 			const runtime = ctx.manager.get(input.bash_id);
 			if (!runtime) return errorResult(`No terminal session found with id: ${input.bash_id}`);
 			await ctx.manager.stop(input.bash_id);
+			ctx.monitorRegistry?.settleKilled(input.bash_id);
 			return textResult(`Killed ${input.bash_id}.`);
 		},
 	};

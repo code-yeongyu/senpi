@@ -159,6 +159,13 @@ export class MonitorRegistry {
 		return "rearmed";
 	}
 
+	settleKilled(id: string): boolean {
+		const record = this.#records.get(id);
+		if (!record) return false;
+		this.#settle(record, "killed");
+		return true;
+	}
+
 	async stopFile(id: string): Promise<boolean> {
 		return await this.#files.stop(id);
 	}
@@ -210,14 +217,14 @@ export class MonitorRegistry {
 		record.lineBuffer = remaining;
 	}
 
-	#settle(record: MonitorRecord): void {
+	#settle(record: MonitorRecord, statusOverride?: string): void {
 		if (record.settled) return;
 		record.settled = true;
 		record.unsubscribeOutput?.();
 		record.unsubscribeExit?.();
 		this.#records.delete(record.id);
 		this.#notifyChange();
-		const status = describeExit(record.runtime) ?? "exited";
+		const status = statusOverride ?? describeExit(record.runtime) ?? "exited";
 		const code = record.runtime.exitResult?.exitCode;
 		const codeText = code === null || code === undefined ? "" : ` (exit code ${code})`;
 		this.#emit({

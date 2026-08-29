@@ -12,6 +12,7 @@
 - Native results expose both `bash_id` and `watch_id`; file fingerprints include device, inode, ctime, size, and mtime so same-size rewrites remain observable even when mtime is restored.
 - Secure asynchronous settlement reports aggregate cleanup failures through the configured error boundary, and terminal creation rejects once concurrent teardown begins; if its graceful stop expires, cleanup escalates to `SIGKILL` and awaits exit so neither path can leave an unhandled rejection or untracked process.
 - `kill_bash({ all: true })` clears live sessions through a reusable stop-all path, while permanent bundle teardown remains fenced against overlapping creates.
+- Successful command-monitor cancellation settles its lifecycle-owned record with a `killed` summary immediately after terminal stop returns, without depending on a delayed Windows process-close notification.
 - Secure workers inherit only canonical Windows root variables, excluding runtime options, dynamic-loader controls, search paths, secrets, and every other ambient variable; they also validate every response and event shape and fail closed on request/response mismatches.
 - File-monitor stop-all temporarily fences and awaits pending registrations so a watch cannot commit after cancellation returns.
 - `kill_bash({ all: true })` clears live sessions through a reusable stop-all path, while permanent bundle teardown remains fenced against overlapping creates.
