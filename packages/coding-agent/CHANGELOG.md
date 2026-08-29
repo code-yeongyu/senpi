@@ -21,6 +21,11 @@
 
 ### Fixed
 
+- On the `claude-sdk-oauth` lane, automatic compaction no longer re-attempts and re-logs a rejection
+  every turn after the Claude Agent SDK owns compaction: the first `external-owner` rejection makes the
+  delegation sticky until compaction is accepted, the model or provider changes, or the session
+  navigates to another branch. Manual `/compact` behavior is unchanged.
+
 ### Removed
 
 ## [2026.8.29] - 2026-08-29

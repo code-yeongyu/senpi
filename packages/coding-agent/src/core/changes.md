@@ -1,5 +1,24 @@
 # changes
 
+## 2026-08-29 - Make externally owned compaction delegation sticky
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: remember the provider and model id after an automatic compaction is rejected by an external owner, suppressing repeated automatic attempts until that key changes, compaction is accepted, or runtime ownership is reconfigured by reload/registry refresh. Manual compaction remains admitted.
+- Added `test/suite/regressions/1174-sticky-delegated-compaction.test.ts` covering repeated turns, manual compaction, and model changes.
+
+### Why
+
+- A provider-owned compaction lane previously caused the core to emit a new automatic compaction attempt on every turn, repeatedly producing rejection events and repainting the same error.
+
+### Why an extension could not handle it
+
+- Automatic compaction admission and lifecycle state are private `AgentSession` control flow that runs before extension hooks are emitted.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: compaction state, automatic admission methods, rejection handling, model selection invalidation, and tree navigation.
+
 ## 2026-08-29 - Withheld tools are filtered at the advertisement seam
 
 ### What changed
