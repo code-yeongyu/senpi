@@ -99,6 +99,7 @@ export class FooterComponent implements Component {
 	private session: InteractiveSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private autoCompactEnabled = true;
+	private compactionDelegated = false;
 
 	constructor(session: InteractiveSession, footerData: ReadonlyFooterDataProvider) {
 		this.session = session;
@@ -111,6 +112,15 @@ export class FooterComponent implements Component {
 
 	setAutoCompactEnabled(enabled: boolean): void {
 		this.autoCompactEnabled = enabled;
+	}
+
+	/**
+	 * Marks the context meter while an external owner (the Claude Agent SDK)
+	 * manages compaction natively, so a saturated meter reads as delegated
+	 * rather than stalled.
+	 */
+	setCompactionDelegated(delegated: boolean): void {
+		this.compactionDelegated = delegated;
 	}
 
 	/**
@@ -186,17 +196,24 @@ export class FooterComponent implements Component {
 		}
 
 		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
-		const ctxDisplay =
+		const delegationIndicator = this.compactionDelegated ? " (SDK)" : "";
+		const ctxBase =
 			contextPercent === "?"
 				? `${contextTokens}/${formatTokens(contextWindow)} (?)${autoIndicator}`
 				: `${contextTokens}/${formatTokens(contextWindow)} (${contextPercent}%)${autoIndicator}`;
-		const ctxColored =
+		const colorCtx = (text: string): string =>
 			contextPercentValue > 90
-				? theme.fg("error", ctxDisplay)
+				? theme.fg("error", text)
 				: contextPercentValue > 70
-					? theme.fg("warning", ctxDisplay)
-					: theme.fg("muted", ctxDisplay);
-		const tail: FooterSegment = { plain: ctxDisplay, colored: ctxColored };
+					? theme.fg("warning", text)
+					: theme.fg("muted", text);
+		// The delegation marker stays muted even when the saturated meter is
+		// error/warning tinted: SDK-owned compaction is expected state, not alarm.
+		const makeTail = (withMarker: boolean): FooterSegment => ({
+			plain: withMarker ? `${ctxBase}${delegationIndicator}` : ctxBase,
+			colored: withMarker ? `${colorCtx(ctxBase)}${theme.fg("muted", delegationIndicator)}` : colorCtx(ctxBase),
+		});
+		let tail: FooterSegment = makeTail(delegationIndicator !== "");
 
 		// Model label pinned to the right edge; the provider prefix stays only when
 		// the full line fits.
@@ -228,17 +245,30 @@ export class FooterComponent implements Component {
 			: undefined;
 
 		const marker: FooterSegment = { plain: "…", colored: theme.fg("dim", "…") };
-		const plan = planFooterLayout({
-			width,
-			anchor,
-			pwdIndex,
-			middle,
-			tail,
-			right: { minimal, full },
-			separator,
-			minPadding: 2,
-			ellipsisMarker: marker,
-		});
+		const planWithTail = (tailSegment: FooterSegment) =>
+			planFooterLayout({
+				width,
+				anchor,
+				pwdIndex,
+				middle,
+				tail: tailSegment,
+				right: { minimal, full },
+				separator,
+				minPadding: 2,
+				ellipsisMarker: marker,
+			});
+		let plan = planWithTail(tail);
+		// Head elision keeps the string tail, so at narrow widths it can leave a
+		// chopped marker fragment like "…SDK)". Render the complete marker or drop
+		// it entirely — never a fragment.
+		if (
+			delegationIndicator !== "" &&
+			plan.kind === "left-elided" &&
+			!plan.leftPlain.includes(delegationIndicator.trimStart())
+		) {
+			tail = makeTail(false);
+			plan = planWithTail(tail);
+		}
 
 		const joinSegments = (segments: readonly FooterSegment[]): { colored: string; width: number } => ({
 			colored: segments.map((segment) => segment.colored).join(sepColored),

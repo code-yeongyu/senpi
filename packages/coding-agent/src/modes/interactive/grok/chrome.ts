@@ -16,6 +16,8 @@ import { GrokWelcomeCard } from "./welcome-card.ts";
 export interface InteractiveFooter extends Component {
 	setSession(session: InteractiveSession): void;
 	setAutoCompactEnabled(enabled: boolean): void;
+	/** Optional: mark the context meter while an external owner compacts natively. */
+	setCompactionDelegated?(delegated: boolean): void;
 	invalidate(): void;
 	dispose(): void;
 }
