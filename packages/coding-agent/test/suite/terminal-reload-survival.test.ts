@@ -1,6 +1,16 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, watch, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	unwatchFile,
+	watchFile,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerTerminalExtension } from "../../src/core/extensions/builtin/terminal/extension.ts";
 import type { FileMonitorWatch } from "../../src/core/extensions/builtin/terminal/file-monitor-runtime.ts";
@@ -133,15 +143,15 @@ function extractWatchId(text: string): string {
 
 function waitForFile(path: string, label: string): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const watcher = watch(dirname(path), settleIfPresent);
+		watchFile(path, { interval: 20, persistent: false }, settleIfPresent);
 		const timeout = setTimeout(() => {
-			watcher.close();
+			unwatchFile(path, settleIfPresent);
 			reject(new Error(`Timed out waiting for ${label}`));
 		}, 8000);
 		function settleIfPresent(): void {
 			if (!existsSync(path)) return;
 			clearTimeout(timeout);
-			watcher.close();
+			unwatchFile(path, settleIfPresent);
 			resolve();
 		}
 		settleIfPresent();
@@ -210,15 +220,14 @@ describe("terminal extension — background state survives reload", () => {
 		writeFileSync(
 			waitScript,
 			[
-				'import { existsSync, watch, writeFileSync } from "node:fs";',
-				'import { dirname } from "node:path";',
+				'import { existsSync, unwatchFile, watchFile, writeFileSync } from "node:fs";',
 				"const [trigger, ready] = process.argv.slice(2);",
 				"const complete = () => {",
 				"\tif (!existsSync(trigger)) return;",
-				"\twatcher.close();",
+				"\tunwatchFile(trigger, complete);",
 				'\tprocess.stdout.write("event-after-reload\\n");',
 				"};",
-				"const watcher = watch(dirname(trigger), complete);",
+				"watchFile(trigger, { interval: 20, persistent: true }, complete);",
 				'writeFileSync(ready, "ready");',
 				"complete();",
 			].join("\n"),
