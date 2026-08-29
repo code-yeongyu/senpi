@@ -143,6 +143,36 @@ describe("PipeFallbackSession", () => {
 		await delay(5);
 		expect(session.write("late").ok).toBe(false);
 	});
+
+	it("escalates a timed-out process that ignores SIGTERM", async () => {
+		const session = new PipeFallbackSession({
+			command: process.execPath,
+			args: ["-e", 'process.on("SIGTERM", () => {}); process.stdout.write("READY\\n"); setInterval(() => {}, 1000)'],
+			timeoutMs: 500,
+		});
+		const ready = Promise.withResolvers<void>();
+		const unsubscribe = session.onData((chunk) => {
+			if (chunk.toString("utf8").includes("READY")) ready.resolve();
+		});
+		session.start();
+
+		try {
+			await ready.promise;
+			const exit = await Promise.race([
+				session.waitExit(),
+				delay(2000).then(() => {
+					throw new Error("Timed out waiting for SIGKILL escalation");
+				}),
+			]);
+
+			expect(exit.timedOut).toBe(true);
+			expect(exit.signal).toBe("SIGKILL");
+		} finally {
+			unsubscribe();
+			session.kill("SIGKILL");
+			await session.waitExit();
+		}
+	}, 3000);
 });
 
 describe("PipeFallbackSession terminal detachment", () => {

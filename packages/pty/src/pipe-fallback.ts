@@ -38,6 +38,7 @@ type ExitHandler = (exit: PipeFallbackSessionExit) => void;
 
 const PIPE_FALLBACK_NOTE =
 	"Running with child_process pipe fallback because no PTY backend is active; terminal screen state and resize are unavailable.";
+const TIMEOUT_FORCE_KILL_GRACE_MS = 1000;
 
 export function isPipeFallbackForced(env: Readonly<Record<string, string | undefined>> = process.env): boolean {
 	const value = env.SENPI_PTY_FORCE_PIPE;
@@ -105,6 +106,7 @@ export class PipeFallbackSession {
 	private resolveExit: ((exit: PipeFallbackSessionExit) => void) | null = null;
 	private spawnError: PipeFallbackSessionError | undefined;
 	private timedOut = false;
+	private timeoutForceKillHandle: NodeJS.Timeout | undefined;
 	private timeoutHandle: NodeJS.Timeout | undefined;
 	private readonly dataHandlers = new Set<DataHandler>();
 	private readonly exitHandlers = new Set<ExitHandler>();
@@ -158,6 +160,10 @@ export class PipeFallbackSession {
 				this.timeoutHandle = setTimeout(() => {
 					this.timedOut = true;
 					this.kill("SIGTERM");
+					this.timeoutForceKillHandle = setTimeout(() => {
+						if (this.exitResult === null) this.kill("SIGKILL");
+					}, TIMEOUT_FORCE_KILL_GRACE_MS);
+					this.timeoutForceKillHandle.unref();
 				}, this.options.timeoutMs);
 			}
 		} catch (error) {
@@ -275,6 +281,7 @@ export class PipeFallbackSession {
 	private settleExit(exit: PipeFallbackSessionExit): void {
 		if (this.exitResult !== null) return;
 		if (this.timeoutHandle) clearTimeout(this.timeoutHandle);
+		if (this.timeoutForceKillHandle) clearTimeout(this.timeoutForceKillHandle);
 		this.exitResult = exit;
 		this.resolveExit?.(exit);
 		for (const handler of this.exitHandlers) handler(exit);

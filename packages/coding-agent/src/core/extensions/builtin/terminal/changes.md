@@ -4,7 +4,7 @@
 
 ### What changed
 
-- Added the `packages/coding-agent/src/core/extensions/builtin/terminal/file-monitor-{registry,legacy,secure,runtime,types,cleanup}.ts` and `secure-file-monitor-worker*.ts` modules for bounded native `path` + `event` watches that return `watch_N`, with synchronous injected-test and asynchronous anchored-worker lifecycles split into focused modules.
+- Added the `packages/coding-agent/src/core/extensions/builtin/terminal/file-monitor-{registry,legacy,secure,runtime,types,cleanup}.ts` and `secure-file-monitor-worker*.ts` modules for bounded native `path` + `event` watches that return `watch_N`, with synchronous injected-test and sanitized, protocol-validated asynchronous anchored-worker lifecycles split into focused modules.
 - Production watches use one pooled child per approved directory identity. The worker retains that directory as its process `cwd`, completes a bigint device/inode handshake before target inspection, and performs basename-only `lstat` operations so parent rename/symlink ABA replacement cannot redirect reads to an unapproved directory.
 - Each directory worker shares one `fs.watch(".")` wake hint and one one-second anchored stat recheck across its targets. Watch registration/runtime failures leave polling active, and every deadline performs one final reconciliation before reporting a timeout.
 - Routed native watches through `packages/coding-agent/src/core/extensions/builtin/terminal/monitor-registry.ts`, `packages/coding-agent/src/core/extensions/builtin/terminal/session-bundle.ts`, `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`, and `packages/coding-agent/src/core/extensions/builtin/terminal/tools/kill-bash.ts` so command and file monitors share reload, pause/rearm, state, aggregate monitor capacity, cancellation, and teardown.
@@ -12,6 +12,8 @@
 - Native results expose both `bash_id` and `watch_id`; file fingerprints include device, inode, ctime, size, and mtime so same-size rewrites remain observable even when mtime is restored.
 - Secure asynchronous settlement reports aggregate cleanup failures through the configured error boundary, and terminal creation rejects once concurrent teardown begins so neither path can leave an unhandled rejection or untracked process.
 - `kill_bash({ all: true })` clears live sessions through a reusable stop-all path, while permanent bundle teardown remains fenced against overlapping creates.
+- Secure workers strip inherited runtime startup options, validate every response and event shape, and fail closed on request/response mismatches.
+- File-monitor stop-all temporarily fences and awaits pending registrations so a watch cannot commit after cancellation returns.
 - `kill_bash({ all: true })` clears live sessions through a reusable stop-all path, while permanent bundle teardown remains fenced against overlapping creates.
 - `packages/coding-agent/test/suite/native-file-monitor-harness.ts`, the `secure-file-monitor-worker*.test.ts` files, `file-monitor-*.test.ts`, `terminal-manager-capacity.test.ts`, `terminal-monitor.test.ts`, and `terminal-reload-survival.test.ts` cover anchored ABA resistance, worker startup/crash/forced cleanup, reconciliation and stat fallback, transactional registration, concurrent admission, cancellation, rebinding, and lossless reload delivery with bounded event-driven waits.
 

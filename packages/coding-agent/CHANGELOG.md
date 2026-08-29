@@ -8,8 +8,9 @@
 
 - `monitor` now supports one-shot native file create/modify watches with `watch_N`
   lifecycle controls, shared terminal-monitor capacity, ctime-aware stat polling
-  for silently dropped filesystem events, full-tree fallback timeout cleanup, and
-  canonical-directory permission checks.
+  for silently dropped filesystem events, bounded TERM-to-KILL fallback timeout
+  cleanup, sanitized and validated secure workers, and canonical-directory
+  permission checks.
 
 ### Changed
 

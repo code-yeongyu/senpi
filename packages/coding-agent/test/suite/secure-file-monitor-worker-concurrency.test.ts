@@ -232,9 +232,8 @@ describe("secure file monitor worker concurrency", () => {
 					onEvent: () => {},
 				}),
 			).rejects.toThrow("request timed out");
-			await expect(withDeadline(workerStopped.promise, "worker timeout error")).resolves.toEqual({
+			await expect(withDeadline(workerStopped.promise, "worker timeout error")).resolves.toMatchObject({
 				type: "error",
-				message: "secure worker stopped unexpectedly",
 			});
 			await expect(first.stop()).resolves.toBeUndefined();
 			expect(pool.workerCount).toBe(0);

@@ -37,8 +37,10 @@ export class FileMonitorRegistry {
 	readonly #secureWorkers: SecureFileMonitorWorkerPool | undefined;
 	readonly #pendingRegistrationPromises = new Set<Promise<string>>();
 	#acceptingRegistrations = true;
+	#closed = false;
 	#nextId = 1;
 	#pendingRegistrations = 0;
+	#stopAllPromise: Promise<number> | null = null;
 
 	constructor(options: FileMonitorRegistryOptions) {
 		this.#options = options;
@@ -125,18 +127,18 @@ export class FileMonitorRegistry {
 	}
 
 	async stopAll(): Promise<number> {
-		const records = [...this.#records.values()];
-		const actions: Array<() => void | Promise<void>> = records.map((record) => () => {
-			if (record.backend === "legacy") {
-				settleLegacyFileMonitor(this.#legacy!, record, "watcher killed", undefined, false);
-			} else return this.#settleAsync(record, "watcher killed", undefined, false);
-		});
-		if (records.length > 0) actions.push(() => this.#options.onChange());
-		await runAllAsyncCleanup(actions);
-		return records.length;
+		if (this.#stopAllPromise) return await this.#stopAllPromise;
+		const operation = this.#stopAllOnce();
+		this.#stopAllPromise = operation;
+		try {
+			return await operation;
+		} finally {
+			if (this.#stopAllPromise === operation) this.#stopAllPromise = null;
+		}
 	}
 
 	dispose(): void {
+		this.#closed = true;
 		this.#acceptingRegistrations = false;
 		const records = [...this.#records.values()];
 		this.#records.clear();
@@ -145,6 +147,7 @@ export class FileMonitorRegistry {
 	}
 
 	async teardown(): Promise<void> {
+		this.#closed = true;
 		this.#acceptingRegistrations = false;
 		await Promise.allSettled([...this.#pendingRegistrationPromises]);
 		const records = [...this.#records.values()];
@@ -156,6 +159,25 @@ export class FileMonitorRegistry {
 			}),
 			async () => await this.#secureWorkers?.dispose(),
 		]);
+	}
+
+	async #stopAllOnce(): Promise<number> {
+		this.#acceptingRegistrations = false;
+		const pendingCount = this.#pendingRegistrations;
+		try {
+			await Promise.allSettled([...this.#pendingRegistrationPromises]);
+			const records = [...this.#records.values()];
+			const actions: Array<() => void | Promise<void>> = records.map((record) => () => {
+				if (record.backend === "legacy") {
+					settleLegacyFileMonitor(this.#legacy!, record, "watcher killed", undefined, false);
+				} else return this.#settleAsync(record, "watcher killed", undefined, false);
+			});
+			if (records.length > 0) actions.push(() => this.#options.onChange());
+			await runAllAsyncCleanup(actions);
+			return records.length + pendingCount;
+		} finally {
+			if (!this.#closed) this.#acceptingRegistrations = true;
+		}
 	}
 
 	#settle(record: FileMonitorRecord, summary: string, line?: string, notifyChange = true): void {

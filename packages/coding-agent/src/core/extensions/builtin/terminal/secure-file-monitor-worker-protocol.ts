@@ -25,12 +25,25 @@ export interface SecureFileMonitorWorkerPoolOptions {
 	readonly workerCommand?: readonly [executable: string, ...args: string[]];
 }
 
-export type SecureWorkerResponse = {
-	readonly type: string;
-	readonly requestId?: number;
-	readonly id?: string;
-	readonly device?: string;
-	readonly inode?: string;
-	readonly event?: SecureFileMonitorWorkerEvent;
-	readonly message?: string;
-};
+export type SecureWorkerRequestSuccessType = "cancelled" | "reconciled" | "registered";
+
+export type SecureWorkerResponse =
+	| {
+			readonly device: string;
+			readonly inode: string;
+			readonly type: "ready";
+	  }
+	| {
+			readonly requestId: number;
+			readonly type: SecureWorkerRequestSuccessType;
+	  }
+	| {
+			readonly message: string;
+			readonly requestId: number;
+			readonly type: "request_error";
+	  }
+	| {
+			readonly event: SecureFileMonitorWorkerEvent;
+			readonly id: string;
+			readonly type: "event";
+	  };

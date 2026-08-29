@@ -1,11 +1,17 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import {
+	deliverSecureWorkerEvent,
+	parseSecureWorkerResponse,
+	sanitizeSecureWorkerEnvironment,
+} from "./secure-file-monitor-worker-boundary.ts";
 import { resolveDefaultWorkerCommand } from "./secure-file-monitor-worker-command.ts";
 import { disposeSecureWorkerProcess } from "./secure-file-monitor-worker-process.ts";
 import type {
 	RegisterSecureFileMonitorOptions,
 	SecureFileMonitorWorkerPoolOptions,
 	SecureFileMonitorWorkerRegistration,
+	SecureWorkerRequestSuccessType,
 	SecureWorkerResponse,
 } from "./secure-file-monitor-worker-protocol.ts";
 
@@ -13,6 +19,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
 const MAX_PROTOCOL_LINE_LENGTH = 64 * 1024;
 
 type PendingRequest = {
+	readonly expectedType: SecureWorkerRequestSuccessType;
 	readonly reject: (error: Error) => void;
 	readonly resolve: () => void;
 	readonly timer: ReturnType<typeof setTimeout>;
@@ -38,6 +45,7 @@ export class SecureFileMonitorWorkerConnection {
 		const [executable, ...args] = options.workerCommand ?? resolveDefaultWorkerCommand();
 		this.#child = spawn(executable, args, {
 			cwd: directory,
+			env: sanitizeSecureWorkerEnvironment(),
 			shell: false,
 			stdio: ["pipe", "pipe", "pipe"],
 			windowsHide: true,
@@ -51,7 +59,11 @@ export class SecureFileMonitorWorkerConnection {
 			this.#rejectPending(error);
 			if (!this.#disposing) {
 				for (const onEvent of this.#events.values()) {
-					this.#deliverEvent(onEvent, { type: "error", message: "secure worker stopped unexpectedly" });
+					deliverSecureWorkerEvent(
+						onEvent,
+						{ type: "error", message: "secure worker stopped unexpectedly" },
+						this.#onError,
+					);
 				}
 			}
 			this.#events.clear();
@@ -72,7 +84,7 @@ export class SecureFileMonitorWorkerConnection {
 		const id = `secure_${this.#nextId++}`;
 		this.#events.set(id, options.onEvent);
 		try {
-			await this.#request("register", {
+			await this.#request("register", "registered", {
 				id,
 				targetName: options.targetName,
 				event: options.event,
@@ -84,13 +96,13 @@ export class SecureFileMonitorWorkerConnection {
 		}
 		let stopped = false;
 		return {
-			reconcile: () => this.#request("reconcile", { id }),
+			reconcile: () => this.#request("reconcile", "reconciled", { id }),
 			stop: async () => {
 				if (stopped) return;
 				stopped = true;
 				this.#events.delete(id);
 				if (this.#poisoned || this.#child.exitCode !== null || this.#child.stdin.destroyed) return;
-				await this.#request("cancel", { id });
+				await this.#request("cancel", "cancelled", { id });
 			},
 		};
 	}
@@ -128,14 +140,14 @@ export class SecureFileMonitorWorkerConnection {
 				}
 				let response: SecureWorkerResponse;
 				try {
-					response = JSON.parse(line) as SecureWorkerResponse;
+					response = parseSecureWorkerResponse(line);
 				} catch (error) {
 					const failure = error instanceof Error ? error : new Error(String(error));
 					settleFailure(failure);
 					this.#retire(failure);
 					return;
 				}
-				if (response.type === "ready" && response.device && response.inode && !settled) {
+				if (response.type === "ready" && !settled) {
 					try {
 						const device = BigInt(response.device);
 						const inode = BigInt(response.inode);
@@ -147,18 +159,20 @@ export class SecureFileMonitorWorkerConnection {
 						settleFailure(failure);
 						this.#retire(failure);
 					}
-				} else if (response.type === "event" && response.id && response.event) {
+				} else if (response.type === "event") {
 					const onEvent = this.#events.get(response.id);
 					this.#events.delete(response.id);
-					if (onEvent) this.#deliverEvent(onEvent, response.event);
-				} else if (response.requestId !== undefined) {
+					if (onEvent) deliverSecureWorkerEvent(onEvent, response.event, this.#onError);
+				} else if (response.type !== "ready") {
 					this.#settleRequest(response);
+				} else {
+					this.#retire(new Error("Secure file monitor worker sent an unexpected ready response."));
 				}
 			});
 		});
 	}
 
-	#request(type: string, body: Record<string, unknown>): Promise<void> {
+	#request(type: string, expectedType: SecureWorkerRequestSuccessType, body: Record<string, unknown>): Promise<void> {
 		if (this.#poisoned || this.#child.exitCode !== null || this.#child.stdin.destroyed) {
 			return Promise.reject(new Error("Secure file monitor worker already exited."));
 		}
@@ -171,7 +185,7 @@ export class SecureFileMonitorWorkerConnection {
 				this.#retire(error);
 			}, this.#requestTimeoutMs);
 			timer.unref();
-			this.#pending.set(requestId, { resolve: resolveRequest, reject: rejectRequest, timer });
+			this.#pending.set(requestId, { expectedType, resolve: resolveRequest, reject: rejectRequest, timer });
 			this.#child.stdin.write(`${JSON.stringify({ type, requestId, ...body })}\n`, (error) => {
 				if (!error) return;
 				const pending = this.#pending.get(requestId);
@@ -184,45 +198,38 @@ export class SecureFileMonitorWorkerConnection {
 		});
 	}
 
-	#deliverEvent(
-		onEvent: RegisterSecureFileMonitorOptions["onEvent"],
-		event: Parameters<RegisterSecureFileMonitorOptions["onEvent"]>[0],
-	): void {
-		try {
-			onEvent(event);
-		} catch (error) {
-			this.#reportError(error instanceof Error ? error : new Error(String(error)));
-		}
-	}
-
-	#reportError(error: Error): void {
-		try {
-			if (this.#onError) this.#onError(error);
-			else process.emitWarning(error);
-		} catch (reportError) {
-			process.emitWarning(
-				new AggregateError(
-					[error, reportError instanceof Error ? reportError : new Error(String(reportError))],
-					"Secure file monitor error reporting failed.",
-				),
-			);
-		}
-	}
-
 	#retire(error: Error): void {
 		if (this.#poisoned || this.#disposing) return;
 		this.#poisoned = true;
 		this.#rejectPending(error);
+		for (const onEvent of this.#events.values()) {
+			deliverSecureWorkerEvent(onEvent, { type: "error", message: error.message }, this.#onError);
+		}
+		this.#events.clear();
 		this.#child.kill();
 	}
 
-	#settleRequest(response: SecureWorkerResponse): void {
-		const pending = response.requestId === undefined ? undefined : this.#pending.get(response.requestId);
-		if (!pending || response.requestId === undefined) return;
+	#settleRequest(response: Exclude<SecureWorkerResponse, { readonly type: "event" | "ready" }>): void {
+		const pending = this.#pending.get(response.requestId);
+		if (!pending) {
+			this.#retire(new Error(`Secure file monitor worker sent an unknown request id: ${response.requestId}`));
+			return;
+		}
 		this.#pending.delete(response.requestId);
 		clearTimeout(pending.timer);
-		if (response.type === "request_error") pending.reject(new Error(response.message ?? "Worker request failed."));
-		else pending.resolve();
+		if (response.type === "request_error") {
+			pending.reject(new Error(response.message));
+			return;
+		}
+		if (response.type !== pending.expectedType) {
+			const error = new Error(
+				`Secure file monitor worker sent unexpected response ${response.type}; expected ${pending.expectedType}.`,
+			);
+			pending.reject(error);
+			this.#retire(error);
+			return;
+		}
+		pending.resolve();
 	}
 
 	#rejectPending(error: Error): void {

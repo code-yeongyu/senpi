@@ -8,6 +8,7 @@ import {
 } from "../../src/core/extensions/builtin/terminal/file-monitor-registry.ts";
 import { TerminalManager } from "../../src/core/extensions/builtin/terminal/manager.ts";
 import { MonitorRegistry } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
+import type { SecureFileMonitorWorkerPool } from "../../src/core/extensions/builtin/terminal/secure-file-monitor-worker.ts";
 import { createKillBashTool } from "../../src/core/extensions/builtin/terminal/tools/kill-bash.ts";
 
 function registration(path: string) {
@@ -166,6 +167,43 @@ describe("native file monitor registration transaction", () => {
 		}
 	});
 
+	it("fences and awaits pending secure registrations during stop-all", async () => {
+		const dir = await realpath(await mkdtemp(join(tmpdir(), "senpi-file-monitor-pending-stop-")));
+		const started = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const stop = vi.fn(async () => {});
+		const secureWorkers = {
+			register: vi.fn(async () => {
+				started.resolve();
+				await release.promise;
+				return { stop, reconcile: vi.fn(async () => {}) };
+			}),
+			dispose: vi.fn(async () => {}),
+		} as unknown as SecureFileMonitorWorkerPool;
+		const registry = new FileMonitorRegistry({
+			emitLine: vi.fn(),
+			emitSummary: vi.fn(),
+			onChange: vi.fn(),
+			secureWorkers,
+		});
+
+		try {
+			const registering = registry.register(registration(join(dir, "claim.json"))) as Promise<string>;
+			await started.promise;
+			const stopping = registry.stopAll();
+			release.resolve();
+
+			await expect(stopping).resolves.toBe(1);
+			await expect(registering).rejects.toBeInstanceOf(FileMonitorRegistrationError);
+			expect(registry.snapshot()).toEqual([]);
+			expect(stop).toHaveBeenCalledOnce();
+		} finally {
+			release.resolve();
+			await registry.teardown();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("settles every native monitor before reporting batch cancellation errors", async () => {
 		const dir = await realpath(await mkdtemp(join(tmpdir(), "senpi-file-monitor-transaction-")));
 		const close = vi.fn();
@@ -193,7 +231,7 @@ describe("native file monitor registration transaction", () => {
 	it("tears down terminal sessions even when native batch cancellation throws", async () => {
 		const dir = await realpath(await mkdtemp(join(tmpdir(), "senpi-file-monitor-transaction-")));
 		const manager = new TerminalManager();
-		const teardown = vi.spyOn(manager, "teardown");
+		const stopAll = vi.spyOn(manager, "stopAll");
 		const registry = new MonitorRegistry(
 			(event) => {
 				if (event.type === "summary" && event.id === "watch_1") throw new Error("summary failure");
@@ -219,7 +257,7 @@ describe("native file monitor registration transaction", () => {
 				}).execute("kill-all-after-error", { all: true }),
 			).rejects.toThrow(AggregateError);
 			expect(registry.snapshot()).toEqual([]);
-			expect(teardown).toHaveBeenCalledOnce();
+			expect(stopAll).toHaveBeenCalledOnce();
 		} finally {
 			registry.dispose();
 			await manager.teardown();
