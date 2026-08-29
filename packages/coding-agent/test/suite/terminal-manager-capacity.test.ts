@@ -65,4 +65,26 @@ describe("terminal manager capacity", () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
+
+	it("rejects terminal creation racing with teardown without leaking a session", async () => {
+		const root = await realpath(await mkdtemp(join(tmpdir(), "senpi-terminal-teardown-race-")));
+		const manager = new TerminalManager();
+		const command = `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`;
+
+		try {
+			const creating = manager.create(command, {
+				cols: 80,
+				rows: 24,
+				cwd: root,
+				env: { ...process.env },
+			});
+			await manager.teardown();
+			await expect(creating).rejects.toThrow("shutting down");
+			expect(manager.activeSize).toBe(0);
+			expect(manager.size).toBe(0);
+		} finally {
+			await manager.teardown();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 });

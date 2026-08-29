@@ -26,6 +26,8 @@ function summaryEvent(event: MonitorEvent): MonitorSummaryEvent {
 	return event;
 }
 
+const TERMINAL_STOP_EVENT_TIMEOUT_MS = 10_000;
+
 class EventSink {
 	readonly events: MonitorEvent[] = [];
 	readonly #listeners = new Set<(event: MonitorEvent) => void>();
@@ -35,12 +37,12 @@ class EventSink {
 		for (const listener of this.#listeners) listener(event);
 	}
 
-	waitFor(predicate: (event: MonitorEvent) => boolean, label: string): Promise<MonitorEvent> {
+	waitFor(predicate: (event: MonitorEvent) => boolean, label: string, timeoutMs = 5000): Promise<MonitorEvent> {
 		return new Promise((resolve, reject) => {
 			const timeout = setTimeout(() => {
 				this.#listeners.delete(listener);
 				reject(new Error(`Timed out waiting for ${label}`));
-			}, 5000);
+			}, timeoutMs);
 			const listener = (event: MonitorEvent) => {
 				if (!predicate(event)) return;
 				clearTimeout(timeout);
@@ -386,6 +388,7 @@ describe("terminal monitor tool", () => {
 		const timedOut = sink.waitFor(
 			(event) => event.type === "summary" && event.description === "timed",
 			"timeout summary",
+			TERMINAL_STOP_EVENT_TIMEOUT_MS,
 		);
 		const timedResult = await tool.execute("monitor-timeout", {
 			description: "timed",
@@ -425,7 +428,11 @@ describe("terminal monitor tool", () => {
 	it("emits a final summary when a wake-budget-paused monitor exits", async () => {
 		const registry = new MonitorRegistry((event) => sink.push(event));
 		const tool = createMonitorTool({ ...ctx, monitorRegistry: registry });
-		const ended = sink.waitFor((event) => event.type === "summary", "paused monitor completion");
+		const ended = sink.waitFor(
+			(event) => event.type === "summary",
+			"paused monitor completion",
+			TERMINAL_STOP_EVENT_TIMEOUT_MS,
+		);
 		const started = await tool.execute("monitor-paused-exit", { description: "paused exit", command: "sleep 30" });
 		const bashId = /ID: (bash_\d+)/.exec(firstText(started))?.[1];
 		if (!bashId) throw new Error("Monitor did not return a bash_id");

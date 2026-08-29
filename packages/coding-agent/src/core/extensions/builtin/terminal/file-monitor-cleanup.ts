@@ -2,17 +2,25 @@ function reportFileMonitorError(error: Error): void {
 	console.error("Native file monitor callback failed.", error);
 }
 
+function reportBoundaryError(error: unknown, onError: (error: Error) => void): void {
+	const failure = error instanceof Error ? error : new Error(String(error));
+	try {
+		onError(failure);
+	} catch (reportError) {
+		reportFileMonitorError(reportError instanceof Error ? reportError : new Error(String(reportError)));
+	}
+}
+
 export function runFileMonitorAsyncBoundary(action: () => void, onError = reportFileMonitorError): void {
 	try {
 		action();
 	} catch (error) {
-		const failure = error instanceof Error ? error : new Error(String(error));
-		try {
-			onError(failure);
-		} catch (reportError) {
-			reportFileMonitorError(reportError instanceof Error ? reportError : new Error(String(reportError)));
-		}
+		reportBoundaryError(error, onError);
 	}
+}
+
+export function runFileMonitorPromiseBoundary(action: () => Promise<void>, onError = reportFileMonitorError): void {
+	void action().catch((error) => reportBoundaryError(error, onError));
 }
 
 export function runAllCleanup(actions: ReadonlyArray<() => void>): void {

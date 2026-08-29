@@ -1,3 +1,4 @@
+import { utimesSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -197,6 +198,20 @@ describe("secure file monitor worker", () => {
 			});
 			stop = registration.stop;
 
+			if (process.platform === "win32") {
+				await expect(rename(approved, moved)).rejects.toMatchObject({
+					code: expect.stringMatching(/^(?:EACCES|EBUSY|EPERM)$/),
+				});
+				await writeFile(join(external, "claim.json"), "external-secret");
+				await registration.reconcile();
+				expect(events).toEqual([]);
+
+				await writeFile(join(approved, "claim.json"), "approved");
+				await registration.reconcile();
+				expect(events).toEqual([{ type: "created" }]);
+				return;
+			}
+
 			await rename(approved, moved);
 			await symlink(external, approved);
 			await writeFile(join(external, "claim.json"), "external-secret");
@@ -206,6 +221,40 @@ describe("secure file monitor worker", () => {
 			await writeFile(join(moved, "claim.json"), "approved");
 			await registration.reconcile();
 			expect(events).toEqual([{ type: "created" }]);
+		} finally {
+			await stop?.();
+			await pool.dispose();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("detects same-size modification after mtime restoration", async () => {
+		const root = await realpath(await mkdtemp(join(tmpdir(), "senpi-secure-monitor-ctime-")));
+		const target = join(root, "claim.json");
+		const stableTime = new Date("2020-01-01T00:00:00.000Z");
+		writeFileSync(target, "first");
+		utimesSync(target, stableTime, stableTime);
+		const identity = await stat(root, { bigint: true });
+		const events: SecureFileMonitorWorkerEvent[] = [];
+		const pool = new SecureFileMonitorWorkerPool();
+		let stop: (() => Promise<void>) | undefined;
+
+		try {
+			const registration = await pool.register({
+				directory: root,
+				expectedDevice: identity.dev,
+				expectedInode: identity.ino,
+				targetName: "claim.json",
+				event: "modify",
+				timeoutMs: 5000,
+				onEvent: (event) => events.push(event),
+			});
+			stop = registration.stop;
+
+			writeFileSync(target, "after");
+			utimesSync(target, stableTime, stableTime);
+			await registration.reconcile();
+			expect(events).toEqual([{ type: "modified" }]);
 		} finally {
 			await stop?.();
 			await pool.dispose();

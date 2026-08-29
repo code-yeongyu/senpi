@@ -13,7 +13,10 @@ const inspect = (name) => {
 	try {
 		const value = lstatSync(name, { bigint: true });
 		if (!value.isFile() || value.isSymbolicLink()) return { kind: "invalid" };
-		return { kind: "file", fingerprint: [value.dev, value.ino, value.size, value.mtimeNs].join(":") };
+		return {
+			kind: "file",
+			fingerprint: [value.dev, value.ino, value.size, value.ctimeNs, value.mtimeNs].join(":"),
+		};
 	} catch (error) {
 		if (error && error.code === "ENOENT") return { kind: "missing" };
 		throw error;

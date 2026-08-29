@@ -66,6 +66,35 @@ describe("native file monitor lifecycle errors", () => {
 		},
 	);
 
+	it("reports secure settlement failures through the async boundary", async () => {
+		const dir = await realpath(await mkdtemp(join(tmpdir(), "senpi-file-monitor-secure-lifecycle-")));
+		const target = join(dir, "claim.json");
+		const reported = Promise.withResolvers<Error>();
+		const registry = new FileMonitorRegistry({
+			emitLine: vi.fn(),
+			emitSummary: () => {
+				throw new Error("summary failure");
+			},
+			onChange: vi.fn(),
+			onError: (error) => reported.resolve(error),
+		});
+		const deadline = setTimeout(
+			() => reported.reject(new Error("Timed out waiting for secure settlement failure")),
+			5000,
+		);
+
+		try {
+			await registry.register(registration(target));
+			await writeFile(target, "{}");
+			await expect(reported.promise).resolves.toBeInstanceOf(AggregateError);
+			expect(registry.snapshot()).toEqual([]);
+		} finally {
+			clearTimeout(deadline);
+			await registry.teardown();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("finishes bundle teardown when native watcher close throws", async () => {
 		const dir = await realpath(await mkdtemp(join(tmpdir(), "senpi-file-monitor-lifecycle-")));
 		const states: string[][] = [];

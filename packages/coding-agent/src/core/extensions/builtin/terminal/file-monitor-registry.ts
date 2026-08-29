@@ -1,4 +1,4 @@
-import { runAllAsyncCleanup, runAllCleanup, runFileMonitorAsyncBoundary } from "./file-monitor-cleanup.ts";
+import { runAllAsyncCleanup, runAllCleanup, runFileMonitorPromiseBoundary } from "./file-monitor-cleanup.ts";
 import {
 	createLegacyFileMonitorContext,
 	type LegacyFileMonitorContext,
@@ -163,7 +163,10 @@ export class FileMonitorRegistry {
 			settleLegacyFileMonitor(this.#legacy!, record, summary, line, notifyChange);
 			return;
 		}
-		runFileMonitorAsyncBoundary(() => this.#settleAsync(record, summary, line, notifyChange), this.#options.onError);
+		runFileMonitorPromiseBoundary(
+			() => this.#settleAsync(record, summary, line, notifyChange),
+			this.#options.onError,
+		);
 	}
 
 	async #settleAsync(

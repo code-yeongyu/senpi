@@ -32,6 +32,7 @@ export class TerminalManager {
 	private readonly getExternalSessionCount: () => number;
 	private readonly maxSessions: number;
 	private readonly scrollback?: number;
+	private acceptingCreates = true;
 	private pendingCreates = 0;
 
 	constructor(options: TerminalManagerOptions = {}) {
@@ -57,6 +58,7 @@ export class TerminalManager {
 
 	/** Spawn a new terminal session and register it under an allocated `bash_N` id. */
 	async create(command: string, options: TerminalSessionOptions): Promise<CreatedTerminalSession> {
+		if (!this.acceptingCreates) throw new Error("Terminal manager is shutting down.");
 		if (this.capacityCount + this.getExternalSessionCount() >= this.maxSessions) {
 			throw new SessionRegistryCapacityError(this.maxSessions);
 		}
@@ -67,6 +69,10 @@ export class TerminalManager {
 			let entry: { id: string };
 			try {
 				entry = await this.registry.create({ command, session: runtime.session });
+				if (!this.acceptingCreates) {
+					await this.registry.stop(entry.id);
+					throw new Error("Terminal manager is shutting down.");
+				}
 				if (this.activeSize + this.pendingCreates - 1 + this.getExternalSessionCount() > this.maxSessions) {
 					await this.registry.stop(entry.id);
 					throw new SessionRegistryCapacityError(this.maxSessions);
@@ -109,6 +115,7 @@ export class TerminalManager {
 
 	/** Tree-kill every session and dispose all runtime wrappers. */
 	async teardown(): Promise<void> {
+		this.acceptingCreates = false;
 		await this.registry.teardown();
 		for (const runtime of this.runtimes.values()) runtime.dispose();
 		this.runtimes.clear();
