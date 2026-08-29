@@ -72,7 +72,7 @@ const stopSources = () => {
 const ensureSources = () => {
 	if (!watcher) {
 		try {
-			watcher = watch(".", { encoding: "utf8", persistent: false }, scheduleAll);
+			watcher = watch(process.cwd(), { encoding: "utf8", persistent: false }, scheduleAll);
 			watcher.on("error", () => {
 				if (watcher) watcher.close();
 				watcher = undefined;

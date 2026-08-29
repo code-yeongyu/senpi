@@ -7,7 +7,8 @@
 ### Added
 
 - `monitor` now supports one-shot native file create/modify watches with `watch_N`
-  lifecycle controls, shared terminal-monitor capacity, ctime-aware stat polling
+  lifecycle controls, shared terminal-monitor capacity, absolute Windows watch
+  paths, ctime-aware stat polling
   for silently dropped filesystem events, bounded TERM-to-KILL fallback timeout
   cleanup, allowlisted and validated secure worker environments, and canonical-directory
   permission checks.

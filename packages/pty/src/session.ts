@@ -9,6 +9,7 @@ import {
 	normalizeTerminalExit,
 	notStartedOperation,
 } from "./session-exit.ts";
+import { killTerminalSession } from "./session-kill.ts";
 import { getNativeSessionFactory } from "./session-native.ts";
 import { defaultCommand, normalizeRawTailBytes, toNativeOptions, toPipeFallbackOptions } from "./session-options.ts";
 import type {
@@ -55,7 +56,7 @@ export class TerminalSession {
 	private settledExit: TerminalSessionExit | null = null;
 	private rawTailBuffer = Buffer.alloc(0);
 	private rawByteCount = 0;
-	private killRequested = false;
+	private killSignal: TerminalSessionSignal | null = null;
 	private unsubscribeBackendData: (() => void) | null = null;
 
 	constructor(options: TerminalSessionOptions = {}, dependencies: TerminalSessionDependencies = {}) {
@@ -183,20 +184,9 @@ export class TerminalSession {
 	}
 
 	kill(signal: TerminalSessionSignal = "SIGTERM"): TerminalSessionOperationResult {
-		const handle = this.backendHandle;
-		if (this.killRequested || this.settledExit !== null) {
-			return {
-				ok: true,
-				idempotent: true,
-				note: "Terminal session kill was already requested.",
-			};
-		}
-		if (handle === null) return notStartedOperation("kill");
-
-		this.killRequested = true;
-		const result = normalizeOperationResult(handle.kill(signal), `Sent ${signal} to terminal session.`);
-		if (!result.ok) this.killRequested = false;
-		return result;
+		const outcome = killTerminalSession(this.backendHandle, signal, this.killSignal, this.settledExit !== null);
+		this.killSignal = outcome.signal;
+		return outcome.result;
 	}
 
 	stop(): TerminalSessionOperationResult {
@@ -216,7 +206,7 @@ export class TerminalSession {
 		const wait = handle.waitExit ?? handle.wait;
 		if (!wait) throw new Error("Terminal session backend does not expose waitExit or wait");
 		const exit = await wait.call(handle);
-		return normalizeTerminalExit(exit, backend, this.killRequested);
+		return normalizeTerminalExit(exit, backend, this.killSignal !== null);
 	}
 
 	private settleExit(exit: TerminalSessionExit): TerminalSessionExit {

@@ -8,6 +8,7 @@
 src/index.ts                     Public barrel; ".", "./screen", "./registry", "./native" exports
 src/loader.ts, native-loader.ts  Native prebuild discovery and ABI checks
 src/session.ts                   Public session lifecycle
+src/session-kill.ts              Idempotent kill and SIGKILL escalation policy
 src/session-native.ts            Native backend adapter
 src/pipe-fallback.ts             child_process fallback when native is absent
 src/session-exit.ts              Exit settlement helpers
@@ -25,7 +26,7 @@ test/fixtures/*.mjs              Native-addon child processes for callback/worke
 - macOS quarantine is probed via `xattr -p` before loading a prebuild. Detection must never clear the attribute; an unreadable attribute is non-rejecting.
 - Unsupported or missing native bindings select the pipe fallback with a diagnostic; fallback behavior must never be presented as a real PTY.
 - Exit notification settles exactly once across native exit, child exit, startup failure, kill, and disposal races.
-- `kill()` is idempotent and detached-child cleanup owns the full process tree.
+- Repeated `kill()` calls are idempotent except that `SIGKILL` may escalate an earlier softer request; detached-child cleanup owns the full process tree.
 - Bound retained raw output/tails; persistent sessions must not grow memory without limit.
 - Registry IDs, detached process metadata, stop, and removal remain explicit. The current registry has no caller-authorization model; do not claim owner isolation without adding one.
 
@@ -35,7 +36,7 @@ test/fixtures/*.mjs              Native-addon child processes for callback/worke
 |---|---|
 | Public API / subpath exports | `src/index.ts` |
 | Native loading/ABI | `src/loader.ts`, `src/native-loader.ts` |
-| Session lifecycle | `src/session.ts`, `src/session-exit.ts` |
+| Session lifecycle | `src/session.ts`, `src/session-exit.ts`, `src/session-kill.ts` |
 | Fallback process behavior | `src/pipe-fallback.ts` |
 | Detached sessions | `src/registry.ts`, `src/registry-detached.ts` |
 | Screen parsing | `src/screen.ts` |

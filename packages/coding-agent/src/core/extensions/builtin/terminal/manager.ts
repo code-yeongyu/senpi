@@ -74,11 +74,11 @@ export class TerminalManager {
 			try {
 				entry = await this.registry.create({ command, session: runtime.session });
 				if (!this.acceptingCreates || this.stoppingAll || createGeneration !== this.createGeneration) {
-					await this.registry.stop(entry.id);
+					await this.stopCreatedRuntime(entry.id, runtime);
 					throw new Error("Terminal manager is shutting down.");
 				}
 				if (this.activeSize + this.pendingCreates - 1 + this.getExternalSessionCount() > this.maxSessions) {
-					await this.registry.stop(entry.id);
+					await this.stopCreatedRuntime(entry.id, runtime);
 					throw new SessionRegistryCapacityError(this.maxSessions);
 				}
 			} catch (error) {
@@ -145,6 +145,14 @@ export class TerminalManager {
 		} finally {
 			this.stoppingAll = false;
 		}
+	}
+
+	private async stopCreatedRuntime(id: string, runtime: TerminalRuntimeSession): Promise<void> {
+		await this.registry.stop(id);
+		if (runtime.exited) return;
+		const forced = runtime.session.kill("SIGKILL");
+		if (!forced.ok) throw new Error(forced.note);
+		await runtime.session.waitExit();
 	}
 
 	/** Dispose runtime wrappers whose registry entry was pruned (capacity/LRU eviction). */

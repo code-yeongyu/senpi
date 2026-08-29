@@ -82,6 +82,44 @@ describe("TerminalSession", () => {
 		expect(session.exitState.exit?.cancelled).toBe(true);
 	});
 
+	it("allows SIGKILL to escalate a previous SIGTERM request", async () => {
+		const exits = Promise.withResolvers<TerminalSessionExit>();
+		const kills: string[] = [];
+		const handle: TerminalSessionHandle = {
+			write: () => ok("native write"),
+			resize: () => ok("native resize"),
+			kill(signal) {
+				kills.push(signal ?? "SIGTERM");
+				return ok("native kill");
+			},
+			waitExit: () => exits.promise,
+		};
+		const session = new TerminalSession(
+			{ command: "native-command" },
+			{
+				nativeLoadResult: {
+					native: { PtySession: class NativePtySessionPlaceholder {}, version: () => "0.0.0" },
+					diagnostic: null,
+				},
+				createNativeSession: () => handle,
+			},
+		).start();
+
+		expect(session.kill("SIGTERM").idempotent).not.toBe(true);
+		expect(session.kill("SIGTERM").idempotent).toBe(true);
+		expect(session.kill("SIGKILL").idempotent).not.toBe(true);
+		expect(kills).toEqual(["SIGTERM", "SIGKILL"]);
+
+		exits.resolve({
+			backend: "native",
+			exitCode: null,
+			signal: "SIGKILL",
+			cancelled: false,
+			timedOut: false,
+		});
+		await session.waitExit();
+	});
+
 	it("wraps injected native sessions and normalizes native exits", async () => {
 		const writes: string[] = [];
 		const resizes: string[] = [];
