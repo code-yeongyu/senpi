@@ -11,6 +11,8 @@
 - Rearm state resets before a native watcher can emit a registration-race completion.
 - Native results expose both `bash_id` and `watch_id`; file fingerprints include device, inode, ctime, size, and mtime so same-size rewrites remain observable even when mtime is restored.
 - Secure asynchronous settlement reports aggregate cleanup failures through the configured error boundary, and terminal creation rejects once concurrent teardown begins so neither path can leave an unhandled rejection or untracked process.
+- `kill_bash({ all: true })` clears live sessions through a reusable stop-all path, while permanent bundle teardown remains fenced against overlapping creates.
+- `kill_bash({ all: true })` clears live sessions through a reusable stop-all path, while permanent bundle teardown remains fenced against overlapping creates.
 - `packages/coding-agent/test/suite/native-file-monitor-harness.ts`, the `secure-file-monitor-worker*.test.ts` files, `file-monitor-*.test.ts`, `terminal-manager-capacity.test.ts`, `terminal-monitor.test.ts`, and `terminal-reload-survival.test.ts` cover anchored ABA resistance, worker startup/crash/forced cleanup, reconciliation and stat fallback, transactional registration, concurrent admission, cancellation, rebinding, and lossless reload delivery with bounded event-driven waits.
 
 ### Why

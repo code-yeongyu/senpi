@@ -9,12 +9,14 @@ describe("terminal manager capacity", () => {
 	it("reserves one slot before asynchronously creating a terminal", async () => {
 		const root = await realpath(await mkdtemp(join(tmpdir(), "senpi-terminal-capacity-")));
 		const manager = new TerminalManager({ maxSessions: 1 });
-		const command = `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`;
+		const command = process.execPath;
 		const options = {
+			command: process.execPath,
+			args: ["-e", "setInterval(() => {}, 1000)"],
 			cols: 80,
 			rows: 24,
 			cwd: root,
-			env: { ...process.env },
+			env: { ...process.env, SENPI_PTY_FORCE_PIPE: "1" },
 		};
 
 		try {
@@ -36,14 +38,16 @@ describe("terminal manager capacity", () => {
 	it("shares pending terminal reservations with native file admission", async () => {
 		const root = await realpath(await mkdtemp(join(tmpdir(), "senpi-shared-terminal-capacity-")));
 		const bundle = new TerminalSessionBundle({ maxSessions: 1 });
-		const command = `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`;
+		const command = process.execPath;
 
 		try {
 			const terminal = bundle.manager.create(command, {
+				command: process.execPath,
+				args: ["-e", "setInterval(() => {}, 1000)"],
 				cols: 80,
 				rows: 24,
 				cwd: root,
-				env: { ...process.env },
+				env: { ...process.env, SENPI_PTY_FORCE_PIPE: "1" },
 			});
 			const file = bundle.monitors.registerFile({
 				description: "competing file watch",
@@ -69,14 +73,16 @@ describe("terminal manager capacity", () => {
 	it("rejects terminal creation racing with teardown without leaking a session", async () => {
 		const root = await realpath(await mkdtemp(join(tmpdir(), "senpi-terminal-teardown-race-")));
 		const manager = new TerminalManager();
-		const command = `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`;
+		const command = process.execPath;
 
 		try {
 			const creating = manager.create(command, {
+				command: process.execPath,
+				args: ["-e", "setInterval(() => {}, 1000)"],
 				cols: 80,
 				rows: 24,
 				cwd: root,
-				env: { ...process.env },
+				env: { ...process.env, SENPI_PTY_FORCE_PIPE: "1" },
 			});
 			await manager.teardown();
 			await expect(creating).rejects.toThrow("shutting down");

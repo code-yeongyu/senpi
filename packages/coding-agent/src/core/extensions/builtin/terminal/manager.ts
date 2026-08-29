@@ -33,7 +33,10 @@ export class TerminalManager {
 	private readonly maxSessions: number;
 	private readonly scrollback?: number;
 	private acceptingCreates = true;
+	private createGeneration = 0;
 	private pendingCreates = 0;
+	private stoppingAll = false;
+	private stopAllPromise: Promise<void> | null = null;
 
 	constructor(options: TerminalManagerOptions = {}) {
 		this.maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
@@ -58,10 +61,11 @@ export class TerminalManager {
 
 	/** Spawn a new terminal session and register it under an allocated `bash_N` id. */
 	async create(command: string, options: TerminalSessionOptions): Promise<CreatedTerminalSession> {
-		if (!this.acceptingCreates) throw new Error("Terminal manager is shutting down.");
+		if (!this.acceptingCreates || this.stoppingAll) throw new Error("Terminal manager is shutting down.");
 		if (this.capacityCount + this.getExternalSessionCount() >= this.maxSessions) {
 			throw new SessionRegistryCapacityError(this.maxSessions);
 		}
+		const createGeneration = this.createGeneration;
 		this.pendingCreates += 1;
 		try {
 			const runtimeOptions: TerminalRuntimeOptions = { ...options, scrollback: this.scrollback };
@@ -69,7 +73,7 @@ export class TerminalManager {
 			let entry: { id: string };
 			try {
 				entry = await this.registry.create({ command, session: runtime.session });
-				if (!this.acceptingCreates) {
+				if (!this.acceptingCreates || this.stoppingAll || createGeneration !== this.createGeneration) {
 					await this.registry.stop(entry.id);
 					throw new Error("Terminal manager is shutting down.");
 				}
@@ -114,11 +118,33 @@ export class TerminalManager {
 	}
 
 	/** Tree-kill every session and dispose all runtime wrappers. */
+	async stopAll(): Promise<void> {
+		if (this.stopAllPromise) return await this.stopAllPromise;
+		const operation = this.stopAllOnce();
+		this.stopAllPromise = operation;
+		try {
+			await operation;
+		} finally {
+			if (this.stopAllPromise === operation) this.stopAllPromise = null;
+		}
+	}
+
+	/** Permanently stop accepting sessions and tear down every live runtime. */
 	async teardown(): Promise<void> {
 		this.acceptingCreates = false;
-		await this.registry.teardown();
-		for (const runtime of this.runtimes.values()) runtime.dispose();
-		this.runtimes.clear();
+		await this.stopAll();
+	}
+
+	private async stopAllOnce(): Promise<void> {
+		this.stoppingAll = true;
+		this.createGeneration += 1;
+		try {
+			await this.registry.teardown();
+			for (const runtime of this.runtimes.values()) runtime.dispose();
+			this.runtimes.clear();
+		} finally {
+			this.stoppingAll = false;
+		}
 	}
 
 	/** Dispose runtime wrappers whose registry entry was pruned (capacity/LRU eviction). */

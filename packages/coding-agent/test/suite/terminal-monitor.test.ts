@@ -132,7 +132,7 @@ describe("terminal monitor tool", () => {
 			expect(firstText(modifyResult)).toContain("does not exist");
 			expect(registry.snapshot()).toEqual([]);
 		} finally {
-			registry.dispose();
+			await registry.teardown();
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
@@ -170,7 +170,7 @@ describe("terminal monitor tool", () => {
 			expect(firstText(result)).toContain("parent is not a directory");
 			expect(registry.snapshot()).toEqual([]);
 		} finally {
-			registry.dispose();
+			await registry.teardown();
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
@@ -216,7 +216,7 @@ describe("terminal monitor tool", () => {
 			expect(firstText(killedAll)).toContain("Killed 2 session(s)");
 			expect(registry.snapshot()).toEqual([]);
 		} finally {
-			registry.dispose();
+			await registry.teardown();
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
@@ -244,7 +244,7 @@ describe("terminal monitor tool", () => {
 			expect(firstText(second)).toContain("capacity");
 			expect(registry.snapshot()).toHaveLength(1);
 		} finally {
-			registry.dispose();
+			await registry.teardown();
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
@@ -271,7 +271,7 @@ describe("terminal monitor tool", () => {
 			expect(manager.size).toBe(0);
 			expect(registry.snapshot()).toHaveLength(1);
 		} finally {
-			registry.dispose();
+			await registry.teardown();
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
@@ -413,7 +413,11 @@ describe("terminal monitor tool", () => {
 
 	it("shares the bash registry with kill_bash and treats rearm of a live monitor as a no-op", async () => {
 		const tool = createMonitorTool(ctx);
-		const ended = sink.waitFor((event) => event.type === "summary", "killed monitor summary");
+		const ended = sink.waitFor(
+			(event) => event.type === "summary",
+			"killed monitor summary",
+			TERMINAL_STOP_EVENT_TIMEOUT_MS,
+		);
 		const started = await tool.execute("monitor-live", { description: "live", command: "sleep 30" });
 		const bashId = /ID: (bash_\d+)/.exec(firstText(started))?.[1];
 		if (!bashId) throw new Error("Monitor did not return a bash_id");
@@ -423,6 +427,22 @@ describe("terminal monitor tool", () => {
 		const killed = await createKillBashTool(ctx).execute("kill-monitor", { bash_id: bashId });
 		expect(firstText(killed)).toContain(`Killed ${bashId}`);
 		expect(summaryEvent(await ended).summary).toContain("killed");
+	});
+
+	it("keeps the terminal manager reusable after kill-all", async () => {
+		const killed = await createKillBashTool(ctx).execute("kill-all-empty", { all: true });
+		expect(firstText(killed)).toContain("Killed 0 terminal session(s)");
+
+		const created = await manager.create(process.execPath, {
+			command: process.execPath,
+			args: ["-e", "process.exit(0)"],
+			cwd: process.cwd(),
+			env: { ...process.env, SENPI_PTY_FORCE_PIPE: "1" },
+			cols: 80,
+			rows: 24,
+		});
+		await created.runtime.session.waitExit();
+		expect(created.runtime.exitResult?.exitCode).toBe(0);
 	});
 
 	it("emits a final summary when a wake-budget-paused monitor exits", async () => {

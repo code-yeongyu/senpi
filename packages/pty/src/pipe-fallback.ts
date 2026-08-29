@@ -157,7 +157,7 @@ export class PipeFallbackSession {
 			if (this.options.timeoutMs !== undefined) {
 				this.timeoutHandle = setTimeout(() => {
 					this.timedOut = true;
-					terminateChildTree(child, "SIGTERM");
+					this.kill("SIGTERM");
 				}, this.options.timeoutMs);
 			}
 		} catch (error) {

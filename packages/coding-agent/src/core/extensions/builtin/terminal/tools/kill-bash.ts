@@ -28,7 +28,7 @@ export function createKillBashTool(ctx: TerminalToolContext) {
 					errors.push(error);
 				}
 				try {
-					await ctx.manager.teardown();
+					await ctx.manager.stopAll();
 				} catch (error) {
 					if (!(error instanceof Error)) throw error;
 					errors.push(error);
