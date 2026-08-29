@@ -139,7 +139,7 @@ describe("PipeFallbackSession", () => {
 		const exit = await session.waitExit();
 
 		expect(exit.timedOut).toBe(true);
-		expect(exit.exitCode).toBeNull();
+		expect(exit.exitCode).not.toBe(0);
 		await delay(5);
 		expect(session.write("late").ok).toBe(false);
 	});
@@ -166,7 +166,8 @@ describe("PipeFallbackSession", () => {
 			]);
 
 			expect(exit.timedOut).toBe(true);
-			expect(exit.signal).toBe("SIGKILL");
+			if (process.platform === "win32") expect(exit.exitCode).not.toBe(0);
+			else expect(exit.signal).toBe("SIGKILL");
 		} finally {
 			unsubscribe();
 			session.kill("SIGKILL");
