@@ -1,5 +1,23 @@
 # changes
 
+## Anchor compiled-binary detection to exact virtual-filesystem url shapes (2026-08-30)
+
+### What changed
+
+- `packages/coding-agent/src/config.ts`: `isBunBinary` now derives from `isCompiledBunBinaryUrl()`, which matches only the exact embedded-module url shapes (`file:///$bunfs/...`, `file:///<drive>:/~BUN/...` raw or percent-encoded) instead of unrestricted substring checks.
+
+### Why
+
+- A stock `bun run` from a disk path containing a marker segment (e.g. `/tmp/$bunfs/...`) previously classified as a compiled binary, misrouting theme/package-dir resolution and, via the new compiled-host signal, mislabeling the eval js runtime badge as `native`.
+
+### Why an extension could not handle it
+
+- `isBunBinary` is core bootstrap classification consumed by config path resolution and the bundled-extension loader.
+
+### Expected merge conflict zones
+
+- LOW: `isBunBinary` definition in `packages/coding-agent/src/config.ts`.
+
 ## Measure Cursor tool-result history at the wire representation (2026-08-29)
 
 ### What changed

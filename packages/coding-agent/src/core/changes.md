@@ -1,5 +1,6 @@
 # changes
 
+<<<<<<< HEAD
 ## 2026-08-30 - Experimental workflow eval-only policy
 
 ### What changed
@@ -18,6 +19,25 @@
 ### Expected merge conflict zones
 
 - `agent-session.ts`: active-tool selection, tool registry refresh, reload, and system-prompt assembly.
+
+## 2026-08-30 - Publish compiled-binary host signal for sidecar extensions
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: before loading a bundled extension through `resolveBinaryFactory` in a compiled binary, the loader publishes `Symbol.for("@earendil-works/pi-coding-agent:compiled-binary-host")` on `globalThis`.
+
+### Why
+
+- Compiled binaries load bundled extensions (codemode) from the physical sidecar, whose module urls carry no bunfs marker; codemode's eval runtime badge reads this host classification to label the self-hosted runtime `native`.
+
+### Why an extension could not handle it
+
+- Only the binary loader knows it is executing the compiled-host loading path; extension code loaded from the sidecar cannot observe `isBunBinary` itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/resource-loader.ts` (bundled builtin extension loading)
+
 ## 2026-08-29 - Bound Cursor serialized tool-result admissions
 
 ### What changed

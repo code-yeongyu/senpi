@@ -58,6 +58,27 @@ describe("eval renderer runtime badge", () => {
 		expect(rendered[0]).toBe("eval js (node 26.7.0) done");
 	});
 
+	it("labels the js runtime as native when the kernel runs inside the compiled binary", () => {
+		const details: EvalToolDetails = {
+			language: "js",
+			durationMs: 0,
+			toolCalls: [],
+			truncated: false,
+			runtime: { name: "native", version: "1.4.0" },
+		};
+
+		const rendered = renderLines(
+			renderEvalResult(
+				evalResult(details, "complete"),
+				{ expanded: false, isPartial: false },
+				undefined,
+				resultContext(undefined, false),
+			),
+		);
+
+		expect(rendered[0]).toBe("eval js (native 1.4.0) done");
+	});
+
 	it("renders headers without any badge when runtime is unknown", () => {
 		const rendered = renderLines(
 			renderEvalResult(

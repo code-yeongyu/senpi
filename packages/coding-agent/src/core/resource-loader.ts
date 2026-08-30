@@ -113,6 +113,14 @@ const VENDORED_BUILTIN_EXTENSION_PACKAGES: ReadonlyArray<{ builtinId: string; pa
 ];
 const moduleRequire = createRequire(import.meta.url);
 
+/**
+ * Published before loading bundled extensions from the physical sidecar of a
+ * compiled binary: sidecar module urls carry no bunfs marker, so extensions
+ * (codemode's eval runtime badge) read this host classification instead.
+ * Key convention matches the interactive theme registry.
+ */
+const COMPILED_BINARY_HOST_KEY = Symbol.for("@earendil-works/pi-coding-agent:compiled-binary-host");
+
 const bundledBuiltinExtensions: ReadonlyArray<{
 	id: string;
 	resolvePackage: () => string;
@@ -1389,6 +1397,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 			try {
 				if (isBunBinary && bundledExtension.resolveBinaryFactory) {
+					Reflect.set(globalThis, COMPILED_BINARY_HOST_KEY, true);
 					const factory = await bundledExtension.resolveBinaryFactory();
 					const extensionPath = `<builtin:${bundledExtension.id}>`;
 					const extension = await loadExtensionFromFactory(

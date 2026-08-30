@@ -8,6 +8,10 @@
 
 ### Changed
 
+- Eval header runtime badges for the js kernel now read `native` when a compiled
+  standalone binary hosts the kernel itself (an omo/pi native build), e.g.
+  `eval js (native 1.4.0, ~/.omo/…/omo)`; stock bun and node badges and the eval
+  prompt host line are unchanged.
 - The eval prompt's dependency-graph section is now `<workflow>` and states its contract directly:
   define the workflow spec in code, one node per logically distinct step, rather than hand-authoring
   the graph as a single opaque call.

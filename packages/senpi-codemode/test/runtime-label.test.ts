@@ -18,6 +18,12 @@ describe("formatRuntimeBadge", () => {
 		).toBe("bun 1.4.0, /usr/local/bin/bun");
 	});
 
+	it("labels the native self-hosted runtime like any js runtime", () => {
+		expect(
+			formatRuntimeBadge("js", { name: "native", version: "1.4.0", path: "/Users/dev/.omo/bin/omo" }, "/Users/dev"),
+		).toBe("native 1.4.0, ~/.omo/bin/omo");
+	});
+
 	it("falls back to a version-only badge when no path is known", () => {
 		expect(formatRuntimeBadge("py", { name: "python", version: "3.12.4" }, "/Users/dev")).toBe("3.12.4");
 	});

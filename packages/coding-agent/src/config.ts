@@ -17,11 +17,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /**
- * Detect if we're running as a Bun compiled binary.
- * Bun binaries have import.meta.url containing "$bunfs", "~BUN", or "%7EBUN" (Bun's virtual filesystem path)
+ * Exact module-url shape of a module embedded in a Bun compiled binary:
+ * posix `file:///$bunfs/...` or the windows virtual drive
+ * `file:///<drive>:/~BUN/...` (raw or percent-encoded). Marker-named disk
+ * paths (e.g. `file:///tmp/$bunfs/...`) never match. Shapes are mirrored by
+ * senpi-codemode's runtime-info.ts.
  */
-export const isBunBinary =
-	import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN") || import.meta.url.includes("%7EBUN");
+export function isCompiledBunBinaryUrl(moduleUrl: string): boolean {
+	return moduleUrl.startsWith("file:///$bunfs/") || /^file:\/\/\/[A-Za-z]:\/(?:~BUN|%7EBUN)\//.test(moduleUrl);
+}
+
+/** Detect if we're running as a Bun compiled binary. */
+export const isBunBinary = isCompiledBunBinaryUrl(import.meta.url);
 
 /** Detect if Bun is the runtime (compiled binary or bun run) */
 export const isBunRuntime = !!process.versions.bun;

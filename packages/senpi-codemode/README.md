@@ -34,7 +34,10 @@ task-tool names are known.
   `eval js (node 26.7.0, /opt/…/bin/node)` — with the same `runtime` info on
   `EvalToolDetails` and its `cells` for RPC consumers; interpreter detection
   resolves absolute executable paths, and the eval prompt host line names the
-  JS runtime (`node`/`bun`).
+  JS runtime (`node`/`bun`). When a compiled standalone binary hosts the JS
+  kernel itself (an omo/pi native build), the badge reads `native` instead of
+  `bun` — `eval js (native 1.4.0, ~/.omo/…/omo)` — while the prompt host line
+  stays `bun` for engine capability.
 - JavaScript import rewriting for supported local modules and package imports
   in the persistent Node.js worker.
 - GPT models receive a terse `eval` prompt dialect that prioritizes composing
