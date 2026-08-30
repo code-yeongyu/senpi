@@ -55,19 +55,17 @@ async function createRuntimeWithProvider(config: ProviderConfigInput, storage = 
 	return runtime;
 }
 
-function authenticatedStorage(): AuthStorage {
+function authenticatedStorage(accountCount = 1): AuthStorage {
 	return AuthStorage.inMemory({
 		[CLAUDE_SDK_OAUTH_PROVIDER_ID]: {
 			...emptyCredential(),
-			accounts: [
-				{
-					name: "test",
-					refresh: "test-refresh",
-					access: "test-access",
-					expires: Date.now() + 60_000,
-					source: "login",
-				},
-			],
+			accounts: Array.from({ length: accountCount }, (_, index) => ({
+				name: `test-${index + 1}`,
+				refresh: `test-refresh-${index + 1}`,
+				access: `test-access-${index + 1}`,
+				expires: Date.now() + 60_000,
+				source: "login",
+			})),
 		},
 	});
 }
@@ -146,7 +144,7 @@ describe("claude-sdk-oauth builtin provider", () => {
 		});
 	});
 
-	it("preflight reaches streamSimple with a stored login", async () => {
+	it("preflight reaches streamSimple with multiple stored logins", async () => {
 		const { registration } = captureRegistration();
 		let called = false;
 		const config: ProviderConfigInput = {
@@ -156,7 +154,7 @@ describe("claude-sdk-oauth builtin provider", () => {
 				return fakeStreamSimple()(model, context);
 			},
 		};
-		const runtime = await createRuntimeWithProvider(config, authenticatedStorage());
+		const runtime = await createRuntimeWithProvider(config, authenticatedStorage(2));
 		const model = (await runtime.getAvailable(CLAUDE_SDK_OAUTH_PROVIDER_ID))[0];
 		expect(model).toBeDefined();
 		const stream = runtime.streamSimple(model as Model<Api>, { messages: [], tools: [] } as unknown as Context);

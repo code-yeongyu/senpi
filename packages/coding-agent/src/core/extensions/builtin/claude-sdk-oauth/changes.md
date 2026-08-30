@@ -1,5 +1,32 @@
 # claude-sdk-oauth
 
+## 2026-08-30 - Preserve selected OAuth slots during provider preflight
+
+### What changed
+
+- `oauth-login.ts`: readiness now recognizes a concrete OAuth credential selected by the shared credential-rotation
+  layer, while still excluding the provider's synthetic managed sentinel.
+- `test/suite/claude-sdk-oauth-extension.test.ts`: the stream preflight coverage now uses two stored logins so it
+  exercises the selected-slot request path.
+
+### Why
+
+- With two or more Claude logins, shared credential rotation passes one selected OAuth slot to provider auth
+  resolution. The Claude readiness predicate counted only the parent credential's `accounts` array, so the selected
+  slot appeared empty and the request failed with `Provider is not configured: claude-sdk-oauth` even though both
+  accounts were valid.
+
+### Why an extension could not handle it
+
+- The predicate is part of the builtin provider's private OAuth configuration and runs after the shared runtime has
+  selected a credential slot. An external extension cannot repair that credential interpretation without replacing
+  the provider registration.
+
+### Expected merge conflict zones
+
+- LOW in `oauth-login.ts` around `configuredFor` account counting.
+- LOW in `test/suite/claude-sdk-oauth-extension.test.ts` around the stored-login stream preflight.
+
 ## 2026-08-21 - Cache provider settings loads by mtime+size to cut lock convoy
 
 ### What changed
