@@ -10,8 +10,8 @@
 - `auth-lane.ts`: recognized transient refresh failures surface as `server_error` instead of claiming that the OAuth
   token was rejected.
 - `guidance.ts`: all-account guidance now names transient provider failures among temporary block causes.
-- `test/suite/regressions/claude-oauth-refresh-network-classification.test.ts`: locks the transient/auth boundary with
-  the observed `ENOTFOUND platform.claude.com` and Undici timeout shapes.
+- `test/claude-sdk-oauth-failover.test.ts`: locks the transient/auth boundary with the observed
+  `ENOTFOUND platform.claude.com`, Undici timeout, connection-reset, invalid-grant, and HTTP 401 shapes.
 
 ### Why
 

@@ -52,6 +52,16 @@ describe("Claude SDK OAuth failover", () => {
 		expect(classifySdkError("HTTP 529 overloaded")).toEqual({ kind: "overloaded", retryable: true });
 	});
 
+	it.each([
+		["fetch failed; getaddrinfo ENOTFOUND platform.claude.com", "other", true],
+		["authentication_failed: getaddrinfo EAI_AGAIN platform.claude.com", "other", true],
+		["fetch failed; UND_ERR_CONNECT_TIMEOUT", "other", true],
+		["authentication_failed: invalid_grant token revoked", "auth_error", true],
+		["OAuth refresh HTTP 401 unauthorized", "auth_error", true],
+	] as const)("classifies OAuth refresh failure %s", (message, kind, retryable) => {
+		expect(classifySdkError(message)).toEqual({ kind, retryable });
+	});
+
 	it("treats Claude Code's prose subscription limits as rate limits", () => {
 		// Real message from the CLI on an exhausted Pro/Max plan: no SDK error code
 		// and no HTTP status, so without prose matching it classified as
