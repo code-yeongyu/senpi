@@ -72,6 +72,23 @@ function getSessionWorkBarrier(harness: Harness): { readonly hasActiveWork: bool
 }
 
 describe("AgentSession queue characterization", () => {
+	it("emits a state event when queue modes change", async () => {
+		const harness = await createHarness();
+		harness.session.setSteeringMode("one-at-a-time");
+		harness.session.setFollowUpMode("all");
+		harness.session.setAutoCompactionEnabled(false);
+
+		expect(harness.eventsOfType("session_settings_changed")).toEqual([
+			expect.objectContaining({
+				steeringMode: "one-at-a-time",
+				followUpMode: "one-at-a-time",
+				autoCompactionEnabled: true,
+			}),
+			expect.objectContaining({ steeringMode: "one-at-a-time", followUpMode: "all", autoCompactionEnabled: true }),
+			expect.objectContaining({ steeringMode: "one-at-a-time", followUpMode: "all", autoCompactionEnabled: false }),
+		]);
+		harness.cleanup();
+	});
 	const harnesses: Harness[] = [];
 
 	afterEach(() => {

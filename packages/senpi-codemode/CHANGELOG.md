@@ -14,6 +14,28 @@
 
 ### Fixed
 
+- The JavaScript kernel persistence transform no longer truncates declarations whose multi-line
+  initializers contain interior `//` comments (previously emitted unparseable code such as
+  `globalThis["jobs"] = {;`, failing cells with `Unexpected token ';'. Expected a property name.`),
+  and no longer re-evaluates comment-bearing initializers when persisting bindings — such
+  declarations are kept verbatim and their bindings persisted by reference.
+- Last-expression capture no longer inserts `return` before continuation lines (`else`/`catch`/`finally`
+  clauses and leading-`.`/operator method-chain lines), and now scans template literals (including
+  nested templates in interpolations), regexes, and comments with the same literal-aware scanner as
+  the persistence transform — fixing `return else …`, `return .replace(…)`, and mid-argument
+  `return )` corruption of valid cells.
+- Last-expression capture now follows real ASI statement semantics: a parenthesized/bracketed/template
+  line after a closed block starts a new statement (echo restored), expressions split after a trailing
+  operator or `await` stay one statement, tagged templates split across lines invoke the tag, regexes
+  directly after a control-structure condition no longer desync the scanner, and labeled final
+  statements are left uncaptured instead of emitting invalid `return label: …`.
+- Destructuring patterns carrying interior line comments now persist their bindings, and declarations
+  with a dangling trailing comma are left untransformed so the original syntax error surfaces instead
+  of being silently "repaired".
+- Rewritten destructuring assignments are emitted with a leading defensive semicolon so they can no
+  longer ASI-merge into a preceding unterminated expression statement as a bogus call
+  (`foo()\n({…} = …)` previously became `foo()({…} = …)`).
+
 ### Removed
 
 ## [2026.8.29] - 2026-08-29

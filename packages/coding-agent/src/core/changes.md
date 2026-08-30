@@ -1,5 +1,35 @@
 # changes
 
+## 2026-08-30 - Durable entry notifications are rpc-scoped
+
+- `agent-session.ts`: `_emitEntryAppended` only fires while the session is bound in `rpc`
+  mode. The notifications exist to hydrate the shared-host RPC proxy mirror; emitting them
+  on classic/print streams injected extra labels into the released event-order contract
+  (`agent-session-retry-events`, `retry-fallback-engine` pin the full ordered label list and
+  the byte-for-byte no-chain retry contract).
+- `agent-session-prompt.test.ts` binds `mode: "rpc"` before asserting durable prompt entries,
+  so the new-behavior test exercises the lane the contract actually covers instead of the
+  default print lane.
+
+
+## 2026-08-30 - Experimental workflow eval-only policy
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: adds the `experimental.workflowEvalOnly` setting and its getter.
+- `packages/coding-agent/src/core/agent-session.ts`: resolves the policy from settings in the constructor and on reload, hides the `workflow` tool while the registered `eval` tool is present, executes it through the registry without activation, publishes an eval-cell hint, adds system-prompt guidance, and retains the withheld tool so disarming restores direct access.
+
+### Why
+
+- Codemode can keep invoking the workflow (dag) tool from eval cells while preventing it from being advertised as a direct model tool. The policy is inert when codemode's `eval` tool is unavailable, so workflow access is never lost.
+
+### Why an extension could not handle it
+
+- Active tool visibility, lazy activation, the wrapped registry, and the agent-loop removed-tool hint map are coordinated inside `AgentSession`; an extension cannot atomically enforce these boundaries.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: active-tool selection, tool registry refresh, reload, and system-prompt assembly.
 ## 2026-08-29 - Bound Cursor serialized tool-result admissions
 
 ### What changed

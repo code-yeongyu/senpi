@@ -25,6 +25,44 @@ afterEach(async () => {
 });
 
 describe("ensureHost", () => {
+	it("serializes concurrent starts for one socket across agent directories", async () => {
+		const qa = await scratch("cross-agent-race");
+		const secondAgentDir = join(qa.root, "other-agent");
+		let releaseFirst!: () => void;
+		let signalFirstLocked!: () => void;
+		const firstLocked = new Promise<void>((resolve) => (releaseFirst = resolve));
+		const firstAcquired = new Promise<void>((resolve) => (signalFirstLocked = resolve));
+		const first = ensureHost({
+			agentDir: qa.agentDir,
+			socket: qa.socket,
+			_test: {
+				afterLockAcquired: async () => {
+					signalFirstLocked();
+					await firstLocked;
+				},
+				spawn: {
+					command: process.execPath,
+					args: [fixture, qa.socket, VERSION, "multi_session,extension_events", "answer"],
+				},
+			},
+		});
+		await firstAcquired;
+		const second = ensureHost({
+			agentDir: secondAgentDir,
+			socket: qa.socket,
+			_test: {
+				spawn: {
+					command: process.execPath,
+					args: [fixture, qa.socket, VERSION, "multi_session,extension_events", "answer"],
+				},
+			},
+		});
+		releaseFirst();
+		const [firstResult, secondResult] = await Promise.all([first, second]);
+		expect(firstResult.reused).toBe(false);
+		expect(secondResult).toMatchObject({ socket: qa.socket, reused: true });
+	}, 45_000);
+
 	it("starts a missing host and reuses it on the second call", async () => {
 		const qa = await scratch("start-reuse");
 		const first = await ensureFixtureHost(qa);

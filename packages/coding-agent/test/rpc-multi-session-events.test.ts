@@ -222,6 +222,58 @@ describe("multi-session RPC event writer", () => {
 		expect(chunks).toHaveLength(5);
 	});
 
+	it("does not let a gated socket stall a fast socket", async () => {
+		const slowGate = deferred<void>();
+		const slow: string[] = [];
+		const fast: string[] = [];
+		const writer = new SessionEventWriter(() => {});
+		writer.registerConnection("slow", {
+			writeRaw: (chunk) => slow.push(chunk),
+			waitForBackpressure: () => slowGate.promise,
+		});
+		writer.registerConnection("fast", {
+			writeRaw: (chunk) => fast.push(chunk),
+			waitForBackpressure: async () => {},
+		});
+
+		writer.enqueue("session", { type: "event", sequence: 1 });
+		await new Promise<void>((resolve) => queueMicrotask(resolve));
+		expect(slow).toHaveLength(1);
+		expect(fast).toHaveLength(1);
+		slowGate.resolve();
+		await writer.flush();
+	});
+
+	it("replays the session snapshot when a socket attaches mid-stream", async () => {
+		const first: string[] = [];
+		const second: string[] = [];
+		const writer = new SessionEventWriter(() => {});
+		writer.registerConnection("first", {
+			writeRaw: (chunk) => first.push(chunk),
+			waitForBackpressure: async () => {},
+		});
+		writer.enqueue("session", { type: "message_start", message: { role: "assistant", content: [] } });
+		writer.enqueue("session", {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "one" },
+			message: null,
+		});
+		await writer.flush();
+		writer.registerConnection("second", {
+			writeRaw: (chunk) => second.push(chunk),
+			waitForBackpressure: async () => {},
+		});
+		writer.enqueue("session", {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "two" },
+			message: null,
+		});
+		await writer.flush();
+		expect(
+			records(second).map((record) => (record.assistantMessageEvent as { delta?: string })?.delta ?? record.type),
+		).toEqual(["message_start", "one", "two"]);
+	});
+
 	it("routes extension UI responses only to that session's pending map and rejects pending work on close", () => {
 		const a = new SessionExtensionUiRequests();
 		const b = new SessionExtensionUiRequests();
@@ -240,6 +292,46 @@ describe("multi-session RPC event writer", () => {
 		expect(a.resolve({ type: "extension_ui_response", id: "closing", value: "late" })).toBe(false);
 		expect(b.resolve({ type: "extension_ui_response", id: "request", value: "B" })).toBe(true);
 		expect(resolvedB).toBe(true);
+	});
+
+	it("broadcasts unsolicited extension UI state while targeting dialog requests", async () => {
+		const chunks: string[] = [];
+		const scheduled: Array<() => void> = [];
+		const writer = new SessionEventWriter(
+			(chunk) => chunks.push(chunk),
+			(flush) => scheduled.push(flush),
+		);
+		writer.registerConnection("a", { writeRaw: (chunk) => chunks.push(chunk), waitForBackpressure: async () => {} });
+		writer.registerConnection("b", { writeRaw: (chunk) => chunks.push(chunk), waitForBackpressure: async () => {} });
+		writer.withConnection("a", () =>
+			writer.enqueue("session", { type: "extension_ui_request", id: "dialog", method: "confirm" }),
+		);
+		writer.withConnection("a", () =>
+			writer.enqueue("session", { type: "extension_ui_request", id: "status", method: "setStatus" }),
+		);
+		await scheduled[0]!();
+		const output = records(chunks);
+		expect(output.filter((record) => record.id === "dialog")).toHaveLength(1);
+		expect(output.filter((record) => record.id === "status")).toHaveLength(2);
+	});
+
+	it("cancels all pending extension UI requests with matching ids", () => {
+		const requests = new SessionExtensionUiRequests();
+		const cancelled: string[] = [];
+		requests.set("one", {
+			resolve: (response) => {
+				if ("cancelled" in response) cancelled.push(response.id);
+			},
+			reject: () => {},
+		});
+		requests.set("two", {
+			resolve: (response) => {
+				if ("cancelled" in response) cancelled.push(response.id);
+			},
+			reject: () => {},
+		});
+		requests.cancelAll();
+		expect(cancelled).toEqual(["one", "two"]);
 	});
 
 	it("does not emit after a session is sealed, while allowing its terminal close response", async () => {

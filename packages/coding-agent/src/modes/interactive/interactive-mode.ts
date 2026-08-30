@@ -713,6 +713,37 @@ export interface InteractiveModeOptions {
 	initialThemeSetting?: string;
 }
 
+/** Extension UI request forwarded from the shared interactive host. */
+type HostUiRequest = {
+	id: string;
+	method: string;
+	title?: string;
+	options?: string[];
+	message?: string;
+	prefill?: string;
+	placeholder?: string;
+	statusKey?: string;
+	statusText?: string;
+	widgetKey?: string;
+	widgetLines?: string[];
+	widgetPlacement?: "aboveEditor" | "belowEditor";
+	extensionName?: string;
+	text?: string;
+};
+
+type HostUiResponse =
+	| { type: "extension_ui_response"; id: string; value: string }
+	| { type: "extension_ui_response"; id: string; confirmed: boolean }
+	| { type: "extension_ui_response"; id: string; cancelled: true };
+
+/**
+ * Optional runtime capability: only the shared interactive host proxies extension
+ * UI requests back to this mode. The classic local runtime does not implement it.
+ */
+type HostUiCapableRuntime = {
+	setHostUiHandler(callback?: (request: HostUiRequest) => Promise<HostUiResponse | undefined>): void;
+};
+
 interface InteractiveTuiOptions {
 	tuiMode: TuiMode;
 	showHardwareCursor: boolean;
@@ -1004,6 +1035,10 @@ export class InteractiveMode {
 			await this.rebindCurrentSession({ renderBeforeBind: true });
 			await this.themeController.applyFromSettings();
 		});
+		// Host-driven extension UI only exists on the shared-host lane; the classic
+		// local runtime renders extension UI in-process and has no such hook.
+		const hostUiRuntime = this.runtimeHost as Partial<HostUiCapableRuntime>;
+		hostUiRuntime.setHostUiHandler?.((request) => this.handleHostUiRequest(request as HostUiRequest));
 		this.version = DISPLAY_VERSION;
 		this.renderer = createInteractiveTui({
 			tuiMode,
@@ -2748,6 +2783,61 @@ export class InteractiveMode {
 		};
 	}
 
+	private async handleHostUiRequest(request: HostUiRequest): Promise<HostUiResponse | undefined> {
+		switch (request.method) {
+			case "select": {
+				const value = await this.showExtensionSelector(request.title ?? "", request.options ?? []);
+				return value === undefined
+					? { type: "extension_ui_response", id: request.id, cancelled: true }
+					: { type: "extension_ui_response", id: request.id, value };
+			}
+			case "confirm":
+				return {
+					type: "extension_ui_response",
+					id: request.id,
+					confirmed: await this.showExtensionConfirm(request.title ?? "", request.message ?? ""),
+				};
+			case "input": {
+				const value = await this.showExtensionInput(request.title ?? "", request.placeholder);
+				return value === undefined
+					? { type: "extension_ui_response", id: request.id, cancelled: true }
+					: { type: "extension_ui_response", id: request.id, value };
+			}
+			case "editor": {
+				const value = await this.showExtensionEditor(request.title ?? "", request.prefill);
+				return value === undefined
+					? { type: "extension_ui_response", id: request.id, cancelled: true }
+					: { type: "extension_ui_response", id: request.id, value };
+			}
+			case "notify":
+				this.showExtensionNotify(request.message ?? "");
+				return undefined;
+			case "setStatus":
+				this.setExtensionStatus(request.statusKey ?? "", request.statusText);
+				return undefined;
+			case "setTitle":
+				this.extensionTerminalTitle = request.title ?? "";
+				this.applyTerminalTitle();
+				return undefined;
+			case "set_editor_text":
+				this.editor.setText(request.text ?? "");
+				return undefined;
+			case "setWidget":
+				this.setExtensionWidget(request.widgetKey ?? "", request.widgetLines, {
+					placement: request.widgetPlacement,
+				});
+				return undefined;
+			case "custom_unsupported":
+				this.showExtensionNotify(
+					`${request.extensionName ?? "This extension"} requires the classic TUI; its component widget cannot be rendered in the shared host.`,
+					"warning",
+				);
+				return undefined;
+			default:
+				return undefined;
+		}
+	}
+
 	/**
 	 * Set extension status text in the footer.
 	 */
@@ -3808,7 +3898,9 @@ export class InteractiveMode {
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
 			if (this.session.isStreaming || this.session.retryAttempt > 0) {
-				void this.abortAndFireQueuedMessages();
+				void this.abortAndFireQueuedMessages().catch((error) =>
+					this.showError(error instanceof Error ? error.message : String(error)),
+				);
 			} else if (this.session.isBashRunning) {
 				this.session.abortBash();
 			} else if (this.isBashMode) {

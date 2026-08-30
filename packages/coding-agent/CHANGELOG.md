@@ -4,6 +4,12 @@
 
 ### Added
 
+- New experimental setting `experimental.workflowEvalOnly` (default `false`). When enabled, the `workflow` (dag)
+  tool is withheld from the model-facing tool surface and runs only inside eval cells via
+  `tool.workflow({ action: "snapshot", run_id })`. Hooks and permission checks still apply to those operations.
+  The policy is inert whenever the `eval` tool is unavailable, so workflow access is never lost, and it follows the
+  flag across a reload.
+
 ### Fixed
 
 - Claude SDK OAuth no longer treats DNS, connection, timeout, socket, or fetch failures during token refresh as a

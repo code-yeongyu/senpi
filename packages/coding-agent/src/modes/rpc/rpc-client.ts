@@ -21,8 +21,11 @@ import type {
 	RpcAuthAccountsChangedEvent,
 	RpcCommand,
 	RpcExtensionEvent,
+	RpcExtensionUIRequest,
+	RpcExtensionUIResponse,
 	RpcProviderAccount,
 	RpcResponse,
+	RpcSessionModelEntry,
 	RpcSessionState,
 	RpcSlashCommand,
 } from "./rpc-types.ts";
@@ -68,6 +71,7 @@ type PromptOptions = {
 	thinkingLevel?: ThinkingLevel;
 	promptDisposition?: (disposition: PromptDisposition) => void;
 	preflightResult?: (success: boolean) => void;
+	sessionTitlePrompt?: string | false;
 	expandPromptTemplates?: boolean;
 };
 
@@ -76,6 +80,7 @@ export type RpcClientEvent =
 	| JsonAgentSessionEvent
 	| RpcProviderAccountEvent
 	| RpcExtensionEvent
+	| RpcExtensionUIRequest
 	| { type: "bash_start" }
 	| { type: "bash_end" };
 export type RpcEventListener = (event: RpcClientEvent) => void;
@@ -87,6 +92,13 @@ function isProviderAccountEvent(event: RpcClientEvent): event is RpcProviderAcco
 // ============================================================================
 // RPC Client
 // ============================================================================
+
+function isTransportGoneError(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		(error.message === "Client not started" || error.message.startsWith("RPC transport is not writable."))
+	);
+}
 
 export class RpcClient {
 	private process: ChildProcess | null = null;
@@ -294,9 +306,17 @@ export class RpcClient {
 		return opened;
 	}
 
+	async sendExtensionUIResponse(response: RpcExtensionUIResponse): Promise<void> {
+		await this.send(response, true, undefined, false);
+	}
+
 	async closeSession(sessionId = this.sessionId): Promise<void> {
 		if (!sessionId) return;
-		await this.send({ type: "close_session", sessionId }, false);
+		try {
+			await this.send({ type: "close_session", sessionId }, false);
+		} catch (error) {
+			if (!isTransportGoneError(error)) throw error;
+		}
 		if (this.sessionId === sessionId) this.sessionId = undefined;
 	}
 
@@ -347,6 +367,7 @@ export class RpcClient {
 				...(options.images ? { images: options.images } : {}),
 				...(options.streamingBehavior ? { streamingBehavior: options.streamingBehavior } : {}),
 				...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}),
+				...(options.sessionTitlePrompt !== undefined ? { sessionTitlePrompt: options.sessionTitlePrompt } : {}),
 				...(options.expandPromptTemplates !== undefined
 					? { expandPromptTemplates: options.expandPromptTemplates }
 					: {}),
@@ -405,7 +426,11 @@ export class RpcClient {
 	 * Abort current operation.
 	 */
 	async abort(): Promise<void> {
-		await this.send({ type: "abort" });
+		try {
+			await this.send({ type: "abort" });
+		} catch (error) {
+			if (!isTransportGoneError(error)) throw error;
+		}
 	}
 
 	async abortCompaction(): Promise<void> {
@@ -488,12 +513,20 @@ export class RpcClient {
 	/**
 	 * Cycle to next model.
 	 */
-	async cycleModel(): Promise<{
+	async setFavoriteModels(models: RpcSessionModelEntry[]): Promise<void> {
+		await this.send({ type: "set_favorite_models", models });
+	}
+
+	async setScopedModels(models: RpcSessionModelEntry[]): Promise<void> {
+		await this.send({ type: "set_scoped_models", models });
+	}
+
+	async cycleModel(direction: "forward" | "backward" = "forward"): Promise<{
 		model: { provider: string; id: string };
 		thinkingLevel: ThinkingLevel;
 		isScoped: boolean;
 	} | null> {
-		const response = await this.send({ type: "cycle_model" });
+		const response = await this.send({ type: "cycle_model", direction });
 		return this.getData(response);
 	}
 
@@ -645,8 +678,8 @@ export class RpcClient {
 	/**
 	 * Export session to HTML.
 	 */
-	async exportHtml(outputPath?: string): Promise<{ path: string }> {
-		const response = await this.send({ type: "export_html", outputPath });
+	async exportHtml(outputPath?: string, themeName?: string): Promise<{ path: string }> {
+		const response = await this.send({ type: "export_html", outputPath, themeName });
 		return this.getData(response);
 	}
 
@@ -812,7 +845,8 @@ export class RpcClient {
 					isProviderAccountEvent(event) ||
 					event.type === "extension_event" ||
 					event.type === "bash_start" ||
-					event.type === "bash_end"
+					event.type === "bash_end" ||
+					event.type === "extension_ui_request"
 				)
 					return;
 				events.push(event);
@@ -878,9 +912,10 @@ export class RpcClient {
 	}
 
 	private async send(
-		command: RpcCommandBody,
+		command: RpcCommandBody | RpcExtensionUIResponse,
 		route = true,
 		hooks?: { onResponse?: (response: RpcResponse) => void; onReject?: (error: Error) => void },
+		expectResponse = true,
 	): Promise<RpcResponse> {
 		const childProcess = this.process;
 		const stream = this.socket ?? childProcess?.stdin;
@@ -901,13 +936,17 @@ export class RpcClient {
 			throw error;
 		}
 
-		const id = `req_${++this.requestId}`;
+		const id = "type" in command && command.type === "extension_ui_response" ? command.id : `req_${++this.requestId}`;
 		const fullCommand = {
 			...command,
 			...(route && this.sessionId && !("sessionId" in command) ? { sessionId: this.sessionId } : {}),
-			id,
+			...(command.type === "extension_ui_response" ? {} : { id }),
 		} as RpcCommand;
 
+		if (!expectResponse) {
+			stream.write(serializeJsonLine(fullCommand));
+			return Promise.resolve({ type: "response", command: command.type, success: true } as RpcResponse);
+		}
 		return new Promise((resolve, reject) => {
 			const timeout = setTimeout(() => {
 				const pending = this.pendingRequests.get(id);

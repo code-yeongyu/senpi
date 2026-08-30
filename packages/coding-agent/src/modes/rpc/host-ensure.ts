@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as properLockfile from "proper-lockfile";
@@ -41,6 +43,8 @@ export interface EnsureHostOptions {
 		readonly env?: Readonly<Record<string, string>>;
 		/** Extra CLI args forwarded through the supervisor to the host process. */
 		readonly hostArgs?: readonly string[];
+		/** Runs after endpoint ownership is locked; deterministic concurrency-test gate. */
+		readonly afterLockAcquired?: () => Promise<void>;
 	};
 }
 
@@ -79,8 +83,14 @@ export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHos
 	const socket = normalizeSocketPath(options.socket);
 	const paths = createHostDaemonPaths(options.agentDir);
 	await mkdir(paths.dir, { recursive: true });
-	const release = await properLockfile.lock(paths.dir, { ...lockOptions, lockfilePath: paths.lockFile });
+	// The public socket is the shared resource; agent directories are not a
+	// sufficient lock scope when two installations target the same endpoint.
+	const lockTarget = join(tmpdir(), "senpi-rpc-host-locks", createSocketLockName(socket));
+	await mkdir(dirname(lockTarget), { recursive: true });
+	await writeFile(lockTarget, "", { flag: "a", mode: 0o600 });
+	const release = await properLockfile.lock(lockTarget, { ...lockOptions, lockfilePath: `${lockTarget}.lock` });
 	try {
+		await options._test?.afterLockAcquired?.();
 		return await ensureHostLocked(paths, socket, options.agentDir ?? getAgentDir(), options.policy, options._test);
 	} finally {
 		await release();
@@ -161,7 +171,9 @@ async function startHost(
 		`spawned RPC socket host did not answer get_protocol_info within ${readinessTimeoutMs}ms`,
 	);
 	await cleanupState(paths);
-	await rm(socket, { force: true });
+	// The supervisor may have failed before binding, or another owner may have
+	// appeared while readiness was being checked. Never unlink an endpoint we
+	// cannot prove this start owned.
 	throw new Error(diagnostic);
 }
 
@@ -274,6 +286,10 @@ async function appendStderr(paths: HostDaemonPaths, message: string): Promise<st
 		if (isNodeErrorCode(error, "ENOENT")) return message;
 		throw error;
 	}
+}
+
+function createSocketLockName(socket: string): string {
+	return createHash("sha256").update(socket).digest("hex").slice(0, 32);
 }
 
 function normalizeSocketPath(value: string): string {

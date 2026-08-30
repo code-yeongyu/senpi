@@ -231,6 +231,64 @@ describe("RPC session registry", () => {
 		expect(registry.list()).toHaveLength(1);
 	});
 
+	test("moves path attachment metadata after runtime replacement", async () => {
+		const { dir } = await createRegistry();
+		let openedRuntime!: CreateAgentSessionRuntimeResult;
+		const registry = new RpcSessionRegistry({
+			agentDir: dir,
+			createRuntime: async (options) => {
+				openedRuntime = runtime(options);
+				return openedRuntime;
+			},
+		});
+		const oldPath = join(dir, "replaced-old.jsonl");
+		const newPath = join(dir, "replaced-new.jsonl");
+		const first = await registry.openSession(profile(dir, oldPath));
+
+		openedRuntime.session.sessionManager.setSessionFile(newPath);
+		const second = await registry.openSession(profile(dir, oldPath));
+
+		expect(second.attached).not.toBe(true);
+		expect(second.sessionId).not.toBe(first.sessionId);
+		expect(
+			registry
+				.list()
+				.map((session) => session.sessionPath)
+				.map((path) => path?.endsWith("replaced-old.jsonl")),
+		).toContain(true);
+		expect(
+			registry
+				.list()
+				.map((session) => session.sessionPath)
+				.map((path) => path?.endsWith("replaced-new.jsonl")),
+		).toContain(true);
+
+		await expect(registry.openSession(profile(dir, newPath))).resolves.toMatchObject({
+			sessionId: first.sessionId,
+			attached: true,
+		});
+	});
+
+	test("routes a multi-session switch through the live runtime with its cwd override", async () => {
+		const { dir, registry } = await createRegistry();
+		const initialCwd = await mkdtemp(join(tmpdir(), "senpi-rpc-initial-"));
+		const replacementCwd = await mkdtemp(join(tmpdir(), "senpi-rpc-replacement-"));
+		directories.push(initialCwd, replacementCwd);
+		const opened = await registry.openSession(profile(initialCwd, join(dir, "initial.jsonl")));
+		const entry = registry.getForCommand(opened.sessionId, "switch_session");
+		const initialRuntime = entry.runtime;
+
+		const result = await entry.switchSession!(join(dir, "replacement.jsonl"), {
+			cwdOverride: replacementCwd,
+		});
+
+		expect(result).toEqual({ cancelled: false });
+		expect(entry.runtime).not.toBe(initialRuntime);
+		expect(entry.runtime?.session.sessionManager.getCwd()).toBe(replacementCwd);
+		expect(registry.list()[0]?.cwd).toBe(replacementCwd);
+		await registry.close(opened.sessionId);
+	});
+
 	test("keeps the runtime alive until the last attachment closes", async () => {
 		const { dir } = await createRegistry();
 		let disposed = false;

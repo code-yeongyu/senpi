@@ -5,6 +5,7 @@ import type { AuthStorage } from "./auth-storage.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
 import { CredentialSlotRepository, type CredentialSlotState, slotHealth } from "./credential-pool/state-store.ts";
 import { emitProviderAccountsChanged } from "./extensions/builtin/claude-sdk-oauth/account-events.ts";
+import { SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/claude-sdk-oauth/accounts.ts";
 
 export type CredentialAccountSource = "login" | "import" | "env";
 
@@ -89,19 +90,28 @@ export async function summarizeCredentialAccounts(
 	const credential = pooledFrom(stored);
 	const now = Date.now();
 	const pinned = pinnedName(credential);
+	const summaries: CredentialAccountSummary[] = [];
 
 	if (credential) {
 		const state = await repository.listSlots(provider, "stored");
-		return listSlots(credential).map((slot) => ({
-			name: slot.name,
-			source: slot.source ?? "login",
-			blocked: slotBlocked(slot, state[slot.name], now),
-			pinned: pinned === slot.name,
-		}));
+		const storedAccounts =
+			provider === "claude-sdk-oauth"
+				? Array.isArray(credential.accounts)
+					? listSlots(credential)
+					: []
+				: listSlots(credential);
+		for (const slot of storedAccounts) {
+			summaries.push({
+				name: slot.name,
+				source: slot.source ?? "login",
+				blocked: slotBlocked(slot, state[slot.name], now),
+				pinned: pinned === slot.name,
+			});
+		}
+		if (provider !== "claude-sdk-oauth") return summaries;
 	}
 
 	const state = await repository.listSlots(provider, "env");
-	const summaries: CredentialAccountSummary[] = [];
 	for (const slot of discoverEnvSlots(provider, (name) => env[name])) {
 		const persisted = state[slot.name];
 		const revision = await repository.envCredentialRevision(slot.envVarName, slot.key);
@@ -134,7 +144,12 @@ export async function pinCredentialAccount(
 		}
 	}
 	await storage.modify(provider, async (current) => {
-		if (current === undefined) throw new Error(`No stored credential for provider: ${provider}`);
+		if (current === undefined) {
+			if (provider !== "claude-sdk-oauth" || name === null) {
+				throw new Error(`No stored credential for provider: ${provider}`);
+			}
+			return pinSlot({ type: "oauth", ...SENTINEL_OAUTH_FIELDS, accounts: [] }, name);
+		}
 		if (name === null) {
 			if (pinnedName(current) === undefined) return current;
 			const { pinned: _pinned, ...unpinned } = { ...current, pinned: undefined };

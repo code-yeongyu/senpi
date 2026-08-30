@@ -132,6 +132,34 @@ describe("SessionManager open and lightweight state", () => {
 		expect(session.hasContextMessages()).toBe(true);
 	});
 
+	it("does not replace a live session when its file is transiently empty", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		const file = session.getSessionFile();
+		expect(file).toBeDefined();
+		const entryId = session.appendMessage({ role: "user", content: "keep me", timestamp: 1 });
+		writeFileSync(file!, "");
+
+		session.reloadFromDisk();
+
+		expect(session.getSessionId()).not.toBe("");
+		expect(session.getEntry(entryId)?.id).toBe(entryId);
+		expect(session.getEntries()).toHaveLength(1);
+	});
+
+	it("leaves all state unchanged when a replacement session file is malformed", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		const file = session.getSessionFile();
+		expect(file).toBeDefined();
+		const entryId = session.appendMessage({ role: "user", content: "keep me", timestamp: 1 });
+		const originalId = session.getSessionId();
+		writeFileSync(file!, '{"type":"not-a-session"}\\n');
+
+		expect(() => session.reloadFromDisk()).toThrow();
+		expect(session.getSessionId()).toBe(originalId);
+		expect(session.getEntry(entryId)?.id).toBe(entryId);
+		expect(session.getEntries()).toHaveLength(1);
+	});
+
 	it("reloads entries from disk when session file changes externally", () => {
 		const session = SessionManager.create(tempDir, tempDir);
 		const file = session.getSessionFile();

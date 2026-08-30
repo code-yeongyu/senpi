@@ -178,6 +178,7 @@ export type PackageSource =
 
 export interface ExperimentalSettings {
 	bashEvalOnly?: boolean;
+	workflowEvalOnly?: boolean;
 }
 
 export interface Settings {
@@ -2035,6 +2036,10 @@ export class SettingsManager {
 
 	getExperimentalBashEvalOnly(): boolean {
 		return this.settings.experimental?.bashEvalOnly === true;
+	}
+
+	getExperimentalWorkflowEvalOnly(): boolean {
+		return this.settings.experimental?.workflowEvalOnly === true;
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

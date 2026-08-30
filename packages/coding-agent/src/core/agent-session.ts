@@ -203,7 +203,16 @@ import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapp
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
 /** Built-in shell tools routed exclusively through eval when experimental.bashEvalOnly is enabled. */
-const EVAL_ONLY_POLICY_TOOL_NAMES: readonly string[] = ["bash", "powershell"];
+const EVAL_ONLY_SHELL_TOOL_NAMES: readonly string[] = ["bash", "powershell"];
+/** Workflow tool routed exclusively through eval when experimental.workflowEvalOnly is enabled. */
+const EVAL_ONLY_WORKFLOW_TOOL_NAMES: readonly string[] = ["workflow"];
+
+/** Sample eval-cell call for an eval-only tool, using the argument name that tool actually takes. */
+function evalHelperCall(name: string): string {
+	if (EVAL_ONLY_SHELL_TOOL_NAMES.includes(name)) return `tool.${name}({ command: "..." })`;
+	if (EVAL_ONLY_WORKFLOW_TOOL_NAMES.includes(name)) return `tool.${name}({ action: "..." })`;
+	return `tool.${name}({ ... })`;
+}
 const TURN_RETRY_SUPPRESSION_PREFIX = "senpi:no-turn-retry:";
 const DEFERRED_RETRY_QUEUE_OWNERS = new WeakSet<object>();
 
@@ -437,6 +446,12 @@ export type AgentSessionEvent =
 	  }
 	/** Effective service tier or fast-mode state changed. */
 	| { type: "service_tier_changed"; tier?: ServiceTier; fastMode: boolean }
+	| {
+			type: "session_settings_changed";
+			steeringMode: "all" | "one-at-a-time";
+			followUpMode: "all" | "one-at-a-time";
+			autoCompactionEnabled: boolean;
+	  }
 	| {
 			type: "compaction_end";
 			reason: CompactionReason;
@@ -1086,6 +1101,8 @@ export class AgentSession {
 	private readonly _evalOnlyToolNamesOverride?: ReadonlySet<string>;
 	/** Policy tools withheld from the model, retained so disarming can restore direct access. */
 	private readonly _withheldEvalOnlyToolNames = new Set<string>();
+	/** Eval-only hint names this session published, so a disarm can withdraw exactly those. */
+	private readonly _publishedEvalOnlyHintNames = new Set<string>();
 	/** Active-tool selection as requested by callers, before eval-only filtering. */
 	private _requestedActiveToolNames?: string[];
 	private _allowedToolNames?: Set<string>;
@@ -1567,6 +1584,19 @@ export class AgentSession {
 	// =========================================================================
 
 	/** Emit an event to all listeners */
+	private _emitEntryAppended(entryId: string): void {
+		if (this._extensionMode !== "rpc") return;
+		const entry = this.sessionManager.getEntry(entryId);
+		if (entry) this._emit({ type: "entry_appended", entry });
+	}
+
+	/** Append a transport-provided entry and publish it on the RPC event stream. */
+	appendSessionEntry(entry: SessionEntry): void {
+		this.sessionManager.appendEntry(entry);
+		this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+		this._emitEntryAppended(entry.id);
+	}
+
 	private _emit(event: AgentSessionEvent): void {
 		this._logSessionEvent(event);
 		for (const l of this._eventListeners) {
@@ -2240,7 +2270,7 @@ export class AgentSession {
 				event.message.role === "toolResult"
 			) {
 				// Regular LLM message - persist as SessionMessageEntry
-				this.sessionManager.appendMessage(event.message);
+				this._emitEntryAppended(this.sessionManager.appendMessage(event.message));
 				this._incrementMessageRevision();
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
@@ -3037,15 +3067,32 @@ export class AgentSession {
 	 */
 	private _resolveEvalOnlyToolNames(): ReadonlySet<string> | undefined {
 		if (this._evalOnlyToolNamesOverride !== undefined) return this._evalOnlyToolNamesOverride;
-		return this.settingsManager.getExperimentalBashEvalOnly() ? new Set(EVAL_ONLY_POLICY_TOOL_NAMES) : undefined;
+		const names = [
+			...(this.settingsManager.getExperimentalBashEvalOnly() ? EVAL_ONLY_SHELL_TOOL_NAMES : []),
+			...(this.settingsManager.getExperimentalWorkflowEvalOnly() ? EVAL_ONLY_WORKFLOW_TOOL_NAMES : []),
+		];
+		return names.length > 0 ? new Set(names) : undefined;
 	}
 
-	/** Publish per-tool eval-only redirect hints so a direct call names its own eval helper. */
+	/**
+	 * Publish per-tool eval-only redirect hints so a direct call names its own eval helper.
+	 *
+	 * Hints published here are tracked so a disarm - or a shrinking armed set, e.g. bash+workflow
+	 * down to workflow only - withdraws the stale ones. Only tracked names are ever deleted, so
+	 * hints owned by other publishers survive.
+	 */
 	private _publishEvalOnlyToolHints(): void {
-		if (!this._isEvalOnlyPolicyArmed()) return;
-		for (const name of this._evalOnlyToolNames ?? []) {
+		const armed = this._isEvalOnlyPolicyArmed() ? (this._evalOnlyToolNames ?? new Set<string>()) : undefined;
+		for (const name of this._publishedEvalOnlyHintNames) {
+			if (armed?.has(name)) continue;
+			delete this.agent.removedToolHints[name];
+		}
+		this._publishedEvalOnlyHintNames.clear();
+		if (!armed) return;
+		for (const name of armed) {
 			this.agent.removedToolHints[name] =
-				`Run ${name} inside an eval cell via tool.${name}({ command: "..." }); hooks and permissions still apply.`;
+				`Run ${name} inside an eval cell via ${evalHelperCall(name)}; hooks and permissions still apply.`;
+			this._publishedEvalOnlyHintNames.add(name);
 		}
 	}
 
@@ -3294,10 +3341,29 @@ export class AgentSession {
 		const prompt =
 			loaderAppendSystemPrompt.length > 0 ? `${basePrompt}\n\n${loaderAppendSystemPrompt.join("\n\n")}` : basePrompt;
 		if (!this._isEvalOnlyPolicyArmed()) return prompt;
-		const helpers = [...(this._evalOnlyToolNames ?? [])]
-			.map((name) => `tool.${name}({ command: "..." })`)
-			.join(" or ");
-		return `${prompt}\n\nShell commands run ONLY inside eval cells via ${helpers}; hooks and permissions still apply.`;
+		const armed = this._evalOnlyToolNames ?? new Set<string>();
+		const sentences: string[] = [];
+		const shellHelpers = EVAL_ONLY_SHELL_TOOL_NAMES.filter((name) => armed.has(name)).map(evalHelperCall);
+		if (shellHelpers.length > 0) {
+			sentences.push(
+				`Shell commands run ONLY inside eval cells via ${shellHelpers.join(" or ")}; hooks and permissions still apply.`,
+			);
+		}
+		if (armed.has("workflow")) {
+			sentences.push(
+				`The workflow tool runs ONLY inside eval cells via ${evalHelperCall("workflow")}; hooks and permissions still apply.`,
+			);
+		}
+		// SDK embedders can arm names outside the built-in groups; they still need eval guidance.
+		const otherHelpers = [...armed]
+			.filter((name) => !EVAL_ONLY_SHELL_TOOL_NAMES.includes(name) && name !== "workflow")
+			.map(evalHelperCall);
+		if (otherHelpers.length > 0) {
+			sentences.push(
+				`These tools run ONLY inside eval cells via ${otherHelpers.join(" or ")}; hooks and permissions still apply.`,
+			);
+		}
+		return sentences.length > 0 ? `${prompt}\n\n${sentences.join("\n\n")}` : prompt;
 	}
 
 	/**
@@ -4159,11 +4225,13 @@ export class AgentSession {
 
 	private _appendCustomMessage(appMessage: CustomMessage): void {
 		this.agent.state.messages.push(appMessage);
-		this.sessionManager.appendCustomMessageEntry(
-			appMessage.customType,
-			appMessage.content,
-			appMessage.display,
-			appMessage.details,
+		this._emitEntryAppended(
+			this.sessionManager.appendCustomMessageEntry(
+				appMessage.customType,
+				appMessage.content,
+				appMessage.display,
+				appMessage.details,
+			),
 		);
 		this._incrementMessageRevision();
 		this._emit({ type: "message_start", message: appMessage });
@@ -4808,6 +4876,7 @@ export class AgentSession {
 	setSteeringMode(mode: "all" | "one-at-a-time"): void {
 		this.agent.steeringMode = mode;
 		this.settingsManager.setSteeringMode(mode);
+		this._emitSessionSettingsChanged();
 	}
 
 	/**
@@ -4817,6 +4886,7 @@ export class AgentSession {
 	setFollowUpMode(mode: "all" | "one-at-a-time"): void {
 		this.agent.followUpMode = mode;
 		this.settingsManager.setFollowUpMode(mode);
+		this._emitSessionSettingsChanged();
 	}
 
 	// =========================================================================
@@ -6339,6 +6409,16 @@ export class AgentSession {
 	 */
 	setAutoCompactionEnabled(enabled: boolean): void {
 		this.settingsManager.setCompactionEnabled(enabled);
+		this._emitSessionSettingsChanged();
+	}
+
+	private _emitSessionSettingsChanged(): void {
+		this._emit({
+			type: "session_settings_changed",
+			steeringMode: this.steeringMode,
+			followUpMode: this.followUpMode,
+			autoCompactionEnabled: this.autoCompactionEnabled,
+		});
 	}
 
 	/** Whether auto-compaction is enabled */

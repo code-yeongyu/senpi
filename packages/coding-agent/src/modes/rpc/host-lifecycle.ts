@@ -47,7 +47,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "../../config.ts";
 import { createHostDaemonPaths } from "./host-ensure.ts";
-import { HOST_SCRATCH_DIR_ENV, HOST_WATCH_FD_ENV, HOST_WATCH_PPID_ENV } from "./host-watchdog.ts";
+import {
+	HOST_CLEANUP_PATHS_ENV,
+	HOST_SCRATCH_DIR_ENV,
+	HOST_WATCH_FD_ENV,
+	HOST_WATCH_PPID_ENV,
+} from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 
 export type HostColdStart = "transient" | "persistent";
@@ -219,6 +224,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const clientSockets = new Set<Socket>();
 	const busySessions = new Map<string, number>();
 	let observerHealthy = false;
+	let observerReconnectTimer: ReturnType<typeof setTimeout> | undefined;
 	let shuttingDown = false;
 	let shutdownPromise: Promise<never> | undefined;
 
@@ -239,9 +245,11 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		{
 			env: {
 				...process.env,
+				...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),
 				[HOST_WATCH_FD_ENV]: String(CHILD_WATCH_FD),
 				[HOST_WATCH_PPID_ENV]: String(process.pid),
 				[HOST_SCRATCH_DIR_ENV]: internal.dir,
+				[HOST_CLEANUP_PATHS_ENV]: [publicSocket, paths.pidFile, paths.settingsFile].join("\n"),
 			},
 			// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
 			// wait on and keeps the write end owned by this process alone.
@@ -337,7 +345,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		await rm(internal.dir, { recursive: true, force: true });
 		await stopChild(child);
 		observer?.destroy();
-		await rm(publicSocket, { force: true });
+		if (publicSocketOwned) await rm(publicSocket, { force: true });
 		// Mirror ensureHost's cleanupState: the pidfile and settings describe a
 		// live host only; the stderr log stays for diagnostics.
 		await rm(paths.pidFile, { force: true });
@@ -346,6 +354,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	}
 
 	let observer: Socket | undefined;
+	let publicSocketOwned = false;
 	// Registered before the startup handshake, not after it: the private internal
 	// directory already exists at this point, so a SIGTERM arriving during host
 	// startup must run the same cleanup instead of Node's default kill, which
@@ -353,21 +362,35 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	registerSupervisorSignals(shutdown);
 	try {
 		await waitForListener(internalSocket, 30_000);
-		observer = createConnection(internalSocket);
-		await waitForConnect(observer, 5_000);
-		observerHealthy = true;
-		attachJsonlLineReader(observer, observeHostEvent, { maxLineLength: MAX_RPC_LINE_CHARACTERS });
-		observer.once("close", () => {
-			observerHealthy = false;
-		});
-		observer.once("error", () => {
-			observerHealthy = false;
-		});
+		await connectObserver();
 		await prepareSocketPath(publicSocket);
 		await listen(server, publicSocket);
+		publicSocketOwned = true;
 	} catch (cause) {
 		await shutdown(`startup failed: ${errorMessage(cause)}`, 1);
 	}
+	async function connectObserver(): Promise<void> {
+		const next = createConnection(internalSocket);
+		await waitForConnect(next, 5_000);
+		observer = next;
+		observerHealthy = true;
+		attachJsonlLineReader(next, observeHostEvent, { maxLineLength: MAX_RPC_LINE_CHARACTERS });
+		const lost = (): void => {
+			if (observer !== next || shuttingDown) return;
+			observerHealthy = false;
+			observer = undefined;
+			if (observerReconnectTimer === undefined) {
+				observerReconnectTimer = setTimeout(() => {
+					observerReconnectTimer = undefined;
+					void connectObserver().catch(() => lost());
+				}, 250);
+				observerReconnectTimer.unref?.();
+			}
+		};
+		next.once("close", lost);
+		next.once("error", lost);
+	}
+
 	writeStderrLine(
 		`senpi rpc host ready on unix://${publicSocket} (coldStart=${policy.coldStart}, idleExitMs=${
 			policy.coldStart === "persistent" ? "never" : String(policy.idleExitMs)

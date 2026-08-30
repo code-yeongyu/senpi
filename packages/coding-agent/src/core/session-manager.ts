@@ -838,7 +838,16 @@ export class SessionManager {
 	 */
 	reloadFromDisk(): void {
 		if (!this.sessionFile || !existsSync(this.sessionFile)) return;
-		this._setSessionFile(this.sessionFile);
+
+		// A live session file can be observed between truncate and rewrite. Treat
+		// that window (and an invalid replacement) as unavailable rather than
+		// routing it through the create/recover path in _setSessionFile().
+		const fileEntries = loadEntriesFromFile(this.sessionFile);
+		if (fileEntries.length === 0) {
+			if (statSync(this.sessionFile).size === 0) return;
+			throw new Error(`Session file is not a valid ${APP_NAME} session: ${this.sessionFile}`);
+		}
+		this._setSessionFile(this.sessionFile, fileEntries);
 	}
 
 	/** Switch to a different session file (used for resume and branching) */

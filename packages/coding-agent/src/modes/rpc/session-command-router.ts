@@ -216,6 +216,7 @@ export class SessionCommandRouter {
 			return;
 		}
 		for (const [sessionId, count] of owned) {
+			this.bindings.get(sessionId)?.cancelPendingExtensionUiRequests?.();
 			for (let attachment = 0; attachment < count; attachment++) {
 				// Headless completion contract: a turn survives its client's death and
 				// runs to settlement (the host lifecycle keeps the process alive on

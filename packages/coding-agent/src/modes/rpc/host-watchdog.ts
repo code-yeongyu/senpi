@@ -26,11 +26,13 @@ export const HOST_SCRATCH_DIR_ENV = "SENPI_RPC_HOST_SCRATCH_DIR";
 export const HOST_WATCH_PPID_ENV = "SENPI_RPC_HOST_WATCH_PPID";
 /** Poll cadence for the ppid fallback. */
 export const HOST_WATCH_PPID_INTERVAL_MS = 2_000;
+export const HOST_CLEANUP_PATHS_ENV = "SENPI_RPC_HOST_CLEANUP_PATHS";
 
 export interface HostWatchdogConfig {
 	readonly fd?: number;
 	readonly ppid?: number;
 	readonly scratchDir?: string;
+	readonly cleanupPaths?: readonly string[];
 }
 
 function parsePositiveInteger(value: string | undefined): number | undefined {
@@ -51,7 +53,13 @@ export function readHostWatchdogConfig(
 	const ppid = parsePositiveInteger(env[HOST_WATCH_PPID_ENV]);
 	if (fd === undefined && ppid === undefined) return undefined;
 	const scratchDir = env[HOST_SCRATCH_DIR_ENV];
-	return { fd, ppid, scratchDir: scratchDir === undefined || scratchDir === "" ? undefined : scratchDir };
+	const cleanupPaths = env[HOST_CLEANUP_PATHS_ENV]?.split("\n").filter(Boolean);
+	return {
+		fd,
+		ppid,
+		scratchDir: scratchDir === undefined || scratchDir === "" ? undefined : scratchDir,
+		cleanupPaths,
+	};
 }
 
 /** Same configuration, resolved through the brand-aware env prefixes. */
@@ -60,6 +68,7 @@ export function readHostWatchdogConfigFromBrandEnv(): HostWatchdogConfig | undef
 		[HOST_WATCH_FD_ENV]: envValue("RPC_HOST_WATCH_FD"),
 		[HOST_WATCH_PPID_ENV]: envValue("RPC_HOST_WATCH_PPID"),
 		[HOST_SCRATCH_DIR_ENV]: envValue("RPC_HOST_SCRATCH_DIR"),
+		[HOST_CLEANUP_PATHS_ENV]: envValue("RPC_HOST_CLEANUP_PATHS"),
 	});
 }
 
@@ -80,7 +89,7 @@ export function armHostWatchdog(
 	if (!config) return () => {};
 	const fire = (reason: string): void => {
 		disarm();
-		void cleanupScratchDir(config.scratchDir).finally(() => onSupervisorGone(reason));
+		void cleanupWatchdogPaths(config).finally(() => onSupervisorGone(reason));
 	};
 	const disarmers: Array<() => void> = [];
 	const disarm = (): void => {
@@ -109,7 +118,9 @@ function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
 	stream.once("end", onEnd);
 	// A read error means the pipe is unusable, which is indistinguishable from a
 	// dead supervisor from this side; treating it as EOF keeps the binding safe.
-	stream.once("error", onEnd);
+	// An unavailable inherited fd is a configuration/setup failure, not proof
+	// that the supervisor died. The PPID binding, when supplied, remains active.
+	stream.once("error", () => {});
 	return () => {
 		stream.off("end", onEnd);
 		stream.off("error", onEnd);
@@ -140,11 +151,15 @@ function processAlive(pid: number): boolean {
 	}
 }
 
-async function cleanupScratchDir(scratchDir: string | undefined): Promise<void> {
-	if (scratchDir === undefined) return;
-	try {
-		await rm(scratchDir, { recursive: true, force: true });
-	} catch {
-		/* best effort: the host is exiting either way. */
-	}
+async function cleanupWatchdogPaths(config: HostWatchdogConfig): Promise<void> {
+	const paths = [...(config.cleanupPaths ?? []), ...(config.scratchDir ? [config.scratchDir] : [])];
+	await Promise.all(
+		paths.map(async (path) => {
+			try {
+				await rm(path, { recursive: true, force: true });
+			} catch {
+				/* best effort: the host is exiting either way. */
+			}
+		}),
+	);
 }

@@ -161,9 +161,6 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	server.on("error", (cause) => {
 		if (!shuttingDown) process.stderr.write(`senpi rpc socket listener failed: ${errorMessage(cause)}\n`);
 	});
-	await listen(server, socketPath);
-	process.stderr.write(`senpi rpc listening on ${formatSocketAddress(socketPath)}\n`);
-
 	const shutdown = async (exitCode = 0): Promise<never> => {
 		if (shuttingDown) process.exit(exitCode);
 		shuttingDown = true;
@@ -178,13 +175,18 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		process.exit(exitCode);
 	};
 	registerShutdownSignals(shutdown);
-	// Opt-in only: set by the lifecycle supervisor so this host can never outlive
-	// it, including when the supervisor is SIGKILLed and runs no handler at all.
+	// Arm before listen: a supervisor death during the listen transition must
+	// still close the child and clean its private endpoint.
 	armHostWatchdog(readHostWatchdogConfigFromBrandEnv(), (reason) => {
 		process.stderr.write(`senpi rpc host: ${reason}; shutting down\n`);
 		killTrackedDetachedChildren();
 		void shutdown(0);
 	});
+	await listen(server, socketPath);
+	process.stderr.write(`senpi rpc listening on ${formatSocketAddress(socketPath)}\n`);
+
+	// Opt-in only: set by the lifecycle supervisor so this host can never outlive
+	// it, including when the supervisor is SIGKILLed and runs no handler at all.
 	return new Promise(() => {});
 }
 

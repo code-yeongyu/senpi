@@ -1,12 +1,112 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { emitProviderAccountFailover } from "../../src/core/extensions/builtin/claude-sdk-oauth/account-events.ts";
 import type { RpcEnvelope } from "../../src/modes/app-server/rpc/envelope.ts";
 import { ServerCore } from "../../src/modes/app-server/server/server-core.ts";
 
 describe("app-server account reads", () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	it("projects Claude environment token slots from an empty isolated auth file", async () => {
+		vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", "legacy-env");
+		vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN_2", "legacy-env-2");
+		const fixture = await createFixture({});
+		try {
+			await initialize(fixture.core, fixture.connectionId);
+			await fixture.core.receive(
+				fixture.connectionId,
+				request(2, "account/providerAccounts/read", { provider: "claude-sdk-oauth" }),
+			);
+			expect(resultOf(fixture.sent[1], 2)).toEqual({
+				provider: "claude-sdk-oauth",
+				accounts: [
+					{ name: "env", source: "env", blocked: false, pinned: false },
+					{ name: "env-2", source: "env", blocked: false, pinned: false },
+				],
+			});
+		} finally {
+			await rm(fixture.root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not project the Claude empty sentinel as a default account", async () => {
+		const fixture = await createFixture({
+			"claude-sdk-oauth": {
+				type: "oauth",
+				access: "claude-sdk-oauth-managed",
+				refresh: "claude-sdk-oauth-managed",
+				expires: 4_102_444_800_000,
+			},
+		});
+		try {
+			await initialize(fixture.core, fixture.connectionId);
+			await fixture.core.receive(
+				fixture.connectionId,
+				request(2, "account/providerAccounts/read", { provider: "claude-sdk-oauth" }),
+			);
+			expect(resultOf(fixture.sent[1], 2)).toEqual({ provider: "claude-sdk-oauth", accounts: [] });
+		} finally {
+			await rm(fixture.root, { recursive: true, force: true });
+		}
+	});
+
+	it("projects Claude stored and environment accounts together", async () => {
+		vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", "legacy-env");
+		const fixture = await createFixture({
+			"claude-sdk-oauth": {
+				type: "oauth",
+				access: "claude-sdk-oauth-managed",
+				refresh: "claude-sdk-oauth-managed",
+				expires: 4_102_444_800_000,
+				accounts: [{ name: "stored", source: "login", access: "a", refresh: "r", expires: 4_102_444_800_000 }],
+			},
+		});
+		try {
+			await initialize(fixture.core, fixture.connectionId);
+			await fixture.core.receive(
+				fixture.connectionId,
+				request(2, "account/providerAccounts/read", { provider: "claude-sdk-oauth" }),
+			);
+			expect(resultOf(fixture.sent[1], 2)).toEqual({
+				provider: "claude-sdk-oauth",
+				accounts: [
+					{ name: "stored", source: "login", blocked: false, pinned: false },
+					{ name: "env", source: "env", blocked: false, pinned: false },
+				],
+			});
+		} finally {
+			await rm(fixture.root, { recursive: true, force: true });
+		}
+	});
+
+	it("pins a Claude environment account and persists the compatible sentinel pin", async () => {
+		vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", "legacy-env");
+		const fixture = await createFixture({});
+		try {
+			await initialize(fixture.core, fixture.connectionId);
+			await fixture.core.receive(
+				fixture.connectionId,
+				request(2, "account/providerAccounts/pin", { provider: "claude-sdk-oauth", name: "env" }),
+			);
+			expect(resultOf(fixture.sent[1], 2)).toEqual({});
+			expect(
+				JSON.parse(
+					await (await import("node:fs/promises")).readFile(join(fixture.root, "agent", "auth.json"), "utf8"),
+				)["claude-sdk-oauth"],
+			).toMatchObject({
+				pinned: "env",
+				access: "claude-sdk-oauth-managed",
+				refresh: "claude-sdk-oauth-managed",
+			});
+		} finally {
+			await rm(fixture.root, { recursive: true, force: true });
+		}
+	});
+
 	it("reports an apiKey account when an isolated provider credential exists", async () => {
 		// Given: an isolated auth fixture containing one provider credential.
 		const fixture = await createFixture({

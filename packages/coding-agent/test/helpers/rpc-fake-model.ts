@@ -137,6 +137,10 @@ export async function startFakeModelServer(options: { multiDelta?: boolean } = {
 		requests,
 		close: () =>
 			new Promise<void>((resolveClose, rejectClose) => {
+				// `server.close()` waits for every open connection to end. The slow lane
+				// holds responses open and RPC hosts keep sockets alive, so drop them
+				// first or the callback never fires and teardown hangs.
+				server.closeAllConnections();
 				server.close((error) => {
 					if (error) {
 						rejectClose(error);

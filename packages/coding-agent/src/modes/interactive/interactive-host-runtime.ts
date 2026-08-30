@@ -41,6 +41,13 @@ export type InteractiveSession = Omit<
 		| Promise<ReturnType<AgentSession["getUserMessagesForForking"]>>;
 };
 
+export type InteractiveHostUiHandler = (
+	request: import("../rpc/rpc-types.ts").RpcExtensionUIRequest,
+) =>
+	| Promise<import("../rpc/rpc-types.ts").RpcExtensionUIResponse | undefined>
+	| import("../rpc/rpc-types.ts").RpcExtensionUIResponse
+	| undefined;
+
 export interface InteractiveHostRuntimeOptions {
 	readonly socket: string;
 	readonly agentDir?: string;
@@ -85,6 +92,7 @@ export async function createInteractiveHostRuntime(
 			// aborting it would cancel work owned by the surviving attachment.
 			await client.abortBash().catch(() => {});
 		}
+		if (opened.attached) await remoteSession.refresh();
 		return new RemoteInteractiveRuntime(localRuntime, remoteSession, client) as unknown as AgentSessionRuntime;
 	} catch (cause) {
 		await client.stop().catch(() => {});
@@ -97,7 +105,7 @@ export async function createInteractiveHostRuntime(
 	}
 }
 
-class RemoteInteractiveRuntime {
+export class RemoteInteractiveRuntime {
 	readonly #local: AgentSessionRuntime;
 	readonly #remoteSession: RemoteSessionProxy;
 	readonly #client: RpcClient;
@@ -134,10 +142,24 @@ class RemoteInteractiveRuntime {
 	setRebindSession(callback?: () => Promise<void>): void {
 		this.#rebindSession = callback;
 	}
+	setHostUiHandler(callback?: InteractiveHostUiHandler): void {
+		this.#remoteSession.setHostUiHandler(callback);
+	}
 	async dispose(): Promise<void> {
-		await this.#client.closeSession();
-		await this.#client.stop();
-		await this.#local.dispose();
+		const errors: unknown[] = [];
+		for (const cleanup of [
+			() => (this.#remoteSession.abortLocalBash as (() => void) | undefined)?.(),
+			() => this.#client.closeSession(),
+			() => this.#client.stop(),
+			() => this.#local.dispose(),
+		]) {
+			try {
+				await cleanup();
+			} catch (error) {
+				errors.push(error);
+			}
+		}
+		if (errors.length > 0) throw errors[0];
 	}
 	async newSession(options?: {
 		parentSession?: string;
@@ -168,7 +190,10 @@ class RemoteInteractiveRuntime {
 			projectTrustContextFactory?: (cwd: string) => ProjectTrustContext;
 		},
 	): Promise<{ cancelled: boolean }> {
-		const result = await this.#client.switchSession(sessionPath, options);
+		const result = await this.#client.switchSession(
+			sessionPath,
+			options?.cwdOverride === undefined ? undefined : { cwdOverride: options.cwdOverride },
+		);
 		if (!result.cancelled) {
 			this.#beforeSessionInvalidate?.();
 			this.#remoteSession.abortLocalBash();
@@ -212,6 +237,7 @@ class RemoteInteractiveRuntime {
 
 interface RemoteSessionProxy {
 	readonly session: AgentSession;
+	setHostUiHandler(callback?: InteractiveHostUiHandler): void;
 	refresh(): Promise<void>;
 	abortLocalBash(): void;
 	createReplacedSessionContext(): ReplacedSessionContext;
@@ -289,9 +315,12 @@ function createRemoteSessionProxy(
 			hasError: boolean;
 		}
 	>();
+	let hostUiHandler: InteractiveHostUiHandler | undefined;
+	const pendingUiRequests: import("../rpc/rpc-types.ts").RpcExtensionUIRequest[] = [];
 	let localBashAbortController: AbortController | undefined;
 	let localBashRunning = false;
 	let hostBashRunning = initialState.isBashRunning;
+	let nextQueuedInputOrder = Math.max(0, ...initialState.ordered.map((item) => item.enqueueOrder));
 	let sessionManager = local.sessionManager;
 	let settingsManager = SettingsManager.create(initialState.cwd, agentDir, {
 		projectTrusted: initialState.projectTrusted,
@@ -304,6 +333,7 @@ function createRemoteSessionProxy(
 			if (property === "appendLabelChange") {
 				return (entryId: string, label?: string) => void client.setLabel(entryId, label);
 			}
+			if (property === "getCwd") return () => state.cwd;
 			if (property === "getSessionName") return () => state.sessionName;
 			if (property === "getUsageTotals") return () => state.usageTotals;
 			const value = Reflect.get(sessionManager, property, sessionManager);
@@ -314,6 +344,15 @@ function createRemoteSessionProxy(
 	let mirroredCurrentAssistantUsage = false;
 	const listeners = new Set<AgentSessionEventListener>();
 	client.onEvent((wireEvent) => {
+		if ((wireEvent as { type?: string }).type === "extension_ui_request") {
+			const request = wireEvent as import("../rpc/rpc-types.ts").RpcExtensionUIRequest;
+			if (hostUiHandler)
+				void Promise.resolve(hostUiHandler(request)).then(
+					(response) => response && client.sendExtensionUIResponse(response),
+				);
+			else pendingUiRequests.push(request);
+			return;
+		}
 		if (wireEvent.type === "agent_settled") state = { ...state, isStreaming: false, retryAttempt: 0 };
 		if (wireEvent.type === "bash_start") {
 			hostBashRunning = true;
@@ -352,6 +391,7 @@ function createRemoteSessionProxy(
 		if (wireEvent.type === "auto_retry_start") state = { ...state, retryAttempt: wireEvent.attempt };
 		if (wireEvent.type === "auto_retry_end") state = { ...state, retryAttempt: 0 };
 		if (wireEvent.type === "queue_update") {
+			nextQueuedInputOrder = Math.max(nextQueuedInputOrder, ...wireEvent.ordered.map((item) => item.enqueueOrder));
 			state = {
 				...state,
 				steering: [...wireEvent.steering],
@@ -366,6 +406,22 @@ function createRemoteSessionProxy(
 		if (wireEvent.type === "thinking_level_changed") state = { ...state, thinkingLevel: wireEvent.level };
 		if (wireEvent.type === "service_tier_changed") {
 			state = { ...state, serviceTier: wireEvent.tier, fastMode: wireEvent.fastMode };
+		}
+		if (wireEvent.type === "session_settings_changed") {
+			state = {
+				...state,
+				steeringMode: wireEvent.steeringMode,
+				followUpMode: wireEvent.followUpMode,
+				autoCompactionEnabled: wireEvent.autoCompactionEnabled,
+			};
+		}
+		if (wireEvent.type === "entry_appended") {
+			try {
+				sessionManager.appendEntry(wireEvent.entry);
+				local.agent.state.messages = sessionManager.buildSessionContext().messages;
+			} catch {
+				// Non-fatal if the local snapshot cannot accept a concurrent entry.
+			}
 		}
 		if (wireEvent.type === "session_info_changed") state = { ...state, sessionName: wireEvent.name };
 		if (wireEvent.type === "message_start") {
@@ -382,8 +438,14 @@ function createRemoteSessionProxy(
 				if (usage && !mirroredCurrentAssistantUsage) {
 					mirroredCurrentAssistantUsage = true;
 					const latestPromptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+					const contextWindow = state.model?.contextWindow ?? 0;
+					const contextTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 					state = {
 						...state,
+						contextUsage:
+							contextWindow > 0
+								? { tokens: contextTokens, contextWindow, percent: (contextTokens / contextWindow) * 100 }
+								: undefined,
 						usageTotals: {
 							...state.usageTotals,
 							input: state.usageTotals.input + usage.input,
@@ -404,7 +466,8 @@ function createRemoteSessionProxy(
 		}
 		if (wireEvent.type === "compaction_end" && wireEvent.accepted && !wireEvent.aborted) {
 			try {
-				sessionManager.reloadFromDisk?.();
+				local.sessionManager.reloadFromDisk?.();
+				if (sessionManager !== local.sessionManager) sessionManager.reloadFromDisk?.();
 				local.agent.state.messages = sessionManager.buildSessionContext().messages;
 			} catch {
 				// Non-fatal if session file is transiently locked or unavailable
@@ -416,14 +479,22 @@ function createRemoteSessionProxy(
 	const refresh = async (): Promise<void> => {
 		const nextState = await client.getState();
 		state = { ...stateFromRpc(nextState) };
+		nextQueuedInputOrder = Math.max(0, ...nextState.ordered.map((item) => item.enqueueOrder));
 		let messages: AgentSession["messages"];
 		settingsManager = SettingsManager.create(nextState.cwd, agentDir, {
 			projectTrusted: nextState.projectTrusted,
 		});
 		if (nextState.sessionFile) {
-			// SessionManager.open retains the explicit path even when the host has
-			// deferred creating the file for a setup-only session.
-			sessionManager = SessionManager.open(nextState.sessionFile, undefined, nextState.cwd);
+			// Keep the caller-owned manager identity when refreshing the same session.
+			// Navigation and host-side mutations must update every existing mirror, not
+			// leave the interactive runtime holding the pre-refresh snapshot.
+			if (sessionManager.getSessionFile() === nextState.sessionFile) {
+				sessionManager.reloadFromDisk?.();
+			} else {
+				// SessionManager.open retains the explicit path even when the host has
+				// deferred creating the file for a setup-only session.
+				sessionManager = SessionManager.open(nextState.sessionFile, undefined, nextState.cwd);
+			}
 			if (nextState.entries?.length && !sessionManager.getEntries().length) {
 				for (const entry of nextState.entries) sessionManager.appendEntry(entry);
 			}
@@ -442,6 +513,12 @@ function createRemoteSessionProxy(
 						...(options?.images ? { images: options.images } : {}),
 						...(options?.streamingBehavior ? { streamingBehavior: options.streamingBehavior } : {}),
 						...(options?.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}),
+						...(options?.sessionTitlePrompt !== undefined
+							? { sessionTitlePrompt: options.sessionTitlePrompt }
+							: {}),
+						...(options?.expandPromptTemplates !== undefined
+							? { expandPromptTemplates: options.expandPromptTemplates }
+							: {}),
 						...(options?.promptDisposition ? { promptDisposition: options.promptDisposition } : {}),
 						...(options?.preflightResult ? { preflightResult: options.preflightResult } : {}),
 					});
@@ -481,12 +558,35 @@ function createRemoteSessionProxy(
 				};
 			if (property === "waitForIdle") return () => client.waitForIdle();
 			if (property === "getLastAssistantText") return () => target.getLastAssistantText();
-			if (property === "setModel")
+			if (property === "setModel" || property === "setSessionModel")
 				return async (model: NonNullable<AgentSession["model"]>) => {
 					const next = await client.setModel(model.provider, model.id);
 					return { systemPromptName: next.systemPromptName, model: next };
 				};
-			if (property === "cycleModel") return () => client.cycleModel();
+			if (property === "setSessionThinkingLevel")
+				return (level: AgentSession["thinkingLevel"]) =>
+					void client
+						.setThinkingLevel(level, { scope: "turn" })
+						.catch(reportActionFailure("setSessionThinkingLevel"));
+			if (property === "setSessionFastMode")
+				return (enabled: boolean) =>
+					void client.setFastMode(enabled).catch(reportActionFailure("setSessionFastMode"));
+			if (property === "abortRetry") return () => void client.abortRetry().catch(reportActionFailure("abortRetry"));
+			if (property === "setAutoRetryEnabled")
+				return (enabled: boolean) =>
+					void client.setAutoRetry(enabled).catch(reportActionFailure("setAutoRetryEnabled"));
+			if (property === "reserveQueuedInputOrder") return () => ++nextQueuedInputOrder;
+			if (property === "setFavoriteModels")
+				return (models: Parameters<AgentSession["setFavoriteModels"]>[0]) => {
+					state = { ...state, favoriteModels: [...models] };
+					void client.setFavoriteModels(models).catch(reportActionFailure("setFavoriteModels"));
+				};
+			if (property === "setScopedModels")
+				return (models: Parameters<AgentSession["setScopedModels"]>[0]) => {
+					state = { ...state, scopedModels: [...models] };
+					void client.setScopedModels(models).catch(reportActionFailure("setScopedModels"));
+				};
+			if (property === "cycleModel") return (direction?: "forward" | "backward") => client.cycleModel(direction);
 			if (property === "setThinkingLevel")
 				return (level: AgentSession["thinkingLevel"]) =>
 					void client.setThinkingLevel(level).catch(reportActionFailure("setThinkingLevel"));
@@ -567,9 +667,11 @@ function createRemoteSessionProxy(
 					if (localBashAbortController) localBashAbortController.abort();
 					else void client.abortBash().catch(reportActionFailure("abortBash"));
 				};
+			if (property === "getContextUsage") return () => state.contextUsage;
 			if (property === "getSessionStats") return () => client.getSessionStats();
 			if (property === "exportToHtml")
-				return (outputPath?: string) => client.exportHtml(outputPath).then((result) => result.path);
+				return (outputPath?: string, options?: { themeName?: string }) =>
+					client.exportHtml(outputPath, options?.themeName).then((result) => result.path);
 			if (property === "setSessionName")
 				return (name: string) => client.setSessionName(name).catch(reportActionFailure("setSessionName"));
 			if (property === "navigateTree")
@@ -589,8 +691,8 @@ function createRemoteSessionProxy(
 					};
 				};
 			if (property === "isStreaming") return state.isStreaming;
+			if (property === "isIdle") return !state.isStreaming;
 			if (property === "isCompacting") return state.isCompacting;
-			if (property === "isFastModeActive") return () => state.fastMode;
 			if (property === "pendingMessageCount") return state.pendingMessageCount;
 			if (property === "getSteeringMessages") return () => state.steering;
 			if (property === "getFollowUpMessages") return () => state.followUp;
@@ -639,9 +741,15 @@ function createRemoteSessionProxy(
 			if (property === "sessionId") return state.sessionId;
 			if (property === "sessionName") return state.sessionName;
 			if (property === "serviceTier") return state.serviceTier;
+			if (property === "steeringMode") return state.steeringMode;
+			if (property === "followUpMode") return state.followUpMode;
+			if (property === "autoCompactionEnabled") return state.autoCompactionEnabled;
+			if (property === "isFastModeActive") return () => state.fastMode;
 			if (property === "sessionManager") return remoteSessionManager;
 			if (property === "settingsManager") return settingsManager;
 			if (property === "messages") return target.messages;
+			if (property === "favoriteModels") return state.favoriteModels;
+			if (property === "scopedModels") return state.scopedModels;
 			if (property === "model") return state.model ?? target.model;
 			if (property === "thinkingLevel") return state.thinkingLevel;
 			return Reflect.get(target, property, receiver);
@@ -649,6 +757,14 @@ function createRemoteSessionProxy(
 	});
 	return {
 		session,
+		setHostUiHandler: (callback) => {
+			hostUiHandler = callback;
+			if (callback)
+				for (const request of pendingUiRequests.splice(0))
+					void Promise.resolve(callback(request)).then(
+						(response) => response && client.sendExtensionUIResponse(response),
+					);
+		},
 		refresh,
 		abortLocalBash: () => localBashAbortController?.abort(),
 		createReplacedSessionContext: () => {
@@ -720,6 +836,7 @@ function stateFromRpc(state: {
 	isCompacting: boolean;
 	pendingMessageCount: number;
 	usageTotals: import("../../core/session-manager.ts").UsageTotals;
+	contextUsage?: import("../../core/extensions/types.ts").ContextUsage;
 	retryAttempt: number;
 	isBashRunning: boolean;
 	sessionFile?: string;
@@ -729,7 +846,12 @@ function stateFromRpc(state: {
 	projectTrusted: boolean;
 	serviceTier?: AgentSession["serviceTier"];
 	fastMode: boolean;
+	steeringMode: AgentSession["steeringMode"];
+	followUpMode: AgentSession["followUpMode"];
+	autoCompactionEnabled: boolean;
 	entries?: import("../../core/session-manager.ts").SessionEntry[];
+	favoriteModels: import("../rpc/rpc-types.ts").RpcSessionModelEntry[];
+	scopedModels: import("../rpc/rpc-types.ts").RpcSessionModelEntry[];
 	steering: string[];
 	followUp: string[];
 	ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;

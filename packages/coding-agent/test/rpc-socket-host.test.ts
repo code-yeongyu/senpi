@@ -61,7 +61,7 @@ class JsonlPeer {
 				reject,
 				timer: setTimeout(() => {
 					this.waiters.delete(waiter);
-					reject(new Error("Timed out waiting for RPC record"));
+					reject(new Error(`Timed out waiting for RPC record: ${JSON.stringify(this.messages)}`));
 				}, timeoutMs),
 			};
 			this.waiters.add(waiter);
@@ -123,6 +123,7 @@ function spawnRpc(args: string[], qa: ReturnType<typeof scratch>): ChildProcessW
 			SENPI_RUNTIME: "node",
 			SENPI_CODING_AGENT_DIR: qa.agentDir,
 			SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
+			SENPI_RPC_CLIENT_CAPABILITIES: "extension_events,custom_unsupported",
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
@@ -224,6 +225,71 @@ function normalizeResponse(value: RecordValue): RecordValue {
 }
 
 describe("RPC Unix-socket multi-connection host", () => {
+	it("signals unsupported factory widgets while preserving array widgets", async () => {
+		const qa = scratch("widget-factory");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		mkdirSync(join(qa.agentDir, "extensions"), { recursive: true });
+		writeFileSync(
+			join(qa.agentDir, "extensions", "widget-factory.ts"),
+			`export default function (pi) {
+				pi.on("session_start", (_event, ctx) => {
+					ctx.ui.setWidget("array-widget", ["array widget"]);
+					ctx.ui.setWidget("factory-widget", () => ({ render: () => ["factory widget"] }));
+				});
+			}\n`,
+		);
+		const child = spawnRpc(
+			[
+				"--mode",
+				"rpc",
+				"--listen",
+				`unix://${qa.socketPath}`,
+				"--provider",
+				MOCK_PROVIDER,
+				"--model",
+				MOCK_MODEL,
+				"--extension",
+				join(qa.agentDir, "extensions", "widget-factory.ts"),
+			],
+			qa,
+		);
+		await waitForStderr(child, `senpi rpc listening on unix://${qa.socketPath}`);
+		const peer = await connectPeer(qa.socketPath);
+		try {
+			const arrayWidget = peer.peer.waitFor(
+				(value) =>
+					value.type === "extension_ui_request" &&
+					value.method === "setWidget" &&
+					value.widgetKey === "array-widget",
+				1_000,
+			);
+			const unsupported = peer.peer.waitFor(
+				(value) => value.type === "extension_ui_request" && value.method === "custom_unsupported",
+				1_000,
+			);
+			const opened = await peer.peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
+			const sessionId = openedSessionId(opened);
+			expect(await arrayWidget).toMatchObject({
+				type: "extension_ui_request",
+				method: "setWidget",
+				widgetKey: "array-widget",
+				widgetLines: ["array widget"],
+			});
+			expect(await unsupported).toMatchObject({
+				type: "extension_ui_request",
+				method: "custom_unsupported",
+				extensionName: "widget component",
+				sessionId,
+			});
+		} finally {
+			peer.peer.close();
+			peer.socket.destroy();
+			await fake.close();
+			await stopChild(child);
+		}
+	});
+
 	it("dispatches a reentrant UI response while switch_session is in flight", async () => {
 		const qa = scratch("reent");
 		const fake = await startFakeModelServer();

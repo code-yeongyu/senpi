@@ -1198,6 +1198,61 @@ describe("SettingsManager", () => {
 			expect(manager.drainErrors()).toEqual([]);
 		});
 	});
+
+	describe("experimental.workflowEvalOnly", () => {
+		it("returns false when experimental is unset", () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getExperimentalWorkflowEvalOnly()).toBe(false);
+		});
+
+		it("returns true when global experimental.workflowEvalOnly is true", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ experimental: { workflowEvalOnly: true } }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getExperimentalWorkflowEvalOnly()).toBe(true);
+		});
+
+		it("lets project override global true to false via deep merge", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ experimental: { workflowEvalOnly: true } }));
+			writeFileSync(
+				join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+				JSON.stringify({ experimental: { workflowEvalOnly: false } }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getExperimentalWorkflowEvalOnly()).toBe(false);
+		});
+
+		it("lets project override global false to true via deep merge", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ experimental: { workflowEvalOnly: false } }));
+			writeFileSync(
+				join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+				JSON.stringify({ experimental: { workflowEvalOnly: true } }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getExperimentalWorkflowEvalOnly()).toBe(true);
+		});
+
+		it("stays independent of experimental.bashEvalOnly", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ experimental: { bashEvalOnly: true, workflowEvalOnly: false } }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getExperimentalBashEvalOnly()).toBe(true);
+			expect(manager.getExperimentalWorkflowEvalOnly()).toBe(false);
+		});
+
+		it("returns false for a malformed string value without throwing on load", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ experimental: { workflowEvalOnly: "yes" } }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getExperimentalWorkflowEvalOnly()).toBe(false);
+			expect(manager.drainErrors()).toEqual([]);
+		});
+	});
 });
 
 describe("routine settings keys", () => {

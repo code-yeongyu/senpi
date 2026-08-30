@@ -1,5 +1,49 @@
 # changes
 
+## 2026-08-30 - Replacement broadcast reaches observers, not the issuer
+
+- `connection-handler.ts`: `session_replaced` is emitted to every connection that did NOT
+  issue the replacement, including classic (unrouted) ones. Previously the emission was
+  gated on `routingSessionId !== undefined`, which silenced it for classic observers: a
+  classic client attached while another actor swapped the runtime session kept routing at
+  the old identity forever (`rpc-wire-provenance`: "broadcasts the replacement identity to
+  an attached client after a runtime session swap" timed out).
+- The suppression is now scoped to the ISSUER instead of the transport: a connection whose
+  own `new_session`/`switch_session`/`fork`/tree command drove the replacement already
+  receives the new identity in that command's response, and classic records must not carry
+  a top-level `sessionId` key (`rpc-classic-compat` asserts this per command). Classic
+  post-command rebinds go through `rebindAfterLocalReplacement()`, which raises
+  `replacementIssuedHere` for the duration of that rebind only.
+- Routed/shared-host behavior is unchanged: those connections still receive the broadcast.
+
+
+## 2026-08-30 - Reschedule the sink actor drain when an enqueue races its settling
+
+- `socket-event-fanout.ts`: `SocketEventSinkActor.drain()` clears `draining` in a `.finally()` reaction. An `enqueue()` landing between the drain loop's exit and that reaction received the stale settled promise and started no new drain, leaving the record queued until the next unrelated enqueue rescued it — observed as targeted `open_session` responses reaching the client seconds late or not at all (`W-route` logged, `socket.write` never called). The `.finally()` now reschedules `drain()` when the queue is non-empty, so a racing record flushes immediately. Deterministic reproduction: `test/socket-event-fanout.test.ts`.
+
+## 2026-08-30 - Resolve RPC project trust from the current session cwd
+
+- `buildRpcSessionState` now reads the nearest saved project-trust decision from `ProjectTrustStore` for the session's current cwd instead of publishing the construction-time `SettingsManager` verdict from the previous cwd.
+- An absent or false store decision remains untrusted, preserving the project-settings and project-resource gate.
+
+### Why
+
+- A shared RPC session can switch to a replacement cwd while its state is projected through a long-lived connection. Trust must follow the authoritative store entry for that replacement cwd rather than being inherited from the prior runtime.
+
+## 2026-08-30 - Honor cwd overrides for multi-session switch_session
+
+- `session-binding.ts` now binds the RPC connection handler to a live session runtime host, and `session-registry.ts` exposes the runtime's replacement-aware `switchSession` seam instead of treating the open-time runtime shape as the complete binding contract.
+- `interactive-host-runtime.ts` forwards only the wire-supported `cwdOverride` when switching through the shared host, so the host's normal runtime replacement rebuilds settings and other cwd-bound state for the effective directory.
+- `rpc-session-registry.test.ts` covers a replacement switch and verifies that the runtime and `list_sessions` report the override cwd.
+
+### Why
+
+- Multi-session bindings are created once at `open_session`; a later `switch_session` must reach the replacement-aware runtime method rather than remain coupled to the initial session-open runtime.
+
+### Expected merge conflict zones
+
+- LOW: `session-binding.ts` runtime host construction and `session-registry.ts` session runtime type.
+
 ## 2026-08-29 - Complete remote bash callback spill cleanup lifecycle
 
 ### What changed

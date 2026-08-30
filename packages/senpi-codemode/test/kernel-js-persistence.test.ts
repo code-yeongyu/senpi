@@ -186,4 +186,162 @@ footer\`)`,
 			expect(parseJavaScriptResult(run.result)).toBe(2);
 		});
 	});
+
+	it("persists object-literal declarations containing interior line comments", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const first = await runJavaScriptCell(
+				kernel,
+				`const persistenceCommentedObject = {
+		  // interior comment
+		  value: 41,
+		}
+		return persistenceCommentedObject.value`,
+			);
+			const second = await runJavaScriptCell(kernel, "return persistenceCommentedObject.value + 1");
+
+			expect(parseJavaScriptResult(first.result)).toBe(41);
+			expect(parseJavaScriptResult(second.result)).toBe(42);
+		});
+	});
+
+	it("persists arrow-function declarations containing interior comments", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const first = await runJavaScriptCell(
+				kernel,
+				`const persistenceCommentedArrow = () => {
+		  // helper note
+		  return 20
+		}
+		return persistenceCommentedArrow() + 1`,
+			);
+			const second = await runJavaScriptCell(kernel, "return persistenceCommentedArrow() + 2");
+
+			expect(parseJavaScriptResult(first.result)).toBe(21);
+			expect(parseJavaScriptResult(second.result)).toBe(22);
+		});
+	});
+
+	it("evaluates initializers with trailing comments exactly once", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			await runJavaScriptCell(kernel, "var persistenceEvalCount = 0");
+			const declared = await runJavaScriptCell(
+				kernel,
+				"const persistenceCountedValue = (persistenceEvalCount += 1) // trailing note\nreturn persistenceCountedValue",
+			);
+			const counted = await runJavaScriptCell(kernel, "return persistenceEvalCount");
+
+			expect(parseJavaScriptResult(declared.result)).toBe(1);
+			expect(parseJavaScriptResult(counted.result)).toBe(1);
+		});
+	});
+
+	it("persists destructured bindings declared with trailing comments", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			await runJavaScriptCell(
+				kernel,
+				"const { persistenceCommentedA, renamed: persistenceCommentedB } = { persistenceCommentedA: 1, renamed: 2 } // note",
+			);
+			const run = await runJavaScriptCell(kernel, "return [persistenceCommentedA, persistenceCommentedB]");
+
+			expect(parseJavaScriptResult(run.result)).toEqual([1, 2]);
+		});
+	});
+
+	it("persists multi-declarator declarations containing block comments", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			await runJavaScriptCell(
+				kernel,
+				"const persistenceMultiFirst = 1, persistenceMultiSecond = { /* block */ value: 2 }",
+			);
+			const run = await runJavaScriptCell(kernel, "return [persistenceMultiFirst, persistenceMultiSecond.value]");
+
+			expect(parseJavaScriptResult(run.result)).toEqual([1, 2]);
+		});
+	});
+
+	it("runs cells whose final statement is an else clause on its own line", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const first = await runJavaScriptCell(
+				kernel,
+				[
+					"var persistenceBranchValue = 0",
+					"if (persistenceBranchValue) { persistenceBranchValue = 1 }",
+					"else persistenceBranchValue = 2",
+				].join("\n"),
+			);
+			const run = await runJavaScriptCell(kernel, "return persistenceBranchValue");
+
+			expect(first.result.ok).toBe(true);
+			expect(parseJavaScriptResult(run.result)).toBe(2);
+		});
+	});
+
+	it("keeps continuation-line method chains inside the captured last statement", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const run = await runJavaScriptCell(
+				kernel,
+				[
+					'var persistenceChained = "a-b"',
+					'persistenceChained = persistenceChained.replace("a", "x")',
+					'.replace(/b|\\(/g, "y")',
+					"persistenceChained",
+				].join("\n"),
+			);
+
+			expect(parseJavaScriptResult(run.result)).toBe("x-y");
+		});
+	});
+
+	it("persists bindings whose pattern carries an interior line comment", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			await runJavaScriptCell(
+				kernel,
+				"const { persistenceCommentedBinding // note\n} = { persistenceCommentedBinding: 7 };",
+			);
+			const run = await runJavaScriptCell(kernel, "return persistenceCommentedBinding");
+
+			expect(parseJavaScriptResult(run.result)).toBe(7);
+		});
+	});
+
+	it("emits destructuring assignments that cannot merge with the previous expression statement", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const run = await runJavaScriptCell(
+				kernel,
+				[
+					"var persistenceAsiPrev = [0]",
+					"persistenceAsiPrev.pop()",
+					"const { length: persistenceAsiLen } = []",
+					"persistenceAsiLen",
+				].join("\n"),
+			);
+
+			expect(parseJavaScriptResult(run.result)).toBe(0);
+		});
+	});
+
+	it("rejects declarations with a dangling trailing comma", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const run = await runJavaScriptCell(kernel, "const persistenceDangling = 1,");
+
+			expect(run.result.ok).toBe(false);
+		});
+	});
+
+	it("captures the last expression after nested template literals in interpolations", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const run = await runJavaScriptCell(
+				kernel,
+				[
+					"var persistenceQuoted = `$" + '{"x".replace("x", `)`)}`',
+					'var persistenceJoined = ["a", persistenceQuoted].join(',
+					'\t"-",',
+					")",
+					"persistenceJoined",
+				].join("\n"),
+			);
+
+			expect(parseJavaScriptResult(run.result)).toBe("a-)");
+		});
+	});
 });

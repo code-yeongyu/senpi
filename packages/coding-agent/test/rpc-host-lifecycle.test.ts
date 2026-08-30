@@ -1,8 +1,18 @@
-import { execFileSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import {
+	closeSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer as createHttpServer, type Server as HttpServer, type ServerResponse } from "node:http";
-import { type AddressInfo, createConnection, type Socket } from "node:net";
+import { type AddressInfo, createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -202,6 +212,35 @@ describe("ensureHost-spawned host lifecycle", () => {
 		await waitForHostExit(entry);
 	}, 45_000);
 
+	it("preserves a live public socket when supervisor startup cannot bind it", async () => {
+		const qa = scratch("collision");
+		const live = createServer((socket) => socket.resume());
+		await new Promise<void>((resolve) => live.listen(qa.socket, resolve));
+		const childScript =
+			"const {createServer}=require('node:net'); const s=createServer(); s.listen(process.argv.at(-1));";
+		const supervisor = spawn(
+			process.execPath,
+			[
+				"--import",
+				"tsx",
+				hostLifecycleEntry(),
+				"--socket",
+				qa.socket,
+				"--child-command",
+				process.execPath,
+				"--child-args",
+				JSON.stringify(["-e", childScript]),
+			],
+			{ stdio: ["ignore", "ignore", "pipe"] },
+		);
+		const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+			supervisor.once("exit", (code, signal) => resolve({ code, signal })),
+		);
+		expect(exit).toMatchObject({ code: 1 });
+		expect(existsSync(qa.socket)).toBe(true);
+		live.close();
+	}, 45_000);
+
 	it("reaps the internal host when the supervisor is SIGKILLed (no catchable-signal path)", async () => {
 		const qa = scratch("kill9");
 		const internalBefore = listInternalSocketDirs();
@@ -216,6 +255,9 @@ describe("ensureHost-spawned host lifecycle", () => {
 		await waitForPidsGone(internalHosts, 10_000);
 		expect(internalHosts.filter(processAlive)).toEqual([]);
 		expect(leakedDirs.filter((dir) => existsSync(join(tmpdir(), dir)))).toEqual([]);
+		expect(existsSync(qa.socket)).toBe(false);
+		expect(existsSync(qa.pidFilePath)).toBe(false);
+		expect(existsSync(createHostDaemonPaths(qa.agentDir).settingsFile)).toBe(false);
 	}, 60_000);
 });
 
@@ -241,6 +283,39 @@ describe("host watchdog configuration", () => {
 				[HOST_SCRATCH_DIR_ENV]: "/tmp/senpi-rpc-host-internal-abc",
 			}),
 		).toEqual({ fd: 3, ppid: 4242, scratchDir: "/tmp/senpi-rpc-host-internal-abc" });
+	});
+
+	it("ignores an unavailable watchdog fd when the supervisor is still alive", async () => {
+		let fired = false;
+		const disarm = armHostWatchdog({ fd: 999_999, ppid: process.pid }, () => {
+			fired = true;
+		});
+		await delay(300);
+		disarm();
+		expect(fired).toBe(false);
+	});
+
+	it("removes supervisor public state on inherited-pipe EOF", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "senpi-hlc-wd-state-"));
+		roots.push(dir);
+		const fifo = join(dir, "pipe");
+		const socket = join(dir, "rpc.sock");
+		const pidFile = join(dir, "host.pid");
+		const settings = join(dir, "settings.json");
+		execFileSync("mkfifo", [fifo]);
+		writeFileSync(socket, "socket");
+		writeFileSync(pidFile, "pid");
+		writeFileSync(settings, "settings");
+		const writeEnd = openSync(fifo, "w+");
+		const readEnd = openSync(fifo, "r");
+		const reason = new Promise<string>((resolve) => {
+			armHostWatchdog({ fd: readEnd, cleanupPaths: [socket, pidFile, settings] }, resolve);
+		});
+		closeSync(writeEnd);
+		await reason;
+		expect(existsSync(socket)).toBe(false);
+		expect(existsSync(pidFile)).toBe(false);
+		expect(existsSync(settings)).toBe(false);
 	});
 
 	it("fires on inherited-pipe EOF and removes the supervisor's private directory", async () => {
@@ -332,7 +407,12 @@ function hostLifecycleEntry(): string {
 
 async function ensureLifecycleHost(
 	qa: Scratch,
-	options: { policy?: HostLifecyclePolicyInput; hostArgs?: string[]; env?: Record<string, string> } = {},
+	options: {
+		policy?: HostLifecyclePolicyInput;
+		hostArgs?: string[];
+		env?: Record<string, string>;
+		spawn?: { command: string; args: string[] };
+	} = {},
 ) {
 	const hostArgs = options.hostArgs ?? [];
 	try {
@@ -351,7 +431,20 @@ async function ensureLifecycleHost(
 					...(options.env ?? {}),
 				},
 				hostArgs,
-				spawn: { command: process.execPath, args: [hostLifecycleEntry(), "--socket", qa.socket, ...hostArgs] },
+				spawn: options.spawn
+					? {
+							command: process.execPath,
+							args: [
+								hostLifecycleEntry(),
+								"--socket",
+								qa.socket,
+								"--child-command",
+								options.spawn.command,
+								"--child-args",
+								JSON.stringify(options.spawn.args),
+							],
+						}
+					: { command: process.execPath, args: [hostLifecycleEntry(), "--socket", qa.socket, ...hostArgs] },
 			},
 		});
 		managed.push({

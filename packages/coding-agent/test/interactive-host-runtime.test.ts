@@ -3,7 +3,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { CONFIG_DIR_NAME } from "../src/config.ts";
 import {
 	type AgentSessionRuntime,
@@ -12,13 +12,16 @@ import {
 	createAgentSessionServices,
 } from "../src/core/agent-session-runtime.ts";
 import { createGoal, updateGoal } from "../src/core/extensions/builtin/goal/store.ts";
+import { FooterDataProvider } from "../src/core/footer-data-provider.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
+import { FooterComponent } from "../src/modes/interactive/components/footer.ts";
 import {
 	createInteractiveHostRuntime,
 	INTERACTIVE_HOST_FALLBACK_WARNING,
 } from "../src/modes/interactive/interactive-host-runtime.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
 import { startFakeModelServer } from "./helpers/rpc-fake-model.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
@@ -26,6 +29,12 @@ import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } fr
 const roots: string[] = [];
 const children: ChildProcessWithoutNullStreams[] = [];
 const runtimes: AgentSessionRuntime[] = [];
+
+beforeAll(() => initTheme("dark"));
+
+function stripAnsi(text: string): string {
+	return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
 
 afterEach(async () => {
 	await Promise.all(runtimes.splice(0).map((runtime) => runtime.dispose()));
@@ -67,7 +76,11 @@ function spawnHost(
 		{
 			cwd: qa.cwd,
 			env: {
-				...process.env,
+				...Object.fromEntries(
+					Object.entries(process.env).filter(
+						([key]) => key !== "SENPI_BRAND" && !key.endsWith("_CODING_AGENT_DIR") && !key.endsWith("_CODING_AGENT_SESSION_DIR"),
+					),
+				),
 				...hermeticProviderEnv(),
 				PI_OFFLINE: "1",
 				PI_TELEMETRY: "0",
@@ -135,6 +148,40 @@ async function waitForHost(child: ChildProcessWithoutNullStreams, socket: string
 }
 
 describe("interactive host runtime", () => {
+	it("renders host-authoritative footer context, cwd, and session name", async () => {
+		const qa = scratch("footer-values");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		const host = spawnHost(qa);
+		await waitForHost(host, qa.socket);
+		const local = await createAgentSessionRuntimeFixture({
+			cwd: qa.cwd,
+			agentDir: qa.agentDir,
+			sessionManager: SessionManager.create(qa.cwd, qa.sessionDir),
+			settingsManager: SettingsManager.create(qa.cwd, qa.agentDir),
+		});
+		local.session.getContextUsage = () => ({ tokens: 42, contextWindow: 4242, percent: 1 });
+		const runtime = await createInteractiveHostRuntime(local, {
+			socket: qa.socket,
+			ensureHost: async () => undefined,
+			onWarning: vi.fn(),
+		});
+		try {
+			await runtime.session.setSessionName("host-footer-name");
+			await runtime.session.prompt("footer context");
+			const footer = new FooterComponent(runtime.session, new FooterDataProvider(qa.cwd));
+			const rendered = stripAnsi(footer.render(240).join("\n"));
+			expect(runtime.session.sessionManager.getCwd()).toBe(qa.cwd);
+			expect(runtime.session.sessionManager.getSessionName()).toBe("host-footer-name");
+			expect(runtime.session.getContextUsage()).toEqual(expect.objectContaining({ contextWindow: 1000000 }));
+			expect(rendered).toContain(`${qa.cwd} • host-footer-name`);
+			expect(rendered).toMatch(/\d+\/1M \([0-9.]+%\)/);
+		} finally {
+			await runtime.dispose();
+			await fake.close();
+		}
+	});
+
 	it("does not issue getState per streamed delta while mirroring usage totals", async () => {
 		const qa = scratch("usage-deltas");
 		const fake = await startFakeModelServer({ multiDelta: true });
@@ -385,6 +432,298 @@ describe("interactive host runtime", () => {
 			expect(runtime.session.serviceTier).toBe("priority");
 		} finally {
 			await observer.stop();
+			await runtime.dispose();
+			await fake.close();
+		}
+	});
+
+	it("mirrors host session settings in direct proxy getters", async () => {
+		const qa = scratch("settings-sync");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		const host = spawnHost(qa);
+		await waitForHost(host, qa.socket);
+		const runtime = await createInteractiveHostRuntime(
+			await createAgentSessionRuntimeFixture({
+				cwd: qa.cwd,
+				agentDir: qa.agentDir,
+				sessionManager: SessionManager.create(qa.cwd, qa.sessionDir),
+				settingsManager: SettingsManager.create(qa.cwd, qa.agentDir),
+			}),
+			{ socket: qa.socket, ensureHost: async () => undefined },
+		);
+		const observer = new RpcClient({ socketPath: qa.socket });
+		await observer.start();
+		try {
+			await observer.openSession({ sessionPath: runtime.session.sessionFile!, cwd: qa.cwd });
+			let settingsEvents = 0;
+			const settingsChanged = new Promise<void>((resolve) => {
+				const unsubscribe = runtime.session.subscribe((event) => {
+					if (event.type !== "session_settings_changed") return;
+					settingsEvents++;
+					if (settingsEvents >= 3) {
+						unsubscribe();
+						resolve();
+					}
+				});
+			});
+			await observer.setSteeringMode("one-at-a-time");
+			await observer.setFollowUpMode("one-at-a-time");
+			await observer.setAutoCompaction(false);
+			await settingsChanged;
+			expect(runtime.session.steeringMode).toBe("one-at-a-time");
+			expect(runtime.session.followUpMode).toBe("one-at-a-time");
+			expect(runtime.session.autoCompactionEnabled).toBe(false);
+		} finally {
+			await observer.stop();
+			await runtime.dispose();
+			await fake.close();
+		}
+	});
+
+	it("routes session-scoped mutations to the host", async () => {
+		const qa = scratch("scoped");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		const host = spawnHost(qa);
+		await waitForHost(host, qa.socket);
+		const warnings: unknown[] = [];
+		const runtime = await createInteractiveHostRuntime(
+			await createAgentSessionRuntimeFixture({
+				cwd: qa.cwd,
+				agentDir: qa.agentDir,
+				sessionManager: SessionManager.create(qa.cwd, qa.sessionDir),
+				settingsManager: SettingsManager.create(qa.cwd, qa.agentDir),
+			}),
+			{ socket: qa.socket, ensureHost: async () => undefined, onWarning: (warning) => warnings.push(warning) },
+		);
+		try {
+			const settled = new Promise<void>((resolve) => {
+				const unsubscribe = runtime.session.subscribe((event) => {
+					if (event.type !== "thinking_level_changed") return;
+					unsubscribe();
+					resolve();
+				});
+			});
+			runtime.session.setSessionThinkingLevel("low");
+			await settled;
+			expect(runtime.session.thinkingLevel).toBe("low");
+			expect(warnings).toEqual([]);
+		} finally {
+			await runtime.dispose();
+			await fake.close();
+		}
+	});
+
+	it("hydrates the session manager when attaching after another client advances the host", async () => {
+		const qa = scratch("attach-hydration");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		const host = spawnHost(qa);
+		await waitForHost(host, qa.socket);
+		const localSessionManager = SessionManager.create(qa.cwd, qa.sessionDir);
+		const sessionPath = localSessionManager.getSessionFile();
+		if (!sessionPath) throw new Error("Expected persisted session path");
+		const observer = new RpcClient({ socketPath: qa.socket });
+		await observer.start();
+		await observer.openSession({ sessionPath, cwd: qa.cwd });
+		const settled = new Promise<void>((resolve) => {
+			const unsubscribe = observer.onEvent((event) => {
+				if (event.type !== "agent_settled") return;
+				unsubscribe();
+				resolve();
+			});
+		});
+		await observer.prompt("already-advanced-before-attach");
+		await settled;
+		const local = await createAgentSessionRuntimeFixture({
+			cwd: qa.cwd,
+			agentDir: qa.agentDir,
+			sessionManager: localSessionManager,
+			settingsManager: SettingsManager.create(qa.cwd, qa.agentDir),
+		});
+		const runtime = await createInteractiveHostRuntime(local, {
+			socket: qa.socket,
+			ensureHost: async () => undefined,
+		});
+		try {
+			expect(JSON.stringify(runtime.session.messages)).toContain("already-advanced-before-attach");
+			expect(runtime.session.sessionManager.getEntries()).toEqual(
+				expect.arrayContaining([expect.objectContaining({ type: "message" })]),
+			);
+		} finally {
+			await runtime.dispose();
+			await observer.stop();
+			await fake.close();
+		}
+	});
+
+	it("reserves queued input order after the host queue", async () => {
+		const qa = scratch("queue-order");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		const host = spawnHost(qa);
+		await waitForHost(host, qa.socket);
+		const local = await createAgentSessionRuntimeFixture({
+			cwd: qa.cwd,
+			agentDir: qa.agentDir,
+			sessionManager: SessionManager.create(qa.cwd, qa.sessionDir),
+			settingsManager: SettingsManager.create(qa.cwd, qa.agentDir),
+		});
+		const runtime = await createInteractiveHostRuntime(local, {
+			socket: qa.socket,
+			ensureHost: async () => undefined,
+		});
+		try {
+			const started = new Promise<void>((resolve) => {
+				const unsubscribe = runtime.session.subscribe((event) => {
+					if (event.type !== "agent_start") return;
+					unsubscribe();
+					resolve();
+				});
+			});
+			void runtime.session.prompt("hold-open-500 queue-order");
+			await started;
+			await runtime.session.steer("queued-one");
+			await runtime.session.steer("queued-two");
+			const reserved = runtime.session.reserveQueuedInputOrder();
+			expect(reserved).toBeGreaterThan(2);
+		} finally {
+			await runtime.session.abort();
+			await runtime.dispose();
+			await fake.close();
+		}
+	});
+
+	it("aborts client-local bash when the runtime is disposed", async () => {
+		const qa = scratch("dispose-bash");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		const host = spawnHost(qa);
+		await waitForHost(host, qa.socket);
+		const local = await createAgentSessionRuntimeFixture({
+			cwd: qa.cwd,
+			agentDir: qa.agentDir,
+			sessionManager: SessionManager.create(qa.cwd, qa.sessionDir),
+			settingsManager: SettingsManager.create(qa.cwd, qa.agentDir),
+		});
+		const runtime = await createInteractiveHostRuntime(local, {
+			socket: qa.socket,
+			ensureHost: async () => undefined,
+		});
+		let started = false;
+		let aborted = false;
+		const operation = new Promise<{ exitCode: number | null }>((resolve) => {
+			void runtime.session.executeBash("local-bash", undefined, {
+				operations: {
+					exec: async (_command: string, _cwd: string, options: { signal?: AbortSignal }) => {
+						started = true;
+						if (options.signal?.aborted) aborted = true;
+						else
+							options.signal?.addEventListener(
+								"abort",
+								() => {
+									aborted = true;
+									resolve({ exitCode: null });
+								},
+								{ once: true },
+							);
+						return await new Promise<{ exitCode: number | null }>(() => {});
+					},
+				},
+			});
+		});
+		try {
+			while (!started) await new Promise((resolve) => setImmediate(resolve));
+			await runtime.dispose();
+			expect(aborted).toBe(true);
+		} finally {
+			void operation;
+			await fake.close();
+		}
+	});
+
+	it("reports host work through isIdle while streaming", async () => {
+		const qa = scratch("idle-sync");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		const host = spawnHost(qa);
+		await waitForHost(host, qa.socket);
+		const runtime = await createInteractiveHostRuntime(
+			await createAgentSessionRuntimeFixture({
+				cwd: qa.cwd,
+				agentDir: qa.agentDir,
+				sessionManager: SessionManager.create(qa.cwd, qa.sessionDir),
+				settingsManager: SettingsManager.create(qa.cwd, qa.agentDir),
+			}),
+			{ socket: qa.socket, ensureHost: async () => undefined },
+		);
+		try {
+			const started = new Promise<void>((resolve) => {
+				const unsubscribe = runtime.session.subscribe((event) => {
+					if (event.type !== "agent_start") return;
+					unsubscribe();
+					resolve();
+				});
+			});
+			const settled = new Promise<void>((resolve) => {
+				const unsubscribe = runtime.session.subscribe((event) => {
+					if (event.type !== "agent_settled") return;
+					unsubscribe();
+					resolve();
+				});
+			});
+			void runtime.session.prompt("hold-open-500 idle-probe");
+			await started;
+			expect(runtime.session.isStreaming).toBe(true);
+			expect(runtime.session.isIdle).toBe(false);
+			await settled;
+			expect(runtime.session.isIdle).toBe(true);
+		} finally {
+			await runtime.dispose();
+			await fake.close();
+		}
+	});
+
+	it("refreshes the session manager after host entries are appended", async () => {
+		const qa = scratch("entry-sync");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		const host = spawnHost(qa);
+		await waitForHost(host, qa.socket);
+		const localManager = SessionManager.create(qa.cwd, qa.sessionDir);
+		const runtime = await createInteractiveHostRuntime(
+			await createAgentSessionRuntimeFixture({
+				cwd: qa.cwd,
+				agentDir: qa.agentDir,
+				sessionManager: localManager,
+				settingsManager: SettingsManager.create(qa.cwd, qa.agentDir),
+			}),
+			{ socket: qa.socket, ensureHost: async () => undefined },
+		);
+		try {
+			const settled = new Promise<void>((resolve) => {
+				const unsubscribe = runtime.session.subscribe((event) => {
+					if (event.type !== "agent_settled") return;
+					unsubscribe();
+					resolve();
+				});
+			});
+			await runtime.session.prompt("entry-sync-probe");
+			await settled;
+			const entries = runtime.session.sessionManager.getEntries();
+			expect(entries).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						type: "message",
+						message: expect.objectContaining({
+							role: "user",
+							content: [{ type: "text", text: "entry-sync-probe" }],
+						}),
+					}),
+				]),
+			);
+		} finally {
 			await runtime.dispose();
 			await fake.close();
 		}
@@ -1185,8 +1524,7 @@ describe("interactive host runtime", () => {
 	});
 
 	it("rebinds settingsManager reads to the replacement session", async () => {
-		const qa = scratch("replacement-settings");
-		qa.socket = `/tmp/senpi-replacement-settings-${process.pid}.sock`;
+		const qa = scratch("rs");
 		const projectB = join(qa.root, "project-b");
 		mkdirSync(join(projectB, CONFIG_DIR_NAME), { recursive: true });
 		writeFileSync(
@@ -1199,7 +1537,10 @@ describe("interactive host runtime", () => {
 		const host = spawnHost(qa);
 		await waitForHost(host, qa.socket);
 		const target = SessionManager.create(projectB, qa.sessionDir);
-		const targetPath = target.getSessionFile()!;
+		target.appendMessage({ role: "user", content: "replacement-target", timestamp: 1 });
+		target.appendMessage(fauxAssistantMessage("replacement-target-answer"));
+		const targetPath = target.getSessionFile();
+		if (!targetPath) throw new Error("target session path missing");
 		const runtime = await createInteractiveHostRuntime(
 			await createAgentSessionRuntimeFixture({
 				cwd: qa.cwd,
