@@ -149,9 +149,13 @@ describe("RPC wire provenance", () => {
 		// An attached client that did not issue the replacement must be told the live
 		// binding moved, and must be given the new authoritative identity so it can
 		// resync without guessing. Without this it keeps routing at the old session.
+		// The identity travels as `durableSessionId`. Top-level `sessionId` is the
+		// per-connection routing handle a multi-session host tags records with, and
+		// that tag is applied last - carrying the identity under the same key would
+		// let the tag overwrite it and strip the event of its only payload.
 		expect(await replaced).toMatchObject({
 			type: "session_replaced",
-			sessionId: second.session.sessionId,
+			durableSessionId: second.session.sessionId,
 			cwd: second.session.sessionManager.getCwd(),
 		});
 		expect(second.session.sessionId).not.toBe(first.session.sessionId);

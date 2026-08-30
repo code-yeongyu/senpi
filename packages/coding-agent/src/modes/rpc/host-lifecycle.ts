@@ -45,7 +45,7 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir } from "../../config.ts";
+import { getAgentDir, isBunBinary } from "../../config.ts";
 import { createHostDaemonPaths } from "./host-ensure.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
@@ -173,6 +173,41 @@ export interface SupervisorLaunch {
 	readonly agentDir?: string;
 }
 
+/** Hidden internal launch route: wire-invisible, never advertised by the public CLI surface. */
+export const INTERNAL_SUPERVISOR_FLAG = "--internal-rpc-host-supervisor";
+
+/**
+ * Engine-global flags a rebranded wrapper may legitimately prepend when it
+ * re-dispatches this binary. `packages/omo-native` injects `--extension <dir>`
+ * for every non-early command, which pushed the sentinel off argv[0].
+ */
+const INJECTABLE_PREFIX_FLAGS = new Set(["--extension"]);
+
+/**
+ * Returns the internal supervisor payload when argv selects that route.
+ *
+ * The route dispatches when the sentinel is argv[0] OR is preceded only by
+ * known injectable prefix flags and their values - the one perturbation
+ * wrappers legitimately perform. Everything else disqualifies it: a positional
+ * operand, `--`, or an unknown flag before the sentinel all return undefined,
+ * so a user-supplied value that happens to equal the sentinel can never reach
+ * the supervisor.
+ *
+ * The skipped prefix is deliberately NOT forwarded to the host: a wrapper
+ * re-injects its own prefix on every re-entry, so the host child receives it
+ * from the wrapper rather than twice from here.
+ */
+export function findInternalSupervisorArgs(argv: readonly string[]): readonly string[] | undefined {
+	for (let index = 0; index < argv.length; index++) {
+		const arg = argv[index];
+		if (arg === INTERNAL_SUPERVISOR_FLAG) return argv.slice(index + 1);
+		// A prefix flag only counts when its value is actually present.
+		if (!INJECTABLE_PREFIX_FLAGS.has(arg) || index + 1 >= argv.length) return undefined;
+		index++;
+	}
+	return undefined;
+}
+
 /** `--socket <path>` selects the public socket; every other argument is forwarded to the host CLI. */
 export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch | undefined {
 	const hostArgs: string[] = [];
@@ -215,6 +250,39 @@ export function resolveCliMainPath(): string {
 	return resolve(dirname(modulePath), "..", "..", `cli-main${extension}`);
 }
 
+/**
+ * Resolves the host child spawn. Explicit child commands (desktop launchers)
+ * are forwarded untouched. The default re-enters the committed CLI entry
+ * through the runtime, except in compiled standalone binaries, which always
+ * boot their embedded entrypoint and would parse a script path as CLI
+ * arguments - there the executable itself is the CLI, so the mode flags are
+ * passed directly. Exported for tests.
+ */
+export function resolveHostChildLaunch(
+	launch: SupervisorLaunch,
+	internalSocket: string,
+	compiled: boolean = isBunBinary,
+): { command: string; args: string[] } {
+	if (launch.childCommand) {
+		return {
+			command: launch.childCommand,
+			args: [...(launch.childArgs ?? []), "--listen", `unix://${internalSocket}`],
+		};
+	}
+	return {
+		command: process.execPath,
+		args: [
+			...(compiled ? [] : [...process.execArgv, resolveCliMainPath()]),
+			"--mode",
+			"rpc",
+			"--multi-session",
+			"--listen",
+			`unix://${internalSocket}`,
+			...launch.hostArgs,
+		],
+	};
+}
+
 export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void> {
 	const paths = createHostDaemonPaths(launch.agentDir ?? getAgentDir());
 	const policy = resolveHostPolicy(await readSettingsFile(paths.settingsFile), process.env);
@@ -228,34 +296,20 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	let shuttingDown = false;
 	let shutdownPromise: Promise<never> | undefined;
 
-	const child = spawn(
-		launch.childCommand ?? process.execPath,
-		launch.childCommand
-			? [...(launch.childArgs ?? []), "--listen", `unix://${internalSocket}`]
-			: [
-					...process.execArgv,
-					resolveCliMainPath(),
-					"--mode",
-					"rpc",
-					"--multi-session",
-					"--listen",
-					`unix://${internalSocket}`,
-					...launch.hostArgs,
-				],
-		{
-			env: {
-				...process.env,
-				...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),
-				[HOST_WATCH_FD_ENV]: String(CHILD_WATCH_FD),
-				[HOST_WATCH_PPID_ENV]: String(process.pid),
-				[HOST_SCRATCH_DIR_ENV]: internal.dir,
-				[HOST_CLEANUP_PATHS_ENV]: [publicSocket, paths.pidFile, paths.settingsFile].join("\n"),
-			},
-			// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
-			// wait on and keeps the write end owned by this process alone.
-			stdio: ["ignore", "ignore", "inherit", "pipe"],
+	const childLaunch = resolveHostChildLaunch(launch, internalSocket);
+	const child = spawn(childLaunch.command, childLaunch.args, {
+		env: {
+			...process.env,
+			...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),
+			[HOST_WATCH_FD_ENV]: String(CHILD_WATCH_FD),
+			[HOST_WATCH_PPID_ENV]: String(process.pid),
+			[HOST_SCRATCH_DIR_ENV]: internal.dir,
+			[HOST_CLEANUP_PATHS_ENV]: [publicSocket, paths.pidFile, paths.settingsFile].join("\n"),
 		},
-	);
+		// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
+		// wait on and keeps the write end owned by this process alone.
+		stdio: ["ignore", "ignore", "inherit", "pipe"],
+	});
 	// Nothing is ever written; the pipe exists purely so its EOF is a reliable
 	// death notification. Errors on it must not crash the supervisor.
 	child.stdio[CHILD_WATCH_FD]?.on("error", () => {});

@@ -22,6 +22,24 @@
 - `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`: settings list construction and callbacks.
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: assistant component construction, tool-separated timestamp eligibility, runtime settings, `/settings` callbacks, and reload transcript reconstruction.
 
+## 2026-08-30 - Scope host UI dispatch to the shared-host lane
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` treats host-driven extension UI as the optional shared-host capability it is: the constructor calls `setHostUiHandler` only when the runtime provides it, and the request type is declared locally instead of cast through `any`.
+
+### Why
+
+- Host-driven extension UI is a shared-host capability. An unconditional constructor call plus a no-op stub on the classic runtime made a host-only concern part of the classic construction contract, so classic mode construction was no longer byte-identical.
+
+### Why an extension could not handle it
+
+- Interactive-mode construction and the runtime capability surface are core wiring beneath the extension API.
+
+### Expected merge conflict zones
+
+- LOW: the host-UI probe in the `InteractiveMode` constructor.
+
 ## 2026-08-30 - Forward shared-host switch cwd overrides
 
 - `interactive-host-runtime.ts` forwards the `cwdOverride` field explicitly when the interactive proxy requests a shared-host session replacement, preserving the host-effective cwd through the RPC boundary and subsequent proxy refresh.

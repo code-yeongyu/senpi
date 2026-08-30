@@ -710,8 +710,15 @@ export interface RpcServiceTierChangedEvent {
  */
 export interface RpcSessionReplacedEvent {
 	type: "session_replaced";
-	/** Durable session id of the session now bound to this connection. */
-	sessionId: string;
+	/**
+	 * Durable session id of the session now bound to this connection.
+	 *
+	 * Deliberately NOT `sessionId`: top-level `sessionId` is reserved for the
+	 * per-connection routing handle that multi-session hosts tag every record
+	 * with, and that tag is applied last - it would overwrite this value and
+	 * leave the event carrying no identity at all.
+	 */
+	durableSessionId: string;
 	/** Session file backing the new session, absent for a deferred setup-only session. */
 	sessionFile?: string;
 	cwd: string;

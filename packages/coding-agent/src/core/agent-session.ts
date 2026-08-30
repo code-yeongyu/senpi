@@ -3167,8 +3167,14 @@ export class AgentSession {
 		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
 		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
 		if (activeToolNamesChanged) {
-			this.abortCompaction();
-			this._incrementMessageRevision();
+			// A tool change emitted while extensions are still binding belongs to the
+			// binding itself, not to a mid-session change. The session was already
+			// committed to the client, so cancelling or invalidating work it started
+			// against that session would be spurious.
+			if (this._extensionBindingPromptReadiness === undefined) {
+				this.abortCompaction();
+				this._incrementMessageRevision();
+			}
 		}
 	}
 

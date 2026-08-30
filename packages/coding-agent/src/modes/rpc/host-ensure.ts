@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as properLockfile from "proper-lockfile";
-import { ENV_AGENT_DIR, getAgentDir, VERSION } from "../../config.ts";
+import { ENV_AGENT_DIR, getAgentDir, isBunBinary, VERSION } from "../../config.ts";
 import {
 	type DaemonPidFile,
 	parseDaemonPidFile,
@@ -18,7 +18,12 @@ import {
 	EXTENSION_EVENTS_CAPABILITY,
 	RPC_CLIENT_CAPABILITIES_ENV,
 } from "./custom-capability.ts";
-import { DEFAULT_HOST_IDLE_EXIT_MS, type HostColdStart, type HostLifecyclePolicyInput } from "./host-lifecycle.ts";
+import {
+	DEFAULT_HOST_IDLE_EXIT_MS,
+	type HostColdStart,
+	type HostLifecyclePolicyInput,
+	INTERNAL_SUPERVISOR_FLAG,
+} from "./host-lifecycle.ts";
 
 export type { HostColdStart, HostLifecyclePolicyInput };
 
@@ -301,14 +306,29 @@ function normalizeSocketPath(value: string): string {
  * Default launch: the host-lifecycle supervisor owns the public socket and the
  * idle-exit policy; it spawns the committed RPC socket host itself. Any extra
  * hostArgs are forwarded verbatim to the host CLI (e.g. provider pinning).
+ *
+ * A compiled standalone binary cannot re-enter itself through a script path:
+ * bun executables always boot their embedded entrypoint and parse the whole
+ * argv as CLI arguments, so `host-lifecycle.ts --socket <path>` dies with
+ * "Unknown option: --socket" before the host ever answers get_protocol_info.
+ * Compiled binaries therefore re-enter through the hidden
+ * `--internal-rpc-host-supervisor` route that main() dispatches before
+ * argument parsing. Exported for tests.
  */
-function defaultHostLaunch(
+export function defaultHostLaunch(
 	socket: string,
 	hostArgs: readonly string[],
+	compiled: boolean = isBunBinary,
 ): {
 	command: string;
 	args: string[];
 } {
+	if (compiled) {
+		return {
+			command: process.execPath,
+			args: [INTERNAL_SUPERVISOR_FLAG, "--socket", socket, ...hostArgs],
+		};
+	}
 	return {
 		command: process.execPath,
 		args: [...process.execArgv, resolveHostLifecycleEntryPath(), "--socket", socket, ...hostArgs],

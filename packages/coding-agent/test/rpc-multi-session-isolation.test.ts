@@ -16,6 +16,7 @@ import type {
 	WatchEventSource,
 } from "../src/core/extensions/builtin/config-reload/watch-engine.ts";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../src/core/extensions/types.ts";
+import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import type { RpcSessionBinding } from "../src/modes/rpc/session-binding.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
@@ -145,9 +146,11 @@ function hostFixture() {
 		const durableSessionId = options.sessionManager.getSessionId();
 		streaming.set(durableSessionId, false);
 		registerApiProvider(provider("rpc-isolation-provider", owner));
+		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		return {
 			session: {
 				sessionManager: options.sessionManager,
+				agentDir: options.agentDir,
 				model: undefined,
 				thinkingLevel: "off",
 				// Part of the wire state `open_session` projects; a router fixture still has to

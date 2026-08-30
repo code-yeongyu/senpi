@@ -10,6 +10,18 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.8.30] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Fixed Shift+Enter submitting instead of inserting a newline in direct Warp-on-WSL sessions ([#1109](https://github.com/code-yeongyu/senpi/pull/1109) by [@deopa0402](https://github.com/deopa0402)).
 
 ### Removed

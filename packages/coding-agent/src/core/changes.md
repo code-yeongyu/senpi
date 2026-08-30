@@ -20,6 +20,27 @@
 
 ## 2026-08-30 - Durable entry notifications are rpc-scoped
 
+## 2026-08-30 - Do not cancel client work from a binding-time tool change
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `setActiveToolsByName()` calls `abortCompaction()` and `_incrementMessageRevision()` only when the tool change happens outside extension binding, detected through the existing `_extensionBindingPromptReadiness` scope that `bindExtensions()` already maintains.
+
+### Why
+
+- A session replacement responds as soon as the swap is committed and rebinds extensions afterwards, by design: awaiting the bind would deadlock a client whose `session_start` handler blocks on an `extension_ui_request`. During that bind, `session_start` handlers deactivate tools for the active model (`video-in`, `look-at`), the tool set changes, and the abort plus revision bump cancelled a compaction the client had already started against the committed session - "Compaction cancelled" on roughly 4 of 6 runs, verified by capturing the abort stack inside the host process. Tool activation performed while binding is part of the binding, not a mid-session context change, so it must not invalidate that work. Mid-session tool changes still abort and bump exactly as before.
+
+### Why an extension could not handle it
+
+- The abort is core session lifecycle beneath the extension API, and the extensions involved are the ones whose binding triggers it.
+
+### Expected merge conflict zones
+
+- LOW: the `activeToolNamesChanged` branch in `setActiveToolsByName()`.
+
+
+## 2026-08-30 - Drop the classic host-UI no-op stub
+
 - `agent-session.ts`: `_emitEntryAppended` only fires while the session is bound in `rpc`
   mode. The notifications exist to hydrate the shared-host RPC proxy mirror; emitting them
   on classic/print streams injected extra labels into the released event-order contract

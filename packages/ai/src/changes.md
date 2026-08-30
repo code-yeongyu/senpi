@@ -1,3 +1,24 @@
+## Stop replaying the Anthropic server-side fallback marker (2026-08-30)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES` no longer contains `fallback`. The stored marker (`providerNative` subtype `fallback`) remains session audit metadata and still drives declined-attempt pruning (`lastAnthropicFallbackBoundary`, `collectDiscardedFallbackToolCallIds`), but it is never serialized into request params.
+- `packages/ai/test/anthropic-provider-native-replay.test.ts`: new regression test `never replays the fallback marker itself into request content`; the three existing fallback replay expectations updated to the marker-absent contract.
+
+### Why
+
+- Production 400 loop (omo session 01a050f8, 2026-08-30): after a client retry-fallback switched the session to the model that had served a server-side fallback (`claude-opus-4-8`), `isSameAnthropicModel` became true and the raw `{type:"fallback"}` marker replayed verbatim as `messages.253.content.0`. The Messages API rejected every subsequent request with `Input tag 'fallback' found using 'type' does not match any of the expected tags`, wedging the session permanently.
+- Live wire probes (2026-08-30, ccapi): a marker-bearing assistant input 400s with exactly that error on routes without the `server-side-fallback` beta and is merely tolerated on beta routes, while the marker-stripped shape is accepted on both. Replaying the marker buys nothing and breaks every cross-route/model-switch replay, so the marker is stored-only now.
+
+### Why an extension could not handle it
+
+- The replay set is provider serialization internals in `convertMessages`; no extension hook exists between stored assistant content and the Anthropic payload.
+
+### Expected merge conflict zones
+
+- LOW: the `REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES` literal and its comment block.
+- LOW: expectation arrays in `anthropic-provider-native-replay.test.ts`.
+
 ## Measure Cursor history at the wire representation (2026-08-29)
 
 ### What changed

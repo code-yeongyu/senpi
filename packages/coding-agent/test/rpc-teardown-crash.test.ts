@@ -36,11 +36,13 @@ describe("RPC teardown when the transport is gone", () => {
 		(client as any).sessionId = "session";
 		const stop = vi.spyOn(client, "stop").mockResolvedValue(undefined);
 		const localDispose = vi.fn(async () => {});
-		const runtime = new RemoteInteractiveRuntime({ dispose: localDispose } as any, {} as any, client);
+		const abortLocalBash = vi.fn();
+		const runtime = new RemoteInteractiveRuntime({ dispose: localDispose } as any, { abortLocalBash } as any, client);
 
 		await expect(runtime.dispose()).resolves.toBeUndefined();
 		expect(stop).toHaveBeenCalledTimes(1);
 		expect(localDispose).toHaveBeenCalledTimes(1);
+		expect(abortLocalBash).toHaveBeenCalledTimes(1);
 	});
 
 	test("active send failures still surface", async () => {

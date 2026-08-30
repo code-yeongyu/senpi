@@ -81,7 +81,7 @@ import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { createInteractiveHostRuntime } from "./modes/interactive/interactive-host-runtime.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { runPrintMode } from "./modes/print-mode.ts";
-import { parseSupervisorArgs, runHostSupervisor } from "./modes/rpc/host-lifecycle.ts";
+import { findInternalSupervisorArgs, parseSupervisorArgs, runHostSupervisor } from "./modes/rpc/host-lifecycle.ts";
 import { runMultiSessionHost } from "./modes/rpc/multi-session-host.ts";
 import { runRpcMode } from "./modes/rpc/rpc-mode.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
@@ -694,10 +694,15 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	// Internal launch surface used by bundled/rebranded runtimes. It is deliberately
-	// not accepted by parseArgs, so existing CLI modes remain unchanged.
-	if (args[0] === "--internal-rpc-host-supervisor") {
-		const launch = parseSupervisorArgs(args.slice(1));
+	// not accepted by parseArgs, so existing CLI modes remain unchanged. A rebranded
+	// wrapper may prepend its own `--extension <dir>` before forwarding argv, so the
+	// route is matched through the bounded scan rather than at argv[0] alone.
+	const supervisorArgs = findInternalSupervisorArgs(args);
+	if (supervisorArgs) {
+		const launch = parseSupervisorArgs(supervisorArgs);
 		if (!launch) {
+			// Fail closed: an internal protocol fault must never fall through to the
+			// public parser and surface as a confusing "Unknown option" error.
 			console.error("invalid internal RPC host supervisor arguments");
 			process.exit(2);
 		}

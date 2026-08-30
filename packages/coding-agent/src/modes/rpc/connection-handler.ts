@@ -160,12 +160,12 @@ function loadedMcpStatus(server: McpWireStatusServer): RpcMcpServerStatus {
  */
 export function buildRpcSessionState(session: AgentSession, lastAbortSource?: AgentAbortSource): RpcSessionState {
 	const cwd = session.sessionManager.getCwd();
-	// Trust gates project-source settings (shell prefixes, project resources), so an
-	// unverifiable verdict must fail closed: no agentDir means no authoritative store to
-	// consult, and the session's own manager only counts when it says trusted outright.
-	const projectTrusted = session.agentDir
-		? new ProjectTrustStore(session.agentDir).get(cwd) === true
-		: session.settingsManager?.isProjectTrusted?.() === true;
+	// Trust gates project-source settings (shell prefixes, project resources), so every
+	// session state projection must have an authoritative store to consult.
+	if (!session.agentDir) {
+		throw new Error("RPC session invariant violated: agentDir is required");
+	}
+	const projectTrusted = new ProjectTrustStore(session.agentDir).get(cwd) === true;
 	return {
 		model: session.model,
 		thinkingLevel: session.thinkingLevel,
@@ -670,7 +670,7 @@ export function createRpcConnectionHandler(
 				// the window the refresh takes.
 				outputEvent({
 					type: "session_replaced",
-					sessionId: session.sessionId,
+					durableSessionId: session.sessionId,
 					sessionFile: session.sessionFile,
 					cwd: session.sessionManager.getCwd(),
 					sessionName: session.sessionName,

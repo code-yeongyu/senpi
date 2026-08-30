@@ -437,12 +437,13 @@ const REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES: ReadonlySet<string> = new Set(
 	"text_editor_code_execution_tool_result",
 	"tool_search_tool_result",
 	"container_upload",
-	// Server-side fallback beta (server-side-fallback-2026-06-01) emits a
-	// `fallback` marker mid-response. The marker itself is replayed as a kept
-	// audit block. Blocks emitted *before* the final marker are the declined
-	// attempt and are pruned in convertMessages (see lastAnthropicFallbackBoundary
-	// and collectDiscardedFallbackToolCallIds); the marker onward replays verbatim.
-	"fallback",
+	// The server-side fallback marker (`fallback`, server-side-fallback-2026-06-01
+	// beta) is deliberately absent: the Messages API rejects it as an *input* tag
+	// ("Input tag 'fallback' found using 'type' does not match any of the expected
+	// tags"), so replaying it 400s every subsequent same-model request. The stored
+	// marker is audit metadata and still drives declined-attempt pruning in
+	// convertMessages (see lastAnthropicFallbackBoundary and
+	// collectDiscardedFallbackToolCallIds); blocks after it replay verbatim.
 ]);
 
 function isReplayableAnthropicProviderNativeBlock(raw: unknown): raw is ContentBlockParam {
@@ -2313,7 +2314,8 @@ function convertMessages(
 			const blocks: ContentBlockParam[] = [];
 			const isSameModel = isSameAnthropicModel(msg, model);
 			// Blocks before the final fallback marker are the declined attempt; the
-			// marker onward is the serving model's output and replays verbatim.
+			// blocks after it are the serving model's output and replay verbatim. The
+			// marker itself never replays: the API rejects `fallback` as an input tag.
 			const fallbackBoundary = isSameModel ? lastAnthropicFallbackBoundary(msg.content) : -1;
 			const preBoundaryPairedServerToolUseIds =
 				fallbackBoundary >= 0
