@@ -262,21 +262,24 @@ describe("RPC Unix-socket multi-connection host", () => {
 					value.type === "extension_ui_request" &&
 					value.method === "setWidget" &&
 					value.widgetKey === "array-widget",
-				1_000,
 			);
 			const unsupported = peer.peer.waitFor(
 				(value) => value.type === "extension_ui_request" && value.method === "custom_unsupported",
-				1_000,
 			);
-			const opened = await peer.peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
-			const sessionId = openedSessionId(opened);
-			expect(await arrayWidget).toMatchObject({
+			const opened = peer.peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
+			const [openedResponse, arrayWidgetRecord, unsupportedRecord] = await Promise.all([
+				opened,
+				arrayWidget,
+				unsupported,
+			]);
+			const sessionId = openedSessionId(openedResponse);
+			expect(arrayWidgetRecord).toMatchObject({
 				type: "extension_ui_request",
 				method: "setWidget",
 				widgetKey: "array-widget",
 				widgetLines: ["array widget"],
 			});
-			expect(await unsupported).toMatchObject({
+			expect(unsupportedRecord).toMatchObject({
 				type: "extension_ui_request",
 				method: "custom_unsupported",
 				extensionName: "widget component",

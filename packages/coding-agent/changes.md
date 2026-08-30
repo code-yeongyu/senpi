@@ -1,5 +1,9 @@
 # Local fork changes
 
+## 2026-08-30 - Make RPC widget test event waits deterministic
+
+- The Unix-socket widget regression subscribes to both UI records before issuing `open_session`, waits for the open response and both records together, and uses the shared bounded waiter timeout. This prevents slow shard startup from expiring the record waiters and avoids unhandled rejections from promises that were not yet observed.
+
 ## 2026-08-29 - GLM-5.3 default and prompt preset
 
 - Use GLM-5.3 as the Z.AI global and China default, with the matching built-in prompt preset from current main.
