@@ -1739,7 +1739,11 @@ describe("interactive host runtime", () => {
 			ensureHost: async () => undefined,
 		});
 		try {
-			await runtime.switchSession(target.getSessionFile()!);
+			await runtime.switchSession(target.getSessionFile()!, {
+				withSession: async (ctx) => {
+					expect(ctx.sessionManager.getSessionFile()).toBe(target.getSessionFile());
+				},
+			});
 			await runtime.session.compact();
 			expect(runtime.session.messages).toContainEqual({
 				role: "user",

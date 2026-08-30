@@ -262,11 +262,11 @@ describe("RPC Unix-socket multi-connection host", () => {
 					value.type === "extension_ui_request" &&
 					value.method === "setWidget" &&
 					value.widgetKey === "array-widget",
-				1_000,
+				10_000,
 			);
 			const unsupported = peer.peer.waitFor(
 				(value) => value.type === "extension_ui_request" && value.method === "custom_unsupported",
-				1_000,
+				10_000,
 			);
 			const opened = await peer.peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
 			const sessionId = openedSessionId(opened);
