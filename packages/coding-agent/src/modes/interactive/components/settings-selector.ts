@@ -73,6 +73,7 @@ export interface SettingsConfig {
 	terminalTheme: TerminalTheme;
 	availableThemes: string[];
 	hideThinkingBlock: boolean;
+	showMessageTimestamps: boolean;
 	smoothStreaming: boolean;
 	smoothStreamingFps: number;
 	mermaidRenderingMode: MermaidRenderingMode;
@@ -110,6 +111,7 @@ export interface SettingsCallbacks {
 	onThemeChange: (theme: string) => void;
 	onThemePreview?: (theme: string) => void;
 	onHideThinkingBlockChange: (hidden: boolean) => void;
+	onShowMessageTimestampsChange: (show: boolean) => void;
 	onSmoothStreamingChange: (enabled: boolean) => void;
 	onSmoothStreamingFpsChange: (fps: number) => void;
 	onMermaidRenderingModeChange: (mode: MermaidRenderingMode) => void;
@@ -544,6 +546,13 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
+				id: "message-timestamps",
+				label: "Message timestamps",
+				description: "Prefix each assistant message with the local time it arrived",
+				currentValue: config.showMessageTimestamps ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
 				id: "smooth-streaming",
 				label: "Smooth streaming",
 				description: "Reveal streamed assistant text at a steady pace",
@@ -834,6 +843,9 @@ export class SettingsSelectorComponent extends Container {
 					}
 					case "hide-thinking":
 						callbacks.onHideThinkingBlockChange(newValue === "true");
+						break;
+					case "message-timestamps":
+						callbacks.onShowMessageTimestampsChange(newValue === "true");
 						break;
 					case "smooth-streaming":
 						callbacks.onSmoothStreamingChange(newValue === "true");

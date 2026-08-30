@@ -1,5 +1,27 @@
 # changes
 
+## 2026-08-30 - Render optional assistant message arrival timestamps
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: stamps the first rendered content line with a dim local `HH:MM:SS` prefix when enabled and preserves the first `updateContent()` arrival time across streaming updates, rerenders, and width changes.
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`: exposes the default-off message timestamp toggle in `/settings`.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: wires persisted state into new, restored, streaming, and segmented assistant components; applies toggles immediately; and refreshes the setting before transcript reconstruction on reload.
+
+### Why
+
+- Long-running interactive sessions need an unobtrusive way to distinguish when assistant output first arrived without changing existing output unless the operator opts in.
+
+### Why an extension could not handle it
+
+- Assistant component construction, streaming updates, transcript reconstruction, and the built-in settings selector are private interactive-mode rendering boundaries without an extension hook that can add a stable prefix to every applicable component.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: render caching and message update lifecycle.
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`: settings list construction and callbacks.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: assistant component construction, runtime settings, `/settings` callbacks, and reload transcript reconstruction.
+
 ## 2026-08-30 - Forward shared-host switch cwd overrides
 
 - `interactive-host-runtime.ts` forwards the `cwdOverride` field explicitly when the interactive proxy requests a shared-host session replacement, preserving the host-effective cwd through the RPC boundary and subsequent proxy refresh.

@@ -197,6 +197,7 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
 	hideThinkingBlock?: boolean;
+	showMessageTimestamps?: boolean; // default: false - prefix each rendered message with its local clock time
 	smoothStreaming?: boolean; // default: true
 	smoothStreamingFps?: number; // default: 60, clamped to 30-120 when read
 	showCacheMissNotices?: boolean; // default: false - show prompt-cache miss and compaction cost notices
@@ -1618,6 +1619,10 @@ export class SettingsManager {
 		return this.settings.hideThinkingBlock ?? false;
 	}
 
+	getShowMessageTimestamps(): boolean {
+		return this.settings.showMessageTimestamps ?? false;
+	}
+
 	getSmoothStreaming(): boolean {
 		return this.settings.smoothStreaming ?? true;
 	}
@@ -1649,6 +1654,12 @@ export class SettingsManager {
 	setHideThinkingBlock(hide: boolean): void {
 		this.globalSettings.hideThinkingBlock = hide;
 		this.markModified("hideThinkingBlock");
+		this.save();
+	}
+
+	setShowMessageTimestamps(show: boolean): void {
+		this.globalSettings.showMessageTimestamps = show;
+		this.markModified("showMessageTimestamps");
 		this.save();
 	}
 
