@@ -1,5 +1,38 @@
 # senpi-codemode fork changes
 
+## Eval QA owns its temporary agent directory (2026-08-30)
+
+### What changed
+
+- `packages/senpi-codemode/scripts/qa-e2e-eval.ts` now always creates its own
+  temporary agent directory instead of reusing an inherited
+  `SENPI_CODING_AGENT_DIR`.
+- `test/qa-e2e-eval-sandbox.test.ts` runs the real QA driver with an external
+  sentinel agent directory and proves the directory remains unchanged after
+  the driver exits.
+
+### Why
+
+- A QA command launched from an active Senpi or branded Omo session inherits
+  the live runtime's agent directory. The driver previously treated that path
+  as QA-owned scratch space, wrote test settings into it, and recursively
+  removed it during cleanup.
+- In the observed incident, deleting the live sessions directory made the
+  running UI appear to open a new session. The surviving processes recreated
+  headerless JSONL fragments, so the resume picker no longer found the recent
+  sessions.
+
+### Why an extension could not handle it
+
+- The destructive path selection and cleanup happen in the standalone QA
+  driver before extension behavior can impose a filesystem boundary. The
+  driver itself must create and own the paths it removes.
+
+### Expected merge conflict zones
+
+- LOW in `scripts/qa-e2e-eval.ts` around sandbox setup and cleanup.
+- LOW in the new focused QA sandbox regression test.
+
 ## Compiled eval kernels resolve runtime assets from the sidecar (2026-08-27)
 
 ### What changed

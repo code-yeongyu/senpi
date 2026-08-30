@@ -4,6 +4,24 @@
 
 ### Added
 
+### Fixed
+
+### New Features
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30] - 2026-08-30
+
+### Added
+
 - New experimental setting `experimental.workflowEvalOnly` (default `false`). When enabled, the `workflow` (dag)
   tool is withheld from the model-facing tool surface and runs only inside eval cells via
   `tool.workflow({ action: "snapshot", run_id })`. Hooks and permission checks still apply to those operations.

@@ -12,6 +12,19 @@
 
 - Provider-owned OAuth account pools are preserved during login instead of being appended again as a duplicate slot
   from their flat compatibility credential.
+
+### Removed
+
+## [2026.8.30] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Preserve GLM-5.3 Flash and Highspeed reasoning effort mappings and Z.AI thinking serialization.
 - Coalesced adjacent Anthropic user and tool-result turns without changing standalone string user-message content.
 - Anthropic prompt caching now retains the previous checkpoint while tool loops append a new result, avoiding repeated prefix reprocessing for API-key and OAuth requests.
