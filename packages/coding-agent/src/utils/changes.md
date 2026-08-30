@@ -1,5 +1,30 @@
 # changes
 
+## tmux clipboard passthrough (2026-08-30)
+
+### What changed
+
+- `packages/coding-agent/src/utils/clipboard.ts` probes the effective tmux
+  `#{allow-passthrough}` value and wraps remote OSC 52 clipboard writes with the TUI package's
+  existing DCS helper only when passthrough is enabled. Non-tmux sessions, disabled passthrough,
+  and failed probes keep receiving the raw OSC 52 sequence.
+
+### Why
+
+- tmux can accept raw application OSC 52 while still failing to deliver it through an SSH client.
+  A DCS passthrough envelope reaches the outer terminal when `allow-passthrough` is enabled, so
+  fullscreen selection and `/copy` update the workstation clipboard from a remote Senpi session.
+  Keeping raw OSC 52 when passthrough is unavailable preserves tmux's `set-clipboard on` path.
+
+### Why an extension could not handle it
+
+- Clipboard transport is a shared host utility used by interactive selection and core commands.
+  Extensions receive no hook between the selected text and the terminal escape sequence.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/utils/clipboard.ts` around `emitOsc52()` and its TUI import.
+
 ## Utils re-diverge from upstream dcd4619 (2026-08-25)
 
 ### What changed
