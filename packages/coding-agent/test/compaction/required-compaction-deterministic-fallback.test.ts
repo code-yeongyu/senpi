@@ -9,6 +9,7 @@ import {
 	classifyRequiredCompactionFallbackFailure,
 	createRequiredCompactionFallback,
 } from "../../src/core/extensions/builtin/compaction/deterministic-fallback.ts";
+import { resolveCompactionGeometry } from "../../src/core/extensions/builtin/compaction/orchestration.ts";
 import { SummaryRequestError } from "../../src/core/extensions/builtin/compaction/speculative.ts";
 import type { CompactionReason } from "../../src/core/extensions/types.ts";
 import { createBlockingContext, createCompactionHandlers } from "../helpers/blocking-compaction-harness.ts";
@@ -408,7 +409,48 @@ describe("required compaction deterministic fallback", () => {
 		expect(projectionCount).toBe(1);
 	});
 
-	it("accepts the reconstructed retained context exactly at the input cap and rejects one token below", () => {
+	it("rejects retained context that clears the configured reserve but not the scaled hard-limit reserve", () => {
+		// given a 1M window where the configured 16384 reserve scales to 40000 for the hard-limit valve
+		const contextWindow = 1_000_000;
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: `bulk retained context ${"filler ".repeat(139_000)}`,
+			timestamp: 4,
+		});
+		const branchEntries = harness.sessionManager.getBranch();
+		const basePreparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!;
+		const settings = { ...basePreparation.settings, reserveTokens: 16_384 };
+		const preparation = { ...basePreparation, settings, firstKeptEntryId: branchEntries.at(-1)?.id ?? "" };
+		const effectiveReserve = resolveCompactionGeometry({ contextWindow, settings }).reserveTokens;
+		expect(settings.reserveTokens).toBe(16_384);
+		expect(effectiveReserve).toBe(40_000);
+
+		// and retained context sized into the gap between the two budgets
+		const retainedTokens = createRequiredCompactionFallback(
+			preparation,
+			Number.MAX_SAFE_INTEGER,
+			"summarization-timeout",
+			{},
+			branchEntries,
+		)!.estimatedTokensAfter!;
+		expect(retainedTokens).toBeGreaterThan(contextWindow - effectiveReserve);
+		expect(retainedTokens).toBeLessThanOrEqual(contextWindow - settings.reserveTokens);
+
+		// when the deterministic fallback projects that retained context at the 1M window
+		const result = createRequiredCompactionFallback(
+			preparation,
+			contextWindow,
+			"summarization-timeout",
+			{},
+			branchEntries,
+		);
+
+		// then acceptance follows the scaled hard-limit reserve and refuses the oversized suffix
+		expect(result).toBeUndefined();
+	});
+
+	it("accepts the reconstructed retained context exactly at the effective reserve cap and rejects one token below", () => {
 		const harness = createBlockingContext({ usageTokens: 9_900 });
 		const branchEntries = harness.ctx.sessionManager.getBranch();
 		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!;
@@ -420,7 +462,15 @@ describe("required compaction deterministic fallback", () => {
 			{},
 			branchEntries,
 		)!;
-		const exactWindow = roomy.estimatedTokensAfter! + preparation.settings.reserveTokens;
+		// The effective reserve is window-dependent, so resolve the exact cap at the window under test.
+		let exactWindow = roomy.estimatedTokensAfter! + preparation.settings.reserveTokens;
+		while (
+			roomy.estimatedTokensAfter! >
+			exactWindow -
+				resolveCompactionGeometry({ contextWindow: exactWindow, settings: preparation.settings }).reserveTokens
+		) {
+			exactWindow++;
+		}
 
 		const exact = createRequiredCompactionFallback(
 			retainedPreparation,

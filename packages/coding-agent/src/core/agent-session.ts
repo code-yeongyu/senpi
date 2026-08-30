@@ -108,6 +108,10 @@ import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import {
+	ModelUsabilityBudgetError,
+	projectModelUsabilityBudget,
+} from "./extensions/builtin/compaction/model-usability-budget.ts";
 import { resolveReserveTokens } from "./extensions/builtin/compaction/policy.ts";
 import { CODEX_RESPONSES_API, type ServiceTier } from "./extensions/builtin/service-tier.ts";
 import { deriveExtensionRegistrationId } from "./extensions/builtin/tool-search/engine/marker.ts";
@@ -4502,6 +4506,41 @@ export class AgentSession {
 		return this._setModel(model, true);
 	}
 
+	assertModelUsable(model: Model<Api> | undefined = this.model, liveContextTokens = 0): void {
+		if (!model || model.contextWindow <= 0) return;
+		const projection = projectModelUsabilityBudget({
+			model,
+			systemPrompt: this.agent.state.systemPrompt,
+			tools: this.agent.state.tools,
+			liveContextTokens,
+			compaction: this.settingsManager.getCompactionSettings(),
+		});
+		if (!projection.usable) throw new ModelUsabilityBudgetError(projection);
+	}
+
+	private _getDownswitchLiveContextTokens(model: Model<Api>): number {
+		const currentModel = this.model;
+		if (!currentModel) return 0;
+		const compaction = this.settingsManager.getCompactionSettings();
+		const currentBudget = projectModelUsabilityBudget({
+			model: currentModel,
+			systemPrompt: this.agent.state.systemPrompt,
+			tools: this.agent.state.tools,
+			compaction,
+		});
+		const targetBudget = projectModelUsabilityBudget({
+			model,
+			systemPrompt: this.agent.state.systemPrompt,
+			tools: this.agent.state.tools,
+			compaction,
+		});
+		const currentUsableContext = currentBudget.contextWindow - currentBudget.requiredTokens;
+		const targetUsableContext = targetBudget.contextWindow - targetBudget.requiredTokens;
+		if (targetUsableContext >= currentUsableContext) return 0;
+		const fixedPrefixTokens = currentBudget.systemPromptTokens + currentBudget.activeToolSchemaTokens;
+		return Math.max(0, (this.getContextUsage()?.tokens ?? 0) - fixedPrefixTokens);
+	}
+
 	/**
 	 * Set the model for this session without changing the global model defaults.
 	 * The selection is still persisted in this session's history.
@@ -4514,6 +4553,7 @@ export class AgentSession {
 		model: Model<Api>,
 		updateGlobalDefaults: boolean,
 	): Promise<SystemPromptChangeEvent | undefined> {
+		this.assertModelUsable(model, this._getDownswitchLiveContextTokens(model));
 		if (!(await this._modelRuntime.checkAuth(model.provider))) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
@@ -4567,6 +4607,7 @@ export class AgentSession {
 			this._invalidateCompactionForModelSelection();
 		}
 		const thinking = this._getThinkingForModelSwitch(model, opts.ephemeralThinkingLevel);
+		const liveContextTokens = this._getDownswitchLiveContextTokens(model);
 		this.agent.state.model = model;
 		this.agent.abortServerSideFallback =
 			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
@@ -4606,7 +4647,17 @@ export class AgentSession {
 		this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
 
 		if (!opts.emitModelSelect) return undefined;
-		return await this._emitModelSelect(model, previousModel, opts.modelSelectSource);
+		const previousSystemPrompt = this.agent.state.systemPrompt;
+		try {
+			const systemPromptChange = await this._emitModelSelect(model, previousModel, opts.modelSelectSource);
+			this.assertModelUsable(model, liveContextTokens);
+			return systemPromptChange;
+		} catch (error) {
+			if (previousModel) this.agent.state.model = previousModel;
+			else delete (this.agent.state as { model?: Model<Api> }).model;
+			this.agent.state.systemPrompt = previousSystemPrompt;
+			throw error;
+		}
 	}
 
 	private _applyEphemeralThinkingLevel(level: ThinkingLevel): void {
@@ -4649,6 +4700,8 @@ export class AgentSession {
 			nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
 		}
 		const next = favoriteModels[nextIndex];
+		const liveContextTokens = this._getDownswitchLiveContextTokens(next.model);
+		this.assertModelUsable(next.model, liveContextTokens);
 		const invalidatesCompaction =
 			this._modelSelectionChangesContext(currentModel, next.model) ||
 			currentModel?.provider !== next.model.provider ||
@@ -4679,17 +4732,26 @@ export class AgentSession {
 		});
 		this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
 
-		const systemPromptChange = await this._emitModelSelect(next.model, currentModel, "cycle");
+		const previousSystemPrompt = this.agent.state.systemPrompt;
+		try {
+			const systemPromptChange = await this._emitModelSelect(next.model, currentModel, "cycle");
+			this.assertModelUsable(next.model, liveContextTokens);
 
-		const cycleResult: ModelCycleResult = {
-			model: next.model,
-			thinkingLevel: this.thinkingLevel,
-			isScoped: true,
-		};
-		if (systemPromptChange) {
-			cycleResult.systemPromptChange = systemPromptChange;
+			const cycleResult: ModelCycleResult = {
+				model: next.model,
+				thinkingLevel: this.thinkingLevel,
+				isScoped: true,
+			};
+			if (systemPromptChange) {
+				cycleResult.systemPromptChange = systemPromptChange;
+			}
+			return cycleResult;
+		} catch (error) {
+			if (currentModel) this.agent.state.model = currentModel;
+			else delete (this.agent.state as { model?: Model<Api> }).model;
+			this.agent.state.systemPrompt = previousSystemPrompt;
+			throw error;
 		}
-		return cycleResult;
 	}
 
 	// =========================================================================

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	clearTokenBudgetReminderLease,
 	computeTokenBudgetReminder,
 	createInitialReminderState,
 	type TokenBudgetReminderState,
@@ -21,7 +22,7 @@ function reminder(
 		contextWindow: number;
 		thresholdTokens: number;
 		leadTokens: number;
-		compactionGeneration: number;
+		compactionEpoch: number;
 		state: TokenBudgetReminderState;
 	}> = {},
 ) {
@@ -30,15 +31,15 @@ function reminder(
 		contextWindow: CONTEXT_WINDOW,
 		thresholdTokens: THRESHOLD_TOKENS,
 		leadTokens: LEAD_TOKENS,
-		compactionGeneration: 1,
+		compactionEpoch: 1,
 		state: createInitialReminderState(),
 		...overrides,
 	});
 }
 
 describe("createInitialReminderState", () => {
-	it("starts with no fired generation", () => {
-		expect(createInitialReminderState()).toEqual({ lastFiredGeneration: null });
+	it("starts with no fired epoch", () => {
+		expect(createInitialReminderState()).toEqual({ lastFiredEpoch: null });
 	});
 });
 
@@ -46,29 +47,50 @@ describe("computeTokenBudgetReminder", () => {
 	it("fires in-zone once", () => {
 		const result = reminder();
 		expect(result.message).toBe(expectedMessage(IN_ZONE_REMAINING));
-		expect(result.nextState).toEqual({ lastFiredGeneration: 1 });
+		expect(result.nextState).toEqual({
+			lastFiredEpoch: 1,
+			lease: { compactionEpoch: 1, message: expectedMessage(IN_ZONE_REMAINING) },
+		});
 	});
 
 	it("fires at the inclusive upper bound of the reminder zone", () => {
 		const remaining = 2 * LEAD_TOKENS;
 		const result = reminder({ contextTokens: THRESHOLD_TOKENS - remaining });
 		expect(result.message).toBe(expectedMessage(remaining));
-		expect(result.nextState).toEqual({ lastFiredGeneration: 1 });
+		expect(result.nextState).toEqual({
+			lastFiredEpoch: 1,
+			lease: { compactionEpoch: 1, message: expectedMessage(remaining) },
+		});
 	});
 
-	it("does not refire for the same generation", () => {
-		const state: TokenBudgetReminderState = { lastFiredGeneration: 1 };
-		const result = reminder({ state, compactionGeneration: 1 });
+	it("does not refire for the same epoch", () => {
+		const state: TokenBudgetReminderState = { lastFiredEpoch: 1 };
+		const result = reminder({ state, compactionEpoch: 1 });
 		expect(result.message).toBeUndefined();
 		expect(result.nextState).toBe(state);
 	});
 
-	it("refires after generation increments", () => {
-		const state: TokenBudgetReminderState = { lastFiredGeneration: 1 };
-		const result = reminder({ state, compactionGeneration: 2 });
+	it("refires after the accepted-compaction epoch increments", () => {
+		const state: TokenBudgetReminderState = { lastFiredEpoch: 1 };
+		const result = reminder({ state, compactionEpoch: 2 });
 		expect(result.message).toBe(expectedMessage(IN_ZONE_REMAINING));
-		expect(result.nextState).toEqual({ lastFiredGeneration: 2 });
+		expect(result.nextState).toEqual({
+			lastFiredEpoch: 2,
+			lease: { compactionEpoch: 2, message: expectedMessage(IN_ZONE_REMAINING) },
+		});
 		expect(result.nextState).not.toBe(state);
+	});
+
+	it("clears the active lease when the same epoch reaches the next user turn", () => {
+		const lease = { compactionEpoch: 1, message: expectedMessage(IN_ZONE_REMAINING) };
+		const result = reminder({ state: { lastFiredEpoch: 1, lease } });
+		expect(result.message).toBeUndefined();
+		expect(result.nextState).toEqual({ lastFiredEpoch: 1 });
+	});
+
+	it("clears the active lease when reminders are disabled", () => {
+		const lease = { compactionEpoch: 1, message: expectedMessage(IN_ZONE_REMAINING) };
+		expect(clearTokenBudgetReminderLease({ lastFiredEpoch: 1, lease })).toEqual({ lastFiredEpoch: 1 });
 	});
 
 	it("does not fire above the reminder zone", () => {
@@ -92,10 +114,10 @@ describe("computeTokenBudgetReminder", () => {
 	});
 
 	it("returns the same state object when nothing changes", () => {
-		const state: TokenBudgetReminderState = { lastFiredGeneration: 3 };
+		const state: TokenBudgetReminderState = { lastFiredEpoch: 3 };
 		const result = reminder({
 			state,
-			compactionGeneration: 3,
+			compactionEpoch: 3,
 			contextTokens: IN_ZONE_CONTEXT_TOKENS,
 		});
 		expect(result).toEqual({ nextState: state });

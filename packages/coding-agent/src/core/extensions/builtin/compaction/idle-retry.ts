@@ -17,13 +17,13 @@ export interface IdleWarmupRetryDecision {
 	readonly transient: boolean;
 	readonly isIdle: boolean;
 	readonly breakerTripped: boolean;
-	readonly stillOverThreshold: boolean;
+	readonly stillWarmEligible: boolean;
 }
 
 export function shouldRetryIdleWarmup(decision: IdleWarmupRetryDecision): boolean {
 	if (!decision.transient) return false;
 	if (!decision.isIdle) return false;
 	if (decision.breakerTripped) return false;
-	if (!decision.stillOverThreshold) return false;
+	if (!decision.stillWarmEligible) return false;
 	return decision.attempt < MAX_IDLE_WARMUP_RETRIES;
 }

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
+import { resolveCompactionGeometry } from "../../src/core/extensions/builtin/compaction/orchestration.ts";
 import {
 	baseThresholdRatioForWindow,
 	computeAdaptiveThresholdRatio,
 	computeEffectiveKeepRecentTokens,
 	computeEffectiveThreshold,
+	resolveEffectiveReserveTokens,
 	resolveReserveTokens,
 	shouldStartSpeculativeCompaction,
 } from "../../src/core/extensions/builtin/compaction/policy.ts";
@@ -21,6 +23,63 @@ describe("compaction policy: window-scaled reserve", () => {
 				expect(resolveReserveTokens(200_000, CONFIGURED_RESERVE_TOKENS)).toBe(16_384);
 				expect(resolveReserveTokens(1_000_000, CONFIGURED_RESERVE_TOKENS)).toBe(40_000);
 				expect(resolveReserveTokens(2_000_000, CONFIGURED_RESERVE_TOKENS)).toBe(49_152);
+			});
+		});
+	});
+});
+
+describe("compaction policy: effective reserve resolution", () => {
+	describe("Given a 1M window whose configured reserve is 16384 and scaling is left at its default", () => {
+		describe("When the effective reserve is resolved from settings", () => {
+			it("Then it matches the scaled reserve the hard-limit geometry uses", () => {
+				// given
+				const contextWindow = 1_000_000;
+				const settings = { ...DEFAULT_COMPACTION_SETTINGS, reserveTokens: CONFIGURED_RESERVE_TOKENS };
+
+				// when
+				const effective = resolveEffectiveReserveTokens(contextWindow, settings);
+
+				// then
+				expect(effective).toBe(resolveReserveTokens(contextWindow, CONFIGURED_RESERVE_TOKENS));
+				expect(effective).toBe(resolveCompactionGeometry({ contextWindow, settings }).reserveTokens);
+			});
+		});
+	});
+
+	describe("Given reserve scaling is explicitly disabled", () => {
+		describe("When the effective reserve is resolved for a 1M window", () => {
+			it("Then the configured reserve is used verbatim", () => {
+				// given
+				const contextWindow = 1_000_000;
+				const settings = {
+					...DEFAULT_COMPACTION_SETTINGS,
+					reserveTokens: CONFIGURED_RESERVE_TOKENS,
+					reserveScalingEnabled: false,
+				};
+
+				// when
+				const effective = resolveEffectiveReserveTokens(contextWindow, settings);
+
+				// then
+				expect(effective).toBe(CONFIGURED_RESERVE_TOKENS);
+				expect(effective).toBe(resolveCompactionGeometry({ contextWindow, settings }).reserveTokens);
+			});
+		});
+	});
+
+	describe("Given an already-scaled reserve is fed back through the resolver", () => {
+		describe("When the effective reserve is resolved a second time", () => {
+			it("Then the value is idempotent and never double-scales", () => {
+				// given
+				const contextWindow = 1_000_000;
+				const settings = { ...DEFAULT_COMPACTION_SETTINGS, reserveTokens: CONFIGURED_RESERVE_TOKENS };
+				const once = resolveEffectiveReserveTokens(contextWindow, settings);
+
+				// when
+				const twice = resolveEffectiveReserveTokens(contextWindow, { ...settings, reserveTokens: once });
+
+				// then
+				expect(twice).toBe(once);
 			});
 		});
 	});

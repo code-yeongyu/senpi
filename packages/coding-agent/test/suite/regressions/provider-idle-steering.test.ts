@@ -134,7 +134,7 @@ describe("provider idle steering", () => {
 
 	it("runs queued steering after the timed-out retry budget is exhausted", async () => {
 		const harness = await createHarness({
-			settings: { retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 } },
+			settings: { retry: { enabled: true, modelFallback: false, maxRetries: 1, baseDelayMs: 0 } },
 		});
 		harnesses.push(harness);
 		harness.agent.timeoutMs = DEFAULT_PROVIDER_IDLE_TIMEOUT_MS;
@@ -189,7 +189,7 @@ describe("provider idle steering", () => {
 
 	it("uses the retry continuation's queue ownership when the final error changes class", async () => {
 		const harness = await createHarness({
-			settings: { retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 } },
+			settings: { retry: { enabled: true, modelFallback: false, maxRetries: 1, baseDelayMs: 0 } },
 		});
 		harnesses.push(harness);
 		harness.agent.timeoutMs = DEFAULT_PROVIDER_IDLE_TIMEOUT_MS;
@@ -246,7 +246,7 @@ describe("provider idle steering", () => {
 
 	it("keeps late steering parked when a non-deferred retry ends in a provider timeout", async () => {
 		const harness = await createHarness({
-			settings: { retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 } },
+			settings: { retry: { enabled: true, modelFallback: false, maxRetries: 1, baseDelayMs: 0 } },
 		});
 		harnesses.push(harness);
 		const retryRequestStarted = createDeferred();

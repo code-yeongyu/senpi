@@ -87,6 +87,22 @@ export function resolveReserveTokens(contextWindow: number, configuredReserve: n
 	);
 }
 
+/**
+ * The single effective reserve for one window. Every consumer that reasons about
+ * the usable prompt budget — the hard-limit valve, restoration, and deterministic
+ * fallback acceptance — must resolve it here so acceptance can never admit a
+ * context the hard valve would immediately compact again. Scaling is idempotent,
+ * so re-resolving an already-scaled reserve never double-scales it.
+ */
+export function resolveEffectiveReserveTokens(
+	contextWindow: number,
+	settings: Pick<CompactionSettings, "reserveTokens" | "reserveScalingEnabled">,
+): number {
+	return settings.reserveScalingEnabled === false
+		? settings.reserveTokens
+		: resolveReserveTokens(contextWindow, settings.reserveTokens);
+}
+
 export function computeAdaptiveThresholdRatio(contextWindow: number, priorCompactionSavedTokens?: number): number {
 	const ratio = baseThresholdRatioForWindow(contextWindow);
 
@@ -140,14 +156,6 @@ export function shouldStartSpeculativeCompaction(
 
 	const fraction = settings.speculativeFraction ?? SPECULATIVE_FRACTION;
 	return usage.tokens >= contextWindow * computeEffectiveThreshold(contextWindow, lastYield) * fraction;
-}
-
-export function resolveEffectiveReserveTokens(
-	contextWindow: number,
-	configuredReserve: number,
-	reserveScalingEnabled = true,
-): number {
-	return reserveScalingEnabled ? resolveReserveTokens(contextWindow, configuredReserve) : configuredReserve;
 }
 
 export function isAtHardLimit(

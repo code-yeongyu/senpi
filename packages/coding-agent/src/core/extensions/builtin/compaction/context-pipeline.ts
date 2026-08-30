@@ -7,7 +7,7 @@ import {
 } from "./context-reduction.ts";
 import { markOpenAiRemoteReplayBoundary } from "./openai-remote.ts";
 import { isOpenAiRemoteCompactionModel } from "./openai-remote-model.ts";
-import { admitContextToolResults } from "./orchestration.ts";
+import { admitContextToolResults, injectTokenBudgetReminder } from "./orchestration.ts";
 import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
 import { type EmergencyPruneLatch, hardLimitEmergencyPrune } from "./speculative.ts";
 
@@ -24,7 +24,11 @@ export function buildCompactionContext(input: {
 	breakerFallback: boolean;
 	laneOwnsCompaction: boolean;
 	emergencyPruneLatch: EmergencyPruneLatch;
+	reminder?: string;
 }) {
+	if (input.laneOwnsCompaction) {
+		return repairOrphanedToolResults(convertToLlm(input.event.messages));
+	}
 	const admittedMessages = admitContextToolResults(
 		input.event.messages,
 		input.contextWindow,
@@ -47,5 +51,6 @@ export function buildCompactionContext(input: {
 		model: input.ctx.model,
 		branchEntries: input.ctx.sessionManager.getBranch(),
 	});
-	return repairOrphanedToolResults(convertToLlm(marked));
+	const reminded = injectTokenBudgetReminder(marked, input.reminder);
+	return repairOrphanedToolResults(convertToLlm(reminded));
 }

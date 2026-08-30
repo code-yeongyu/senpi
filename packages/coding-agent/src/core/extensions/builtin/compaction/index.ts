@@ -74,6 +74,7 @@ import {
 	createBlockingRemoteCompactionEvent,
 	endCompactionFeedback,
 	estimatePendingPromptTokens,
+	getPromptContextWindow,
 	isAbortedAssistantMessage,
 	isMonitorableMessageEvent,
 	isRequiredCompactionFallbackReason,
@@ -178,19 +179,23 @@ export default function compactionExtension(
 			}
 			const usage = ctx.getContextUsage();
 			const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+			const settings = ctx.getCompactionSettings();
+			const breakerTripped = breaker.isTripped(state, Date.now());
 			const retryDecision: idleRetry.IdleWarmupRetryDecision = {
 				attempt: idleWarmupAttempt,
 				transient: isTransientSummarizationFailure(failure, failure.message),
 				isIdle: ctx.isIdle(),
-				breakerTripped: breaker.isTripped(state, Date.now()),
-				stillOverThreshold:
-					usage !== undefined &&
-					policy.shouldTriggerCompaction(
-						usage,
-						contextWindow,
-						ctx.getCompactionSettings(),
-						state.lastYield ?? undefined,
-					),
+				breakerTripped,
+				stillWarmEligible: idle.shouldWarmAtIdle({
+					willRetry: false,
+					aborted: false,
+					settings,
+					usage,
+					contextWindow,
+					breakerTripped,
+					lastYield: state.lastYield ?? undefined,
+					mode: ctx.mode,
+				}),
 			};
 			if (!idleRetry.shouldRetryIdleWarmup(retryDecision)) return;
 			cancelIdleWarmupRetry();
@@ -744,13 +749,10 @@ export default function compactionExtension(
 					compactionEntryId: compactEvent.compactionEntry.id,
 					contextWindow: usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
 					usageTokens: usage?.tokens ?? null,
-					reserveTokens:
-						settings.reserveScalingEnabled === false
-							? settings.reserveTokens
-							: policy.resolveReserveTokens(
-									usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
-									settings.reserveTokens,
-								),
+					reserveTokens: policy.resolveEffectiveReserveTokens(
+						usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+						settings,
+					),
 					settings,
 					keptMessages: keptEntries.flatMap((entry) => {
 						if (entry.type !== "message") return [];
@@ -760,6 +762,7 @@ export default function compactionExtension(
 			}
 			return;
 		}
+		if (compactEvent.rejectionCause === "external-owner") return;
 		if (!lanePolicy.disablesSenpiCompaction(ctx)) {
 			state = breaker.recordFailure(state, Date.now(), { route: compactEvent.reason });
 		}
@@ -829,6 +832,7 @@ export default function compactionExtension(
 			}
 		} else if (
 			!breakerCoolingDown &&
+			!isOpenAiRemoteCompactionModel(ctx.model) &&
 			usageWithPendingPrompt &&
 			policy.shouldStartSpeculativeCompaction(
 				usageWithPendingPrompt,
@@ -850,7 +854,7 @@ export default function compactionExtension(
 			contextWindow,
 			thresholdTokens,
 			leadTokens,
-			compactionGeneration: speculativeGeneration,
+			compactionEpoch: speculativeGeneration,
 			state: reminderState,
 		});
 		reminderState = reminder.nextState;
@@ -889,7 +893,7 @@ export default function compactionExtension(
 				event,
 				ctx,
 				contextWindow,
-				promptContextWindow: contextWindow,
+				promptContextWindow: getPromptContextWindow(contextWindow, ctx.model?.maxTokens),
 				toolAdmissionEnabled: settings.toolAdmissionEnabled !== false,
 				breakerFallback,
 				laneOwnsCompaction,
@@ -963,6 +967,13 @@ export default function compactionExtension(
 			armIdleWarmupRetry(ctx);
 			armIdleApply(ctx);
 		} else {
+			// A sub-threshold OpenAI warm-up cannot be consumed by the remote
+			// compaction route. Once threshold admission succeeds remotely, it would
+			// only abort and discard this paid local summary. Above threshold we keep
+			// the existing local idle apply, which can finish before the next prompt;
+			// if remote compaction later falls back, blocking local generation remains
+			// unchanged.
+			if (isOpenAiRemoteCompactionModel(ctx.model)) return;
 			const warmAction = resolveIdleWarmAction(
 				{
 					willRetry: event.willRetry ?? false,
@@ -977,7 +988,13 @@ export default function compactionExtension(
 				speculativeJob,
 			);
 			if (warmAction === "replace") invalidateSpeculativeCompaction(ctx);
-			if (warmAction !== "none") startSpeculativeCompaction(ctx, idle.IDLE_COMPACTION_INSTRUCTIONS);
+			if (warmAction !== "none") {
+				idleWarmupAttempt = 0;
+				sessionIdleSinceAgentEnd = true;
+				startSpeculativeCompaction(ctx, idle.IDLE_COMPACTION_INSTRUCTIONS);
+				armIdleWarmupRetry(ctx);
+				armIdleApply(ctx);
+			}
 		}
 	});
 

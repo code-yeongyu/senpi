@@ -95,6 +95,17 @@
   `min(threshold + lead, window - reserve)`. Past that cap it blocks as before. Disable with
   `compaction.graceBandEnabled: false`.
 
+- Oversized tool results are now capped before they enter the context. A single result is limited to
+  `min(50000, max(8192, 5% of the context window))` with a deterministic, diskless head/tail
+  projection. Admission is re-derived from content on every request, so output that reproduces the
+  visible projection marker cannot bypass the cap. Disable with `compaction.toolAdmissionEnabled: false`.
+- A context-budget reminder is delivered once per compaction generation as the remaining runway
+  approaches the threshold, so the model can wrap up verbose exploration before the summary is
+  taken. Disable with `compaction.reminderEnabled: false`.
+- A grace band defers blocking compaction while a speculative summary is still generating, up to
+  `min(threshold + lead, window - reserve)`. Past that cap it blocks as before. Disable with
+  `compaction.graceBandEnabled: false`.
+
 ### Changed
 
 - Speculative summarization now starts on an absolute lead of `clamp(threshold * 0.125, 8192, 32768)`
@@ -109,7 +120,9 @@
   `max(configured, min(4% of window, 49152))`, moving the emergency valve off 98.4% on million-token
   windows. Disable with `compaction.reserveScalingEnabled: false`.
 - While the compaction circuit breaker is cooling down and the context is over the threshold, the
-  deterministic no-LLM context reduction now runs immediately instead of waiting out the cooldown.
+  deterministic no-LLM context reduction now runs immediately instead of waiting out the cooldown. It
+  stands down on sessions whose compaction lane is owned externally, and an external-owner stand-down
+  never counts as a compaction failure against the breaker.
 - `grep` is temporarily withheld from the model-facing tool surface. It no longer appears in the
   system prompt or the active tool names, so the model can neither see nor call it. The tool is
   still built and stays resolvable by name for programmatic callers such as the Cursor exec bridge,
@@ -136,6 +149,17 @@
   every turn after the Claude Agent SDK owns compaction: the first `external-owner` rejection makes the
   delegation sticky until compaction is accepted, the model or provider changes, or the session
   navigates to another branch. Manual `/compact` behavior is unchanged.
+
+- Tool-result admission now preserves images and other structured content blocks in their original order while
+  projecting only oversized text blocks.
+- Sub-threshold idle compaction warm-ups now retry transient failures with the existing bounded idle lifecycle, and OpenAI remote-compaction lanes avoid local warming until the apply threshold so successful remote admission does not discard paid local work.
+- Models whose context window cannot hold the assembled system prompt and active tool schemas plus
+  output, compaction, speculation, and model-family safety reserves are now rejected at session setup
+  or explicit selection with an exact budget shortfall instead of entering permanent compaction. A
+  downswitch also includes the current live context and is refused before mutation when it cannot fit,
+  with compact/revalidate/retry guidance
+  ([#1194](https://github.com/code-yeongyu/senpi/pull/1194) by
+  [@minpeter](https://github.com/minpeter)).
 
 ### Removed
 

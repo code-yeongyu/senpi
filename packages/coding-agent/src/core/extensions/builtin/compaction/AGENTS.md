@@ -24,7 +24,7 @@ compaction/
 ├── task-intent.ts            # Extracts/persists/reinjects task-intent anchors across compaction
 ├── tool-truncation.ts        # Emergency/compaction-budget truncation for oversized bash/read results
 ├── speculation-lead.ts       # Speculative lead and grace-band policy primitives
-├── tool-admission.ts         # Tool-result admission cap and spill-to-disk excerpts
+├── tool-admission.ts         # Deterministic diskless tool-result admission projections
 ├── token-budget-reminder.ts  # Per-generation context budget reminder state
 ├── yield.ts                  # Structural yield capture and ineffective-compaction accounting
 ├── checkpoint-state.ts       # Snapshots agent state (model, thinking, todos) at compact boundaries
@@ -53,7 +53,7 @@ compaction/
 ## PIPELINE (one turn)
 
 1. **Pre-turn**: `policy.ts` checks thresholds; if proactive, fire `speculative.ts` in parallel.
-2. **Context assembly** (`context` event): `tool-admission.ts` first caps every oversized tool result and spills its full content to disk, regardless of the current context threshold.
+2. **Context assembly** (`context` event): `tool-admission.ts` first caps every oversized tool result with a deterministic diskless head/tail projection, regardless of the current context threshold.
 3. **Context reduction and emergency pruning** (`context` event): near the limit, `context-reduction.ts` applies deterministic no-LLM reductions, then `speculative.ts` applies the `tool-truncation.ts` emergency valve and old-message pruning if the context still exceeds the hard threshold; `repair-tool-pairs.ts` finally patches orphaned tool-call/result pairs.
 4. **Provider call**: on a provider context-overflow error, `core/agent-session.ts` detects it via `isContextOverflow` (`packages/ai/src/utils/overflow.ts`), cancels the turn, runs blocking compaction, and auto-retries once. On OpenAI Responses models, compaction routes through `openai-remote.ts` instead of local summarization.
 5. **Post-turn**: `circuit-breaker.ts` + `per-turn-cap.ts` gate any further auto-compaction; `degradation-monitor.ts` watches for post-compact quality drop. When the turn ends and the context is over the soft threshold (`idle.ts`), summary generation warms at `agent_end`; a transient warm-up failure is retried while the session stays idle (`idle-retry.ts`, bounded attempts + delay, fenced on the observed job); when generation completes while the session is still idle, the warm result is applied immediately (`armIdleApply` in `index.ts`, fenced on the idle flag, lane, breaker, cap, and a fresh threshold check), so the [compaction] block renders during the idle gap and the next message stacks below it. A stale or refused apply keeps the warm hold and the next `before_agent_start` consumes it through normal admission, exactly as before. The warm-up is skipped when the run will auto-continue (`willRetry`), was aborted, in one-shot (`print`/`json`) mode, or `idleCompactionEnabled` is false.

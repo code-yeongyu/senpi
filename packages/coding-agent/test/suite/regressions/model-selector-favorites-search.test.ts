@@ -178,6 +178,7 @@ describe("model selector favorites-first search with frozen session ordering", (
 	// Plan todo 2 case (iii), toggle half: the first toggle materializes the null
 	// sentinel into an explicit list; rows must not reshuffle when that happens.
 	it("does not reshuffle rows on the first toggle from the null favorites sentinel", async () => {
+		vi.stubEnv("KIMI_API_KEY", undefined);
 		const harness = await createHarness({
 			provider: "anthropic",
 			models: [

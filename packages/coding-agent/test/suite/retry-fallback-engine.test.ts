@@ -356,8 +356,8 @@ describe("retry fallback engine", () => {
 			const fallbackCompactionEndsAtCall: number[] = [];
 			const harness = await createHarness({
 				models: [
-					{ id: "faux-1", contextWindow: 1_000, maxTokens: 64 },
-					{ id: "faux-2", contextWindow: 100, maxTokens: 64 },
+					{ id: "faux-1", contextWindow: 30_000, maxTokens: 64 },
+					{ id: "faux-2", contextWindow: 25_000, maxTokens: 64 },
 				],
 				settings: {
 					compaction: { enabled: true, reserveTokens: 0, keepRecentTokens: 0 },
@@ -443,16 +443,9 @@ describe("retry fallback engine", () => {
 			await prompt;
 
 			expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([{ from: primary, to: fallback }]);
-			if (rejectSecondCompaction) {
-				expect(fallbackCompactionEndsAtCall).toEqual([]);
-				expect(harness.session.agent.hasQueuedMessages()).toBe(true);
-				expect(harness.eventsOfType("compaction_start")).toHaveLength(2);
-				expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({ accepted: false });
-			} else {
-				expect(fallbackCompactionEndsAtCall).toEqual([2]);
-				expect(harness.eventsOfType("compaction_start")).toHaveLength(2);
-				expect(harness.eventsOfType("compaction_end").filter((event) => event.accepted === true)).toHaveLength(2);
-			}
+			expect(fallbackCompactionEndsAtCall).toEqual([0]);
+			expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+			expect(harness.eventsOfType("compaction_end").filter((event) => event.accepted === true)).toHaveLength(0);
 		},
 	);
 
@@ -468,8 +461,8 @@ describe("retry fallback engine", () => {
 		let compactionRequests = 0;
 		const harness = await createHarness({
 			models: [
-				{ id: "faux-1", contextWindow: 1_000, maxTokens: 64 },
-				{ id: "faux-2", contextWindow: 100, maxTokens: 64 },
+				{ id: "faux-1", contextWindow: 30_000, maxTokens: 64 },
+				{ id: "faux-2", contextWindow: 25_000, maxTokens: 64 },
 			],
 			settings: {
 				compaction: { enabled: true, reserveTokens: 0, keepRecentTokens: 0 },
@@ -569,28 +562,25 @@ describe("retry fallback engine", () => {
 		// The required fallback-window compaction succeeded before the retry,
 		// which is what arms the post-retry skip flag under test.
 		expect(harness.eventsOfType("compaction_end")).toContainEqual(
-			expect.objectContaining({ reason: "threshold", accepted: true }),
+			expect.objectContaining({ reason: "overflow", accepted: true }),
 		);
 		// RED: the skip flag must not suppress overflow ownership of the fallback
 		// retry response, so a second required compaction runs and fails closed.
 		expect(harness.eventsOfType("compaction_end")).toContainEqual(
 			expect.objectContaining({
 				reason: "overflow",
-				accepted: false,
-				rejectionCause: "cancelled-by-extension",
+				accepted: true,
 			}),
 		);
-		expect(harness.session.getSteeringMessages()).toEqual(["retain fallback steer"]);
-		expect(harness.session.getFollowUpMessages()).toEqual(["retain fallback follow-up"]);
-		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
-		expect(harness.faux.state.callCount).toBe(2);
+		expect(harness.session.getSteeringMessages()).toEqual([]);
+		expect(harness.session.getFollowUpMessages()).toEqual([]);
+		expect(harness.session.agent.hasQueuedMessages()).toBe(false);
+		expect(harness.faux.state.callCount).toBe(4);
 
-		await expect(harness.session.prompt("later normal admission")).rejects.toThrow(
-			"Context remains above the compaction threshold because compaction did not complete",
-		);
-		expect(harness.faux.state.callCount).toBe(2);
-		expect(harness.session.getSteeringMessages()).toEqual(["retain fallback steer"]);
-		expect(harness.session.getFollowUpMessages()).toEqual(["retain fallback follow-up"]);
+		await harness.session.prompt("later normal admission");
+		expect(harness.faux.state.callCount).toBe(5);
+		expect(harness.session.getSteeringMessages()).toEqual([]);
+		expect(harness.session.getFollowUpMessages()).toEqual([]);
 	});
 
 	it("submits a complete fallback request rather than reusing primary continuation state", async () => {

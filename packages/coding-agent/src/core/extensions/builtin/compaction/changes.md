@@ -1,3 +1,77 @@
+# changes.md — builtin compaction policy
+
+## Deliver retry-safe ephemeral budget reminders (2026-08-30)
+
+### What changed
+
+- `before_agent_start` now arms a one-user-turn reminder lease keyed to the accepted-compaction epoch instead of returning a custom reminder message or consuming an undelivered generation.
+- The context projection prepends the leased reminder to the real user message without persisting or adding a turn. Repeated provider projections reuse that shape, so retry/model fallback sees one reminder while the next user turn, disablement, or accepted compaction clears the lease.
+- Restoration custom messages remain separate and unchanged.
+
+### Why
+
+- Ordinary turns had no restoration payload for the reminder to ride on, so the previous state advanced without delivering anything. Returning a standalone custom message fixed delivery but suppressed model fallback. A context-only lease reaches every attempt of the same logical turn without entering session history or changing retry dispatch.
+
+### Why an extension could not handle it
+
+- The lease coordinates this builtin's private compaction epoch, reminder policy, restoration payload, and context transform. Another extension cannot safely observe or mutate that state.
+
+### Expected merge conflict zones
+
+- MEDIUM: `index.ts` around accepted `session_compact`, `before_agent_start`, and `context` handlers.
+- LOW: `token-budget-reminder.ts`, `orchestration.ts`, and `context-pipeline.ts` around reminder state/projection.
+
+## Preserve structured tool-result content during admission (2026-08-30)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/orchestration.ts` now projects oversized text
+  blocks in place while preserving every image/non-text block and the original mixed-content ordering.
+- The real OpenAI replay pipeline is characterized with an oversized checkpoint-owned tool result: the extension
+  runner's enumerable session-entry identity survives admission and authorizes native replay without extra identity
+  copying in production.
+
+### Why
+
+- Replacing an admitted mixed tool result with one synthesized text block silently discarded images. The separate
+  replay-loss report was incorrect because the extension runner materializes session-entry identity as an enumerable
+  request-local property before context handlers run, and the existing message spread retains it.
+
+### Why an extension could not handle it
+
+- Admission is the builtin compaction extension's first context transform; later extensions cannot recover structured
+  blocks that this handler has already removed.
+
+### Expected merge conflict zones
+
+- LOW: the tool-result content mapping in `orchestration.ts`.
+
+## Deterministic diskless tool admission (2026-08-30)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/tool-admission.ts` now replaces oversized tool
+  results with a deterministic in-memory head/tail projection instead of synchronously writing full results to
+  random spill files. Projection keeps shrinking until its estimated text is at or below the configured admission
+  cap, and visible marker text is never interpreted as trusted state.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/orchestration.ts` no longer allocates a shared
+  temporary spill directory or bypasses admission when tool output contains a marker-shaped line.
+
+### Why
+
+- Context projections are rebuilt from persisted original messages on every provider request. Random spill names
+  therefore caused unbounded duplicate files with umask-dependent permissions, while synchronous filesystem
+  failures could abort this context handler and skip downstream compaction transforms. A forgeable marker also
+  allowed oversized output to bypass the cap.
+
+### Why an extension could not handle it
+
+- This is the builtin compaction extension's context-admission boundary itself. An external extension cannot make
+  an earlier builtin handler deterministic or recover downstream transforms after that handler throws.
+
+### Expected merge conflict zones
+
+- LOW: the admission call in `orchestration.ts` and the projection format and cap loop in `tool-admission.ts`.
 # Builtin compaction extension changes
 
 ## Preserve replay-safe Gemini signed state in deterministic fallback recovery (2026-08-18)
@@ -19,6 +93,62 @@
 
 - `packages/coding-agent/src/core/extensions/builtin/compaction/retained-message-safety.ts`
 - `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`
+
+## Align idle warm lifecycle with compaction lane ownership (2026-08-30)
+
+### What changed
+
+- `index.ts` enrolls newly started sub-threshold idle warm jobs in the same bounded transient-failure retry lifecycle as above-threshold idle jobs. Retry admission now re-checks the warm-generation floor instead of requiring the apply threshold; the idle apply still requires a fresh above-threshold decision.
+- Sub-threshold local warming is skipped for OpenAI remote-compaction-capable models. Above-threshold idle generation and apply remain local, and the existing remote-first blocking route still falls back to local generation when remote compaction is unavailable.
+- `idle-retry.ts` names its retry gate for warm eligibility rather than threshold eligibility.
+
+### Why
+
+- The half-window idle path started a speculative job without arming its retry watcher. One transient failure therefore left a failed job for later threshold admission to inherit, even though the established idle lifecycle had bounded retries for the same failure class.
+- A completed sub-threshold local summary cannot be consumed by OpenAI remote compaction. Successful remote threshold admission aborted that already-paid local work, so warming it had cost without a viable owner.
+
+### Why an extension could not handle it
+
+- Speculative job ownership, idle retry registration, and remote/local route ordering are private state inside this builtin. Another extension cannot attach lifecycle watchers or transfer a warm job between these routes.
+
+### Expected merge conflict zones
+
+- MEDIUM: `index.ts` around `armIdleWarmupRetry` and the `agent_end` warm-action branch.
+- LOW: `idle-retry.ts` retry decision naming.
+
+## Model usability budget admission (2026-08-30)
+
+### What changed
+
+- `model-usability-budget.ts` projects one typed minimum context budget from the assembled system
+  prompt, active tool schemas, model output reserve, effective compaction reserve, speculation lead,
+  a data table of model-family safety margins, and (for a downswitch) the current live context.
+- `agent-session.ts` rejects an unusable model during direct or favorite-cycle selection before any
+  model, history, or default mutation; `sdk.ts` applies the fixed-budget check after session setup has
+  assembled the runtime prompt and active tools. A live-context rejection carries compact, revalidate,
+  and retry guidance, while a successful explicit compaction lets the caller retry the same switch.
+- Disabling compaction removes both its reserve and speculation lead from the projection, while
+  disabling speculation removes only the lead. Reserve-scaling opt-out continues to use the exact
+  configured reserve.
+
+### Why
+
+- Small-context models could have a speculation lead at or beyond their compaction threshold and
+  enter permanent compaction before the prompt and tool surface left any room for useful work.
+  A measured rejection explains the exact shortfall instead of silently degrading.
+- A statically usable target could still be too small for a transcript accumulated on a larger model;
+  committing that downswitch deferred the failure until the next provider request. The live projection
+  now refuses that invalid state and makes compaction an explicit, revalidated recovery step.
+
+### Why an extension could not handle it
+
+- Initial session creation and model mutation must reject before a provider request is admitted;
+  an extension cannot atomically guard every core model-selection and runtime-creation path.
+
+### Expected merge conflict zones
+
+- LOW: the projection imports shared compaction geometry and output-reserve helpers; keep those
+  dependencies aligned if either helper moves.
 
 ## Apply idle warm compaction during the idle gap (2026-08-26)
 
@@ -756,7 +886,7 @@ These are corrections to the lane-policy gate itself, not new behavior an extens
 ## Deterministic required-compaction recovery (2026-07-31)
 
 - Required threshold/overflow recovery may synthesize one local checkpoint after a summarization watchdog or a transient `SummaryRequestError` carrying the structured `upstream-stream-truncated` failure kind, without issuing another provider request. Generic thrown text is never fallback authorization, even when it contains truncation-like markers.
-- Recovery is accepted only with a real non-empty retained boundary whose fully reconstructed context fits `contextWindow - reserveTokens`, including the exact cap boundary. An absent or unfit suffix cancels without appending a compaction entry or dropping the latest request.
+- Recovery is accepted only with a real non-empty retained boundary whose fully reconstructed context fits the effective reserve budget (`contextWindow - resolveEffectiveReserveTokens(contextWindow, settings)`), including the exact cap boundary. Acceptance therefore uses the same scaled reserve as the hard-limit valve, so a recovered context can never be admitted only to be compacted again on the next request; `reserveScalingEnabled: false` keeps the configured reserve verbatim. An absent or unfit suffix cancels without appending a compaction entry or dropping the latest request.
 - The checkpoint carries parsed or inherited task intent and a UTF-8-safe bounded prior summary. Todo and agent-checkpoint snapshots remain solely in their canonical custom entries persisted after acceptance, avoiding duplicate unbounded objects in compaction details. Manual, aborted, and unrelated failures remain fail-closed.
 - Local summaries now persist parsed task intent and inherit it through subsequent local compactions while ignoring remote checkpoint metadata.
 - Coverage: `test/compaction/required-compaction-deterministic-fallback.test.ts`, `test/compaction/task-intent-anchor.test.ts`, and the existing blocking/runtime-provider suites.
@@ -1355,3 +1485,25 @@ untouched. Expected upstream conflict zones: `builtin/compaction/speculative.ts`
 - Added optional settings for grace-band deferral, tool-result admission, context reminders, reserve scaling, and a configured speculative lead override; all feature gates default to enabled.
 - Tool results exceeding the admission cap are spilled to `os.tmpdir()/senpi-tool-spill` and represented by bounded excerpts, with marker-aware re-admission bypass.
 - Context reminders are delivered through the existing `before_agent_start` custom-message return seam and reset after accepted compaction. Breaker trips retain deterministic context reduction rather than leaving the context untouched.
+
+## 2026-08-30 - External lane ownership survives the circuit breaker
+
+### What changed
+
+- `index.ts` `session_compact`: a rejection carrying `rejectionCause: "external-owner"` returns before `breaker.recordFailure()`. Every other rejection cause still debits the breaker exactly as before. The cause is read off the event, so the lane policy is not re-consulted and no additional provider-settings read is paid.
+- `context-pipeline.ts`: the breaker's deterministic context-reduction fallback is now `breakerFallback && !laneOwnsCompaction`. The reduction pass therefore stands down on an externally owned lane even when the breaker is tripped, narrowing the 2026-08-29 entry above: breaker trips retain deterministic reduction only on lanes senpi owns.
+
+### Why
+
+- Senpi declining to compact an SDK-native lane is a policy stand-down, not a senpi failure. Debiting the breaker for it tripped senpi's own health accounting on a perfectly healthy session after three ordinary turns.
+- Once tripped, `breakerFallback` short-circuited ahead of `shouldApplyContextReduction()`, whose `isProviderNativeCompactionPath` gate already stands reduction down for owned lanes. That let senpi rewrite a history the Claude Agent SDK owns — the exact thing `lane-policy.ts` exists to prevent. The two guards are independent because a breaker tripped by earlier senpi-owned failures must still stand down once the session moves onto an SDK-native lane.
+
+### Why an extension could not handle it
+
+- Both the breaker counter and the context-reduction fallback are private state of the builtin compaction extension closure; no public hook observes a rejection cause before the debit or intercepts the reduction pass.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` around the `session_compact` rejected branch.
+- LOW: `context-pipeline.ts` around the `sourceMessages` reduction predicate.
+- Coverage: `test/compaction/external-owner-breaker-isolation.test.ts`.

@@ -5,6 +5,7 @@ import {
 	createBlockingContext,
 	createCompactionHandlers,
 } from "../helpers/blocking-compaction-harness.ts";
+import { OPENAI_NATIVE_LEGACY_MODEL } from "./openai-remote-test-models.ts";
 
 /**
  * A speculative warm-start summary that fails must not turn the next blocking
@@ -24,6 +25,21 @@ describe("Given a speculative summary that failed before a blocking route inheri
 		for (const registration of registrations.splice(0)) {
 			registration.unregister();
 		}
+	});
+
+	it("Then an OpenAI remote-capable lane does not buy a local sub-threshold warm-up", async () => {
+		// Given: usage is high enough for local speculation but below threshold,
+		// and the active model owns a remote compaction route at threshold.
+		const { beforeAgentStart } = createCompactionHandlers();
+		const harness = createBlockingContext({ usageTokens: 4_000, model: OPENAI_NATIVE_LEGACY_MODEL });
+		registrations.push(harness.registration);
+		harness.registration.setResponses([connectionErrorResponse()]);
+
+		// When
+		await expect(beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx)).resolves.not.toThrow();
+
+		// Then: no local request is purchased for remote threshold admission to discard.
+		expect(harness.getApiKeyAndHeaders).not.toHaveBeenCalled();
 	});
 
 	it("Then the blocking route degrades on that job instead of paying for a second request", async () => {

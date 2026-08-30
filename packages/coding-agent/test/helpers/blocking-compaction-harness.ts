@@ -88,9 +88,10 @@ export function createBlockingContext(options: {
 	withAuth?: boolean;
 	beginCompaction?: () => AbortSignal | undefined;
 	graceBandEnabled?: boolean;
+	model?: ExtensionContext["model"];
 }): BlockingHarness {
 	const registration = registerFauxProvider();
-	const model = registration.getModel();
+	const model = options.model ?? registration.getModel();
 	const sessionManager = SessionManager.inMemory();
 	sessionManager.appendMessage(userMessage("Summarize old context", 1));
 	sessionManager.appendMessage({

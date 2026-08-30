@@ -254,6 +254,87 @@
 - Upstream changes to `getCompactionSettings` now touch `compaction-settings-resolver.ts` as well as
   `settings-manager.ts`.
 
+## Reject model downswitches that exceed the target budget (2026-08-30)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` adds current live-context usage to the assembled
+  model budget before direct or favorite-cycle downswitches. Rejected switches leave the active
+  model, persisted session history, and global defaults unchanged.
+- The rejection reports every measured budget component and directs callers to compact, revalidate,
+  and retry. A successful manual compaction reduces the live projection, so the same explicit switch
+  can then be retried normally.
+
+### Why
+
+- A session accumulated under a million-token model could previously commit a 372K model before
+  discovering that its live transcript plus prompt, tools, and reserves did not fit. The next turn
+  then entered emergency overflow recovery from a model state that was invalid when selected.
+
+### Why an extension could not handle it
+
+- Direct and favorite-cycle model selection mutate private session state and persistence before a
+  post-selection extension hook runs. Admission must happen at that shared pre-commit boundary.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts` around `_setModel`,
+  `_cycleFavoriteModel`, and the model-budget assertion.
+
+## Reject models with unusable assembled context budgets (2026-08-30)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` projects the selected model against the current
+  assembled system prompt, active tool schemas, output reserve, effective compaction reserve,
+  speculation lead, and model-family safety margin before mutating explicit model selection.
+- `packages/coding-agent/src/core/sdk.ts` runs the same projection after `AgentSession` construction,
+  when the initial runtime prompt and active tools have been assembled, and rejects setup with the
+  projection's precise budget diagnostic when the model is unusable.
+
+### Why
+
+- A small context window can put the fixed speculation lead at or beyond its compaction threshold.
+  Accepting that model creates a session with no useful conversation budget and causes permanent
+  compaction; setup and explicit selection now fail before provider traffic or model mutation.
+
+### Why an extension could not handle it
+
+- Session construction and explicit model mutation are core boundaries. Extensions cannot reject
+  initial creation after the final prompt/tool assembly or atomically guard every model-selection
+  caller before persistence.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts` around `_setModel` and the public budget
+  assertion used by runtime setup.
+- LOW: `packages/coding-agent/src/core/sdk.ts` immediately after `AgentSession` construction.
+
+## Compaction settings resolution moved out of the settings manager (2026-08-29)
+
+### What changed
+
+- `settings-manager.ts` delegates compaction knob resolution to `compaction-settings-resolver.ts`
+  instead of resolving every field inline. The manager keeps its public accessor shape; the resolver
+  owns the defaults for the ideal-pipeline knobs (grace band, tool admission, reminder, reserve
+  scaling, speculative lead).
+
+### Why
+
+- `settings-manager.ts` was already well past the module size ceiling. This branch adds compaction
+  knobs, and the project rule forbids growing an already-oversized file, so the added resolution
+  became its own module.
+
+### Why an extension could not handle it
+
+- These defaults are read by core admission before any extension runs, so they cannot be supplied
+  from extension space.
+
+### Expected merge conflict zones
+
+- Upstream changes to `getCompactionSettings` now touch `compaction-settings-resolver.ts` as well as
+  `settings-manager.ts`.
+
 ## 2026-08-29 - Withheld tools are filtered at the advertisement seam
 
 ### What changed
