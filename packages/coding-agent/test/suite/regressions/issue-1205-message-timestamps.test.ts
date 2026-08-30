@@ -117,6 +117,28 @@ describe("AssistantMessageComponent message timestamps", () => {
 		expect(lines.filter((line) => /^\d{2}:\d{2}:\d{2} /.test(line))).toHaveLength(1);
 	});
 
+	it("toggles only the timestamp prefix without rebuilding rendered content children", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date(2026, 7, 30, 9, 8, 7));
+		const component = new AssistantMessageComponent(createAssistantMessage("Stable content"));
+		const contentContainer = component.children[0];
+		expect(contentContainer).toBeInstanceOf(Container);
+		if (!(contentContainer instanceof Container)) throw new TypeError("Expected assistant content container");
+		const contentChildren = [...contentContainer.children];
+
+		expect(component.render(80).map(stripAnsi).join("\n")).not.toContain("09:08:07 ");
+		component.setShowTimestamps(true);
+		expect(component.render(80).map(stripAnsi).join("\n")).toMatch(/09:08:07\s+Stable content/);
+		component.setTimestampEligible(false);
+		expect(component.render(80).map(stripAnsi).join("\n")).not.toContain("09:08:07 ");
+		component.setTimestampEligible(true);
+		component.setShowTimestamps(false);
+
+		expect(contentContainer.children).toHaveLength(contentChildren.length);
+		expect(contentContainer.children.every((child, index) => child === contentChildren[index])).toBe(true);
+		expect(component.render(80).map(stripAnsi).join("\n")).not.toContain("09:08:07 ");
+	});
+
 	it("retains the first update time across later updates and width rerenders", () => {
 		// Given: the first content delta arrives at a fixed local time.
 		vi.useFakeTimers();

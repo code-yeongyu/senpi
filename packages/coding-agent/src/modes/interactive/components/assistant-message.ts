@@ -72,7 +72,7 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	override invalidate(): void {
-		this.renderCache = undefined;
+		this.invalidateRenderCache();
 		super.invalidate();
 		this.renderDescriptors = [];
 		this.refreshContent();
@@ -105,13 +105,13 @@ export class AssistantMessageComponent extends Container {
 	setShowTimestamps(show: boolean): void {
 		if (this.showTimestamps === show) return;
 		this.showTimestamps = show;
-		this.invalidate();
+		this.invalidateRenderCache();
 	}
 
 	setTimestampEligible(eligible: boolean): void {
 		if (this.timestampEligible === eligible) return;
 		this.timestampEligible = eligible;
-		this.invalidate();
+		this.invalidateRenderCache();
 	}
 
 	hasVisibleContent(): boolean {
@@ -254,6 +254,10 @@ export class AssistantMessageComponent extends Container {
 
 	private cacheRender(width: number, signature: string, lines: string[]): void {
 		this.renderCache = { lines: [...lines], signature, width };
+	}
+
+	private invalidateRenderCache(): void {
+		this.renderCache = undefined;
 	}
 
 	private refreshContent(): void {
