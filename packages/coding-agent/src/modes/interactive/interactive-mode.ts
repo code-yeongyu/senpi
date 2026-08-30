@@ -5269,6 +5269,7 @@ export class InteractiveMode {
 		const firstToolIndex = content.findIndex((block) => block.type === "toolCall");
 		if (firstToolIndex === -1) {
 			this.detachAssistantTextSegments();
+			this.syncStreamingMessageTimestampEligibility();
 			return;
 		}
 		let index = firstToolIndex + 1;
@@ -5298,6 +5299,7 @@ export class InteractiveMode {
 				this.outputPad,
 				this.getMarkdownTransformers(),
 				this.showMessageTimestamps,
+				{ eligible: false, arrivedAt: this.streamingComponent.getArrivedAt() },
 			);
 			segment.setExpanded(this.toolOutputExpanded);
 			this.assistantTextSegments.set(runStart, segment);
@@ -5313,6 +5315,20 @@ export class InteractiveMode {
 				this.chatContainer.detachChild(segment);
 				this.assistantTextSegments.delete(runStart);
 			}
+		}
+		this.syncStreamingMessageTimestampEligibility();
+	}
+
+	private syncStreamingMessageTimestampEligibility(): void {
+		if (!this.streamingComponent) return;
+		const segments = [...this.assistantTextSegments.entries()]
+			.sort(([left], [right]) => left - right)
+			.map(([, segment]) => segment);
+		let assigned = false;
+		for (const component of [this.streamingComponent, ...segments]) {
+			const eligible = !assigned && component.hasVisibleContent();
+			component.setTimestampEligible(eligible);
+			if (eligible) assigned = true;
 		}
 	}
 
@@ -6616,6 +6632,7 @@ export class InteractiveMode {
 						for (const segment of this.assistantTextSegments.values()) {
 							segment.setShowTimestamps(show);
 						}
+						this.syncStreamingMessageTimestampEligibility();
 						this.ui.requestRender();
 					},
 					onHideThinkingBlockChange: (hidden) => {

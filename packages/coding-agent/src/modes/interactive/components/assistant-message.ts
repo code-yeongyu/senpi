@@ -37,6 +37,7 @@ export class AssistantMessageComponent extends Container {
 	private expanded = false;
 	private isStreaming = false;
 	private showTimestamps: boolean;
+	private timestampEligible: boolean;
 	// Stamped once when the message arrives, never at render time: render() is
 	// cache-backed and re-runs on resize, so reading the clock there would make a
 	// past message silently change its own timestamp.
@@ -50,10 +51,13 @@ export class AssistantMessageComponent extends Container {
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
 		showTimestamps = false,
+		timestamp?: { readonly eligible: boolean; readonly arrivedAt?: Date },
 	) {
 		super();
 
 		this.showTimestamps = showTimestamps;
+		this.timestampEligible = timestamp?.eligible ?? true;
+		this.arrivedAt = timestamp?.arrivedAt;
 		this.hideThinkingBlock = hideThinkingBlock;
 		this.markdownTheme = markdownTheme;
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
@@ -104,8 +108,22 @@ export class AssistantMessageComponent extends Container {
 		this.invalidate();
 	}
 
+	setTimestampEligible(eligible: boolean): void {
+		if (this.timestampEligible === eligible) return;
+		this.timestampEligible = eligible;
+		this.invalidate();
+	}
+
+	hasVisibleContent(): boolean {
+		return this.renderDescriptors.some((descriptor) => descriptor.kind !== "spacer");
+	}
+
+	getArrivedAt(): Date | undefined {
+		return this.arrivedAt;
+	}
+
 	private timestampPrefix(): string {
-		if (!this.showTimestamps) return "";
+		if (!this.showTimestamps || !this.timestampEligible) return "";
 		const at = this.arrivedAt ?? new Date();
 		const hh = String(at.getHours()).padStart(2, "0");
 		const mm = String(at.getMinutes()).padStart(2, "0");
@@ -122,10 +140,15 @@ export class AssistantMessageComponent extends Container {
 		const prefix = this.timestampPrefix();
 		const prefixWidth = visibleWidth(prefix);
 		const showTimestamp = prefixWidth > 0 && width > prefixWidth;
-		const lines = super.render(showTimestamp ? width - prefixWidth : width);
+		let lines = super.render(showTimestamp ? width - prefixWidth : width);
 		const firstContentLineIndex = lines.findIndex((line) => visibleWidth(line) > 0);
 		if (firstContentLineIndex >= 0 && showTimestamp) {
-			lines[firstContentLineIndex] = prefix + lines[firstContentLineIndex];
+			const prefixedLine = prefix + lines[firstContentLineIndex];
+			if (visibleWidth(prefixedLine) <= width) {
+				lines[firstContentLineIndex] = prefixedLine;
+			} else {
+				lines = super.render(width);
+			}
 		}
 		if (this.hasToolCalls || lines.length === 0) {
 			this.cacheRender(width, signature, lines);

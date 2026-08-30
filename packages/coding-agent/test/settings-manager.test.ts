@@ -724,6 +724,21 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("message timestamps", () => {
+		it("defaults to off and persists an enabled value across restart", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getShowMessageTimestamps()).toBe(false);
+
+			manager.setShowMessageTimestamps(true);
+			await manager.flush();
+
+			expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"))).toMatchObject({
+				showMessageTimestamps: true,
+			});
+			expect(SettingsManager.create(projectDir, agentDir).getShowMessageTimestamps()).toBe(true);
+		});
+	});
+
 	describe("smooth streaming", () => {
 		it("defaults smooth streaming on at 60 fps", () => {
 			// Given

@@ -4,9 +4,9 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: stamps the first rendered content line with a dim local `HH:MM:SS` prefix when enabled and preserves the first `updateContent()` arrival time across streaming updates, rerenders, and width changes.
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: stamps the first rendered content line with a dim local `HH:MM:SS` prefix when enabled, falls back to unprefixed rendering when a narrow viewport cannot fit the prefix plus content padding, and preserves the first `updateContent()` arrival time across streaming updates, rerenders, and width changes.
 - `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`: exposes the default-off message timestamp toggle in `/settings`.
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: wires persisted state into new, restored, streaming, and segmented assistant components; applies toggles immediately; and refreshes the setting before transcript reconstruction on reload.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: wires persisted state into new, restored, and streaming assistant messages; coordinates tool-separated render segments so one logical message receives exactly one prefix with a shared arrival time; applies toggles immediately; and refreshes the setting before transcript reconstruction on reload.
 
 ### Why
 
@@ -18,9 +18,9 @@
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: render caching and message update lifecycle.
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: render caching, narrow-width fallback, and message update lifecycle.
 - `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`: settings list construction and callbacks.
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: assistant component construction, runtime settings, `/settings` callbacks, and reload transcript reconstruction.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: assistant component construction, tool-separated timestamp eligibility, runtime settings, `/settings` callbacks, and reload transcript reconstruction.
 
 ## 2026-08-30 - Forward shared-host switch cwd overrides
 
