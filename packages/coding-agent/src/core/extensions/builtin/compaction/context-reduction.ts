@@ -151,12 +151,30 @@ export interface ShouldApplyContextReductionInput {
 	isProviderNativeCompactionPath?: boolean;
 }
 
-export function shouldApplyContextReduction(input: ShouldApplyContextReductionInput): boolean {
-	const gate = input.gateRatio ?? BUILTIN_CONTEXT_REDUCTION_GATE_RATIO;
+export interface ContextReductionLatch {
+	engaged: boolean;
+}
+
+export function createContextReductionLatch(): ContextReductionLatch {
+	return { engaged: false };
+}
+
+export function resetContextReductionLatch(latch: ContextReductionLatch): void {
+	latch.engaged = false;
+}
+
+export function shouldApplyContextReduction(
+	input: ShouldApplyContextReductionInput,
+	latch?: ContextReductionLatch,
+): boolean {
 	if (input.isProviderNativeCompactionPath === true) return false;
+	if (latch?.engaged === true) return true;
 	if (input.usageTokens === null) return false;
 	if (input.contextWindow <= 0) return false;
-	return input.usageTokens >= input.contextWindow * gate;
+	const gate = input.gateRatio ?? BUILTIN_CONTEXT_REDUCTION_GATE_RATIO;
+	const shouldApply = input.usageTokens >= input.contextWindow * gate;
+	if (shouldApply && latch) latch.engaged = true;
+	return shouldApply;
 }
 
 function approxTextTokens(text: string): number {
