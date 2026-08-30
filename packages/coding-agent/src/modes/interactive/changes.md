@@ -22,6 +22,22 @@
 - `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`: settings list construction and callbacks.
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: assistant component construction, tool-separated timestamp eligibility, runtime settings, `/settings` callbacks, and reload transcript reconstruction.
 
+## 2026-08-30 - Harden shared-host reconnect fallback
+
+### What changed
+
+- Shared-host refresh and bash operations now classify transport loss through the common reconnect path, avoiding raw RPC errors in the TUI.
+- Local fallback preserves the runtime invalidate/rebind callback contract and rebinds session-bound UI when the transition occurs.
+- Reconnect action failures use a transient reconnecting warning; the continuing-locally warning is emitted only after fallback.
+
+### Why
+
+- The shared-host runtime must degrade at the transport boundary without exposing implementation errors or leaving InteractiveMode bound to a stale remote session.
+
+### Expected merge conflict zones
+
+- LOW: reconnect warning and replacement handling in `interactive-host-runtime.ts`.
+
 ## 2026-08-30 - Reconcile the shared-host mirror to the host entry list
 
 ### What changed
@@ -3024,3 +3040,13 @@ The tip line was teaching a small slice of the product while most of the surface
 
 - NF-2 RED: replacement string sendUserMessage dropped expandPromptTemplates, so the binding host trace did not preserve explicit false.
 - NF-2 GREEN: string replacement messages now forward expandPromptTemplates exactly like array messages; explicit false leaves /help as provider content.
+
+## Interactive RPC reconnect cancellation and terminal fallback (2026-08-30)
+
+- Treats transport loss in value-returning interactive host operations as user cancellation with inert results, so reconnect/fallback warnings are not repeated as action errors.
+- Makes reconnect exhaustion terminal after three attempts and awaits the local fallback session rebind before disposal.
+
+## Interactive RPC reconnect cancellation ordering (2026-08-30)
+
+- Preserves structured cancellation results for reload and reload-veto checks when the shared transport disconnects.
+- Keeps fallback warning emission behind the completed local rebind handoff.

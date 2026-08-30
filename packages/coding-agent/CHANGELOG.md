@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- The shared interactive host no longer surfaces raw `Error: Client not started` when its socket drops: the RPC client classifies transport loss with a typed error, the TUI runtime makes bounded reconnect attempts and then genuinely falls back to the local session with a single warning, and in-flight actions resolve as cancellations instead of error toasts ([#1220](https://github.com/code-yeongyu/senpi/pull/1220)).
+
 - Persistent terminals now serialize headless xterm screen writes through parser callbacks with a bounded, dispose-safe backlog, preventing fast PTY output from exceeding xterm's pending-write watermark and terminating Senpi with `write data discarded, use flow control to avoid losing data` ([#1214](https://github.com/code-yeongyu/senpi/pull/1214), supersedes [#837](https://github.com/code-yeongyu/senpi/pull/837)).
 
 ### New Features

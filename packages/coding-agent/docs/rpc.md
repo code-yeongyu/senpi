@@ -8,6 +8,10 @@ RPC mode enables headless operation of the coding agent via a JSON protocol over
 
 ## Starting RPC Mode
 
+### RPC client lifecycle
+
+`RpcClient` accepts an `onDisconnect` callback for an established socket and rejects subsequent transport operations with the typed `RpcTransportGoneError` (also detectable with `isTransportGoneError`). Callers should use the callback to begin recovery and keep the error text out of user-facing output.
+
 ```bash
 senpi --mode rpc [options]
 ```

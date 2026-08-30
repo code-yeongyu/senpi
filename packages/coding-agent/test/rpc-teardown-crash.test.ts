@@ -48,6 +48,9 @@ describe("RPC teardown when the transport is gone", () => {
 	test("active send failures still surface", async () => {
 		const client = new RpcClient();
 
-		await expect(client.prompt("active turn")).rejects.toThrow("Client not started");
+		await expect(client.prompt("active turn")).rejects.toMatchObject({
+			name: "RpcTransportGoneError",
+			code: "rpc_transport_gone",
+		});
 	});
 });

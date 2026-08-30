@@ -19,6 +19,25 @@
 - LOW: the tail of `rebindSession()` and the `installSessionSubscriptions` declaration.
 
 
+## 2026-08-30 - Classify RPC transport disconnects and recover shared interactive hosts
+
+### What changed
+
+- `rpc-client.ts`: `RpcClient` reports established socket disconnects through the new `onDisconnect` option and rejects sends with the exported `RpcTransportGoneError` (`code: "rpc_transport_gone"`) instead of exposing the raw `Client not started` message; `isTransportGoneError()` classifies both the typed error and legacy message shapes.
+- Shared interactive runtimes make bounded reconnect attempts, re-open and refresh the attached session, and on exhaustion switch to the retained local runtime while surfacing only the standard fallback warning.
+
+### Why
+
+- The shared interactive host surfaced raw transport internals in the TUI whenever the host socket dropped; recovery orchestration needs a typed, once-only disconnect signal at the client boundary.
+
+### Why an extension could not handle it
+
+- The transport lifecycle lives inside `RpcClient` beneath every extension surface; no extension hook observes socket teardown or send gating.
+
+### Expected merge conflict zones
+
+- LOW: the `send()` guard block and socket close/error handlers in `rpc-client.ts`.
+
 ## 2026-08-30 - Expose session_replaced on the public client event union
 
 ### What changed

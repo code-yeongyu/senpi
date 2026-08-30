@@ -839,7 +839,7 @@ describe("interactive host runtime", () => {
 		});
 		try {
 			expect(runtime).toBe(local);
-			expect(warnings).toEqual([`${INTERACTIVE_HOST_FALLBACK_WARNING}: host intentionally unavailable`]);
+			expect(warnings).toEqual([INTERACTIVE_HOST_FALLBACK_WARNING]);
 			await runtime.session.prompt("local-fallback-unique");
 			await runtime.session.waitForIdle();
 			expect(runtime.session.getLastAssistantText()).toBeTruthy();
