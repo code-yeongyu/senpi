@@ -18,6 +18,17 @@
 
 - `packages/coding-agent/src/core/settings-manager.ts`: the settings schema, public getter set, and persisted setter block.
 
+## 2026-08-30 - Durable entry notifications are rpc-scoped
+
+- `agent-session.ts`: `_emitEntryAppended` only fires while the session is bound in `rpc`
+  mode. The notifications exist to hydrate the shared-host RPC proxy mirror; emitting them
+  on classic/print streams injected extra labels into the released event-order contract
+  (`agent-session-retry-events`, `retry-fallback-engine` pin the full ordered label list and
+  the byte-for-byte no-chain retry contract).
+- `agent-session-prompt.test.ts` binds `mode: "rpc"` before asserting durable prompt entries,
+  so the new-behavior test exercises the lane the contract actually covers instead of the
+  default print lane.
+
 ## 2026-08-30 - Experimental workflow eval-only policy
 
 ### What changed

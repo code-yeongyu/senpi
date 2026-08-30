@@ -228,6 +228,7 @@ export class SessionEventWriter {
 		void drain.then(
 			() => {
 				if (this.drainPromise === drain) this.drainPromise = undefined;
+				if (this.readyQueues.length > 0) this.requestFlush();
 			},
 			(cause) => {
 				if (this.drainPromise === drain) this.drainPromise = undefined;

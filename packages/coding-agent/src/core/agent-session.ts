@@ -1585,8 +1585,16 @@ export class AgentSession {
 
 	/** Emit an event to all listeners */
 	private _emitEntryAppended(entryId: string): void {
+		if (this._extensionMode !== "rpc") return;
 		const entry = this.sessionManager.getEntry(entryId);
 		if (entry) this._emit({ type: "entry_appended", entry });
+	}
+
+	/** Append a transport-provided entry and publish it on the RPC event stream. */
+	appendSessionEntry(entry: SessionEntry): void {
+		this.sessionManager.appendEntry(entry);
+		this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+		this._emitEntryAppended(entry.id);
 	}
 
 	private _emit(event: AgentSessionEvent): void {

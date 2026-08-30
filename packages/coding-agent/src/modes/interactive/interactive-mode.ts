@@ -713,6 +713,37 @@ export interface InteractiveModeOptions {
 	initialThemeSetting?: string;
 }
 
+/** Extension UI request forwarded from the shared interactive host. */
+type HostUiRequest = {
+	id: string;
+	method: string;
+	title?: string;
+	options?: string[];
+	message?: string;
+	prefill?: string;
+	placeholder?: string;
+	statusKey?: string;
+	statusText?: string;
+	widgetKey?: string;
+	widgetLines?: string[];
+	widgetPlacement?: "aboveEditor" | "belowEditor";
+	extensionName?: string;
+	text?: string;
+};
+
+type HostUiResponse =
+	| { type: "extension_ui_response"; id: string; value: string }
+	| { type: "extension_ui_response"; id: string; confirmed: boolean }
+	| { type: "extension_ui_response"; id: string; cancelled: true };
+
+/**
+ * Optional runtime capability: only the shared interactive host proxies extension
+ * UI requests back to this mode. The classic local runtime does not implement it.
+ */
+type HostUiCapableRuntime = {
+	setHostUiHandler(callback?: (request: HostUiRequest) => Promise<HostUiResponse | undefined>): void;
+};
+
 interface InteractiveTuiOptions {
 	tuiMode: TuiMode;
 	showHardwareCursor: boolean;
@@ -1005,7 +1036,10 @@ export class InteractiveMode {
 			await this.rebindCurrentSession({ renderBeforeBind: true });
 			await this.themeController.applyFromSettings();
 		});
-		this.runtimeHost.setHostUiHandler((request) => this.handleHostUiRequest(request as any));
+		// Host-driven extension UI only exists on the shared-host lane; the classic
+		// local runtime renders extension UI in-process and has no such hook.
+		const hostUiRuntime = this.runtimeHost as Partial<HostUiCapableRuntime>;
+		hostUiRuntime.setHostUiHandler?.((request) => this.handleHostUiRequest(request as HostUiRequest));
 		this.version = DISPLAY_VERSION;
 		this.renderer = createInteractiveTui({
 			tuiMode,
@@ -2752,30 +2786,7 @@ export class InteractiveMode {
 		};
 	}
 
-	/**
-	 * Set extension status text in the footer.
-	 */
-	private async handleHostUiRequest(request: {
-		id: string;
-		method: string;
-		title?: string;
-		options?: string[];
-		message?: string;
-		prefill?: string;
-		placeholder?: string;
-		statusKey?: string;
-		statusText?: string;
-		widgetKey?: string;
-		widgetLines?: string[];
-		widgetPlacement?: "aboveEditor" | "belowEditor";
-		extensionName?: string;
-		text?: string;
-	}): Promise<
-		| { type: "extension_ui_response"; id: string; value: string }
-		| { type: "extension_ui_response"; id: string; confirmed: boolean }
-		| { type: "extension_ui_response"; id: string; cancelled: true }
-		| undefined
-	> {
+	private async handleHostUiRequest(request: HostUiRequest): Promise<HostUiResponse | undefined> {
 		switch (request.method) {
 			case "select": {
 				const value = await this.showExtensionSelector(request.title ?? "", request.options ?? []);
@@ -2830,6 +2841,9 @@ export class InteractiveMode {
 		}
 	}
 
+	/**
+	 * Set extension status text in the footer.
+	 */
 	private setExtensionStatus(key: string, text: string | undefined): void {
 		this.footerDataProvider.setExtensionStatus(key, text);
 		this.ui.requestRender();

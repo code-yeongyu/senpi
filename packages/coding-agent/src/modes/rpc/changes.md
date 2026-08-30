@@ -1,5 +1,22 @@
 # changes
 
+## 2026-08-30 - Replacement broadcast reaches observers, not the issuer
+
+- `connection-handler.ts`: `session_replaced` is emitted to every connection that did NOT
+  issue the replacement, including classic (unrouted) ones. Previously the emission was
+  gated on `routingSessionId !== undefined`, which silenced it for classic observers: a
+  classic client attached while another actor swapped the runtime session kept routing at
+  the old identity forever (`rpc-wire-provenance`: "broadcasts the replacement identity to
+  an attached client after a runtime session swap" timed out).
+- The suppression is now scoped to the ISSUER instead of the transport: a connection whose
+  own `new_session`/`switch_session`/`fork`/tree command drove the replacement already
+  receives the new identity in that command's response, and classic records must not carry
+  a top-level `sessionId` key (`rpc-classic-compat` asserts this per command). Classic
+  post-command rebinds go through `rebindAfterLocalReplacement()`, which raises
+  `replacementIssuedHere` for the duration of that rebind only.
+- Routed/shared-host behavior is unchanged: those connections still receive the broadcast.
+
+
 ## 2026-08-30 - Reschedule the sink actor drain when an enqueue races its settling
 
 - `socket-event-fanout.ts`: `SocketEventSinkActor.drain()` clears `draining` in a `.finally()` reaction. An `enqueue()` landing between the drain loop's exit and that reaction received the stale settled promise and started no new drain, leaving the record queued until the next unrelated enqueue rescued it — observed as targeted `open_session` responses reaching the client seconds late or not at all (`W-route` logged, `socket.write` never called). The `.finally()` now reschedules `drain()` when the queue is non-empty, so a racing record flushes immediately. Deterministic reproduction: `test/socket-event-fanout.test.ts`.

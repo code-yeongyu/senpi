@@ -147,8 +147,6 @@ export class AgentSessionRuntime {
 	 * such as detaching extension-provided TUI components before the old extension
 	 * context becomes stale.
 	 */
-	setHostUiHandler(_callback?: (request: unknown) => unknown): void {}
-
 	setBeforeSessionInvalidate(beforeSessionInvalidate?: () => void): void {
 		this.beforeSessionInvalidate = beforeSessionInvalidate;
 	}

@@ -78,7 +78,10 @@ function spawnHost(
 			env: {
 				...Object.fromEntries(
 					Object.entries(process.env).filter(
-						([key]) => key !== "SENPI_BRAND" && !key.endsWith("_CODING_AGENT_DIR") && !key.endsWith("_CODING_AGENT_SESSION_DIR"),
+						([key]) =>
+							key !== "SENPI_BRAND" &&
+							!key.endsWith("_CODING_AGENT_DIR") &&
+							!key.endsWith("_CODING_AGENT_SESSION_DIR"),
 					),
 				),
 				...hermeticProviderEnv(),

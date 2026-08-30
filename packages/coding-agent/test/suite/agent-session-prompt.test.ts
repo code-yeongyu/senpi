@@ -30,6 +30,10 @@ describe("AgentSession prompt characterization", () => {
 	it("publishes durable entries for ordinary prompt messages", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
+		// entry_appended exists to hydrate the shared-host RPC proxy mirror; it is scoped to
+		// rpc mode so classic/print streams keep their pinned event order (see
+		// agent-session-retry-events.test.ts, which asserts the full ordered label list).
+		await harness.session.bindExtensions({ mode: "rpc", shutdownHandler: () => {} });
 		harness.setResponses([fauxAssistantMessage("hello")]);
 
 		await harness.session.prompt("hi");

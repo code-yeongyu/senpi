@@ -258,20 +258,22 @@ function rewriteDeclaration(code, declarationStart, start, end, keyword) {
 	const preserveDeclaration = source.includes("//") || source.includes("/*");
 	for (const [segmentStart, segmentEnd] of splitDeclarators(code, start, end)) {
 		const segment = code.slice(segmentStart, segmentEnd);
-		if (!segment.trim()) continue;
+		if (!segment.trim()) return undefined;
 		const initializerStart = findTopLevelEquals(segment);
 		if (initializerStart < 0 && keyword === "const") return undefined;
 		const pattern = trimPattern(initializerStart < 0 ? segment : segment.slice(0, initializerStart));
 		const bindings = [];
 		collectPatternNames(pattern, bindings);
 		if (bindings.length === 0) return undefined;
+		if (preserveDeclaration) {
+			for (const name of bindings) assignments.push(`globalThis[${JSON.stringify(name)}] = ${name};`);
+			continue;
+		}
 		const target = rewriteBindingPattern(pattern);
 		if (target === undefined) return undefined;
 		const initializer = initializerStart < 0 ? "undefined" : segment.slice(initializerStart + 1).trim();
-		const [assignmentInitializer, comment] = splitTrailingLineComment(initializer);
-		const assignmentComment = preserveDeclaration ? "" : comment;
 		assignments.push(
-			`${target.startsWith("{") || target.startsWith("[") ? `(${target} = ${assignmentInitializer})` : `${target} = ${assignmentInitializer}`};${assignmentComment}`,
+			`${target.startsWith("{") || target.startsWith("[") ? `;(${target} = ${initializer})` : `${target} = ${initializer}`};`,
 		);
 	}
 	if (assignments.length === 0) return undefined;
@@ -408,6 +410,7 @@ function splitDeclarators(code, start, end) {
 		if (!/\s/u.test(char)) canStartRegex = isExpressionOperator(char) || char === "(" || char === "[" || char === "{";
 	}
 	if (segmentStart < end && code.slice(segmentStart, end).trim() !== ";") ranges.push([segmentStart, end - (code[end - 1] === ";" ? 1 : 0)]);
+	else if (ranges.length > 0 && code.slice(segmentStart, end).trim() !== ";") ranges.push([end, end]);
 	return ranges;
 }
 
@@ -501,51 +504,9 @@ function applyTextEdits(code, edits) {
 	return output;
 }
 
-function splitTrailingLineComment(source) {
-	let canStartRegex = true;
-	for (let index = 0; index < source.length; index += 1) {
-		const char = source[index];
-		const next = source[index + 1];
-		if (char === "/" && next === "/") return [source.slice(0, index).trimEnd(), source.slice(index)];
-		if (char === "/" && next === "*") {
-			index = skipBlockComment(source, index) - 1;
-			continue;
-		}
-		if (char === "'" || char === '"') {
-			index = skipQuotedLiteral(source, index) - 1;
-			canStartRegex = false;
-			continue;
-		}
-		if (char === "`") {
-			index = skipTemplateLiteral(source, index) - 1;
-			canStartRegex = false;
-			continue;
-		}
-		if (char === "/" && canStartRegex) {
-			index = skipRegexLiteral(source, index) - 1;
-			canStartRegex = false;
-			continue;
-		}
-		if (isIdentifierStart(char)) {
-			const end = readIdentifier(source, index);
-			canStartRegex = REGEX_PREFIX_KEYWORDS.has(source.slice(index, end));
-			index = end - 1;
-			continue;
-		}
-		if (isDecimalDigit(char)) {
-			index = skipNumberLiteral(source, index) - 1;
-			canStartRegex = false;
-			continue;
-		}
-		if (!/\s/u.test(char)) canStartRegex = isExpressionOperator(char) || char === "(" || char === "[" || char === "{";
-	}
-	return [source, ""];
-}
-
 function trimPattern(source) {
 	let start = 0;
-	let end = source.length;
-	while (start < end) {
+	while (start < source.length) {
 		if (/\s/u.test(source[start])) {
 			start += 1;
 			continue;
@@ -560,12 +521,30 @@ function trimPattern(source) {
 		}
 		break;
 	}
-	while (true) {
-		while (end > start && /\s/u.test(source[end - 1])) end -= 1;
-		if (end < start + 2 || source.slice(end - 2, end) !== "*/") break;
-		const commentStart = source.lastIndexOf("/*", end - 2);
-		if (commentStart < start) break;
-		end = commentStart;
+	let end = start;
+	for (let index = start; index < source.length; index += 1) {
+		const char = source[index];
+		const next = source[index + 1];
+		if (/\s/u.test(char)) continue;
+		if (char === "/" && next === "/") {
+			index = skipLineComment(source, index) - 1;
+			continue;
+		}
+		if (char === "/" && next === "*") {
+			index = skipBlockComment(source, index) - 1;
+			continue;
+		}
+		if (char === "'" || char === '"') {
+			index = skipQuotedLiteral(source, index) - 1;
+			end = index + 1;
+			continue;
+		}
+		if (char === "`") {
+			index = skipTemplateLiteral(source, index) - 1;
+			end = index + 1;
+			continue;
+		}
+		end = index + 1;
 	}
 	return source.slice(start, end);
 }
@@ -733,66 +712,136 @@ function captureLastExpression(code) {
 	return `${head}return ${tail.replace(/;+$/u, "")};`;
 }
 
+const LABEL_PREFIX_RE = /^[\p{ID_Start}$_][\p{ID_Continue}\u200c\u200d$]*\s*:/u;
+
 function isStatementOnly(source) {
-	return /^(?:const|let|var|if|for|while|switch|try|catch|finally|class|function|import|export|throw|return|do|break|continue|debugger)\b/u.test(
-		source,
-	);
+	if (
+		/^(?:const|let|var|if|for|while|switch|try|catch|finally|class|function|import|export|throw|return|do|break|continue|debugger)\b/u.test(
+			source,
+		)
+	)
+		return true;
+	return LABEL_PREFIX_RE.test(source);
 }
+
+const CONTROL_PAREN_KEYWORDS = new Set(["catch", "for", "if", "switch", "while", "with"]);
 
 function findLastTopLevelStatementStart(code) {
 	let start = 0;
 	let round = 0;
 	let square = 0;
 	let curly = 0;
-	let quote = "";
-	let escaped = false;
-	let lineComment = false;
-	let blockComment = false;
+	let canStartRegex = true;
+	let lastSignificant = "";
+	let pendingControlParen = false;
+	const controlParens = [];
 	for (let index = 0; index < code.length; index += 1) {
 		const char = code[index];
 		const next = code[index + 1];
-		if (lineComment) {
-			if (char === "\n") lineComment = false;
-			continue;
-		}
-		if (blockComment) {
-			if (char === "*" && next === "/") {
-				blockComment = false;
-				index += 1;
-			}
-			continue;
-		}
-		if (quote) {
-			if (escaped) {
-				escaped = false;
-			} else if (char === "\\") {
-				escaped = true;
-			} else if (char === quote) {
-				quote = "";
-			}
-			continue;
-		}
 		if (char === "/" && next === "/") {
-			lineComment = true;
-			index += 1;
+			index = skipLineComment(code, index) - 1;
 			continue;
 		}
 		if (char === "/" && next === "*") {
-			blockComment = true;
-			index += 1;
+			index = skipBlockComment(code, index) - 1;
 			continue;
 		}
 		if (char === "'" || char === '"' || char === "`") {
-			quote = char;
+			index = (char === "`" ? skipTemplateLiteral(code, index) : skipQuotedLiteral(code, index)) - 1;
+			canStartRegex = false;
+			lastSignificant = char;
+			pendingControlParen = false;
 			continue;
 		}
-		if (char === "(") round += 1;
-		else if (char === ")") round -= 1;
-		else if (char === "[") square += 1;
-		else if (char === "]") square -= 1;
-		else if (char === "{") curly += 1;
-		else if (char === "}") curly -= 1;
-		else if ((char === ";" || char === "\n") && round === 0 && square === 0 && curly === 0) start = index + 1;
+		if (char === "/" && canStartRegex) {
+			index = skipRegexLiteral(code, index) - 1;
+			canStartRegex = false;
+			lastSignificant = char;
+			pendingControlParen = false;
+			continue;
+		}
+		if (isIdentifierStart(char)) {
+			const end = readIdentifier(code, index);
+			const token = code.slice(index, end);
+			canStartRegex = REGEX_PREFIX_KEYWORDS.has(token);
+			pendingControlParen = CONTROL_PAREN_KEYWORDS.has(token);
+			lastSignificant = code[end - 1];
+			index = end - 1;
+			continue;
+		}
+		if (isDecimalDigit(char)) {
+			index = skipNumberLiteral(code, index) - 1;
+			canStartRegex = false;
+			lastSignificant = char;
+			pendingControlParen = false;
+			continue;
+		}
+		if (char === "(") {
+			round += 1;
+			controlParens.push(pendingControlParen);
+			pendingControlParen = false;
+			canStartRegex = true;
+			lastSignificant = char;
+			continue;
+		}
+		if (char === ")") {
+			round = Math.max(0, round - 1);
+			canStartRegex = controlParens.pop() === true;
+			lastSignificant = char;
+			continue;
+		}
+		if (char === "[" || char === "{") {
+			if (char === "[") square += 1;
+			else curly += 1;
+			canStartRegex = true;
+			lastSignificant = char;
+			pendingControlParen = false;
+			continue;
+		}
+		if (char === "]" || char === "}") {
+			if (char === "]") square = Math.max(0, square - 1);
+			else curly = Math.max(0, curly - 1);
+			canStartRegex = false;
+			lastSignificant = char;
+			pendingControlParen = false;
+			continue;
+		}
+		if (char === ";" && round === 0 && square === 0 && curly === 0) {
+			const nextIndex = nextSignificantIndex(code, index + 1);
+			if (nextIndex < code.length && !isContinuationKeyword(code, nextIndex)) start = nextIndex;
+			canStartRegex = true;
+			lastSignificant = char;
+			pendingControlParen = false;
+			continue;
+		}
+		if (isLineTerminator(char) && round === 0 && square === 0 && curly === 0) {
+			if (!canStartRegex) {
+				const nextIndex = nextSignificantIndex(code, index + 1);
+				if (nextIndex < code.length && !isStatementContinuation(code, nextIndex, lastSignificant)) start = nextIndex;
+			}
+			canStartRegex = true;
+			continue;
+		}
+		if (!/\s/u.test(char)) {
+			canStartRegex = isExpressionOperator(char) || char === ",";
+			lastSignificant = char;
+			pendingControlParen = false;
+		}
 	}
 	return start;
+}
+
+const STATEMENT_CONTINUATION_KEYWORDS = new Set(["catch", "else", "finally"]);
+
+function isContinuationKeyword(code, index) {
+	if (!isIdentifierStart(code[index])) return false;
+	return STATEMENT_CONTINUATION_KEYWORDS.has(code.slice(index, readIdentifier(code, index)));
+}
+
+function isStatementContinuation(code, index, previousChar) {
+	const char = code[index];
+	if (char === "(" || char === "[" || char === "`") return previousChar !== "}" && previousChar !== "";
+	if (char === "!" || char === "~") return false;
+	if (char !== undefined && isDeclarationContinuation(char)) return true;
+	return isContinuationKeyword(code, index);
 }
