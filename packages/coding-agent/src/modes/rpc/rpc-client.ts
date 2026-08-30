@@ -26,6 +26,7 @@ import type {
 	RpcProviderAccount,
 	RpcResponse,
 	RpcSessionModelEntry,
+	RpcSessionReplacedEvent,
 	RpcSessionState,
 	RpcSlashCommand,
 } from "./rpc-types.ts";
@@ -81,6 +82,12 @@ export type RpcClientEvent =
 	| RpcProviderAccountEvent
 	| RpcExtensionEvent
 	| RpcExtensionUIRequest
+	// The host swapped the live session behind this connection. Part of the public
+	// union so a typed client can discriminate on the type and read the new
+	// `durableSessionId` without casting: the command response carries only
+	// `{ cancelled }`, and a replacement may be driven by another client or an
+	// extension, so this is the only channel delivering the new identity.
+	| RpcSessionReplacedEvent
 	| { type: "bash_start" }
 	| { type: "bash_end" };
 export type RpcEventListener = (event: RpcClientEvent) => void;
@@ -846,7 +853,9 @@ export class RpcClient {
 					event.type === "extension_event" ||
 					event.type === "bash_start" ||
 					event.type === "bash_end" ||
-					event.type === "extension_ui_request"
+					event.type === "extension_ui_request" ||
+					// Connection-level, not part of the agent's event stream.
+					event.type === "session_replaced"
 				)
 					return;
 				events.push(event);

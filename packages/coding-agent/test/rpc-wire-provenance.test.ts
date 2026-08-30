@@ -163,6 +163,32 @@ describe("RPC wire provenance", () => {
 		await handler.dispose();
 	});
 
+	it("keeps the replacement identity intact on a routed multi-session connection", async () => {
+		const first = await newHarness();
+		const second = await newHarness();
+		const collected = makeSink();
+		const host = makeRuntimeHost(first.session);
+		// The lane the key separation exists for: only a routed connection tags every
+		// record with its per-connection handle, and tagSessionRecord() applies that
+		// tag last. Carrying the identity under `sessionId` would be overwritten here
+		// and nowhere else, so the classic case above cannot catch a regression.
+		const handler = createRpcConnectionHandler(host.runtimeHost, collected.sink, { sessionId: "rpc-attached" });
+		await handler.ready;
+
+		const replaced = collected.waitFor((record) => record.type === "session_replaced");
+		await host.replaceWith(second.session);
+
+		expect(await replaced).toMatchObject({
+			type: "session_replaced",
+			durableSessionId: second.session.sessionId,
+			// The routing handle still rides alongside, untouched by the identity.
+			sessionId: "rpc-attached",
+		});
+		expect(second.session.sessionId).not.toBe("rpc-attached");
+
+		await handler.dispose();
+	});
+
 	// Finding 4 -----------------------------------------------------------------
 	it("carries user abort provenance across the RPC boundary in state and the abort event", async () => {
 		const harness = await newHarness();

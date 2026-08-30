@@ -22,6 +22,24 @@
 - `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`: settings list construction and callbacks.
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: assistant component construction, tool-separated timestamp eligibility, runtime settings, `/settings` callbacks, and reload transcript reconstruction.
 
+## 2026-08-30 - Rebind the shared-host proxy on session_replaced
+
+### What changed
+
+- `interactive-host-runtime.ts`: the remote session proxy handles the `session_replaced` wire event by refreshing its binding. Refreshes are serialized, so a replacement-driven refresh cannot interleave with a caller-driven one and commit a snapshot mixing two sessions. Replacements this runtime drives itself are wrapped in `aroundLocalReplacement`, which suppresses the echo a multi-session host broadcasts back to the issuing connection; the scope covers the whole command, because the host emits while completing it. `createRemoteSessionProxy` is exported for direct coverage.
+
+### Why
+
+- A replacement can be driven by any other attached client, or by an extension that no client asked, and the command response carries only `{ cancelled }`. Without handling the event the proxy kept serving the previous session's `sessionManager`, `settingsManager`, and mirrored message list while the host had already moved on. Without the suppression the echo raced the runtime's own ordered refresh/rebind, which transports setup entries between two refreshes. The event is deliberately not forwarded to `AgentSession` listeners: it is connection-level, not part of the agent event stream.
+
+### Why an extension could not handle it
+
+- The proxy owns the shared-host binding beneath every extension surface; no extension hook observes the connection's replacement notice.
+
+### Expected merge conflict zones
+
+- LOW: the wire-event switch in the proxy's `client.onEvent` handler, the replacement methods, and the `refresh` definition.
+
 ## 2026-08-30 - Scope host UI dispatch to the shared-host lane
 
 ### What changed

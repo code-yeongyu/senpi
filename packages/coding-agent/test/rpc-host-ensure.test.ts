@@ -141,6 +141,35 @@ describe("ensureHost", () => {
 		await expect(access(paths.pidFile)).rejects.toMatchObject({ code: "ENOENT" });
 		await expect(access(qa.socket)).rejects.toMatchObject({ code: "ENOENT" });
 	}, 10_000);
+
+	it("fails fast when the spawned host exits before readiness", async () => {
+		const qa = await scratch("early-exit");
+		const startedAt = Date.now();
+		await expect(
+			ensureFixtureHost(qa, {
+				readinessTimeoutMs: 5_000,
+				spawn: { command: "/bin/sh", args: ["-c", "exit 7"] },
+			}),
+		).rejects.toThrow(/exited.*7/);
+		expect(Date.now() - startedAt).toBeLessThan(2_500);
+	}, 10_000);
+
+	it("reports an incompatible protocol answer instead of a readiness timeout", async () => {
+		const qa = await scratch("incompatible-answer");
+		const helper = `
+			const net = require("node:net");
+			const server = net.createServer((socket) => {
+				socket.on("data", () => socket.end(JSON.stringify({ id: "ensure-host-probe", success: true, data: { serverVersion: "0.0.0-wrong", capabilities: [] } }) + "\\n"));
+			});
+			server.listen(process.argv[1]);
+		`;
+		await expect(
+			ensureFixtureHost(qa, {
+				readinessTimeoutMs: 500,
+				spawn: { command: process.execPath, args: ["-e", helper, qa.socket] },
+			}),
+		).rejects.toThrow(/incompatible|0\\.0\\.0-wrong/);
+	}, 10_000);
 });
 
 describe("defaultHostLaunch", () => {

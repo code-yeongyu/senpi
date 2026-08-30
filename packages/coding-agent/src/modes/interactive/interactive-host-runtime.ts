@@ -166,21 +166,27 @@ export class RemoteInteractiveRuntime {
 		setup?: (sessionManager: SessionManager) => Promise<void>;
 		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 	}): Promise<{ cancelled: boolean }> {
-		const result = await this.#client.newSession(options?.parentSession);
-		if (!result.cancelled) {
-			this.#beforeSessionInvalidate?.();
-			this.#remoteSession.abortLocalBash();
-			await this.#remoteSession.refresh();
-			if (options?.setup) {
-				const capture = SessionManager.inMemory(this.#remoteSession.session.sessionManager.getCwd());
-				await options.setup(capture);
-				for (const entry of capture.getEntries()) await this.#client.appendSessionEntry(entry);
+		// Suppresses for the ENTIRE command, not just the refresh tail: a
+		// multi-session host emits session_replaced while completing it, so the echo
+		// can arrive before the refresh/rebind sequence below starts and race it -
+		// newSession transports setup entries between two refreshes.
+		return this.#remoteSession.aroundLocalReplacement(async () => {
+			const result = await this.#client.newSession(options?.parentSession);
+			if (!result.cancelled) {
+				this.#beforeSessionInvalidate?.();
+				this.#remoteSession.abortLocalBash();
 				await this.#remoteSession.refresh();
+				if (options?.setup) {
+					const capture = SessionManager.inMemory(this.#remoteSession.session.sessionManager.getCwd());
+					await options.setup(capture);
+					for (const entry of capture.getEntries()) await this.#client.appendSessionEntry(entry);
+					await this.#remoteSession.refresh();
+				}
+				await this.#rebindSession?.();
+				if (options?.withSession) await options.withSession(this.#remoteSession.createReplacedSessionContext());
 			}
-			await this.#rebindSession?.();
-			if (options?.withSession) await options.withSession(this.#remoteSession.createReplacedSessionContext());
-		}
-		return result;
+			return result;
+		});
 	}
 	async switchSession(
 		sessionPath: string,
@@ -190,43 +196,53 @@ export class RemoteInteractiveRuntime {
 			projectTrustContextFactory?: (cwd: string) => ProjectTrustContext;
 		},
 	): Promise<{ cancelled: boolean }> {
-		const result = await this.#client.switchSession(
-			sessionPath,
-			options?.cwdOverride === undefined ? undefined : { cwdOverride: options.cwdOverride },
-		);
-		if (!result.cancelled) {
-			this.#beforeSessionInvalidate?.();
-			this.#remoteSession.abortLocalBash();
-			await this.#remoteSession.refresh();
-			await this.#rebindSession?.();
-			// The shared host already resolved trust; this callback is retained for
-			// compatibility, but its result cannot override host-authoritative state.
-			options?.projectTrustContextFactory?.(this.#remoteSession.session.sessionManager.getCwd());
-			if (options?.withSession) await options.withSession(this.#remoteSession.createReplacedSessionContext());
-		}
-		return result;
+		// See newSession: the suppression must cover the command itself, since the
+		// host emits session_replaced while completing it.
+		return this.#remoteSession.aroundLocalReplacement(async () => {
+			const result = await this.#client.switchSession(
+				sessionPath,
+				options?.cwdOverride === undefined ? undefined : { cwdOverride: options.cwdOverride },
+			);
+			if (!result.cancelled) {
+				this.#beforeSessionInvalidate?.();
+				this.#remoteSession.abortLocalBash();
+				await this.#remoteSession.refresh();
+				await this.#rebindSession?.();
+				// The shared host already resolved trust; this callback is retained for
+				// compatibility, but its result cannot override host-authoritative state.
+				options?.projectTrustContextFactory?.(this.#remoteSession.session.sessionManager.getCwd());
+				if (options?.withSession) await options.withSession(this.#remoteSession.createReplacedSessionContext());
+			}
+			return result;
+		});
 	}
 	async fork(
 		entryId: string,
 		options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 	): Promise<{ cancelled: boolean; selectedText?: string }> {
-		const result = await this.#client.fork(entryId, options);
-		if (!result.cancelled) {
-			this.#beforeSessionInvalidate?.();
-			this.#remoteSession.abortLocalBash();
-			await this.#refreshAndRebind();
-			if (options?.withSession) await options.withSession(this.#remoteSession.createReplacedSessionContext());
-		}
-		return { cancelled: result.cancelled, selectedText: result.text };
+		// See newSession: the suppression must cover the command itself.
+		return this.#remoteSession.aroundLocalReplacement(async () => {
+			const result = await this.#client.fork(entryId, options);
+			if (!result.cancelled) {
+				this.#beforeSessionInvalidate?.();
+				this.#remoteSession.abortLocalBash();
+				await this.#refreshAndRebind();
+				if (options?.withSession) await options.withSession(this.#remoteSession.createReplacedSessionContext());
+			}
+			return { cancelled: result.cancelled, selectedText: result.text };
+		});
 	}
 	async importFromJsonl(inputPath: string, cwdOverride?: string): Promise<{ cancelled: boolean }> {
-		const result = await this.#client.importJsonl(inputPath, cwdOverride);
-		if (!result.cancelled) {
-			this.#beforeSessionInvalidate?.();
-			this.#remoteSession.abortLocalBash();
-			await this.#refreshAndRebind();
-		}
-		return result;
+		// See newSession: the suppression must cover the command itself.
+		return this.#remoteSession.aroundLocalReplacement(async () => {
+			const result = await this.#client.importJsonl(inputPath, cwdOverride);
+			if (!result.cancelled) {
+				this.#beforeSessionInvalidate?.();
+				this.#remoteSession.abortLocalBash();
+				await this.#refreshAndRebind();
+			}
+			return result;
+		});
 	}
 
 	async #refreshAndRebind(): Promise<void> {
@@ -239,11 +255,19 @@ interface RemoteSessionProxy {
 	readonly session: AgentSession;
 	setHostUiHandler(callback?: InteractiveHostUiHandler): void;
 	refresh(): Promise<void>;
+	/**
+	 * Run a replacement this runtime is driving itself, suppressing the refresh
+	 * that the host's broadcast `session_replaced` would otherwise trigger. The
+	 * caller owns the refresh/rebind ordering for its own replacements, so the
+	 * scope must cover the command itself, not just its refresh tail.
+	 */
+	aroundLocalReplacement<T>(body: () => Promise<T>): Promise<T>;
 	abortLocalBash(): void;
 	createReplacedSessionContext(): ReplacedSessionContext;
 }
 
-function createRemoteSessionProxy(
+/** Exported for direct coverage of the wire-event handling below. */
+export function createRemoteSessionProxy(
 	local: AgentSession,
 	agentDir: string,
 	client: RpcClient,
@@ -342,6 +366,8 @@ function createRemoteSessionProxy(
 	});
 	let streamingAssistant: Extract<AgentSession["messages"][number], { role: "assistant" }> | undefined;
 	let mirroredCurrentAssistantUsage = false;
+	/** Non-zero while this runtime is driving its own replacement sequence. */
+	let localReplacementDepth = 0;
 	const listeners = new Set<AgentSessionEventListener>();
 	client.onEvent((wireEvent) => {
 		if ((wireEvent as { type?: string }).type === "extension_ui_request") {
@@ -351,6 +377,24 @@ function createRemoteSessionProxy(
 					(response) => response && client.sendExtensionUIResponse(response),
 				);
 			else pendingUiRequests.push(request);
+			return;
+		}
+		if (wireEvent.type === "session_replaced") {
+			// The host swapped the live session behind this connection - another
+			// attached client issued the replacement, or an extension drove one that no
+			// client issued. Nothing else re-reads the binding, so without this the
+			// proxy keeps serving the previous session's manager, settings and message
+			// mirror while the host has already moved on. The command response carries
+			// only `{ cancelled }`, so this event is the only signal available here.
+			//
+			// A multi-session host broadcasts the event to every connection including
+			// the one that issued the replacement, and this runtime's own replacement
+			// methods already run an ordered refresh/rebind - newSession additionally
+			// transports setup entries between two refreshes. Refreshing again from
+			// here would race that sequence, so self-driven replacements are skipped.
+			if (localReplacementDepth === 0) {
+				void refresh().catch(reportActionFailure("session refresh after replacement"));
+			}
 			return;
 		}
 		if (wireEvent.type === "agent_settled") state = { ...state, isStreaming: false, retryAttempt: 0 };
@@ -476,7 +520,7 @@ function createRemoteSessionProxy(
 		const event = hydrateMessageUpdate(wireEvent, streamingAssistant);
 		for (const listener of listeners) listener(event);
 	});
-	const refresh = async (): Promise<void> => {
+	const performRefresh = async (): Promise<void> => {
 		const nextState = await client.getState();
 		state = { ...stateFromRpc(nextState) };
 		nextQueuedInputOrder = Math.max(0, ...nextState.ordered.map((item) => item.enqueueOrder));
@@ -504,6 +548,19 @@ function createRemoteSessionProxy(
 		}
 		local.agent.state.messages.splice(0, local.agent.state.messages.length, ...structuredClone(messages));
 		streamingAssistant = undefined;
+	};
+	// Refreshes must not interleave: each one reassigns sessionManager,
+	// settingsManager and the mirrored message list, so two in flight can commit a
+	// mixed snapshot of two different sessions. A replacement-driven refresh races
+	// exactly that way against a caller-driven one, so run them in order.
+	let refreshChain: Promise<void> = Promise.resolve();
+	const refresh = (): Promise<void> => {
+		const next = refreshChain.then(performRefresh, performRefresh);
+		refreshChain = next.then(
+			() => {},
+			() => {},
+		);
+		return next;
 	};
 	const session = new Proxy(local, {
 		get(target, property, receiver) {
@@ -766,6 +823,14 @@ function createRemoteSessionProxy(
 					);
 		},
 		refresh,
+		aroundLocalReplacement: async (body) => {
+			localReplacementDepth++;
+			try {
+				return await body();
+			} finally {
+				localReplacementDepth--;
+			}
+		},
 		abortLocalBash: () => localBashAbortController?.abort(),
 		createReplacedSessionContext: () => {
 			const context = local.createReplacedSessionContext();

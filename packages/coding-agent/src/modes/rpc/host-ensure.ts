@@ -148,9 +148,12 @@ async function startHost(
 	);
 	const stderr = await open(paths.stderrLog, "w", 0o600);
 	let pidFile: DaemonPidFile | undefined;
+	let child: ReturnType<typeof spawn> | undefined;
+	let exitedEarly: ChildExit | undefined;
+	let childExit: Promise<ChildExit> | undefined;
 	try {
 		const launch = testOptions?.spawn ?? defaultHostLaunch(socket, testOptions?.hostArgs ?? []);
-		const child = spawn(launch.command, [...launch.args], {
+		child = spawn(launch.command, [...launch.args], {
 			detached: true,
 			env: {
 				...process.env,
@@ -160,21 +163,43 @@ async function startHost(
 			},
 			stdio: ["ignore", "ignore", stderr.fd],
 		});
+		childExit = new Promise((resolveExit) => {
+			child!.once("exit", (code, signal) => {
+				exitedEarly = { code, signal };
+				resolveExit(exitedEarly);
+			});
+		});
 		child.unref();
 		if (child.pid === undefined) throw new Error("failed to spawn RPC socket host");
-		pidFile = { pid: child.pid, processStartTime: await waitForStartTime(child.pid, 2_000) };
+		const processStartTime = await Promise.race([
+			waitForStartTime(child.pid, 2_000),
+			childExit.then(() => {
+				throw new Error("RPC socket host exited before its start time could be read");
+			}),
+		]);
+		pidFile = { pid: child.pid, processStartTime };
 		await writeFile(paths.pidFile, `${JSON.stringify(pidFile)}\n`, { mode: 0o600 });
+	} catch (error: unknown) {
+		if (!exitedEarly) throw error;
+		const diagnostic = await appendStderr(
+			paths,
+			`RPC socket host exited with code ${exitedEarly.code ?? "null"}${exitedEarly.signal ? ` (${exitedEarly.signal})` : ""} before answering get_protocol_info`,
+		);
+		await cleanupState(paths);
+		throw new Error(diagnostic);
 	} finally {
 		await stderr.close();
 	}
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? 10_000;
-	const protocol = await pollProtocolInfo(socket, readinessTimeoutMs);
-	if (isCompatible(protocol)) return { pid: pidFile.pid, socket, reused: false };
+	const result = await pollProtocolInfo(socket, readinessTimeoutMs, childExit);
+	if (isCompatible(result.protocol)) return { pid: pidFile.pid, socket, reused: false };
 	await stopManagedHost(pidFile, testOptions?.stopTimeoutMs ?? 10_000);
-	const diagnostic = await appendStderr(
-		paths,
-		`spawned RPC socket host did not answer get_protocol_info within ${readinessTimeoutMs}ms`,
-	);
+	const message = result.protocol
+		? `RPC socket host answered get_protocol_info with serverVersion ${result.protocol.serverVersion} and capabilities ${JSON.stringify(result.protocol.capabilities)}, but is incompatible with serverVersion ${VERSION} and required capabilities ${JSON.stringify(REQUIRED_CAPABILITIES)}`
+		: result.exited
+			? `RPC socket host exited with code ${result.exited.code ?? "null"}${result.exited.signal ? ` (${result.exited.signal})` : ""} before answering get_protocol_info`
+			: `spawned RPC socket host did not answer get_protocol_info within ${readinessTimeoutMs}ms`;
+	const diagnostic = await appendStderr(paths, message);
 	await cleanupState(paths);
 	// The supervisor may have failed before binding, or another owner may have
 	// appeared while readiness was being checked. Never unlink an endpoint we
@@ -209,14 +234,32 @@ async function waitForGone(pidFile: DaemonPidFile, timeoutMs: number): Promise<b
 	return false;
 }
 
-async function pollProtocolInfo(socket: string, timeoutMs: number): Promise<ProtocolInfo | undefined> {
+type ChildExit = { readonly code: number | null; readonly signal: NodeJS.Signals | null };
+
+type ProtocolPollResult = { readonly protocol?: ProtocolInfo; readonly exited?: ChildExit };
+
+async function pollProtocolInfo(
+	socket: string,
+	timeoutMs: number,
+	childExit?: Promise<ChildExit>,
+): Promise<ProtocolPollResult> {
 	const deadline = Date.now() + timeoutMs;
+	let lastProtocol: ProtocolInfo | undefined;
 	while (Date.now() <= deadline) {
-		const info = await probeProtocolInfo(socket, Math.min(500, Math.max(1, deadline - Date.now())));
-		if (info) return info;
+		const probe = probeProtocolInfo(socket, Math.min(500, Math.max(1, deadline - Date.now())));
+		const info = childExit ? await Promise.race([probe, childExit]) : await probe;
+		if (isChildExit(info)) return { protocol: lastProtocol, exited: info };
+		if (info) {
+			lastProtocol = info;
+			if (isCompatible(info)) return { protocol: info };
+		}
 		await delay(50);
 	}
-	return undefined;
+	return { protocol: lastProtocol };
+}
+
+function isChildExit(value: ProtocolInfo | ChildExit | undefined): value is ChildExit {
+	return !!value && "code" in value && "signal" in value;
 }
 
 function probeProtocolInfo(socketPath: string, timeoutMs: number): Promise<ProtocolInfo | undefined> {

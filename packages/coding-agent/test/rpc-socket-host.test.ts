@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Readable } from "node:stream";
+import { PassThrough, type Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../src/cli/args.ts";
 import { attachJsonlLineReader } from "../src/modes/rpc/jsonl.ts";
@@ -54,7 +54,7 @@ class JsonlPeer {
 	waitFor(predicate: (value: RecordValue) => boolean, timeoutMs = 15_000): Promise<RecordValue> {
 		const existing = this.messages.find(predicate);
 		if (existing) return Promise.resolve(existing);
-		return new Promise((resolve, reject) => {
+		const pending = new Promise<RecordValue>((resolve, reject) => {
 			const waiter = {
 				predicate,
 				resolve,
@@ -66,6 +66,15 @@ class JsonlPeer {
 			};
 			this.waiters.add(waiter);
 		});
+		// Callers arm a waiter BEFORE the command that triggers it and await it only
+		// after that command returns, so anything rejecting in between - the timeout
+		// or close() during teardown - rejects a promise with no handler attached
+		// yet. Node then reports an unhandled rejection blamed on whichever test
+		// happened to be running when the timer fired. Marking the promise handled at
+		// creation closes that window for good; the rejection still propagates to the
+		// eventual awaiter, so failures are surfaced rather than swallowed.
+		pending.catch(() => {});
+		return pending;
 	}
 
 	close(): void {
@@ -224,6 +233,71 @@ function normalizeResponse(value: RecordValue): RecordValue {
 	return clone;
 }
 
+/**
+ * Observe whether Node reports an unhandled rejection while `body` runs.
+ *
+ * Subscribes before triggering, then waits for either the rejection event or a
+ * bounded deadline, so the check never depends on a fixed sleep landing after
+ * the microtask checkpoint.
+ */
+async function unhandledRejectionDuring(body: () => void, settleMs = 250): Promise<unknown> {
+	let onUnhandled!: (reason: unknown) => void;
+	const observed = new Promise<unknown>((resolve) => {
+		onUnhandled = (reason: unknown) => resolve(reason);
+		process.on("unhandledRejection", onUnhandled);
+		setTimeout(() => resolve(undefined), settleMs);
+	});
+	try {
+		body();
+		return await observed;
+	} finally {
+		process.off("unhandledRejection", onUnhandled);
+	}
+}
+
+describe("JSONL peer waiter lifecycle", () => {
+	// Every waiter in this suite is armed BEFORE the command that triggers it and
+	// awaited only after that command returns. Whatever rejects in that window -
+	// the timeout, or close() during teardown - rejects a promise nobody is
+	// holding yet. A longer timeout only narrows the window; the rejection must be
+	// handled from the moment the waiter exists.
+	it("does not surface an unhandled rejection when an armed waiter times out before it is awaited", async () => {
+		const peer = new JsonlPeer(new PassThrough(), () => {});
+		let pending!: Promise<RecordValue>;
+
+		const reason = await unhandledRejectionDuring(() => {
+			pending = peer.waitFor(() => false, 1);
+		});
+
+		expect(reason).toBeUndefined();
+		// The rejection still reaches the eventual awaiter; it is handled, not swallowed.
+		await expect(pending).rejects.toThrow(/Timed out waiting for RPC record/);
+	});
+
+	it("does not surface an unhandled rejection when close() settles an armed waiter", async () => {
+		const peer = new JsonlPeer(new PassThrough(), () => {});
+		let pending!: Promise<RecordValue>;
+
+		const reason = await unhandledRejectionDuring(() => {
+			pending = peer.waitFor(() => false, 60_000);
+			peer.close();
+		});
+
+		expect(reason).toBeUndefined();
+		await expect(pending).rejects.toThrow(/RPC peer closed/);
+	});
+
+	it("still resolves a waiter armed before the matching record arrives", async () => {
+		const stream = new PassThrough();
+		const peer = new JsonlPeer(stream, () => {});
+
+		const pending = peer.waitFor((value) => value.type === "late", 15_000);
+		stream.write(`${JSON.stringify({ type: "late", ok: true })}\n`);
+
+		expect(await pending).toMatchObject({ type: "late", ok: true });
+	});
+});
+
 describe("RPC Unix-socket multi-connection host", () => {
 	it("signals unsupported factory widgets while preserving array widgets", async () => {
 		const qa = scratch("widget-factory");
@@ -257,16 +331,19 @@ describe("RPC Unix-socket multi-connection host", () => {
 		await waitForStderr(child, `senpi rpc listening on unix://${qa.socketPath}`);
 		const peer = await connectPeer(qa.socketPath);
 		try {
+			// Armed before open_session so neither request can be missed, but left on
+			// the default timeout: both only arrive after the session spawns and loads
+			// its extensions, which outruns a 1s budget on a loaded CI shard. A short
+			// deadline here rejected both waiters and surfaced as two unhandled
+			// rejections attributed to whichever test ran next.
 			const arrayWidget = peer.peer.waitFor(
 				(value) =>
 					value.type === "extension_ui_request" &&
 					value.method === "setWidget" &&
 					value.widgetKey === "array-widget",
-				1_000,
 			);
 			const unsupported = peer.peer.waitFor(
 				(value) => value.type === "extension_ui_request" && value.method === "custom_unsupported",
-				1_000,
 			);
 			const opened = await peer.peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
 			const sessionId = openedSessionId(opened);
