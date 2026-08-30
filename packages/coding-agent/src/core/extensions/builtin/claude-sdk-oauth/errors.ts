@@ -46,7 +46,7 @@ export function classifySdkError(error: unknown): SdkErrorClassification {
 	// validity. Match them before `authentication_failed` because the auth lane
 	// wraps every refresh exception with that SDK-compatible prefix.
 	if (
-		/\b(?:enotfound|eai_again|econnreset|econnrefused|etimedout|enetworkdown|enetunreach|ehostunreach|und_err_connect_timeout|und_err_socket)\b|fetch failed|network(?: request)? (?:failed|error)|socket hang up/.test(
+		/\b(?:enotfound|eai_again|econnreset|econnrefused|etimedout|enetworkdown|enetunreach|ehostunreach|und_err_connect_timeout|und_err_socket)\b|fetch failed|network(?: request)? (?:failed|error)|socket hang up|connection reset by peer/.test(
 			text,
 		)
 	) {

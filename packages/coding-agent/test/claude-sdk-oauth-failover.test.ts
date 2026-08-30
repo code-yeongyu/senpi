@@ -85,13 +85,13 @@ describe("Claude SDK OAuth failover", () => {
 		});
 	});
 
-	it("still treats unrelated errors as non-retryable", () => {
+	it("keeps unrelated errors non-retryable while treating connection resets as transient", () => {
 		// The prose matcher must not swallow ordinary failures into the retry path.
 		expect(classifySdkError("context window exceeded for this request")).toEqual({
 			kind: "other",
 			retryable: false,
 		});
-		expect(classifySdkError("connection reset by peer")).toEqual({ kind: "other", retryable: false });
+		expect(classifySdkError("connection reset by peer")).toEqual({ kind: "other", retryable: true });
 	});
 
 	it("walks HRW order after a rate limit, persists the cooldown, and emits failover", async () => {
