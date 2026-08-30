@@ -6,6 +6,9 @@
 
 ### Fixed
 
+- Claude SDK OAuth no longer treats DNS, connection, timeout, socket, or fetch failures during token refresh as a
+  rejected token that blocks the account until re-login; real OAuth rejection signals remain persistent auth errors.
+
 - Bash callback settlement is bounded on direct, shared-host, and harness execution paths so never-settling callbacks cannot hang commands or silently lose spill cleanup failures.
 
 - Deterministic compaction fallback now supports replay-safe Gemini opaque provider state (thoughtSignature, thinkingSignature, textSignature, and empty visible text blocks) and recovers earlier safe boundaries without breaking atomic tool-call chains ([#947](https://github.com/code-yeongyu/senpi/pull/947)).

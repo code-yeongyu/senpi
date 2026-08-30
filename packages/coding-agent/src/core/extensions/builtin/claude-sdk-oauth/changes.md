@@ -1,5 +1,35 @@
 # claude-sdk-oauth
 
+## 2026-08-30 - Keep transient OAuth refresh failures temporary
+
+### What changed
+
+- `errors.ts`: DNS, connection, timeout, socket, and fetch transport failures classify as retryable transient errors
+  before the generic `authentication_failed` SDK code is considered. Explicit `invalid_grant`, `invalid_token`,
+  revoked-token, HTTP 401, and unauthorized signals remain persistent `auth_error` classifications.
+- `auth-lane.ts`: recognized transient refresh failures surface as `server_error` instead of claiming that the OAuth
+  token was rejected.
+- `guidance.ts`: all-account guidance now names transient provider failures among temporary block causes.
+- `test/suite/regressions/claude-oauth-refresh-network-classification.test.ts`: locks the transient/auth boundary with
+  the observed `ENOTFOUND platform.claude.com` and Undici timeout shapes.
+
+### Why
+
+- A temporary DNS outage made the Anthropic refresh request fail before the server could inspect the token. The auth
+  lane wrapped every refresh exception as `authentication_failed`; failover therefore persisted `auth_error`, which
+  never expires and incorrectly required re-login. Other external APIs failed DNS in the same window, confirming a
+  transport outage rather than token rejection.
+
+### Why an extension could not handle it
+
+- Refresh executes inside this builtin's managed account lane before the Claude subprocess starts. Only this layer
+  can preserve the distinction between transport failure and an OAuth server rejection before failover persists the
+  account state.
+
+### Expected merge conflict zones
+
+- LOW in `errors.ts` before SDK-code matching, `auth-lane.ts` refresh error wrapping, and `guidance.ts` blocked text.
+
 ## 2026-08-30 - Preserve selected OAuth slots during provider preflight
 
 ### What changed

@@ -23,7 +23,7 @@ export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined)
 			? new Date(soonestUnblockAt).toISOString()
 			: "after re-login";
 	return [
-		`All Claude accounts for ${PROVIDER} are currently blocked (rate limit or auth errors).`,
+		`All Claude accounts for ${PROVIDER} are currently blocked (rate limit, transient provider, or auth errors).`,
 		`  Soonest automatic retry: ${eta}.`,
 		`  /claude-account list  - inspect account states`,
 		`  /login ${PROVIDER}  - add another account`,

@@ -18,6 +18,8 @@ const SDK_ERROR_CLASSIFICATIONS: Partial<Record<SDKAssistantMessageError, SdkErr
 };
 
 const OTHER_ERROR: SdkErrorClassification = { kind: "other", retryable: false };
+const TRANSIENT_NETWORK_ERROR: SdkErrorClassification = { kind: "other", retryable: true };
+const AUTH_ERROR: SdkErrorClassification = { kind: "auth_error", retryable: true };
 
 function record(value: unknown): Record<string, unknown> | undefined {
 	return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -40,8 +42,23 @@ function errorText(error: unknown): string {
 /** Classifies Claude SDK OAuth error codes and HTTP-shaped fallback text in one place. */
 export function classifySdkError(error: unknown): SdkErrorClassification {
 	const text = errorText(error).toLowerCase();
+	// Transport failures during token refresh do not say anything about token
+	// validity. Match them before `authentication_failed` because the auth lane
+	// wraps every refresh exception with that SDK-compatible prefix.
+	if (
+		/\b(?:enotfound|eai_again|econnreset|econnrefused|etimedout|enetworkdown|enetunreach|ehostunreach|und_err_connect_timeout|und_err_socket)\b|fetch failed|network(?: request)? (?:failed|error)|socket hang up/.test(
+			text,
+		)
+	) {
+		return TRANSIENT_NETWORK_ERROR;
+	}
 	for (const [code, classification] of Object.entries(SDK_ERROR_CLASSIFICATIONS)) {
 		if (new RegExp(`\\b${code}\\b`).test(text)) return classification;
+	}
+	if (
+		/\binvalid_grant\b|\binvalid_token\b|\btoken\b[^.]*\brevoked\b|\b(?:http\s*)?401\b|\bunauthorized\b/.test(text)
+	) {
+		return AUTH_ERROR;
 	}
 	if (/\b(?:http\s*)?429\b|too many requests|rate[ _-]?limit/.test(text)) {
 		return { kind: "rate_limit", retryable: true };

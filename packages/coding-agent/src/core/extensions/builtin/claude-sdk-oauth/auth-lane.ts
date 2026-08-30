@@ -143,7 +143,10 @@ async function prepareSlot(
 			Object.assign(slot, updated);
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
-			throw new Error(`authentication_failed: ${detail}`);
+			const classification = classifySdkError(error);
+			const code =
+				classification.kind === "other" && classification.retryable ? "server_error" : "authentication_failed";
+			throw new Error(`${code}: ${detail}`);
 		}
 	}
 	const access = slot.source === "env" ? envSlotToken((name) => environment[name], slot.name) : slot.access;
