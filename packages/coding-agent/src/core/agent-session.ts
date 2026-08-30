@@ -108,6 +108,7 @@ import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import { resolveReserveTokens } from "./extensions/builtin/compaction/policy.ts";
 import { CODEX_RESPONSES_API, type ServiceTier } from "./extensions/builtin/service-tier.ts";
 import { deriveExtensionRegistrationId } from "./extensions/builtin/tool-search/engine/marker.ts";
 import { getToolSearchService } from "./extensions/builtin/tool-search/service.ts";
@@ -5638,7 +5639,11 @@ export class AgentSession {
 		}
 		const contextTokens = estimateMessagesTokens(filterContextExcludedMessages(simulatedMessages));
 		const settings = this.settingsManager.getCompactionSettings();
-		return contextTokens > model.contextWindow - settings.reserveTokens;
+		const reserveTokens =
+			settings.reserveScalingEnabled === false
+				? settings.reserveTokens
+				: resolveReserveTokens(model.contextWindow, settings.reserveTokens);
+		return contextTokens > model.contextWindow - reserveTokens;
 	}
 
 	/**
@@ -5832,6 +5837,10 @@ export class AgentSession {
 		const model = this.model;
 		if (!model) return;
 		const settings = this.settingsManager.getCompactionSettings();
+		const reserveTokens =
+			settings.reserveScalingEnabled === false
+				? settings.reserveTokens
+				: resolveReserveTokens(model.contextWindow, settings.reserveTokens);
 		const isOversized = (): boolean => {
 			const providerMessages = filterContextExcludedMessages([...this.agent.state.messages, ...messages]);
 			const estimate = estimateContextTokens(providerMessages);
@@ -5843,7 +5852,7 @@ export class AgentSession {
 				usageMessage?.role === "assistant" && this._isAssistantFromBeforeLatestCompaction(usageMessage)
 					? estimateMessagesTokens(providerMessages)
 					: estimate.tokens;
-			return contextTokens > model.contextWindow - settings.reserveTokens;
+			return contextTokens > model.contextWindow - reserveTokens;
 		};
 
 		if (!settings.enabled || !isOversized()) return;

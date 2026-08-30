@@ -1,22 +1,15 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
-	type AssistantMessageEventStream,
-	type Context,
 	hasCredentialHeaders,
 	isContextOverflow,
 	isRetryableAssistantError,
 	isRetryableErrorMessage,
 	type Message,
 	type Model,
-	type ProviderHeaders,
 	retryTransientCall,
-	type StreamOptions,
-	sanitizeAnthropicToolPairs as sanitizeAnthropicPayload,
-	type TextContent,
 	type Tool,
 } from "@earendil-works/pi-ai";
-import { stream } from "@earendil-works/pi-ai/compat";
 import {
 	type CompactionPreparation,
 	type CompactionResult,
@@ -24,13 +17,7 @@ import {
 	estimateContextTokens,
 	prepareCompaction,
 } from "../../../compaction/index.ts";
-import {
-	consumeStreamWithIdleTimeout,
-	DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
-	DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
-	StreamDurationBudgetError,
-	StreamIdleTimeoutError,
-} from "../../../compaction/stream-watchdog.ts";
+import { StreamDurationBudgetError, StreamIdleTimeoutError } from "../../../compaction/stream-watchdog.ts";
 import {
 	createWarmAnchorSnapshot,
 	isWarmSummaryAnchorValid,
@@ -40,34 +27,37 @@ import { convertToLlm } from "../../../messages.ts";
 import type { ModelRegistry } from "../../../model-registry.ts";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";
 import type { ApplyCompactionResult, ContextUsage, ProviderRequestPreparation } from "../../types.ts";
+import { pruneToolResults } from "./emergency-prune.ts";
 import {
 	allowOverflowRetry,
 	boundSummarizationInput,
-	estimateTotalTokens,
-	pruneOldMessagesToBudget,
 	SUMMARIZATION_INPUT_BUDGET_RATIO,
 	SummarizationOverflowExhaustedError,
 	shrinkSummarizationInputForOverflowRetry,
 } from "./overflow-retry.ts";
 import { computeEffectiveKeepRecentTokens, computeEffectiveThreshold } from "./policy.ts";
 import { buildPrompt, type MergedCompactionPromptVariant } from "./prompts.ts";
-import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
+import { generateSummaryMessage, getSummaryText, isAssistantMessage } from "./speculative-summary.ts";
+
 import { allowSummarizationRetry, DEFAULT_SUMMARIZATION_RETRY_POLICY } from "./summarization-retry.ts";
-import { normalizeSummarizationTurnOrder } from "./summarization-turn-order.ts";
+
 import { extractTaskIntent, resolveInheritedTaskIntent } from "./task-intent.ts";
-import * as truncation from "./tool-truncation.ts";
+
+export {
+	createEmergencyPruneLatch,
+	type EmergencyPruneLatch,
+	hardLimitEmergencyPrune,
+	truncateContextMessages,
+} from "./emergency-prune.ts";
+
 import { computeStructuralYield } from "./yield.ts";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
-const EMERGENCY_CONTEXT_TARGET_RATIO = 0.95;
 // Hysteresis: the emergency prune engages at EMERGENCY_CONTEXT_TARGET_RATIO but only
 // releases once the context falls below this lower ratio. A single threshold makes a
 // session parked near the limit alternate between the pruned and un-pruned history on
 // consecutive requests; because pruning rewrites old tool results, every alternation
 // invalidates the provider prompt-cache prefix and re-bills the whole conversation.
-const EMERGENCY_CONTEXT_RELEASE_RATIO = 0.85;
-const SUMMARY_TOKEN_HEADROOM = 32_768;
-const SUMMARY_CONTEXT_WINDOW_RESERVE_RATIO = 0.5;
 const SUMMARY_SCHEMA = "senpi.compaction.summary.v1";
 type CompactionProgressCallback = (delta: string) => void;
 
@@ -185,225 +175,6 @@ export class SummaryGenerationError extends Error {
  * would otherwise reject the request for models advertising contextWindow ==
  * maxTokens (every summarization request also carries conversation input).
  */
-function summaryMaxTokens(model: Model<any>, contextWindow: number): number {
-	const headroom = model.maxTokens > 0 ? Math.min(SUMMARY_TOKEN_HEADROOM, model.maxTokens) : SUMMARY_TOKEN_HEADROOM;
-	if (contextWindow > 0) {
-		return Math.min(headroom, Math.floor(contextWindow * SUMMARY_CONTEXT_WINDOW_RESERVE_RATIO));
-	}
-	return headroom;
-}
-
-/**
- * Reasoning override for summarization requests. Compaction must be fast: a
- * summarization request that inherits the provider's default reasoning mode
- * burns its latency (and output budget) on invisible thinking before emitting
- * the summary. Disable or minimize reasoning per wire family; adapters ignore
- * options their provider does not support. Mirrors how OpenAI Codex keeps its
- * compaction turn cheap.
- */
-function summarizationReasoningOptions(model: Model<any>): Record<string, unknown> {
-	if (!model.reasoning) return {};
-	if (model.api === "anthropic-messages") return { thinkingEnabled: false };
-	const reasoningEffort = (["low", "medium", "high"] as const).find(
-		(level) => model.thinkingLevelMap?.[level] !== null,
-	);
-	if (!reasoningEffort) return {};
-	switch (model.api) {
-		case "openai-responses":
-		case "openai-codex-responses":
-		case "azure-openai-responses":
-			return { reasoningEffort, reasoningSummary: null };
-		case "openai-completions":
-			return { reasoningEffort };
-		default:
-			return {};
-	}
-}
-
-function getSummaryText(message: Message): string {
-	const content = Array.isArray(message.content)
-		? message.content
-		: [{ type: "text" as const, text: message.content }];
-	return content
-		.filter((content): content is TextContent => content.type === "text")
-		.map((content) => content.text)
-		.join("\n")
-		.trim();
-}
-
-function isAssistantMessage(message: Message): message is AssistantMessage {
-	return message.role === "assistant" && "stopReason" in message;
-}
-
-/**
- * Providers registered through `pi.registerProvider()` (claude-sdk-oauth, Kiro, any
- * extension provider) exist only in Senpi's ModelRuntime, never in compat's builtin
- * api-registry, which rejects their api id outright. Dispatch through the runtime
- * whenever it is reachable and keep compat for contexts constructed without a registry.
- */
-function summarizationStream(
-	context: SpeculativeCompactionContext,
-	model: Model<any>,
-	requestContext: Context,
-	options: StreamOptions & Record<string, unknown>,
-): AssistantMessageEventStream {
-	const runtime = context.modelRegistry?.modelRuntime;
-	return runtime ? runtime.stream(model, requestContext, options) : stream(model, requestContext, options);
-}
-
-async function generateSummaryMessage(options: {
-	context: SpeculativeCompactionContext;
-	messages: AgentMessage[];
-	onProgress?: CompactionProgressCallback;
-	prompt: ReturnType<typeof buildPrompt>;
-	signal?: AbortSignal;
-	snapshot: SpeculativeCompactionSnapshot;
-	auth: {
-		apiKey?: string;
-		headers?: ProviderHeaders;
-		extraBody?: Record<string, unknown>;
-	};
-}): Promise<Message | undefined> {
-	// Send the conversation as native LLM messages with the summarization
-	// instruction as a trailing user message, mirroring normal agent traffic.
-	// A single serialized `<conversation>` text dump of a large session is
-	// deterministically refused by Anthropic's anti-distillation classifier
-	// ("reverse engineering or duplicating model outputs"), while the same
-	// content as native blocks with the agent's system prompt and tools passes.
-	// Request-local controller: the idle watchdog must be able to tear down a
-	// stalled summarization request without aborting the caller's own signal.
-	const requestController = new AbortController();
-	const onCallerAbort = () => requestController.abort(options.signal?.reason);
-	if (options.signal) {
-		if (options.signal.aborted) onCallerAbort();
-		else options.signal.addEventListener("abort", onCallerAbort, { once: true });
-	}
-	try {
-		const requestMessages: AgentMessage[] = [
-			...options.messages,
-			{
-				role: "user",
-				content: [{ type: "text", text: options.prompt.user }],
-				timestamp: Date.now(),
-			},
-		];
-		const providerRequest = await options.context.prepareProviderRequest?.(requestMessages);
-		const requestContext = {
-			systemPrompt: options.snapshot.systemPrompt ?? options.prompt.system,
-			messages: repairOrphanedToolResults(
-				normalizeSummarizationTurnOrder(convertToLlm(providerRequest?.messages ?? requestMessages)),
-			),
-			...(options.snapshot.tools && options.snapshot.tools.length > 0 ? { tools: options.snapshot.tools } : {}),
-		};
-		const headers = providerRequest
-			? await providerRequest.transformHeaders(options.auth.headers ?? {})
-			: options.auth.headers;
-		const responseStream = summarizationStream(options.context, options.snapshot.model, requestContext, {
-			apiKey: options.auth.apiKey,
-			headers,
-			extraBody: options.auth.extraBody,
-			onPayload: async (payload, model) => {
-				const sanitized = model.api === "anthropic-messages" ? sanitizeAnthropicPayload(payload) : payload;
-				return providerRequest ? await providerRequest.transformPayload(sanitized) : sanitized;
-			},
-			maxTokens: summaryMaxTokens(options.snapshot.model, options.snapshot.contextWindow),
-			signal: requestController.signal,
-			...summarizationReasoningOptions(options.snapshot.model),
-		});
-		await consumeStreamWithIdleTimeout(responseStream, {
-			idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
-			maxDurationMs: DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
-			abort: () => requestController.abort(),
-			signal: options.signal,
-			onEvent: (event) => {
-				if (event.type === "text_delta" && event.delta) {
-					options.onProgress?.(event.delta);
-				}
-			},
-		});
-		return await responseStream.result();
-	} finally {
-		if (options.signal) options.signal.removeEventListener("abort", onCallerAbort);
-	}
-}
-
-function pruneToolResults(messages: AgentMessage[], contextWindow: number, budgetRatio: number): AgentMessage[] {
-	const toolResults = messages
-		.filter((message) => message.role === "toolResult")
-		.map((message) => ({ content: message.content, details: undefined }));
-	if (toolResults.length === 0) return messages;
-
-	const prunedResults = truncation.prePruneToolOutputsToBudget(toolResults, contextWindow * budgetRatio);
-	let resultIndex = 0;
-	return messages.map((message) => {
-		if (message.role !== "toolResult") return message;
-		const pruned = prunedResults[resultIndex];
-		resultIndex++;
-		return pruned ? { ...message, content: pruned.content } : message;
-	});
-}
-
-export function truncateContextMessages(messages: AgentMessage[]): AgentMessage[] {
-	const toolResults = messages
-		.filter((message) => message.role === "toolResult")
-		.map((message) => ({ content: message.content, details: undefined }));
-	if (toolResults.length === 0) return messages;
-
-	const truncatedResults = truncation.truncateOversizedToolResults(toolResults);
-	let resultIndex = 0;
-	return messages.map((message) => {
-		if (message.role !== "toolResult") return message;
-		const truncated = truncatedResults[resultIndex];
-		resultIndex++;
-		return truncated ? { ...message, content: truncated.content } : message;
-	});
-}
-
-/**
- * Sticky engage/release state for {@link hardLimitEmergencyPrune}. Callers that
- * issue many requests for one session share a single latch so the emitted context
- * shape stays stable while the estimate hovers around the engage threshold.
- */
-export interface EmergencyPruneLatch {
-	engaged: boolean;
-}
-
-export function createEmergencyPruneLatch(): EmergencyPruneLatch {
-	return { engaged: false };
-}
-
-export function hardLimitEmergencyPrune(
-	messages: AgentMessage[],
-	contextWindow: number,
-	latch?: EmergencyPruneLatch,
-): {
-	messages: AgentMessage[];
-	needsAggressiveCompaction: boolean;
-} {
-	const targetTokens = Math.floor(contextWindow * EMERGENCY_CONTEXT_TARGET_RATIO);
-	const releaseTokens = Math.floor(contextWindow * EMERGENCY_CONTEXT_RELEASE_RATIO);
-	const totalTokens = estimateTotalTokens(messages);
-	// Without a latch this keeps the historical single-threshold behaviour.
-	const engaged = latch
-		? latch.engaged
-			? totalTokens > releaseTokens
-			: totalTokens > targetTokens
-		: totalTokens > targetTokens;
-	if (latch) latch.engaged = engaged;
-	if (!engaged) {
-		return { messages, needsAggressiveCompaction: false };
-	}
-	const noLlmPruned = truncateContextMessages(
-		pruneToolResults(messages, contextWindow, SUMMARIZATION_INPUT_BUDGET_RATIO),
-	);
-	if (estimateTotalTokens(noLlmPruned) <= targetTokens) {
-		return { messages: noLlmPruned, needsAggressiveCompaction: false };
-	}
-	return {
-		messages: pruneOldMessagesToBudget(noLlmPruned, targetTokens),
-		needsAggressiveCompaction: true,
-	};
-}
 
 export function getPromptVariant(options: {
 	reason: string;
@@ -439,17 +210,14 @@ export function createSpeculativeCompactionSnapshot(
 	if (!preparation) return undefined;
 
 	return {
-		generation: options.generation,
+		...options,
 		expectedRevision,
 		model,
 		contextWindow,
 		preparation,
 		branchEntries,
 		promptVariant: getPromptVariant({ reason: "extension", preparation }),
-		...(options.origin ? { origin: options.origin } : {}),
-		customInstructions: options.customInstructions,
 		systemPrompt: context.getSystemPrompt?.(),
-		tools: options.tools,
 	};
 }
 

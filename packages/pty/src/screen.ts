@@ -1,5 +1,22 @@
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import xterm from "@xterm/headless";
+import {
+	MAX_PENDING_WRITE_CHARS,
+	type ReplayOperation,
+	type ResizeOperation,
+	type ScreenOperation,
+	settleOperation,
+	sharedSettler,
+} from "./screen-operations.ts";
+
+import {
+	decodeInput,
+	normalizeDimension,
+	normalizeReplayHistoryLength,
+	normalizeScrollback,
+	readLine,
+	sanitizeString,
+} from "./screen-text.ts";
 
 export interface TerminalScreenOptions {
 	readonly cols?: number;
@@ -21,16 +38,29 @@ export interface TerminalScreenSnapshot {
 const XtermTerminal = xterm.Terminal;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
-const DEFAULT_SCROLLBACK = 1000;
-const MIN_SIZE = 1;
-const MAX_SIZE = 10000;
-const MIN_REPLAY_HISTORY_LENGTH = 4096;
-const MAX_REPLAY_HISTORY_LENGTH = 1_000_000;
 
+/**
+ * Headless xterm screen model with serialized, flow-controlled writes.
+ *
+ * Every terminal mutation (feed, resize, backlog replay) runs through one
+ * FIFO queue that awaits xterm's parse callback before issuing the next
+ * write, so xterm's pending-write watermark can never be exceeded. When the
+ * queued backlog outgrows {@link MAX_PENDING_WRITE_CHARS}, the queued writes
+ * collapse into a single bounded history replay that reconstructs the same
+ * screen state. After {@link TerminalScreen.dispose}, queued and future
+ * operations settle as resolved no-ops; a terminal is never created after
+ * disposal.
+ */
 export class TerminalScreen {
 	private terminal: XtermTerminalType;
 	private readonly history: string[] = [];
 	private historyLength = 0;
+	private readonly operations: ScreenOperation[] = [];
+	private pendingChars = 0;
+	private draining = false;
+	private disposed = false;
+	private notifyDisposed: () => void = () => undefined;
+	private readonly whenDisposed: Promise<void>;
 	private readonly maxReplayHistoryLength: number;
 	private readonly scrollback: number;
 
@@ -39,26 +69,65 @@ export class TerminalScreen {
 		const rows = normalizeDimension(options.rows, DEFAULT_ROWS);
 		this.scrollback = normalizeScrollback(options.scrollback);
 		this.maxReplayHistoryLength = normalizeReplayHistoryLength(cols, rows, this.scrollback);
+		this.whenDisposed = new Promise((resolve) => {
+			this.notifyDisposed = resolve;
+		});
 		this.terminal = this.createTerminal(cols, rows);
 	}
 
 	feed(data: string | Uint8Array): Promise<void> {
+		if (this.disposed) return Promise.resolve();
 		const payload = decodeInput(data);
 		const sanitizedPayload = sanitizeString(payload);
 		if (sanitizedPayload.length > 0) this.appendHistory(sanitizedPayload);
-		return this.write(payload);
+		if (this.pendingChars + payload.length > MAX_PENDING_WRITE_CHARS) {
+			return this.coalesceFeedIntoReplay(payload);
+		}
+		this.pendingChars += payload.length;
+		const operation: ScreenOperation = { kind: "write", payload, settled: null, settlers: [] };
+		return this.enqueue(operation, sharedSettler(operation));
 	}
 
 	resize(cols: number, rows: number): Promise<void> {
+		if (this.disposed) return Promise.resolve();
 		const nextCols = normalizeDimension(cols, this.terminal.cols);
 		const nextRows = normalizeDimension(rows, this.terminal.rows);
-		this.terminal.dispose();
-		this.terminal = this.createTerminal(nextCols, nextRows);
-		return this.write(this.history.join(""));
+		const snapshot = this.history.join("");
+		const tail = this.operations[this.operations.length - 1];
+		if (tail !== undefined && tail.kind === "resize") {
+			tail.cols = nextCols;
+			tail.rows = nextRows;
+			this.pendingChars += snapshot.length - tail.replay.length;
+			tail.replay = snapshot;
+			return sharedSettler(tail);
+		}
+		if (this.pendingChars + snapshot.length > MAX_PENDING_WRITE_CHARS) {
+			return this.coalesceQueueIntoResize(nextCols, nextRows, snapshot);
+		}
+		const operation: ResizeOperation = {
+			kind: "resize",
+			cols: nextCols,
+			rows: nextRows,
+			replay: snapshot,
+			settled: null,
+			settlers: [],
+		};
+		this.pendingChars += snapshot.length;
+		return this.enqueue(operation, sharedSettler(operation));
 	}
 
+	/**
+	 * Resolves once everything fed before this call has been parsed. Attaches
+	 * to the queue tail instead of enqueueing a marker so a flush can never
+	 * split a tail replay (which would let over-cap feeds mint unbounded new
+	 * replay operations); only an empty queue enqueues a zero-length write.
+	 */
 	flush(): Promise<void> {
-		return this.write("");
+		if (this.disposed) return Promise.resolve();
+		const tail = this.operations[this.operations.length - 1];
+		if (tail !== undefined) return sharedSettler(tail);
+		const operation: ScreenOperation = { kind: "write", payload: "", settled: null, settlers: [] };
+		return this.enqueue(operation, sharedSettler(operation));
 	}
 
 	snapshot(): TerminalScreenSnapshot {
@@ -88,6 +157,14 @@ export class TerminalScreen {
 	}
 
 	dispose(): void {
+		if (this.disposed) return;
+		this.disposed = true;
+		this.notifyDisposed();
+		const pending = this.operations.splice(0, this.operations.length);
+		this.pendingChars = 0;
+		for (const operation of pending) {
+			settleOperation(operation.settlers, null);
+		}
 		this.terminal.dispose();
 	}
 
@@ -100,6 +177,108 @@ export class TerminalScreen {
 			allowProposedApi: true,
 			logLevel: "off",
 		});
+	}
+
+	private enqueue(operation: ScreenOperation, settled: Promise<void>): Promise<void> {
+		this.operations.push(operation);
+		void this.drain();
+		return settled;
+	}
+
+	/**
+	 * Route an over-cap feed to the queue's tail replay instead of enqueueing
+	 * another write. Replay payloads are owned snapshot strings (immune to
+	 * history trimming) bounded to the replay budget, and every coalesced feed
+	 * shares the tail's memoized promise, so a flood cannot grow the queue,
+	 * its payload memory, or its settler memory past the configured bounds.
+	 */
+	private coalesceFeedIntoReplay(payload: string): Promise<void> {
+		const tail = this.operations[this.operations.length - 1];
+		if (tail !== undefined && tail.kind === "replay") {
+			const previousLength = tail.payload.length;
+			tail.payload = this.boundReplayPayload(tail.payload + payload);
+			this.pendingChars += tail.payload.length - previousLength;
+			return sharedSettler(tail);
+		}
+		const operation: ReplayOperation = {
+			kind: "replay",
+			payload: this.history.join(""),
+			settled: null,
+			settlers: [],
+		};
+		this.pendingChars += operation.payload.length;
+		return this.enqueue(operation, sharedSettler(operation));
+	}
+
+	/**
+	 * A resize whose snapshot would push the queued payload past the cap
+	 * collapses the whole queue into one resize at the latest dimensions:
+	 * every dropped operation's payload is already covered by the bounded
+	 * history snapshot, and their settlers settle with this operation.
+	 */
+	private coalesceQueueIntoResize(cols: number, rows: number, snapshot: string): Promise<void> {
+		const operation: ResizeOperation = {
+			kind: "resize",
+			cols,
+			rows,
+			replay: snapshot,
+			settled: null,
+			settlers: [],
+		};
+		for (const queued of this.operations.splice(0, this.operations.length)) {
+			for (const settler of queued.settlers) operation.settlers.push(settler);
+			queued.settlers.length = 0;
+		}
+		this.pendingChars = snapshot.length;
+		return this.enqueue(operation, sharedSettler(operation));
+	}
+
+	private boundReplayPayload(payload: string): string {
+		if (payload.length <= this.maxReplayHistoryLength) return payload;
+		return sanitizeString(payload.slice(-this.maxReplayHistoryLength));
+	}
+
+	private async drain(): Promise<void> {
+		if (this.draining) return;
+		this.draining = true;
+		try {
+			while (!this.disposed) {
+				const operation = this.operations.shift();
+				if (operation === undefined) return;
+				this.pendingChars -= operation.kind === "resize" ? operation.replay.length : operation.payload.length;
+				try {
+					await this.run(operation);
+					settleOperation(operation.settlers, null);
+				} catch (error) {
+					settleOperation(operation.settlers, error instanceof Error ? error : new Error(String(error)));
+				}
+			}
+		} finally {
+			this.draining = false;
+		}
+	}
+
+	private async run(operation: ScreenOperation): Promise<void> {
+		if (this.disposed) return;
+		switch (operation.kind) {
+			case "write":
+				await this.raceDisposal(this.write(operation.payload));
+				return;
+			case "replay":
+				this.terminal.reset();
+				await this.raceDisposal(this.write(operation.payload));
+				return;
+			case "resize":
+				this.terminal.dispose();
+				this.terminal = this.createTerminal(operation.cols, operation.rows);
+				await this.raceDisposal(this.write(operation.replay));
+				return;
+		}
+	}
+
+	/** A disposed terminal may never invoke its parse callback; do not hang. */
+	private raceDisposal(written: Promise<void>): Promise<void> {
+		return Promise.race([written, this.whenDisposed]);
 	}
 
 	private write(payload: string): Promise<void> {
@@ -137,49 +316,4 @@ export class TerminalScreen {
 		this.history[0] = trimmed;
 		this.historyLength = trimmed.length;
 	}
-}
-
-function readLine(buffer: XtermTerminalType["buffer"]["active"], lineIndex: number): string {
-	return buffer.getLine(lineIndex)?.translateToString(true) ?? "";
-}
-
-function normalizeDimension(value: number | undefined, fallback: number): number {
-	if (value === undefined || !Number.isFinite(value)) return fallback;
-	return Math.min(MAX_SIZE, Math.max(MIN_SIZE, Math.trunc(value)));
-}
-
-function normalizeScrollback(value: number | undefined): number {
-	if (value === undefined || !Number.isFinite(value)) return DEFAULT_SCROLLBACK;
-	return Math.max(0, Math.trunc(value));
-}
-
-function normalizeReplayHistoryLength(cols: number, rows: number, scrollback: number): number {
-	const visibleCells = Math.max(MIN_SIZE, cols) * Math.max(MIN_SIZE, rows + scrollback + 1);
-	return Math.min(MAX_REPLAY_HISTORY_LENGTH, Math.max(MIN_REPLAY_HISTORY_LENGTH, visibleCells * 4));
-}
-
-function decodeInput(value: string | Uint8Array): string {
-	if (typeof value === "string") return value;
-	return new TextDecoder("utf-8", { fatal: false }).decode(value);
-}
-
-function sanitizeString(value: string): string {
-	let output = "";
-	for (let index = 0; index < value.length; index += 1) {
-		const code = value.charCodeAt(index);
-		if (code >= 0xd800 && code <= 0xdbff) {
-			const next = value.charCodeAt(index + 1);
-			if (next >= 0xdc00 && next <= 0xdfff) {
-				output += value[index] + value[index + 1];
-				index += 1;
-			} else {
-				output += "\uFFFD";
-			}
-		} else if (code >= 0xdc00 && code <= 0xdfff) {
-			output += "\uFFFD";
-		} else {
-			output += value[index];
-		}
-	}
-	return output;
 }

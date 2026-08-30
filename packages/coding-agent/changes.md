@@ -1,5 +1,10 @@
 # Local fork changes
 
+## 2026-08-30 - Make interactive-host entry-parity tests rules-hermetic
+
+- The spawned RPC host in `test/interactive-host-runtime.test.ts` now sets `PI_RULES_DISABLED=1`, so the rules extension's asynchronous `pi-rules.scan` custom entry can no longer race the host-vs-local entry parity assertions (flaky `transports setup mutations to the authoritative host before rebind` on CI shard 1/3).
+- The tree-navigation regression now asserts navigation through its real contract: `SessionManager.branch()` is a memory-only leaf-pointer move, so the test proves the host applied it by checking that the next host append (`session_info`) lands as a root entry. The old persisted-leaf-changed assertion only ever passed when the rules extension's async scan entry happened to append after the branch, which was the flake.
+
 ## 2026-08-29 - GLM-5.3 default and prompt preset
 
 - Use GLM-5.3 as the Z.AI global and China default, with the matching built-in prompt preset from current main.

@@ -1348,3 +1348,10 @@ session on the same gateway and model in the same minutes had zero misses, isola
 Only *when* the prune disengages changes; what gets pruned and the `needsAggressiveCompaction` signal are
 untouched. Expected upstream conflict zones: `builtin/compaction/speculative.ts` around
 `hardLimitEmergencyPrune`, and `builtin/compaction/index.ts` around the `context` hook.
+
+## 2026-08-29
+
+- Integrated ideal-compaction policy primitives into builtin event wiring: scaled reserve tokens, explicit speculative lead tokens, grace-band deferral, idle warm-floor refresh and stale warm invalidation.
+- Added optional settings for grace-band deferral, tool-result admission, context reminders, reserve scaling, and a configured speculative lead override; all feature gates default to enabled.
+- Tool results exceeding the admission cap are spilled to `os.tmpdir()/senpi-tool-spill` and represented by bounded excerpts, with marker-aware re-admission bypass.
+- Context reminders are delivered through the existing `before_agent_start` custom-message return seam and reset after accepted compaction. Breaker trips retain deterministic context reduction rather than leaving the context untouched.

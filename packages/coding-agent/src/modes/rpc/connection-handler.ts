@@ -683,6 +683,17 @@ export function createRpcConnectionHandler(
 				})
 			: undefined;
 		subscribeLoadedSurfaceEvents();
+		// Subscribe to the replaced session before its bind runs, not after. The bind
+		// is deferred by design - awaiting it would deadlock a client whose
+		// session_start handler blocks on an extension_ui_request it cannot answer
+		// while still awaiting the replacement response - and it still mutates the
+		// session it owns: pi-rules appends a durable scan entry from session_start.
+		// Those entries must reach every attached connection, and nothing else can
+		// carry them, because the session file is not written until an assistant
+		// message exists, so a client that misses the notification can never
+		// reconstruct the session it is bound to. Installing here also drops the
+		// previous session's subscription immediately instead of after the bind.
+		installSessionSubscriptions();
 		const refresh = refreshLoadedSurfacesAfter(
 			() =>
 				session.bindExtensions({
@@ -731,7 +742,7 @@ export function createRpcConnectionHandler(
 				}),
 			true,
 		);
-		const installSessionSubscriptions = () => {
+		function installSessionSubscriptions(): void {
 			unsubscribe?.();
 			unsubscribeBackpressure?.();
 			unsubscribe = session.subscribe((event) => {
@@ -765,15 +776,17 @@ export function createRpcConnectionHandler(
 			unsubscribeBackpressure = session.agent.subscribe(async () => {
 				await waitForRpcBackpressure();
 			});
-		};
+		}
 		if (deferRefresh) {
-			void refresh.then(installSessionSubscriptions, (cause) => {
+			// The subscription is already installed on the replaced session above, so
+			// the deferred refresh only needs its failure reported. Re-installing here
+			// would replay the settings-source selection a second time.
+			void refresh.catch((cause) => {
 				outputEvent({ type: "rpc_error", error: String(cause) });
 			});
 			return;
 		}
 		await refresh;
-		installSessionSubscriptions();
 	};
 
 	/**

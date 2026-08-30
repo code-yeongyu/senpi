@@ -1,6 +1,6 @@
 {
 	"name": "@code-yeongyu/senpi",
-	"version": "2026.8.30",
+	"version": "2026.8.30-2",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
@@ -47,11 +47,11 @@
 		"qa:app-server": "node scripts/qa-app-server/run-all.mjs"
 	},
 	"dependencies": {
-		"@earendil-works/pi-agent-core": "^2026.8.30",
-		"@earendil-works/pi-ai": "^2026.8.30",
-		"@earendil-works/pi-client": "^2026.8.30",
-		"@earendil-works/pi-protocol": "^2026.8.30",
-		"@earendil-works/pi-tui": "^2026.8.30",
+		"@earendil-works/pi-agent-core": "^2026.8.30-2",
+		"@earendil-works/pi-ai": "^2026.8.30-2",
+		"@earendil-works/pi-client": "^2026.8.30-2",
+		"@earendil-works/pi-protocol": "^2026.8.30-2",
+		"@earendil-works/pi-tui": "^2026.8.30-2",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "6.0.0",
 		"cross-spawn": "7.0.6",
@@ -71,8 +71,8 @@
 		"@anthropic-ai/sdk": "0.120.0",
 		"@aws-sdk/client-bedrock-runtime": "3.1116.0",
 		"@bufbuild/protobuf": "2.14.0",
-		"@code-yeongyu/senpi-codemode": "^2026.8.30",
-		"@earendil-works/pi-pty": "^2026.8.30",
+		"@code-yeongyu/senpi-codemode": "^2026.8.30-2",
+		"@earendil-works/pi-pty": "^2026.8.30-2",
 		"@modelcontextprotocol/sdk": "1.30.0",
 		"@mozilla/readability": "0.6.0",
 		"@opentelemetry/api": "1.9.1",

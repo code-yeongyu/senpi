@@ -17,6 +17,13 @@ import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { envValue } from "./brand.ts";
+import type { CompactionSettings } from "./compaction-settings-access.ts";
+import {
+	compactionEnabled,
+	compactionKeepRecentTokens,
+	compactionReserveTokens,
+} from "./compaction-settings-access.ts";
+import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import { FILE_STORAGE_LOCK_OPTIONS } from "./lockfile-policy.ts";
 import type { RetryPolicyOverride } from "./retry-fallback/profile-override.ts";
@@ -29,99 +36,25 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
+import type {
+	ImageSettings,
+	LookAtSettings,
+	MarkdownSettings,
+	MermaidRenderingMode,
+	OpenAISettings,
+	PromptCacheKeepAliveSettings,
+	PromptCacheSettings,
+	ThinkingBudgetsSettings,
+} from "./settings-shapes.ts";
+import type { BranchSummarySettings, TerminalSettings } from "./terminal-settings.ts";
 
-export type {
-	ProviderRetrySettings,
-	RetrySettings,
-} from "./retry-fallback/settings.ts";
+export type * from "./settings-public-types.ts";
 
 export const DEFAULT_STREAM_START_TIMEOUT_MS = 90_000;
 export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
 
-export interface CompactionSettings {
-	enabled?: boolean; // default: true
-	reserveTokens?: number; // default: 16384
-	keepRecentTokens?: number; // default: 20000
-	speculativeEnabled?: boolean; // default: true
-	speculativeFraction?: number; // default: 0.75
-	speculativeCooldownMs?: number; // default: 30000
-	restorationEnabled?: boolean; // default: true
-	restorationMaxItems?: number; // default: 10
-	restorationMaxTokensPerItem?: number; // default: 5000
-	restorationMaxTotalTokens?: number; // default: 50000
-	restorationContextRatio?: number; // default: 0.15
-	idleCompactionEnabled?: boolean; // default: true
-}
-
-export interface BranchSummarySettings {
-	reserveTokens?: number; // default: 16384 (tokens reserved for prompt + LLM response)
-	skipPrompt?: boolean; // default: false - when true, skips "Summarize branch?" prompt and defaults to no summary
-}
-
 export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
-
-export interface TerminalSettings {
-	showImages?: boolean; // default: true (only relevant if terminal supports images)
-	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
-	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
-	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
-	// Persistent-terminal tool suite (builtin `terminal` extension) config.
-	defaultCols?: number; // default: 120 (PTY width for new sessions)
-	defaultRows?: number; // default: 40 (PTY height for new sessions)
-	scrollback?: number; // default: 10000 (xterm scrollback lines per session)
-	maxSessions?: number; // default: 32 (concurrent background sessions before LRU-exited pruning)
-	timeoutAction?: "background" | "kill"; // default: "background" (fate of a foreground timeout)
-	notify?: "wake" | "next-turn" | "off"; // default: "wake" (async completion wake behavior)
-	monitorCoalesceWindowMs?: number; // default: 2000 (event batching window)
-	monitorRateLimitMs?: number; // default: 5000 (minimum interval per monitor injection)
-	monitorMaxLinesPerInjection?: number; // default: 50 (bounded monitor event batch)
-	monitorMaxCharsPerInjection?: number; // default: 4096 (bounded monitor event batch)
-	monitorWakeBudget?: number; // default: 5 (consecutive monitor-only wake limit)
-}
-
-export interface PromptCacheKeepAliveSettings {
-	enabled?: boolean; // default: false
-	maxRequestsPerSession?: number; // default: 3
-	maxCostUsdPerSession?: number; // default: 0.05
-	marginSeconds?: number; // default: 60
-}
-
-export interface PromptCacheSettings {
-	cacheAwareTimeouts?: boolean; // default: true (size foreground tool waits by the model's prompt-cache TTL)
-	safetyBufferSeconds?: number; // default: 30 (headroom subtracted from the cache TTL)
-	goalBackstopMaxSeconds?: number; // default: 3570 (maximum Goal monitor continuation backstop)
-	keepAlive?: PromptCacheKeepAliveSettings;
-}
-
-export interface ImageSettings {
-	autoResize?: boolean; // default: true (resize images to 2000x2000 max for better model compatibility)
-	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers
-	maxHistoricalImages?: number; // default: undefined (preserve existing transport behavior)
-}
-
-export interface LookAtSettings {
-	enabled?: boolean; // default: true
-	models?: string[]; // default: undefined (use the default look-at chain)
-}
-
-export interface ThinkingBudgetsSettings {
-	minimal?: number;
-	low?: number;
-	medium?: number;
-	high?: number;
-}
-
-export type MermaidRenderingMode = "off" | "final" | "streaming";
-
-export interface MarkdownSettings {
-	codeBlockIndent?: string; // default: "  "
-	mermaid?: MermaidRenderingMode; // default: "streaming"
-}
-
-export interface OpenAISettings {
-	serviceTier?: "auto" | "flex" | "priority";
-}
 
 /** Service tier remembered per model; "auto" is an explicit opt-out of an inherited priority tier. */
 export type ModelServiceTier = "auto" | "flex" | "priority";
@@ -179,6 +112,7 @@ export type PackageSource =
 export interface ExperimentalSettings {
 	bashEvalOnly?: boolean;
 	workflowEvalOnly?: boolean;
+	sharedHost?: boolean;
 }
 
 export interface Settings {
@@ -1289,7 +1223,7 @@ export class SettingsManager {
 	}
 
 	getCompactionEnabled(): boolean {
-		return this.settings.compaction?.enabled ?? true;
+		return compactionEnabled(this.settings.compaction);
 	}
 
 	setCompactionEnabled(enabled: boolean): void {
@@ -1302,41 +1236,15 @@ export class SettingsManager {
 	}
 
 	getCompactionReserveTokens(): number {
-		return this.settings.compaction?.reserveTokens ?? 16384;
+		return compactionReserveTokens(this.settings.compaction);
 	}
 
 	getCompactionKeepRecentTokens(): number {
-		return this.settings.compaction?.keepRecentTokens ?? 20000;
+		return compactionKeepRecentTokens(this.settings.compaction);
 	}
 
-	getCompactionSettings(): {
-		enabled: boolean;
-		reserveTokens: number;
-		keepRecentTokens: number;
-		speculativeEnabled: boolean;
-		speculativeFraction: number;
-		speculativeCooldownMs: number;
-		restorationEnabled: boolean;
-		restorationMaxItems: number;
-		restorationMaxTokensPerItem: number;
-		restorationMaxTotalTokens: number;
-		restorationContextRatio: number;
-		idleCompactionEnabled: boolean;
-	} {
-		return {
-			enabled: this.getCompactionEnabled(),
-			reserveTokens: this.getCompactionReserveTokens(),
-			keepRecentTokens: this.getCompactionKeepRecentTokens(),
-			speculativeEnabled: this.settings.compaction?.speculativeEnabled ?? true,
-			speculativeFraction: this.settings.compaction?.speculativeFraction ?? 0.75,
-			speculativeCooldownMs: this.settings.compaction?.speculativeCooldownMs ?? 30000,
-			restorationEnabled: this.settings.compaction?.restorationEnabled ?? true,
-			restorationMaxItems: this.settings.compaction?.restorationMaxItems ?? 10,
-			restorationMaxTokensPerItem: this.settings.compaction?.restorationMaxTokensPerItem ?? 5000,
-			restorationMaxTotalTokens: this.settings.compaction?.restorationMaxTotalTokens ?? 50_000,
-			restorationContextRatio: this.settings.compaction?.restorationContextRatio ?? 0.15,
-			idleCompactionEnabled: this.settings.compaction?.idleCompactionEnabled ?? true,
-		};
+	getCompactionSettings(): ResolvedCompactionSettings {
+		return resolveCompactionSettings(this.settings.compaction);
 	}
 
 	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {
@@ -2051,6 +1959,10 @@ export class SettingsManager {
 
 	getExperimentalWorkflowEvalOnly(): boolean {
 		return this.settings.experimental?.workflowEvalOnly === true;
+	}
+
+	getExperimentalSharedHost(): boolean {
+		return this.settings.experimental?.sharedHost === true;
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

@@ -521,6 +521,10 @@ export function createRemoteSessionProxy(
 		for (const listener of listeners) listener(event);
 	});
 	const performRefresh = async (): Promise<void> => {
+		// Captured before the first await: entries that arrive via `entry_appended`
+		// while this refresh is in flight are newer than the snapshot it reconciles
+		// against, and must survive the rebuild below.
+		const idsAtRefreshStart = new Set(sessionManager.getEntries().map((entry) => entry.id));
 		const nextState = await client.getState();
 		state = { ...stateFromRpc(nextState) };
 		nextQueuedInputOrder = Math.max(0, ...nextState.ordered.map((item) => item.enqueueOrder));
@@ -539,8 +543,35 @@ export function createRemoteSessionProxy(
 				// deferred creating the file for a setup-only session.
 				sessionManager = SessionManager.open(nextState.sessionFile, undefined, nextState.cwd);
 			}
-			if (nextState.entries?.length && !sessionManager.getEntries().length) {
-				for (const entry of nextState.entries) sessionManager.appendEntry(entry);
+			// The host ships its complete entry list while the session file is still
+			// deferred (no assistant message yet, so nothing has been written), which
+			// makes that list the only authoritative view of the session. Reconcile the
+			// mirror to it exactly: `entry_appended` notifications that cross a
+			// concurrent refresh land on whichever manager is current, so the mirror
+			// can hold an arbitrary partial set rather than a prefix, and a snapshot
+			// taken mid-bind can simply be short. Backfilling only an empty mirror
+			// wedged it at whatever partial set it happened to hold.
+			const authoritative = nextState.entries;
+			if (authoritative?.length) {
+				const mirror = sessionManager.getEntries();
+				const matches =
+					mirror.length === authoritative.length &&
+					mirror.every((entry, index) => entry.id === authoritative[index]?.id);
+				if (!matches) {
+					const rebuilt = SessionManager.open(nextState.sessionFile, undefined, nextState.cwd);
+					for (const entry of authoritative) rebuilt.appendEntry(entry);
+					// A notification that crossed this refresh refers to an entry the
+					// snapshot predates, so it is newer than the snapshot; dropping it
+					// would strand the entry until an unrelated refresh happened to
+					// run. Keep it, in arrival order, after the authoritative list.
+					const authoritativeIds = new Set(authoritative.map((entry) => entry.id));
+					for (const entry of mirror) {
+						if (!idsAtRefreshStart.has(entry.id) && !authoritativeIds.has(entry.id)) {
+							rebuilt.appendEntry(entry);
+						}
+					}
+					sessionManager = rebuilt;
+				}
 			}
 			messages = sessionManager.buildSessionContext().messages;
 		} else {

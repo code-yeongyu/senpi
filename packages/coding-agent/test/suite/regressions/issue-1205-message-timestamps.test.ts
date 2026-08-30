@@ -3,6 +3,7 @@ import { type Component, Container, visibleWidth } from "@earendil-works/pi-tui"
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { AssistantMessageComponent } from "../../../src/modes/interactive/components/assistant-message.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
+import { StreamingRevealController } from "../../../src/modes/interactive/streaming-reveal.ts";
 import { getMarkdownTheme, initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
 
@@ -32,7 +33,7 @@ function createTimestampedComponent(message?: AssistantMessage): AssistantMessag
 
 type TimestampSyncContext = {
 	streamingComponent: AssistantMessageComponent;
-	streamingReveal: { isPacingHead: () => boolean };
+	streamingReveal: Pick<StreamingRevealController, "isPacingHead">;
 	chatContainer: Container;
 	assistantTextSegments: Map<number, AssistantMessageComponent>;
 	detachAssistantTextSegments: () => void;
@@ -182,6 +183,33 @@ describe("AssistantMessageComponent message timestamps", () => {
 				.join("\n"),
 		).not.toContain("09:08:07 ");
 		expect(renders[3]?.lines.join("\n")).toContain("09:08:07 ");
+	});
+
+	it("keeps the timestamp eligible until smooth streaming reveals visible content", () => {
+		// Given: smooth streaming has stamped an empty initial frame at message arrival.
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date(2026, 7, 30, 9, 8, 7));
+		const context = createTimestampSyncContext();
+		const reveal = new StreamingRevealController({
+			getSmoothStreaming: () => true,
+			getSmoothStreamingFps: () => 60,
+			getHideThinkingBlock: () => false,
+			requestRender: () => {},
+		});
+		context.streamingReveal = reveal;
+		reveal.begin(context.streamingComponent, createAssistantMessage(""));
+		context.syncStreamingMessageTimestampEligibility();
+
+		// When: a later target becomes visible through reveal ticks before message_end.
+		vi.setSystemTime(new Date(2026, 7, 30, 10, 11, 12));
+		reveal.setTarget(createAssistantMessage("First revealed content"));
+		vi.advanceTimersByTime(250);
+		const lines = context.chatContainer.render(80).map(stripAnsi);
+		reveal.stop();
+
+		// Then: the first revealed line keeps the message-arrival prefix.
+		expect(lines.find((line) => line.includes("First revealed"))).toMatch(/^09:08:07 /);
+		expect(lines.join("\n")).not.toContain("10:11:12 ");
 	});
 
 	it("prefixes a tool-segmented assistant message exactly once", () => {

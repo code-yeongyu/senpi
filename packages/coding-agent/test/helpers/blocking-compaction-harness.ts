@@ -19,12 +19,17 @@ export interface CompactionHandlers {
 	beforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>;
 	modelSelect: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>;
 	sessionBeforeCompact: NonNullable<ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult>>;
+	waitForSpeculativeJob: () => Promise<void>;
 }
 
 export function createCompactionHandlers(): CompactionHandlers {
 	let beforeAgentStart: CompactionHandlers["beforeAgentStart"] | undefined;
 	let modelSelect: CompactionHandlers["modelSelect"] | undefined;
 	let sessionBeforeCompact: CompactionHandlers["sessionBeforeCompact"] | undefined;
+	let resolveSpeculativeJob: (() => void) | undefined;
+	const speculativeJobSettled = new Promise<void>((resolve) => {
+		resolveSpeculativeJob = resolve;
+	});
 	const api = {
 		events: {
 			emit: () => undefined,
@@ -41,7 +46,7 @@ export function createCompactionHandlers(): CompactionHandlers {
 			}
 		},
 	} as unknown as ExtensionAPI;
-	compactionExtension(api);
+	compactionExtension(api, { onSpeculativeJobSettled: () => resolveSpeculativeJob?.() });
 	expect(beforeAgentStart).toBeDefined();
 	expect(modelSelect).toBeDefined();
 	expect(sessionBeforeCompact).toBeDefined();
@@ -49,6 +54,19 @@ export function createCompactionHandlers(): CompactionHandlers {
 		beforeAgentStart: beforeAgentStart as CompactionHandlers["beforeAgentStart"],
 		modelSelect: modelSelect as CompactionHandlers["modelSelect"],
 		sessionBeforeCompact: sessionBeforeCompact as CompactionHandlers["sessionBeforeCompact"],
+		waitForSpeculativeJob: async () => {
+			let timeout: ReturnType<typeof setTimeout> | undefined;
+			try {
+				await Promise.race([
+					speculativeJobSettled,
+					new Promise<never>((_, reject) => {
+						timeout = setTimeout(() => reject(new Error("speculative job did not settle")), 5_000);
+					}),
+				]);
+			} finally {
+				if (timeout) clearTimeout(timeout);
+			}
+		},
 	};
 }
 
@@ -69,6 +87,7 @@ export function createBlockingContext(options: {
 	usageTokens: number;
 	withAuth?: boolean;
 	beginCompaction?: () => AbortSignal | undefined;
+	graceBandEnabled?: boolean;
 }): BlockingHarness {
 	const registration = registerFauxProvider();
 	const model = registration.getModel();
@@ -118,7 +137,12 @@ export function createBlockingContext(options: {
 			contextWindow: 10_000,
 			percent: (usageTokens / 10_000) * 100,
 		}),
-		getCompactionSettings: () => ({ enabled: true, reserveTokens: 100, keepRecentTokens: 2_000 }),
+		getCompactionSettings: () => ({
+			enabled: true,
+			reserveTokens: 100,
+			keepRecentTokens: 2_000,
+			graceBandEnabled: options.graceBandEnabled ?? true,
+		}),
 		getLookAtSettings: () => ({ enabled: true, models: undefined }),
 		getImageSettings: () => ({ autoResize: true, blockImages: false }),
 		sessionSettings: createInMemoryExtensionSessionSettings(),

@@ -1,5 +1,24 @@
 # changes
 
+## 2026-08-30 - Deliver session events across a deferred rebind
+
+### What changed
+
+- `connection-handler.ts`: `rebindSession()` installs the session event subscription on the replaced session immediately after the swap, instead of only after the deferred derived-surface refresh completes, and the post-refresh install is removed - it would have re-subscribed and replayed the settings-source selection a second time, since `AgentSession.subscribe()` replays the current selection to every new listener. `installSessionSubscriptions` became a hoisted function declaration so the eagerly-run initial bind can reach it. The deferred refresh still reports its failure as `rpc_error`.
+
+### Why
+
+- A replacement swaps the live session and rebinds extensions afterwards, and that bind is deferred by design: awaiting it would deadlock a client whose `session_start` handler blocks on an `extension_ui_request` it cannot answer while still awaiting the replacement response. But the bind still mutates the session it owns - the pi-rules builtin appends a durable `pi-rules.scan` entry from `session_start` - and those entries were never forwarded, because the subscription was torn down at rebind start and reinstalled only once the bind finished. Nothing else can carry them: the session file is not written until an assistant message exists, so a client that misses the notification can never reconstruct the session it is bound to. Observed as the shared-host mirror ending one entry short after `new_session`, roughly one run in six under load.
+
+### Why an extension could not handle it
+
+- The event subscription belongs to the connection handler, beneath every extension surface; no extension hook can observe or reinstate it.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `rebindSession()` and the `installSessionSubscriptions` declaration.
+
+
 ## 2026-08-30 - Expose session_replaced on the public client event union
 
 ### What changed

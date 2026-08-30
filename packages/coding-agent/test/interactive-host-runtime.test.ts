@@ -87,6 +87,10 @@ function spawnHost(
 				...hermeticProviderEnv(),
 				PI_OFFLINE: "1",
 				PI_TELEMETRY: "0",
+				// The rules extension appends an async `pi-rules.scan` entry on the
+				// host after session start, racing entry-parity assertions between
+				// the host and the local mirror. No test here exercises rules.
+				PI_RULES_DISABLED: "1",
 				SENPI_RUNTIME: "node",
 				SENPI_CODING_AGENT_DIR: qa.agentDir,
 				SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
@@ -1156,15 +1160,29 @@ describe("interactive host runtime", () => {
 			ensureHost: async () => undefined,
 		});
 		try {
-			const before = runtime.session.sessionManager.getLeafId();
-			await runtime.session.navigateTree(userId, { summarize: false });
-			const persistedHostSession = SessionManager.open(runtime.session.sessionFile!);
-			expect(before).not.toBe(persistedHostSession.getLeafId());
-			expect(persistedHostSession.getLeafId()).toBe(runtime.session.sessionManager.getLeafId());
+			const result = await runtime.session.navigateTree(userId, { summarize: false });
+			expect(result.cancelled).toBe(false);
+			expect(result.editorText).toBe("nav-user");
 			expect(runtime.session.messages).toContainEqual({
 				role: "user",
 				content: "nav-user",
 				timestamp: 1,
+			});
+			// SessionManager.branch() moves the leaf pointer in memory only, so the
+			// host's applied navigation is proven by where the NEXT host append
+			// parents: navigating to the root user message moved the leaf to null,
+			// so the session_info below must land as a root entry. The previous
+			// persisted-leaf assertion only ever held when the rules extension's
+			// async `pi-rules.scan` append raced in ahead of it.
+			await runtime.session.setSessionName("post-nav");
+			const sessionFile = runtime.session.sessionFile!;
+			await vi.waitFor(() => {
+				const persisted = SessionManager.open(sessionFile);
+				const info = persisted
+					.getEntries()
+					.find((entry) => entry.type === "session_info" && entry.name === "post-nav");
+				expect(info).toBeDefined();
+				expect(info?.parentId).toBeNull();
 			});
 		} finally {
 			await runtime.dispose();

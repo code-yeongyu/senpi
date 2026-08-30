@@ -5338,12 +5338,9 @@ export class InteractiveMode {
 		const segments = [...this.assistantTextSegments.entries()]
 			.sort(([left], [right]) => left - right)
 			.map(([, segment]) => segment);
-		let assigned = false;
-		for (const component of [this.streamingComponent, ...segments]) {
-			const eligible = !assigned && component.hasVisibleContent();
-			component.setTimestampEligible(eligible);
-			if (eligible) assigned = true;
-		}
+		const components = [this.streamingComponent, ...segments];
+		const timestampOwner = components.find((component) => component.hasVisibleContent()) ?? this.streamingComponent;
+		for (const component of components) component.setTimestampEligible(component === timestampOwner);
 	}
 
 	private detachAssistantTextSegments(): void {
