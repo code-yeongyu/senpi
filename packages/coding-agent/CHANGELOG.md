@@ -6,6 +6,10 @@
 
 ### Fixed
 
+- Claude SDK OAuth now treats terminal `is_error` results as failures even when
+  the SDK reports `subtype: "success"`, preserving fallback for rate-limit and
+  session-limit responses ([#1169](https://github.com/code-yeongyu/senpi/issues/1169)).
+
 ### New Features
 
 ### Breaking Changes

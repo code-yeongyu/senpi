@@ -1,5 +1,33 @@
 # claude-sdk-oauth
 
+## 2026-08-31 - Treat SDK `is_error` results as terminal failures (issue #1169)
+
+### What changed
+
+- `errors.ts` centralizes Claude SDK result failure detection. A `result` with `is_error: true` now fails even when its
+  subtype is `success`, preserving API status and terminal-reason metadata for the existing failover classifier.
+- `auth-lane.ts`, `stream.ts`, `session-registry-pump.ts`, and `session-turn-attempt.ts` use that boundary so ambient,
+  managed, non-resident, and resident turns cannot report an errored result as successful or synchronize it as a
+  resident-session success.
+
+### Why
+
+Claude emits subscription/session-limit failures as `subtype: "success"` plus `is_error: true`, often with HTTP 429
+and `blocking_limit` metadata. Treating subtype as the sole success signal displayed the error text as a completed
+assistant response and could retain a failed resident turn as synchronized.
+
+### Why an extension could not handle it
+
+The SDK result crosses this builtin provider's private auth, non-resident stream, and resident query-pump boundaries.
+An external extension receives only the already-classified provider stream and cannot correct failover or continuity
+state.
+
+### Expected merge conflict zones
+
+- LOW in `errors.ts`, `auth-lane.ts`, and `stream.ts` around SDK terminal-result handling.
+- MEDIUM in `session-registry-pump.ts` and `session-turn-attempt.ts` around resident turn settlement and success
+  detection.
+
 ## 2026-08-21 - Cache provider settings loads by mtime+size to cut lock convoy
 
 ### What changed

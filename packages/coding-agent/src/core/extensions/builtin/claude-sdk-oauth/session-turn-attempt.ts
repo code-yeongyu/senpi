@@ -1,4 +1,5 @@
 import { BoundedAsyncQueue, SESSION_STREAM_QUEUE_CAPACITY } from "./bounded-queue.ts";
+import { sdkResultFailure } from "./errors.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
 import { bindingFromEntry, rememberBinding } from "./session-reattach.ts";
 import {
@@ -13,7 +14,9 @@ import { recordSyncedStream, sentHashPrefixDigest } from "./session-sync.ts";
 type StagedContinuityDecision = { emit(): void };
 
 function successfulTurn(messages: readonly SDKMessage[]): boolean {
-	return messages.some((message) => message.type === "result" && message.subtype === "success");
+	return messages.some(
+		(message) => message.type === "result" && message.subtype === "success" && !sdkResultFailure(message),
+	);
 }
 
 function recordAssistantUuid(entry: ClaudeSdkOauthSessionEntry, sentCount: number, message: SDKMessage): void {

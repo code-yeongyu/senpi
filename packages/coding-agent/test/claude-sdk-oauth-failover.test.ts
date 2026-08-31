@@ -7,8 +7,9 @@ import {
 	emptyCredential,
 } from "../src/core/extensions/builtin/claude-sdk-oauth/accounts.ts";
 import { rendezvousOrder, selectAccount } from "../src/core/extensions/builtin/claude-sdk-oauth/affinity.ts";
-import { classifySdkError } from "../src/core/extensions/builtin/claude-sdk-oauth/errors.ts";
+import { classifySdkError, sdkResultFailure } from "../src/core/extensions/builtin/claude-sdk-oauth/errors.ts";
 import { ClassifiedSdkError, runFailover } from "../src/core/extensions/builtin/claude-sdk-oauth/failover.ts";
+import type { SDKMessage } from "../src/core/extensions/builtin/claude-sdk-oauth/sdk-boundary.ts";
 
 type AttemptEvent =
 	| { type: "text_delta"; delta: string }
@@ -83,6 +84,41 @@ describe("Claude SDK OAuth failover", () => {
 			kind: "other",
 			retryable: false,
 		});
+	});
+
+	it("rotates after a successful-subtype SDK result carries a rate-limit error", async () => {
+		const store = await storeWithAccounts();
+		const result = {
+			type: "result",
+			subtype: "success",
+			is_error: true,
+			api_error_status: 429,
+			terminal_reason: "blocking_limit",
+			result: "session limit reached",
+		} as Extract<SDKMessage, { type: "result" }>;
+		const failure = sdkResultFailure(result);
+		expect(failure?.message).toContain("HTTP 429");
+		expect(failure?.message).toContain("blocking_limit");
+
+		const attempts: string[] = [];
+		const events = await collect(
+			runFailover({
+				accounts: accountPool,
+				selectFn: (pool) => selectAccount(pool, { sessionId: "success-error", now }),
+				runAttempt: async function* (slot) {
+					attempts.push(slot.name);
+					if (attempts.length === 1) throw failure;
+					yield { type: "done", value: slot.name };
+				},
+				classify: classifySdkError,
+				store,
+				providerId: "claude-sdk-oauth",
+				now: () => now,
+			}),
+		);
+
+		expect(attempts).toHaveLength(2);
+		expect(events).toEqual([{ type: "done", value: attempts[1] }]);
 	});
 
 	it("still treats unrelated errors as non-retryable", () => {

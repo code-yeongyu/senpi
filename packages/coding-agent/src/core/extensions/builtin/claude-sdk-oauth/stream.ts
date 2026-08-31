@@ -10,6 +10,7 @@ import {
 import { getSessionClaudeAccountPin } from "./account-command.ts";
 import { queryWithAuthLane } from "./auth-lane.ts";
 import { buildCustomToolServers } from "./custom-tools.ts";
+import { sdkResultFailure } from "./errors.ts";
 import { defaultExecutableDeps, resolveClaudeCodeExecutable } from "./executable.ts";
 import { buildClaudeSdkOauthQueryOptions } from "./options.ts";
 import { buildPromptBlocks, buildPromptStream } from "./prompt-bridge.ts";
@@ -185,6 +186,8 @@ export function streamClaudeSdkOauth(
 						},
 					];
 				} else if (message.type === "result" && message.subtype === "success") {
+					const failure = sdkResultFailure(message);
+					if (failure) throw failure;
 					// Both fields are optional on the wire, so only adopt them when present.
 					// A terminal result must never downgrade a toolUse turn that the stream
 					// already established, or the agent loop would stop instead of running

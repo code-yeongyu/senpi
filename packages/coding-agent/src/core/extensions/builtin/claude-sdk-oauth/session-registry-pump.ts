@@ -1,3 +1,4 @@
+import { sdkResultFailure } from "./errors.ts";
 import { refusalError } from "./refusal.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
 import { evaluateAbortOutcome } from "./session-reattach.ts";
@@ -134,8 +135,14 @@ function handleMessage(
 		failTurn(registry, entry, refusal);
 		return true;
 	}
-	if (message.type === "result") finishTurn(registry, entry, turn, message);
-	else deliver(entry, turn, message);
+	if (message.type === "result") {
+		const failure = sdkResultFailure(message);
+		if (failure) {
+			failTurn(registry, entry, failure);
+			return true;
+		}
+		finishTurn(registry, entry, turn, message);
+	} else deliver(entry, turn, message);
 	return false;
 }
 

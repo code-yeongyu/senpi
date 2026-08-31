@@ -1,4 +1,5 @@
 import type { SDKAssistantMessageError } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKMessage } from "./sdk-boundary.ts";
 
 export type SdkErrorKind = "rate_limit" | "overloaded" | "auth_error" | "billing" | "org_not_allowed" | "other";
 
@@ -23,6 +24,20 @@ function record(value: unknown): Record<string, unknown> | undefined {
 	return value !== null && typeof value === "object" && !Array.isArray(value)
 		? (value as Record<string, unknown>)
 		: undefined;
+}
+
+export function sdkResultFailure(message: Extract<SDKMessage, { type: "result" }>): Error | undefined {
+	if (message.subtype === "success" && !("is_error" in message && message.is_error === true)) return undefined;
+	const errors = "errors" in message && Array.isArray(message.errors) ? message.errors : [];
+	const status =
+		"api_error_status" in message && typeof message.api_error_status === "number"
+			? `HTTP ${message.api_error_status}`
+			: undefined;
+	const terminalReason =
+		"terminal_reason" in message && typeof message.terminal_reason === "string" ? message.terminal_reason : undefined;
+	const details = [status, terminalReason].filter((detail): detail is string => detail !== undefined);
+	const summary = errors.length > 0 ? String(errors[0]) : `Claude Code ${message.subtype}`;
+	return new Error(details.length > 0 ? `${summary}: ${details.join(", ")}` : summary);
 }
 
 function errorText(error: unknown): string {
