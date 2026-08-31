@@ -742,7 +742,17 @@ type HostUiResponse =
  */
 type HostUiCapableRuntime = {
 	setHostUiHandler(callback?: (request: HostUiRequest) => Promise<HostUiResponse | undefined>): void;
+	setClientInfo?(width: number): void;
 };
+
+function linesFactory(lines: string[] | undefined): ((tui: TUI, thm: Theme) => Component) | undefined {
+	if (lines === undefined) return undefined;
+	return () => {
+		const container = new Container();
+		for (const line of lines) container.addChild(new Text(line, 1, 0));
+		return container;
+	};
+}
 
 interface InteractiveTuiOptions {
 	tuiMode: TuiMode;
@@ -1462,6 +1472,7 @@ export class InteractiveMode {
 			throw error;
 		}
 		this.isInitialized = true;
+		(this.runtimeHost as Partial<HostUiCapableRuntime> | undefined)?.setClientInfo?.(this.ui.terminal.columns);
 
 		await this.themeController.applyFromSettings();
 
@@ -2826,6 +2837,12 @@ export class InteractiveMode {
 				this.setExtensionWidget(request.widgetKey ?? "", request.widgetLines, {
 					placement: request.widgetPlacement,
 				});
+				return undefined;
+			case "setHeader":
+				this.setExtensionHeader(linesFactory(request.widgetLines));
+				return undefined;
+			case "setFooter":
+				this.setExtensionFooter(linesFactory(request.widgetLines));
 				return undefined;
 			case "custom_unsupported":
 				this.showExtensionNotify(
@@ -5771,6 +5788,14 @@ export class InteractiveMode {
 		const signals: NodeJS.Signals[] = ["SIGTERM"];
 		if (process.platform !== "win32") {
 			signals.push("SIGHUP");
+		}
+
+		if (process.platform !== "win32") {
+			const resizeHandler = () => {
+				(this.runtimeHost as Partial<HostUiCapableRuntime> | undefined)?.setClientInfo?.(this.ui.terminal.columns);
+			};
+			process.on("SIGWINCH", resizeHandler);
+			this.signalCleanupHandlers.push(() => process.off("SIGWINCH", resizeHandler));
 		}
 
 		for (const signal of signals) {

@@ -120,6 +120,7 @@ describe("provider idle recovery", () => {
 			settings: {
 				retry: {
 					enabled: true,
+					modelFallback: false,
 					maxRetries: 1,
 					baseDelayMs: 0,
 					provider: { streamRetryTimeoutMs: retryTimeoutMs },
@@ -170,7 +171,13 @@ describe("provider idle recovery", () => {
 		vi.useFakeTimers();
 		const harness = await createHarness({
 			settings: {
-				retry: { enabled: true, maxRetries: 3, baseDelayMs: 0, provider: { streamRetryTimeoutMs: 50 } },
+				retry: {
+					enabled: true,
+					modelFallback: false,
+					maxRetries: 3,
+					baseDelayMs: 0,
+					provider: { streamRetryTimeoutMs: 50 },
+				},
 			},
 		});
 		harnesses.push(harness);
@@ -222,7 +229,7 @@ describe("provider idle recovery", () => {
 	it("expires a no-first-event retry at the reconciled continuation bound without shortening the provider guards", async () => {
 		vi.useFakeTimers();
 		const harness = await createHarness({
-			settings: { retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 } },
+			settings: { retry: { enabled: true, modelFallback: false, maxRetries: 1, baseDelayMs: 0 } },
 		});
 		harnesses.push(harness);
 		harness.agent.timeoutMs = DEFAULT_PROVIDER_IDLE_TIMEOUT_MS;

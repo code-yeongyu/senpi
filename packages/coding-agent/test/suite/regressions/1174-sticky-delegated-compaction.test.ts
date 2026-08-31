@@ -32,7 +32,7 @@ async function createOverThresholdHarness(attempts: string[]): Promise<Harness> 
 			{ id: "faux-large", contextWindow: 20_000, maxTokens: 4_096 },
 			{ id: "faux-large-next", contextWindow: 20_000, maxTokens: 4_096 },
 		],
-		settings: { compaction: { reserveTokens: 1_000 } },
+		settings: { compaction: { reserveTokens: 1_000, speculativeEnabled: false } },
 		extensionFactories: [externallyOwnedCompaction(attempts)],
 	});
 	harnesses.push(harness);
@@ -62,10 +62,10 @@ async function createOverThresholdHarnessWithResourceLoader(
 ): Promise<Harness> {
 	const harness = await createHarness({
 		models: [
-			{ id: "faux-large", contextWindow: 20_000, maxTokens: 4_096 },
-			{ id: "faux-large-next", contextWindow: 20_000, maxTokens: 4_096 },
+			{ id: "faux-large", contextWindow: 25_000, maxTokens: 4_096 },
+			{ id: "faux-large-next", contextWindow: 25_000, maxTokens: 4_096 },
 		],
-		settings: { compaction: { reserveTokens: 1_000 } },
+		settings: { compaction: { reserveTokens: 1_000, speculativeEnabled: false } },
 		resourceLoader,
 	});
 	harnesses.push(harness);

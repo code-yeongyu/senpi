@@ -26,6 +26,7 @@ import type {
 	RpcProviderAccount,
 	RpcResponse,
 	RpcSessionModelEntry,
+	RpcSessionReplacedEvent,
 	RpcSessionState,
 	RpcSlashCommand,
 } from "./rpc-types.ts";
@@ -43,6 +44,8 @@ type RpcCommandBody = DistributiveOmit<RpcCommand, "id">;
 export interface RpcClientOptions {
 	/** Connect to an existing multi-session Unix socket instead of spawning a child. */
 	socketPath?: string;
+	/** Called once when an established transport disconnects. */
+	onDisconnect?: (error: RpcTransportGoneError) => void;
 	/** Path to the CLI entry point (default: searches for dist/cli.js) */
 	cliPath?: string;
 	/** Working directory for the agent */
@@ -81,6 +84,12 @@ export type RpcClientEvent =
 	| RpcProviderAccountEvent
 	| RpcExtensionEvent
 	| RpcExtensionUIRequest
+	// The host swapped the live session behind this connection. Part of the public
+	// union so a typed client can discriminate on the type and read the new
+	// `durableSessionId` without casting: the command response carries only
+	// `{ cancelled }`, and a replacement may be driven by another client or an
+	// extension, so this is the only channel delivering the new identity.
+	| RpcSessionReplacedEvent
 	| { type: "bash_start" }
 	| { type: "bash_end" };
 export type RpcEventListener = (event: RpcClientEvent) => void;
@@ -93,10 +102,22 @@ function isProviderAccountEvent(event: RpcClientEvent): event is RpcProviderAcco
 // RPC Client
 // ============================================================================
 
-function isTransportGoneError(error: unknown): boolean {
+export class RpcTransportGoneError extends Error {
+	readonly code = "rpc_transport_gone" as const;
+
+	constructor(message = "Shared RPC host is unavailable") {
+		super(message);
+		this.name = "RpcTransportGoneError";
+	}
+}
+
+export function isTransportGoneError(error: unknown): error is RpcTransportGoneError {
 	return (
-		error instanceof Error &&
-		(error.message === "Client not started" || error.message.startsWith("RPC transport is not writable."))
+		error instanceof RpcTransportGoneError ||
+		(error instanceof Error &&
+			(error.message === "Client not started" ||
+				error.message.startsWith("RPC transport is not writable.") ||
+				error.message === "RPC socket closed"))
 	);
 }
 
@@ -118,6 +139,8 @@ export class RpcClient {
 	private sessionId: string | undefined;
 	private stderr = "";
 	private exitError: Error | null = null;
+	private disconnectNotified = false;
+	private stopping = false;
 	private options: RpcClientOptions;
 
 	constructor(options: RpcClientOptions = {}) {
@@ -133,6 +156,8 @@ export class RpcClient {
 		}
 
 		this.exitError = null;
+		this.stopping = false;
+		this.disconnectNotified = false;
 		if (this.options.socketPath) {
 			await this.startSocket(this.options.socketPath);
 			return;
@@ -204,12 +229,13 @@ export class RpcClient {
 	 */
 	async stop(): Promise<void> {
 		if (this.socket) {
+			this.stopping = true;
 			this.stopReadingStdout?.();
 			this.stopReadingStdout = null;
 			this.socket.destroy();
 			this.socket = null;
 			this.sessionId = undefined;
-			this.rejectPendingRequests(new Error("RPC socket client stopped"));
+			this.notifyDisconnect(new RpcTransportGoneError());
 			return;
 		}
 		if (!this.process) return;
@@ -259,12 +285,12 @@ export class RpcClient {
 		socket.once("close", () => {
 			if (this.socket !== socket) return;
 			this.socket = null;
-			this.rejectPendingRequests(new Error("RPC socket closed"));
+			this.notifyDisconnect(new RpcTransportGoneError());
 		});
 		socket.once("error", (error) => {
 			if (this.socket !== socket) return;
-			this.exitError = error;
-			this.rejectPendingRequests(error);
+			this.notifyDisconnect(new RpcTransportGoneError());
+			void error;
 		});
 	}
 
@@ -291,6 +317,10 @@ export class RpcClient {
 	// =========================================================================
 	// Command Methods
 	// =========================================================================
+
+	async setClientInfo(width: number, capabilities?: string[]): Promise<void> {
+		await this.send({ type: "set_client_info", width, capabilities }, this.sessionId !== undefined);
+	}
 
 	async openSession(options: {
 		sessionPath?: string;
@@ -846,7 +876,9 @@ export class RpcClient {
 					event.type === "extension_event" ||
 					event.type === "bash_start" ||
 					event.type === "bash_end" ||
-					event.type === "extension_ui_request"
+					event.type === "extension_ui_request" ||
+					// Connection-level, not part of the agent's event stream.
+					event.type === "session_replaced"
 				)
 					return;
 				events.push(event);
@@ -903,6 +935,14 @@ export class RpcClient {
 		return new Error(`Agent process exited (code=${code} signal=${signal}). Stderr: ${this.stderr}`);
 	}
 
+	private notifyDisconnect(error: RpcTransportGoneError): void {
+		this.rejectPendingRequests(error);
+		if (!this.disconnectNotified && !this.stopping) {
+			this.disconnectNotified = true;
+			this.options.onDisconnect?.(error);
+		}
+	}
+
 	private rejectPendingRequests(error: Error): void {
 		for (const pending of this.pendingRequests.values()) {
 			pending.onReject?.(error);
@@ -920,7 +960,7 @@ export class RpcClient {
 		const childProcess = this.process;
 		const stream = this.socket ?? childProcess?.stdin;
 		if (!stream) {
-			throw new Error("Client not started");
+			throw new RpcTransportGoneError();
 		}
 		if (this.exitError) {
 			throw this.exitError;
@@ -931,8 +971,8 @@ export class RpcClient {
 			throw error;
 		}
 		if (stream.destroyed || !stream.writable) {
-			const error = new Error(`RPC transport is not writable. Stderr: ${this.stderr}`);
-			this.exitError = error;
+			const error = new RpcTransportGoneError();
+			this.notifyDisconnect(error);
 			throw error;
 		}
 

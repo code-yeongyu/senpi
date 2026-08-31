@@ -8,6 +8,7 @@ import {
 	type SessionEntry,
 } from "../../../session-manager.ts";
 import { SummarizationOverflowExhaustedError } from "./overflow-retry.ts";
+import { resolveEffectiveReserveTokens } from "./policy.ts";
 import { hasUnsafeRetainedContent } from "./retained-message-safety.ts";
 import { SummaryRequestError } from "./speculative.ts";
 import { capUtf8Bytes } from "./task-intent.ts";
@@ -266,7 +267,9 @@ export function createRequiredCompactionFallback(
 			if (diagnostics) diagnostics.rejectionReason = "atomic-tool-chain-cut";
 			return undefined;
 		}
-		const budget = contextWindow - preparation.settings.reserveTokens;
+		// The hard-limit valve reserves the scaled budget, so accepting against the raw
+		// configured reserve would admit a context that valve immediately compacts again.
+		const budget = contextWindow - resolveEffectiveReserveTokens(contextWindow, preparation.settings);
 		const summaryTokens =
 			summaryIndex === undefined
 				? Number.POSITIVE_INFINITY

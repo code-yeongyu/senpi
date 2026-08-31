@@ -52,6 +52,7 @@ import type {
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
+import { FooterDataProvider } from "../../core/footer-data-provider.ts";
 import { getSupportedThinkingLevels } from "../../core/thinking-levels.ts";
 import { ProjectTrustStore } from "../../core/trust-manager.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
@@ -59,6 +60,7 @@ import {
 	buildCustomUnsupportedRequest,
 	DEFAULT_CUSTOM_EXTENSION_LABEL,
 	EXTENSION_EVENTS_CAPABILITY,
+	RENDERED_COMPONENTS_CAPABILITY,
 } from "./custom-capability.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
@@ -78,7 +80,9 @@ import type {
 	RpcSessionState,
 	RpcSkillInvocationEvent,
 } from "./rpc-types.ts";
+import { RENDERED_COMPONENT_RECORD } from "./session-event-writer.ts";
 import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
+import { createLiveComponentRenderer, type LiveComponentRenderer } from "./widget-line-renderer.ts";
 
 /** Additive per-connection options. Absent = classic default (byte-identical). */
 export interface RpcConnectionOptions {
@@ -90,6 +94,16 @@ export interface RpcConnectionOptions {
 	disposeRuntime?: boolean;
 	/** Multi-session routing handle. Absent preserves classic wire output exactly. */
 	sessionId?: string;
+	footerDataProviderFactory?: (session: AgentSession) => FooterDataProvider;
+	sharedWidth?: {
+		getWidth: () => number;
+		setWidth: (connectionId: string | undefined, width: number) => void;
+		clearWidth: (connectionId: string | undefined) => void;
+		setCapabilities?: (connectionId: string | undefined, capabilities: readonly string[]) => void;
+		hasRenderedComponents?: (sessionId: string) => boolean;
+		connectionId: () => string | undefined;
+		onChange?: () => void;
+	};
 }
 
 /**
@@ -97,6 +111,10 @@ export interface RpcConnectionOptions {
  * text (LF-terminated). `waitForBackpressure` lets the host apply flow control
  * (stdout drain in classic mode, or the transport's own `drain` signal).
  */
+function createFooterDataProvider(session: AgentSession): FooterDataProvider {
+	return new FooterDataProvider(session.sessionManager.getCwd());
+}
+
 export interface RpcConnectionSink {
 	writeRaw(chunk: string): void;
 	waitForBackpressure(): Promise<void>;
@@ -110,6 +128,7 @@ export interface RpcConnectionHandler {
 	readonly ready: Promise<void>;
 	/** Feed one inbound JSONL line (command or extension_ui_response). */
 	handleInputLine(line: string): Promise<void>;
+	rerenderComponents(): void;
 	/**
 	 * True once an extension requested shutdown via the shutdown handler. The
 	 * host polls this after each command and decides how to tear down.
@@ -160,12 +179,12 @@ function loadedMcpStatus(server: McpWireStatusServer): RpcMcpServerStatus {
  */
 export function buildRpcSessionState(session: AgentSession, lastAbortSource?: AgentAbortSource): RpcSessionState {
 	const cwd = session.sessionManager.getCwd();
-	// Trust gates project-source settings (shell prefixes, project resources), so an
-	// unverifiable verdict must fail closed: no agentDir means no authoritative store to
-	// consult, and the session's own manager only counts when it says trusted outright.
-	const projectTrusted = session.agentDir
-		? new ProjectTrustStore(session.agentDir).get(cwd) === true
-		: session.settingsManager?.isProjectTrusted?.() === true;
+	// Trust gates project-source settings (shell prefixes, project resources), so every
+	// session state projection must have an authoritative store to consult.
+	if (!session.agentDir) {
+		throw new Error("RPC session invariant violated: agentDir is required");
+	}
+	const projectTrusted = new ProjectTrustStore(session.agentDir).get(cwd) === true;
 	return {
 		model: session.model,
 		thinkingLevel: session.thinkingLevel,
@@ -248,8 +267,27 @@ export function createRpcConnectionHandler(
 	sink: RpcConnectionSink,
 	options: RpcConnectionOptions = {},
 ): RpcConnectionHandler {
-	const clientCapabilities = options.capabilities;
+	let clientCapabilities = options.capabilities;
 	const routingSessionId = options.sessionId;
+	const clientWidth = () => options.sharedWidth?.getWidth() ?? 80;
+	const hasRenderedComponents = () =>
+		(options.sharedWidth?.hasRenderedComponents?.(routingSessionId ?? "") ?? false) ||
+		(clientCapabilities?.includes(RENDERED_COMPONENTS_CAPABILITY) ?? false);
+	const liveRenderers = new Map<string, LiveComponentRenderer>();
+	const retainedRendererFactories = new Map<string, () => void>();
+	const footerProviders = new Map<string, FooterDataProvider>();
+	const disposeRenderer = (key: string) => {
+		liveRenderers.get(key)?.dispose();
+		liveRenderers.delete(key);
+		footerProviders.get(key)?.dispose();
+		footerProviders.delete(key);
+	};
+	const disposeAllRenderers = () => {
+		for (const renderer of liveRenderers.values()) renderer.dispose();
+		for (const provider of footerProviders.values()) provider.dispose();
+		liveRenderers.clear();
+		footerProviders.clear();
+	};
 	// True only while THIS connection's own command drives a replacement; the issuer
 	// already learns the new identity from its command response.
 	let replacementIssuedHere = false;
@@ -484,6 +522,8 @@ export function createRpcConnectionHandler(
 		},
 
 		setWidget(key: string, content: unknown, options?: ExtensionWidgetOptions): void {
+			disposeRenderer(key);
+			retainedRendererFactories.delete(key);
 			if (content === undefined || Array.isArray(content)) {
 				output({
 					type: "extension_ui_request",
@@ -495,19 +535,96 @@ export function createRpcConnectionHandler(
 				} as RpcExtensionUIRequest);
 				return;
 			}
-			// A component factory closes over live TUI/theme state and cannot cross
-			// the RPC boundary. Never drop it silently: an opted-in client can show
-			// the same explicit degradation notice used by ctx.ui.custom.
-			const request = buildCustomUnsupportedRequest(clientCapabilities, "widget component");
-			if (request) output(request);
+			retainedRendererFactories.set(key, () => {
+				const renderer = createLiveComponentRenderer({
+					factory: content as (
+						tui: import("@earendil-works/pi-tui").TUI,
+						thm: Theme,
+					) => import("@earendil-works/pi-tui").Component,
+					getWidth: clientWidth,
+					emit: (widgetLines) =>
+						output({
+							type: "extension_ui_request",
+							id: crypto.randomUUID(),
+							method: "setWidget",
+							widgetKey: key,
+							widgetLines,
+							widgetPlacement: options?.placement,
+							[RENDERED_COMPONENT_RECORD]: true,
+						} as RpcExtensionUIRequest),
+				});
+				if (renderer) liveRenderers.set(key, renderer);
+			});
+			if (hasRenderedComponents()) retainedRendererFactories.get(key)!();
 		},
 
-		setFooter(_factory: unknown): void {
-			// Custom footer not supported in RPC mode - requires TUI access
+		setFooter(factory: unknown): void {
+			const key = "__footer__";
+			disposeRenderer(key);
+			retainedRendererFactories.delete(key);
+			if (factory === undefined) {
+				if (hasRenderedComponents())
+					output({
+						type: "extension_ui_request",
+						id: crypto.randomUUID(),
+						method: "setFooter",
+						widgetLines: undefined,
+					} as RpcExtensionUIRequest);
+				return;
+			}
+			retainedRendererFactories.set(key, () => {
+				const provider = options.footerDataProviderFactory?.(session) ?? createFooterDataProvider(session);
+				const renderer = createLiveComponentRenderer({
+					factory: factory as never,
+					factoryArgs: [provider],
+					getWidth: clientWidth,
+					emit: (widgetLines) =>
+						output({
+							type: "extension_ui_request",
+							id: crypto.randomUUID(),
+							method: "setFooter",
+							widgetLines,
+							[RENDERED_COMPONENT_RECORD]: true,
+						} as RpcExtensionUIRequest),
+				});
+				if (renderer) {
+					liveRenderers.set(key, renderer);
+					footerProviders.set(key, provider);
+				} else provider.dispose();
+			});
+			if (hasRenderedComponents()) retainedRendererFactories.get(key)!();
 		},
 
-		setHeader(_factory: unknown): void {
-			// Custom header not supported in RPC mode - requires TUI access
+		setHeader(factory: unknown): void {
+			const key = "__header__";
+			disposeRenderer(key);
+			retainedRendererFactories.delete(key);
+			if (factory === undefined) {
+				if (hasRenderedComponents())
+					output({
+						type: "extension_ui_request",
+						id: crypto.randomUUID(),
+						method: "setHeader",
+						widgetLines: undefined,
+					} as RpcExtensionUIRequest);
+				return;
+			}
+			retainedRendererFactories.set(key, () => {
+				const renderer = createLiveComponentRenderer({
+					factory: factory as never,
+					getWidth: clientWidth,
+					emit: (widgetLines) =>
+						output({
+							type: "extension_ui_request",
+							id: crypto.randomUUID(),
+							method: "setHeader",
+							widgetLines,
+							[RENDERED_COMPONENT_RECORD]: true,
+						} as RpcExtensionUIRequest),
+				});
+				if (renderer) liveRenderers.set(key, renderer);
+			});
+			if (hasRenderedComponents()) retainedRendererFactories.get(key)!();
 		},
 
 		setTitle(title: string): void {
@@ -670,7 +787,7 @@ export function createRpcConnectionHandler(
 				// the window the refresh takes.
 				outputEvent({
 					type: "session_replaced",
-					sessionId: session.sessionId,
+					durableSessionId: session.sessionId,
 					sessionFile: session.sessionFile,
 					cwd: session.sessionManager.getCwd(),
 					sessionName: session.sessionName,
@@ -683,6 +800,17 @@ export function createRpcConnectionHandler(
 				})
 			: undefined;
 		subscribeLoadedSurfaceEvents();
+		// Subscribe to the replaced session before its bind runs, not after. The bind
+		// is deferred by design - awaiting it would deadlock a client whose
+		// session_start handler blocks on an extension_ui_request it cannot answer
+		// while still awaiting the replacement response - and it still mutates the
+		// session it owns: pi-rules appends a durable scan entry from session_start.
+		// Those entries must reach every attached connection, and nothing else can
+		// carry them, because the session file is not written until an assistant
+		// message exists, so a client that misses the notification can never
+		// reconstruct the session it is bound to. Installing here also drops the
+		// previous session's subscription immediately instead of after the bind.
+		installSessionSubscriptions();
 		const refresh = refreshLoadedSurfacesAfter(
 			() =>
 				session.bindExtensions({
@@ -731,7 +859,7 @@ export function createRpcConnectionHandler(
 				}),
 			true,
 		);
-		const installSessionSubscriptions = () => {
+		function installSessionSubscriptions(): void {
 			unsubscribe?.();
 			unsubscribeBackpressure?.();
 			unsubscribe = session.subscribe((event) => {
@@ -765,15 +893,17 @@ export function createRpcConnectionHandler(
 			unsubscribeBackpressure = session.agent.subscribe(async () => {
 				await waitForRpcBackpressure();
 			});
-		};
+		}
 		if (deferRefresh) {
-			void refresh.then(installSessionSubscriptions, (cause) => {
+			// The subscription is already installed on the replaced session above, so
+			// the deferred refresh only needs its failure reported. Re-installing here
+			// would replay the settings-source selection a second time.
+			void refresh.catch((cause) => {
 				outputEvent({ type: "rpc_error", error: String(cause) });
 			});
 			return;
 		}
 		await refresh;
-		installSessionSubscriptions();
 	};
 
 	/**
@@ -998,6 +1128,19 @@ export function createRpcConnectionHandler(
 			// =================================================================
 			// State
 			// =================================================================
+
+			case "set_client_info":
+				if (options.sharedWidth && command.capabilities !== undefined) {
+					clientCapabilities = command.capabilities;
+					options.sharedWidth.setCapabilities?.(options.sharedWidth.connectionId(), command.capabilities);
+				}
+				if (Number.isFinite(command.width) && command.width > 0) {
+					if (options.sharedWidth) {
+						options.sharedWidth.setWidth(options.sharedWidth.connectionId(), command.width);
+						options.sharedWidth.onChange?.();
+					} else for (const renderer of liveRenderers.values()) renderer.rerender();
+				}
+				return success(id, "set_client_info");
 
 			case "get_state":
 				return success(id, "get_state", buildRpcSessionState(session, lastAbortSource));
@@ -1471,6 +1614,7 @@ export function createRpcConnectionHandler(
 	};
 
 	const dispose = async (): Promise<void> => {
+		disposeAllRenderers();
 		pendingExtensionRequests.close();
 		unsubscribeProviderAccountEvents();
 		unsubscribe?.();
@@ -1495,6 +1639,14 @@ export function createRpcConnectionHandler(
 		async handleInputLine(line: string) {
 			await ready;
 			await handleInputLine(line);
+		},
+		rerenderComponents() {
+			if (!hasRenderedComponents()) {
+				disposeAllRenderers();
+				return;
+			}
+			for (const [key, createRenderer] of retainedRendererFactories) if (!liveRenderers.has(key)) createRenderer();
+			for (const renderer of liveRenderers.values()) renderer.rerender();
 		},
 		isShutdownRequested() {
 			return shutdownRequested;

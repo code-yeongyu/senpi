@@ -40,6 +40,8 @@ export class SessionCommandRouter {
 	>;
 	private readonly createBinding: typeof createRpcSessionBinding;
 	private readonly connectionOptions: Parameters<typeof createRpcSessionBinding>[4];
+	private readonly widths = new Map<string, Map<string, number>>();
+	private readonly pendingCapabilities = new Map<string, string[]>();
 
 	constructor(
 		registry: RpcSessionRegistry,
@@ -81,6 +83,14 @@ export class SessionCommandRouter {
 			};
 		if (command.type === "open_session") return this.openWithBarrier(command);
 		if (command.type === "close_session") return this.close(command);
+		if (command.type === "set_client_info" && !command.sessionId) {
+			const connection = this.writer.currentConnection();
+			if (connection !== undefined) {
+				this.pendingCapabilities.set(connection, command.capabilities ?? []);
+				this.writer.setConnectionCapabilities(connection, command.capabilities ?? []);
+			}
+			return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
+		}
 		if (controls.has(command.type)) return undefined;
 		if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 		try {
@@ -152,6 +162,14 @@ export class SessionCommandRouter {
 			});
 			const openedSession = opened;
 			const entry = this.registry.getForCommand(openedSession.sessionId, "open_session");
+			if (owner !== undefined) {
+				if (!this.writer.hasRegisteredConnectionCapabilities(owner))
+					this.writer.setConnectionCapabilities(
+						owner,
+						this.pendingCapabilities.get(owner) ?? this.connectionOptions?.capabilities ?? [],
+					);
+				this.writer.attachConnectionToSession(owner, openedSession.sessionId);
+			}
 			// A client that dies without close_session (terminal closed, SIGKILL, dropped
 			// SSH) still holds this handle's attachment and its path reservation. Remember
 			// which connection owns it so releaseConnection() can close exactly that.
@@ -168,7 +186,43 @@ export class SessionCommandRouter {
 						entry,
 						this.writer,
 						() => void this.close({ type: "close_session", sessionId: openedSession.sessionId }),
-						this.connectionOptions,
+						{
+							...this.connectionOptions,
+							capabilities:
+								owner !== undefined
+									? (this.pendingCapabilities.get(owner) ?? [])
+									: this.connectionOptions?.capabilities,
+							sharedWidth: {
+								getWidth: () => {
+									const widths = this.widths.get(openedSession.sessionId);
+									return widths?.size ? Math.min(...widths.values()) : 80;
+								},
+								setWidth: (connectionId, width) => {
+									if (connectionId !== undefined) {
+										const widths = this.widths.get(openedSession.sessionId) ?? new Map<string, number>();
+										widths.set(connectionId, width);
+										this.widths.set(openedSession.sessionId, widths);
+									}
+								},
+								clearWidth: (connectionId) => {
+									const widths = this.widths.get(openedSession.sessionId);
+									if (connectionId !== undefined) widths?.delete(connectionId);
+								},
+								setCapabilities: (connectionId, capabilities) => {
+									if (connectionId !== undefined) {
+										this.writer.setConnectionCapabilities(connectionId, capabilities);
+										this.pendingCapabilities.set(connectionId, [...capabilities]);
+										for (const binding of this.bindings.values()) binding.rerenderComponents?.();
+									}
+								},
+								hasRenderedComponents: (sessionId) => this.writer.hasCapableConnection(sessionId),
+
+								connectionId: () => this.writer.currentConnection(),
+								onChange: () => {
+									for (const binding of this.bindings.values()) binding.rerenderComponents?.();
+								},
+							},
+						},
 					),
 				);
 			}
@@ -207,6 +261,11 @@ export class SessionCommandRouter {
 	 */
 	async releaseConnection(connectionId: string): Promise<void> {
 		this.releasedConnections.add(connectionId);
+		this.writer.clearConnectionCapabilities(connectionId);
+		for (const sessionId of this.sessionsByConnection.get(connectionId)?.keys() ?? [])
+			this.writer.detachConnectionFromSession(connectionId, sessionId);
+		for (const widths of this.widths.values()) widths.delete(connectionId);
+		for (const binding of this.bindings.values()) binding.rerenderComponents?.();
 		const opens = this.opensByConnection.get(connectionId);
 		if (opens) await Promise.all([...opens]);
 		const owned = this.sessionsByConnection.get(connectionId);
@@ -280,6 +339,11 @@ export class SessionCommandRouter {
 			// otherwise leaves a window where commands can enter the old handler.
 			const entry = this.registry.beginClose(command.sessionId);
 			const owner = this.writer.currentConnection();
+			if (owner !== undefined) {
+				this.widths.get(command.sessionId)?.delete(owner);
+				this.writer.detachConnectionFromSession(owner, command.sessionId);
+				for (const binding of this.bindings.values()) binding.rerenderComponents?.();
+			}
 			if (owner !== undefined) {
 				const owned = this.sessionsByConnection.get(owner);
 				const count = owned?.get(command.sessionId);

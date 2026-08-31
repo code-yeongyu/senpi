@@ -1,5 +1,95 @@
 # changes
 
+## 2026-08-30 - Harden shared-host reconnect fallback
+
+### What changed
+
+- Shared-host refresh and bash operations now classify transport loss through the common reconnect path, avoiding raw RPC errors in the TUI.
+- Local fallback preserves the runtime invalidate/rebind callback contract and rebinds session-bound UI when the transition occurs.
+- Reconnect action failures use a transient reconnecting warning; the continuing-locally warning is emitted only after fallback.
+
+### Why
+
+- The shared-host runtime must degrade at the transport boundary without exposing implementation errors or leaving InteractiveMode bound to a stale remote session.
+
+### Expected merge conflict zones
+
+- LOW: reconnect warning and replacement handling in `interactive-host-runtime.ts`.
+
+## 2026-08-30 - Shared-host rendered component integration
+
+### What changed
+
+- `interactive-mode.ts` and `interactive-host-runtime.ts` retain the shared-host rendered-component capability and session-width integration while the RPC host owns per-connection filtering and lifecycle.
+
+### Why
+
+- Interactive clients use the shared host through the runtime bridge and must advertise the same capability and width semantics as direct RPC clients.
+
+### Why an extension could not handle it
+
+- The integration is host startup and session mirror infrastructure, outside extension lifecycle hooks.
+
+### Expected merge conflict zones
+
+- LOW: shared-host client setup in `interactive-host-runtime.ts` and interactive startup wiring in `interactive-mode.ts`.
+
+## 2026-08-30 - Reconcile the shared-host mirror to the host entry list
+
+### What changed
+
+- `interactive-host-runtime.ts`: `performRefresh()` reconciles the session mirror to the complete entry list the host ships in `get_state`, whenever that list is present, instead of backfilling only an empty mirror. A mismatch rebuilds the mirror from the authoritative list, keeping any entry whose `entry_appended` notification crossed the refresh - such an entry postdates the snapshot, so dropping it would strand it until an unrelated refresh happened to run.
+
+### Why
+
+- The host ships its full entry list only while the session file is still deferred (no assistant message yet, so nothing has been written to disk), which makes that list the only authoritative view of the session. `entry_appended` notifications that cross a concurrent refresh land on whichever manager object is current at that instant, so the mirror could hold an arbitrary partial set rather than a prefix of the host's list; backfill-only-when-empty then wedged it at that partial set permanently. Together with event delivery across the rebind this makes the mirror converge after a replacement.
+
+### Why an extension could not handle it
+
+- The mirror is proxy state beneath every extension surface; no extension hook observes it.
+
+### Expected merge conflict zones
+
+- LOW: the entry-list reconciliation block inside `performRefresh()`.
+
+
+## 2026-08-30 - Rebind the shared-host proxy on session_replaced
+
+### What changed
+
+- `interactive-host-runtime.ts`: the remote session proxy handles the `session_replaced` wire event by refreshing its binding. Refreshes are serialized, so a replacement-driven refresh cannot interleave with a caller-driven one and commit a snapshot mixing two sessions. Replacements this runtime drives itself are wrapped in `aroundLocalReplacement`, which suppresses the echo a multi-session host broadcasts back to the issuing connection; the scope covers the whole command, because the host emits while completing it. `createRemoteSessionProxy` is exported for direct coverage.
+
+### Why
+
+- A replacement can be driven by any other attached client, or by an extension that no client asked, and the command response carries only `{ cancelled }`. Without handling the event the proxy kept serving the previous session's `sessionManager`, `settingsManager`, and mirrored message list while the host had already moved on. Without the suppression the echo raced the runtime's own ordered refresh/rebind, which transports setup entries between two refreshes. The event is deliberately not forwarded to `AgentSession` listeners: it is connection-level, not part of the agent event stream.
+
+### Why an extension could not handle it
+
+- The proxy owns the shared-host binding beneath every extension surface; no extension hook observes the connection's replacement notice.
+
+### Expected merge conflict zones
+
+- LOW: the wire-event switch in the proxy's `client.onEvent` handler, the replacement methods, and the `refresh` definition.
+
+
+## 2026-08-30 - Scope host UI dispatch to the shared-host lane
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` treats host-driven extension UI as the optional shared-host capability it is: the constructor calls `setHostUiHandler` only when the runtime provides it, and the request type is declared locally instead of cast through `any`.
+
+### Why
+
+- Host-driven extension UI is a shared-host capability. An unconditional constructor call plus a no-op stub on the classic runtime made a host-only concern part of the classic construction contract, so classic mode construction was no longer byte-identical.
+
+### Why an extension could not handle it
+
+- Interactive-mode construction and the runtime capability surface are core wiring beneath the extension API.
+
+### Expected merge conflict zones
+
+- LOW: the host-UI probe in the `InteractiveMode` constructor.
+
 ## 2026-08-30 - Forward shared-host switch cwd overrides
 
 - `interactive-host-runtime.ts` forwards the `cwdOverride` field explicitly when the interactive proxy requests a shared-host session replacement, preserving the host-effective cwd through the RPC boundary and subsequent proxy refresh.
@@ -2948,3 +3038,13 @@ The tip line was teaching a small slice of the product while most of the surface
 
 - NF-2 RED: replacement string sendUserMessage dropped expandPromptTemplates, so the binding host trace did not preserve explicit false.
 - NF-2 GREEN: string replacement messages now forward expandPromptTemplates exactly like array messages; explicit false leaves /help as provider content.
+
+## Interactive RPC reconnect cancellation and terminal fallback (2026-08-30)
+
+- Treats transport loss in value-returning interactive host operations as user cancellation with inert results, so reconnect/fallback warnings are not repeated as action errors.
+- Makes reconnect exhaustion terminal after three attempts and awaits the local fallback session rebind before disposal.
+
+## Interactive RPC reconnect cancellation ordering (2026-08-30)
+
+- Preserves structured cancellation results for reload and reload-veto checks when the shared transport disconnects.
+- Keeps fallback warning emission behind the completed local rebind handoff.

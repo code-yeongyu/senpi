@@ -149,12 +149,42 @@ describe("RPC wire provenance", () => {
 		// An attached client that did not issue the replacement must be told the live
 		// binding moved, and must be given the new authoritative identity so it can
 		// resync without guessing. Without this it keeps routing at the old session.
+		// The identity travels as `durableSessionId`. Top-level `sessionId` is the
+		// per-connection routing handle a multi-session host tags records with, and
+		// that tag is applied last - carrying the identity under the same key would
+		// let the tag overwrite it and strip the event of its only payload.
 		expect(await replaced).toMatchObject({
 			type: "session_replaced",
-			sessionId: second.session.sessionId,
+			durableSessionId: second.session.sessionId,
 			cwd: second.session.sessionManager.getCwd(),
 		});
 		expect(second.session.sessionId).not.toBe(first.session.sessionId);
+
+		await handler.dispose();
+	});
+
+	it("keeps the replacement identity intact on a routed multi-session connection", async () => {
+		const first = await newHarness();
+		const second = await newHarness();
+		const collected = makeSink();
+		const host = makeRuntimeHost(first.session);
+		// The lane the key separation exists for: only a routed connection tags every
+		// record with its per-connection handle, and tagSessionRecord() applies that
+		// tag last. Carrying the identity under `sessionId` would be overwritten here
+		// and nowhere else, so the classic case above cannot catch a regression.
+		const handler = createRpcConnectionHandler(host.runtimeHost, collected.sink, { sessionId: "rpc-attached" });
+		await handler.ready;
+
+		const replaced = collected.waitFor((record) => record.type === "session_replaced");
+		await host.replaceWith(second.session);
+
+		expect(await replaced).toMatchObject({
+			type: "session_replaced",
+			durableSessionId: second.session.sessionId,
+			// The routing handle still rides alongside, untouched by the identity.
+			sessionId: "rpc-attached",
+		});
+		expect(second.session.sessionId).not.toBe("rpc-attached");
 
 		await handler.dispose();
 	});

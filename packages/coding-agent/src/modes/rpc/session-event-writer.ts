@@ -69,14 +69,19 @@ export interface SessionEventWriterConnection {
 	readonly waitForBackpressure: BackpressureWaiter;
 }
 
+export const RENDERED_COMPONENT_RECORD = "__senpiRenderedComponent";
+
 export class SessionEventWriter {
 	private readonly queues = new Map<string, RecordQueue>();
 	private readonly connections = new Map<
 		string,
 		{ connection: SessionEventWriterConnection; actor: SocketEventSinkActor }
 	>();
-	private readonly sessionSnapshots = new Map<string, string[]>();
+	private readonly sessionSnapshots = new Map<string, Array<{ line: string; rendered: boolean }>>();
 	private readonly connectionContext = new AsyncLocalStorage<string>();
+	private readonly connectionCapabilities = new Map<string, Set<string>>();
+	private readonly connectionSessions = new Map<string, Set<string>>();
+	private readonly registeredCapabilityConnections = new Set<string>();
 	private readonly controlQueue: RecordQueue = { latestByKey: new Map(), ready: false };
 	private readonly readyQueues: RecordQueue[] = [];
 	private readonly sealedSessions = new Set<string>();
@@ -124,10 +129,18 @@ export class SessionEventWriter {
 
 	registerConnection(id: string, connection: SessionEventWriterConnection): void {
 		const actor = new SocketEventSinkActor(connection, () => {
-			if (this.connections.get(id)?.actor === actor) this.connections.delete(id);
+			if (this.connections.get(id)?.actor === actor) {
+				this.connections.delete(id);
+				this.connectionCapabilities.delete(id);
+				this.connectionSessions.delete(id);
+				this.registeredCapabilityConnections.delete(id);
+			}
 		});
 		this.connections.set(id, { connection, actor });
-		for (const snapshot of this.sessionSnapshots.values()) for (const line of snapshot) actor.enqueue(line);
+		this.connectionCapabilities.set(id, new Set());
+		this.connectionSessions.set(id, new Set());
+		for (const snapshot of this.sessionSnapshots.values())
+			for (const record of snapshot) if (!record.rendered) actor.enqueue(record.line);
 	}
 
 	unregisterConnection(id: string): void {
@@ -135,6 +148,57 @@ export class SessionEventWriter {
 		if (!registered) return;
 		registered.actor.close();
 		this.connections.delete(id);
+		this.connectionCapabilities.delete(id);
+		this.connectionSessions.delete(id);
+		this.registeredCapabilityConnections.delete(id);
+	}
+
+	attachConnectionToSession(id: string, sessionId: string): void {
+		if (!this.connections.has(id)) return;
+		const sessions = this.connectionSessions.get(id) ?? new Set<string>();
+		sessions.add(sessionId);
+		this.connectionSessions.set(id, sessions);
+		if (this.connectionCapabilities.get(id)?.has("rendered_components"))
+			for (const record of this.sessionSnapshots.get(sessionId) ?? [])
+				if (record.rendered) this.connections.get(id)!.actor.enqueue(record.line);
+	}
+
+	detachConnectionFromSession(id: string, sessionId: string): void {
+		this.connectionSessions.get(id)?.delete(sessionId);
+	}
+
+	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
+		const registered = this.connections.get(id);
+		if (!registered) return;
+		const wasCapable = this.connectionCapabilities.get(id)?.has("rendered_components") ?? false;
+		this.connectionCapabilities.set(id, new Set(capabilities));
+		this.registeredCapabilityConnections.add(id);
+		if (!wasCapable && capabilities.includes("rendered_components"))
+			for (const sessionId of this.connectionSessions.get(id) ?? [])
+				for (const record of this.sessionSnapshots.get(sessionId) ?? [])
+					if (record.rendered) registered.actor.enqueue(record.line);
+	}
+
+	clearConnectionCapabilities(id: string): void {
+		if (this.connections.has(id)) {
+			this.connectionCapabilities.set(id, new Set());
+			this.registeredCapabilityConnections.delete(id);
+		}
+	}
+
+	hasRegisteredConnectionCapabilities(id: string): boolean {
+		return this.registeredCapabilityConnections.has(id);
+	}
+
+	getConnectionCapabilities(id: string): readonly string[] | undefined {
+		if (!this.registeredCapabilityConnections.has(id)) return undefined;
+		return [...(this.connectionCapabilities.get(id) ?? [])];
+	}
+
+	hasCapableConnection(sessionId: string): boolean {
+		for (const [id, capabilities] of this.connectionCapabilities)
+			if (capabilities.has("rendered_components") && this.connectionSessions.get(id)?.has(sessionId)) return true;
+		return false;
 	}
 
 	/** Execute a connection's command with its response destination in context. */
@@ -158,15 +222,26 @@ export class SessionEventWriter {
 			(record.type === "extension_ui_request" &&
 				["select", "confirm", "input", "editor"].includes(String(record.method)));
 		const tagged = { ...value, sessionId } as RpcRecord;
-		const line = serializeJsonLine(tagged);
+		const { [RENDERED_COMPONENT_RECORD]: _rendered, ...wireTagged } = tagged;
+		const line = serializeJsonLine(wireTagged);
 		this.rememberSnapshot(sessionId, tagged, line);
-		const targets = isTargeted ? [targetId] : this.connections.size > 0 ? [...this.connections.keys()] : [undefined];
+		const targets = isTargeted
+			? [targetId]
+			: record[RENDERED_COMPONENT_RECORD] && this.connections.size > 0
+				? [...this.connections.keys()].filter(
+						(id) =>
+							this.connectionCapabilities.get(id)?.has("rendered_components") &&
+							this.connectionSessions.get(id)?.has(sessionId),
+					)
+				: this.connections.size > 0
+					? [...this.connections.keys()]
+					: [undefined];
 		for (const target of targets) {
 			if (target !== undefined && !this.connections.has(target)) continue;
 			const registered = target === undefined ? undefined : this.connections.get(target);
 			if (registered)
 				registered.actor.enqueue(line, compactDelta(tagged) && tagged.message !== null ? MESSAGE_KEY : undefined);
-			else this.appendSessionRecord(sessionId, tagged, target);
+			else this.appendSessionRecord(sessionId, wireTagged, target);
 		}
 		this.requestFlush();
 		return true;
@@ -286,10 +361,11 @@ export class SessionEventWriter {
 
 	private rememberSnapshot(sessionId: string, value: RpcRecord, line: string): void {
 		const event = value.assistantMessageEvent as Record<string, unknown> | undefined;
+		const record = { line, rendered: value[RENDERED_COMPONENT_RECORD] === true };
 		if (value.type === "message_start" || (value.type === "message_update" && event?.type === "text_start")) {
-			this.sessionSnapshots.set(sessionId, [line]);
+			this.sessionSnapshots.set(sessionId, [record]);
 		} else if (this.sessionSnapshots.has(sessionId)) {
-			this.sessionSnapshots.get(sessionId)!.push(line);
+			this.sessionSnapshots.get(sessionId)!.push(record);
 		}
 		if (value.type === "message_end") this.sessionSnapshots.delete(sessionId);
 	}

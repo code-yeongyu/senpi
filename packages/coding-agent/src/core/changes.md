@@ -1,6 +1,57 @@
 # changes
 
+## 2026-08-31 - Shared session host is OFF by default (opt-in)
+
+- Interactive sessions no longer join the shared RPC host implicitly. `main.ts` now gates
+  `createInteractiveHostRuntime` on `shouldJoinSharedHost()` (`core/shared-host-policy.ts`): a bare
+  interactive session stays purely local and never opens `<agentDir>/rpc/rpc.sock`.
+- Opt in persistently with the `experimental.sharedHost` setting, or per-process with the
+  brand-prefixed `ENABLE_SHARED_HOST` env flag (`SENPI_ENABLE_SHARED_HOST=1` / `OMO_ENABLE_SHARED_HOST=1`) (`SettingsManager.getExperimentalSharedHost()`). Non-interactive
+  modes (print, json, rpc, app-server) are unaffected; the app-server / `--multi-session` host owns
+  its own transport.
+- The former opt-out `DISABLE_SHARED_HOST` is obsolete: it is now the default, and setting it prints a
+  one-time notice pointing at the opt-in flag.
+
 ## 2026-08-30 - Durable entry notifications are rpc-scoped
+
+## 2026-08-30 - Wire ideal compaction execution through AgentSession
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` routes compaction through the ideal compaction execution pipeline while preserving the existing session lifecycle and transcript accounting contracts.
+
+### Why
+
+- The feature's compaction policy and execution layers need the session-owned model, settings, and transcript state at the integration boundary.
+
+### Why an extension could not handle it
+
+- Compaction dispatch is owned by `AgentSession`, before extension-level behavior can replace the session lifecycle integration.
+
+### Expected merge conflict zones
+
+- LOW: compaction dispatch in `agent-session.ts`.
+
+## 2026-08-30 - Do not cancel client work from a binding-time tool change
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `setActiveToolsByName()` calls `abortCompaction()` and `_incrementMessageRevision()` only when the tool change happens outside extension binding, detected through the existing `_extensionBindingPromptReadiness` scope that `bindExtensions()` already maintains.
+
+### Why
+
+- A session replacement responds as soon as the swap is committed and rebinds extensions afterwards, by design: awaiting the bind would deadlock a client whose `session_start` handler blocks on an `extension_ui_request`. During that bind, `session_start` handlers deactivate tools for the active model (`video-in`, `look-at`), the tool set changes, and the abort plus revision bump cancelled a compaction the client had already started against the committed session - "Compaction cancelled" on roughly 4 of 6 runs, verified by capturing the abort stack inside the host process. Tool activation performed while binding is part of the binding, not a mid-session context change, so it must not invalidate that work. Mid-session tool changes still abort and bump exactly as before.
+
+### Why an extension could not handle it
+
+- The abort is core session lifecycle beneath the extension API, and the extensions involved are the ones whose binding triggers it.
+
+### Expected merge conflict zones
+
+- LOW: the `activeToolNamesChanged` branch in `setActiveToolsByName()`.
+
+
+## 2026-08-30 - Drop the classic host-UI no-op stub
 
 - `agent-session.ts`: `_emitEntryAppended` only fires while the session is bound in `rpc`
   mode. The notifications exist to hydrate the shared-host RPC proxy mirror; emitting them
@@ -160,6 +211,113 @@
 ### Expected merge conflict zones
 
 - `agent-session.ts`: active-tool selection, tool registry refresh, reload, and system-prompt assembly.
+
+## Compaction settings resolution moved out of the settings manager (2026-08-29)
+
+### What changed
+
+- `settings-manager.ts` delegates compaction knob resolution to `compaction-settings-resolver.ts`
+  instead of resolving every field inline. The manager keeps its public accessor shape; the resolver
+  owns the defaults for the ideal-pipeline knobs (grace band, tool admission, reminder, reserve
+  scaling, speculative lead).
+
+### Why
+
+- `settings-manager.ts` was already well past the module size ceiling. This branch adds compaction
+  knobs, and the project rule forbids growing an already-oversized file, so the added resolution
+  became its own module.
+
+### Why an extension could not handle it
+
+- These defaults are read by core admission before any extension runs, so they cannot be supplied
+  from extension space.
+
+### Expected merge conflict zones
+
+- Upstream changes to `getCompactionSettings` now touch `compaction-settings-resolver.ts` as well as
+  `settings-manager.ts`.
+
+## Reject model downswitches that exceed the target budget (2026-08-30)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` adds current live-context usage to the assembled
+  model budget before direct or favorite-cycle downswitches. Rejected switches leave the active
+  model, persisted session history, and global defaults unchanged.
+- The rejection reports every measured budget component and directs callers to compact, revalidate,
+  and retry. A successful manual compaction reduces the live projection, so the same explicit switch
+  can then be retried normally.
+
+### Why
+
+- A session accumulated under a million-token model could previously commit a 372K model before
+  discovering that its live transcript plus prompt, tools, and reserves did not fit. The next turn
+  then entered emergency overflow recovery from a model state that was invalid when selected.
+
+### Why an extension could not handle it
+
+- Direct and favorite-cycle model selection mutate private session state and persistence before a
+  post-selection extension hook runs. Admission must happen at that shared pre-commit boundary.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts` around `_setModel`,
+  `_cycleFavoriteModel`, and the model-budget assertion.
+
+## Reject models with unusable assembled context budgets (2026-08-30)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` projects the selected model against the current
+  assembled system prompt, active tool schemas, output reserve, effective compaction reserve,
+  speculation lead, and model-family safety margin before mutating explicit model selection.
+- `packages/coding-agent/src/core/sdk.ts` runs the same projection after `AgentSession` construction,
+  when the initial runtime prompt and active tools have been assembled, and rejects setup with the
+  projection's precise budget diagnostic when the model is unusable.
+
+### Why
+
+- A small context window can put the fixed speculation lead at or beyond its compaction threshold.
+  Accepting that model creates a session with no useful conversation budget and causes permanent
+  compaction; setup and explicit selection now fail before provider traffic or model mutation.
+
+### Why an extension could not handle it
+
+- Session construction and explicit model mutation are core boundaries. Extensions cannot reject
+  initial creation after the final prompt/tool assembly or atomically guard every model-selection
+  caller before persistence.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts` around `_setModel` and the public budget
+  assertion used by runtime setup.
+- LOW: `packages/coding-agent/src/core/sdk.ts` immediately after `AgentSession` construction.
+
+## Compaction settings resolution moved out of the settings manager (2026-08-29)
+
+### What changed
+
+- `settings-manager.ts` delegates compaction knob resolution to `compaction-settings-resolver.ts`
+  instead of resolving every field inline. The manager keeps its public accessor shape; the resolver
+  owns the defaults for the ideal-pipeline knobs (grace band, tool admission, reminder, reserve
+  scaling, speculative lead).
+
+### Why
+
+- `settings-manager.ts` was already well past the module size ceiling. This branch adds compaction
+  knobs, and the project rule forbids growing an already-oversized file, so the added resolution
+  became its own module.
+
+### Why an extension could not handle it
+
+- These defaults are read by core admission before any extension runs, so they cannot be supplied
+  from extension space.
+
+### Expected merge conflict zones
+
+- Upstream changes to `getCompactionSettings` now touch `compaction-settings-resolver.ts` as well as
+  `settings-manager.ts`.
+
 ## 2026-08-29 - Withheld tools are filtered at the advertisement seam
 
 ### What changed

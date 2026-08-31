@@ -2,13 +2,11 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type Api,
 	type AssistantMessage,
-	type Context,
 	type ContextProvenance,
 	convertResponsesMessages,
 	getContextProvenance,
 	type Model,
 	type ProviderHeaders,
-	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { CompactionResult } from "../../../compaction/index.ts";
@@ -87,17 +85,9 @@ type OpenAiCompactedResponse = {
 	usage?: Record<string, unknown>;
 };
 
-type OpenAiResponsesStream = {
-	result(): Promise<AssistantMessage>;
-};
+import type { OpenAiResponsesStreamRunner, SpeculativeJobSettlement } from "./openai-remote-dependencies.ts";
 
-type OpenAiResponsesStreamRunner = (
-	model: Model<"openai-responses">,
-	context: Context,
-	options: SimpleStreamOptions,
-) => OpenAiResponsesStream;
-
-export type OpenAiRemoteCompactionDependencies = {
+export type OpenAiRemoteCompactionDependencies = SpeculativeJobSettlement & {
 	fetch?: typeof fetch;
 	now?: () => number;
 	remoteTimeoutMs?: number;

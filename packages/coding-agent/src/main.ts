@@ -73,6 +73,7 @@ import {
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
+import { shouldJoinSharedHost } from "./core/shared-host-policy.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
@@ -81,7 +82,7 @@ import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { createInteractiveHostRuntime } from "./modes/interactive/interactive-host-runtime.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { runPrintMode } from "./modes/print-mode.ts";
-import { parseSupervisorArgs, runHostSupervisor } from "./modes/rpc/host-lifecycle.ts";
+import { findInternalSupervisorArgs, parseSupervisorArgs, runHostSupervisor } from "./modes/rpc/host-lifecycle.ts";
 import { runMultiSessionHost } from "./modes/rpc/multi-session-host.ts";
 import { runRpcMode } from "./modes/rpc/rpc-mode.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
@@ -694,10 +695,15 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	// Internal launch surface used by bundled/rebranded runtimes. It is deliberately
-	// not accepted by parseArgs, so existing CLI modes remain unchanged.
-	if (args[0] === "--internal-rpc-host-supervisor") {
-		const launch = parseSupervisorArgs(args.slice(1));
+	// not accepted by parseArgs, so existing CLI modes remain unchanged. A rebranded
+	// wrapper may prepend its own `--extension <dir>` before forwarding argv, so the
+	// route is matched through the bounded scan rather than at argv[0] alone.
+	const supervisorArgs = findInternalSupervisorArgs(args);
+	if (supervisorArgs) {
+		const launch = parseSupervisorArgs(supervisorArgs);
 		if (!launch) {
+			// Fail closed: an internal protocol fault must never fall through to the
+			// public parser and surface as a confusing "Unknown option" error.
 			console.error("invalid internal RPC host supervisor arguments");
 			process.exit(2);
 		}
@@ -1100,7 +1106,19 @@ export async function main(args: string[], options?: MainOptions) {
 	});
 	time("createAgentSessionRuntime");
 	let selectedRuntime = runtime;
-	if (appMode === "interactive" && !isTruthyEnvFlag(envValue("DISABLE_SHARED_HOST"))) {
+	if (isTruthyEnvFlag(envValue("DISABLE_SHARED_HOST"))) {
+		console.error(
+			chalk.yellow(
+				"DISABLE_SHARED_HOST is obsolete: the shared session host is now off by default. Enable the experimental.sharedHost setting (or set the brand-prefixed ENABLE_SHARED_HOST=1 env flag) to opt in.",
+			),
+		);
+	}
+	if (
+		shouldJoinSharedHost(appMode, {
+			enableEnv: isTruthyEnvFlag(envValue("ENABLE_SHARED_HOST")),
+			settingEnabled: runtime.services.settingsManager.getExperimentalSharedHost(),
+		})
+	) {
 		const socket = envValue("RPC_SOCKET") ?? resolve(agentDir, "rpc", "rpc.sock");
 		selectedRuntime = await createInteractiveHostRuntime(runtime, {
 			socket,

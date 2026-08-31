@@ -332,7 +332,7 @@ async function expectSpeculativeCompactionInvalidatedBy(
 	const branchEntries = [firstUser, firstAssistant, secondUser, secondAssistant];
 	const appliedSummaries: string[] = [];
 	let currentModel = previousModel;
-	let usageTokens = 100_000;
+	let usageTokens = 130_000;
 	let releaseStale: (() => void) | undefined;
 	const speculativeStarted = new Promise<void>((resolveStarted) => {
 		completeMock.mockImplementationOnce(async (_model: Model<string>, _context: Context, options: StreamOptions) => {
@@ -1064,10 +1064,7 @@ describe("builtin compaction extension threshold regressions", () => {
 				contextWindow: 200_000,
 				percent: 0.95,
 			}),
-			getCompactionSettings: () => ({
-				...DEFAULT_COMPACTION_SETTINGS,
-				keepRecentTokens: 1,
-			}),
+			getCompactionSettings: () => ({ ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1, reserveTokens: 100 }),
 		});
 
 		// when
@@ -1185,10 +1182,7 @@ describe("builtin compaction extension threshold regressions", () => {
 				contextWindow: 200_000,
 				percent: 0.95,
 			}),
-			getCompactionSettings: () => ({
-				...DEFAULT_COMPACTION_SETTINGS,
-				keepRecentTokens: 1,
-			}),
+			getCompactionSettings: () => ({ ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1, reserveTokens: 100 }),
 		});
 
 		// when

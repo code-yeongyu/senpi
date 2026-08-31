@@ -128,7 +128,7 @@ describe("compaction policy: adaptive threshold ratio", () => {
 
 	describe("Given a faux model with context window 200000", () => {
 		describe("When the adaptive threshold ratio is computed for that window", () => {
-			it("Then the ratio equals 0.65", () => {
+			it("Then the ratio equals 0.70", () => {
 				const registration = registerFauxProvider({
 					models: [{ id: "faux-200k", contextWindow: 200000 }],
 				});
@@ -141,7 +141,7 @@ describe("compaction policy: adaptive threshold ratio", () => {
 
 				const ratio = computeAdaptiveThresholdRatio(model.contextWindow);
 
-				expect(ratio).toBe(0.65);
+				expect(ratio).toBe(0.7);
 			});
 		});
 	});
@@ -194,7 +194,7 @@ describe("compaction policy: adaptive threshold ratio", () => {
 
 	describe("Given context window 16000 with a low-yield prior compaction (savedTokens < 1000)", () => {
 		describe("When the next adaptive threshold ratio is computed", () => {
-			it("Then the ratio rises by 0.05 and is clamped at the 0.70 ceiling", () => {
+			it("Then the upward adjustment is capped at the window base ratio", () => {
 				const registration = registerFauxProvider({
 					models: [{ id: "faux-16k-low-yield", contextWindow: 16000 }],
 				});
@@ -209,8 +209,8 @@ describe("compaction policy: adaptive threshold ratio", () => {
 				const adjustedRatio = computeAdaptiveThresholdRatio(model.contextWindow, LOW_YIELD_SAVED_TOKENS);
 
 				expect(baselineRatio).toBe(0.45);
-				expect(adjustedRatio).toBe(0.5);
-				expect(adjustedRatio).toBeLessThanOrEqual(0.7);
+				expect(adjustedRatio).toBe(0.45);
+				expect(adjustedRatio).toBeLessThanOrEqual(0.85);
 			});
 		});
 	});
@@ -242,7 +242,7 @@ describe("compaction policy: adaptive threshold ratio", () => {
 
 	describe("Given context window 32000 with a low-yield prior compaction", () => {
 		describe("When the effective threshold is computed", () => {
-			it("Then the threshold rises by 0.05 from the adaptive baseline", () => {
+			it("Then the threshold cannot rise above the adaptive baseline", () => {
 				// given
 				const registration = registerFauxProvider({
 					models: [{ id: "faux-32k-effective-low-yield", contextWindow: 32000 }],
@@ -260,7 +260,7 @@ describe("compaction policy: adaptive threshold ratio", () => {
 				});
 
 				// then
-				expect(effective).toBe(0.55);
+				expect(effective).toBe(0.5);
 			});
 		});
 	});
@@ -274,7 +274,7 @@ describe("compaction policy: adaptive threshold ratio", () => {
 					{ contextWindow: 32_000, adaptiveRatio: 0.5 },
 					{ contextWindow: 64_000, adaptiveRatio: 0.55 },
 					{ contextWindow: 128_000, adaptiveRatio: 0.6 },
-					{ contextWindow: 200_000, adaptiveRatio: 0.65 },
+					{ contextWindow: 200_000, adaptiveRatio: 0.7 },
 				];
 
 				// when / then

@@ -10,9 +10,10 @@ import { SessionManager } from "../../core/session-manager.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import type { BashOperations } from "../../core/tools/bash.ts";
 import { type EnsuredHost, ensureHost } from "../rpc/host-ensure.ts";
-import { RpcClient, type RpcClientEvent } from "../rpc/rpc-client.ts";
+import { isTransportGoneError, RpcClient, type RpcClientEvent } from "../rpc/rpc-client.ts";
 
 export const INTERACTIVE_HOST_FALLBACK_WARNING = "Warning: shared interactive host unavailable; continuing locally";
+export const INTERACTIVE_HOST_RECONNECTING_WARNING = "Warning: shared interactive host connection lost; reconnecting";
 
 export interface InteractiveHostWarning {
 	readonly type: "interactive_host_fallback" | "interactive_host_action_failed";
@@ -68,10 +69,79 @@ export async function createInteractiveHostRuntime(
 	const sessionPath = localRuntime.session.sessionFile;
 	if (!sessionPath) return localRuntime;
 	const startHost = options.ensureHost ?? ((hostOptions) => ensureHost(hostOptions));
-	const client = new RpcClient({ socketPath: options.socket });
+	let remoteSession: RemoteSessionProxy | undefined;
+	let remoteRuntime: RemoteInteractiveRuntime | undefined;
+	let reconnecting: Promise<void> | undefined;
+	let disconnectQueued = false;
+	let disposed = false;
+	let fallbackWarned = false;
+	let reconnectWarningShown = false;
+	const warnReconnect = (cause: unknown) => {
+		if (reconnectWarningShown) return;
+		reconnectWarningShown = true;
+		options.onWarning?.({
+			type: "interactive_host_action_failed",
+			message: INTERACTIVE_HOST_RECONNECTING_WARNING,
+			cause,
+		});
+	};
+	const warnFallback = (cause: unknown) => {
+		if (fallbackWarned) return;
+		fallbackWarned = true;
+		options.onWarning?.({ type: "interactive_host_fallback", message: INTERACTIVE_HOST_FALLBACK_WARNING, cause });
+	};
+	let scheduleReconnect: () => void = () => {};
+	const client = new RpcClient({
+		socketPath: options.socket,
+		onDisconnect: () => {
+			disconnectQueued = true;
+			scheduleReconnect();
+		},
+	});
+	scheduleReconnect = () => {
+		if (!remoteSession || reconnecting || disposed || remoteRuntime?.isFallback) return;
+		remoteRuntime?.enterReconnecting();
+		reconnecting = (async () => {
+			let cause: unknown;
+			for (let attempt = 0; attempt < 3; attempt++) {
+				if (disposed) return;
+				disconnectQueued = false;
+				try {
+					await startHost({ socket: options.socket, agentDir: options.agentDir });
+					if (disposed) return;
+					await client.start();
+					if (disposed) return;
+					await client.openSession({ sessionPath, cwd: localRuntime.cwd });
+					if (disposed) return;
+					if (remoteRuntime) await remoteRuntime.reRegisterClientInfo();
+					if (disposed) return;
+					await remoteSession.refresh();
+					if (disposed) return;
+					fallbackWarned = false;
+					reconnectWarningShown = false;
+					remoteRuntime?.enterConnected();
+					return;
+				} catch (error) {
+					cause = error;
+					await client.stop().catch(() => {});
+					if (disposed) return;
+				}
+			}
+			if (!disposed) {
+				await remoteRuntime?.enterFallback();
+				warnFallback(cause);
+			}
+		})().finally(() => {
+			reconnecting = undefined;
+			if (disconnectQueued && !disposed && !remoteRuntime?.isFallback) scheduleReconnect();
+		});
+	};
 	try {
 		await startHost({ socket: options.socket, agentDir: options.agentDir });
 		await client.start();
+		await client.setClientInfo(80, ["rendered_components"]);
+		const startupEvents: import("../rpc/rpc-client.ts").RpcClientEvent[] = [];
+		const stopBuffering = client.onEvent((event) => startupEvents.push(event));
 		const opened = await client.openSession({
 			sessionPath,
 			cwd: localRuntime.cwd,
@@ -79,13 +149,19 @@ export async function createInteractiveHostRuntime(
 			modelId: localRuntime.session.model?.id,
 			thinkingLevel: localRuntime.session.thinkingLevel,
 		});
-		const remoteSession = createRemoteSessionProxy(
+		remoteSession = createRemoteSessionProxy(
 			localRuntime.session,
 			localRuntime.services.agentDir,
 			client,
 			opened.state,
 			options.onWarning,
+			(cause) => {
+				if (remoteRuntime?.isReconnecting) warnReconnect(cause);
+				else warnFallback(cause);
+			},
+			startupEvents.filter((event) => !("sessionId" in event) || event.sessionId === opened.sessionId),
 		);
+		stopBuffering();
 		if (opened.state.isBashRunning && !opened.attached) {
 			// Only a newly opened session can have an execution orphaned by a
 			// previous connection. An attach is an observer of the same live runtime;
@@ -93,14 +169,22 @@ export async function createInteractiveHostRuntime(
 			await client.abortBash().catch(() => {});
 		}
 		if (opened.attached) await remoteSession.refresh();
-		return new RemoteInteractiveRuntime(localRuntime, remoteSession, client) as unknown as AgentSessionRuntime;
+		remoteRuntime = new RemoteInteractiveRuntime(localRuntime, remoteSession, client, {
+			onTransportGone: (cause) => {
+				if (remoteRuntime?.isReconnecting) warnReconnect(cause);
+				else warnFallback(cause);
+			},
+			get reconnecting() {
+				return reconnecting;
+			},
+			dispose: () => {
+				disposed = true;
+			},
+		});
+		return remoteRuntime as unknown as AgentSessionRuntime;
 	} catch (cause) {
 		await client.stop().catch(() => {});
-		options.onWarning?.({
-			type: "interactive_host_fallback",
-			message: `${INTERACTIVE_HOST_FALLBACK_WARNING}: ${cause instanceof Error ? cause.message : String(cause)}`,
-			cause,
-		});
+		warnFallback(cause);
 		return localRuntime;
 	}
 }
@@ -109,23 +193,77 @@ export class RemoteInteractiveRuntime {
 	readonly #local: AgentSessionRuntime;
 	readonly #remoteSession: RemoteSessionProxy;
 	readonly #client: RpcClient;
+	readonly #lifecycle?: { readonly reconnecting: Promise<void> | undefined; readonly dispose: () => void };
+	readonly #onTransportGone: (cause: unknown) => void;
 	#rebindSession: (() => Promise<void>) | undefined;
 	#beforeSessionInvalidate: (() => void) | undefined;
+	#state: "connected" | "reconnecting" | "fallback" | "disposed" = "connected";
+	#fallbackHandoff: Promise<void> | undefined;
+	get isReconnecting(): boolean {
+		return this.#state === "reconnecting";
+	}
+	get isFallback(): boolean {
+		return this.#state === "fallback";
+	}
 
-	constructor(local: AgentSessionRuntime, remoteSession: RemoteSessionProxy, client: RpcClient) {
+	constructor(
+		local: AgentSessionRuntime,
+		remoteSession: RemoteSessionProxy,
+		client: RpcClient,
+		lifecycle?: { readonly reconnecting: Promise<void> | undefined; readonly dispose: () => void } & {
+			onTransportGone: (cause: unknown) => void;
+		},
+	) {
 		this.#local = local;
 		this.#remoteSession = remoteSession;
 		this.#client = client;
+		this.#lifecycle = lifecycle;
+		this.#onTransportGone = lifecycle?.onTransportGone ?? (() => {});
+	}
+
+	async #call<T>(call: () => Promise<T>): Promise<T> {
+		try {
+			return await call();
+		} catch (error) {
+			if (isTransportGoneError(error)) {
+				this.#onTransportGone(error);
+				return { cancelled: true } as T;
+			}
+			throw error;
+		}
+	}
+
+	enterConnected(): void {
+		if (this.#state !== "disposed" && this.#state !== "fallback") this.#state = "connected";
+	}
+
+	enterReconnecting(): void {
+		if (this.#state !== "disposed" && this.#state !== "fallback") this.#state = "reconnecting";
+	}
+
+	async enterFallback(): Promise<void> {
+		if (this.#state === "disposed" || this.#state === "fallback") return;
+		this.#state = "fallback";
+		this.#beforeSessionInvalidate?.();
+		const rebind = this.#rebindSession?.();
+		if (rebind) {
+			this.#fallbackHandoff = rebind.catch((error) => {
+				this.#onTransportGone(error);
+			});
+			await this.#fallbackHandoff;
+		}
 	}
 
 	get session(): AgentSession {
-		return this.#remoteSession.session;
+		return this.#state === "fallback" || this.#state === "disposed"
+			? this.#local.session
+			: this.#remoteSession.session;
 	}
 	get services(): AgentSessionRuntime["services"] {
 		return this.#local.services;
 	}
 	get cwd(): string {
-		return this.#remoteSession.session.sessionManager.getCwd();
+		return this.session.sessionManager.getCwd();
 	}
 	get diagnostics(): readonly AgentSessionRuntimeDiagnostic[] {
 		return this.#local.diagnostics;
@@ -138,17 +276,40 @@ export class RemoteInteractiveRuntime {
 	}
 	setBeforeSessionInvalidate(callback?: () => void): void {
 		this.#beforeSessionInvalidate = callback;
+		this.#local.setBeforeSessionInvalidate(callback);
 	}
 	setRebindSession(callback?: () => Promise<void>): void {
 		this.#rebindSession = callback;
+		this.#local.setRebindSession(callback);
+		if (callback && this.#state === "fallback" && !this.#fallbackHandoff) {
+			this.#fallbackHandoff = callback().catch((error) => {
+				this.#onTransportGone(error);
+			});
+		}
 	}
 	setHostUiHandler(callback?: InteractiveHostUiHandler): void {
 		this.#remoteSession.setHostUiHandler(callback);
 	}
+	#clientInfoSent = false;
+	#lastClientWidth = 80;
+	setClientInfo(width: number): void {
+		this.#lastClientWidth = width;
+		const capabilities = this.#clientInfoSent ? undefined : ["rendered_components"];
+		this.#clientInfoSent = true;
+		void this.#client.setClientInfo(width, capabilities).catch(() => {});
+	}
+	async reRegisterClientInfo(): Promise<void> {
+		await this.#client.setClientInfo(this.#lastClientWidth, ["rendered_components"]);
+	}
 	async dispose(): Promise<void> {
+		if (this.#state === "disposed") return;
+		this.#state = "disposed";
+		this.#lifecycle?.dispose();
+		await this.#lifecycle?.reconnecting?.catch(() => {});
+		await this.#fallbackHandoff?.catch(() => {});
 		const errors: unknown[] = [];
 		for (const cleanup of [
-			() => (this.#remoteSession.abortLocalBash as (() => void) | undefined)?.(),
+			() => this.#remoteSession.abortLocalBash(),
 			() => this.#client.closeSession(),
 			() => this.#client.stop(),
 			() => this.#local.dispose(),
@@ -166,21 +327,33 @@ export class RemoteInteractiveRuntime {
 		setup?: (sessionManager: SessionManager) => Promise<void>;
 		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 	}): Promise<{ cancelled: boolean }> {
-		const result = await this.#client.newSession(options?.parentSession);
-		if (!result.cancelled) {
-			this.#beforeSessionInvalidate?.();
-			this.#remoteSession.abortLocalBash();
-			await this.#remoteSession.refresh();
-			if (options?.setup) {
-				const capture = SessionManager.inMemory(this.#remoteSession.session.sessionManager.getCwd());
-				await options.setup(capture);
-				for (const entry of capture.getEntries()) await this.#client.appendSessionEntry(entry);
-				await this.#remoteSession.refresh();
-			}
-			await this.#rebindSession?.();
-			if (options?.withSession) await options.withSession(this.#remoteSession.createReplacedSessionContext());
-		}
-		return result;
+		if (this.#state === "fallback") return this.#local.newSession(options);
+		// Suppresses for the ENTIRE command, not just the refresh tail: a
+		// multi-session host emits session_replaced while completing it, so the echo
+		// can arrive before the refresh/rebind sequence below starts and race it -
+		// newSession transports setup entries between two refreshes.
+		return this.#remoteSession
+			.aroundLocalReplacement(async () => {
+				const result = await this.#call(() => this.#client.newSession(options?.parentSession));
+				if (!result.cancelled) {
+					this.#beforeSessionInvalidate?.();
+					this.#remoteSession.abortLocalBash();
+					await this.#remoteSession.refresh();
+					if (options?.setup) {
+						const capture = SessionManager.inMemory(this.#remoteSession.session.sessionManager.getCwd());
+						await options.setup(capture);
+						for (const entry of capture.getEntries()) await this.#client.appendSessionEntry(entry);
+						await this.#remoteSession.refresh();
+					}
+					await this.#rebindSession?.();
+					if (options?.withSession) await options.withSession(this.#remoteSession.createReplacedSessionContext());
+				}
+				return result;
+			})
+			.catch((error) => {
+				if (isTransportGoneError(error)) return { cancelled: true };
+				throw error;
+			});
 	}
 	async switchSession(
 		sessionPath: string,
@@ -190,43 +363,73 @@ export class RemoteInteractiveRuntime {
 			projectTrustContextFactory?: (cwd: string) => ProjectTrustContext;
 		},
 	): Promise<{ cancelled: boolean }> {
-		const result = await this.#client.switchSession(
-			sessionPath,
-			options?.cwdOverride === undefined ? undefined : { cwdOverride: options.cwdOverride },
-		);
-		if (!result.cancelled) {
-			this.#beforeSessionInvalidate?.();
-			this.#remoteSession.abortLocalBash();
-			await this.#remoteSession.refresh();
-			await this.#rebindSession?.();
-			// The shared host already resolved trust; this callback is retained for
-			// compatibility, but its result cannot override host-authoritative state.
-			options?.projectTrustContextFactory?.(this.#remoteSession.session.sessionManager.getCwd());
-			if (options?.withSession) await options.withSession(this.#remoteSession.createReplacedSessionContext());
-		}
-		return result;
+		if (this.#state === "fallback") return this.#local.switchSession(sessionPath, options);
+		// See newSession: the suppression must cover the command itself, since the
+		// host emits session_replaced while completing it.
+		return this.#remoteSession
+			.aroundLocalReplacement(async () => {
+				const result = await this.#call(() =>
+					this.#client.switchSession(
+						sessionPath,
+						options?.cwdOverride === undefined ? undefined : { cwdOverride: options.cwdOverride },
+					),
+				);
+				if (!result.cancelled) {
+					this.#beforeSessionInvalidate?.();
+					this.#remoteSession.abortLocalBash();
+					await this.#remoteSession.refresh();
+					await this.#rebindSession?.();
+					// The shared host already resolved trust; this callback is retained for
+					// compatibility, but its result cannot override host-authoritative state.
+					options?.projectTrustContextFactory?.(this.#remoteSession.session.sessionManager.getCwd());
+					if (options?.withSession) await options.withSession(this.#remoteSession.createReplacedSessionContext());
+				}
+				return result;
+			})
+			.catch((error) => {
+				if (isTransportGoneError(error)) return { cancelled: true };
+				throw error;
+			});
 	}
 	async fork(
 		entryId: string,
 		options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 	): Promise<{ cancelled: boolean; selectedText?: string }> {
-		const result = await this.#client.fork(entryId, options);
-		if (!result.cancelled) {
-			this.#beforeSessionInvalidate?.();
-			this.#remoteSession.abortLocalBash();
-			await this.#refreshAndRebind();
-			if (options?.withSession) await options.withSession(this.#remoteSession.createReplacedSessionContext());
-		}
-		return { cancelled: result.cancelled, selectedText: result.text };
+		if (this.#state === "fallback") return this.#local.fork(entryId, options);
+		// See newSession: the suppression must cover the command itself.
+		return this.#remoteSession
+			.aroundLocalReplacement(async () => {
+				const result = await this.#call(() => this.#client.fork(entryId, options));
+				if (!result.cancelled) {
+					this.#beforeSessionInvalidate?.();
+					this.#remoteSession.abortLocalBash();
+					await this.#refreshAndRebind();
+					if (options?.withSession) await options.withSession(this.#remoteSession.createReplacedSessionContext());
+				}
+				return { cancelled: result.cancelled, selectedText: result.text };
+			})
+			.catch((error) => {
+				if (isTransportGoneError(error)) return { cancelled: true };
+				throw error;
+			});
 	}
 	async importFromJsonl(inputPath: string, cwdOverride?: string): Promise<{ cancelled: boolean }> {
-		const result = await this.#client.importJsonl(inputPath, cwdOverride);
-		if (!result.cancelled) {
-			this.#beforeSessionInvalidate?.();
-			this.#remoteSession.abortLocalBash();
-			await this.#refreshAndRebind();
-		}
-		return result;
+		if (this.#state === "fallback") return this.#local.importFromJsonl(inputPath, cwdOverride);
+		// See newSession: the suppression must cover the command itself.
+		return this.#remoteSession
+			.aroundLocalReplacement(async () => {
+				const result = await this.#call(() => this.#client.importJsonl(inputPath, cwdOverride));
+				if (!result.cancelled) {
+					this.#beforeSessionInvalidate?.();
+					this.#remoteSession.abortLocalBash();
+					await this.#refreshAndRebind();
+				}
+				return result;
+			})
+			.catch((error) => {
+				if (isTransportGoneError(error)) return { cancelled: true };
+				throw error;
+			});
 	}
 
 	async #refreshAndRebind(): Promise<void> {
@@ -239,26 +442,48 @@ interface RemoteSessionProxy {
 	readonly session: AgentSession;
 	setHostUiHandler(callback?: InteractiveHostUiHandler): void;
 	refresh(): Promise<void>;
+	/**
+	 * Run a replacement this runtime is driving itself, suppressing the refresh
+	 * that the host's broadcast `session_replaced` would otherwise trigger. The
+	 * caller owns the refresh/rebind ordering for its own replacements, so the
+	 * scope must cover the command itself, not just its refresh tail.
+	 */
+	aroundLocalReplacement<T>(body: () => Promise<T>): Promise<T>;
 	abortLocalBash(): void;
 	createReplacedSessionContext(): ReplacedSessionContext;
 }
 
-function createRemoteSessionProxy(
+/** Exported for direct coverage of the wire-event handling below. */
+export function createRemoteSessionProxy(
 	local: AgentSession,
 	agentDir: string,
 	client: RpcClient,
 	initialState: ReturnType<typeof stateFromRpc>,
 	onWarning?: (warning: InteractiveHostWarning) => void,
+	onTransportGone?: (cause: unknown) => void,
+	startupEvents: readonly import("../rpc/rpc-client.ts").RpcClientEvent[] = [],
 ): RemoteSessionProxy {
 	// Fire-and-forget setters keep the sync AgentSession signature, but their RPC
 	// failures must not vanish: the matching *_changed wire event confirms success,
 	// and a rejection here is the only signal of failure.
 	const reportActionFailure = (action: string) => (error: unknown) => {
-		onWarning?.({
-			type: "interactive_host_action_failed",
-			message: `Warning: shared interactive host ${action} failed: ${error instanceof Error ? error.message : String(error)}`,
-			cause: error,
-		});
+		const transportGone = isTransportGoneError(error);
+		if (transportGone) onTransportGone?.(error);
+		else
+			onWarning?.({
+				type: "interactive_host_action_failed",
+				message: `Warning: shared interactive host ${action} failed: ${error instanceof Error ? error.message : String(error)}`,
+				cause: error,
+			});
+	};
+	const transportCall = async <T>(action: string, call: () => Promise<T>, cancelledValue?: T): Promise<T> => {
+		try {
+			return await call();
+		} catch (error) {
+			if (!isTransportGoneError(error)) throw error;
+			reportActionFailure(action)(error);
+			return cancelledValue as T;
+		}
 	};
 	let state = { ...initialState };
 	const waitForBashCallbacks = async (promises: Set<Promise<void>>, allowAbandonment: boolean): Promise<boolean> => {
@@ -331,7 +556,8 @@ function createRemoteSessionProxy(
 	const remoteSessionManager = new Proxy({} as SessionManager, {
 		get(_target, property, _receiver) {
 			if (property === "appendLabelChange") {
-				return (entryId: string, label?: string) => void client.setLabel(entryId, label);
+				return (entryId: string, label?: string) =>
+					void client.setLabel(entryId, label).catch(reportActionFailure("appendLabelChange"));
 			}
 			if (property === "getCwd") return () => state.cwd;
 			if (property === "getSessionName") return () => state.sessionName;
@@ -342,15 +568,35 @@ function createRemoteSessionProxy(
 	});
 	let streamingAssistant: Extract<AgentSession["messages"][number], { role: "assistant" }> | undefined;
 	let mirroredCurrentAssistantUsage = false;
+	/** Non-zero while this runtime is driving its own replacement sequence. */
+	let localReplacementDepth = 0;
 	const listeners = new Set<AgentSessionEventListener>();
-	client.onEvent((wireEvent) => {
+	const handleWireEvent = (wireEvent: import("../rpc/rpc-client.ts").RpcClientEvent) => {
 		if ((wireEvent as { type?: string }).type === "extension_ui_request") {
 			const request = wireEvent as import("../rpc/rpc-types.ts").RpcExtensionUIRequest;
 			if (hostUiHandler)
-				void Promise.resolve(hostUiHandler(request)).then(
-					(response) => response && client.sendExtensionUIResponse(response),
-				);
+				void Promise.resolve(hostUiHandler(request))
+					.then((response) => response && client.sendExtensionUIResponse(response))
+					.catch(reportActionFailure("host UI response"));
 			else pendingUiRequests.push(request);
+			return;
+		}
+		if (wireEvent.type === "session_replaced") {
+			// The host swapped the live session behind this connection - another
+			// attached client issued the replacement, or an extension drove one that no
+			// client issued. Nothing else re-reads the binding, so without this the
+			// proxy keeps serving the previous session's manager, settings and message
+			// mirror while the host has already moved on. The command response carries
+			// only `{ cancelled }`, so this event is the only signal available here.
+			//
+			// A multi-session host broadcasts the event to every connection including
+			// the one that issued the replacement, and this runtime's own replacement
+			// methods already run an ordered refresh/rebind - newSession additionally
+			// transports setup entries between two refreshes. Refreshing again from
+			// here would race that sequence, so self-driven replacements are skipped.
+			if (localReplacementDepth === 0) {
+				void refresh().catch(reportActionFailure("session refresh after replacement"));
+			}
 			return;
 		}
 		if (wireEvent.type === "agent_settled") state = { ...state, isStreaming: false, retryAttempt: 0 };
@@ -475,9 +721,16 @@ function createRemoteSessionProxy(
 		}
 		const event = hydrateMessageUpdate(wireEvent, streamingAssistant);
 		for (const listener of listeners) listener(event);
-	});
-	const refresh = async (): Promise<void> => {
-		const nextState = await client.getState();
+	};
+	client.onEvent(handleWireEvent);
+	for (const event of startupEvents) handleWireEvent(event);
+	const performRefresh = async (): Promise<void> => {
+		// Captured before the first await: entries that arrive via `entry_appended`
+		// while this refresh is in flight are newer than the snapshot it reconciles
+		// against, and must survive the rebuild below.
+		const idsAtRefreshStart = new Set(sessionManager.getEntries().map((entry) => entry.id));
+		const nextState = await transportCall("refresh", () => client.getState());
+		if (!nextState) return;
 		state = { ...stateFromRpc(nextState) };
 		nextQueuedInputOrder = Math.max(0, ...nextState.ordered.map((item) => item.enqueueOrder));
 		let messages: AgentSession["messages"];
@@ -495,35 +748,82 @@ function createRemoteSessionProxy(
 				// deferred creating the file for a setup-only session.
 				sessionManager = SessionManager.open(nextState.sessionFile, undefined, nextState.cwd);
 			}
-			if (nextState.entries?.length && !sessionManager.getEntries().length) {
-				for (const entry of nextState.entries) sessionManager.appendEntry(entry);
+			// The host ships its complete entry list while the session file is still
+			// deferred (no assistant message yet, so nothing has been written), which
+			// makes that list the only authoritative view of the session. Reconcile the
+			// mirror to it exactly: `entry_appended` notifications that cross a
+			// concurrent refresh land on whichever manager is current, so the mirror
+			// can hold an arbitrary partial set rather than a prefix, and a snapshot
+			// taken mid-bind can simply be short. Backfilling only an empty mirror
+			// wedged it at whatever partial set it happened to hold.
+			const authoritative = nextState.entries;
+			if (authoritative?.length) {
+				const mirror = sessionManager.getEntries();
+				const matches =
+					mirror.length === authoritative.length &&
+					mirror.every((entry, index) => entry.id === authoritative[index]?.id);
+				if (!matches) {
+					const rebuilt = SessionManager.open(nextState.sessionFile, undefined, nextState.cwd);
+					for (const entry of authoritative) rebuilt.appendEntry(entry);
+					// A notification that crossed this refresh refers to an entry the
+					// snapshot predates, so it is newer than the snapshot; dropping it
+					// would strand the entry until an unrelated refresh happened to
+					// run. Keep it, in arrival order, after the authoritative list.
+					const authoritativeIds = new Set(authoritative.map((entry) => entry.id));
+					for (const entry of mirror) {
+						if (!idsAtRefreshStart.has(entry.id) && !authoritativeIds.has(entry.id)) {
+							rebuilt.appendEntry(entry);
+						}
+					}
+					sessionManager = rebuilt;
+				}
 			}
 			messages = sessionManager.buildSessionContext().messages;
 		} else {
-			messages = await client.getMessages();
+			messages = await transportCall("refresh", () => client.getMessages(), []);
 		}
 		local.agent.state.messages.splice(0, local.agent.state.messages.length, ...structuredClone(messages));
 		streamingAssistant = undefined;
 	};
+	// Refreshes must not interleave: each one reassigns sessionManager,
+	// settingsManager and the mirrored message list, so two in flight can commit a
+	// mixed snapshot of two different sessions. A replacement-driven refresh races
+	// exactly that way against a caller-driven one, so run them in order.
+	let refreshChain: Promise<void> = Promise.resolve();
+	const refresh = (): Promise<void> => {
+		const next = refreshChain.then(performRefresh, performRefresh);
+		refreshChain = next.then(
+			() => {},
+			() => {},
+		);
+		return next;
+	};
 	const session = new Proxy(local, {
 		get(target, property, receiver) {
 			if (property === "prompt")
-				return (message: string, options?: Parameters<AgentSession["prompt"]>[1]) =>
-					client.prompt(message, {
-						...(options?.images ? { images: options.images } : {}),
-						...(options?.streamingBehavior ? { streamingBehavior: options.streamingBehavior } : {}),
-						...(options?.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}),
-						...(options?.sessionTitlePrompt !== undefined
-							? { sessionTitlePrompt: options.sessionTitlePrompt }
-							: {}),
-						...(options?.expandPromptTemplates !== undefined
-							? { expandPromptTemplates: options.expandPromptTemplates }
-							: {}),
-						...(options?.promptDisposition ? { promptDisposition: options.promptDisposition } : {}),
-						...(options?.preflightResult ? { preflightResult: options.preflightResult } : {}),
-					});
+				return async (message: string, options?: Parameters<AgentSession["prompt"]>[1]) => {
+					try {
+						await client.prompt(message, {
+							...(options?.images ? { images: options.images } : {}),
+							...(options?.streamingBehavior ? { streamingBehavior: options.streamingBehavior } : {}),
+							...(options?.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}),
+							...(options?.sessionTitlePrompt !== undefined
+								? { sessionTitlePrompt: options.sessionTitlePrompt }
+								: {}),
+							...(options?.expandPromptTemplates !== undefined
+								? { expandPromptTemplates: options.expandPromptTemplates }
+								: {}),
+							...(options?.promptDisposition ? { promptDisposition: options.promptDisposition } : {}),
+							...(options?.preflightResult ? { preflightResult: options.preflightResult } : {}),
+						});
+					} catch (error) {
+						if (!isTransportGoneError(error)) throw error;
+						reportActionFailure("prompt")(error);
+					}
+				};
 			if (property === "abort") return () => client.abort();
-			if (property === "abortCompaction") return () => void client.abortCompaction();
+			if (property === "abortCompaction")
+				return () => void client.abortCompaction().catch(reportActionFailure("abortCompaction"));
 			if (property === "steer")
 				return (
 					message: string,
@@ -538,7 +838,7 @@ function createRemoteSessionProxy(
 						ordered: [...state.ordered, { text: message, mode: "steer", enqueueOrder }],
 						pendingMessageCount: state.pendingMessageCount + 1,
 					};
-					return client.steer(message, images, { ...recovery, enqueueOrder });
+					return transportCall("steer", () => client.steer(message, images, { ...recovery, enqueueOrder }));
 				};
 			if (property === "followUp")
 				return (
@@ -554,14 +854,14 @@ function createRemoteSessionProxy(
 						ordered: [...state.ordered, { text: message, mode: "followUp", enqueueOrder }],
 						pendingMessageCount: state.pendingMessageCount + 1,
 					};
-					return client.followUp(message, images, { ...recovery, enqueueOrder });
+					return transportCall("followUp", () => client.followUp(message, images, { ...recovery, enqueueOrder }));
 				};
 			if (property === "waitForIdle") return () => client.waitForIdle();
 			if (property === "getLastAssistantText") return () => target.getLastAssistantText();
 			if (property === "setModel" || property === "setSessionModel")
 				return async (model: NonNullable<AgentSession["model"]>) => {
-					const next = await client.setModel(model.provider, model.id);
-					return { systemPromptName: next.systemPromptName, model: next };
+					const next = await transportCall("setModel", () => client.setModel(model.provider, model.id), undefined);
+					return next ? { systemPromptName: next.systemPromptName, model: next } : undefined;
 				};
 			if (property === "setSessionThinkingLevel")
 				return (level: AgentSession["thinkingLevel"]) =>
@@ -586,20 +886,27 @@ function createRemoteSessionProxy(
 					state = { ...state, scopedModels: [...models] };
 					void client.setScopedModels(models).catch(reportActionFailure("setScopedModels"));
 				};
-			if (property === "cycleModel") return (direction?: "forward" | "backward") => client.cycleModel(direction);
+			if (property === "cycleModel")
+				return (direction?: "forward" | "backward") =>
+					transportCall("cycleModel", () => client.cycleModel(direction), undefined);
 			if (property === "setThinkingLevel")
 				return (level: AgentSession["thinkingLevel"]) =>
 					void client.setThinkingLevel(level).catch(reportActionFailure("setThinkingLevel"));
 			if (property === "cycleThinkingLevel")
-				return () => client.cycleThinkingLevel().then((result) => result?.level);
-			if (property === "getAvailableThinkingLevels") return () => client.getAvailableThinkingLevels();
+				return () =>
+					transportCall("cycleThinkingLevel", () => client.cycleThinkingLevel(), undefined).then(
+						(result) => result?.level,
+					);
+			if (property === "getAvailableThinkingLevels")
+				return () => transportCall("getAvailableThinkingLevels", () => client.getAvailableThinkingLevels(), []);
 			if (property === "setSteeringMode")
 				return (mode: AgentSession["steeringMode"]) =>
 					void client.setSteeringMode(mode).catch(reportActionFailure("setSteeringMode"));
 			if (property === "setFollowUpMode")
 				return (mode: AgentSession["followUpMode"]) =>
 					void client.setFollowUpMode(mode).catch(reportActionFailure("setFollowUpMode"));
-			if (property === "compact") return (instructions?: string) => client.compact(instructions);
+			if (property === "compact")
+				return (instructions?: string) => transportCall("compact", () => client.compact(instructions));
 			if (property === "setAutoCompactionEnabled")
 				return (enabled: boolean) =>
 					void client.setAutoCompaction(enabled).catch(reportActionFailure("setAutoCompaction"));
@@ -625,7 +932,9 @@ function createRemoteSessionProxy(
 								{ onChunk, signal: abortController.signal },
 							);
 							if (state.sessionId === sessionAtStart) {
-								await client.recordBashResult(command, result, options.excludeFromContext);
+								await transportCall("recordBashResult", () =>
+									client.recordBashResult(command, result, options.excludeFromContext),
+								);
 							}
 							return result;
 						} finally {
@@ -643,11 +952,16 @@ function createRemoteSessionProxy(
 					};
 					bashExecutions.set(executionId, execution);
 					try {
-						const result = await client.bash(command, {
-							excludeFromContext: options?.excludeFromContext,
-							executionId,
-							operations: options?.operations as Record<string, unknown> | undefined,
-						});
+						const result = await transportCall(
+							"bash",
+							() =>
+								client.bash(command, {
+									excludeFromContext: options?.excludeFromContext,
+									executionId,
+									operations: options?.operations as Record<string, unknown> | undefined,
+								}),
+							{ output: "", exitCode: undefined, cancelled: true, truncated: false },
+						);
 						const callbacksSettled = await waitForBashCallbacks(execution.promises, false);
 						if (!callbacksSettled) {
 							if (result.fullOutputPath) await cleanupRemoteBashOutput(result.fullOutputPath);
@@ -668,19 +982,25 @@ function createRemoteSessionProxy(
 					else void client.abortBash().catch(reportActionFailure("abortBash"));
 				};
 			if (property === "getContextUsage") return () => state.contextUsage;
-			if (property === "getSessionStats") return () => client.getSessionStats();
+			if (property === "getSessionStats")
+				return () => transportCall("getSessionStats", () => client.getSessionStats(), local.getSessionStats());
 			if (property === "exportToHtml")
 				return (outputPath?: string, options?: { themeName?: string }) =>
-					client.exportHtml(outputPath, options?.themeName).then((result) => result.path);
+					transportCall("exportToHtml", () => client.exportHtml(outputPath, options?.themeName)).then(
+						(result) => result?.path,
+					);
 			if (property === "setSessionName")
 				return (name: string) => client.setSessionName(name).catch(reportActionFailure("setSessionName"));
 			if (property === "navigateTree")
 				return async (targetId: string, options?: Parameters<AgentSession["navigateTree"]>[1]) => {
-					const result = await client.navigateTree(targetId, options);
+					const result = await transportCall("navigateTree", () => client.navigateTree(targetId, options), {
+						cancelled: true,
+					});
 					if (!result.cancelled) await refresh();
 					return result;
 				};
-			if (property === "getUserMessagesForForking") return () => client.getForkMessages();
+			if (property === "getUserMessagesForForking")
+				return () => transportCall("getUserMessagesForForking", () => client.getForkMessages(), []);
 			if (property === "subscribe")
 				return (listener: AgentSessionEventListener) => {
 					listeners.add(listener);
@@ -721,10 +1041,14 @@ function createRemoteSessionProxy(
 			if (property === "set_label") return undefined;
 			if (property === "retryAttempt") return state.retryAttempt;
 			if (property === "isBashRunning") return state.isBashRunning;
-			if (property === "reload") return (_options?: Parameters<AgentSession["reload"]>[0]) => client.reload();
-			if (property === "checkReloadVeto") return () => client.checkReloadVeto();
+			if (property === "reload")
+				return (_options?: Parameters<AgentSession["reload"]>[0]) =>
+					transportCall("reload", () => client.reload(), { cancelled: true });
+			if (property === "checkReloadVeto")
+				return () => transportCall("checkReloadVeto", () => client.checkReloadVeto(), { cancelled: true });
 			if (property === "exportToJsonl")
-				return (outputPath?: string) => client.exportJsonl(outputPath).then((result) => result.path);
+				return (outputPath?: string) =>
+					transportCall("exportToJsonl", () => client.exportJsonl(outputPath)).then((result) => result?.path);
 			// The footer and other renderers read session.state.*; surface the
 			// host-authoritative fields there too, not only via the direct getters.
 			if (property === "state") {
@@ -761,37 +1085,51 @@ function createRemoteSessionProxy(
 			hostUiHandler = callback;
 			if (callback)
 				for (const request of pendingUiRequests.splice(0))
-					void Promise.resolve(callback(request)).then(
-						(response) => response && client.sendExtensionUIResponse(response),
-					);
+					void Promise.resolve(callback(request))
+						.then((response) => response && client.sendExtensionUIResponse(response))
+						.catch(reportActionFailure("host UI response"));
 		},
 		refresh,
+		aroundLocalReplacement: async (body) => {
+			localReplacementDepth++;
+			try {
+				return await body();
+			} finally {
+				localReplacementDepth--;
+			}
+		},
 		abortLocalBash: () => localBashAbortController?.abort(),
 		createReplacedSessionContext: () => {
 			const context = local.createReplacedSessionContext();
 			Object.defineProperty(context, "cwd", { value: state.cwd });
 			Object.defineProperty(context, "sessionManager", { value: remoteSessionManager });
 			context.sendMessage = (message, options) =>
-				client.sendCustomMessage(message, {
-					triggerTurn: options?.triggerTurn,
-					deliverAs: options?.deliverAs,
-				});
+				transportCall("sendMessage", () =>
+					client.sendCustomMessage(message, {
+						triggerTurn: options?.triggerTurn,
+						deliverAs: options?.deliverAs,
+					}),
+				);
 			context.sendUserMessage = (content, options) => {
 				if (typeof content === "string")
-					return client.prompt(content, {
-						streamingBehavior: options?.deliverAs,
-						expandPromptTemplates: options?.expandPromptTemplates,
-					});
+					return transportCall("sendUserMessage", () =>
+						client.prompt(content, {
+							streamingBehavior: options?.deliverAs,
+							expandPromptTemplates: options?.expandPromptTemplates,
+						}),
+					);
 				const text = content
 					.filter((part) => part.type === "text")
 					.map((part) => part.text)
 					.join("\n");
 				const images = content.filter((part) => part.type === "image");
-				return client.prompt(text, {
-					images,
-					streamingBehavior: options?.deliverAs,
-					expandPromptTemplates: options?.expandPromptTemplates,
-				});
+				return transportCall("sendUserMessage", () =>
+					client.prompt(text, {
+						images,
+						streamingBehavior: options?.deliverAs,
+						expandPromptTemplates: options?.expandPromptTemplates,
+					}),
+				);
 			};
 			return context;
 		},

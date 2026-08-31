@@ -48,8 +48,11 @@ export async function runMultiSessionHost(options: MultiSessionHostOptions): Pro
 	return runSocketHost(options, resolveSocketPath(options.listen, options.agentDir));
 }
 
-function createHostCore(options: MultiSessionHostOptions, writer: SessionEventWriter) {
-	const capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES"));
+function createHostCore(
+	options: MultiSessionHostOptions,
+	writer: SessionEventWriter,
+	capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
+) {
 	const router = new SessionCommandRouter(
 		new RpcSessionRegistry({ agentDir: options.agentDir, createRuntime: options.createRuntime }),
 		writer,
@@ -109,7 +112,13 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 async function runSocketHost(options: MultiSessionHostOptions, socketPath: string): Promise<never> {
 	await prepareSocketPath(socketPath);
 	const writer = new SessionEventWriter(() => {});
-	const { router, handle } = createHostCore(options, writer);
+	const { router, handle } = createHostCore(
+		options,
+		writer,
+		parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")).filter(
+			(capability) => capability !== "rendered_components",
+		),
+	);
 	const connections = new Map<string, Connection>();
 	let nextConnection = 0;
 	let shuttingDown = false;

@@ -384,6 +384,30 @@ describe("RPC auth and connection handler contracts", () => {
 		await handler.dispose();
 	});
 
+	it("disposes footer data providers on replacement and handler disposal", async () => {
+		const collected = makeSink();
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		const providers: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink, {
+			capabilities: ["rendered_components"],
+			footerDataProviderFactory: () => {
+				const provider = { dispose: vi.fn(), getGitBranch: () => null };
+				providers.push(provider);
+				return provider as never;
+			},
+		});
+		await handler.ready;
+		const ui = harness.runtimeHost.session.extensionRunner.getUIContext();
+		ui.setFooter((() => ({ render: () => ["footer"], invalidate: () => {} })) as never);
+		await Promise.resolve();
+		ui.setFooter((() => ({ render: () => ["replacement"], invalidate: () => {} })) as never);
+		await Promise.resolve();
+		expect(providers[0]?.dispose).toHaveBeenCalledTimes(1);
+		await handler.dispose();
+		expect(providers[1]?.dispose).toHaveBeenCalledTimes(1);
+	});
+
 	it("emits an optional custom-UI capability notice without changing default clients", async () => {
 		const factory = (() => ({ render: () => "" })) as never;
 		const flagged = makeSink();

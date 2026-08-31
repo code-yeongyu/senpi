@@ -23,6 +23,11 @@ function cumulativeTextUpdate(delta: string, text: string, contentIndex = 0): Re
 	};
 }
 
+function widgetLines(record: Record<string, unknown>): string[] | undefined {
+	const lines = record.widgetLines;
+	return Array.isArray(lines) && lines.every((line): line is string => typeof line === "string") ? lines : undefined;
+}
+
 function flushedDeltas(output: readonly Record<string, unknown>[]): string {
 	return output
 		.filter((record) => record.type === "message_update")
@@ -274,6 +279,63 @@ describe("multi-session RPC event writer", () => {
 		).toEqual(["message_start", "one", "two"]);
 	});
 
+	it("filters rendered snapshot replay by each connection capability", async () => {
+		const capable: string[] = [];
+		const defaultClient: string[] = [];
+		const lateCapable: string[] = [];
+		const writer = new SessionEventWriter(() => {});
+		writer.registerConnection("capable", {
+			writeRaw: (chunk) => capable.push(chunk),
+			waitForBackpressure: async () => {},
+		});
+		writer.setConnectionCapabilities("capable", ["rendered_components"]);
+		writer.attachConnectionToSession("capable", "session");
+		writer.enqueue("session", { type: "message_start" });
+		writer.enqueue("session", {
+			type: "extension_ui_request",
+			method: "setWidget",
+			widgetLines: ["factory"],
+			__senpiRenderedComponent: true,
+		});
+		writer.enqueue("session", { type: "extension_ui_request", method: "setWidget", widgetLines: ["array"] });
+		await writer.flush();
+
+		writer.registerConnection("default", {
+			writeRaw: (chunk) => defaultClient.push(chunk),
+			waitForBackpressure: async () => {},
+		});
+		writer.registerConnection("late-capable", {
+			writeRaw: (chunk) => lateCapable.push(chunk),
+			waitForBackpressure: async () => {},
+		});
+		writer.setConnectionCapabilities("late-capable", ["rendered_components"]);
+		writer.attachConnectionToSession("late-capable", "session");
+		await writer.flush();
+
+		expect(records(defaultClient).some((record) => widgetLines(record)?.includes("factory"))).toBe(false);
+		expect(records(defaultClient).some((record) => widgetLines(record)?.includes("array"))).toBe(true);
+		expect(records(lateCapable).some((record) => widgetLines(record)?.includes("factory"))).toBe(true);
+	});
+
+	it("scopes rendered delivery and capability presence to the attached session", async () => {
+		const a: string[] = [];
+		const b: string[] = [];
+		const writer = new SessionEventWriter(() => {});
+		writer.registerConnection("a", { writeRaw: (chunk) => a.push(chunk), waitForBackpressure: async () => {} });
+		writer.registerConnection("b", { writeRaw: (chunk) => b.push(chunk), waitForBackpressure: async () => {} });
+		writer.setConnectionCapabilities("a", ["rendered_components"]);
+		writer.attachConnectionToSession("a", "session-a");
+		writer.attachConnectionToSession("b", "session-b");
+		expect(writer.hasCapableConnection("session-a")).toBe(true);
+		expect(writer.hasCapableConnection("session-b")).toBe(false);
+		writer.enqueue("session-a", { type: "extension_ui_request", widgetLines: ["a"], __senpiRenderedComponent: true });
+		writer.enqueue("session-b", { type: "extension_ui_request", widgetLines: ["b"], __senpiRenderedComponent: true });
+		await writer.flush();
+		expect(records(a).some((record) => widgetLines(record)?.includes("a"))).toBe(true);
+		expect(records(a).some((record) => widgetLines(record)?.includes("b"))).toBe(false);
+		expect(records(b).some((record) => widgetLines(record)?.includes("b"))).toBe(false);
+	});
+
 	it("routes extension UI responses only to that session's pending map and rejects pending work on close", () => {
 		const a = new SessionExtensionUiRequests();
 		const b = new SessionExtensionUiRequests();
@@ -292,6 +354,28 @@ describe("multi-session RPC event writer", () => {
 		expect(a.resolve({ type: "extension_ui_response", id: "closing", value: "late" })).toBe(false);
 		expect(b.resolve({ type: "extension_ui_response", id: "request", value: "B" })).toBe(true);
 		expect(resolvedB).toBe(true);
+	});
+
+	it("delivers rendered component records only to registered capable connections", async () => {
+		const a: string[] = [];
+		const b: string[] = [];
+		const writer = new SessionEventWriter(() => {});
+		writer.registerConnection("a", { writeRaw: (chunk) => a.push(chunk), waitForBackpressure: async () => {} });
+		writer.registerConnection("b", { writeRaw: (chunk) => b.push(chunk), waitForBackpressure: async () => {} });
+		writer.setConnectionCapabilities("a", ["rendered_components"]);
+		writer.attachConnectionToSession("a", "session");
+		writer.enqueue("session", {
+			type: "extension_ui_request",
+			method: "setWidget",
+			widgetLines: ["factory"],
+			__senpiRenderedComponent: true,
+		});
+		writer.enqueue("session", { type: "extension_ui_request", method: "setWidget", widgetLines: ["array"] });
+		await writer.flush();
+		expect(records(a).filter((record) => record.widgetLines)).toHaveLength(2);
+		expect(records(b).filter((record) => record.widgetLines)).toEqual([
+			{ type: "extension_ui_request", method: "setWidget", widgetLines: ["array"], sessionId: "session" },
+		]);
 	});
 
 	it("broadcasts unsolicited extension UI state while targeting dialog requests", async () => {

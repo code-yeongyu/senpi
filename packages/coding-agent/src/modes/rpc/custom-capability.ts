@@ -20,6 +20,7 @@ import type { RpcExtensionUIRequest } from "./rpc-types.ts";
 /** The capability string a client sends in its handshake to opt into the notice. */
 export const CUSTOM_UNSUPPORTED_CAPABILITY = "custom_unsupported";
 export const EXTENSION_EVENTS_CAPABILITY = "extension_events";
+export const RENDERED_COMPONENTS_CAPABILITY = "rendered_components";
 
 /**
  * Env var carrying client capabilities to a single-connection stdio RPC host

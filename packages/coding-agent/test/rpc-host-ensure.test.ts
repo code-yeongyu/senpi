@@ -10,7 +10,7 @@ import {
 	readProcessStartTime,
 	waitForStartTime,
 } from "../src/modes/app-server/daemon/process.ts";
-import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
+import { createHostDaemonPaths, defaultHostLaunch, ensureHost } from "../src/modes/rpc/host-ensure.ts";
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
@@ -141,6 +141,52 @@ describe("ensureHost", () => {
 		await expect(access(paths.pidFile)).rejects.toMatchObject({ code: "ENOENT" });
 		await expect(access(qa.socket)).rejects.toMatchObject({ code: "ENOENT" });
 	}, 10_000);
+
+	it("fails fast when the spawned host exits before readiness", async () => {
+		const qa = await scratch("early-exit");
+		const startedAt = Date.now();
+		await expect(
+			ensureFixtureHost(qa, {
+				readinessTimeoutMs: 5_000,
+				spawn: { command: "/bin/sh", args: ["-c", "exit 7"] },
+			}),
+		).rejects.toThrow(/exited.*7/);
+		expect(Date.now() - startedAt).toBeLessThan(2_500);
+	}, 10_000);
+
+	it("reports an incompatible protocol answer instead of a readiness timeout", async () => {
+		const qa = await scratch("incompatible-answer");
+		const helper = `
+			const net = require("node:net");
+			const server = net.createServer((socket) => {
+				socket.on("data", () => socket.end(JSON.stringify({ id: "ensure-host-probe", success: true, data: { serverVersion: "0.0.0-wrong", capabilities: [] } }) + "\\n"));
+			});
+			server.listen(process.argv[1]);
+		`;
+		await expect(
+			ensureFixtureHost(qa, {
+				readinessTimeoutMs: 500,
+				spawn: { command: process.execPath, args: ["-e", helper, qa.socket] },
+			}),
+		).rejects.toThrow(/incompatible|0\\.0\\.0-wrong/);
+	}, 10_000);
+});
+
+describe("defaultHostLaunch", () => {
+	it("re-enters through the internal supervisor route in compiled binaries", () => {
+		expect(defaultHostLaunch("/tmp/qa.sock", ["--provider", "mock"], true)).toEqual({
+			command: process.execPath,
+			args: ["--internal-rpc-host-supervisor", "--socket", "/tmp/qa.sock", "--provider", "mock"],
+		});
+	});
+
+	it("re-enters through the host-lifecycle script outside compiled binaries", () => {
+		const launch = defaultHostLaunch("/tmp/qa.sock", ["--provider", "mock"], false);
+		expect(launch.command).toBe(process.execPath);
+		const args = launch.args.slice(process.execArgv.length);
+		expect(args[0]).toMatch(/host-lifecycle\.(ts|js)$/);
+		expect(args.slice(1)).toEqual(["--socket", "/tmp/qa.sock", "--provider", "mock"]);
+	});
 });
 
 type Qa = { root: string; agentDir: string; socket: string };

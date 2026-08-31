@@ -1,6 +1,6 @@
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "vitest";
-import { getAgentDir } from "../src/config.ts";
+import { getAgentDir, getPackageDir } from "../src/config.ts";
 import { resetBrandProfileForTests } from "../src/core/brand.ts";
 import { resolveQuarantineAgentDir, scrubAmbientAgentDirEnv } from "./support/quarantine.ts";
 
@@ -8,6 +8,9 @@ const AMBIENT_AGENT_DIR_KEYS = [
 	"OMO_CODING_AGENT_DIR",
 	"SENPI_CODING_AGENT_DIR",
 	"PI_CODING_AGENT_DIR",
+	"OMO_PACKAGE_DIR",
+	"SENPI_PACKAGE_DIR",
+	"PI_PACKAGE_DIR",
 	"SENPI_BRAND",
 ] as const;
 
@@ -18,6 +21,9 @@ function saveAndPoisonEnv(realDir: string): Record<string, string | undefined> {
 	}
 	process.env.OMO_CODING_AGENT_DIR = realDir;
 	process.env.SENPI_CODING_AGENT_DIR = realDir;
+	process.env.OMO_PACKAGE_DIR = "/installed/omo";
+	process.env.SENPI_PACKAGE_DIR = "/installed/senpi";
+	process.env.PI_PACKAGE_DIR = "/installed/pi";
 	process.env.SENPI_BRAND = JSON.stringify({ name: "omo", configDir: ".omo", envPrefix: "OMO" });
 	resetBrandProfileForTests();
 	return saved;
@@ -65,6 +71,10 @@ describe("test quarantine resolver", () => {
 			SENPI_CODING_AGENT_DIR: "/real",
 			PI_CODING_AGENT_DIR: "/real",
 			TAU_CODING_AGENT_DIR: "/real",
+			OMO_PACKAGE_DIR: "/installed/omo",
+			SENPI_PACKAGE_DIR: "/installed/senpi",
+			PI_PACKAGE_DIR: "/installed/pi",
+			TAU_PACKAGE_DIR: "/installed/tau",
 			SENPI_BRAND: "{}",
 			UNRELATED: "keep",
 		};
@@ -90,8 +100,10 @@ describe("test quarantine resolver", () => {
 
 			// Proof the setup module re-executed and quarantined the SENPI_ lane.
 			expect(process.env.SENPI_CODING_AGENT_DIR).toContain(tmpdir());
-			// The regression: no brand/agent-dir lane may leak the real directory through.
+			// The regression: no brand/agent-dir lane may leak the real directory through, and no
+			// package-dir lane may redirect asset resolution to an installed runtime.
 			expect(getAgentDir()).not.toBe(realDir);
+			expect(getPackageDir()).toBe(process.cwd());
 		} finally {
 			restoreEnv(saved);
 		}

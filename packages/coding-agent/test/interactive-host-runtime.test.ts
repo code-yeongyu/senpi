@@ -19,7 +19,9 @@ import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { FooterComponent } from "../src/modes/interactive/components/footer.ts";
 import {
 	createInteractiveHostRuntime,
+	createRemoteSessionProxy,
 	INTERACTIVE_HOST_FALLBACK_WARNING,
+	RemoteInteractiveRuntime,
 } from "../src/modes/interactive/interactive-host-runtime.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
@@ -87,9 +89,14 @@ function spawnHost(
 				...hermeticProviderEnv(),
 				PI_OFFLINE: "1",
 				PI_TELEMETRY: "0",
+				// The rules extension appends an async `pi-rules.scan` entry on the
+				// host after session start, racing entry-parity assertions between
+				// the host and the local mirror. No test here exercises rules.
+				PI_RULES_DISABLED: "1",
 				SENPI_RUNTIME: "node",
 				SENPI_CODING_AGENT_DIR: qa.agentDir,
 				SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
+				SENPI_RPC_CLIENT_CAPABILITIES: "extension_events,custom_unsupported,rendered_components",
 			},
 			stdio: ["pipe", "pipe", "pipe"],
 		},
@@ -151,6 +158,95 @@ async function waitForHost(child: ChildProcessWithoutNullStreams, socket: string
 }
 
 describe("interactive host runtime", () => {
+	it("re-registers rendered capability and last width after reconnect", async () => {
+		const setClientInfo = vi.fn(async () => {});
+		const runtime = new RemoteInteractiveRuntime({} as AgentSessionRuntime, {} as never, { setClientInfo } as never);
+		runtime.setClientInfo(117);
+		await Promise.resolve();
+		await runtime.reRegisterClientInfo();
+		expect(setClientInfo).toHaveBeenNthCalledWith(1, 117, ["rendered_components"]);
+		expect(setClientInfo).toHaveBeenNthCalledWith(2, 117, ["rendered_components"]);
+	});
+	it("replays only own-session and untagged startup events", async () => {
+		const cwd = tmpdir();
+		const local = await createAgentSessionRuntimeFixture({
+			cwd,
+			agentDir: cwd,
+			sessionManager: SessionManager.inMemory(cwd),
+			settingsManager: SettingsManager.create(cwd, cwd),
+		});
+		const client = { onEvent: () => () => {} } as unknown as RpcClient;
+		const message = (text: string) => ({ role: "user", content: text, timestamp: Date.now() });
+		createRemoteSessionProxy(
+			local.session,
+			cwd,
+			client,
+			{
+				sessionId: "own",
+				cwd,
+				ordered: [],
+				isBashRunning: false,
+				isStreaming: false,
+				isCompacting: false,
+				retryAttempt: 0,
+				steering: [],
+				followUp: [],
+				thinkingLevel: "off",
+				autoCompactionEnabled: false,
+				pendingMessageCount: 0,
+				usageTotals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+				favoriteModels: [],
+				scopedModels: [],
+				projectTrusted: false,
+			} as never,
+			undefined,
+			undefined,
+			[
+				{ type: "message_start", sessionId: "own", message: message("own") } as never,
+				{ type: "message_start", message: message("untagged") } as never,
+			],
+		);
+		expect(local.session.agent.state.messages.map((entry) => (entry as { content: unknown }).content)).toEqual([
+			"own",
+			"untagged",
+		]);
+	});
+	it("delivers startup factory UI through the normal runtime API", async () => {
+		const qa = scratch("startup-ui");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		mkdirSync(join(qa.agentDir, "extensions"), { recursive: true });
+		writeFileSync(
+			join(qa.agentDir, "extensions", "startup-ui.ts"),
+			`export default function (pi) { pi.on("session_start", (_event, ctx) => ctx.ui.setWidget("startup", () => ({ render: () => ["startup"] }))); }`,
+		);
+		const host = spawnHost(qa);
+		await waitForHost(host, qa.socket);
+		const local = await createAgentSessionRuntimeFixture({
+			cwd: qa.cwd,
+			agentDir: qa.agentDir,
+			sessionManager: SessionManager.create(qa.cwd, qa.sessionDir),
+			settingsManager: SettingsManager.create(qa.cwd, qa.agentDir),
+		});
+		const runtime = await createInteractiveHostRuntime(local, {
+			socket: qa.socket,
+			ensureHost: async () => undefined,
+		});
+		try {
+			const received: unknown[] = [];
+			(
+				runtime as unknown as import("../src/modes/interactive/interactive-host-runtime.ts").RemoteInteractiveRuntime
+			).setHostUiHandler((request) => {
+				received.push(request);
+			});
+			expect(received).toContainEqual(
+				expect.objectContaining({ method: "setWidget", widgetKey: "startup", widgetLines: ["startup"] }),
+			);
+		} finally {
+			await runtime.dispose();
+			await fake.close();
+		}
+	});
 	it("renders host-authoritative footer context, cwd, and session name", async () => {
 		const qa = scratch("footer-values");
 		const fake = await startFakeModelServer();
@@ -835,7 +931,7 @@ describe("interactive host runtime", () => {
 		});
 		try {
 			expect(runtime).toBe(local);
-			expect(warnings).toEqual([`${INTERACTIVE_HOST_FALLBACK_WARNING}: host intentionally unavailable`]);
+			expect(warnings).toEqual([INTERACTIVE_HOST_FALLBACK_WARNING]);
 			await runtime.session.prompt("local-fallback-unique");
 			await runtime.session.waitForIdle();
 			expect(runtime.session.getLastAssistantText()).toBeTruthy();
@@ -1156,15 +1252,29 @@ describe("interactive host runtime", () => {
 			ensureHost: async () => undefined,
 		});
 		try {
-			const before = runtime.session.sessionManager.getLeafId();
-			await runtime.session.navigateTree(userId, { summarize: false });
-			const persistedHostSession = SessionManager.open(runtime.session.sessionFile!);
-			expect(before).not.toBe(persistedHostSession.getLeafId());
-			expect(persistedHostSession.getLeafId()).toBe(runtime.session.sessionManager.getLeafId());
+			const result = await runtime.session.navigateTree(userId, { summarize: false });
+			expect(result.cancelled).toBe(false);
+			expect(result.editorText).toBe("nav-user");
 			expect(runtime.session.messages).toContainEqual({
 				role: "user",
 				content: "nav-user",
 				timestamp: 1,
+			});
+			// SessionManager.branch() moves the leaf pointer in memory only, so the
+			// host's applied navigation is proven by where the NEXT host append
+			// parents: navigating to the root user message moved the leaf to null,
+			// so the session_info below must land as a root entry. The previous
+			// persisted-leaf assertion only ever held when the rules extension's
+			// async `pi-rules.scan` append raced in ahead of it.
+			await runtime.session.setSessionName("post-nav");
+			const sessionFile = runtime.session.sessionFile!;
+			await vi.waitFor(() => {
+				const persisted = SessionManager.open(sessionFile);
+				const info = persisted
+					.getEntries()
+					.find((entry) => entry.type === "session_info" && entry.name === "post-nav");
+				expect(info).toBeDefined();
+				expect(info?.parentId).toBeNull();
 			});
 		} finally {
 			await runtime.dispose();

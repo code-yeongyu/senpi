@@ -47,6 +47,7 @@ describe("Given a warm speculative summary and idle-time message appends", () =>
 			fauxAssistantMessage("fresh summary the user should never have to wait for"),
 		]);
 		await handlers.beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx);
+		await handlers.waitForSpeculativeJob();
 
 		// When: idle-time appends bump the revision without rewriting the
 		// summarized prefix, and the next prompt crosses the threshold.
@@ -73,6 +74,7 @@ describe("Given a warm speculative summary and idle-time message appends", () =>
 			fauxAssistantMessage("fresh summary after the prefix was rewritten"),
 		]);
 		await handlers.beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx);
+		await handlers.waitForSpeculativeJob();
 
 		// When: a compaction boundary lands, the warm summary now describes
 		// history that no longer exists in the branch it would be applied to.

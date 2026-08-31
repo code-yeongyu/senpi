@@ -18,6 +18,54 @@
 
 ### Removed
 
+## [2026.8.30-3] - 2026-08-30
+
+### Added
+
+### Fixed
+
+- The shared interactive host no longer surfaces raw `Error: Client not started` when its socket drops: the RPC client classifies transport loss with a typed error, the TUI runtime makes bounded reconnect attempts and then genuinely falls back to the local session with a single warning, and in-flight actions resolve as cancellations instead of error toasts ([#1220](https://github.com/code-yeongyu/senpi/pull/1220)).
+
+- Persistent terminals now serialize headless xterm screen writes through parser callbacks with a bounded, dispose-safe backlog, preventing fast PTY output from exceeding xterm's pending-write watermark and terminating Senpi with `write data discarded, use flow control to avoid losing data` ([#1214](https://github.com/code-yeongyu/senpi/pull/1214), supersedes [#837](https://github.com/code-yeongyu/senpi/pull/837)).
+
+### New Features
+
+- Shared RPC hosts now render factory widgets, headers, and footers only for connections advertising the per-connection `rendered_components` capability; clients register that capability and session-minimum width through `set_client_info` ([#1219](https://github.com/code-yeongyu/senpi/pull/1219)).
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30-2] - 2026-08-30
+
+### Added
+
+### Fixed
+
+- Entries an extension appends while a replaced session is still binding (for example the `pi-rules` scan) now reach every attached RPC connection. The event subscription was reinstalled only after the deferred bind finished, so those durable entries were never delivered, and because the session file is not written until an assistant message exists nothing else could carry them.
+
+- The shared interactive host mirror now reconciles to the complete entry list the host reports, instead of backfilling only when empty, so it no longer stays permanently short of entries after a session replacement.
+
+- Fixed shared RPC socket host startup to fail fast when the spawned host exits before answering `get_protocol_info`, instead of silently consuming the full 10-second readiness budget, and made readiness diagnostics honest: an early exit reports the child's exit code, an incompatible host reports its advertised server version and capabilities against the expected values, and a host that never answered keeps the existing timeout message.
+
+### New Features
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.8.30] - 2026-08-30
 
 ### Added
@@ -32,6 +80,18 @@
 
 - Claude SDK OAuth no longer treats DNS, connection, timeout, socket, or fetch failures during token refresh as a
   rejected token that blocks the account until re-login; real OAuth rejection signals remain persistent auth errors.
+
+- Compiled standalone binaries can now start the shared interactive RPC host. The host launch re-enters the executable through the internal supervisor route instead of a script path, which compiled entrypoints parse as CLI arguments; previously every interactive launch stalled for the full 10s readiness budget, printed `Error: Unknown option: --socket`, and fell back to a local session.
+
+- A compaction started right after `switch_session`, `new_session`, or `fork` is no longer cancelled by the replacement's own extension binding. Binding deactivates tools for the active model, and that tool change aborted the in-flight compaction with "Compaction cancelled".
+
+- The `session_replaced` RPC event carries the replacement identity as `durableSessionId`. It previously used `sessionId`, which multi-session hosts overwrite with the connection's routing handle, so attached clients received a replacement event with no usable identity.
+
+- The RPC `session_replaced` event is now part of the typed `RpcClientEvent` union, so clients can discriminate it and read `durableSessionId` without casting.
+
+- An interactive session sharing a host no longer keeps rendering the previous session after another attached client switches, forks, or replaces the shared session; the proxy rebinds its session manager, settings, and transcript when the host announces the replacement.
+
+- The `session_replaced` RPC event carries the replacement identity as `durableSessionId`. It previously used `sessionId`, which multi-session hosts overwrite with the connection's routing handle, so attached clients received a replacement event with no usable identity.
 
 - Bash callback settlement is bounded on direct, shared-host, and harness execution paths so never-settling callbacks cannot hang commands or silently lose spill cleanup failures.
 
@@ -49,8 +109,45 @@
   directly. Hooks and permission checks still apply to those commands. The policy is inert whenever the
   `eval` tool is unavailable, so shell access is never lost, and it follows the flag across a reload.
 
+- Oversized tool results are now capped before they enter the context. A single result is limited to
+  `min(50000, max(8192, 5% of the context window))`; the full output is written to a spill file and
+  the kept excerpt carries a marker naming that path, so the model can read it back on demand.
+  Disable with `compaction.toolAdmissionEnabled: false`.
+- A context-budget reminder is delivered once per compaction generation as the remaining runway
+  approaches the threshold, so the model can wrap up verbose exploration before the summary is
+  taken. Disable with `compaction.reminderEnabled: false`.
+- A grace band defers blocking compaction while a speculative summary is still generating, up to
+  `min(threshold + lead, window - reserve)`. Past that cap it blocks as before. Disable with
+  `compaction.graceBandEnabled: false`.
+
+- Oversized tool results are now capped before they enter the context. A single result is limited to
+  `min(50000, max(8192, 5% of the context window))` with a deterministic, diskless head/tail
+  projection. Admission is re-derived from content on every request, so output that reproduces the
+  visible projection marker cannot bypass the cap. Disable with `compaction.toolAdmissionEnabled: false`.
+- A context-budget reminder is delivered once per compaction generation as the remaining runway
+  approaches the threshold, so the model can wrap up verbose exploration before the summary is
+  taken. Disable with `compaction.reminderEnabled: false`.
+- A grace band defers blocking compaction while a speculative summary is still generating, up to
+  `min(threshold + lead, window - reserve)`. Past that cap it blocks as before. Disable with
+  `compaction.graceBandEnabled: false`.
+
 ### Changed
 
+- Speculative summarization now starts on an absolute lead of `clamp(threshold * 0.125, 8192, 32768)`
+  tokens instead of a multiplicative fraction of the threshold, so a warm summary is generated close
+  enough to the threshold to still be valid when it is needed. Idle warm generation may also begin at
+  50% fill; the idle apply gates are unchanged. Override the lead with
+  `compaction.speculativeLeadTokens` (clamped to the same range).
+- The compaction threshold table gains large-window tiers: 0.70 above 128K and 0.80 above 512K, with
+  the clamp widened to `[0.40, 0.85]`. Low-yield feedback can no longer raise a ratio above its tier
+  base.
+- The hard-limit reserve now scales with the context window as
+  `max(configured, min(4% of window, 49152))`, moving the emergency valve off 98.4% on million-token
+  windows. Disable with `compaction.reserveScalingEnabled: false`.
+- While the compaction circuit breaker is cooling down and the context is over the threshold, the
+  deterministic no-LLM context reduction now runs immediately instead of waiting out the cooldown. It
+  stands down on sessions whose compaction lane is owned externally, and an external-owner stand-down
+  never counts as a compaction failure against the breaker.
 - `grep` is temporarily withheld from the model-facing tool surface. It no longer appears in the
   system prompt or the active tool names, so the model can neither see nor call it. The tool is
   still built and stays resolvable by name for programmatic callers such as the Cursor exec bridge,
@@ -77,6 +174,17 @@
   every turn after the Claude Agent SDK owns compaction: the first `external-owner` rejection makes the
   delegation sticky until compaction is accepted, the model or provider changes, or the session
   navigates to another branch. Manual `/compact` behavior is unchanged.
+
+- Tool-result admission now preserves images and other structured content blocks in their original order while
+  projecting only oversized text blocks.
+- Sub-threshold idle compaction warm-ups now retry transient failures with the existing bounded idle lifecycle, and OpenAI remote-compaction lanes avoid local warming until the apply threshold so successful remote admission does not discard paid local work.
+- Models whose context window cannot hold the assembled system prompt and active tool schemas plus
+  output, compaction, speculation, and model-family safety reserves are now rejected at session setup
+  or explicit selection with an exact budget shortfall instead of entering permanent compaction. A
+  downswitch also includes the current live context and is refused before mutation when it cannot fit,
+  with compact/revalidate/retry guidance
+  ([#1194](https://github.com/code-yeongyu/senpi/pull/1194) by
+  [@minpeter](https://github.com/minpeter)).
 
 ### Removed
 

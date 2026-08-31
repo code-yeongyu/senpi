@@ -361,6 +361,7 @@ export {
 	type HostDaemonPaths,
 	InteractiveMode,
 	type InteractiveModeOptions,
+	isTransportGoneError,
 	type JsonAgentSessionEvent,
 	type ModelInfo,
 	PINNED_HOST_CLIENT_CAPABILITIES,
@@ -375,6 +376,7 @@ export {
 	type RpcExtensionUIResponse,
 	type RpcResponse,
 	type RpcSessionState,
+	RpcTransportGoneError,
 	runPrintMode,
 	runRpcMode,
 } from "./modes/index.ts";

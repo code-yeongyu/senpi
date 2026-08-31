@@ -1,5 +1,9 @@
 # changes — senpi-monorepo root
 
+## Shared-host rendering isolation (2026-08-30)
+
+Shared socket clients now register `rendered_components` through additive `set_client_info` capabilities. Factory-rendered component records are filtered per connection, including capability-aware snapshot replay. Capabilities remain connection-wide across sessions and are cleared only on socket release; explicit close removes only the closing width. Shared bindings retain factories while disposing live renderers and footer providers when no capable connection remains, recreating them for later capable joiners.
+
 Root tracker for repository-level divergence from upstream `badlogic/pi-mono`.
 Owns every audited production path whose nearest tracker is the repository root.
 

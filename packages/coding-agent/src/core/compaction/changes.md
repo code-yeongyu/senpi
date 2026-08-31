@@ -1,5 +1,32 @@
 # changes.md — compaction
 
+## Ideal-pipeline settings split out of the compaction module (2026-08-29)
+
+### What changed
+
+- `compaction.ts` no longer declares the compaction settings surface inline. `CompactionSettings`
+  and `DEFAULT_COMPACTION_SETTINGS` move to `compaction-settings.ts`, and the knobs this branch adds
+  (grace band, tool admission, reminder, reserve scaling, speculative lead) live in
+  `ideal-compaction-settings.ts`, which that type composes. `compaction.ts` re-exports both names, so
+  every existing importer keeps its path.
+
+### Why
+
+- `compaction.ts` was already far past the module size ceiling, and the project rule forbids growing
+  a file that is already over it. Splitting the settings surface by responsibility keeps the added
+  knobs out of an oversized module instead of appending to it.
+
+### Why an extension could not handle it
+
+- The settings shape is the contract the builtin compaction extension and the session manager both
+  resolve against; an external extension cannot introduce fields that core admission reads before
+  any extension runs.
+
+### Expected merge conflict zones
+
+- Upstream edits to the `CompactionSettings` interface or to `DEFAULT_COMPACTION_SETTINGS` now land
+  in `compaction-settings.ts` rather than in `compaction.ts`.
+
 ## Compaction re-diverges from upstream dcd4619 (2026-08-25)
 
 ### What changed

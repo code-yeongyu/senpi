@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Readable } from "node:stream";
+import { PassThrough, type Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../src/cli/args.ts";
 import { attachJsonlLineReader } from "../src/modes/rpc/jsonl.ts";
@@ -54,7 +54,7 @@ class JsonlPeer {
 	waitFor(predicate: (value: RecordValue) => boolean, timeoutMs = 15_000): Promise<RecordValue> {
 		const existing = this.messages.find(predicate);
 		if (existing) return Promise.resolve(existing);
-		return new Promise((resolve, reject) => {
+		const pending = new Promise<RecordValue>((resolve, reject) => {
 			const waiter = {
 				predicate,
 				resolve,
@@ -66,6 +66,15 @@ class JsonlPeer {
 			};
 			this.waiters.add(waiter);
 		});
+		// Callers arm a waiter BEFORE the command that triggers it and await it only
+		// after that command returns, so anything rejecting in between - the timeout
+		// or close() during teardown - rejects a promise with no handler attached
+		// yet. Node then reports an unhandled rejection blamed on whichever test
+		// happened to be running when the timer fired. Marking the promise handled at
+		// creation closes that window for good; the rejection still propagates to the
+		// eventual awaiter, so failures are surfaced rather than swallowed.
+		pending.catch(() => {});
+		return pending;
 	}
 
 	close(): void {
@@ -112,7 +121,11 @@ function scratch(label: string): {
 	};
 }
 
-function spawnRpc(args: string[], qa: ReturnType<typeof scratch>): ChildProcessWithoutNullStreams {
+function spawnRpc(
+	args: string[],
+	qa: ReturnType<typeof scratch>,
+	capabilities = "extension_events,custom_unsupported,rendered_components",
+): ChildProcessWithoutNullStreams {
 	const child = spawn(process.execPath, [join(import.meta.dirname, "..", "src", "cli.ts"), ...args], {
 		cwd: qa.cwd,
 		env: {
@@ -123,7 +136,7 @@ function spawnRpc(args: string[], qa: ReturnType<typeof scratch>): ChildProcessW
 			SENPI_RUNTIME: "node",
 			SENPI_CODING_AGENT_DIR: qa.agentDir,
 			SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
-			SENPI_RPC_CLIENT_CAPABILITIES: "extension_events,custom_unsupported",
+			SENPI_RPC_CLIENT_CAPABILITIES: capabilities,
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
@@ -224,8 +237,73 @@ function normalizeResponse(value: RecordValue): RecordValue {
 	return clone;
 }
 
+/**
+ * Observe whether Node reports an unhandled rejection while `body` runs.
+ *
+ * Subscribes before triggering, then waits for either the rejection event or a
+ * bounded deadline, so the check never depends on a fixed sleep landing after
+ * the microtask checkpoint.
+ */
+async function unhandledRejectionDuring(body: () => void, settleMs = 250): Promise<unknown> {
+	let onUnhandled!: (reason: unknown) => void;
+	const observed = new Promise<unknown>((resolve) => {
+		onUnhandled = (reason: unknown) => resolve(reason);
+		process.on("unhandledRejection", onUnhandled);
+		setTimeout(() => resolve(undefined), settleMs);
+	});
+	try {
+		body();
+		return await observed;
+	} finally {
+		process.off("unhandledRejection", onUnhandled);
+	}
+}
+
+describe("JSONL peer waiter lifecycle", () => {
+	// Every waiter in this suite is armed BEFORE the command that triggers it and
+	// awaited only after that command returns. Whatever rejects in that window -
+	// the timeout, or close() during teardown - rejects a promise nobody is
+	// holding yet. A longer timeout only narrows the window; the rejection must be
+	// handled from the moment the waiter exists.
+	it("does not surface an unhandled rejection when an armed waiter times out before it is awaited", async () => {
+		const peer = new JsonlPeer(new PassThrough(), () => {});
+		let pending!: Promise<RecordValue>;
+
+		const reason = await unhandledRejectionDuring(() => {
+			pending = peer.waitFor(() => false, 1);
+		});
+
+		expect(reason).toBeUndefined();
+		// The rejection still reaches the eventual awaiter; it is handled, not swallowed.
+		await expect(pending).rejects.toThrow(/Timed out waiting for RPC record/);
+	});
+
+	it("does not surface an unhandled rejection when close() settles an armed waiter", async () => {
+		const peer = new JsonlPeer(new PassThrough(), () => {});
+		let pending!: Promise<RecordValue>;
+
+		const reason = await unhandledRejectionDuring(() => {
+			pending = peer.waitFor(() => false, 60_000);
+			peer.close();
+		});
+
+		expect(reason).toBeUndefined();
+		await expect(pending).rejects.toThrow(/RPC peer closed/);
+	});
+
+	it("still resolves a waiter armed before the matching record arrives", async () => {
+		const stream = new PassThrough();
+		const peer = new JsonlPeer(stream, () => {});
+
+		const pending = peer.waitFor((value) => value.type === "late", 15_000);
+		stream.write(`${JSON.stringify({ type: "late", ok: true })}\n`);
+
+		expect(await pending).toMatchObject({ type: "late", ok: true });
+	});
+});
+
 describe("RPC Unix-socket multi-connection host", () => {
-	it("signals unsupported factory widgets while preserving array widgets", async () => {
+	it("renders factory widgets while preserving array widgets", async () => {
 		const qa = scratch("widget-factory");
 		const fake = await startFakeModelServer();
 		writeRpcModelsJson(qa.agentDir, fake.origin);
@@ -235,7 +313,9 @@ describe("RPC Unix-socket multi-connection host", () => {
 			`export default function (pi) {
 				pi.on("session_start", (_event, ctx) => {
 					ctx.ui.setWidget("array-widget", ["array widget"]);
-					ctx.ui.setWidget("factory-widget", () => ({ render: () => ["factory widget"] }));
+					ctx.ui.setWidget("factory-widget", () => ({ render: (width) => [\`w:\${width}\`] }));
+					ctx.ui.setHeader(() => ({ render: () => ["factory header"] }));
+					ctx.ui.setFooter((_tui, _theme, footerData) => ({ render: () => [footerData.getGitBranch() ?? "factory footer"] }));
 				});
 			}\n`,
 		);
@@ -257,17 +337,43 @@ describe("RPC Unix-socket multi-connection host", () => {
 		await waitForStderr(child, `senpi rpc listening on unix://${qa.socketPath}`);
 		const peer = await connectPeer(qa.socketPath);
 		try {
+			// Armed before open_session so neither request can be missed, but left on
+			// the default timeout: both only arrive after the session spawns and loads
+			// its extensions, which outruns a 1s budget on a loaded CI shard. A short
+			// deadline here rejected both waiters and surfaced as two unhandled
+			// rejections attributed to whichever test ran next.
 			const arrayWidget = peer.peer.waitFor(
 				(value) =>
 					value.type === "extension_ui_request" &&
 					value.method === "setWidget" &&
 					value.widgetKey === "array-widget",
-				10_000,
 			);
-			const unsupported = peer.peer.waitFor(
-				(value) => value.type === "extension_ui_request" && value.method === "custom_unsupported",
-				10_000,
+			const factoryWidget = peer.peer.waitFor(
+				(value) =>
+					value.type === "extension_ui_request" &&
+					value.method === "setWidget" &&
+					value.widgetKey === "factory-widget",
 			);
+			const factoryHeader = peer.peer.waitFor(
+				(value) =>
+					value.type === "extension_ui_request" &&
+					value.method === "setHeader" &&
+					Array.isArray(value.widgetLines),
+			);
+			const factoryFooter = peer.peer.waitFor(
+				(value) =>
+					value.type === "extension_ui_request" &&
+					value.method === "setFooter" &&
+					Array.isArray(value.widgetLines),
+			);
+			await expect(
+				peer.peer.request({
+					id: "client-info",
+					type: "set_client_info",
+					width: 80,
+					capabilities: ["rendered_components"],
+				}),
+			).resolves.toMatchObject({ type: "response", command: "set_client_info", success: true });
 			const opened = await peer.peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
 			const sessionId = openedSessionId(opened);
 			expect(await arrayWidget).toMatchObject({
@@ -276,15 +382,247 @@ describe("RPC Unix-socket multi-connection host", () => {
 				widgetKey: "array-widget",
 				widgetLines: ["array widget"],
 			});
-			expect(await unsupported).toMatchObject({
+			expect(await factoryWidget).toMatchObject({
 				type: "extension_ui_request",
-				method: "custom_unsupported",
-				extensionName: "widget component",
+				method: "setWidget",
+				widgetKey: "factory-widget",
+				widgetLines: ["w:80"],
 				sessionId,
+			});
+			const resizedWidget = peer.peer.waitFor(
+				(value) =>
+					value.type === "extension_ui_request" &&
+					value.method === "setWidget" &&
+					value.widgetKey === "factory-widget" &&
+					JSON.stringify(value.widgetLines) === JSON.stringify(["w:120"]),
+			);
+			await expect(
+				peer.peer.request({ id: "set-width", type: "set_client_info", width: 120, sessionId }),
+			).resolves.toMatchObject({
+				type: "response",
+				command: "set_client_info",
+				success: true,
+				sessionId,
+			});
+			expect(await resizedWidget).toMatchObject({
+				type: "extension_ui_request",
+				method: "setWidget",
+				widgetKey: "factory-widget",
+				widgetLines: ["w:120"],
+				sessionId,
+			});
+			expect(await factoryHeader).toMatchObject({
+				type: "extension_ui_request",
+				method: "setHeader",
+				widgetLines: ["factory header"],
+				sessionId,
+			});
+			expect(await factoryFooter).toMatchObject({
+				type: "extension_ui_request",
+				method: "setFooter",
+				widgetLines: ["factory footer"],
+				sessionId,
+			});
+			expect(peer.peer.messages.some((value) => value.method === "custom_unsupported")).toBe(false);
+		} finally {
+			peer.peer.close();
+			peer.socket.destroy();
+			await fake.close();
+			await stopChild(child);
+		}
+	});
+
+	it("keeps factory UI silent for a default client while preserving array widgets", async () => {
+		const qa = scratch("widget-default");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		mkdirSync(join(qa.agentDir, "extensions"), { recursive: true });
+		writeFileSync(
+			join(qa.agentDir, "extensions", "widget-factory.ts"),
+			`export default function (pi) {
+			pi.on("session_start", (_event, ctx) => {
+				ctx.ui.setWidget("array-widget", ["array widget"]);
+				ctx.ui.setWidget("factory-widget", () => ({ render: () => ["factory"] }));
+				ctx.ui.setHeader(() => ({ render: () => ["header"] }));
+				ctx.ui.setFooter((_tui, _theme, footerData) => ({ render: () => [footerData.getGitBranch() ?? "footer"] }));
+			});
+		}`,
+		);
+		const child = spawnRpc(
+			[
+				"--mode",
+				"rpc",
+				"--listen",
+				`unix://${qa.socketPath}`,
+				"--provider",
+				MOCK_PROVIDER,
+				"--model",
+				MOCK_MODEL,
+				"--extension",
+				join(qa.agentDir, "extensions", "widget-factory.ts"),
+			],
+			qa,
+			"rendered_components",
+		);
+		await waitForStderr(child, `senpi rpc listening on unix://${qa.socketPath}`);
+		const peer = await connectPeer(qa.socketPath);
+		try {
+			const opened = await peer.peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
+			await new Promise<void>((resolve) => queueMicrotask(resolve));
+			expect(opened).toMatchObject({ success: true });
+			expect(
+				peer.peer.messages.filter(
+					(value) =>
+						value.type === "extension_ui_request" &&
+						["factory-widget", "setHeader", "setFooter"].includes(String(value.widgetKey ?? value.method)),
+				),
+			).toEqual([]);
+			expect(peer.peer.messages).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						method: "setWidget",
+						widgetKey: "array-widget",
+						widgetLines: ["array widget"],
+					}),
+				]),
+			);
+		} finally {
+			peer.peer.close();
+			peer.socket.destroy();
+			await fake.close();
+			await stopChild(child);
+		}
+	});
+
+	it("preserves registered capabilities when one socket opens a second session", async () => {
+		const qa = scratch("cap-second");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		mkdirSync(join(qa.agentDir, "extensions"), { recursive: true });
+		writeFileSync(
+			join(qa.agentDir, "extensions", "widget-factory.ts"),
+			`export default function (pi) { pi.on("session_start", (_event, ctx) => ctx.ui.setWidget("factory", () => ({ render: (width) => [String(width)] }))); }`,
+		);
+		const child = spawnRpc(
+			[
+				"--mode",
+				"rpc",
+				"--listen",
+				`unix://${qa.socketPath}`,
+				"--provider",
+				MOCK_PROVIDER,
+				"--model",
+				MOCK_MODEL,
+				"--extension",
+				join(qa.agentDir, "extensions", "widget-factory.ts"),
+			],
+			qa,
+			"rendered_components",
+		);
+		await waitForStderr(child, `senpi rpc listening on unix://${qa.socketPath}`);
+		const peer = await connectPeer(qa.socketPath);
+		try {
+			const first = await peer.peer.request({ id: "open-a", type: "open_session", cwd: qa.cwd });
+			const sessionA = openedSessionId(first);
+			await peer.peer.request({
+				id: "info-a",
+				type: "set_client_info",
+				sessionId: sessionA,
+				width: 80,
+				capabilities: ["rendered_components"],
+			});
+			await peer.peer.request({ id: "open-b", type: "open_session", cwd: qa.cwd });
+			const factoryAfterSecondOpen = peer.peer.waitFor(
+				(value) =>
+					value.type === "extension_ui_request" &&
+					value.widgetKey === "factory" &&
+					JSON.stringify(value.widgetLines) === JSON.stringify(["81"]),
+			);
+			await peer.peer.request({ id: "info-a-again", type: "set_client_info", sessionId: sessionA, width: 81 });
+			expect(await factoryAfterSecondOpen).toMatchObject({
+				sessionId: sessionA,
+				widgetKey: "factory",
+				widgetLines: ["81"],
 			});
 		} finally {
 			peer.peer.close();
 			peer.socket.destroy();
+			await fake.close();
+			await stopChild(child);
+		}
+	});
+
+	it("uses the minimum reported width across attached peers and drops leavers", async () => {
+		const qa = scratch("widget-width-peers");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		mkdirSync(join(qa.agentDir, "extensions"), { recursive: true });
+		writeFileSync(
+			join(qa.agentDir, "extensions", "widget-factory.ts"),
+			`export default function (pi) { pi.on("session_start", (_event, ctx) => ctx.ui.setWidget("factory-widget", () => ({ render: (width) => [String(width)] }))); }`,
+		);
+		const child = spawnRpc(
+			[
+				"--mode",
+				"rpc",
+				"--listen",
+				`unix://${qa.socketPath}`,
+				"--provider",
+				MOCK_PROVIDER,
+				"--model",
+				MOCK_MODEL,
+				"--extension",
+				join(qa.agentDir, "extensions", "widget-factory.ts"),
+			],
+			qa,
+		);
+		await waitForStderr(child, `senpi rpc listening on unix://${qa.socketPath}`);
+		const a = await connectPeer(qa.socketPath);
+		const b = await connectPeer(qa.socketPath);
+		try {
+			const path = join(qa.sessionDir, "width.jsonl");
+			const opened = await a.peer.request({ id: "open", type: "open_session", cwd: qa.cwd, sessionPath: path });
+			const sessionId = openedSessionId(opened);
+			await b.peer.request({ id: "attach", type: "open_session", cwd: qa.cwd, sessionPath: path });
+			await a.peer.request({
+				id: "a-width",
+				type: "set_client_info",
+				width: 120,
+				capabilities: ["rendered_components"],
+				sessionId,
+			});
+			const min60 = a.peer.waitFor(
+				(v) =>
+					v.type === "extension_ui_request" &&
+					v.widgetKey === "factory-widget" &&
+					JSON.stringify(v.widgetLines) === JSON.stringify(["60"]),
+			);
+			await b.peer.request({
+				id: "b-width",
+				type: "set_client_info",
+				width: 60,
+				capabilities: ["rendered_components"],
+				sessionId,
+			});
+			await expect(min60).resolves.toBeDefined();
+			expect(
+				b.peer.messages.some(
+					(v) => v.widgetKey === "factory-widget" && JSON.stringify(v.widgetLines) === JSON.stringify(["60"]),
+				),
+			).toBe(true);
+			const bClose = a.peer.waitFor(
+				(v) =>
+					v.type === "extension_ui_request" &&
+					v.widgetKey === "factory-widget" &&
+					JSON.stringify(v.widgetLines) === JSON.stringify(["120"]),
+			);
+			await b.peer.request({ id: "b-close", type: "close_session", sessionId });
+			await expect(bClose).resolves.toBeDefined();
+		} finally {
+			a.peer.close();
+			a.socket.destroy();
+			b.peer.close();
+			b.socket.destroy();
 			await fake.close();
 			await stopChild(child);
 		}

@@ -1,5 +1,121 @@
 # changes
 
+## 2026-08-30 - Shared-host rendered component capability lifecycle
+
+### What changed
+
+- `widget-line-renderer.ts`, `connection-handler.ts`, `rpc-types.ts`, `custom-capability.ts`, `host-ensure.ts`, `session-binding.ts`, `session-command-router.ts`, `session-event-writer.ts`, and `multi-session-host.ts` implement per-connection rendered-component delivery, capability-aware snapshot replay, shared width registration, and renderer/provider teardown and recreation.
+
+### Why
+
+- Shared socket clients can join or leave independently, so factory-rendered UI provenance, capability state, and live renderer resources must follow connection lifecycle without affecting surviving sessions or leaking footer watchers.
+
+### Why an extension could not handle it
+
+- These behaviors are transport routing, snapshot storage, and renderer ownership semantics beneath extension APIs; extensions cannot observe or control socket capability registration and disposal.
+
+### Expected merge conflict zones
+
+- LOW: the shared-host RPC connection options and capability routing in `connection-handler.ts`, `session-binding.ts`, and `session-command-router.ts`; socket registration in `multi-session-host.ts`; snapshot fanout in `session-event-writer.ts`; protocol declarations in `rpc-types.ts` and `custom-capability.ts`; host lifecycle in `host-ensure.ts`; renderer behavior in `widget-line-renderer.ts`.
+
+## 2026-08-30 - Shared-host rendered components
+
+- Added the `rendered_components` capability gate for factory-rendered widgets, headers, and footers. Shared-session component widths use the minimum reported width across attached connections, defaulting to 80 and dropping disconnected connections. Footer factories receive a session-backed readonly footer data provider. Interactive host startup records are buffered until the normal event listener is installed.
+- Snapshot replay retains rendered-component provenance and filters it by each connection's session attachment and capability registration. Shared socket hosts never seed `rendered_components` from the host environment; clients register it with `set_client_info`, and must re-register width plus capabilities after reconnect. Shared bindings retain component factories while disposing live renderers and footer providers when no capable connection remains, recreating them for a later capable connection.
+
+## 2026-08-30 - Deliver session events across a deferred rebind
+
+### What changed
+
+- `connection-handler.ts`: `rebindSession()` installs the session event subscription on the replaced session immediately after the swap, instead of only after the deferred derived-surface refresh completes, and the post-refresh install is removed - it would have re-subscribed and replayed the settings-source selection a second time, since `AgentSession.subscribe()` replays the current selection to every new listener. `installSessionSubscriptions` became a hoisted function declaration so the eagerly-run initial bind can reach it. The deferred refresh still reports its failure as `rpc_error`.
+
+### Why
+
+- A replacement swaps the live session and rebinds extensions afterwards, and that bind is deferred by design: awaiting it would deadlock a client whose `session_start` handler blocks on an `extension_ui_request` it cannot answer while still awaiting the replacement response. But the bind still mutates the session it owns - the pi-rules builtin appends a durable `pi-rules.scan` entry from `session_start` - and those entries were never forwarded, because the subscription was torn down at rebind start and reinstalled only once the bind finished. Nothing else can carry them: the session file is not written until an assistant message exists, so a client that misses the notification can never reconstruct the session it is bound to. Observed as the shared-host mirror ending one entry short after `new_session`, roughly one run in six under load.
+
+### Why an extension could not handle it
+
+- The event subscription belongs to the connection handler, beneath every extension surface; no extension hook can observe or reinstate it.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `rebindSession()` and the `installSessionSubscriptions` declaration.
+
+
+## 2026-08-30 - Classify RPC transport disconnects and recover shared interactive hosts
+
+### What changed
+
+- `rpc-client.ts`: `RpcClient` reports established socket disconnects through the new `onDisconnect` option and rejects sends with the exported `RpcTransportGoneError` (`code: "rpc_transport_gone"`) instead of exposing the raw `Client not started` message; `isTransportGoneError()` classifies both the typed error and legacy message shapes.
+- Shared interactive runtimes make bounded reconnect attempts, re-open and refresh the attached session, and on exhaustion switch to the retained local runtime while surfacing only the standard fallback warning.
+
+### Why
+
+- The shared interactive host surfaced raw transport internals in the TUI whenever the host socket dropped; recovery orchestration needs a typed, once-only disconnect signal at the client boundary.
+
+### Why an extension could not handle it
+
+- The transport lifecycle lives inside `RpcClient` beneath every extension surface; no extension hook observes socket teardown or send gating.
+
+### Expected merge conflict zones
+
+- LOW: the `send()` guard block and socket close/error handlers in `rpc-client.ts`.
+
+## 2026-08-30 - Expose session_replaced on the public client event union
+
+### What changed
+
+- `rpc-client.ts`: `RpcSessionReplacedEvent` joins the public `RpcClientEvent` union, so a typed client can discriminate `event.type === "session_replaced"` and read `durableSessionId` without casting. The runtime already forwarded the event through the unchecked `data as RpcClientEvent` cast in `handleFrame`, so it reached listeners untyped.
+- `rpc-client.ts`: `collectEvents()` excludes it alongside the other non-session events it already filtered. It returns `JsonAgentSessionEvent[]`, and a replacement notice is connection-level rather than part of the agent's event stream.
+
+### Why
+
+- The command response for a replacement carries only `{ cancelled }`, and a replacement can be driven by another attached client or by an extension, so this event is the only channel delivering the new identity. A client that cannot narrow to it cannot resync.
+
+### Why an extension could not handle it
+
+- The client event union is protocol surface beneath every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcClientEvent` union members and the `collectEvents()` filter.
+
+
+## 2026-08-30 - Require agentDir for the RPC project-trust gate
+
+## 2026-08-30 - Carry the replacement identity as durableSessionId
+
+### What changed
+
+- `rpc-types.ts` / `connection-handler.ts`: `session_replaced` now carries `durableSessionId` instead of `sessionId`.
+
+### Why
+
+- Top-level `sessionId` is the per-connection routing handle, and `tagSessionRecord()` applies it last (`{ ...value, sessionId: routingSessionId }`). A multi-session host therefore overwrote the durable identity in the payload, leaving the event with no identity at all - the exact information it exists to deliver. In classic mode the untagged payload key also broke the pin that no classic line carries a top-level `sessionId`. Renaming to the vocabulary the D6 table already uses for `list_sessions` fixes both modes and keeps `sessionId` meaning exactly one thing on the wire.
+
+### Why an extension could not handle it
+
+- The event is emitted by the connection handler beneath the extension API; no extension hook can rewrite an outbound wire record.
+
+### Expected merge conflict zones
+
+- LOW: the `session_replaced` payload in `rebindSession()` and its interface in `rpc-types.ts`.
+
+
+## 2026-08-30 - Reschedule the retained-queue drain when an enqueue races its settling
+
+- `connection-handler.ts` now requires an authoritative `agentDir` when projecting RPC session state and reads project trust only from a fresh `ProjectTrustStore` lookup for the session's current cwd.
+- The old `settingsManager.isProjectTrusted()` fallback is removed because that verdict can belong to a previous cwd after a session replacement. Missing `agentDir` now throws an explicit RPC session invariant error rather than silently selecting a stale trust verdict.
+- RPC test doubles now provide temporary agent directories and seeded trust-store entries.
+
+### Why
+
+- Project trust gates project-source settings and resources, so the RPC state builder must never substitute a construction-time settings verdict for the current cwd's authoritative trust decision.
+
+### Expected merge conflict zones
+
+- LOW: `connection-handler.ts` project trust projection and RPC fixture setup.
+
 ## 2026-08-30 - Replacement broadcast reaches observers, not the issuer
 
 - `connection-handler.ts`: `session_replaced` is emitted to every connection that did NOT
@@ -16,6 +132,47 @@
   `replacementIssuedHere` for the duration of that rebind only.
 - Routed/shared-host behavior is unchanged: those connections still receive the broadcast.
 
+## 2026-08-30 - Fail fast and report honest spawned-host readiness diagnostics
+
+### What changed
+
+- `host-ensure.ts` observes the spawned host's exit event during readiness polling and aborts immediately when the child exits before answering `get_protocol_info`.
+- Readiness retains the last valid protocol answer so incompatible hosts report their advertised server version and capabilities alongside the expected values, while never-answered hosts retain the existing timeout message.
+- Added coverage for early child exit and answered-but-incompatible protocol information.
+
+### Why
+
+- A host that exits before binding can never become ready, but previously consumed the full 10-second readiness budget. An incompatible answer was also incorrectly reported as a host that never answered, obscuring version and capability mismatches.
+
+### Why an extension could not handle it
+
+- Spawn lifecycle observation and readiness diagnostics happen inside the core shared-host startup path before any extension can run.
+
+### Expected merge conflict zones
+
+- LOW: `host-ensure.ts` readiness polling and its focused test coverage.
+
+## 2026-08-30 - Launch the shared RPC socket host correctly from compiled binaries
+
+### What changed
+
+- `host-ensure.ts`: `defaultHostLaunch()` (now exported for tests) re-enters a compiled standalone binary through the hidden `--internal-rpc-host-supervisor` route instead of a `host-lifecycle` script path. A bun executable always boots its embedded entrypoint, so the script path was parsed as CLI arguments and the spawned supervisor died with `Unknown option: --socket`; every interactive launch then burned the full 10s readiness budget before printing the shared-host fallback warning.
+- `host-lifecycle.ts`: the supervisor's default host spawn moved into the exported `resolveHostChildLaunch()`. In compiled binaries it drops `resolveCliMainPath()` and passes `--mode rpc --multi-session --listen` directly to the executable; explicit `--child-command` launches (desktop) are unchanged.
+- `host-lifecycle.ts`: the internal launch route is now matched by the exported `findInternalSupervisorArgs()` bounded scan instead of a strict `args[0]` test in `main.ts`. A rebranded wrapper may prepend engine-global flags before re-dispatching (`packages/omo-native` injects `--extension <dir>` for every non-early command), which pushed the sentinel off `args[0]` so the route never fired and the helper died on `--socket` anyway. The scan accepts the sentinel at `args[0]` or preceded only by allowlisted `--extension <value>` pairs; a positional operand, `--`, an unknown flag, or a dangling prefix all disqualify it, so a user-supplied value equal to the sentinel can never reach the supervisor. The skipped prefix is not forwarded, because the wrapper re-injects its own on every re-entry.
+- `main.ts`: dispatches through that scan and still fails closed (`exit(2)`) on a malformed payload rather than falling through to the public parser.
+- QA: `scripts/qa-rpc-socket/compiled-host.mjs` drives the real `build:binary` output through a pty and asserts the shared host answers `get_protocol_info` without the fallback warning, reaping the detached supervisor on every exit path (SIGTERM then SIGKILL) so a failed run cannot leak a live host and a bound socket.
+
+### Why
+
+- No compiled distribution (release binaries, bundled/rebranded runtimes) could ever start the shared interactive host: the script-path re-entry only works when `process.execPath` is a JS runtime. Both spawn levels (ensure -> supervisor, supervisor -> host) had the same defect.
+
+### Why an extension could not handle it
+
+- The spawn shapes are core host-lifecycle wiring inside `ensureHost()` and the supervisor; no extension hook runs before the shared host is ensured, so an extension cannot intercept or rewrite the default launch.
+
+### Expected merge conflict zones
+
+- LOW: `defaultHostLaunch` in `host-ensure.ts`, the child spawn in `runHostSupervisor`, and the internal-route dispatch block in `main.ts`.
 
 ## 2026-08-30 - Reschedule the sink actor drain when an enqueue races its settling
 
@@ -743,10 +900,17 @@ events.
 records. The extension and RPC guides document `pi.rpc.emit`, capability environment variables, the
 wire shape, multi-session tagging, and payload validation responsibilities.
 
+## 2026-08-30 - Render shared-host extension components
+
+- Added live server-side rendering for extension component factories used by `setWidget`, `setHeader`, and `setFooter`.
+- Added additive `setHeader`/`setFooter` extension UI requests and the `set_client_info { width }` command so attached clients can keep component layout responsive.
+- Factory widgets no longer degrade to `custom_unsupported`; that notice remains reserved for `ctx.ui.custom()`.
+
 ## 2026-08-25 - Preserve upstream RPC public queue API
 
 ### What changed
 
+- `rpc-client.ts`: the interactive client buffers events received during `open_session` so startup widget/header/footer records emitted while attaching are replayed (session-filtered) instead of dropped.
 - `packages/coding-agent/src/modes/rpc/rpc-client.ts` and `packages/coding-agent/src/modes/rpc/rpc-types.ts` expose upstream queue-clearing commands while retaining fork RPC protocol structure.
 
 ### Why

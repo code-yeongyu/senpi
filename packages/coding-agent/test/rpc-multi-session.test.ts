@@ -88,9 +88,13 @@ describe("multi-session RPC routing", () => {
 
 		await router.handle({ id: "open", type: "open_session", cwd: "/tmp" });
 
-		expect(createBinding).toHaveBeenCalledWith("rpc-session-beta", entry, writer, expect.any(Function), {
-			capabilities: ["extension_events"],
-		});
+		expect(createBinding).toHaveBeenCalledWith(
+			"rpc-session-beta",
+			entry,
+			writer,
+			expect.any(Function),
+			expect.objectContaining({ capabilities: ["extension_events"], sharedWidth: expect.any(Object) }),
+		);
 	});
 
 	test("routes extension requests only to the addressed session binding", async () => {
