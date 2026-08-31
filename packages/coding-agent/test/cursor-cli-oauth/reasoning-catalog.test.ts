@@ -40,4 +40,16 @@ describe("cursor-cli-oauth catalog normalization", () => {
 		expect(byId.get("cursor-grok-4.6")?.contextWindow).toBe(500_000);
 		expect(STATIC_CURSOR_CLI_MODELS.some((model) => model.reasoning)).toBe(true);
 	});
+
+	it("exposes the same grouped base ids offline that the live catalog groups to", () => {
+		const byId = new Map(STATIC_CURSOR_CLI_MODELS.map((model) => [model.id, model]));
+		expect(byId.get("kimi-k3")?.thinkingLevelMap).toMatchObject({ low: "low", high: "high", max: "max" });
+		expect(byId.get("glm-5.2")?.thinkingLevelMap).toMatchObject({ high: "high", max: "max" });
+		expect(byId.get("claude-sonnet-5")?.reasoning).toBe(true);
+		expect(byId.get("claude-sonnet-5-thinking")?.thinkingLevelMap?.max).toBe("max");
+		expect(byId.get("claude-fable-5")?.reasoning).toBe(true);
+		expect(byId.get("claude-fable-5-thinking")?.thinkingLevelMap?.max).toBe("max");
+		expect(byId.get("gpt-5.6-sol")?.thinkingLevelMap).toMatchObject({ off: "none", max: "max" });
+		expect(byId.get("kimi-k2.7-code")?.reasoning).toBe(false);
+	});
 });

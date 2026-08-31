@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Cursor CLI OAuth model caches retain reasoning and effort metadata across reloads, stale real catalogs are preferred when probes fail, and the offline catalog covers current Cursor model families.
+
 ### New Features
 
 ### Breaking Changes

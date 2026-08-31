@@ -46,22 +46,90 @@ type StaticModelDefinition = {
 	readonly label: string;
 };
 
+/**
+ * Expand one model family into the variant ids the live catalog lists for it,
+ * so the offline fallback normalizes into the same grouped reasoning identities
+ * as a probed catalog. `thinking.style` follows the upstream id convention:
+ * newer Claude families use `<family>-thinking-<level>`, older ones
+ * `<family>-<level>-thinking`.
+ */
+function familyDefinitions(
+	family: string,
+	label: string,
+	levels: readonly string[],
+	thinking?: { readonly levels: readonly string[]; readonly style: "thinking-level" | "level-thinking" },
+): StaticModelDefinition[] {
+	const definitions = levels.map((level) => ({ id: `${family}-${level}`, label }));
+	if (thinking) {
+		for (const level of thinking.levels) {
+			const id = thinking.style === "thinking-level" ? `${family}-thinking-${level}` : `${family}-${level}-thinking`;
+			definitions.push({ id, label: `${label} Thinking` });
+		}
+	}
+	return definitions;
+}
+
 const STATIC_MODEL_DEFINITIONS: readonly StaticModelDefinition[] = [
 	{ id: "auto", label: "Auto" },
-	{ id: "composer-2.5", label: "Composer 2.5 (200K context)" },
-	{ id: "composer-2.5-fast", label: "Composer 2.5 Fast (200K context)" },
-	{ id: "gpt-5.6-sol-high", label: "GPT 5.6 SOL High (272K context)" },
-	{ id: "gpt-5.6-luna-high", label: "GPT 5.6 Luna High (272K context)" },
-	{ id: "gpt-5.5-high", label: "GPT 5.5 High (272K context)" },
-	{ id: "gpt-5.3-codex", label: "GPT 5.3 Codex (272K context)" },
-	{ id: "gpt-5.2", label: "GPT 5.2 (272K context)" },
-	{ id: "claude-opus-5-high", label: "Claude Opus 5 High (300K context)" },
-	{ id: "claude-opus-5-thinking-high", label: "Claude Opus 5 Thinking High (300K context)" },
-	{ id: "claude-opus-4-8-thinking-high", label: "Claude Opus 4.8 Thinking High (300K context)" },
-	{ id: "claude-fable-5-thinking-high", label: "Claude Fable 5 Thinking High (300K context)" },
-	{ id: "claude-sonnet-5-thinking-high", label: "Claude Sonnet 5 Thinking High (300K context)" },
-	{ id: "gemini-3.7-flash-high", label: "Gemini 3.7 Flash High (1M context)" },
-	{ id: "cursor-grok-4.6-high", label: "Cursor Grok 4.6 High (200K context)" },
+	{ id: "composer-2.5", label: "Composer 2.5" },
+	{ id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
+	...familyDefinitions("gpt-5.6-sol", "GPT-5.6 Sol 1M", ["none", "low", "medium", "high", "xhigh", "max"]),
+	...familyDefinitions("gpt-5.6-luna", "GPT-5.6 Luna 1M", ["none", "low", "medium", "high", "xhigh", "max"]),
+	...familyDefinitions("gpt-5.6-terra", "GPT-5.6 Terra 1M", ["none", "low", "medium", "high", "xhigh", "max"]),
+	...familyDefinitions("gpt-5.5", "GPT-5.5 1M", ["none", "low", "medium", "high", "extra-high"]),
+	...familyDefinitions("gpt-5.4", "GPT-5.4 1M", ["low", "medium", "high", "xhigh"]),
+	...familyDefinitions("gpt-5.4-mini", "GPT-5.4 Mini", ["none", "low", "medium", "high", "xhigh"]),
+	...familyDefinitions("gpt-5.4-nano", "GPT-5.4 Nano", ["none", "low", "medium", "high", "xhigh"]),
+	...familyDefinitions("gpt-5.3-codex", "Codex 5.3", ["low", "high", "xhigh"]),
+	...familyDefinitions("gpt-5.2", "GPT-5.2", ["low", "high", "xhigh"]),
+	...familyDefinitions("gpt-5.1", "GPT-5.1", ["low", "high"]),
+	{ id: "gpt-5-mini", label: "GPT-5 Mini" },
+	...familyDefinitions("claude-opus-5", "Claude Opus 5 1M", ["low", "medium", "high"], {
+		levels: ["low", "medium", "high", "xhigh", "max"],
+		style: "thinking-level",
+	}),
+	...familyDefinitions("claude-opus-4-8", "Claude Opus 4.8 1M", ["low", "medium", "high", "xhigh", "max"], {
+		levels: ["low", "medium", "high", "xhigh", "max"],
+		style: "thinking-level",
+	}),
+	...familyDefinitions("claude-opus-4-7", "Claude Opus 4.7 1M", ["low", "medium", "high", "xhigh", "max"], {
+		levels: ["low", "medium", "high", "xhigh", "max"],
+		style: "thinking-level",
+	}),
+	...familyDefinitions("claude-fable-5", "Claude Fable 5 1M (NO ZDR)", ["low", "medium", "high", "xhigh", "max"], {
+		levels: ["low", "medium", "high", "xhigh", "max"],
+		style: "thinking-level",
+	}),
+	...familyDefinitions("claude-sonnet-5", "Claude Sonnet 5 1M", ["low", "medium", "high", "xhigh", "max"], {
+		levels: ["low", "medium", "high", "xhigh", "max"],
+		style: "thinking-level",
+	}),
+	...familyDefinitions("claude-4.6-opus", "Claude Opus 4.6 1M", ["high", "max"], {
+		levels: ["high", "max"],
+		style: "level-thinking",
+	}),
+	...familyDefinitions("claude-4.6-sonnet", "Claude Sonnet 4.6 1M", ["medium"], {
+		levels: ["medium"],
+		style: "level-thinking",
+	}),
+	...familyDefinitions("claude-4.5-opus", "Claude Opus 4.5", ["high"], {
+		levels: ["high"],
+		style: "level-thinking",
+	}),
+	{ id: "claude-4.5-sonnet", label: "Claude Sonnet 4.5" },
+	{ id: "claude-4.5-sonnet-thinking", label: "Claude Sonnet 4.5 Thinking" },
+	{ id: "claude-4-sonnet", label: "Claude Sonnet 4" },
+	{ id: "claude-4-sonnet-thinking", label: "Claude Sonnet 4 Thinking" },
+	...familyDefinitions("gemini-3.7-flash", "Gemini 3.7 Flash", ["low", "medium", "high"]),
+	...familyDefinitions("gemini-3.6-flash", "Gemini 3.6 Flash", ["minimal", "low", "medium", "high"]),
+	{ id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+	{ id: "gemini-3-flash", label: "Gemini 3 Flash" },
+	{ id: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
+	...familyDefinitions("cursor-grok-4.6", "Cursor Grok 4.6", ["low", "medium", "high", "xhigh"]),
+	...familyDefinitions("cursor-grok-4.5", "Cursor Grok 4.5", ["low", "medium", "high"]),
+	...familyDefinitions("kimi-k3", "Kimi K3", ["low", "high", "max"]),
+	...familyDefinitions("glm-5.2", "GLM 5.2", ["high", "max"]),
+	{ id: "kimi-k2.7-code", label: "Kimi K2.7 Code" },
 ];
 
 function stripAnsi(value: string): string {
@@ -192,6 +260,108 @@ function catalogTtlMs(settings: CursorCliModelCatalogSettings): number {
 	return validHours * 60 * 60 * 1_000;
 }
 
+const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as const;
+const FALLBACK_CONTEXT_WINDOW = 200_000;
+const FALLBACK_MAX_TOKENS = 64_000;
+const THINKING_LEVEL_KEYS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+function parseCachedCost(value: unknown): ProviderModelConfig["cost"] {
+	if (typeof value !== "object" || value === null) return { ...ZERO_COST };
+	const record = value as Record<string, unknown>;
+	const rate = (key: string): number => {
+		const field = record[key];
+		return typeof field === "number" && Number.isFinite(field) && field >= 0 ? field : 0;
+	};
+	return {
+		input: rate("input"),
+		output: rate("output"),
+		cacheRead: rate("cacheRead"),
+		cacheWrite: rate("cacheWrite"),
+	};
+}
+
+function parseCachedThinkingLevelMap(value: unknown): ProviderModelConfig["thinkingLevelMap"] | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const record = value as Record<string, unknown>;
+	const map: Record<string, string | null> = {};
+	for (const level of THINKING_LEVEL_KEYS) {
+		const entry = record[level];
+		if (entry === undefined) continue;
+		if (entry !== null && typeof entry !== "string") return undefined;
+		map[level] = entry;
+	}
+	return map as ProviderModelConfig["thinkingLevelMap"];
+}
+
+function parseCachedCompat(value: unknown): ProviderModelConfig["compat"] | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const record = value as Record<string, unknown>;
+	const cursorReasoning = record.cursorReasoning;
+	if (cursorReasoning === undefined) return {};
+	if (typeof cursorReasoning !== "object" || cursorReasoning === null) return undefined;
+	const reasoning = cursorReasoning as Record<string, unknown>;
+	if (
+		typeof reasoning.capabilityId !== "string" ||
+		reasoning.capabilityId.length === 0 ||
+		typeof reasoning.representativeVariantId !== "string" ||
+		reasoning.representativeVariantId.length === 0 ||
+		(reasoning.thinkingMode !== undefined && typeof reasoning.thinkingMode !== "boolean")
+	) {
+		return undefined;
+	}
+	return {
+		cursorReasoning: {
+			capabilityId: reasoning.capabilityId,
+			...(reasoning.thinkingMode !== undefined ? { thinkingMode: reasoning.thinkingMode } : {}),
+			representativeVariantId: reasoning.representativeVariantId,
+		},
+	} as ProviderModelConfig["compat"];
+}
+
+/**
+ * Restore one cached catalog entry verbatim. The cache stores post-normalization
+ * entries, so re-running grouping here would collapse every model to a flat,
+ * non-reasoning identity (variants were already folded into thinkingLevelMap).
+ */
+function parseCachedModelEntry(candidate: unknown, seen: Set<string>): ProviderModelConfig | undefined {
+	if (typeof candidate !== "object" || candidate === null) return undefined;
+	const record = candidate as Record<string, unknown>;
+	const { id, name } = record;
+	if (typeof id !== "string" || !MODEL_ID.test(id) || seen.has(id)) return undefined;
+	if (typeof name !== "string" || name.length === 0) return undefined;
+	if (record.thinkingLevelMap !== undefined && parseCachedThinkingLevelMap(record.thinkingLevelMap) === undefined) {
+		return undefined;
+	}
+	if (record.compat !== undefined && parseCachedCompat(record.compat) === undefined) return undefined;
+	seen.add(id);
+
+	const input = Array.isArray(record.input)
+		? record.input.filter((type): type is "text" | "image" => type === "text" || type === "image")
+		: [];
+	const contextWindow = record.contextWindow;
+	const maxTokens = record.maxTokens;
+	return {
+		id,
+		name,
+		reasoning: record.reasoning === true,
+		...(record.thinkingLevelMap !== undefined
+			? { thinkingLevelMap: parseCachedThinkingLevelMap(record.thinkingLevelMap) }
+			: {}),
+		input: input.length > 0 ? input : ["text"],
+		cost: parseCachedCost(record.cost),
+		contextWindow:
+			typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0
+				? contextWindow
+				: FALLBACK_CONTEXT_WINDOW,
+		maxTokens:
+			typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0 ? maxTokens : FALLBACK_MAX_TOKENS,
+		...(typeof record.upstreamModelId === "string" && record.upstreamModelId.length > 0
+			? { upstreamModelId: record.upstreamModelId }
+			: {}),
+		compat: parseCachedCompat(record.compat) ?? {},
+	};
+}
+
 function parseCachedCatalog(contents: string): CachedModelCatalog | undefined {
 	let parsed: unknown;
 	try {
@@ -208,39 +378,19 @@ function parseCachedCatalog(contents: string): CachedModelCatalog | undefined {
 		return undefined;
 	}
 
-	const rawCached: { id: string; label: string }[] = [];
+	const restored: ProviderModelConfig[] = [];
 	const seen = new Set<string>();
 	for (const candidate of models) {
-		if (typeof candidate !== "object" || candidate === null || !("id" in candidate) || !("name" in candidate)) {
-			return undefined;
-		}
-		const id = candidate.id;
-		const name = candidate.name;
-		if (
-			typeof id !== "string" ||
-			!MODEL_ID.test(id) ||
-			typeof name !== "string" ||
-			name.length === 0 ||
-			seen.has(id)
-		) {
-			return undefined;
-		}
-		seen.add(id);
-		rawCached.push({ id, label: name });
+		const entry = parseCachedModelEntry(candidate, seen);
+		if (!entry) return undefined;
+		restored.push(entry);
 	}
-	return { cachedAt, models: normalizeEntries(rawCached) };
+	return { cachedAt, models: restored };
 }
 
-async function readFreshCache(
-	cachePath: string,
-	now: number,
-	ttlMs: number,
-	deps: CursorCliModelCatalogDeps,
-): Promise<readonly ProviderModelConfig[] | undefined> {
+async function readCache(cachePath: string, deps: CursorCliModelCatalogDeps): Promise<CachedModelCatalog | undefined> {
 	try {
-		const cached = parseCachedCatalog(await deps.readTextFile(cachePath));
-		if (!cached || now < cached.cachedAt || now - cached.cachedAt >= ttlMs) return undefined;
-		return cached.models;
+		return parseCachedCatalog(await deps.readTextFile(cachePath));
 	} catch {
 		return undefined;
 	}
@@ -267,8 +417,8 @@ export async function resolveCursorCliModelCatalog(
 	const cacheDirectory = join(options.agentDir, "cursor-cli-oauth");
 	const cachePath = join(cacheDirectory, "models.json");
 	const now = deps.now();
-	const cached = await readFreshCache(cachePath, now, catalogTtlMs(settings), deps);
-	if (cached) return cached;
+	const cached = await readCache(cachePath, deps);
+	if (cached && now >= cached.cachedAt && now - cached.cachedAt < catalogTtlMs(settings)) return cached.models;
 
 	let temporaryDirectory: string | undefined;
 	try {
@@ -277,7 +427,8 @@ export async function resolveCursorCliModelCatalog(
 		const stdoutPath = join(temporaryDirectory, "stdout.txt");
 		await deps.runProbe(executable, stdoutPath, MODEL_PROBE_TIMEOUT_MS);
 		const models = parseCursorAgentModelsListing(await deps.readTextFile(stdoutPath));
-		if (models.length === 0) return STATIC_CURSOR_CLI_MODELS;
+		// stale-if-error: a stale real catalog still beats the static snapshot.
+		if (models.length === 0) return cached?.models ?? STATIC_CURSOR_CLI_MODELS;
 		try {
 			await writeCache(cacheDirectory, cachePath, { cachedAt: now, models }, deps);
 		} catch {
@@ -285,7 +436,7 @@ export async function resolveCursorCliModelCatalog(
 		}
 		return models;
 	} catch {
-		return STATIC_CURSOR_CLI_MODELS;
+		return cached?.models ?? STATIC_CURSOR_CLI_MODELS;
 	} finally {
 		if (temporaryDirectory !== undefined) {
 			try {
