@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { resolvePromptCacheLifetime } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import {
 	createGoalCacheWarmScheduleData,
@@ -9,6 +10,7 @@ import {
 	type GoalCacheWarmupEntryData,
 	type LiveGoalCacheWarmupEntryData,
 	resolveGoalMonitorContinuationDelayMs,
+	toProviderEnv,
 } from "./cache-warm.ts";
 import { subscribeGoalChannelState } from "./channel-state-subscriptions.ts";
 
@@ -322,15 +324,19 @@ export class MonitorAwareGoalContinuation {
 
 	#schedule(goal: Goal, kind: DelayedContinuationKind): void {
 		if (this.#scheduledContinuationKind !== undefined) return;
+		const ctx = this.#ctx;
+		const lifetime =
+			ctx?.model === undefined ? undefined : resolvePromptCacheLifetime(ctx.model, toProviderEnv(process.env));
 		const delayMs =
 			kind === "monitor"
 				? resolveGoalMonitorContinuationDelayMs(
-						this.#ctx?.getPromptCacheSafeWaitSeconds?.(),
-						this.#ctx?.getPromptCacheGoalBackstopMaxSeconds?.(),
+						ctx?.getPromptCacheSafeWaitSeconds?.(),
+						ctx?.getPromptCacheGoalBackstopMaxSeconds?.(),
+						lifetime,
 					)
 				: GOAL_USER_GRACE_DELAY_MS;
 		this.#scheduledDelayMs = delayMs;
-		if (kind === "monitor") {
+		if (kind === "monitor" && lifetime?.kind !== "disabled") {
 			this.#cacheWarmIteration += 1;
 			this.#scheduledCacheWarmIteration = this.#cacheWarmIteration;
 			const iteration = this.#scheduledCacheWarmIteration;

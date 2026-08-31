@@ -3153,3 +3153,23 @@ Detection has to happen inside the Anthropic SSE loop while the stream is still 
 
 ### Expected merge conflict zones
 - MEDIUM: `api/anthropic-messages.ts` cache-control placement in `buildParams()` and the final checkpoint pass in `convertMessages()`.
+
+## Prompt-cache lifetime semantics (2026-08-31)
+
+### What changed
+
+- `packages/ai/src/utils/prompt-cache-ttl.ts` now resolves the typed `PromptCacheLifetime` union: fixed TTL, provider-managed automatic, explicitly disabled, or unknown. The legacy numeric resolver remains a fixed-lifetime projection.
+- Direct DeepSeek detection parses URL authority and accepts only the case-insensitive `api.deepseek.com` hostname, rejecting lookalikes such as `deepseek.com.example.org`; `cacheRetention: "none"` wins before provider detection.
+- `packages/ai/src/index.ts` exports the lifetime resolver and type.
+
+### Why
+
+- DeepSeek's automatic cache has no client-visible expiry contract. Treating it as a fixed five-minute cache made downstream scheduling and savings claims false, while substring URL matching accepted unrelated authorities.
+
+### Why an extension could not handle it
+
+- Provider cache semantics and the compatibility URL authority are resolved below all extension hooks in the shared AI provider boundary.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/utils/prompt-cache-ttl.ts` lifetime switch and root `index.ts` exports.

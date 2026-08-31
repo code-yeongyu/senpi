@@ -1336,3 +1336,23 @@ stale-ctx error (`stale-context.ts`) inside `tick()` and retire (clear the
 interval, drop the ctx); `GoalWaitTicker.stop()` tolerates a stale ctx on its
 final clear render. A later `sync()` with a live ctx re-arms them. Covered by
 `test/suite/goal-ticker-stale-context.test.ts`.
+
+## Prompt-cache lifetime aware goal continuations (2026-08-31)
+
+### What changed
+
+- `cache-warm.ts`, `monitor-continuation.ts`, and `cache-warm-renderer.ts` consume `PromptCacheLifetime` rather than inferring cache behavior from an optional number.
+- Automatic provider caching uses the explicit liveness backstop, reports no fixed TTL or savings, and renders copy that does not claim a timed cache preservation.
+- Explicitly disabled caching still permits the monitor continuation liveness timer, but emits no cache-warm event, durable entry, renderer copy, or metric. Fixed and unknown lanes retain their existing behavior.
+
+### Why
+
+- A provider-managed cache cannot justify a client TTL wake or a cold-read saving estimate. A user explicitly disabling cache retention must also suppress cache-preservation telemetry and transcript claims.
+
+### Why an extension could not handle it
+
+- The Goal extension owns the monitor timer, durable entry/event contract, and cache-warm renderer; no outside extension can remove those entries after scheduling.
+
+### Expected merge conflict zones
+
+- LOW: `cache-warm.ts` lifetime branching, `monitor-continuation.ts` scheduling branch, and `cache-warm-renderer.ts` automatic-copy branch.

@@ -337,48 +337,81 @@ function resolveOpenAIResponsesCacheRetention(cacheRetention?: CacheRetention, e
 	return "short";
 }
 
-export function resolvePromptCacheTtlSeconds(model: Model<Api>, env?: ProviderEnv): number | undefined {
+export type PromptCacheLifetime =
+	| { readonly kind: "fixed"; readonly ttlSeconds: number }
+	| { readonly kind: "automatic" }
+	| { readonly kind: "disabled" }
+	| { readonly kind: "unknown" };
+
+function isDeepSeekOpenAICompletionsModel(model: Model<"openai-completions">): boolean {
+	if (model.provider === "deepseek") return true;
+	try {
+		return new URL(model.baseUrl).hostname.toLowerCase() === "api.deepseek.com";
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Classifies prompt-cache lifetimes at the provider semantic boundary.
+ *
+ * `fixed` is the deterministic client-visible TTL used by cache-aware
+ * scheduling. `automatic` is provider-managed best-effort caching with no
+ * client-visible TTL (direct DeepSeek). `disabled` turns caching off, while
+ * `unknown` has no established cache contract.
+ */
+export function resolvePromptCacheLifetime(model: Model<Api>, env?: ProviderEnv): PromptCacheLifetime {
 	switch (model.api) {
 		case "claude-sdk-oauth":
 			// The Claude SDK owns prompt caching for this lane and uses Anthropic's default 5m TTL.
-			return PROMPT_CACHE_TTL_SHORT_SECONDS;
+			return { kind: "fixed", ttlSeconds: PROMPT_CACHE_TTL_SHORT_SECONDS };
 		case "anthropic-messages": {
 			const anthropicModel = model as Model<"anthropic-messages">;
 			const retention = resolveAnthropicCacheRetention(anthropicModel.cacheRetention, env, "short");
-			if (retention === "none") return undefined;
+			if (retention === "none") return { kind: "disabled" };
 			return retention === "long" &&
 				isAnthropicApiBaseUrl(anthropicModel.baseUrl) &&
 				getAnthropicCompat(anthropicModel).supportsLongCacheRetention
-				? PROMPT_CACHE_TTL_LONG_SECONDS
-				: PROMPT_CACHE_TTL_SHORT_SECONDS;
+				? { kind: "fixed", ttlSeconds: PROMPT_CACHE_TTL_LONG_SECONDS }
+				: { kind: "fixed", ttlSeconds: PROMPT_CACHE_TTL_SHORT_SECONDS };
 		}
 		case "bedrock-converse-stream": {
 			const bedrockModel = model as Model<"bedrock-converse-stream">;
 			const retention = resolveBedrockCacheRetention(bedrockModel.cacheRetention, env);
-			if (retention === "none" || !supportsPromptCaching(bedrockModel, env)) return undefined;
+			if (retention === "none" || !supportsPromptCaching(bedrockModel, env)) return { kind: "disabled" };
 			return retention === "long" && supportsOneHourCacheTtl(bedrockModel)
-				? PROMPT_CACHE_TTL_LONG_SECONDS
-				: PROMPT_CACHE_TTL_SHORT_SECONDS;
+				? { kind: "fixed", ttlSeconds: PROMPT_CACHE_TTL_LONG_SECONDS }
+				: { kind: "fixed", ttlSeconds: PROMPT_CACHE_TTL_SHORT_SECONDS };
 		}
 		case "openai-completions": {
 			const completionsModel = model as Model<"openai-completions">;
 			const retention = resolveOpenAICompletionsCacheRetention(completionsModel.cacheRetention, env);
-			if (retention === "none") return undefined;
+			if (retention === "none") return { kind: "disabled" };
+			// DeepSeek's provider-managed cache has no client-visible TTL contract.
+			if (isDeepSeekOpenAICompletionsModel(completionsModel)) return { kind: "automatic" };
 			const compat = getOpenAICompletionsCompat(completionsModel);
 			if (compat.cacheControlFormat === "anthropic") {
 				return retention === "long" && compat.supportsLongCacheRetention
-					? PROMPT_CACHE_TTL_LONG_SECONDS
-					: PROMPT_CACHE_TTL_SHORT_SECONDS;
+					? { kind: "fixed", ttlSeconds: PROMPT_CACHE_TTL_LONG_SECONDS }
+					: { kind: "fixed", ttlSeconds: PROMPT_CACHE_TTL_SHORT_SECONDS };
 			}
-			return PROMPT_CACHE_TTL_SHORT_SECONDS;
+			return { kind: "fixed", ttlSeconds: PROMPT_CACHE_TTL_SHORT_SECONDS };
 		}
 		case "openai-responses":
 		case "openai-codex-responses":
 		case "azure-openai-responses": {
 			const retention = resolveOpenAIResponsesCacheRetention(model.cacheRetention, env);
-			return retention === "none" ? undefined : PROMPT_CACHE_TTL_SHORT_SECONDS;
+			return retention === "none"
+				? { kind: "disabled" }
+				: { kind: "fixed", ttlSeconds: PROMPT_CACHE_TTL_SHORT_SECONDS };
 		}
 		default:
-			return undefined;
+			return { kind: "unknown" };
 	}
+}
+
+/** Legacy numeric view for fixed-TTL callers. */
+export function resolvePromptCacheTtlSeconds(model: Model<Api>, env?: ProviderEnv): number | undefined {
+	const lifetime = resolvePromptCacheLifetime(model, env);
+	return lifetime.kind === "fixed" ? lifetime.ttlSeconds : undefined;
 }

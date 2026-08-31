@@ -115,10 +115,12 @@ export * from "./utils/event-stream.ts";
 export * from "./utils/json-parse.ts";
 export { extractOpenAiCodexAccountId } from "./utils/openai-codex-auth.ts";
 export * from "./utils/overflow.ts";
+export type { PromptCacheLifetime } from "./utils/prompt-cache-ttl.ts";
 export {
 	isAnthropicApiBaseUrl,
 	PROMPT_CACHE_TTL_LONG_SECONDS,
 	PROMPT_CACHE_TTL_SHORT_SECONDS,
+	resolvePromptCacheLifetime,
 	resolvePromptCacheTtlSeconds,
 } from "./utils/prompt-cache-ttl.ts";
 export * from "./utils/retry.ts";

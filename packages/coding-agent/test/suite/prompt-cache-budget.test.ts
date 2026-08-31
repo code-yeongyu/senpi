@@ -21,6 +21,22 @@ function anthropicModel(overrides: Partial<Model<"anthropic-messages">> = {}): M
 	} as Model<"anthropic-messages">;
 }
 
+function deepseekModel(cacheRetention?: "none"): Model<"openai-completions"> {
+	return {
+		id: "deepseek-v4",
+		name: "DeepSeek V4",
+		api: "openai-completions",
+		provider: "deepseek",
+		baseUrl: "https://api.deepseek.com/v1",
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128000,
+		maxTokens: 8192,
+		...(cacheRetention === undefined ? {} : { cacheRetention }),
+	};
+}
+
 function googleModel(): Model<"google-generative-ai"> {
 	return {
 		id: "gemini-3-pro",
@@ -57,6 +73,11 @@ describe("resolvePromptCacheSafeWaitSeconds", () => {
 
 	it("returns undefined when the model TTL is unknown", () => {
 		expect(resolvePromptCacheSafeWaitSeconds(googleModel() as Model<Api>, undefined, {})).toBeUndefined();
+	});
+
+	it("does not fabricate a safe wait for automatic or disabled DeepSeek caching", () => {
+		expect(resolvePromptCacheSafeWaitSeconds(deepseekModel(), undefined, {})).toBeUndefined();
+		expect(resolvePromptCacheSafeWaitSeconds(deepseekModel("none"), undefined, {})).toBeUndefined();
 	});
 
 	it("returns undefined when no model is active", () => {
