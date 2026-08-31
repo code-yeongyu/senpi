@@ -20,6 +20,7 @@ name: Release
         default: false
 
 permissions:
+  actions: read
   contents: read
   id-token: write
 
@@ -28,7 +29,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  native-prebuilds:
+    if: ${{ inputs.publish-only == true }}
+    uses: ./.github/workflows/native-prebuilds.yml
+
   release:
+    needs: native-prebuilds
+    if: ${{ always() && (inputs.publish-only != true || needs.native-prebuilds.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -60,6 +67,14 @@ jobs:
 
       - name: Install dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Download native prebuilds
+        if: inputs.publish-only == true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: native-prebuild-*
+          path: packages/pty
+          merge-multiple: true
 
       # coding-agent tool tests resolve rg/fd via system binaries first and only
       # download from GitHub releases as a fallback. Unauthenticated downloads
@@ -113,7 +128,7 @@ jobs:
           if [ "$DRY_RUN" = "true" ]; then
             PUBLISH_ARGS+=(--dry-run)
           fi
-          node scripts/publish.mjs "${PUBLISH_ARGS[@]}"
+          node scripts/publish.mjs "${PUBLISH_ARGS[@]}" --require-native-prebuild=linux-x64
 
       - name: Workflow summary
         if: always()

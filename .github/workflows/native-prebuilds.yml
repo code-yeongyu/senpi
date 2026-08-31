@@ -1,6 +1,12 @@
 name: Native Prebuilds
 
 on:
+  workflow_call:
+    inputs:
+      native_package_dir:
+        required: false
+        type: string
+        default: crates/senpi-pty
   workflow_dispatch:
     inputs:
       native_package_dir:
@@ -116,7 +122,7 @@ jobs:
         shell: bash
 
     env:
-      NATIVE_PACKAGE_DIR: ${{ github.event.inputs.native_package_dir || 'crates/senpi-pty' }}
+      NATIVE_PACKAGE_DIR: ${{ inputs.native_package_dir || 'crates/senpi-pty' }}
       NAPI_TARGET: ${{ matrix.napi_target }}
       RUST_TARGET: ${{ matrix.rust_target }}
       NODE_PLATFORM: ${{ matrix.node_platform }}
@@ -261,7 +267,10 @@ jobs:
           artifact_dir="${RUNNER_TEMP}/native-prebuild-artifact"
           output_dir="${RUNNER_TEMP}/native-prebuild-output"
 
-          mkdir -p "${artifact_dir}"
+          host="${NODE_PLATFORM}-${NODE_ARCH}"
+          prebuild_dir="${artifact_dir}/native/prebuilds/${host}"
+
+          mkdir -p "${prebuild_dir}"
           # macOS runners ship bash 3.2, which lacks mapfile/readarray.
           node_files=()
           while IFS= read -r node_file; do
@@ -278,20 +287,12 @@ jobs:
             exit 1
           fi
 
-          cp "${node_files[0]}" "${artifact_dir}/"
-          {
-            echo "artifact=${{ matrix.artifact }}"
-            echo "napi_target=${NAPI_TARGET}"
-            echo "rust_target=${RUST_TARGET}"
-            echo "node_platform=${NODE_PLATFORM}"
-            echo "node_arch=${NODE_ARCH}"
-            echo "file=$(basename "${node_files[0]}")"
-          } > "${artifact_dir}/manifest.txt"
+          cp "${node_files[0]}" "${prebuild_dir}/senpi_pty.${host}.node"
 
       - name: Upload native prebuild
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ runner.temp }}/native-prebuild-artifact/*
+          path: ${{ runner.temp }}/native-prebuild-artifact
           if-no-files-found: error
           retention-days: 14

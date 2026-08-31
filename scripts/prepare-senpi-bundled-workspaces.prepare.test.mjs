@@ -185,6 +185,23 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		);
 	});
 
+	it("rejects staging when an explicitly required native target is absent", () => {
+		// Given: the source package has its loader but no release-built Linux x64 prebuild.
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-required-pty-prebuild-"));
+		writeShrinkwrap(tempDir, { "": { dependencies: {} } });
+		writeCodingAgentManifest(tempDir);
+		for (const workspace of ["agent", "ai", "client", "protocol", "pty", "telemetry", "tui", "senpi-codemode"]) {
+			writeBundledWorkspace(tempDir, workspace);
+		}
+		rmSync(join(tempDir, "packages", "pty", nativePrebuildFile("linux-x64")), { force: true });
+
+		// When / Then
+		assert.throws(
+			() => prepareSenpiBundledWorkspaces(tempDir, { requiredNativePrebuildTargets: ["linux-x64"] }),
+			/Missing .*native\/prebuilds\/linux-x64\/senpi_pty\.linux-x64\.node.*requires this native prebuild/,
+		);
+	});
+
 	it("rewrites the publish manifest so bundleDependencies covers every staged package", () => {
 		// Given: a registry runtime dep (cross-spawn) plus its hoisted transitive (which) are
 		// installed at the repo root and enumerated by the staging lock.
