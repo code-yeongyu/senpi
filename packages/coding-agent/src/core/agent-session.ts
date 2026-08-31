@@ -2315,7 +2315,7 @@ export class AgentSession {
 				if (succeeded) {
 					// A successful call clears any stale access-denied mark immediately.
 					const current = this.model;
-					if (current) await this._modelCallability.unmark(`${current.provider}/${current.id}`);
+					if (current) this._modelCallability.clear(`${current.provider}/${current.id}`);
 				}
 				if (succeeded && this._retryAttempt > 0) {
 					const fallback = this._retryFallback.activeState;

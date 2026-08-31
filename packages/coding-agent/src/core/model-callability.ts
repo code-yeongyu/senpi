@@ -97,6 +97,16 @@ export class ModelCallabilityStore {
 		await this.persist();
 	}
 
+	/** Clear an already-loaded mark synchronously; persistence stays off the turn-critical success path. */
+	clear(selector: string): void {
+		if (!this.loaded) {
+			void this.unmark(selector);
+			return;
+		}
+		if (!this.entries.delete(selector)) return;
+		void this.persist();
+	}
+
 	private async ensureLoaded(): Promise<void> {
 		if (!this.loaded) await this.load();
 	}
