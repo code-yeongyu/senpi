@@ -28,6 +28,7 @@ export class ModelCallabilityStore {
 	private readonly ttlMs: number;
 	private entries = new Map<string, ModelCallabilityEntry>();
 	private loaded = false;
+	private loadPromise?: Promise<void>;
 
 	constructor(agentDir: string, options?: { now?: () => number; ttlMs?: number }) {
 		this.filePath = join(agentDir, "model-callability.json");
@@ -37,6 +38,12 @@ export class ModelCallabilityStore {
 
 	/** Load persisted marks; expired entries are pruned. Safe to fire and forget. */
 	async load(): Promise<void> {
+		if (this.loaded) return;
+		this.loadPromise ??= this.loadFromDisk();
+		await this.loadPromise;
+	}
+
+	private async loadFromDisk(): Promise<void> {
 		let parsed: StoredFile;
 		try {
 			parsed = JSON.parse(await readFile(this.filePath, "utf8")) as StoredFile;
