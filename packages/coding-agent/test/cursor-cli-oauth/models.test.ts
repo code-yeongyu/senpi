@@ -115,17 +115,73 @@ describe("resolveCursorCliModelCatalog", () => {
 			"composer-2.5-fast",
 			"gpt-5.6-sol",
 			"gpt-5.6-luna",
+			"gpt-5.6-terra",
 			"gpt-5.5",
+			"gpt-5.4",
+			"gpt-5.4-mini",
+			"gpt-5.4-nano",
 			"gpt-5.3-codex",
 			"gpt-5.2",
+			"gpt-5.1",
+			"gpt-5-mini",
 			"claude-opus-5",
 			"claude-opus-5-thinking",
+			"claude-opus-4-8",
 			"claude-opus-4-8-thinking",
+			"claude-opus-4-7",
+			"claude-opus-4-7-thinking",
+			"claude-fable-5",
 			"claude-fable-5-thinking",
+			"claude-sonnet-5",
 			"claude-sonnet-5-thinking",
+			"claude-4.6-opus",
+			"claude-4.6-opus-thinking",
+			"claude-4.6-sonnet",
+			"claude-4.6-sonnet-thinking",
+			"claude-4.5-opus",
+			"claude-4.5-opus-thinking",
+			"claude-4.5-sonnet",
+			"claude-4.5-sonnet-thinking",
+			"claude-4-sonnet",
+			"claude-4-sonnet-thinking",
 			"gemini-3.7-flash",
+			"gemini-3.6-flash",
+			"gemini-3.5-flash",
+			"gemini-3-flash",
+			"gemini-3.1-pro",
 			"cursor-grok-4.6",
+			"cursor-grok-4.6-low-fast",
+			"cursor-grok-4.6-medium-fast",
+			"cursor-grok-4.6-high-fast",
+			"cursor-grok-4.6-xhigh-fast",
+			"cursor-grok-4.5",
+			"kimi-k3",
+			"glm-5.2",
+			"kimi-k2.7-code",
 		]);
+	});
+
+	it("preserves reasoning metadata across the cache round-trip", async () => {
+		const agentDir = await temporaryDirectory();
+		const now = Date.parse("2026-08-17T00:00:00.000Z");
+		const deps = probeDeps(
+			() => now,
+			() => "kimi-k3-low - Kimi K3 Low\nkimi-k3-high - Kimi K3 High\nkimi-k3-max - Kimi K3 Max\n",
+		);
+		const options = { agentDir, settings: { modelCatalogTtlHours: 24 }, deps };
+
+		const probed = await resolveCursorCliModelCatalog(options);
+		expect(probed).toHaveLength(1);
+		expect(probed[0]).toMatchObject({
+			id: "kimi-k3",
+			reasoning: true,
+			upstreamModelId: "kimi-k3-low",
+		});
+		expect(probed[0]?.thinkingLevelMap).toMatchObject({ low: "low", high: "high", max: "max" });
+
+		const fromCache = await resolveCursorCliModelCatalog(options);
+		expect(deps.runProbe).toHaveBeenCalledTimes(1);
+		expect(fromCache).toEqual(probed);
 	});
 
 	it("captures and parses complete stdout beyond 8 KB through the real process runner", async () => {
@@ -148,7 +204,7 @@ describe("resolveCursorCliModelCatalog", () => {
 		expect(models.at(-1)?.id).toBe("deepseek-v4-max-fast");
 	});
 
-	it("falls back on failed or misleading probes without poisoning an existing cache", async () => {
+	it("serves the stale cache on failed or misleading probes without poisoning it", async () => {
 		const agentDir = await temporaryDirectory();
 		let now = 1_000_000;
 		const goodDeps = probeDeps(
@@ -164,10 +220,36 @@ describe("resolveCursorCliModelCatalog", () => {
 
 		await expect(
 			resolveCursorCliModelCatalog({ agentDir, settings: { modelCatalogTtlHours: 1 }, deps: badDeps }),
-		).resolves.toEqual(STATIC_CURSOR_CLI_MODELS);
+		).resolves.toMatchObject([{ id: "model-a" }]);
 
 		const cache = await readFile(join(agentDir, "cursor-cli-oauth", "models.json"), "utf8");
 		expect(cache).toContain('"model-a"');
 		expect(cache).not.toContain("authentication unavailable");
+	});
+
+	it("uses the static fallback only when no cache exists at all", async () => {
+		const agentDir = await temporaryDirectory();
+		const failingDeps = {
+			now: () => 1_000_000,
+			resolveExecutable: () => {
+				throw new CursorAgentNotInstalledError();
+			},
+		};
+
+		await expect(
+			resolveCursorCliModelCatalog({ agentDir, settings: { modelCatalogTtlHours: 1 }, deps: failingDeps }),
+		).resolves.toEqual(STATIC_CURSOR_CLI_MODELS);
+
+		let now = 1_000_000;
+		const goodDeps = probeDeps(
+			() => now,
+			() => "model-a - Model A\n",
+		);
+		await resolveCursorCliModelCatalog({ agentDir, settings: { modelCatalogTtlHours: 1 }, deps: goodDeps });
+		now += 2 * 60 * 60 * 1_000;
+
+		await expect(
+			resolveCursorCliModelCatalog({ agentDir, settings: { modelCatalogTtlHours: 1 }, deps: failingDeps }),
+		).resolves.toMatchObject([{ id: "model-a" }]);
 	});
 });

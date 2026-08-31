@@ -7035,6 +7035,7 @@ export class InteractiveMode {
 						await this.applyFavoriteSelection(favoriteIds, allModels, true, await favoritePatternSnapshot);
 					},
 				},
+				{ unavailableModelIds: this.session.getUnavailableModelIds() },
 			);
 			return {
 				component: selector,

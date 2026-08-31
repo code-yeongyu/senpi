@@ -58,6 +58,33 @@ describe("retry fallback hard errors", () => {
 		expect(cooldownsFor(harness).isSuppressed(primary)).toBe(true);
 	});
 
+	it("hides an access-denied model and clears the mark after a later successful call", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: { enabled: true, maxRetries: 0, baseDelayMs: 60_000, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "HTTP 403 Forbidden: model is not available for your plan",
+			}),
+			fauxAssistantMessage("fallback answer"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect([...harness.session.getUnavailableModelIds()]).toEqual([primary]);
+		await harness.session.setModel(harness.getModel("faux-1")!);
+		harness.setResponses([fauxAssistantMessage("recovered")]);
+
+		await harness.session.prompt("retry");
+
+		expect([...harness.session.getUnavailableModelIds()]).toEqual([]);
+	});
+
 	it("does not report a fallback auth error as a successful response", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],

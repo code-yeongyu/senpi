@@ -1,5 +1,26 @@
 # changes
 
+## 2026-08-31 - Expiring callability marks for access-denied models
+
+### What changed
+
+- `packages/coding-agent/src/core/model-callability.ts` persists 24-hour access-denied marks under the agent directory and clears them on expiry or a later successful call.
+- `packages/coding-agent/src/core/retry-fallback/access-denied.ts` conservatively classifies HTTP 403, policy acknowledgement, entitlement, and permission failures.
+- `packages/coding-agent/src/core/agent-session.ts` marks the active model at the non-retryable hard-error seam, clears stale marks after success, and exposes the unavailable-selector snapshot to interactive consumers.
+
+### Why
+
+- Authenticated providers can advertise subscription- or policy-gated models that deterministically fail when called. Leaving them in the picker caused repeated dead-end selections, while a permanent denylist would not recover after a subscription or policy change.
+
+### Why an extension could not handle it
+
+- The authoritative non-retryable provider-error and successful-turn seams are private `AgentSession` state, and no extension event exposes a reliable pre-fallback classification for persisting model callability.
+
+### Expected merge conflict zones
+
+- HIGH: `agent-session.ts` imports, retry-fallback fields, constructor wiring, success handling, access-denied hard-error handling, and the selector-facing accessor.
+- LOW: the new `model-callability.ts` and `retry-fallback/access-denied.ts` modules.
+
 ## 2026-08-31 - Session activity contract for host occupancy decisions
 
 ### What changed

@@ -1,5 +1,23 @@
 # cursor-cli-oauth extension changes
 
+## 2026-08-31 - Preserve catalog capabilities across cache and offline fallback
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models.ts` restores complete cached model metadata instead of re-normalizing grouped ids, serves a stale real catalog when refresh fails, and expands the offline catalog to the current Cursor reasoning families.
+
+### Why
+
+- Cache reloads stripped `thinkingLevelMap`, `compat.cursorReasoning`, and representative upstream ids, disabling Shift+Tab effort cycling. Probe failures also exposed a 15-entry offline catalog that omitted current Kimi, GLM, Claude, GPT, Gemini, and Grok families, producing false `No models match pattern` warnings.
+
+### Why an extension could not handle it
+
+- This is the Cursor CLI OAuth extension's provider-local catalog boundary; only `models.ts` owns probe normalization, cache serialization, and the registered offline model list.
+
+### Expected merge conflict zones
+
+- LOW: `models.ts` static definitions, cached-entry parser, and fresh/probe/stale/static selection order.
+
 ## 2026-08-24 - Keep provider tool protocol out of assistant text
 
 ### What changed

@@ -165,6 +165,7 @@ import {
 	convertToLlm,
 	filterContextExcludedMessages,
 } from "./messages.ts";
+import { ModelCallabilityStore } from "./model-callability.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -172,6 +173,7 @@ import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from ".
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
+import { isAccessDeniedErrorMessage } from "./retry-fallback/access-denied.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
 import { formatSelector } from "./retry-fallback/chains.ts";
 import { RetryFallbackController } from "./retry-fallback/controller.ts";
@@ -1141,6 +1143,7 @@ export class AgentSession {
 	private readonly _probeBackScheduler: ProbeBackScheduler;
 	private readonly _fallbackNow: () => number;
 	private readonly _retryRandom: () => number;
+	private readonly _modelCallability: ModelCallabilityStore;
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
@@ -1206,6 +1209,8 @@ export class AgentSession {
 		this._selectorCooldowns = new SelectorCooldowns(config.fallbackNow ?? (() => Date.now()));
 		this._fallbackNow = config.fallbackNow ?? (() => Date.now());
 		this._retryRandom = config.retryRandom ?? Math.random;
+		this._modelCallability = new ModelCallabilityStore(this._agentDir, { now: this._fallbackNow });
+		void this._modelCallability.load();
 		this._retryFallback = new RetryFallbackController({
 			getSettings: () => this.settingsManager.getRetryFallbackSettings(),
 			registry: this._modelRegistry,
@@ -2307,6 +2312,11 @@ export class AgentSession {
 				// Reset retry state only after a genuinely successful response. Provider
 				// transport timeouts can arrive as `aborted` and must keep consuming the
 				// same bounded retry budget instead of reporting a false success.
+				if (succeeded) {
+					// A successful call clears any stale access-denied mark immediately.
+					const current = this.model;
+					if (current) this._modelCallability.clear(`${current.provider}/${current.id}`);
+				}
 				if (succeeded && this._retryAttempt > 0) {
 					const fallback = this._retryFallback.activeState;
 					if (fallback) {
@@ -6989,6 +6999,11 @@ export class AgentSession {
 		return this._fallbackValidationWarnings;
 	}
 
+	/** Models currently marked unavailable due to access-denied failures (selectors hide these). */
+	getUnavailableModelIds(): ReadonlySet<string> {
+		return this._modelCallability.unavailableSelectors();
+	}
+
 	private _isBuiltinExtensionPath(path: string): boolean {
 		return path.startsWith("<builtin:") || /[\\/]senpi-codemode[\\/]/u.test(path);
 	}
@@ -7543,6 +7558,13 @@ export class AgentSession {
 			// Billing-class failures never recover on this account, so the fallback
 			// switch pins as the session model instead of reverting after the cooldown.
 			const reason = isBillingErrorMessage(errorMessage) ? "billing" : "hard-error";
+			if (reason === "hard-error" && isAccessDeniedErrorMessage(errorMessage)) {
+				// 403/policy-gate: hide the model from selectors until the mark expires.
+				const failed = this.model;
+				if (failed) {
+					await this._modelCallability.mark(`${failed.provider}/${failed.id}`, "access-denied");
+				}
+			}
 			switchedFallback = await this._retryFallback.tryFallback(reason, {
 				errorMessage,
 			});
