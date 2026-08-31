@@ -22,7 +22,7 @@ interface ScopedModelItem {
 	thinkingLevel?: string;
 }
 
-type ModelScope = "all" | "narrowed";
+type ModelScope = "all" | "favorites" | "byModel" | "narrowed";
 type ModelSelectorTui = Pick<TUI, "requestRender"> & { terminal?: { rows: number } };
 type ModelSelectorSource = ModelRuntime | ModelRegistry;
 
@@ -33,6 +33,11 @@ export interface ModelSelectorFavoriteOptions {
 		allModels: Model<any>[],
 		toggledModel: Model<any>,
 	) => void | Promise<void>;
+}
+
+export interface ModelSelectorCallabilityOptions {
+	/** Models marked unavailable (access-denied); hidden from every view. */
+	unavailableModelIds?: ReadonlySet<string>;
 }
 
 /**
@@ -53,6 +58,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private listContainer: Container;
 	private allModels: ModelItem[] = [];
 	private scopedModelItems: ModelItem[] = [];
+	private readonly hasConfiguredScope: boolean;
 	private activeModels: ModelItem[] = [];
 	private filteredModels: ModelItem[] = [];
 	private selectedIndex: number = 0;
@@ -67,12 +73,15 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	// whole session; live `favoriteIds` only drives markers and callbacks.
 	private readonly favoriteIdsAtOpen: FavoriteModelIds;
 	private onFavoriteChangeCallback?: ModelSelectorFavoriteOptions["onFavoriteChange"];
+	private readonly unavailableModelIds: ReadonlySet<string>;
+	private hiddenUnavailableCount = 0;
 	private errorMessage?: string;
 	private refreshStatusMessage = "Refreshing model catalogs…";
 	private refreshStatusSuccess = false;
 	private tui: ModelSelectorTui;
 	private scopedModels: ReadonlyArray<ScopedModelItem>;
 	private scope: ModelScope = "all";
+	private expandedModelGroup?: string;
 	private scopeText?: Text;
 	private scopeHintText?: Text;
 	private readonly refreshAbortController = new AbortController();
@@ -89,6 +98,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		onCancel: () => void,
 		initialSearchInput?: string,
 		favorites?: ModelSelectorFavoriteOptions,
+		callability?: ModelSelectorCallabilityOptions,
 	) {
 		super();
 
@@ -97,24 +107,25 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.settingsManager = settingsManager;
 		this.modelRuntime = modelRuntime;
 		this.scopedModels = scopedModels;
+		this.hasConfiguredScope = scopedModels.length > 0;
 		this.scope = scopedModels.length > 0 ? "narrowed" : "all";
 		this.onSelectCallback = onSelect;
 		this.onCancelCallback = onCancel;
 		this.favoriteIds = favorites?.favoriteModelIds === null ? null : [...(favorites?.favoriteModelIds ?? [])];
 		this.favoriteIdsAtOpen = this.favoriteIds === null ? null : [...this.favoriteIds];
 		this.onFavoriteChangeCallback = favorites?.onFavoriteChange;
+		this.unavailableModelIds = callability?.unavailableModelIds ?? new Set();
 
 		// Add top border
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
 
 		// Add hint about model filtering
-		if (scopedModels.length > 0) {
-			this.scopeText = new Text(this.getScopeText(), 0, 0);
-			this.addChild(this.scopeText);
-			this.scopeHintText = new Text(this.getScopeHintText(), 0, 0);
-			this.addChild(this.scopeHintText);
-		} else {
+		this.scopeText = new Text(this.getScopeText(), 0, 0);
+		this.addChild(this.scopeText);
+		this.scopeHintText = new Text(this.getScopeHintText(), 0, 0);
+		this.addChild(this.scopeHintText);
+		if (scopedModels.length === 0) {
 			const hintText = "Only showing models from configured providers. Use /login to add providers.";
 			this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
 		}
@@ -171,8 +182,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			id: model.id,
 			model,
 		}));
-		this.allModels = this.sortModels(models);
-		const modelsById = new Map(models.map((model) => [model.fullId, model]));
+		const visibleModels = models.filter((item) => !this.unavailableModelIds.has(item.fullId));
+		this.hiddenUnavailableCount = models.length - visibleModels.length;
+		this.allModels = this.sortModels(visibleModels);
+		const modelsById = new Map(visibleModels.map((model) => [model.fullId, model]));
 		this.scopedModels = this.scopedModels.map((scoped) => {
 			const refreshed =
 				this.modelRuntime instanceof ModelRegistry
@@ -184,7 +197,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			const refreshed = modelsById.get(`${scoped.model.provider}/${scoped.model.id}`);
 			return refreshed ? [refreshed] : [];
 		});
-		this.activeModels = this.scope === "narrowed" ? this.scopedModelItems : this.allModels;
+		this.activeModels = this.computeActiveModels();
 		this.filteredModels = this.activeModels;
 		const currentIndex = this.filteredModels.findIndex((item) => modelsAreEqual(this.currentModel, item.model));
 		this.selectedIndex =
@@ -263,26 +276,78 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		return sorted;
 	}
 
+	private availableScopes(): ModelScope[] {
+		const scopes: ModelScope[] = ["all", "favorites", "byModel"];
+		if (this.hasConfiguredScope) scopes.push("narrowed");
+		return scopes;
+	}
+
 	private getScopeText(): string {
-		const allText = this.scope === "all" ? theme.fg("accent", "all") : theme.fg("muted", "all");
-		const narrowedText = this.scope === "narrowed" ? theme.fg("accent", "narrowed") : theme.fg("muted", "narrowed");
-		return `${theme.fg("muted", "Catalog: ")}${allText}${theme.fg("muted", " | ")}${narrowedText}`;
+		const labels: Record<ModelScope, string> = {
+			all: "all",
+			favorites: "favorites",
+			byModel: "by-model",
+			narrowed: "narrowed",
+		};
+		const parts = this.availableScopes().map((scope) =>
+			scope === this.scope ? theme.fg("accent", labels[scope]) : theme.fg("muted", labels[scope]),
+		);
+		return `${theme.fg("muted", "Catalog: ")}${parts.join(theme.fg("muted", " | "))}`;
 	}
 
 	private getScopeHintText(): string {
-		return keyHint("tui.input.tab", "catalog") + theme.fg("muted", " (all/narrowed)");
+		const labels = this.availableScopes().map((scope) => (scope === "byModel" ? "by-model" : scope));
+		return keyHint("tui.input.tab", "catalog") + theme.fg("muted", ` (${labels.join("/")})`);
+	}
+
+	/** Group the full catalog by model id so one row represents every provider lane. */
+	private groupByModelId(): Map<string, ModelItem[]> {
+		const groups = new Map<string, ModelItem[]>();
+		for (const item of this.allModels) {
+			const group = groups.get(item.id);
+			if (group) group.push(item);
+			else groups.set(item.id, [item]);
+		}
+		return groups;
+	}
+
+	private computeActiveModels(): ModelItem[] {
+		switch (this.scope) {
+			case "narrowed":
+				return this.scopedModelItems;
+			case "favorites":
+				return this.allModels.filter((item) => isFavoriteModel(this.favoriteIdsAtOpen, item.fullId));
+			case "byModel": {
+				if (this.expandedModelGroup !== undefined) {
+					return this.groupByModelId().get(this.expandedModelGroup) ?? [];
+				}
+				// Representative per group: allModels order already prefers the
+				// current model, then favorites, then provider/id alphabetical.
+				return [...this.groupByModelId().values()].flatMap((group) => {
+					const representative = group[0];
+					return representative === undefined ? [] : [representative];
+				});
+			}
+			default:
+				return this.allModels;
+		}
 	}
 
 	private setScope(scope: ModelScope): void {
-		if (this.scope === scope) return;
+		if (this.scope === scope && this.expandedModelGroup === undefined) return;
 		this.scope = scope;
-		this.activeModels = this.scope === "narrowed" ? this.scopedModelItems : this.allModels;
+		this.expandedModelGroup = undefined;
+		this.activeModels = this.computeActiveModels();
 		const currentIndex = this.activeModels.findIndex((item) => modelsAreEqual(this.currentModel, item.model));
 		this.selectedIndex = currentIndex >= 0 ? currentIndex : 0;
-		this.filterModels(this.searchInput.getValue());
 		if (this.scopeText) {
 			this.scopeText.setText(this.getScopeText());
 		}
+		if (this.scopeHintText) {
+			this.scopeHintText.setText(this.getScopeHintText());
+		}
+		this.filterModels(this.searchInput.getValue());
+		this.tui.requestRender();
 	}
 
 	private filterModels(query: string): void {
@@ -320,6 +385,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.listContainer.addChild(new Text(theme.fg("muted", `  … ${startIndex} more above`), 0, 0));
 		}
 
+		const groupSizes = new Map<string, number>();
+		if (this.scope === "byModel" && this.expandedModelGroup === undefined) {
+			for (const [id, group] of this.groupByModelId()) groupSizes.set(id, group.length);
+		}
+
 		// Show visible slice of filtered models
 		for (let i = startIndex; i < endIndex; i++) {
 			const item = this.filteredModels[i];
@@ -331,16 +401,17 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				? theme.fg("success", "* ")
 				: theme.fg("dim", "  ");
 
+			const groupSize = groupSizes.get(item.id) ?? 1;
+			const providerBadge = theme.fg("muted", groupSize > 1 ? `[${groupSize} providers]` : `[${item.provider}]`);
+
 			let line = "";
 			if (isSelected) {
 				const prefix = theme.fg("accent", "→ ");
 				const modelText = `${favoriteMarker}${theme.fg("accent", item.id)}`;
-				const providerBadge = theme.fg("muted", `[${item.provider}]`);
 				const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
 				line = `${prefix}${modelText} ${providerBadge}${checkmark}`;
 			} else {
 				const modelText = `  ${favoriteMarker}${item.id}`;
-				const providerBadge = theme.fg("muted", `[${item.provider}]`);
 				const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
 				line = `${modelText} ${providerBadge}${checkmark}`;
 			}
@@ -362,11 +433,27 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				this.listContainer.addChild(new Text(theme.fg("error", line), 0, 0));
 			}
 		} else if (this.filteredModels.length === 0) {
-			this.listContainer.addChild(new Text(theme.fg("muted", "  No matching models"), 0, 0));
+			const emptyText =
+				this.scope === "favorites" && !this.searchInput.getValue()
+					? `  No favorite models yet — ${keyHint("app.models.toggleFavorite", "favorite")} to mark one`
+					: "  No matching models";
+			this.listContainer.addChild(new Text(theme.fg("muted", emptyText), 0, 0));
 		} else {
 			const selected = this.filteredModels[this.selectedIndex];
 			this.listContainer.addChild(new Spacer(1));
 			this.listContainer.addChild(new Text(theme.fg("muted", `  Model Name: ${selected.model.name}`), 0, 0));
+		}
+		if (this.hiddenUnavailableCount > 0) {
+			this.listContainer.addChild(
+				new Text(
+					theme.fg(
+						"muted",
+						`  ${this.hiddenUnavailableCount} unavailable model(s) hidden (access denied; auto-restores within 24h)`,
+					),
+					0,
+					0,
+				),
+			);
 		}
 		if (this.refreshStatusMessage) {
 			this.listContainer.addChild(new Spacer(1));
@@ -379,13 +466,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		if (kb.matches(keyData, "tui.input.tab")) {
-			if (this.scopedModelItems.length > 0) {
-				const nextScope: ModelScope = this.scope === "all" ? "narrowed" : "all";
-				this.setScope(nextScope);
-				if (this.scopeHintText) {
-					this.scopeHintText.setText(this.getScopeHintText());
-				}
-			}
+			const scopes = this.availableScopes();
+			const nextScope = scopes[(scopes.indexOf(this.scope) + 1) % scopes.length] ?? "all";
+			this.setScope(nextScope);
 			return;
 		}
 		// Up arrow - wrap to bottom when at top
@@ -403,9 +486,19 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		// Enter
 		else if (kb.matches(keyData, "tui.select.confirm")) {
 			const selectedModel = this.filteredModels[this.selectedIndex];
-			if (selectedModel) {
-				this.handleSelect(selectedModel.model);
+			if (!selectedModel) return;
+			if (this.scope === "byModel" && this.expandedModelGroup === undefined) {
+				const group = this.groupByModelId().get(selectedModel.id) ?? [];
+				if (group.length > 1) {
+					// Drill into the provider lanes of a multi-provider model id.
+					this.expandedModelGroup = selectedModel.id;
+					this.activeModels = group;
+					this.selectedIndex = 0;
+					this.filterModels(this.searchInput.getValue());
+					return;
+				}
 			}
+			this.handleSelect(selectedModel.model);
 		}
 		// Toggle favorite for selected model
 		else if (kb.matches(keyData, "app.models.toggleFavorite")) {
@@ -413,6 +506,19 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		}
 		// Escape or Ctrl+C
 		else if (kb.matches(keyData, "tui.select.cancel")) {
+			if (this.expandedModelGroup !== undefined) {
+				// Pop back out of a provider drill-down instead of closing.
+				const groupKey = this.expandedModelGroup;
+				this.expandedModelGroup = undefined;
+				this.activeModels = this.computeActiveModels();
+				this.filterModels(this.searchInput.getValue());
+				const groupIndex = this.filteredModels.findIndex((item) => item.id === groupKey);
+				if (groupIndex >= 0) {
+					this.selectedIndex = groupIndex;
+					this.updateList();
+				}
+				return;
+			}
 			this.dispose();
 			this.onCancelCallback();
 		}

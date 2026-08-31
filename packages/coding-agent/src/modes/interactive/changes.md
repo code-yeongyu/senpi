@@ -1,5 +1,26 @@
 # changes
 
+## 2026-08-31 - Catalog views and unavailable-model filtering
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/model-selector.ts` cycles All, Favorites, By Model, and configured Narrowed views with Tab; By Model groups provider-equivalent ids and drills into provider choices with Enter/Escape.
+- The selector filters expiring access-denied marks from every view and reports the hidden count.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` passes the session callability snapshot into the `/model` overlay.
+
+### Why
+
+- Provider-prefixed rows made equivalent models difficult to compare, favorites were mixed into the full catalog, and authenticated-but-uncallable models remained selectable after deterministic 403 or policy failures.
+
+### Why an extension could not handle it
+
+- The built-in `/model` overlay, its focus/cancellation lifecycle, and provider-specific selection callback are owned by `InteractiveMode` and `ModelSelectorComponent`; extensions cannot replace that catalog view safely.
+
+### Expected merge conflict zones
+
+- MEDIUM: `model-selector.ts` scope state, filtering, rendering, and key handling.
+- LOW: the `ModelSelectorComponent` construction in `interactive-mode.ts`.
+
 ## 2026-08-30 - Harden shared-host reconnect fallback
 
 ### What changed

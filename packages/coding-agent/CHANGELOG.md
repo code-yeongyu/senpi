@@ -4,9 +4,12 @@
 
 ### Added
 
+- `/model` now cycles All, Favorites, and By Model catalog views with Tab, groups equivalent model ids across providers, and drills into provider choices with Enter.
+
 ### Fixed
 
 - Cursor CLI OAuth model caches retain reasoning and effort metadata across reloads, stale real catalogs are preferred when probes fail, and the offline catalog covers current Cursor model families.
+- Models that return deterministic access-denied or policy-gate errors are hidden from `/model` for 24 hours and automatically restored after expiry or a later successful call.
 
 ### New Features
 
