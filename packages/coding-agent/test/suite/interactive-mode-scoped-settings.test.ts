@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
+import { Container } from "@earendil-works/pi-tui";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
@@ -157,6 +158,53 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 		// Then: this existing caller retains its global-default side effect.
 		expect(setModel).toHaveBeenCalledExactlyOnceWith(defaultModel);
 		expect(setSessionModel).not.toHaveBeenCalled();
+	});
+
+	it("refreshes message timestamps before rebuilding the transcript during reload", async () => {
+		// Given: reload changes the persisted timestamp setting from disabled to enabled.
+		const events: string[] = [];
+		let fakeThis: { showMessageTimestamps: boolean } & Record<string, unknown>;
+		fakeThis = {
+			showMessageTimestamps: false,
+			hideThinkingBlock: false,
+			outputPad: 1,
+			editor: {},
+			editorContainer: new Container(),
+			ui: { setFocus: vi.fn(), requestRender: vi.fn() },
+			settingsManager: {
+				getHideThinkingBlock: () => false,
+				getShowMessageTimestamps: () => true,
+				getOutputPad: () => 1,
+			},
+			session: {
+				isStreaming: false,
+				isCompacting: false,
+				checkReloadVeto: async () => ({ cancelled: false }),
+				reload: async (options?: { beforeSessionStart?: () => void }) => {
+					events.push("reload");
+					options?.beforeSessionStart?.();
+					events.push(`start:${fakeThis.showMessageTimestamps}`);
+					throw new Error("stop after reload boundary");
+				},
+			},
+			resetExtensionUI: vi.fn(),
+			rebuildChatFromMessages: () => {
+				events.push(`rebuild:${fakeThis.showMessageTimestamps}`);
+			},
+			showWarning: vi.fn(),
+			showError: vi.fn(),
+		};
+		const handleReloadCommand = Reflect.get(InteractiveMode.prototype, "handleReloadCommand");
+		if (typeof handleReloadCommand !== "function") {
+			throw new Error("InteractiveMode.handleReloadCommand is missing");
+		}
+
+		// When: the interactive reload reaches its before-session-start reconstruction boundary.
+		await handleReloadCommand.call(fakeThis);
+
+		// Then: the refreshed value is visible to both transcript rebuild and session start.
+		expect(fakeThis.showMessageTimestamps).toBe(true);
+		expect(events).toEqual(["reload", "rebuild:true", "start:true"]);
 	});
 });
 

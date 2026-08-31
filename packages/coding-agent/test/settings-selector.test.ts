@@ -17,7 +17,9 @@ describe("SettingsSelectorComponent", () => {
 	it("cycles through fullscreen settings", () => {
 		const onExitOutputChange = vi.fn();
 		const onScrollbarChange = vi.fn();
+		const onShowMessageTimestampsChange = vi.fn();
 		const config = {
+			showMessageTimestamps: false,
 			fullscreenExitOutput: "transcript",
 			fullscreenScrollbar: "auto",
 			warnings: {},
@@ -30,6 +32,7 @@ describe("SettingsSelectorComponent", () => {
 		const callbacks = {
 			onFullscreenExitOutputChange: onExitOutputChange,
 			onFullscreenScrollbarChange: onScrollbarChange,
+			onShowMessageTimestampsChange,
 		} as unknown as SettingsCallbacks;
 
 		const cycle = (label: string, count: number) => {
@@ -42,5 +45,7 @@ describe("SettingsSelectorComponent", () => {
 		expect(onExitOutputChange.mock.calls.flat()).toEqual(["resume-hint", "transcript"]);
 		cycle("Fullscreen scrollbar", 3);
 		expect(onScrollbarChange.mock.calls.flat()).toEqual(["always", "hidden", "auto"]);
+		cycle("Message timestamps", 2);
+		expect(onShowMessageTimestampsChange.mock.calls.flat()).toEqual([true, false]);
 	});
 });

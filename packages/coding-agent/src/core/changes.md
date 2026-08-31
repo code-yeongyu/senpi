@@ -1,5 +1,23 @@
 # changes
 
+## 2026-08-30 - Persist optional assistant message timestamps
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: adds the default-off `showMessageTimestamps` setting, getter, and setter.
+
+### Why
+
+- Operators can opt into compact local arrival times for assistant messages, and the choice survives later sessions.
+
+### Why an extension could not handle it
+
+- The built-in settings manager owns persisted interactive preferences and their reload semantics before extension UI hooks run.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-manager.ts`: the settings schema, public getter set, and persisted setter block.
+
 ## 2026-08-31 - Shared session host is OFF by default (opt-in)
 
 - Interactive sessions no longer join the shared RPC host implicitly. `main.ts` now gates
@@ -61,7 +79,6 @@
 - `agent-session-prompt.test.ts` binds `mode: "rpc"` before asserting durable prompt entries,
   so the new-behavior test exercises the lane the contract actually covers instead of the
   default print lane.
-
 
 ## 2026-08-30 - Experimental workflow eval-only policy
 

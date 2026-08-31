@@ -240,7 +240,11 @@ describe("handleReloadCommand extension UI lifecycle", () => {
 		const sentinel = new Error("boom after commit point");
 		const session = {
 			isCompacting: false,
-			settingsManager: { getHideThinkingBlock: () => false, getOutputPad: () => 0 },
+			settingsManager: {
+				getHideThinkingBlock: () => false,
+				getShowMessageTimestamps: () => false,
+				getOutputPad: () => 0,
+			},
 			checkReloadVeto: async () => ({ cancelled: false }),
 			reload: async (options?: { beforeSessionStart?: () => void | Promise<void> }) => {
 				await options?.beforeSessionStart?.();
@@ -252,6 +256,12 @@ describe("handleReloadCommand extension UI lifecycle", () => {
 		await proto.handleReloadCommand.call(context);
 
 		expect(resetExtensionUI).toHaveBeenCalledOnce();
+		expect(
+			(context as unknown as { rebuildChatFromMessages: ReturnType<typeof vi.fn> }).rebuildChatFromMessages,
+		).toHaveBeenCalledOnce();
+		expect((context as unknown as { showError: ReturnType<typeof vi.fn> }).showError).toHaveBeenCalledWith(
+			"Reload failed: boom after commit point",
+		);
 		ui.stop();
 	});
 });

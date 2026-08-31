@@ -1,22 +1,22 @@
 # changes
 
-## 2026-08-30 - Export the RPC transport-gone classifier
+## 2026-08-30 - Export and normalize the RPC transport-gone classifier
 
 ### What changed
 
-- `index.ts` and `modes/index.ts` re-export `RpcTransportGoneError` and `isTransportGoneError` beside `RpcClient` so embedders can classify shared-host transport loss.
+- `packages/coding-agent/src/index.ts` and `packages/coding-agent/src/modes/index.ts` re-export `RpcTransportGoneError` and `isTransportGoneError` beside `RpcClient` so embedders can classify shared-host transport loss, with their mixed type/value export lists normalized to the repository's Biome order during integration.
 
 ### Why
 
-- The reconnect-or-fallback orchestration rejects sends with the typed error; consumers of the public client surface need the classifier to distinguish transport loss from real failures.
+- `packages/coding-agent/src/index.ts` and `packages/coding-agent/src/modes/index.ts` expose the classifier because reconnect-or-fallback orchestration rejects sends with the typed error; consumers of the public client surface need to distinguish transport loss from real failures, and the canonical gate rewrites both touched export lists into deterministic order.
 
 ### Why an extension could not handle it
 
-- Package export surfaces are compile-time module structure; extensions cannot add public exports.
+- `packages/coding-agent/src/index.ts` and `packages/coding-agent/src/modes/index.ts` are compile-time package export surfaces; extensions cannot add public exports or control their source ordering.
 
 ### Expected merge conflict zones
 
-- LOW: export lists in `index.ts` and `modes/index.ts`.
+- LOW: export lists in `packages/coding-agent/src/index.ts` and `packages/coding-agent/src/modes/index.ts`.
 
 ## 2026-08-30 - Dispatch the internal RPC host route through wrapper-injected argv
 

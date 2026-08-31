@@ -1,5 +1,13 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { type Component, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import {
+	type Component,
+	Container,
+	Markdown,
+	type MarkdownTheme,
+	Spacer,
+	Text,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { type AssistantRenderDescriptor, createAssistantRenderDescriptors } from "./assistant-render-descriptors.ts";
@@ -28,6 +36,12 @@ export class AssistantMessageComponent extends Container {
 	private hasToolCalls = false;
 	private expanded = false;
 	private isStreaming = false;
+	private showTimestamps: boolean;
+	private timestampEligible: boolean;
+	// Stamped once when the message arrives, never at render time: render() is
+	// cache-backed and re-runs on resize, so reading the clock there would make a
+	// past message silently change its own timestamp.
+	private arrivedAt?: Date;
 
 	constructor(
 		message?: AssistantMessage,
@@ -36,9 +50,14 @@ export class AssistantMessageComponent extends Container {
 		hiddenThinkingLabel = "Thinking...",
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
+		showTimestamps = false,
+		timestamp?: { readonly eligible: boolean; readonly arrivedAt?: Date },
 	) {
 		super();
 
+		this.showTimestamps = showTimestamps;
+		this.timestampEligible = timestamp?.eligible ?? true;
+		this.arrivedAt = timestamp?.arrivedAt;
 		this.hideThinkingBlock = hideThinkingBlock;
 		this.markdownTheme = markdownTheme;
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
@@ -53,7 +72,7 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	override invalidate(): void {
-		this.renderCache = undefined;
+		this.invalidateRenderCache();
 		super.invalidate();
 		this.renderDescriptors = [];
 		this.refreshContent();
@@ -83,13 +102,54 @@ export class AssistantMessageComponent extends Container {
 		this.refreshContent();
 	}
 
+	setShowTimestamps(show: boolean): void {
+		if (this.showTimestamps === show) return;
+		this.showTimestamps = show;
+		this.invalidateRenderCache();
+	}
+
+	setTimestampEligible(eligible: boolean): void {
+		if (this.timestampEligible === eligible) return;
+		this.timestampEligible = eligible;
+		this.invalidateRenderCache();
+	}
+
+	hasVisibleContent(): boolean {
+		return this.renderDescriptors.some((descriptor) => descriptor.kind !== "spacer");
+	}
+
+	getArrivedAt(): Date | undefined {
+		return this.arrivedAt;
+	}
+
+	private timestampPrefix(): string {
+		if (!this.showTimestamps || !this.timestampEligible) return "";
+		const at = this.arrivedAt ?? new Date();
+		const hh = String(at.getHours()).padStart(2, "0");
+		const mm = String(at.getMinutes()).padStart(2, "0");
+		const ss = String(at.getSeconds()).padStart(2, "0");
+		return theme.fg("dim", `${hh}:${mm}:${ss} `);
+	}
+
 	override render(width: number): string[] {
 		const signature = this.lastMessageSignature ?? "";
 		if (this.renderCache?.width === width && this.renderCache.signature === signature) {
 			return [...this.renderCache.lines];
 		}
 
-		const lines = super.render(width);
+		const prefix = this.timestampPrefix();
+		const prefixWidth = visibleWidth(prefix);
+		const showTimestamp = prefixWidth > 0 && width > prefixWidth;
+		let lines = super.render(showTimestamp ? width - prefixWidth : width);
+		const firstContentLineIndex = lines.findIndex((line) => visibleWidth(line) > 0);
+		if (firstContentLineIndex >= 0 && showTimestamp) {
+			const prefixedLine = prefix + lines[firstContentLineIndex];
+			if (visibleWidth(prefixedLine) <= width) {
+				lines[firstContentLineIndex] = prefixedLine;
+			} else {
+				lines = super.render(width);
+			}
+		}
 		if (this.hasToolCalls || lines.length === 0) {
 			this.cacheRender(width, signature, lines);
 			return lines;
@@ -102,6 +162,10 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
+		// First delta only. updateContent runs once per streaming chunk, so stamping
+		// unconditionally would march the clock forward while the message is still
+		// being written and land on the completion time rather than the start.
+		this.arrivedAt ??= new Date();
 		const previousMessage = this.lastMessage;
 		const streamingChanged = this.isStreaming !== isStreaming;
 		this.isStreaming = isStreaming;
@@ -190,6 +254,10 @@ export class AssistantMessageComponent extends Container {
 
 	private cacheRender(width: number, signature: string, lines: string[]): void {
 		this.renderCache = { lines: [...lines], signature, width };
+	}
+
+	private invalidateRenderCache(): void {
+		this.renderCache = undefined;
 	}
 
 	private refreshContent(): void {
