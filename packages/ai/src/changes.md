@@ -1,3 +1,29 @@
+## Provider-owned OAuth pools survive generic login persistence (2026-09-02)
+
+### What changed
+
+- `auth/pool/slots.ts`: `appendLoginSlot` now accepts a provider-owned credential that already contains a non-empty
+  `accounts` pool as the complete next entry instead of projecting its sentinel top-level fields into a generated
+  `login-N` slot.
+- `packages/ai/test/credential-pool-write-paths.test.ts`: covers a provider-owned OAuth login returning the current
+  account plus a newly named sibling, proving both accounts survive without a synthetic sentinel slot.
+
+### Why
+
+- Claude SDK OAuth and Cursor CLI OAuth own account naming and return the full updated pool from their login flows.
+  The generic persistence layer treated that pooled result as a new flat credential, discarded the provider's real
+  new account, and appended the pool's compatibility sentinel as `login-2`. Credential rotation then selected the
+  unusable sentinel and request-time auth failed with `Provider is not configured`.
+
+### Why an extension could not handle it
+
+- The destructive second merge happens after the provider login returns, inside the shared credential-store mutation
+  in `Models.login`; provider extensions cannot alter that generic persistence boundary.
+
+### Expected merge conflict zones
+
+- LOW: the early provider-owned-pool branch in `appendLoginSlot` in `auth/pool/slots.ts`.
+
 ## Cursor conversation cache eviction cannot break a live request (2026-08-31)
 
 ### What changed

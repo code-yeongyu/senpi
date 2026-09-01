@@ -62,6 +62,23 @@ describe("claude-sdk-oauth availability", () => {
 		expect(readAmbientAuthStatus).not.toHaveBeenCalled();
 	});
 
+	it("accepts a resume-projected selected account without a sibling pool", async () => {
+		const readAmbientAuthStatus = vi.fn(async () => false);
+		const check = availabilityCheck(readAmbientAuthStatus);
+		const credential = {
+			type: "oauth" as const,
+			access: "selected-access",
+			refresh: "selected-refresh",
+			expires: Date.now() + 60_000,
+		};
+
+		expect(await check({ ctx: authContext(), credential })).toEqual({
+			type: "oauth",
+			source: "Claude SDK OAuth",
+		});
+		expect(readAmbientAuthStatus).not.toHaveBeenCalled();
+	});
+
 	it("rejects a persisted empty managed credential when ambient auth is logged out", async () => {
 		const check = availabilityCheck(
 			async () => false,

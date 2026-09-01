@@ -146,6 +146,10 @@ function nextLoginSlotName(credential: PooledCredential): string {
  * user's stored bytes change until a second credential actually exists.
  */
 export function appendLoginSlot(current: PooledCredential | undefined, flat: Credential): Credential {
+	// Provider-owned account flows already return the complete next pool. Treating
+	// that sentinel-backed result as one flat login discards its new real account
+	// and appends an unusable sentinel slot instead.
+	if ("accounts" in flat && Array.isArray(flat.accounts) && flat.accounts.length > 0) return flat;
 	if (!current || !Array.isArray(current.accounts) || current.accounts.length === 0) {
 		return flat;
 	}

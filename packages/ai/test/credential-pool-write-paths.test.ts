@@ -53,6 +53,65 @@ describe("Models slot-preserving login/logout/refresh", () => {
 		expect(listSlots(stored).find((slot) => slot.name === "login-2")).toMatchObject({ key: "rotated-key" });
 	});
 
+	test("provider-owned pooled login result replaces the current pool without a sentinel slot", async () => {
+		const current = {
+			type: "oauth",
+			access: "managed",
+			refresh: "managed",
+			expires: 4_102_444_800_000,
+			accounts: [
+				{
+					name: "default",
+					access: "default-access",
+					refresh: "default-refresh",
+					expires: 4_102_444_800_000,
+					source: "login" as const,
+				},
+			],
+		} satisfies PooledCredential;
+		const providerOwnedResult = {
+			...current,
+			accounts: [
+				...current.accounts,
+				{
+					name: "second",
+					access: "second-access",
+					refresh: "second-refresh",
+					expires: 4_102_444_800_000,
+					source: "login" as const,
+				},
+			],
+		} satisfies PooledCredential;
+		const provider = createProvider({
+			id: "provider-owned-pool",
+			name: "Provider-owned Pool",
+			baseUrl: "https://provider-owned-pool.example",
+			auth: {
+				oauth: {
+					name: "Provider-owned Pool",
+					login: async () => providerOwnedResult,
+					refresh: async (credential: OAuthCredential) => credential,
+					toAuth: async (credential) => ({ apiKey: credential.access }),
+				},
+			},
+			models: [],
+			api: "openai-responses" as never,
+		});
+		const store = new InMemoryCredentialStore();
+		await store.modify(provider.id, async () => current);
+		const models = createModels({ credentials: store });
+		models.setProvider(provider);
+
+		await models.login(provider.id, "oauth", promptInteraction("unused"));
+
+		const stored = (await store.read(provider.id)) as PooledCredential;
+		expect(listSlots(stored).map((slot) => slot.name)).toEqual(["default", "second"]);
+		expect(listSlots(stored).find((slot) => slot.name === "second")).toMatchObject({
+			access: "second-access",
+			refresh: "second-refresh",
+		});
+	});
+
 	test("logout with a slotId removes only that slot", async () => {
 		const store = new InMemoryCredentialStore();
 		await store.modify("pooltest", async () => pooledApiKeyEntry());
