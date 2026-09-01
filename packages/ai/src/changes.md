@@ -2,11 +2,13 @@
 
 ### What changed
 
-- `auth/pool/slots.ts`: `appendLoginSlot` now accepts a provider-owned credential that already contains a non-empty
-  `accounts` pool as the complete next entry instead of projecting its sentinel top-level fields into a generated
-  `login-N` slot.
+- `auth/pool/slots.ts`: `appendLoginSlot` now recognizes a provider-owned credential by its `accounts` array instead
+  of projecting sentinel top-level fields into a generated `login-N` slot. An explicitly empty provider pool remains
+  empty; a non-empty result merges accounts added by another login while both flows overlapped.
 - `packages/ai/test/credential-pool-write-paths.test.ts`: covers a provider-owned OAuth login returning the current
   account plus a newly named sibling, proving both accounts survive without a synthetic sentinel slot.
+- `packages/ai/test/provider-owned-pool-login.test.ts`: deterministically overlaps two provider-owned login flows and
+  covers an explicitly empty returned pool.
 
 ### Why
 
@@ -22,7 +24,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: the early provider-owned-pool branch in `appendLoginSlot` in `auth/pool/slots.ts`.
+- LOW: provider-owned-pool detection and serialized account merge in `appendLoginSlot` in `auth/pool/slots.ts`.
 
 ## Cursor conversation cache eviction cannot break a live request (2026-08-31)
 

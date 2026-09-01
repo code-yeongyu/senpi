@@ -140,6 +140,10 @@ function nextLoginSlotName(credential: PooledCredential): string {
 	throw new Error("Credential pool is full");
 }
 
+function hasProviderOwnedPool(credential: Credential): credential is PooledCredential & { accounts: CredentialSlot[] } {
+	return "accounts" in credential && Array.isArray(credential.accounts);
+}
+
 /**
  * Appends an unnamed flat credential to a pool as a generated `login-N` slot. A
  * flat or absent current entry keeps today's whole-write shape so no existing
@@ -149,7 +153,14 @@ export function appendLoginSlot(current: PooledCredential | undefined, flat: Cre
 	// Provider-owned account flows already return the complete next pool. Treating
 	// that sentinel-backed result as one flat login discards its new real account
 	// and appends an unusable sentinel slot instead.
-	if ("accounts" in flat && Array.isArray(flat.accounts) && flat.accounts.length > 0) return flat;
+	if (hasProviderOwnedPool(flat)) {
+		if (flat.accounts.length === 0 || !current || !Array.isArray(current.accounts)) return flat;
+		const returnedNames = new Set(flat.accounts.map((slot) => slot.name));
+		const concurrentAccounts = current.accounts.filter((slot) => !returnedNames.has(slot.name));
+		if (concurrentAccounts.length === 0) return flat;
+		const merged: PooledCredential = { ...flat, accounts: [...flat.accounts, ...concurrentAccounts] };
+		return merged;
+	}
 	if (!current || !Array.isArray(current.accounts) || current.accounts.length === 0) {
 		return flat;
 	}
