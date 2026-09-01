@@ -148,3 +148,17 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 - Deep guidance lives in ~60 nested `AGENTS.md` files holding the file-level maps this root omits; read the nearest one before editing. `packages/coding-agent` is by far the largest package (~105k LOC with tests).
 - `packages/ai` tests alias `@earendil-works/pi-telemetry` to telemetry source, so telemetry breakage fails AI tests. Node floors differ: packages require >=22.19.0, root and CI use Node 24.
 - `packages/tui` uses tabs in source and its own `node --test` runner — do not apply coding-agent test habits there. `packages/coding-agent/bin/senpi` is only a symlink to built output; launcher logic lives in `src/cli.ts` / `src/bun-runtime.ts`.
+
+## Review claim labels (merge-gating)
+
+Three PR labels drive the review workflow; automation lives in `.github/workflows/review-claims.yml`:
+
+- `will-review` — a reviewer claims the PR ("I will review this"). Applying it auto-requests the labeler as reviewer and BLOCKS merge via the required `Review claim gate` check.
+- `in-review` — the claimer is actively reviewing. Same merge-blocking + auto-reviewer-request effects.
+- `stale-review` — a claim sat 3+ days without the claimer's review; the sweep removes the claim labels and applies this one. A fresh claim clears it.
+
+Rules:
+- Apply `will-review` when you plan to review a PR; switch to `in-review` when you start.
+- NEVER merge a PR carrying `will-review` or `in-review`; the gate check enforces this.
+- Claim labels are removed automatically ONLY when the claimer (the person who applied the label) submits an approve or request-changes review. Do not remove someone else's claim label by hand.
+- If a PR shows `stale-review`, it needs a (new) reviewer: claim it.

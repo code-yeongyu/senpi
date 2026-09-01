@@ -1,5 +1,31 @@
 # changes
 
+## Shared GitHub Action pins move to current majors (2026-09-01)
+
+### What changed
+
+- `.github/workflows/ci.yml` and `.github/workflows/build-binaries.yml` and `.github/workflows/npm-audit.yml` and `.github/workflows/publish-model-catalog.yml` unify their shared action pins on the current releases.
+- `actions/checkout` moves to `3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1) and `actions/setup-node` to `820762786026740c76f36085b0efc47a31fe5020` (v7.0.0), collapsing the two competing pins each carried.
+- `actions/upload-artifact` moves to `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a` (v7.0.1) and `actions/download-artifact` to `3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c` (v8.0.1), off the retiring v4 line.
+- Only `uses:` lines change. Every pin keeps the repository's full-commit-SHA style with a trailing version
+  comment, and the two previously comment-less checkout and setup-node pins gain one.
+
+### Why
+
+- The tree carried two different `actions/checkout` pins and two different `actions/setup-node` pins across
+  workflows, so the same step ran on different action majors depending on the file. The artifact actions were
+  still on v4, which GitHub is retiring. Unifying on one verified SHA per action removes the drift and keeps
+  the supply chain pinned to a reviewed commit rather than a mutable tag.
+
+### Why an extension could not handle it
+
+- Action resolution is GitHub Actions runner plumbing evaluated before any repository code, let alone the
+  coding-agent extension loader, is fetched or executed.
+
+### Expected merge conflict zones
+
+- LOW: the `uses:` lines of the shared checkout, setup-node, upload-artifact, and download-artifact steps in `.github/workflows/ci.yml`, `.github/workflows/build-binaries.yml`, `.github/workflows/npm-audit.yml`, and `.github/workflows/publish-model-catalog.yml` whenever upstream bumps the same actions.
+
 ## Windows fs.watch regression joins the terminal cross-OS CI job (2026-08-31)
 
 ### What changed
