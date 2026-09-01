@@ -367,6 +367,56 @@ describe("cursor-cli-oauth stream mapping", () => {
 		expect(invocation(fixture.dump).argv[1]).toBe("current question");
 	});
 
+	it("fails closed after restart when prior Cursor account ownership is unknown", async () => {
+		const directory = temporaryDirectory();
+		const fixture = fixtureExecutable(directory, "happy");
+		const deps: CursorCliStreamDeps = {
+			cwd: directory,
+			agentDir: join(directory, "agent"),
+			store: await makeStore([account("bravo")]),
+			settings: enabledSettings(),
+			now: () => NOW,
+			router: new CursorCliSessionRouter(),
+		};
+		process.env.SENPI_CURSOR_CLI_OAUTH_EXECUTABLE = fixture.executable;
+		const beforeRestart: CursorCliStreamDeps = {
+			...deps,
+			store: await makeStore([account("alpha")]),
+			router: new CursorCliSessionRouter(),
+		};
+		const priorCursor = doneMessage(
+			await collect(
+				runContextTurn(
+					beforeRestart,
+					providerSwitchContext("first Cursor turn", "PRIVATE-BEFORE-CURSOR"),
+					"stream-restart-owner",
+				),
+			),
+		);
+		const turnContext: Context = {
+			messages: [
+				priorCursor,
+				{
+					...priorCursor,
+					api: "openai-responses",
+					provider: "openai",
+					model: "gpt-test",
+					content: [{ type: "text", text: "PRIVATE-AFTER-CURSOR" }],
+					diagnostics: undefined,
+				},
+				{ role: "user", content: "current question", timestamp: NOW },
+			],
+		};
+
+		const events = await collect(runContextTurn(deps, turnContext, "stream-restart-owner"));
+
+		expect(events.at(-1)?.type).toBe("done");
+		const sent = invocation(fixture.dump);
+		expect(sent.argv[1]).toBe("current question");
+		expect(sent.argv).not.toContain("--resume");
+		expect(sent.env.HOME).toContain(join("accounts", "bravo", "home"));
+	});
+
 	it("isolates CLI usage numbers from AssistantMessage.usage and carries them only in a diagnostic", async () => {
 		const directory = temporaryDirectory();
 		const fixture = fixtureExecutable(directory, "happy");

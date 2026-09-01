@@ -19,6 +19,11 @@ export type CursorCliRecapExchange = {
 	readonly text: string;
 };
 
+export type CursorCliContextOwnership =
+	| { readonly kind: "new" }
+	| { readonly kind: "known"; readonly accountName: string }
+	| { readonly kind: "unknown" };
+
 export type CursorCliSessionTurnContext = {
 	readonly senpiSessionId: string;
 	readonly accountName: string;
@@ -30,6 +35,8 @@ export type CursorCliSessionTurnInput = {
 	readonly recentExchanges?: readonly CursorCliRecapExchange[];
 	/** The immediately preceding assistant turn came from another provider. */
 	readonly contextRecapRequested?: boolean;
+	/** Durable account ownership recovered from prior Cursor assistant diagnostics. */
+	readonly contextOwnership?: CursorCliContextOwnership;
 	/** A replacement account must never receive transcript context from the failed account. */
 	readonly contextRecapSuppressed?: boolean;
 	/** Cross-account failover promises a fresh chat even when this account has an older binding. */
@@ -52,6 +59,7 @@ export type CursorCliTurnPlan = {
 	readonly contextRecap: string | undefined;
 	readonly modelSwitch: boolean;
 	readonly recapDroppedForCeiling: boolean;
+	readonly freshChatRecapAllowed: boolean;
 };
 
 export type CursorCliSessionAttempt = {
@@ -293,11 +301,17 @@ export class CursorCliSessionRouter {
 			resumeEnabled;
 		const resumeChatId = resumable && bound !== undefined ? bound.chatId : undefined;
 		const modelSwitch = resumable && bound !== undefined && bound.lastModel !== input.model;
-		const sameAccount = bound === undefined || bound.accountName === context.accountName;
+		const ownership = input.contextOwnership ?? { kind: "new" };
+		const sameAccount =
+			bound !== undefined
+				? bound.accountName === context.accountName
+				: ownership.kind === "new" || (ownership.kind === "known" && ownership.accountName === context.accountName);
 		const providerSwitchRecap =
 			sameAccount && input.contextRecapRequested === true && policy.contextRecapOnProviderSwitch !== false;
 		const modelSwitchRecap = modelSwitch && policy.contextRecapOnModelSwitch !== false;
 		const needsRecap = input.contextRecapSuppressed !== true && (providerSwitchRecap || modelSwitchRecap);
+		const freshChatRecapAllowed =
+			input.contextRecapSuppressed !== true && (input.contextRecapRequested !== true || providerSwitchRecap);
 		const recap = needsRecap
 			? buildCursorCliContextRecap(
 					input.model,
@@ -313,6 +327,7 @@ export class CursorCliSessionRouter {
 			contextRecap: shrunk.recapDropped ? undefined : recap,
 			modelSwitch,
 			recapDroppedForCeiling: shrunk.recapDropped,
+			freshChatRecapAllowed,
 		};
 	}
 
@@ -382,7 +397,9 @@ export class CursorCliSessionRouter {
 					classification.kind === "context_overflow" ? "context_overflow" : "resume_failed";
 				const recap =
 					plan.contextRecap ??
-					buildCursorCliContextRecap(undefined, priorRecapExchanges(input), options.maxRecapBytes);
+					(plan.freshChatRecapAllowed
+						? buildCursorCliContextRecap(undefined, priorRecapExchanges(input), options.maxRecapBytes)
+						: undefined);
 				const shrunk = shrinkToCeiling(recap, input.prompt, ceilingBytes);
 				yield restartNotice(previousChatId, reason, recap !== undefined && !shrunk.recapDropped);
 				attempt = { prompt: shrunk.prompt, resumeChatId: undefined };

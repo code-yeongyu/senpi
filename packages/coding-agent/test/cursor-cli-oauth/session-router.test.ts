@@ -146,6 +146,36 @@ describe("Cursor CLI OAuth session router", () => {
 		expect(attempts).toEqual([{ prompt: "current question", resumeChatId: undefined }]);
 	});
 
+	it("keeps the provider recap opt-out after a resumed chat falls back", async () => {
+		const router = makeRouter();
+		await primeChat(router, "chat-1", "model-a");
+		const { attempts, runAttempt } = scriptedRunner([
+			{ failure: { stderr: "Error: session chat-1 not found" } },
+			[initEvent("chat-2", "model-a"), assistantEvent("answer")],
+		]);
+
+		const events = await collect(
+			router.runTurn(
+				{ ...alphaContext, runAttempt, contextRecapOnProviderSwitch: false },
+				{
+					prompt: "current question",
+					model: "model-a",
+					contextRecapRequested: true,
+					recentExchanges: [
+						{ role: "assistant", text: "PRIVATE-OTHER-PROVIDER-CONTEXT" },
+						{ role: "user", text: "current question" },
+					],
+				},
+			),
+		);
+
+		expect(attempts).toEqual([
+			{ prompt: "current question", resumeChatId: "chat-1" },
+			{ prompt: "current question", resumeChatId: undefined },
+		]);
+		expect(restartNotice(events)?.message).not.toContain("re-injected");
+	});
+
 	it("reinjects intervening context when returning to an existing Cursor chat", async () => {
 		const router = makeRouter();
 		await primeChat(router, "chat-1", "model-a");

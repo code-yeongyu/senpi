@@ -37,6 +37,7 @@ import {
 	isCursorCliOauthLaneEnabled,
 } from "./oauth-login.ts";
 import {
+	type CursorCliContextOwnership,
 	type CursorCliRecapExchange,
 	type CursorCliSessionRestartNotice,
 	type CursorCliSessionRouter,
@@ -53,6 +54,7 @@ export { CURSOR_CLI_OAUTH_PROVIDER_ID } from "./oauth-login.ts";
 const DISABLED_MESSAGE = "disabled by settings";
 const NO_ACCOUNTS_MESSAGE = "no accounts: run /login cursor-cli-oauth";
 const RECENT_EXCHANGE_LIMIT = 12;
+const ACCOUNT_OWNERSHIP_DIAGNOSTIC = "cursor_cli_oauth_account_ownership";
 
 /** Injectable seams so tests stay hermetic; every default is re-resolved per turn. */
 export type CursorCliStreamDeps = {
@@ -363,6 +365,19 @@ function enteringFromAnotherProvider(context: Context): boolean {
 	return false;
 }
 
+function cursorContextOwnership(context: Context): CursorCliContextOwnership {
+	for (let index = context.messages.length - 1; index >= 0; index -= 1) {
+		const message = context.messages[index];
+		if (message?.role !== "assistant" || message.provider !== CURSOR_CLI_OAUTH_PROVIDER_ID) continue;
+		const diagnostic = message.diagnostics?.find((entry) => entry.type === ACCOUNT_OWNERSHIP_DIAGNOSTIC);
+		const accountName = diagnostic?.details?.accountName;
+		return typeof accountName === "string" && accountName.length > 0
+			? { kind: "known", accountName }
+			: { kind: "unknown" };
+	}
+	return { kind: "new" };
+}
+
 function isFailoverNotice(event: unknown): event is CursorCliFailoverNotice {
 	return (event as { type?: unknown }).type === "cursor_account_changed";
 }
@@ -417,6 +432,7 @@ export function streamCursorCliOauth(
 		const signal = options?.signal;
 		let wasAborted = signal?.aborted === true;
 		let sentPromptTokens = 0;
+		let activeAccountName: string | undefined;
 		let runningHandle: CursorCliTransportHandle | undefined;
 		let handleRunning = false;
 		const onAbort = (): void => {
@@ -474,6 +490,7 @@ export function streamCursorCliOauth(
 				model: spawnModel,
 				recentExchanges: recapExchanges(context),
 				contextRecapRequested: enteringFromAnotherProvider(context),
+				contextOwnership: cursorContextOwnership(context),
 			};
 
 			const spawnAndStream = (
@@ -603,6 +620,7 @@ export function streamCursorCliOauth(
 					}
 					// Cross-account chats live in each account's HOME, so a fresh-chat
 					// failover needs no flag here: the router resumes only its own account's chat.
+					activeAccountName = slot.name;
 					return router.runTurn(
 						{
 							senpiSessionId,
@@ -669,6 +687,16 @@ export function streamCursorCliOauth(
 			}
 
 			closeOpen(mapper);
+			if (activeAccountName !== undefined) {
+				mapper.output.diagnostics = [
+					...(mapper.output.diagnostics ?? []),
+					{
+						type: ACCOUNT_OWNERSHIP_DIAGNOSTIC,
+						timestamp: now(),
+						details: { accountName: activeAccountName },
+					},
+				];
+			}
 			stream.push({ type: "done", reason: "stop", message: mapper.output });
 		} catch (error) {
 			closeOpen(mapper);
