@@ -4595,9 +4595,6 @@ export class AgentSession {
 		liveContextTokens: number,
 	): Promise<SystemPromptChangeEvent | undefined> {
 		this.assertModelUsable(model, liveContextTokens);
-		if (!(await this._modelRuntime.checkAuth(model.provider))) {
-			throw new Error(`No API key for ${model.provider}/${model.id}`);
-		}
 		const previousModel = this.model;
 		const systemPromptChange = await this._switchActiveModel(model, {
 			persistDefault: false,
@@ -4605,6 +4602,7 @@ export class AgentSession {
 			emitModelSelect: true,
 			modelSelectSource: "restore",
 			invalidateCompaction: true,
+			ephemeralThinkingLevel: this.thinkingLevel,
 			liveContextTokens,
 		});
 		this.sessionManager.appendModelChange(

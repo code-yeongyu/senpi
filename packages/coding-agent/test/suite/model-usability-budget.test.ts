@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	ModelUsabilityBudgetError,
 	projectModelUsabilityBudget,
@@ -255,6 +255,61 @@ describe("model usability budget", () => {
 			{
 				provider: "faux",
 				modelId: "usable-largest",
+				originalProvider: "faux",
+				originalModelId: "saved-small",
+			},
+		]);
+		resumed.session.dispose();
+	});
+
+	it("skips an unauthenticated largest candidate and recovers onto the next capable provider", async () => {
+		// given
+		const harness = await createHarness({
+			models: [
+				{ id: "saved-small", contextWindow: 100_000, maxTokens: 4_000 },
+				{ id: "candidate-medium", contextWindow: 600_000, maxTokens: 32_000 },
+				{ id: "candidate-largest", contextWindow: 1_000_000, maxTokens: 32_000 },
+			],
+		});
+		harnesses.push(harness);
+		const sessionManager = harness.sessionManager;
+		sessionManager.appendModelChange("faux", "saved-small");
+		sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "restored transcript ".repeat(80_000) }],
+			timestamp: Date.now(),
+		});
+		const modelRuntime = harness.session.modelRuntime;
+		const saved = harness.getModel("saved-small");
+		const mediumSource = harness.getModel("candidate-medium");
+		const largestSource = harness.getModel("candidate-largest");
+		if (!saved || !mediumSource || !largestSource) throw new Error("missing auth recovery model fixture");
+		const medium = { ...mediumSource, provider: "available-provider" };
+		const largest = { ...largestSource, provider: "expired-provider" };
+		vi.spyOn(modelRuntime, "getAvailableSnapshot").mockReturnValue([saved, medium, largest]);
+		const checkAuth = vi
+			.spyOn(modelRuntime, "checkAuth")
+			.mockImplementation(async (provider) => (provider === "available-provider" ? { type: "api_key" } : undefined));
+
+		// when
+		const resumed = await createAgentSession({
+			cwd: harness.tempDir,
+			agentDir: join(harness.tempDir, "sdk-agent"),
+			authStorage: harness.authStorage,
+			modelRuntime,
+			sessionManager,
+			settingsManager: harness.settingsManager,
+			noTools: "all",
+		});
+
+		// then
+		expect(checkAuth.mock.calls.map(([provider]) => provider)).toEqual(["expired-provider", "available-provider"]);
+		expect(resumed.session.model).toMatchObject({ provider: "available-provider", id: "candidate-medium" });
+		expect(sessionManager.getEntries().filter((entry) => entry.type === "model_change")).toMatchObject([
+			{ provider: "faux", modelId: "saved-small" },
+			{
+				provider: "available-provider",
+				modelId: "candidate-medium",
 				originalProvider: "faux",
 				originalModelId: "saved-small",
 			},

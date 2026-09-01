@@ -5,6 +5,8 @@
 - Implicit saved-model restores now recover onto the authenticated model with
   the largest usable remaining context budget while preserving explicit model
   admission checks.
+- Recovery skips unavailable providers and commits model-specific selection
+  history only after extension admission succeeds.
 - When no recovery model exists, CLI startup prints the typed budget guidance
   and exits cleanly instead of exposing an uncaught exception stack.
 

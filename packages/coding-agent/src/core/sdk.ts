@@ -143,14 +143,14 @@ interface StartupRecoveryModel {
 	order: number;
 }
 
-function findStartupRecoveryModel(
+function findStartupRecoveryModels(
 	session: AgentSession,
 	modelRuntime: ModelRuntime,
 	settingsManager: SettingsManager,
 	liveContextTokens: number,
-): StartupRecoveryModel | undefined {
+): StartupRecoveryModel[] {
 	const currentModel = session.model;
-	if (!currentModel) return undefined;
+	if (!currentModel) return [];
 
 	const candidates = modelRuntime
 		.getAvailableSnapshot()
@@ -173,7 +173,7 @@ function findStartupRecoveryModel(
 		const leftRemaining = left.projection.contextWindow - left.projection.requiredTokens;
 		const rightRemaining = right.projection.contextWindow - right.projection.requiredTokens;
 		return rightRemaining - leftRemaining || left.order - right.order;
-	})[0];
+	});
 }
 
 // Re-exports
@@ -569,7 +569,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		if (options.model !== undefined || !hasExistingSession || !(error instanceof ModelUsabilityBudgetError)) {
 			throw error;
 		}
-		const recovery = findStartupRecoveryModel(session, modelRuntime, settingsManager, liveContextTokens);
+		const unavailableProviders = new Set<string>();
+		let recovery: StartupRecoveryModel | undefined;
+		for (const candidate of findStartupRecoveryModels(session, modelRuntime, settingsManager, liveContextTokens)) {
+			if (unavailableProviders.has(candidate.model.provider)) continue;
+			if (await modelRuntime.checkAuth(candidate.model.provider)) {
+				recovery = candidate;
+				break;
+			}
+			unavailableProviders.add(candidate.model.provider);
+		}
 		if (!recovery) throw error;
 
 		const restoredModel = session.model;

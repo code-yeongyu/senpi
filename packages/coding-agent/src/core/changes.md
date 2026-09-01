@@ -10,6 +10,9 @@
 - Implicit restores deterministically select the authenticated candidate with
   the greatest remaining context budget, persist that change only in the
   session history, and return a visible fallback notice.
+- Recovery validates candidate credentials in budget order, skips unavailable
+  providers, and defers both model and model-specific thinking persistence
+  until extension admission succeeds.
 - Explicit startup models remain fail-closed, and sessions with no capable
   authenticated recovery model keep the typed `ModelUsabilityBudgetError`.
 

@@ -6,6 +6,9 @@
 
 - Session bootstrap now recovers an unusable implicit saved model onto the
   authenticated model with the largest verified remaining context budget.
+- An unavailable highest-capacity provider no longer aborts recovery; startup
+  tries the next usable provider, and failed model-select admission leaves no
+  model-specific thinking or model history behind.
 - CLI startup renders a no-capable-model budget failure as an actionable error
   without leaking an uncaught Node stack.
 
