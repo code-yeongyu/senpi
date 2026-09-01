@@ -110,7 +110,7 @@ describe("Cursor CLI OAuth session router", () => {
 
 		await collect(
 			router.runTurn(
-				{ ...alphaContext, runAttempt },
+				{ ...alphaContext, runAttempt, contextRecapOnModelSwitch: false },
 				{ prompt, model: "model-a", recentExchanges, contextRecapRequested: true },
 			),
 		);
@@ -118,6 +118,7 @@ describe("Cursor CLI OAuth session router", () => {
 		const freshPrompt = attempts[0]?.prompt ?? "";
 		expect(attempts[0]?.resumeChatId).toBeUndefined();
 		expect(freshPrompt.startsWith(CURSOR_CLI_CONTEXT_RECAP_BEGIN)).toBe(true);
+		expect(freshPrompt).toContain("provider switched to cursor-cli-oauth");
 		expect(freshPrompt).toContain("The codename is ORCHID.");
 		expect(occurrences(freshPrompt, prompt)).toBe(1);
 		expect(freshPrompt.endsWith(prompt)).toBe(true);
@@ -129,7 +130,7 @@ describe("Cursor CLI OAuth session router", () => {
 
 		await collect(
 			router.runTurn(
-				{ ...alphaContext, runAttempt, contextRecapOnModelSwitch: false },
+				{ ...alphaContext, runAttempt, contextRecapOnProviderSwitch: false },
 				{
 					prompt: "current question",
 					model: "model-a",
@@ -194,7 +195,7 @@ describe("Cursor CLI OAuth session router", () => {
 		const switchTurn = scriptedRunner([[initEvent("chat-1", "model-b"), assistantEvent("switched")]]);
 		await collect(
 			router.runTurn(
-				{ ...alphaContext, runAttempt: switchTurn.runAttempt },
+				{ ...alphaContext, runAttempt: switchTurn.runAttempt, contextRecapOnProviderSwitch: false },
 				{ prompt: "switch turn", model: "model-b", recentExchanges: recent },
 			),
 		);
@@ -414,7 +415,7 @@ describe("Cursor CLI OAuth session router", () => {
 		});
 	});
 
-	it("keeps replacement-account attempts fresh and context-free with resume disabled", async () => {
+	it("keeps replacement-account attempts fresh and context-free with auto resume", async () => {
 		const router = makeRouter();
 		await primeChat(router, "replacement-old-chat", "model-a");
 		const { attempts, runAttempt } = scriptedRunner([
@@ -423,7 +424,7 @@ describe("Cursor CLI OAuth session router", () => {
 
 		await collect(
 			router.runTurn(
-				{ ...alphaContext, runAttempt, resumeMode: "off" },
+				{ ...alphaContext, runAttempt },
 				{
 					prompt: "replacement prompt",
 					model: "model-a",
@@ -459,8 +460,7 @@ describe("Cursor CLI OAuth session router", () => {
 		);
 
 		expect(second.attempts[0]?.resumeChatId).toBeUndefined();
-		expect(second.attempts[0]?.prompt).toContain("hist");
-		expect(second.attempts[0]?.prompt.endsWith("two")).toBe(true);
+		expect(second.attempts[0]?.prompt).toBe("two");
 	});
 
 	it("omits the recap on model switches when contextRecapOnModelSwitch is false", async () => {

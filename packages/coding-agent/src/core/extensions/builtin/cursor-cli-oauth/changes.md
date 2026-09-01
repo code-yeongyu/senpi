@@ -4,8 +4,9 @@
 
 ### What changed
 
-- `stream.ts` and `session-router.ts`: the turn boundary now detects when the immediately preceding assistant response came from another provider and requests a bounded Senpi context recap, covering both first-time Cursor use and returns to an existing Cursor chat. Resume-disabled turns also recap because every CLI invocation is a fresh chat. The current user prompt is removed from recap composition so it is sent exactly once. Same-turn failover and cross-turn account reselection both suppress the recap, and replacement accounts are forced off any older sticky chat, preserving the cross-account context-isolation contract.
-- `session-router.test.ts` and `stream.test.ts`: add regressions for first-time and returning provider switches, resume-disabled continuity, the existing recap opt-out, single-copy current prompts on resume fallback, end-to-end provider detection, same-turn/cross-turn account isolation, and replacement accounts with stale bindings.
+- `settings.ts`, `stream.ts`, and `session-router.ts`: the turn boundary now detects when the immediately preceding assistant response came from another provider and requests a bounded Senpi context recap, covering both first-time Cursor use and returns to an existing Cursor chat. Provider-switch recap has its own `contextRecapOnProviderSwitch` setting and `SENPI_CURSOR_CLI_OAUTH_PROVIDER_RECAP` environment override (default on), independent from the existing model-switch recap option, and its recap header identifies the provider transition instead of claiming the model changed. Resume-disabled turns retain their existing context-free behavior. The current user prompt is removed from recap composition so it is sent exactly once. Same-turn failover and cross-turn account reselection both suppress the recap, and replacement accounts are forced off any older sticky chat, preserving the cross-account context-isolation contract.
+- `session-router.test.ts`, `stream.test.ts`, and `settings.test.ts`: add regressions for first-time and returning provider switches, independent provider/model recap opt-outs (including end-to-end provider opt-out), single-copy current prompts on resume fallback, transition-specific recap headers, same-turn/cross-turn account isolation, and replacement accounts with stale bindings under auto resume.
+- `docs/providers.md` and `docs/settings.md`: document both recap controls and their independent environment overrides.
 
 ### Why
 
@@ -17,7 +18,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: `stream.ts` around turn-input/failover composition and `session-router.ts` around recap planning, plus their focused test suites.
+- LOW: `settings.ts` around recap toggles, `stream.ts` around turn-input/failover composition, and `session-router.ts` around recap planning, plus their focused test suites.
 
 ## 2026-08-24 - Keep provider tool protocol out of assistant text
 

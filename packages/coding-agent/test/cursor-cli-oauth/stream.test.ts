@@ -69,6 +69,7 @@ function enabledSettings(overrides: Partial<CursorCliOauthProviderSettings> = {}
 		resumeMode: "auto",
 		pinnedAccount: undefined,
 		contextRecapOnModelSwitch: true,
+		contextRecapOnProviderSwitch: true,
 		modelCatalogTtlHours: 24,
 		sandboxMode: undefined,
 		denyCommands: [],
@@ -340,6 +341,30 @@ describe("cursor-cli-oauth stream mapping", () => {
 		const sentPrompt = invocation(fixture.dump).argv[1] ?? "";
 		expect(sentPrompt).toContain("The codename is ORCHID.");
 		expect(sentPrompt.split("What was the codename?")).toHaveLength(2);
+	});
+
+	it("honors the provider-switch recap opt-out end to end", async () => {
+		const directory = temporaryDirectory();
+		const fixture = fixtureExecutable(directory, "happy");
+		const deps: CursorCliStreamDeps = {
+			cwd: directory,
+			agentDir: join(directory, "agent"),
+			store: await makeStore([account("alpha")]),
+			settings: enabledSettings({ contextRecapOnProviderSwitch: false }),
+			now: () => NOW,
+		};
+		process.env.SENPI_CURSOR_CLI_OAUTH_EXECUTABLE = fixture.executable;
+
+		const events = await collect(
+			runContextTurn(
+				deps,
+				providerSwitchContext("current question", "PRIVATE-PROVIDER-CONTEXT"),
+				"stream-provider-switch-opt-out",
+			),
+		);
+
+		expect(events.at(-1)?.type).toBe("done");
+		expect(invocation(fixture.dump).argv[1]).toBe("current question");
 	});
 
 	it("isolates CLI usage numbers from AssistantMessage.usage and carries them only in a diagnostic", async () => {

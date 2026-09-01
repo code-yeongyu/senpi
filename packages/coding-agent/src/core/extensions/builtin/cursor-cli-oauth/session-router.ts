@@ -5,6 +5,7 @@ import { CursorCliAbortError, CursorCliPromptTooLargeError, MAX_CURSOR_CLI_PROMP
 export const CURSOR_CLI_CONTEXT_RECAP_MAX_BYTES = 8 * 1024;
 export const CURSOR_CLI_CONTEXT_RECAP_BEGIN = "===== senpi context recap =====";
 export const CURSOR_CLI_CONTEXT_RECAP_END = "===== end senpi context recap =====";
+export type CursorCliContextRecapReason = "model-switch" | "provider-switch" | "chat-restart";
 
 export type CursorCliSessionRecord = {
 	readonly accountName: string;
@@ -38,6 +39,7 @@ export type CursorCliSessionTurnInput = {
 export type CursorCliSessionPolicy = {
 	readonly resumeMode?: CursorCliOauthResumeMode;
 	readonly contextRecapOnModelSwitch?: boolean;
+	readonly contextRecapOnProviderSwitch?: boolean;
 	readonly maxRecapBytes?: number;
 	readonly promptCeilingBytes?: number;
 };
@@ -113,12 +115,17 @@ export function buildCursorCliContextRecap(
 	model: string | undefined,
 	exchanges: readonly CursorCliRecapExchange[] | undefined,
 	maxRecapBytes: number = CURSOR_CLI_CONTEXT_RECAP_MAX_BYTES,
+	reason: CursorCliContextRecapReason = model === undefined ? "chat-restart" : "model-switch",
 ): string | undefined {
 	const usable = (exchanges ?? []).filter((exchange) => exchange.text.length > 0);
 	if (usable.length === 0) return undefined;
-	const header = `${CURSOR_CLI_CONTEXT_RECAP_BEGIN}\n(${
-		model === undefined ? "chat restarted" : `model switched to '${model}'`
-	}; recent conversation from senpi's own records follows)`;
+	const transition =
+		reason === "provider-switch"
+			? `provider switched to cursor-cli-oauth${model === undefined ? "" : ` using '${model}'`}`
+			: reason === "chat-restart"
+				? "chat restarted"
+				: `model switched to '${model}'`;
+	const header = `${CURSOR_CLI_CONTEXT_RECAP_BEGIN}\n(${transition}; recent conversation from senpi's own records follows)`;
 	const overheadBytes = byteLength(header) + 1 + byteLength(CURSOR_CLI_CONTEXT_RECAP_END) + 1;
 	if (overheadBytes >= maxRecapBytes) return undefined;
 	const budget = maxRecapBytes - overheadBytes;
@@ -287,13 +294,18 @@ export class CursorCliSessionRouter {
 		const resumeChatId = resumable && bound !== undefined ? bound.chatId : undefined;
 		const modelSwitch = resumable && bound !== undefined && bound.lastModel !== input.model;
 		const sameAccount = bound === undefined || bound.accountName === context.accountName;
-		const needsRecap =
-			input.contextRecapSuppressed !== true &&
-			((sameAccount && (input.contextRecapRequested === true || !resumeEnabled)) || modelSwitch);
-		const recap =
-			needsRecap && policy.contextRecapOnModelSwitch !== false
-				? buildCursorCliContextRecap(input.model, priorRecapExchanges(input), policy.maxRecapBytes)
-				: undefined;
+		const providerSwitchRecap =
+			sameAccount && input.contextRecapRequested === true && policy.contextRecapOnProviderSwitch !== false;
+		const modelSwitchRecap = modelSwitch && policy.contextRecapOnModelSwitch !== false;
+		const needsRecap = input.contextRecapSuppressed !== true && (providerSwitchRecap || modelSwitchRecap);
+		const recap = needsRecap
+			? buildCursorCliContextRecap(
+					input.model,
+					priorRecapExchanges(input),
+					policy.maxRecapBytes,
+					providerSwitchRecap ? "provider-switch" : "model-switch",
+				)
+			: undefined;
 		const shrunk = shrinkToCeiling(recap, input.prompt, ceilingBytes);
 		return {
 			resumeChatId,
@@ -335,6 +347,7 @@ export class CursorCliSessionRouter {
 		const plan = this.planTurn(context, input, {
 			resumeMode: options.resumeMode,
 			contextRecapOnModelSwitch: options.contextRecapOnModelSwitch,
+			contextRecapOnProviderSwitch: options.contextRecapOnProviderSwitch,
 			maxRecapBytes: options.maxRecapBytes,
 			promptCeilingBytes: options.promptCeilingBytes,
 		});

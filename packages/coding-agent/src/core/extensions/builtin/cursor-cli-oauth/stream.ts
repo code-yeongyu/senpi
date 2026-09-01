@@ -610,6 +610,7 @@ export function streamCursorCliOauth(
 							runAttempt: (attempt) => spawnAndStream(attempt, slot),
 							resumeMode: settings.resumeMode,
 							contextRecapOnModelSwitch: settings.contextRecapOnModelSwitch,
+							contextRecapOnProviderSwitch: settings.contextRecapOnProviderSwitch,
 							now: () => now(),
 						},
 						{
