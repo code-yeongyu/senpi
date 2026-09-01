@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-01 - Bound session tree construction with duplicate entry IDs
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `SessionManager.getTree()` now links each unique entry ID once, while preserving the existing final-entry-wins index semantics for repeated persisted rows.
+
+### Why
+
+- Duplicate entry IDs caused the same `SessionTreeNode` object to be appended repeatedly to a parent's children. Repeated duplicate edges along a branch multiplied the later traversal work and could freeze the interactive session tree before it rendered.
+
+### Why an extension could not handle it
+
+- Persisted session indexing and tree construction are core `SessionManager` responsibilities below the extension API. An extension cannot replace the synchronous tree returned to interactive, RPC, and other consumers.
+
+### Expected merge conflict zones
+
+- LOW: the edge-construction loop in `packages/coding-agent/src/core/session-manager.ts`.
+
 ## 2026-08-31 - Session activity contract for host occupancy decisions
 
 ### What changed

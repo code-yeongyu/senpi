@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Session tree construction no longer freezes on sessions with duplicate entry IDs; `getTree()` builds one edge per unique node instead of re-linking the same node for every persisted row ([#1247](https://github.com/code-yeongyu/senpi/issues/1247)).
+
 - Multi-session RPC hosts launched with `SENPI_RPC_CLIENT_CAPABILITIES` (for example `extension_events`) now apply those capabilities to connection-owned session bindings when the client never sends `set_client_info`. Previously the launch capabilities were advertised through `get_protocol_info` but dropped at binding creation, so undeclared clients received no `extension_event` frames (breaking downstream task/DAG/monitor liveness in omo-desktop-app). An explicit `set_client_info` declaration, including an empty capability list, still overrides the launch default.
 
 - RPC `abort` acknowledgements are now sent immediately after the abort signal is dispatched instead of waiting for full session quiescence, preventing desktop stop requests from hitting their 10-second bounded-ack timeout under host load.
