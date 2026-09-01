@@ -1,5 +1,24 @@
 # cursor-cli-oauth extension changes
 
+## 2026-09-01 - Preserve Senpi context on first Cursor CLI turn
+
+### What changed
+
+- `stream.ts` and `session-router.ts`: the turn boundary now detects when the immediately preceding assistant response came from another provider and requests a bounded Senpi context recap, covering both first-time Cursor use and returns to an existing Cursor chat. Resume-disabled turns also recap because every CLI invocation is a fresh chat. The current user prompt is removed from recap composition so it is sent exactly once. Same-turn failover and cross-turn account reselection both suppress the recap, and replacement accounts are forced off any older sticky chat, preserving the cross-account context-isolation contract.
+- `session-router.test.ts` and `stream.test.ts`: add regressions for first-time and returning provider switches, resume-disabled continuity, the existing recap opt-out, single-copy current prompts on resume fallback, end-to-end provider detection, same-turn/cross-turn account isolation, and replacement accounts with stale bindings.
+
+### Why
+
+- The router previously built recaps only for model switches inside an already-bound Cursor chat. Switching from another provider either had no Cursor routing record or resumed an older Cursor chat, so the CLI received only the latest user message and missed the intervening Senpi conversation.
+
+### Why an extension could not handle it
+
+- This is the builtin extension's private prompt-composition boundary. External hooks cannot access its in-memory Cursor chat binding or alter the subprocess prompt after routing.
+
+### Expected merge conflict zones
+
+- LOW: `stream.ts` around turn-input/failover composition and `session-router.ts` around recap planning, plus their focused test suites.
+
 ## 2026-08-24 - Keep provider tool protocol out of assistant text
 
 ### What changed

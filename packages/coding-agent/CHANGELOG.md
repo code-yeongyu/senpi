@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Switching an existing Senpi conversation from another provider to `cursor-cli-oauth` now reinjects the bounded recent transcript into the first Cursor CLI turn, instead of sending only the latest user message and making Cursor respond as if the conversation were new.
+
 ### New Features
 
 ### Breaking Changes

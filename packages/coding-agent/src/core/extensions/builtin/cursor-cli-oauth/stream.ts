@@ -355,6 +355,14 @@ function recapExchanges(context: Context): CursorCliRecapExchange[] {
 	return exchanges.slice(-RECENT_EXCHANGE_LIMIT);
 }
 
+function enteringFromAnotherProvider(context: Context): boolean {
+	for (let index = context.messages.length - 1; index >= 0; index -= 1) {
+		const message = context.messages[index];
+		if (message?.role === "assistant") return message.provider !== CURSOR_CLI_OAUTH_PROVIDER_ID;
+	}
+	return false;
+}
+
 function isFailoverNotice(event: unknown): event is CursorCliFailoverNotice {
 	return (event as { type?: unknown }).type === "cursor_account_changed";
 }
@@ -465,6 +473,7 @@ export function streamCursorCliOauth(
 				prompt,
 				model: spawnModel,
 				recentExchanges: recapExchanges(context),
+				contextRecapRequested: enteringFromAnotherProvider(context),
 			};
 
 			const spawnAndStream = (
@@ -551,7 +560,7 @@ export function streamCursorCliOauth(
 					now: now(),
 				},
 				now: () => now(),
-				runAttempt: async (selected, _options: CursorCliAttemptOptions) => {
+				runAttempt: async (selected, attemptOptions: CursorCliAttemptOptions) => {
 					let slot = selected;
 					const current = await store.read(CURSOR_CLI_OAUTH_PROVIDER_ID);
 					if (current?.type === "oauth") {
@@ -603,7 +612,12 @@ export function streamCursorCliOauth(
 							contextRecapOnModelSwitch: settings.contextRecapOnModelSwitch,
 							now: () => now(),
 						},
-						turnInput,
+						{
+							...turnInput,
+							contextRecapRequested: turnInput.contextRecapRequested && !attemptOptions.freshChat,
+							contextRecapSuppressed: attemptOptions.freshChat,
+							forceFreshChat: attemptOptions.freshChat,
+						},
 					);
 				},
 			});
