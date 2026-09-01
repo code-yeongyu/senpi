@@ -1,5 +1,32 @@
 # config-reload Extension Changes
 
+## Retire watchers after their provider scope closes (2026-09-01)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts` now
+  treats only the `Provider scope is closed` error from a scope-bound filesystem
+  callback as a terminal lifecycle signal and closes the config-reload watcher.
+  Other callback errors still propagate through their existing paths.
+
+### Why
+
+- A debounced filesystem event can outlive the RPC session provider scope that
+  created `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`.
+  The late callback previously threw an uncaught error, terminated the host, and
+  left callers waiting until their prompt timed out.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts` owns
+  both the internal watcher lifecycle and the provider-scope callback binding;
+  an external extension cannot retire this orphaned watcher safely.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`
+  callback binding and watcher-construction wiring.
+
 ## Watch only in-scope directories instead of whole subtrees (2026-08-20)
 
 ### What changed

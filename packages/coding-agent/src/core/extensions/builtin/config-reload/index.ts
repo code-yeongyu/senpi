@@ -125,11 +125,20 @@ export class ConfigReloadHandoffRegistry<T> {
 
 const reloadHandoffs = new ConfigReloadHandoffRegistry<ReloadHandoff>();
 
-function bindExternalCallback<TArgs extends unknown[], TResult>(
-	callback: (...args: TArgs) => TResult,
-): (...args: TArgs) => TResult {
+function bindExternalCallback<TArgs extends unknown[]>(
+	callback: (...args: TArgs) => void,
+	onProviderScopeClosed: () => void,
+): (...args: TArgs) => void {
 	try {
-		return bindToProviderScope(callback);
+		const boundCallback = bindToProviderScope(callback);
+		return (...args: TArgs): void => {
+			try {
+				boundCallback(...args);
+			} catch (error: unknown) {
+				if (!(error instanceof Error) || error.message !== "Provider scope is closed") throw error;
+				onProviderScopeClosed();
+			}
+		};
 	} catch {
 		return callback;
 	}
@@ -342,10 +351,10 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 			debounceMs: settings.debounceMs,
 			clock: options.clock,
 			hashFile: options.hashFile,
-			onRealChange: bindExternalCallback(enqueueChange),
+			onRealChange: bindExternalCallback(enqueueChange, closeWatchers),
 			onError: bindExternalCallback((error, path) => {
 				logger.error("watcher_error", { path, message: errorMessage(error) });
-			}),
+			}, closeWatchers),
 		});
 		refreshSettingsContentSnapshots(settingsContents, agentDir, ctx.cwd);
 		logger.info("watcher_started", { targetCount: activeTargets.length });
