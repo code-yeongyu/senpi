@@ -1568,9 +1568,10 @@ export class SessionManager {
 			nodeMap.set(entry.id, { entry, children: [], label, labelTimestamp });
 		}
 
-		// Build tree
-		for (const entry of entries) {
-			const node = nodeMap.get(entry.id)!;
+		// Build one edge per unique ID. Persisted sessions can contain repeated rows,
+		// and nodeMap intentionally keeps the final entry for each ID.
+		for (const node of nodeMap.values()) {
+			const { entry } = node;
 			if (entry.parentId === null || entry.parentId === entry.id) {
 				roots.push(node);
 			} else {
