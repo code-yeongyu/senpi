@@ -55,19 +55,18 @@ async function createRuntimeWithProvider(config: ProviderConfigInput, storage = 
 	return runtime;
 }
 
-function authenticatedStorage(): AuthStorage {
+function authenticatedStorage(accountCount = 1, pinned?: string): AuthStorage {
 	return AuthStorage.inMemory({
 		[CLAUDE_SDK_OAUTH_PROVIDER_ID]: {
 			...emptyCredential(),
-			accounts: [
-				{
-					name: "test",
-					refresh: "test-refresh",
-					access: "test-access",
-					expires: Date.now() + 60_000,
-					source: "login",
-				},
-			],
+			accounts: Array.from({ length: accountCount }, (_, index) => ({
+				name: `test-${index + 1}`,
+				refresh: `test-refresh-${index + 1}`,
+				access: `test-access-${index + 1}`,
+				expires: Date.now() + 60_000,
+				source: "login" as const,
+			})),
+			...(pinned === undefined ? {} : { pinned }),
 		},
 	});
 }
@@ -146,21 +145,33 @@ describe("claude-sdk-oauth builtin provider", () => {
 		});
 	});
 
-	it("preflight reaches streamSimple with a stored login", async () => {
+	it("preflight projects the pinned stored login before reaching streamSimple", async () => {
 		const { registration } = captureRegistration();
+		const oauth = registration.config.oauth;
+		const check = oauth?.check;
+		if (!oauth || !check) throw new Error("extension did not register an OAuth check");
+		const checkedAccess: Array<string | undefined> = [];
 		let called = false;
 		const config: ProviderConfigInput = {
 			...registration.config,
+			oauth: {
+				...oauth,
+				check: async (input) => {
+					checkedAccess.push(input.credential?.access);
+					return check(input);
+				},
+			},
 			streamSimple: (model: Model<Api>, context: Context) => {
 				called = true;
 				return fakeStreamSimple()(model, context);
 			},
 		};
-		const runtime = await createRuntimeWithProvider(config, authenticatedStorage());
+		const runtime = await createRuntimeWithProvider(config, authenticatedStorage(2, "test-2"));
 		const model = (await runtime.getAvailable(CLAUDE_SDK_OAUTH_PROVIDER_ID))[0];
 		expect(model).toBeDefined();
 		const stream = runtime.streamSimple(model as Model<Api>, { messages: [], tools: [] } as unknown as Context);
 		for await (const event of stream) void event;
 		expect(called).toBe(true);
+		expect(checkedAccess).toContain("test-access-2");
 	});
 });
