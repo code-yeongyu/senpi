@@ -42,7 +42,11 @@ import {
 } from "./cli/startup-loading-indicator.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
 import { APP_NAME, DISPLAY_VERSION, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir } from "./config.ts";
-import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
+import {
+	type AgentSessionRuntime,
+	type CreateAgentSessionRuntimeFactory,
+	createAgentSessionRuntime,
+} from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
 	createAgentSessionFromServices,
@@ -53,6 +57,7 @@ import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { envValue } from "./core/brand.ts";
 import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./core/credential-accounts.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
+import { ModelUsabilityBudgetError } from "./core/extensions/builtin/compaction/model-usability-budget.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import {
@@ -1113,13 +1118,22 @@ export async function main(args: string[], options?: MainOptions) {
 			listen: parsed.listen,
 		});
 	}
-	const runtime = await createAgentSessionRuntime(createRuntime, {
-		cwd: sessionManager.getCwd(),
-		agentDir,
-		sessionManager,
-	}).finally(() => {
-		startupLoadingIndicator.stop();
-	});
+	let runtime: AgentSessionRuntime;
+	try {
+		runtime = await createAgentSessionRuntime(createRuntime, {
+			cwd: sessionManager.getCwd(),
+			agentDir,
+			sessionManager,
+		}).finally(() => {
+			startupLoadingIndicator.stop();
+		});
+	} catch (error) {
+		if (error instanceof ModelUsabilityBudgetError) {
+			console.error(chalk.red(error.message));
+			process.exit(1);
+		}
+		throw error;
+	}
 	time("createAgentSessionRuntime");
 	let selectedRuntime = runtime;
 	if (isTruthyEnvFlag(envValue("DISABLE_SHARED_HOST"))) {

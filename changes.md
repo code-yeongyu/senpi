@@ -1,5 +1,16 @@
 # changes — senpi-monorepo root
 
+## Oversized saved-session recovery (2026-09-01)
+
+Coding-agent bootstrap now distinguishes implicit saved-model restoration from
+explicit model selection. A restored session that outgrew its saved model picks
+the authenticated candidate with the greatest verified remaining budget,
+records the session-local model change, and opens normally. Explicit selections
+remain fail-closed; no-capable-model failures render as clean typed CLI errors.
+
+This is core startup behavior because the failure occurs before extensions or
+interactive UI activation.
+
 ## Shared-host rendering isolation (2026-08-30)
 
 Shared socket clients now register `rendered_components` through additive `set_client_info` capabilities. Factory-rendered component records are filtered per connection, including capability-aware snapshot replay. Capabilities remain connection-wide across sessions and are cleared only on socket release; explicit close removes only the closing width. Shared bindings retain factories while disposing live renderers and footer providers when no capable connection remains, recreating them for later capable joiners.

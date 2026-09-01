@@ -4583,6 +4583,40 @@ export class AgentSession {
 		return this._setModel(model, false);
 	}
 
+	/**
+	 * Recover an existing session whose restored model cannot carry its live
+	 * context. Startup owns candidate selection and full-budget admission; this
+	 * seam records the recovered model without changing global defaults or
+	 * treating the restore as a manual fallback reset.
+	 * @internal
+	 */
+	async setStartupRecoveryModel(
+		model: Model<Api>,
+		liveContextTokens: number,
+	): Promise<SystemPromptChangeEvent | undefined> {
+		this.assertModelUsable(model, liveContextTokens);
+		if (!(await this._modelRuntime.checkAuth(model.provider))) {
+			throw new Error(`No API key for ${model.provider}/${model.id}`);
+		}
+		const previousModel = this.model;
+		const systemPromptChange = await this._switchActiveModel(model, {
+			persistDefault: false,
+			appendSessionEntry: false,
+			emitModelSelect: true,
+			modelSelectSource: "restore",
+			invalidateCompaction: true,
+			liveContextTokens,
+		});
+		this.sessionManager.appendModelChange(
+			model.provider,
+			model.id,
+			undefined,
+			previousModel?.provider,
+			previousModel?.id,
+		);
+		return systemPromptChange;
+	}
+
 	private async _setModel(
 		model: Model<Api>,
 		updateGlobalDefaults: boolean,
@@ -4640,6 +4674,7 @@ export class AgentSession {
 			modelSelectSource: ModelSelectSource;
 			invalidateCompaction: boolean;
 			ephemeralThinkingLevel?: ThinkingLevel;
+			liveContextTokens?: number;
 		},
 	): Promise<SystemPromptChangeEvent | undefined> {
 		const previousModel = this.model;
@@ -4652,7 +4687,7 @@ export class AgentSession {
 			this._invalidateCompactionForModelSelection();
 		}
 		const thinking = this._getThinkingForModelSwitch(model, opts.ephemeralThinkingLevel);
-		const liveContextTokens = this._getDownswitchLiveContextTokens(model);
+		const liveContextTokens = opts.liveContextTokens ?? this._getDownswitchLiveContextTokens(model);
 		this.agent.state.model = model;
 		this.agent.abortServerSideFallback =
 			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();

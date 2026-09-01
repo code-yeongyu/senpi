@@ -1,5 +1,13 @@
 # Local fork changes
 
+## 2026-09-01 - Recover oversized session resumes
+
+- Implicit saved-model restores now recover onto the authenticated model with
+  the largest usable remaining context budget while preserving explicit model
+  admission checks.
+- When no recovery model exists, CLI startup prints the typed budget guidance
+  and exits cleanly instead of exposing an uncaught exception stack.
+
 ## 2026-09-01 - Acknowledge RPC abort before quiesce
 
 - The RPC `abort` command now acknowledges immediately after dispatching the abort signal, while observing quiesce failures through the existing `rpc_error` event path.

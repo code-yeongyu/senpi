@@ -1,5 +1,29 @@
 # changes
 
+## 2026-09-01 - Make oversized sessions resumable
+
+### What changed
+
+- Session bootstrap now recovers an unusable implicit saved model onto the
+  authenticated model with the largest verified remaining context budget.
+- CLI startup renders a no-capable-model budget failure as an actionable error
+  without leaking an uncaught Node stack.
+
+### Why
+
+- Recent long-running sessions could no longer reopen after their restored
+  transcript outgrew the saved model, even though a larger configured model was
+  available.
+
+### Why an extension could not handle it
+
+- Both the saved-model restore and startup usability gate precede extension
+  activation and TUI construction.
+
+### Expected merge conflict zones
+
+- MEDIUM: `core/sdk.ts` and the runtime creation boundary in `main.ts`.
+
 ## 2026-09-01 - Negotiate RPC session auto-titling
 
 ### What changed

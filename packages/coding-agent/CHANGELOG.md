@@ -6,6 +6,12 @@
 
 ### Fixed
 
+- Existing sessions whose restored transcript no longer fits their saved model
+  now reopen on the configured authenticated model with the largest usable
+  remaining context budget. Explicit `--model` selections stay strict, and a
+  session with no capable model exits with actionable budget guidance instead
+  of an uncaught stack trace.
+
 - `/quit` and `/exit` submitted while startup is still finishing (managed-tool downloads) now quit instead of being parked back in the editor behind a "Startup is still in progress" notice. Parking the text also disabled the Ctrl+D quit escape, which only fires on an empty editor, so the usual way out was a dead end until the line was cleared by hand.
 
 - An extension calling `ctx.shutdown()` while the session is idle now shuts down immediately instead of waiting for an `agent_settled` event that an idle session never emits, which previously stranded the request until the user happened to run another turn.
