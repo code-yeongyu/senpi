@@ -1,5 +1,15 @@
 # claude-sdk-oauth
 
+## 2026-09-02 - Preserve selected OAuth slot during resume
+
+### What changed
+
+- Treat a non-sentinel top-level OAuth credential as one configured account even when the provider-owned `accounts` pool is absent.
+
+### Why
+
+- Session resume can project the selected account into the top-level credential while omitting the sibling pool. Counting only `accounts` incorrectly routes the session to the ambient lane and reports the provider as unconfigured.
+
 ## 2026-08-21 - Cache provider settings loads by mtime+size to cut lock convoy
 
 ### What changed
