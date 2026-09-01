@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Provider-owned OAuth account flows now persist their complete updated credential pool instead of having the generic login layer discard the real new account and append the pool's compatibility sentinel as a synthetic `login-N` slot ([#1262](https://github.com/code-yeongyu/senpi/pull/1262) by [@eddieparc](https://github.com/eddieparc)).
+
 ### Removed
 
 ## [2026.8.31] - 2026-08-31

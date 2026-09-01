@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Claude SDK OAuth and Cursor CLI OAuth account additions now retain the provider-added account instead of creating an unusable sentinel `login-N` entry that could be selected on the next turn and fail with `Provider is not configured` ([#1262](https://github.com/code-yeongyu/senpi/pull/1262) by [@eddieparc](https://github.com/eddieparc)).
+
 - `/quit` and `/exit` submitted while startup is still finishing (managed-tool downloads) now quit instead of being parked back in the editor behind a "Startup is still in progress" notice. Parking the text also disabled the Ctrl+D quit escape, which only fires on an empty editor, so the usual way out was a dead end until the line was cleared by hand.
 
 - An extension calling `ctx.shutdown()` while the session is idle now shuts down immediately instead of waiting for an `agent_settled` event that an idle session never emits, which previously stranded the request until the user happened to run another turn.
