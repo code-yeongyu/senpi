@@ -1,5 +1,25 @@
 # Local fork changes
 
+## Claude Agent SDK pin refresh for the claude-fable-5-1 version floor (2026-09-03)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.241 -> 0.3.258. The SDK's eight platform binary packages follow through its `optionalDependencies`.
+- The root lockfile, the coding-agent publish dependency closure, the install lock, and the Claude Agent SDK platform lock were regenerated from the refreshed pin.
+- `packages/coding-agent/test/claude-sdk-oauth-project-instructions.test.ts`: the `appendOf` helper narrows the SDK `systemPrompt` union on `type === "preset"` before reading `append`, because the 0.3.258 typings add a `{ type: "custom" }` object variant without that property.
+
+### Why
+
+- The 0.3.241 SDK bundles Claude Code 2.1.241, which the API rejects for `claude-fable-5-1` with `API Error: 400 Claude Code 2.1.241 does not support this model; version 2.1.251 or newer is required`. 0.3.258 bundles Claude Code 2.1.258, which satisfies the floor ([#1298](https://github.com/code-yeongyu/senpi/issues/1298)). The pinned `@anthropic-ai/sdk` 0.120.0 still satisfies the SDK's `>=0.93.0` peer range.
+
+### Why an extension could not handle it
+
+- Package resolution and the generated publish/install/platform locks are resolved by npm and repository tooling before the extension runtime loads.
+
+### Expected merge conflict zones
+
+- HIGH: `package.json` and the generated publish/install/platform locks, which upstream regenerates on every release.
+
 ## 2026-09-02 - RPC host lifecycle teardown treats a timed-out probe as unknown, not alive
 
 - `test/rpc-host-lifecycle.test.ts` decides Windows process liveness with the production `processIsLive(pid)` (`kill(pid, 0)`) instead of trusting the PowerShell CIM probe's `timedOut` flag. A loaded `windows-latest` runner could time the 10s CIM probe out for a supervisor that had genuinely idle-exited; `terminateSupervisor()` then rethrew the `Stop-Process` failure (`starts a fresh host transparently on the next ensure after an idle exit`), and `waitForHostExit()` spun to its deadline and threw `did not exit within Nms`. A timed-out probe means the state is unknown, so it is re-decided by `kill(pid, 0)` (`ESRCH` -> gone, `EPERM` -> alive); a process that is really still alive still rethrows / still keeps waiting.
