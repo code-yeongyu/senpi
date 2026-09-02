@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	ModelUsabilityBudgetError,
@@ -347,6 +348,7 @@ describe("model usability budget", () => {
 			content: [{ type: "text", text: "restored transcript ".repeat(80_000) }],
 			timestamp: Date.now(),
 		});
+		const authCheck = vi.spyOn(harness.session.modelRuntime, "checkAuth");
 
 		// when
 		const resumed = await createAgentSession({
@@ -362,6 +364,89 @@ describe("model usability budget", () => {
 
 		// then
 		expect(resumed.session.model).toMatchObject({ id: "candidate-medium" });
+		expect(sessionManager.getEntries().filter((entry) => entry.type === "model_change")).toMatchObject([
+			{ provider: "faux", modelId: "saved-small" },
+			{ provider: "faux", modelId: "candidate-medium" },
+		]);
+		expect(authCheck.mock.calls.filter(([provider]) => provider === "faux")).toHaveLength(1);
+		resumed.session.dispose();
+	});
+
+	it("rolls back rejected candidate tools and extension state before trying the next model", async () => {
+		// given
+		initTheme("dark");
+		const harness = await createHarness({
+			models: [
+				{ id: "saved-small", contextWindow: 100_000, maxTokens: 4_000 },
+				{ id: "candidate-medium", contextWindow: 600_000, maxTokens: 32_000 },
+				{ id: "candidate-largest", contextWindow: 1_000_000, maxTokens: 32_000 },
+			],
+		});
+		harnesses.push(harness);
+		const extensionsResult = await createTestExtensionsResult(
+			[
+				(pi) => {
+					let rejectedCandidateState = false;
+					pi.registerTool({
+						name: "stable-tool",
+						label: "Stable tool",
+						description: "Tool for the restored and accepted models",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text", text: "stable" }], details: {} }),
+					});
+					pi.registerTool({
+						name: "candidate-tool",
+						label: "Candidate tool",
+						description: "Tool exposed only by the rejected candidate",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text", text: "candidate" }], details: {} }),
+					});
+					pi.on("session_start", () => {
+						pi.setActiveTools(["stable-tool"]);
+					});
+					pi.on("model_select", (event) => {
+						if (event.model.id === "candidate-largest") {
+							rejectedCandidateState = true;
+							pi.setActiveTools(["candidate-tool"]);
+							return { systemPrompt: "oversized model prompt ".repeat(300_000) };
+						}
+						if (event.model.id === "saved-small") {
+							rejectedCandidateState = false;
+							pi.setActiveTools(["stable-tool"]);
+							return undefined;
+						}
+						if (event.model.id === "candidate-medium" && rejectedCandidateState) {
+							return { systemPrompt: "leaked extension state ".repeat(300_000) };
+						}
+						return undefined;
+					});
+				},
+			],
+			harness.tempDir,
+		);
+		const sessionManager = harness.sessionManager;
+		sessionManager.appendModelChange("faux", "saved-small");
+		sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "restored transcript ".repeat(80_000) }],
+			timestamp: Date.now(),
+		});
+
+		// when
+		const resumed = await createAgentSession({
+			cwd: harness.tempDir,
+			agentDir: join(harness.tempDir, "sdk-agent"),
+			authStorage: harness.authStorage,
+			modelRuntime: harness.session.modelRuntime,
+			resourceLoader: createTestResourceLoader({ extensionsResult }),
+			sessionManager,
+			settingsManager: harness.settingsManager,
+			tools: ["stable-tool"],
+		});
+
+		// then
+		expect(resumed.session.model).toMatchObject({ id: "candidate-medium" });
+		expect(resumed.session.getActiveToolNames()).toEqual(["stable-tool"]);
 		expect(sessionManager.getEntries().filter((entry) => entry.type === "model_change")).toMatchObject([
 			{ provider: "faux", modelId: "saved-small" },
 			{ provider: "faux", modelId: "candidate-medium" },

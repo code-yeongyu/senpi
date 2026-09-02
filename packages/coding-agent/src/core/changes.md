@@ -14,7 +14,8 @@
   providers, and defers both model and model-specific thinking persistence
   until extension admission succeeds.
 - If a model-select hook makes the highest-capacity candidate unusable, startup
-  continues through the remaining budget-ranked candidates.
+  rolls back its runtime state before continuing through the remaining
+  budget-ranked candidates, and provider authentication is cached per recovery.
 - Explicit startup models remain fail-closed, and sessions with no capable
   authenticated recovery model keep the typed `ModelUsabilityBudgetError`.
 

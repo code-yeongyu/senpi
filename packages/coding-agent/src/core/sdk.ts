@@ -581,13 +581,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		}
 		const restoredModel = session.model;
 		if (!restoredModel) throw error;
-		const unavailableProviders = new Set<string>();
+		const providerAuthentication = new Map<string, boolean>();
 		let recovery: ModelUsabilityBudgetProjection | undefined;
 		let lastRecoveryError: ModelUsabilityBudgetError | undefined;
 		for (const candidate of findStartupRecoveryModels(session, modelRuntime, settingsManager, liveContextTokens)) {
-			if (unavailableProviders.has(candidate.model.provider)) continue;
-			if (!(await modelRuntime.checkAuth(candidate.model.provider))) {
-				unavailableProviders.add(candidate.model.provider);
+			let authenticated = providerAuthentication.get(candidate.model.provider);
+			if (authenticated === undefined) {
+				authenticated = Boolean(await modelRuntime.checkAuth(candidate.model.provider));
+				providerAuthentication.set(candidate.model.provider, authenticated);
+			}
+			if (!authenticated) {
 				continue;
 			}
 			try {

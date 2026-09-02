@@ -9,7 +9,9 @@
 - An unavailable highest-capacity provider no longer aborts recovery; startup
   tries the next usable provider, and failed model-select admission leaves no
   model-specific thinking or model history persisted.
-- A post-select budget rejection also falls through to the next capable model.
+- A post-select budget rejection rolls back candidate-specific runtime state
+  before falling through to the next capable model; provider authentication is
+  cached for that recovery attempt.
 - CLI startup renders a no-capable-model budget failure as an actionable error
   without leaking an uncaught Node stack.
 

@@ -1154,6 +1154,8 @@ export class AgentSession {
 	private _currentServiceTier: ServiceTier | undefined = undefined;
 	private _sessionFastMode = false;
 	private readonly _shownHighReasoningWarningKeys = new Set<string>();
+	/** Buffers public events until transactional model admission commits. */
+	private _deferredSessionEvents?: AgentSessionEvent[];
 	// Widened with the upstream BuildSystemPromptOptions user-override fields so
 	// extensions (prompt-preset) can see CLI/SDK custom prompts via
 	// before_agent_start/model_select systemPromptOptions and ctx.getSystemPromptOptions().
@@ -1613,6 +1615,10 @@ export class AgentSession {
 	}
 
 	private _emit(event: AgentSessionEvent): void {
+		if (this._deferredSessionEvents) {
+			this._deferredSessionEvents.push(event);
+			return;
+		}
 		this._logSessionEvent(event);
 		for (const l of this._eventListeners) {
 			l(event);
@@ -4493,6 +4499,7 @@ export class AgentSession {
 		nextModel: Model<any>,
 		previousModel: Model<any> | undefined,
 		source: ModelSelectSource,
+		publish = true,
 	): Promise<SystemPromptChangeEvent | undefined> {
 		this.syncPromptCacheSafeWaitEnv();
 		if (!this._modelSelectionChangesContext(previousModel, nextModel)) return undefined;
@@ -4526,9 +4533,13 @@ export class AgentSession {
 		if (result.systemPromptName) {
 			event.systemPromptName = result.systemPromptName;
 		}
+		if (publish) await this._publishSystemPromptChange(event);
+		return event;
+	}
+
+	private async _publishSystemPromptChange(event: SystemPromptChangeEvent): Promise<void> {
 		await this._extensionRunner.emit(event);
 		this._emit(event);
-		return event;
 	}
 
 	/**
@@ -4604,6 +4615,7 @@ export class AgentSession {
 			invalidateCompaction: true,
 			persistThinkingLevel: false,
 			liveContextTokens,
+			transactionalModelSelect: true,
 		});
 		this.sessionManager.appendModelChange(
 			model.provider,
@@ -4674,9 +4686,76 @@ export class AgentSession {
 			ephemeralThinkingLevel?: ThinkingLevel;
 			persistThinkingLevel?: boolean;
 			liveContextTokens?: number;
+			transactionalModelSelect?: boolean;
 		},
 	): Promise<SystemPromptChangeEvent | undefined> {
 		const previousModel = this.model;
+		const snapshot = opts.transactionalModelSelect
+			? {
+					model: this.agent.state.model,
+					systemPrompt: this.agent.state.systemPrompt,
+					tools: this.agent.state.tools,
+					thinkingLevel: this.agent.state.thinkingLevel,
+					thinkingSelection: this.agent.state.thinkingSelection,
+					abortServerSideFallback: this.agent.abortServerSideFallback,
+					currentServiceTier: this._currentServiceTier,
+					sessionFastMode: this._sessionFastMode,
+					baseSystemPrompt: this._baseSystemPrompt,
+					baseSystemPromptOptions: { ...this._baseSystemPromptOptions },
+					systemPromptOverride: this._systemPromptOverride,
+					requestedActiveToolNames: this._requestedActiveToolNames
+						? [...this._requestedActiveToolNames]
+						: undefined,
+					withheldEvalOnlyToolNames: new Set(this._withheldEvalOnlyToolNames),
+					publishedEvalOnlyHintNames: new Set(this._publishedEvalOnlyHintNames),
+					removedToolHints: { ...this.agent.removedToolHints },
+					toolRegistry: new Map(this._toolRegistry),
+					toolDefinitions: new Map(this._toolDefinitions),
+					toolPromptSnippets: new Map(this._toolPromptSnippets),
+					toolPromptGuidelines: new Map(this._toolPromptGuidelines),
+					shownHighReasoningWarningKeys: new Set(this._shownHighReasoningWarningKeys),
+				}
+			: undefined;
+		const ownsDeferredEvents = opts.transactionalModelSelect && this._deferredSessionEvents === undefined;
+		if (ownsDeferredEvents) this._deferredSessionEvents = [];
+		const restoreSnapshot = () => {
+			if (!snapshot) return;
+			this.agent.state.model = snapshot.model;
+			this.agent.state.systemPrompt = snapshot.systemPrompt;
+			this.agent.state.tools = snapshot.tools;
+			this.agent.state.thinkingLevel = snapshot.thinkingLevel;
+			this.agent.state.thinkingSelection = snapshot.thinkingSelection;
+			this.agent.abortServerSideFallback = snapshot.abortServerSideFallback;
+			this._currentServiceTier = snapshot.currentServiceTier;
+			this._sessionFastMode = snapshot.sessionFastMode;
+			this._baseSystemPrompt = snapshot.baseSystemPrompt;
+			this._baseSystemPromptOptions = snapshot.baseSystemPromptOptions;
+			this._systemPromptOverride = snapshot.systemPromptOverride;
+			this._requestedActiveToolNames = snapshot.requestedActiveToolNames;
+			this._withheldEvalOnlyToolNames.clear();
+			for (const toolName of snapshot.withheldEvalOnlyToolNames) {
+				this._withheldEvalOnlyToolNames.add(toolName);
+			}
+			this._publishedEvalOnlyHintNames.clear();
+			for (const toolName of snapshot.publishedEvalOnlyHintNames) {
+				this._publishedEvalOnlyHintNames.add(toolName);
+			}
+			this.agent.removedToolHints = snapshot.removedToolHints;
+			this._toolRegistry = snapshot.toolRegistry;
+			this._toolDefinitions = snapshot.toolDefinitions;
+			this._toolPromptSnippets = snapshot.toolPromptSnippets;
+			this._toolPromptGuidelines = snapshot.toolPromptGuidelines;
+			this._shownHighReasoningWarningKeys.clear();
+			for (const key of snapshot.shownHighReasoningWarningKeys) {
+				this._shownHighReasoningWarningKeys.add(key);
+			}
+		};
+		const flushDeferredEvents = () => {
+			if (!ownsDeferredEvents) return;
+			const deferredEvents = this._deferredSessionEvents ?? [];
+			this._deferredSessionEvents = undefined;
+			for (const event of deferredEvents) this._emit(event);
+		};
 		if (
 			opts.invalidateCompaction &&
 			(this._modelSelectionChangesContext(previousModel, model) ||
@@ -4730,13 +4809,32 @@ export class AgentSession {
 		if (!opts.emitModelSelect) return undefined;
 		const previousSystemPrompt = this.agent.state.systemPrompt;
 		try {
-			const systemPromptChange = await this._emitModelSelect(model, previousModel, opts.modelSelectSource);
+			const systemPromptChange = await this._emitModelSelect(
+				model,
+				previousModel,
+				opts.modelSelectSource,
+				!opts.transactionalModelSelect,
+			);
 			this.assertModelUsable(model, liveContextTokens);
+			flushDeferredEvents();
+			if (systemPromptChange && opts.transactionalModelSelect) {
+				await this._publishSystemPromptChange(systemPromptChange);
+			}
 			return systemPromptChange;
 		} catch (error) {
-			if (previousModel) this.agent.state.model = previousModel;
-			else delete (this.agent.state as { model?: Model<Api> }).model;
-			this.agent.state.systemPrompt = previousSystemPrompt;
+			if (snapshot) {
+				restoreSnapshot();
+				try {
+					if (previousModel) await this._emitModelSelect(previousModel, model, opts.modelSelectSource, false);
+				} finally {
+					restoreSnapshot();
+				}
+			} else {
+				if (previousModel) this.agent.state.model = previousModel;
+				else delete (this.agent.state as { model?: Model<Api> }).model;
+				this.agent.state.systemPrompt = previousSystemPrompt;
+			}
+			if (ownsDeferredEvents) this._deferredSessionEvents = undefined;
 			throw error;
 		}
 	}

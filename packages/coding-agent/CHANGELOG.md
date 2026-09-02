@@ -10,9 +10,9 @@
   now reopen on the configured authenticated model with the largest usable
   remaining context budget, skipping unavailable providers without leaving
   partial model or thinking history persisted. Explicit `--model` selections
-  stay strict, later candidates are tried after post-select admission failures,
-  and a session with no capable model exits with actionable budget guidance
-  instead of an uncaught stack trace.
+  stay strict, rejected candidates roll back their model-specific runtime state
+  before later candidates are tried, and a session with no capable model exits
+  with actionable budget guidance instead of an uncaught stack trace.
 
 - `/quit` and `/exit` submitted while startup is still finishing (managed-tool downloads) now quit instead of being parked back in the editor behind a "Startup is still in progress" notice. Parking the text also disabled the Ctrl+D quit escape, which only fires on an empty editor, so the usual way out was a dead end until the line was cleared by hand.
 
