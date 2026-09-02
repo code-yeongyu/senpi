@@ -687,7 +687,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			: this.mergePaths([...cliEnabledSkills, ...enabledSkills], this.additionalSkillPaths);
 
 		this.lastSkillPaths = skillPaths;
-		this.updateSkillsFromPaths(skillPaths, metadataByPath);
+		await this.updateSkillsFromPaths(skillPaths, metadataByPath);
 		time("skills", "extensions");
 		for (const p of this.additionalSkillPaths) {
 			if (isLocalPath(p)) {

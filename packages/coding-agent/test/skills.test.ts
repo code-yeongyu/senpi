@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, it } from "vitest";
@@ -433,7 +433,11 @@ describe("loadSkills canonical path dedupe", () => {
 			includeDefaults: false,
 		});
 
-		expect(skills).toHaveLength(1);
-		expect(skills[0]?.name).toBe("dup-skill");
+		try {
+			expect(skills).toHaveLength(1);
+			expect(skills[0]?.name).toBe("dup-skill");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });

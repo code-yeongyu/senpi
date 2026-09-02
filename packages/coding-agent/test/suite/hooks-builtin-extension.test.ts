@@ -159,7 +159,7 @@ describe("builtin hooks extension registration and resource plumbing", () => {
 		await loader.reload();
 
 		// When
-		loader.extendResources({
+		await loader.extendResources({
 			hookPaths: [
 				{
 					path: runtimeHookPath,

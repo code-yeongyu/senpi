@@ -1220,11 +1220,11 @@ export async function main(args: string[], options?: MainOptions) {
 	} else if (appMode === "interactive") {
 		// Keep the TUI graph out of headless RPC children. This is intentionally at the
 		// mode seam: interactive startup still loads the same module before first use.
-		const { InteractiveMode } = await import("./modes/interactive/interactive-mode.ts");
-		// The startup indicator must keep spinning through the TUI graph import: it is the
-		// single largest cold-start cost after resource loading, and stopping before it
-		// leaves a blank terminal that looks frozen.
-		startupLoadingIndicator.stop();
+		const { InteractiveMode } = await import("./modes/interactive/interactive-mode.ts").finally(() => {
+			// The startup indicator must stop on success AND failure: an import rejection
+			// must not leave the spinner running with the cursor hidden.
+			startupLoadingIndicator.stop();
+		});
 		const interactiveMode = new InteractiveMode(selectedRuntime, {
 			migratedProviders,
 			modelFallbackMessage,
