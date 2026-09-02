@@ -347,32 +347,36 @@ describe("host watchdog configuration", () => {
 		expect(existsSync(settings)).toBe(false);
 	});
 
-	it.skipIf(process.platform === "win32")("fires on inherited-pipe EOF and removes the supervisor's private directory", async () => {
-		if (process.platform === "win32") {
-			// This fixture models POSIX FIFO EOF and synchronous filesystem cleanup;
-			// Windows named-pipe handle close and fs.rm completion are asynchronous,
-			// so the real Win32 lifecycle test covers those semantics instead.
-			return;
-		}
-		const dir = mkdtempSync(join(tmpdir(), "senpi-hlc-wd-"));
-		roots.push(dir);
-		const scratchDir = join(dir, "internal");
-		mkdirSync(scratchDir, { recursive: true });
-		const fifo = join(dir, "pipe");
-		execFileSync("mkfifo", [fifo]);
-		// Opening both ends keeps the fifo alive until the write end is closed, which
-		// is exactly the EOF the supervisor's death produces on the inherited pipe.
-		const writeEnd = openSync(fifo, "w+");
-		const readEnd = openSync(fifo, "r");
-		// armHostWatchdog takes ownership of the read end, so the test only closes
-		// the write end - that close is what the supervisor's death looks like.
-		const reason = new Promise<string>((resolve) => {
-			armHostWatchdog({ fd: readEnd, scratchDir }, resolve);
-		});
-		closeSync(writeEnd);
-		expect(await reason).toContain("closed");
-		expect(existsSync(scratchDir)).toBe(false);
-	}, 15_000);
+	it.skipIf(process.platform === "win32")(
+		"fires on inherited-pipe EOF and removes the supervisor's private directory",
+		async () => {
+			if (process.platform === "win32") {
+				// This fixture models POSIX FIFO EOF and synchronous filesystem cleanup;
+				// Windows named-pipe handle close and fs.rm completion are asynchronous,
+				// so the real Win32 lifecycle test covers those semantics instead.
+				return;
+			}
+			const dir = mkdtempSync(join(tmpdir(), "senpi-hlc-wd-"));
+			roots.push(dir);
+			const scratchDir = join(dir, "internal");
+			mkdirSync(scratchDir, { recursive: true });
+			const fifo = join(dir, "pipe");
+			execFileSync("mkfifo", [fifo]);
+			// Opening both ends keeps the fifo alive until the write end is closed, which
+			// is exactly the EOF the supervisor's death produces on the inherited pipe.
+			const writeEnd = openSync(fifo, "w+");
+			const readEnd = openSync(fifo, "r");
+			// armHostWatchdog takes ownership of the read end, so the test only closes
+			// the write end - that close is what the supervisor's death looks like.
+			const reason = new Promise<string>((resolve) => {
+				armHostWatchdog({ fd: readEnd, scratchDir }, resolve);
+			});
+			closeSync(writeEnd);
+			expect(await reason).toContain("closed");
+			expect(existsSync(scratchDir)).toBe(false);
+		},
+		15_000,
+	);
 });
 
 describe("findInternalSupervisorArgs", () => {

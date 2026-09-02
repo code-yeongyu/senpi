@@ -142,21 +142,24 @@ describe("InteractiveMode startup input", () => {
 		expect(context.showStatus).toHaveBeenCalledWith("Startup is still in progress");
 	});
 
-	it.each(["/quit", "/exit"])("shuts down when %s is submitted while managed-tool setup is running", (command: string) => {
-		const context: StartupSubmitContext = {
-			editor: { setText: vi.fn() },
-			showStatus: vi.fn(),
-			shutdown: vi.fn(async () => {}),
-		};
+	it.each(["/quit", "/exit"])(
+		"shuts down when %s is submitted while managed-tool setup is running",
+		(command: string) => {
+			const context: StartupSubmitContext = {
+				editor: { setText: vi.fn() },
+				showStatus: vi.fn(),
+				shutdown: vi.fn(async () => {}),
+			};
 
-		interactiveModePrototype.handleStartupSubmit.call(context, command);
+			interactiveModePrototype.handleStartupSubmit.call(context, command);
 
-		// The quit command is a control action, not a prompt: it must not be parked in
-		// the editor, because a non-empty editor also disables the Ctrl+D quit escape.
-		expect(context.shutdown).toHaveBeenCalledTimes(1);
-		expect(context.editor.setText).not.toHaveBeenCalledWith(command);
-		expect(context.showStatus).not.toHaveBeenCalledWith("Startup is still in progress");
-	});
+			// The quit command is a control action, not a prompt: it must not be parked in
+			// the editor, because a non-empty editor also disables the Ctrl+D quit escape.
+			expect(context.shutdown).toHaveBeenCalledTimes(1);
+			expect(context.editor.setText).not.toHaveBeenCalledWith(command);
+			expect(context.showStatus).not.toHaveBeenCalledWith("Startup is still in progress");
+		},
+	);
 
 	it("honors an extension shutdown request immediately while the session is idle", () => {
 		const context: ExtensionShutdownContext = {

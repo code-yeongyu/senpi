@@ -6,13 +6,31 @@
 
 - `/fallback restore` returns the current session to the model and thinking level active before fallback without changing global defaults.
 
-- Claude Fable 5.1 gets its own system prompt preset (`claude-fable-5-1`): the dieted Fable 5 core plus surgical deltas from the Fable 5.1 prompting guide (scope-is-the-deliverable, per-response tool-call batching, surgical-edit preference, test-scope discipline, and formatting/narration recalibration). The dotted release resolves before the generic `fable-5` matcher, `promptPreset: "claude-fable-5-1"` can force it, and the fable default lanes now point at 5.1: the recommended default model, the shipped fallback chain (the `claude-fable-5` chain stays for sessions still on it), the startup tip, and doc examples.
-
 ### Fixed
 
 - Claude SDK OAuth sessions recreate restart continuity after compaction instead of permanently losing their sidecar and replaying the full compacted context on the next process start.
 
 - Claude SDK OAuth and Cursor CLI OAuth account additions now retain the provider-added account instead of creating an unusable sentinel `login-N` entry that could be selected on the next turn and fail with `Provider is not configured` ([#1262](https://github.com/code-yeongyu/senpi/pull/1262) by [@eddieparc](https://github.com/eddieparc)).
+
+### New Features
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2] - 2026-09-02
+
+### Added
+
+- Claude Fable 5.1 gets its own system prompt preset (`claude-fable-5-1`): the dieted Fable 5 core plus surgical deltas from the Fable 5.1 prompting guide (scope-is-the-deliverable, per-response tool-call batching, surgical-edit preference, test-scope discipline, and formatting/narration recalibration). The dotted release resolves before the generic `fable-5` matcher, `promptPreset: "claude-fable-5-1"` can force it, and the fable default lanes now point at 5.1: the recommended default model, the shipped fallback chain (the `claude-fable-5` chain stays for sessions still on it), the startup tip, and doc examples.
+
+### Fixed
 
 - The shared RPC host now starts on Windows: socket endpoints resolve to `\\.\pipe\` named-pipe addresses derived from a per-endpoint secret (stored `0600` beside the logical path) with a constant-time authenticated handshake gating both the public and internal listeners, pidfile ownership proof no longer depends on MSYS `ps`, logical-path filesystem cleanup is skipped for named pipes, and detached supervisor/daemon startup failures no longer leak live children or signal reused PIDs. POSIX transports keep the prior unix-socket + `0600` behavior.
 

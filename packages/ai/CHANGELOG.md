@@ -6,6 +6,18 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
 - Claude Fable 5.1 (`claude-fable-5-1`) joins the generated model catalog for the anthropic, amazon-bedrock, openrouter, and vercel-ai-gateway providers with its release specs: 1M context window, 128k max output, $10/$50 pricing with cache reads at $0.25/MTok, xhigh+max thinking levels, adaptive-only thinking, and Opus 4.8/Opus 5 as the permitted refusal-fallback targets. The same strict regeneration carries current upstream drift (nvidia retires nemotron-3-nano, openrouter adds mercury-2.5-preview and retires three opus `-fast` variants, vercel retires deepseek-v3).
 
 ### Changed
