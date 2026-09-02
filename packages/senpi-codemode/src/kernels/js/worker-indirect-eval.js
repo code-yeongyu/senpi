@@ -11,14 +11,15 @@ export async function awaitMaybePromise(value) {
 
 export function wrapUserCode(code) {
 	const persistentCode = persistTopLevelDeclarations(code);
-	if (/\breturn\b/u.test(persistentCode)) return `(async () => {\n${persistentCode}\n})()`;
-	return `(async () => {\n${captureLastExpression(persistentCode)}\n})()`;
+	const body = /\breturn\b/u.test(persistentCode) ? persistentCode : captureLastExpression(persistentCode);
+	return `(async (exports, require, module, __filename, __dirname) => {\n${body}\n})(globalThis.exports, globalThis.require, globalThis.module, globalThis.__filename, globalThis.__dirname)`;
 }
 
 const IDENTIFIER_START_RE = /[$_\p{ID_Start}]/u;
 const IDENTIFIER_CONTINUE_RE = /[$_\p{ID_Continue}\u200c\u200d]/u;
 const IDENTIFIER_RE = /^[\p{ID_Start}$_][\p{ID_Continue}\u200c\u200d]*$/u;
 const DECLARATION_KEYWORDS = new Set(["const", "let", "var"]);
+const COMMONJS_RESERVED_NAMES = new Set(["exports", "require", "module", "__filename", "__dirname"]);
 const REGEX_PREFIX_KEYWORDS = new Set([
 	"await",
 	"case",
@@ -265,6 +266,7 @@ function rewriteDeclaration(code, declarationStart, start, end, keyword) {
 		const bindings = [];
 		collectPatternNames(pattern, bindings);
 		if (bindings.length === 0) return undefined;
+		if (bindings.some((name) => COMMONJS_RESERVED_NAMES.has(name))) return undefined;
 		if (preserveDeclaration) {
 			for (const name of bindings) assignments.push(`globalThis[${JSON.stringify(name)}] = ${name};`);
 			continue;

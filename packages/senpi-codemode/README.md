@@ -46,7 +46,7 @@ task-tool names are known.
 
 | Language | Default | Runtime | Notes |
 | --- | --- | --- | --- |
-| `js` | enabled | In-process worker on senpi's own runtime (Bun or Node.js 24+) | Supports top-level `await` and `return`; the eval prompt's runtime line follows the kernel. |
+| `js` | enabled | In-process worker on senpi's own runtime (Bun or Node.js 24+) | Supports top-level `await`/`return` and CommonJS `require`/`module.exports`; the eval prompt's runtime line follows the kernel. |
 | `py` | enabled | `python3` or `python` | Optional interpreter detected at session start. |
 | `rb` | disabled | `ruby` | Optional interpreter detected at session start. |
 | `jl` | disabled | `julia` | Optional interpreter detected at session start. |
@@ -122,6 +122,7 @@ options object and asynchronous helpers are `await`-able.
 | `output(ids, format?, offset?, limit?)` | Delegates transcript retrieval to the configured active `taskTools.output` tool. |
 | `parallel(thunks)` | Runs thunks through the configured bounded pool while preserving input order. |
 | `pipeline(items, ...stages)` | Applies stages left to right with a barrier between stages. |
+| `require` / `module.exports` | JavaScript only. CommonJS bindings resolved from the session cwd (`__filename` is `eval-cell.cjs`). |
 | `log(message)` / `phase(title)` | Emits progress text and starts a status phase. |
 
 When a `tool.<name>()` call fails argument validation, the error delivered back

@@ -1,5 +1,6 @@
 // allow: SIZE_OK — private runtime state and installed globals must stay in one worker module.
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { inspect } from "node:util";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
@@ -17,7 +18,7 @@ export class JsWorkerRuntime {
 	#hooks = null;
 
 	constructor(options) {
-		this.#cwd = options.cwd;
+		this.#cwd = resolve(options.cwd);
 		this.#parallelPoolWidth = options.parallelPoolWidth;
 		this.#localRoots = { ...(options.localRoots ?? {}) };
 		if (options.artifactsDir && !this.#localRoots.local) this.#localRoots.local = join(options.artifactsDir, "local");
@@ -35,13 +36,41 @@ export class JsWorkerRuntime {
 				({ prelude, code: cellCode } = prepared);
 			}
 			if (prelude) indirectEval(prelude, `${cellId}:prelude`);
+			this.#syncCommonJsExports();
 			return await awaitMaybePromise(indirectEval(wrapUserCode(cellCode), cellId));
 		} finally {
 			this.#hooks = null;
 		}
 	}
 
+	#installCommonJs() {
+		const filename = join(this.#cwd, "eval-cell.cjs");
+		const require = createRequire(filename);
+		const module = {
+			id: filename,
+			filename,
+			path: this.#cwd,
+			exports: {},
+			loaded: false,
+			children: [],
+			paths: require.resolve.paths(".") ?? [],
+			require,
+			parent: undefined,
+		};
+		globalThis.require = require;
+		globalThis.module = module;
+		globalThis.exports = module.exports;
+		globalThis.__filename = filename;
+		globalThis.__dirname = this.#cwd;
+	}
+
+	#syncCommonJsExports() {
+		if (!isPlainObject(globalThis.module)) return;
+		globalThis.exports = globalThis.module.exports;
+	}
+
 	#installGlobals() {
+		this.#installCommonJs();
 		globalThis.print = (...values) => this.#emitText("stdout", `${values.map(formatValue).join(" ")}\n`);
 		globalThis.display = value => this.#display(value);
 		globalThis.log = message => this.#hooks?.emit({ type: "log", message: String(message) });

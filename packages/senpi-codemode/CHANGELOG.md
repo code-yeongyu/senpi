@@ -6,6 +6,8 @@
 
 ### Added
 
+- JavaScript eval cells now expose CommonJS `require`, `module.exports`, `exports`, `__filename`, and `__dirname`, resolved from the session cwd.
+
 ### Changed
 
 ### Fixed

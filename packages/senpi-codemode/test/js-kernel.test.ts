@@ -1,7 +1,7 @@
 // allow: SIZE_OK — todo 7 parity cases must remain in the plan-listed js-kernel test file.
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
@@ -118,6 +118,129 @@ describe("JavaScriptKernel", () => {
 
 			// Then the imported namespace is available to the cell
 			expect(run.result).toMatchObject({ ok: true, valueRepr: '"function"' });
+		});
+	});
+
+	it("requires Node builtins through CommonJS", async () => {
+		await withKernel(async (kernel) => {
+			// Given a live JavaScript kernel without an ESM import
+			// When a cell calls require() for a Node builtin
+			const run = await runCell(kernel, "return require('node:path').basename('/a/b/c.js')");
+
+			// Then the CommonJS binding resolves the builtin
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"c.js"' });
+		});
+	});
+
+	it("requires a relative CommonJS module from the session cwd", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-cjs-"));
+		await writeFile(join(root, "module.cjs"), "module.exports = { value: 41 };\n");
+		const kernel = new JavaScriptKernel({ sessionId: "relative-cjs", cwd: root, parallelPoolWidth: 2 });
+		try {
+			// Given a CommonJS module beside the session cell
+			// When the cell requires it by a relative specifier
+			const run = await runCell(kernel, 'const mod = require("./module.cjs"); return mod.value + 1');
+
+			// Then resolution starts from the session cwd
+			expect(run.result).toMatchObject({ ok: true, valueRepr: "42" });
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("exposes module.exports, exports, __filename, and __dirname", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-cjs-meta-"));
+		const kernel = new JavaScriptKernel({ sessionId: "cjs-meta", cwd: root, parallelPoolWidth: 2 });
+		try {
+			// Given a live JavaScript kernel
+			// When a cell inspects CommonJS metadata and writes module.exports
+			const run = await runCell(
+				kernel,
+				[
+					"exports.mark = true;",
+					"return {",
+					"  dirname: __dirname,",
+					"  filename: __filename,",
+					"  exportsIsModuleExports: exports === module.exports,",
+					"  requireType: typeof require,",
+					"  exported: module.exports,",
+					"};",
+				].join("\n"),
+			);
+
+			// Then cwd-relative CommonJS bindings are available to the cell
+			expect(run.result.ok).toBe(true);
+			if (!run.result.ok) return;
+			expect(JSON.parse(run.result.valueRepr ?? "null")).toEqual({
+				dirname: root,
+				filename: join(root, "eval-cell.cjs"),
+				exportsIsModuleExports: true,
+				requireType: "function",
+				exported: { mark: true },
+			});
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps module.exports identity across cells after reassignment", async () => {
+		await withKernel(async (kernel) => {
+			// Given a cell that replaces module.exports
+			await runCell(kernel, "module.exports = { persisted: 7 }");
+
+			// When a later cell reads exports and module.exports
+			const run = await runCell(kernel, "return { same: exports === module.exports, value: exports.persisted }");
+
+			// Then exports tracks the replaced module.exports object
+			expect(run.result).toMatchObject({
+				ok: true,
+				valueRepr: JSON.stringify({ same: true, value: 7 }),
+			});
+		});
+	});
+
+	it("resolves a relative session cwd before installing CommonJS", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-cjs-rel-"));
+		await writeFile(join(root, "module.cjs"), "module.exports = { value: 41 };\n");
+		const kernel = new JavaScriptKernel({
+			sessionId: "relative-cwd-cjs",
+			cwd: relative(process.cwd(), root),
+			parallelPoolWidth: 2,
+		});
+		try {
+			// Given a kernel whose cwd is not an absolute path
+			// When a cell requires a sibling CommonJS module and inspects __dirname
+			const run = await runCell(
+				kernel,
+				'const mod = require("./module.cjs"); return { value: mod.value + 1, dirname: __dirname }',
+			);
+
+			// Then createRequire still resolves from the absolute session cwd
+			expect(run.result.ok).toBe(true);
+			if (!run.result.ok) return;
+			expect(JSON.parse(run.result.valueRepr ?? "null")).toEqual({
+				value: 42,
+				dirname: resolve(root),
+			});
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps require after a cell redeclares the CommonJS binding", async () => {
+		await withKernel(async (kernel) => {
+			// Given a cell that tries to shadow require with a top-level declaration
+			const first = await runCell(kernel, "const require = 1; return require");
+
+			// When the declaration collides with the CommonJS wrapper parameter
+			expect(first.result.ok).toBe(false);
+
+			// Then later cells still have the original require function
+			const second = await runCell(kernel, "return require('node:path').basename('/a/b/c.js')");
+			expect(second.result).toMatchObject({ ok: true, valueRepr: '"c.js"' });
 		});
 	});
 
