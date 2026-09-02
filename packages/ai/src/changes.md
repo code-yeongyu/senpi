@@ -1,3 +1,21 @@
+## Honor explicit Anthropic long-cache retention on compatible proxies (2026-08-31)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the wire-level `cache_control.ttl` decision now delegates to the shared Anthropic long-cache retention helper, so an explicit `compat.supportsLongCacheRetention` value is authoritative while an unset value keeps hostname-based inference.
+
+### Why
+
+- A model routed through an Anthropic-compatible proxy could explicitly declare one-hour cache support, but the wire path still required the official Anthropic hostname and silently omitted `ttl: "1h"`. Sharing the resolver decision prevents the request and internal TTL accounting from drifting.
+
+### Why an extension could not handle it
+
+- The cache-control object is serialized inside the private Anthropic Messages request builder before dispatch; no extension hook can rewrite that provider-wire field or keep it synchronized with internal TTL accounting.
+
+### Expected merge conflict zones
+
+- LOW: the prompt-cache helper import and `getCacheControl` TTL expression in `packages/ai/src/api/anthropic-messages.ts`.
+
 ## Cursor conversation cache eviction cannot break a live request (2026-08-31)
 
 ### What changed

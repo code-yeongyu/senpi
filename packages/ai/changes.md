@@ -132,6 +132,86 @@
 
 - LOW: `packages/ai/package.json` dependency pins during upstream syncs.
 
+## 2026-08-26 - Make the long-cache retention flag authoritative
+
+### What changed
+
+- `src/utils/prompt-cache-ttl.ts`: added an exported helper `allowsAnthropicLongCacheRetention(model)` that
+  resolves the long-cache decision as a tri-state. An explicit `compat.supportsLongCacheRetention` of `true` or
+  `false` now wins on any host. Only an unset (`undefined`) flag falls back to the previous inference, which is
+  `isAnthropicApiBaseUrl(model.baseUrl)` plus the existing fireworks carve-out.
+- The long-TTL condition used to be duplicated at two decision sites; both now call the one helper. The
+  `anthropic-messages` branch of `resolvePromptCacheTtlSeconds` uses it to pick 3600 vs 300 seconds, and the
+  private `getCacheControl` in `src/api/anthropic-messages.ts` uses it to pick the wire value
+  `cache_control.ttl: "1h"` vs omitting the field.
+- `src/api/anthropic-messages.ts` no longer imports `isAnthropicApiBaseUrl`.
+- `getAnthropicCompat` is unchanged. Its return type and the value it reports for
+  `supportsLongCacheRetention` are untouched; the helper is purely additive.
+
+### Why
+
+- `compat.supportsLongCacheRetention` is a documented public field in models.json, but for `anthropic-messages`
+  the 1-hour TTL was additionally gated on a hostname allowlist. A user pointing `baseUrl` at their own
+  Anthropic-wire-compatible proxy and explicitly setting the flag to `true` was silently ignored: the documented
+  knob did nothing.
+- The two sites had to converge for a second reason. While the condition stayed duplicated, a later edit to one
+  site could leave the computed TTL seconds disagreeing with the wire `ttl` string, and that divergence fails
+  silently. The request still succeeds while cache-expiry bookkeeping and safe-wait calculations can both be wrong.
+
+### Why an extension could not handle it
+
+Extensions sit above the provider request-construction and cache-accounting boundary. They cannot atomically
+change both Anthropic wire `cache_control.ttl` emission and the core `resolvePromptCacheTtlSeconds` bookkeeping.
+
+Changing only one side would silently desynchronize the actual request TTL from cache-expiry bookkeeping and safe-wait
+calculations. This belongs in the ai provider core and shared resolver.
+
+### Back-compat
+
+| baseUrl host | flag | before | after |
+| --- | --- | --- | --- |
+| api.anthropic.com | unset | 1h / 3600 | 1h / 3600 |
+| api.anthropic.com | false | 5m / 300 | 5m / 300 |
+| foreign proxy | unset | 5m / 300 | 5m / 300 |
+| foreign proxy | true | 5m / 300 | 1h / 3600 |
+
+- Only the last row changes behavior, and it changes only for a user who explicitly opted in.
+
+### Downstream effect
+
+- For an `anthropic-messages` model on a foreign proxy with long retention and an explicit
+  `supportsLongCacheRetention: true`, `resolvePromptCacheTtlSeconds` now reports the asserted cache TTL correctly:
+  300 seconds before, 3600 seconds after.
+- `packages/coding-agent` already propagates that TTL into
+  `ExtensionContext.getPromptCacheSafeWaitSeconds()`. With the default 30-second safety buffer, the corresponding
+  safe wait changes from 270 to 3570 seconds, not from 300 to 3600. Custom prompt-cache settings can disable this
+  budget or change the buffer.
+- Third-party extensions can observe the corrected safe wait through the public
+  `ExtensionContext.getPromptCacheSafeWaitSeconds()` getter. `packages/coding-agent` also mirrors it into the advisory
+  `PI_PROMPT_CACHE_SAFE_WAIT_SECONDS` environment variable for out-of-process consumers; no in-repository runtime
+  consumer currently reads that variable.
+- Existing safe-wait consumers are the opt-in cache-keepalive scheduler and monitor-delayed Goal continuation.
+  For the affected foreign-proxy case, the observable built-in behavior is the Goal continuation backstop and its
+  cache-warm metadata: under default settings, an active monitor/wake-source continuation can move from 270s to
+  3570s, subject to the configured Goal ceiling. The built-in cache-keepalive extension remains restricted to
+  `api.anthropic.com`, so this proxy opt-in does not activate or retime keepalive for a foreign proxy.
+- `bash-timeout` and `terminal` do not consume the cache-safe wait. Bash keeps its independent process kill
+  deadlines, while terminal foreground auto-detach uses the independent 60-second default foreground window
+  (5 seconds for classified sleep waits), configurable through `PI_BASH_FOREGROUND_SECONDS`.
+- Nothing under `packages/coding-agent/src/` changed; these effects are pre-existing propagation of the corrected
+  provider TTL.
+
+### Modified upstream files
+
+- `src/utils/prompt-cache-ttl.ts`
+- `src/api/anthropic-messages.ts`
+
+### Expected merge conflict zones
+
+- MEDIUM: the `anthropic-messages` branch of `resolvePromptCacheTtlSeconds`, rewritten from an inline conjunction
+  to a helper call.
+- MEDIUM: the `ttl` expression in `getCacheControl`, rewritten the same way.
+
 ## 2026-08-25 - Keep Cloudflare AI Gateway provider divergence covered
 
 ### What changed

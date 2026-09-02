@@ -285,3 +285,75 @@ describe("automatic and unknown cache backends", () => {
 		},
 	);
 });
+
+describe("Anthropic long-cache opt-in", () => {
+	it("(a) enables one-hour retention for opt-in proxied Anthropic models", () => {
+		const model = createModel("anthropic-messages", {
+			baseUrl: "https://proxy.example.com/v1",
+			cacheRetention: "long",
+			compat: { supportsLongCacheRetention: true },
+		});
+
+		expect(resolvePromptCacheTtlSeconds(model)).toBe(3600);
+	});
+
+	it("(b) keeps direct Anthropic long retention short when compat opts out", () => {
+		const model = createModel("anthropic-messages", {
+			baseUrl: "https://api.anthropic.com/v1",
+			cacheRetention: "long",
+			compat: { supportsLongCacheRetention: false },
+		});
+
+		expect(resolvePromptCacheTtlSeconds(model)).toBe(300);
+	});
+
+	it("(c) keeps proxied Anthropic long retention short when compat opts out", () => {
+		const model = createModel("anthropic-messages", {
+			baseUrl: "https://proxy.example.com/v1",
+			cacheRetention: "long",
+			compat: { supportsLongCacheRetention: false },
+		});
+
+		expect(resolvePromptCacheTtlSeconds(model)).toBe(300);
+	});
+
+	it("(d) keeps malformed Anthropic URLs on short retention without compat", () => {
+		const model = createModel("anthropic-messages", {
+			baseUrl: "not a url",
+			cacheRetention: "long",
+		});
+
+		expect(resolvePromptCacheTtlSeconds(model)).toBe(300);
+	});
+
+	it("(e) disables caching regardless of the long-cache opt-in", () => {
+		const model = createModel("anthropic-messages", {
+			baseUrl: "https://proxy.example.com/v1",
+			cacheRetention: "none",
+			compat: { supportsLongCacheRetention: true },
+		});
+
+		expect(resolvePromptCacheTtlSeconds(model)).toBeUndefined();
+	});
+
+	it("(f) honors an explicit long-cache opt-in for Fireworks-hosted models", () => {
+		const model = createModel("anthropic-messages", {
+			provider: "fireworks",
+			baseUrl: "https://api.anthropic.com/v1",
+			cacheRetention: "long",
+			compat: { supportsLongCacheRetention: true },
+		});
+
+		expect(resolvePromptCacheTtlSeconds(model)).toBe(3600);
+	});
+
+	it("(g) honors ProviderEnv long retention for opt-in proxied Anthropic models", () => {
+		const model = createModel("anthropic-messages", {
+			baseUrl: "https://proxy.example.com/v1",
+			compat: { supportsLongCacheRetention: true },
+		});
+		const env = { PI_CACHE_RETENTION: "long" };
+
+		expect(resolvePromptCacheTtlSeconds(model, env)).toBe(3600);
+	});
+});

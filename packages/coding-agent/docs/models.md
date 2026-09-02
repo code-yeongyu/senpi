@@ -529,7 +529,7 @@ Built-in Anthropic models enable `supportsStrictTools` in their model metadata. 
 | Field | Description |
 |-------|-------------|
 | `supportsEagerToolInputStreaming` | Whether the provider accepts per-tool `eager_input_streaming`. Default: `true`. Set to `false` to omit that field and use the legacy fine-grained tool streaming beta header on tool-enabled requests. |
-| `supportsLongCacheRetention` | Whether the provider accepts Anthropic long cache retention (`cache_control.ttl: "1h"`) when cache retention is `long`. Default: `true`. |
+| `supportsLongCacheRetention` | Whether the provider accepts Anthropic long cache retention (`cache_control.ttl: "1h"`) when cache retention is `long`. Tri-state. Leave it unset (the default) and senpi infers support from the `baseUrl` host, enabling the 1-hour TTL only on the native Anthropic host. Set it to `true` and that's authoritative: the 1-hour TTL is sent on any host, including a custom proxy. Set it to `false` and that's authoritative too: the long TTL is refused on every host, native Anthropic included. Only set `true` for a proxy you've verified actually honors `cache_control.ttl`; the flag is your assertion, not a capability probe, and 1-hour cache writes cost more than 5-minute writes. |
 | `sendSessionAffinityHeaders` | Whether to send `x-session-affinity` from the session id when caching is enabled. Default: auto-detected for known providers. |
 | `supportsCacheControlOnTools` | Whether the provider accepts Anthropic-style `cache_control` markers on tool definitions. Default: `true`. |
 | `forceAdaptiveThinking` | Whether to send adaptive thinking (`thinking.type: "adaptive"` plus `output_config.effort`) for this model. Built-in adaptive models set this automatically. Default: `false`. |
