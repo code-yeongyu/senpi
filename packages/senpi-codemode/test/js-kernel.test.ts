@@ -1,7 +1,7 @@
 // allow: SIZE_OK — todo 7 parity cases must remain in the plan-listed js-kernel test file.
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
@@ -198,6 +198,49 @@ describe("JavaScriptKernel", () => {
 				ok: true,
 				valueRepr: JSON.stringify({ same: true, value: 7 }),
 			});
+		});
+	});
+
+	it("resolves a relative session cwd before installing CommonJS", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-cjs-rel-"));
+		await writeFile(join(root, "module.cjs"), "module.exports = { value: 41 };\n");
+		const kernel = new JavaScriptKernel({
+			sessionId: "relative-cwd-cjs",
+			cwd: relative(process.cwd(), root),
+			parallelPoolWidth: 2,
+		});
+		try {
+			// Given a kernel whose cwd is not an absolute path
+			// When a cell requires a sibling CommonJS module and inspects __dirname
+			const run = await runCell(
+				kernel,
+				'const mod = require("./module.cjs"); return { value: mod.value + 1, dirname: __dirname }',
+			);
+
+			// Then createRequire still resolves from the absolute session cwd
+			expect(run.result.ok).toBe(true);
+			if (!run.result.ok) return;
+			expect(JSON.parse(run.result.valueRepr ?? "null")).toEqual({
+				value: 42,
+				dirname: resolve(root),
+			});
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps require after a cell redeclares the CommonJS binding", async () => {
+		await withKernel(async (kernel) => {
+			// Given a cell that tries to shadow require with a top-level declaration
+			const first = await runCell(kernel, "const require = 1; return require");
+
+			// When the declaration collides with the CommonJS wrapper parameter
+			expect(first.result.ok).toBe(false);
+
+			// Then later cells still have the original require function
+			const second = await runCell(kernel, "return require('node:path').basename('/a/b/c.js')");
+			expect(second.result).toMatchObject({ ok: true, valueRepr: '"c.js"' });
 		});
 	});
 

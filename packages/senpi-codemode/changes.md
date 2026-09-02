@@ -7,8 +7,12 @@
 - `packages/senpi-codemode/src/kernels/js/worker-runtime.js` installs cwd-resolved CommonJS
   bindings (`require`, `module`, `exports`, `__filename`, `__dirname`) on the persistent JS
   worker via `createRequire`, and resyncs `exports` to `module.exports` before each cell.
+  The session cwd is `resolve()`d first so a relative or empty cwd still yields an absolute
+  filename for `createRequire`.
 - `packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js` wraps user cells so those
-  five CommonJS names bind as function parameters, matching Node's CJS wrapper.
+  five CommonJS names bind as function parameters, matching Node's CJS wrapper. Top-level
+  declarations that rebind those names are left unrewritten so they SyntaxError instead of
+  overwriting the persistent `require`/`module`.
 - `packages/senpi-codemode/src/kernels/js/prelude.ts` and `src/prompt/eval-prompt.ts` document
   the bindings on both Bun and Node runtime lines.
 

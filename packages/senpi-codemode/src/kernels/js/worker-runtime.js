@@ -18,7 +18,7 @@ export class JsWorkerRuntime {
 	#hooks = null;
 
 	constructor(options) {
-		this.#cwd = options.cwd;
+		this.#cwd = resolve(options.cwd);
 		this.#parallelPoolWidth = options.parallelPoolWidth;
 		this.#localRoots = { ...(options.localRoots ?? {}) };
 		if (options.artifactsDir && !this.#localRoots.local) this.#localRoots.local = join(options.artifactsDir, "local");
