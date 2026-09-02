@@ -1,5 +1,20 @@
 # claude-sdk-oauth
 
+## 2026-09-02 - Recreate restart bindings after compaction
+
+### What changed
+
+- Derive persisted sent-stream hashes from the same compaction-aware active context projection used by the session runtime instead of refusing every branch that contains a compaction entry.
+- Recreate the fixed-size restart sidecar after the first successful post-compaction assistant turn.
+
+### Why
+
+- Accepted compaction deleted the previous sidecar, and the old branch walker returned no hashes forever after. Restarting a long compacted session therefore cold-seeded hundreds of messages; an aborted seed left a zero-count lineage that replayed the entire context again and failed with `invalid_request`.
+
+### Expected merge conflict zones
+
+- LOW: `session-binding.ts` at `sentHashesFromBranch`, plus the restart and binding-anchor regressions.
+
 ## 2026-09-02 - Preserve selected OAuth slot during resume
 
 ### What changed

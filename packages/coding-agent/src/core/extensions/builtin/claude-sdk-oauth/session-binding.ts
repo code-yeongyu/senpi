@@ -1,8 +1,9 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { buildSessionContext, type SessionEntry } from "../../../session-manager.ts";
 import type { StoredBinding } from "./session-binding-store.ts";
 import { assistantContentHash } from "./session-commit-boundary.ts";
 import type { ContinuityBinding } from "./session-reattach.ts";
-import { isTransmittedMessage, type SentMessage, sentHashPrefixDigest, sentMessageHashes } from "./session-sync.ts";
+import { isTransmittedMessage, sentHashPrefixDigest, sentMessageHashes } from "./session-sync.ts";
 
 export const BINDING_ENTRY_TYPE = "claude-sdk-oauth-binding";
 export const BINDING_MARKER = { schemaVersion: 2, marker: true } as const;
@@ -67,24 +68,9 @@ export function storedBindingFromEntry(
 }
 
 /** Hashes for the user/toolResult messages the persisted branch already carries. */
-export function sentHashesFromBranch(branch: readonly BranchEntry[]): string[] {
-	// This walk is not compaction-aware, but admission compares against the
-	// compaction-truncated context. Anchoring across a boundary would inflate
-	// sentCount and flatten every later restart, so decline to anchor instead.
-	if (branch.some((entry) => entry.type === "compaction")) return [];
-	const messages: SentMessage[] = [];
-	for (const entry of branch) {
-		if (entry.type !== "message") continue;
-		if (isSentMessage(entry.message)) messages.push(entry.message);
-	}
-	return sentMessageHashes(messages);
-}
-
-function isSentMessage(value: unknown): value is SentMessage {
-	if (typeof value !== "object" || value === null) return false;
-	if (!("role" in value) || typeof value.role !== "string" || !("content" in value)) return false;
-	// Same selection rule the context path uses, so the digests cannot diverge.
-	return isTransmittedMessage(value as { role: string });
+export function sentHashesFromBranch(branch: readonly SessionEntry[]): string[] {
+	const context = buildSessionContext([...branch], branch[branch.length - 1]?.id);
+	return sentMessageHashes(context.messages.filter(isTransmittedMessage));
 }
 
 export function bindingFromStoredBranch(

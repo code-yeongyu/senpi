@@ -173,7 +173,7 @@ import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
-import { formatSelector } from "./retry-fallback/chains.ts";
+import { formatSelector, parseFallbackSelector } from "./retry-fallback/chains.ts";
 import { RetryFallbackController } from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
 import {
@@ -2349,8 +2349,12 @@ export class AgentSession {
 			const retryAfterRequiredCompaction =
 				requiredAutoCompaction !== undefined && this._isRequiredCompactionError(msg);
 
-			// Retry transient failures normally and eligible hard errors only through a fallback.
-			const retryableError = this._isRetryableError(msg);
+			// A provider-owned AbortError is not a user cancellation. Admit it to
+			// the ordinary three-retry turn budget, then fall back if it persists.
+			// User/system abort provenance still wins and never replays a cancelled turn.
+			const providerOperationAbort =
+				msg.stopReason === "aborted" && msg.errorMessage?.trim().toLowerCase() === "this operation was aborted";
+			const retryableError = this._isRetryableError(msg) || providerOperationAbort;
 			const hardErrorFallbackEligible = this._isHardErrorFallbackEligible(msg);
 			const cursorZeroTokenRe = isCursorZeroTokenResourceExhausted(msg);
 			const cursorQuotaRe = isCursorQuotaResourceExhausted(msg, this.model?.contextWindow ?? 0);
@@ -6879,6 +6883,17 @@ export class AgentSession {
 							originalSelector: active.originalSelector,
 							pinned: active.pinned,
 						};
+					},
+					restoreFallbackPrimary: async () => {
+						const active = this._retryFallback.activeState;
+						if (!active) return false;
+						const selector = parseFallbackSelector(active.originalSelector, this._modelRegistry);
+						const model = selector ? this._modelRegistry.find(selector.provider, selector.id) : undefined;
+						if (!model) return false;
+						const originalThinkingLevel = active.originalThinkingLevel;
+						await this.setSessionModel(model);
+						if (originalThinkingLevel !== undefined) this.setSessionThinkingLevel(originalThinkingLevel);
+						return true;
 					},
 				},
 				compact: (options) => {

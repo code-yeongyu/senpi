@@ -137,19 +137,24 @@ describe("claude-sdk-oauth stored binding anchor", () => {
 		expect(bindingFromStoredBranch(branch, stored())).toBeUndefined();
 	});
 
-	it("refuses to derive hashes across a compaction boundary", () => {
-		// The branch walk is not compaction-aware, while admission compares against
-		// the compaction-truncated context. Deriving here would inflate sentCount and
-		// flatten every later restart, so refuse to anchor at all.
-		const message = { role: "user" as const, content: [{ type: "text" as const, text: "before" }], timestamp: 1 };
+	it("derives hashes from the active context after compaction", () => {
+		const before = { role: "user" as const, content: [{ type: "text" as const, text: "before" }], timestamp: 1 };
+		const after = { role: "user" as const, content: [{ type: "text" as const, text: "after" }], timestamp: 3 };
+		const fromBranch = sentHashesFromBranch([
+			{ type: "message", id: "u1", parentId: null, timestamp: "2026-09-02T00:00:01.000Z", message: before },
+			{
+				type: "compaction",
+				id: "c1",
+				parentId: "u1",
+				timestamp: "2026-09-02T00:00:02.000Z",
+				summary: "Earlier work summarized.",
+				firstKeptEntryId: "u1",
+				tokensBefore: 100,
+			},
+			{ type: "message", id: "u2", parentId: "c1", timestamp: "2026-09-02T00:00:03.000Z", message: after },
+		]);
 
-		expect(
-			sentHashesFromBranch([
-				{ type: "message", id: "u1", message },
-				{ type: "compaction", id: "c1" },
-				{ type: "message", id: "u2", message },
-			] as never),
-		).toEqual([]);
+		expect(fromBranch).toEqual(sentMessageHashes(sentMessages({ messages: [before, after] } as never)));
 	});
 
 	it("derives branch hashes exactly as the context path does", () => {
@@ -164,9 +169,21 @@ describe("claude-sdk-oauth stored binding anchor", () => {
 		const contentless = { role: "user" as const, content: [], timestamp: 2 };
 
 		const fromBranch = sentHashesFromBranch([
-			{ type: "message", id: "u1", message: transmitted },
-			{ type: "message", id: "u2", message: contentless },
-		] as never);
+			{
+				type: "message",
+				id: "u1",
+				parentId: null,
+				timestamp: "2026-09-02T00:00:01.000Z",
+				message: transmitted,
+			},
+			{
+				type: "message",
+				id: "u2",
+				parentId: "u1",
+				timestamp: "2026-09-02T00:00:02.000Z",
+				message: contentless,
+			},
+		]);
 		const fromContext = sentMessageHashes(sentMessages({ messages: [transmitted, contentless] } as never));
 
 		expect(fromBranch).toEqual(fromContext);

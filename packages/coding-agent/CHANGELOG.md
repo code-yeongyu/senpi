@@ -4,7 +4,13 @@
 
 ### Added
 
+- `/fallback restore` returns the current session to the model and thinking level active before fallback without changing global defaults.
+
 ### Fixed
+
+- Claude SDK OAuth sessions recreate restart continuity after compaction instead of permanently losing their sidecar and replaying the full compacted context on the next process start.
+
+- Provider-owned operation aborts now use the configured turn retry budget (three retries by default) before model fallback; explicit user aborts remain terminal.
 
 - Claude SDK OAuth and Cursor CLI OAuth account additions now retain the provider-added account instead of creating an unusable sentinel `login-N` entry that could be selected on the next turn and fail with `Provider is not configured` ([#1262](https://github.com/code-yeongyu/senpi/pull/1262) by [@eddieparc](https://github.com/eddieparc)).
 

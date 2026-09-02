@@ -155,6 +155,7 @@ async function context(
 			},
 			reload: () => settings.reload(),
 			getFallbackStatus: () => undefined,
+			restoreFallbackPrimary: async () => false,
 		},
 		compact: () => {},
 		getMessageRevision: () => 0,
@@ -185,7 +186,7 @@ describe("model fallback builtin command", () => {
 
 	it("registers /fallback with its quick-set hint", async () => {
 		const command = (await harness()).get("fallback");
-		expect(command?.argumentHint).toBe("[target [fallback1 fallback2 ...]]");
+		expect(command?.argumentHint).toBe("[restore | target fallback1 [fallback2 ...]]");
 		expect(command?.description).toContain("fallback");
 	});
 
