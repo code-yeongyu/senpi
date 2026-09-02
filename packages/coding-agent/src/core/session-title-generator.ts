@@ -88,7 +88,12 @@ export async function generateSessionTitle(options: GenerateSessionTitleOptions)
 	// Titles are cosmetic background work: honor the caller's retry policy so a
 	// single transient provider error (e.g. a 529 overloaded stream) does not
 	// surface as a scary runtime error. Mirrors completeSummarization().
-	const response = await retryAssistantCall(
+	// Reasoning-mandatory endpoints (e.g. Z.ai GLM 5.x via OpenRouter) reject the
+	// reasoning-disabled mapping pi-ai sends when `reasoning` is unset with HTTP
+	// 400 "Reasoning is mandatory for this endpoint and cannot be disabled.";
+	// retry those once with low reasoning instead of paying reasoning cost on
+	// every title call for every provider.
+	let response = await retryAssistantCall(
 		() =>
 			completeTitle(
 				options.model,
@@ -99,10 +104,29 @@ export async function generateSessionTitle(options: GenerateSessionTitleOptions)
 		options.retry,
 		options.signal,
 	);
+	if (response.stopReason === "error" && isReasoningMandatoryError(response.errorMessage)) {
+		response = await retryAssistantCall(
+			() =>
+				completeTitle(
+					options.model,
+					buildTitleContext(options.firstPrompt),
+					buildTitleOptions(options, "low"),
+					options.streamFn,
+				),
+			options.retry,
+			options.signal,
+		);
+	}
 	if (response.stopReason === "error") {
 		throw new Error(humanizeProviderError(response.errorMessage ?? "Session title generation failed"));
 	}
 	return parseSessionTitle(response);
+}
+
+const REASONING_MANDATORY_PATTERN = /reasoning is mandatory/i;
+
+function isReasoningMandatoryError(errorMessage: string | undefined): boolean {
+	return errorMessage !== undefined && REASONING_MANDATORY_PATTERN.test(errorMessage);
 }
 
 function buildTitleContext(firstPrompt: string): Context {
@@ -118,13 +142,24 @@ function buildTitleContext(firstPrompt: string): Context {
 	};
 }
 
-function buildTitleOptions(options: GenerateSessionTitleOptions): SimpleStreamOptions {
+function buildTitleOptions(
+	options: GenerateSessionTitleOptions,
+	reasoning?: SimpleStreamOptions["reasoning"],
+): SimpleStreamOptions {
 	const titleOptions: SimpleStreamOptions = {
 		...options.baseOptions,
 		sessionId: options.sessionId,
 		cacheRetention: options.model.cacheRetention === "none" ? "none" : "short",
 		maxTokens: 64,
 	};
+	if (reasoning !== undefined) {
+		// Fallback for reasoning-mandatory endpoints: low reasoning keeps the
+		// cosmetic title cheap, and the larger maxTokens leaves room for the
+		// `<title>` output once reasoning tokens count against the completion
+		// budget. Callers that never see the 400 keep the cheap default above.
+		titleOptions.reasoning = reasoning;
+		titleOptions.maxTokens = 1024;
+	}
 	if (options.auth.apiKey !== undefined) {
 		titleOptions.apiKey = options.auth.apiKey;
 	}
