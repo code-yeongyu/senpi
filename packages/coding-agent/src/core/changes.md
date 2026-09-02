@@ -4,7 +4,7 @@
 
 ### What changed
 
-- The session settings binding exposes `restoreFallbackPrimary()`, which resolves the controller's recorded original model, switches only the current session, restores its prior thinking level, and clears live fallback state through the normal manual model-change path.
+- `packages/coding-agent/src/core/agent-session.ts` exposes `restoreFallbackPrimary()` through the session settings binding. It resolves the controller's recorded original model, switches only the current session, restores its prior thinking level, and clears live fallback state through the normal manual model-change path.
 
 ### Why
 
