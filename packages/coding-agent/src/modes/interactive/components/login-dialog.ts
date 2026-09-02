@@ -15,6 +15,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	private abortController = new AbortController();
 	private inputResolver?: (value: string) => void;
 	private inputRejecter?: (error: Error) => void;
+	private liveHint?: Text;
 	private onComplete: (success: boolean, message?: string) => void;
 
 	// Focusable implementation - propagate to input for IME cursor positioning
@@ -80,6 +81,16 @@ export class LoginDialogComponent extends Container implements Focusable {
 		);
 	}
 
+	/** The Input widget is a single instance; mounting it twice paints two live `>` rows. */
+	private remountInput(hint: Text): void {
+		this.contentContainer.children = this.contentContainer.children.filter(
+			(child) => child !== this.input && child !== this.liveHint,
+		);
+		this.contentContainer.addChild(this.input);
+		this.liveHint = hint;
+		this.contentContainer.addChild(hint);
+	}
+
 	private cancel(): void {
 		this.abortController.abort();
 		if (this.inputRejecter) {
@@ -137,8 +148,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.input.setValue("");
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(theme.fg("dim", prompt), 1, 0));
-		this.contentContainer.addChild(this.input);
-		this.contentContainer.addChild(new Text(`(${keyHint("tui.select.cancel", "to cancel")})`, 1, 0));
+		this.remountInput(new Text(`(${keyHint("tui.select.cancel", "to cancel")})`, 1, 0));
 		this.tui.requestRender();
 
 		return new Promise((resolve, reject) => {
@@ -157,8 +167,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 		if (placeholder) {
 			this.contentContainer.addChild(new Text(theme.fg("dim", `e.g., ${placeholder}`), 1, 0));
 		}
-		this.contentContainer.addChild(this.input);
-		this.contentContainer.addChild(
+		this.remountInput(
 			new Text(
 				`(${keyHint("tui.select.cancel", "to cancel,")} ${keyHint("tui.select.confirm", "to submit")})`,
 				1,

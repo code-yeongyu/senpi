@@ -96,6 +96,24 @@ describe("LoginDialogComponent OAuth prompts", () => {
 		expect(output).toContain("Enter API key:");
 	});
 
+	test("does not paint two live inputs when a later prompt starts before the first is submitted", () => {
+		const dialog = createDialog();
+
+		dialog.showAuth("https://example.invalid/login");
+		void dialog.showManualInput("Complete login in your browser, or paste the authorization code / redirect URL here:");
+		dialog.showProgress("Exchanging authorization code for tokens...");
+		void dialog.showPrompt("Name for this account (existing: default)", "account-2");
+		dialog.handleInput("jgplabs");
+
+		const lines = renderDialog(dialog);
+		const output = lines.join("\n");
+		expect(output).toContain("https://example.invalid/login");
+		expect(output).toContain("Exchanging authorization code for tokens...");
+		expect(output).toContain("Name for this account (existing: default)");
+		expect(countRenderedValue(lines, "jgplabs")).toBe(1);
+		expect(lines.filter((line) => /^>\s*$/.test(line.trim()) || line.trim() === ">").length).toBe(0);
+	});
+
 	test("keeps previous manual input stable when a later prompt is active", async () => {
 		const dialog = createDialog();
 
