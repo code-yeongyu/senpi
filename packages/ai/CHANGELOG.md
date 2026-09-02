@@ -11,6 +11,7 @@
 ### Fixed
 
 - Login no longer double-appends a provider-owned OAuth account pool as a fake `login-N` slot copied from the flat compatibility sentinel.
+- Claude Agent SDK `Lock file is already being held` is classified as a transient retryable error instead of an unknown/terminal failure.
 
 ### Removed
 

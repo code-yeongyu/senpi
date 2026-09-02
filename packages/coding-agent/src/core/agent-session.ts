@@ -2381,6 +2381,8 @@ export class AgentSession {
 					// failed assistant before provider fallback so replay stays valid.
 					this._retireFailedRetryAssistant(msg);
 					retryOutcome = await this._handleRetryableError(msg, { hardErrorFallback: true });
+				} else if (this._isClaudeSdkSessionLockError(msg)) {
+					retryOutcome = await this._handleRetryableError(msg, { sameModelRemint: true });
 				} else if (retryableError) {
 					retryOutcome = await this._handleRetryableError(msg);
 				} else if (hardErrorFallbackEligible) {
@@ -7375,10 +7377,15 @@ export class AgentSession {
 		return true;
 	}
 
+	private _isClaudeSdkSessionLockError(message: AssistantMessage): boolean {
+		return (message.errorMessage ?? "").includes("Lock file is already being held");
+	}
+
 	private _isHardErrorFallbackEligible(message: AssistantMessage): boolean {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
 			!message.errorMessage?.startsWith("Provider is not configured:") &&
+			!this._isClaudeSdkSessionLockError(message) &&
 			message.stopReason === "error" &&
 			!isContextOverflow(message, this.model?.contextWindow ?? 0) &&
 			!this._isCursorPayloadOverflow(message) &&

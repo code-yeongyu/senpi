@@ -130,6 +130,11 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 
 	// gRPC based providers (e.g. NVIDIA NIM)
 	"ResourceExhausted",
+
+	// Claude Agent SDK session.json lock contention. A second stream/resume
+	// hits proper-lockfile while the previous subprocess still holds the file.
+	// Same-process retry recovers; hopping providers cannot release that lock.
+	"Lock file is already being held",
 ]);
 
 /**

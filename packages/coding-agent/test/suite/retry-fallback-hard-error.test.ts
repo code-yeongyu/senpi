@@ -206,6 +206,47 @@ describe("retry fallback hard errors", () => {
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
 	});
 
+	it("retries a Claude SDK session lock on the same model instead of hopping providers", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: { enabled: true, maxRetries: 2, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		const lock = "Lock file is already being held";
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: lock }),
+			fauxAssistantMessage("recovered after lock"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
+	});
+
+	it("does not hop providers when a Claude SDK session lock exhausts same-model retries", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: { enabled: true, maxRetries: 1, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		const lock = "Lock file is already being held";
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: lock }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: lock }),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+	});
+
 	it("does not switch providers on a provider-not-configured auth miss", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],

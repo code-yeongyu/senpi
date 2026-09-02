@@ -1,3 +1,22 @@
+## Classify Claude SDK session lock contention as retryable (2026-09-02)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `RETRYABLE_PROVIDER_ERROR_PATTERN` matches `Lock file is already being held`.
+- `packages/ai/test/retry.test.ts`: pins that wording as a retryable assistant error.
+
+### Why
+
+- Claude Agent SDK session resume/stream hits proper-lockfile while a previous subprocess still holds `session.json`. The failure is local and transient; treating it as unknown/terminal made the coding-agent hard-error fallback hop providers.
+
+### Why an extension could not handle it
+
+- Retry classification lives in the shared `pi-ai` regexes used by every caller of `isRetryableAssistantError`.
+
+### Expected merge conflict zones
+
+- LOW: `RETRYABLE_PROVIDER_ERROR_PATTERN` in `retry.ts`.
+
 ## Preserve provider-owned credential pools during login (2026-09-02)
 
 ### What changed

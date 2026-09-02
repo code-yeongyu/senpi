@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-02 - Retry Claude SDK session locks on the same model
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `Lock file is already being held` is same-model remint, not hard-error provider fallback.
+- `packages/coding-agent/test/suite/retry-fallback-hard-error.test.ts`: lock recovers on the original model and never hops after budget exhaustion.
+
+### Why
+
+- A held Claude Agent SDK session lock cannot be released by switching to OpenGateway or another provider. Immediate hard-error fallback produced 401 storms and `resume_initialization_aborted` resends.
+
+### Why an extension could not handle it
+
+- Hard-error vs same-model retry is decided in `AgentSession` before extension failover runs.
+
+### Expected merge conflict zones
+
+- LOW: `_isHardErrorFallbackEligible` and the `agent_end` retry branch in `agent-session.ts`.
+
 ## 2026-09-02 - Do not hard-fallback a provider-not-configured auth miss
 
 ### What changed

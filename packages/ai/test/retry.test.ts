@@ -242,6 +242,17 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
+	it("matches Claude Agent SDK session lock contention", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "Lock file is already being held",
+				}),
+			),
+		).toBe(true);
+	});
+
 	it("matches upstream request buffer exhaustion wording", () => {
 		expect(
 			isRetryableAssistantError(
