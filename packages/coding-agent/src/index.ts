@@ -368,6 +368,7 @@ export {
 	type PrintModeOptions,
 	RpcClient,
 	type RpcClientEvent,
+	RpcClientOpenInFlightError,
 	type RpcClientOptions,
 	type RpcCommand,
 	type RpcEventListener,

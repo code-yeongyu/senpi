@@ -1,3 +1,21 @@
+## Anthropic OAuth advertises Claude Code 2.1.251 (2026-09-02)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `claudeCodeVersion` goes from `2.1.75` to `2.1.251`, so the OAuth client's `user-agent` header is `claude-cli/2.1.251`. Same value as upstream pi commit `96317e50`; the OAuth beta list, `x-app`, and tool naming are untouched.
+
+### Why
+
+- Anthropic now rejects OAuth requests for Claude Fable 5.1 and Opus 5 whose advertised Claude Code version is below 2.1.251 (`error_code: claude_code_version_too_old`), regardless of the Claude Code actually installed on the machine. Tracked as oh-my-openagent#7650. `test/anthropic-oauth-claude-code-version.test.ts` pins the advertised version at or above that minimum.
+
+### Why an extension could not handle it
+
+- The header is assembled inside `createClient()` before `onPayload` hooks run and is not part of the model or request options an extension can override; the SDK client is constructed with it as a default header.
+
+### Expected merge conflict zones
+
+- LOW: the single `claudeCodeVersion` constant near the top of `api/anthropic-messages.ts`; upstream already carries the identical value, so the next pin sync should resolve cleanly.
+
 ## senpi-default retry profile is more patient with slow providers (2026-09-02)
 
 ### What changed

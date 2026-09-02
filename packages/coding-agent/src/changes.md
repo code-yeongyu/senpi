@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-02 - Export the RPC open-in-flight client error
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` and `packages/coding-agent/src/modes/index.ts` re-export `RpcClientOpenInFlightError` beside `RpcClient` and `RpcTransportGoneError` so embedders can classify a rejected concurrent `open_session`.
+
+### Why
+
+- `RpcClient` now holds exactly one lease and rejects a second `openSession()` while one is in flight (`code: "open_session_in_flight"`); the public client surface needs the typed error to distinguish that programming error from transport loss.
+
+### Why an extension could not handle it
+
+- The client lease and its pending-open buffering live in the RPC transport layer below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: the export lists in `index.ts` and `modes/index.ts`.
+
 ## 2026-09-01 - Negotiate RPC session auto-titling
 
 ### What changed

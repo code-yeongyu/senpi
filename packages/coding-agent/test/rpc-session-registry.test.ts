@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getApiProvider, registerApiProvider } from "@earendil-works/pi-ai/compat";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
 	AgentSessionRuntime,
 	type CreateAgentSessionRuntimeFactory,
@@ -129,6 +129,112 @@ describe("RPC session registry", () => {
 		await closing;
 		expect(disposed).toBe(true);
 		await expect(registry.openSession(profile(dir, path))).resolves.toMatchObject({ sessionId: expect.any(String) });
+	});
+
+	test("bounds a stuck abort and releases the path reservation", async () => {
+		const { dir } = await createRegistry();
+		let disposed = false;
+		const samePath = join(dir, "stuck.jsonl");
+		const registry = new RpcSessionRegistry({
+			agentDir: dir,
+			closeGraceMs: 50,
+			createRuntime: async (options) => {
+				const result = runtime(options);
+				result.session.abort = () => new Promise<void>(() => {});
+				result.session.dispose = () => {
+					disposed = true;
+				};
+				return result;
+			},
+		});
+		const opened = await registry.openSession(profile(dir, samePath));
+		const started = Date.now();
+		await registry.close(opened.sessionId);
+		expect(Date.now() - started).toBeLessThan(500);
+		expect(registry.list()).toEqual([]);
+		expect(disposed).toBe(true);
+		await expect(registry.openSession(profile(dir, samePath))).resolves.toMatchObject({
+			sessionId: expect.any(String),
+		});
+	});
+
+	test("force-releases a stuck abort while independently closing runtime and scope", async () => {
+		const { dir } = await createRegistry();
+		const samePath = join(dir, "stuck-scope.jsonl");
+		let scopeClosed!: () => void;
+		const scopeClosedSignal = new Promise<void>((resolve) => {
+			scopeClosed = resolve;
+		});
+		const scopeClose = vi.fn(async () => scopeClosed());
+		const dispose = vi.fn(async () => {});
+		const waitForIdle = vi.fn(async () => {
+			throw new Error("idle failed");
+		});
+		const registry = new RpcSessionRegistry({
+			agentDir: dir,
+			closeGraceMs: 50,
+			createRuntime: async (options) => {
+				const result = runtime(options, { waitForIdle });
+				result.session.abort = () => new Promise<void>(() => {});
+				result.session.dispose = dispose;
+				return result;
+			},
+		});
+		const opened = await registry.openSession(profile(dir, samePath));
+		const entry = registry.peek(opened.sessionId);
+		if (!entry) throw new Error("session was not opened");
+		entry.scope.close = scopeClose;
+		await expect(registry.close(opened.sessionId)).resolves.toBeUndefined();
+		await scopeClosedSignal;
+		expect(dispose).toHaveBeenCalledTimes(1);
+		expect(scopeClose).toHaveBeenCalledTimes(1);
+	});
+
+	test("closes a responsive runtime before the grace deadline", async () => {
+		const { dir } = await createRegistry();
+		let disposeCount = 0;
+		const registry = new RpcSessionRegistry({
+			agentDir: dir,
+			closeGraceMs: 50,
+			createRuntime: async (options) => {
+				const result = runtime(options);
+				result.session.dispose = () => {
+					disposeCount += 1;
+				};
+				return result;
+			},
+		});
+		const opened = await registry.openSession(profile(dir, join(dir, "responsive.jsonl")));
+		await registry.close(opened.sessionId);
+		expect(disposeCount).toBe(1);
+		expect(registry.list()).toEqual([]);
+	});
+
+	test("joins concurrent closes and disposes the runtime once", async () => {
+		const { dir } = await createRegistry();
+		let releaseAbort!: () => void;
+		const abortFinished = new Promise<void>((resolve) => {
+			releaseAbort = resolve;
+		});
+		let disposeCount = 0;
+		const registry = new RpcSessionRegistry({
+			agentDir: dir,
+			closeGraceMs: 500,
+			createRuntime: async (options) => {
+				const result = runtime(options);
+				result.session.abort = () => abortFinished;
+				result.session.dispose = () => {
+					disposeCount += 1;
+				};
+				return result;
+			},
+		});
+		const opened = await registry.openSession(profile(dir, join(dir, "joined.jsonl")));
+		const first = registry.close(opened.sessionId);
+		const second = registry.close(opened.sessionId);
+		releaseAbort();
+		await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+		expect(disposeCount).toBe(1);
 	});
 
 	test("marks closing before binding disposal so a concurrent command cannot enter its handler", async () => {

@@ -227,6 +227,29 @@ describe("multi-session RPC event writer", () => {
 		expect(chunks).toHaveLength(5);
 	});
 
+	it("delivers session agent events only to attached connections", async () => {
+		const a: string[] = [];
+		const b: string[] = [];
+		const unattached: string[] = [];
+		const writer = new SessionEventWriter(() => {});
+		writer.registerConnection("a", { writeRaw: (chunk) => a.push(chunk), waitForBackpressure: async () => {} });
+		writer.registerConnection("b", { writeRaw: (chunk) => b.push(chunk), waitForBackpressure: async () => {} });
+		writer.registerConnection("unattached", {
+			writeRaw: (chunk) => unattached.push(chunk),
+			waitForBackpressure: async () => {},
+		});
+		writer.attachConnectionToSession("a", "s1");
+		writer.attachConnectionToSession("b", "s2");
+
+		writer.enqueue("s1", { type: "message_update", message: "s1" });
+		await writer.flush();
+
+		expect(records(a)).toHaveLength(1);
+		expect(records(a)[0]).toMatchObject({ sessionId: "s1", message: "s1" });
+		expect(records(b)).toEqual([]);
+		expect(records(unattached)).toEqual([]);
+	});
+
 	it("does not let a gated socket stall a fast socket", async () => {
 		const slowGate = deferred<void>();
 		const slow: string[] = [];
@@ -240,6 +263,8 @@ describe("multi-session RPC event writer", () => {
 			writeRaw: (chunk) => fast.push(chunk),
 			waitForBackpressure: async () => {},
 		});
+		writer.attachConnectionToSession("slow", "session");
+		writer.attachConnectionToSession("fast", "session");
 
 		writer.enqueue("session", { type: "event", sequence: 1 });
 		await new Promise<void>((resolve) => queueMicrotask(resolve));
@@ -257,6 +282,7 @@ describe("multi-session RPC event writer", () => {
 			writeRaw: (chunk) => first.push(chunk),
 			waitForBackpressure: async () => {},
 		});
+		writer.attachConnectionToSession("first", "session");
 		writer.enqueue("session", { type: "message_start", message: { role: "assistant", content: [] } });
 		writer.enqueue("session", {
 			type: "message_update",
@@ -268,6 +294,7 @@ describe("multi-session RPC event writer", () => {
 			writeRaw: (chunk) => second.push(chunk),
 			waitForBackpressure: async () => {},
 		});
+		writer.attachConnectionToSession("second", "session");
 		writer.enqueue("session", {
 			type: "message_update",
 			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "two" },
@@ -277,6 +304,51 @@ describe("multi-session RPC event writer", () => {
 		expect(
 			records(second).map((record) => (record.assistantMessageEvent as { delta?: string })?.delta ?? record.type),
 		).toEqual(["message_start", "one", "two"]);
+	});
+
+	it("does not replay targeted records to a connection attaching mid-turn", async () => {
+		const first: string[] = [];
+		const second: string[] = [];
+		const writer = new SessionEventWriter(() => {});
+		writer.registerConnection("first", {
+			writeRaw: (chunk) => first.push(chunk),
+			waitForBackpressure: async () => {},
+		});
+		writer.attachConnectionToSession("first", "session");
+		writer.enqueue("session", { type: "message_start" });
+		writer.withConnection("first", () => writer.enqueue("session", { type: "response", id: "private-response" }));
+		writer.withConnection("first", () =>
+			writer.enqueue("session", { type: "extension_ui_request", id: "private-dialog", method: "confirm" }),
+		);
+		writer.registerConnection("second", {
+			writeRaw: (chunk) => second.push(chunk),
+			waitForBackpressure: async () => {},
+		});
+		writer.attachConnectionToSession("second", "session");
+		await writer.flush();
+
+		expect(records(second)).toEqual([{ type: "message_start", sessionId: "session" }]);
+		expect(records(first).some((record) => record.id === "private-response")).toBe(true);
+		expect(records(first).some((record) => record.id === "private-dialog")).toBe(true);
+	});
+
+	it("replays an attaching connection only once when attach is repeated", async () => {
+		const output: string[] = [];
+		const writer = new SessionEventWriter(() => {});
+		writer.registerConnection("client", {
+			writeRaw: (chunk) => output.push(chunk),
+			waitForBackpressure: async () => {},
+		});
+		writer.enqueue("session", { type: "message_start" });
+		writer.enqueue("session", { type: "message_update", sequence: 1 });
+		writer.attachConnectionToSession("client", "session");
+		writer.attachConnectionToSession("client", "session");
+		await writer.flush();
+
+		expect(records(output)).toEqual([
+			{ type: "message_start", sessionId: "session" },
+			{ type: "message_update", sequence: 1, sessionId: "session" },
+		]);
 	});
 
 	it("filters rendered snapshot replay by each connection capability", async () => {
@@ -304,6 +376,7 @@ describe("multi-session RPC event writer", () => {
 			writeRaw: (chunk) => defaultClient.push(chunk),
 			waitForBackpressure: async () => {},
 		});
+		writer.attachConnectionToSession("default", "session");
 		writer.registerConnection("late-capable", {
 			writeRaw: (chunk) => lateCapable.push(chunk),
 			waitForBackpressure: async () => {},
@@ -364,6 +437,7 @@ describe("multi-session RPC event writer", () => {
 		writer.registerConnection("b", { writeRaw: (chunk) => b.push(chunk), waitForBackpressure: async () => {} });
 		writer.setConnectionCapabilities("a", ["rendered_components"]);
 		writer.attachConnectionToSession("a", "session");
+		writer.attachConnectionToSession("b", "session");
 		writer.enqueue("session", {
 			type: "extension_ui_request",
 			method: "setWidget",
@@ -387,6 +461,8 @@ describe("multi-session RPC event writer", () => {
 		);
 		writer.registerConnection("a", { writeRaw: (chunk) => chunks.push(chunk), waitForBackpressure: async () => {} });
 		writer.registerConnection("b", { writeRaw: (chunk) => chunks.push(chunk), waitForBackpressure: async () => {} });
+		writer.attachConnectionToSession("a", "session");
+		writer.attachConnectionToSession("b", "session");
 		writer.withConnection("a", () =>
 			writer.enqueue("session", { type: "extension_ui_request", id: "dialog", method: "confirm" }),
 		);
@@ -433,8 +509,9 @@ describe("multi-session RPC event writer", () => {
 
 		expect(records(chunks)).toEqual([
 			{ type: "message_update", sessionId: "a" },
-			{ id: "close-a", type: "response", command: "close_session", success: true, sessionId: "a" },
+			{ type: "session_closed", sessionId: "a" },
 			{ type: "agent_settled", sessionId: "b" },
+			{ id: "close-a", type: "response", command: "close_session", success: true, sessionId: "a" },
 		]);
 	});
 

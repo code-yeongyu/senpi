@@ -613,15 +613,26 @@ async function ensureLifecycleHost(
 					: { command: process.execPath, args: [hostLifecycleEntry(), "--socket", qa.socket, ...hostArgs] },
 			},
 		});
-		managed.push({
-			pidFile: JSON.parse(await readFile(qa.pidFilePath, "utf8")) as { pid: number; processStartTime: string },
-			pidFilePath: qa.pidFilePath,
-		});
+		managed.push({ pidFile: await recordedPidFile(qa.pidFilePath, ensured.pid), pidFilePath: qa.pidFilePath });
 		return ensured;
 	} catch (error) {
 		throw new Error(
 			`${error instanceof Error ? error.message : String(error)}\n[supervisor stderr]\n${readSupervisorStderr(qa)}`,
 		);
+	}
+}
+
+/**
+ * The transient supervisor can idle-exit between answering the handshake and
+ * ensureHost returning, so the pidfile may already be gone; the returned pid is
+ * still the identity every later liveness/exit probe needs.
+ */
+async function recordedPidFile(pidFilePath: string, pid: number): Promise<{ pid: number; processStartTime: string }> {
+	try {
+		return JSON.parse(await readFile(pidFilePath, "utf8")) as { pid: number; processStartTime: string };
+	} catch (error: unknown) {
+		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+		return { pid, processStartTime: (await readProcessStartTime(pid)) ?? "" };
 	}
 }
 
@@ -730,11 +741,20 @@ function terminateSupervisor(pid: number, signal: NodeJS.Signals): void {
 		// Bun cannot deliver catchable POSIX signals to detached Windows processes.
 		// taskkill is the real Windows termination primitive; the child watchdog must
 		// still perform the cleanup assertions below when this bypasses JS handlers.
-		execFileSync(
-			"powershell.exe",
-			["-NoProfile", "-NonInteractive", "-Command", `Stop-Process -Id ${String(pid)} -Force`],
-			{ stdio: "ignore", windowsHide: true },
-		);
+		try {
+			execFileSync(
+				"powershell.exe",
+				["-NoProfile", "-NonInteractive", "-Command", `Stop-Process -Id ${String(pid)} -Force`],
+				{ stdio: "ignore", windowsHide: true },
+			);
+		} catch (cause) {
+			// The supervisor idle-exits on its own timer, so it can vanish between the
+			// caller's liveness check and this Stop-Process: an already-gone pid is the
+			// outcome the caller wanted, not a failure.
+			const probe = probeWindowsProcessIdentity(pid, 10_000);
+			if (probe.identity === undefined && !probe.timedOut) return;
+			throw cause;
+		}
 		return;
 	}
 	process.kill(pid, signal);

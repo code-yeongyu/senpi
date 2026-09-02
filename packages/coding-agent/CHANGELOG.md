@@ -8,6 +8,30 @@
 
 ### Fixed
 
+- Multi-session RPC `close_session` teardown is bounded by a 10-second grace period (configurable via `SENPI_RPC_CLOSE_GRACE_MS`), force-releasing the session and path reservation on expiry; a second close joins the in-flight teardown instead of returning `unknown_session`.
+
+### New Features
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-4] - 2026-09-02
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Anthropic OAuth requests advertise `claude-cli/2.1.251` instead of the stale `2.1.75`, so Claude Fable 5.1 and Opus 5 no longer fail with `claude_code_version_too_old` (syncs upstream pi `96317e50`) ([oh-my-openagent#7650](https://github.com/code-yeongyu/oh-my-openagent/issues/7650)).
+
 ### New Features
 
 ### Breaking Changes
@@ -33,6 +57,7 @@
 ### Fixed
 
 - Two concurrent shared-host starts for one socket no longer fail with a raw `database is locked`: the ensure-lock wait now covers the whole host startup critical section (probe, incompatible-host stop, spawned-host readiness) instead of ten seconds.
+- Multi-session socket hosts deliver agent events only to connections attached to the session; targeted responses and dialog extension UI requests remain requester-only, while other extension UI state reaches attached connections. `RpcClient` drops foreign session events while lease-less and buffers own pre-lease startup events during `open_session`.
 
 ### New Features
 

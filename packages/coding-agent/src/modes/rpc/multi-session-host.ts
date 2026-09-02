@@ -46,6 +46,8 @@ export const RPC_SESSION_IDLE_EVICTION_MS_ENV = "SENPI_RPC_SESSION_IDLE_EVICTION
 export const RPC_MAX_SESSIONS_ENV = "SENPI_RPC_MAX_SESSIONS";
 /** Environment override for the empty-host exit window, in milliseconds. */
 export const RPC_HOST_EMPTY_EXIT_MS_ENV = "SENPI_RPC_HOST_EMPTY_EXIT_MS";
+/** Environment override for the graceful close_session teardown window, in milliseconds. */
+export const RPC_CLOSE_GRACE_MS_ENV = "SENPI_RPC_CLOSE_GRACE_MS";
 /** Default idle-eviction window: 30 minutes after a session's last routed command or settled turn. */
 export const DEFAULT_SESSION_IDLE_EVICTION_MS = 30 * 60_000;
 /** Default session cap: an idle session holds a full runtime (~340-510 MB RSS measured). */
@@ -61,6 +63,7 @@ export interface HostIdleOverrides {
 	idleEvictionMs?: number;
 	emptyExitMs?: number;
 	maxSessions?: number;
+	closeGraceMs?: number;
 	/** Shutdown hook the empty-exit window invokes; hosts pass their exit path. */
 	onEmptyExit?: () => void;
 	/** Gate consulted before the empty-exit window advances (connected clients block it). */
@@ -98,10 +101,10 @@ interface Connection {
 }
 
 /**
- * Socket event visibility is an all-sessions broadcast: every connected client
- * receives every session lifecycle/agent event, tagged with its routing
- * sessionId. Responses and extension UI requests remain requester-only. This
- * keeps observers stateless while preventing correlated replies from leaking.
+ * Socket agent events are delivered only to connections attached to their
+ * session, tagged with its routing sessionId. Content-free session lifecycle
+ * events remain visible to every connection. Responses and extension UI
+ * requests remain requester-only; foreign observation uses attach-on-open.
  */
 export async function runMultiSessionHost(options: MultiSessionHostOptions): Promise<never> {
 	if (options.listen === undefined || options.listen === "stdio://") return runStdioHost(options);
@@ -121,6 +124,7 @@ export function createHostCore(
 			createRuntime: options.createRuntime,
 			now: policy.now,
 			maxSessions: policy.maxSessions,
+			closeGraceMs: idle.closeGraceMs ?? parseIdleExitMs(process.env[RPC_CLOSE_GRACE_MS_ENV]) ?? 10_000,
 		}),
 		writer,
 		options,

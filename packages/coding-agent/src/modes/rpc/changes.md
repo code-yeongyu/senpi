@@ -48,6 +48,42 @@
 
 - LOW: the net transport calls and filesystem cleanup guards in `host-lifecycle.ts` and `multi-session-host.ts`; one import and one `createConnection` expression each in `host-ensure.ts` and `rpc-client.ts`.
 
+## [Unreleased] - Bound and join multi-session close_session teardown
+
+### What changed
+
+- `session-teardown.ts` bounds graceful `abort` -> idle -> dispose teardown by a 10-second default grace window (configurable with `SENPI_RPC_CLOSE_GRACE_MS`), then releases the entry and path reservation while detached cleanup continues and reports failures in the existing RPC stderr format.
+- `session-command-router.ts` makes explicit close, idle eviction, and router disposal share one binding-finalization owner, so normal idle eviction still disposes the binding once while concurrent lifecycle paths join it.
+- `session-event-writer.ts` preserves the first closer's terminal `session_closed` plus final response ordering and targets joined successful responses after that terminal sequence.
+- `rpc-mode.ts` documents the bounded close and join response contract in the protocol table.
+- A second `close_session` for an entry already `closing` joins the shared completion; the binding is disposed once, the first closer retains the terminal `session_closed` plus final response ordering, and joined callers receive targeted successful responses.
+
+### Why
+
+- A wedged abort previously retained the runtime and session-path reservation forever, while concurrent close requests incorrectly returned `unknown_session`.
+
+### Why an extension could not handle it
+
+- Session teardown deadlines, reservation ownership, and response ordering are host transport lifecycle behavior below the extension API.
+
+## [Unreleased] - Isolate multi-session socket events by attachment
+
+### What changed
+
+- Files: `multi-session-host.ts`, `rpc-client.ts`, `session-event-fanout.ts`, `session-event-writer.ts`; the `RpcClientOpenInFlightError` re-exports in `packages/coding-agent/src/index.ts` and `packages/coding-agent/src/modes/index.ts`.
+- Session agent events are delivered only to connections attached to that session; newly registered sockets no longer replay every session's in-flight snapshot.
+- Attaching a connection replays that session's unrendered snapshot, plus rendered records when `rendered_components` is advertised.
+- `session_closed` remains broadcast because it carries no content and observers rely on roster visibility.
+- Lease-less `RpcClient` instances drop all session-tagged events until they open a session; during an in-flight `open_session`, matching startup events are buffered up to 512 records and 1 MiB of serialized JSONL, evicting oldest records first when either bound is exceeded.
+
+### Why
+
+- Shared multi-session socket hosts must not leak one session's assistant output into another session's client during normal operation or reconnect.
+
+### Why an extension could not handle it
+
+- Socket fan-out and client lease filtering are transport behavior below the extension API.
+
 ## [Unreleased] - Preserve launch capabilities for undeclared multi-session clients
 
 - `session-command-router.ts`: connection-owned session bindings now fall back to the host launch capabilities when the client has not sent `set_client_info`; an explicit empty capability declaration still wins.

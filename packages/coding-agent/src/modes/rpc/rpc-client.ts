@@ -127,6 +127,19 @@ export function isTransportGoneError(error: unknown): error is RpcTransportGoneE
 	);
 }
 
+export class RpcClientOpenInFlightError extends Error {
+	readonly code = "open_session_in_flight" as const;
+
+	constructor() {
+		super("An open_session request is already in flight");
+		this.name = "RpcClientOpenInFlightError";
+	}
+}
+
+// Keep pre-lease startup delivery bounded by both record count and wire size.
+const MAX_PENDING_SESSION_EVENTS = 512;
+const MAX_PENDING_SESSION_EVENT_BYTES = 1024 * 1024;
+
 export class RpcClient {
 	private process: ChildProcess | null = null;
 	private socket: Socket | null = null;
@@ -143,6 +156,9 @@ export class RpcClient {
 	> = new Map();
 	private requestId = 0;
 	private sessionId: string | undefined;
+	private pendingOpenSession = false;
+	private pendingSessionEvents: Array<{ sessionId: string; event: RpcClientEvent; bytes: number }> = [];
+	private pendingSessionEventBytes = 0;
 	private stderr = "";
 	private exitError: Error | null = null;
 	private disconnectNotified = false;
@@ -237,6 +253,9 @@ export class RpcClient {
 	 * Stop the RPC agent process.
 	 */
 	async stop(): Promise<void> {
+		this.pendingOpenSession = false;
+		this.pendingSessionEvents = [];
+		this.pendingSessionEventBytes = 0;
 		if (this.socket) {
 			this.stopping = true;
 			this.stopReadingStdout?.();
@@ -244,6 +263,8 @@ export class RpcClient {
 			this.socket.destroy();
 			this.socket = null;
 			this.sessionId = undefined;
+			this.pendingOpenSession = false;
+			this.pendingSessionEvents = [];
 			this.notifyDisconnect(new RpcTransportGoneError());
 			return;
 		}
@@ -341,10 +362,21 @@ export class RpcClient {
 		thinkingLevel?: ThinkingLevel;
 		permissionPreset?: string;
 	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
-		const response = await this.send({ type: "open_session", ...options }, false);
-		const opened = this.getData<{ sessionId: string; state: RpcSessionState; attached?: boolean }>(response);
-		this.sessionId = opened.sessionId;
-		return opened;
+		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();
+		this.pendingOpenSession = true;
+		try {
+			const response = await this.send({ type: "open_session", ...options }, false);
+			const opened = this.getData<{ sessionId: string; state: RpcSessionState; attached?: boolean }>(response);
+			this.sessionId = opened.sessionId;
+			this.pendingOpenSession = false;
+			this.flushPendingSessionEvents();
+			return opened;
+		} catch (error) {
+			this.pendingOpenSession = false;
+			this.pendingSessionEvents = [];
+			this.pendingSessionEventBytes = 0;
+			throw error;
+		}
 	}
 
 	async sendExtensionUIResponse(response: RpcExtensionUIResponse): Promise<void> {
@@ -931,14 +963,39 @@ export class RpcClient {
 				return;
 			}
 
-			// Otherwise it's an event. Multi-session hosts broadcast all session
-			// events to every connection; a routed client exposes only its lease.
-			if (data.sessionId !== undefined && this.sessionId !== undefined && data.sessionId !== this.sessionId) return;
+			// Otherwise it's an event. During open_session, retain tagged events until
+			// the response establishes the lease so startup hooks are not lost.
+			if (typeof data.sessionId === "string" && data.sessionId !== this.sessionId) {
+				if (this.pendingOpenSession) {
+					const bytes = Buffer.byteLength(line);
+					this.pendingSessionEvents.push({ sessionId: data.sessionId, event: data as RpcClientEvent, bytes });
+					this.pendingSessionEventBytes += bytes;
+					while (
+						this.pendingSessionEvents.length > MAX_PENDING_SESSION_EVENTS ||
+						this.pendingSessionEventBytes > MAX_PENDING_SESSION_EVENT_BYTES
+					) {
+						const oldest = this.pendingSessionEvents.shift();
+						if (!oldest) break;
+						this.pendingSessionEventBytes -= oldest.bytes;
+					}
+				}
+				return;
+			}
 			for (const listener of this.eventListeners) {
 				listener(data as RpcClientEvent);
 			}
 		} catch {
 			// Ignore non-JSON lines
+		}
+	}
+
+	private flushPendingSessionEvents(): void {
+		const pending = this.pendingSessionEvents;
+		this.pendingSessionEvents = [];
+		this.pendingSessionEventBytes = 0;
+		for (const { sessionId, event } of pending) {
+			if (sessionId !== this.sessionId) continue;
+			for (const listener of this.eventListeners) listener(event);
 		}
 	}
 

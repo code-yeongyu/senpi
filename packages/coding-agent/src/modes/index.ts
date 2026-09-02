@@ -18,6 +18,7 @@ export {
 	type ModelInfo,
 	RpcClient,
 	type RpcClientEvent,
+	RpcClientOpenInFlightError,
 	type RpcClientOptions,
 	type RpcEventListener,
 	RpcTransportGoneError,

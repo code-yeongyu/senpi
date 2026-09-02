@@ -8,6 +8,7 @@ import {
 	createAgentSessionRuntime,
 } from "../../core/agent-session-runtime.ts";
 import { SessionManager } from "../../core/session-manager.ts";
+import { beginSessionClose, closeMarkedSession, closeSession, type SessionTeardownHost } from "./session-teardown.ts";
 
 /** The immutable flags selected when a routing session is opened. */
 export interface RpcSessionLaunchProfile extends AgentSessionLaunchProfile {
@@ -37,6 +38,9 @@ export interface RpcSessionEntry {
 	/** Timestamp of the last routed command / observed activity; drives idle eviction. */
 	lastCommandAt: number;
 	lifecycleMutex: Promise<void>;
+	closeCompletion?: Promise<void>;
+	closeResolve?: () => void;
+	closeStarted?: boolean;
 }
 
 export class RpcSessionRegistryError extends Error {
@@ -62,6 +66,8 @@ export interface RpcSessionRegistryOptions {
 	now?: () => number;
 	/** Cap on concurrently opening/open sessions; attach-on-open is exempt. */
 	maxSessions?: number;
+	/** Maximum time to wait for graceful runtime teardown before forced release. */
+	closeGraceMs?: number;
 }
 
 export interface OpenRpcSession {
@@ -89,13 +95,23 @@ function frozenProfile(profile: RpcSessionLaunchProfile): Readonly<RpcSessionLau
 export class RpcSessionRegistry {
 	private readonly entries = new Map<string, RpcSessionEntry>();
 	private readonly reservations = new Set<string>();
+	private readonly teardownHost: SessionTeardownHost;
 	private nextHandle = 0;
 	private readonly options: RpcSessionRegistryOptions;
 	private readonly now: () => number;
+	readonly closeGraceMs: number;
 
 	constructor(options: RpcSessionRegistryOptions) {
 		this.options = options;
 		this.now = options.now ?? Date.now;
+		this.closeGraceMs = options.closeGraceMs ?? 10_000;
+		this.teardownHost = {
+			closeGraceMs: this.closeGraceMs,
+			get: (handle) => this.entries.get(handle),
+			delete: (handle) => this.entries.delete(handle),
+			releaseReservation: (key) => this.reservations.delete(key),
+			sync: () => this.syncRuntimeMetadata(),
+		};
 	}
 
 	/** Number of live entries, including ones still opening or closing. */
@@ -254,49 +270,18 @@ export class RpcSessionRegistry {
 		return entry;
 	}
 
-	/**
-	 * Starts a close synchronously. Call this before disposing any session-owned
-	 * binding so a concurrent command cannot reach a half-disposed handler.
-	 * Each call releases one attachment; the entry transitions to "closing" only
-	 * when the last attachment closes, so callers must check the returned state
-	 * and skip finalization while other attachments remain.
-	 */
-	beginClose(handle: string): RpcSessionEntry {
-		const entry = this.entries.get(handle);
-		if (entry?.state !== "open") throw new RpcSessionRegistryError("unknown_session");
-		entry.attachments -= 1;
-		if (entry.attachments > 0) return entry;
-		entry.state = "closing";
-		return entry;
+	/** Starts a close synchronously and returns the live entry for routing decisions. */
+	beginClose(handle: string, onRole?: (finalizer: boolean) => void): RpcSessionEntry {
+		return beginSessionClose(this.teardownHost, handle, onRole);
 	}
 
 	async close(handle: string): Promise<void> {
-		const entry = this.beginClose(handle);
-		// Other attachments may still own the live session; only the last close finalizes.
-		if (entry.state !== "closing") return;
-		return this.closeMarked(handle);
+		return closeSession(this.teardownHost, handle);
 	}
 
 	/** Completes a close previously made visible by beginClose(). */
 	async closeMarked(handle: string): Promise<void> {
-		this.syncRuntimeMetadata();
-		const entry = this.entries.get(handle);
-		if (entry?.state !== "closing") throw new RpcSessionRegistryError("unknown_session");
-		const previousLifecycle = entry.lifecycleMutex;
-		entry.lifecycleMutex = (async () => {
-			await previousLifecycle;
-			try {
-				await entry.runtime?.session.abort();
-				await entry.runtime?.session.waitForIdle();
-				await entry.runtime?.dispose();
-				await entry.scope.close?.();
-			} finally {
-				entry.state = "closed";
-				this.entries.delete(handle);
-				if (entry.reservationKey) this.reservations.delete(entry.reservationKey);
-			}
-		})();
-		return entry.lifecycleMutex;
+		return closeMarkedSession(this.teardownHost, handle);
 	}
 
 	list(): Array<{

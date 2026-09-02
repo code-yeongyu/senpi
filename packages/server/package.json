@@ -1,6 +1,6 @@
 {
 	"name": "@code-yeongyu/senpi-server",
-	"version": "2026.9.2-3",
+	"version": "2026.9.2-4",
 	"description": "experimental server package for senpi",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -47,8 +47,8 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^2026.9.2-3",
-		"@earendil-works/pi-protocol": "^2026.9.2-3"
+		"@earendil-works/pi-ai": "^2026.9.2-4",
+		"@earendil-works/pi-protocol": "^2026.9.2-4"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",

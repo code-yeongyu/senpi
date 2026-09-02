@@ -12,6 +12,18 @@
 
 ### Removed
 
+## [2026.9.2-4] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.9.2-3] - 2026-09-02
 
 ### Breaking Changes
@@ -24,6 +36,7 @@
 
 ### Fixed
 
+- Anthropic OAuth requests advertise `claude-cli/2.1.251` instead of the stale `2.1.75`, so Claude Fable 5.1 and Opus 5 no longer fail with `claude_code_version_too_old` (syncs upstream pi `96317e50`) ([oh-my-openagent#7650](https://github.com/code-yeongyu/oh-my-openagent/issues/7650)).
 - Anthropic OAuth now falls back to manual redirect URL entry when callback port 53692 cannot be opened.
 
 ### Removed

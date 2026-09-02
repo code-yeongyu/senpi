@@ -1,6 +1,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { serializeJsonLine } from "./jsonl.ts";
-import { SocketEventSinkActor } from "./socket-event-fanout.ts";
+import {
+	RENDERED_COMPONENT_RECORD,
+	SessionEventFanout,
+	type SessionEventWriterConnection,
+} from "./session-event-fanout.ts";
+
+export { RENDERED_COMPONENT_RECORD, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 
 type RawWriter = (chunk: string) => void;
 type BackpressureWaiter = () => Promise<void>;
@@ -64,24 +70,10 @@ function toolUpdateKey(value: RpcRecord): string | undefined {
  * by itself: coalescing records from different sessions would obscure the
  * scheduling boundary and violate D9.
  */
-export interface SessionEventWriterConnection {
-	readonly writeRaw: RawWriter;
-	readonly waitForBackpressure: BackpressureWaiter;
-}
-
-export const RENDERED_COMPONENT_RECORD = "__senpiRenderedComponent";
-
 export class SessionEventWriter {
 	private readonly queues = new Map<string, RecordQueue>();
-	private readonly connections = new Map<
-		string,
-		{ connection: SessionEventWriterConnection; actor: SocketEventSinkActor }
-	>();
-	private readonly sessionSnapshots = new Map<string, Array<{ line: string; rendered: boolean }>>();
+	private readonly fanout = new SessionEventFanout();
 	private readonly connectionContext = new AsyncLocalStorage<string>();
-	private readonly connectionCapabilities = new Map<string, Set<string>>();
-	private readonly connectionSessions = new Map<string, Set<string>>();
-	private readonly registeredCapabilityConnections = new Set<string>();
 	private readonly controlQueue: RecordQueue = { latestByKey: new Map(), ready: false };
 	private readonly readyQueues: RecordQueue[] = [];
 	private readonly sealedSessions = new Set<string>();
@@ -128,77 +120,39 @@ export class SessionEventWriter {
 	}
 
 	registerConnection(id: string, connection: SessionEventWriterConnection): void {
-		const actor = new SocketEventSinkActor(connection, () => {
-			if (this.connections.get(id)?.actor === actor) {
-				this.connections.delete(id);
-				this.connectionCapabilities.delete(id);
-				this.connectionSessions.delete(id);
-				this.registeredCapabilityConnections.delete(id);
-			}
-		});
-		this.connections.set(id, { connection, actor });
-		this.connectionCapabilities.set(id, new Set());
-		this.connectionSessions.set(id, new Set());
-		for (const snapshot of this.sessionSnapshots.values())
-			for (const record of snapshot) if (!record.rendered) actor.enqueue(record.line);
+		this.fanout.registerConnection(id, connection);
 	}
 
 	unregisterConnection(id: string): void {
-		const registered = this.connections.get(id);
-		if (!registered) return;
-		registered.actor.close();
-		this.connections.delete(id);
-		this.connectionCapabilities.delete(id);
-		this.connectionSessions.delete(id);
-		this.registeredCapabilityConnections.delete(id);
+		this.fanout.unregisterConnection(id);
 	}
 
 	attachConnectionToSession(id: string, sessionId: string): void {
-		if (!this.connections.has(id)) return;
-		const sessions = this.connectionSessions.get(id) ?? new Set<string>();
-		sessions.add(sessionId);
-		this.connectionSessions.set(id, sessions);
-		if (this.connectionCapabilities.get(id)?.has("rendered_components"))
-			for (const record of this.sessionSnapshots.get(sessionId) ?? [])
-				if (record.rendered) this.connections.get(id)!.actor.enqueue(record.line);
+		this.fanout.attachConnectionToSession(id, sessionId);
 	}
 
 	detachConnectionFromSession(id: string, sessionId: string): void {
-		this.connectionSessions.get(id)?.delete(sessionId);
+		this.fanout.detachConnectionFromSession(id, sessionId);
 	}
 
 	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
-		const registered = this.connections.get(id);
-		if (!registered) return;
-		const wasCapable = this.connectionCapabilities.get(id)?.has("rendered_components") ?? false;
-		this.connectionCapabilities.set(id, new Set(capabilities));
-		this.registeredCapabilityConnections.add(id);
-		if (!wasCapable && capabilities.includes("rendered_components"))
-			for (const sessionId of this.connectionSessions.get(id) ?? [])
-				for (const record of this.sessionSnapshots.get(sessionId) ?? [])
-					if (record.rendered) registered.actor.enqueue(record.line);
+		this.fanout.setConnectionCapabilities(id, capabilities);
 	}
 
 	clearConnectionCapabilities(id: string): void {
-		if (this.connections.has(id)) {
-			this.connectionCapabilities.set(id, new Set());
-			this.registeredCapabilityConnections.delete(id);
-		}
+		this.fanout.clearConnectionCapabilities(id);
 	}
 
 	hasRegisteredConnectionCapabilities(id: string): boolean {
-		return this.registeredCapabilityConnections.has(id);
+		return this.fanout.hasRegisteredConnectionCapabilities(id);
 	}
 
 	getConnectionCapabilities(id: string): readonly string[] | undefined {
-		if (!this.registeredCapabilityConnections.has(id)) return undefined;
-		return [...(this.connectionCapabilities.get(id) ?? [])];
+		return this.fanout.getConnectionCapabilities(id);
 	}
 
 	hasCapableConnection(sessionId: string): boolean {
-		for (const [id, capabilities] of this.connectionCapabilities)
-			if (capabilities.has("rendered_components") && this.connectionSessions.get(id)?.has(sessionId)) return true;
-		return false;
+		return this.fanout.hasCapableConnection(sessionId);
 	}
 
 	/** Execute a connection's command with its response destination in context. */
@@ -211,7 +165,7 @@ export class SessionEventWriter {
 		return this.connectionContext.getStore();
 	}
 
-	/** Queue a session record. Lifecycle/events are broadcast; responses/UI are targeted. */
+	/** Queue a session record. Content events target connections attached to the session. */
 	enqueue(sessionId: string, value: object): boolean {
 		if (this.sealedSessions.has(sessionId)) return false;
 		const targetId = this.connectionContext.getStore();
@@ -224,21 +178,11 @@ export class SessionEventWriter {
 		const tagged = { ...value, sessionId } as RpcRecord;
 		const { [RENDERED_COMPONENT_RECORD]: _rendered, ...wireTagged } = tagged;
 		const line = serializeJsonLine(wireTagged);
-		this.rememberSnapshot(sessionId, tagged, line);
-		const targets = isTargeted
-			? [targetId]
-			: record[RENDERED_COMPONENT_RECORD] && this.connections.size > 0
-				? [...this.connections.keys()].filter(
-						(id) =>
-							this.connectionCapabilities.get(id)?.has("rendered_components") &&
-							this.connectionSessions.get(id)?.has(sessionId),
-					)
-				: this.connections.size > 0
-					? [...this.connections.keys()]
-					: [undefined];
+		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line);
+		const targets = this.fanout.targets(sessionId, targetId, isTargeted, record[RENDERED_COMPONENT_RECORD] === true);
 		for (const target of targets) {
-			if (target !== undefined && !this.connections.has(target)) continue;
-			const registered = target === undefined ? undefined : this.connections.get(target);
+			if (target !== undefined && !this.fanout.get(target)) continue;
+			const registered = target === undefined ? undefined : this.fanout.get(target);
 			if (registered)
 				registered.actor.enqueue(line, compactDelta(tagged) && tagged.message !== null ? MESSAGE_KEY : undefined);
 			else this.appendSessionRecord(sessionId, wireTagged, target);
@@ -251,7 +195,7 @@ export class SessionEventWriter {
 	enqueueControl(value: object): Promise<void> {
 		if (this.failure !== undefined) return Promise.reject(this.failure);
 		const targetId = this.connectionContext.getStore();
-		const registered = targetId === undefined ? undefined : this.connections.get(targetId);
+		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
 		if (registered) {
 			registered.actor.enqueue(serializeJsonLine(value));
 			return Promise.resolve();
@@ -275,11 +219,20 @@ export class SessionEventWriter {
 		this.sealedSessions.add(sessionId);
 		const targetId = this.connectionContext.getStore();
 		const lifecycle = { type: "session_closed", sessionId };
-		for (const connectionId of this.connections.keys()) {
-			this.connections.get(connectionId)!.actor.enqueue(serializeJsonLine(lifecycle));
-		}
+		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
+		else this.fanout.broadcast(serializeJsonLine(lifecycle));
 		const taggedResponse = { ...response, sessionId };
-		const registered = targetId === undefined ? undefined : this.connections.get(targetId);
+		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
+		if (registered) registered.actor.enqueue(serializeJsonLine(taggedResponse));
+		else this.appendSessionRecord(sessionId, taggedResponse, targetId);
+		this.requestFlush();
+	}
+
+	/** Queue a successful response for a joined close after the terminal lifecycle record. */
+	enqueueClosedResponse(sessionId: string, response: object): void {
+		const targetId = this.connectionContext.getStore();
+		const taggedResponse = { ...response, sessionId };
+		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
 		if (registered) registered.actor.enqueue(serializeJsonLine(taggedResponse));
 		else this.appendSessionRecord(sessionId, taggedResponse, targetId);
 		this.requestFlush();
@@ -293,7 +246,7 @@ export class SessionEventWriter {
 	 */
 	forgetSession(sessionId: string): void {
 		this.sealedSessions.delete(sessionId);
-		this.sessionSnapshots.delete(sessionId);
+		this.fanout.forgetSession(sessionId);
 	}
 
 	/** Drain every retained lane and the current in-flight record. */
@@ -302,7 +255,7 @@ export class SessionEventWriter {
 		this.flushScheduled = false;
 		if (this.drainPromise) return this.drainPromise;
 		if (this.readyQueues.length === 0)
-			return Promise.all([...this.connections.values()].map(({ actor }) => actor.flush())).then(() => undefined);
+			return Promise.all([...this.fanout.values()].map(({ actor }) => actor.flush())).then(() => undefined);
 		let resolveDrain!: () => void;
 		let rejectDrain!: (cause: unknown) => void;
 		const drain = new Promise<void>((resolve, reject) => {
@@ -328,7 +281,7 @@ export class SessionEventWriter {
 		do {
 			await this.drainReadyQueues();
 		} while (this.readyQueues.length > 0);
-		await Promise.all([...this.connections.values()].map(({ actor }) => actor.flush()));
+		await Promise.all([...this.fanout.values()].map(({ actor }) => actor.flush()));
 	}
 
 	private async drainReadyQueues(): Promise<void> {
@@ -343,7 +296,7 @@ export class SessionEventWriter {
 			try {
 				// D9: exactly one complete record per raw write. The next lane is not
 				// selected until this record has cleared stdout backpressure.
-				const connection = queue.targetId ? this.connections.get(queue.targetId)?.connection : undefined;
+				const connection = queue.targetId ? this.fanout.get(queue.targetId)?.connection : undefined;
 				const writeRaw = connection?.writeRaw ?? this.writeRaw;
 				const waitForBackpressure = connection?.waitForBackpressure ?? this.waitForBackpressure;
 				if (!connection && queue.targetId) {
@@ -368,17 +321,6 @@ export class SessionEventWriter {
 				}
 			}
 		}
-	}
-
-	private rememberSnapshot(sessionId: string, value: RpcRecord, line: string): void {
-		const event = value.assistantMessageEvent as Record<string, unknown> | undefined;
-		const record = { line, rendered: value[RENDERED_COMPONENT_RECORD] === true };
-		if (value.type === "message_start" || (value.type === "message_update" && event?.type === "text_start")) {
-			this.sessionSnapshots.set(sessionId, [record]);
-		} else if (this.sessionSnapshots.has(sessionId)) {
-			this.sessionSnapshots.get(sessionId)!.push(record);
-		}
-		if (value.type === "message_end") this.sessionSnapshots.delete(sessionId);
 	}
 
 	private connectionQueue(targetId: string): RecordQueue {
