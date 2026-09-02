@@ -1,5 +1,37 @@
 # changes.md — ai
 
+## Add Claude Fable 5.1 to the generated Anthropic catalog (2026-09-02)
+
+### What changed
+
+- `src/providers/data/anthropic.json`: regenerated the Anthropic shard from models.dev so
+  `claude-fable-5-1` carries the published 1M context window, 128K output limit, adaptive-thinking
+  compatibility, and current pricing metadata.
+- `src/providers/data/.manifest.json`: refreshed the generated structure hash and Anthropic shard hash.
+- `../coding-agent/test/suite/claude-sdk-oauth-extension.test.ts`: added a regression proving the
+  Claude SDK OAuth provider registers the new model ID.
+
+### Why
+
+- The Claude SDK OAuth provider copies `getModels("anthropic")` into its model selector catalog.
+  Without the generated Anthropic entry, the released model could not appear in SDK model selection.
+
+### Why this cannot be expressed as an extension
+
+- The missing value is the generated catalog input consumed while the built-in Claude SDK OAuth
+  extension registers its provider; a later extension cannot add it to that already-captured list.
+
+### Modified upstream files
+
+- `src/providers/data/anthropic.json`
+- `src/providers/data/.manifest.json`
+- `../coding-agent/test/suite/claude-sdk-oauth-extension.test.ts`
+
+### Expected merge conflict zones
+
+- LOW: generated Anthropic data and manifest hashes when upstream refreshes model metadata.
+- LOW: the Claude SDK OAuth provider catalog regression if upstream reorganizes built-in extension tests.
+
 ## Follow Groq Qwen catalog replacement during generation (2026-08-04)
 
 ### What changed

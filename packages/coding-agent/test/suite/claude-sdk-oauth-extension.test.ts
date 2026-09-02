@@ -63,6 +63,12 @@ describe("claude-sdk-oauth builtin provider", () => {
 		expect(ids.some((id) => id.startsWith(`${CLAUDE_SDK_OAUTH_PROVIDER_ID}/`))).toBe(true);
 	});
 
+	it("includes Claude Fable 5.1 in the registered model catalog", () => {
+		const { registration } = captureRegistration();
+		const ids = registration.config.models?.map((model) => model.id);
+		expect(ids).toContain("claude-fable-5-1");
+	});
+
 	it("login selector lists the provider as oauth after registration", async () => {
 		const { registration } = captureRegistration();
 		const storage = AuthStorage.inMemory();
