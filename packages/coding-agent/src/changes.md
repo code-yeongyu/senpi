@@ -1,5 +1,38 @@
 # changes
 
+## 2026-09-01 - Fail closed on an unusable model budget at startup
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` wraps the `createAgentSessionRuntime` call with a try/catch that
+  specifically catches `ModelUsabilityBudgetError`, printing the error's own actionable message
+  (`chalk.red`) and exiting with `process.exit(1)` instead of letting the error escape uncaught.
+
+### Why
+
+- `AgentSession.assertModelUsable` (via `createAgentSession` in `sdk.ts`) throws
+  `ModelUsabilityBudgetError` when the selected model's context window cannot hold the assembled
+  session budget (live context + system prompt + tool schemas + output/compaction/speculation
+  reserves + safety margin) — most commonly hit when resuming a large existing session with a model
+  whose context window is too small. Nothing between that throw site and the top-level `await main()`
+  call in `cli-main.ts` ever catches it, so the error reaches Node as an uncaught exception: a raw
+  stack trace plus the `Node.js vX.Y.Z` crash banner, and the process exits without ever reaching the
+  point where the TUI, RPC transport, or any other surface could render a normal error state. The
+  thrown error's own message is already fully actionable (it names the exact shortfall and suggests
+  compacting the session and retrying), so the fix only needed to stop it from being silently dropped
+  before that message could reach the user.
+
+### Why an extension could not handle it
+
+- The throw happens inside `createAgentSessionRuntime`, which runs before any extension host exists;
+  by the time an extension could observe the failure, the process has already crashed.
+
+### Expected merge conflict zones
+
+- LOW: the `createAgentSessionRuntime` call site and its surrounding `time("createAgentSessionRuntime")`
+  call in `main.ts`; this block has changed at least once before (see the 2026-08-30 entry above) so a
+  future upstream sync may touch the same lines again.
+
 ## 2026-09-01 - Negotiate RPC session auto-titling
 
 ### What changed

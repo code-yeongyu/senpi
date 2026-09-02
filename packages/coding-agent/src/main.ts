@@ -53,6 +53,7 @@ import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { envValue } from "./core/brand.ts";
 import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./core/credential-accounts.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
+import { ModelUsabilityBudgetError } from "./core/extensions/builtin/compaction/model-usability-budget.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import {
@@ -1113,13 +1114,20 @@ export async function main(args: string[], options?: MainOptions) {
 			listen: parsed.listen,
 		});
 	}
-	const runtime = await createAgentSessionRuntime(createRuntime, {
-		cwd: sessionManager.getCwd(),
-		agentDir,
-		sessionManager,
-	}).finally(() => {
-		startupLoadingIndicator.stop();
-	});
+	let runtime: Awaited<ReturnType<typeof createAgentSessionRuntime>>;
+	try {
+		runtime = await createAgentSessionRuntime(createRuntime, {
+			cwd: sessionManager.getCwd(),
+			agentDir,
+			sessionManager,
+		}).finally(() => {
+			startupLoadingIndicator.stop();
+		});
+	} catch (error) {
+		if (!(error instanceof ModelUsabilityBudgetError)) throw error;
+		console.error(chalk.red(`Error: ${error.message}`));
+		process.exit(1);
+	}
 	time("createAgentSessionRuntime");
 	let selectedRuntime = runtime;
 	if (isTruthyEnvFlag(envValue("DISABLE_SHARED_HOST"))) {
