@@ -77,7 +77,7 @@ export interface ResourceLoader {
 	getAppendSystemPrompt(): string[];
 	getLoadedHookSources?(): LoadedHookSources;
 	getAppendSystemPromptSources(): Array<{ path: string }>;
-	extendResources(paths: ResourceExtensionPaths): void;
+	extendResources(paths: ResourceExtensionPaths): Promise<void>;
 	reload(options?: ResourceLoaderReloadOptions): Promise<void>;
 }
 
@@ -520,7 +520,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return this.appendSystemPromptSourcePaths.map((path) => ({ path }));
 	}
 
-	extendResources(paths: ResourceExtensionPaths): void {
+	async extendResources(paths: ResourceExtensionPaths): Promise<void> {
 		const skillPaths = this.normalizeExtensionPaths(paths.skillPaths ?? []);
 		const promptPaths = this.normalizeExtensionPaths(paths.promptPaths ?? []);
 		const themePaths = this.normalizeExtensionPaths(paths.themePaths ?? []);
@@ -541,7 +541,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				this.lastSkillPaths,
 				skillPaths.map((entry) => entry.path),
 			);
-			this.updateSkillsFromPaths(this.lastSkillPaths, this.resourceMetadataByPath);
+			await this.updateSkillsFromPaths(this.lastSkillPaths, this.resourceMetadataByPath);
 		}
 
 		if (promptPaths.length > 0) {
@@ -953,12 +953,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		};
 	}
 
-	private updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
+	private async updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): Promise<void> {
 		let skillsResult: { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {
 			skillsResult = { skills: [], diagnostics: [] };
 		} else {
-			skillsResult = loadSkills({
+			skillsResult = await loadSkills({
 				cwd: this.cwd,
 				agentDir: this.agentDir,
 				skillPaths,

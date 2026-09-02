@@ -6637,7 +6637,7 @@ export class AgentSession {
 			hookPaths: this.buildExtensionResourcePaths(hookPaths),
 		};
 
-		this._resourceLoader.extendResources(extensionPaths);
+		await this._resourceLoader.extendResources(extensionPaths);
 		if (skillPaths.length > 0 || promptPaths.length > 0 || themePaths.length > 0) {
 			this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
 			this.agent.state.systemPrompt = this._baseSystemPrompt;
