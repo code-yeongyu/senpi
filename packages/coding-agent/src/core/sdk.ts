@@ -579,35 +579,42 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		if (options.model !== undefined || !hasExistingSession || !(error instanceof ModelUsabilityBudgetError)) {
 			throw error;
 		}
-		const unavailableProviders = new Set<string>();
-		let recovery: StartupRecoveryModel | undefined;
-		for (const candidate of findStartupRecoveryModels(session, modelRuntime, settingsManager, liveContextTokens)) {
-			if (unavailableProviders.has(candidate.model.provider)) continue;
-			if (await modelRuntime.checkAuth(candidate.model.provider)) {
-				recovery = candidate;
-				break;
-			}
-			unavailableProviders.add(candidate.model.provider);
-		}
-		if (!recovery) throw new SessionResumeModelUnavailableError(error);
-
 		const restoredModel = session.model;
 		if (!restoredModel) throw error;
-		await session.setStartupRecoveryModel(recovery.model, liveContextTokens);
-		const admittedProjection = projectModelUsabilityBudget({
-			model: recovery.model,
-			systemPrompt: session.agent.state.systemPrompt,
-			tools: session.agent.state.tools,
-			liveContextTokens,
-			compaction: settingsManager.getCompactionSettings(),
-		});
-		if (!admittedProjection.usable) {
-			throw new ModelUsabilityBudgetError(admittedProjection);
+		const unavailableProviders = new Set<string>();
+		let recovery: ModelUsabilityBudgetProjection | undefined;
+		let lastRecoveryError: ModelUsabilityBudgetError | undefined;
+		for (const candidate of findStartupRecoveryModels(session, modelRuntime, settingsManager, liveContextTokens)) {
+			if (unavailableProviders.has(candidate.model.provider)) continue;
+			if (!(await modelRuntime.checkAuth(candidate.model.provider))) {
+				unavailableProviders.add(candidate.model.provider);
+				continue;
+			}
+			try {
+				await session.setStartupRecoveryModel(candidate.model, liveContextTokens);
+				const admittedProjection = projectModelUsabilityBudget({
+					model: candidate.model,
+					systemPrompt: session.agent.state.systemPrompt,
+					tools: session.agent.state.tools,
+					liveContextTokens,
+					compaction: settingsManager.getCompactionSettings(),
+				});
+				if (!admittedProjection.usable) {
+					throw new ModelUsabilityBudgetError(admittedProjection);
+				}
+				recovery = admittedProjection;
+				break;
+			} catch (candidateError) {
+				if (!(candidateError instanceof ModelUsabilityBudgetError)) throw candidateError;
+				lastRecoveryError = candidateError;
+			}
 		}
+		if (!recovery) throw new SessionResumeModelUnavailableError(lastRecoveryError ?? error);
+
 		const recoveryMessage =
 			`Restored context exceeds ${restoredModel.provider}/${restoredModel.id}'s usable budget. ` +
-			`Using ${admittedProjection.model} for this session with ` +
-			`${admittedProjection.contextWindow - admittedProjection.requiredTokens} tokens of remaining budget.`;
+			`Using ${recovery.model} for this session with ` +
+			`${recovery.contextWindow - recovery.requiredTokens} tokens of remaining budget.`;
 		modelFallbackMessage = modelFallbackMessage ? `${modelFallbackMessage}. ${recoveryMessage}` : recoveryMessage;
 	}
 	cursorBridgeSessionRef.current = session;

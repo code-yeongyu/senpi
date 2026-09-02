@@ -9,7 +9,8 @@
 - Existing sessions whose restored transcript no longer fits their saved model
   now reopen on the configured authenticated model with the largest usable
   remaining context budget, skipping unavailable providers without leaving
-  partial model or thinking history. Explicit `--model` selections stay strict,
+  partial model or thinking history persisted. Explicit `--model` selections
+  stay strict, later candidates are tried after post-select admission failures,
   and a session with no capable model exits with actionable budget guidance
   instead of an uncaught stack trace.
 

@@ -317,6 +317,58 @@ describe("model usability budget", () => {
 		resumed.session.dispose();
 	});
 
+	it("continues after a larger candidate fails post-select budget admission", async () => {
+		// given
+		initTheme("dark");
+		const harness = await createHarness({
+			models: [
+				{ id: "saved-small", contextWindow: 100_000, maxTokens: 4_000 },
+				{ id: "candidate-medium", contextWindow: 600_000, maxTokens: 32_000 },
+				{ id: "candidate-largest", contextWindow: 1_000_000, maxTokens: 32_000 },
+			],
+		});
+		harnesses.push(harness);
+		const extensionsResult = await createTestExtensionsResult(
+			[
+				(pi) => {
+					pi.on("model_select", (event) =>
+						event.model.id === "candidate-largest"
+							? { systemPrompt: "oversized model prompt ".repeat(300_000) }
+							: undefined,
+					);
+				},
+			],
+			harness.tempDir,
+		);
+		const sessionManager = harness.sessionManager;
+		sessionManager.appendModelChange("faux", "saved-small");
+		sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "restored transcript ".repeat(80_000) }],
+			timestamp: Date.now(),
+		});
+
+		// when
+		const resumed = await createAgentSession({
+			cwd: harness.tempDir,
+			agentDir: join(harness.tempDir, "sdk-agent"),
+			authStorage: harness.authStorage,
+			modelRuntime: harness.session.modelRuntime,
+			resourceLoader: createTestResourceLoader({ extensionsResult }),
+			sessionManager,
+			settingsManager: harness.settingsManager,
+			noTools: "all",
+		});
+
+		// then
+		expect(resumed.session.model).toMatchObject({ id: "candidate-medium" });
+		expect(sessionManager.getEntries().filter((entry) => entry.type === "model_change")).toMatchObject([
+			{ provider: "faux", modelId: "saved-small" },
+			{ provider: "faux", modelId: "candidate-medium" },
+		]);
+		resumed.session.dispose();
+	});
+
 	it("rejects a resumed session whose restored transcript exceeds the startup budget", async () => {
 		// given
 		const harness = await createHarness({
