@@ -123,7 +123,16 @@ function buildTitleOptions(options: GenerateSessionTitleOptions): SimpleStreamOp
 		...options.baseOptions,
 		sessionId: options.sessionId,
 		cacheRetention: options.model.cacheRetention === "none" ? "none" : "short",
-		maxTokens: 64,
+		// Titles are cosmetic background work, but leaving `reasoning` unset makes
+		// reasoning-capable models fall back to the provider's "disabled" mapping
+		// (e.g. `reasoning: { effort: "none" }` on OpenRouter), which
+		// reasoning-mandatory endpoints (e.g. Z.ai GLM 5.x) reject with HTTP 400
+		// "Reasoning is mandatory for this endpoint and cannot be disabled.".
+		// Ask for low reasoning explicitly instead; non-reasoning models ignore it.
+		reasoning: "low",
+		// Low reasoning consumes part of the completion budget on token-based
+		// providers, so keep room for the actual `<title>` output.
+		maxTokens: 1024,
 	};
 	if (options.auth.apiKey !== undefined) {
 		titleOptions.apiKey = options.auth.apiKey;

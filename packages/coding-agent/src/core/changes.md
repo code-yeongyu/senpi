@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-02 - Session title requests ask for low reasoning
+
+### What changed
+
+- `session-title-generator.ts`: `buildTitleOptions()` now sets `reasoning: "low"` and raises the title request's `maxTokens` from 64 to 1024.
+
+### Why
+
+- Leaving `reasoning` unset on the title request makes token-based providers fall back to their "disabled" mapping (e.g. `reasoning: { effort: "none" }` on OpenRouter-format models). Reasoning-mandatory endpoints such as Z.ai GLM 5.x reject that with HTTP 400 `Reasoning is mandatory for this endpoint and cannot be disabled.`, which surfaced as a repeated `session_title_generation` runtime error in every session on those models (agent turns were unaffected because they always carry the session's thinking level). Low reasoning keeps the cosmetic title cheap while producing a request every endpoint accepts; non-reasoning models ignore the hint via level clamping. The larger `maxTokens` keeps room for the `<title>` output once reasoning tokens count against the completion budget.
+
+### Why an extension could not handle it
+
+- Title generation is core background work invoked from `agent-session.ts`; extensions cannot alter the request options of the internal title call.
+
+### Expected merge conflict zones
+
+- LOW: the `buildTitleOptions()` literal in `session-title-generator.ts` and the new `generateSessionTitle` describe block in `test/session-title-generator.test.ts`.
+
 ## 2026-08-31 - Session activity contract for host occupancy decisions
 
 ### What changed

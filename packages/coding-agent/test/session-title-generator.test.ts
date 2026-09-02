@@ -1,5 +1,65 @@
+import type {
+	Api,
+	AssistantMessage,
+	AssistantMessageEventStream,
+	Model,
+	SimpleStreamOptions,
+} from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import { humanizeProviderError, sessionTitleRetryPolicy } from "../src/core/session-title-generator.ts";
+import {
+	generateSessionTitle,
+	humanizeProviderError,
+	sessionTitleRetryPolicy,
+} from "../src/core/session-title-generator.ts";
+
+const TITLE_MODEL = {
+	api: "openai-completions",
+	provider: "openrouter",
+	id: "z-ai/glm-5.3-flash",
+	reasoning: true,
+	baseUrl: "https://openrouter.ai/api/v1",
+} as unknown as Model<Api>;
+
+function fakeTitleStream(text: string): {
+	streamFn: NonNullable<Parameters<typeof generateSessionTitle>[0]["streamFn"]>;
+	capturedOptions: () => SimpleStreamOptions | undefined;
+} {
+	let captured: SimpleStreamOptions | undefined;
+	const message = {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: "openai-completions",
+		provider: "openrouter",
+		model: "z-ai/glm-5.3-flash",
+		usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+		stopReason: "stop",
+	} as unknown as AssistantMessage;
+	const streamFn = ((_model: unknown, _context: unknown, options: SimpleStreamOptions | undefined) => {
+		captured = options;
+		return { result: async () => message } as unknown as AssistantMessageEventStream;
+	}) as NonNullable<Parameters<typeof generateSessionTitle>[0]["streamFn"]>;
+	return { streamFn, capturedOptions: () => captured };
+}
+
+describe("generateSessionTitle", () => {
+	it("requests low reasoning so reasoning-mandatory endpoints do not reject the title call", async () => {
+		const { streamFn, capturedOptions } = fakeTitleStream("<title>Fix Login Bug</title>");
+		const title = await generateSessionTitle({
+			firstPrompt: "Fix the login bug in the auth service",
+			model: TITLE_MODEL,
+			auth: {},
+			sessionId: "test-session",
+			streamFn,
+			retry: { enabled: false, maxRetries: 0, baseDelayMs: 0 },
+		});
+		expect(title).toBe("Fix Login Bug");
+		const options = capturedOptions();
+		// Unset reasoning makes pi-ai send `reasoning: { effort: "none" }` on
+		// OpenRouter, which reasoning-mandatory endpoints reject with HTTP 400.
+		expect(options?.reasoning).toBe("low");
+		expect(options?.maxTokens).toBe(1024);
+	});
+});
 
 describe("sessionTitleRetryPolicy", () => {
 	it("caps the cosmetic title retry below the full agent-turn budget", () => {
