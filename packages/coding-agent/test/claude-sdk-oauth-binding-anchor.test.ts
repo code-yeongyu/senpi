@@ -4,12 +4,10 @@ import {
 	BINDING_ENTRY_TYPE,
 	BINDING_MARKER,
 	bindingFromStoredBranch,
-	sentHashesFromBranch,
 	storedBindingFromEntry,
 } from "../src/core/extensions/builtin/claude-sdk-oauth/session-binding.ts";
 import type { StoredBinding } from "../src/core/extensions/builtin/claude-sdk-oauth/session-binding-store.ts";
 import { assistantContentHash } from "../src/core/extensions/builtin/claude-sdk-oauth/session-commit-boundary.ts";
-import { sentMessageHashes, sentMessages } from "../src/core/extensions/builtin/claude-sdk-oauth/session-sync.ts";
 
 const PROMPT_HASH = "1".repeat(64);
 const TOOLSET_HASH = "2".repeat(64);
@@ -135,59 +133,6 @@ describe("claude-sdk-oauth stored binding anchor", () => {
 		];
 
 		expect(bindingFromStoredBranch(branch, stored())).toBeUndefined();
-	});
-
-	it("derives hashes from the active context after compaction", () => {
-		const before = { role: "user" as const, content: [{ type: "text" as const, text: "before" }], timestamp: 1 };
-		const after = { role: "user" as const, content: [{ type: "text" as const, text: "after" }], timestamp: 3 };
-		const fromBranch = sentHashesFromBranch([
-			{ type: "message", id: "u1", parentId: null, timestamp: "2026-09-02T00:00:01.000Z", message: before },
-			{
-				type: "compaction",
-				id: "c1",
-				parentId: "u1",
-				timestamp: "2026-09-02T00:00:02.000Z",
-				summary: "Earlier work summarized.",
-				firstKeptEntryId: "u1",
-				tokensBefore: 100,
-			},
-			{ type: "message", id: "u2", parentId: "c1", timestamp: "2026-09-02T00:00:03.000Z", message: after },
-		]);
-
-		expect(fromBranch).toEqual(sentMessageHashes(sentMessages({ messages: [before, after] } as never)));
-	});
-
-	it("derives branch hashes exactly as the context path does", () => {
-		// A content-less user message is skipped when the provider builds its sent
-		// stream; if only one side skips it, every later index shifts and a restart
-		// reports a false divergence.
-		const transmitted = {
-			role: "user" as const,
-			content: [{ type: "text" as const, text: "real turn" }],
-			timestamp: 1,
-		};
-		const contentless = { role: "user" as const, content: [], timestamp: 2 };
-
-		const fromBranch = sentHashesFromBranch([
-			{
-				type: "message",
-				id: "u1",
-				parentId: null,
-				timestamp: "2026-09-02T00:00:01.000Z",
-				message: transmitted,
-			},
-			{
-				type: "message",
-				id: "u2",
-				parentId: "u1",
-				timestamp: "2026-09-02T00:00:02.000Z",
-				message: contentless,
-			},
-		]);
-		const fromContext = sentMessageHashes(sentMessages({ messages: [transmitted, contentless] } as never));
-
-		expect(fromBranch).toEqual(fromContext);
-		expect(fromBranch).toHaveLength(1);
 	});
 
 	it("keeps the sidecar fixed-size when the conversation grows", () => {

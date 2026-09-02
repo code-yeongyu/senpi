@@ -4,16 +4,16 @@
 
 ### What changed
 
-- Derive persisted sent-stream hashes from the same compaction-aware active context projection used by the session runtime instead of refusing every branch that contains a compaction entry.
+- Derive persisted sent-stream hashes directly from `SessionManager.buildSessionContext()`, the same compaction-aware active context projection used by the runtime. Do not reconstruct it from `getBranch()`: a long-running resident mirror may have externalized message bodies that the manager can restore but a copied branch cannot.
 - Recreate the fixed-size restart sidecar after the first successful post-compaction assistant turn.
 
 ### Why
 
-- Accepted compaction deleted the previous sidecar, and the old branch walker returned no hashes forever after. Restarting a long compacted session therefore cold-seeded hundreds of messages; an aborted seed left a zero-count lineage that replayed the entire context again and failed with `invalid_request`.
+- Accepted compaction deleted the previous sidecar, and the old branch walker returned no hashes forever after. A first attempted fix rebuilt context from `getBranch()`, but live instrumentation on the affected 527-message session measured `hashes: 0` there while reopening the same file through `buildSessionContext()` produced 386 transmitted hashes. Restarting without a sidecar cold-seeded hundreds of messages; an aborted seed left a zero-count lineage that replayed the entire context again and failed with `invalid_request`.
 
 ### Expected merge conflict zones
 
-- LOW: `session-binding.ts` at `sentHashesFromBranch`, plus the restart and binding-anchor regressions.
+- LOW: `session-registry-wiring.ts` at the `message_end` persistence seam, plus the restart regression.
 
 ## 2026-09-02 - Preserve selected OAuth slot during resume
 

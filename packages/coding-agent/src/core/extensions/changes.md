@@ -1,5 +1,23 @@
 # Core Extensions Changes
 
+## Restore pre-fallback session model through extension settings (2026-09-02)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionSessionSettings` adds the narrow async `restoreFallbackPrimary()` action.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the no-op extension runtime returns `false` for that action when no live session owns fallback state.
+
+### Why
+
+- The builtin `/fallback restore` command needs a typed host capability that restores the retry controller's recorded original model and thinking level without exposing controller internals or changing global defaults.
+
+### Why an extension could not handle it
+
+- The extension can request restoration but cannot read or mutate `AgentSession`'s private fallback state directly.
+
+### Expected merge conflict zones
+
+- LOW: `ExtensionSessionSettings` and the no-op session-settings fixture in `runner.ts`.
 
 ## Expose the extension event bus for session activity signals (2026-08-31)
 

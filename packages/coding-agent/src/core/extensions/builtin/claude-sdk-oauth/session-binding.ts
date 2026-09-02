@@ -1,9 +1,8 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { buildSessionContext, type SessionEntry } from "../../../session-manager.ts";
 import type { StoredBinding } from "./session-binding-store.ts";
 import { assistantContentHash } from "./session-commit-boundary.ts";
 import type { ContinuityBinding } from "./session-reattach.ts";
-import { isTransmittedMessage, sentHashPrefixDigest, sentMessageHashes } from "./session-sync.ts";
+import { sentHashPrefixDigest } from "./session-sync.ts";
 
 export const BINDING_ENTRY_TYPE = "claude-sdk-oauth-binding";
 export const BINDING_MARKER = { schemaVersion: 2, marker: true } as const;
@@ -65,12 +64,6 @@ export function storedBindingFromEntry(
 		systemPromptHash: entry.systemPromptHash,
 		toolsetHash: entry.toolsetHash,
 	};
-}
-
-/** Hashes for the user/toolResult messages the persisted branch already carries. */
-export function sentHashesFromBranch(branch: readonly SessionEntry[]): string[] {
-	const context = buildSessionContext([...branch], branch[branch.length - 1]?.id);
-	return sentMessageHashes(context.messages.filter(isTransmittedMessage));
 }
 
 export function bindingFromStoredBranch(

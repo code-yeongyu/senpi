@@ -1,25 +1,23 @@
 # changes
 
-## 2026-09-02 - Retry provider aborts and restore the pre-fallback model
+## 2026-09-02 - Restore the pre-fallback model
 
 ### What changed
 
-- Provider-owned `This operation was aborted` results enter the ordinary turn retry budget, which defaults to three retries, before model fallback. Explicit user aborts remain terminal.
 - `/fallback restore` switches only the current session back to the model and thinking level active before fallback, then clears the live fallback state.
 - `ExtensionSessionSettings` exposes the narrow `restoreFallbackPrimary()` action used by the builtin command.
 
 ### Why
 
-- A fallback provider could return an operation abort once and strand the session after a single attempt even though the existing transient retry budget was three.
 - Operators had no direct session command to undo an unwanted fallback without manually reconstructing the original model selector and thinking level.
 
 ### Why an extension could not handle it
 
-- Retry admission and the pre-fallback model/thinking state are owned by `AgentSession` and its retry controller. The builtin command uses only the narrow session action exposed by core.
+- The pre-fallback model/thinking state is owned by `AgentSession` and its retry controller. The builtin command uses only the narrow session action exposed by core.
 
 ### Expected merge conflict zones
 
-- MEDIUM: retry admission in `_processAgentEvent`, `sessionSettings` binding in `_bindExtensionCore`, and the `ExtensionSessionSettings` public contract.
+- MEDIUM: `sessionSettings` binding in `_bindExtensionCore` and the `ExtensionSessionSettings` public contract.
 - LOW: the builtin `/fallback` argument router.
 
 ## 2026-09-01 - Negotiate RPC session auto-titling

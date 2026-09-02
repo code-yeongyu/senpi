@@ -6,7 +6,6 @@ import {
 	BINDING_MARKER,
 	type BindingInvalidation,
 	bindingFromStoredBranch,
-	sentHashesFromBranch,
 	storedBindingFromEntry,
 } from "./session-binding.ts";
 import { deleteStoredBinding, readStoredBinding, writeStoredBinding } from "./session-binding-store.ts";
@@ -24,7 +23,7 @@ import {
 	recordPendingFork,
 	switchSessionModel,
 } from "./session-registry.ts";
-import { sentHashesForEntry } from "./session-sync.ts";
+import { isTransmittedMessage, sentHashesForEntry, sentMessageHashes } from "./session-sync.ts";
 
 const commitBoundary = new AssistantCommitBoundary();
 
@@ -137,7 +136,7 @@ export function registerSessionRegistry(
 		if (outcome !== "clean") return;
 		const sessionFile = ctx.sessionManager.getSessionFile?.();
 		if (!sessionFile || !pi.appendEntry) return;
-		const hashes = sentHashesFromBranch(ctx.sessionManager.getBranch());
+		const hashes = sentMessageHashes(ctx.sessionManager.buildSessionContext().messages.filter(isTransmittedMessage));
 		if (hashes.length === 0) return;
 		pi.appendEntry(BINDING_ENTRY_TYPE, BINDING_MARKER);
 		const markerEntryId = ctx.sessionManager.getLeafId();

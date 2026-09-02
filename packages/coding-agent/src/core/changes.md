@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-02 - Restore pre-fallback session state
+
+### What changed
+
+- The session settings binding exposes `restoreFallbackPrimary()`, which resolves the controller's recorded original model, switches only the current session, restores its prior thinking level, and clears live fallback state through the normal manual model-change path.
+
+### Why
+
+- Operators needed a direct way to undo an unwanted fallback without changing global model defaults or reconstructing the previous thinking level.
+
+### Why an extension could not handle it
+
+- The original model/thinking snapshot is private `AgentSession` and retry-controller state. The builtin command consumes the narrow session action rather than reaching into core.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `sessionSettings` object in `_bindExtensionCore`.
+
 ## 2026-08-31 - Session activity contract for host occupancy decisions
 
 ### What changed

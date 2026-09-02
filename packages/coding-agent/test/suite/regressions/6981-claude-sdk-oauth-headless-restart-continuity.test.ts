@@ -214,6 +214,15 @@ describe("issue #6981 headless restart continuity", () => {
 
 	it("recreates restart continuity after compaction", async () => {
 		const { sessionFile, branch } = sessionFixture();
+		// A long-running resident mirror may no longer carry the materialized
+		// message bodies that SessionManager.buildSessionContext() can restore.
+		// Persistence must consume the manager's active context, not rebuild it
+		// from this lossy branch projection.
+		branch[0] = {
+			type: "message",
+			id: "user-entry",
+			message: { role: "user" as const, content: [], timestamp: 1 },
+		};
 		const currentUser = {
 			role: "user" as const,
 			content: [{ type: "text" as const, text: "after compaction" }],
@@ -229,7 +238,12 @@ describe("issue #6981 headless restart continuity", () => {
 				tokensBefore: 200_000,
 				timestamp: 2,
 			},
-			{ type: "message", id: "current-user", parentId: "compaction-entry", message: currentUser },
+			{
+				type: "message",
+				id: "current-user",
+				parentId: "compaction-entry",
+				message: { role: "user" as const, content: [], timestamp: 3 },
+			},
 		);
 		const extension = fakeExtension(branch);
 		registerSessionRegistry(extension.api);
@@ -241,7 +255,7 @@ describe("issue #6981 headless restart continuity", () => {
 		expect(await readStoredBinding(sessionFile)).toMatchObject({
 			sessionId: SESSION_ID,
 			sdkSessionId: entry.sdkSessionId,
-			sentCount: 2,
+			sentCount: 1,
 		});
 	});
 });

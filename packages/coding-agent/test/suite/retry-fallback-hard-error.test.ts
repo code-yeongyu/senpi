@@ -224,31 +224,4 @@ describe("retry fallback hard errors", () => {
 		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
 	});
-
-	it("retries a provider operation abort three times before fallback", async () => {
-		const harness = await createHarness({
-			models: [{ id: "faux-1" }, { id: "faux-2" }],
-			settings: {
-				retry: { enabled: true, maxRetries: 3, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
-			},
-		});
-		harnesses.push(harness);
-		harness.setResponses([
-			...Array.from({ length: 4 }, () =>
-				fauxAssistantMessage("", { stopReason: "aborted", errorMessage: "This operation was aborted" }),
-			),
-			fauxAssistantMessage("fallback answer"),
-		]);
-
-		await harness.session.prompt("hello");
-
-		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual([
-			"faux-1",
-			"faux-1",
-			"faux-1",
-			"faux-1",
-			"faux-2",
-		]);
-		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([{ reason: "transient" }]);
-	});
 });

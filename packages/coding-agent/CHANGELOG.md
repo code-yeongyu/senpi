@@ -12,8 +12,6 @@
 
 - Claude SDK OAuth sessions recreate restart continuity after compaction instead of permanently losing their sidecar and replaying the full compacted context on the next process start.
 
-- Provider-owned operation aborts now use the configured turn retry budget (three retries by default) before model fallback; explicit user aborts remain terminal.
-
 - Claude SDK OAuth and Cursor CLI OAuth account additions now retain the provider-added account instead of creating an unusable sentinel `login-N` entry that could be selected on the next turn and fail with `Provider is not configured` ([#1262](https://github.com/code-yeongyu/senpi/pull/1262) by [@eddieparc](https://github.com/eddieparc)).
 
 - The shared RPC host now starts on Windows: socket endpoints resolve to `\\.\pipe\` named-pipe addresses derived from a per-endpoint secret (stored `0600` beside the logical path) with a constant-time authenticated handshake gating both the public and internal listeners, pidfile ownership proof no longer depends on MSYS `ps`, logical-path filesystem cleanup is skipped for named pipes, and detached supervisor/daemon startup failures no longer leak live children or signal reused PIDs. POSIX transports keep the prior unix-socket + `0600` behavior.

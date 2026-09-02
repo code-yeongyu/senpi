@@ -2349,12 +2349,8 @@ export class AgentSession {
 			const retryAfterRequiredCompaction =
 				requiredAutoCompaction !== undefined && this._isRequiredCompactionError(msg);
 
-			// A provider-owned AbortError is not a user cancellation. Admit it to
-			// the ordinary three-retry turn budget, then fall back if it persists.
-			// User/system abort provenance still wins and never replays a cancelled turn.
-			const providerOperationAbort =
-				msg.stopReason === "aborted" && msg.errorMessage?.trim().toLowerCase() === "this operation was aborted";
-			const retryableError = this._isRetryableError(msg) || providerOperationAbort;
+			// Retry transient failures normally and eligible hard errors only through a fallback.
+			const retryableError = this._isRetryableError(msg);
 			const hardErrorFallbackEligible = this._isHardErrorFallbackEligible(msg);
 			const cursorZeroTokenRe = isCursorZeroTokenResourceExhausted(msg);
 			const cursorQuotaRe = isCursorQuotaResourceExhausted(msg, this.model?.contextWindow ?? 0);
