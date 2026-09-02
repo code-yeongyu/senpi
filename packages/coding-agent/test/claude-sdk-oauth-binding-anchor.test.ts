@@ -89,14 +89,32 @@ describe("claude-sdk-oauth stored binding anchor", () => {
 		expect(bindingFromStoredBranch([marker(), assistantEntry(assistant("rewritten"))], stored())).toBeUndefined();
 	});
 
-	it("rejects an anchor followed by later conversation context", () => {
+	it("allows unsent goal continuation context after the committed assistant", () => {
 		const branch = [
 			marker(),
 			assistantEntry(),
-			{ type: "message" as const, id: "later-user", message: { role: "user" as const } },
+			{
+				type: "custom_message" as const,
+				id: "goal-continuation",
+				customType: "goal-continuation",
+				content: "Continue the active goal.",
+			},
+			{
+				type: "custom" as const,
+				id: "goal-cache",
+				customType: "goal-cache-warmup",
+				data: { phase: "scheduled" },
+			},
+			{ type: "message" as const, id: "later-user", message: { role: "user" as const, content: "resume" } },
 		];
 
-		expect(bindingFromStoredBranch(branch, stored())).toBeUndefined();
+		expect(bindingFromStoredBranch(branch, stored())).toMatchObject({ sdkSessionId: "sdk-1", sentCount: 2 });
+	});
+
+	it("rejects a stale anchor followed by another assistant", () => {
+		expect(
+			bindingFromStoredBranch([marker(), assistantEntry(), assistantEntry(assistant("later"))], stored()),
+		).toBeUndefined();
 	});
 
 	it("allows known non-context metadata after the committed assistant", () => {

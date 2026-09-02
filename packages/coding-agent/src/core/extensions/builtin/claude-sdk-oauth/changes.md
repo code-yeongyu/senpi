@@ -6,10 +6,12 @@
 
 - Derive persisted sent-stream hashes directly from `SessionManager.buildSessionContext()`, the same compaction-aware active context projection used by the runtime. Do not reconstruct it from `getBranch()`: a long-running resident mirror may have externalized message bodies that the manager can restore but a copied branch cannot.
 - Recreate the fixed-size restart sidecar after the first successful post-compaction assistant turn.
+- Admit post-anchor user/tool-result and automatic goal-continuation metadata as unsent restart delta. A later assistant or unknown state entry still rejects the stale anchor, and a newer binding invalidation remains authoritative.
 
 ### Why
 
 - Accepted compaction deleted the previous sidecar, and the old branch walker returned no hashes forever after. A first attempted fix rebuilt context from `getBranch()`, but live instrumentation on the affected 527-message session measured `hashes: 0` there while reopening the same file through `buildSessionContext()` produced 386 transmitted hashes. Restarting without a sidecar cold-seeded hundreds of messages; an aborted seed left a zero-count lineage that replayed the entire context again and failed with `invalid_request`.
+- The corrected sidecar was then created on the real session, but restart admission deleted it because `goal-continuation`, memory state, and the next user input followed the anchored assistant. Those entries do not rewrite the trusted assistant; they are the delta the resumed query must consume.
 
 ### Expected merge conflict zones
 

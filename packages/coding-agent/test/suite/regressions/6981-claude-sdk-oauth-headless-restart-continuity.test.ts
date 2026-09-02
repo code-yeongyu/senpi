@@ -33,6 +33,8 @@ type BranchEntry = {
 	type: string;
 	parentId?: string;
 	customType?: string;
+	content?: unknown;
+	display?: boolean;
 	data?: unknown;
 	message?: unknown;
 	summary?: string;
@@ -178,6 +180,21 @@ describe("issue #6981 headless restart continuity", () => {
 
 		await emit(extension.handlers, "message_end", { type: "message_end", message: assistant() }, eventContext);
 		branch.push({ type: "message", id: "assistant-entry", message: assistant() });
+		branch.push(
+			{
+				type: "custom_message",
+				id: "goal-continuation",
+				customType: "goal-continuation",
+				content: "Continue working toward the active thread goal.",
+				display: false,
+			},
+			{
+				type: "custom",
+				id: "goal-cache",
+				customType: "goal-cache-warmup",
+				data: { phase: "scheduled" },
+			},
+		);
 
 		expect(extension.persisted).toEqual([{ customType: BINDING_ENTRY_TYPE, data: BINDING_MARKER }]);
 		expect(await readStoredBinding(sessionFile)).toMatchObject({

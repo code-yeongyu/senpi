@@ -97,11 +97,22 @@ const SAFE_BINDING_SUFFIX_TYPES: ReadonlySet<string> = new Set([
 	"senpi.hooks.stop-output",
 	"pi-rules.scan",
 	"rule-activation",
+	"goal-cache-warmup",
+	"senpi-memory.session-binding",
+	"omo-memory:accepted-turns",
 ]);
 
 function isSafeBindingSuffix(entry: BranchEntry): boolean {
-	if (entry.type === "label") return true;
+	if (entry.type === "label" || entry.type === "custom_message") return true;
+	if (entry.type === "message") {
+		return isSentMessage(entry.message);
+	}
 	return entry.type === "custom" && entry.customType !== undefined && SAFE_BINDING_SUFFIX_TYPES.has(entry.customType);
+}
+
+function isSentMessage(value: unknown): boolean {
+	if (typeof value !== "object" || value === null || !("role" in value)) return false;
+	return value.role === "user" || value.role === "toolResult";
 }
 
 function newestBindingEntryIndex(branch: readonly BranchEntry[]): number {
