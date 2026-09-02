@@ -74,7 +74,7 @@ describe("imagegen skill contribution", () => {
 
 		const resources = await runner.emitResourcesDiscover(cwd, "startup");
 		const skillPaths = resources.skillPaths.map((entry) => entry.path);
-		const loaded = loadSkills({ cwd, agentDir: join(cwd, "agent"), skillPaths, includeDefaults: false });
+		const loaded = await loadSkills({ cwd, agentDir: join(cwd, "agent"), skillPaths, includeDefaults: false });
 		const prompt = await runner.emitBeforeAgentStart("draw an image", undefined, "base", { cwd });
 
 		expect(skillPaths).toHaveLength(1);

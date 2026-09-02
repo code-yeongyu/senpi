@@ -1,5 +1,13 @@
 # Local fork changes
 
+## 2026-09-02 - Load skill files concurrently at startup
+
+- `loadSkills` / `loadSkillsFromDir` are now async and read skill files concurrently while preserving skill and diagnostic order exactly. `resource-loader`'s `extendResources` / `updateSkillsFromPaths` and the app-server skills loader await them; startup with many skills no longer serializes disk reads.
+
+## 2026-09-02 - Keep the startup indicator through the interactive-mode import
+
+- The startup loading indicator now stays visible through the dynamic import of the interactive-mode module graph (the largest cold-start cost after resource loading) instead of stopping before it, which left a blank terminal that looked frozen.
+
 ## 2026-09-01 - Acknowledge RPC abort before quiesce
 
 - The RPC `abort` command now acknowledges immediately after dispatching the abort signal, while observing quiesce failures through the existing `rpc_error` event path.

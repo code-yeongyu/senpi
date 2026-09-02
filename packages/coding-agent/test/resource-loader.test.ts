@@ -716,7 +716,7 @@ Extra prompt content`,
 			const loader = new DefaultResourceLoader({ cwd, agentDir });
 			await loader.reload();
 
-			loader.extendResources({
+			await loader.extendResources({
 				skillPaths: [
 					{
 						path: extraSkillDir,
@@ -770,7 +770,7 @@ Extra content`,
 			const loader = new DefaultResourceLoader({ cwd, agentDir });
 			await loader.reload();
 
-			loader.extendResources({
+			await loader.extendResources({
 				skillPaths: [
 					{
 						path: pathToFileURL(extraSkillDir).href,
@@ -865,7 +865,7 @@ Extension prompt content`,
 				scope: "temporary",
 				origin: "top-level",
 			} as const;
-			loader.extendResources({
+			await loader.extendResources({
 				skillPaths: [{ path: extensionSkillDir, metadata: extensionMetadata }],
 				promptPaths: [{ path: extensionPromptsDir, metadata: extensionMetadata }],
 				themePaths: [{ path: extensionThemesDir, metadata: extensionMetadata }],

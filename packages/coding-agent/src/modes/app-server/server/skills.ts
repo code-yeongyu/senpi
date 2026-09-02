@@ -131,11 +131,11 @@ function findLoadedLoader(
 
 async function createLoader(cwd: string, options: SkillsListEntryOptions): Promise<SkillResourceLoader> {
 	if (options.resourceLoaderFactory) return options.resourceLoaderFactory(cwd);
-	let loaded = loadSkills({ cwd, agentDir: options.agentDir, skillPaths: [], includeDefaults: true });
+	let loaded = await loadSkills({ cwd, agentDir: options.agentDir, skillPaths: [], includeDefaults: true });
 	return {
 		getSkills: () => loaded,
 		reload: async () => {
-			loaded = loadSkills({ cwd, agentDir: options.agentDir, skillPaths: [], includeDefaults: true });
+			loaded = await loadSkills({ cwd, agentDir: options.agentDir, skillPaths: [], includeDefaults: true });
 		},
 	};
 }
