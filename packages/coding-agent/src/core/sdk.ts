@@ -143,6 +143,16 @@ interface StartupRecoveryModel {
 	order: number;
 }
 
+class SessionResumeModelUnavailableError extends ModelUsabilityBudgetError {
+	constructor(error: ModelUsabilityBudgetError) {
+		super(error.projection);
+		this.name = "SessionResumeModelUnavailableError";
+		this.message =
+			"Cannot resume this session: no authenticated model has enough usable context budget for the restored history. " +
+			"Configure a larger-context model or start a new session.";
+	}
+}
+
 function findStartupRecoveryModels(
 	session: AgentSession,
 	modelRuntime: ModelRuntime,
@@ -579,16 +589,25 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			}
 			unavailableProviders.add(candidate.model.provider);
 		}
-		if (!recovery) throw error;
+		if (!recovery) throw new SessionResumeModelUnavailableError(error);
 
 		const restoredModel = session.model;
 		if (!restoredModel) throw error;
 		await session.setStartupRecoveryModel(recovery.model, liveContextTokens);
-		session.assertModelUsable(undefined, liveContextTokens);
+		const admittedProjection = projectModelUsabilityBudget({
+			model: recovery.model,
+			systemPrompt: session.agent.state.systemPrompt,
+			tools: session.agent.state.tools,
+			liveContextTokens,
+			compaction: settingsManager.getCompactionSettings(),
+		});
+		if (!admittedProjection.usable) {
+			throw new ModelUsabilityBudgetError(admittedProjection);
+		}
 		const recoveryMessage =
 			`Restored context exceeds ${restoredModel.provider}/${restoredModel.id}'s usable budget. ` +
-			`Using ${recovery.projection.model} for this session with ` +
-			`${recovery.projection.contextWindow - recovery.projection.requiredTokens} tokens of remaining budget.`;
+			`Using ${admittedProjection.model} for this session with ` +
+			`${admittedProjection.contextWindow - admittedProjection.requiredTokens} tokens of remaining budget.`;
 		modelFallbackMessage = modelFallbackMessage ? `${modelFallbackMessage}. ${recoveryMessage}` : recoveryMessage;
 	}
 	cursorBridgeSessionRef.current = session;

@@ -4602,7 +4602,7 @@ export class AgentSession {
 			emitModelSelect: true,
 			modelSelectSource: "restore",
 			invalidateCompaction: true,
-			ephemeralThinkingLevel: this.thinkingLevel,
+			persistThinkingLevel: false,
 			liveContextTokens,
 		});
 		this.sessionManager.appendModelChange(
@@ -4672,6 +4672,7 @@ export class AgentSession {
 			modelSelectSource: ModelSelectSource;
 			invalidateCompaction: boolean;
 			ephemeralThinkingLevel?: ThinkingLevel;
+			persistThinkingLevel?: boolean;
 			liveContextTokens?: number;
 		},
 	): Promise<SystemPromptChangeEvent | undefined> {
@@ -4708,6 +4709,8 @@ export class AgentSession {
 		this._currentServiceTier = this._resolveServiceTier(model, scopedMatch?.serviceTier);
 
 		if (opts.ephemeralThinkingLevel !== undefined) {
+			this._applyEphemeralThinkingLevel(thinking.level);
+		} else if (opts.persistThinkingLevel === false) {
 			this._applyEphemeralThinkingLevel(thinking.level);
 		} else {
 			this._setThinkingLevel(thinking.level, false, thinking.selection);

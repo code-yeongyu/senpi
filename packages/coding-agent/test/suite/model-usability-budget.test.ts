@@ -345,7 +345,10 @@ describe("model usability budget", () => {
 			(reason: unknown) => reason,
 		);
 		expect(error).toMatchObject({
-			name: "ModelUsabilityBudgetError",
+			name: "SessionResumeModelUnavailableError",
+			message:
+				"Cannot resume this session: no authenticated model has enough usable context budget for the restored history. " +
+				"Configure a larger-context model or start a new session.",
 			projection: {
 				model: "faux/startup",
 				liveContextTokens: expect.any(Number),
@@ -438,6 +441,7 @@ describe("model usability budget", () => {
 		expect(sessionManager.getEntries().filter((entry) => entry.type === "model_change")).toEqual(
 			originalModelChanges,
 		);
+		expect(sessionManager.getEntries().filter((entry) => entry.type === "thinking_level_change")).toHaveLength(1);
 	});
 
 	it("keeps fresh and fitting resumed sessions accepted", async () => {
