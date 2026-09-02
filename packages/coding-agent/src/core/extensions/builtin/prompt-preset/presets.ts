@@ -1,6 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.ts";
 import { buildClaudeFable5Prompt } from "./claude-fable-5.ts";
+import { buildClaudeFable51Prompt } from "./claude-fable-5-1.ts";
 import { buildClaudeOpus45Prompt } from "./claude-opus-4-5.ts";
 import { buildClaudeOpus46Prompt } from "./claude-opus-4-6.ts";
 import { buildClaudeOpus47Prompt } from "./claude-opus-4-7.ts";
@@ -154,6 +155,11 @@ function isGrok46Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGrok46Signal(model.id) || (model.name !== undefined && hasGrok46Signal(model.name));
 }
 
+function isClaudeFable51Model(modelId: string): boolean {
+	const normalized = normalizeModelId(modelId);
+	return normalized.includes("fable-5-1") || normalized.includes("fable-5.1");
+}
+
 function isClaudeFable5Model(modelId: string): boolean {
 	return normalizeModelId(modelId).includes("fable-5");
 }
@@ -206,6 +212,10 @@ export function resolvePresetName(
 	}
 	if (isKimiK26Model(model)) {
 		return "kimi-k2-6";
+	}
+	// The dotted release must resolve before the generic fable-5 substring.
+	if (isClaudeFable51Model(model.id)) {
+		return "claude-fable-5-1";
 	}
 	if (isClaudeFable5Model(model.id)) {
 		return "claude-fable-5";
@@ -276,6 +286,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildKimiK27Prompt(options) };
 		case "kimi-k2-6":
 			return { name, prompt: buildKimiK26Prompt(options) };
+		case "claude-fable-5-1":
+			return { name, prompt: buildClaudeFable51Prompt(options) };
 		case "claude-fable-5":
 			return { name, prompt: buildClaudeFable5Prompt(options) };
 		case "claude-opus-5":

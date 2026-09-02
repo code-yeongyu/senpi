@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -24,6 +24,13 @@ import {
 	INTERNAL_SUPERVISOR_FLAG,
 } from "./host-lifecycle.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
+import {
+	createSocketSecret,
+	readSocketSecret,
+	resolveSocketTransportAddress,
+	sendSocketHandshake,
+	socketSecretPath,
+} from "./socket-transport.ts";
 
 export type { HostColdStart, HostLifecyclePolicyInput };
 
@@ -66,6 +73,8 @@ type ProtocolInfo = {
 
 const lockOptions = { retries: { retries: 100, minTimeout: 20, maxTimeout: 100 } } as const;
 const REQUIRED_CAPABILITIES = ["multi_session", EXTENSION_EVENTS_CAPABILITY] as const;
+const SPAWNED_HOST_PROBE_TIMEOUT_MS = 10_000;
+const EXISTING_HOST_PROBE_TIMEOUT_MS = 10_000;
 /**
  * Every ensured host starts with this installation-wide profile, independent of
  * the first caller. In particular, extension_events must remain available when
@@ -95,6 +104,7 @@ export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHos
 	await writeFile(lockTarget, "", { flag: "a", mode: 0o600 });
 	const release = await acquireOwnershipSafeLock(`${lockTarget}.lock`, lockOptions);
 	try {
+		await reapOrphanedInternalHostDirs();
 		await options._test?.afterLockAcquired?.();
 		return await ensureHostLocked(paths, socket, options.agentDir ?? getAgentDir(), options.policy, options._test);
 	} finally {
@@ -110,7 +120,7 @@ async function ensureHostLocked(
 	testOptions: EnsureHostOptions["_test"],
 ): Promise<EnsuredHost> {
 	const pidFile = await readPidFile(paths);
-	const protocol = await probeProtocolInfo(socket, 1_000);
+	const protocol = await probeProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
 	const pidMatches = pidFile ? await processMatchesPidFile(pidFile) : false;
 	if (isCompatible(protocol)) {
 		// A compatible socket is attachable even when another client surface
@@ -136,6 +146,7 @@ async function startHost(
 ): Promise<EnsuredHost> {
 	// The settings file must exist before the supervisor reads it at boot, so it
 	// records the policy before the spawn instead of beside the pidfile.
+	if (process.platform === "win32") await createSocketSecret(socketSecretPath(socket));
 	await writeFile(
 		paths.settingsFile,
 		`${JSON.stringify({
@@ -155,6 +166,7 @@ async function startHost(
 		const launch = testOptions?.spawn ?? defaultHostLaunch(socket, testOptions?.hostArgs ?? []);
 		child = spawn(launch.command, [...launch.args], {
 			detached: true,
+			windowsHide: true,
 			env: {
 				...process.env,
 				...(testOptions?.env ?? {}),
@@ -169,18 +181,35 @@ async function startHost(
 				resolveExit(exitedEarly);
 			});
 		});
-		child.unref();
 		if (child.pid === undefined) throw new Error("failed to spawn RPC socket host");
 		const processStartTime = await Promise.race([
-			waitForStartTime(child.pid, 2_000),
+			waitForStartTime(child.pid, 10_000),
 			childExit.then(() => {
 				throw new Error("RPC socket host exited before its start time could be read");
 			}),
 		]);
 		pidFile = { pid: child.pid, processStartTime };
 		await writeFile(paths.pidFile, `${JSON.stringify(pidFile)}\n`, { mode: 0o600 });
+		child.unref();
 	} catch (error: unknown) {
-		if (!exitedEarly) throw error;
+		// Keep the ChildProcess handle owned until registration succeeds. If startup
+		// fails before the pidfile is written, terminate this exact child through
+		// its still-attached handle rather than leaving an unmanaged daemon behind.
+		if (!exitedEarly && child && child.exitCode === null && child.signalCode === null) {
+			try {
+				child.kill("SIGTERM");
+			} catch {}
+			if (childExit) await Promise.race([childExit, delay(2_000)]);
+			if (child.exitCode === null && child.signalCode === null) {
+				try {
+					child.kill("SIGKILL");
+				} catch {}
+			}
+		}
+		if (!exitedEarly) {
+			await cleanupState(paths);
+			throw error;
+		}
 		const diagnostic = await appendStderr(
 			paths,
 			`RPC socket host exited with code ${exitedEarly.code ?? "null"}${exitedEarly.signal ? ` (${exitedEarly.signal})` : ""} before answering get_protocol_info`,
@@ -231,7 +260,7 @@ async function waitForGone(pidFile: DaemonPidFile, timeoutMs: number): Promise<b
 		if (!(await processMatchesPidFile(pidFile))) return true;
 		await delay(50);
 	}
-	return false;
+	return !(await processMatchesPidFile(pidFile));
 }
 
 type ChildExit = { readonly code: number | null; readonly signal: NodeJS.Signals | null };
@@ -246,12 +275,27 @@ async function pollProtocolInfo(
 	const deadline = Date.now() + timeoutMs;
 	let lastProtocol: ProtocolInfo | undefined;
 	while (Date.now() <= deadline) {
-		const probe = probeProtocolInfo(socket, Math.min(500, Math.max(1, deadline - Date.now())));
-		const info = childExit ? await Promise.race([probe, childExit]) : await probe;
-		if (isChildExit(info)) return { protocol: lastProtocol, exited: info };
-		if (info) {
-			lastProtocol = info;
-			if (isCompatible(info)) return { protocol: info };
+		const probe = probeProtocolInfo(
+			socket,
+			Math.min(SPAWNED_HOST_PROBE_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
+		);
+		const raced = childExit ? await Promise.race([probe, childExit]) : await probe;
+		if (isChildExit(raced)) {
+			// A supervisor exit can be triggered by the Windows identity watchdog
+			// while a named-pipe client is still composing its protocol reply. Do
+			// not terminate the host based solely on that exit until this probe has
+			// had a chance to deliver an answer. A host that never answers still
+			// resolves through probeProtocolInfo's bounded timeout/close handling.
+			const info = await probe;
+			if (info) {
+				lastProtocol = info;
+				if (isCompatible(info)) return { protocol: info };
+			} else {
+				return { protocol: lastProtocol, exited: raced };
+			}
+		} else if (raced) {
+			lastProtocol = raced;
+			if (isCompatible(raced)) return { protocol: raced };
 		}
 		await delay(50);
 	}
@@ -262,9 +306,18 @@ function isChildExit(value: ProtocolInfo | ChildExit | undefined): value is Chil
 	return !!value && "code" in value && "signal" in value;
 }
 
-function probeProtocolInfo(socketPath: string, timeoutMs: number): Promise<ProtocolInfo | undefined> {
+async function probeProtocolInfo(socketPath: string, timeoutMs: number): Promise<ProtocolInfo | undefined> {
+	let secret: Buffer | undefined;
+	if (process.platform === "win32") {
+		try {
+			secret = await readSocketSecret(socketSecretPath(socketPath));
+		} catch {
+			return undefined;
+		}
+	}
 	return new Promise((resolveProbe) => {
-		const socket = createConnection(socketPath);
+		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
+		if (secret) sendSocketHandshake(socket, secret);
 		let buffer = "";
 		let settled = false;
 		const finish = (value?: ProtocolInfo): void => {
@@ -321,6 +374,35 @@ async function readPidFile(paths: HostDaemonPaths): Promise<DaemonPidFile | unde
 	}
 }
 
+async function reapOrphanedInternalHostDirs(): Promise<void> {
+	try {
+		const entries = await readdir(tmpdir(), { withFileTypes: true });
+		await Promise.all(
+			entries
+				.filter((entry) => entry.isDirectory() && entry.name.startsWith("senpi-rpc-host-internal-"))
+				.map(async (entry) => {
+					try {
+						const owner = JSON.parse(await readFile(join(tmpdir(), entry.name, ".owner"), "utf8")) as {
+							pid?: unknown;
+							processStartTime?: unknown;
+							createdAt?: unknown;
+						};
+						if (
+							typeof owner.pid === "number" &&
+							typeof owner.processStartTime === "string" &&
+							typeof owner.createdAt === "number" &&
+							owner.processStartTime.length > 0 &&
+							owner.createdAt < Date.now() - 60_000 &&
+							(await readdir(join(tmpdir(), entry.name))).length === 1 &&
+							!(await processMatchesPidFile({ pid: owner.pid, processStartTime: owner.processStartTime }))
+						)
+							await rm(join(tmpdir(), entry.name), { recursive: true, force: true });
+					} catch {}
+				}),
+		);
+	} catch {}
+}
+
 async function cleanupState(paths: HostDaemonPaths): Promise<void> {
 	await rm(paths.pidFile, { force: true });
 	await rm(paths.settingsFile, { force: true });
@@ -337,7 +419,10 @@ async function appendStderr(paths: HostDaemonPaths, message: string): Promise<st
 }
 
 function createSocketLockName(socket: string): string {
-	return createHash("sha256").update(socket).digest("hex").slice(0, 32);
+	return createHash("sha256")
+		.update(resolveSocketTransportAddress(socket, process.platform), "utf8")
+		.digest("hex")
+		.slice(0, 32);
 }
 
 function normalizeSocketPath(value: string): string {

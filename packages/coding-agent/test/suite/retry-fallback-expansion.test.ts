@@ -20,6 +20,7 @@ function model(provider: string, id: string): Model<Api> {
 }
 
 const FABLE = "claude-fable-5";
+const FABLE51 = "claude-fable-5-1";
 const OPUS5 = "claude-opus-5";
 const OPUS48 = "claude-opus-4-8";
 
@@ -50,6 +51,7 @@ const sdkAndAnthropic = [
 describe("bare model-id family expansion", () => {
 	it("ships a provider-agnostic default chain with bare model ids", () => {
 		expect(DEFAULT_FALLBACK_CHAINS).toEqual({
+			[FABLE51]: ["k3:max", "kimi-k3:max", `${OPUS5}:xhigh`, `${OPUS48}:xhigh`],
 			[FABLE]: ["k3:max", "kimi-k3:max", `${OPUS5}:xhigh`, `${OPUS48}:xhigh`],
 			// Last-resort lane for models with no chain of their own.
 			"*": ["k3:max", "kimi-k3:max", `${OPUS5}:xhigh`, `${OPUS48}:xhigh`],

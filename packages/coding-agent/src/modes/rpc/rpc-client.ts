@@ -30,6 +30,12 @@ import type {
 	RpcSessionState,
 	RpcSlashCommand,
 } from "./rpc-types.ts";
+import {
+	readSocketSecret,
+	resolveSocketTransportAddress,
+	sendSocketHandshake,
+	socketSecretPath,
+} from "./socket-transport.ts";
 
 // ============================================================================
 // Types
@@ -180,6 +186,9 @@ export class RpcClient {
 			cwd: this.options.cwd,
 			env: { ...process.env, ...this.options.env },
 			stdio: ["pipe", "pipe", "pipe"],
+			// Callers may be console-less on win32 (GUI hosts, detached daemons), and a
+			// console-subsystem child would then allocate a fresh visible terminal window.
+			windowsHide: true,
 		});
 		this.process = childProcess;
 
@@ -262,7 +271,8 @@ export class RpcClient {
 	}
 
 	private async startSocket(path: string): Promise<void> {
-		const socket = createConnection(path);
+		const secret = process.platform === "win32" ? await readSocketSecret(socketSecretPath(path)) : undefined;
+		const socket = createConnection(resolveSocketTransportAddress(path, process.platform, secret));
 		this.socket = socket;
 		await new Promise<void>((resolve, reject) => {
 			const onConnect = () => {
@@ -281,6 +291,7 @@ export class RpcClient {
 			socket.once("connect", onConnect);
 			socket.once("error", onError);
 		});
+		if (secret) sendSocketHandshake(socket, secret);
 		this.stopReadingStdout = attachJsonlLineReader(socket, (line) => this.handleLine(line));
 		socket.once("close", () => {
 			if (this.socket !== socket) return;

@@ -1,5 +1,23 @@
 # changes
 
+## Windows RPC named-pipe suites gain a real Windows CI job (2026-09-01)
+
+### What changed
+
+- `.github/workflows/ci.yml` adds an `rpc-windows` job (`RPC named pipes (Windows)`, windows-latest, 20-minute timeout) that builds the workspace packages and runs `test/rpc-host-ensure.test.ts`, `test/rpc-host-lifecycle.test.ts`, `test/rpc-socket-transport.test.ts`, and `test/suite/app-server-daemon.test.ts` from `packages/coding-agent` on a real Windows runner.
+
+### Why
+
+- PR #1244 makes the shared RPC host work on Windows through named pipes with authenticated handshakes; the main coding-agent shards run on ubuntu only, so the win32-specific transport, lifecycle, and handshake behavior was untested in CI until this job.
+
+### Why an extension could not handle it
+
+- CI workflow wiring is repository build plumbing evaluated on GitHub's runners; no runtime extension surface can add a job to a GitHub Actions workflow.
+
+### Expected merge conflict zones
+
+- LOW: the job list at the end of `.github/workflows/ci.yml` and the `needs`/gate lists of `Check and test` whenever upstream adds or reorders CI jobs.
+
 ## Workflow summary step for the model catalog publisher (2026-09-01)
 
 ### What changed

@@ -6,6 +6,8 @@
 
 - `/fallback restore` returns the current session to the model and thinking level active before fallback without changing global defaults.
 
+- Claude Fable 5.1 gets its own system prompt preset (`claude-fable-5-1`): the dieted Fable 5 core plus surgical deltas from the Fable 5.1 prompting guide (scope-is-the-deliverable, per-response tool-call batching, surgical-edit preference, test-scope discipline, and formatting/narration recalibration). The dotted release resolves before the generic `fable-5` matcher, `promptPreset: "claude-fable-5-1"` can force it, and the fable default lanes now point at 5.1: the recommended default model, the shipped fallback chain (the `claude-fable-5` chain stays for sessions still on it), the startup tip, and doc examples.
+
 ### Fixed
 
 - Claude SDK OAuth sessions recreate restart continuity after compaction instead of permanently losing their sidecar and replaying the full compacted context on the next process start.
@@ -14,10 +16,11 @@
 
 - Claude SDK OAuth and Cursor CLI OAuth account additions now retain the provider-added account instead of creating an unusable sentinel `login-N` entry that could be selected on the next turn and fail with `Provider is not configured` ([#1262](https://github.com/code-yeongyu/senpi/pull/1262) by [@eddieparc](https://github.com/eddieparc)).
 
+- The shared RPC host now starts on Windows: socket endpoints resolve to `\\.\pipe\` named-pipe addresses derived from a per-endpoint secret (stored `0600` beside the logical path) with a constant-time authenticated handshake gating both the public and internal listeners, pidfile ownership proof no longer depends on MSYS `ps`, logical-path filesystem cleanup is skipped for named pipes, and detached supervisor/daemon startup failures no longer leak live children or signal reused PIDs. POSIX transports keep the prior unix-socket + `0600` behavior.
+
 - `/quit` and `/exit` submitted while startup is still finishing (managed-tool downloads) now quit instead of being parked back in the editor behind a "Startup is still in progress" notice. Parking the text also disabled the Ctrl+D quit escape, which only fires on an empty editor, so the usual way out was a dead end until the line was cleared by hand.
 
 - An extension calling `ctx.shutdown()` while the session is idle now shuts down immediately instead of waiting for an `agent_settled` event that an idle session never emits, which previously stranded the request until the user happened to run another turn.
-
 - Interactive quit now keeps stderr capture installed while session shutdown handlers drain during runtime disposal, so shutdown-time diagnostics (for example memory drain warnings) are recorded in the debug log instead of printing raw beside the resume hint. The TUI still stops first to avoid final-frame repaints, and stderr is restored after disposal even when disposal fails.
 
 - Multi-session RPC hosts launched with `SENPI_RPC_CLIENT_CAPABILITIES` (for example `extension_events`) now apply those capabilities to connection-owned session bindings when the client never sends `set_client_info`. Previously the launch capabilities were advertised through `get_protocol_info` but dropped at binding creation, so undeclared clients received no `extension_event` frames (breaking downstream task/DAG/monitor liveness in omo-desktop-app). An explicit `set_client_info` declaration, including an empty capability list, still overrides the launch default.

@@ -116,7 +116,7 @@ The bundled `model-fallback` extension registers `/fallback` to manage global pe
 Use the quick-set form in scripts or any non-TUI mode:
 
 ```text
-/fallback anthropic/claude-fable-5 ccapi/kimi-k3:max
+/fallback anthropic/claude-fable-5-1 ccapi/kimi-k3:max
 ```
 
 The first argument is the exact primary model selector; each later argument is an ordered fallback selector. Quick-set validates selectors before saving. At least one fallback is required:

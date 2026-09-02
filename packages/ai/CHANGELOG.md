@@ -6,6 +6,8 @@
 
 ### Added
 
+- Claude Fable 5.1 (`claude-fable-5-1`) joins the generated model catalog for the anthropic, amazon-bedrock, openrouter, and vercel-ai-gateway providers with its release specs: 1M context window, 128k max output, $10/$50 pricing with cache reads at $0.25/MTok, xhigh+max thinking levels, adaptive-only thinking, and Opus 4.8/Opus 5 as the permitted refusal-fallback targets. The same strict regeneration carries current upstream drift (nvidia retires nemotron-3-nano, openrouter adds mercury-2.5-preview and retires three opus `-fast` variants, vercel retires deepseek-v3).
+
 ### Changed
 
 - OpenGateway `moonshotai/kimi-k3-ultrafast` now registers a 256k (262144) default context window instead of inheriting the base model's full 1M window, so sessions compact at the serving default; the strict model-data regeneration also carries current upstream catalog drift (opengateway, openrouter, google, groq, vercel-ai-gateway).

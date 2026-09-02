@@ -1,5 +1,27 @@
 # prompt-preset Extension Changes
 
+## Claude Fable 5.1 preset (2026-09-02)
+
+### What changed
+
+- `claude-fable-5-1.ts`: new full-core preset. Baseline is the dieted claude-fable-5 core (the Fable 5.1 guide states existing Fable 5 prompts carry over), plus surgical deltas mapped 1:1 to documented 5.1 behavior differences: scope-is-the-deliverable paragraph in the intent gate, per-response independent-call batching framing, surgical-edit-over-rewrite line, follow-up/test-scope sentences in Verification, bidirectional formatting rule replacing bullets-suppression, literal-phrase (anti-mannered-prose) clause, and progress-note encouragement replacing the shorthand permission.
+- `presets.ts`: `isClaudeFable51Model` matcher (fable-5-1 / fable-5.1), checked before the generic `fable-5` substring so the dotted release is not swallowed; `resolvePresetName` branch + `buildPreset` case.
+- `settings.ts`: `"claude-fable-5-1"` joins `PromptPresetName` and `VALID_PRESETS`.
+- `docs/settings.md`: preset value list gains `claude-fable-5-1`.
+- `test/suite/prompt-presets-claude-fable-5-1.test.ts`: id-shape resolution, fable-5/fable-5-1 precedence both ways, settings force. `prompt-presets-claude-fable-5.test.ts` catalog signal now excludes the 5.1 release; `brand-identity.test.ts` covers the new preset file.
+
+### Why
+
+- Claude Fable 5.1 shipped in the anthropic/bedrock/openrouter/vercel catalogs; without a matcher the generic fable-5 substring routed it to the Fable 5 preset, and the 5.1 guide documents behavior deltas that preset does not address.
+
+### Why extension system couldn't handle this differently
+
+- Content-only addition inside this builtin; follows the established corePrompt preset architecture.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `claude-fable-5-1.ts` is fork-only; `presets.ts`/`settings.ts` touch shared lists — trivial adjacent-line conflicts if upstream adds presets.
+
 ## Grok 4.6 preset (2026-08-17)
 
 ### What changed

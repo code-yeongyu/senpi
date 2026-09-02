@@ -12,7 +12,7 @@
 | 4 | `gpt-apply-patch` | `gpt-apply-patch/` | Codex-style `apply_patch` tool with rich render + freeform grammar |
 | 5 | `imagegen` | `imagegen/` | Client-side image generation tool plus the bundled `skill/` guidance and shared auth/state used by the native lane |
 | 6 | `openai-image-gen` | `openai-image-gen/` | OpenAI-native image generation; follows `imagegen` so the native injector's bypass wiring observes the registered client tool |
-| 7 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-fable-5, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, glm-5.3, deepseek-v4-{flash,flash-0731,pro}, grok-4.{5,6}, kimi-k2-{6,7}, kimi-k3) |
+| 7 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, claude-fable-5, claude-fable-5-1, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, glm-5.3, deepseek-v4-{flash,flash-0731,pro}, grok-4.{5,6}, kimi-k2-{6,7}, kimi-k3) |
 | 8 | `todowrite` | `todotools/` | Op-based oh-my-pi todo port + `/todo` command; fully diverged from `../pi-extensions/pi-todotools` |
 | 9 | `redraws` | `redraws.ts` | `/tui` full-redraw count diagnostic |
 | 10 | `anthropic-web-search` | `anthropic-web-search/` | Anthropic-native web search tool |

@@ -11,10 +11,17 @@ import {
 	waitForStartTime,
 } from "../src/modes/app-server/daemon/process.ts";
 import { createHostDaemonPaths, defaultHostLaunch, ensureHost } from "../src/modes/rpc/host-ensure.ts";
+import {
+	readSocketSecret,
+	resolveSocketTransportAddress,
+	sendSocketHandshake,
+	socketSecretPath,
+} from "../src/modes/rpc/socket-transport.ts";
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
 const fixture = join(import.meta.dirname, "fixtures", "rpc-host-fixture.mjs");
+const incompatibleProtocolFixture = join(import.meta.dirname, "fixtures", "rpc-incompatible-protocol-host.ts");
 
 afterEach(async () => {
 	for (const child of children.splice(0)) await stopChild(child);
@@ -93,7 +100,7 @@ describe("ensureHost", () => {
 		expect(result.reused).toBe(false);
 		expect(result.pid).not.toBe(old.pid);
 		await expectGone(old.pidFile);
-	});
+	}, 15_000);
 
 	it("replaces a host missing a required capability", async () => {
 		const qa = await scratch("missing-capability");
@@ -102,7 +109,7 @@ describe("ensureHost", () => {
 		expect(result.reused).toBe(false);
 		expect(result.pid).not.toBe(old.pid);
 		await expectGone(old.pidFile);
-	});
+	}, 15_000);
 
 	it("cleans a stale dead pidfile and starts fresh", async () => {
 		const qa = await scratch("stale-pidfile");
@@ -122,9 +129,9 @@ describe("ensureHost", () => {
 		const startedAt = Date.now();
 		const result = await ensureFixtureHost(qa, { stopTimeoutMs: 200 });
 		expect(result.pid).not.toBe(old.pid);
-		expect(Date.now() - startedAt).toBeLessThan(5_000);
+		expect(Date.now() - startedAt).toBeLessThan(8_000);
 		await expectGone(old.pidFile);
-	});
+	}, 15_000);
 
 	it("fails within the readiness budget and includes stderr diagnostics", async () => {
 		const qa = await scratch("readiness-failure");
@@ -148,7 +155,7 @@ describe("ensureHost", () => {
 		await expect(
 			ensureFixtureHost(qa, {
 				readinessTimeoutMs: 5_000,
-				spawn: { command: "/bin/sh", args: ["-c", "exit 7"] },
+				spawn: { command: process.execPath, args: ["-e", "process.exit(7)"] },
 			}),
 		).rejects.toThrow(/exited.*7/);
 		expect(Date.now() - startedAt).toBeLessThan(2_500);
@@ -156,20 +163,16 @@ describe("ensureHost", () => {
 
 	it("reports an incompatible protocol answer instead of a readiness timeout", async () => {
 		const qa = await scratch("incompatible-answer");
-		const helper = `
-			const net = require("node:net");
-			const server = net.createServer((socket) => {
-				socket.on("data", () => socket.end(JSON.stringify({ id: "ensure-host-probe", success: true, data: { serverVersion: "0.0.0-wrong", capabilities: [] } }) + "\\n"));
-			});
-			server.listen(process.argv[1]);
-		`;
 		await expect(
 			ensureFixtureHost(qa, {
-				readinessTimeoutMs: 500,
-				spawn: { command: process.execPath, args: ["-e", helper, qa.socket] },
+				readinessTimeoutMs: 10_000,
+				spawn: {
+					command: process.execPath,
+					args: ["--import", "tsx", incompatibleProtocolFixture, qa.socket],
+				},
 			}),
 		).rejects.toThrow(/incompatible|0\\.0\\.0-wrong/);
-	}, 10_000);
+	}, 30_000);
 });
 
 describe("defaultHostLaunch", () => {
@@ -235,8 +238,9 @@ async function startManagedFixture(
 }
 
 async function protocolInfo(socketPath: string): Promise<Record<string, unknown>> {
+	const secret = process.platform === "win32" ? await readSocketSecret(socketSecretPath(socketPath)) : undefined;
 	return new Promise((resolve, reject) => {
-		const socket = createConnection(socketPath);
+		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
 		let buffer = "";
 		const timer = setTimeout(() => finish(new Error("protocol timeout")), 1_000);
 		const finish = (error?: Error, value?: Record<string, unknown>) => {
@@ -244,7 +248,10 @@ async function protocolInfo(socketPath: string): Promise<Record<string, unknown>
 			socket.destroy();
 			error ? reject(error) : resolve(value!);
 		};
-		socket.once("connect", () => socket.write('{"id":"probe","type":"get_protocol_info"}\n'));
+		socket.once("connect", () => {
+			if (secret) sendSocketHandshake(socket, secret);
+			socket.write('{"id":"probe","type":"get_protocol_info"}\n');
+		});
 		socket.on("data", (chunk) => {
 			buffer += chunk.toString("utf8");
 			const newline = buffer.indexOf("\n");
