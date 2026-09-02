@@ -11,8 +11,8 @@ export async function awaitMaybePromise(value) {
 
 export function wrapUserCode(code) {
 	const persistentCode = persistTopLevelDeclarations(code);
-	if (/\breturn\b/u.test(persistentCode)) return `(async () => {\n${persistentCode}\n})()`;
-	return `(async () => {\n${captureLastExpression(persistentCode)}\n})()`;
+	const body = /\breturn\b/u.test(persistentCode) ? persistentCode : captureLastExpression(persistentCode);
+	return `(async (exports, require, module, __filename, __dirname) => {\n${body}\n})(globalThis.exports, globalThis.require, globalThis.module, globalThis.__filename, globalThis.__dirname)`;
 }
 
 const IDENTIFIER_START_RE = /[$_\p{ID_Start}]/u;

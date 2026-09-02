@@ -12,4 +12,5 @@ export const JAVASCRIPT_KERNEL_PRELUDE = [
 	"agent(prompt, options?): delegate work through the reserved agent bridge.",
 	"parallel(thunks): run async thunks through the configured bounded pool; preserves order and rethrows the lowest-index error after all settle.",
 	"pipeline(items, ...stages): map items through staged async transforms with a barrier between stages.",
+	"require(specifier), module.exports, exports, __filename, __dirname: CommonJS bindings resolved from cwd.",
 ].join("\n");

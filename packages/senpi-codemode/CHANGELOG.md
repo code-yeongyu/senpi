@@ -6,6 +6,8 @@
 
 ### Added
 
+- JavaScript eval cells now expose CommonJS `require`, `module.exports`, `exports`, `__filename`, and `__dirname`, resolved from the session cwd.
+
 ### Changed
 
 - The eval prompt's JS runtime line is now runtime-aware: on a bun kernel it names `Bun <version>` and

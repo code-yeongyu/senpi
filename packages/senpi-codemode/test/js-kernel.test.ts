@@ -121,6 +121,86 @@ describe("JavaScriptKernel", () => {
 		});
 	});
 
+	it("requires Node builtins through CommonJS", async () => {
+		await withKernel(async (kernel) => {
+			// Given a live JavaScript kernel without an ESM import
+			// When a cell calls require() for a Node builtin
+			const run = await runCell(kernel, "return require('node:path').basename('/a/b/c.js')");
+
+			// Then the CommonJS binding resolves the builtin
+			expect(run.result).toMatchObject({ ok: true, valueRepr: '"c.js"' });
+		});
+	});
+
+	it("requires a relative CommonJS module from the session cwd", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-cjs-"));
+		await writeFile(join(root, "module.cjs"), "module.exports = { value: 41 };\n");
+		const kernel = new JavaScriptKernel({ sessionId: "relative-cjs", cwd: root, parallelPoolWidth: 2 });
+		try {
+			// Given a CommonJS module beside the session cell
+			// When the cell requires it by a relative specifier
+			const run = await runCell(kernel, 'const mod = require("./module.cjs"); return mod.value + 1');
+
+			// Then resolution starts from the session cwd
+			expect(run.result).toMatchObject({ ok: true, valueRepr: "42" });
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("exposes module.exports, exports, __filename, and __dirname", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-cjs-meta-"));
+		const kernel = new JavaScriptKernel({ sessionId: "cjs-meta", cwd: root, parallelPoolWidth: 2 });
+		try {
+			// Given a live JavaScript kernel
+			// When a cell inspects CommonJS metadata and writes module.exports
+			const run = await runCell(
+				kernel,
+				[
+					"exports.mark = true;",
+					"return {",
+					"  dirname: __dirname,",
+					"  filename: __filename,",
+					"  exportsIsModuleExports: exports === module.exports,",
+					"  requireType: typeof require,",
+					"  exported: module.exports,",
+					"};",
+				].join("\n"),
+			);
+
+			// Then cwd-relative CommonJS bindings are available to the cell
+			expect(run.result.ok).toBe(true);
+			if (!run.result.ok) return;
+			expect(JSON.parse(run.result.valueRepr ?? "null")).toEqual({
+				dirname: root,
+				filename: join(root, "eval-cell.cjs"),
+				exportsIsModuleExports: true,
+				requireType: "function",
+				exported: { mark: true },
+			});
+		} finally {
+			await kernel.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps module.exports identity across cells after reassignment", async () => {
+		await withKernel(async (kernel) => {
+			// Given a cell that replaces module.exports
+			await runCell(kernel, "module.exports = { persisted: 7 }");
+
+			// When a later cell reads exports and module.exports
+			const run = await runCell(kernel, "return { same: exports === module.exports, value: exports.persisted }");
+
+			// Then exports tracks the replaced module.exports object
+			expect(run.result).toMatchObject({
+				ok: true,
+				valueRepr: JSON.stringify({ same: true, value: 7 }),
+			});
+		});
+	});
+
 	it("imports a relative module from the session cwd", async () => {
 		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-js-import-"));
 		await writeFile(join(root, "module.mjs"), "export const value = 41;\n");

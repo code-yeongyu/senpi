@@ -1,5 +1,33 @@
 # senpi-codemode fork changes
 
+## JavaScript eval CommonJS bindings (2026-09-02)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-runtime.js` installs cwd-resolved CommonJS
+  bindings (`require`, `module`, `exports`, `__filename`, `__dirname`) on the persistent JS
+  worker via `createRequire`, and resyncs `exports` to `module.exports` before each cell.
+- `packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js` wraps user cells so those
+  five CommonJS names bind as function parameters, matching Node's CJS wrapper.
+- `packages/senpi-codemode/src/kernels/js/prelude.ts` and `src/prompt/eval-prompt.ts` document
+  the bindings on both Bun and Node runtime lines.
+
+### Why
+
+- JS cells run through ESM-worker `eval`, so Node never wraps them with CJS parameters.
+  `typeof require` was `undefined`, which blocked loading CJS packages and local `.cjs` files.
+
+### Why an extension could not handle it
+
+- Cell wrapping and worker globals are owned by the eval kernel, not by a host tool or
+  extension hook. An external wrapper cannot inject `require` into the persistent worker VM.
+
+### Expected merge conflict zones
+
+- MEDIUM in `src/kernels/js/worker-runtime.js` around `#installGlobals` and cell `run`.
+- MEDIUM in `src/kernels/js/worker-indirect-eval.js` around `wrapUserCode`.
+- LOW in `src/prompt/eval-prompt.ts` around the JS runtime line.
+
 ## Binary skill resolution and stdout-safe miss reporting (2026-09-02)
 
 ### What changed
