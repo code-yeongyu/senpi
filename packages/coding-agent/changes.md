@@ -1,5 +1,19 @@
 # Local fork changes
 
+## 2026-09-01 - Recover oversized session resumes
+
+- Implicit saved-model restores now recover onto the authenticated model with
+  the largest usable remaining context budget while preserving explicit model
+  admission checks.
+- Recovery skips unavailable providers and commits model-specific selection
+  history only after extension admission succeeds.
+- A candidate rejected by a model-select budget hook no longer prevents later
+  capable candidates from being tried; rejected candidate runtime state is
+  rolled back, Claude SDK continuity ignores provisional candidate probes, and
+  each provider is authenticated once per recovery.
+- When no recovery model exists, CLI startup prints the typed budget guidance
+  and exits cleanly instead of exposing an uncaught exception stack.
+
 ## 2026-09-01 - Acknowledge RPC abort before quiesce
 
 - The RPC `abort` command now acknowledges immediately after dispatching the abort signal, while observing quiesce failures through the existing `rpc_error` event path.

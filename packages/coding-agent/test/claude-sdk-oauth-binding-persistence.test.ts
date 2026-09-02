@@ -191,6 +191,30 @@ describe("Claude SDK OAuth persisted binding lifecycle", () => {
 
 		expect(getBinding(SESSION_ID)).toBeUndefined();
 	});
+
+	it("does not invalidate continuity during a provisional recovery model probe", async () => {
+		const { sessionFile } = sessionFixture();
+		const binding = bindingFromStored(stored(sessionFile));
+		rememberBinding(binding);
+		const extension = fakeExtension();
+		registerSessionRegistry(extension.api);
+
+		await emit(
+			extension.handlers,
+			"model_select",
+			{
+				type: "model_select",
+				model: { provider: "openai", id: "candidate" },
+				previousModel: { provider: "claude-sdk-oauth", id: "claude-test" },
+				source: "restore",
+				provisional: true,
+			},
+			context(sessionFile),
+		);
+
+		expect(getBinding(SESSION_ID)).toEqual(binding);
+		expect(extension.persisted).toEqual([]);
+	});
 });
 
 function bindingFromStored(record: StoredBinding): ContinuityBinding {

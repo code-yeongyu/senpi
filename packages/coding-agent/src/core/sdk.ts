@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ThinkingSelection } from "@earendil-works/pi-ai";
+import type { Api, ThinkingSelection } from "@earendil-works/pi-ai";
 import { type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -10,6 +10,11 @@ import { AuthStorage } from "./auth-storage.ts";
 import { estimateTokens } from "./compaction/compaction.ts";
 import { createSessionCursorExecBridge } from "./cursor-exec-bridge-session.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import {
+	ModelUsabilityBudgetError,
+	type ModelUsabilityBudgetProjection,
+	projectModelUsabilityBudget,
+} from "./extensions/builtin/compaction/model-usability-budget.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { convertToLlmForTransport, TRANSPORT_IMAGE_BUDGET_BYTES } from "./messages.ts";
@@ -130,6 +135,55 @@ export interface CreateAgentSessionResult {
 	extensionsResult: LoadExtensionsResult;
 	/** Warning if session was restored with a different model than saved */
 	modelFallbackMessage?: string;
+}
+
+interface StartupRecoveryModel {
+	model: Model<Api>;
+	projection: ModelUsabilityBudgetProjection;
+	order: number;
+}
+
+class SessionResumeModelUnavailableError extends ModelUsabilityBudgetError {
+	constructor(error: ModelUsabilityBudgetError) {
+		super(error.projection);
+		this.name = "SessionResumeModelUnavailableError";
+		this.message =
+			"Cannot resume this session: no authenticated model has enough usable context budget for the restored history. " +
+			"Configure a larger-context model or start a new session.";
+	}
+}
+
+function findStartupRecoveryModels(
+	session: AgentSession,
+	modelRuntime: ModelRuntime,
+	settingsManager: SettingsManager,
+	liveContextTokens: number,
+): StartupRecoveryModel[] {
+	const currentModel = session.model;
+	if (!currentModel) return [];
+
+	const candidates = modelRuntime
+		.getAvailableSnapshot()
+		.map((model, order): StartupRecoveryModel | undefined => {
+			if (model.contextWindow <= 0 || (model.provider === currentModel.provider && model.id === currentModel.id)) {
+				return undefined;
+			}
+			const projection = projectModelUsabilityBudget({
+				model,
+				systemPrompt: session.agent.state.systemPrompt,
+				tools: session.agent.state.tools,
+				liveContextTokens,
+				compaction: settingsManager.getCompactionSettings(),
+			});
+			return projection.usable ? { model, projection, order } : undefined;
+		})
+		.filter((candidate): candidate is StartupRecoveryModel => candidate !== undefined);
+
+	return candidates.sort((left, right) => {
+		const leftRemaining = left.projection.contextWindow - left.projection.requiredTokens;
+		const rightRemaining = right.projection.contextWindow - right.projection.requiredTokens;
+		return rightRemaining - leftRemaining || left.order - right.order;
+	});
 }
 
 // Re-exports
@@ -519,7 +573,53 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const liveContextTokens = hasExistingSession
 		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)
 		: 0;
-	session.assertModelUsable(undefined, liveContextTokens);
+	try {
+		session.assertModelUsable(undefined, liveContextTokens);
+	} catch (error) {
+		if (options.model !== undefined || !hasExistingSession || !(error instanceof ModelUsabilityBudgetError)) {
+			throw error;
+		}
+		const restoredModel = session.model;
+		if (!restoredModel) throw error;
+		const providerAuthentication = new Map<string, boolean>();
+		let recovery: ModelUsabilityBudgetProjection | undefined;
+		let lastRecoveryError: ModelUsabilityBudgetError | undefined;
+		for (const candidate of findStartupRecoveryModels(session, modelRuntime, settingsManager, liveContextTokens)) {
+			let authenticated = providerAuthentication.get(candidate.model.provider);
+			if (authenticated === undefined) {
+				authenticated = Boolean(await modelRuntime.checkAuth(candidate.model.provider));
+				providerAuthentication.set(candidate.model.provider, authenticated);
+			}
+			if (!authenticated) {
+				continue;
+			}
+			try {
+				await session.setStartupRecoveryModel(candidate.model, liveContextTokens);
+				const admittedProjection = projectModelUsabilityBudget({
+					model: candidate.model,
+					systemPrompt: session.agent.state.systemPrompt,
+					tools: session.agent.state.tools,
+					liveContextTokens,
+					compaction: settingsManager.getCompactionSettings(),
+				});
+				if (!admittedProjection.usable) {
+					throw new ModelUsabilityBudgetError(admittedProjection);
+				}
+				recovery = admittedProjection;
+				break;
+			} catch (candidateError) {
+				if (!(candidateError instanceof ModelUsabilityBudgetError)) throw candidateError;
+				lastRecoveryError = candidateError;
+			}
+		}
+		if (!recovery) throw new SessionResumeModelUnavailableError(lastRecoveryError ?? error);
+
+		const recoveryMessage =
+			`Restored context exceeds ${restoredModel.provider}/${restoredModel.id}'s usable budget. ` +
+			`Using ${recovery.model} for this session with ` +
+			`${recovery.contextWindow - recovery.requiredTokens} tokens of remaining budget.`;
+		modelFallbackMessage = modelFallbackMessage ? `${modelFallbackMessage}. ${recoveryMessage}` : recoveryMessage;
+	}
 	cursorBridgeSessionRef.current = session;
 	const extensionsResult = resourceLoader.getExtensions();
 

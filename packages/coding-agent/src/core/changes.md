@@ -1,5 +1,40 @@
 # changes
 
+## 2026-09-01 - Recover oversized saved sessions onto a usable model
+
+### What changed
+
+- `sdk.ts` now distinguishes an implicit saved-model restore from an explicit
+  startup model selection when the assembled runtime fails the live-context
+  usability projection.
+- Implicit restores deterministically select the authenticated candidate with
+  the greatest remaining context budget, persist that change only in the
+  session history, and return a visible fallback notice.
+- Recovery validates candidate credentials in budget order, skips unavailable
+  providers, and defers both model and model-specific thinking persistence
+  until extension admission succeeds.
+- If a model-select hook makes the highest-capacity candidate unusable, startup
+  rolls back its runtime state before continuing through the remaining
+  budget-ranked candidates; Claude SDK continuity ignores provisional candidate
+  probes and provider authentication is cached per recovery.
+- Explicit startup models remain fail-closed, and sessions with no capable
+  authenticated recovery model keep the typed `ModelUsabilityBudgetError`.
+
+### Why
+
+- The restored-transcript admission guard correctly prevented undersized model
+  switches, but it also made long existing sessions impossible to reopen from
+  the normal session picker even when a larger configured model was available.
+
+### Why an extension could not handle it
+
+- Model restoration and the first usability assertion happen before extensions
+  receive a live session surface.
+
+### Expected merge conflict zones
+
+- MEDIUM: `sdk.ts` startup model selection and final usability assertion.
+
 ## 2026-08-31 - Session activity contract for host occupancy decisions
 
 ### What changed

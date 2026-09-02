@@ -6,6 +6,15 @@
 
 ### Fixed
 
+- Existing sessions whose restored transcript no longer fits their saved model
+  now reopen on the configured authenticated model with the largest usable
+  remaining context budget, skipping unavailable providers without leaving
+  partial model or thinking history persisted. Explicit `--model` selections
+  stay strict, rejected candidates roll back their model-specific runtime state
+  before later candidates are tried, Claude SDK continuity ignores provisional
+  candidate probes, and a session with no capable model exits with actionable
+  budget guidance instead of an uncaught stack trace.
+
 ### New Features
 
 ### Breaking Changes

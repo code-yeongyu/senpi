@@ -98,6 +98,7 @@ export function registerSessionRegistry(
 		await invalidateBinding(pi, ctx, "tree_changed");
 	});
 	pi.on("model_select", async (event, ctx) => {
+		if (event.provisional) return;
 		const sessionId = ctx.sessionManager.getSessionId();
 		if (event.model?.provider !== CLAUDE_SDK_OAUTH_PROVIDER_ID) {
 			closeSession(sessionId, "model_selected");
