@@ -1,22 +1,23 @@
 # changes
 
-## 2026-09-02 - Session title requests ask for low reasoning
+## 2026-09-02 - Session titles fall back to low reasoning on reasoning-mandatory endpoints
 
 ### What changed
 
-- `session-title-generator.ts`: `buildTitleOptions()` now sets `reasoning: "low"` and raises the title request's `maxTokens` from 64 to 1024.
+- `session-title-generator.ts`: `generateSessionTitle()` keeps the default title request reasoning-free; when the provider returns an error matching "Reasoning is mandatory" it retries once with `reasoning: "low"` and `maxTokens: 1024`. `buildTitleOptions()` takes an optional reasoning level that enables both.
 
 ### Why
 
-- Leaving `reasoning` unset on the title request makes token-based providers fall back to their "disabled" mapping (e.g. `reasoning: { effort: "none" }` on OpenRouter-format models). Reasoning-mandatory endpoints such as Z.ai GLM 5.x reject that with HTTP 400 `Reasoning is mandatory for this endpoint and cannot be disabled.`, which surfaced as a repeated `session_title_generation` runtime error in every session on those models (agent turns were unaffected because they always carry the session's thinking level). Low reasoning keeps the cosmetic title cheap while producing a request every endpoint accepts; non-reasoning models ignore the hint via level clamping. The larger `maxTokens` keeps room for the `<title>` output once reasoning tokens count against the completion budget.
+- Leaving `reasoning` unset makes token-based providers fall back to their "disabled" mapping (e.g. `reasoning: { effort: "none" }` on OpenRouter-format models), which reasoning-mandatory endpoints such as Z.ai GLM 5.x reject with HTTP 400 `Reasoning is mandatory for this endpoint and cannot be disabled.` — surfacing as a repeated `session_title_generation` runtime error in every session on those models (agent turns were unaffected because they always carry the session's thinking level).
+- Forcing `reasoning: "low"` on every title call instead would tax all reasoning-capable models on a cosmetic background call, and some catalogs map `low` to full effort (e.g. DeepSeek `low` -> `"high"` in `openai-completions.ts`). Matching on the specific 400 keeps the zero-reasoning path for every healthy endpoint and pays reasoning only where the endpoint demands it; the `maxTokens` bump leaves room for the `<title>` output once reasoning tokens count against the completion budget.
 
 ### Why an extension could not handle it
 
-- Title generation is core background work invoked from `agent-session.ts`; extensions cannot alter the request options of the internal title call.
+- Title generation is core background work invoked from `agent-session.ts`; extensions cannot alter the request options or the retry behavior of the internal title call.
 
 ### Expected merge conflict zones
 
-- LOW: the `buildTitleOptions()` literal in `session-title-generator.ts` and the new `generateSessionTitle` describe block in `test/session-title-generator.test.ts`.
+- LOW: the `generateSessionTitle()` retry block and `buildTitleOptions()` signature in `session-title-generator.ts`, and the `generateSessionTitle` describe block in `test/session-title-generator.test.ts`.
 
 ## 2026-08-31 - Session activity contract for host occupancy decisions
 
