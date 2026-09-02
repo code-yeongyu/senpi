@@ -7,11 +7,13 @@
 - Derive persisted sent-stream hashes directly from `SessionManager.buildSessionContext()`, the same compaction-aware active context projection used by the runtime. Do not reconstruct it from `getBranch()`: a long-running resident mirror may have externalized message bodies that the manager can restore but a copied branch cannot.
 - Recreate the fixed-size restart sidecar after the first successful post-compaction assistant turn.
 - Admit post-anchor user/tool-result and automatic goal-continuation metadata as unsent restart delta. A later assistant or unknown state entry still rejects the stale anchor, and a newer binding invalidation remains authoritative.
+- Persist from the current in-memory continuity binding when a successful turn closes its resident registry entry before the host emits `message_end`; require its `sentCount` to equal the active context hashes before trusting it.
 
 ### Why
 
 - Accepted compaction deleted the previous sidecar, and the old branch walker returned no hashes forever after. A first attempted fix rebuilt context from `getBranch()`, but live instrumentation on the affected 527-message session measured `hashes: 0` there while reopening the same file through `buildSessionContext()` produced 386 transmitted hashes. Restarting without a sidecar cold-seeded hundreds of messages; an aborted seed left a zero-count lineage that replayed the entire context again and failed with `invalid_request`.
 - The corrected sidecar was then created on the real session, but restart admission deleted it because `goal-continuation`, memory state, and the next user input followed the anchored assistant. Those entries do not rewrite the trusted assistant; they are the delta the resumed query must consume.
+- Live restarts also showed successful fallback turns after `resume_initialization_aborted` with no new marker: the registry entry had closed, but `message_end` returned before consulting the binding that `session-turn-attempt` had already committed. The next restart therefore found a stale anchor followed by later assistants and correctly rejected it.
 
 ### Expected merge conflict zones
 

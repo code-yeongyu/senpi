@@ -66,6 +66,30 @@ export function storedBindingFromEntry(
 	};
 }
 
+/** Persist a completed turn whose resident registry entry closed before `message_end`. */
+export function storedBindingFromBinding(
+	binding: ContinuityBinding,
+	hashes: readonly string[],
+	anchor: StoredBindingAnchor,
+): StoredBinding | undefined {
+	if (binding.sentCount !== hashes.length) return undefined;
+	return {
+		schemaVersion: 1,
+		sessionPath: anchor.sessionPath,
+		sessionId: anchor.sessionId,
+		markerEntryId: anchor.markerEntryId,
+		sdkSessionId: binding.sdkSessionId,
+		sentCount: hashes.length,
+		sentPrefixHash: sentHashPrefixDigest(hashes),
+		assistantContentHash: anchor.assistantContentHash,
+		lastAssistantUuid: binding.lastAssistantUuid,
+		accountName: binding.accountName,
+		modelId: binding.modelId,
+		systemPromptHash: binding.systemPromptHash,
+		toolsetHash: binding.toolsetHash,
+	};
+}
+
 export function bindingFromStoredBranch(
 	branch: readonly BranchEntry[],
 	stored: StoredBinding,

@@ -24,7 +24,10 @@ import {
 	resetSessionRegistryBoundary,
 } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-registry.ts";
 import { registerSessionRegistry } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-registry-wiring.ts";
-import { sentMessageHashes } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-sync.ts";
+import {
+	recordSyncedStream,
+	sentMessageHashes,
+} from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-sync.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extensions/types.ts";
 
 type EventHandler = (event: unknown, ctx: ExtensionContext) => unknown;
@@ -177,6 +180,8 @@ describe("issue #6981 headless restart continuity", () => {
 		const entry = residentEntry();
 		rememberBinding(bindingFromEntry(entry, turnHashes));
 		const eventContext = context(sessionFile, branch, contextMessages);
+		recordSyncedStream(entry, turnHashes);
+		closeSession(SESSION_ID, "other");
 
 		await emit(extension.handlers, "message_end", { type: "message_end", message: assistant() }, eventContext);
 		branch.push({ type: "message", id: "assistant-entry", message: assistant() });
