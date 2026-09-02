@@ -30,6 +30,7 @@ afterEach(() => {
 
 describe("SettingsManager retry fallback settings", () => {
 	const defaultChains = {
+		"claude-fable-5-1": ["k3:max", "kimi-k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
 		"claude-fable-5": ["k3:max", "kimi-k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
 		// Last-resort lane so a model without its own chain still has an escape
 		// route instead of wedging the session terminal.
@@ -86,7 +87,11 @@ describe("SettingsManager retry fallback settings", () => {
 		// survives so other models keep their escape route.
 		expect(reloaded.getRetryFallbackSettings()).toEqual({
 			modelFallback: false,
-			chains: { "claude-fable-5": ["ccapi/kimi-k3:max"], "*": defaultChains["*"] },
+			chains: {
+				"claude-fable-5": ["ccapi/kimi-k3:max"],
+				"claude-fable-5-1": defaultChains["claude-fable-5-1"],
+				"*": defaultChains["*"],
+			},
 			revertPolicy: "never",
 		});
 

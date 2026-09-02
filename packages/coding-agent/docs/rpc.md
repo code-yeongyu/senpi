@@ -49,7 +49,7 @@ Multi-session mode lets one `senpi --mode rpc` process serve several independent
 # Shared JSONL over stdio (legacy multi-session host)
 senpi --mode rpc --multi-session [options]
 
-# One shared host over a Unix socket; each accepted connection has its own JSONL feed
+# One shared host over a local socket; each accepted connection has its own JSONL feed
 senpi --mode rpc --listen unix:///tmp/senpi-rpc.sock [options]
 senpi --mode rpc --listen /tmp/senpi-rpc.sock [options]
 ```
@@ -57,6 +57,10 @@ senpi --mode rpc --listen /tmp/senpi-rpc.sock [options]
 `--listen unix://` selects the default per-agent socket path. Unix abstract socket names may be supplied as
 `unix://@name` where supported by the host platform. Socket mode accepts concurrent connections while retaining one
 process-global session registry.
+
+On Windows, listeners and clients deterministically map the logical socket path to
+`\\.\pipe\senpi-rpc-<sha256[:32]>`. Callers keep using the same `unix://` CLI value; the logical path remains the
+ownership and settings identity, and callers never construct the pipe name themselves.
 
 Socket event visibility is an all-sessions broadcast: every connected client receives lifecycle and agent events from
 every open session, each tagged with its routing `sessionId`. Correlated responses and extension UI requests are sent

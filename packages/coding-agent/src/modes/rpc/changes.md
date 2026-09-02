@@ -1,5 +1,35 @@
 # changes
 
+## 2026-09-01 - Windows shared hosts use deterministic named pipes
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-transport.ts` maps every logical Windows socket path to `\\.\pipe\senpi-rpc-<sha256[:32]>`; POSIX filesystem and abstract socket addresses remain unchanged.
+- `host-lifecycle.ts`, `multi-session-host.ts`, `host-ensure.ts`, and `rpc-client.ts` resolve that transport address at every listen/connect boundary while locks, settings, diagnostics, and CLI arguments keep the original logical socket path.
+- Windows skips filesystem-only socket chmod/unlink cleanup; the pipe is kernel-owned and disappears when its listener closes. Each Windows client proves possession of a 32-byte owner-only secret before registration, and the secret-bound pipe name prevents blind endpoint collisions.
+- `spawnableChildLaunch` in `host-lifecycle.ts` runs a `.cmd`/`.bat` `--child-command` through a shell and quotes its argv, so an embedder passes its launcher script VERBATIM. Windows refuses to spawn a `.cmd` without a shell, and Node's `shell: true` concatenates argv without escaping it, so the only alternative was for callers to pre-escape - which this spawn then escaped a second time, and the child arrived unrunnable.
+- The supervisor's child and `RpcClient`'s child are spawned with `windowsHide`, so a console-less caller (GUI host, detached daemon) does not pop an empty terminal window.
+
+### Why
+
+- Node treats a Windows filesystem path passed to `net.Server.listen()` as an invalid pipe address and fails with `EACCES`. Both the private supervisor-to-host hop and the public shared endpoint used `.sock` paths, so no Windows shared host could start.
+- A path hash gives independently launched clients and listeners the same bounded pipe name without publishing user paths into the global pipe namespace.
+
+### Cleanup ownership
+
+- The supervisor omits the logical Windows socket from watchdog cleanup because it is only an endpoint name, never a filesystem object owned by this process. The Windows boundary is the secret-derived pipe name plus the authenticated handshake; the profile directory's native ACL protects the secret file. Node's `readableAll`/`writableAll` options are not treated as a Windows DACL, and POSIX mode handling remains separate. `ensureHost()` removes abandoned POSIX internal scratch directories only after a recorded owner start-time check proves the owner is stale.
+- A supervised Windows socket host keeps its normal close, runtime-dispose, and metadata-cleanup sequence, but applies a short hard-exit fallback. Win32 named-pipe instances can remain live after JavaScript sockets are destroyed and leave `server.close()` unresolved; the bounded fallback prevents a watchdog-triggered orphan from retaining the public endpoint indefinitely. POSIX watchdog cleanup remains awaited before the callback so filesystem-state assertions and ownership cleanup stay deterministic.
+- The lifecycle supervisor uses the same bounded finalizer: after its child-stop, internal-directory, pidfile, and settings cleanup, it explicitly exits for every shutdown trigger, with a Win32 hard-exit fallback if any named-pipe handle prevents that sequence from completing. On Win32 it also polls the child process's recorded creation-time identity, so a child idle exit cannot be lost when the ChildProcess exit event is not delivered.
+- The inherited supervisor pipe is the primary watchdog signal on Win32: its owned read stream uses automatic close and both `end` and `close` trigger teardown, while the slower identity fallback requires three consecutive missing probes so a timed-out PowerShell query cannot delay or spuriously trigger lifecycle cleanup.
+
+### Why an extension could not handle it
+
+- Socket address resolution happens before extensions or sessions exist and must be identical in the lifecycle supervisor, host, ensure probe, and SDK client.
+
+### Expected merge conflict zones
+
+- LOW: the net transport calls and filesystem cleanup guards in `host-lifecycle.ts` and `multi-session-host.ts`; one import and one `createConnection` expression each in `host-ensure.ts` and `rpc-client.ts`.
+
 ## [Unreleased] - Preserve launch capabilities for undeclared multi-session clients
 
 - `session-command-router.ts`: connection-owned session bindings now fall back to the host launch capabilities when the client has not sent `set_client_info`; an explicit empty capability declaration still wins.
@@ -106,7 +136,6 @@
 
 - LOW: the tail of `rebindSession()` and the `installSessionSubscriptions` declaration.
 
-
 ## 2026-08-30 - Classify RPC transport disconnects and recover shared interactive hosts
 
 ### What changed
@@ -145,7 +174,6 @@
 
 - LOW: the `RpcClientEvent` union members and the `collectEvents()` filter.
 
-
 ## 2026-08-30 - Require agentDir for the RPC project-trust gate
 
 ## 2026-08-30 - Carry the replacement identity as durableSessionId
@@ -165,7 +193,6 @@
 ### Expected merge conflict zones
 
 - LOW: the `session_replaced` payload in `rebindSession()` and its interface in `rpc-types.ts`.
-
 
 ## 2026-08-30 - Reschedule the retained-queue drain when an enqueue races its settling
 
@@ -777,7 +804,6 @@ Expected merge conflict zones: MEDIUM in `main.ts` and `host-lifecycle.ts`; LOW 
 - MEDIUM: `connection-handler.ts` command dispatch and event subscriptions.
 - LOW: app-server account handlers and protocol facade additions.
 
-
 ## Removed legacy `--neo` daemon support while preserving RPC contracts (2026-07-26)
 
 ### What changed
@@ -958,6 +984,7 @@ Capability-gated extension RPC listeners now attach before `bindExtensions()` di
 `session_start`. This preserves initial atomic extension snapshots such as native task state while
 keeping rebind cleanup generation-safe; subscribing after binding deterministically dropped those
 events.
+
 ## Public RPC client exposes extension events (2026-08-11)
 
 `RpcClientEvent`, `RpcEventListener`, the modes barrel, and the package root now include

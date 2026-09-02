@@ -38,6 +38,7 @@ export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {
 	// `kimi-k3:max` is an alias entry for providers that expose Kimi K3 under the
 	// vendor-prefixed id `kimi-k3` (e.g. OpenCode Go), which the conservative `k3`
 	// family matcher intentionally cannot capture (issue #793).
+	"claude-fable-5-1": ["k3:max", "kimi-k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
 	"claude-fable-5": ["k3:max", "kimi-k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
 	// Last-resort lane for models with no chain of their own. resolveChainKey
 	// falls through exact -> base -> "*", so any current model whose upstream

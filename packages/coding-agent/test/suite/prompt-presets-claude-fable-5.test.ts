@@ -25,6 +25,7 @@ function createModel(id: string, provider: string, api: Api = "anthropic-message
 
 function hasFable5CatalogSignal(model: Model<Api>): boolean {
 	const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
+	if (/claude-fable-5[-.]1(?:$|[/@._:-])/.test(searchable)) return false;
 	return /(?:^|[/@._-])claude-fable-5(?:$|[/@._:-])/.test(searchable);
 }
 
@@ -53,7 +54,7 @@ describe("Claude Fable 5 prompt preset", () => {
 		expect(preset?.prompt).toContain("You are senpi");
 	});
 
-	it.each(["claude-opus-4-8", "~anthropic/claude-fable-latest", "some-fable-compatible-router"])(
+	it.each(["claude-opus-4-8", "claude-fable-5-1", "~anthropic/claude-fable-latest", "some-fable-compatible-router"])(
 		"does not route %s to the claude-fable-5 preset",
 		(modelId) => {
 			// given

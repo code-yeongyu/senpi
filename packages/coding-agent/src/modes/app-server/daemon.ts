@@ -187,17 +187,68 @@ async function spawnDaemon(paths: DaemonPaths, listen: AppServerListen): Promise
 			],
 			{
 				detached: true,
+				windowsHide: true,
 				env: { ...process.env, SENPI_RUNTIME: "node" },
 				stdio: ["ignore", "ignore", stderr.fd],
 			},
 		);
 		const exited = observeDaemonExit(child);
-		child.unref();
 		const pid = child.pid;
 		if (pid === undefined) throw new Error("failed to spawn daemon process");
-		const startTime = await waitForStartTime(pid, 2_000);
-		await writeFile(paths.pidFile, `${JSON.stringify({ pid, processStartTime: startTime })}\n`, { mode: 0o600 });
-		await writeFile(paths.settingsFile, `${JSON.stringify({ listen })}\n`, { mode: 0o600 });
+		let startTime: string;
+		try {
+			startTime = await Promise.race([
+				waitForStartTime(pid, 10_000),
+				exited.then(() => {
+					throw new Error(`spawned daemon ${pid} exited before its start time could be read`);
+				}),
+			]);
+		} catch (error: unknown) {
+			// Keep the handle owned until registration succeeds. This terminates the
+			// exact child even when start-time acquisition fails, without a raw PID.
+			if (child.exitCode === null && child.signalCode === null) {
+				try {
+					child.kill("SIGTERM");
+				} catch {}
+				await Promise.race([exited, delay(2_000)]);
+				if (child.exitCode === null && child.signalCode === null) {
+					try {
+						child.kill("SIGKILL");
+					} catch {}
+				}
+			}
+			await cleanupState(paths, listen);
+			throw error;
+		}
+		try {
+			await writeFile(paths.pidFile, `${JSON.stringify({ pid, processStartTime: startTime })}\n`, { mode: 0o600 });
+			await writeFile(paths.settingsFile, `${JSON.stringify({ listen })}\n`, { mode: 0o600 });
+		} catch (error: unknown) {
+			// Registration is the ownership hand-off point. Until both files exist,
+			// retain the exact ChildProcess handle and terminate it on any write
+			// failure so a partial registration can never leave an unmanaged daemon.
+			if (child.exitCode === null && child.signalCode === null) {
+				try {
+					child.kill("SIGTERM");
+				} catch {}
+				await Promise.race([exited, delay(2_000)]);
+				if (child.exitCode === null && child.signalCode === null) {
+					try {
+						child.kill("SIGKILL");
+					} catch (killError: unknown) {
+						throw new Error(
+							`failed to terminate daemon after registration failure: ${killError instanceof Error ? killError.message : String(killError)}`,
+						);
+					}
+					if (!(await Promise.race([exited.then(() => true), delay(2_000).then(() => false)]))) {
+						throw new Error(`daemon ${pid} remained alive after SIGKILL during registration failure`);
+					}
+				}
+			}
+			await cleanupState(paths, { ...listen, ...(listen.kind === "unix" ? { path: undefined } : {}) });
+			throw error;
+		}
+		child.unref();
 		return { pid, exited };
 	} finally {
 		await stderr.close();
@@ -219,6 +270,10 @@ async function waitForDaemonReady(
 	} finally {
 		controller.abort();
 	}
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
 function observeDaemonExit(child: ChildProcess): Promise<DaemonExit> {

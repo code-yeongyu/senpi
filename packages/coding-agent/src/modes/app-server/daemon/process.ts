@@ -22,12 +22,56 @@ export function parseDaemonPidFile(text: string): DaemonPidFile | undefined {
 	return { pid: parsed.pid, processStartTime: parsed.processStartTime };
 }
 
+export type ProcessIdentityResult =
+	| { readonly kind: "present"; readonly identity: string }
+	| { readonly kind: "absent" }
+	| { readonly kind: "error"; readonly error: unknown };
+
 export async function processMatchesPidFile(
 	pidFile: DaemonPidFile,
 	readStartTime: (pid: number) => Promise<string | undefined> = readProcessStartTime,
 ): Promise<boolean> {
 	const current = await readStartTime(pidFile.pid);
 	return current === pidFile.processStartTime;
+}
+
+export async function readProcessIdentity(
+	pid: number,
+	platform: NodeJS.Platform = process.platform,
+	timeoutMs?: number,
+): Promise<ProcessIdentityResult> {
+	const command =
+		platform === "win32"
+			? {
+					executable: "powershell.exe",
+					args: [
+						"-NoProfile",
+						"-NonInteractive",
+						"-Command",
+						`$process = Get-CimInstance Win32_Process -Filter "ProcessId=${String(pid)}" -ErrorAction Stop; if ($null -eq $process) { Write-Output '__SENPI_ABSENT__'; exit 0 }; $process.CreationDate.ToFileTimeUtc().ToString("D", [Globalization.CultureInfo]::InvariantCulture)`,
+					],
+				}
+			: { executable: "ps", args: ["-o", "lstart=", "-p", String(pid)] };
+	return new Promise((resolve) => {
+		const effectiveTimeoutMs = timeoutMs ?? (platform === "win32" ? 1_000 : undefined);
+		execFile(
+			command.executable,
+			command.args,
+			{ windowsHide: true, ...(effectiveTimeoutMs === undefined ? {} : { timeout: effectiveTimeoutMs }) },
+			(error, stdout) => {
+				if (error) {
+					const code = "code" in error ? error.code : undefined;
+					resolve(platform !== "win32" && code === 1 ? { kind: "absent" } : { kind: "error", error });
+					return;
+				}
+				const output = stdout.trim();
+				if (output === "__SENPI_ABSENT__") return resolve({ kind: "absent" });
+				if (!output || (platform === "win32" && !/^\d+$/.test(output)))
+					return resolve({ kind: "error", error: new Error("invalid process identity output") });
+				resolve({ kind: "present", identity: output });
+			},
+		).once("error", (error) => resolve({ kind: "error", error }));
+	});
 }
 
 export async function stopValidatedPid(pidFile: DaemonPidFile, signal: NodeJS.Signals): Promise<void> {
@@ -47,25 +91,46 @@ export async function waitForGone(pidFile: DaemonPidFile, timeoutMs: number): Pr
 		if (!(await processMatchesPidFile(pidFile))) return true;
 		await delay(100);
 	}
-	return false;
+	return !(await processMatchesPidFile(pidFile));
 }
 
-export async function readProcessStartTime(pid: number): Promise<string | undefined> {
-	return new Promise((resolveStartTime, reject) => {
-		execFile("ps", ["-o", "lstart=", "-p", String(pid)], (error, stdout) => {
-			if (error) {
-				resolveStartTime(undefined);
-				return;
-			}
-			resolveStartTime(stdout.trim() || undefined);
-		}).once("error", reject);
+export async function readProcessStartTime(
+	pid: number,
+	platform: NodeJS.Platform = process.platform,
+	timeoutMs?: number,
+): Promise<string | undefined> {
+	return readProcessIdentity(pid, platform, timeoutMs).then((result) => {
+		if (result.kind === "error") throw result.error;
+		return result.kind === "present" ? result.identity : undefined;
 	});
 }
 
-export async function waitForStartTime(pid: number, timeoutMs: number): Promise<string> {
+export function processIsLive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error: unknown) {
+		if (isNodeErrorCode(error, "ESRCH")) return false;
+		if (isNodeErrorCode(error, "EPERM")) return true;
+		throw error;
+	}
+}
+
+export async function waitForStartTime(
+	pid: number,
+	timeoutMs: number,
+	readStartTime: (pid: number) => Promise<string | undefined> = readProcessStartTime,
+): Promise<string> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() <= deadline) {
-		const startTime = await readProcessStartTime(pid);
+		let startTime: string | undefined;
+		try {
+			startTime = await readStartTime(pid);
+		} catch {
+			// Process identity queries can fail transiently while a Windows process is
+			// entering the CIM table. Keep the bounded startup wait alive so callers do
+			// not mistake an observability failure for a child startup failure.
+		}
 		if (startTime) return startTime;
 		await delay(20);
 	}

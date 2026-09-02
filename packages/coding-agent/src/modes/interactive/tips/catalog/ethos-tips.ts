@@ -36,7 +36,7 @@ export const ETHOS_TIPS = [
 		bindings: [],
 		requiresCommand: "tasks",
 		render: () =>
-			"Try ulw-plan on fable-5 xhigh. A patient sage obsessed with the essence does the agonizing for you and fills in every blank you were pretending not to see.",
+			"Try ulw-plan on fable-5.1 xhigh. A patient sage obsessed with the essence does the agonizing for you and fills in every blank you were pretending not to see.",
 	},
 	{
 		id: "ethos.ulw-loop-shallow",

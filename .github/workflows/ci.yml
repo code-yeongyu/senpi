@@ -22,7 +22,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install system dependencies
@@ -70,7 +70,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install system dependencies
@@ -111,7 +111,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install dependencies
@@ -119,6 +119,48 @@ jobs:
 
       - name: Run hooks trust-storage regressions
         run: npx vitest run test/suite/hooks-trust.test.ts test/suite/hooks-trust-storage-errors.test.ts test/suite/hooks-trust-storage-release-errors.test.ts test/suite/hooks-trust-storage-aba.test.ts
+        working-directory: packages/coding-agent
+
+  rpc-windows:
+    name: RPC named pipes (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.0"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      # Each suite runs in its own process; lifecycle failures are not retried in-process.
+      - name: Run RPC host ensure tests
+        run: bunx vitest run test/rpc-host-ensure.test.ts
+        working-directory: packages/coding-agent
+
+      - name: Run RPC host lifecycle tests
+        run: bunx vitest run test/rpc-host-lifecycle.test.ts
+        working-directory: packages/coding-agent
+
+      - name: Run RPC socket transport tests
+        run: bunx vitest run test/rpc-socket-transport.test.ts
+        working-directory: packages/coding-agent
+
+      - name: Run app-server daemon tests
+        run: bunx vitest run test/suite/app-server-daemon.test.ts
         working-directory: packages/coding-agent
 
   test-workspaces:
@@ -132,7 +174,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install system dependencies
@@ -177,7 +219,14 @@ jobs:
   # so the required-status contract is unchanged while the work runs in parallel.
   check-and-test:
     name: Check and test
-    needs: [check, test-coding-agent, hooks-trust-storage-windows, test-workspaces]
+    needs:
+      [
+        check,
+        test-coding-agent,
+        hooks-trust-storage-windows,
+        rpc-windows,
+        test-workspaces,
+      ]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -203,6 +252,7 @@ jobs:
             echo "- check: ${{ needs.check.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
             echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
+            echo "- rpc-windows: ${{ needs.rpc-windows.result }}"
             echo "- test-workspaces: ${{ needs.test-workspaces.result }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -221,7 +271,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install dependencies
@@ -254,7 +304,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install dependencies

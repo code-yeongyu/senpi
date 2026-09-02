@@ -8,6 +8,14 @@
 
 ### Fixed
 
+## [2026.9.2] - 2026-09-02
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
 ## [2026.8.31] - 2026-08-31
 
 ### Breaking Changes

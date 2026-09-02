@@ -20,6 +20,13 @@ import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import { type RpcBindingFactory, SessionCommandRouter } from "./session-command-router.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
 import { RpcSessionRegistry } from "./session-registry.ts";
+import {
+	authenticateSocket,
+	ensureSocketSecret,
+	resolveSocketTransportAddress,
+	SOCKET_SECRET_FILE_ENV,
+	socketSecretPath,
+} from "./socket-transport.ts";
 
 export interface MultiSessionHostOptions {
 	agentDir: string;
@@ -45,6 +52,8 @@ export const DEFAULT_SESSION_IDLE_EVICTION_MS = 30 * 60_000;
 export const DEFAULT_MAX_SESSIONS = 8;
 /** Default empty-host exit: 15 minutes with zero open sessions, matching the supervisor's idle window. */
 export const DEFAULT_HOST_EMPTY_EXIT_MS = 15 * 60_000;
+/** Win32 named-pipe close can leave libuv's server callback pending after handles are destroyed. */
+const WINDOWS_SHUTDOWN_HARD_EXIT_MS = 2_000;
 
 /** Explicit occupancy-policy overrides for createHostCore; tests inject clocks and hooks here. */
 export interface HostIdleOverrides {
@@ -196,81 +205,109 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	);
 	let nextConnection = 0;
 	let shuttingDown = false;
+	const secret =
+		process.platform === "win32"
+			? await ensureSocketSecret(process.env[SOCKET_SECRET_FILE_ENV] ?? socketSecretPath(socketPath))
+			: undefined;
 	const server = createServer((socket) => {
-		const id = `socket-${++nextConnection}`;
-		const sink = socketSink(socket);
-		writer.registerConnection(id, sink);
-		const detachReader = attachJsonlLineReader(
-			socket,
-			(line) => {
-				// Do not serialize awaited commands: extension_ui_response and other
-				// re-entrant frames must be able to resolve a command already awaiting them.
-				void writer
-					.withConnection(id, () => handle(line))
-					.catch((cause) => {
-						process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`);
-					});
-			},
-			{
-				maxLineLength: MAX_RPC_LINE_CHARACTERS,
-				onOversizedLine: () => {
+		const accept = (): void => {
+			const id = `socket-${++nextConnection}`;
+			const sink = socketSink(socket);
+			writer.registerConnection(id, sink);
+			const detachReader = attachJsonlLineReader(
+				socket,
+				(line) => {
+					// Do not serialize awaited commands: extension_ui_response and other
+					// re-entrant frames must be able to resolve a command already awaiting them.
 					void writer
-						.withConnection(id, () => writer.enqueueControl(parseError(oversizedLineError())))
-						.catch((cause) =>
-							process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`),
-						);
+						.withConnection(id, () => handle(line))
+						.catch((cause) => {
+							process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`);
+						});
 				},
-			},
-		);
-		let detached = false;
-		const detach = () => {
-			if (detached) return;
-			detached = true;
-			detachReader();
-			writer.unregisterConnection(id);
-			connections.delete(id);
-			// A socket that dies without close_session still owns its sessions' attachments
-			// and path reservations. Release them on the command chain so this runs after any
-			// in-flight command for this connection settles, otherwise the path stays pinned
-			// by a runtime whose client is gone and later resumes attach to that orphan.
-			void router.releaseConnection(id).catch((cause) => {
-				process.stderr.write(`senpi rpc connection ${id} release failed: ${errorMessage(cause)}\n`);
-			});
+				{
+					maxLineLength: MAX_RPC_LINE_CHARACTERS,
+					onOversizedLine: () => {
+						void writer
+							.withConnection(id, () => writer.enqueueControl(parseError(oversizedLineError())))
+							.catch((cause) =>
+								process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`),
+							);
+					},
+				},
+			);
+			let detached = false;
+			const detach = () => {
+				if (detached) return;
+				detached = true;
+				detachReader();
+				writer.unregisterConnection(id);
+				connections.delete(id);
+				// A socket that dies without close_session still owns its sessions' attachments
+				// and path reservations. Release them on the command chain so this runs after any
+				// in-flight command for this connection settles, otherwise the path stays pinned
+				// by a runtime whose client is gone and later resumes attach to that orphan.
+				void router.releaseConnection(id).catch((cause) => {
+					process.stderr.write(`senpi rpc connection ${id} release failed: ${errorMessage(cause)}\n`);
+				});
+			};
+			connections.set(id, { id, sink, detach, close: () => socket.destroy() });
+			socket.once("close", detach);
+			socket.once("error", () => detach());
 		};
-		connections.set(id, { id, sink, detach, close: () => socket.destroy() });
-		socket.once("close", detach);
-		socket.once("error", () => detach());
+		if (secret) authenticateSocket(socket, secret, accept);
+		else accept();
 	});
 	server.on("error", (cause) => {
 		if (!shuttingDown) process.stderr.write(`senpi rpc socket listener failed: ${errorMessage(cause)}\n`);
 	});
-	const shutdown = async (exitCode = 0): Promise<never> => {
+	const shutdown = async (exitCode = 0, watchdogCleanup?: Promise<void>): Promise<never> => {
 		if (shuttingDown) process.exit(exitCode);
 		shuttingDown = true;
-		for (const connection of connections.values()) {
-			connection.detach();
-			connection.close();
+		// On Windows, destroying named-pipe sockets does not always make libuv's
+		// server.close callback fire: connected pipe instances can remain in the
+		// kernel after the JavaScript handles are destroyed. Keep the normal drain
+		// path, but never let that platform-specific close stall orphan the host.
+		try {
+			for (const connection of connections.values()) {
+				connection.detach();
+				connection.close();
+			}
+			await (process.platform === "win32"
+				? Promise.race([closeServer(server), delay(WINDOWS_SHUTDOWN_HARD_EXIT_MS)])
+				: closeServer(server));
+			await router.dispose();
+			await writer.flush();
+			await removeSocketPath(socketPath);
+			if (watchdogCleanup) await watchdogCleanup;
+		} finally {
+			// Explicitly terminate after every shutdown trigger. Windows named-pipe
+			// handles are not fully controllable from JS, and an unresolved cleanup
+			// must not leave this daemon or its public endpoint alive.
+			process.exit(exitCode);
 		}
-		await closeServer(server);
-		await router.dispose();
-		await writer.flush();
-		await removeSocketPath(socketPath);
-		process.exit(exitCode);
 	};
 	registerShutdownSignals(shutdown);
 	// Arm before listen: a supervisor death during the listen transition must
 	// still close the child and clean its private endpoint.
-	armHostWatchdog(readHostWatchdogConfigFromBrandEnv(), (reason) => {
+	armHostWatchdog(readHostWatchdogConfigFromBrandEnv(), (reason, cleanup) => {
 		process.stderr.write(`senpi rpc host: ${reason}; shutting down\n`);
-		killTrackedDetachedChildren();
-		void shutdown(0);
+		// Enter shutdown before killing session-owned child processes. The Windows
+		// tree killer is synchronous, while the shutdown fallback must be armed
+		// before any such cleanup can delay the event loop.
+		void shutdown(0, cleanup);
+		setImmediate(killTrackedDetachedChildren);
 	});
-	await listen(server, socketPath);
+	await listen(server, socketPath, secret);
 	process.stderr.write(`senpi rpc listening on ${formatSocketAddress(socketPath)}\n`);
 
 	// Opt-in only: set by the lifecycle supervisor so this host can never outlive
 	// it, including when the supervisor is SIGKILLed and runs no handler at all.
 	return new Promise(() => {});
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parseError(error: string): RpcResponse {
@@ -323,7 +360,7 @@ function socketSink(socket: Socket): RpcConnectionSink {
 }
 
 async function prepareSocketPath(socketPath: string): Promise<void> {
-	if (socketPath.startsWith("\0")) return;
+	if (process.platform === "win32" || socketPath.startsWith("\0")) return;
 	await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
 	try {
 		await access(socketPath);
@@ -337,7 +374,7 @@ async function prepareSocketPath(socketPath: string): Promise<void> {
 
 function probeSocket(socketPath: string): Promise<boolean> {
 	return new Promise((resolve) => {
-		const socket = createConnection(socketPath);
+		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform));
 		const settle = (live: boolean) => {
 			socket.destroy();
 			resolve(live);
@@ -348,13 +385,17 @@ function probeSocket(socketPath: string): Promise<boolean> {
 	});
 }
 
-function listen(server: Server, socketPath: string): Promise<void> {
+function listen(server: Server, socketPath: string, secret?: Uint8Array): Promise<void> {
 	return new Promise((resolve, reject) => {
 		server.once("error", reject);
-		server.listen(socketPath, async () => {
+		server.listen(resolveSocketTransportAddress(socketPath, process.platform, secret), async () => {
 			server.off("error", reject);
-			if (!socketPath.startsWith("\0")) await chmod(socketPath, 0o600);
-			resolve();
+			try {
+				if (process.platform !== "win32" && !socketPath.startsWith("\0")) await chmod(socketPath, 0o600);
+				resolve();
+			} catch (cause) {
+				reject(cause);
+			}
 		});
 	});
 }
@@ -366,7 +407,7 @@ function closeServer(server: Server): Promise<void> {
 }
 
 async function removeSocketPath(socketPath: string): Promise<void> {
-	if (socketPath.startsWith("\0")) return;
+	if (process.platform === "win32" || socketPath.startsWith("\0")) return;
 	try {
 		await unlink(socketPath);
 	} catch (cause) {
