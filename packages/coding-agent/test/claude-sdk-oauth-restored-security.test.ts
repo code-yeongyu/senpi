@@ -99,9 +99,15 @@ describe("claude-sdk-oauth restored security", () => {
 				"options_changed",
 			],
 			["toolset", { fingerprint: { systemPromptHash: "prompt-v1", toolsetHash: "tools-v2" } }, "options_changed"],
-		] as const)("cold-seeds a persisted binding when %s drifts", (_label, override, reason) => {
+		] as const)("forks a persisted binding when %s drifts instead of flattening the whole transcript", (_label, override, reason) => {
 			const decision = decideNativeContinuity(baseInput(override));
-			expect(decision).toEqual({ kind: "flatten", reason });
+			expect(decision).toEqual({
+				kind: "fork",
+				sdkSessionId: SDK_SESSION_ID,
+				atUuid: ASSISTANT_UUID,
+				from: 2,
+				reason,
+			});
 		});
 
 		it.each([

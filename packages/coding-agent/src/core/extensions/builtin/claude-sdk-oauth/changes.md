@@ -1,5 +1,24 @@
 # claude-sdk-oauth
 
+## 2026-09-02 - Fork persisted bindings on options drift instead of flattening
+
+### What changed
+
+- `session-continuity.ts`: a persisted binding whose account/model/prompt/toolset drifted now forks at the last assistant UUID instead of flattening the whole transcript.
+- `test/claude-sdk-oauth-restored-security.test.ts` and `test/claude-sdk-oauth-continuity-retry-checkpoint.test.ts`: drift after a timeout teardown is a fork, not a 1.7MB flatten.
+
+### Why
+
+- Stream-start timeouts tear down the live registry entry. The next attempt only had the sidecar binding, and `options_changed` (reload / cache-warm / toolset hash) flattened hundreds of messages. That megabyte resend then timed out again and hopped providers.
+
+### Why an extension could not handle it
+
+- Continuity decisions live inside the Claude SDK OAuth resident lane.
+
+### Expected merge conflict zones
+
+- LOW: `decideFromBinding` identity-drift branch in `session-continuity.ts`.
+
 ## 2026-09-02 - Preserve selected OAuth slots during provider preflight
 
 ### What changed

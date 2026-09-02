@@ -132,10 +132,24 @@ function retryCheckpointDecision(
 	};
 }
 
+function forkBindingOrFlatten(
+	binding: ContinuityBindingSnapshot,
+	reason: ContinuityReason,
+): ContinuityDecision {
+	if (!binding.lastAssistantUuid) return { kind: "flatten", reason };
+	return {
+		kind: "fork",
+		sdkSessionId: binding.sdkSessionId,
+		atUuid: binding.lastAssistantUuid,
+		from: binding.sentCount,
+		reason,
+	};
+}
+
 function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBindingSnapshot): ContinuityDecision {
 	if (!input.transcriptAvailable) return { kind: "flatten", reason: "transcript_missing" };
 	const drift = identityDrift(input, binding);
-	if (drift) return { kind: "flatten", reason: drift };
+	if (drift) return forkBindingOrFlatten(binding, drift);
 	const retry = retryCheckpointDecision(input, binding);
 	if (retry) return retry;
 	if (binding.sentPrefixHash !== undefined) {

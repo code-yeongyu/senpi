@@ -88,12 +88,12 @@ describe("claude-sdk-oauth retry checkpoint continuity", () => {
 	});
 
 	it("does not let a checkpoint outrank an identity drift", () => {
-		expect(decideNativeContinuity(input({ modelId: "claude-sonnet-5" }))).toEqual({
-			kind: "flatten",
+		expect(decideNativeContinuity(input({ modelId: "claude-sonnet-5" }))).toMatchObject({
+			kind: "fork",
 			reason: "model_changed",
 		});
-		expect(decideNativeContinuity(input({ accountName: "secondary" }))).toEqual({
-			kind: "flatten",
+		expect(decideNativeContinuity(input({ accountName: "secondary" }))).toMatchObject({
+			kind: "fork",
 			reason: "account_changed",
 		});
 	});

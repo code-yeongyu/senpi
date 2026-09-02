@@ -2354,10 +2354,11 @@ export class AgentSession {
 			const hardErrorFallbackEligible = this._isHardErrorFallbackEligible(msg);
 			const cursorZeroTokenRe = isCursorZeroTokenResourceExhausted(msg);
 			const cursorQuotaRe = isCursorQuotaResourceExhausted(msg, this.model?.contextWindow ?? 0);
+			const claudeSdkSameModelRemint = this._isClaudeSdkSameModelRemintError(msg);
 			const retryCanAdmitProvider =
 				!userAbortSuppressedQueuedContinuation &&
 				this.settingsManager.getRetrySettings().enabled &&
-				(retryableError || hardErrorFallbackEligible || cursorZeroTokenRe || cursorQuotaRe);
+				(retryableError || hardErrorFallbackEligible || cursorZeroTokenRe || cursorQuotaRe || claudeSdkSameModelRemint);
 			let compactedBeforeRetry = false;
 			if (
 				retryCanAdmitProvider &&
@@ -2381,7 +2382,7 @@ export class AgentSession {
 					// failed assistant before provider fallback so replay stays valid.
 					this._retireFailedRetryAssistant(msg);
 					retryOutcome = await this._handleRetryableError(msg, { hardErrorFallback: true });
-				} else if (this._isClaudeSdkSessionLockError(msg)) {
+				} else if (claudeSdkSameModelRemint) {
 					retryOutcome = await this._handleRetryableError(msg, { sameModelRemint: true });
 				} else if (retryableError) {
 					retryOutcome = await this._handleRetryableError(msg);
@@ -7381,11 +7382,23 @@ export class AgentSession {
 		return (message.errorMessage ?? "").includes("Lock file is already being held");
 	}
 
+	private _isClaudeSdkInvalidRequestError(message: AssistantMessage): boolean {
+		return message.errorMessage === "invalid_request";
+	}
+
+	private _isClaudeSdkSameModelRemintError(message: AssistantMessage): boolean {
+		return (
+			this._isClaudeSdkSessionLockError(message) ||
+			this._isClaudeSdkInvalidRequestError(message) ||
+			isProviderStreamStallError(message)
+		);
+	}
+
 	private _isHardErrorFallbackEligible(message: AssistantMessage): boolean {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
 			!message.errorMessage?.startsWith("Provider is not configured:") &&
-			!this._isClaudeSdkSessionLockError(message) &&
+			!this._isClaudeSdkSameModelRemintError(message) &&
 			message.stopReason === "error" &&
 			!isContextOverflow(message, this.model?.contextWindow ?? 0) &&
 			!this._isCursorPayloadOverflow(message) &&

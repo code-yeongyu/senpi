@@ -206,6 +206,45 @@ describe("retry fallback hard errors", () => {
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
 	});
 
+	it("retries a Claude SDK stream-start timeout on the same model instead of hopping providers", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: { enabled: true, maxRetries: 2, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		const timeout = "Provider stream start timed out after 90000ms";
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: timeout }),
+			fauxAssistantMessage("recovered after stall"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+	});
+
+	it("does not hop providers on a bare Claude SDK invalid_request", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: { enabled: true, maxRetries: 1, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid_request" }),
+			fauxAssistantMessage("recovered after invalid_request"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+	});
+
 	it("retries a Claude SDK session lock on the same model instead of hopping providers", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],

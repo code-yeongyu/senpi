@@ -10,6 +10,8 @@
 - `Provider is not configured:` is no longer a hard-error model fallback, so an auth miss on Claude SDK OAuth does not eject the turn onto another provider.
 - OAuth login no longer paints two live `>` prompts when the browser callback finishes before the paste-code field is submitted.
 - Claude Agent SDK `Lock file is already being held` retries on the same model and no longer hard-error-falls back onto another provider.
+- Claude SDK stream-start timeouts and a bare `invalid_request` remint the same model instead of hopping to an unauthenticated OpenGateway Anthropic route.
+- A persisted Claude SDK binding whose prompt/toolset drifted after a timeout now forks at the last assistant UUID instead of flattening megabytes of transcript.
 
 ### New Features
 

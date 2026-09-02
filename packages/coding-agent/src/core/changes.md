@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-02 - Keep Claude SDK stalls and invalid_request on the same model
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `Provider stream start timed out after Nms` and a bare `invalid_request` remint the same model. They are not hard-error provider hops.
+- `packages/coding-agent/test/suite/retry-fallback-hard-error.test.ts`: both recover on faux-1 and never apply a fallback chain.
+
+### Why
+
+- After a 1.7MB flatten the SDK timed out, then returned `invalid_request`. Hard-error fallback switched onto `opengateway/anthropic/claude-opus-4-8` which has no key and 401-looped until the goal continuation cap fired.
+
+### Why an extension could not handle it
+
+- Hard-error vs same-model retry is decided in `AgentSession` before extension failover runs.
+
+### Expected merge conflict zones
+
+- LOW: `_isHardErrorFallbackEligible` and the `agent_end` remint branch in `agent-session.ts`.
+
 ## 2026-09-02 - Retry Claude SDK session locks on the same model
 
 ### What changed
