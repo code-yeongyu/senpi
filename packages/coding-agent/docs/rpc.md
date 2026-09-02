@@ -62,9 +62,11 @@ On Windows, listeners and clients deterministically map the logical socket path 
 `\\.\pipe\senpi-rpc-<sha256[:32]>`. Callers keep using the same `unix://` CLI value; the logical path remains the
 ownership and settings identity, and callers never construct the pipe name themselves.
 
-Socket event visibility is attachment-scoped: each connection receives agent events only from sessions attached to that
-connection, with every record tagged by its routing `sessionId`. Content-free `session_closed` lifecycle records remain
-broadcast to all connections so observers can track the session roster. Correlated responses and dialog extension UI
+Socket event visibility is attachment-scoped for session content: each connection receives agent output only from sessions
+attached to that connection, with every record tagged by its routing `sessionId`. Content-free lifecycle records
+(`agent_start`, `agent_settled`, `agent_idle`, `session_opened`, and `session_closed`) are broadcast to all registered
+connections, including the supervisor's unattached observer, so host lifecycle accounting remains accurate without exposing
+session content. Correlated responses and dialog extension UI
 requests (select, confirm, input, and editor) are requester-only; other extension UI state records go to the session's
 attached connections. To observe a foreign session, open it by its existing
 `sessionPath`; the host attaches that connection during `open_session`.

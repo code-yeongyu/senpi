@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
-import { processMatchesPidFile, readProcessStartTime } from "../src/modes/app-server/daemon/process.ts";
+import { processIsLive, processMatchesPidFile, readProcessStartTime } from "../src/modes/app-server/daemon/process.ts";
 import { createHostDaemonPaths, ensureHost, type HostLifecyclePolicyInput } from "../src/modes/rpc/host-ensure.ts";
 import {
 	DEFAULT_HOST_IDLE_EXIT_MS,
@@ -61,7 +61,10 @@ afterEach(async () => {
 	for (const model of models.splice(0)) await model.close();
 	for (const entry of managed.splice(0)) await stopHostProcess(entry.pidFile, entry.pidFilePath);
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
-}, 30_000);
+	// Budget: teardown liveness probe (~1s) + SIGTERM exit wait (30s) + SIGKILL
+	// escalation (2s) per host, with headroom; the old 30s cap already sat below
+	// the pre-existing 33s worst case.
+}, 60_000);
 
 type RecordValue = Record<string, unknown>;
 
@@ -175,7 +178,7 @@ describe("ensureHost-spawned host lifecycle", () => {
 		const entry = currentManaged();
 		const peer = await JsonlPeer.connect(qa.socket);
 		await delay(2_000);
-		expect(await hostAlive(entry.pidFile)).toBe(true);
+		await expectHostAlive(qa, entry.pidFile);
 		peer.destroy();
 		await waitForHostExit(entry);
 	}, 45_000);
@@ -198,7 +201,7 @@ describe("ensureHost-spawned host lifecycle", () => {
 		await agentStart;
 		peer.destroy();
 		await delay(2_500);
-		expect(await hostAlive(entry.pidFile)).toBe(true);
+		await expectHostAlive(qa, entry.pidFile);
 		model.release();
 		await waitForHostExit(entry, 20_000);
 	}, 60_000);
@@ -223,7 +226,7 @@ describe("ensureHost-spawned host lifecycle", () => {
 		});
 		const entry = currentManaged();
 		await delay(2_500);
-		expect(await hostAlive(entry.pidFile)).toBe(true);
+		await expectHostAlive(qa, entry.pidFile);
 		terminateSupervisor(entry.pidFile.pid, "SIGTERM");
 		await waitForHostExit(entry, WINDOWS_SUPERVISOR_EXIT_TIMEOUT_MS);
 	}, 45_000);
@@ -650,8 +653,42 @@ function currentManaged(): { pidFile: { pid: number; processStartTime: string };
 	return entry;
 }
 
+/**
+ * Liveness assertions must not fail on a flaky identity probe: the Windows CIM
+ * query is a 1s-bounded PowerShell that can throw (timeout) or report a live
+ * pid as ABSENT for one read while the process is alive (issue #1290 variant 2
+ * hit both shapes on CI - the production callers got throw-retry in 1640d9b67,
+ * and PR #1291's own CI run then proved a lone false read occurs too). Treat
+ * "alive" as decisive on the first read, and require two consecutive agreeing
+ * "not alive" reads before reporting dead; a genuinely dead host settles in one
+ * extra 500ms probe, while a transient miss cannot fail an assertion.
+ */
+/**
+ * Asserts liveness with the supervisor's own stderr attached: when the probe
+ * (now double-checked) still reports the host gone, the next CI failure must
+ * show WHY - a genuine early exit logs "idle shutdown"/signal lines, while a
+ * silent log with a dead pid points at process death, and a live-looking log
+ * points at the CIM observer (#1290).
+ */
+async function expectHostAlive(qa: Scratch, pidFile: { pid: number; processStartTime: string }): Promise<void> {
+	const alive = await hostAlive(pidFile);
+	if (!alive) throw new Error(`host ${pidFile.pid} reported dead\n[supervisor stderr]\n${readSupervisorStderr(qa)}`);
+}
+
 async function hostAlive(pidFile: { pid: number; processStartTime: string }): Promise<boolean> {
-	return processMatchesPidFile(pidFile, readProcessStartTime);
+	const deadline = Date.now() + 10_000;
+	let consecutiveNotAlive = 0;
+	for (;;) {
+		try {
+			if (await processMatchesPidFile(pidFile, readProcessStartTime)) return true;
+			consecutiveNotAlive += 1;
+			if (consecutiveNotAlive >= 2 || Date.now() > deadline) return false;
+		} catch (cause) {
+			consecutiveNotAlive = 0;
+			if (Date.now() > deadline) throw cause;
+		}
+		await delay(500);
+	}
 }
 
 async function waitForHostExit(
@@ -667,7 +704,10 @@ async function waitForHostExit(
 			// avoids the 50ms polling storm that caused every probe to time out.
 			const probe = probeWindowsProcessIdentity(entry.pidFile.pid, 10_000);
 			currentIdentity = probe.identity;
-			probeTimedOut = probe.timedOut;
+			// A probe that timed out reports UNKNOWN, not ALIVE. kill(pid, 0) answers
+			// liveness deterministically, so a host that really exited is recognized here
+			// instead of spinning until the deadline and failing with "did not exit".
+			probeTimedOut = probe.timedOut && processIsLive(entry.pidFile.pid);
 		} else {
 			currentIdentity = await readProcessStartTime(entry.pidFile.pid);
 		}
@@ -711,7 +751,11 @@ function probeWindowsProcessIdentity(pid: number, timeoutMs: number): { identity
 
 async function stopHostProcess(pidFile: { pid: number; processStartTime: string }, pidFilePath: string): Promise<void> {
 	try {
-		if (await hostAlive(pidFile)) {
+		// Teardown must not spend hostAlive()'s assertion-grade retry window: one
+		// probe decides, and an unreadable identity is treated as alive so the stop
+		// path still runs (stopping an already-dead pid is harmless downstream).
+		const alive = await processMatchesPidFile(pidFile, readProcessStartTime).catch(() => true);
+		if (alive) {
 			if (process.platform === "win32") {
 				// Detached Win32 supervisors require Stop-Process; process.kill does not
 				// reliably terminate them and can leak handles into the next test.
@@ -751,8 +795,12 @@ function terminateSupervisor(pid: number, signal: NodeJS.Signals): void {
 			// The supervisor idle-exits on its own timer, so it can vanish between the
 			// caller's liveness check and this Stop-Process: an already-gone pid is the
 			// outcome the caller wanted, not a failure.
-			const probe = probeWindowsProcessIdentity(pid, 10_000);
-			if (probe.identity === undefined && !probe.timedOut) return;
+			//
+			// Liveness is decided by kill(pid, 0), not by the PowerShell CIM probe: that
+			// probe has its own timeout, and a loaded runner hitting it reported
+			// `timedOut` for a process that had genuinely exited, which rethrew and made
+			// teardown fail on runner slowness alone. A timeout means UNKNOWN, never ALIVE.
+			if (!processIsLive(pid)) return;
 			throw cause;
 		}
 		return;

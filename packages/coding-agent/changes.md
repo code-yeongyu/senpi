@@ -1,5 +1,9 @@
 # Local fork changes
 
+## 2026-09-02 - RPC host lifecycle teardown treats a timed-out probe as unknown, not alive
+
+- `test/rpc-host-lifecycle.test.ts` decides Windows process liveness with the production `processIsLive(pid)` (`kill(pid, 0)`) instead of trusting the PowerShell CIM probe's `timedOut` flag. A loaded `windows-latest` runner could time the 10s CIM probe out for a supervisor that had genuinely idle-exited; `terminateSupervisor()` then rethrew the `Stop-Process` failure (`starts a fresh host transparently on the next ensure after an idle exit`), and `waitForHostExit()` spun to its deadline and threw `did not exit within Nms`. A timed-out probe means the state is unknown, so it is re-decided by `kill(pid, 0)` (`ESRCH` -> gone, `EPERM` -> alive); a process that is really still alive still rethrows / still keeps waiting.
+
 ## 2026-09-01 - Acknowledge RPC abort before quiesce
 
 - The RPC `abort` command now acknowledges immediately after dispatching the abort signal, while observing quiesce failures through the existing `rpc_error` event path.

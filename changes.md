@@ -1,5 +1,24 @@
 # changes — senpi-monorepo root
 
+## Root workspace fan-out scripts no longer recurse under bun (2026-09-02)
+
+### What changed
+
+- `package.json`: the three root scripts that fan out to workspaces stop passing workspace flags after the script name. `test` and `clean` move the flags before the script name (`npm run --workspaces --if-present <script>`), and `eval` moves its flag before `run` (`npm --workspace=@code-yeongyu/senpi-evals run eval --`). npm behavior is unchanged in all three cases.
+- `scripts/root-workspace-scripts.test.mjs` (new): parses the root manifest and fails a root script for either recursion-prone shape — a workspace flag after the script name, or a singular `--workspace` on an `npm run` call (which bun ignores, re-entering the root script). Both shipped shapes are covered; a mutation check confirms reverting `eval` to `npm run --workspace=<name> eval` fails the guard.
+
+### Why
+
+- Bun rewrites `npm run <name>` to `bun run <name>` inside script text, and bun appends flags placed after the script name to the script itself instead of parsing them. `npm run test --workspaces --if-present` therefore re-invoked the ROOT script with an ever-growing flag suffix (`bun run test --workspaces --if-present --workspaces --if-present ...`) and spun forever instead of running the workspace suites — it never failed, so it read as a slow suite. `clean` and `eval` had the same defect. Verified in a throwaway fixture: the flag-before form fans out under both npm and bun, while the singular `--workspace=<name>` form still recurses under bun (bun does not recognize it), which is why `eval` needs the flag before `run` so no `npm run` substring remains to rewrite.
+
+### Why an extension could not handle it
+
+- These are root package manifest scripts consumed by the release gate (`scripts/release.mjs`, `scripts/local-release.mjs` run `CI=1 npm test`) and by contributors directly; no extension surface exists above the package manager.
+
+### Expected merge conflict zones
+
+- LOW: the `test`, `clean`, and `eval` lines in the root `package.json` scripts block.
+
 ## Shared-host rendering isolation (2026-08-30)
 
 Shared socket clients now register `rendered_components` through additive `set_client_info` capabilities. Factory-rendered component records are filtered per connection, including capability-aware snapshot replay. Capabilities remain connection-wide across sessions and are cleared only on socket release; explicit close removes only the closing width. Shared bindings retain factories while disposing live renderers and footer providers when no capable connection remains, recreating them for later capable joiners.

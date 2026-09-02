@@ -824,7 +824,15 @@ describe("RPC Unix-socket multi-connection host", () => {
 			const third = await connectPeer(qa.socketPath);
 			try {
 				await turn;
-				const foreign = (value: RecordValue) => value.sessionId === sessionB && value.type !== "session_closed";
+				const lifecycle = new Set([
+					"agent_start",
+					"agent_settled",
+					"agent_idle",
+					"session_opened",
+					"session_closed",
+				]);
+				const foreign = (value: RecordValue) =>
+					value.sessionId === sessionB && typeof value.type === "string" && !lifecycle.has(value.type);
 				expect(a.peer.messages.some(foreign)).toBe(false);
 				expect(third.peer.messages.some(foreign)).toBe(false);
 			} finally {

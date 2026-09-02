@@ -46,7 +46,7 @@ import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, isBunBinary } from "../../config.ts";
-import { readProcessStartTime } from "../app-server/daemon/process.ts";
+import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
 import { createHostDaemonPaths } from "./host-ensure.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
@@ -562,7 +562,14 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	}
 
 	if (process.platform === "win32" && child.pid !== undefined) {
-		const childStartTime = await readProcessStartTime(child.pid, process.platform, 1_000);
+		// This baseline read sits outside the startup try/catch, and readProcessStartTime
+		// THROWS when the 1s CIM probe fails (execFile's timeout SIGTERMs the PowerShell
+		// child). With no unhandledRejection handler the supervisor died right here on a
+		// loaded runner: it never reached the "host ready" line, and the internal host it
+		// owned vanished with it, surfacing downstream as `connect ENOENT` on the pipe and
+		// as `reported dead`. A failed baseline read is UNKNOWN, so the watchdog simply
+		// starts without one and relies on its own comparisons.
+		const childStartTime = await readProcessStartTime(child.pid, process.platform, 1_000).catch(() => undefined);
 		let missingIdentityChecks = 0;
 		let checkingChildIdentity = false;
 		const checkChildIdentity = (): void => {
@@ -570,8 +577,13 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			checkingChildIdentity = true;
 			void readProcessStartTime(child.pid!, process.platform, 1_000)
 				.then((currentStartTime) => {
-					if (currentStartTime === undefined) missingIdentityChecks++;
-					else missingIdentityChecks = 0;
+					// An absent identity is only believed once kill(pid, 0) agrees the child is
+					// gone. This probe is a 1s PowerShell CIM spawn polled every 500ms, so a
+					// loaded runner produced two consecutive timeouts and this watchdog shut
+					// down a perfectly healthy host (`does not exit while a turn is active`).
+					// A timed-out probe means UNKNOWN, never EXITED.
+					if (currentStartTime === undefined && !processIsLive(child.pid!)) missingIdentityChecks++;
+					else if (currentStartTime !== undefined) missingIdentityChecks = 0;
 					const identityChanged =
 						childStartTime !== undefined && currentStartTime !== undefined && currentStartTime !== childStartTime;
 					if (identityChanged || missingIdentityChecks >= 2) {

@@ -10,6 +10,14 @@ export interface SessionEventWriterConnection {
 
 export const RENDERED_COMPONENT_RECORD = "__senpiRenderedComponent";
 
+const BROADCAST_LIFECYCLE_RECORDS = new Set([
+	"agent_start",
+	"agent_settled",
+	"agent_idle",
+	"session_opened",
+	"session_closed",
+]);
+
 type RegisteredConnection = {
 	readonly connection: SessionEventWriterConnection;
 	readonly actor: SocketEventSinkActor;
@@ -98,8 +106,11 @@ export class SessionEventFanout {
 		targetId: string | undefined,
 		isTargeted: boolean,
 		rendered: boolean,
+		recordType: unknown,
 	): readonly (string | undefined)[] {
 		if (isTargeted) return [targetId];
+		if (typeof recordType === "string" && BROADCAST_LIFECYCLE_RECORDS.has(recordType))
+			return this.connections.size > 0 ? [...this.connections.keys()] : [undefined];
 		if (rendered)
 			return this.connections.size > 0
 				? [...this.connections.keys()].filter(

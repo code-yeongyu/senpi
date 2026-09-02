@@ -8,6 +8,10 @@
 
 ### Fixed
 
+- The shared RPC supervisor's observer receives content-free session and agent lifecycle records even without a session attachment, so it no longer exits the host during an active turn.
+- The Windows RPC host supervisor no longer dies when its baseline process-identity probe times out; a failed baseline read is treated as unknown instead of throwing past the startup guard and taking the internal host down with it.
+- The Windows shared RPC host is no longer shut down by its own identity watchdog when the PowerShell process probe merely times out; an absent identity is confirmed with `kill(pid, 0)` before the host is treated as exited.
+- Shared RPC host startup no longer runs its orphaned-directory cleanup while holding the endpoint lock, so a concurrent `senpi` start on a busy machine no longer fails with a raw `database is locked` when the cleanup's temp-directory scan and per-candidate process probes outlast the lock budget.
 - Multi-session RPC `close_session` teardown is bounded by a 10-second grace period (configurable via `SENPI_RPC_CLOSE_GRACE_MS`), force-releasing the session and path reservation on expiry; a second close joins the in-flight teardown instead of returning `unknown_session`.
 
 ### New Features

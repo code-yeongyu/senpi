@@ -250,6 +250,43 @@ describe("multi-session RPC event writer", () => {
 		expect(records(unattached)).toEqual([]);
 	});
 
+	it("broadcasts content-free lifecycle records to unattached connections only", async () => {
+		const attached: string[] = [];
+		const unattached: string[] = [];
+		const writer = new SessionEventWriter(() => {});
+		writer.registerConnection("attached", {
+			writeRaw: (chunk) => attached.push(chunk),
+			waitForBackpressure: async () => {},
+		});
+		writer.registerConnection("unattached", {
+			writeRaw: (chunk) => unattached.push(chunk),
+			waitForBackpressure: async () => {},
+		});
+		writer.attachConnectionToSession("attached", "session");
+
+		for (const type of ["agent_start", "agent_settled", "agent_idle", "session_opened", "session_closed"])
+			writer.enqueue("session", { type });
+		writer.enqueue("session", { type: "message_update", message: "private" });
+		await writer.flush();
+
+		expect(records(unattached).map((record) => record.type)).toEqual([
+			"agent_start",
+			"agent_settled",
+			"agent_idle",
+			"session_opened",
+			"session_closed",
+		]);
+		expect(records(unattached).every((record) => record.sessionId === "session")).toBe(true);
+		expect(records(attached).map((record) => record.type)).toEqual([
+			"agent_start",
+			"agent_settled",
+			"agent_idle",
+			"session_opened",
+			"session_closed",
+			"message_update",
+		]);
+	});
+
 	it("does not let a gated socket stall a fast socket", async () => {
 		const slowGate = deferred<void>();
 		const slow: string[] = [];

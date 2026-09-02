@@ -13,7 +13,7 @@
 		"packages/coding-agent/examples/extensions/gondolin"
 	],
 	"scripts": {
-		"clean": "shx rm -rf dist && npm run clean --workspaces",
+		"clean": "shx rm -rf dist && npm run --workspaces --if-present clean",
 		"build": "node scripts/build-all.mjs",
 		"build:npm": "node scripts/build-all.mjs --pm npm",
 		"build:bun": "node scripts/build-all.mjs --pm bun",
@@ -31,11 +31,11 @@
 		"generate:models": "npm --prefix packages/ai run generate-models && npm --prefix packages/ai run generate-image-models",
 		"generate:model-catalog": "npm --prefix packages/ai run generate-model-catalog",
 		"diff:model-catalog": "node scripts/diff-model-catalog.mjs",
-		"eval": "npm run eval --workspace=@code-yeongyu/senpi-evals --",
+		"eval": "npm --workspace=@code-yeongyu/senpi-evals run eval --",
 		"check:model-catalog": "node scripts/publish-model-catalog.mjs --input .artifacts/model-catalog --dry-run",
 		"profile:tui": "node scripts/profile-coding-agent-node.mjs --mode tui",
 		"profile:rpc": "node scripts/profile-coding-agent-node.mjs --mode rpc",
-		"test": "npm run test:scripts && npm run test --workspaces --if-present",
+		"test": "npm run test:scripts && npm run --workspaces --if-present test",
 		"test:scripts": "node --test scripts/*.test.mjs",
 		"version:patch": "npm version patch --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
 		"version:minor": "npm version minor --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",

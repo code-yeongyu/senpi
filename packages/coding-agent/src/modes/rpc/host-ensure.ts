@@ -119,9 +119,14 @@ export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHos
 	const lockTarget = join(tmpdir(), "senpi-rpc-host-locks", createSocketLockName(socket));
 	await mkdir(dirname(lockTarget), { recursive: true });
 	await writeFile(lockTarget, "", { flag: "a", mode: 0o600 });
+	// Opportunistic GC of other installs' leftovers stays OUTSIDE the endpoint lock.
+	// Its cost scales with the whole tmpdir and, on win32, adds a ~1s process probe per
+	// candidate; inside the critical section that inflated the hold for every concurrent
+	// ensureHost until a waiter exhausted its budget and surfaced a raw "database is
+	// locked". Its own guards (60s age, dead owner pid) already make it safe unlocked.
+	await reapOrphanedInternalHostDirs();
 	const release = await acquireOwnershipSafeLock(`${lockTarget}.lock`, lockOptions);
 	try {
-		await reapOrphanedInternalHostDirs();
 		await options._test?.afterLockAcquired?.();
 		return await ensureHostLocked(paths, socket, options.agentDir ?? getAgentDir(), options.policy, options._test);
 	} finally {

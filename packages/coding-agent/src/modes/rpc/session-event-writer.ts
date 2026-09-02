@@ -179,7 +179,13 @@ export class SessionEventWriter {
 		const { [RENDERED_COMPONENT_RECORD]: _rendered, ...wireTagged } = tagged;
 		const line = serializeJsonLine(wireTagged);
 		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line);
-		const targets = this.fanout.targets(sessionId, targetId, isTargeted, record[RENDERED_COMPONENT_RECORD] === true);
+		const targets = this.fanout.targets(
+			sessionId,
+			targetId,
+			isTargeted,
+			record[RENDERED_COMPONENT_RECORD] === true,
+			record.type,
+		);
 		for (const target of targets) {
 			if (target !== undefined && !this.fanout.get(target)) continue;
 			const registered = target === undefined ? undefined : this.fanout.get(target);
