@@ -173,7 +173,7 @@ import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
-import { formatSelector } from "./retry-fallback/chains.ts";
+import { formatSelector, parseFallbackSelector } from "./retry-fallback/chains.ts";
 import { RetryFallbackController } from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
 import {
@@ -6879,6 +6879,17 @@ export class AgentSession {
 							originalSelector: active.originalSelector,
 							pinned: active.pinned,
 						};
+					},
+					restoreFallbackPrimary: async () => {
+						const active = this._retryFallback.activeState;
+						if (!active) return false;
+						const selector = parseFallbackSelector(active.originalSelector, this._modelRegistry);
+						const model = selector ? this._modelRegistry.find(selector.provider, selector.id) : undefined;
+						if (!model) return false;
+						const originalThinkingLevel = active.originalThinkingLevel;
+						await this.setSessionModel(model);
+						if (originalThinkingLevel !== undefined) this.setSessionThinkingLevel(originalThinkingLevel);
+						return true;
 					},
 				},
 				compact: (options) => {

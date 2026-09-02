@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-02 - Restore the pre-fallback session model on request
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` binds a session-only `restoreFallbackPrimary` operation that resolves the retry controller's original selector, restores that model and its original thinking level, and clears active fallback state without changing global defaults.
+
+### Why
+
+- A successful fallback intentionally leaves the session on the fallback model. Users need an explicit, bounded way to return to the pre-fallback model after the incident clears without rewriting their configured defaults.
+
+### Why an extension could not handle it
+
+- The retry controller's original selector and thinking level are private session state. The builtin command can request restoration only through a host-bound session-settings operation.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts` in the extension session-settings binding.
+
 ## 2026-08-31 - Session activity contract for host occupancy decisions
 
 ### What changed

@@ -33,5 +33,6 @@ export function createInMemoryExtensionSessionSettings(): ExtensionSessionSettin
 		},
 		reload: () => settings.reload(),
 		getFallbackStatus: () => undefined,
+		restoreFallbackPrimary: async () => false,
 	};
 }

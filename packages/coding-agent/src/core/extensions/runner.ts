@@ -329,6 +329,7 @@ function createNoOpSessionSettings(): ExtensionContextActions["sessionSettings"]
 		},
 		reload: () => settings.reload(),
 		getFallbackStatus: () => undefined,
+		restoreFallbackPrimary: async () => false,
 	};
 }
 

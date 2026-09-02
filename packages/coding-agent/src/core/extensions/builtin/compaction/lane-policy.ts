@@ -16,6 +16,7 @@
  */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessageDiagnostic } from "@earendil-works/pi-ai";
+import type { CompactionReason } from "../../types.ts";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../claude-sdk-oauth/account-management.ts";
 import type { ClaudeSdkOauthProviderSettings } from "../claude-sdk-oauth/settings.ts";
 import { loadClaudeSdkOauthProviderSettingsFromDisk } from "../claude-sdk-oauth/settings.ts";
@@ -31,6 +32,24 @@ export const CLAUDE_SDK_OAUTH_COMPACT_BOUNDARY_DIAGNOSTIC = "claude_sdk_oauth_co
  */
 export const SDK_NATIVE_LANE_REJECTION_REASON = "the Claude Agent SDK owns compaction for this session";
 const COMPACT_BOUNDARY_SCHEMA = "senpi.claude-sdk-oauth.compact-boundary.v1";
+
+/**
+ * Compaction reasons the SDK-native delegation does NOT cover.
+ *
+ * The stand-down exists because the SDK owns the transcript and runs its own
+ * native auto-compaction over it, so senpi's AUTOMATIC compaction would rewrite
+ * a history senpi no longer owns. That argument only holds while the SDK's
+ * compaction actually happens; senpi cannot observe that it did not. `manual` is
+ * the escape hatch for exactly that blind spot: an explicitly requested
+ * `/compact` is the user stating the delegated owner did not deliver, and
+ * delegating it away leaves the session with no way back under the limit.
+ *
+ * Every automatic reason stays delegated, so the lane keeps its ownership in
+ * the steady state.
+ */
+export function isLaneOverrideReason(reason: CompactionReason): boolean {
+	return reason === "manual";
+}
 
 export interface LaneModel {
 	provider?: string;

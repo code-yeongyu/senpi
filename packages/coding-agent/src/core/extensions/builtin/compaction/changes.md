@@ -1,5 +1,49 @@
 # changes.md — builtin compaction policy
 
+## An explicitly requested compaction overrides the SDK-native lane opt-out (2026-09-02)
+
+### What changed
+
+- `lane-policy.ts` gained `isLaneOverrideReason(reason)`, naming the `CompactionReason` values the
+  `claude-sdk-oauth` delegation does NOT cover. Today that is `manual` alone.
+- The `session_before_compact` guard in `index.ts` now reads
+  `if (!isLaneOverrideReason(event.reason) && lanePolicy.disablesSenpiCompaction(ctx))`. Every automatic reason
+  (`threshold`, `overflow`, `pre_prompt`, `branch`, `extension`) is still cancelled with
+  `rejectionCause: "external-owner"` exactly as before; only an explicitly requested `/compact` proceeds.
+- No other lane call site changed: the `before_agent_start`, `agent_end`, `turn_end`, `model_select`, `context`
+  and `message_end` guards still stand down unconditionally, because none of them carries a user request.
+
+### Why
+
+The opt-out added on 2026-08-01 rests on one premise: the Claude Agent SDK runs its own native auto-compaction over the
+session it owns, so senpi compacting on top would rewrite a history senpi no longer owns. That premise is about
+AUTOMATIC compaction, and senpi cannot observe that the SDK's compaction did not happen. Because the guard ignored
+`event.reason`, an explicit `/compact` was cancelled with the same delegation message — and `interactive-mode.ts`
+renders a manual rejection as a red error rather than the muted delegation notice. A session whose SDK-side compaction
+never fired therefore had no way back under the limit: no automatic path, and no manual one either.
+
+`manual` is the escape hatch for exactly that blind spot. The lane keeps full ownership in the steady state; the user
+keeps a way out when the delegated owner does not deliver.
+
+### Post-compaction continuity
+
+A senpi-side compaction taints the SDK binding, so `session-continuity.ts` resolves the next turn to a fork at the last
+assistant boundary instead of a delta. That path already existed (`PENDING_FORK_REASONS.compaction`); this change only
+makes it reachable from `/compact`. Measured on the lane with `claude-haiku-4-5`: compacted from 64,779 tokens to 368,
+and the following turn re-established the lane with 3.4KB re-sent at a 95.4% cache hit.
+
+### Scope
+
+- Senpi compaction remains fully active for every non-`claude-sdk-oauth` provider, and every automatic reason on the
+  lane is still delegated; both stay pinned in `test/claude-sdk-oauth-compaction-alignment.test.ts`.
+- Coverage: `test/claude-sdk-oauth-compaction-alignment.test.ts` — "never delegates an explicitly requested manual
+  compaction to the SDK", beside the existing "cancels a requested senpi compaction with the lane reason".
+
+### Expected merge conflict zones
+
+- LOW: `lane-policy.ts` around the new `isLaneOverrideReason` export and its `CompactionReason` type import.
+- LOW: `index.ts` at the single `session_before_compact` lane guard.
+
 ## Emergency-prune counter emitted at its one true site (2026-09-01)
 
 ### What changed

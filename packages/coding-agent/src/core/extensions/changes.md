@@ -1,5 +1,25 @@
 # Core Extensions Changes
 
+## Session-only fallback restoration seam (2026-09-02)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds `restoreFallbackPrimary(): Promise<boolean>` to the session-settings command surface.
+- `packages/coding-agent/src/core/extensions/runner.ts` supplies the inert default until the host binds the real operation.
+
+### Why
+
+- The builtin `/fallback restore` command must ask the owning session to restore its private retry state without reaching into `AgentSession` or changing persisted defaults.
+
+### Why an extension could not handle it
+
+- The command is an extension, but the original selector, thinking level, and active retry state are host-owned. A narrow bound operation is the extension-safe seam.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/types.ts` on `ExtensionSessionSettings`.
+- LOW: `packages/coding-agent/src/core/extensions/runner.ts` in the default session-settings object.
+
 
 ## Expose the extension event bus for session activity signals (2026-08-31)
 

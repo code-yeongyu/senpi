@@ -4,7 +4,11 @@
 
 ### Added
 
+- `/fallback restore` returns the current session to the model and thinking level active before retry fallback, without changing global model defaults.
+
 ### Fixed
+
+- An explicitly requested `/compact` now overrides Claude SDK OAuth's automatic-compaction delegation, providing a manual escape hatch when SDK-native compaction does not fire.
 
 ### New Features
 
