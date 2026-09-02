@@ -324,6 +324,8 @@ export interface ExtensionSessionSettings {
 	setFallbackRevertPolicy(policy: "cooldown-expiry" | "never"): Promise<void>;
 	reload(): Promise<void>;
 	getFallbackStatus(): RetryFallbackStatus | undefined;
+	/** Restore this session to the model and thinking level active before fallback. */
+	restoreFallbackPrimary(): Promise<boolean>;
 }
 
 export interface ContextUsage {

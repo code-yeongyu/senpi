@@ -13,7 +13,7 @@ export default function modelFallbackExtension(pi: ExtensionAPI): void {
 	});
 	pi.registerCommand("fallback", {
 		description: "View and manage retry model fallback chains.",
-		argumentHint: "[target [fallback1 fallback2 ...]]",
+		argumentHint: "[restore | target fallback1 [fallback2 ...]]",
 		handler: async (rawArgs, ctx) => handleFallbackCommand(rawArgs, ctx),
 	});
 }
@@ -45,8 +45,16 @@ async function handleFallbackCommand(rawArgs: string, ctx: ExtensionCommandConte
 		});
 		return;
 	}
+	if (args.length === 1 && args[0] === "restore") {
+		const restored = await ctx.sessionSettings.restoreFallbackPrimary();
+		ctx.ui.notify(
+			restored ? "Restored the pre-fallback model for this session." : "This session has no active fallback model.",
+			restored ? "info" : "warning",
+		);
+		return;
+	}
 	if (args.length < 2) {
-		ctx.ui.notify("Usage: /fallback <target> <fallback1> [fallback2 ...]", "error");
+		ctx.ui.notify("Usage: /fallback restore | /fallback <target> <fallback1> [fallback2 ...]", "error");
 		return;
 	}
 	await saveChain(ctx, args[0], args.slice(1));

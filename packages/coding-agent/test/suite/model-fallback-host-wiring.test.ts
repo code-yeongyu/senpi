@@ -157,4 +157,27 @@ describe("model fallback host wiring", () => {
 			pinned: false,
 		});
 	});
+
+	it("restores the pre-fallback model for the current session on command", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: { enabled: true, baseDelayMs: 1, maxRetries: 0, fallbackChains: { [primary]: [fallback] } },
+			},
+			extensionFactories: [{ factory: modelFallbackExtension }],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("fallback response"),
+		]);
+		await harness.session.prompt("enter fallback");
+		expect(harness.session.model?.id).toBe("faux-2");
+
+		const context = harness.getExtensionRunner().createCommandContext();
+		await getFallbackCommand(harness).handler("restore", context);
+
+		expect(harness.session.model?.id).toBe("faux-1");
+		expect(context.sessionSettings.getFallbackStatus()).toBeUndefined();
+	});
 });
