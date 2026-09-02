@@ -178,10 +178,10 @@ function beforeAgentStartEvent(): BeforeAgentStartEvent {
 	} as BeforeAgentStartEvent;
 }
 
-function beforeCompactEvent(): SessionBeforeCompactEvent {
+function beforeCompactEvent(reason: SessionBeforeCompactEvent["reason"] = "threshold"): SessionBeforeCompactEvent {
 	return {
 		type: "session_before_compact",
-		reason: "threshold",
+		reason,
 		willRetry: false,
 		requestId: "request-1",
 		preparation: {
@@ -225,6 +225,17 @@ describe("claude-sdk-oauth lane: senpi compaction stands down", () => {
 			reason: SDK_NATIVE_LANE_REJECTION_REASON,
 			rejectionCause: "external-owner",
 		});
+	});
+
+	it("never delegates an explicitly requested manual compaction to the SDK", async () => {
+		const harness = createHarness({ provider: "claude-sdk-oauth" });
+
+		const result = await harness.sessionBeforeCompact(beforeCompactEvent("manual"), harness.ctx);
+
+		// The delegation covers senpi's AUTOMATIC compaction only. `/compact` is the
+		// user's escape hatch for the case the lane cannot detect: the SDK did not
+		// compact and the session has no other way back under the limit.
+		expect(result?.rejectionCause).not.toBe("external-owner");
 	});
 
 	it("leaves context messages untouched while the same load reduces them for other providers", () => {

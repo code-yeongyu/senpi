@@ -22,6 +22,7 @@ import {
 	CLAUDE_SDK_OAUTH_COMPACT_ENTRY_TYPE,
 	collectCompactBoundaryEntries,
 	createCompactionLanePolicy,
+	isLaneOverrideReason,
 	SDK_NATIVE_LANE_REJECTION_REASON,
 } from "./lane-policy.ts";
 import { type CompactionLogger, createCompactionLogger } from "./log.ts";
@@ -556,7 +557,11 @@ export default function compactionExtension(
 		let warmJobConsumed = false;
 		invalidateSpeculativeCompaction(ctx);
 		try {
-			if (lanePolicy.disablesSenpiCompaction(ctx)) {
+			// The lane owns senpi's AUTOMATIC compaction only. An explicitly requested
+			// compaction overrides the delegation: senpi cannot observe that the SDK
+			// failed to compact, so `/compact` is the only way back under the limit
+			// once the delegated owner has not delivered.
+			if (!isLaneOverrideReason(event.reason) && lanePolicy.disablesSenpiCompaction(ctx)) {
 				return {
 					cancel: true,
 					rejectionCause: "external-owner",
