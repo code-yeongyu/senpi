@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { envApiKeyAuth } from "../src/auth/helpers.ts";
-import { listSlots, type PooledCredential } from "../src/auth/pool/slots.ts";
+import { appendLoginSlot, listSlots, type PooledCredential } from "../src/auth/pool/slots.ts";
 import { resolveProviderAuth } from "../src/auth/resolve.ts";
 import type { OAuthCredential } from "../src/auth/types.ts";
 import { createProvider, type Provider } from "../src/models.ts";
@@ -63,6 +63,35 @@ function oauthProvider(refreshed: (credential: OAuthCredential) => OAuthCredenti
 }
 
 describe("slot-scoped auth resolution", () => {
+	test("login preserves a provider-owned pooled credential instead of double-appending its flat sentinel", () => {
+		const current = pooledOAuthEntry();
+		const providerOwned: PooledCredential = {
+			...current,
+			accounts: [
+				...(current.accounts ?? []),
+				{ name: "work", access: "named-access", refresh: "r-named", expires: FUTURE, source: "login" },
+			],
+		};
+
+		expect(appendLoginSlot(current, providerOwned)).toEqual(providerOwned);
+	});
+
+	test("unnamed flat oauth still appends as login-N", () => {
+		const current = pooledOAuthEntry();
+		const next = appendLoginSlot(current, {
+			type: "oauth",
+			access: "new-access",
+			refresh: "r-new",
+			expires: FUTURE,
+		}) as PooledCredential;
+
+		expect(listSlots(next).map((slot) => slot.name)).toEqual(["default", "alt", "login-2"]);
+		expect(listSlots(next).find((slot) => slot.name === "login-2")).toMatchObject({
+			access: "new-access",
+			refresh: "r-new",
+		});
+	});
+
 	test("slotName resolves the named api_key slot instead of the flat projection", async () => {
 		const store = new InMemoryCredentialStore();
 		await store.modify("slottest", async () => pooledApiKeyEntry());

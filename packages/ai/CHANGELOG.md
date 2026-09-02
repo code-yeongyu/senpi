@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Login no longer double-appends a provider-owned OAuth account pool as a fake `login-N` slot copied from the flat compatibility sentinel.
+
 ### Removed
 
 ## [2026.9.2] - 2026-09-02

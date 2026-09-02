@@ -6,6 +6,9 @@
 
 ### Fixed
 
+- Claude SDK OAuth readiness now treats a rotation-selected concrete OAuth slot as configured, so a second login no longer fails every request with `Provider is not configured: claude-sdk-oauth`.
+- `Provider is not configured:` is no longer a hard-error model fallback, so an auth miss on Claude SDK OAuth does not eject the turn onto another provider.
+
 ### New Features
 
 ### Breaking Changes

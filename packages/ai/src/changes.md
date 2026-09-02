@@ -1,3 +1,22 @@
+## Preserve provider-owned credential pools during login (2026-09-02)
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` now accepts an OAuth credential whose provider already returned a populated `accounts` pool as the complete post-login credential instead of appending its flat compatibility fields as another generated slot.
+- `packages/ai/test/credential-pool-resolve-slot.test.ts`: covers a provider-owned named account pool and still appends unnamed flat credentials as `login-N`.
+
+### Why
+
+- The shared login layer automatically appends ordinary flat credentials. The Claude SDK OAuth provider already returns its current pool plus the newly named account, so applying the generic append a second time stored the provider's managed top-level sentinel as a fake `login-2` account.
+
+### Why an extension could not handle it
+
+- The double append happens after the provider login returns, inside the shared credential-pool write path. Providers cannot prevent the runtime from reinterpreting their completed pool as a flat credential.
+
+### Expected merge conflict zones
+
+- LOW: `auth/pool/slots.ts` at the start of `appendLoginSlot`.
+
 ## Cursor conversation cache eviction cannot break a live request (2026-08-31)
 
 ### What changed

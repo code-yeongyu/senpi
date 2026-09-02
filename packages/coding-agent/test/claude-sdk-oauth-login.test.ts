@@ -101,4 +101,24 @@ describe("claude-sdk-oauth oauth login config", () => {
 		const credential = await config.login({});
 		expect(await config.refreshToken(credential)).toBe(credential);
 	});
+
+	it("treats a projected non-sentinel OAuth slot as configured", async () => {
+		const config = createOAuthConfig({ readCurrent: async () => undefined, loginFlow: fakeFlow(fresh) });
+		const ctx = { env: async () => undefined, fileExists: async () => false };
+		const check = await config.check({
+			ctx,
+			credential: { type: "oauth", access: "slot-access", refresh: "slot-refresh", expires: Date.now() + 60_000 },
+		});
+		expect(check).toEqual({ source: "Claude SDK OAuth", type: "oauth" });
+	});
+
+	it("does not treat a projected managed sentinel as configured", async () => {
+		const config = createOAuthConfig({ readCurrent: async () => undefined, loginFlow: fakeFlow(fresh) });
+		const ctx = { env: async () => undefined, fileExists: async () => false };
+		const check = await config.check({
+			ctx,
+			credential: { type: "oauth", ...SENTINEL_OAUTH_FIELDS },
+		});
+		expect(check).toBeUndefined();
+	});
 });
