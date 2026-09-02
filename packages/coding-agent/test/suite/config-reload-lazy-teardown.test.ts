@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEventBus } from "../../src/core/event-bus.ts";
 import configReloadExtension from "../../src/core/extensions/builtin/config-reload/index.ts";
@@ -190,6 +191,45 @@ describe("config reload watcher teardown is non-blocking", () => {
 		expect(onRealChange).not.toHaveBeenCalled();
 		await teardown;
 		expect(probe.activeListenerCount(watchedDir)).toBe(0);
+	});
+
+	it("drops debounced events after the bound provider scope closes", async () => {
+		// Given: an extension whose filesystem callbacks were bound to a live
+		// provider scope, with a content change waiting on the debounce clock.
+		vi.useFakeTimers();
+		const agentDir = createTempDir("senpi-config-reload-closed-scope-");
+		const settingsPath = join(agentDir, "settings.json");
+		writeFileSync(settingsPath, '{"theme":"dark"}\n', "utf-8");
+		const probe = createSlowTeardownProbe();
+		const extension = createManualExtension();
+		const scope = new ProviderScope();
+		runWithProviderScope(scope, () => {
+			configReloadExtension(extension.api, {
+				agentDir,
+				subscribe: probe.subscribe,
+				logger: silentLogger(),
+			});
+		});
+		const context = fakeContext(agentDir);
+		await runWithProviderScope(scope, () =>
+			invoke(
+				extension.handlers,
+				"session_start",
+				{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
+				context,
+			),
+		);
+		writeFileSync(settingsPath, '{"theme":"light"}\n', "utf-8");
+		probe.emit(agentDir, "settings.json");
+
+		// When: the owning session scope closes before the debounce expires.
+		scope.close();
+
+		// Then: the late callback cannot escape as an uncaught error and the
+		// orphaned watcher tears itself down.
+		await vi.advanceTimersByTimeAsync(200);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(probe.activeListenerCount(agentDir)).toBe(0);
 	});
 
 	it("returns from session_shutdown without waiting for the unsubscribe loop", async () => {
