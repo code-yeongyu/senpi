@@ -1,5 +1,25 @@
 # changes.md — builtin compaction policy
 
+## Recover classified manual compaction failures deterministically (2026-09-02)
+
+### What changed
+
+- Manual `/compact` requests now use the existing deterministic, no-LLM recovery when summarization fails with a classified failure (`summarization-timeout`, `upstream-stream-truncated`, `summarization-overflow-exhausted`, or `summarization-empty-summary`).
+- The recovery preserves the existing `required-compaction-recovery` diagnostic and failure kind; unclassified failures remain fail-closed.
+
+### Why
+
+A manual compaction is an explicit request to reduce context immediately. Failing closed on a classified summarizer failure could leave the session above its compaction threshold and eventually trip the compaction breaker, despite a safe local recovery already being available.
+
+### Why an extension could not handle it
+
+The fallback decision is made inside the builtin `session_before_compact` core route, where the summarizer failure classification, compaction preparation boundary, and breaker bookkeeping are coordinated. An external extension cannot safely admit this recovery after the builtin route throws.
+
+### Expected merge conflict zones
+
+- LOW: `extension-wiring.ts` required-compaction reason predicate.
+- LOW: compaction route tests and changelog entries.
+
 ## Emergency-prune counter emitted at its one true site (2026-09-01)
 
 ### What changed

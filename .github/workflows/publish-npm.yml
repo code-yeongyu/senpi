@@ -30,7 +30,12 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # `--ref main` resolves at run start, so the release can always check out a commit
+    # whose CI has not finished yet; the test gate then runs the full suite in-job.
+    # Measured full-gate releases land at 22-26 min, so a 30 min cap has under 5 min
+    # of headroom and kills the job mid-suite (run 33605173502). Budget for the slow
+    # path plus growth; gate-reused releases still finish in ~4 min.
+    timeout-minutes: 50
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -212,14 +212,14 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the senpi version update check. Use `--
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `retry.enabled` | boolean | `true` | Enable automatic agent-level retry on transient errors |
-| `retry.maxRetries` | number | `3` | Maximum agent-level retry attempts |
+| `retry.maxRetries` | number | `5` | Maximum agent-level retry attempts |
 | `retry.baseDelayMs` | number | `2000` | Base delay for agent-level exponential backoff (2s, 4s, 8s) |
 | `retry.modelFallback` | boolean | `true` | Let eligible retry failures advance through configured per-model fallback chains |
 | `retry.fallbackChains` | `Record<string, string[]>` | `{}` | Ordered exact model-selector to fallback-selector chains |
 | `retry.fallbackRevertPolicy` | `"cooldown-expiry"` \| `"never"` | `"cooldown-expiry"` | Automatic primary-model restoration policy |
 | `retry.abortServerSideFallback` | boolean | `true` | Abort a turn when the provider substitutes a different model after a classifier decline |
 | `retry.provider.timeoutMs` | number | `300000` | Provider/SDK request timeout and stream idle timeout in milliseconds |
-| `retry.provider.streamStartTimeoutMs` | number | `90000` | Maximum wait for the first provider stream event; `0` disables |
+| `retry.provider.streamStartTimeoutMs` | number | `300000` | Maximum wait for the first provider stream event; `0` disables |
 | `retry.provider.streamRetryTimeoutMs` | number | `30000` | First-request liveness cap after a known provider stream/transport timeout; `0` disables the cap |
 | `retry.provider.maxRetries` | number | `0` | Provider/SDK retry attempts |
 | `retry.provider.maxRetryDelayMs` | number | `60000` | Max server-requested delay honored on the same model before the fallback chain engages (60s) |
@@ -236,11 +236,11 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 {
   "retry": {
     "enabled": true,
-    "maxRetries": 3,
+    "maxRetries": 5,
     "baseDelayMs": 2000,
     "provider": {
       "timeoutMs": 3600000,
-      "streamStartTimeoutMs": 90000,
+      "streamStartTimeoutMs": 300000,
       "streamRetryTimeoutMs": 30000,
       "maxRetries": 0,
       "maxRetryDelayMs": 60000

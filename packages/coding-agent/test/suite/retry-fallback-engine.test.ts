@@ -695,7 +695,7 @@ describe("retry fallback engine", () => {
 			{
 				type: "auto_retry_start",
 				attempt: 1,
-				maxAttempts: 3,
+				maxAttempts: 5,
 				delayMs: 1,
 				errorMessage: codexUpstreamUnavailableMessage,
 			},

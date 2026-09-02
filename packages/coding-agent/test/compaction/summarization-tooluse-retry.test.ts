@@ -173,7 +173,7 @@ describe("empty-summary deterministic fallback classification", () => {
 });
 
 describe("required compaction recovery from summarizer tool-call hijack", () => {
-	it("Given a threshold compaction whose summarizer only tool-calls When the handler runs Then the deterministic fallback engages instead of cancelling", async () => {
+	it("Given a manual compaction whose summarizer only tool-calls When the handler runs Then the deterministic fallback engages instead of cancelling", async () => {
 		const handlers = createCompactionHandlers();
 		const harness = createBlockingContext({ usageTokens: 9_900 });
 		harness.registration.setResponses([bareToolCallResponse()]);
@@ -184,9 +184,9 @@ describe("required compaction recovery from summarizer tool-call hijack", () => 
 		const result = await handlers.sessionBeforeCompact(
 			{
 				type: "session_before_compact",
-				reason: "threshold",
+				reason: "manual",
 				willRetry: false,
-				requestId: "tooluse-hijack-recovery",
+				requestId: "manual-tooluse-hijack-recovery",
 				preparation: preparation!,
 				branchEntries,
 				signal: new AbortController().signal,
@@ -204,5 +204,104 @@ describe("required compaction recovery from summarizer tool-call hijack", () => 
 				},
 			},
 		});
+
+		// Two subsequent unclassified threshold failures must not trip the breaker:
+		// the manual recovery itself must not have recorded a failure.
+		harness.registration.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "unclassified failure" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "unclassified failure" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "unclassified failure" }),
+		]);
+		for (let attempt = 0; attempt < 3; attempt++) {
+			await handlers.sessionBeforeCompact(
+				{
+					type: "session_before_compact",
+					reason: "threshold",
+					willRetry: false,
+					requestId: `breaker-probe-${attempt}`,
+					preparation: preparation!,
+					branchEntries,
+					signal: new AbortController().signal,
+				},
+				harness.ctx,
+			);
+		}
+		expect(harness.registration.getCallLog()).toHaveLength(4);
+	});
+
+	it("Given a manual compaction whose summarizer times out When the handler runs Then the deterministic fallback engages", async () => {
+		vi.useFakeTimers();
+		try {
+			const handlers = createCompactionHandlers();
+			const harness = createBlockingContext({ usageTokens: 9_900 });
+			harness.registration.setResponses([async () => await new Promise<never>(() => undefined)]);
+			const branchEntries = harness.ctx.sessionManager.getBranch();
+			const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
+			const resultPromise = handlers.sessionBeforeCompact(
+				{
+					type: "session_before_compact",
+					reason: "manual",
+					willRetry: false,
+					requestId: "manual-timeout-recovery",
+					preparation: preparation!,
+					branchEntries,
+					signal: new AbortController().signal,
+				},
+				harness.ctx,
+			);
+			await vi.advanceTimersByTimeAsync(120_001);
+			await expect(resultPromise).resolves.toMatchObject({
+				compaction: {
+					details: { origin: "required-compaction-recovery", failureKind: "summarization-timeout" },
+				},
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps idle and speculative-origin failures fail-closed", async () => {
+		for (const reason of ["pre_prompt", "extension"] as const) {
+			const handlers = createCompactionHandlers();
+			const harness = createBlockingContext({ usageTokens: 9_900 });
+			harness.registration.setResponses([bareToolCallResponse()]);
+			const branchEntries = harness.ctx.sessionManager.getBranch();
+			const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
+			const result = await handlers.sessionBeforeCompact(
+				{
+					type: "session_before_compact",
+					reason,
+					willRetry: false,
+					requestId: `fail-closed-${reason}`,
+					preparation: preparation!,
+					branchEntries,
+					signal: new AbortController().signal,
+				},
+				harness.ctx,
+			);
+			expect(result).toMatchObject({ cancel: true });
+			expect(result).not.toHaveProperty("compaction");
+		}
+	});
+
+	it("keeps manual auth failures fail-closed", async () => {
+		const handlers = createCompactionHandlers();
+		const harness = createBlockingContext({ usageTokens: 9_900, withAuth: false });
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
+		const result = await handlers.sessionBeforeCompact(
+			{
+				type: "session_before_compact",
+				reason: "manual",
+				willRetry: false,
+				requestId: "manual-auth-failure",
+				preparation: preparation!,
+				branchEntries,
+				signal: new AbortController().signal,
+			},
+			harness.ctx,
+		);
+		expect(result).toMatchObject({ cancel: true });
+		expect(result).not.toHaveProperty("compaction");
 	});
 });

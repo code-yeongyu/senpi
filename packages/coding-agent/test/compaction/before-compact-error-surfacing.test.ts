@@ -190,11 +190,10 @@ describe("session_before_compact error surfacing", () => {
 		// When
 		const result = await harness.beforeCompact(createEvent(), harness.ctx);
 
-		// Then: the cancel reason names the real failure (no text + stop reason)
-		// instead of the undiagnosable "returned no summary".
+		// Then: this classified failure enters deterministic recovery, but the
+		// deliberately boundary-less fixture cannot retain a safe suffix.
 		expect(result?.cancel).toBe(true);
-		expect(result?.reason ?? "").toContain("no text");
-		expect(result?.reason ?? "").toContain("stopReason: length");
+		expect(result?.reason).toBe("deterministic compaction fallback cannot retain the prepared suffix");
 	});
 
 	it("cancels with the credential error when summarization auth is unavailable", async () => {

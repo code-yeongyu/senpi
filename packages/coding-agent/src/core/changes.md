@@ -1,5 +1,25 @@
 # changes
 
+## 2026-09-02 - Provider stream-start default raised to 300s for slow thinking models
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `DEFAULT_STREAM_START_TIMEOUT_MS` goes from 90_000 to 300_000, so the default provider stream-start watchdog grants 300s for the first SSE event. The effective value is still `min(default, idle timeout)`, explicit `retry.provider.streamStartTimeoutMs` overrides win unchanged, and `0` still disables the watchdog.
+- `packages/coding-agent/src/core/settings-manager.ts`: `getRetrySettings()` now defaults `maxRetries` to 5 instead of 3, matching `SENPI_DEFAULT_RETRY_PROFILE.turn.maxRetries`. Without this the one `retry.maxRetries` key meant 5 on the turn stage but 3 on every `getRetrySettings()` consumer (session-title retry, compaction summarization retry, the agent-session retry gate), and the documented default could only be true for one of them.
+- `packages/coding-agent/docs/settings.md`: the defaults table and the JSON example track the new default.
+
+### Why
+
+- Opus/Fable-class models with xhigh thinking routinely take longer than 90s to emit the first stream event, so the old default aborted healthy requests (`Provider stream start timed out after 90000ms`) and support had to tell users to raise the timeout by hand. Every comparable harness already grants 300s here (opencode's header timeout, codex's stream idle timeout, oh-my-pi's first-event timeout), and senpi's own stream idle default is already 300s.
+
+### Why an extension could not handle it
+
+- The value is a shipped core constant that applies only when no explicit setting exists; extensions can set `retry.provider.streamStartTimeoutMs` per session but cannot change the unset default every session inherits.
+
+### Expected merge conflict zones
+
+- LOW: the two default lines in `settings-manager.ts` (`DEFAULT_STREAM_START_TIMEOUT_MS`, the `getRetrySettings()` fallback) plus the matching rows in `docs/settings.md`.
+
 ## 2026-09-02 - Inherit extension provider settings for models.json custom models
 
 ### What changed

@@ -71,10 +71,27 @@ type ProtocolInfo = {
 	readonly capabilities: readonly string[];
 };
 
-const lockOptions = { retries: { retries: 100, minTimeout: 20, maxTimeout: 100 } } as const;
 const REQUIRED_CAPABILITIES = ["multi_session", EXTENSION_EVENTS_CAPABILITY] as const;
 const SPAWNED_HOST_PROBE_TIMEOUT_MS = 10_000;
 const EXISTING_HOST_PROBE_TIMEOUT_MS = 10_000;
+const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
+const DEFAULT_STOP_TIMEOUT_MS = 10_000;
+const SIGKILL_GRACE_MS = 2_000;
+/**
+ * A lock waiter must outlast the longest critical section a holder can run:
+ * probing an existing host, stopping an incompatible one (SIGTERM wait plus the
+ * SIGKILL grace), then spawning the replacement and waiting for it to answer.
+ * Each SQLite busy wait stays short because it blocks the event loop; this
+ * cumulative budget is what covers the whole section, with headroom for a slow
+ * runner. A waiter that gives up early surfaces as a raw "database is locked"
+ * failure on the second of two concurrent starts.
+ */
+const ENSURE_LOCK_WAIT_MS =
+	EXISTING_HOST_PROBE_TIMEOUT_MS + DEFAULT_STOP_TIMEOUT_MS + SIGKILL_GRACE_MS + DEFAULT_READINESS_TIMEOUT_MS + 10_000;
+const LOCK_BUSY_WAIT_MS = 100;
+const lockOptions = {
+	retries: { retries: ENSURE_LOCK_WAIT_MS / LOCK_BUSY_WAIT_MS, minTimeout: 20, maxTimeout: LOCK_BUSY_WAIT_MS },
+} as const;
 /**
  * Every ensured host starts with this installation-wide profile, independent of
  * the first caller. In particular, extension_events must remain available when
@@ -131,7 +148,7 @@ async function ensureHostLocked(
 		throw new Error(`RPC socket ${socket} is owned by an unmanaged host`);
 	}
 	if (pidFile && pidMatches) {
-		await stopManagedHost(pidFile, testOptions?.stopTimeoutMs ?? 10_000);
+		await stopManagedHost(pidFile, testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS);
 	}
 	await cleanupState(paths);
 	return startHost(paths, socket, agentDir, policy, testOptions);
@@ -219,10 +236,10 @@ async function startHost(
 	} finally {
 		await stderr.close();
 	}
-	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? 10_000;
+	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
 	const result = await pollProtocolInfo(socket, readinessTimeoutMs, childExit);
 	if (isCompatible(result.protocol)) return { pid: pidFile.pid, socket, reused: false };
-	await stopManagedHost(pidFile, testOptions?.stopTimeoutMs ?? 10_000);
+	await stopManagedHost(pidFile, testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS);
 	const message = result.protocol
 		? `RPC socket host answered get_protocol_info with serverVersion ${result.protocol.serverVersion} and capabilities ${JSON.stringify(result.protocol.capabilities)}, but is incompatible with serverVersion ${VERSION} and required capabilities ${JSON.stringify(REQUIRED_CAPABILITIES)}`
 		: result.exited
@@ -240,7 +257,7 @@ async function stopManagedHost(pidFile: DaemonPidFile, termTimeoutMs: number): P
 	await signalValidated(pidFile, "SIGTERM");
 	if (await waitForGone(pidFile, termTimeoutMs)) return;
 	await signalValidated(pidFile, "SIGKILL");
-	if (!(await waitForGone(pidFile, 2_000))) {
+	if (!(await waitForGone(pidFile, SIGKILL_GRACE_MS))) {
 		throw new Error(`RPC socket host pid ${pidFile.pid} remained alive after SIGKILL`);
 	}
 }

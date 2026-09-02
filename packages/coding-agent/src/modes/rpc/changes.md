@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-02 - Size the ensure-host lock wait to the startup critical section
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts` derives the ensure-lock wait budget (`ENSURE_LOCK_WAIT_MS`, 42s) from the longest critical section a holder can run - existing-host probe, incompatible-host stop (SIGTERM wait plus SIGKILL grace), then spawned-host readiness - instead of the previous 10s (100 x 100ms) constant that only covered a fraction of it. The stop/readiness/SIGKILL literals now share named constants with that derivation.
+
+### Why
+
+- Two concurrent `ensureHost` callers for one socket serialize on the SQLite ensure lock; when the first holder's section outlived 10s the second surfaced a raw `database is locked` instead of reusing the host. This flaked the Windows RPC named-pipes CI job (`serializes concurrent starts for one socket across agent directories`) and is the same failure a second interactive session would hit on a slow machine.
+
+### Why an extension could not handle it
+
+- The lock wait is part of the host handshake below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: the constants block near the top of `host-ensure.ts` and the two `stopManagedHost` call sites.
+
 ## 2026-09-01 - Windows shared hosts use deterministic named pipes
 
 ### What changed

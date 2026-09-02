@@ -12,6 +12,22 @@
 
 ### Removed
 
+## [2026.9.2-3] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The `senpi-default` retry profile is more patient with slow long-thinking providers (Opus/Fable-class with xhigh thinking): the turn-stage retry budget rises from 3 to 5 attempts, matching opencode's session retry budget and codex's `stream_max_retries` default. Backoff shapes, failure classification, `providerRequest.maxRetries` (still 0) and `KIMI_CODE_RETRY_PROFILE` are unchanged.
+
+### Fixed
+
+- Anthropic OAuth now falls back to manual redirect URL entry when callback port 53692 cannot be opened.
+
+### Removed
+
 ## [2026.9.2-2] - 2026-09-02
 
 ### Breaking Changes

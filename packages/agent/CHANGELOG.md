@@ -10,6 +10,18 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.9.2-3] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Provider stream-start timeout errors now name `retry.provider.streamStartTimeoutMs` and explain that `0` disables the guard.
 
 ### Removed

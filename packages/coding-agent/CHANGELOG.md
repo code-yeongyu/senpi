@@ -4,11 +4,35 @@
 
 ### Added
 
-- Claude (Fable 5/5.1, Opus 4.5-4.8/5), Kimi (K2.6/K2.7/K3), and GPT-5.6 presets now carry an execution-tooling stance: when the `eval` tool is selected, multi-call steps are routed through one code cell with maximal parallel batching and real control-flow code; when `monitor` is selected, every wait on a long-running command, child task, or detached cell is a subscription instead of a sleep or poll. Wording is tailored per family and renders only for tools the session actually has.
+### Changed
+
+### Fixed
+
+### New Features
+
+### Breaking Changes
+
+### Added
 
 ### Changed
 
 ### Fixed
+
+### Removed
+
+## [2026.9.2-3] - 2026-09-02
+
+### Added
+
+- Claude (Fable 5/5.1, Opus 4.5-4.8/5), Kimi (K2.6/K2.7/K3), and GPT-5.6 presets now carry an execution-tooling stance: when the `eval` tool is selected, multi-call steps are routed through one code cell with maximal parallel batching and real control-flow code; when `monitor` is selected, every wait on a long-running command, child task, or detached cell is a subscription instead of a sleep or poll. Wording is tailored per family and renders only for tools the session actually has.
+
+### Changed
+
+- Dropped `.codegraph` from the omo local-update fingerprint's excluded roots; the omo product removed its CodeGraph integration, so that directory is never created.
+
+### Fixed
+
+- Two concurrent shared-host starts for one socket no longer fail with a raw `database is locked`: the ensure-lock wait now covers the whole host startup critical section (probe, incompatible-host stop, spawned-host readiness) instead of ten seconds.
 
 ### New Features
 
@@ -38,6 +62,8 @@
 
 - Claude SDK OAuth compaction retries that forbid tool calls now send a genuinely tool-less request, preventing host-denied tool calls from producing an empty summary.
 
+- Manual `/compact` now recovers through the deterministic no-LLM fallback for classified summarizer failures, while unclassified failures remain fail-closed.
+
 ### New Features
 
 ### Breaking Changes
@@ -45,6 +71,8 @@
 ### Added
 
 ### Changed
+
+- The default provider stream-start timeout rises from 90s to 300s (`retry.provider.streamStartTimeoutMs` overrides are unchanged, and the default still never exceeds the idle timeout), so Opus/Fable-class models with long thinking no longer fail healthy requests with `Provider stream start timed out after 90000ms` before the first stream event; every comparable harness (opencode, codex, oh-my-pi) already grants 300s here. The agent-level retry budget also rises from 3 to 5 attempts: `SENPI_DEFAULT_RETRY_PROFILE.turn.maxRetries` and the `retry.maxRetries` settings default now agree, so the documented default is the budget every consumer actually sees (session-title retry stays clamped by its own cap).
 
 ### Fixed
 

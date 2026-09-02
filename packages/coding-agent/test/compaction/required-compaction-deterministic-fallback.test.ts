@@ -131,9 +131,8 @@ describe("required compaction deterministic fallback", () => {
 		});
 	});
 
-	it("does not recover manual, aborted, or unrelated failures", async () => {
+	it("does not recover aborted or unrelated failures", async () => {
 		for (const testCase of [
-			{ reason: "manual" as const, message: "upstream_stream_truncated", aborted: false, refusal: false },
 			{ reason: "threshold" as const, message: "upstream_stream_truncated", aborted: true, refusal: false },
 			{ reason: "threshold" as const, message: "unrelated provider refusal", aborted: false, refusal: false },
 			{ reason: "threshold" as const, message: "upstream_stream_truncated", aborted: false, refusal: true },
@@ -176,7 +175,7 @@ describe("required compaction deterministic fallback", () => {
 	});
 
 	it("fails closed for every non-required reason even when typed truncation recovery would fit", async () => {
-		const nonRequiredReasons = ["manual", "pre_prompt", "branch", "extension"] satisfies CompactionReason[];
+		const nonRequiredReasons = ["pre_prompt", "branch", "extension"] satisfies CompactionReason[];
 		for (const reason of nonRequiredReasons) {
 			const handlers = createCompactionHandlers();
 			const harness = createBlockingContext({ usageTokens: 9_900 });

@@ -1,10 +1,22 @@
-import { createAssistantMessageEventStream, type Api, type AssistantMessageEventStream, type Context, type Model, type Tool } from "@earendil-works/pi-ai";
+import {
+	type Api,
+	type AssistantMessageEventStream,
+	type Context,
+	createAssistantMessageEventStream,
+	type Model,
+	type Tool,
+} from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { generateSummaryMessage } from "../src/core/extensions/builtin/compaction/speculative-summary.ts";
-import { BUILTIN_SDK_TOOLS } from "../src/core/extensions/builtin/claude-sdk-oauth/tools.ts";
 import { buildClaudeSdkOauthQueryOptions } from "../src/core/extensions/builtin/claude-sdk-oauth/options.ts";
-import { resetSdkBoundary, overrideSdkBoundary, type Options, type SDKMessage } from "../src/core/extensions/builtin/claude-sdk-oauth/sdk-boundary.ts";
+import {
+	type Options,
+	overrideSdkBoundary,
+	resetSdkBoundary,
+	type SDKMessage,
+} from "../src/core/extensions/builtin/claude-sdk-oauth/sdk-boundary.ts";
 import { streamClaudeSdkOauth } from "../src/core/extensions/builtin/claude-sdk-oauth/stream.ts";
+import { BUILTIN_SDK_TOOLS } from "../src/core/extensions/builtin/claude-sdk-oauth/tools.ts";
+import { generateSummaryMessage } from "../src/core/extensions/builtin/compaction/speculative-summary.ts";
 
 const model: Model<Api> = {
 	id: "claude-sonnet-4-6",
@@ -103,7 +115,10 @@ describe("claude-sdk-oauth tool-less requests", () => {
 			},
 		});
 
-		const stream = streamClaudeSdkOauth(model, context([customTool]), { toolChoice: "none", streamKind: "auxiliary" });
+		const stream = streamClaudeSdkOauth(model, context([customTool]), {
+			toolChoice: "none",
+			streamKind: "auxiliary",
+		});
 		await collect(stream);
 		await stream.result();
 
@@ -137,7 +152,14 @@ describe("claude-sdk-oauth tool-less requests", () => {
 					api: "claude-sdk-oauth",
 					provider: "claude-sdk-oauth",
 					model: model.id,
-					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
 					stopReason: "stop",
 					timestamp: Date.now(),
 				};
@@ -164,7 +186,9 @@ describe("claude-sdk-oauth tool-less requests", () => {
 			forbidToolCalls: true,
 		});
 
-		expect(result && "content" in result ? result.content : result).toEqual([{ type: "text", text: "recovered summary" }]);
+		expect(result && "content" in result ? result.content : result).toEqual([
+			{ type: "text", text: "recovered summary" },
+		]);
 		expect(calls).toHaveLength(1);
 		expect(calls[0]?.tools).toEqual([]);
 	});

@@ -1,3 +1,21 @@
+## senpi-default retry profile is more patient with slow providers (2026-09-02)
+
+### What changed
+
+- `utils/retry-profile/profiles.ts`: `SENPI_DEFAULT_RETRY_PROFILE.turn.maxRetries` goes from 3 to 5. Backoff shapes, the server-hint policies, `providerRequest.maxRetries` (still 0, so no hidden second budget), and `KIMI_CODE_RETRY_PROFILE` are untouched.
+
+### Why
+
+- Opus/Fable-class models with xhigh thinking make transient provider failures more likely per turn, and the previous turn budget was the least tolerant of the harnesses we compared: opencode retries a session 5 times, codex defaults to `stream_max_retries` 5, and oh-my-pi allows up to 10 agent retries. The `providerRequest` server-hint ceiling was deliberately left alone: `planRetryDelay` has no production caller today, so changing that constant would have been an inert edit dressed up as a fix.
+
+### Why an extension could not handle it
+
+- Shipped profile constants are read by the provider-request and turn retry planners before any extension seam exists; an extension can only override them per provider through settings, not change what every session inherits.
+
+### Expected merge conflict zones
+
+- LOW: the two constant lines inside `SENPI_DEFAULT_RETRY_PROFILE` in `utils/retry-profile/profiles.ts`.
+
 ## Actionable provider stream-start timeout guidance (2026-09-02)
 
 ### What changed
@@ -15,6 +33,26 @@
 ### Expected merge conflict zones
 
 - LOW: `utils/retry.ts` provider timeout pattern.
+
+## 2026-09-02 - Anthropic OAuth callback bind fallback
+
+### What changed
+
+- The login abort handler now aborts the manual `manual_code` prompt as well as the callback wait, so cancelling a manual-only login (callback port unavailable) settles instead of leaving `loginAnthropic` pending.
+- `auth/oauth/anthropic.ts`: Anthropic OAuth now falls back to manual redirect URL entry when local callback port 53692 cannot bind with EACCES, EADDRINUSE, or EPERM, while preserving the registered localhost redirect URI.
+
+### Why
+
+- Fixed or restricted callback ports can be unavailable on Windows, sandboxed hosts, or when another senpi/Claude process is already listening, so login must not fail before presenting its existing manual-code path.
+
+### Why an extension could not handle it
+
+- The callback listener is created and owned inside the Anthropic provider OAuth implementation before auth interaction events are emitted; an extension cannot intercept its bind failure or preserve the provider's registered redirect URI.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/auth/oauth/anthropic.ts` callback listener startup, auth URL instructions, and cleanup.
+- LOW: `test/anthropic-oauth.test.ts` OAuth interaction coverage.
 
 ## Cursor conversation cache eviction cannot break a live request (2026-08-31)
 

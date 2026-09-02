@@ -14,7 +14,6 @@ import { createHash } from "node:crypto";
 const EXCLUDED_ROOT_PATHS: ReadonlySet<string> = new Set([
 	".agents",
 	".claude",
-	".codegraph",
 	".codex",
 	".cursor",
 	".devcontainer",

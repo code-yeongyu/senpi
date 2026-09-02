@@ -28,7 +28,9 @@ export const SENPI_DEFAULT_RETRY_PROFILE: RetryPolicyProfile = {
 	},
 	turn: {
 		enabled: true,
-		maxRetries: 3,
+		// 5 attempts matches opencode's session retry budget and codex's
+		// stream_max_retries default for slow long-thinking providers.
+		maxRetries: 5,
 		backoff: {
 			baseDelayMs: 2_000,
 			growthFactor: 2,
