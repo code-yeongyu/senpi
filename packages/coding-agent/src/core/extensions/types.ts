@@ -1125,6 +1125,11 @@ export interface ModelSelectEvent {
 	model: Model<any>;
 	previousModel: Model<any> | undefined;
 	source: ModelSelectSource;
+	/**
+	 * A startup-recovery candidate probe. Handlers may adjust in-memory prompt or
+	 * tool state, but must defer external side effects until the committed event.
+	 */
+	provisional?: boolean;
 	/** The active system prompt before model_select handlers run. */
 	systemPrompt: string;
 	/** Structured options used to build the base system prompt. */

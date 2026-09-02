@@ -4500,6 +4500,7 @@ export class AgentSession {
 		previousModel: Model<any> | undefined,
 		source: ModelSelectSource,
 		publish = true,
+		provisional = false,
 	): Promise<SystemPromptChangeEvent | undefined> {
 		this.syncPromptCacheSafeWaitEnv();
 		if (!this._modelSelectionChangesContext(previousModel, nextModel)) return undefined;
@@ -4508,6 +4509,7 @@ export class AgentSession {
 			model: nextModel,
 			previousModel,
 			source,
+			...(provisional ? { provisional: true } : {}),
 			systemPrompt: this.agent.state.systemPrompt,
 			systemPromptOptions: this._baseSystemPromptOptions,
 		});
@@ -4814,18 +4816,24 @@ export class AgentSession {
 				previousModel,
 				opts.modelSelectSource,
 				!opts.transactionalModelSelect,
+				opts.transactionalModelSelect,
 			);
 			this.assertModelUsable(model, liveContextTokens);
+			const committedSystemPromptChange = opts.transactionalModelSelect
+				? await this._emitModelSelect(model, previousModel, opts.modelSelectSource, false)
+				: systemPromptChange;
+			this.assertModelUsable(model, liveContextTokens);
 			flushDeferredEvents();
-			if (systemPromptChange && opts.transactionalModelSelect) {
-				await this._publishSystemPromptChange(systemPromptChange);
+			if (committedSystemPromptChange && opts.transactionalModelSelect) {
+				await this._publishSystemPromptChange(committedSystemPromptChange);
 			}
-			return systemPromptChange;
+			return committedSystemPromptChange;
 		} catch (error) {
 			if (snapshot) {
 				restoreSnapshot();
 				try {
-					if (previousModel) await this._emitModelSelect(previousModel, model, opts.modelSelectSource, false);
+					if (previousModel)
+						await this._emitModelSelect(previousModel, model, opts.modelSelectSource, false, true);
 				} finally {
 					restoreSnapshot();
 				}

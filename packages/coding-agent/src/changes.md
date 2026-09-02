@@ -11,7 +11,8 @@
   model-specific thinking or model history persisted.
 - A post-select budget rejection rolls back candidate-specific runtime state
   before falling through to the next capable model; provider authentication is
-  cached for that recovery attempt.
+  cached for that recovery attempt and Claude SDK continuity ignores
+  provisional candidate probes.
 - CLI startup renders a no-capable-model budget failure as an actionable error
   without leaking an uncaught Node stack.
 

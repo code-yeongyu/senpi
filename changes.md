@@ -7,8 +7,9 @@ explicit model selection. A restored session that outgrew its saved model picks
 the authenticated candidate with the greatest verified remaining budget,
 skips unavailable providers, records model-specific selection history only
 after extension admission succeeds, and opens normally. Explicit selections
-remain fail-closed; post-select candidate failures roll back their runtime
-state before falling through; each provider is authenticated once per recovery;
+remain fail-closed; candidate probes are marked provisional so Claude SDK
+continuity is not invalidated before admission, post-select failures roll back
+runtime state before falling through, and each provider is authenticated once;
 no-capable-model failures render as clean typed CLI errors.
 
 This is core startup behavior because the failure occurs before extensions or

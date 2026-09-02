@@ -383,6 +383,7 @@ describe("model usability budget", () => {
 			],
 		});
 		harnesses.push(harness);
+		const selections: Array<{ id: string; provisional: boolean | undefined }> = [];
 		const extensionsResult = await createTestExtensionsResult(
 			[
 				(pi) => {
@@ -405,6 +406,7 @@ describe("model usability budget", () => {
 						pi.setActiveTools(["stable-tool"]);
 					});
 					pi.on("model_select", (event) => {
+						selections.push({ id: event.model.id, provisional: event.provisional });
 						if (event.model.id === "candidate-largest") {
 							rejectedCandidateState = true;
 							pi.setActiveTools(["candidate-tool"]);
@@ -450,6 +452,12 @@ describe("model usability budget", () => {
 		expect(sessionManager.getEntries().filter((entry) => entry.type === "model_change")).toMatchObject([
 			{ provider: "faux", modelId: "saved-small" },
 			{ provider: "faux", modelId: "candidate-medium" },
+		]);
+		expect(selections).toEqual([
+			{ id: "candidate-largest", provisional: true },
+			{ id: "saved-small", provisional: true },
+			{ id: "candidate-medium", provisional: true },
+			{ id: "candidate-medium", provisional: undefined },
 		]);
 		resumed.session.dispose();
 	});

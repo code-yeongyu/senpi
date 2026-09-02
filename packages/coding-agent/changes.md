@@ -9,7 +9,8 @@
   history only after extension admission succeeds.
 - A candidate rejected by a model-select budget hook no longer prevents later
   capable candidates from being tried; rejected candidate runtime state is
-  rolled back and each provider is authenticated once per recovery.
+  rolled back, Claude SDK continuity ignores provisional candidate probes, and
+  each provider is authenticated once per recovery.
 - When no recovery model exists, CLI startup prints the typed budget guidance
   and exits cleanly instead of exposing an uncaught exception stack.
 
