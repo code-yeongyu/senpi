@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+	appendLoginSlot,
 	type Credential,
 	type CredentialSlot,
 	listSlots,
@@ -57,6 +58,30 @@ describe("credential pool slot algebra", () => {
 		const next = upsertSlot({ type: "api_key", key: "legacy-key" }, { name: "second", key: "s", source: "login" });
 		expect(next).toMatchObject({ type: "api_key", key: "legacy-key" });
 		expect(names(next)).toEqual(["default", "second"]);
+	});
+
+	test("appendLoginSlot promotes a legacy flat credential before adding a login", () => {
+		const current: Credential = { type: "oauth", access: "first-access", refresh: "first-refresh", expires: 1 };
+		const next = appendLoginSlot(current, {
+			type: "oauth",
+			access: "second-access",
+			refresh: "second-refresh",
+			expires: 2,
+		});
+
+		expect(next).toMatchObject({ type: "oauth", access: "first-access", refresh: "first-refresh", expires: 1 });
+		expect(names(next)).toEqual(["default", "login-2"]);
+		expect(listSlots(next).find((slot) => slot.name === "login-2")).toMatchObject({
+			access: "second-access",
+			refresh: "second-refresh",
+			expires: 2,
+		});
+	});
+
+	test("appendLoginSlot preserves existing pooled accounts and chooses the next name", () => {
+		const next = appendLoginSlot(pooledApiKey(), { type: "api_key", key: "new-key" });
+		expect(names(next)).toEqual(["default", "work", "login-2"]);
+		expect(listSlots(next).find((slot) => slot.name === "login-2")?.key).toBe("new-key");
 	});
 
 	test("removeSlot deletes only the named slot", () => {
