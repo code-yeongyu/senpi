@@ -271,6 +271,7 @@ describe("Gemini/Muse Spark typed rule contracts", () => {
 			{ id: "long-context-anchoring", concern: "grounding" },
 			{ id: "behavior-requirements-binding", concern: "harness-contract" },
 			{ id: "action-budget", concern: "tool-orchestration" },
+			{ id: "load-matching-skills", concern: "skill-utilization" },
 		]);
 	});
 
@@ -285,6 +286,7 @@ describe("Gemini/Muse Spark typed rule contracts", () => {
 			{ id: "chain-checkpoints", concern: "deliberation" },
 			{ id: "injected-directive-authority", concern: "harness-contract" },
 			{ id: "korean-easy-report", concern: "reporting" },
+			{ id: "load-matching-skills", concern: "skill-utilization" },
 		]);
 	});
 });
