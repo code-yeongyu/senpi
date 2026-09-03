@@ -1,5 +1,25 @@
 # changes
 
+## 2026-09-03 - Restore interactive lifecycle seams and branded terminal overrides
+
+### What changed
+
+- Guarded early interactive TUI lifecycle reads when test or host construction has not yet provided session, terminal, or pending-tool state, while retaining the normal runtime behavior.
+- Resolved unset terminal capability settings from `SENPI_HYPERLINKS`, `SENPI_IMAGE_PROTOCOL`, and `SENPI_TRUE_COLOR`, with legacy `PI_*` fallback.
+
+### Why
+
+- The upstream sync introduced lifecycle calls at construction and event boundaries where fork-owned fakes and early host events legitimately omit optional state.
+- Branded deployments need their capability namespace to reach the TUI detection seam.
+
+### Why an extension could not handle it
+
+- Interactive lifecycle state and terminal capability detection are host-owned infrastructure below the extension API.
+
+### Expected merge conflict zones
+
+- MEDIUM: interactive constructor/event handling and terminal settings resolution during upstream syncs.
+
 ## 2026-09-03 - Record fork-owned interactive surfaces against the advanced upstream pin
 
 ### What changed

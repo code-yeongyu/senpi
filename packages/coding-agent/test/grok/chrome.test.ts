@@ -31,6 +31,7 @@ function createRuntime(): AgentSessionRuntime {
 				getSmoothStreaming: () => false,
 				getSmoothStreamingFps: () => 60,
 				getThemeSetting: () => "grok-night",
+				getFullscreenCopyOnSelect: () => true,
 			},
 		},
 		setBeforeSessionInvalidate: () => {},
