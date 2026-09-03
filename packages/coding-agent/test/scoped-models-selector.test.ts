@@ -70,7 +70,8 @@ describe("scoped models selector", () => {
 
 		expect(models.map((model) => model.enabled)).toEqual([true, true, true]);
 		expect(getMarkerStates(selector, models)).toEqual([true, true, true]);
-		expect(stripAnsi(selector.render(120).join("\n"))).toContain("all enabled");
+		// D6: the simplified selector keeps an explicit enabled list; enable-all no longer collapses to null.
+		expect(stripAnsi(selector.render(120).join("\n"))).toContain("3/3 enabled");
 	});
 
 	it("disables only the selected model after enabling all", async () => {
@@ -121,6 +122,7 @@ describe("scoped models selector", () => {
 
 		expect(models.map((model) => model.enabled)).toEqual([true, true, true]);
 		expect(getMarkerStates(selector, models)).toEqual([true, true, true]);
-		expect(stripAnsi(selector.render(120).join("\n"))).toContain("all enabled");
+		// D6: the simplified selector keeps an explicit enabled list; enable-all no longer collapses to null.
+		expect(stripAnsi(selector.render(120).join("\n"))).toContain("3/3 enabled");
 	});
 });

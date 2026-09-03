@@ -50,9 +50,10 @@ describe("model selector", () => {
 				.find((line) => line.includes(`${id} [`))
 				?.trimEnd();
 
-		expect(getModelRow("current-model")).toBe(`→ ✓ current-model [${currentModel.provider}]`);
+		// D6: the checkmark renders after the model name (upstream #8900 cheap markers).
+		expect(getModelRow("current-model")).toBe(`→   current-model [${currentModel.provider}] ✓`);
 		selector.handleInput("\x1b[B");
-		expect(getModelRow("current-model")).toBe(`  ✓ current-model [${currentModel.provider}]`);
+		expect(getModelRow("current-model")).toBe(`    current-model [${currentModel.provider}] ✓`);
 		expect(getModelRow("browsed-model")).toBe(`→   browsed-model [${currentModel.provider}]`);
 		selector.dispose();
 	});

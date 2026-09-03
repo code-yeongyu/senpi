@@ -1,5 +1,5 @@
 import { setKeybindings } from "@earendil-works/pi-tui";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import {
 	type SettingsCallbacks,
@@ -8,18 +8,11 @@ import {
 } from "../src/modes/interactive/components/settings-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
-import { createHarness, type Harness } from "./suite/harness.ts";
 
 describe("SettingsSelectorComponent", () => {
-	let harness: Harness | undefined;
 	beforeAll(() => {
 		initTheme("dark");
 		setKeybindings(new KeybindingsManager());
-	});
-
-	afterEach(() => {
-		harness?.cleanup();
-		harness = undefined;
 	});
 
 	it("cycles through fullscreen settings", () => {
@@ -107,32 +100,34 @@ describe("SettingsSelectorComponent", () => {
 		expect(output).toContain("→   other");
 	});
 
-	it("keeps the configured per-model thinking level marked while browsing", async () => {
-		harness = await createHarness({
-			models: [{ id: "thinking-model", reasoning: true }],
-		});
-		const model = harness.getModel("thinking-model")!;
-		const modelKey = `${model.provider}/${model.id}`;
+	it("pre-selects the configured thinking level in the settings submenu while browsing", () => {
+		// Upstream sync (5133c9284, adopted by the merge): the settings selector dropped the
+		// per-model thinking row; per-model thinking memory stays covered by settings-manager
+		// and per-model-thinking-memory tests. The configured global level is now pre-selected
+		// in the "Thinking level" submenu.
 		const config = {
-			defaultModel: modelKey,
-			availableDefaultModels: [model],
-			thinkingLevel: "high",
-			modelThinkingLevels: { [modelKey]: "medium" },
+			defaultModel: "not set",
+			availableDefaultModels: [],
+			thinkingLevel: "medium",
+			availableThinkingLevels: ["medium", "high"],
+			modelThinkingLevels: {},
+			currentTheme: "dark",
+			terminalTheme: "dark",
+			availableThemes: ["dark", "light"],
+			warnings: {},
 		} as unknown as SettingsConfig;
 		const callbacks = { onCancel: () => {} } as unknown as SettingsCallbacks;
 		const list = new SettingsSelectorComponent(config, callbacks).getSettingsList();
 
-		list.selectItem("model-thinking");
-		list.handleInput("\r");
+		list.selectItem("thinking");
 		list.handleInput("\r");
 
 		let output = stripAnsi(list.render(120).join("\n"));
-		expect(output).toContain("→ ✓ medium");
-		expect(output).toContain("    (clear override)");
+		expect(output).toContain("→ medium");
 
 		list.handleInput("\x1b[B");
 		output = stripAnsi(list.render(120).join("\n"));
-		expect(output).toContain("  ✓ medium");
-		expect(output).toContain("→   high");
+		expect(output).toContain("  medium");
+		expect(output).toContain("→ high");
 	});
 });
