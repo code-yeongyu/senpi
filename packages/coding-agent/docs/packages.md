@@ -56,10 +56,16 @@ Pi accepts three source types in settings and `pi install`.
 ### npm
 
 ```
+npm-package
+npm-package@1.2.3
 npm:@scope/pkg@1.2.3
 npm:pkg
 ```
 
+- Bare unscoped package names are npm sources. Prefix a single-segment local
+  file or directory with `./` (for example, `./my-package`) to select the local
+  path explicitly.
+- Scoped npm packages continue to use the explicit `npm:` prefix.
 - Versioned specs are pinned and skipped by package updates (`pi update --extensions`, `pi update --all`).
 - User installs go under `~/.pi/agent/npm/`.
 - Project installs go under `.pi/npm/`.

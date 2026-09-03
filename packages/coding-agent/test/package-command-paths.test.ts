@@ -931,7 +931,8 @@ if(args.includes("install")) process.exit(23);
 		}
 	});
 
-	it("suggests the configured source when update input omits the npm prefix", async () => {
+	it("updates a configured npm package when the input is a bare name", async () => {
+		vi.stubEnv("PI_OFFLINE", "1");
 		const settingsPath = join(agentDir, "settings.json");
 		writeFileSync(settingsPath, JSON.stringify({ packages: ["npm:pi-formatter"] }, null, 2));
 
@@ -943,9 +944,9 @@ if(args.includes("install")) process.exit(23);
 
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			expect(stderr).toContain("Did you mean npm:pi-formatter?");
-			expect(stdout).not.toContain("Updated pi-formatter");
-			expect(process.exitCode).toBe(1);
+			expect(stderr).toBe("");
+			expect(stdout).toContain("Updated pi-formatter");
+			expect(process.exitCode).toBeUndefined();
 
 			const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as { packages?: string[] };
 			expect(settings.packages).toContain("npm:pi-formatter");

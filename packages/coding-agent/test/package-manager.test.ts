@@ -699,6 +699,20 @@ Content`,
 	});
 
 	describe("npmCommand", () => {
+		it("should install a bare unscoped package name from npm", async () => {
+			const runCommandSpy = vi
+				.spyOn(packageManager as unknown as PackageManagerInternals, "runCommand")
+				.mockResolvedValue(undefined);
+
+			await packageManager.install("omo-codex-computer");
+
+			expect(runCommandSpy).toHaveBeenCalledWith(
+				"npm",
+				["install", "omo-codex-computer", "--prefix", join(agentDir, "npm"), "--legacy-peer-deps"],
+				undefined,
+			);
+		});
+
 		it("should use npmCommand argv for npm installs", async () => {
 			settingsManager = SettingsManager.inMemory({
 				npmCommand: ["mise", "exec", "node@20", "--", "npm"],
@@ -1240,6 +1254,9 @@ Content`,
 			expect(parseNpm("npm:@scope/pkg@1.2.3").pinned).toBe(true);
 			expect(parseNpm("npm:@scope/pkg@^1.2.3").pinned).toBe(false);
 			expect(parseNpm("npm:pkg").pinned).toBe(false);
+			expect(parseNpm("omo-codex-computer").spec).toBe("omo-codex-computer");
+			expect(parseNpm("omo-codex-computer@latest").pinned).toBe(false);
+			expect(parseNpm("omo-codex-computer@1.2.3").pinned).toBe(true);
 
 			expect((packageManager as any).parseSource("git:github.com/user/repo@v1").type).toBe("git");
 			expect((packageManager as any).parseSource("https://github.com/user/repo@v1").type).toBe("git");
@@ -1249,6 +1266,8 @@ Content`,
 			expect((packageManager as any).parseSource("/absolute/path/to/package").type).toBe("local");
 			expect((packageManager as any).parseSource("./relative/path/to/package").type).toBe("local");
 			expect((packageManager as any).parseSource("../relative/path/to/package").type).toBe("local");
+			expect((packageManager as any).parseSource("@scope/pkg").type).toBe("local");
+			expect((packageManager as any).parseSource("github.com/user/repo").type).toBe("local");
 		});
 
 		it("should never parse dot-relative paths as git", () => {
@@ -2498,12 +2517,11 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			expect(maxConcurrentGitUpdates).toBeGreaterThan(1);
 		});
 
-		it("should suggest npm source prefixes for update lookups", async () => {
+		it("should match bare npm names in update lookups", async () => {
+			process.env.PI_OFFLINE = "1";
 			settingsManager.setProjectPackages(["npm:example"]);
 
-			await expect(packageManager.update("example")).rejects.toThrow(
-				"No matching package found for example. Did you mean npm:example?",
-			);
+			await expect(packageManager.update("example")).resolves.toBeUndefined();
 		});
 
 		it("should suggest git source prefixes for update lookups", async () => {

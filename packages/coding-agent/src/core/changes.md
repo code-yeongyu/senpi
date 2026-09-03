@@ -1,5 +1,38 @@
 # changes
 
+## 2026-09-03 - Install bare unscoped npm package specs
+
+### What changed
+
+- `packages/coding-agent/src/core/package-manager.ts`: recognizes bare unscoped
+  npm package specs such as `foo`, `foo@latest`, and `foo@1.2.3` before the
+  package-manager-local fallback to local paths. Explicit relative, absolute,
+  `file:`, scoped, slash-containing, and Git sources keep their existing
+  classifications.
+- `packages/coding-agent/docs/packages.md`: documents bare unscoped npm installs
+  and the required `./` prefix for an otherwise ambiguous single-segment local
+  path.
+
+### Why
+
+- Users expect `senpi install foo` (and branded equivalents such as
+  `omo install foo`) to install the public npm package named `foo`. The old
+  parser treated every bare name as a local path and failed with
+  `Path does not exist` before npm could run.
+
+### Why an extension could not handle it
+
+- Package source parsing and installation happen before the target extension is
+  installed or loaded, so an extension cannot reinterpret its own install
+  source.
+
+### Expected merge conflict zones
+
+- LOW: `DefaultPackageManager.parseSource()` near npm/local/Git source
+  classification in `packages/coding-agent/src/core/package-manager.ts`.
+- LOW: npm and local source examples in
+  `packages/coding-agent/docs/packages.md`.
+
 ## 2026-09-03 - Make eval-only tool routing unconditional and registry-aware
 
 ### What changed

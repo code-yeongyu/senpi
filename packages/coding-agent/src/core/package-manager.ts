@@ -50,6 +50,7 @@ import type { PackageSource, SettingsManager } from "./settings-manager.ts";
 const NETWORK_TIMEOUT_MS = 10000;
 const UPDATE_CHECK_CONCURRENCY = 4;
 const GIT_UPDATE_CONCURRENCY = 4;
+const BARE_NPM_PACKAGE_SPEC_PATTERN = /^[a-z0-9][a-z0-9._~-]*(?:@[^/\\\s]+)?$/i;
 
 function isOfflineModeEnabled(): boolean {
 	const value = envValue("OFFLINE");
@@ -1449,8 +1450,14 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	private parseSource(source: string): ParsedSource {
-		if (source.startsWith("npm:")) {
-			const spec = source.slice("npm:".length).trim();
+		const trimmed = source.trim();
+		const npmSpec = source.startsWith("npm:")
+			? source.slice("npm:".length).trim()
+			: BARE_NPM_PACKAGE_SPEC_PATTERN.test(trimmed)
+				? trimmed
+				: undefined;
+		if (npmSpec !== undefined) {
+			const spec = npmSpec;
 			const { name, version } = this.parseNpmSpec(spec);
 			return {
 				type: "npm",
