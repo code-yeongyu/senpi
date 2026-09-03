@@ -22,7 +22,7 @@ prompt-preset/
 ├── claude-fable-5-1.ts  # Claude Fable 5.1 preset — fable-5 core plus surgical deltas per the Fable 5.1 prompting guide (scope-is-deliverable, batching, surgical edits, test scope, formatting/narration recalibration); dotted release resolves before the generic fable-5 substring
 ├── claude-opus-5.ts     # Claude Opus 5 preset — dieted full-core rewrite via `corePrompt` on the fable-5-1 skeleton (one home per rule, Scope section) plus the Opus 5 guide deltas: bounded single-pass verification, delegation caps, narration cadence, correction filter, document length, short conciseness line, outcome-first final summary
 ├── claude-opus-4-{5,6,7,8}.ts  # Per-snapshot Opus 4.x thin presets: execution-tooling stance + only the guide-documented deltas the shared core lacks (4.7/4.8: literal scope, tool-over-reasoning, same-turn subagent fan-out, house-style counter; 4.8 also reasons over what changed after a user turn; 4.6 carries no tuning text — claude.md documents nothing the dieted core lacks)
-├── glm-5.ts             # Shared GLM 5.x builder (`GLM5_TUNING` + `buildGlm5Prompt`): execution-tooling stance in the claude dialect (GLM is Claude-distilled) + a two-sentence tool-over-deliberation / short-loop tuning; 5.2 and 5.3 share one prompting surface (same base model, post-training delta only)
+├── glm-5.ts             # Shared GLM 5.x builder (`GLM5_RULES`, `GLM5_TUNING`, `buildGlm5Prompt`): visible-skill gate + execution-tooling stance in the claude dialect (GLM is Claude-distilled) + tool-over-deliberation / short-loop tuning; 5.2 and 5.3 share one prompting surface
 ├── glm-5-{2,3}.ts       # GLM 5.2 / GLM 5.3 thin aliases over `buildGlm5Prompt`
 ├── gemini.ts            # Gemini 3.x Flash preset — typed rule data (`GEMINI_RULES`) over a thin tuningSection wrapper
 ├── muse-spark.ts        # Muse Spark preset — typed rule data (`MUSE_SPARK_RULES`) over a thin tuningSection wrapper
@@ -31,7 +31,7 @@ prompt-preset/
 ├── deepseek-v4-flash-0731.ts # DeepSeek V4 Flash 0731 snapshot preset — dated snapshot resolves before the generic flash alias
 ├── deepseek-v4-pro.ts   # DeepSeek V4 Pro preset (deep-reasoner calibration)
 ├── kimi-k2-{6,7}.ts     # Kimi K2.6 / K2.7 presets (kimi-k2-6.ts, kimi-k2-7.ts)
-├── kimi-k3.ts           # Kimi K3 preset — full-core rewrite via `corePrompt` on the Fable 5.1 skeleton, tuned for Moonshot's documented K3 "excessive proactiveness" (Scope section: request = deliverable, pre-existing problems are follow-ups, test scope; reflect-then-ask ambiguity gate; bounded failure cap; delegation with propagated stop condition) + binding stop contract (declared stop condition in the routing line)
+├── kimi-k3.ts           # Kimi K3 preset — full-core rewrite via `corePrompt` on the Fable 5.1 skeleton, tuned for Moonshot's documented K3 "excessive proactiveness" (scope boundary, ambiguity gate, bounded failure cap, delegation with propagated stop condition, visible-skill gate) + binding stop contract
 └── changes.md           # Fork tracker (model-family rename 2026-04-30, file-operations 2026-05-07)
 ```
 
