@@ -1,3 +1,22 @@
+## 2026-09-03 - Restore Anthropic mid-output fallback failure path after upstream sync
+
+### What changed
+
+- Restored the Anthropic SSE guard that fails immediately when a `fallback` content block arrives after output has begun, preserving the explicit `unsupported mid-output model fallback` error instead of allowing an incomplete stream to report only a missing `message_stop`.
+- Restored the managed-provider argument to Anthropic message conversion so persisted per-turn effort levels reconstruct their exact historical marker prefix; managed requests retain the stable top-level `output_config: { effort: "high" }` while per-turn markers carry the selected effort.
+
+### Why
+
+- The upstream re-integration retained beta-client and effort-marker machinery but lost two fork-side merge behaviors. Without the SSE guard, Anthropic could replace a partially emitted response without a safe error. Without provider-scoped conversion, historical effort metadata was not associated with assistant messages and the marker prefix was omitted.
+
+### Why this cannot be expressed externally
+
+- Both behaviors are owned by the Anthropic adapter: the fallback decision occurs inside the SSE event loop, and effort markers are constructed while converting persisted conversation history into Anthropic wire messages before extension hooks can repair the payload.
+
+### Expected merge conflict zones
+
+- MEDIUM: `api/anthropic-messages.ts` SSE `content_block_start` handling and `buildParams()` / `convertMessages()` effort-marker plumbing during future upstream syncs.
+
 ## OpenRouter native Anthropic routing declared ahead of the catalog (2026-09-03)
 
 ### What changed

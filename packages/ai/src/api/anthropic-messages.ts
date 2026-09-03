@@ -1472,6 +1472,12 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						break;
 					}
 				} else if (event.type === "content_block_start") {
+					if (event.content_block.type === "fallback") {
+						if (output.content.length > 0) {
+							throw new Error("Anthropic performed an unsupported mid-output model fallback");
+						}
+						continue;
+					}
 					const receipt =
 						options?.abortServerSideFallback === true
 							? parseServerFallbackReceipt(event.content_block)
@@ -2130,6 +2136,7 @@ function buildParams(
 		unsignedThinkingReplay,
 		deferredToolNames,
 		normalizeToolName,
+		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
 	);
 	const messages =
 		model.compat?.supportsMidConvoEffort === true
@@ -2218,7 +2225,7 @@ function buildParams(
 			display: options?.thinkingDisplay ?? "summarized",
 			block_binding: { prefix_mismatch_behavior: "drop_block" },
 		};
-		params.output_config = { effort: options?.effort ?? "high" };
+		params.output_config = { effort: "high" };
 	} else if (model.reasoning) {
 		if (options?.thinkingEnabled) {
 			// Default to "summarized" so Opus 4.7 and Mythos Preview behave like
