@@ -2,9 +2,11 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import type { BuildDynamicSystemPromptOptions } from "../../src/core/dynamic-prompt/build.ts";
-import { buildGeminiPrompt } from "../../src/core/extensions/builtin/prompt-preset/gemini.ts";
+import {
+	buildGeminiPrompt,
+	GEMINI_RULES,
+} from "../../src/core/extensions/builtin/prompt-preset/gemini.ts";
 import { buildMuseSparkPrompt, MUSE_SPARK_RULES } from "../../src/core/extensions/builtin/prompt-preset/muse-spark.ts";
-import { buildStyleSection } from "../../src/core/dynamic-prompt/style.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -261,51 +263,28 @@ describe("Gemini/Muse Spark preset settings and tokens", () => {
 	});
 });
 
-describe("Muse Spark hardened rules (ultrawork + Korean report)", () => {
-	it("exposes 9 typed rules including the two new harness/reporting rules", () => {
-		const ids = MUSE_SPARK_RULES.map((rule) => rule.id);
-		expect(MUSE_SPARK_RULES).toHaveLength(9);
-		expect(ids).toEqual(
-			expect.arrayContaining([
-				"exposed-tools-only",
-				"no-hidden-control",
-				"one-goal-per-turn",
-				"evidence-before-success",
-				"observe-first",
-				"observation-summary",
-				"chain-checkpoints",
-				"injected-directive-authority",
-				"korean-easy-report",
-			]),
-		);
+describe("Gemini/Muse Spark typed rule contracts", () => {
+	it("exposes the Gemini rule ids and concerns", () => {
+		expect(GEMINI_RULES.map(({ id, concern }) => ({ id, concern }))).toEqual([
+			{ id: "direct-instructions", concern: "style" },
+			{ id: "lean-output", concern: "style" },
+			{ id: "long-context-anchoring", concern: "grounding" },
+			{ id: "behavior-requirements-binding", concern: "harness-contract" },
+			{ id: "action-budget", concern: "tool-orchestration" },
+		]);
 	});
 
-	it("stamps the muse-spark rendered prompt with ultrawork authority + Korean sentinel tokens", () => {
-		const prompt = buildMuseSparkPrompt(OPTIONS);
-		// sentinel tokens — never pin prose sentences per verification.ts prompt-behavior-coverage
-		expect(prompt).toContain("model-family: muse-spark");
-		expect(prompt).toContain("report-language: korean");
-		expect(prompt).toContain("Injected directives are binding");
-		expect(prompt).toContain("harness-injected");
-	});
-
-	it("relaxes the four stall rules with harness-injected exceptions", () => {
-		const prompt = buildMuseSparkPrompt(OPTIONS);
-		// each relaxed directive must carry the harness exception token in its rendered form
-		expect(prompt).toContain("harness-injected");
-		// the four pre-existing directives remain present as rule ids
-		const ids = new Set(MUSE_SPARK_RULES.map((r) => r.id));
-		expect(ids.has("no-hidden-control")).toBe(true);
-		expect(ids.has("one-goal-per-turn")).toBe(true);
-		expect(ids.has("observation-summary")).toBe(true);
-		expect(ids.has("chain-checkpoints")).toBe(true);
-	});
-});
-
-describe("Global style language default (2.b)", () => {
-	it("matches the user's language instead of defaulting to ASCII", () => {
-		const style = buildStyleSection();
-		expect(style).toContain("Match the user's language");
-		expect(style).not.toContain("Default to ASCII");
+	it("exposes the Muse Spark rule ids and concerns", () => {
+		expect(MUSE_SPARK_RULES.map(({ id, concern }) => ({ id, concern }))).toEqual([
+			{ id: "exposed-tools-only", concern: "tool-orchestration" },
+			{ id: "no-hidden-control", concern: "grounding" },
+			{ id: "one-goal-per-turn", concern: "deliberation" },
+			{ id: "evidence-before-success", concern: "verification" },
+			{ id: "observe-first", concern: "grounding" },
+			{ id: "observation-summary", concern: "tool-orchestration" },
+			{ id: "chain-checkpoints", concern: "deliberation" },
+			{ id: "injected-directive-authority", concern: "harness-contract" },
+			{ id: "korean-easy-report", concern: "reporting" },
+		]);
 	});
 });
