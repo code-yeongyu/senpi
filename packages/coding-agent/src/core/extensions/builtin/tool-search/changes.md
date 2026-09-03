@@ -1,5 +1,24 @@
 # Tool Search Builtin Changes
 
+## 2026-09-04 - Fix the native search tool name and gate injection to first-party Anthropic hosts
+
+### What changed
+
+- `ANTHROPIC_TOOL_SEARCH_NAME` is now `tool_search_tool_bm25`, the only `name` the Messages API accepts for `tool_search_tool_bm25_20251119`; the previous `tool_search` was rejected with `400 tools.N.tool_search_tool_bm25_20251119.name: Input should be 'tool_search_tool_bm25'`.
+- `AnthropicNativeToolSearchAdapter.applyBeforeRequest` takes the request model (`event.model ?? ctx.model`) instead of the bare `api` string and skips injection unless the model's `baseUrl` host is `anthropic.com` (or a subdomain). Third-party endpoints that speak the Anthropic Messages wire format (Kimi Code, OpenRouter, proxies) do not implement native tool search and answered the injected tool with an opaque `400 Invalid request Error`; they now receive the untouched payload and keep the local `tool_search` tool.
+- A missing `baseUrl` keeps the previous behaviour so existing callers and tests stay unchanged.
+- The request-validator mock now enforces the tool `name` the same way the API does, and `test/tool-search/native-anthropic.test.ts` covers the name, the host gate, and that a third-party 400 is not attributed to native search.
+
+### Why
+
+- The eval-only tool routing default (`bash`/`workflow`/`monitor` inactive) made the extension catalog non-empty for every session, which turned the native adapter on for every `anthropic-messages` request and surfaced both defects at once: every Anthropic request failed with the name error, and every Kimi Code request failed with the opaque 400.
+- The 400 fallback only helps after the first failed turn of each session, and on third-party hosts it hid the real cause behind a generic error.
+
+### Expected merge conflict zones
+
+- LOW: `native-search.ts` constants and the adapter entry point.
+- LOW: `index.ts` provider-request hook wiring.
+
 ## 2026-08-11 - Defer local tool registration until the catalog is searchable
 
 ### What changed

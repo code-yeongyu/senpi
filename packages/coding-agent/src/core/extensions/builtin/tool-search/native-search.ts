@@ -6,7 +6,8 @@ import type { ToolSearchDocument } from "./engine/document.ts";
 // scope because it requires a provider-layer seam.
 
 export const ANTHROPIC_TOOL_SEARCH_TYPE = "tool_search_tool_bm25_20251119";
-export const ANTHROPIC_TOOL_SEARCH_NAME = "tool_search";
+/** The API rejects any other `name` for this tool type (400: "Input should be 'tool_search_tool_bm25'"). */
+export const ANTHROPIC_TOOL_SEARCH_NAME = "tool_search_tool_bm25";
 /** Anthropic caps a request at 10k tools; beyond that native search is invalid. */
 export const ANTHROPIC_MAX_TOOLS = 10000;
 
@@ -43,6 +44,29 @@ export interface AnthropicNativeInjectionConfig {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
+}
+
+/** The subset of the request model the adapter needs to decide whether native search applies. */
+export interface NativeToolSearchRequestModel {
+	readonly api?: string;
+	readonly baseUrl?: string;
+}
+
+/**
+ * Native tool search is an Anthropic server-side feature. Third-party endpoints
+ * that speak the Anthropic Messages wire format (Kimi Code, OpenRouter, proxies)
+ * reject the `tool_search_tool_bm25_20251119` tool with an opaque 400, so only
+ * first-party Anthropic hosts opt in. A missing `baseUrl` (older callers, tests)
+ * keeps the previous behaviour.
+ */
+export function isFirstPartyAnthropicEndpoint(baseUrl: string | undefined): boolean {
+	if (baseUrl === undefined) return true;
+	try {
+		const host = new URL(baseUrl).hostname.toLowerCase();
+		return host === "anthropic.com" || host.endsWith(".anthropic.com");
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -124,10 +148,11 @@ export class AnthropicNativeToolSearchAdapter {
 		this.#deps = deps;
 	}
 
-	applyBeforeRequest(api: string | undefined, payload: unknown): unknown {
+	applyBeforeRequest(model: NativeToolSearchRequestModel | undefined, payload: unknown): unknown {
 		this.#injectedLastRequest = false;
 		if (this.#disabled || !this.#deps.enabled()) return payload;
-		const next = addAnthropicNativeToolSearch(api, payload, this.#deps);
+		if (!isFirstPartyAnthropicEndpoint(model?.baseUrl)) return payload;
+		const next = addAnthropicNativeToolSearch(model?.api, payload, this.#deps);
 		this.#injectedLastRequest = next !== payload;
 		return next;
 	}
