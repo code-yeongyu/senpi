@@ -170,6 +170,27 @@
 ### Expected merge conflict zones on next upstream sync
 
 - LOW: `index.ts` handler bodies; keep the customPrompt yield and append reattachment when upstream reshapes handlers.
+## Gemini + Muse Spark presets (2026-08-16)
+
+### What changed
+
+- `gemini.ts` / `muse-spark.ts`: new presets for the Gemini 3.x Flash and Muse Spark families — thin `tuningSection` wrappers over the shared dynamic core with `workstationDialect: "default"`, each carrying its vendor-guidance behaviors as typed rule data (`GEMINI_RULES` / `MUSE_SPARK_RULES`, deepseek-v4.ts precedent) and ending the tuning block with a machine-consumed `model-family: <name>` token line. Gemini rules: direct-instructions, lean-output, long-context-anchoring, behavior-requirements-binding, action-budget. Muse Spark rules: exposed-tools-only, no-hidden-control, one-goal-per-turn, evidence-before-success, observe-first, observation-summary, chain-checkpoints.
+- `presets.ts`: `hasGeminiSignal` / `hasMuseSparkSignal` matchers on normalized id OR display name with `[/@:._-]` boundaries, verified against the installed pi-ai provider catalogs (2026-08-16). Gemini matches the exact flash ids `google/gemini-3.6-flash`, `google/gemini-3.1-flash-lite`, `google/gemini-3.5-flash`, `google/gemini-3.5-flash-lite`, `google/gemini-3.7-flash` plus their unprefixed (google, google-vertex, github-copilot, opencode), `:batch`-tagged, and `-preview` shapes; `-image` variants (Nano Banana image models) are excluded as a different modality, and truncated ids (`google/gemini-3.6`) do not match. Muse Spark matches `meta/muse-spark-1.1`, `meta/muse-spark-1.2`, `meta/muse-spark-1.2-contributor`; truncated `meta/muse-spark` and bare `spark` substrings do not.
+- `settings.ts`: `"gemini"` and `"muse-spark"` join `PromptPresetName` and `VALID_PRESETS`.
+- `docs/settings.md`, `AGENTS.md`, `builtin/AGENTS.md`: preset lists updated.
+- `test/suite/prompt-presets-gemini-muse.test.ts` (new): routing decisions and `model-family` tokens only — exact-id tables for both families, truncated-id and loose-substring negatives, image-variant exclusion, a deepseek-v4-pro negative control, settings force + `parsePromptPreset` wiring, a catalog sweep asserting every built-in Gemini/Muse catalog model resolves, and per-prompt token stamping with cross-token non-leakage.
+
+### Why
+
+- Gemini 3.x Flash and Muse Spark models ship in the provider catalogs without a preset, so they fell back to the untuned dynamic prompt. Google's Gemini 3 guidance reads as calibration for a native reasoner (direct instructions, lean output, instruction-at-the-end anchoring, binding behavior requirements, binding action budgets); Meta's Muse Spark guidance centers on capability honesty and evidence-anchored tool loops. Both fit the thin-wrapper architecture with no shared-core changes.
+
+### Why extension system couldn't handle this differently
+
+- Content-only addition inside this builtin; follows the thin-wrapper preset architecture (`tuningSection` only).
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `gemini.ts`, `muse-spark.ts`, and the test file are new files; `presets.ts`/`settings.ts` touch shared lists — trivial adjacent-line conflicts if upstream adds presets.
 
 ## GLM 5.3 preset (2026-08-16)
 

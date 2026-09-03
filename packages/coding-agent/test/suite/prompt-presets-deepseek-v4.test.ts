@@ -257,6 +257,22 @@ describe("DeepSeek V4 rule data", () => {
 			expect(rule.directive.length).toBeGreaterThan(80);
 		}
 		// The documented 0731 failure modes each have an owning rule on the 0731 preset.
+		expect(
+			DEEPSEEK_V4_RULES.filter((rule) =>
+				["delegate-separable-work", "load-matching-skills"].includes(rule.id),
+			).map(({ id, concern, presets }) => ({ id, concern, presets })),
+		).toEqual([
+			{
+				id: "delegate-separable-work",
+				concern: "subagent-delegation",
+				presets: ["deepseek-v4-flash", "deepseek-v4-flash-0731", "deepseek-v4-pro"],
+			},
+			{
+				id: "load-matching-skills",
+				concern: "skill-utilization",
+				presets: ["deepseek-v4-flash", "deepseek-v4-flash-0731", "deepseek-v4-pro"],
+			},
+		]);
 		const on0731 = DEEPSEEK_V4_RULES.filter((rule) => rule.presets.includes("deepseek-v4-flash-0731"));
 		const concerns = new Set(on0731.map((rule) => rule.concern));
 		expect(concerns.has("harness-contract")).toBe(true);
@@ -289,9 +305,10 @@ describe("DeepSeek V4 rule data", () => {
 		];
 
 		// then
+		const presetSpecificRules = DEEPSEEK_V4_RULES.filter((rule) => rule.id !== "load-matching-skills");
 		for (const prompt of otherPrompts) {
 			expect(prompt).toBeDefined();
-			for (const rule of DEEPSEEK_V4_RULES) {
+			for (const rule of presetSpecificRules) {
 				expect(prompt).not.toContain(rule.directive);
 			}
 		}
