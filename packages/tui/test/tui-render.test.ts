@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, it, test } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
+import type { Terminal } from "../src/terminal.ts";
 import {
 	deleteKittyImage,
 	encodeKitty,
@@ -147,6 +148,30 @@ class ExpandedStreamingOutputComponent implements Component {
 	}
 
 	invalidate(): void {}
+}
+
+const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
+
+class BoundedWriteTerminal implements Terminal {
+	readonly writes: string[] = [];
+	columns = 80;
+	rows = 24;
+	readonly kittyProtocolActive = false;
+
+	start(_onInput: (data: string) => void, _onResize: () => void): void {}
+	stop(): void {}
+	async drainInput(_maxMs?: number, _idleMs?: number): Promise<void> {}
+	write(data: string): void {
+		this.writes.push(data);
+	}
+	moveBy(_lines: number): void {}
+	hideCursor(): void {}
+	showCursor(): void {}
+	clearLine(): void {}
+	clearFromCursor(): void {}
+	clearScreen(): void {}
+	setTitle(_title: string): void {}
+	setProgress(_active: boolean): void {}
 }
 
 class LoggingVirtualTerminal extends VirtualTerminal {
@@ -367,6 +392,55 @@ describe("TUI input render scheduling", () => {
 		assert.ok(terminal.getViewport().join("\n").includes("input:ZQX"));
 
 		tui.stop();
+	});
+});
+
+describe("TUI bounded render output", () => {
+	it("splits a large full render without changing its output", () => {
+		const terminal = new BoundedWriteTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		const kittyLine = `\x1b_Ga=T,f=100;${"A".repeat(1_200_000)}\x1b\\`;
+		component.lines = [kittyLine, kittyLine];
+		tui.addChild(component);
+
+		tui.renderNow();
+
+		assert.ok(terminal.writes.length > 2, "large output should be split across terminal writes");
+		assert.ok(
+			terminal.writes.every((write) => write.length <= MAX_RENDER_WRITE_CHARS),
+			"each terminal write should stay below the configured limit",
+		);
+		// The fork's TuiBase frame prologue is `\x1b[?2026h\x1b[?7l` (synchronized
+		// update + autowrap guard) and it clears each line with `\r\x1b[2K`, so the
+		// byte-exact upstream expectation does not apply. Assert instead that
+		// chunking preserved both payloads, their order, and the frame envelope.
+		const output = terminal.writes.join("");
+		assert.ok(output.startsWith("\x1b[?2026h"), "frame must open a synchronized update");
+		assert.ok(output.endsWith("\x1b[?2026l"), "frame must close the synchronized update");
+		assert.strictEqual(output.split(kittyLine).length - 1, 2, "chunking must preserve both Kitty payloads intact");
+		assert.ok(output.indexOf(kittyLine) < output.lastIndexOf(kittyLine), "chunking must preserve payload order");
+	});
+
+	it("splits large differential updates without a full redraw", () => {
+		const terminal = new BoundedWriteTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = ["before"];
+		tui.renderNow();
+		terminal.writes.length = 0;
+
+		const kittyLine = `\x1b_Ga=T,f=100;${"A".repeat(1_200_000)}\x1b\\`;
+		component.lines = ["before", kittyLine, kittyLine];
+		tui.renderNow();
+
+		assert.ok(terminal.writes.length > 2, "large output should be split across terminal writes");
+		assert.ok(terminal.writes.every((write) => write.length <= MAX_RENDER_WRITE_CHARS));
+		const output = terminal.writes.join("");
+		assert.ok(output.startsWith("\x1b[?2026h"));
+		assert.ok(output.endsWith("\x1b[?2026l"));
+		assert.ok(!output.includes("\x1b[2J"), "the update should stay on the differential render path");
 	});
 });
 

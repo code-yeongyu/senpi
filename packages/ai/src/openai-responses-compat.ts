@@ -23,4 +23,6 @@ export interface OpenAIResponsesCompat {
 	supportsToolSearch?: boolean;
 	/** Whether the model accepts `prompt_cache_options`. */
 	supportsExplicitPromptCacheMode?: boolean;
+	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
+	supportsMaxOutputTokens?: boolean;
 }

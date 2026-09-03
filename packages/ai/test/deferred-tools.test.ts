@@ -440,6 +440,7 @@ describe("deferred tools", () => {
 			sendSessionAffinityHeaders: false,
 			deferredToolsMode: "kimi",
 			sessionAffinityFormat: "openai",
+			supportsMaxOutputTokens: true,
 			supportsLongCacheRetention: false,
 		});
 

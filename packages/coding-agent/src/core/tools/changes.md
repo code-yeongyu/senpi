@@ -1,5 +1,36 @@
 # core/tools changes
 
+## Adopt upstream ctx.cwd tool resolution without dropping fork tool surfaces (2026-09-03)
+
+### What changed
+
+- `read.ts`, `write.ts`, `edit.ts`, `grep.ts`, `find.ts`, `ls.ts`, and `bash.ts` resolve
+  filesystem/spawn cwd as `ctx?.cwd || cwd` (upstream 62835ea81) while keeping fork additions:
+  the read-tool `local://` URI guard, `FilesystemPolicyChecker` / permission hooks on
+  read/write/edit/grep/find/ls, snake_case tool naming, eval-only routing hooks, and bash spawn
+  context.
+- `write.ts` success text is now `Successfully wrote to <path>` (upstream e583b290a) but still
+  returns `details: createWriteDetails(path, content, baseline)` so TUI write-diff rendering
+  survives.
+
+### Why
+
+- Upstream tests assert per-call `ExtensionContext.cwd` overrides. Taking only ours would fail
+  those tests; taking only theirs would drop the local:// guard, filesystem policy, and write
+  details that the fork's TUI and eval kernel depend on.
+
+### Why an extension could not handle it
+
+- Builtin tool execute paths and their result `details` shape are core wiring. Extensions cannot
+  rewrite cwd resolution or restore write-diff details after the tool has already returned.
+
+### Expected merge conflict zones
+
+- Import blocks that add `ExtensionContext` next to `FilesystemPolicyChecker`.
+- `write.ts` execute return (`content` text vs `details`).
+- `grep.ts` `searchPath` (fork computes it before the policy check; upstream added a second
+  assignment after `ensureTool`).
+
 ## grep is temporarily withheld from the model-facing tool surface (2026-08-29)
 
 ### What changed

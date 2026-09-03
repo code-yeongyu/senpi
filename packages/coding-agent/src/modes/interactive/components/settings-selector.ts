@@ -92,6 +92,7 @@ export interface SettingsConfig {
 	tuiMode: TuiMode;
 	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
+	fullscreenCopyOnSelect: boolean;
 	warnings: WarningSettings;
 }
 
@@ -129,6 +130,7 @@ export interface SettingsCallbacks {
 	onTuiModeChange: (mode: TuiMode) => void;
 	onFullscreenExitOutputChange: (output: FullscreenExitOutput) => void;
 	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
+	onFullscreenCopyOnSelectChange: (enabled: boolean) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
 	onCancel: () => void;
 }
@@ -242,20 +244,23 @@ class SelectSubmenu extends Container {
 	}
 }
 
-function themeItems(availableThemes: string[]): SelectItem[] {
-	return availableThemes.map((name) => ({ value: name, label: name }));
+function themeItems(availableThemes: string[], currentTheme: string): SelectItem[] {
+	return availableThemes.map((name) => ({
+		value: name,
+		label: `${name === currentTheme ? "✓ " : "  "}${name}`,
+	}));
 }
 
 const AUTOMATIC_THEME_VALUE = "/";
 
-function singleModeThemeItems(availableThemes: string[]): SelectItem[] {
+function singleModeThemeItems(availableThemes: string[], currentTheme: string): SelectItem[] {
 	return [
 		{
 			value: AUTOMATIC_THEME_VALUE,
-			label: "Automatic",
+			label: "  Automatic",
 			description: "Use separate themes for light and dark terminal appearance",
 		},
-		...themeItems(availableThemes),
+		...themeItems(availableThemes, currentTheme),
 	];
 }
 
@@ -336,7 +341,7 @@ class ThemeSubmenu extends Container {
 		const menu = new SelectSubmenu(
 			"Theme",
 			"Select a theme, or choose Automatic to follow terminal appearance.",
-			singleModeThemeItems(this.availableThemes),
+			singleModeThemeItems(this.availableThemes, this.singleTheme),
 			this.singleTheme,
 			(value) => {
 				if (value === AUTOMATIC_THEME_VALUE) {
@@ -452,7 +457,7 @@ class ThemeSubmenu extends Container {
 		return new SelectSubmenu(
 			title,
 			description,
-			themeItems(this.availableThemes),
+			themeItems(this.availableThemes, currentValue),
 			currentValue,
 			onSelect,
 			() => {
@@ -567,7 +572,7 @@ export class SettingsSelectorComponent extends Container {
 			{
 				id: "cache-miss-notices",
 				label: "Cache miss notices",
-				description: "Show transcript notices for significant prompt-cache misses and compaction costs",
+				description: "Show transcript notices for cache costs and provider recovery diagnostics",
 				currentValue: config.showCacheMissNotices ? "true" : "false",
 				values: ["true", "false"],
 			},
@@ -670,6 +675,13 @@ export class SettingsSelectorComponent extends Container {
 				description: "Scrollbar behavior in fullscreen mode; has no effect in regular mode",
 				currentValue: config.fullscreenScrollbar,
 				values: ["auto", "always", "hidden"],
+			},
+			{
+				id: "fullscreen-copy-on-select",
+				label: "Fullscreen copy on select",
+				description: "Automatically copy selected text in fullscreen mode; disable to copy selections with Ctrl+X",
+				currentValue: config.fullscreenCopyOnSelect ? "true" : "false",
+				values: ["true", "false"],
 			},
 			{
 				id: "theme",
@@ -897,6 +909,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "fullscreen-scrollbar":
 						callbacks.onFullscreenScrollbarChange(newValue as ScrollViewScrollbar);
+						break;
+					case "fullscreen-copy-on-select":
+						callbacks.onFullscreenCopyOnSelectChange(newValue === "true");
 						break;
 					case "theme":
 						callbacks.onThemeChange(newValue);

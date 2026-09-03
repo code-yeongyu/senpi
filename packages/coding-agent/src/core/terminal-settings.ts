@@ -3,6 +3,10 @@ export interface TerminalSettings {
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
 	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
+	// Terminal capability overrides (upstream e86823096); "auto" defers to detection.
+	hyperlinks?: boolean | "auto";
+	images?: "kitty" | "iterm2" | "auto" | false;
+	trueColor?: boolean | "auto";
 	// Persistent-terminal tool suite (builtin `terminal` extension) config.
 	defaultCols?: number; // default: 120 (PTY width for new sessions)
 	defaultRows?: number; // default: 40 (PTY height for new sessions)

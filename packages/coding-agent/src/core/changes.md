@@ -4499,3 +4499,21 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 ### Expected merge conflict zones
 
 - Agent event dispatch and custom-message queue handling.
+
+## 2026-09-03 - Reconcile upstream agent-session admission and runtime replacement
+
+### What changed and why
+
+- Kept senpi compaction admission, abort, model persistence, and event-union behavior while removing the obsolete queued-message gate and callback re-sample from next-turn refresh; runtime replacement now settles the outgoing session before creating the fork target and preserves extension spill reporting.
+
+### Why
+
+- Upstream loop ordering already drains continuation messages into loop-local state before preparation, so the old gate skipped required threshold compaction. Settling before fork creation preserves outgoing JSONL and active-turn lifecycle ordering.
+
+### Why an extension could not handle this
+
+- Session admission, persistence, abort, and runtime replacement are core lifecycle boundaries below extension interception.
+
+### Expected merge conflict zones
+
+- `src/core/agent-session.ts` next-turn refresh and compaction lifecycle; `src/core/agent-session-runtime.ts` replacement ordering.

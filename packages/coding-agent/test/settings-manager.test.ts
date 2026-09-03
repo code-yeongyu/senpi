@@ -8,6 +8,7 @@ import {
 	excludeRoutineOnlySettingsChanges,
 	refreshSettingsContentSnapshots,
 } from "../src/core/extensions/builtin/config-reload/routine-settings.ts";
+import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
 import {
 	__resetSelfWriteTrackerForTests,
 	__setSelfWriteTrackerClockForTests,
@@ -624,6 +625,29 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("httpIdleTimeoutMs", () => {
+		it("should default to 5 minutes", () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getHttpIdleTimeoutMs()).toBe(DEFAULT_HTTP_IDLE_TIMEOUT_MS);
+		});
+
+		it("should use merged global and project settings", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 300000 }));
+			writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 0 }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getHttpIdleTimeoutMs()).toBe(0);
+		});
+
+		it("should reject invalid timeout values", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: -1 }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(() => manager.getHttpIdleTimeoutMs()).toThrow("Invalid httpIdleTimeoutMs setting");
+		});
+	});
+
 	describe("externalEditor", () => {
 		const originalVisual = process.env.VISUAL;
 		const originalEditor = process.env.EDITOR;
@@ -702,13 +726,16 @@ describe("SettingsManager", () => {
 		const manager = SettingsManager.create(projectDir, agentDir);
 		expect(manager.getFullscreenExitOutput()).toBe("transcript");
 		expect(manager.getFullscreenScrollbar()).toBe("auto");
+		expect(manager.getFullscreenCopyOnSelect()).toBe(true);
 
 		manager.setFullscreenExitOutput("resume-hint");
 		manager.setFullscreenScrollbar("hidden");
+		manager.setFullscreenCopyOnSelect(false);
 		await manager.flush();
 		const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
 		expect(savedSettings.fullscreenExitOutput).toBe("resume-hint");
 		expect(savedSettings.fullscreenScrollbar).toBe("hidden");
+		expect(savedSettings.fullscreenCopyOnSelect).toBe(false);
 
 		writeFileSync(
 			join(agentDir, "settings.json"),
@@ -717,6 +744,7 @@ describe("SettingsManager", () => {
 		const reloadedManager = SettingsManager.create(projectDir, agentDir);
 		expect(reloadedManager.getFullscreenExitOutput()).toBe("transcript");
 		expect(reloadedManager.getFullscreenScrollbar()).toBe("auto");
+		expect(reloadedManager.getFullscreenCopyOnSelect()).toBe(true);
 	});
 
 	describe("outputPad", () => {

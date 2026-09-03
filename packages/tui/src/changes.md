@@ -911,3 +911,21 @@ Component-level caching is added in coding-agent components because high-frequen
 
 - MEDIUM: `packages/tui/src/components/editor.ts` (segment handling around cursor movement and deletion) and `packages/tui/src/paste-markers.ts` (the generalized segmentation shared with paste markers).
 - LOW: `packages/tui/src/image-markers.ts` (new fork-owned file, no upstream counterpart), `packages/tui/src/editor-component.ts` (additive optional interface members), and the `packages/tui/src/index.ts` export lists.
+
+## 2026-09-03 - Port upstream #8028 bounded main-screen rendering
+
+### What changed
+
+- `packages/tui/src/tui.ts`: main-screen render writes are emitted in bounded 1 MiB chunks, including full redraws and differential updates, so large image-heavy frames cannot exceed V8 string limits while preserving the fork's synchronized frames and viewport renderer.
+
+### Why
+
+- Upstream #8028 prevents V8 string-length crashes when a main-screen render contains very large terminal-image payloads. The fork renderer lives in `TuiBase`, so the bounded write behavior is ported there rather than replacing the fork's thin `TuiMainScreen` subclass.
+
+### Why this lives in the fork
+
+- `TuiBase` owns the fork's main-screen differential renderer, insert-scroll path, scrollback handling, and lifecycle state; no extension boundary can safely split its terminal frame writes.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts` around full-render and differential-render terminal writes; `packages/tui/src/tui-main-screen.ts` remains a thin state-capture subclass.

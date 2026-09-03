@@ -7,7 +7,7 @@ Senpi uses JSON settings files with project settings overriding global settings.
 | `~/.senpi/agent/settings.json` | Global (all projects) |
 | `.senpi/settings.json` | Project (current directory) |
 
-Edit directly or use `/settings` for common options.
+Edit directly or use `/settings` for common options. To save startup model defaults interactively, use `/model` and press Ctrl+S on the desired model. To save the startup thinking level, use `/thinking` and press Ctrl+S.
 
 ## Project Trust
 
@@ -81,15 +81,15 @@ Permission rules are a confirmation policy, not a sandbox. Senpi, extensions, pa
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `defaultProvider` | string | - | Default provider (e.g., `"anthropic"`, `"openai"`) |
-| `defaultModel` | string | - | Default model ID |
-| `defaultThinkingLevel` | string | - | `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
+| `defaultProvider` | string | - | Startup provider (e.g., `"anthropic"`, `"openai"`; saved with Ctrl+S in `/model`, or edited manually) |
+| `defaultModel` | string | - | Startup model ID (saved with Ctrl+S in `/model`, or edited manually) |
+| `defaultThinkingLevel` | string | - | Startup thinking level (saved with Ctrl+S in `/thinking`, or edited manually): `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
 | `modelThinkingLevels` | object | - | Per-model reasoning effort memory (`"provider/id": "level"`) |
 | `modelLastOnThinkingLevels` | object | - | Per-model last non-off reasoning level, used by `/reasoning on` to restore the previous effort |
 | `modelServiceTiers` | object | - | Per-model service tier memory (`"provider/id": "auto" \| "priority"`) |
 | `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k3"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-opus-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-pro"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, or `"gpt-5.6"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
-| `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses and compaction or branch-summary usage |
+| `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses, compaction or branch-summary usage, and provider recovery diagnostics such as dropped Anthropic thinking blocks |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level. Anthropic, Google, and Bedrock use these natively. OpenAI-compatible models use them when `compat.thinkingTokenBudgetField` (or `supportsThinkingTokenBudget`) is set. |
 
 #### promptPreset
@@ -141,6 +141,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `tuiMode` | string | `"regular"` | Interactive TUI mode: `"regular"` or experimental `"fullscreen"`. Changes from `/settings` apply immediately; `--tui-mode` overrides this setting at startup |
 | `fullscreenExitOutput` | string | `"transcript"` | Fullscreen exit output: `"transcript"` prints the final transcript and resume hint, while `"resume-hint"` restores the previous screen and prints only the resume hint. Has no effect in regular TUI mode |
 | `fullscreenScrollbar` | string | `"auto"` | Fullscreen transcript scrollbar: `"auto"` shows it temporarily while scrolling, `"always"` reserves the rightmost column and keeps it visible, and `"hidden"` hides it. Has no effect in regular TUI mode |
+| `fullscreenCopyOnSelect` | boolean | `true` | Automatically copy selected text in fullscreen mode. When disabled, selections stay highlighted and `Ctrl+X` copies the active selection |
 
 For VS Code, include `--wait` so senpi resumes after the editor exits:
 
@@ -346,6 +347,9 @@ Both ambient-auth providers are explicit opt-in: a vendor CLI being logged in on
 | `terminal.showImages` | boolean | `true` | Show images in terminal (if supported) |
 | `terminal.imageWidthCells` | number | `60` | Preferred inline image width in terminal cells |
 | `terminal.clearOnShrink` | boolean | `false` | Clear empty rows when content shrinks (can cause flicker) |
+| `terminal.hyperlinks` | boolean or `"auto"` | `"auto"` | Override OSC 8 hyperlink support (advanced, JSON-only) |
+| `terminal.images` | string or boolean | `"auto"` | Override image protocol support with `"kitty"`, `"iterm2"`, `false`, or `"auto"` (advanced, JSON-only) |
+| `terminal.trueColor` | boolean or `"auto"` | `"auto"` | Override truecolor support (advanced, JSON-only) |
 | `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max. Applies to `@file` attachments, `read`, and images returned by tools |
 | `images.blockImages` | boolean | `false` | Block all images from being sent to LLM |
 
@@ -575,6 +579,9 @@ See [packages.md](packages.md) for package management details.
   "defaultProvider": "anthropic",
   "defaultModel": "claude-sonnet-4-20250514",
   "defaultThinkingLevel": "medium",
+  "modelThinkingLevels": {
+    "anthropic/claude-sonnet-4-20250514": "high"
+  },
   "theme": "dark",
   "compaction": {
     "enabled": true,

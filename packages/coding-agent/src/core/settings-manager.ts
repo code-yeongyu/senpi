@@ -6,7 +6,7 @@ import type {
 	RetryStagePolicy,
 	RetryTieredHintStrategy,
 } from "@earendil-works/pi-ai/utils/retry-profile/types";
-import type { TuiMode as RendererTuiMode, ScrollViewScrollbar } from "@earendil-works/pi-tui";
+import type { TuiMode as RendererTuiMode, ScrollViewScrollbar, TerminalCapabilities } from "@earendil-works/pi-tui";
 import { createHash, randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
@@ -179,6 +179,7 @@ export interface Settings {
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 	experimental?: ExperimentalSettings;
+	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -1797,6 +1798,16 @@ export class SettingsManager {
 		return this.settings.thinkingBudgets;
 	}
 
+	getTerminalCapabilityOverrides(): Partial<TerminalCapabilities> {
+		const terminal = this.settings.terminal;
+		const images = terminal?.images;
+		return {
+			...(images === "kitty" || images === "iterm2" ? { images } : images === false ? { images: null } : {}),
+			...(typeof terminal?.trueColor === "boolean" ? { trueColor: terminal.trueColor } : {}),
+			...(typeof terminal?.hyperlinks === "boolean" ? { hyperlinks: terminal.hyperlinks } : {}),
+		};
+	}
+
 	getShowImages(): boolean {
 		return this.settings.terminal?.showImages ?? true;
 	}
@@ -1885,6 +1896,16 @@ export class SettingsManager {
 	setFullscreenScrollbar(mode: ScrollViewScrollbar): void {
 		this.globalSettings.fullscreenScrollbar = mode;
 		this.markModified("fullscreenScrollbar");
+		this.save();
+	}
+
+	getFullscreenCopyOnSelect(): boolean {
+		return this.settings.fullscreenCopyOnSelect ?? true;
+	}
+
+	setFullscreenCopyOnSelect(enabled: boolean): void {
+		this.globalSettings.fullscreenCopyOnSelect = enabled;
+		this.markModified("fullscreenCopyOnSelect");
 		this.save();
 	}
 

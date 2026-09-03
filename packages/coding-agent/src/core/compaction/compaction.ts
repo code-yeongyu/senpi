@@ -711,7 +711,6 @@ export async function completeSummarization(
 		cacheRetention: options.cacheRetention ?? "none",
 		affinitySessionId: options.affinitySessionId ?? options.sessionId,
 		sessionId: uuidv7(),
-		toolChoice: "none",
 	};
 	const callerSignal = options.signal;
 	const produce = async (): Promise<AssistantMessage> => {

@@ -1,5 +1,32 @@
 # changes
 
+## Keep synchronous Windows process-tree kill; never throw on missing taskkill (2026-09-03)
+
+### What changed
+
+- `shell.ts` keeps the fork's synchronous `killWindowsProcessTree(pid, taskkillPaths)` /
+  `killProcessTree` / `killTrackedDetachedChildren` path (`spawnSync` over
+  `windowsTaskkillCandidates`). Upstream 7af2d27dc's async `spawn` + `child.once("error")` is not
+  adopted because RPC host shutdown and hooks call the killer in the same tick as `process.exit`.
+- The ENOENT / spawn-failure guard is already the fork `spawnSync` `result.error` / try-catch
+  path: a missing or failed `taskkill` never throws. Regression `6596-taskkill-enoent` is adapted
+  to mock `spawnSync` instead of async `spawn`.
+
+### Why
+
+- Adopting upstream's async kill would make shutdown reaping fire-and-forget and leave orphaned
+  children. Dropping the ENOENT guard (or leaving the upstream test mocking `spawn`) would crash
+  or false-pass when `taskkill` is absent from PATH.
+
+### Why an extension could not handle it
+
+- Process-tree kill runs from RPC host shutdown, hooks, and bash abort inside core utilities
+  before any extension hook can wrap it.
+
+### Expected merge conflict zones
+
+- `shell.ts` import of `spawn` vs `spawnSync`, and the win32 branch of `killProcessTree`.
+
 ## Fix biome import-order format drift from #1230 (2026-08-31)
 
 ### What changed

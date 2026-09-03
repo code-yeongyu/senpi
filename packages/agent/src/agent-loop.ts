@@ -20,7 +20,6 @@ import {
 	normalizeTerminalAssistantMessage,
 	promoteStopWithPendingToolCalls,
 	shouldFinalizeIdleAsStop,
-	shouldTerminateAssistantTurn,
 } from "./assistant-terminal-state.ts";
 import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
 import type {
@@ -32,6 +31,7 @@ import type {
 	AgentTool,
 	AgentToolCall,
 	AgentToolResult,
+	PrepareNextTurnContext,
 	StreamFn,
 } from "./types.ts";
 
@@ -194,10 +194,8 @@ async function runLoop(
 ): Promise<void> {
 	let currentContext = initialContext;
 	let config = initialConfig;
-	let firstTurn = true;
+	let lastCompletedTurn: PrepareNextTurnContext | undefined;
 	let firstProviderRequest = true;
-	// Check for steering messages at start (user may have typed while waiting)
-	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 	let drainedTerminatingQueue: "steering" | "followUp" | undefined;
 	const refreshTerminatingQueueDrain = async (): Promise<void> => {
 		if (!drainedTerminatingQueue || !config.restorePendingMessages) return;
@@ -209,6 +207,8 @@ async function runLoop(
 			drainedTerminatingQueue = pendingMessages.length > 0 ? "followUp" : undefined;
 		}
 	};
+	// Check for steering messages at start (user may have typed while waiting)
+	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {
@@ -216,18 +216,50 @@ async function runLoop(
 
 		// Inner loop: process tool calls and steering messages
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
-			if (!firstTurn) {
-				await emit({ type: "turn_start" });
-			} else {
-				firstTurn = false;
-			}
-			if (drainedTerminatingQueue) {
-				await refreshTerminatingQueueDrain();
+			if (lastCompletedTurn) {
+				let nextTurnSnapshot: AgentLoopTurnUpdate | undefined;
+				try {
+					nextTurnSnapshot = await config.prepareNextTurn?.(lastCompletedTurn);
+				} catch (error) {
+					if (drainedTerminatingQueue)
+						await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
+					throw error;
+				}
+				if (nextTurnSnapshot) {
+					currentContext = nextTurnSnapshot.context ?? currentContext;
+					config = {
+						...config,
+						model: nextTurnSnapshot.model ?? config.model,
+						reasoning:
+							nextTurnSnapshot.thinkingLevel === undefined
+								? config.reasoning
+								: nextTurnSnapshot.thinkingLevel === "off"
+									? undefined
+									: nextTurnSnapshot.thinkingLevel,
+						thinkingSelection:
+							nextTurnSnapshot.thinkingSelection === undefined
+								? config.thinkingSelection
+								: (nextTurnSnapshot.thinkingSelection ?? undefined),
+						abortServerSideFallback: nextTurnSnapshot.abortServerSideFallback ?? config.abortServerSideFallback,
+					};
+				}
+				// Preparation can be long-running (for example, compaction). Pick up steering
+				// queued while it ran. Only poll again if the earlier poll returned nothing;
+				// otherwise one-at-a-time mode would deliver two messages in this turn.
 				if (pendingMessages.length === 0) {
+					pendingMessages = (await config.getSteeringMessages?.()) || [];
+				}
+				// Preparation can abort the run (for example, a cancelled compaction).
+				// Bail before the next provider request and hand any drained terminating
+				// queue back to its owner.
+				if (signal?.aborted) {
+					if (drainedTerminatingQueue)
+						await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
 					await emit({ type: "agent_end", messages: newMessages });
 					return;
 				}
-				drainedTerminatingQueue = undefined;
+				if (drainedTerminatingQueue) await refreshTerminatingQueueDrain();
+				await emit({ type: "turn_start" });
 			}
 
 			// Process pending messages (inject before next assistant response)
@@ -241,10 +273,7 @@ async function runLoop(
 				pendingMessages = [];
 			}
 
-			// Stream assistant response. Continuation-scoped overrides apply to one
-			// provider request only. Once that request emits its first event, the
-			// configured idle timeout resumes so healthy reasoning gaps are not bound
-			// by the short liveness probe.
+			// Stream assistant response
 			const isInitialProviderRequest = firstProviderRequest;
 			firstProviderRequest = false;
 			const requestConfig = isInitialProviderRequest
@@ -254,24 +283,17 @@ async function runLoop(
 						streamStartTimeoutMs: config.initialRequestStreamStartTimeoutMs ?? config.streamStartTimeoutMs,
 					}
 				: config;
-			const streamIdleTimeoutMs = isInitialProviderRequest ? config.timeoutMs : requestConfig.timeoutMs;
 			const streamed = await streamAssistantResponse(
 				currentContext,
 				requestConfig,
 				signal,
 				emit,
 				withEmptyAssistantRecovery(requestConfig.model, streamFunction),
-				streamIdleTimeoutMs,
+				isInitialProviderRequest ? config.timeoutMs : requestConfig.timeoutMs,
 			);
 			const message = promoteStopWithPendingToolCalls(streamed.message);
 			const providerToolResults = streamed.providerToolResults;
 			newMessages.push(message);
-
-			// Provider-resolved (Cursor exec-channel) tool results pair with
-			// already-resolved toolCall blocks in the assistant message. They are
-			// appended right after it — including on terminal error/abort paths,
-			// where dropping them would leave resolved calls unpaired and strip
-			// the interaction from every rebuilt transcript.
 			const toolResults: ToolResultMessage[] = [];
 			for (const result of providerToolResults) {
 				await emit({ type: "message_start", message: result });
@@ -281,16 +303,13 @@ async function runLoop(
 				toolResults.push(result);
 			}
 
-			if (shouldTerminateAssistantTurn(message)) {
+			if (message.stopReason === "error" || message.stopReason === "aborted") {
 				await emit({ type: "turn_end", message, toolResults });
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}
 
-			// Check for tool calls. Blocks stamped `kCursorExecResolved` were
-			// already executed by Cursor's exec channel mid-stream (their results
-			// arrived via `providerToolResults`); running them here again would
-			// duplicate side-effecting tools.
+			// Check for tool calls
 			const toolCalls = message.content.filter(
 				(c): c is AgentToolCall => c.type === "toolCall" && !isCursorExecResolved(c as CursorExecResolvedCarrier),
 			);
@@ -298,10 +317,9 @@ async function runLoop(
 			hasMoreToolCalls = false;
 			let toolBatchTerminated = false;
 			if (toolCalls.length > 0) {
-				// A native "length" stop means the output was cut off by the token limit,
-				// so every tool call in the message may carry truncated arguments. Text
-				// tool-call middleware finalizes its calls as "toolUse", leaving only
-				// native, unwrapped length responses for this message-wide safeguard.
+				// A "length" stop means the output was cut off by the token limit, so
+				// every tool call in the message may carry truncated arguments. Fail
+				// them all instead of executing potentially borked calls.
 				const executedToolBatch =
 					message.stopReason === "length"
 						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
@@ -322,89 +340,31 @@ async function runLoop(
 				return;
 			}
 
-			const nextTurnContext = {
+			lastCompletedTurn = {
 				message,
 				toolResults,
 				context: currentContext,
 				newMessages,
 			};
-			if (toolBatchTerminated) {
-				if (await config.shouldStopAfterTurn?.(nextTurnContext)) {
-					await emit({ type: "agent_end", messages: newMessages });
-					return;
-				}
 
+			if (await config.shouldStopAfterTurn?.(lastCompletedTurn)) {
+				await emit({ type: "agent_end", messages: newMessages });
+				return;
+			}
+			if (toolBatchTerminated) {
 				pendingMessages = (await config.getSteeringMessages?.()) || [];
-				if (pendingMessages.length > 0) {
-					drainedTerminatingQueue = "steering";
-				}
+				if (pendingMessages.length > 0) drainedTerminatingQueue = "steering";
 				if (pendingMessages.length === 0) {
 					pendingMessages = (await config.getFollowUpMessages?.()) || [];
-					if (pendingMessages.length > 0) {
-						drainedTerminatingQueue = "followUp";
-					}
+					if (pendingMessages.length > 0) drainedTerminatingQueue = "followUp";
 				}
 				if (pendingMessages.length === 0) {
 					await emit({ type: "agent_end", messages: newMessages });
 					return;
 				}
-			}
-			let nextTurnSnapshot: AgentLoopTurnUpdate | undefined;
-			try {
-				nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);
-			} catch (error) {
-				if (drainedTerminatingQueue) {
-					await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
-				}
-				throw error;
-			}
-			if (nextTurnSnapshot) {
-				currentContext = nextTurnSnapshot.context ?? currentContext;
-				config = {
-					...config,
-					model: nextTurnSnapshot.model ?? config.model,
-					reasoning:
-						nextTurnSnapshot.thinkingLevel === undefined
-							? config.reasoning
-							: nextTurnSnapshot.thinkingLevel === "off"
-								? undefined
-								: nextTurnSnapshot.thinkingLevel,
-					thinkingSelection:
-						nextTurnSnapshot.thinkingSelection === undefined
-							? config.thinkingSelection
-							: (nextTurnSnapshot.thinkingSelection ?? undefined),
-					abortServerSideFallback: nextTurnSnapshot.abortServerSideFallback ?? config.abortServerSideFallback,
-				};
-			}
-			if (signal?.aborted) {
-				if (drainedTerminatingQueue) {
-					await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
-				}
-				await emit({ type: "agent_end", messages: newMessages });
-				return;
-			}
-			if (drainedTerminatingQueue) {
-				await refreshTerminatingQueueDrain();
-				if (pendingMessages.length === 0) {
-					await emit({ type: "agent_end", messages: newMessages });
-					return;
-				}
-			}
-
-			if (
-				!toolBatchTerminated &&
-				(await config.shouldStopAfterTurn?.({
-					message,
-					toolResults,
-					context: currentContext,
-					newMessages,
-				}))
-			) {
-				await emit({ type: "agent_end", messages: newMessages });
-				return;
-			}
-
-			if (!toolBatchTerminated) {
+			} else {
+				// A terminating batch already drained steering/follow-ups above; polling
+				// again here would discard the messages that keep the loop alive.
 				pendingMessages = (await config.getSteeringMessages?.()) || [];
 			}
 		}
@@ -430,21 +390,9 @@ export async function buildProviderContext(
 	config: Pick<AgentLoopConfig, "convertToLlm" | "transformContext">,
 	signal?: AbortSignal,
 ): Promise<Context> {
-	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
 	let messages = context.messages;
-	if (config.transformContext) {
-		messages = await config.transformContext(messages, signal);
-	}
-
-	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
-	const llmMessages = await config.convertToLlm(messages);
-
-	// Build LLM context
-	return {
-		systemPrompt: context.systemPrompt,
-		messages: llmMessages,
-		tools: context.tools,
-	};
+	if (config.transformContext) messages = await config.transformContext(messages, signal);
+	return { systemPrompt: context.systemPrompt, messages: await config.convertToLlm(messages), tools: context.tools };
 }
 
 /**
@@ -960,6 +908,18 @@ async function executeToolCallsParallel(
 
 		const finalizedCall = (async () => {
 			await Promise.all(dependencies);
+			if (signal?.aborted) {
+				const finalized = await runPreparedToolCall(
+					currentContext,
+					assistantMessage,
+					preparation,
+					config,
+					signal,
+					emit,
+				);
+				await emitToolExecutionEnd(finalized, emit);
+				return finalized;
+			}
 			const finalized = await runPreparedToolCall(
 				currentContext,
 				assistantMessage,

@@ -9,6 +9,7 @@
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
+import { setCapabilityOverrides } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { handleAppServerCommand } from "./cli/app-server-command.ts";
 import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
@@ -1144,6 +1145,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	const { services, session, modelFallbackMessage } = selectedRuntime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;
+	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
 	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
 

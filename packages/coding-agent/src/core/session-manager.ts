@@ -8,6 +8,7 @@ import {
 	mkdirSync,
 	openSync,
 	readdirSync,
+	readFileSync,
 	readSync,
 	statSync,
 	writeFileSync,
@@ -623,11 +624,11 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 	if (!existsSync(resolvedFilePath)) return [];
 
 	const entries: FileEntry[] = [];
+	let pending = "";
 	const fd = openSync(resolvedFilePath, "r");
 	try {
 		const decoder = new StringDecoder("utf8");
 		const buffer = Buffer.allocUnsafe(SESSION_READ_BUFFER_SIZE);
-		let pending = "";
 
 		while (true) {
 			const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
@@ -652,7 +653,7 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 		closeSync(fd);
 	}
 
-	// Validate session header
+	// Validate session header before repairing the file.
 	if (entries.length === 0) return entries;
 	const header = entries[0];
 	if (header.type !== "session" || typeof header.id !== "string") {
@@ -1806,6 +1807,12 @@ export class SessionManager {
 				const firstEntry = preloadedFileEntries[0];
 				header = firstEntry?.type === "session" ? firstEntry : null;
 			}
+		}
+		// This process opens the session for append; normalize a final unterminated
+		// JSONL entry here, never from read-only loadEntriesFromFile callers.
+		if (existsSync(resolvedPath)) {
+			const content = readFileSync(resolvedPath);
+			if (content.length > 0 && content[content.length - 1] !== 10) appendFileSync(resolvedPath, "\n");
 		}
 		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory

@@ -1,3 +1,57 @@
+## OpenRouter native Anthropic routing declared ahead of the catalog (2026-09-03)
+
+### What changed
+
+- `providers/openrouter.ts`: the provider is now built with an explicit
+  `createProvider<"anthropic-messages" | "openai-completions">` type argument so the upstream
+  `anthropic-messages` entry in its `api` map type-checks. The committed catalog
+  (`providers/data/openrouter.json`) still declares every `anthropic/*` model as `openai-completions`,
+  because the generator rule that flips them (`scripts/generate-models.ts`, `useAnthropicMessages`)
+  only takes effect on a live regeneration, which this merge deliberately did not run.
+- `openai-responses-compat.ts`: added `supportsMaxOutputTokens`, which upstream reads in
+  `api/openai-responses.ts` but which the fork's extracted Responses compat interface was missing.
+- `utils/prompt-cache-ttl.ts`: resolver defaults for the new compat flags -
+  `supportsMaxOutputTokens` defaults to `true`, `vllmPriority` stays unset (off by default) and is
+  therefore excluded from `ResolvedOpenAICompletionsCompat`'s `Required<>` core, and
+  `supportsMidConvoEffort` is excluded from the Anthropic resolver because every consumer reads it
+  straight off `model.compat`.
+
+### Why
+
+- Adopting upstream's per-turn effort and OpenRouter Claude routing requires the compat surface and
+  provider typing to exist even before the model catalog is regenerated; without these the tree does
+  not compile.
+
+### Why an extension could not handle it
+
+- Provider construction, the compat type surface, and catalog resolution are core `packages/ai`
+  wiring that runs before any extension is loaded.
+
+### Expected merge conflict zones
+
+- MEDIUM: `providers/openrouter.ts` and the compat resolvers will conflict on the next sync if
+  upstream keeps extending Responses/Completions compat flags. Regenerating the model catalog will
+  flip the `anthropic/*` entries and make the explicit type argument redundant.
+
+## Upstream AI provider compatibility merge (2026-09-03)
+
+### What changed
+
+- Merged Anthropic Messages beta request types and per-turn effort persistence, including provider-scoped mid-conversation effort markers while retaining Senpi's refusal fallback, signature replay, tool-pairing, and cache checkpoint behavior.
+- Added OpenAI Completions vLLM priority and upstream model routing/catalog compatibility while retaining Senpi request retry and reasoning-detail handling. Pinned `@anthropic-ai/sdk` to `0.123.0` for the beta stop-reason and dropped-input transformation types.
+
+### Why
+
+- The upstream provider behavior is required for Claude 5 effort changes, OpenRouter native Anthropic routing, Fireworks GLM completions, and vLLM scheduling without regressing Senpi's provider-specific safeguards.
+
+### Why an extension could not handle this
+
+- These changes are shared wire-format construction, generated model metadata, and SDK type contracts executed below the extension/provider composition boundary.
+
+### Expected merge conflict zones
+
+- LOW: future upstream syncs in `api/anthropic-messages.ts`, `api/openai-completions.ts`, `types.ts`, `scripts/generate-models.ts`, and provider-composition model defaults.
+
 ## A legacy flat credential is promoted, not overwritten, by a second login (2026-09-03)
 
 ### What changed
