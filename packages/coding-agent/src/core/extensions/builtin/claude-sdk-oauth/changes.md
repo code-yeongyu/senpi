@@ -1,5 +1,24 @@
 # claude-sdk-oauth
 
+## 2026-09-03 - Ignore rewrite-in-place hook bodies in session continuity hashes
+
+### What changed
+
+- `session-sync.ts`: `sentMessageHashes` hashes rewrite-in-place custom hooks by their provenance `customType` while leaving them in the transmitted list; memory notices, RULES blocks, and senpi-task notices retain content-prefix compatibility. Append-only goal continuations remain content-significant.
+- `test/suite/regressions/claude-sdk-oauth-volatile-hook-continuity.test.ts`: coverage now hashes actual `convertToLlm` output, confirms reattach bindings, and keeps structural prepend and real-user rewrite cases fail-closed.
+
+### Why
+
+- Rewritten hook bodies can falsely report `sent_stream_diverged` and flatten a valid SDK session, but removing hooks from the transmitted list would omit hook-only turns from the resident delta payload.
+
+### Why an extension could not handle it
+
+- `session-sync.ts` owns the provider-private continuity ledger and delta index; no extension hook can alter those hashes after provider dispatch.
+
+### Expected merge conflict zones
+
+- LOW: `session-sync.ts` around `sentMessageHashes` and hook-kind detection.
+
 ## 2026-09-03 - Never resume an SDK session id the SDK never acknowledged
 
 ### What changed
@@ -23,6 +42,7 @@
 
 - LOW: `session-continuity.ts` `decideNativeContinuity` entry branch, `session-turn-attempt.ts` publish/catch paths, `session-registry-pump.ts` init/claim handling, the `ContinuityReason` union.
 ## 2026-09-03 - Map malformed content entries to text instead of broken image blocks
+
 
 ### What changed
 

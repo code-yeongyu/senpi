@@ -6,7 +6,14 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { copyContextProvenance, type ImageContent, type Message, type TextContent } from "@earendil-works/pi-ai";
+import {
+	CONTEXT_PROVENANCE_FIELD,
+	copyContextProvenance,
+	getContextProvenance,
+	type ImageContent,
+	type Message,
+	type TextContent,
+} from "@earendil-works/pi-ai";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -194,11 +201,15 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 					}
 
 					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
-					return withContextProvenance(m, {
-						role: "user",
-						content,
-						timestamp: m.timestamp,
-					});
+					const provenance = { ...getContextProvenance(m), customType: m.customType };
+					return Object.assign(
+						{
+							role: "user" as const,
+							content,
+							timestamp: m.timestamp,
+						},
+						{ [CONTEXT_PROVENANCE_FIELD]: provenance },
+					);
 				}
 				case "branchSummary":
 					return withContextProvenance(m, {

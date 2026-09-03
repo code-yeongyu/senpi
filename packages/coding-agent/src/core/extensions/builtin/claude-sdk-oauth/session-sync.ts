@@ -59,6 +59,61 @@ function isContentlessUserMessage(message: SentMessage): boolean {
 	return Array.isArray(message.content) && message.content.length === 0;
 }
 
+const VOLATILE_HOOK_CUSTOM_TYPES = new Set([
+	"omo-memory:notice",
+	"mindy-team:context-block",
+	"senpi-task.usage",
+	"senpi-monitor:notification",
+	"omo-senpi:wake",
+	"senpi-terminal:notification",
+	"omo-ultrawork:directive",
+	"omo-mass-ulw:skill-pointer",
+]);
+
+type HookInspectable = {
+	role: string;
+	content?: unknown;
+	customType?: unknown;
+	__piContextProvenance?: { customType?: unknown };
+};
+
+function messageText(message: HookInspectable): string {
+	const content = message.content;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((block) =>
+			block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block
+				? String(block.text)
+				: "",
+		)
+		.join("");
+}
+
+function hookCustomType(message: HookInspectable): string | undefined {
+	if (typeof message.customType === "string") return message.customType;
+	const provenance = message.__piContextProvenance;
+	if (provenance && typeof provenance.customType === "string") return provenance.customType;
+	return undefined;
+}
+
+/**
+ * Top-of-turn hook injections convert to user-role bodies. Their *content*
+ * must not participate in continuity hashes (a rewrite would look like
+ * sent_stream_diverged and flatten). They still have to stay in the transmitted
+ * set: `from` indexes that same list when building the SDK delta payload.
+ * convertToLlm preserves customType in request-local provenance; content signatures keep compatibility with already-converted rewrite-in-place hooks.
+ */
+function volatileHookKind(message: HookInspectable): string | undefined {
+	const customType = hookCustomType(message);
+	if (customType && VOLATILE_HOOK_CUSTOM_TYPES.has(customType)) return customType;
+	const text = messageText(message);
+	if (text.startsWith("<memory_notice>")) return "omo-memory:notice";
+	if (text.startsWith("<RULES>\n") || text.startsWith("<RULES>\r\n")) return "mindy-team:context-block";
+	if (text.startsWith("<omo-senpi-task>")) return "senpi-task.usage";
+	return undefined;
+}
+
 export function sentMessages(context: Context): SentMessage[] {
 	return context.messages.filter(isTransmittedMessage);
 }
@@ -78,8 +133,10 @@ export function isTransmittedMessage(message: { role: string }): message is Sent
  * list that disagrees with another caller's by forgetting the filter.
  */
 export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
-	const hashes = messages.filter(isTransmittedMessage).map((message) =>
-		digest(
+	const hashes = messages.filter(isTransmittedMessage).map((message) => {
+		const hook = volatileHookKind(message);
+		if (hook) return digest({ role: message.role, volatileHook: hook });
+		return digest(
 			message.role === "user"
 				? { role: message.role, content: message.content }
 				: {
@@ -88,8 +145,8 @@ export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
 						toolName: message.toolName,
 						content: message.content,
 					},
-		),
-	);
+		);
+	});
 	return hashes;
 }
 
