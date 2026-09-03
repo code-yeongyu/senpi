@@ -46,10 +46,12 @@ function makeTool(name: string): Tool {
 async function captureText(context: Context): Promise<string[]> {
 	let captured: Record<string, unknown> = {};
 	const client = {
-		messages: {
-			create: (params: unknown) => {
-				captured = params as Record<string, unknown>;
-				return { asResponse: async () => createSseResponse() };
+		beta: {
+			messages: {
+				create: (params: unknown) => {
+					captured = params as Record<string, unknown>;
+					return { asResponse: async () => createSseResponse() };
+				},
 			},
 		},
 	} as Anthropic;

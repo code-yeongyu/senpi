@@ -45,21 +45,19 @@ vi.mock("@anthropic-ai/sdk", () => {
 	}
 
 	class FakeAnthropic {
-		messages = {
-			create: (params: AnthropicToolChoicePayload) => {
-				mockState.createParams = params;
-				mockState.createCalls.push(params);
-				const createError = mockState.createErrors.shift();
-				return {
-					asResponse: async () => {
-						if (createError) {
-							throw createError;
-						}
-						return createSseResponse();
-					},
-				};
-			},
+		private readonly create = (params: AnthropicToolChoicePayload) => {
+			mockState.createParams = params;
+			mockState.createCalls.push(params);
+			const createError = mockState.createErrors.shift();
+			return {
+				asResponse: async () => {
+					if (createError) throw createError;
+					return createSseResponse();
+				},
+			};
 		};
+		beta = { messages: { create: this.create } };
+		messages = { create: this.create };
 	}
 
 	return { default: FakeAnthropic };

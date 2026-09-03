@@ -68,20 +68,22 @@ export function makeMockAnthropicClient(sse: string): MockAnthropicClient {
 	let lastParams: Record<string, unknown> | undefined;
 	let createCount = 0;
 	const client = {
-		messages: {
-			create(params: Record<string, unknown>) {
-				lastParams = params;
-				createCount += 1;
-				return {
-					asResponse(): Promise<Response> {
-						return Promise.resolve(
-							new Response(sse, {
-								status: 200,
-								headers: { "content-type": "text/event-stream" },
-							}),
-						);
-					},
-				};
+		beta: {
+			messages: {
+				create(params: Record<string, unknown>) {
+					lastParams = params;
+					createCount += 1;
+					return {
+						asResponse(): Promise<Response> {
+							return Promise.resolve(
+								new Response(sse, {
+									status: 200,
+									headers: { "content-type": "text/event-stream" },
+								}),
+							);
+						},
+					};
+				},
 			},
 		},
 	};

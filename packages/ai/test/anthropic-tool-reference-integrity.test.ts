@@ -67,10 +67,12 @@ function finalTextResponse(): Response {
 
 function createFakeAnthropicClient(captured: CapturedRequest): Anthropic {
 	return {
-		messages: {
-			create: (params: unknown) => {
-				captured.params = params as Record<string, unknown>;
-				return { asResponse: async () => finalTextResponse() };
+		beta: {
+			messages: {
+				create: (params: unknown) => {
+					captured.params = params as Record<string, unknown>;
+					return { asResponse: async () => finalTextResponse() };
+				},
 			},
 		},
 	} as Anthropic;

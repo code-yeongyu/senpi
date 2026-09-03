@@ -75,10 +75,12 @@ describe("Anthropic final tool-pair guard", () => {
 	it("repairs a result removed by the last payload hook before SDK submission", async () => {
 		let captured: WirePayload | undefined;
 		const client = {
-			messages: {
-				create: (params: unknown) => {
-					captured = params as WirePayload;
-					return { asResponse: async () => createSseResponse() };
+			beta: {
+				messages: {
+					create: (params: unknown) => {
+						captured = params as WirePayload;
+						return { asResponse: async () => createSseResponse() };
+					},
 				},
 			},
 		} as Anthropic;
