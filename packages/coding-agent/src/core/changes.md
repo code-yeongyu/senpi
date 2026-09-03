@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-03 - Bridge branded terminal capability overrides
+
+### What changed
+
+- `settings-manager.ts` resolves unset terminal hyperlink, image-protocol, and truecolor settings from `SENPI_*` environment variables, falling back to the legacy `PI_*` names through the brand environment helper.
+
+### Why
+
+- Branded Senpi launches need terminal capability overrides to reach the shared TUI detection path without duplicating environment-resolution policy.
+
+### Why an extension could not handle it
+
+- Settings resolution occurs before interactive rendering and is core-owned configuration behavior outside extension hooks.
+
+### Expected merge conflict zones
+
+- LOW: `settings-manager.ts` terminal capability override resolution.
+
 ## 2026-09-03 - Make eval-only tool routing unconditional and registry-aware
 
 ### What changed

@@ -20,6 +20,27 @@ import {
 } from "../src/core/settings-manager.ts";
 
 describe("SettingsManager", () => {
+	it("bridges SENPI terminal capability overrides, with PI fallback", () => {
+		const previous = {
+			SENPI_HYPERLINKS: process.env.SENPI_HYPERLINKS,
+			PI_HYPERLINKS: process.env.PI_HYPERLINKS,
+		};
+		try {
+			process.env.SENPI_HYPERLINKS = "0";
+			process.env.PI_HYPERLINKS = "1";
+			const manager = SettingsManager.inMemory();
+			expect(manager.getTerminalCapabilityOverrides().hyperlinks).toBe(false);
+
+			delete process.env.SENPI_HYPERLINKS;
+			expect(manager.getTerminalCapabilityOverrides().hyperlinks).toBe(true);
+		} finally {
+			if (previous.SENPI_HYPERLINKS === undefined) delete process.env.SENPI_HYPERLINKS;
+			else process.env.SENPI_HYPERLINKS = previous.SENPI_HYPERLINKS;
+			if (previous.PI_HYPERLINKS === undefined) delete process.env.PI_HYPERLINKS;
+			else process.env.PI_HYPERLINKS = previous.PI_HYPERLINKS;
+		}
+	});
+
 	const testDir = join(tmpdir(), `senpi-settings-${process.pid}`);
 	const agentDir = join(testDir, "agent");
 	const projectDir = join(testDir, "project");

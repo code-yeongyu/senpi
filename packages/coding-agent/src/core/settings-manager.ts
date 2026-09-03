@@ -1800,11 +1800,28 @@ export class SettingsManager {
 
 	getTerminalCapabilityOverrides(): Partial<TerminalCapabilities> {
 		const terminal = this.settings.terminal;
-		const images = terminal?.images;
+		const imageSetting = terminal?.images;
+		const imageOverride = imageSetting !== undefined ? imageSetting : envValue("IMAGE_PROTOCOL")?.toLowerCase();
+		const trueColorSetting = terminal?.trueColor;
+		const trueColorOverride = trueColorSetting !== undefined ? trueColorSetting : envValue("TRUE_COLOR");
+		const hyperlinksSetting = terminal?.hyperlinks;
+		const hyperlinksOverride = hyperlinksSetting !== undefined ? hyperlinksSetting : envValue("HYPERLINKS");
 		return {
-			...(images === "kitty" || images === "iterm2" ? { images } : images === false ? { images: null } : {}),
-			...(typeof terminal?.trueColor === "boolean" ? { trueColor: terminal.trueColor } : {}),
-			...(typeof terminal?.hyperlinks === "boolean" ? { hyperlinks: terminal.hyperlinks } : {}),
+			...(imageOverride === "kitty" || imageOverride === "iterm2"
+				? { images: imageOverride }
+				: imageOverride === false || imageOverride === "none" || imageOverride === "0"
+					? { images: null }
+					: {}),
+			...(typeof trueColorOverride === "boolean"
+				? { trueColor: trueColorOverride }
+				: trueColorOverride === "1" || trueColorOverride === "0"
+					? { trueColor: trueColorOverride === "1" }
+					: {}),
+			...(typeof hyperlinksOverride === "boolean"
+				? { hyperlinks: hyperlinksOverride }
+				: hyperlinksOverride === "1" || hyperlinksOverride === "0"
+					? { hyperlinks: hyperlinksOverride === "1" }
+					: {}),
 		};
 	}
 
