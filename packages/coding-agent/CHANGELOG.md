@@ -2,17 +2,15 @@
 
 ## [Unreleased]
 
-### New Features
+### Breaking Changes
+
+### Added
 
 - **Terminal capability overrides** — Override detected terminal hyperlink, image, and truecolor support. See [Capability Overrides](docs/terminal-setup.md#capability-overrides).
 - **Extension UI prompt events** — Integrations can distinguish active agent work from time spent waiting for `ctx.ui` prompts. See [Extension UI prompt events](docs/extensions.md#ui_prompt_start--ui_prompt_end).
 - **RPC queue clearing** — Retrieve and clear queued steering and follow-up messages with `clear_queue`. See [RPC `clear_queue`](docs/rpc.md#clear_queue).
 - **Fullscreen selection copy controls** — Disable automatic selection copying in fullscreen mode and use Ctrl+X to copy the active selection. See [UI & Display](docs/settings.md#ui--display).
 - **DeepSeek V4 Flash Vision (experimental)** — Use the vision-capable model through the built-in DeepSeek provider. See [API Keys](docs/providers.md#api-keys).
-
-### Breaking Changes
-
-### Added
 
 - Added `supportsMidConvoEffort` to custom Anthropic Messages model compatibility settings.
 - Added transcript notices for Anthropic thinking blocks dropped during provider recovery when cache miss notices are enabled.
@@ -50,8 +48,9 @@
 - Fixed inherited OpenAI-compatible Chat Completions ignoring an explicitly requested `toolChoice` when no tools are defined.
 - Fixed inherited fragmented Mistral tool calls splitting when continuation chunks omit the tool-call ID ([#8387](https://github.com/earendil-works/pi/issues/8387)).
 
-### Removed
+- TTSR now interrupts a single streamed assistant message that repeats the same paragraph three times (a within-message narration loop such as re-announcing the same "now writing the DAG cell" step for minutes without ever issuing the tool call): the collapse guard gains a paragraph-repeat mechanism, truncates the message from the first repeat, and injects the usual recovery nudge. Scalar runs, short periods, and line cycles were the only mechanisms before, and blank lines reset line-cycle tracking, so paragraph-level loops streamed unchecked until the user aborted. Tool-argument streams are not affected.
 
+### Removed
 ## [2026.9.3-3] - 2026-09-03
 
 ### Added

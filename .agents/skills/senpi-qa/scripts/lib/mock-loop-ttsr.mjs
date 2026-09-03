@@ -5,7 +5,49 @@ import { createChecks, evidenceDir, guardRealAuth, installCleanupHooks } from ".
 const CTRL_SEP = ["<", "|", "sep", "|", ">"].join("");
 const BANG_RUN_300 = /!{300}/;
 
-export const TTSR_SCENARIOS = ["ttsr-collapse", "ttsr-leak", "ttsr-repetitive-turns"];
+export const TTSR_SCENARIOS = ["ttsr-collapse", "ttsr-leak", "ttsr-repetitive-turns", "ttsr-paragraph-loop"];
+
+// Shape of session 01a06648: the model re-announced the same planning step for minutes as
+// plain text without ever issuing the tool call. Three byte-identical paragraphs per cycle,
+// three cycles, blank-line separated; only the paragraph-repeat mechanism can see it.
+const PARAGRAPH_LOOP_CYCLE = [
+	"Now I'm writing the actual DAG code: setting up the shared context block with rules and tool guidance, then each research lane with its own scoped prompt and report path.",
+	"I'm setting up the goal and todo registration, then writing out the full DAG with all seven lanes, synth, and verify nodes in a single dispatch cell.",
+	"I'm now running the actual DAG start and capturing the run ID to track progress across all the parallel lanes before summarizing.",
+];
+const PARAGRAPH_LOOP_TEXT = `${Array.from({ length: 3 }, () => PARAGRAPH_LOOP_CYCLE.join("\n\n")).join("\n\n")}\n\n`;
+
+function readFirstPersistedAssistant(box) {
+	const files = readdirSync(box.sessionDir, { recursive: true, encoding: "utf8" })
+		.filter((name) => name.endsWith(".jsonl"))
+		.map((name) => join(box.sessionDir, name));
+	for (const file of files) {
+		for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+			if (!line.trim()) continue;
+			const entry = JSON.parse(line);
+			if (entry.type === "message" && entry.message?.role === "assistant") return entry.message;
+		}
+	}
+	return undefined;
+}
+
+function assistantText(message) {
+	if (message === undefined || !Array.isArray(message.content)) return "";
+	return message.content
+		.filter((block) => block?.type === "text" && typeof block.text === "string")
+		.map((block) => block.text)
+		.join("");
+}
+
+function countOccurrences(haystack, needle) {
+	let count = 0;
+	let index = haystack.indexOf(needle);
+	while (index !== -1) {
+		count += 1;
+		index = haystack.indexOf(needle, index + needle.length);
+	}
+	return count;
+}
 
 export function isTtsrScenario(name) {
 	return TTSR_SCENARIOS.includes(name);
@@ -166,9 +208,15 @@ export async function runTtsrScenario({ scenarioName, apiName, driveTurn, eviden
 		return runRepetitiveTurnsScenario({ apiName, driveTurn, evidenceSlug, checks, guard, finalMarker, scenarioName });
 	}
 	const collapse = scenarioName === "ttsr-collapse";
-	const firstTurn = collapse
-		? { reasoning: `analyzing the problem ${"!".repeat(600)}`, chunks: 40 }
-		: { reasoning: `Thinking... ${CTRL_SEP} ${CTRL_SEP} ${CTRL_SEP} trailing garbage ${"x".repeat(400)}`, chunks: 20 };
+	const paragraphLoop = scenarioName === "ttsr-paragraph-loop";
+	let firstTurn;
+	if (collapse) {
+		firstTurn = { reasoning: `analyzing the problem ${"!".repeat(600)}`, chunks: 40 };
+	} else if (paragraphLoop) {
+		firstTurn = { text: PARAGRAPH_LOOP_TEXT, chunks: 60 };
+	} else {
+		firstTurn = { reasoning: `Thinking... ${CTRL_SEP} ${CTRL_SEP} ${CTRL_SEP} trailing garbage ${"x".repeat(400)}`, chunks: 20 };
+	}
 	const { box, server, result } = await driveTurn({
 		apiName,
 		turns: [firstTurn, { text: finalMarker }],
@@ -191,6 +239,28 @@ export async function runTtsrScenario({ scenarioName, apiName, driveTurn, eviden
 				"ttsr-collapse: truncated garbage absent from recovery request",
 				!BANG_RUN_300.test(replayBody),
 				`bangRun300=${BANG_RUN_300.test(replayBody)}`,
+			);
+		} else if (paragraphLoop) {
+			const firstParagraph = PARAGRAPH_LOOP_CYCLE[0];
+			const replayOccurrences = countOccurrences(replayBody, JSON.stringify(firstParagraph).slice(1, -1));
+			checks.ok(
+				"ttsr-paragraph-loop: recovery request never replays the repeated paragraph",
+				replayOccurrences <= 1,
+				`firstParagraphOccurrences=${replayOccurrences} (streamed 3)`,
+			);
+			const aborted = readFirstPersistedAssistant(box);
+			const persistedText = assistantText(aborted);
+			checks.ok(
+				"ttsr-paragraph-loop: persisted aborted message keeps the first cycle and is truncated at the first repeat",
+				aborted?.stopReason === "aborted" &&
+					countOccurrences(persistedText, firstParagraph) === 1 &&
+					persistedText.includes("[output interrupted by stream rule]"),
+				`stopReason=${aborted?.stopReason ?? "missing"} persistedOccurrences=${countOccurrences(persistedText, firstParagraph)} chars=${persistedText.length}/${PARAGRAPH_LOOP_TEXT.length}`,
+			);
+			checks.ok(
+				"ttsr-paragraph-loop: collapse-repetition system-interrupt injected into the recovery request",
+				replayBody.includes('rule=\\"collapse-repetition\\"'),
+				`interruptPresent=${replayBody.includes("collapse-repetition")}`,
 			);
 		} else {
 			checks.ok(

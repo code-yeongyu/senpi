@@ -52,6 +52,53 @@
 
 - LOW: future upstream syncs in `api/anthropic-messages.ts`, `api/openai-completions.ts`, `types.ts`, `scripts/generate-models.ts`, and provider-composition model defaults.
 
+## Provider requests are refused, not shrunk to one token, once the context window is exhausted (2026-09-03)
+
+### What changed
+
+- `packages/ai/src/api/context-room.ts` (new): owns `clampMaxTokensToContext`, `CONTEXT_SAFETY_TOKENS`,
+  `MIN_ANSWER_TOKENS`, and the new `ContextWindowExhaustedError`. The clamp still fits the requested output budget into
+  `contextWindow - estimateContextTokens(context).tokens - CONTEXT_SAFETY_TOKENS`, but when that room drops below
+  `MIN_ANSWER_TOKENS` (1024) it throws `ContextWindowExhaustedError` instead of flooring `max_tokens` at 1. Windows
+  smaller than `CONTEXT_GUARD_MIN_WINDOW` (5120 = safety margin + one answer) cannot satisfy that geometry at all and
+  keep the previous one-token floor, so tiny-window fixtures and models behave exactly as before. The error
+  message names the estimate and the window ("Context window exhausted: the conversation is estimated at X of Y tokens,
+  leaving fewer than 1024 tokens for a response. Compact the conversation, enable auto-compaction, or start a new session
+  before retrying.") and carries `estimatedTokens` / `contextWindow` as typed fields.
+- `packages/ai/src/api/simple-options.ts`: `clampMaxTokensToContext` and `MIN_ANSWER_TOKENS` moved to
+  `context-room.ts`; `simple-options.ts` re-exports them (plus `CONTEXT_SAFETY_TOKENS` and
+  `ContextWindowExhaustedError`) so `buildBaseOptions`, `anthropic-messages.ts`, `bedrock-converse-stream.ts`, and tests
+  keep their import sites. `buildBaseOptions` therefore throws before any provider request is built once the window is
+  exhausted; the lazy API boundary (`lazyStream`) turns that throw into an assistant `stopReason: "error"` message with
+  the text above, and the harness `ModelRuntime` / provider-composer `lazyStream` wrappers do the same for extension
+  providers.
+- `packages/ai/src/utils/overflow.ts`: `OVERFLOW_PATTERNS` gains `/^Context window exhausted: /` so
+  `isContextOverflow` classifies the guard's error as a context overflow; the retry classifier leaves it `unknown`
+  (never retried).
+
+### Why
+
+- Observed on 2026-09-03 (session `01a06520`, anthropic `claude-fable-5-1`, 1M window, auto-compaction disabled): at
+  an estimated 995,154 tokens the clamp produced `max_tokens: 750`; the model's tool call was cut mid-arguments and the
+  agent loop reported "Tool call stream ended before completion. Re-issue the tool call with complete arguments."; the
+  re-issued request got `max_tokens: 1`, stopped after one token, and the TUI rendered "Model stopped because it reached
+  the maximum output token limit". Both messages hid the real cause and each doomed request billed ~1M cached tokens.
+- A request that cannot produce a minimal answer is never worth sending. Refusing it with a typed, overflow-classified
+  error lets the existing overflow route compact and retry when auto-compaction is enabled, and gives the user an
+  actionable message (compact / enable auto-compaction / new session) when it is not.
+
+### Why an extension could not handle it
+
+- The clamp runs inside `buildBaseOptions`, in every provider adapter, after the harness has emitted its last
+  `before_provider_request` hook; no extension seam sits between the token estimate and the request body. Extensions also
+  cannot see the `max_tokens` the adapter is about to send, so they cannot tell a doomed request from a normal one.
+
+### Expected merge conflict zones
+
+- LOW: the `clampMaxTokensToContext` / `MIN_ANSWER_TOKENS` region of `packages/ai/src/api/simple-options.ts` (upstream
+  keeps both definitions inline; the fork re-exports them from `context-room.ts`).
+- LOW: the head of `OVERFLOW_PATTERNS` in `packages/ai/src/utils/overflow.ts` and its provider list comment.
+
 ## A legacy flat credential is promoted, not overwritten, by a second login (2026-09-03)
 
 ### What changed
