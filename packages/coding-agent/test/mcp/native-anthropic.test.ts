@@ -117,7 +117,10 @@ describe("todo33 anthropic native: 400 -> local fallback", () => {
 				fallback = reason;
 			},
 		});
-		const injected = adapter.applyBeforeRequest("anthropic-messages", mcpToolsPayload(3));
+		const injected = adapter.applyBeforeRequest(
+			{ api: "anthropic-messages", baseUrl: "https://api.anthropic.com" },
+			mcpToolsPayload(3),
+		);
 		expect(searchTool(toolsOf(injected))).toHaveLength(1);
 
 		adapter.noteResponseStatus(400);
@@ -126,13 +129,17 @@ describe("todo33 anthropic native: 400 -> local fallback", () => {
 
 		// Subsequent requests are byte-identical (no injection): session continues.
 		const next = mcpToolsPayload(3);
-		expect(adapter.applyBeforeRequest("anthropic-messages", next)).toBe(next);
+		expect(
+			adapter.applyBeforeRequest({ api: "anthropic-messages", baseUrl: "https://api.anthropic.com" }, next),
+		).toBe(next);
 	});
 
 	it("ignores a 400 on a request it did not inject", () => {
 		const adapter = new AnthropicNativeToolSearchAdapter({ ...CONFIG, enabled: () => false });
 		const payload = mcpToolsPayload(3);
-		expect(adapter.applyBeforeRequest("anthropic-messages", payload)).toBe(payload); // config off -> no-op
+		expect(
+			adapter.applyBeforeRequest({ api: "anthropic-messages", baseUrl: "https://api.anthropic.com" }, payload),
+		).toBe(payload); // config off -> no-op
 		adapter.noteResponseStatus(400);
 		expect(adapter.disabled).toBe(false);
 	});

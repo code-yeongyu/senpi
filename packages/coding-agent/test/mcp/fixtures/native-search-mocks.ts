@@ -157,6 +157,7 @@ export function anthropicToolSearchResultBlock(toolUseId = "srvtoolu_spike_1"): 
 // ---------------------------------------------------------------------------
 
 export const ANTHROPIC_TOOL_SEARCH_TYPE = "tool_search_tool_bm25_20251119";
+export const ANTHROPIC_TOOL_SEARCH_NAME = "tool_search_tool_bm25";
 
 export interface AnthropicValidationResult {
 	readonly status: 200 | 400;
@@ -174,6 +175,14 @@ export function validateAnthropicToolSearchPayload(payload: unknown): AnthropicV
 	const objs = tools.filter(isObj);
 	const deferred = objs.filter((tool) => tool.defer_loading === true);
 	const hasSearchTool = objs.some((tool) => tool.type === ANTHROPIC_TOOL_SEARCH_TYPE);
+	for (const [index, tool] of objs.entries()) {
+		if (tool.type === ANTHROPIC_TOOL_SEARCH_TYPE && tool.name !== ANTHROPIC_TOOL_SEARCH_NAME) {
+			return {
+				status: 400,
+				error: `invalid_request_error: tools.${index}.${ANTHROPIC_TOOL_SEARCH_TYPE}.name: Input should be '${ANTHROPIC_TOOL_SEARCH_NAME}'`,
+			};
+		}
+	}
 	for (const tool of deferred) {
 		if ("cache_control" in tool) {
 			return { status: 400, error: "invalid_request: defer_loading and cache_control on the same tool" };

@@ -12,11 +12,13 @@ import { describe, expect, it } from "vitest";
 import { addAnthropicWebSearchToPayload } from "../../src/core/extensions/builtin/anthropic-web-search/index.ts";
 import toolSearchExtension from "../../src/core/extensions/builtin/tool-search/index.ts";
 import {
+	ANTHROPIC_TOOL_SEARCH_NAME,
 	ANTHROPIC_TOOL_SEARCH_TYPE,
 	AnthropicNativeToolSearchAdapter,
 	addAnthropicNativeToolSearch,
 	buildToolReferenceBlocks,
 	installMcpNativeToolSearchGate,
+	isFirstPartyAnthropicEndpoint,
 	isMcpNativeToolSearchEnabled,
 } from "../../src/core/extensions/builtin/tool-search/native-search.ts";
 import type { ExtensionAPI, ExtensionFactory } from "../../src/core/extensions/types.ts";
@@ -30,6 +32,9 @@ const CONFIG = {
 	searchToolName: "tool_search",
 	isDeferrable: (name: string) => name.startsWith("mcp_") && name !== "tool_search",
 };
+const ANTHROPIC_MODEL = { api: "anthropic-messages", baseUrl: "https://api.anthropic.com" };
+/** Anthropic-compatible wire format on a third-party host (Kimi Code). */
+const KIMI_MODEL = { api: "anthropic-messages", baseUrl: "https://api.kimi.com/coding" };
 
 function toolsOf(payload: unknown): Record<string, unknown>[] {
 	return ((payload as { tools?: unknown[] }).tools ?? []).filter(
@@ -71,9 +76,13 @@ describe("todo 9 generalized catalog injection", () => {
 			],
 		});
 		try {
-			const output = await harness.getExtensionRunner().emitBeforeProviderRequest({
-				tools: [{ name: "tool_search", description: "Search", input_schema: {} }],
-			});
+			const output = await harness
+				.getExtensionRunner()
+				.emitBeforeProviderRequest(
+					{ tools: [{ name: "tool_search", description: "Search", input_schema: {} }] },
+					undefined,
+					{ model: { ...harness.models[0], baseUrl: ANTHROPIC_MODEL.baseUrl }, headers: {} },
+				);
 
 			expect(named(toolsOf(output), "weather_forecast")).toMatchObject({
 				name: "weather_forecast",
@@ -141,10 +150,10 @@ describe("todo 9 generalized catalog injection", () => {
 		const payload = { tools: [{ name: "tool_search", description: "search", input_schema: {} }] };
 
 		installMcpNativeToolSearchGate(() => false);
-		expect(makeAdapter().applyBeforeRequest("anthropic-messages", payload)).toBe(payload);
+		expect(makeAdapter().applyBeforeRequest(ANTHROPIC_MODEL, payload)).toBe(payload);
 		installMcpNativeToolSearchGate(() => true);
 		expect(
-			named(toolsOf(makeAdapter().applyBeforeRequest("anthropic-messages", payload)), "mcp_weather_forecast"),
+			named(toolsOf(makeAdapter().applyBeforeRequest(ANTHROPIC_MODEL, payload)), "mcp_weather_forecast"),
 		).toMatchObject({ defer_loading: true, input_schema: { type: "object" } });
 		installMcpNativeToolSearchGate(() => false);
 	});
@@ -337,7 +346,7 @@ describe("todo33 anthropic native: 400 -> local fallback", () => {
 				fallback = reason;
 			},
 		});
-		const injected = adapter.applyBeforeRequest("anthropic-messages", mcpToolsPayload(3));
+		const injected = adapter.applyBeforeRequest(ANTHROPIC_MODEL, mcpToolsPayload(3));
 		expect(searchTool(toolsOf(injected))).toHaveLength(1);
 
 		adapter.noteResponseStatus(400);
@@ -346,15 +355,59 @@ describe("todo33 anthropic native: 400 -> local fallback", () => {
 
 		// Subsequent requests are byte-identical (no injection): session continues.
 		const next = mcpToolsPayload(3);
-		expect(adapter.applyBeforeRequest("anthropic-messages", next)).toBe(next);
+		expect(adapter.applyBeforeRequest(ANTHROPIC_MODEL, next)).toBe(next);
 	});
 
 	it("ignores a 400 on a request it did not inject", () => {
 		const adapter = new AnthropicNativeToolSearchAdapter({ ...CONFIG, enabled: () => false });
 		const payload = mcpToolsPayload(3);
-		expect(adapter.applyBeforeRequest("anthropic-messages", payload)).toBe(payload); // config off -> no-op
+		expect(adapter.applyBeforeRequest(ANTHROPIC_MODEL, payload)).toBe(payload); // config off -> no-op
 		adapter.noteResponseStatus(400);
 		expect(adapter.disabled).toBe(false);
+	});
+});
+
+describe("anthropic native: tool name and endpoint gating", () => {
+	it("names the native search tool exactly as the API requires", () => {
+		const out = addAnthropicNativeToolSearch("anthropic-messages", mcpToolsPayload(2), CONFIG);
+		const [search] = searchTool(toolsOf(out));
+		expect(search).toEqual({ type: ANTHROPIC_TOOL_SEARCH_TYPE, name: ANTHROPIC_TOOL_SEARCH_NAME });
+		expect(validateAnthropicToolSearchPayload(out)).toEqual({ status: 200 });
+	});
+
+	it("the validator 400s on the pre-fix name the same way the API does", () => {
+		const payload = {
+			tools: [
+				{ name: "tool_search", description: "search", input_schema: {} },
+				{ name: "mcp_docs_tool-1", description: "tool", input_schema: {}, defer_loading: true },
+				{ type: ANTHROPIC_TOOL_SEARCH_TYPE, name: "tool_search" },
+			],
+		};
+		expect(validateAnthropicToolSearchPayload(payload)).toEqual({
+			status: 400,
+			error: `invalid_request_error: tools.2.${ANTHROPIC_TOOL_SEARCH_TYPE}.name: Input should be '${ANTHROPIC_TOOL_SEARCH_NAME}'`,
+		});
+	});
+
+	it("only treats anthropic.com hosts as first-party", () => {
+		expect(isFirstPartyAnthropicEndpoint("https://api.anthropic.com")).toBe(true);
+		expect(isFirstPartyAnthropicEndpoint("https://api.anthropic.com/v1")).toBe(true);
+		expect(isFirstPartyAnthropicEndpoint(undefined)).toBe(true);
+		expect(isFirstPartyAnthropicEndpoint("https://api.kimi.com/coding")).toBe(false);
+		expect(isFirstPartyAnthropicEndpoint("https://openrouter.ai/api")).toBe(false);
+		expect(isFirstPartyAnthropicEndpoint("https://evil-anthropic.com")).toBe(false);
+		expect(isFirstPartyAnthropicEndpoint("not a url")).toBe(false);
+	});
+
+	it("leaves the payload untouched for anthropic-messages models on third-party hosts", () => {
+		const adapter = new AnthropicNativeToolSearchAdapter({ ...CONFIG, enabled: () => true });
+		const payload = mcpToolsPayload(3);
+		expect(adapter.applyBeforeRequest(KIMI_MODEL, payload)).toBe(payload);
+		// A later 400 from that host must not be attributed to native search.
+		adapter.noteResponseStatus(400);
+		expect(adapter.disabled).toBe(false);
+		// The same session still injects for the first-party host.
+		expect(searchTool(toolsOf(adapter.applyBeforeRequest(ANTHROPIC_MODEL, payload)))).toHaveLength(1);
 	});
 });
 
