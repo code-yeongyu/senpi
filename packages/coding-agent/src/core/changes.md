@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-03 - Route required compaction failures through admission state
+
+### What changed
+
+- Preserved the RequiredCompactionError turn/admission markers used to convert asynchronous compaction rejection into a controlled prompt error.
+
+### Why
+
+- Required compaction must reject the originating prompt without escaping as an unhandled event-queue rejection.
+
+### Why an extension could not handle it
+
+- Admission state is owned by AgentSession and spans agent event persistence, retry, and compaction scheduling.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` compaction admission and `_processAgentEvent` handling.
+
 ## 2026-09-03 - Bridge branded terminal capability overrides
 
 ### What changed
