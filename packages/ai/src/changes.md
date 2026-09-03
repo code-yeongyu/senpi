@@ -1,3 +1,22 @@
+## 2026-09-03 - Align Anthropic beta-client fallback and thinking semantics
+
+### What changed
+
+- Anthropic managed effort requests retain the stable top-level `output_config.effort: "high"` while selected per-turn effort remains in the marker; thinking-off managed models now emit `thinking.type: "disabled"` when supported.
+- The Anthropic beta request path continues to preserve the pre-output fallback receipt behavior and the unsupported mid-output fallback error.
+
+### Why
+
+- The upstream SDK contract uses `client.beta.messages.create`; managed model semantics require per-turn effort markers and a real disabled-thinking request when the user turns reasoning off.
+
+### Why this cannot be expressed externally
+
+- Request construction, SSE fallback handling, and thinking normalization are owned by the Anthropic adapter below extension hooks.
+
+### Expected merge conflict zones
+
+- MEDIUM: `api/anthropic-messages.ts` request construction and SSE event loop during future upstream syncs.
+
 ## 2026-09-03 - Restore Anthropic mid-output fallback failure path after upstream sync
 
 ### What changed

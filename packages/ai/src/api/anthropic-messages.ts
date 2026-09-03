@@ -1472,11 +1472,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						break;
 					}
 				} else if (event.type === "content_block_start") {
-					if (event.content_block.type === "fallback") {
-						if (output.content.length > 0) {
-							throw new Error("Anthropic performed an unsupported mid-output model fallback");
-						}
-						continue;
+					if (event.content_block.type === "fallback" && output.content.length > 0) {
+						throw new Error("Anthropic performed an unsupported mid-output model fallback");
 					}
 					const receipt =
 						options?.abortServerSideFallback === true
@@ -1781,7 +1778,6 @@ function cannotDisableThinking(
 	compat: { supportsDisabledThinking: boolean },
 ): boolean {
 	if (!compat.supportsDisabledThinking) return true;
-	if (model.thinkingLevelMap?.off === null) return true;
 	return matchesModelMarker(model, DISABLED_THINKING_REJECTING_MODEL_MARKERS);
 }
 
@@ -2218,8 +2214,9 @@ function buildParams(
 	}
 
 	// Managed effort models always use adaptive thinking so prefix mismatches can
-	// be dropped instead of surfacing as persistent 400 responses.
-	if (model.compat?.supportsMidConvoEffort === true) {
+	// be dropped instead of surfacing as persistent 400 responses. Thinking-off is
+	// handled before this managed branch because these models accept `disabled`.
+	if (model.compat?.supportsMidConvoEffort === true && options?.thinkingEnabled !== false) {
 		params.thinking = {
 			type: "adaptive",
 			display: options?.thinkingDisplay ?? "summarized",
