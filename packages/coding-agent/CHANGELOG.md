@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Claude SDK OAuth continuity no longer flattens a resumable session when a converted extension hook rewrites its body; rewrite-in-place hooks remain transmitted and are matched by their request-local custom-message provenance.
+
 ### New Features
 
 ### Breaking Changes

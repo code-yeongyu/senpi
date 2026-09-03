@@ -61,7 +61,6 @@ function isContentlessUserMessage(message: SentMessage): boolean {
 
 const VOLATILE_HOOK_CUSTOM_TYPES = new Set([
 	"omo-memory:notice",
-	"goal-continuation",
 	"mindy-team:context-block",
 	"senpi-task.usage",
 	"senpi-monitor:notification",
@@ -103,7 +102,7 @@ function hookCustomType(message: HookInspectable): string | undefined {
  * must not participate in continuity hashes (a rewrite would look like
  * sent_stream_diverged and flatten). They still have to stay in the transmitted
  * set: `from` indexes that same list when building the SDK delta payload.
- * convertToLlm drops customType, so content signatures are the live detector.
+ * convertToLlm preserves customType in request-local provenance; content signatures keep compatibility with already-converted rewrite-in-place hooks.
  */
 function volatileHookKind(message: HookInspectable): string | undefined {
 	const customType = hookCustomType(message);
@@ -112,9 +111,6 @@ function volatileHookKind(message: HookInspectable): string | undefined {
 	if (text.startsWith("<memory_notice>")) return "omo-memory:notice";
 	if (text.startsWith("<RULES>\n") || text.startsWith("<RULES>\r\n")) return "mindy-team:context-block";
 	if (text.startsWith("<omo-senpi-task>")) return "senpi-task.usage";
-	if (text.startsWith("Continue working toward the active thread goal.") && text.includes("<untrusted_objective>")) {
-		return "goal-continuation";
-	}
 	return undefined;
 }
 

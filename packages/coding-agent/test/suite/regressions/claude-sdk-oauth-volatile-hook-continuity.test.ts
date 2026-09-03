@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import {
 	type ContinuityBindingSnapshot,
@@ -9,6 +10,7 @@ import {
 	sentHashPrefixDigest,
 	sentMessageHashes,
 } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-sync.ts";
+import { convertToLlm } from "../../../src/core/messages.ts";
 
 const ACCOUNT = "default";
 const MODEL = "claude-opus-5";
@@ -19,15 +21,20 @@ function userMessage(text: string) {
 	return { role: "user" as const, content: [{ type: "text" as const, text }], timestamp: 1 };
 }
 
-function notice(n: number) {
-	return userMessage(
-		`<memory_notice>\n- ${n} previous messages between you and the user are stored in recall memory\n</memory_notice>`,
-	);
+function customMessage(customType: string, text: string): AgentMessage {
+	return { role: "custom", customType, content: text, display: false, timestamp: 1 };
 }
 
-function goalContinuation(tokens: number) {
-	return userMessage(
-		`Continue working toward the active thread goal.\n\n<untrusted_objective>\nship it\n</untrusted_objective>\n\nUsage so far:\n- Tokens used: ${tokens}`,
+function convertedCustom(customType: string, text: string) {
+	const [message] = convertToLlm([customMessage(customType, text)]);
+	if (message?.role !== "user") throw new Error(`custom message ${customType} did not convert to user role`);
+	return message;
+}
+
+function notice(n: number) {
+	return convertedCustom(
+		"omo-memory:notice",
+		`<memory_notice>\n- ${n} previous messages between you and the user are stored in recall memory\n</memory_notice>`,
 	);
 }
 
@@ -49,6 +56,7 @@ function bindingFrom(messages: ReadonlyArray<{ role: string }>): ContinuityBindi
 	const hashes = hashesOf(messages);
 	return {
 		sdkSessionId: "sdk-1",
+		sdkSessionIdConfirmed: true,
 		accountName: ACCOUNT,
 		modelId: MODEL,
 		systemPromptHash: SYSTEM_PROMPT_HASH,
@@ -79,38 +87,41 @@ function entryFrom(messages: ReadonlyArray<{ role: string }>): ContinuityEntrySn
 
 const fingerprint = { systemPromptHash: SYSTEM_PROMPT_HASH, toolsetHash: TOOLSET_HASH };
 
+const VOLATILE_CUSTOM_TYPES = [
+	"omo-memory:notice",
+	"mindy-team:context-block",
+	"senpi-task.usage",
+	"senpi-monitor:notification",
+	"omo-senpi:wake",
+	"senpi-terminal:notification",
+	"omo-ultrawork:directive",
+	"omo-mass-ulw:skill-pointer",
+] as const;
+
 describe("volatile hook continuity", () => {
 	const prior = [userMessage("task1"), notice(8), toolResult("t1")];
 	const rewrittenNotice = [userMessage("task1"), notice(186), toolResult("t1")];
 	const prependedNotice = [notice(280), userMessage("task1"), notice(8), toolResult("t1")];
-	const appended = [
-		userMessage("task1"),
-		notice(8),
-		toolResult("t1"),
-		userMessage("task2"),
-		notice(999),
-		goalContinuation(12),
-	];
+	const appended = [...prior, userMessage("task2"), notice(999)];
 	const realEdit = [userMessage("task1-edited"), notice(8), toolResult("t1")];
 
-	it("keeps converted hooks in the transmitted set but hashes them by kind, not body", () => {
-		expect(isTransmittedMessage(notice(8))).toBe(true);
-		expect(isTransmittedMessage(goalContinuation(1))).toBe(true);
-		expect(isTransmittedMessage(userMessage("task1"))).toBe(true);
-		expect(isTransmittedMessage(toolResult("t1"))).toBe(true);
-		expect(isTransmittedMessage(userMessage("Continue working toward the active thread goal"))).toBe(true);
-		expect(sentMessageHashes([notice(8)])).toEqual(sentMessageHashes([notice(186)]));
-		expect(sentMessageHashes([goalContinuation(1)])).toEqual(sentMessageHashes([goalContinuation(99)]));
-		const mon1 = { role: "user" as const, content: [{ type: "text" as const, text: "job 1 finished" }], customType: "senpi-monitor:notification", timestamp: 1 };
-		const mon2 = { role: "user" as const, content: [{ type: "text" as const, text: "job 2 finished" }], customType: "senpi-monitor:notification", timestamp: 2 };
-		expect(sentMessageHashes([mon1])).toEqual(sentMessageHashes([mon2]));
-		const wake1 = { role: "user" as const, content: [{ type: "text" as const, text: "wake A" }], customType: "omo-senpi:wake", timestamp: 1 };
-		const wake2 = { role: "user" as const, content: [{ type: "text" as const, text: "wake B" }], customType: "omo-senpi:wake", timestamp: 2 };
-		expect(sentMessageHashes([wake1])).toEqual(sentMessageHashes([wake2]));
+	it("hashes convertToLlm custom-message output by provenance kind while keeping every hook transmitted", () => {
+		for (const customType of VOLATILE_CUSTOM_TYPES) {
+			const first = convertedCustom(customType, `${customType}: first body`);
+			const second = convertedCustom(customType, `${customType}: rewritten body`);
+			expect(isTransmittedMessage(first), customType).toBe(true);
+			expect(sentMessageHashes([first]), customType).toEqual(sentMessageHashes([second]));
+		}
+	});
+
+	it("keeps append-only goal continuations and ordinary user content hash-significant", () => {
+		const firstGoal = convertedCustom("goal-continuation", "Continue goal: first body");
+		const rewrittenGoal = convertedCustom("goal-continuation", "Continue goal: rewritten body");
+		expect(sentMessageHashes([firstGoal])).not.toEqual(sentMessageHashes([rewrittenGoal]));
 		expect(sentMessageHashes([userMessage("task1")])).not.toEqual(sentMessageHashes([userMessage("task1-edited")]));
 	});
 
-	it("reattaches after a hook rewrite, but still diverges on prepend or a real user rewrite", () => {
+	it("reattaches after a hook rewrite, but still diverges on a structural prepend or real user rewrite", () => {
 		const binding = bindingFrom(prior);
 		const input = {
 			entry: undefined,

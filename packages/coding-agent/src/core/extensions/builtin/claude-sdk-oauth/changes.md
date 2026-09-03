@@ -1,24 +1,23 @@
 # claude-sdk-oauth
 
-## 2026-08-23 - Ignore volatile top-hook content in continuity hashes
+## 2026-09-03 - Ignore rewrite-in-place hook bodies in session continuity hashes
 
 ### What changed
 
-- `session-sync.ts`: `sentMessageHashes` digests omo-memory notices, goal-continuation, mindy-team context blocks, and senpi-task usage as `{ role, volatileHook }` instead of their bodies. `isTransmittedMessage` is unchanged so those messages still occupy a slot in `messages.slice(from)`.
-- Detection uses customType/provenance when present and content signatures after `convertToLlm` strips customType.
-- Regression: hook rewrite reattaches; a structural prepend or a genuine user rewrite still reports `sent_stream_diverged`.
+- `session-sync.ts`: `sentMessageHashes` hashes rewrite-in-place custom hooks by their provenance `customType` while leaving them in the transmitted list; memory notices, RULES blocks, and senpi-task notices retain content-prefix compatibility. Append-only goal continuations remain content-significant.
+- `test/suite/regressions/claude-sdk-oauth-volatile-hook-continuity.test.ts`: coverage now hashes actual `convertToLlm` output, confirms reattach bindings, and keeps structural prepend and real-user rewrite cases fail-closed.
 
 ### Why
 
-Those hooks are rewritten every turn. Hashing their converted user-role bodies makes `decideFromBinding` report `sent_stream_diverged` and flatten to a cold seed. Dropping them from `isTransmittedMessage` would also drop them from `buildDeltaPromptBlocks(messages.slice(from))`, so a goal-continuation-only turn would send an empty delta. Same class as PR #791, but hash-only.
+- Rewritten hook bodies can falsely report `sent_stream_diverged` and flatten a valid SDK session, but removing hooks from the transmitted list would omit hook-only turns from the resident delta payload.
 
 ### Why an extension could not handle it
 
-Continuity hashes are computed inside this provider before the request is serialized. An extension cannot change `sentMessageHashes`.
+- `session-sync.ts` owns the provider-private continuity ledger and delta index; no extension hook can alter those hashes after provider dispatch.
 
 ### Expected merge conflict zones
 
-- `session-sync.ts` around `sentMessageHashes` / `isTransmittedMessage`.
+- LOW: `session-sync.ts` around `sentMessageHashes` and hook-kind detection.
 
 ## 2026-09-03 - Never resume an SDK session id the SDK never acknowledged
 
