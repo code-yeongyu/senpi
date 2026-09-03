@@ -1,6 +1,6 @@
 # builtin/prompt-preset
 
-Builtin extension #7. On `before_agent_start` and `model_select`, picks a system prompt preset by **model family** (gpt-5.x through gpt-5.6, claude-fable-5, claude-fable-5-1, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, glm-5.3, deepseek-v4-{flash,flash-0731,pro}, kimi-k2-{6,7}, kimi-k3) and falls back to the senpi dynamic prompt when nothing matches. Renders the active preset name in the startup header. After 2026-04-30, presets are thin wrappers around `buildDynamicSystemPrompt()` carrying only model-specific tuning.
+Builtin extension #7. On `before_agent_start` and `model_select`, picks a system prompt preset by **model family** (gpt-5.x through gpt-5.6, claude-fable-5, claude-fable-5-1, claude-opus-5, claude-opus-4-{5,6,7,8}, glm-5.2, glm-5.3, deepseek-v4-{flash,flash-0731,pro}, gemini, muse-spark, kimi-k2-{6,7}, kimi-k3) and falls back to the senpi dynamic prompt when nothing matches. Renders the active preset name in the startup header. After 2026-04-30, presets are thin wrappers around `buildDynamicSystemPrompt()` carrying only model-specific tuning.
 
 ## FILES
 
@@ -23,7 +23,9 @@ prompt-preset/
 ├── claude-opus-5.ts     # Claude Opus 5 preset — dieted full-core rewrite via `corePrompt` on the fable-5-1 skeleton (one home per rule, Scope section) plus the Opus 5 guide deltas: bounded single-pass verification, delegation caps, narration cadence, correction filter, document length, short conciseness line, outcome-first final summary
 ├── claude-opus-4-{5,6,7,8}.ts  # Per-snapshot Opus 4.x thin presets: execution-tooling stance + only the guide-documented deltas the shared core lacks (4.7/4.8: literal scope, tool-over-reasoning, same-turn subagent fan-out, house-style counter; 4.8 also reasons over what changed after a user turn; 4.6 carries no tuning text — claude.md documents nothing the dieted core lacks)
 ├── glm-5.ts             # Shared GLM 5.x builder (`GLM5_TUNING` + `buildGlm5Prompt`): execution-tooling stance in the claude dialect (GLM is Claude-distilled) + a two-sentence tool-over-deliberation / short-loop tuning; 5.2 and 5.3 share one prompting surface (same base model, post-training delta only)
-├── glm-5-{2,3}.ts       # GLM 5.2 / 5.3 presets — thin aliases over `buildGlm5Prompt`
+├── glm-5-{2,3}.ts       # GLM 5.2 / GLM 5.3 thin aliases over `buildGlm5Prompt`
+├── gemini.ts            # Gemini 3.x Flash preset — typed rule data (`GEMINI_RULES`) over a thin tuningSection wrapper
+├── muse-spark.ts        # Muse Spark preset — typed rule data (`MUSE_SPARK_RULES`) over a thin tuningSection wrapper
 ├── deepseek-v4.ts       # Shared DeepSeek V4 rule data (`DEEPSEEK_V4_RULES`) + tuning builders (directive authority, todo discipline, missing-info, settled-reading, reasoning-aim)
 ├── deepseek-v4-flash.ts # DeepSeek V4 Flash preset (thin tuningSection over the shared core)
 ├── deepseek-v4-flash-0731.ts # DeepSeek V4 Flash 0731 snapshot preset — dated snapshot resolves before the generic flash alias
