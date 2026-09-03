@@ -177,7 +177,7 @@ function modelFromJson(
 	providerId: string,
 	definition: ModelsJsonModel,
 	providerConfig: ModelsJsonProvider,
-	defaults: Model<Api> | undefined,
+	defaults: { api?: Api; baseUrl?: string } | undefined,
 ): ModelWithConfigMetadata {
 	const api = definition.api ?? providerConfig.api ?? defaults?.api;
 	if (!api) {
@@ -262,19 +262,13 @@ function applyModelsJson(
 				? models[existingIndex]
 				: findModelDefaults(models, definition.id, definition.api ?? extension?.api ?? config.api);
 		// Extension-provided api/baseUrl still win over the resolved defaults so a
-		// models.json extension can retarget an inherited built-in entry.
-		const model = modelFromJson(
-			providerId,
-			definition,
-			config,
-			defaults
-				? {
-						...defaults,
-						api: extension?.api ?? defaults.api,
-						baseUrl: extension?.baseUrl ?? defaults.baseUrl,
-					}
-				: undefined,
-		);
+		// models.json extension can retarget an inherited built-in entry, and remain
+		// the fallback when no built-in default exists (empty catalog).
+		const model = modelFromJson(providerId, definition, config, {
+			...defaults,
+			api: extension?.api ?? defaults?.api,
+			baseUrl: extension?.baseUrl ?? defaults?.baseUrl,
+		});
 		if (existingIndex >= 0) models[existingIndex] = model;
 		else models.push(model);
 	}

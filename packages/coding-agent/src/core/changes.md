@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-03 - Restore provider-level api inheritance for models.json models
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts` composes models.json custom models with a defaults object that always carries the extension-registered provider's `api` and `baseUrl`, so a definition that omits both still inherits them when no built-in default exists; upstream's api-aware `findModelDefaults` remains the built-in lookup, and the missing-api/missing-baseUrl errors are unchanged when neither source provides a value.
+
+### Why
+
+- The upstream sync kept `findModelDefaults` but gated the extension fallback behind a truthy defaults check, so a models.json model under an extension-registered provider with an empty base catalog failed composition with `no "api" specified` before the extension layer could run.
+
+### Why an extension could not handle it
+
+- Provider composition order and models.json merging happen inside `applyModelsJson`/`modelFromJson` in `packages/coding-agent/src/core/provider-composer.ts`, before extension model behavior can repair the intermediate layer.
+
+### Expected merge conflict zones
+
+- LOW: models.json model upsert loop in `packages/coding-agent/src/core/provider-composer.ts` (`applyModelsJson`), plus the `modelFromJson` defaults parameter type.
+
 ## 2026-09-03 - Route required compaction failures through admission state
 
 ### What changed
