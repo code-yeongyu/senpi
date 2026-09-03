@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import accountExtension from "../../src/core/extensions/builtin/account/index.ts";
+import gptAccountExtension from "../../src/core/extensions/builtin/gpt-account.ts";
 import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "../../src/core/extensions/types.ts";
 
 type Command = Pick<RegisteredCommand, "handler">;
@@ -118,5 +119,63 @@ describe("/account command", () => {
 
 		expect(notices.at(-1)?.type).toBe("error");
 		expect(notices.at(-1)?.message).toContain("Usage: /account");
+	});
+});
+
+describe("/gpt-account command", () => {
+	function registeredGptCommand(): Command {
+		const commands = new Map<string, Command>();
+		const pi = {
+			registerCommand: (name: string, command: Command) => commands.set(name, command),
+		} as unknown as ExtensionAPI;
+		gptAccountExtension(pi);
+		const registered = commands.get("gpt-account");
+		if (!registered) throw new Error("/gpt-account was not registered");
+		return registered;
+	}
+
+	it("lists OpenAI Codex OAuth accounts without leaking tokens", async () => {
+		await storage.modify("openai-codex", async () => ({
+			type: "oauth",
+			access: "access-secret",
+			refresh: "refresh-secret",
+			expires: 1,
+			accounts: [
+				{ name: "default", access: "access-secret", refresh: "refresh-secret", expires: 1, source: "login" },
+				{ name: "work", access: "work-access", refresh: "work-refresh", expires: 1, source: "login" },
+			],
+		}));
+		const { ctx, notices } = createContext();
+
+		await registeredGptCommand().handler("", ctx);
+
+		const output = notices.map((notice) => notice.message).join("\n");
+		expect(output).toContain("OpenAI Codex OAuth accounts:");
+		expect(output).toContain("default | login | available");
+		expect(output).toContain("work | login | available");
+		expect(output).not.toContain("access-secret");
+		expect(output).not.toContain("work-access");
+	});
+
+	it("pins and unpins an OpenAI Codex OAuth account", async () => {
+		await storage.modify("openai-codex", async () => ({
+			type: "oauth",
+			access: "access-secret",
+			refresh: "refresh-secret",
+			expires: 1,
+			accounts: [
+				{ name: "default", access: "access-secret", refresh: "refresh-secret", expires: 1, source: "login" },
+				{ name: "work", access: "work-access", refresh: "work-refresh", expires: 1, source: "login" },
+			],
+		}));
+		const { ctx, notices } = createContext();
+		const command = registeredGptCommand();
+
+		await command.handler("pin work", ctx);
+		await command.handler("", ctx);
+		expect(notices[notices.length - 1]?.message).toContain("work | login | available | pinned");
+
+		await command.handler("unpin", ctx);
+		expect(storage.get("openai-codex")).not.toHaveProperty("pinned");
 	});
 });

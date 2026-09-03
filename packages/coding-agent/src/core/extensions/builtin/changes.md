@@ -1,5 +1,17 @@
 # Builtin extensions changes
 
+## OpenAI Codex OAuth account command (2026-09-03)
+
+### What changed
+
+- Added `/gpt-account` as the dedicated OpenAI Codex OAuth account manager.
+- It mirrors `/claude-account` actions: `add`, `remove <name>`, `pin <name>`,
+  `unpin`, and account listing without exposing token material.
+
+### Expected merge conflict zones
+
+- NONE: new command module plus the builtin extension registry entry.
+
 ## Hooks trust-state snapshots publish atomically for same-account application state (2026-08-31)
 
 ### What changed
