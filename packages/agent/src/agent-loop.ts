@@ -20,6 +20,7 @@ import {
 	normalizeTerminalAssistantMessage,
 	promoteStopWithPendingToolCalls,
 	shouldFinalizeIdleAsStop,
+	shouldTerminateAssistantTurn,
 } from "./assistant-terminal-state.ts";
 import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
 import type {
@@ -258,7 +259,14 @@ async function runLoop(
 					await emit({ type: "agent_end", messages: newMessages });
 					return;
 				}
-				if (drainedTerminatingQueue) await refreshTerminatingQueueDrain();
+				if (drainedTerminatingQueue) {
+					await refreshTerminatingQueueDrain();
+					if (pendingMessages.length === 0) {
+						await emit({ type: "agent_end", messages: newMessages });
+						return;
+					}
+					drainedTerminatingQueue = undefined;
+				}
 				await emit({ type: "turn_start" });
 			}
 
@@ -303,7 +311,7 @@ async function runLoop(
 				toolResults.push(result);
 			}
 
-			if (message.stopReason === "error" || message.stopReason === "aborted") {
+			if (shouldTerminateAssistantTurn(message)) {
 				await emit({ type: "turn_end", message, toolResults });
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
@@ -887,6 +895,11 @@ async function executeToolCallsParallel(
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: Promise<FinalizedToolCallOutcome>[] = [];
+	const preparedCalls: Array<{
+		preparation: PreparedToolCall | ImmediateToolCallOutcome;
+		isSequential: boolean;
+		dependencies: Promise<FinalizedToolCallOutcome>[];
+	}> = [];
 	let lastSequentialCall: Promise<FinalizedToolCallOutcome> | undefined;
 	let currentParallelWave: Promise<FinalizedToolCallOutcome>[] = [];
 
@@ -906,38 +919,15 @@ async function executeToolCallsParallel(
 				? [lastSequentialCall]
 				: [];
 
-		const finalizedCall = (async () => {
-			await Promise.all(dependencies);
-			if (signal?.aborted) {
-				const finalized = await runPreparedToolCall(
-					currentContext,
-					assistantMessage,
-					preparation,
-					config,
-					signal,
-					emit,
-				);
-				await emitToolExecutionEnd(finalized, emit);
-				return finalized;
-			}
-			const finalized = await runPreparedToolCall(
-				currentContext,
-				assistantMessage,
-				preparation,
-				config,
-				signal,
-				emit,
-			);
-			await emitToolExecutionEnd(finalized, emit);
-			return finalized;
-		})();
-		finalizedCalls.push(finalizedCall);
+		preparedCalls.push({ preparation, isSequential, dependencies });
 
 		if (isSequential) {
-			lastSequentialCall = finalizedCall;
+			// Dependencies are assigned in the second phase after all preflight hooks
+			// have completed, so a later preflight abort vetoes every execution.
+			lastSequentialCall = undefined;
 			currentParallelWave = [];
 		} else {
-			currentParallelWave.push(finalizedCall);
+			currentParallelWave.push(Promise.resolve(undefined as never));
 		}
 
 		if (signal?.aborted) {
@@ -945,6 +935,28 @@ async function executeToolCallsParallel(
 		}
 	}
 
+	let previousSequential: Promise<FinalizedToolCallOutcome> | undefined;
+	let previousWave: Promise<FinalizedToolCallOutcome>[] = [];
+	for (const { preparation, isSequential } of preparedCalls) {
+		const dependencies = isSequential
+			? [...(previousSequential ? [previousSequential] : []), ...previousWave]
+			: previousSequential
+				? [previousSequential]
+				: [];
+		const finalizedCall = (async () => {
+			await Promise.all(dependencies);
+			const finalized = signal?.aborted
+				? { toolCall: preparation.toolCall, result: createErrorToolResult("Operation aborted"), isError: true }
+				: await runPreparedToolCall(currentContext, assistantMessage, preparation, config, signal, emit);
+			await emitToolExecutionEnd(finalized, emit);
+			return finalized;
+		})();
+		finalizedCalls.push(finalizedCall);
+		if (isSequential) {
+			previousSequential = finalizedCall;
+			previousWave = [];
+		} else previousWave.push(finalizedCall);
+	}
 	const orderedFinalizedCalls = await Promise.all(finalizedCalls);
 	const messages: ToolResultMessage[] = [];
 	for (const finalized of orderedFinalizedCalls) {

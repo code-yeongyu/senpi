@@ -1,5 +1,23 @@
 # Changes
 
+## 2026-09-03 - Restore queue ownership and preflight abort barriers
+
+### What changed
+
+- Restored classifier refusals as terminal assistant turns, preserved terminating queue re-poll/restore ownership across next-turn preparation, and completed all parallel tool preflight checks before releasing execution.
+
+### Why
+
+- The upstream loop merge allowed refused calls, cleared queue snapshots, and already-prepared tools to cross the next provider/execution boundary.
+
+### Why an extension could not handle it
+
+- Queue drain ownership and tool execution scheduling are core agent-loop responsibilities before extension hooks can observe or veto execution.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` turn admission, queue restoration, and parallel tool scheduling.
+
 ## 2026-09-02 - Name the stream-start timeout setting
 
 ### What changed
