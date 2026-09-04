@@ -6,7 +6,13 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { copyContextProvenance, type ImageContent, type Message, type TextContent } from "@earendil-works/pi-ai";
+import {
+	copyContextProvenance,
+	dropFailedAssistantTurns,
+	type ImageContent,
+	type Message,
+	type TextContent,
+} from "@earendil-works/pi-ai";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -175,7 +181,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 		copyContextProvenance(source, target);
 	// Continuations are append-only here too: the transport array must extend the
 	// previous request verbatim to keep the provider's cache prefix valid.
-	return messages
+	const converted = messages
 		.map((m): Message | undefined => {
 			switch (m.role) {
 				case "bashExecution":
@@ -225,6 +231,12 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 			}
 		})
 		.filter((m) => m !== undefined);
+	// Failed provider turns (stopReason error/aborted) must never reach an LLM
+	// request: lanes that build requests straight from this output (claude-sdk
+	// prompt bridge, cursor turns) would otherwise replay their partial text and
+	// unexecuted tool calls, and token estimation would count them. Dropping is
+	// deterministic per session state, so the cache-prefix guarantee above holds.
+	return dropFailedAssistantTurns(converted);
 }
 
 // ============================================================================

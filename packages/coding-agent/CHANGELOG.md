@@ -60,6 +60,8 @@
 - Fixed `prepareNextTurn` and `prepareNextTurnWithContext` being skipped on completed turns without tool calls: the next-turn preparation now runs after every completed assistant turn that can reach the preparation boundary, including a normal stop response, while the terminating queue boundary and ownership refresh are preserved before a continuation provider request.
 - Fixed next-turn compaction firing on completed turns that will not reach the provider: compaction is now gated on real provider admission (a tool continuation or queued message actually being admitted), while the next-turn callback keeps running on every completed turn and the late queue re-sample and one bounded callback replay after compaction are retained.
 
+- Errored and aborted provider turns are now excluded from every LLM request at the session level: `convertToLlm` runs the shared `dropFailedAssistantTurns` from `@earendil-works/pi-ai` as its final step, so lanes that build requests straight from its output (the claude-sdk-oauth prompt bridge's `<conversation_history>` rendering and cursor turn building) no longer replay a failed turn's partial text and unexecuted tool calls, and token estimation (`estimateContextTokens(buildSessionContext(...))`) no longer counts them. A tool call id re-declared by a later kept assistant keeps its result; `stop`/`length`/`toolUse` turns are untouched; the provider transform layer's existing drop in `transform-messages.ts` stays as-is.
+
 ### Removed
 
 ## [2026.9.4] - 2026-09-04
