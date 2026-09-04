@@ -110,6 +110,7 @@
 ### Expected merge conflict zones
 
 - LOW: the tail of `convertToLlm` in `packages/agent/src/harness/messages.ts` (the new `dropFailedAssistantTurns` return).
+- LOW: the head of `estimateContextTokens` and the `counted` parameter of `getLastAssistantUsageInfo` in `packages/agent/src/harness/compaction/compaction.ts`.
 
 ## 2026-09-02 - Name the stream-start timeout setting
 

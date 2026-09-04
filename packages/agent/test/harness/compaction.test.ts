@@ -315,6 +315,24 @@ describe("harness compaction", () => {
 		expect(withFailedEstimate.trailingTokens).toBe(baselineEstimate.trailingTokens);
 	});
 
+	it("reports lastUsageIndex against the input array when a failed turn precedes the anchor", () => {
+		const failed: AssistantMessage = { ...createAssistantMessage("failed"), stopReason: "error" };
+		const anchor = createAssistantMessage("anchor", createMockUsage(200, 100));
+		const messages: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			failed,
+			anchor,
+			createUserMessage("next"),
+		];
+
+		const estimate = estimateContextTokens(messages);
+
+		expect(estimate.lastUsageIndex).not.toBeNull();
+		expect(messages[estimate.lastUsageIndex as number]).toBe(anchor);
+		expect(estimate.usageTokens).toBe(300);
+	});
+
 	it("estimates tokens and context usage across supported message roles", () => {
 		const usage = createMockUsage(10, 5, 3, 2);
 		const assistant = createAssistantMessage("assistant", usage);

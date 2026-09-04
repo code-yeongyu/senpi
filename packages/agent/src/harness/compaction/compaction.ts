@@ -205,9 +205,14 @@ export interface ContextUsageEstimate {
 	lastUsageIndex: number | null;
 }
 
-function getLastAssistantUsageInfo(messages: AgentMessage[]): { usage: Usage; index: number } | undefined {
+function getLastAssistantUsageInfo(
+	messages: AgentMessage[],
+	counted: ReadonlySet<AgentMessage>,
+): { usage: Usage; index: number } | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
-		const usage = getAssistantUsage(messages[i]);
+		const message = messages[i];
+		if (!counted.has(message)) continue;
+		const usage = getAssistantUsage(message);
 		if (usage) return { usage, index: i };
 	}
 	return undefined;
@@ -217,13 +222,15 @@ function getLastAssistantUsageInfo(messages: AgentMessage[]): { usage: Usage; in
 export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEstimate {
 	// Count the same set the next provider request will carry: convertToLlm drops
 	// failed (error/aborted) assistant turns and their orphaned tool results.
-	const countedMessages = dropFailedAssistantTurns(messages);
-	const usageInfo = getLastAssistantUsageInfo(countedMessages);
+	// Indices stay relative to the INPUT array because callers read
+	// `messages[lastUsageIndex]` on the array they passed in.
+	const counted = new Set<AgentMessage>(dropFailedAssistantTurns(messages));
+	const usageInfo = getLastAssistantUsageInfo(messages, counted);
 
 	if (!usageInfo) {
 		let estimated = 0;
-		for (const message of countedMessages) {
-			estimated += estimateTokens(message);
+		for (const message of messages) {
+			if (counted.has(message)) estimated += estimateTokens(message);
 		}
 		return {
 			tokens: estimated,
@@ -235,8 +242,8 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
 
 	const usageTokens = calculateContextTokens(usageInfo.usage);
 	let trailingTokens = 0;
-	for (let i = usageInfo.index + 1; i < countedMessages.length; i++) {
-		trailingTokens += estimateTokens(countedMessages[i]);
+	for (let i = usageInfo.index + 1; i < messages.length; i++) {
+		if (counted.has(messages[i])) trailingTokens += estimateTokens(messages[i]);
 	}
 
 	return {
