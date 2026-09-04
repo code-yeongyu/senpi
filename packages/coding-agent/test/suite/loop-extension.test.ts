@@ -669,7 +669,10 @@ describe("loop extension schedule_wakeup exposure", () => {
 	it("re-activates schedule_wakeup when a dynamic loop is restored on session start", async () => {
 		const first = await fixture();
 		await first.emit("session_start");
-		const created = await first.controller.startDynamic({ originalArgs: "watch the queue", prompt: "watch the queue" });
+		const created = await first.controller.startDynamic({
+			originalArgs: "watch the queue",
+			prompt: "watch the queue",
+		});
 		if (!created.ok) throw new Error(created.message);
 		await settleTurn(first, created.loopId);
 		await first.emit("session_shutdown", { reason: "quit" });
