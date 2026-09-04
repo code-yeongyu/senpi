@@ -27,18 +27,64 @@ export type ProcessIdentityResult =
 	| { readonly kind: "absent" }
 	| { readonly kind: "error"; readonly error: unknown };
 
+/** Thrown when a live process refuses to yield an identity after the retry budget. */
+export class ProcessIdentityUnreadableError extends Error {
+	readonly pid: number;
+	readonly attempts: number;
+	override readonly cause: unknown;
+
+	constructor(pid: number, attempts: number, cause: unknown) {
+		super(
+			`process identity for live pid ${pid} stayed unreadable after ${attempts} probe attempt(s): ${cause instanceof Error ? cause.message : String(cause)}`,
+		);
+		this.name = "ProcessIdentityUnreadableError";
+		this.pid = pid;
+		this.attempts = attempts;
+		this.cause = cause;
+	}
+}
+
+export interface IdentityProbeRetry {
+	/** Probe attempts against a live pid before giving up (default 5). */
+	readonly attempts?: number;
+	/** Pause between attempts in ms (default 200). */
+	readonly delayMs?: number;
+}
+
+/**
+ * True when the pidfile still describes the running process. A probe FAILURE is not
+ * an answer: on a pid that is no longer live it means "gone" (false); on a live pid it
+ * is an observation gap — the platform query was starved or exited non-zero — so the
+ * probe is retried within a bounded budget and only then surfaces as
+ * ProcessIdentityUnreadableError. It never leaks the raw probe error as a verdict.
+ */
 export async function processMatchesPidFile(
 	pidFile: DaemonPidFile,
 	readStartTime: (pid: number) => Promise<string | undefined> = readProcessStartTime,
+	isLive: (pid: number) => boolean = processIsLive,
+	retry: IdentityProbeRetry = {},
 ): Promise<boolean> {
-	const current = await readStartTime(pidFile.pid);
-	return current === pidFile.processStartTime;
+	const attempts = Math.max(1, retry.attempts ?? 5);
+	const delayMs = retry.delayMs ?? 200;
+	let lastError: unknown;
+	for (let attempt = 1; attempt <= attempts; attempt++) {
+		try {
+			const current = await readStartTime(pidFile.pid);
+			return current === pidFile.processStartTime;
+		} catch (error: unknown) {
+			if (!isLive(pidFile.pid)) return false;
+			lastError = error;
+			if (attempt < attempts) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+		}
+	}
+	throw new ProcessIdentityUnreadableError(pidFile.pid, attempts, lastError);
 }
 
 export async function readProcessIdentity(
 	pid: number,
 	platform: NodeJS.Platform = process.platform,
 	timeoutMs?: number,
+	isLive: (pid: number) => boolean = processIsLive,
 ): Promise<ProcessIdentityResult> {
 	const command =
 		platform === "win32"
@@ -61,7 +107,14 @@ export async function readProcessIdentity(
 			(error, stdout) => {
 				if (error) {
 					const code = "code" in error ? error.code : undefined;
-					resolve(platform !== "win32" && code === 1 ? { kind: "absent" } : { kind: "error", error });
+					// ps exits 1 for an unknown pid; on every platform a query that fails against a
+					// pid that is no longer live has answered the question. Only a failure against a
+					// LIVE pid is an observation error the caller must treat as unknown.
+					if ((platform !== "win32" && code === 1) || !isLive(pid)) {
+						resolve({ kind: "absent" });
+						return;
+					}
+					resolve({ kind: "error", error });
 					return;
 				}
 				const output = stdout.trim();

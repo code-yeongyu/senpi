@@ -13,6 +13,7 @@
 ### Fixed
 
 - A clean checkout no longer fails `bun install --frozen-lockfile`, because the committed lockfile now matches the `@anthropic-ai/sdk` override in `package.json`.
+- A spawned RPC host that never answers `get_protocol_info` now reports why. Its teardown validated pid ownership with a process-identity probe that throws when the platform query fails (on Windows a starved `powershell.exe` CIM read), so the failure surfaced as `Command failed: powershell.exe …` instead of the readiness diagnostic and the pidfile and socket were left behind. A just-spawned host is now stopped through its own process handle, a probe that fails against a live pid is retried and then reported as a typed unreadable-identity error instead of the raw shell failure, and a probe that fails against a dead pid simply reads as gone — so the same Windows probe flake can no longer surface from concurrent starts, attach, or teardown.
 - Image generation no longer fails with an OpenAI 401 when a placeholder API key is stored for the `openai` provider. A seeded `SK-SENTINEL-DO-NOT-LOG` value is treated as absent instead of as a credential, so resolution falls through to a configured OpenAI-compatible gateway, and image generation is reported as not configured when no gateway exists.
 - Hook trust-state reads no longer fail tool execution when the lock directory cannot be created (`EPERM`/`EACCES`/`EROFS` in sandboxed or read-only children); writers still fail closed on those errors.
 
