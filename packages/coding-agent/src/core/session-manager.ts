@@ -9,7 +9,10 @@ import {
 	openSync,
 	readdirSync,
 	readSync,
+	renameSync,
+	rmSync,
 	statSync,
+	truncateSync,
 	writeFileSync,
 } from "fs";
 import { readdir } from "fs/promises";
@@ -1047,7 +1050,9 @@ export class SessionManager {
 		if (!this.persist || !this.sessionFile) return;
 		const persistedEntry = this.residentStore.materialize(entry);
 
-		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
+		const hasAssistant =
+			(entry.type === "message" && entry.message.role === "assistant") ||
+			this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
 		if (!hasAssistant) {
 			if (this.flushed) {
 				appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
@@ -1059,29 +1064,52 @@ export class SessionManager {
 		}
 
 		if (!this.flushed) {
-			const fd = openSync(this.sessionFile, "wx");
+			const temporaryFile = `${this.sessionFile}.${process.pid}.${randomUUID()}.tmp`;
 			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
+				const fd = openSync(temporaryFile, "wx", 0o600);
+				try {
+					for (const e of this.fileEntries) {
+						writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
+					}
+					writeFileSync(fd, `${JSON.stringify(persistedEntry)}\n`);
+				} finally {
+					closeSync(fd);
 				}
-			} finally {
-				closeSync(fd);
+				renameSync(temporaryFile, this.sessionFile);
+			} catch (error) {
+				rmSync(temporaryFile, { force: true });
+				throw error;
 			}
 			this.flushed = true;
 		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
+			const originalSize = statSync(this.sessionFile).size;
+			try {
+				appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
+			} catch (error) {
+				try {
+					truncateSync(this.sessionFile, originalSize);
+				} catch (rollbackError) {
+					throw new AggregateError(
+						[error, rollbackError],
+						`Session append failed and ${this.sessionFile} could not be restored`,
+					);
+				}
+				throw error;
+			}
 		}
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
 		const residentEntry = this.residentStore.externalize(entry);
+		// Persist first so a filesystem failure cannot expose an entry through the
+		// in-memory indexes while the durable session lacks it.
+		this._persist(residentEntry);
 		this.fileEntries.push(residentEntry);
 		this.byId.set(residentEntry.id, residentEntry);
 		this.entryOrdersById.set(residentEntry.id, this.fileEntries.length - 1);
 		this.leafId = residentEntry.id;
 		this._accumulateUsage(residentEntry);
 		this.mutationCount++;
-		this._persist(residentEntry);
 	}
 
 	/**

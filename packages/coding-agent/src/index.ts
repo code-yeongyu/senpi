@@ -128,6 +128,7 @@ export type {
 	RegisteredCommand,
 	RegisteredTool,
 	ResolvedCommand,
+	RetryFallbackExhaustedEvent,
 	SessionBeforeCompactEvent,
 	SessionBeforeForkEvent,
 	SessionBeforeSwitchEvent,

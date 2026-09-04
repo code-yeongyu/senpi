@@ -24,12 +24,19 @@
 
 ### Added
 
+- Extensions can subscribe to `retry_fallback_exhausted` to receive bounded,
+  structured diagnostics when no configured fallback can hold the live
+  conversation, including a full-error SHA-256 correlation digest, enabling
+  fresh-context delegation without parsing TUI errors.
 - New `gpt-6-astra` prompt preset, written from scratch against the GPT-6 Astra prompting guide: every `gpt-6-astra` model id (bare, `-fast`, dated snapshots, provider-prefixed, Bedrock `openai.gpt-6-astra`, display name "GPT-6 Astra") now gets a full-core system prompt with an initiative section (bias to action, approval as the last step on a concrete result), explicit instruction precedence for skills and project files, an asynchronous-work section mapping Astra's async-tool training onto background sessions, monitors, child tasks, and detached eval cells (end the turn to wait; no wait tool), calibrated test-first verification, and an engineer-prose writing style with the guide's slop-phrase ban. `promptPreset: "gpt-6-astra"` forces it.
 
 ### Changed
 
 ### Fixed
 
+- Retry fallback now skips context-incompatible model rungs, continues to later
+  candidates, settles when none fit, and never persists a rejected automatic
+  fallback switch or leaks its prompt/tool state into the parent session.
 - Anthropic Messages requests that carry deferred (`defer_loading`) tools no longer fail with `invalid_request_error: tools.N.tool_search_tool_bm25_20251119.name: Input should be 'tool_search_tool_bm25'`. The injected native tool-search server tool is now named `tool_search_tool_bm25` as the API contract requires; the local `tool_search` custom tool is unchanged.
 - Prompt surfaces no longer ship the same guidance twice per turn: the `Task_Management` section stops re-sending the todo tool description, `update_goal` points at the goal audits instead of restating them, and the bash timeout policy hands the waiting doctrine to the terminal section. Roughly 1.5K tokens leave every turn with no rule removed.
 - The shared GPT eval-routing bridge no longer routes multi-call work to the `exec`/`wait` Code Mode tools that were removed in favor of detached `eval` cells; every GPT preset now points at `eval` only.

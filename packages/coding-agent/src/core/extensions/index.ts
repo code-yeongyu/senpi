@@ -143,6 +143,7 @@ export type {
 	// Events - Resources
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
+	RetryFallbackExhaustedEvent,
 	SendMessageHandler,
 	SendUserMessageHandler,
 	SessionBeforeCompactEvent,

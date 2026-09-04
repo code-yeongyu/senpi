@@ -66,6 +66,22 @@ describe("SessionManager append and tree traversal", () => {
 			expect(entries[2].parentId).toBe(modelId);
 		});
 
+		it("does not expose an entry when persistence fails", () => {
+			// given
+			const session = SessionManager.inMemory();
+			const entriesBefore = session.getEntries();
+			Reflect.set(session, "_persist", () => {
+				throw new Error("disk full");
+			});
+
+			// when
+			const append = () => session.appendModelChange("openai", "gpt-4");
+
+			// then
+			expect(append).toThrow("disk full");
+			expect(session.getEntries()).toEqual(entriesBefore);
+		});
+
 		it("appendCompaction integrates into tree", () => {
 			const session = SessionManager.inMemory();
 
@@ -591,6 +607,41 @@ describe("createBranchedSession", () => {
 			const lines = content.trim().split("\n").filter(Boolean);
 			const records = lines.map((line) => JSON.parse(line));
 			expect(records.filter((r) => r.type === "session")).toHaveLength(1);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not publish a partial initial session file when serialization fails", () => {
+		// given
+		const tempDir = join(tmpdir(), `session-atomic-flush-${Date.now()}`);
+		mkdirSync(tempDir, { recursive: true });
+
+		try {
+			const session = SessionManager.create(tempDir, tempDir);
+			const sessionFile = session.getSessionFile();
+			if (!sessionFile) throw new Error("missing session file path");
+			session.appendMessage(userMsg("deferred"));
+			const residentStore = Reflect.get(session, "residentStore");
+			const materialize = Reflect.get(residentStore, "materialize");
+			if (typeof materialize !== "function") throw new Error("missing resident materializer");
+			Reflect.set(residentStore, "materialize", (entry: { readonly type: string }) => {
+				const materialized = Reflect.apply(materialize, residentStore, [entry]);
+				if (entry.type !== "message" || typeof materialized !== "object" || materialized === null) {
+					return materialized;
+				}
+				const message = Reflect.get(materialized, "message");
+				return typeof message === "object" && message !== null && Reflect.get(message, "role") === "assistant"
+					? { ...Object.fromEntries(Object.entries(materialized)), invalid: 1n }
+					: materialized;
+			});
+
+			// when
+			const flush = () => session.appendMessage(assistantMsg("flush"));
+
+			// then
+			expect(flush).toThrow();
+			expect(existsSync(sessionFile)).toBe(false);
 		} finally {
 			rmSync(tempDir, { recursive: true, force: true });
 		}

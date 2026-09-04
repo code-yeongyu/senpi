@@ -1,5 +1,33 @@
 # changes
 
+## 2026-09-03 - Skip context-incompatible fallback rungs and make the model switch transactional
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `RetryFallbackControllerDeps` gained the injected `isCandidateUsable` capacity preflight and the `classifySwitchFailure` seam. `nextCandidate` now skips a rung whose window cannot hold the live conversation (`context-unusable`) and keeps walking; `tryFallback` walks the remaining rungs when applying a model is refused on capacity grounds after `model_select` ran, and rethrows any failure the classifier does not recognize so one broken extension cannot spend the whole chain. A turn-scoped, selector-keyed rejection ledger backs the new `exhaustion` accessor (`chainKey`, `from`, `reason`, `rejectedCandidates`); `exhaustedChainKey` is unchanged.
+- `packages/coding-agent/src/core/agent-session.ts`: `_switchActiveModel` is now two-phase. Model, thinking level, service tier, and the server-side-fallback flag are applied provisionally so `model_select` handlers build against the target, but compaction invalidation, `model_changed`, `thinking_level_changed`/`thinking_level_select`, the service-tier event, the high-reasoning warning, `appendModelChange`, and the persisted default all wait until the post-`model_select` `assertModelUsable` clears. A rejected target is rolled back silently and extension-owned prompt/tool state is resynced by re-running `model_select` for the previous model. The seven duplicated exhaustion emits collapse into `_emitRetryFallbackExhausted`, which emits the unchanged session event plus the new extension event.
+- `packages/coding-agent/src/core/extensions/types.ts`: new `RetryFallbackExhaustedEvent` (`sessionId`, `chainKey`, `from`, `lastError`, `lastErrorSha256`, `exhaustionReason`, `rejectedCandidates`) in the `ExtensionEvent` union with a `pi.on("retry_fallback_exhausted", ...)` overload. The digest correlates the bounded diagnostic to the complete failed error. It flows through the generic runner `emit` and returns no result: it is notification-only.
+- Review hardening keeps the two-phase transaction scoped to automatic fallback while manual, cycle, restore, and fallback-revert switches retain their established committed-first event order. Rejected automatic fallbacks directly restore prompt, base prompt, active tools, requested/withheld tool names, model, thinking, tier, and server-fallback state; best-effort extension resynchronization cannot overwrite that snapshot. Exhaustion notifications do not block retry settlement and bound extension diagnostics to 8,192 error characters and 16 candidates.
+- Persistence now defines the automatic-switch commit boundary: pre-commit failures roll back, while post-commit observer failures leave runtime state aligned with the durable `model_change`. `SessionManager` persists an entry before exposing it through in-memory indexes, so a filesystem failure cannot leave a phantom resident entry.
+- Post-commit switch and fallback-event observer failures are logged and isolated so controller bookkeeping still records the applied rung. The retry-handler ownership boundary converts any remaining internal failure into a terminal `not-handled` outcome and resolves the retry promise, preventing a failed persistence or extension path from wedging `prompt()`.
+- Session event listeners are failure-isolated per listener so an observer cannot abort core `agent_end` retry handling. Initial session-file publication now writes a private temporary file and atomically renames it, while failed append writes truncate back to the observed pre-append size before the in-memory entry is exposed. Extension exhaustion payloads cap every selector/model/error string as well as candidate count.
+
+### Why
+
+- The chain walk had no capacity dimension at all, so a 1M-window primary could fall back onto a 200K rung that cannot hold the conversation, trading one dead lane for another.
+- The switch wrote its `model_change` entry before the budget assert, so a rejected target left an unpaired `reason: "fallback"` entry that session restore replays as a fallback window that was never entered, while thinking level and extension-swapped toolsets stayed on the rejected model.
+- `ModelUsabilityBudgetError` escaping `tryFallback` reached `_processAgentEvent`, whose rejection is swallowed by the agent event queue, so `_resolveRetry()` never ran and `prompt()` hung on `waitForRetry()`.
+- `retry_fallback_exhausted` existed only as an `AgentSessionEvent`, so an extension that could route the work to another model had no typed way to learn the parent model's chain was spent.
+
+### Why an extension could not handle it
+
+- Candidate selection, the model-switch commit boundary, and retry dispatch are private `AgentSession`/controller lifecycle state; extensions observe `model_select` only after the core has already mutated and persisted the switch, and cannot atomically defer or undo it.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/core/agent-session.ts` around `_switchActiveModel` and the `_handleRetryableError` exhaustion branches.
+- MEDIUM: `packages/coding-agent/src/core/retry-fallback/controller.ts` around `nextCandidate`, `tryFallback`, and the deps interface.
+- LOW: `packages/coding-agent/src/core/extensions/types.ts` around the event union and the `on` overloads.
 ## 2026-09-04 - Skills prompt aliases each root to a short rN prefix
 
 ### What changed
@@ -17,7 +45,6 @@
 ### Expected merge conflict zones
 
 - LOW: `skills.ts` renderer body and `skills.test.ts` location assertion.
-
 
 ## 2026-09-04 - Restore the selected model, not its upstream wire id, on resume
 
@@ -47,7 +74,6 @@
 ### Expected merge conflict zones
 
 - LOW: the `model` bookkeeping inside `getSessionContextSettings()` in `session-manager.ts`.
-
 
 ## 2026-09-03 - Make eval-only tool routing unconditional and registry-aware
 

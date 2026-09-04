@@ -13,7 +13,7 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { basename, dirname } from "node:path";
@@ -132,6 +132,7 @@ import {
 	type MessageStartEvent,
 	type MessageUpdateEvent,
 	type ReplacedSessionContext,
+	type RetryFallbackExhaustedEvent,
 	type SessionBeforeCompactResult,
 	type SessionBeforeTreeResult,
 	type SessionCompactFailedEvent,
@@ -174,7 +175,7 @@ import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./p
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
 import { formatSelector } from "./retry-fallback/chains.ts";
-import { RetryFallbackController } from "./retry-fallback/controller.ts";
+import { type CandidateUsability, RetryFallbackController } from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
 import {
 	classifyRateLimitedWait,
@@ -220,7 +221,25 @@ function evalHelperCall(name: string): string {
 	return `tool.${name}({ ... })`;
 }
 const TURN_RETRY_SUPPRESSION_PREFIX = "senpi:no-turn-retry:";
+const MAX_FALLBACK_EXHAUSTION_ERROR_BYTES = 8_192;
+const MAX_FALLBACK_EXHAUSTION_CANDIDATES = 16;
+const MAX_FALLBACK_EXHAUSTION_SELECTOR_BYTES = 512;
+const MAX_FALLBACK_EXHAUSTION_CANDIDATE_ERROR_BYTES = 2_048;
+const MAX_FALLBACK_EXHAUSTION_PAYLOAD_BYTES = 64 * 1_024;
 const DEFERRED_RETRY_QUEUE_OWNERS = new WeakSet<object>();
+
+function truncateUtf8(text: string, maxBytes: number): string {
+	if (Buffer.byteLength(text) <= maxBytes) return text;
+	let bytes = 0;
+	let result = "";
+	for (const character of text) {
+		const characterBytes = Buffer.byteLength(character);
+		if (bytes + characterBytes > maxBytes) break;
+		result += character;
+		bytes += characterBytes;
+	}
+	return result;
+}
 
 // ============================================================================
 // Skill Invocation Formatting and Parsing
@@ -1069,6 +1088,7 @@ export class AgentSession {
 	private readonly _assistantsPendingAtCompaction = new WeakSet<AssistantMessage>();
 	private readonly _postCompactionUsageExemptAssistants = new WeakSet<AssistantMessage>();
 	private _messageRevision = 0;
+	private _provisionalModelSelectDepth = 0;
 
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
@@ -1222,6 +1242,11 @@ export class AgentSession {
 			registry: this._modelRegistry,
 			cooldowns: this._selectorCooldowns,
 			logger: fallbackLogger,
+			isCandidateUsable: (model) => this._assessFallbackCandidate(model),
+			// Only a budget refusal is a verdict about the candidate. Anything else that
+			// escapes the switch (an extension defect) must not be mistaken for a spent rung.
+			classifySwitchFailure: (error) =>
+				error instanceof ModelUsabilityBudgetError ? { projection: error.projection } : undefined,
 			switchModel: async (model, thinking, reason) => {
 				await this._switchActiveModel(model, {
 					persistDefault: false,
@@ -1233,7 +1258,15 @@ export class AgentSession {
 					ephemeralThinkingLevel: thinking,
 				});
 			},
-			emit: (event) => this._emit(event),
+			emit: (event) => {
+				try {
+					this._emit(event);
+				} catch (error) {
+					this._sessionLogger.warn("retry_fallback_observer_failed", {
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			},
 			getCurrentSelector: () => (this.model ? { model: this.model, thinkingLevel: this.thinkingLevel } : undefined),
 			isAuthAvailable: (provider) => this._modelRuntime.hasConfiguredAuth(provider),
 		});
@@ -1626,7 +1659,14 @@ export class AgentSession {
 	private _emit(event: AgentSessionEvent): void {
 		this._logSessionEvent(event);
 		for (const l of this._eventListeners) {
-			l(event);
+			try {
+				l(event);
+			} catch (error) {
+				this._sessionLogger.warn("session_event_listener_failed", {
+					kind: event.type,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
 		}
 	}
 
@@ -3214,7 +3254,7 @@ export class AgentSession {
 			// binding itself, not to a mid-session change. The session was already
 			// committed to the client, so cancelling or invalidating work it started
 			// against that session would be spurious.
-			if (this._extensionBindingPromptReadiness === undefined) {
+			if (this._extensionBindingPromptReadiness === undefined && this._provisionalModelSelectDepth === 0) {
 				this.abortCompaction();
 				this._incrementMessageRevision();
 			}
@@ -4508,6 +4548,7 @@ export class AgentSession {
 		nextModel: Model<any>,
 		previousModel: Model<any> | undefined,
 		source: ModelSelectSource,
+		options: { deferSystemPromptAnnouncement?: boolean } = {},
 	): Promise<SystemPromptChangeEvent | undefined> {
 		this.syncPromptCacheSafeWaitEnv();
 		if (!this._modelSelectionChangesContext(previousModel, nextModel)) return undefined;
@@ -4541,9 +4582,16 @@ export class AgentSession {
 		if (result.systemPromptName) {
 			event.systemPromptName = result.systemPromptName;
 		}
+		if (options.deferSystemPromptAnnouncement) {
+			return event;
+		}
+		await this._announceSystemPromptChange(event);
+		return event;
+	}
+
+	private async _announceSystemPromptChange(event: SystemPromptChangeEvent): Promise<void> {
 		await this._extensionRunner.emit(event);
 		this._emit(event);
-		return event;
 	}
 
 	/**
@@ -4565,6 +4613,23 @@ export class AgentSession {
 			compaction: this.settingsManager.getCompactionSettings(),
 		});
 		if (!projection.usable) throw new ModelUsabilityBudgetError(projection);
+	}
+
+	/**
+	 * Capacity verdict for one fallback chain rung, using the same projection that
+	 * gates explicit model selection. Switching into a window that cannot hold the
+	 * live conversation only trades one dead lane for another, so the walk skips it.
+	 */
+	private _assessFallbackCandidate(model: Model<Api>): CandidateUsability {
+		if (model.contextWindow <= 0) return { usable: true };
+		const projection = projectModelUsabilityBudget({
+			model,
+			systemPrompt: this.agent.state.systemPrompt,
+			tools: this.agent.state.tools,
+			liveContextTokens: this._getDownswitchLiveContextTokens(model),
+			compaction: this.settingsManager.getCompactionSettings(),
+		});
+		return { usable: projection.usable, projection };
 	}
 
 	private _getDownswitchLiveContextTokens(model: Model<Api>): number {
@@ -4657,6 +4722,153 @@ export class AgentSession {
 			ephemeralThinkingLevel?: ThinkingLevel;
 		},
 	): Promise<SystemPromptChangeEvent | undefined> {
+		if (opts.entryReason !== "fallback") {
+			return this._switchActiveModelCommittedFirst(model, opts);
+		}
+		const previousModel = this.model;
+		const invalidatesCompaction =
+			opts.invalidateCompaction &&
+			(this._modelSelectionChangesContext(previousModel, model) ||
+				previousModel?.provider !== model.provider ||
+				previousModel?.id !== model.id);
+		const thinking = this._getThinkingForModelSwitch(model, opts.ephemeralThinkingLevel);
+		const liveContextTokens = this._getDownswitchLiveContextTokens(model);
+		const ephemeralThinking = opts.ephemeralThinkingLevel !== undefined;
+		const previous = {
+			model: previousModel,
+			systemPrompt: this.agent.state.systemPrompt,
+			baseSystemPrompt: this._baseSystemPrompt,
+			tools: [...this.agent.state.tools],
+			requestedActiveToolNames: this._requestedActiveToolNames ? [...this._requestedActiveToolNames] : undefined,
+			withheldEvalOnlyToolNames: [...this._withheldEvalOnlyToolNames],
+			thinkingLevel: this.agent.state.thinkingLevel,
+			thinkingSelection: this.agent.state.thinkingSelection,
+			tier: this._currentServiceTier,
+			fastMode: this.isFastModeActive(),
+			abortServerSideFallback: this.agent.abortServerSideFallback,
+		};
+
+		// Provisional state only. `model_select` handlers must build prompts and
+		// toolsets against the target model and its thinking level, but the switch is
+		// not real until the post-handler budget assert clears it: until then nothing
+		// is announced, persisted, or invalidated, so a rejected target leaves no trace.
+		this.agent.state.model = model;
+		this.agent.abortServerSideFallback =
+			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
+		const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, model));
+		this._currentServiceTier = this._resolveServiceTier(model, scopedMatch?.serviceTier);
+		this._applyProvisionalThinkingLevel(thinking, ephemeralThinking);
+
+		const runCommittedAction = (stage: string, action: () => void): void => {
+			try {
+				action();
+			} catch (error) {
+				this._sessionLogger.warn("model_switch_post_commit_failed", {
+					stage,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		};
+		const commitAfterPersistence = (): void => {
+			if (invalidatesCompaction) {
+				runCommittedAction("compaction_invalidation", () => this._invalidateCompactionForModelSelection());
+			}
+			if (opts.persistDefault) {
+				runCommittedAction("persist_default", () =>
+					this.settingsManager.setDefaultModelAndProvider(model.provider, model.id),
+				);
+			}
+			// Rewind the provisional level so the real setter observes the same before/after
+			// pair it would have seen without deferral, and therefore emits the same events,
+			// session entry, and fallback bookkeeping as an undeferred switch.
+			this.agent.state.thinkingLevel = previous.thinkingLevel;
+			this.agent.state.thinkingSelection = previous.thinkingSelection;
+			runCommittedAction("thinking_level", () => {
+				if (ephemeralThinking) this._applyEphemeralThinkingLevel(thinking.level);
+				else this._setThinkingLevel(thinking.level, false, thinking.selection);
+			});
+			runCommittedAction("reasoning_warning", () => this._emitHighReasoningWarningIfNeeded());
+			// Post-switch: the level reported here is the one actually in force (clamped, or restored
+			// from this model's memory), not the level requested for the previous model.
+			runCommittedAction("model_changed", () => {
+				this._emit({
+					type: "model_changed",
+					model,
+					thinkingLevel: this.thinkingLevel,
+					source: opts.modelSelectSource,
+				});
+			});
+			runCommittedAction("service_tier", () =>
+				this._emitServiceTierChangeIfNeeded(previous.tier, previous.fastMode),
+			);
+		};
+
+		let systemPromptChange: SystemPromptChangeEvent | undefined;
+		if (opts.emitModelSelect) {
+			try {
+				this._provisionalModelSelectDepth++;
+				try {
+					systemPromptChange = await this._emitModelSelect(model, previousModel, opts.modelSelectSource, {
+						deferSystemPromptAnnouncement: true,
+					});
+				} finally {
+					this._provisionalModelSelectDepth--;
+				}
+				this.assertModelUsable(model, liveContextTokens);
+			} catch (error) {
+				await this._rollbackProvisionalModelSwitch(model, previous);
+				throw error;
+			}
+		}
+
+		// Persistence is the commit boundary. A failed append is still provisional
+		// and rolls back; once it succeeds, later observer failures must leave the
+		// runtime on the model recorded in session history.
+		if (opts.appendSessionEntry) {
+			try {
+				this.sessionManager.appendModelChange(
+					model.provider,
+					model.id,
+					opts.entryReason,
+					previousModel?.provider,
+					previousModel?.id,
+				);
+			} catch (error) {
+				await this._rollbackProvisionalModelSwitch(model, previous);
+				throw error;
+			}
+		}
+		commitAfterPersistence();
+		if (systemPromptChange) {
+			try {
+				await this._announceSystemPromptChange(systemPromptChange);
+			} catch (error) {
+				this._sessionLogger.warn("model_switch_post_commit_failed", {
+					stage: "system_prompt_change",
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
+		return systemPromptChange;
+	}
+
+	/**
+	 * Preserve the established event order for manual selection, cycling, restore,
+	 * and fallback revert. Only automatic fallback admission needs the provisional
+	 * transaction because it may walk to another rung after a context rejection.
+	 */
+	private async _switchActiveModelCommittedFirst(
+		model: Model<Api>,
+		opts: {
+			persistDefault: boolean;
+			appendSessionEntry: boolean;
+			entryReason?: "fallback" | "fallback-revert";
+			emitModelSelect: boolean;
+			modelSelectSource: ModelSelectSource;
+			invalidateCompaction: boolean;
+			ephemeralThinkingLevel?: ThinkingLevel;
+		},
+	): Promise<SystemPromptChangeEvent | undefined> {
 		const previousModel = this.model;
 		if (
 			opts.invalidateCompaction &&
@@ -4696,8 +4908,6 @@ export class AgentSession {
 		}
 
 		this._emitHighReasoningWarningIfNeeded();
-		// Post-switch: the level reported here is the one actually in force (clamped, or restored
-		// from this model's memory), not the level requested for the previous model.
 		this._emit({
 			type: "model_changed",
 			model,
@@ -4717,6 +4927,83 @@ export class AgentSession {
 			else delete (this.agent.state as { model?: Model<Api> }).model;
 			this.agent.state.systemPrompt = previousSystemPrompt;
 			throw error;
+		}
+	}
+
+	/**
+	 * Put the switch's thinking level in force without announcing it. The level has to
+	 * be live while `model_select` runs so handlers see the level that would actually
+	 * be used, but a rejected switch must leave no event or session entry behind.
+	 * `_getThinkingForModelSwitch` already clamped against this model's supported
+	 * levels, which is the same set `_setThinkingLevel` would clamp against.
+	 */
+	private _applyProvisionalThinkingLevel(
+		thinking: { level: ThinkingLevel; selection?: ThinkingSelection },
+		ephemeral: boolean,
+	): void {
+		this.agent.state.thinkingLevel = thinking.level;
+		this.agent.state.thinkingSelection = ephemeral ? undefined : thinking.selection;
+	}
+
+	/**
+	 * Undo a provisional switch whose target was rejected after `model_select` ran.
+	 * Nothing was announced, persisted, or invalidated, so this restores session-owned
+	 * state silently. Prompt and tool state belong to the extensions that swapped it,
+	 * so it is restored by re-running `model_select` for the previous model rather
+	 * than by snapshotting state this session does not own.
+	 */
+	private async _rollbackProvisionalModelSwitch(
+		rejectedModel: Model<Api>,
+		previous: {
+			model: Model<Api> | undefined;
+			systemPrompt: string;
+			baseSystemPrompt: string;
+			tools: AgentTool[];
+			requestedActiveToolNames: string[] | undefined;
+			withheldEvalOnlyToolNames: string[];
+			thinkingLevel: ThinkingLevel;
+			thinkingSelection: ThinkingSelection | undefined;
+			tier: ServiceTier | undefined;
+			abortServerSideFallback: boolean | undefined;
+		},
+	): Promise<void> {
+		const restoreSessionState = (): void => {
+			if (previous.model) this.agent.state.model = previous.model;
+			else delete (this.agent.state as { model?: Model<Api> }).model;
+			this.agent.state.systemPrompt = previous.systemPrompt;
+			this._baseSystemPrompt = previous.baseSystemPrompt;
+			this.agent.state.tools = [...previous.tools];
+			this._requestedActiveToolNames = previous.requestedActiveToolNames
+				? [...previous.requestedActiveToolNames]
+				: undefined;
+			this._withheldEvalOnlyToolNames.clear();
+			for (const name of previous.withheldEvalOnlyToolNames) {
+				this._withheldEvalOnlyToolNames.add(name);
+			}
+			this.agent.state.thinkingLevel = previous.thinkingLevel;
+			this.agent.state.thinkingSelection = previous.thinkingSelection;
+			this._currentServiceTier = previous.tier;
+			this.agent.abortServerSideFallback = previous.abortServerSideFallback;
+		};
+
+		restoreSessionState();
+		if (!previous.model) return;
+		try {
+			this._provisionalModelSelectDepth++;
+			try {
+				await this._emitModelSelect(previous.model, rejectedModel, "restore", {
+					deferSystemPromptAnnouncement: true,
+				});
+			} finally {
+				this._provisionalModelSelectDepth--;
+			}
+		} catch (error) {
+			console.error("model switch rollback could not resync model_select state", error);
+		} finally {
+			// Extension resynchronization is best-effort. Session-owned state is restored
+			// directly both before and after it so a handler that mutates and then fails
+			// cannot leak the rejected model's prompt or tools into the parent session.
+			restoreSessionState();
 		}
 	}
 
@@ -7388,16 +7675,75 @@ export class AgentSession {
 	}
 
 	private _isHardErrorFallbackEligible(message: AssistantMessage): boolean {
-		return (
+		const eligibleError =
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
 			message.stopReason === "error" &&
 			!isContextOverflow(message, this.model?.contextWindow ?? 0) &&
 			!this._isCursorPayloadOverflow(message) &&
 			!isCursorZeroTokenResourceExhausted(message) &&
 			!isClassifierRefusal(message) &&
-			!message.content.some((content) => content.type === "toolCall") &&
-			this._retryFallback.canTryFallback()
-		);
+			!message.content.some((content) => content.type === "toolCall");
+		if (!eligibleError) return false;
+		if (this._retryFallback.canTryFallback()) return true;
+		return this._retryFallback.exhaustion?.reason === "no-context-compatible-candidate";
+	}
+
+	/**
+	 * Report that the active model's chain has no usable rung left. The session event
+	 * keeps its long-standing shape for the TUI and RPC hosts; the extension event
+	 * additionally carries who ran out and why, so an extension that can route the
+	 * work to another model has enough to decide. Both are emitted from this single
+	 * place so the two views can never disagree across the retry branches.
+	 */
+	private _emitRetryFallbackExhausted(lastError: string): void {
+		const chainKey = this._retryFallback.exhaustedChainKey;
+		if (!chainKey) return;
+		this._emit({ type: "retry_fallback_exhausted", chainKey, lastError });
+		const exhaustion = this._retryFallback.exhaustion;
+		// Detail is only trustworthy when it describes the chain being reported.
+		const detail = exhaustion?.chainKey === chainKey ? exhaustion : undefined;
+		const model = this.model;
+		const rejectedCandidates = (detail?.rejectedCandidates ?? [])
+			.slice(0, MAX_FALLBACK_EXHAUSTION_CANDIDATES)
+			.map((candidate) => ({
+				...candidate,
+				selector: truncateUtf8(candidate.selector, MAX_FALLBACK_EXHAUSTION_SELECTOR_BYTES),
+				...(candidate.error === undefined
+					? {}
+					: { error: truncateUtf8(candidate.error, MAX_FALLBACK_EXHAUSTION_CANDIDATE_ERROR_BYTES) }),
+				...(candidate.projection === undefined
+					? {}
+					: {
+							projection: {
+								...candidate.projection,
+								model: truncateUtf8(candidate.projection.model, MAX_FALLBACK_EXHAUSTION_SELECTOR_BYTES),
+							},
+						}),
+			}));
+		const extensionEvent = {
+			type: "retry_fallback_exhausted",
+			sessionId: truncateUtf8(this.sessionId, MAX_FALLBACK_EXHAUSTION_SELECTOR_BYTES),
+			chainKey: truncateUtf8(chainKey, MAX_FALLBACK_EXHAUSTION_SELECTOR_BYTES),
+			from: truncateUtf8(
+				detail?.from ?? (model ? `${model.provider}/${model.id}` : ""),
+				MAX_FALLBACK_EXHAUSTION_SELECTOR_BYTES,
+			),
+			lastError: truncateUtf8(lastError, MAX_FALLBACK_EXHAUSTION_ERROR_BYTES),
+			lastErrorSha256: createHash("sha256").update(lastError).digest("hex"),
+			exhaustionReason: detail?.reason ?? "candidates-exhausted",
+			rejectedCandidates,
+		} satisfies RetryFallbackExhaustedEvent;
+		while (
+			Buffer.byteLength(JSON.stringify(extensionEvent)) > MAX_FALLBACK_EXHAUSTION_PAYLOAD_BYTES &&
+			rejectedCandidates.length > 0
+		) {
+			rejectedCandidates.pop();
+		}
+		void this._extensionRunner.emit(extensionEvent).catch((error: unknown) => {
+			this._sessionLogger.warn("retry_fallback_exhaustion_extension_failed", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		});
 	}
 
 	private _getProviderRetryDelayMs(errorMessage: string): number | undefined {
@@ -7447,26 +7793,19 @@ export class AgentSession {
 	 * in the final error. Returns the in-turn retry delay, or undefined after
 	 * emitting the terminal auto_retry_end.
 	 */
-	private _degradeRateLimitedWithoutFallback(
+	private async _degradeRateLimitedWithoutFallback(
 		tier: HintTier,
 		hintMs: number | undefined,
 		message: AssistantMessage,
 		errorMessage: string,
-	): number | undefined {
+	): Promise<number | undefined> {
 		const settings = this.settingsManager.getRetrySettings();
 		// Budget checks use the resolved profile (same value as settings.maxRetries
 		// for providers without a declared profile).
 		const turnMaxRetries = this._resolveRetryProfile().turn.maxRetries;
 		const hintSettings = this.settingsManager.getHintPolicySettings();
-		const finishTurn = (attempt: number, finalError: string | undefined) => {
-			const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-			if (exhaustedChainKey) {
-				this._emit({
-					type: "retry_fallback_exhausted",
-					chainKey: exhaustedChainKey,
-					lastError: errorMessage,
-				});
-			}
+		const finishTurn = (attempt: number, finalError: string | undefined): void => {
+			this._emitRetryFallbackExhausted(errorMessage);
 			this._emit({
 				type: "auto_retry_end",
 				success: false,
@@ -7486,7 +7825,7 @@ export class AgentSession {
 		);
 		if (degraded.kind === "fail") {
 			const waitSeconds = Math.ceil(degraded.hintMs / 1000);
-			finishTurn(
+			await finishTurn(
 				this._retryAttempt,
 				`Provider requested a ${waitSeconds}s wait before retrying and no usable fallback model is available. ${message.errorMessage ?? ""}`,
 			);
@@ -7494,7 +7833,7 @@ export class AgentSession {
 		}
 		this._retryAttempt++;
 		if (this._retryAttempt > turnMaxRetries) {
-			finishTurn(this._retryAttempt - 1, message.errorMessage);
+			await finishTurn(this._retryAttempt - 1, message.errorMessage);
 			return undefined;
 		}
 		return degraded.delayMs;
@@ -7505,6 +7844,21 @@ export class AgentSession {
 	 * @returns whether retry continuation started, was blocked by compaction, or was not handled
 	 */
 	private async _handleRetryableError(
+		message: AssistantMessage,
+		options: { hardErrorFallback?: boolean; sameModelRemint?: boolean } = {},
+	): Promise<"continued" | "blocked" | "not-handled" | "cancelled"> {
+		try {
+			return await this._handleRetryableErrorOwned(message, options);
+		} catch (error) {
+			this._sessionLogger.warn("retry_fallback_handler_failed", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+			this._resolveRetry();
+			return "not-handled";
+		}
+	}
+
+	private async _handleRetryableErrorOwned(
 		message: AssistantMessage,
 		options: { hardErrorFallback?: boolean; sameModelRemint?: boolean } = {},
 	): Promise<"continued" | "blocked" | "not-handled" | "cancelled"> {
@@ -7559,14 +7913,7 @@ export class AgentSession {
 				errorMessage,
 			});
 			if (!switchedFallback) {
-				const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-				if (exhaustedChainKey) {
-					this._emit({
-						type: "retry_fallback_exhausted",
-						chainKey: exhaustedChainKey,
-						lastError: errorMessage,
-					});
-				}
+				this._emitRetryFallbackExhausted(errorMessage);
 				this._resolveRetry();
 				return "not-handled";
 			}
@@ -7591,14 +7938,7 @@ export class AgentSession {
 			}
 			switchedFallback = await this._retryFallback.tryFallback("refusal", {});
 			if (!switchedFallback) {
-				const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-				if (exhaustedChainKey) {
-					this._emit({
-						type: "retry_fallback_exhausted",
-						chainKey: exhaustedChainKey,
-						lastError: errorMessage,
-					});
-				}
+				this._emitRetryFallbackExhausted(errorMessage);
 				if (this._retryAttempt > 0) {
 					this._emit({
 						type: "auto_retry_end",
@@ -7644,14 +7984,7 @@ export class AgentSession {
 					if (switchedFallback) {
 						this._retryAttempt = 1;
 					} else {
-						const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-						if (exhaustedChainKey) {
-							this._emit({
-								type: "retry_fallback_exhausted",
-								chainKey: exhaustedChainKey,
-								lastError: errorMessage,
-							});
-						}
+						this._emitRetryFallbackExhausted(errorMessage);
 						this._emit({
 							type: "auto_retry_end",
 							success: false,
@@ -7676,7 +8009,12 @@ export class AgentSession {
 					if (switchedFallback) {
 						this._retryAttempt = 1;
 					} else {
-						const degradedDelayMs = this._degradeRateLimitedWithoutFallback(tier, hintMs, message, errorMessage);
+						const degradedDelayMs = await this._degradeRateLimitedWithoutFallback(
+							tier,
+							hintMs,
+							message,
+							errorMessage,
+						);
 						if (degradedDelayMs === undefined) return "not-handled";
 						hintTierDelayMs = degradedDelayMs;
 					}
@@ -7691,14 +8029,7 @@ export class AgentSession {
 						if (switchedFallback) {
 							this._retryAttempt = 1;
 						} else {
-							const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-							if (exhaustedChainKey) {
-								this._emit({
-									type: "retry_fallback_exhausted",
-									chainKey: exhaustedChainKey,
-									lastError: errorMessage,
-								});
-							}
+							this._emitRetryFallbackExhausted(errorMessage);
 							this._emit({
 								type: "auto_retry_end",
 								success: false,
@@ -7736,14 +8067,7 @@ export class AgentSession {
 							if (switchedFallback) {
 								this._retryAttempt = 1;
 							} else {
-								const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-								if (exhaustedChainKey) {
-									this._emit({
-										type: "retry_fallback_exhausted",
-										chainKey: exhaustedChainKey,
-										lastError: errorMessage,
-									});
-								}
+								this._emitRetryFallbackExhausted(errorMessage);
 								this._emit({
 									type: "auto_retry_end",
 									success: false,
@@ -7773,7 +8097,12 @@ export class AgentSession {
 							this._armProbeBackForDemotedSelector(selector, remainingHintMs);
 						}
 					} else {
-						const degradedDelayMs = this._degradeRateLimitedWithoutFallback(tier, hintMs, message, errorMessage);
+						const degradedDelayMs = await this._degradeRateLimitedWithoutFallback(
+							tier,
+							hintMs,
+							message,
+							errorMessage,
+						);
 						if (degradedDelayMs === undefined) return "not-handled";
 						hintTierDelayMs = degradedDelayMs;
 					}
@@ -7791,14 +8120,7 @@ export class AgentSession {
 					// The new model receives a fresh retry budget; the failed model does not.
 					this._retryAttempt = 1;
 				} else {
-					const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-					if (exhaustedChainKey) {
-						this._emit({
-							type: "retry_fallback_exhausted",
-							chainKey: exhaustedChainKey,
-							lastError: errorMessage,
-						});
-					}
+					this._emitRetryFallbackExhausted(errorMessage);
 					this._emit({
 						type: "auto_retry_end",
 						success: false,
@@ -7837,6 +8159,7 @@ export class AgentSession {
 				}
 			}
 			if (!switchedFallback) {
+				this._emitRetryFallbackExhausted(errorMessage);
 				this._emit({
 					type: "auto_retry_end",
 					success: false,

@@ -825,6 +825,42 @@ pi.on("thinking_level_select", async (event, ctx) => {
 
 Use this to update extension UI when `pi.setThinkingLevel()`, model changes, or built-in thinking-level controls change the active thinking level.
 
+#### retry_fallback_exhausted
+
+Fired when retry fallback has a configured chain but no remaining rung can
+continue the parent turn. `exhaustionReason` distinguishes a spent chain from
+one whose candidates cannot hold the live conversation.
+
+```typescript
+pi.on("retry_fallback_exhausted", (event, ctx) => {
+  if (event.exhaustionReason !== "no-context-compatible-candidate") return;
+
+  const candidate = event.rejectedCandidates.find(
+    (rejected) => rejected.reason === "context-unusable",
+  );
+  ctx.ui.notify(
+    `Fresh-context recovery is available through ${candidate?.selector ?? event.chainKey}`,
+    "warning",
+  );
+});
+```
+
+The payload includes `sessionId`, `chainKey`, `from`, `lastError`,
+`lastErrorSha256` (the full pre-truncation error digest),
+`exhaustionReason`, and `rejectedCandidates`. Diagnostics delivered to
+extensions are bounded to 64 KiB of serialized UTF-8: at most 8,192 bytes for
+the terminal error, 16 rejected candidates, 512 bytes per session or
+selector-bearing field, and 2,048 bytes per candidate error.
+Consumers can correlate the bounded `lastError` to a persisted failed message
+by hashing that message's complete error and comparing `lastErrorSha256`.
+The original session event remains available to TUI/RPC listeners with its
+existing `{ chainKey, lastError }` shape.
+
+This hook is notification-only. Senpi starts handlers without waiting for them,
+so a slow or non-settling recovery extension cannot block retry cleanup. An
+extension that delegates should enforce its own exactly-once ownership and
+return quickly after starting background work.
+
 ### Tool Events
 
 #### tool_call

@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
+import type { ModelUsabilityBudgetProjection } from "../extensions/builtin/compaction/model-usability-budget.ts";
 import {
 	baseSelector,
 	candidatesAfter,
@@ -28,6 +29,42 @@ export interface ActiveFallbackState {
 
 type FallbackReason = "transient" | "refusal" | "hard-error" | "billing";
 
+/**
+ * Why a chain rung never became the active model. Every reason here is a verdict
+ * about the rung itself, so the walk may move on; a failure that is not one of
+ * these is a defect and propagates instead of silently burning candidates.
+ */
+export type FallbackRejectionReason =
+	| "unknown"
+	| "self"
+	| "tried"
+	| "suppressed"
+	| "unauthenticated"
+	| "context-unusable";
+
+export interface FallbackRejectedCandidate {
+	readonly selector: string;
+	readonly reason: FallbackRejectionReason;
+	/** Budget arithmetic behind a `context-unusable` verdict, when it was available. */
+	readonly projection?: ModelUsabilityBudgetProjection;
+	/** Failure text when the verdict came from a rejected switch rather than the preflight. */
+	readonly error?: string;
+}
+
+export type CandidateUsability =
+	| { readonly usable: true }
+	| { readonly usable: false; readonly projection?: ModelUsabilityBudgetProjection };
+
+export type FallbackExhaustionReason = "candidates-exhausted" | "no-context-compatible-candidate";
+
+export interface FallbackExhaustion {
+	readonly chainKey: string;
+	/** Selector that was active when the walk ran out of rungs. */
+	readonly from: string;
+	readonly reason: FallbackExhaustionReason;
+	readonly rejectedCandidates: readonly FallbackRejectedCandidate[];
+}
+
 interface FallbackSettings {
 	modelFallback: boolean;
 	chains: Readonly<Record<string, readonly string[]>>;
@@ -45,6 +82,22 @@ export interface RetryFallbackControllerDeps {
 	};
 	cooldowns: SelectorCooldowns;
 	logger: FallbackLogger;
+	/**
+	 * Capacity preflight for one candidate against the live conversation. Only a
+	 * definitive `false` removes the rung; omitting the probe entirely leaves the
+	 * chain exactly as wide as it is without one. The probe must be total - a failure
+	 * inside it propagates rather than being read as "candidate is fine".
+	 */
+	isCandidateUsable?(model: Model<Api>): CandidateUsability;
+	/**
+	 * Classifies a failure thrown by {@link switchModel}. A returned projection means
+	 * the target was refused on capacity grounds after `model_select` ran, which the
+	 * preflight cannot see; the walk then treats the rung as spent. Returning
+	 * `undefined` means the failure is not a verdict about this candidate (an
+	 * extension defect, an aborted switch), and the controller rethrows it rather
+	 * than quietly consuming the rest of the chain.
+	 */
+	classifySwitchFailure?(error: unknown): { projection?: ModelUsabilityBudgetProjection } | undefined;
 	switchModel(model: Model<Api>, thinking: ThinkingLevel, reason: "fallback" | "fallback-revert"): Promise<void>;
 	emit(
 		event:
@@ -64,8 +117,13 @@ export interface RetryFallbackControllerDeps {
 export class RetryFallbackController {
 	private readonly deps: RetryFallbackControllerDeps;
 	private readonly triedSelectors = new Set<string>();
+	// Turn-scoped rejection ledger, keyed by selector so a rung re-walked on a later
+	// error is recorded once. First write wins: the reason that first removed a rung
+	// explains it better than the "tried" skip a subsequent walk would overwrite it with.
+	private readonly rejectedCandidates = new Map<string, FallbackRejectedCandidate>();
 	private state: ActiveFallbackState | undefined;
 	private lastExhaustedChainKey: string | undefined;
+	private lastExhaustion: FallbackExhaustion | undefined;
 	// Content-keyed memo of canonicalizeFallbackChains. Provider-error handling calls
 	// canTryFallback/nextCandidate several times per error; without this each call
 	// re-expands bare selectors and re-probes registry eligibility over the full
@@ -87,9 +145,20 @@ export class RetryFallbackController {
 		return this.lastExhaustedChainKey;
 	}
 
+	/**
+	 * Structured detail for the chain reported by {@link exhaustedChainKey}. Kept
+	 * separate from that getter so the existing string-only consumers keep working
+	 * and a caller that stubs one never silently reads stale detail from the other.
+	 */
+	get exhaustion(): FallbackExhaustion | undefined {
+		return this.lastExhaustion;
+	}
+
 	resetTurn(): void {
 		this.triedSelectors.clear();
+		this.rejectedCandidates.clear();
 		this.lastExhaustedChainKey = undefined;
+		this.lastExhaustion = undefined;
 	}
 
 	clear(): void {
@@ -200,33 +269,60 @@ export class RetryFallbackController {
 		failure: { errorMessage?: string; retryAfterMs?: number },
 	): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();
-		const candidate = this.nextCandidate();
-		if (!current || !candidate) return false;
+		if (!current) return false;
+		let candidate = this.nextCandidate();
+		if (!candidate) return false;
 		const currentBase = formatSelector(current.model);
 		if (reason === "transient" || reason === "hard-error" || reason === "billing") {
 			this.deps.cooldowns.note(currentBase, failure);
 			this.deps.logger.info("cooldown_noted", { selector: currentBase, errorMessage: failure.errorMessage });
 		}
 
-		const thinking = this.selectThinking(candidate.selector, candidate.model, current.thinkingLevel);
-		await this.deps.switchModel(candidate.model, thinking, "fallback");
-		const from = formatSelector(current.model);
-		const to = formatSelector(candidate.model);
-		const prior = this.state;
-		const pinnedByRefusal = prior?.pinnedByRefusal === true || reason === "refusal";
-		const pinnedByBilling = prior?.pinnedByBilling === true || reason === "billing";
-		this.state = {
-			chainKey: candidate.chainKey,
-			originalSelector: prior?.originalSelector ?? from,
-			originalThinkingLevel: prior?.originalThinkingLevel ?? current.thinkingLevel,
-			lastAppliedThinkingLevel: thinking,
-			pinnedByRefusal,
-			pinnedByBilling,
-			pinned: pinnedByRefusal || pinnedByBilling,
-		};
-		this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason });
-		this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason });
-		return true;
+		// Applying a model can fail after the point where a capacity preflight can see
+		// it: a `model_select` handler may grow the system prompt or toolset past the
+		// target's budget. The switch owner restores itself before rethrowing, so the
+		// walk simply moves to the next rung. Termination is guaranteed - every visited
+		// rung is added to `triedSelectors`, which `nextCandidate` skips.
+		while (candidate) {
+			const thinking = this.selectThinking(candidate.selector, candidate.model, current.thinkingLevel);
+			try {
+				await this.deps.switchModel(candidate.model, thinking, "fallback");
+			} catch (error) {
+				const rejection = this.deps.classifySwitchFailure?.(error);
+				// Not a capacity verdict about this rung: surface it. Swallowing arbitrary
+				// failures here would spend the whole chain on one broken extension.
+				if (!rejection) throw error;
+				const selector = baseSelector(candidate.selector);
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				this.recordRejection({
+					selector,
+					reason: "context-unusable",
+					...(rejection.projection === undefined ? {} : { projection: rejection.projection }),
+					error: errorMessage,
+				});
+				this.deps.logger.warn("fallback_switch_rejected", { candidate: selector, errorMessage });
+				candidate = this.nextCandidate();
+				continue;
+			}
+			const from = formatSelector(current.model);
+			const to = formatSelector(candidate.model);
+			const prior = this.state;
+			const pinnedByRefusal = prior?.pinnedByRefusal === true || reason === "refusal";
+			const pinnedByBilling = prior?.pinnedByBilling === true || reason === "billing";
+			this.state = {
+				chainKey: candidate.chainKey,
+				originalSelector: prior?.originalSelector ?? from,
+				originalThinkingLevel: prior?.originalThinkingLevel ?? current.thinkingLevel,
+				lastAppliedThinkingLevel: thinking,
+				pinnedByRefusal,
+				pinnedByBilling,
+				pinned: pinnedByRefusal || pinnedByBilling,
+			};
+			this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason });
+			this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason });
+			return true;
+		}
+		return false;
 	}
 
 	private nextCandidate(
@@ -253,37 +349,68 @@ export class RetryFallbackController {
 		for (const raw of candidatesAfter(entries, formatSelector(current.model, current.thinkingLevel))) {
 			const selector = parseFallbackSelector(raw, this.deps.registry);
 			if (!selector) {
-				this.skip(raw, "unknown");
+				this.skip(raw, raw, "unknown", reserve);
 				continue;
 			}
 			if (selector.provider === current.model.provider && selector.id === current.model.id) {
-				this.skip(raw, "self");
+				this.skip(raw, baseSelector(selector), "self", reserve);
 				continue;
 			}
 			const base = baseSelector(selector);
 			if (this.triedSelectors.has(base)) {
-				this.skip(raw, "tried");
+				this.skip(raw, base, "tried", reserve);
 				continue;
 			}
 			if (this.deps.cooldowns.isSuppressed(base)) {
-				this.skip(raw, "suppressed");
+				this.skip(raw, base, "suppressed", reserve);
 				continue;
 			}
 			if (!this.deps.isAuthAvailable(selector.provider)) {
-				this.skip(raw, "unauthenticated");
+				this.skip(raw, base, "unauthenticated", reserve);
 				continue;
 			}
 			const model = this.deps.registry.find(selector.provider, selector.id);
 			if (!model) {
-				this.skip(raw, "unknown");
+				this.skip(raw, base, "unknown", reserve);
+				continue;
+			}
+			// Capacity preflight: a rung whose window cannot hold the live conversation
+			// would only trade one dead lane for another, so keep walking the chain.
+			const usability = this.assessUsability(model);
+			if (usability && !usability.usable) {
+				this.skip(raw, base, "context-unusable", reserve, { projection: usability.projection });
 				continue;
 			}
 			if (reserve) this.triedSelectors.add(base);
 			return { chainKey, selector, model };
 		}
 		this.lastExhaustedChainKey = chainKey;
-		if (reserve) this.deps.logger.info("candidates_exhausted", { chainKey });
+		const rejectedCandidates = [...this.rejectedCandidates.values()];
+		this.lastExhaustion = {
+			chainKey,
+			from: formatSelector(current.model),
+			reason: rejectedCandidates.some((rejected) => rejected.reason === "context-unusable")
+				? "no-context-compatible-candidate"
+				: "candidates-exhausted",
+			rejectedCandidates,
+		};
+		if (reserve) this.deps.logger.info("candidates_exhausted", { chainKey, reason: this.lastExhaustion.reason });
 		return undefined;
+	}
+
+	/**
+	 * Normalizes the injected probe's verdict. The probe is total: only its absence is
+	 * handled here, and a failure inside it propagates, because a projection that
+	 * cannot be computed is a defect rather than a verdict about this candidate.
+	 */
+	private assessUsability(model: Model<Api>): CandidateUsability | undefined {
+		if (!this.deps.isCandidateUsable) return undefined;
+		return this.deps.isCandidateUsable(model);
+	}
+
+	private recordRejection(rejected: FallbackRejectedCandidate): void {
+		if (this.rejectedCandidates.has(rejected.selector)) return;
+		this.rejectedCandidates.set(rejected.selector, rejected);
 	}
 
 	private selectThinking(
@@ -298,7 +425,25 @@ export class RetryFallbackController {
 		return clampThinkingLevel(model, requested);
 	}
 
-	private skip(candidate: string, skipReason: string): void {
+	/**
+	 * Single funnel for every reason a rung is passed over. Context incompatibility
+	 * is retained during admission probes so the session can route the otherwise
+	 * terminal error through the extension-visible exhaustion path. Other reasons
+	 * only enter the ledger during the reserving walk.
+	 */
+	private skip(
+		candidate: string,
+		selector: string,
+		skipReason: FallbackRejectionReason,
+		reserve: boolean,
+		detail?: { projection?: ModelUsabilityBudgetProjection },
+	): void {
 		this.deps.logger.debug("candidate_skipped", { candidate, skipReason });
+		if (!reserve && skipReason !== "context-unusable") return;
+		this.recordRejection(
+			detail?.projection === undefined
+				? { selector, reason: skipReason }
+				: { selector, reason: skipReason, projection: detail.projection },
+		);
 	}
 }

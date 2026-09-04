@@ -58,6 +58,7 @@ import type { KeybindingsManager } from "../keybindings.ts";
 import type { CustomMessage } from "../messages.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { InitialModelProvenance, ScopedModel } from "../model-resolver.ts";
+import type { FallbackExhaustionReason, FallbackRejectedCandidate } from "../retry-fallback/controller.ts";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
@@ -1156,6 +1157,28 @@ export interface ThinkingLevelSelectEvent {
 	previousLevel: ThinkingLevel;
 }
 
+/**
+ * Fired when the fallback chain for the active model runs out of usable rungs, so
+ * the turn is about to fail on the parent model. Notification-only: an extension
+ * that can route the work elsewhere (a subagent on another model) uses this to
+ * decide, and `rejectedCandidates` tells it whether the chain was spent or merely
+ * too small for the current conversation.
+ */
+export interface RetryFallbackExhaustedEvent {
+	type: "retry_fallback_exhausted";
+	sessionId: string;
+	/** Chain whose rungs are spent, in canonical `provider/model[:thinking]` form. */
+	chainKey: string;
+	/** Selector that was active when the chain ran out, as `provider/model`. */
+	from: string;
+	/** Terminal provider error that ended the walk. */
+	lastError: string;
+	/** SHA-256 of the complete terminal error, before `lastError` byte bounding. */
+	lastErrorSha256: string;
+	exhaustionReason: FallbackExhaustionReason;
+	rejectedCandidates: readonly FallbackRejectedCandidate[];
+}
+
 // ============================================================================
 // User Bash Events
 // ============================================================================
@@ -1434,6 +1457,7 @@ export type ExtensionEvent =
 	| ModelSelectEvent
 	| SystemPromptChangeEvent
 	| ThinkingLevelSelectEvent
+	| RetryFallbackExhaustedEvent
 	| UserBashEvent
 	| InputEvent
 	| InputDispositionEvent
@@ -1667,6 +1691,7 @@ export interface ExtensionAPI {
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>): void;
 	on(event: "system_prompt_change", handler: ExtensionHandler<SystemPromptChangeEvent>): void;
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
+	on(event: "retry_fallback_exhausted", handler: ExtensionHandler<RetryFallbackExhaustedEvent>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
