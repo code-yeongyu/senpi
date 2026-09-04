@@ -1,3 +1,20 @@
+# changes
+
+## Placeholder credentials no longer hijack image-generation auth (2026-09-04)
+
+### What changed
+
+- `auth.ts` treats a `SK-SENTINEL-DO-NOT-LOG*` value as absent rather than as a credential, in both the stored-`openai` branch (`credentialParts`) and the `OPENAI_API_KEY` env branch. Resolution falls through to the gateway chain, and with no gateway the tool reports "not configured" instead of pinning `api.openai.com`.
+
+### Why
+
+- `~/.omo/agent/auth.json` on Jobdori carries seeded placeholders `SK-SENTINEL-DO-NOT-LOG-1/-2`. The `-2` entry sits under provider `openai`, so step 1 of the chain accepted it, pinned `https://api.openai.com/v1`, and every `gpt-image-2` request answered 401 `Incorrect API key provided: SK-SENTI***OG-2` while a healthy Quotio gateway (`openai-quotio`, verified 200 + real PNG) sat unused. Reported twice on 2026-09-04; the same symptom was "fixed" on 2026-08-21 by deleting the entry, and it came back.
+- Deleting the entry is not a fix: a placeholder is not a credential, and the resolver is the only place that can tell the difference before a request is sent.
+
+### Why this cannot be expressed externally
+
+- The chain runs inside the builtin extension before any request; a caller cannot distinguish "stored openai key" from "stored placeholder" without duplicating the resolver.
+
 # imagegen builtin — changes
 
 ## Bun-compiled skill asset (2026-08-27)
