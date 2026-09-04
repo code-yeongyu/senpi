@@ -1247,6 +1247,10 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 					clearInterval(heartbeatTimer);
 					heartbeatTimer = null;
 				}
+				if (streamHealthTimer) {
+					clearTimeout(streamHealthTimer);
+					streamHealthTimer = null;
+				}
 				h2Request?.close();
 				h2Client?.close();
 				h2Request = null;

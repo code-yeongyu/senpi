@@ -4,7 +4,7 @@
 
 ### What changed
 
-- `packages/ai/vitest.config.ts` uses the forks pool with two workers and a bounded teardown timeout when CI is running.
+- `packages/ai/vitest.config.ts` uses the forks pool with two workers and a bounded teardown timeout when CI is running; `packages/ai/src/api/cursor-agent.ts` clears the stream-health timer when each attempt ends.
 
 ### Why
 
