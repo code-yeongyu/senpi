@@ -27,6 +27,24 @@
 
 - `shell.ts` import of `spawn` vs `spawnSync`, and the win32 branch of `killProcessTree`.
 
+## Branded build labels never advertise a bogus engine update (2026-09-04)
+
+### What changed
+
+- `packages/coding-agent/src/utils/version-check.ts`: `isNewerPackageVersion` returns `false` for version pairs it cannot order instead of falling back to string inequality, so branded build labels (for example `omo@c6e7dd7 2026-09-04 10:17 +09:00`) stop advertising an engine update on every startup.
+
+### Why
+
+- A branded distribution injects a free-form `SENPI_BRAND.displayVersion` that no version parser can order against a registry CalVer. The old inequality fallback made every such pair look "newer", showing a false update toast.
+
+### Why an extension could not handle it
+
+- The comparison lives in the engine's own update-check utility; extensions cannot replace its semantics.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `isNewerPackageVersion` in `packages/coding-agent/src/utils/version-check.ts`.
+
 ## Fix biome import-order format drift from #1230 (2026-08-31)
 
 ### What changed

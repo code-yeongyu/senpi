@@ -1,5 +1,20 @@
 # goal Extension Changes
 
+## 2026-09-04 - update_goal points at the audits instead of restating them
+
+### What changed
+
+- `tool-registration.ts`: the `update_goal` description drops the blocked-audit prose (live-resumption-channel test, three-consecutive-turn recurrence, hard/slow/uncertain caveat) that `buildContinuationPrompt` already teaches on every goal turn. It now states what the tool itself enforces: the audits decide, `complete` is rejected while todo tasks are open, `blocked` needs a reason, resume restarts the blocked audit, pause/resume are not this tool, and the final usage report follows a successful `complete`.
+- `prompt.ts`: the continuation prompt drops its own two repetitions - the trailing "do not call update_goal unless the audit is satisfied" line (already the first sentence of both audits) and the "repeating that the work is done" clause (already in the four-ways bullet).
+
+### Why
+
+- The same policy shipped twice per goal turn: 254 tokens in the tool schema and again inside the 819-token continuation prompt. Behavior is unchanged because the continuation prompt remains the single home of both audits and is present whenever a goal is active.
+
+### Expected merge conflict zones
+
+- LOW: the description string literal and the two removed lines in the prompt array.
+
 ## 2026-08-28 - RPC session resume does not deadlock on stopped-goal prompts
 
 ### What changed

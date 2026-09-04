@@ -65,40 +65,28 @@ describe("eval-only prose call forms", () => {
 	describe("bash timeout policy section", () => {
 		const defaults = { defaultSeconds: 1800, maxSeconds: 1800 };
 
-		it("routes waits to tool.monitor when the session routes through eval", () => {
-			const prompt = buildBashTimeoutPrompt(defaults, { foregroundWindowSeconds: 60, evalOnly: true });
+		it("names no monitor call form at all; the terminal section owns the wait routing", () => {
+			const prompt = buildBashTimeoutPrompt(defaults, { foregroundWindowSeconds: 60 });
 
-			expect(prompt).toContain("`tool.monitor({command, filter})`");
-			expect(prompt).not.toContain("`monitor({command, filter})`");
+			expect(prompt).not.toContain("monitor(");
+			expect(prompt).not.toContain("tool.bash(");
 		});
 
-		it("keeps the direct form when no eval tool is registered", () => {
-			const prompt = buildBashTimeoutPrompt(defaults, { foregroundWindowSeconds: 60, evalOnly: false });
+		it("keeps the kill-deadline contract", () => {
+			const prompt = buildBashTimeoutPrompt(defaults, { foregroundWindowSeconds: 60 });
 
-			expect(prompt).toContain("`monitor({command, filter})`");
-			expect(prompt).not.toContain("tool.monitor(");
+			expect(prompt).toContain("## Bash Tool Timeout Policy");
+			expect(prompt).toContain("process kill deadline");
+			expect(prompt).toContain("Default timeout: 1800s (30 min)");
+			expect(prompt).toContain("auto-detaches alive");
+			expect(prompt).not.toContain("tmux");
 		});
 
-		it("keeps the kill-deadline contract in both branches", () => {
-			for (const evalOnly of [true, false]) {
-				const prompt = buildBashTimeoutPrompt(defaults, { foregroundWindowSeconds: 60, evalOnly });
+		it("omits the detach rules when no PTY bash tool is live", () => {
+			const prompt = buildBashTimeoutPrompt(defaults, {});
 
-				expect(prompt, `evalOnly=${evalOnly}`).toContain("## Bash Tool Timeout Policy");
-				expect(prompt, `evalOnly=${evalOnly}`).toContain("process kill deadline");
-				expect(prompt, `evalOnly=${evalOnly}`).toContain("Default timeout: 1800s (30 min)");
-				expect(prompt, `evalOnly=${evalOnly}`).toContain("auto-detaches alive");
-				expect(prompt, `evalOnly=${evalOnly}`).toContain("bash_output` only for a midpoint peek");
-				expect(prompt, `evalOnly=${evalOnly}`).not.toContain("tmux");
-			}
-		});
-
-		it("omits the detach rules when no PTY bash tool is live, in both branches", () => {
-			for (const evalOnly of [true, false]) {
-				const prompt = buildBashTimeoutPrompt(defaults, { evalOnly });
-
-				expect(prompt, `evalOnly=${evalOnly}`).not.toContain("auto-detaches alive");
-				expect(prompt, `evalOnly=${evalOnly}`).toContain("## Bash Tool Timeout Policy");
-			}
+			expect(prompt).not.toContain("auto-detaches alive");
+			expect(prompt).toContain("## Bash Tool Timeout Policy");
 		});
 	});
 });

@@ -3,6 +3,22 @@
 Injects the default `timeout` into every `bash` call and appends the "Bash Tool Timeout Policy"
 section to the system prompt.
 
+## 2026-09-04 - Timeout policy stops restating the terminal waiting doctrine
+
+### What changed
+
+- `timeout.ts`: the wait-routing bullet (`monitor({command, filter})` vs foreground sleep/poll) and the `run_in_background`/`kill_bash` bullet are removed; the detach bullet keeps the window, `bash_id`, and kill-deadline facts and hands steering to the terminal session tools. `BashTimeoutPromptOptions.evalOnly` is gone with the only text that read it.
+- `index.ts`: stops resolving and passing `evalOnly`.
+- `test/suite/bash-timeout-extension.test.ts`: the byte-identical golden policy is re-pinned to the shortened text and the six pins for sentences that moved out are dropped.
+
+### Why
+
+- `TERMINAL_PROMPT_SECTION` already owns the monitor/notification model and the session tools, and both sections ship together whenever the PTY bash tool is live. The policy drops from 243 to 92 tokens while keeping every timeout fact it alone states.
+
+### Expected merge conflict zones
+
+- LOW: the template literal tail and the golden constant in the test.
+
 ## Timeout policy renders the reachable bash/monitor call form (2026-09-03)
 
 ### What changed

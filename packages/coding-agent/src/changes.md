@@ -19,6 +19,26 @@
 
 - LOW: `packages/coding-agent/src/index.ts` export list; MEDIUM: `packages/coding-agent/src/main.ts` startup ordering around services initialization.
 
+## Branded build labels render verbatim in startup UI (2026-09-04)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/version-label.ts` (new): `formatDisplayVersion` prefixes `v` only when the version string starts with a digit, so release semver/CalVer keep the `v` while branded build labels pass through verbatim.
+- `packages/coding-agent/src/modes/interactive/grok/welcome-card.ts`: both welcome card render sites use the same helper.
+- `packages/coding-agent/src/utils/version-check.ts`: `isNewerPackageVersion` returns `false` for version pairs it cannot order instead of falling back to string inequality.
+
+### Why
+
+- Branded distributions inject free-form `SENPI_BRAND.displayVersion` labels such as `omo@c6e7dd7 2026-09-04 10:17 +09:00`. The hardcoded `v` prefix rendered `OmO vomo@c6e7dd7 …`, and the string-inequality fallback advertised a bogus engine update on every branded startup.
+
+### Why an extension could not handle it
+
+- These are the engine's own startup chrome and update comparison. A branded repackage only injects the label string; it cannot alter render sites or comparison semantics inside the engine.
+
+### Expected merge conflict zones
+
+- LOW: the logo line in `packages/coding-agent/src/modes/interactive/interactive-mode.ts` and the two template literals in `packages/coding-agent/src/modes/interactive/grok/welcome-card.ts`.
+
 ## 2026-09-03 - Announce print-mode model fallback on stderr
 
 ### What changed

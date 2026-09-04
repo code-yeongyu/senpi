@@ -26,7 +26,7 @@ export function buildContinuationPrompt(goal: Goal): string {
 		"- Verify that any manifest, verifier, test suite, or green status actually covers the objective's requirements before relying on it; passing tests and substantial effort count only where they cover a requirement.",
 		"- Verify every todo task is completed or dropped; update_goal rejects completion while todo tasks remain open.",
 		"- Treat missing, incomplete, weakly verified, or uncovered requirements - and uncertainty - as not achieved: gather stronger evidence or continue the work.",
-		'The audit is decisive in both directions. If any requirement fails it, keep working instead of marking the goal complete. If every requirement passes it, call update_goal with status "complete" in this same turn - repeating that the work is done while leaving the goal active is exactly the failure this audit exists to prevent. After update_goal succeeds, report the final elapsed time to the user.',
+		'The audit is decisive in both directions: if any requirement fails it, keep working; if every requirement passes it, call update_goal with status "complete" in this same turn, then report the final elapsed time to the user.',
 		"",
 		"Blocked audit - run this before deciding the goal is blocked:",
 		"- Confirm first that no live resumption channel exists: no active monitor, subscription, background command, or child task can still deliver the change the objective is waiting on. While any such channel is live, end the turn and let it wake the goal - a pending delivery is a wait, not an impasse, and update_goal with status blocked is always the wrong call for it.",
@@ -34,8 +34,6 @@ export function buildContinuationPrompt(goal: Goal): string {
 		"- Require recurrence: the same blocking condition must have repeated for at least three consecutive goal turns, counting automatic continuations. On the first or second occurrence, try a different approach instead.",
 		"- Never block merely because the work is hard, slow, uncertain, or would benefit from clarification.",
 		'- Once both checks hold, call update_goal with status "blocked" and a specific reason instead of reporting the impasse while leaving the goal active.',
-		"",
-		"Do not call update_goal unless the completion audit or the blocked audit above is satisfied. Do not mark the goal complete merely because you are stopping work.",
 	].join("\n");
 }
 

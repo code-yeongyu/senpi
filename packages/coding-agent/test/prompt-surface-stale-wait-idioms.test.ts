@@ -82,10 +82,7 @@ function agentFacingSurfaces(): Array<{ name: string; line: number; text: string
 			`terminal/prompt.ts buildTerminalPromptSection(evalOnly=${evalOnly})`,
 			buildTerminalPromptSection({ evalOnly }),
 		),
-		...surfaceLines(
-			`bash-timeout prompt section (evalOnly=${evalOnly})`,
-			buildBashTimeoutPrompt(resolveBashTimeoutDefaults({}), { evalOnly }),
-		),
+		...surfaceLines("bash-timeout prompt section", buildBashTimeoutPrompt(resolveBashTimeoutDefaults({}))),
 		...terminalToolSurfaces(),
 	]);
 }

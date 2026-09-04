@@ -1,6 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
-import { isEvalOnlyRouting } from "../eval-only-routing.ts";
 import { resolveForegroundWindowSeconds } from "../terminal/tools/foreground-window.ts";
 
 import {
@@ -45,10 +44,10 @@ export default function bashTimeoutExtension(pi: ExtensionAPI): void {
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		const foregroundWindowSeconds = resolveWindow(ctx);
-		const prompt = buildBashTimeoutPrompt(defaults, {
-			...(foregroundWindowSeconds === undefined ? {} : { foregroundWindowSeconds }),
-			evalOnly: isEvalOnlyRouting(pi),
-		});
+		const prompt = buildBashTimeoutPrompt(
+			defaults,
+			foregroundWindowSeconds === undefined ? {} : { foregroundWindowSeconds },
+		);
 		return { systemPrompt: `${event.systemPrompt}${prompt}` };
 	});
 }
