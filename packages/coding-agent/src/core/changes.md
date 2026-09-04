@@ -6,7 +6,7 @@
 
 - `packages/coding-agent/src/core/lockfile-policy.ts`: `FILE_STORAGE_LOCK_OPTIONS` gains a bounded proper-lockfile retry schedule (8 retries, factor 2, 100ms..1,000ms, ~5.5s total = `FILE_STORAGE_LOCK_RETRY_BUDGET_MS`) under the unchanged 30s stale / 10s update window; a separate `FILE_STORAGE_SYNC_LOCK_BUDGET_MS = 1_000` bounds main-thread waiters; exhausted `ELOCKED` becomes `CredentialStoreBusyError` carrying the lock path and elapsed wait, and `isLockError()` centralises the ELOCKED test.
 - `packages/coding-agent/src/core/credential-pool/state-store.ts`: the credential-pool state lock waits through the async budget instead of failing on the first contender (`retries: 0`), and surfaces exhaustion as `CredentialStoreBusyError`.
-- `packages/coding-agent/src/core/auth-storage.ts`: the async auth lock uses the shared policy instead of its own 30s jittered loop; the sync path replaces the fixed 10 x 20ms spin with the 100/200/400ms Atomics.wait schedule truncated to the 1s sync budget.
+- `packages/coding-agent/src/core/auth-storage.ts`: the async auth lock keeps its OWN retry loop (proper-lockfile acquires with `retries: 0`) but bounds it with `FILE_STORAGE_LOCK_RETRY_BUDGET_MS`; delegating to proper-lockfile's internal `retries` was rejected because an `AbortSignal` would then only be observed after the whole 5.5s wait and `onCompromised` would not be rebound per attempt. The sync path replaces the fixed 10 x 20ms spin with the shared 100/200/400ms Atomics.wait schedule truncated to the 1s sync budget.
 - `packages/coding-agent/src/core/settings-manager.ts`: the sync settings lock adopts the same 1s sync schedule and error type.
 
 ### Why

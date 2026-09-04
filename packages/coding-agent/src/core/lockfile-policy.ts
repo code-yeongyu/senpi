@@ -17,6 +17,8 @@ export const FILE_STORAGE_LOCK_OPTIONS = {
 } as const;
 
 export const FILE_STORAGE_LOCK_RETRY_BUDGET_MS = 5_500;
+export const FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS = 100;
+export const FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS = 1_000;
 // Sync callers block the TUI main thread, so keep their bounded wait short despite Atomics.wait avoiding CPU spin.
 export const FILE_STORAGE_SYNC_LOCK_BUDGET_MS = 1_000;
 

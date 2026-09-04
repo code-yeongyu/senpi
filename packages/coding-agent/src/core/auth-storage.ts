@@ -36,6 +36,9 @@ import { stripBom } from "../utils/text.ts";
 import {
 	CredentialStoreBusyError,
 	FILE_STORAGE_LOCK_OPTIONS,
+	FILE_STORAGE_LOCK_RETRY_BUDGET_MS,
+	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
 	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
 	isLockError,
 } from "./lockfile-policy.ts";
@@ -117,7 +120,11 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 				if (waitedMs >= FILE_STORAGE_SYNC_LOCK_BUDGET_MS) {
 					throw new CredentialStoreBusyError(path, waitedMs, error);
 				}
-				const delayMs = Math.min(100 * 2 ** attempt, 1_000, FILE_STORAGE_SYNC_LOCK_BUDGET_MS - waitedMs);
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_SYNC_LOCK_BUDGET_MS - waitedMs,
+				);
 				attempt++;
 				const sleeper = new Int32Array(new SharedArrayBuffer(4));
 				Atomics.wait(sleeper, 0, 0, delayMs);
@@ -151,17 +158,37 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 	): Promise<() => Promise<void>> {
 		signal?.throwIfAborted();
 		const startedAt = Date.now();
-		try {
-			const release = await lockfile.lock(this.authPath, { ...FILE_STORAGE_LOCK_OPTIONS, onCompromised });
-			if (signal?.aborted) {
-				await release();
-				signal.throwIfAborted();
+		let attempt = 0;
+		// The retry loop stays here rather than delegating to proper-lockfile's own
+		// `retries`, so an abort is observed between attempts instead of after the
+		// whole budget, and `onCompromised` is rebound per attempt.
+		while (true) {
+			try {
+				const release = await lockfile.lock(this.authPath, {
+					...FILE_STORAGE_LOCK_OPTIONS,
+					retries: 0,
+					onCompromised,
+				});
+				if (signal?.aborted) {
+					await release();
+					signal.throwIfAborted();
+				}
+				return release;
+			} catch (error) {
+				signal?.throwIfAborted();
+				if (!isLockError(error)) throw error;
+				const waitedMs = Date.now() - startedAt;
+				if (waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) {
+					throw new CredentialStoreBusyError(this.authPath, waitedMs, error);
+				}
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs,
+				);
+				attempt++;
+				await raceWithAbortSignal(new Promise<void>((resolve) => setTimeout(resolve, delayMs)), signal);
 			}
-			return release;
-		} catch (error) {
-			signal?.throwIfAborted();
-			if (isLockError(error)) throw new CredentialStoreBusyError(this.authPath, Date.now() - startedAt, error);
-			throw error;
 		}
 	}
 
