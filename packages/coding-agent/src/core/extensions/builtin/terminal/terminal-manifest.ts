@@ -9,19 +9,30 @@ import type { SessionManager } from "../../../session-manager.ts";
 import { createSidecarStore, type SidecarStore } from "../../../session-sidecar-store.ts";
 import type { MonitorSnapshotEntry } from "./monitor-registry.ts";
 import { parseTerminalManifest } from "./restore.ts";
+import { DURABLE_MONITOR_EXPIRY_MS } from "./shared.ts";
 
 export const TERMINAL_MANIFEST_VERSION = 1;
 /** Minimum debounce for checkpoint writes; a burst inside this window collapses to one write. */
 export const TERMINAL_MANIFEST_CHECKPOINT_DEBOUNCE_MS = 30_000;
+/**
+ * Re-exported so manifest consumers read one durability deadline. The value lives in
+ * `shared.ts` with the rest of the terminal caps; there is exactly one definition of it.
+ */
+export { DURABLE_MONITOR_EXPIRY_MS };
 export type TerminalManifestSession = Pick<SessionManager, "getSessionDir" | "getSessionId">;
 export type MonitorRuntimeKind = "command" | "file";
 export type MonitorDurabilityClass = "ephemeral" | "restartable-command" | "checkpointed-file";
-/** File-monitor checkpoint persisted by the writer: the registry's live identity tuple. */
+/**
+ * File-monitor checkpoint persisted by the writer: the registry's live identity tuple. `digest`
+ * is required — without it a same-size, same-mtime rewrite is undetectable across a restart.
+ */
 export interface TerminalManifestCheckpoint {
 	readonly dev: number;
 	readonly ino: number;
 	readonly size: number;
 	readonly mtimeMs: number;
+	readonly digest: string;
+	readonly present: boolean;
 }
 
 export interface ManifestMonitor {
@@ -79,6 +90,8 @@ export interface FileMonitorSpec {
 	readonly timeoutMs: number;
 	readonly cwd: string;
 	readonly approvedParent?: string;
+	/** Persistent file watches are the durable `checkpointed-file` class; one-shot ones stay ephemeral. */
+	readonly persistent: boolean;
 }
 export type MonitorSpec = CommandMonitorSpec | FileMonitorSpec;
 
@@ -120,6 +133,37 @@ export class TerminalManifestWriter {
 	recordRegister(registration: MonitorRegistration): Promise<void> {
 		this.#entries.set(registration.monitorId, this.#entryFor(registration));
 		return this.#persist();
+	}
+
+	/**
+	 * Re-adopt an entry a restore handler just brought back to life, so THIS generation's
+	 * in-memory map owns it again. Without this, the writer starts every generation empty and
+	 * the next persist (a register, a background start, a checkpoint flush, recordShutdown)
+	 * rewrites the manifest WITHOUT the restored monitors — the monitor survives one restart
+	 * and is erased on the second.
+	 *
+	 * Every persisted field is preserved verbatim, notably `createdAt` and `expiresAt`: the
+	 * durability deadline is set once at registration and a restore NEVER extends it. Only
+	 * `suspended` is cleared, because the monitor is live again in this process.
+	 *
+	 * Deliberately does NOT write: re-adoption is not a state transition, it is recovery of
+	 * state already on disk. The entry reaches the file again on the restore's own next
+	 * persist (the file class's checkpoint, any later transition, or recordShutdown), so a
+	 * restart costs zero extra writes and the write-on-transition invariant holds.
+	 */
+	adoptRestored(entry: ManifestMonitor): void {
+		this.#entries.set(entry.monitorId, { ...entry, suspended: false });
+	}
+
+	/**
+	 * Live durable-monitor count for admission control: entries that survive a restart.
+	 * Ephemeral entries are never counted, so any number of one-shot watches can coexist
+	 * with the durable ones.
+	 */
+	durableCount(): number {
+		let count = 0;
+		for (const entry of this.#entries.values()) if (entry.durabilityClass !== "ephemeral") count += 1;
+		return count;
 	}
 
 	/**
@@ -205,13 +249,19 @@ export class TerminalManifestWriter {
 
 	#entryFor({ monitorId, spec }: MonitorRegistration): ManifestMonitor {
 		const createdAt = this.#now();
+		// A spec that omits `persistent` is ephemeral: the persisted field is a boolean the
+		// strict parse rejects as undefined, so coerce here rather than trusting the caller.
+		const persistent = spec.persistent === true;
 		return {
 			monitorId,
 			sessionId: this.#sessionId,
 			description: spec.description,
 			runtimeKind: spec.kind,
-			durabilityClass:
-				spec.kind === "file" ? "checkpointed-file" : spec.persistent ? "restartable-command" : "ephemeral",
+			durabilityClass: !persistent
+				? "ephemeral"
+				: spec.kind === "file"
+					? "checkpointed-file"
+					: "restartable-command",
 			command: spec.kind === "command" ? spec.command : undefined,
 			path: spec.kind === "file" ? spec.path : undefined,
 			event: spec.kind === "file" ? spec.event : undefined,
@@ -219,8 +269,11 @@ export class TerminalManifestWriter {
 			cwd: spec.cwd,
 			approvedParent: spec.kind === "file" ? spec.approvedParent : undefined,
 			createdAt,
-			expiresAt: spec.kind === "file" ? createdAt + spec.timeoutMs : null,
-			persistent: spec.kind === "command" ? spec.persistent : false,
+			// Absolute durability deadline for every restart-surviving entry, set once here and
+			// never extended by a restore or a rearm. An ephemeral entry dies with the process,
+			// so its runtime deadline stays the registry's business, not the manifest's.
+			expiresAt: persistent ? createdAt + DURABLE_MONITOR_EXPIRY_MS : null,
+			persistent,
 			suspended: false,
 			lastCheckpoint: null,
 			deliveryPaused: false,

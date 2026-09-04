@@ -13,6 +13,7 @@ import {
 	type ManifestMonitor,
 	TERMINAL_MANIFEST_VERSION,
 	type TerminalManifest,
+	type TerminalManifestCheckpoint,
 } from "./terminal-manifest.ts";
 
 export class InvalidTerminalManifestError extends InvalidSidecarStoreError {
@@ -46,6 +47,11 @@ function num(raw: Raw, field: string): number {
 	return raw[field];
 }
 
+function digest(raw: Raw, field: string): string {
+	if (typeof raw[field] !== "string") invalid(`field ${field} must be a string`);
+	return raw[field];
+}
+
 function bool(raw: Raw, field: string): boolean {
 	if (!isBool(raw[field])) invalid(`field ${field} must be a boolean`);
 	return raw[field];
@@ -62,9 +68,18 @@ function oneOf<T extends string>(values: readonly T[], raw: Raw, field: string):
 	return value as T;
 }
 
-function checkpoint(raw: unknown): { dev: number; ino: number; size: number; mtimeMs: number } {
+function checkpoint(raw: unknown): TerminalManifestCheckpoint {
 	if (!isObj(raw)) invalid("field lastCheckpoint must be an object");
-	return { dev: num(raw, "dev"), ino: num(raw, "ino"), size: num(raw, "size"), mtimeMs: num(raw, "mtimeMs") };
+	return {
+		dev: num(raw, "dev"),
+		ino: num(raw, "ino"),
+		size: num(raw, "size"),
+		mtimeMs: num(raw, "mtimeMs"),
+		// A checkpoint without a digest cannot detect a same-size, same-mtime rewrite, so the field is
+		// required — but an absent file legitimately checkpoints an empty digest, so "" is valid.
+		digest: digest(raw, "digest"),
+		present: bool(raw, "present"),
+	};
 }
 
 function fireWindow(raw: unknown): { startMs: number; count: number } {
@@ -120,6 +135,8 @@ export type RestoreOutcome = "restored" | "lost" | "muted" | "attachedElsewhere"
 
 export interface RestoreHandlerResult {
 	readonly outcome: RestoreOutcome;
+	/** Why a durable monitor could not be restored; diagnostic only, never part of the digest counts. */
+	readonly reason?: string;
 }
 
 export type RestoreHandler = (monitor: ManifestMonitor) => RestoreHandlerResult | Promise<RestoreHandlerResult>;
@@ -127,6 +144,27 @@ export type RestoreHandler = (monitor: ManifestMonitor) => RestoreHandlerResult 
 export interface RestoreHandlers {
 	readonly "restartable-command": RestoreHandler;
 	readonly "checkpointed-file": RestoreHandler;
+}
+
+/** The registry surface a restore handler needs to re-apply a persisted mute. */
+export interface PersistedMuteRegistry {
+	pause(ids: readonly string[]): string[];
+}
+
+/**
+ * Re-apply a persisted `deliveryPaused` mute to a freshly restored monitor and report the
+ * outcome it contributes to the digest. The mute MUST be applied by the FRESH runtime id
+ * (bash_N/watch_N) the restore just allocated: `MonitorRegistry.pause` resolves records by
+ * runtime id only, so passing the persisted `mon_` id silently no-ops and the mute is lost.
+ */
+export function reapplyPersistedMute(
+	registry: PersistedMuteRegistry,
+	monitor: Pick<ManifestMonitor, "deliveryPaused">,
+	runtimeId: string,
+): RestoreOutcome {
+	if (!monitor.deliveryPaused) return "restored";
+	registry.pause([runtimeId]);
+	return "muted";
 }
 
 /** Stub durability handlers: every durable monitor is reported lost until later phases land. */
@@ -170,7 +208,8 @@ export async function restoreTerminalState(options: RestoreTerminalStateOptions)
 	const now = (options.now ?? Date.now)();
 	const handlers: RestoreHandlers = { ...stubRestoreHandlers, ...options.handlers };
 	for (const monitor of state.monitors) {
-		if (monitor.expiresAt !== null && monitor.expiresAt < now) {
+		// At the deadline the entry is already expired: the handler must not see it at all.
+		if (monitor.expiresAt !== null && monitor.expiresAt <= now) {
 			digest.expired += 1;
 			continue;
 		}

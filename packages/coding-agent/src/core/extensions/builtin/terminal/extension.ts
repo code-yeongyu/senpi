@@ -6,13 +6,22 @@ import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
 import { isEvalOnlyRouting } from "../eval-only-routing.ts";
 import { TERMINAL_MONITOR_STATE_EVENT, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
+import { createRestartableCommandHandler } from "./durable-command.ts";
+import { createCheckpointedFileRestoreHandler } from "./durable-file.ts";
 import { acquireTerminalLease, releaseTerminalLease } from "./manifest-lease.ts";
 import { MonitorNotifier } from "./monitor-notify.ts";
 import { MONITOR_STATUS_KEY } from "./monitor-status.ts";
 import { MonitorStatusTicker } from "./monitor-status-ticker.ts";
 import { getTerminalNotificationDelivery, TerminalNotifier } from "./notify.ts";
 import { buildTerminalPromptSection } from "./prompt.ts";
-import { type RestoreDigest, type RestoreHandlers, type RestoreOutcome, restoreTerminalState } from "./restore.ts";
+import {
+	type RestoreDigest,
+	type RestoreHandler,
+	type RestoreHandlers,
+	type RestoreOutcome,
+	reapplyPersistedMute,
+	restoreTerminalState,
+} from "./restore.ts";
 import type { TerminalRuntimeSession } from "./runtime-session.ts";
 import {
 	claimParkedBundle,
@@ -239,6 +248,8 @@ function restoreDigestSentence(
 async function adoptPersistedTerminalState(
 	pi: ExtensionAPI,
 	state: TerminalExtensionState,
+	toolCtx: TerminalToolContext,
+	bundle: TerminalSessionBundle,
 	sessionKey: string,
 ): Promise<void> {
 	const ctx = state.ctx;
@@ -259,15 +270,46 @@ async function adoptPersistedTerminalState(
 	state.recordedBackgroundIds.clear();
 	bindTerminalManifestWriter(sessionKey, writer);
 
-	// Restoration handlers: this generation does not re-spawn persisted commands on its own,
-	// so every durable entry reports lost; the outcomes still flow through the orchestrator.
-	const outcomesById = new Map<string, RestoreOutcome>();
-	const reportLost = (monitor: ManifestMonitor): { outcome: RestoreOutcome } => {
-		outcomesById.set(monitor.monitorId, "lost");
-		return { outcome: "lost" };
-	};
-	const handlers: RestoreHandlers = { "restartable-command": reportLost, "checkpointed-file": reportLost };
+	// The real durability handlers, built from what this restore site already owns: the live
+	// registry/manager of the bundle created for this generation, plus the manifest writer.
+	// Each monitor's REAL outcome is recorded so the digest attributes descriptions correctly.
 	const nowMs = Date.now();
+	const outcomesById = new Map<string, RestoreOutcome>();
+	const registry = bundle.monitors;
+	const record = (handler: RestoreHandler): RestoreHandler => {
+		return async (monitor: ManifestMonitor) => {
+			const result = await handler(monitor);
+			outcomesById.set(monitor.monitorId, result.outcome);
+			// Re-adopt every entry that is LIVE in this generation, so the next persist rewrites
+			// the manifest with it instead of erasing it: `restored` and `muted` both describe a
+			// live monitor (a mute only silences delivery). `lost`/`expired`/`attachedElsewhere`
+			// are deliberately not adopted — nothing is running for them here.
+			if (result.outcome === "restored" || result.outcome === "muted") writer.adoptRestored(monitor);
+			return result;
+		};
+	};
+	const restartableCommand = createRestartableCommandHandler({ ctx: toolCtx, registry });
+	// The file handler re-binds the mon_ id to the fresh runtime id; capture that id here so a
+	// persisted mute is re-applied by the runtime id the registry can actually resolve.
+	let freshFileRuntimeId: string | undefined;
+	const checkpointedFile = createCheckpointedFileRestoreHandler({
+		registry,
+		writer,
+		bindMonitorId: (monitorId, runtimeId) => {
+			freshFileRuntimeId = runtimeId;
+			bundle.manager.bindMonitorId(monitorId, runtimeId);
+		},
+		now: () => nowMs,
+	});
+	const handlers: RestoreHandlers = {
+		"restartable-command": record(restartableCommand),
+		"checkpointed-file": record(async (monitor) => {
+			freshFileRuntimeId = undefined;
+			const result = await checkpointedFile(monitor);
+			if (result.outcome !== "restored" || freshFileRuntimeId === undefined) return result;
+			return { ...result, outcome: reapplyPersistedMute(registry, monitor, freshFileRuntimeId) };
+		}),
+	};
 	const digest = await restoreTerminalState({ manifest: writer.store, handlers, now: () => nowMs });
 
 	let manifest = null;
@@ -292,9 +334,13 @@ async function adoptPersistedTerminalState(
 	const restoredDescriptions: string[] = [];
 	const lostDescriptions: string[] = [];
 	for (const monitor of manifest.monitors) {
-		if (monitor.expiresAt !== null && monitor.expiresAt < nowMs) continue;
-		if (outcomesById.get(monitor.monitorId) === "restored") restoredDescriptions.push(monitor.description);
-		else lostDescriptions.push(monitor.description);
+		// Same boundary as the restore orchestrator: at the deadline the entry is expired.
+		if (monitor.expiresAt !== null && monitor.expiresAt <= nowMs) continue;
+		const outcome = outcomesById.get(monitor.monitorId);
+		// Only `restored` and `lost` carry descriptions; a muted restore is reported by its own
+		// count clause, so naming it under either list would desync the clause counts.
+		if (outcome === "restored") restoredDescriptions.push(monitor.description);
+		else if (outcome === undefined || outcome === "lost") lostDescriptions.push(monitor.description);
 	}
 	for (const background of manifest.backgroundSessions) lostDescriptions.push(background.command);
 	const sentence = restoreDigestSentence(digest, restoredDescriptions, lostDescriptions);
@@ -395,7 +441,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 				bindTerminalManifestWriter(sessionKey, writer);
 			}
 		} else if (sessionKey !== undefined) {
-			await adoptPersistedTerminalState(pi, state, sessionKey);
+			await adoptPersistedTerminalState(pi, state, toolCtx, state.bundle, sessionKey);
 		}
 		syncToolset(pi, state);
 	});

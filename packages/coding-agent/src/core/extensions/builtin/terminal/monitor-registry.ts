@@ -345,6 +345,22 @@ export class MonitorRegistry {
 		return { id, monitorId: record.monitorId };
 	}
 
+	/** Live identity tuple of one file watch; undefined when the id is not a live file watch. */
+	fileCheckpoint(id: string) {
+		const r = this.#files.get(id);
+		return (
+			r && { dev: r.device, ino: r.inode, size: r.size, mtimeMs: r.mtimeMs, digest: r.digest, present: r.present }
+		);
+	}
+
+	/** Emit one restored-watch line through the SAME sink a live watch uses (coalescing, wake budget). */
+	emitFileLine(id: string, line: string): boolean {
+		const record = this.#files.get(id);
+		if (!record || record.settled) return false;
+		this.#emit({ type: "line", id: record.id, description: record.description, line });
+		return true;
+	}
+
 	async stopFile(id: string): Promise<boolean> {
 		const record = this.#files.get(id);
 		if (!record) return false;
