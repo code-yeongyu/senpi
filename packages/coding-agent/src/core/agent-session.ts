@@ -109,6 +109,7 @@ import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
+	type ModelUsabilityAdmission,
 	ModelUsabilityBudgetError,
 	projectModelUsabilityBudget,
 } from "./extensions/builtin/compaction/model-usability-budget.ts";
@@ -4555,7 +4556,11 @@ export class AgentSession {
 		return this._setModel(model, true);
 	}
 
-	assertModelUsable(model: Model<Api> | undefined = this.model, liveContextTokens = 0): void {
+	assertModelUsable(
+		model: Model<Api> | undefined = this.model,
+		liveContextTokens = 0,
+		options?: { includeSpeculationLead?: boolean; admission?: ModelUsabilityAdmission },
+	): void {
 		if (!model || model.contextWindow <= 0) return;
 		const projection = projectModelUsabilityBudget({
 			model,
@@ -4563,6 +4568,8 @@ export class AgentSession {
 			tools: this.agent.state.tools,
 			liveContextTokens,
 			compaction: this.settingsManager.getCompactionSettings(),
+			includeSpeculationLead: options?.includeSpeculationLead,
+			admission: options?.admission,
 		});
 		if (!projection.usable) throw new ModelUsabilityBudgetError(projection);
 	}

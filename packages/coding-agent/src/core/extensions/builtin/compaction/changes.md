@@ -1,5 +1,36 @@
 # changes.md — builtin compaction policy
 
+## Omit speculation lead from resumed-session admission (2026-09-03)
+
+### What changed
+
+- `projectModelUsabilityBudget` accepts `includeSpeculationLead` (default true) and `admission`
+  (`start` | `resume` | `switch`). Resume projections report `speculationLeadTokens: 0` when the
+  lead is omitted, so the error breakdown matches the charged budget.
+- `createAgentSession` resume admission passes `includeSpeculationLead: false` and
+  `admission: "resume"`. Fresh startup and live model switches keep charging the lead.
+- `ModelUsabilityBudgetError` uses "cannot resume" for restored transcripts instead of the
+  switch copy that told the user to compact a session that never started.
+
+### Why
+
+- Speculative compaction is enabled by default and starts on `before_agent_start` / idle warmup.
+  Startup admission ran *before* that hook and charged the speculation lead against the full
+  uncompacted transcript, so a session already in the speculative band could not open and
+  auto-compaction never ran. Live miss: 828k restored / 1.05M window / 32,768 lead / 28,351
+  shortfall (`#1339`, `#1340`).
+- Model switch on a live session can still charge the lead: the user can compact first.
+
+### Why an extension could not handle it
+
+- `createAgentSession` throws `ModelUsabilityBudgetError` before the compaction extension is
+  wired; no extension hook can intercept that constructor-time reject.
+
+### Expected merge conflict zones
+
+- `model-usability-budget.ts` projection + error copy; `sdk.ts` startup `assertModelUsable` call;
+  `agent-session.ts` `assertModelUsable` options; `test/suite/model-usability-budget.test.ts`.
+
 ## Recover classified manual compaction failures deterministically (2026-09-02)
 
 ### What changed

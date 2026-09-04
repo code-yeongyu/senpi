@@ -519,7 +519,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const liveContextTokens = hasExistingSession
 		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)
 		: 0;
-	session.assertModelUsable(undefined, liveContextTokens);
+	session.assertModelUsable(
+		undefined,
+		liveContextTokens,
+		hasExistingSession ? { includeSpeculationLead: false, admission: "resume" } : { admission: "start" },
+	);
 	cursorBridgeSessionRef.current = session;
 	const extensionsResult = resourceLoader.getExtensions();
 
