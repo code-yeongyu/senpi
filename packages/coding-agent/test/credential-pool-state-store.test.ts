@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createAgentSessionServices } from "../src/core/agent-session-services.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -10,6 +11,7 @@ import {
 	credentialPoolStatePath,
 	slotHealth,
 } from "../src/core/credential-pool/state-store.ts";
+import { FILE_STORAGE_LOCK_OPTIONS } from "../src/core/lockfile-policy.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 
 const NOW = 1_756_000_000_000;
@@ -31,6 +33,15 @@ afterEach(() => {
 describe("credential pool state sidecar", () => {
 	test("default path lives in the agent dir", () => {
 		expect(credentialPoolStatePath("/tmp/agent")).toBe("/tmp/agent/credential-pool-state.json");
+	});
+
+	test("two repository instances wait through a real shared lock", async () => {
+		await repository.listSlots("openai", "api");
+		const release = await lockfile.lock(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+		const waiting = expect(new CredentialSlotRepository(path).listSlots("openai", "api")).resolves.toEqual({});
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await release();
+		await waiting;
 	});
 
 	test("a cooldown written before a restart still suppresses the slot after re-reading", async () => {

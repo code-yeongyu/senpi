@@ -28,7 +28,7 @@ import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dis
 import {
 	CredentialStoreBusyError,
 	FILE_STORAGE_LOCK_OPTIONS,
-	FILE_STORAGE_LOCK_RETRY_BUDGET_MS,
+	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
 	isLockError,
 } from "./lockfile-policy.ts";
 import type { RetryPolicyOverride } from "./retry-fallback/profile-override.ts";
@@ -498,10 +498,10 @@ export class FileSettingsStorage implements SettingsStorage {
 			} catch (error) {
 				if (!isLockError(error)) throw error;
 				const waitedMs = Date.now() - startedAt;
-				if (waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) {
+				if (waitedMs >= FILE_STORAGE_SYNC_LOCK_BUDGET_MS) {
 					throw new CredentialStoreBusyError(path, waitedMs, error);
 				}
-				const delayMs = Math.min(100 * 2 ** attempt, 1_000, FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs);
+				const delayMs = Math.min(100 * 2 ** attempt, 1_000, FILE_STORAGE_SYNC_LOCK_BUDGET_MS - waitedMs);
 				attempt++;
 				const sleeper = new Int32Array(new SharedArrayBuffer(4));
 				Atomics.wait(sleeper, 0, 0, delayMs);

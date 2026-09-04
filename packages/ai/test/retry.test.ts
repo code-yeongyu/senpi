@@ -76,7 +76,7 @@ describe("provider retry classification", () => {
 			isRetryableAssistantError(
 				fauxAssistantMessage("", {
 					stopReason: "error",
-					errorMessage: "Credential store is busy: lock /tmp/auth.json was held for 5500ms. Retry the operation",
+					errorMessage: "Credential store is busy: lock /tmp/auth.json was held for 1234ms. Another process may be refreshing credentials", 
 				}),
 			),
 		).toBe(true);

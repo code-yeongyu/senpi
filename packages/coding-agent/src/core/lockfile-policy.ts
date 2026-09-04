@@ -17,6 +17,8 @@ export const FILE_STORAGE_LOCK_OPTIONS = {
 } as const;
 
 export const FILE_STORAGE_LOCK_RETRY_BUDGET_MS = 5_500;
+// Sync callers block the TUI main thread, so keep their bounded wait short despite Atomics.wait avoiding CPU spin.
+export const FILE_STORAGE_SYNC_LOCK_BUDGET_MS = 1_000;
 
 export class CredentialStoreBusyError extends Error {
 	readonly path: string;
@@ -24,7 +26,7 @@ export class CredentialStoreBusyError extends Error {
 
 	constructor(path: string, waitedMs: number, cause?: unknown) {
 		super(
-			`Credential store is busy: lock ${path} was held for ${waitedMs}ms. Retry the operation; another omo process may be refreshing credentials.`,
+			`Credential store is busy: lock ${path} was held for ${waitedMs}ms. Another omo process may be refreshing credentials; close unused sessions if contention persists.`,
 			{ cause },
 		);
 		this.name = "CredentialStoreBusyError";
