@@ -18,6 +18,8 @@
 - Fixed `prepareNextTurn` and `prepareNextTurnWithContext` being skipped on completed turns without tool calls: the next-turn preparation now runs after every completed assistant turn that can reach the preparation boundary, including a normal stop response, while the terminating queue boundary and ownership refresh are preserved before a continuation provider request.
 - Fixed next-turn compaction firing on completed turns that will not reach the provider: compaction is now gated on real provider admission (a tool continuation or queued message actually being admitted), while the next-turn callback keeps running on every completed turn and the late queue re-sample and one bounded callback replay after compaction are retained.
 
+- The harness `convertToLlm` (`packages/agent/src/harness/messages.ts`) now drops assistant turns with `stopReason` `error` or `aborted`, and the tool results orphaned by that drop, from its output via the shared `dropFailedAssistantTurns` from `@earendil-works/pi-ai`, so compaction, branch summarization, and any consumer building an LLM request from the converted list never replay a failed provider turn's partial text or unexecuted tool calls. A call id re-declared by a kept assistant keeps its result.
+
 ### Removed
 
 ## [2026.9.4] - 2026-09-04
