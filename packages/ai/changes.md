@@ -1,6 +1,6 @@
 # changes.md — ai
 
-## Bound pi-ai CI Vitest fork concurrency
+## 2026-09-04 - Bound pi-ai CI Vitest fork concurrency
 
 ### What changed
 
