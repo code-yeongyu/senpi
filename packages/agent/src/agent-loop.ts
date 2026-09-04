@@ -198,6 +198,7 @@ async function runLoop(
 	let lastCompletedTurn: PrepareNextTurnContext | undefined;
 	let firstProviderRequest = true;
 	let drainedTerminatingQueue: "steering" | "followUp" | undefined;
+	let awaitingTerminatingContinuation = false;
 	const refreshTerminatingQueueDrain = async (): Promise<void> => {
 		if (!drainedTerminatingQueue || !config.restorePendingMessages) return;
 		await config.restorePendingMessages(drainedTerminatingQueue, pendingMessages);
@@ -218,6 +219,12 @@ async function runLoop(
 		// Inner loop: process tool calls and steering messages
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
 			if (lastCompletedTurn) {
+				if (awaitingTerminatingContinuation) {
+					// Give queue owners a boundary before refreshing messages drained from
+					// a terminating turn. A clear at turn_start must discard the local
+					// snapshot instead of only clearing the owner queue.
+					await emit({ type: "turn_start" });
+				}
 				let nextTurnSnapshot: AgentLoopTurnUpdate | undefined;
 				try {
 					nextTurnSnapshot = await config.prepareNextTurn?.(lastCompletedTurn);
@@ -267,7 +274,11 @@ async function runLoop(
 					}
 					drainedTerminatingQueue = undefined;
 				}
-				await emit({ type: "turn_start" });
+				if (awaitingTerminatingContinuation) {
+					awaitingTerminatingContinuation = false;
+				} else {
+					await emit({ type: "turn_start" });
+				}
 			}
 
 			// Process pending messages (inject before next assistant response)
@@ -370,9 +381,10 @@ async function runLoop(
 					await emit({ type: "agent_end", messages: newMessages });
 					return;
 				}
+				// Keep one boundary turn alive so a queue clear at turn_start can win
+				// over the drained messages before they are injected.
+				awaitingTerminatingContinuation = true;
 			} else {
-				// A terminating batch already drained steering/follow-ups above; polling
-				// again here would discard the messages that keep the loop alive.
 				pendingMessages = (await config.getSteeringMessages?.()) || [];
 			}
 		}

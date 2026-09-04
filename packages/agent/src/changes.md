@@ -1,5 +1,23 @@
 # Changes
 
+## 2026-09-04 - Honor queue clears on terminating continuations
+
+### What changed
+
+- Emit the terminating continuation boundary before refreshing drained queue messages, so a queue clear or replacement at `turn_start` wins before pending input is injected.
+
+### Why
+
+- A terminating tool previously moved queued input into loop-local state before the continuation boundary, allowing cleared steering or follow-up messages to reach the provider.
+
+### Why an extension could not handle it
+
+- Terminating queue ownership and continuation-boundary ordering are enforced inside the core agent loop before extension hooks can change the provider request.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` terminating queue refresh and continuation turn admission; `types.ts` loop configuration contract.
+
 ## 2026-09-03 - Restore queue ownership and preflight abort barriers
 
 ### What changed
