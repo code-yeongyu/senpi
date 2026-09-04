@@ -1,3 +1,22 @@
+## 2026-09-04 - Adopt the Mistral indexed-chunk and Responses max_output_tokens fixes
+
+### What changed
+
+- `packages/ai/src/api/mistral-conversations.ts`: streamed tool-call chunks are keyed by the provider chunk index when present, falling back to the derived call id, instead of the old callId-plus-index-or-zero key (upstream 6c87d9a02, #8387).
+- `packages/ai/src/api/openai-responses.ts`: a new `supportsMaxOutputTokens` compat flag (default true) gates sending `max_output_tokens`, so Responses-compatible gateways that reject the parameter can opt out (upstream b8b873b98, #8941).
+
+### Why
+
+- Mistral streams indexed argument chunks with missing or duplicated ids; the old key collapsed index 0 and an absent index into the same slot and mis-assembled tool calls. Some OpenAI Responses-compatible gateways (for example Codex-protocol proxies) reject `max_output_tokens` with a 400, and the API always sent it when `maxTokens` was set with no way to opt out.
+
+### Why an extension could not handle it
+
+- Stream chunk assembly and request body construction happen inside the provider API clients, below the extension boundary.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/mistral-conversations.ts` tool-call block keying in `consumeChatStream` and `packages/ai/src/api/openai-responses.ts` in `getCompat` and `buildParams`.
+
 ## GPT-6 Astra joins the xhigh and max effort families (2026-09-04)
 
 ### What changed
@@ -15,6 +34,98 @@
 ### Expected merge conflict zones
 
 - `packages/ai/src/models.ts` (id lists), trivially adjacent to upstream additions.
+
+## 2026-09-03 - Align Anthropic beta-client fallback and thinking semantics
+
+### What changed
+
+- Anthropic managed effort requests retain the stable top-level `output_config.effort: "high"` while selected per-turn effort remains in the marker; thinking-off managed models now emit `thinking.type: "disabled"` when supported.
+- The Anthropic beta request path continues to preserve the pre-output fallback receipt behavior and the unsupported mid-output fallback error.
+
+### Why
+
+- The upstream SDK contract uses `client.beta.messages.create`; managed model semantics require per-turn effort markers and a real disabled-thinking request when the user turns reasoning off.
+
+### Why this cannot be expressed externally
+
+- Request construction, SSE fallback handling, and thinking normalization are owned by the Anthropic adapter below extension hooks.
+
+### Expected merge conflict zones
+
+- MEDIUM: `api/anthropic-messages.ts` request construction and SSE event loop during future upstream syncs.
+
+## 2026-09-03 - Restore Anthropic mid-output fallback failure path after upstream sync
+
+### What changed
+
+- Restored the Anthropic SSE guard that fails immediately when a `fallback` content block arrives after output has begun, preserving the explicit `unsupported mid-output model fallback` error instead of allowing an incomplete stream to report only a missing `message_stop`.
+- Restored the managed-provider argument to Anthropic message conversion so persisted per-turn effort levels reconstruct their exact historical marker prefix; managed requests retain the stable top-level `output_config: { effort: "high" }` while per-turn markers carry the selected effort.
+
+### Why
+
+- The upstream re-integration retained beta-client and effort-marker machinery but lost two fork-side merge behaviors. Without the SSE guard, Anthropic could replace a partially emitted response without a safe error. Without provider-scoped conversion, historical effort metadata was not associated with assistant messages and the marker prefix was omitted.
+
+### Why this cannot be expressed externally
+
+- Both behaviors are owned by the Anthropic adapter: the fallback decision occurs inside the SSE event loop, and effort markers are constructed while converting persisted conversation history into Anthropic wire messages before extension hooks can repair the payload.
+
+### Expected merge conflict zones
+
+- MEDIUM: `api/anthropic-messages.ts` SSE `content_block_start` handling and `buildParams()` / `convertMessages()` effort-marker plumbing during future upstream syncs.
+
+## OpenRouter native Anthropic routing declared ahead of the catalog (2026-09-03)
+
+### What changed
+
+- `providers/openrouter.ts`: the provider is now built with an explicit
+  `createProvider<"anthropic-messages" | "openai-completions">` type argument so the upstream
+  `anthropic-messages` entry in its `api` map type-checks. The committed catalog
+  (`providers/data/openrouter.json`) still declares every `anthropic/*` model as `openai-completions`,
+  because the generator rule that flips them (`scripts/generate-models.ts`, `useAnthropicMessages`)
+  only takes effect on a live regeneration, which this merge deliberately did not run.
+- `openai-responses-compat.ts`: added `supportsMaxOutputTokens`, which upstream reads in
+  `api/openai-responses.ts` but which the fork's extracted Responses compat interface was missing.
+- `utils/prompt-cache-ttl.ts`: resolver defaults for the new compat flags -
+  `supportsMaxOutputTokens` defaults to `true`, `vllmPriority` stays unset (off by default) and is
+  therefore excluded from `ResolvedOpenAICompletionsCompat`'s `Required<>` core, and
+  `supportsMidConvoEffort` is excluded from the Anthropic resolver because every consumer reads it
+  straight off `model.compat`.
+
+### Why
+
+- Adopting upstream's per-turn effort and OpenRouter Claude routing requires the compat surface and
+  provider typing to exist even before the model catalog is regenerated; without these the tree does
+  not compile.
+
+### Why an extension could not handle it
+
+- Provider construction, the compat type surface, and catalog resolution are core `packages/ai`
+  wiring that runs before any extension is loaded.
+
+### Expected merge conflict zones
+
+- MEDIUM: `providers/openrouter.ts` and the compat resolvers will conflict on the next sync if
+  upstream keeps extending Responses/Completions compat flags. Regenerating the model catalog will
+  flip the `anthropic/*` entries and make the explicit type argument redundant.
+
+## Upstream AI provider compatibility merge (2026-09-03)
+
+### What changed
+
+- Merged Anthropic Messages beta request types and per-turn effort persistence, including provider-scoped mid-conversation effort markers while retaining Senpi's refusal fallback, signature replay, tool-pairing, and cache checkpoint behavior.
+- Added OpenAI Completions vLLM priority and upstream model routing/catalog compatibility while retaining Senpi request retry and reasoning-detail handling. Pinned `@anthropic-ai/sdk` to `0.123.0` for the beta stop-reason and dropped-input transformation types.
+
+### Why
+
+- The upstream provider behavior is required for Claude 5 effort changes, OpenRouter native Anthropic routing, Fireworks GLM completions, and vLLM scheduling without regressing Senpi's provider-specific safeguards.
+
+### Why an extension could not handle this
+
+- These changes are shared wire-format construction, generated model metadata, and SDK type contracts executed below the extension/provider composition boundary.
+
+### Expected merge conflict zones
+
+- LOW: future upstream syncs in `api/anthropic-messages.ts`, `api/openai-completions.ts`, `types.ts`, `scripts/generate-models.ts`, and provider-composition model defaults.
 
 ## Provider requests are refused, not shrunk to one token, once the context window is exhausted (2026-09-03)
 

@@ -62,10 +62,12 @@ function createChunkedSseResponse(events: readonly SseEvent[], onChunk?: (index:
 
 function createFakeAnthropicClient(response: Response, captureSignal?: (signal?: AbortSignal) => void): Anthropic {
 	return {
-		messages: {
-			create: (_params: unknown, requestOptions?: { signal?: AbortSignal }) => {
-				captureSignal?.(requestOptions?.signal);
-				return { asResponse: async () => response };
+		beta: {
+			messages: {
+				create: (_params: unknown, requestOptions?: { signal?: AbortSignal }) => {
+					captureSignal?.(requestOptions?.signal);
+					return { asResponse: async () => response };
+				},
 			},
 		},
 	} as unknown as Anthropic;

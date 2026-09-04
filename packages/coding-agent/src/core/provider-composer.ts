@@ -177,7 +177,7 @@ function modelFromJson(
 	providerId: string,
 	definition: ModelsJsonModel,
 	providerConfig: ModelsJsonProvider,
-	defaults: Model<Api> | undefined,
+	defaults: { api?: Api; baseUrl?: string } | undefined,
 ): ModelWithConfigMetadata {
 	const api = definition.api ?? providerConfig.api ?? defaults?.api;
 	if (!api) {
@@ -214,6 +214,15 @@ function modelFromJson(
 	};
 }
 
+function findModelDefaults(models: readonly Model<Api>[], modelId: string, api?: Api): Model<Api> | undefined {
+	return (
+		models.find((model) => model.id === modelId) ??
+		(api ? models.find((model) => model.api === api) : undefined) ??
+		models.find((model) => model.api === "openai-completions") ??
+		models[0]
+	);
+}
+
 function applyModelsJson(
 	providerId: string,
 	baseModels: readonly Model<Api>[],
@@ -248,7 +257,13 @@ function applyModelsJson(
 	}));
 	for (const definition of config.models ?? []) {
 		const existingIndex = models.findIndex((model) => model.id === definition.id);
-		const defaults = existingIndex >= 0 ? models[existingIndex] : models[0];
+		const defaults =
+			existingIndex >= 0
+				? models[existingIndex]
+				: findModelDefaults(models, definition.id, definition.api ?? extension?.api ?? config.api);
+		// Extension-provided api/baseUrl still win over the resolved defaults so a
+		// models.json extension can retarget an inherited built-in entry, and remain
+		// the fallback when no built-in default exists (empty catalog).
 		const model = modelFromJson(providerId, definition, config, {
 			...defaults,
 			api: extension?.api ?? defaults?.api,
@@ -277,7 +292,7 @@ function applyExtension(
 	}
 	const declaredModels = config.models;
 	const extensionModels = declaredModels.map((definition) => {
-		const defaults = models.find((model) => model.id === definition.id) ?? models[0];
+		const defaults = findModelDefaults(models, definition.id, definition.api ?? config.api);
 		const api = definition.api ?? config.api ?? defaults?.api;
 		if (!api) {
 			throw new Error(

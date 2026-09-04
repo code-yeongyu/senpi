@@ -1966,7 +1966,9 @@ export class AgentSession {
 					})
 				: processing;
 
-		// Keep queue alive if an event handler fails
+		// Keep queue alive if an event handler fails, including the promise created
+		// by finally() above. The originating prompt observes the stored admission
+		// error after the queue settles; no rejection should become unhandled.
 		this._agentEventQueue.catch(() => {});
 	};
 

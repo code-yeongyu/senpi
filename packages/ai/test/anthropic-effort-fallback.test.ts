@@ -3,6 +3,7 @@ import { getModel, streamSimple } from "../src/compat.ts";
 import type { Context, Model, SimpleStreamOptions } from "../src/types.ts";
 
 interface AnthropicThinkingPayload {
+	messages: Array<{ role: string; output_config?: { effort?: string } }>;
 	thinking?: { type: string; budget_tokens?: number; display?: string };
 	output_config?: { effort?: string };
 }
@@ -55,7 +56,8 @@ function maplessUnflagged(id: FixtureId): Model<"anthropic-messages"> {
 describe("Anthropic adaptive effort fallback for map-less models", () => {
 	it("maps xhigh to the native xhigh tier for a map-less Opus 5", async () => {
 		const payload = await capturePayload(mapless("claude-opus-5"), { reasoning: "xhigh" });
-		expect(payload.output_config).toEqual({ effort: "xhigh" });
+		expect(payload.output_config).toEqual({ effort: "high" });
+		expect(payload.messages.at(-1)).toMatchObject({ output_config: { effort: "xhigh" } });
 	});
 
 	it("maps xhigh to the native xhigh tier for a map-less Fable 5", async () => {
@@ -75,7 +77,8 @@ describe("Anthropic adaptive effort fallback for map-less models", () => {
 
 	it("maps max to max for a map-less Opus 5", async () => {
 		const payload = await capturePayload(mapless("claude-opus-5"), { reasoning: "max" });
-		expect(payload.output_config).toEqual({ effort: "max" });
+		expect(payload.output_config).toEqual({ effort: "high" });
+		expect(payload.messages.at(-1)).toMatchObject({ output_config: { effort: "max" } });
 	});
 });
 

@@ -250,6 +250,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 *
 	 * If it returns true, the loop emits `agent_end` and exits before polling steering or follow-up queues,
 	 * without starting another LLM call. The current assistant response and any tool executions finish normally.
+	 * This callback sees the completed-turn context and runs before `prepareNextTurn`.
 	 *
 	 * Use this to request a graceful stop after the current turn, e.g. before context gets too full.
 	 *
@@ -258,8 +259,11 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext) => boolean | Promise<boolean>;
 
 	/**
-	 * Called after `turn_end` and before the loop decides whether another provider request should start.
-	 * Return replacement context/model/thinking state to affect the next turn in this run.
+	 * Called after each completed assistant turn, including a normal stop response, before the loop decides whether another provider request starts.
+	 * A terminating-tool continuation emits its `turn_start` boundary first so queue owners can clear
+	 * or replace pending input before preparation finishes and the continuation is admitted.
+	 * `shouldStopAfterTurn` and an empty terminating tool batch can end the run before preparation.
+	 * Return replacement context/model/thinking state to affect the next turn.
 	 * Return undefined to keep using the current context/config.
 	 */
 	prepareNextTurn?: (

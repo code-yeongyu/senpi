@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -38,6 +39,7 @@ export interface ImageRenderOptions {
 }
 
 let cachedCapabilities: TerminalCapabilities | null = null;
+let capabilityOverrides: Partial<TerminalCapabilities> = {};
 
 // Default cell dimensions - updated by TUI when terminal responds to query
 let cellDimensions: CellDimensions = { widthPx: 9, heightPx: 18 };
@@ -50,11 +52,116 @@ export function setCellDimensions(dims: CellDimensions): void {
 	cellDimensions = dims;
 }
 
+function probeTmuxHyperlinks(): boolean {
+	try {
+		const termfeatures = execSync("tmux display-message -p '#{client_termfeatures}'", {
+			encoding: "utf8",
+			timeout: 250,
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+		return termfeatures
+			.split(",")
+			.map((feature) => feature.trim())
+			.includes("hyperlinks");
+	} catch {
+		return false;
+	}
+}
+
+function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean): TerminalCapabilities {
+	const termProgram = process.env.TERM_PROGRAM?.toLowerCase() || "";
+	const terminalEmulator = process.env.TERMINAL_EMULATOR?.toLowerCase() || "";
+	const term = process.env.TERM?.toLowerCase() || "";
+	const colorTerm = process.env.COLORTERM?.toLowerCase() || "";
+	const hasTrueColorHint = colorTerm === "truecolor" || colorTerm === "24bit";
+	const isWindowsConsole = process.platform === "win32";
+
+	// Emit OSC 8 hyperlinks only when tmux confirms it forwards.
+	// Image protocols are unreliable under tmux, so leave `images: null`.
+	if (process.env.TMUX || term.startsWith("tmux")) {
+		return { images: null, trueColor: hasTrueColorHint, hyperlinks: tmuxForwardsHyperlink() };
+	}
+
+	// screen does not forward OSC 8 hyperlinks, so keep them off there.
+	if (term.startsWith("screen")) {
+		return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
+	}
+
+	if (process.env.KITTY_WINDOW_ID || termProgram === "kitty") {
+		return { images: "kitty", trueColor: true, hyperlinks: true };
+	}
+
+	if (termProgram === "ghostty" || term.includes("ghostty") || process.env.GHOSTTY_RESOURCES_DIR) {
+		return { images: "kitty", trueColor: true, hyperlinks: true };
+	}
+
+	if (process.env.WEZTERM_PANE || termProgram === "wezterm") {
+		return { images: "kitty", trueColor: true, hyperlinks: true };
+	}
+
+	// Warp supports the Kitty graphics protocol and OSC 8 hyperlinks.
+	if (termProgram === "warpterminal" || process.env.WARP_SESSION_ID || process.env.WARP_TERMINAL_SESSION_UUID) {
+		return { images: "kitty", trueColor: true, hyperlinks: true };
+	}
+
+	if (process.env.ITERM_SESSION_ID || termProgram === "iterm.app") {
+		return { images: "iterm2", trueColor: true, hyperlinks: true };
+	}
+
+	if (process.env.WT_SESSION) {
+		return { images: null, trueColor: true, hyperlinks: true };
+	}
+
+	if (termProgram === "alacritty" || termProgram === "vscode" || termProgram === "zed") {
+		return { images: null, trueColor: true, hyperlinks: true };
+	}
+
+	if (terminalEmulator === "jetbrains-jediterm") {
+		return { images: null, trueColor: true, hyperlinks: false };
+	}
+
+	// Windows Terminal does not always set WT_SESSION, for example when it hosts
+	// a cmd.exe launched directly from Win+R. Modern Windows consoles support
+	// truecolor; keep hyperlinks off unless we positively detected support above.
+	if (isWindowsConsole) {
+		return { images: null, trueColor: true, hyperlinks: false };
+	}
+
+	// Unknown terminal: be conservative. OSC 8 is rendered invisibly as "just
+	// text" on terminals that swallow it, which means the URL disappears from
+	// the rendered output. Default to the legacy `text (url)` behavior unless we
+	// have positively identified a hyperlink-capable terminal above.
+	return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
+}
+
+function parseBooleanCapabilityOverride(value: string | undefined): boolean | undefined {
+	return value === "1" ? true : value === "0" ? false : undefined;
+}
+
 export function detectCapabilities(
 	tmuxForwardsHyperlink?: () => boolean,
 	tmuxPassthroughState?: () => TmuxPassthroughState,
 ): DetectedTerminalCapabilities {
-	if (!tmuxForwardsHyperlink || !tmuxPassthroughState) return detectTerminalCapabilities();
+	if (!tmuxForwardsHyperlink || !tmuxPassthroughState) {
+		const hyperlinks = parseBooleanCapabilityOverride(process.env.PI_HYPERLINKS);
+		const detected = detectCapabilitiesFromEnvironment(
+			hyperlinks === undefined ? probeTmuxHyperlinks : () => hyperlinks,
+		);
+		const imageProtocol = process.env.PI_IMAGE_PROTOCOL?.toLowerCase();
+		const images =
+			imageProtocol === "kitty" || imageProtocol === "iterm2"
+				? imageProtocol
+				: imageProtocol === "none" || imageProtocol === "0"
+					? null
+					: undefined;
+		const trueColor = parseBooleanCapabilityOverride(process.env.PI_TRUE_COLOR);
+		return {
+			...detected,
+			...(images !== undefined ? { images } : {}),
+			...(trueColor !== undefined ? { trueColor } : {}),
+			...(hyperlinks !== undefined ? { hyperlinks } : {}),
+		} as DetectedTerminalCapabilities;
+	}
 
 	const legacy = tmuxPassthroughState();
 	const hyperlinks = tmuxForwardsHyperlink();
@@ -81,14 +188,29 @@ export function detectCapabilities(
 
 export function getCapabilities(): TerminalCapabilities {
 	if (!cachedCapabilities) {
-		const detected = detectCapabilities();
-		if (detected.cellDimensions) setCellDimensions(detected.cellDimensions);
-		cachedCapabilities = detected;
+		const hyperlinks = capabilityOverrides.hyperlinks;
+		cachedCapabilities = {
+			...detectCapabilities(hyperlinks === undefined ? undefined : () => hyperlinks),
+			...capabilityOverrides,
+		};
 	}
 	return cachedCapabilities;
 }
 
 export function resetCapabilitiesCache(): void {
+	cachedCapabilities = null;
+}
+
+/** Override selected auto-detected capabilities. */
+export function setCapabilityOverrides(overrides: Partial<TerminalCapabilities>): void {
+	if (
+		capabilityOverrides.images === overrides.images &&
+		capabilityOverrides.trueColor === overrides.trueColor &&
+		capabilityOverrides.hyperlinks === overrides.hyperlinks
+	) {
+		return;
+	}
+	capabilityOverrides = { ...overrides };
 	cachedCapabilities = null;
 }
 

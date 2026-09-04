@@ -8,6 +8,7 @@ import {
 	excludeRoutineOnlySettingsChanges,
 	refreshSettingsContentSnapshots,
 } from "../src/core/extensions/builtin/config-reload/routine-settings.ts";
+import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
 import {
 	__resetSelfWriteTrackerForTests,
 	__setSelfWriteTrackerClockForTests,
@@ -19,6 +20,27 @@ import {
 } from "../src/core/settings-manager.ts";
 
 describe("SettingsManager", () => {
+	it("bridges SENPI terminal capability overrides, with PI fallback", () => {
+		const previous = {
+			SENPI_HYPERLINKS: process.env.SENPI_HYPERLINKS,
+			PI_HYPERLINKS: process.env.PI_HYPERLINKS,
+		};
+		try {
+			process.env.SENPI_HYPERLINKS = "0";
+			process.env.PI_HYPERLINKS = "1";
+			const manager = SettingsManager.inMemory();
+			expect(manager.getTerminalCapabilityOverrides().hyperlinks).toBe(false);
+
+			delete process.env.SENPI_HYPERLINKS;
+			expect(manager.getTerminalCapabilityOverrides().hyperlinks).toBe(true);
+		} finally {
+			if (previous.SENPI_HYPERLINKS === undefined) delete process.env.SENPI_HYPERLINKS;
+			else process.env.SENPI_HYPERLINKS = previous.SENPI_HYPERLINKS;
+			if (previous.PI_HYPERLINKS === undefined) delete process.env.PI_HYPERLINKS;
+			else process.env.PI_HYPERLINKS = previous.PI_HYPERLINKS;
+		}
+	});
+
 	const testDir = join(tmpdir(), `senpi-settings-${process.pid}`);
 	const agentDir = join(testDir, "agent");
 	const projectDir = join(testDir, "project");
@@ -624,6 +646,29 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("httpIdleTimeoutMs", () => {
+		it("should default to 5 minutes", () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getHttpIdleTimeoutMs()).toBe(DEFAULT_HTTP_IDLE_TIMEOUT_MS);
+		});
+
+		it("should use merged global and project settings", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 300000 }));
+			writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 0 }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getHttpIdleTimeoutMs()).toBe(0);
+		});
+
+		it("should reject invalid timeout values", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: -1 }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(() => manager.getHttpIdleTimeoutMs()).toThrow("Invalid httpIdleTimeoutMs setting");
+		});
+	});
+
 	describe("externalEditor", () => {
 		const originalVisual = process.env.VISUAL;
 		const originalEditor = process.env.EDITOR;
@@ -702,13 +747,16 @@ describe("SettingsManager", () => {
 		const manager = SettingsManager.create(projectDir, agentDir);
 		expect(manager.getFullscreenExitOutput()).toBe("transcript");
 		expect(manager.getFullscreenScrollbar()).toBe("auto");
+		expect(manager.getFullscreenCopyOnSelect()).toBe(true);
 
 		manager.setFullscreenExitOutput("resume-hint");
 		manager.setFullscreenScrollbar("hidden");
+		manager.setFullscreenCopyOnSelect(false);
 		await manager.flush();
 		const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
 		expect(savedSettings.fullscreenExitOutput).toBe("resume-hint");
 		expect(savedSettings.fullscreenScrollbar).toBe("hidden");
+		expect(savedSettings.fullscreenCopyOnSelect).toBe(false);
 
 		writeFileSync(
 			join(agentDir, "settings.json"),
@@ -717,6 +765,7 @@ describe("SettingsManager", () => {
 		const reloadedManager = SettingsManager.create(projectDir, agentDir);
 		expect(reloadedManager.getFullscreenExitOutput()).toBe("transcript");
 		expect(reloadedManager.getFullscreenScrollbar()).toBe("auto");
+		expect(reloadedManager.getFullscreenCopyOnSelect()).toBe(true);
 	});
 
 	describe("outputPad", () => {

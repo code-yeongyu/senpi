@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-04 - Apply terminal capability overrides to the startup TUI
+
+### What changed
+
+- `packages/coding-agent/src/cli/startup-ui.ts`: `createStartupTui` calls `setCapabilityOverrides` with the settings manager's resolved terminal capability overrides before registering themes, so the first painted frames honor explicit settings (and the fork's `SENPI_*` env bridge with `PI_*` fallback) instead of raw auto-detection.
+
+### Why
+
+- Capability auto-detection defaults conservatively (hyperlinks stay off on unknown terminals); the startup banner and theme rendering would otherwise flash the wrong link and image behavior before interactive mode applies overrides.
+
+### Why an extension could not handle it
+
+- The startup TUI is constructed before extensions load; capability detection and theme registration are host-owned boot steps.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/cli/startup-ui.ts` ordering inside `createStartupTui` during upstream syncs.
+
 ## Opt-in session auto-titling flag (2026-08-28)
 
 ### What changed

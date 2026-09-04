@@ -510,3 +510,21 @@ The branch summarization path did not emit a compaction event before building it
 ### Migration notes
 
 If upstream changes branch summary preparation or adds new branch summary data sources, keep the `session_before_compact` hook emission before default prompt construction and update the `CompactionPreparation` mapping to match the new data flow. The `BRANCH_SUMMARY_PROMPT` fallback must remain intact for sessions without the compaction extension.
+
+## 2026-09-03 - Preserve compaction request identity without forcing tool choice
+
+### What changed and why
+
+- Removed the unconditional `toolChoice: "none"` from `completeSummarization` while retaining senpi cache retention, affinity/session identity split, retry, and watchdog behavior.
+
+### Why
+
+- Providers without tools can reject a tool-choice directive even though summarization does not require it; provider-specific tool-call refusal remains owned by the speculative-summary extension.
+
+### Why an extension could not handle this
+
+- The request options are assembled at the shared core summarization choke point before extensions can affect the provider call.
+
+### Expected merge conflict zones
+
+- `compaction.ts` around `completeSummarization` request option construction.

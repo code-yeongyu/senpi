@@ -10,6 +10,14 @@
 
 ### Fixed
 
+- Fixed proxied assistant responses dropping persisted provider-native thinking levels.
+- Fixed the write tool reporting UTF-16 code-unit counts as byte counts by removing the misleading count ([#8979](https://github.com/earendil-works/pi/issues/8979)).
+- Fixed Windows `NodeExecutionEnv` aborts crashing when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).
+
+- Fixed queued steering and follow-up messages still reaching the provider after a queue clear on a terminating continuation: the terminating continuation boundary now runs before the drained queue is refreshed, so a clear or replacement at `turn_start` wins over pending input.
+- Fixed `prepareNextTurn` and `prepareNextTurnWithContext` being skipped on completed turns without tool calls: the next-turn preparation now runs after every completed assistant turn that can reach the preparation boundary, including a normal stop response, while the terminating queue boundary and ownership refresh are preserved before a continuation provider request.
+- Fixed next-turn compaction firing on completed turns that will not reach the provider: compaction is now gated on real provider admission (a tool continuation or queued message actually being admitted), while the next-turn callback keeps running on every completed turn and the late queue re-sample and one bounded callback replay after compaction are retained.
+
 ### Removed
 
 ## [2026.9.4] - 2026-09-04

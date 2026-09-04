@@ -83,7 +83,7 @@
 		"gaxios": {
 			"rimraf": "6.1.3"
 		},
-		"@anthropic-ai/sdk": "0.120.0"
+		"@anthropic-ai/sdk": "0.123.0"
 	},
 	"trustedDependencies": [
 		"@parcel/watcher",

@@ -39,8 +39,10 @@ function createSseResponse(
 }
 
 function createFakeAnthropicClient(response: Response): Anthropic {
+	const create = () => ({ asResponse: async () => response });
 	return {
-		messages: { create: () => ({ asResponse: async () => response }) },
+		beta: { messages: { create } },
+		messages: { create },
 	} as unknown as Anthropic;
 }
 

@@ -47,12 +47,14 @@ const minimalEvents = [
 
 function createCapturingClient(response: Response, captured?: { params?: Record<string, unknown> }): Anthropic {
 	return {
-		messages: {
-			create: (params: Record<string, unknown>) => {
-				if (captured) captured.params = params;
-				return {
-					asResponse: async () => response,
-				};
+		beta: {
+			messages: {
+				create: (params: Record<string, unknown>) => {
+					if (captured) captured.params = params;
+					return {
+						asResponse: async () => response,
+					};
+				},
 			},
 		},
 	} as unknown as Anthropic;

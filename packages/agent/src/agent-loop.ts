@@ -196,9 +196,8 @@ async function runLoop(
 	let config = initialConfig;
 	let firstTurn = true;
 	let firstProviderRequest = true;
-	// Check for steering messages at start (user may have typed while waiting)
-	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 	let drainedTerminatingQueue: "steering" | "followUp" | undefined;
+	let turnStartAlreadyEmitted = false;
 	const refreshTerminatingQueueDrain = async (): Promise<void> => {
 		if (!drainedTerminatingQueue || !config.restorePendingMessages) return;
 		await config.restorePendingMessages(drainedTerminatingQueue, pendingMessages);
@@ -209,6 +208,8 @@ async function runLoop(
 			drainedTerminatingQueue = pendingMessages.length > 0 ? "followUp" : undefined;
 		}
 	};
+	// Check for steering messages at start (user may have typed while waiting)
+	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {
@@ -216,7 +217,9 @@ async function runLoop(
 
 		// Inner loop: process tool calls and steering messages
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
-			if (!firstTurn) {
+			if (turnStartAlreadyEmitted) {
+				turnStartAlreadyEmitted = false;
+			} else if (!firstTurn) {
 				await emit({ type: "turn_start" });
 			} else {
 				firstTurn = false;
@@ -241,10 +244,7 @@ async function runLoop(
 				pendingMessages = [];
 			}
 
-			// Stream assistant response. Continuation-scoped overrides apply to one
-			// provider request only. Once that request emits its first event, the
-			// configured idle timeout resumes so healthy reasoning gaps are not bound
-			// by the short liveness probe.
+			// Stream assistant response
 			const isInitialProviderRequest = firstProviderRequest;
 			firstProviderRequest = false;
 			const requestConfig = isInitialProviderRequest
@@ -254,24 +254,17 @@ async function runLoop(
 						streamStartTimeoutMs: config.initialRequestStreamStartTimeoutMs ?? config.streamStartTimeoutMs,
 					}
 				: config;
-			const streamIdleTimeoutMs = isInitialProviderRequest ? config.timeoutMs : requestConfig.timeoutMs;
 			const streamed = await streamAssistantResponse(
 				currentContext,
 				requestConfig,
 				signal,
 				emit,
 				withEmptyAssistantRecovery(requestConfig.model, streamFunction),
-				streamIdleTimeoutMs,
+				isInitialProviderRequest ? config.timeoutMs : requestConfig.timeoutMs,
 			);
 			const message = promoteStopWithPendingToolCalls(streamed.message);
 			const providerToolResults = streamed.providerToolResults;
 			newMessages.push(message);
-
-			// Provider-resolved (Cursor exec-channel) tool results pair with
-			// already-resolved toolCall blocks in the assistant message. They are
-			// appended right after it — including on terminal error/abort paths,
-			// where dropping them would leave resolved calls unpaired and strip
-			// the interaction from every rebuilt transcript.
 			const toolResults: ToolResultMessage[] = [];
 			for (const result of providerToolResults) {
 				await emit({ type: "message_start", message: result });
@@ -287,10 +280,7 @@ async function runLoop(
 				return;
 			}
 
-			// Check for tool calls. Blocks stamped `kCursorExecResolved` were
-			// already executed by Cursor's exec channel mid-stream (their results
-			// arrived via `providerToolResults`); running them here again would
-			// duplicate side-effecting tools.
+			// Check for tool calls
 			const toolCalls = message.content.filter(
 				(c): c is AgentToolCall => c.type === "toolCall" && !isCursorExecResolved(c as CursorExecResolvedCarrier),
 			);
@@ -298,10 +288,9 @@ async function runLoop(
 			hasMoreToolCalls = false;
 			let toolBatchTerminated = false;
 			if (toolCalls.length > 0) {
-				// A native "length" stop means the output was cut off by the token limit,
-				// so every tool call in the message may carry truncated arguments. Text
-				// tool-call middleware finalizes its calls as "toolUse", leaving only
-				// native, unwrapped length responses for this message-wide safeguard.
+				// A "length" stop means the output was cut off by the token limit, so
+				// every tool call in the message may carry truncated arguments. Fail
+				// them all instead of executing potentially borked calls.
 				const executedToolBatch =
 					message.stopReason === "length"
 						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
@@ -328,34 +317,33 @@ async function runLoop(
 				context: currentContext,
 				newMessages,
 			};
+			if (await config.shouldStopAfterTurn?.(nextTurnContext)) {
+				await emit({ type: "agent_end", messages: newMessages });
+				return;
+			}
 			if (toolBatchTerminated) {
-				if (await config.shouldStopAfterTurn?.(nextTurnContext)) {
-					await emit({ type: "agent_end", messages: newMessages });
-					return;
-				}
-
 				pendingMessages = (await config.getSteeringMessages?.()) || [];
-				if (pendingMessages.length > 0) {
-					drainedTerminatingQueue = "steering";
-				}
+				if (pendingMessages.length > 0) drainedTerminatingQueue = "steering";
 				if (pendingMessages.length === 0) {
 					pendingMessages = (await config.getFollowUpMessages?.()) || [];
-					if (pendingMessages.length > 0) {
-						drainedTerminatingQueue = "followUp";
-					}
+					if (pendingMessages.length > 0) drainedTerminatingQueue = "followUp";
 				}
 				if (pendingMessages.length === 0) {
 					await emit({ type: "agent_end", messages: newMessages });
 					return;
 				}
+				// Give queue owners a boundary before preparation refreshes the drained
+				// snapshot, so a clear or replacement wins before admission.
+				await emit({ type: "turn_start" });
+				turnStartAlreadyEmitted = true;
 			}
+
 			let nextTurnSnapshot: AgentLoopTurnUpdate | undefined;
 			try {
 				nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);
 			} catch (error) {
-				if (drainedTerminatingQueue) {
+				if (drainedTerminatingQueue)
 					await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
-				}
 				throw error;
 			}
 			if (nextTurnSnapshot) {
@@ -377,9 +365,8 @@ async function runLoop(
 				};
 			}
 			if (signal?.aborted) {
-				if (drainedTerminatingQueue) {
+				if (drainedTerminatingQueue)
 					await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
-				}
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}
@@ -389,21 +376,8 @@ async function runLoop(
 					await emit({ type: "agent_end", messages: newMessages });
 					return;
 				}
+				drainedTerminatingQueue = undefined;
 			}
-
-			if (
-				!toolBatchTerminated &&
-				(await config.shouldStopAfterTurn?.({
-					message,
-					toolResults,
-					context: currentContext,
-					newMessages,
-				}))
-			) {
-				await emit({ type: "agent_end", messages: newMessages });
-				return;
-			}
-
 			if (!toolBatchTerminated) {
 				pendingMessages = (await config.getSteeringMessages?.()) || [];
 			}
@@ -430,21 +404,9 @@ export async function buildProviderContext(
 	config: Pick<AgentLoopConfig, "convertToLlm" | "transformContext">,
 	signal?: AbortSignal,
 ): Promise<Context> {
-	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
 	let messages = context.messages;
-	if (config.transformContext) {
-		messages = await config.transformContext(messages, signal);
-	}
-
-	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
-	const llmMessages = await config.convertToLlm(messages);
-
-	// Build LLM context
-	return {
-		systemPrompt: context.systemPrompt,
-		messages: llmMessages,
-		tools: context.tools,
-	};
+	if (config.transformContext) messages = await config.transformContext(messages, signal);
+	return { systemPrompt: context.systemPrompt, messages: await config.convertToLlm(messages), tools: context.tools };
 }
 
 /**
@@ -939,6 +901,11 @@ async function executeToolCallsParallel(
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: Promise<FinalizedToolCallOutcome>[] = [];
+	const preparedCalls: Array<{
+		preparation: PreparedToolCall | ImmediateToolCallOutcome;
+		isSequential: boolean;
+		dependencies: Promise<FinalizedToolCallOutcome>[];
+	}> = [];
 	let lastSequentialCall: Promise<FinalizedToolCallOutcome> | undefined;
 	let currentParallelWave: Promise<FinalizedToolCallOutcome>[] = [];
 
@@ -958,26 +925,15 @@ async function executeToolCallsParallel(
 				? [lastSequentialCall]
 				: [];
 
-		const finalizedCall = (async () => {
-			await Promise.all(dependencies);
-			const finalized = await runPreparedToolCall(
-				currentContext,
-				assistantMessage,
-				preparation,
-				config,
-				signal,
-				emit,
-			);
-			await emitToolExecutionEnd(finalized, emit);
-			return finalized;
-		})();
-		finalizedCalls.push(finalizedCall);
+		preparedCalls.push({ preparation, isSequential, dependencies });
 
 		if (isSequential) {
-			lastSequentialCall = finalizedCall;
+			// Dependencies are assigned in the second phase after all preflight hooks
+			// have completed, so a later preflight abort vetoes every execution.
+			lastSequentialCall = undefined;
 			currentParallelWave = [];
 		} else {
-			currentParallelWave.push(finalizedCall);
+			currentParallelWave.push(Promise.resolve(undefined as never));
 		}
 
 		if (signal?.aborted) {
@@ -985,6 +941,28 @@ async function executeToolCallsParallel(
 		}
 	}
 
+	let previousSequential: Promise<FinalizedToolCallOutcome> | undefined;
+	let previousWave: Promise<FinalizedToolCallOutcome>[] = [];
+	for (const { preparation, isSequential } of preparedCalls) {
+		const dependencies = isSequential
+			? [...(previousSequential ? [previousSequential] : []), ...previousWave]
+			: previousSequential
+				? [previousSequential]
+				: [];
+		const finalizedCall = (async () => {
+			await Promise.all(dependencies);
+			const finalized = signal?.aborted
+				? { toolCall: preparation.toolCall, result: createErrorToolResult("Operation aborted"), isError: true }
+				: await runPreparedToolCall(currentContext, assistantMessage, preparation, config, signal, emit);
+			await emitToolExecutionEnd(finalized, emit);
+			return finalized;
+		})();
+		finalizedCalls.push(finalizedCall);
+		if (isSequential) {
+			previousSequential = finalizedCall;
+			previousWave = [];
+		} else previousWave.push(finalizedCall);
+	}
 	const orderedFinalizedCalls = await Promise.all(finalizedCalls);
 	const messages: ToolResultMessage[] = [];
 	for (const finalized of orderedFinalizedCalls) {

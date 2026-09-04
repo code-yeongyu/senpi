@@ -173,8 +173,8 @@ describe("generateSummary reasoning options", () => {
 		expect(streamSimpleMock.mock.calls[0][2]).toMatchObject({
 			affinitySessionId: "current-routing-session",
 			cacheRetention: "long",
-			toolChoice: "none",
 		});
+		expect(streamSimpleMock.mock.calls[0][2]).toMatchObject({ toolChoice: "auto" });
 		expect(streamSimpleMock.mock.calls[0][2]?.sessionId).not.toBe("current-routing-session");
 	});
 
@@ -262,7 +262,6 @@ describe("generateSummary reasoning options", () => {
 		expect(streamSimpleMock.mock.calls[0][2]).toMatchObject({
 			cacheRetention: "short",
 			affinitySessionId: "routing-session",
-			toolChoice: "none",
 			transport: "websocket",
 			thinkingBudgets: { low: 1234 },
 			maxRetryDelayMs: 4321,
@@ -324,8 +323,8 @@ describe("generateSummary reasoning options", () => {
 		expect(prompt).not.toContain("x".repeat(3000));
 		expect(streamSimpleMock.mock.calls[0][2]).toMatchObject({
 			cacheRetention: "none",
-			toolChoice: "none",
 		});
+		expect(streamSimpleMock.mock.calls[0][2]).not.toHaveProperty("toolChoice");
 		expect(streamSimpleMock.mock.calls[0][2]?.sessionId).not.toBe("routing-session");
 	});
 
@@ -388,8 +387,8 @@ describe("generateSummary reasoning options", () => {
 		expect(prompt).not.toContain("source conversation may also contain complete earlier turns");
 		expect(streamSimpleMock.mock.calls[0][2]).toMatchObject({
 			cacheRetention: "none",
-			toolChoice: "none",
 		});
+		expect(streamSimpleMock.mock.calls[0][2]).not.toHaveProperty("toolChoice");
 		expect(streamSimpleMock.mock.calls[0][2]?.sessionId).not.toBe("routing-session");
 	});
 
@@ -456,8 +455,8 @@ describe("generateSummary reasoning options", () => {
 		expect(instruction).not.toContain("Earlier request");
 		expect(streamSimpleMock.mock.calls[0][2]).toMatchObject({
 			cacheRetention: "short",
-			toolChoice: "none",
 		});
+		expect(streamSimpleMock.mock.calls[0][2]).not.toHaveProperty("toolChoice");
 	});
 
 	it("rejects tool calls from conversation summaries", async () => {

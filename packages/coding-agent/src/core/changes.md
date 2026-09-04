@@ -1,5 +1,26 @@
 # changes
 
+## 2026-09-04 - Adopt the v0.84.4 core runtime fixes
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: an in-memory fork tears down the current runtime before creating the forked or branched session and links the new session's parent to the pre-fork leaf, so the active turn settles before the fork target exists (upstream 56c6fb33c, #8937).
+- `packages/coding-agent/src/core/http-dispatcher.ts`: the environment proxy agent sets `proxyTunnel` to keep HTTP origins on CONNECT tunnels as they behaved before Undici 8.7 (upstream 23842b1e6, #8134).
+- `packages/coding-agent/src/core/model-config.ts`: the models.json compat schemas gain optional `vllmPriority` (openai-completions), `supportsMaxOutputTokens` (openai-responses), and `supportsMidConvoEffort` (anthropic-messages) fields.
+- `packages/coding-agent/src/core/session-manager.ts`: opening an existing session file for append appends a newline when the file does not end with one, repairing an unterminated JSONL tail from the append-owning process only and never from read-only loads (upstream 0b5ee5d8b, #8345).
+
+### Why
+
+- Settling the turn before the fork target exists keeps the forked session from observing a half-written parent; without the tunnel flag proxied HTTP requests lost their origin after the Undici 8.7 behavior change; the compat flags expose provider capabilities the sync's provider clients now read; and a torn tail entry otherwise fuses with the next append and can swallow the rest of the session.
+
+### Why an extension could not handle it
+
+- Session file ownership, runtime teardown ordering, the HTTP dispatcher, and the models.json schema are core seams that run before or below extension hooks.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/session-manager.ts` append-side repair and `packages/coding-agent/src/core/agent-session-runtime.ts` fork ordering; LOW: `packages/coding-agent/src/core/model-config.ts` compat schema fields and `packages/coding-agent/src/core/http-dispatcher.ts` agent options.
+
 ## 2026-09-04 - Skills prompt aliases each root to a short rN prefix
 
 ### What changed
@@ -17,7 +38,6 @@
 ### Expected merge conflict zones
 
 - LOW: `skills.ts` renderer body and `skills.test.ts` location assertion.
-
 
 ## 2026-09-04 - Restore the selected model, not its upstream wire id, on resume
 
@@ -48,6 +68,78 @@
 
 - LOW: the `model` bookkeeping inside `getSessionContextSettings()` in `session-manager.ts`.
 
+
+## 2026-09-04 - Gate next-turn compaction on real provider admission
+
+### What changed
+
+- Keep the next-turn callback running every completed turn, but enforce compaction only when a tool continuation or queued message will be admitted to a provider; retain the late queue re-sample and one bounded callback replay after compaction.
+
+### Why
+
+- Restoring the every-turn preparation contract must not reintroduce compaction on a completed turn that has no provider continuation, while queued work arriving during preparation still needs a consistent compacted context.
+
+### Why an extension could not handle it
+
+- Compaction admission, queue ownership, and callback replay span AgentSession persistence and provider lifecycle state beneath the extension event surface.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` next-turn preparation and compaction admission around `_installAgentNextTurnRefresh`.
+
+## 2026-09-03 - Restore provider-level api inheritance for models.json models
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts` composes models.json custom models with a defaults object that always carries the extension-registered provider's `api` and `baseUrl`, so a definition that omits both still inherits them when no built-in default exists; upstream's api-aware `findModelDefaults` remains the built-in lookup, and the missing-api/missing-baseUrl errors are unchanged when neither source provides a value.
+
+### Why
+
+- The upstream sync kept `findModelDefaults` but gated the extension fallback behind a truthy defaults check, so a models.json model under an extension-registered provider with an empty base catalog failed composition with `no "api" specified` before the extension layer could run.
+
+### Why an extension could not handle it
+
+- Provider composition order and models.json merging happen inside `applyModelsJson`/`modelFromJson` in `packages/coding-agent/src/core/provider-composer.ts`, before extension model behavior can repair the intermediate layer.
+
+### Expected merge conflict zones
+
+- LOW: models.json model upsert loop in `packages/coding-agent/src/core/provider-composer.ts` (`applyModelsJson`), plus the `modelFromJson` defaults parameter type.
+
+## 2026-09-03 - Route required compaction failures through admission state
+
+### What changed
+
+- Preserved the RequiredCompactionError turn/admission markers used to convert asynchronous compaction rejection into a controlled prompt error.
+
+### Why
+
+- Required compaction must reject the originating prompt without escaping as an unhandled event-queue rejection.
+
+### Why an extension could not handle it
+
+- Admission state is owned by AgentSession and spans agent event persistence, retry, and compaction scheduling.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` compaction admission and `_processAgentEvent` handling.
+
+## 2026-09-03 - Bridge branded terminal capability overrides
+
+### What changed
+
+- `settings-manager.ts` resolves unset terminal hyperlink, image-protocol, and truecolor settings from `SENPI_*` environment variables, falling back to the legacy `PI_*` names through the brand environment helper.
+
+### Why
+
+- Branded Senpi launches need terminal capability overrides to reach the shared TUI detection path without duplicating environment-resolution policy.
+
+### Why an extension could not handle it
+
+- Settings resolution occurs before interactive rendering and is core-owned configuration behavior outside extension hooks.
+
+### Expected merge conflict zones
+
+- LOW: `settings-manager.ts` terminal capability override resolution.
 
 ## 2026-09-03 - Make eval-only tool routing unconditional and registry-aware
 
@@ -4548,3 +4640,21 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 ### Expected merge conflict zones
 
 - Agent event dispatch and custom-message queue handling.
+
+## 2026-09-03 - Reconcile upstream agent-session admission and runtime replacement
+
+### What changed and why
+
+- Kept senpi compaction admission, abort, model persistence, and event-union behavior while removing the obsolete queued-message gate and callback re-sample from next-turn refresh; runtime replacement now settles the outgoing session before creating the fork target and preserves extension spill reporting.
+
+### Why
+
+- Upstream loop ordering already drains continuation messages into loop-local state before preparation, so the old gate skipped required threshold compaction. Settling before fork creation preserves outgoing JSONL and active-turn lifecycle ordering.
+
+### Why an extension could not handle this
+
+- Session admission, persistence, abort, and runtime replacement are core lifecycle boundaries below extension interception.
+
+### Expected merge conflict zones
+
+- `src/core/agent-session.ts` next-turn refresh and compaction lifecycle; `src/core/agent-session-runtime.ts` replacement ordering.
