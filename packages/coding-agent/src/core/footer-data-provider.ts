@@ -361,8 +361,23 @@ export class FooterDataProvider {
 				// when watcher creation just failed. The path is recorded after the
 				// attempt because a failure synchronously clears watcher state.
 				this.reftableTablesListPath = tablesListPath;
+				let previousTablesListContent: string | undefined;
+				try {
+					previousTablesListContent = readFileSync(tablesListPath, "utf8");
+				} catch {
+					// The file may disappear between existsSync and the first poll.
+				}
 				watchFile(tablesListPath, { interval: 250 }, (current, previous) => {
+					let contentChanged = false;
+					try {
+						const currentContent = readFileSync(tablesListPath, "utf8");
+						contentChanged = previousTablesListContent !== currentContent;
+						previousTablesListContent = currentContent;
+					} catch {
+						contentChanged = true;
+					}
 					if (
+						contentChanged ||
 						current.mtimeMs !== previous.mtimeMs ||
 						current.ctimeMs !== previous.ctimeMs ||
 						current.size !== previous.size
