@@ -136,9 +136,9 @@ Fields:
 - \`language\` — {{#if py}}\`"py"\` IPython kernel{{/if}}{{#ifAll py js}}, {{/ifAll}}{{#if js}}\`"js"\` persistent JavaScript VM{{/if}}{{#if rb}}{{#ifAny py js}}, {{/ifAny}}\`"rb"\` persistent Ruby kernel{{/if}}{{#if jl}}{{#ifAny py js rb}}, {{/ifAny}}\`"jl"\` persistent Julia kernel{{/if}}.
 - \`code\` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
 - \`summary\` (REQUIRED for run) — ONE line in the USER'S conversational language stating WHAT this cell does and FOR WHAT PURPOSE (e.g. Korean conversation -> "src 전체에서 legacyClient 사용처 집계"); shown in the TUI while the cell runs; >80 chars is force-truncated.
-- \`timeout\` (optional) — seconds. Raise only for heavy compute or long{{#if spawns}} non-agent{{/if}} tool calls.
-- \`on_timeout\` (optional) — \`"detach"\` keeps pure computation running in interactive sessions (the default); \`"error"\` interrupts for deadline-sensitive work and is the print/json default.
-- Every cell is killed at a wall-clock hard limit (default 1800s) that survives detach and is never paused by tool calls; a larger explicit \`timeout\` raises it, and a killed cell notifies you that it hit the limit.
+- \`timeout\` (optional) — seconds the cell may block the turn before it detaches; also raises the wall-clock hard limit below. In interactive sessions the detach point is capped at a ~60s foreground window, so a large \`timeout\` frees the turn at the window while the cell keeps running to the hard limit — it does NOT hold the turn for its full duration. Raise it to let a long detached cell live longer, not to wait longer in the foreground.
+- \`on_timeout\` (optional) — \`"detach"\` keeps pure computation running in interactive sessions (the default), detaching at the foreground window; \`"error"\` interrupts for deadline-sensitive work at the full \`timeout\` (uncapped) and is the print/json default.
+- Every cell is killed at a wall-clock hard limit (default 1800s) that survives detach and is never paused by tool calls; a larger explicit \`timeout\` raises this kill deadline (not the foreground block), and a killed cell notifies you that it hit the limit.
 - \`reset\` (optional) — wipe this language's kernel first.{{#ifAll py js}} Per-language: a \`py\` reset never touches the JS VM.{{/ifAll}}
 - \`action\` (optional) — defaults to \`"run"\`. A detached cell returns its id: use \`eval({ action: "peek", cell_id })\` for buffered output/state or \`eval({ action: "stop", cell_id })\` to cancel it.
 

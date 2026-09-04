@@ -71,6 +71,7 @@ Configuration is loaded in this order:
     "jl": false
   },
   "cellTimeoutSeconds": 30,
+  "foregroundWindowSeconds": 60,
   "parallelPoolWidth": 4,
   "taskTools": {
     "task": "task",
@@ -88,6 +89,7 @@ Configuration is loaded in this order:
 | --- | --- | --- |
 | `languages` | `py`/`js` enabled; `rb`/`jl` disabled | Selects desired languages before interpreter detection. |
 | `cellTimeoutSeconds` | `30` | Idle timeout for one cell unless the call supplies `timeout`; interactive calls detach by default and print/json calls error. |
+| `foregroundWindowSeconds` | `60` | Longest an interactive (detach-behavior) call blocks the turn before the cell detaches, capping the `timeout` detach budget. A larger `timeout` still raises the hard limit and keeps the cell running, but the turn is freed at this window. `on_timeout: "error"` calls keep the full `timeout` as an uncapped deadline. Env override: `SENPI_CODEMODE_FOREGROUND_SECONDS`. |
 | `parallelPoolWidth` | `4` | Maximum concurrent `parallel()` thunks. |
 | `taskTools.task` | `"task"` | Registered tool name used by `agent()`. |
 | `taskTools.output` | `"task_output"` | Registered tool name used by `output()`. |

@@ -21,6 +21,12 @@ export interface CreateEvalToolOptions {
 	readonly enabledLanguages: EnabledEvalLanguages;
 	readonly kernelManager: EvalKernelManager;
 	readonly cellTimeoutSeconds: number;
+	/**
+	 * Longest an interactive (detach-behavior) call blocks the agent loop before the cell detaches,
+	 * capping the `timeout` detach budget. Defaults to {@link DEFAULT_FOREGROUND_WINDOW_SECONDS}.
+	 * Does not affect `on_timeout: "error"` calls or the wall-clock hard limit.
+	 */
+	readonly foregroundWindowSeconds?: number;
 	/** Wall-clock kill deadline applied to every cell; only used when this factory creates its own manager. */
 	readonly hardLimitSeconds?: number;
 	readonly executeTool: ExecuteTool;

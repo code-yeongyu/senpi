@@ -9,8 +9,6 @@
 - Added Anthropic per-turn effort persistence, deterministic historical effort markers, and signed-thinking mismatch recovery for supported Claude models across Anthropic Messages transports, including OpenRouter.
 - Added the experimental vision-capable `deepseek-v4-flash-vision-exp` model to the DeepSeek catalog.
 
-- Added GPT-6 Astra to the OpenAI and OpenAI Codex model catalogs, including long-context pricing, reasoning efforts, tool search, and Priority `-fast` variants.
-
 ### Changed
 
 ### Fixed
@@ -22,6 +20,20 @@
 - Fixed OpenAI-compatible reasoning replay to merge consecutive streamed text and summary `reasoning_details` deltas.
 - Fixed the Cloudflare AI Gateway catalog to include supported `workers-ai/*` passthrough models omitted by models.dev.
 - Fixed OpenRouter reasoning controls by deriving `off` support and available effort levels from OpenRouter's model metadata, preventing reasoning-mandatory models from receiving `effort: "none"` ([#8614](https://github.com/earendil-works/pi/pull/8614) by [@davidbrai](https://github.com/davidbrai)).
+
+### Removed
+
+## [2026.9.4] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+- Added GPT-6 Astra to the OpenAI and OpenAI Codex model catalogs, including long-context pricing, reasoning efforts, tool search, and Priority `-fast` variants.
+
+### Changed
+
+### Fixed
 
 - Provider requests are no longer sent with `max_tokens` shrunk to a handful of tokens (down to 1) once the estimated context fills the model window. `buildBaseOptions` now throws `ContextWindowExhaustedError` when fewer than 1024 tokens of answer room remain after the safety margin (windows under 5120 tokens cannot hold that geometry and keep the previous behavior); the lazy API boundary surfaces it as an assistant error ("Context window exhausted: the conversation is estimated at X of Y tokens, leaving fewer than 1024 tokens for a response. Compact the conversation, enable auto-compaction, or start a new session before retrying.") that `isContextOverflow` classifies as a context overflow, so auto-compaction can recover when it is enabled and the user sees the real cause when it is not. Previously such requests returned truncated tool calls ("Tool call stream ended before completion") or a one-token "length" stop while billing the whole prompt.
 

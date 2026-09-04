@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { AgentToolResult, ExtensionContext, ToolDefinition } from "@code-yeongyu/senpi";
-import { defaultCodemodeSettings } from "../config/settings.ts";
+import { DEFAULT_FOREGROUND_WINDOW_SECONDS, defaultCodemodeSettings } from "../config/settings.ts";
 import { buildEvalPrompt } from "../prompt/eval-prompt.ts";
 import { TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP } from "../timeouts/bridge-timeout.ts";
 import { abortError, CellExecution, defaultTimeoutFactory } from "./cell-execution.ts";
@@ -101,8 +101,19 @@ async function runEvalCell(
 	invocation: EvalCellInvocation,
 ): Promise<AgentToolResult<EvalToolDetails>> {
 	if (invocation.signal.aborted) throw abortError(invocation.signal.reason);
-	const timeoutMs = Math.floor((invocation.input.timeout ?? options.cellTimeoutSeconds) * 1_000);
 	const timeoutBehavior = evalTimeoutBehavior(invocation.input, invocation.ctx);
+	const requestedTimeoutMs = Math.floor((invocation.input.timeout ?? options.cellTimeoutSeconds) * 1_000);
+	// The `timeout` (and its `cellTimeoutSeconds` default) is the detach budget for interactive calls.
+	// Cap it at the foreground window so a large `timeout` — whose real purpose is to raise the
+	// wall-clock hard limit (see EvalDetachedCellManager) — frees the turn at the window instead of
+	// blocking the agent loop for its full duration. `on_timeout: "error"` (and print/json) keep the
+	// unclamped deadline, since there the cell is killed rather than detached.
+	const foregroundWindowMs = (options.foregroundWindowSeconds ?? DEFAULT_FOREGROUND_WINDOW_SECONDS) * 1_000;
+	const timeoutMs =
+		timeoutBehavior === "detach" ? Math.min(requestedTimeoutMs, foregroundWindowMs) : requestedTimeoutMs;
+	// A cell that pauses its watchdog for a host bridge call would otherwise wait the full pause grace
+	// (~10 min) before detaching; cap the grace at the foreground window too so the detach guarantee
+	// holds for bridge-parked cells. Error mode keeps the default grace (its timeout is the deadline).
 	const bridgeAbortController = new AbortController();
 	const cellSignal = AbortSignal.any([invocation.signal, bridgeAbortController.signal]);
 	const bridgeContext: ExtensionContext = { ...invocation.ctx, signal: cellSignal };
@@ -131,6 +142,7 @@ async function runEvalCell(
 		callerSignal: invocation.signal,
 		cellId: invocation.cellId,
 		timeoutMs,
+		...(timeoutBehavior === "detach" ? { maxPauseGraceMs: foregroundWindowMs } : {}),
 		timeoutFactory: options.timeoutFactory ?? defaultTimeoutFactory,
 		onTimeout: (error) => {
 			if (timeoutBehavior === "detach" && cellManager.detach(cell)) {

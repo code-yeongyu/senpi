@@ -13,6 +13,12 @@ export function enabledLanguageList(enabled: EnabledEvalLanguages): EvalLanguage
 
 export const EVAL_SUMMARY_MAX_LENGTH = 80;
 
+const TIMEOUT_FIELD_DESCRIPTION =
+	"Seconds the cell may block the turn before it detaches, and the amount by which it raises the wall-clock hard limit. In interactive sessions the detach point is capped at the foreground window (default 60s), so a large value frees the turn at the window while the cell keeps running; on_timeout:'error' (and print/json) keep the full value as the uncapped deadline.";
+
+const ON_TIMEOUT_FIELD_DESCRIPTION =
+	"Timeout behavior. Interactive sessions detach by default (at the foreground window); print/json sessions error by default. 'error' uses the full timeout as an uncapped deadline.";
+
 export interface EvalToolInput {
 	readonly language: EvalLanguage;
 	readonly code: string;
@@ -47,10 +53,10 @@ const fullEvalInputSchema = Type.Object({
 				"REQUIRED for run. ONE line in the USER'S conversational language (Korean conversation -> Korean summary) stating WHAT this cell does and FOR WHAT PURPOSE; shown in the TUI while the cell runs. Longer values are force-truncated to 80 chars.",
 		}),
 	),
-	timeout: Type.Optional(Type.Number({ minimum: 1, description: "Timeout in seconds." })),
+	timeout: Type.Optional(Type.Number({ minimum: 1, description: TIMEOUT_FIELD_DESCRIPTION })),
 	on_timeout: Type.Optional(
 		Type.Union([Type.Literal("detach"), Type.Literal("error")], {
-			description: "Timeout behavior. Interactive sessions detach by default; print/json sessions error by default.",
+			description: ON_TIMEOUT_FIELD_DESCRIPTION,
 		}),
 	),
 	reset: Type.Optional(Type.Boolean({ description: "Reset this language kernel before running." })),
@@ -83,11 +89,10 @@ export function createEvalInputSchema(enabled: EnabledEvalLanguages): EvalInputS
 						"REQUIRED for run. ONE line in the USER'S conversational language (Korean conversation -> Korean summary) stating WHAT this cell does and FOR WHAT PURPOSE; shown in the TUI while the cell runs. Longer values are force-truncated to 80 chars.",
 				}),
 			),
-			timeout: Type.Optional(Type.Number({ minimum: 1, description: "Timeout in seconds." })),
+			timeout: Type.Optional(Type.Number({ minimum: 1, description: TIMEOUT_FIELD_DESCRIPTION })),
 			on_timeout: Type.Optional(
 				Type.Union([Type.Literal("detach"), Type.Literal("error")], {
-					description:
-						"Timeout behavior. Interactive sessions detach by default; print/json sessions error by default.",
+					description: ON_TIMEOUT_FIELD_DESCRIPTION,
 				}),
 			),
 			reset: Type.Optional(Type.Boolean({ description: "Reset this language kernel before running." })),

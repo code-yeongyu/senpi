@@ -3,7 +3,7 @@ import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "./bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "./bridges/schema-bridge.ts";
 import { type CompletionRequest, type CompletionResult, createCompletionHandler } from "./completion/handler.ts";
-import { defaultCodemodeSettings, resolveHardLimitSeconds } from "./config/settings.ts";
+import { defaultCodemodeSettings, resolveForegroundWindowSeconds, resolveHardLimitSeconds } from "./config/settings.ts";
 import { EvalNotifier } from "./extension/eval-notifier.ts";
 import { EVAL_CELLS_STATUS_KEY } from "./extension/eval-status.ts";
 import { EvalStatusTicker } from "./extension/eval-status-ticker.ts";
@@ -127,6 +127,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 				enabledLanguages: runtime.enabledLanguages,
 				kernelManager: manager,
 				cellTimeoutSeconds: runtime.settings.cellTimeoutSeconds,
+				foregroundWindowSeconds: resolveForegroundWindowSeconds(runtime.settings),
 				executeTool: runtime.executeTool,
 				listTools: () => pi.getAllTools(),
 				complete,
@@ -161,6 +162,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			enabledLanguages: { py: true, js: true, rb: true, jl: true },
 			kernelManager: manager,
 			cellTimeoutSeconds: defaultCodemodeSettings.cellTimeoutSeconds,
+			foregroundWindowSeconds: resolveForegroundWindowSeconds(defaultCodemodeSettings),
 			executeTool: createExecuteTool(pi),
 			listTools: () => pi.getAllTools(),
 			complete,
