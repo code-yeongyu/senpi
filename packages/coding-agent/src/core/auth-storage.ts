@@ -3,7 +3,6 @@
  * Provider auth orchestration belongs to ModelRuntime and pi-ai Models.
  */
 
-import { setTimeout as sleep } from "node:timers/promises";
 import type {
 	ApiKeyCredential,
 	AuthEvent,
@@ -34,7 +33,12 @@ import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
-import { FILE_STORAGE_LOCK_OPTIONS } from "./lockfile-policy.ts";
+import {
+	CredentialStoreBusyError,
+	FILE_STORAGE_LOCK_OPTIONS,
+	FILE_STORAGE_LOCK_RETRY_BUDGET_MS,
+	isLockError,
+} from "./lockfile-policy.ts";
 import { isCommandConfigValue, resolveConfigValue } from "./resolve-config-value.ts";
 
 type AuthStorageData = Record<string, Credential>;
@@ -102,31 +106,23 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
-		const maxAttempts = 10;
-		const delayMs = 20;
-		let lastError: unknown;
-
-		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		const startedAt = Date.now();
+		let attempt = 0;
+		while (true) {
 			try {
-				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS });
+				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 			} catch (error) {
-				const code =
-					typeof error === "object" && error !== null && "code" in error
-						? String((error as { code?: unknown }).code)
-						: undefined;
-				if (code !== "ELOCKED" || attempt === maxAttempts) {
-					throw error;
+				if (!isLockError(error)) throw error;
+				const waitedMs = Date.now() - startedAt;
+				if (waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) {
+					throw new CredentialStoreBusyError(path, waitedMs, error);
 				}
-				lastError = error;
-				// Atomics.wait sleeps the thread without spinning, so contended lock retries
-				// no longer burn a CPU core per waiter (same root cause as the settings-lock
-				// TUI freeze fixed in #1056). Stays synchronous to keep callers unchanged.
+				const delayMs = Math.min(100 * 2 ** attempt, 1_000, FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs);
+				attempt++;
 				const sleeper = new Int32Array(new SharedArrayBuffer(4));
 				Atomics.wait(sleeper, 0, 0, delayMs);
 			}
 		}
-
-		throw (lastError as Error) ?? new Error("Failed to acquire auth storage lock");
 	}
 
 	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T {
@@ -153,39 +149,19 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		signal: AbortSignal | undefined,
 		onCompromised: (error: Error) => void,
 	): Promise<() => Promise<void>> {
-		const staleMs = FILE_STORAGE_LOCK_OPTIONS.stale;
-		const maxDelayMs = 2_000;
-		const deadline = Date.now() + staleMs;
-		let retry = 0;
-		while (true) {
-			signal?.throwIfAborted();
-			let release: (() => Promise<void>) | undefined;
-			try {
-				release = await lockfile.lock(this.authPath, {
-					...FILE_STORAGE_LOCK_OPTIONS,
-					retries: 0,
-					onCompromised,
-				});
-			} catch (error) {
-				signal?.throwIfAborted();
-				const code =
-					typeof error === "object" && error !== null && "code" in error
-						? String((error as { code?: unknown }).code)
-						: undefined;
-				const remainingMs = deadline - Date.now();
-				if (code !== "ELOCKED" || remainingMs <= 0) throw error;
-				const baseDelayMs = Math.min(10 * 2 ** retry, maxDelayMs / 2);
-				retry++;
-				const delayMs = Math.min(Math.round(baseDelayMs * (1 + Math.random())), remainingMs);
-				if (signal) await sleep(delayMs, undefined, { signal });
-				else await sleep(delayMs);
-				continue;
-			}
+		signal?.throwIfAborted();
+		const startedAt = Date.now();
+		try {
+			const release = await lockfile.lock(this.authPath, { ...FILE_STORAGE_LOCK_OPTIONS, onCompromised });
 			if (signal?.aborted) {
 				await release();
 				signal.throwIfAborted();
 			}
 			return release;
+		} catch (error) {
+			signal?.throwIfAborted();
+			if (isLockError(error)) throw new CredentialStoreBusyError(this.authPath, Date.now() - startedAt, error);
+			throw error;
 		}
 	}
 

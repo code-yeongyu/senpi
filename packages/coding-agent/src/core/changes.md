@@ -1,5 +1,10 @@
 # changes
 
+## 2026-09-04 - File-storage locks wait through contention
+
+- `lockfile-policy.ts` now defines one 5.5s bounded retry budget (100, 200, 400, 800, then 1,000ms capped) for the 30s proper-lockfile stale window. Auth, settings, and credential-pool state-store acquisitions use it; exhausted ELOCKED failures become `CredentialStoreBusyError` with path and elapsed wait, and proper-lockfile retains stale-lock recovery. As with the existing policy, a stale lock's ownership cannot be proven safely; this change does not fork proper-lockfile.
+- `auth-storage.ts`, `settings-manager.ts`, and `credential-pool/state-store.ts` preserve immediate success when uncontended while converting exhausted contention into the actionable transient error.
+
 ## 2026-09-04 - Adopt the v0.84.4 core runtime fixes
 
 ### What changed

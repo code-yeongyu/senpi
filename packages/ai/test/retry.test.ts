@@ -71,6 +71,17 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
+	it("classifies credential-store lock exhaustion as retryable infrastructure", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "Credential store is busy: lock /tmp/auth.json was held for 5500ms. Retry the operation",
+				}),
+			),
+		).toBe(true);
+	});
+
 	it("classifies only explicitly provider-owned aborts as provider timeouts", () => {
 		expect(
 			isProviderTimeoutError(

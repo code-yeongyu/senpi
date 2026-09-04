@@ -11,4 +11,28 @@ export const FILE_STORAGE_LOCK_OPTIONS = {
 	realpath: false,
 	stale: 30_000,
 	update: 10_000,
+	// 100+200+400+800+4*1000 = 5.5s: long enough for normal refresh convoys,
+	// while remaining well below the 30s stale window.
+	retries: { retries: 8, factor: 2, minTimeout: 100, maxTimeout: 1_000, randomize: false },
 } as const;
+
+export const FILE_STORAGE_LOCK_RETRY_BUDGET_MS = 5_500;
+
+export class CredentialStoreBusyError extends Error {
+	readonly path: string;
+	readonly waitedMs: number;
+
+	constructor(path: string, waitedMs: number, cause?: unknown) {
+		super(
+			`Credential store is busy: lock ${path} was held for ${waitedMs}ms. Retry the operation; another omo process may be refreshing credentials.`,
+			{ cause },
+		);
+		this.name = "CredentialStoreBusyError";
+		this.path = path;
+		this.waitedMs = waitedMs;
+	}
+}
+
+export function isLockError(error: unknown): boolean {
+	return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ELOCKED";
+}

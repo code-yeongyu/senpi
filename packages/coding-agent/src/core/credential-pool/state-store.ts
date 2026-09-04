@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
 import { getAgentDir } from "../../config.ts";
-import { FILE_STORAGE_LOCK_OPTIONS } from "../lockfile-policy.ts";
+import { CredentialStoreBusyError, FILE_STORAGE_LOCK_OPTIONS, FILE_STORAGE_LOCK_RETRY_BUDGET_MS, isLockError } from "../lockfile-policy.ts";
 
 export const CREDENTIAL_POOL_STATE_FILENAME = "credential-pool-state.json";
 
@@ -106,14 +106,20 @@ export class CredentialSlotRepository {
 		fn: (document: CredentialPoolStateDocument) => { result: T; next?: CredentialPoolStateDocument },
 	): Promise<T> {
 		this.ensureFile();
-		const release = await lockfile.lock(this.path, FILE_STORAGE_LOCK_OPTIONS);
+		let release: (() => Promise<void>) | undefined;
+		try {
+			release = await lockfile.lock(this.path, FILE_STORAGE_LOCK_OPTIONS);
+		} catch (error) {
+			if (isLockError(error)) throw new CredentialStoreBusyError(this.path, FILE_STORAGE_LOCK_RETRY_BUDGET_MS, error);
+			throw error;
+		}
 		try {
 			const document = parseDocument(readFileSync(this.path, "utf-8"));
 			const { result, next } = fn(document);
 			if (next) writeFileSync(this.path, JSON.stringify(next, null, 2), FILE_WRITE_OPTIONS);
 			return result;
 		} finally {
-			await release();
+			if (release) await release();
 		}
 	}
 

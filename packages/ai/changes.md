@@ -18,6 +18,11 @@
 
 - LOW: `packages/ai/vitest.config.ts` test settings.
 
+## 2026-09-04 - Credential-store lock contention remains transient
+
+- `src/utils/retry.ts` recognizes exhausted local credential-store lock waits as retryable infrastructure, preventing provider fallback hopping.
+
+
 ## 2026-09-04 - Restore the @anthropic-ai/sdk 0.123.0 pin the R4b merge dropped
 
 ### What changed

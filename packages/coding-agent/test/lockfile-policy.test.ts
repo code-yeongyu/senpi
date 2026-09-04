@@ -49,10 +49,16 @@ describe("file storage lock policy", () => {
 				stale: options.stale,
 				update: options.update,
 				realpath: options.realpath,
+				retries: options.retries,
 			}));
-			for (const policy of policies) {
-				expect(policy).toEqual({ stale: 30_000, update: 10_000, realpath: false });
-			}
+			expect(policies[0]).toMatchObject({ stale: 30_000, update: 10_000, realpath: false, retries: 0 });
+			expect(policies[1]).toMatchObject({ stale: 30_000, update: 10_000, realpath: false, retries: 0 });
+			expect(policies[2]).toMatchObject({
+				stale: 30_000,
+				update: 10_000,
+				realpath: false,
+				retries: { retries: 8, factor: 2, minTimeout: 100, maxTimeout: 1_000, randomize: false },
+			});
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}
