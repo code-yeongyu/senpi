@@ -21,6 +21,8 @@
 - Fixed the Cloudflare AI Gateway catalog to include supported `workers-ai/*` passthrough models omitted by models.dev.
 - Fixed OpenRouter reasoning controls by deriving `off` support and available effort levels from OpenRouter's model metadata, preventing reasoning-mandatory models from receiving `effort: "none"` ([#8614](https://github.com/earendil-works/pi/pull/8614) by [@davidbrai](https://github.com/davidbrai)).
 
+- New shared helper `dropFailedAssistantTurns` (exported from the package barrel) removes assistant turns with `stopReason` `error` or `aborted` from a converted LLM message list, together with every tool result whose `toolCallId` was declared only by those dropped assistants; a call id re-declared by a kept assistant keeps its result, mirroring the provider-layer `droppedCallIds` pairing in `transform-messages.ts`. Order and every other message are preserved. Consumed by both `convertToLlm` implementations (coding-agent core and agent harness) so every LLM request built from converted context excludes failed provider turns.
+
 ### Removed
 
 ## [2026.9.4] - 2026-09-04

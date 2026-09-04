@@ -64,6 +64,28 @@
 - LOW: `packages/coding-agent/src/core/manual-continue.ts` (new file, no conflicts).
 - LOW: `packages/coding-agent/test/suite/regressions/pre-prompt-compaction-no-continue.test.ts` — the single assertion swap in the "dot retry" case.
 
+
+## 2026-09-04 - Failed provider turns leave the LLM context on every lane
+
+### What changed
+
+- `packages/coding-agent/src/core/messages.ts`: `convertToLlm` runs the shared `dropFailedAssistantTurns` from `@earendil-works/pi-ai` as its final step, removing assistant turns with `stopReason` `error`/`aborted` and the tool results orphaned by that drop from the returned `Message[]`. `convertToLlmForTransport` inherits the drop through `convertToLlm`.
+- `packages/coding-agent/test/convert-to-llm-drops-failed-turns.test.ts` (new): `convertToLlm` on `[user, assistant(error, "PARTIAL" + toolCall), toolResult, user]` yields no `PARTIAL` text and no orphaned tool call; same for an aborted turn.
+- `packages/coding-agent/test/claude-sdk-oauth-prompt-bridge.test.ts`: regression pinning that `buildPromptBlocks` over `convertToLlm`-processed history renders no failed-turn text and no orphaned tool call id.
+
+### Why
+
+- The claude-sdk-oauth prompt bridge (`buildPromptBlocks`) rendered every history assistant into `<conversation_history>` with no `stopReason` filter, so a failed provider turn's partial text and unexecuted tool calls were replayed to the SDK on every subsequent request; `estimateContextTokens(buildSessionContext(...))` counted the failed turns as live tokens. The provider transform layer already dropped them for pi-ai APIs only, leaving these two lanes and token estimation exposed.
+
+### Why an extension could not handle it
+
+- Both lanes consume `convertToLlm` output directly inside core request building (`prompt-bridge.ts`, cursor turn building, token estimation); no extension seam sits between the session message list and those builders.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `convertToLlm` in `packages/coding-agent/src/core/messages.ts` (the new `dropFailedAssistantTurns` return).
+- LOW: `packages/coding-agent/test/claude-sdk-oauth-prompt-bridge.test.ts` (one new `it` before the stream test).
+
 ## 2026-09-04 - Restore the selected model, not its upstream wire id, on resume
 
 ### What changed

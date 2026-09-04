@@ -91,6 +91,27 @@
 
 - MEDIUM: `agent-loop.ts` turn admission, queue restoration, and parallel tool scheduling.
 
+## 2026-09-04 - Failed provider turns leave the LLM context on every lane
+
+### What changed
+
+- `packages/agent/src/harness/messages.ts`: the harness `convertToLlm` runs the shared `dropFailedAssistantTurns` from `@earendil-works/pi-ai` as its final step, removing assistant turns with `stopReason` `error`/`aborted` and the tool results orphaned by that drop from the returned `Message[]`; an id re-declared by a kept assistant keeps its result, and `stop`/`length`/`toolUse` turns pass through untouched.
+- `packages/agent/src/harness/compaction/compaction.ts`: `estimateContextTokens` applies the same `dropFailedAssistantTurns` before anchoring on usage and summing trailing tokens, so the estimate counts exactly the set the next request carries; failed turns and their orphaned results no longer inflate the compaction trigger.
+- `packages/agent/test/harness/convert-to-llm.test.ts` (new) and `packages/agent/test/harness/compaction.test.ts`: pin the harness `convertToLlm` drop (error, aborted, re-declared-id keep) and the estimator exclusion for both failure kinds.
+
+### Why
+
+- Compaction, branch summarization, and any consumer building an LLM request from the converted list had no `stopReason` filter, so after a provider error or abort every subsequent request replayed the failed turn's partial text and unexecuted tool calls; the provider transform layer dropped them for pi-ai API requests only.
+
+### Why an extension could not handle it
+
+- The drop must happen inside `convertToLlm`, which consumers call before any extension seam runs; extensions observe the already-built context and cannot remove a failed assistant turn from every downstream request shape deterministically.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `convertToLlm` in `packages/agent/src/harness/messages.ts` (the new `dropFailedAssistantTurns` return).
+- LOW: the head of `estimateContextTokens` and the `counted` parameter of `getLastAssistantUsageInfo` in `packages/agent/src/harness/compaction/compaction.ts`.
+
 ## 2026-09-02 - Name the stream-start timeout setting
 
 ### What changed

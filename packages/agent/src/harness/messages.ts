@@ -1,4 +1,4 @@
-import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import { dropFailedAssistantTurns, type ImageContent, type Message, type TextContent } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../types.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
@@ -123,7 +123,7 @@ export function createCustomMessage(
 }
 
 export function convertToLlm(messages: AgentMessage[]): Message[] {
-	return messages
+	const converted = messages
 		.map((m): Message | undefined => {
 			switch (m.role) {
 				case "bashExecution":
@@ -166,4 +166,8 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 			}
 		})
 		.filter((m): m is Message => m !== undefined);
+	// Failed provider turns (stopReason error/aborted) must not be replayed by
+	// any lane that builds an LLM request from this output; dropping is
+	// deterministic, so earlier requests stay a prefix of later ones.
+	return dropFailedAssistantTurns(converted);
 }
