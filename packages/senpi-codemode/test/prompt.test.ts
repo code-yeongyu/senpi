@@ -46,14 +46,17 @@ describe("buildEvalPrompt", () => {
 		expect(buildEvalPrompt(enabled, options)).toMatchSnapshot();
 	});
 
-	it("documents only enabled language fields and reset scope", () => {
+	it("documents only enabled languages and leaves field semantics to the parameter schema", () => {
 		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false });
 
 		expect(prompt).toContain('`"py"` IPython kernel');
 		expect(prompt).toContain('`"js"` persistent JavaScript VM');
 		expect(prompt).not.toContain('`"rb"` persistent Ruby kernel');
 		expect(prompt).not.toContain('`"jl"` persistent Julia kernel');
-		expect(prompt).toContain("a `py` reset never touches the JS VM");
+		// The parameter schema is the single home of the per-field semantics; the guideline keeps reset scope.
+		expect(prompt).not.toContain("- `timeout`");
+		expect(prompt).not.toContain("`on_timeout`");
+		expect(prompt).toContain("reset is scoped to the selected language");
 	});
 
 	it("omits disabled and missing languages from the prompt", () => {
@@ -79,7 +82,6 @@ describe("buildEvalPrompt", () => {
 		expect(withSpawns).toContain('agent(prompt, agent?="researcher"');
 		expect(withSpawns).toContain('output(*ids, format?="raw"');
 		expect(withSpawns).toContain("<workflow>");
-		expect(withSpawns).toContain("omit it to use `researcher`");
 	});
 
 	it("documents core helpers with Node wording and no excluded surface when no js runtime is given", () => {
@@ -94,10 +96,10 @@ describe("buildEvalPrompt", () => {
 		}
 	});
 
-	it("documents timeout detachment, busy-kernel discipline, and detached-cell controls", () => {
+	it("documents detachment, busy-kernel discipline, and the detached-cell controls", () => {
 		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false });
 
-		expect(prompt).toContain("`on_timeout`");
+		expect(prompt).toContain("outlives the foreground window detaches");
 		expect(prompt).toContain('eval({ action: "peek", cell_id })');
 		expect(prompt).toContain('eval({ action: "stop", cell_id })');
 		expect(prompt).toContain("Do not re-run a detached cell");
@@ -184,6 +186,7 @@ describe("buildEvalPrompt", () => {
 			[{ py: false, js: true, rb: false, jl: false }, ["{ handle: true }"]],
 			[{ py: true, js: false, rb: false, jl: false }, ["handle=True"]],
 			[{ py: true, js: true, rb: false, jl: false }, ["handle=True", "{ handle: true }"]],
+			[{ py: true, js: true, rb: true, jl: true }, ["`handle=True` / `{ handle: true }` / `handle=true`"]],
 		];
 
 		for (const [enabled, expectedForms] of cases) {
@@ -192,6 +195,7 @@ describe("buildEvalPrompt", () => {
 			// Then: each enabled language's form is present and the two are never fused without a separator.
 			expect(prompt).not.toContain("handle=True{ handle: true }");
 			expect(prompt).not.toContain("True{");
+			expect(prompt).not.toContain("}``handle=true");
 			for (const form of expectedForms) expect(prompt).toContain(form);
 			if (enabled.js) expect(prompt).not.toContain("`handle=True``{ handle: true }`");
 		}

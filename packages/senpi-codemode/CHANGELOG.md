@@ -10,6 +10,8 @@
 
 ### Changed
 
+- The `eval` tool description is dieted a second time: the `Fields:` list now defers to the parameter schema (its single home), the detach guidance is one paragraph, and helper lines keep every signature with fewer words. gpt/codex dialect 1,489 -> 1,087 o200k tokens (description + guidelines); claude 1,173, kimi 1,190, default 1,189. Also fixes the fused `jl` handle form in the all-languages render.
+
 - The `eval` tool description is dieted from ~2002 to ~1588 tokens (codex dialect): the three reuse-chain JSON examples, the `<workflow>` graph prose, the repeated state-persistence rules, and the per-dialect wait-doctrine clause are removed or folded; every helper signature and dialect routing is kept. The workflow block's fused `handle=True{ handle: true }` is fixed into per-language correct forms.
 
 ### Fixed

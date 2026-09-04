@@ -1,5 +1,37 @@
 # senpi-codemode fork changes
 
+## 2026-09-04 - eval tool description diet, second pass
+
+### What changed
+
+- `src/prompt/eval-prompt.ts`: the `Fields:` block is gone; the description names the enabled
+  `language` values and defers every per-field rule (`summary`, `timeout`, `on_timeout`, `reset`,
+  `action`) to the parameter schema, which already carries each of them. The detach paragraph is one
+  sentence pair (what detaches, how to peek/stop). Helper doc lines drop restated words but keep every
+  signature; the `<workflow>` block keeps the graph rules in one sentence each. The `jl` handle form
+  now gets a separator when it follows `py`/`js` (`/ \`handle=true\``), fixing a fused
+  `}\`\`handle=true\`` render that the all-languages snapshot had pinned.
+- `test/prompt.test.ts` + snapshot: the field-semantics test now asserts the schema is the single home
+  (no `- \`timeout\``/`\`on_timeout\`` in the description) and that the guideline still states reset
+  scope; the handle-form test gains the four-language case and rejects the fused `jl` form.
+
+### Why
+
+- After the first diet the gpt/codex dialect still rendered 1,489 o200k tokens (description +
+  guidelines, py+js, spawns). The `Fields:` list restated the parameter schema word for word (198
+  tokens of schema text billed twice), and the detach/busy-kernel text said the same thing in three
+  places. Every deleted sentence has a surviving home; no helper signature or dialect block changed.
+
+### Why an extension could not handle it
+
+- The description is built inside this package's `buildEvalPrompt`; there is no hook that lets an
+  outer extension shorten a tool description it does not own.
+
+### Expected merge conflict zones
+
+- LOW: `EVAL_PROMPT_TEMPLATE` prose and the three snapshot files. Upstream pi has no codemode
+  package, so the zone is fork-only.
+
 ## 2026-09-04 - eval tool description diet
 
 ### What changed
