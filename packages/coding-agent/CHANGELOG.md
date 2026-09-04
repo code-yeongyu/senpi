@@ -7,8 +7,11 @@
 ### Added
 
 - Persistent monitors now survive repeated restarts: file watches are re-registered and compare their persisted checkpoint once, reporting exactly one detached created, replaced, or modified change (and nothing when unchanged), while command watches are re-run once under the same `mon_` id without replaying pre-restart output. Sessions may keep up to five durable watches; each expires seven days after creation without extending that deadline on restart or rearm, and a watch muted by the wake budget remains muted when restored.
+- A standing watch that exceeds its 200-line matching-event budget within a rolling 24-hour window now mutes itself and says so once, telling you to rearm it; rearming resumes the watch, ordinary one-shot monitors are never counted, and the window survives restarts so a noisy watch cannot receive a fresh allowance.
 
 ### Changed
+
+- The `monitor` tool's `persistent` option now reads as what it is — a standing watch: no deadline, survives a session restart (the command is re-run once, the file is rescanned and any change missed while detached is reported), expires seven days after creation, and at most five per session. The native file branch no longer claims to reject `persistent`, since a persistent file watch is exactly the one that is checkpointed and restored, and the guidance the tool description duplicated from the terminal prompt section was removed rather than restated, so the reworded switch and its bounds cost fewer prompt bytes than the wording they replace.
 
 ### Fixed
 

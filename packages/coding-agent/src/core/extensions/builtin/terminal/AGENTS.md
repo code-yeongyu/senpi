@@ -17,7 +17,17 @@ terminal/
 ├── notify.ts            # TerminalNotifier
 ├── output-format.ts     # Output shaping/sanitization
 ├── settings.ts          # loadTerminalSettings / resolveTerminalSettings
-├── shared.ts            # Defaults: 120x40, 10000 scrollback, 32 sessions, 1,000,000 output chars
+├── shared.ts            # Defaults: 120x40, 10000 scrollback, 32 sessions, 1,000,000 output chars;
+│                         durability caps (MAX_DURABLE_MONITORS 5, DURABLE_MONITOR_EXPIRY_MS 7d)
+├── terminal-manifest.ts # Durable per-session record + TerminalManifestWriter (transition writes,
+│                         debounced checkpoints, durableCount admission, adoptRestored)
+├── restore.ts           # Manifest read side: strict fail-closed parse + restoreTerminalState
+│                         (classify → per-class handler → ONE digest) + reapplyPersistedMute
+├── manifest-lease.ts    # Per-session pid lease: only one live process restores/records a session
+├── durable-file.ts      # `checkpointed-file` handler: compare saved checkpoint once, report
+│                         at most one detached created/replaced/modified line
+├── durable-command.ts   # `restartable-command` handler: re-spawn the saved command exactly once,
+│                         no deadline, same mon_ id, no replay of pre-restart output
 ├── prompt.ts            # Tool prompt guidance
 └── tools/               # bash.ts (420 LOC), bash-output/input/resize, kill-bash, monitor,
                          # spawn, render, context, foreground-detach/window, sleep-wait
@@ -34,6 +44,10 @@ terminal/
 | Change footer terminal status | `monitor-status.ts`, `monitor-status-ticker.ts` |
 | Change defaults (size, scrollback, caps) | `shared.ts` |
 | Survive an extension reload | `session-bundle.ts` |
+| Survive a full restart (what is persisted) | `terminal-manifest.ts` |
+| Change restore classification or the digest | `restore.ts` |
+| Change how a durable class comes back | `durable-file.ts`, `durable-command.ts` |
+| Change single-live-process ownership | `manifest-lease.ts` |
 
 ## CONVENTIONS
 
@@ -43,6 +57,10 @@ terminal/
 - TypeBox schemas are **flat root objects, never root unions** (`tools/monitor.ts` is the reference) — several provider conversions rebuild schemas from top-level `properties` and a root `anyOf` arrives empty.
 - Environment overrides are injected for tests rather than mutating `process.env`.
 - Cross-extension seam: `monitor-state-event.ts` (parent dir) carries `TerminalMonitorStateEvent`, consumed by `goal/`.
+- **`persistent` means durable, not merely long-lived.** `persistent: true` is the standing-watch switch: no deadline, and the entry is persisted in a durability class (`restartable-command` for `command`, `checkpointed-file` for `path`) that a restart brings back. Without it the entry is `ephemeral` and dies with the process — so any new durability behavior belongs behind that one flag, never behind a new parameter or action.
+- **ONE digest per restart.** `restoreTerminalState` returns counts, `extension.ts` turns them into exactly one coalesced sentence. Never notify per monitor: a session with five durable watches must still wake once.
+- **Write on transition only.** `TerminalManifestWriter` persists lifecycle transitions (register, settle, pause/resume, background start/exit, shutdown) plus debounced checkpoints — never per output line, never a runtime handle. `adoptRestored` deliberately does not write; the restored entry reaches disk on the next real transition.
+- **`pause`/`resume`/`rearm` resolve RUNTIME ids only.** `MonitorRegistry` keys records by `bash_N`/`watch_N`, so handing it a stable `mon_` id silently no-ops. A restore must re-apply a persisted mute with the FRESH runtime id it just allocated (`reapplyPersistedMute`); resolve a caller-supplied id through `resolveTerminalId` first.
 
 ## ANTI-PATTERNS
 

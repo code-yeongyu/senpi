@@ -62,13 +62,13 @@ export const monitorSchema = Type.Object({
 		Type.Number({
 			minimum: 1,
 			maximum: MAX_MONITOR_TIMEOUT_MS,
-			description: "Watcher deadline in milliseconds (default 300000; ignored by persistent monitors).",
+			description: "Watcher deadline in milliseconds (default 300000; ignored when persistent).",
 		}),
 	),
 	persistent: Type.Optional(
 		Type.Boolean({
 			description:
-				"Keep watching until the command exits or kill_bash stops its bash_id; on the path branch it also survives a restart and reports a change that happened while detached.",
+				"Standing watch: no deadline, and it survives a session restart (command re-run once, file rescanned and any detached change reported). Expires 7 days after creation; max 5 per session; stop one with kill_bash.",
 		}),
 	),
 	bash_id: Type.Optional(
@@ -137,7 +137,14 @@ async function createMonitor(
 		...(input.persistent ? {} : { timeoutMs: resolveTimeoutMs(input.timeout_ms) }),
 	});
 	ctx.onMonitorRearmed?.(id);
-	const monitorId = registry.register({ id, description: input.description, runtime, filter });
+	const monitorId = registry.register({
+		id,
+		description: input.description,
+		runtime,
+		filter,
+		// Only persistent command watches are restartable-command durable: those carry the fire budget.
+		durabilityClass: input.persistent === true ? "restartable-command" : "ephemeral",
+	});
 	ctx.manager.bindMonitorId(monitorId, id);
 	// The tool call site is the only place the branch inputs (command, persistent, filter)
 	// live; hand the captured spec to the session's manifest writer for durable recording.
@@ -219,7 +226,7 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 		name: TERMINAL_MONITOR_TOOL,
 		label: "monitor",
 		description:
-			"Subscribe to a change instead of polling. Pass command XOR path, never both: command watches a PTY session, where newline-terminated output lines (stderr merged) that match filter arrive as injected events while you keep working and command exit always delivers a summary event; path natively watches one file and fires once: create (the default) fires only when the file appears after registration, so watch a file that already exists with event modify. The path branch takes no filter; with persistent: true it survives a restart and reports a change that happened while detached. Identical consecutive line-only update batches are deduped, so a watcher reprinting unchanged status does not re-wake the session. Returns a bash_id immediately; peek with bash_output, stop with kill_bash.",
+			"Subscribe to a change instead of polling. Pass command XOR path, never both: command watches a PTY session, injecting matching newline-terminated output lines (stderr merged) plus an exit summary; path natively watches one file and fires once, where create (the default) fires only when the file appears after registration, so use event modify for an existing file, and filter is rejected. Returns a bash_id immediately; peek with bash_output, stop with kill_bash.",
 		promptSnippet:
 			"Subscribe to a command's output or a file's create/modify event as injected events instead of polling",
 		promptGuidelines: [

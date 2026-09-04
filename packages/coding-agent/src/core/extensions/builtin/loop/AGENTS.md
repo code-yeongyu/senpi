@@ -28,12 +28,21 @@ zero real waiting.
 
 ## PERSISTENCE
 
-`store.ts`: one sidecar file per session, strict `version: 1` validation, atomic write
-via temp file + rename, and a promise tail serializing every mutation so command, timer,
-tool, and lifecycle writes cannot interleave. It FAILS CLOSED: unparseable or wrong-version
-state returns a typed error, arms nothing, never silently resets. Session custom entries
-are deliberately NOT the authoritative store; the `loop-tick` entry exists only for
-attribution and noop folding.
+`store.ts` is now a thin domain layer over the shared primitive `core/session-sidecar-store.ts`
+(`createSidecarStore`), which this store's own discipline was extracted into: one sidecar file
+per session at `<baseDir>/<encoded session id>.json`, strict version and session-id validation,
+atomic write via a 0600 temp file + rename, and a per-file promise tail (`serializeByKey`)
+serializing every read-modify-write so command, timer, tool, and lifecycle writes cannot
+interleave. `store.ts` keeps what is loop-specific: `parseLoopPayload` domain validation, the
+per-file store cache, and `remapLoopStoreError`, which re-labels the primitive's
+`InvalidSidecarStoreError` / `UnsupportedSidecarStoreVersionError` as the loop-typed errors
+callers already handle. It FAILS CLOSED: unparseable or wrong-version state returns a typed
+error, arms nothing, never silently resets. Session custom entries are deliberately NOT the
+authoritative store; the `loop-tick` entry exists only for attribution and noop folding.
+
+The primitive is shared, not loop-owned: `builtin/terminal/terminal-manifest.ts` persists its
+monitor manifest through the same `createSidecarStore`. Fix a persistence bug there, not here,
+and keep domain parsing (and error relabeling) on this side of the seam.
 
 ## SCHEDULING INVARIANTS
 
