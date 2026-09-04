@@ -4,10 +4,7 @@ import { join } from "node:path";
 import lockfile from "proper-lockfile";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { FileAuthStorageBackend } from "../src/core/auth-storage.ts";
-import {
-	FILE_STORAGE_LOCK_RETRY_BUDGET_MS,
-	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
-} from "../src/core/lockfile-policy.ts";
+import { FILE_STORAGE_LOCK_RETRY_BUDGET_MS, FILE_STORAGE_SYNC_LOCK_BUDGET_MS } from "../src/core/lockfile-policy.ts";
 import { FileSettingsStorage } from "../src/core/settings-manager.ts";
 
 type CapturedLockOptions = Record<string, unknown>;

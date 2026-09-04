@@ -38,5 +38,7 @@ export class CredentialStoreBusyError extends Error {
 }
 
 export function isLockError(error: unknown): boolean {
-	return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ELOCKED";
+	return (
+		typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ELOCKED"
+	);
 }
