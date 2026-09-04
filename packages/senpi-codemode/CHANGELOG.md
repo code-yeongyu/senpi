@@ -8,6 +8,7 @@
 
 ### Changed
 
+- The package `test` script runs `vitest run test/` instead of `npx tsx …/vitest/dist/cli.js`, matching every other workspace package. The old form spawned npm and tsx to reach the vitest CLI that is already a direct dependency.
 ### Fixed
 
 ### Removed
