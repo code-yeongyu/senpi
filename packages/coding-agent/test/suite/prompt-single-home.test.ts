@@ -62,7 +62,10 @@ describe("prompt surfaces render each stance in exactly one home", () => {
 
 	it("the waiting doctrine lives in the terminal section; the timeout policy covers timeouts only", () => {
 		// given
-		const timeoutPolicy = buildBashTimeoutPrompt({ defaultSeconds: 1800, maxSeconds: 1800 }, { foregroundWindowSeconds: 60 });
+		const timeoutPolicy = buildBashTimeoutPrompt(
+			{ defaultSeconds: 1800, maxSeconds: 1800 },
+			{ foregroundWindowSeconds: 60 },
+		);
 		const surfaces = { timeoutPolicy, terminalSection: buildTerminalPromptSection({ evalOnly: false }) };
 
 		// then
