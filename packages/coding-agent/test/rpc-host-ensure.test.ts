@@ -186,6 +186,43 @@ describe("ensureHost", () => {
 		await expect(access(qa.socket)).rejects.toMatchObject({ code: "ENOENT" });
 	}, 10_000);
 
+	it("keeps the readiness diagnostic and cleans up when the identity probe fails during teardown", async () => {
+		const qa = await scratch("readiness-failure-probe-error");
+		await expect(
+			ensureFixtureHost(qa, {
+				readinessTimeoutMs: 300,
+				readProcessStartTime: () => Promise.reject(new Error("Command failed: powershell.exe -NoProfile")),
+				spawn: {
+					command: process.execPath,
+					args: ["-e", "process.stderr.write('fixture readiness diagnostic\\n'); setInterval(() => {}, 1000)"],
+				},
+			}),
+		).rejects.toThrow(/did not answer get_protocol_info.*fixture readiness diagnostic/s);
+		const paths = createHostDaemonPaths(qa.agentDir);
+		await expect(access(paths.pidFile)).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(access(qa.socket)).rejects.toMatchObject({ code: "ENOENT" });
+	}, 10_000);
+
+	it("reports the readiness diagnostic even when teardown cannot confirm the host died", async () => {
+		const qa = await scratch("readiness-failure-stop-stuck");
+		// A probe that always returns the recorded start time makes the pidfile look
+		// alive forever, so stopManagedHost exhausts SIGTERM and SIGKILL and throws.
+		// That teardown failure must not replace the readiness diagnostic.
+		await expect(
+			ensureFixtureHost(qa, {
+				readinessTimeoutMs: 300,
+				stopTimeoutMs: 50,
+				readProcessStartTime: () => Promise.resolve("pinned-start-time"),
+				spawn: {
+					command: process.execPath,
+					args: ["-e", "process.stderr.write('fixture readiness diagnostic\\n'); setInterval(() => {}, 1000)"],
+				},
+			}),
+		).rejects.toThrow(/did not answer get_protocol_info.*fixture readiness diagnostic/s);
+		const paths = createHostDaemonPaths(qa.agentDir);
+		await expect(access(paths.pidFile)).rejects.toMatchObject({ code: "ENOENT" });
+	}, 10_000);
+
 	it("fails fast when the spawned host exits before readiness", async () => {
 		const qa = await scratch("early-exit");
 		const startedAt = Date.now();
@@ -230,7 +267,12 @@ describe("defaultHostLaunch", () => {
 });
 
 type Qa = { root: string; agentDir: string; socket: string };
-type Overrides = { readinessTimeoutMs?: number; stopTimeoutMs?: number; spawn?: { command: string; args: string[] } };
+type Overrides = {
+	readinessTimeoutMs?: number;
+	stopTimeoutMs?: number;
+	spawn?: { command: string; args: string[] };
+	readProcessStartTime?: (pid: number) => Promise<string | undefined>;
+};
 
 async function scratch(label: string): Promise<Qa> {
 	const root = await mkdtemp(join(tmpdir(), `senpi-host-ensure-${label}-`));
@@ -249,6 +291,7 @@ function ensureFixtureHost(qa: Qa, overrides: Overrides = {}) {
 				command: process.execPath,
 				args: [fixture, qa.socket, VERSION, "multi_session,extension_events", "answer"],
 			},
+			readProcessStartTime: overrides.readProcessStartTime,
 		},
 	});
 }

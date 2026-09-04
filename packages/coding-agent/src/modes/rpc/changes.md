@@ -1,5 +1,28 @@
 # changes
 
+## `ensureHost` teardown never outranks the readiness diagnostic (2026-09-04)
+
+### What changed
+
+- `host-ensure.ts`: the readiness-failure path captures a `stopManagedHost` failure into the diagnostic instead of letting it propagate, so the readiness message is still composed, still appended to stderr, and `cleanupState` still runs.
+- `host-ensure.ts`: new `pidFileOwnsProcess` absorbs an identity-probe failure as "cannot prove ownership" instead of throwing; `signalValidated` and `waitForGone` route through it, and the probe is threaded into `stopManagedHost` so both are injectable.
+- `host-ensure.ts`: `_test.readProcessStartTime` overrides the probe, making the win32-only failure reproducible on any platform.
+- `test/rpc-host-ensure.test.ts`: two cases — a probe that rejects (the Windows symptom) and a probe that pins the pid alive so teardown exhausts SIGTERM/SIGKILL. Both assert the readiness diagnostic plus pidfile cleanup.
+
+### Why
+
+- `RPC named pipes (Windows)` failed with `Command failed: powershell.exe -NoProfile` instead of `did not answer get_protocol_info` (senpi #1290; hit PR #1357 attempt 1, passed on attempt 2). `readProcessStartTime` throws when the CIM read fails, and `stopManagedHost` runs before the diagnostic is built, so the probe error replaced the real reason and skipped `cleanupState`, leaving the pidfile and socket behind.
+- The starved-probe fix in this same tracker covered the STARTUP path (`waitForStartTime`); the teardown/validate path still propagated the throw.
+- A probe failure is an observability gap, not a verdict about the pid: treating it as a match would signal a pid this start cannot prove it owns, so "cannot prove ownership" is the only safe reading.
+
+### Why an extension could not handle it
+
+- Host spawn, pidfile ownership and endpoint cleanup live inside `ensureHost`; no extension observes the window between a failed readiness poll and the teardown that follows it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts` — `stopManagedHost`, `signalValidated`, `waitForGone`, and the readiness-failure tail.
+
 ## `waitForStartTime`: a starved identity probe is UNKNOWN, not a dead child (2026-09-04)
 
 ### What changed
