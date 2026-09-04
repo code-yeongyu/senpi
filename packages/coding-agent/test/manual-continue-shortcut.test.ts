@@ -142,4 +142,22 @@ describe("manual-continue shortcut", () => {
 		expect(echo.dispositions).toEqual(["started"]);
 		expect(echo.preflights).toEqual([true]);
 	});
+
+	it("treats a bare '.' with attached images as an ordinary user message", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("first reply"), fauxAssistantMessage("image reply")]);
+
+		await harness.session.prompt("hello");
+
+		const echo = recordEchoResolution();
+		await harness.session.prompt(".", {
+			images: [{ type: "image", data: "aGk=", mimeType: "image/png" }],
+			...echo.options,
+		});
+
+		expect(getUserTexts(harness)).toEqual(["hello", "."]);
+		expect(getManualContinueMessages(harness)).toHaveLength(0);
+		expect(getAssistantTexts(harness)).toEqual(["first reply", "image reply"]);
+	});
 });

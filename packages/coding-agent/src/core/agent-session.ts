@@ -3574,8 +3574,10 @@ export class AgentSession {
 			// shortcut: it never becomes a visible user turn. Route it through the
 			// hidden custom-message path before extensions see an input event, so a
 			// "." cannot be echoed, transformed, or persisted as literal text. An
-			// empty session falls through to ordinary prompt handling below.
-			if (text.trim() === "." && this.agent.state.messages.length > 0) {
+			// empty session, or a "." carrying image attachments (the user is sending
+			// the images, not asking to continue), falls through to ordinary prompt
+			// handling below.
+			if (text.trim() === "." && this.agent.state.messages.length > 0 && !options?.images?.length) {
 				await this.sendCustomMessage(
 					{
 						customType: MANUAL_CONTINUE_CUSTOM_TYPE,
