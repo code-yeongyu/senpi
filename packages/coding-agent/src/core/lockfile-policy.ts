@@ -11,9 +11,9 @@ export const FILE_STORAGE_LOCK_OPTIONS = {
 	realpath: false,
 	stale: 30_000,
 	update: 10_000,
-	// 100+200+400+800+4*1000 = 5.5s: long enough for normal refresh convoys,
-	// while remaining well below the 30s stale window.
-	retries: { retries: 8, factor: 2, minTimeout: 100, maxTimeout: 1_000, randomize: false },
+	// Every acquisition passes retries: 0 and runs its own bounded wait loop below, so an
+	// AbortSignal is observed between attempts rather than after the whole budget.
+	retries: 0,
 } as const;
 
 export const FILE_STORAGE_LOCK_RETRY_BUDGET_MS = 5_500;
