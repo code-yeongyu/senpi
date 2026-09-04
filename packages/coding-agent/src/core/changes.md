@@ -1,5 +1,28 @@
 # changes
 
+## 2026-09-04 - File-storage locks wait through contention
+
+### What changed
+
+- `packages/coding-agent/src/core/lockfile-policy.ts`: `FILE_STORAGE_LOCK_OPTIONS` gains a bounded proper-lockfile retry schedule (8 retries, factor 2, 100ms..1,000ms, ~5.5s total = `FILE_STORAGE_LOCK_RETRY_BUDGET_MS`) under the unchanged 30s stale / 10s update window; a separate `FILE_STORAGE_SYNC_LOCK_BUDGET_MS = 1_000` bounds main-thread waiters; exhausted `ELOCKED` becomes `CredentialStoreBusyError` carrying the lock path and elapsed wait, and `isLockError()` centralises the ELOCKED test.
+- `packages/coding-agent/src/core/credential-pool/state-store.ts`: `withDocument` acquires through its own bounded wait loop (same schedule and budget as the auth store) instead of a single `lockfile.lock` call, and surfaces exhaustion as `CredentialStoreBusyError`. A single-shot acquire under the shared `retries: 0` policy died on the first contender, which is the omo#7748 failure itself.
+- `packages/coding-agent/src/core/auth-storage.ts`: the async auth lock keeps its OWN retry loop (proper-lockfile acquires with `retries: 0`) but bounds it with `FILE_STORAGE_LOCK_RETRY_BUDGET_MS`; delegating to proper-lockfile's internal `retries` was rejected because an `AbortSignal` would then only be observed after the whole 5.5s wait and `onCompromised` would not be rebound per attempt. The sync path replaces the fixed 10 x 20ms spin with the shared 100/200/400ms Atomics.wait schedule truncated to the 1s sync budget.
+- `packages/coding-agent/src/core/settings-manager.ts`: the sync settings lock adopts the same 1s sync schedule and error type.
+
+### Why
+
+- On `claude-sdk-oauth`, `refreshSlot()` took the credential-pool lock with no retries, so any concurrent omo process sharing `~/.omo` made the turn die with the bare `Lock file is already being held` and burn the fallback chain (oh-my-openagent#7748). Contention is infrastructure, not a provider failure: it must be waited out and, when exhausted, reported as a typed transient error.
+- Sync callers block the TUI main thread; Atomics.wait removed the CPU spin (#1056) but not the freeze, so their budget stays short (1s) while async refreshers may wait ~5.5s.
+- Stale-lock recovery stays with proper-lockfile; its ownership-unsafe recovery/release sequences remain the documented residual risk and this change does not fork the library.
+
+### Why an extension could not handle it
+
+- The locks are taken inside core storage backends (`auth-storage.ts`, `settings-manager.ts`, `credential-pool/state-store.ts`) below the extension boundary; no hook runs between `lockfile.lock` and the caller.
+
+### Expected merge conflict zones
+
+- LOW: `lockfile-policy.ts` constants block.
+- LOW: the lock-acquire helpers in `auth-storage.ts`, `settings-manager.ts`, `credential-pool/state-store.ts`.
 ## 2026-09-04 - Adopt the v0.84.4 core runtime fixes
 
 ### What changed

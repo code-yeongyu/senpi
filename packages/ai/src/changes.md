@@ -1,3 +1,21 @@
+## 2026-09-04 - Credential-store lock contention stays on the transient retry path
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `RETRYABLE_PROVIDER_ERROR_PATTERN` recognises the coding-agent's `Credential store is busy: lock ...` message (`CredentialStoreBusyError`), so an exhausted local credential/auth/settings lock wait is classified as retryable infrastructure contention.
+
+### Why
+
+- Without the pattern the message fell through as an unknown provider error, which the fallback machinery treated as a model failure and hopped providers (oh-my-openagent#7748: claude-sdk-oauth -> opengateway 401). Lock contention between omo processes sharing `~/.omo` is transient and local; the same provider should simply be retried.
+
+### Why an extension could not handle it
+
+- Retry classification runs inside pi-ai's provider retry loop before any extension observes the assistant error.
+
+### Expected merge conflict zones
+
+- LOW: the retryable pattern list in `retry.ts`.
+
 ## 2026-09-04 - Adopt the Mistral indexed-chunk and Responses max_output_tokens fixes
 
 ### What changed

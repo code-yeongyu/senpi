@@ -45,6 +45,9 @@ const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 ]);
 
 const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
+	// Local credential/auth sidecar lock exhaustion is infrastructure contention,
+	// not a provider failure and must stay on the transient retry path.
+	"Credential store is busy: lock",
 	// Generic provider load, HTTP status, and server-side transient failures.
 	"overloaded",
 	"rate.?limit",
