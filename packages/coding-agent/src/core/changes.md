@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-04 - Gate next-turn compaction on real provider admission
+
+### What changed
+
+- Keep the next-turn callback running every completed turn, but enforce compaction only when a tool continuation or queued message will be admitted to a provider; retain the late queue re-sample and one bounded callback replay after compaction.
+
+### Why
+
+- Restoring the every-turn preparation contract must not reintroduce compaction on a completed turn that has no provider continuation, while queued work arriving during preparation still needs a consistent compacted context.
+
+### Why an extension could not handle it
+
+- Compaction admission, queue ownership, and callback replay span AgentSession persistence and provider lifecycle state beneath the extension event surface.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` next-turn preparation and compaction admission around `_installAgentNextTurnRefresh`.
+
 ## 2026-09-03 - Restore provider-level api inheritance for models.json models
 
 ### What changed

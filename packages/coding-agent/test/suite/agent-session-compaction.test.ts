@@ -545,8 +545,8 @@ describe("AgentSession compaction characterization", () => {
 				cacheRetention: "short",
 				affinitySessionId: harness.sessionManager.getSessionId(),
 				transport: "websocket",
-				toolChoice: "none",
 			});
+			expect(requestOptions).not.toHaveProperty("toolChoice");
 			expect(requestOptions?.sessionId).not.toBe(harness.sessionManager.getSessionId());
 		} finally {
 			if (previousExperimental === undefined) {

@@ -1525,7 +1525,16 @@ export class AgentSession {
 				if (provider === "cursor" || provider === "cursor-cli-oauth") {
 					return false;
 				}
+				if (turn.toolResults.length === 0 && !this.agent.hasQueuedMessages()) {
+					return false;
+				}
 				await this._agentEventQueue;
+				// A queue can be cleared while waiting for persistence. Re-sample it
+				// immediately before compaction so a completed turn never compacts
+				// merely because it once had a possible continuation.
+				if (turn.toolResults.length === 0 && !this.agent.hasQueuedMessages()) {
+					return false;
+				}
 				try {
 					return await this._enforceCompactionBeforeProvider(turn.message, true, "threshold");
 				} catch (error) {
@@ -1546,11 +1555,39 @@ export class AgentSession {
 				...turn,
 				context: { ...turn.context, messages },
 			};
-			const previousSnapshot = await previousPrepareNextTurnWithContext?.(postCompactionTurn, signal);
-			const previousContext = previousSnapshot?.context ?? postCompactionTurn.context;
-			// Under upstream's prepare-at-top ordering (#6879) follow-ups are already
-			// drained into the loop-local pending messages before prepare runs, so the
-			// snapshot is re-read from live session state below rather than re-sampled.
+			let previousSnapshot = await previousPrepareNextTurnWithContext?.(postCompactionTurn, signal);
+			let previousContext = previousSnapshot?.context ?? postCompactionTurn.context;
+			// The previous callback may await while agent_end extensions enqueue
+			// continuation work. Re-sample after it returns so that work cannot
+			// slip through with the stale provider snapshot it observed on entry.
+			let compactedAfterCallback = false;
+			if (!compactedBeforeCallback) {
+				compactedAfterCallback = await compactBeforeNextAdmission();
+			}
+			if (compactedAfterCallback) {
+				// The callback's first result describes the stale pre-compaction
+				// context. Reapply it once to the compacted context so any host
+				// transformation reaches the provider request. Do not re-sample after
+				// this invocation: one replay is the bounded admission path.
+				const postLateCompactionTurn = {
+					...turn,
+					context: {
+						...turn.context,
+						messages: this.agent.state.messages.slice(),
+					},
+				};
+				const postLateCompactionSnapshot = await previousPrepareNextTurnWithContext?.(
+					postLateCompactionTurn,
+					signal,
+				);
+				previousSnapshot = {
+					...previousSnapshot,
+					...postLateCompactionSnapshot,
+					context: postLateCompactionSnapshot?.context ?? postLateCompactionTurn.context,
+				};
+				previousContext = previousSnapshot.context ?? postLateCompactionTurn.context;
+			}
+
 			return {
 				...previousSnapshot,
 				context: {
