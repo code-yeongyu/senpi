@@ -1,5 +1,23 @@
 # changes.md — ai
 
+## 2026-09-04 - Restore the @anthropic-ai/sdk 0.123.0 pin the R4b merge dropped
+
+### What changed
+
+- `packages/ai/package.json`: `@anthropic-ai/sdk` 0.120.0 -> 0.123.0, restoring the declaration the 2026-09-03 upstream sync carried before the R4b re-integration reverted it; `09e23825a` resyncs the root `package-lock.json` to the restored pin.
+
+### Why
+
+- The synced lockfiles and the `.npmrc` `min-release-age-exclude[]=@anthropic-ai/sdk` entry assume 0.123.0, so the reverted manifest left `npm ci` resolving a manifest/lockfile mismatch.
+
+### Why an extension could not handle it
+
+- Dependency resolution happens from the package manifest during install, before any runtime or extension code loads.
+
+### Expected merge conflict zones
+
+- LOW: the `@anthropic-ai/sdk` line in `packages/ai/package.json` and the corresponding lockfile entries.
+
 ## 2026-09-04 - Generator adopts the v0.84.4 routing rules
 
 ### What changed
