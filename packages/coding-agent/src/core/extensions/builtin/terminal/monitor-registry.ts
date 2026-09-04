@@ -3,6 +3,8 @@ import { type FSWatcher, watch } from "node:fs";
 import { access, type FileHandle, lstat, open, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { TerminalRuntimeSession } from "./runtime-session.ts";
+import { DEFAULT_DURABLE_MONITOR_FIRE_BUDGET, FIRE_BUDGET_AUTO_MUTE_SUMMARY, FIRE_BUDGET_WINDOW_MS } from "./shared.ts";
+import type { MonitorDurabilityClass } from "./terminal-manifest.ts";
 import { describeExit } from "./tools/spawn.ts";
 
 export interface MonitorLineEvent {
@@ -46,6 +48,7 @@ export function allocateMonitorId(): string {
 	return id;
 }
 
+export type MonitorFireWindow = { startMs: number; count: number };
 export interface MonitorSnapshotEntry {
 	readonly id: string;
 	/** Stable "mon_" identity carried alongside the runtime id; always set on live snapshots. */
@@ -54,6 +57,7 @@ export interface MonitorSnapshotEntry {
 	readonly paused: boolean;
 	/** Epoch milliseconds when the watch registered; feeds the footer's live elapsed label. */
 	readonly startedAtMs: number;
+	readonly fireWindow?: MonitorFireWindow;
 }
 
 export interface MonitorRegistryOptions {
@@ -81,6 +85,10 @@ export interface RegisterMonitorOptions {
 	readonly description: string;
 	readonly runtime: TerminalRuntimeSession;
 	readonly filter?: RegExp;
+	/** Durability class from the manifest spec; non-ephemeral records carry the fire budget. */
+	readonly durabilityClass?: MonitorDurabilityClass;
+	/** Persisted fire window re-bound by a restore, so a restart cannot reset the budget. */
+	readonly fireWindow?: MonitorFireWindow;
 }
 
 interface PendingFileRegistration {
@@ -131,6 +139,7 @@ interface MonitorRecord {
 	mutedDropped: number;
 	paused: boolean;
 	settled: boolean;
+	fireWindow: MonitorFireWindow | undefined;
 	unsubscribeOutput: (() => void) | undefined;
 	unsubscribeExit: (() => void) | undefined;
 }
@@ -165,6 +174,7 @@ export class MonitorRegistry {
 			description: record.description,
 			paused: record.paused,
 			startedAtMs: record.startedAtMs,
+			fireWindow: "fireWindow" in record ? record.fireWindow : undefined,
 		}));
 	}
 
@@ -492,6 +502,7 @@ export class MonitorRegistry {
 	}
 
 	register(options: RegisterMonitorOptions): string {
+		const durable = options.durabilityClass !== undefined && options.durabilityClass !== "ephemeral";
 		const record: MonitorRecord = {
 			id: options.id,
 			monitorId: options.monitorId ?? allocateMonitorId(),
@@ -504,6 +515,7 @@ export class MonitorRegistry {
 			mutedDropped: 0,
 			paused: false,
 			settled: false,
+			fireWindow: durable ? { ...(options.fireWindow ?? { startMs: Date.now(), count: 0 }) } : undefined,
 			unsubscribeOutput: undefined,
 			unsubscribeExit: undefined,
 		};
@@ -544,6 +556,8 @@ export class MonitorRegistry {
 			record.paused = false;
 			const mutedDropped = "mutedDropped" in record ? record.mutedDropped : 0;
 			if ("mutedDropped" in record) record.mutedDropped = 0;
+			// A rearm (or any resume) restarts the rolling fire budget while keeping its window start.
+			if ("fireWindow" in record && record.fireWindow !== undefined) record.fireWindow.count = 0;
 			resumed.push({ id: record.id, mutedDropped });
 			if ("pendingChange" in record && record.pendingChange) void this.#checkFile(record.id);
 		}
@@ -561,6 +575,16 @@ export class MonitorRegistry {
 		if (!record.paused) return "not_paused";
 		this.resume([id]);
 		return "rearmed";
+	}
+
+	/** Re-bind a persisted fire window onto the record for a durable monitor id (a restore re-arms the budget). */
+	adoptFireWindow(monitorId: string, fireWindow: MonitorFireWindow): boolean {
+		for (const record of this.#records.values()) {
+			if (record.monitorId !== monitorId) continue;
+			record.fireWindow = { ...fireWindow };
+			return true;
+		}
+		return false;
 	}
 
 	dispose(): void {
@@ -662,6 +686,22 @@ export class MonitorRegistry {
 				continue;
 			}
 			this.#emit({ type: "line", id: record.id, description: record.description, line });
+			if (record.fireWindow !== undefined) {
+				const now = Date.now();
+				if (now - record.fireWindow.startMs >= FIRE_BUDGET_WINDOW_MS)
+					record.fireWindow = { startMs: now, count: 0 };
+				record.fireWindow.count += 1;
+				if (record.fireWindow.count >= DEFAULT_DURABLE_MONITOR_FIRE_BUDGET) {
+					record.paused = true;
+					this.#emit({
+						type: "summary",
+						id: record.id,
+						description: record.description,
+						summary: FIRE_BUDGET_AUTO_MUTE_SUMMARY,
+					});
+					this.#notifyChange();
+				}
+			}
 		}
 		record.lineBuffer = remaining;
 	}

@@ -173,24 +173,29 @@ export class TerminalManifestWriter {
 	 * registered through the tool call site are left alone (durability spec unknown).
 	 */
 	observeMonitorState(snapshot: readonly MonitorSnapshotEntry[]): Promise<void> {
-		const live = new Map<string, boolean>();
+		const live = new Map<string, { paused: boolean; fireWindow?: MonitorSnapshotEntry["fireWindow"] }>();
 		for (const entry of snapshot) {
 			if (typeof entry.monitorId !== "string" || entry.monitorId.length === 0) {
 				throw new Error(
 					`terminal manifest writer saw a monitor snapshot entry without a stable monitorId (runtime id ${entry.id}); surfacing instead of silently skipping it`,
 				);
 			}
-			live.set(entry.monitorId, entry.paused);
+			live.set(entry.monitorId, { paused: entry.paused, fireWindow: entry.fireWindow });
 		}
 		let changed = false;
 		for (const [monitorId, known] of this.#entries) {
-			const paused = live.get(monitorId);
-			if (paused === undefined) {
+			const current = live.get(monitorId);
+			if (current === undefined) {
 				if (known.suspended) continue; // shutdown-suspended entries are expected to be absent
 				this.#entries.delete(monitorId); // settle: the registry transitioned it out
 				changed = true;
-			} else if (known.deliveryPaused !== paused) {
-				this.#entries.set(monitorId, { ...known, deliveryPaused: paused });
+				continue;
+			}
+			// The live fire window rides every state transition — notably the auto-mute pause —
+			// so a restart re-binds the burned budget instead of a fresh one.
+			const fireWindow = current.fireWindow ?? known.fireWindow;
+			if (known.deliveryPaused !== current.paused || known.fireWindow.count !== fireWindow.count) {
+				this.#entries.set(monitorId, { ...known, deliveryPaused: current.paused, fireWindow });
 				changed = true;
 			}
 		}

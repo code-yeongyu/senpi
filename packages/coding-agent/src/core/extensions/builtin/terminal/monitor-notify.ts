@@ -2,6 +2,7 @@ import type { MonitorEvent } from "./monitor-registry.ts";
 import { getTerminalNotificationDelivery, type TerminalNotifierDeps } from "./notify.ts";
 import { sanitizeTerminalOutput } from "./output-format.ts";
 import type { MonitorDeliverySettings } from "./settings.ts";
+import { FIRE_BUDGET_AUTO_MUTE_SUMMARY } from "./shared.ts";
 
 const SYSTEM_REMINDER_OPEN = "<system-reminder>";
 const SYSTEM_REMINDER_CLOSE = "</system-reminder>";
@@ -206,7 +207,11 @@ export class MonitorNotifier {
 		) {
 			this.#consecutiveWakes = 0;
 		}
-		const deliversSummary = selected.some((event) => event.type === "summary");
+		const deliversSummary = selected.some(
+			// A fire-budget auto-mute summary is a mute, not a completion: exempting it keeps the
+			// session-global wake streak — the notifier's own pause state — from being cleared.
+			(event) => event.type === "summary" && event.summary !== FIRE_BUDGET_AUTO_MUTE_SUMMARY,
+		);
 		const reachesBudget = !deliversSummary && this.#consecutiveWakes + 1 >= settings.wakeBudget;
 		const pauseNotice = reachesBudget
 			? "Monitor paused after repeated updates. Completion still wakes this session; peek bash_output or re-arm only for intermediate events."

@@ -33,6 +33,7 @@ describe("terminal monitor external resume", () => {
 				paused: true,
 				description: "external resume test",
 				startedAtMs: expect.any(Number),
+				fireWindow: { startMs: expect.any(Number), count: 0 },
 			});
 
 			await harness
@@ -44,6 +45,7 @@ describe("terminal monitor external resume", () => {
 				paused: true,
 				description: "external resume test",
 				startedAtMs: expect.any(Number),
+				fireWindow: { startMs: expect.any(Number), count: 0 },
 			});
 
 			await harness.getExtensionRunner().emitInput("hi", undefined, "interactive", undefined, "user-input");
@@ -53,6 +55,7 @@ describe("terminal monitor external resume", () => {
 				paused: false,
 				description: "external resume test",
 				startedAtMs: expect.any(Number),
+				fireWindow: { startMs: expect.any(Number), count: 0 },
 			});
 		} finally {
 			await harness.session.executeTool("kill_bash", { bash_id: bashId });
