@@ -36,11 +36,18 @@ describe("credential pool state sidecar", () => {
 	});
 
 	test("two repository instances wait through a real shared lock", async () => {
+		// #given one holder owns the lock and a second repository starts reading
 		await repository.listSlots("openai", "api");
 		const release = await lockfile.lock(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 		const waiting = expect(new CredentialSlotRepository(path).listSlots("openai", "api")).resolves.toEqual({});
-		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		// #when the holder keeps the lock past the waiter's first attempt, so the waiter
+		// can only succeed by retrying: a single-shot acquire fails here with ELOCKED.
+		await new Promise<void>((resolve) => setTimeout(resolve, 150));
+		expect(lockfile.checkSync(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 })).toBe(true);
 		await release();
+
+		// #then the waiter completed through its bounded retry loop
 		await waiting;
 	});
 

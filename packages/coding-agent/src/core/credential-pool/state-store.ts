@@ -4,7 +4,14 @@ import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
 import { getAgentDir } from "../../config.ts";
-import { CredentialStoreBusyError, FILE_STORAGE_LOCK_OPTIONS, FILE_STORAGE_LOCK_RETRY_BUDGET_MS, isLockError } from "../lockfile-policy.ts";
+import {
+	CredentialStoreBusyError,
+	FILE_STORAGE_LOCK_OPTIONS,
+	FILE_STORAGE_LOCK_RETRY_BUDGET_MS,
+	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
+	isLockError,
+} from "../lockfile-policy.ts";
 
 export const CREDENTIAL_POOL_STATE_FILENAME = "credential-pool-state.json";
 
@@ -106,20 +113,37 @@ export class CredentialSlotRepository {
 		fn: (document: CredentialPoolStateDocument) => { result: T; next?: CredentialPoolStateDocument },
 	): Promise<T> {
 		this.ensureFile();
-		let release: (() => Promise<void>) | undefined;
-		try {
-			release = await lockfile.lock(this.path, FILE_STORAGE_LOCK_OPTIONS);
-		} catch (error) {
-			if (isLockError(error)) throw new CredentialStoreBusyError(this.path, FILE_STORAGE_LOCK_RETRY_BUDGET_MS, error);
-			throw error;
-		}
+		const release = await this.acquire();
 		try {
 			const document = parseDocument(readFileSync(this.path, "utf-8"));
 			const { result, next } = fn(document);
 			if (next) writeFileSync(this.path, JSON.stringify(next, null, 2), FILE_WRITE_OPTIONS);
 			return result;
 		} finally {
-			if (release) await release();
+			await release();
+		}
+	}
+
+	private async acquire(): Promise<() => Promise<void>> {
+		const startedAt = Date.now();
+		let attempt = 0;
+		while (true) {
+			try {
+				return await lockfile.lock(this.path, FILE_STORAGE_LOCK_OPTIONS);
+			} catch (error) {
+				if (!isLockError(error)) throw error;
+				const waitedMs = Date.now() - startedAt;
+				if (waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) {
+					throw new CredentialStoreBusyError(this.path, waitedMs, error);
+				}
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs,
+				);
+				attempt++;
+				await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+			}
 		}
 	}
 
