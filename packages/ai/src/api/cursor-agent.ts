@@ -774,10 +774,6 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 		const settleH2 = (error?: unknown): void => {
 			if (h2Settled) return;
 			h2Settled = true;
-			if (streamHealthTimer) {
-				clearTimeout(streamHealthTimer);
-				streamHealthTimer = null;
-			}
 			if (error !== undefined) {
 				rejectH2(error);
 				return;
@@ -1246,6 +1242,10 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 				if (heartbeatTimer) {
 					clearInterval(heartbeatTimer);
 					heartbeatTimer = null;
+				}
+				if (streamHealthTimer) {
+					clearTimeout(streamHealthTimer);
+					streamHealthTimer = null;
 				}
 				h2Request?.close();
 				h2Client?.close();

@@ -8,6 +8,8 @@
 
 ### Changed
 
+- CI now bounds pi-ai's Vitest fork pool and teardown time, and Cursor stream attempts clear their health timers, preventing subprocess-heavy lifecycle tests from stranding workers on constrained runners.
+
 ### Fixed
 
 ### Removed

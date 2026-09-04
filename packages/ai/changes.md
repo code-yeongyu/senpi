@@ -1,5 +1,23 @@
 # changes.md — ai
 
+## 2026-09-04 - Bound pi-ai CI Vitest fork concurrency
+
+### What changed
+
+- `packages/ai/vitest.config.ts` uses the forks pool with two workers and a bounded teardown timeout when CI is running; `packages/ai/src/api/cursor-agent.ts` clears the stream-health timer when each attempt ends.
+
+### Why
+
+- Provider lifecycle tests create real network clients and subprocesses; unbounded fork concurrency can strand workers while a constrained CI runner tears down the pool.
+
+### Why this lives in the fork
+
+- Vitest execution policy is package-owned test infrastructure and cannot be configured by a runtime extension.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/vitest.config.ts` test settings.
+
 ## 2026-09-04 - Restore the @anthropic-ai/sdk 0.123.0 pin the R4b merge dropped
 
 ### What changed
