@@ -215,7 +215,7 @@ export function mockAnthropicExpandToolReferences(block: unknown): string[] {
 	if (!isObj(block) || !Array.isArray(block.content)) return [];
 	return block.content
 		.filter((entry): entry is Record<string, unknown> => isObj(entry) && entry.type === "tool_reference")
-		.map((entry) => String(entry.name));
+		.map((entry) => String(entry.tool_name));
 }
 
 /** OpenAI `tool_search_call` output item (client-mode intercept target). */

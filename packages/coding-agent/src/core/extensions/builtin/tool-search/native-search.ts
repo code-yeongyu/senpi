@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ToolSearchDocument } from "./engine/document.ts";
+import { type AnthropicToolSearchTarget, supportsAnthropicNativeToolSearch } from "./native-support.ts";
 
 // Anthropic Messages supports native BM25 tool search through request payload
 // injection alone. OpenAI native client-mode search remains intentionally out of
@@ -52,11 +53,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * least one non-deferred tool, and skip entirely above the 10k tool cap.
  */
 export function addAnthropicNativeToolSearch(
-	api: string | undefined,
+	target: AnthropicToolSearchTarget,
 	payload: unknown,
 	config: AnthropicNativeInjectionConfig,
 ): unknown {
-	if (api !== "anthropic-messages" || !isRecord(payload)) return payload;
+	if (!supportsAnthropicNativeToolSearch(target) || !isRecord(payload)) return payload;
 	const tools = Array.isArray(payload.tools) ? payload.tools : [];
 	const injected = injectInactiveCatalogTools(tools, config);
 	if (injected.length > ANTHROPIC_MAX_TOOLS) return payload;
@@ -101,9 +102,13 @@ function maybeDefer(tool: unknown, config: AnthropicNativeInjectionConfig): unkn
 	return { ...tool, defer_loading: true };
 }
 
-/** `tool_reference` blocks emitted inside a tool_result so the API expands the referenced tools. */
-export function buildToolReferenceBlocks(names: readonly string[]): { type: "tool_reference"; name: string }[] {
-	return names.map((name) => ({ type: "tool_reference", name }));
+/**
+ * `tool_reference` blocks emitted inside a tool_result so the API expands the
+ * referenced tools. Anthropic names the target through `tool_name`; a block
+ * carrying `name` is rejected as a malformed content block.
+ */
+export function buildToolReferenceBlocks(names: readonly string[]): { type: "tool_reference"; tool_name: string }[] {
+	return names.map((name) => ({ type: "tool_reference", tool_name: name }));
 }
 
 export interface AnthropicNativeAdapterDeps extends AnthropicNativeInjectionConfig {
@@ -124,10 +129,10 @@ export class AnthropicNativeToolSearchAdapter {
 		this.#deps = deps;
 	}
 
-	applyBeforeRequest(api: string | undefined, payload: unknown): unknown {
+	applyBeforeRequest(target: AnthropicToolSearchTarget, payload: unknown): unknown {
 		this.#injectedLastRequest = false;
 		if (this.#disabled || !this.#deps.enabled()) return payload;
-		const next = addAnthropicNativeToolSearch(api, payload, this.#deps);
+		const next = addAnthropicNativeToolSearch(target, payload, this.#deps);
 		this.#injectedLastRequest = next !== payload;
 		return next;
 	}
