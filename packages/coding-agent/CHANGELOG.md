@@ -28,6 +28,8 @@
 
 - The skills prompt section aliases each shared skill root to an `r0`/`r1` prefix once and renders per-skill locations relative to it, so the long absolute root is no longer billed per skill (145 skills, -1,137 tokens/turn).
 
+- Typing `.` alone in the editor now resumes the agent's most recent intent (manual continue): no user message is created or rendered, and a hidden `manual-continue` custom message (display off) drives the next turn — a new turn when idle, steer/follow-up while streaming. A lone `.` on an empty session remains an ordinary user message.
+
 ### Changed
 
 - Changed selectors in `/thinking`, `/model`, `/scoped-models`, `/trust`, per-model thinking settings, and theme settings to keep active options marked while browsing. `/scoped-models` now uses consistent per-item toggles and strikes through unavailable models ([#8900](https://github.com/earendil-works/pi/pull/8900)).

@@ -26,6 +26,7 @@ The editor can be replaced temporarily by built-in UI such as `/settings` or by 
 | Images | Paste with Ctrl+V, Alt+V on Windows, or drag into the terminal |
 | Shell command | `!command` runs and sends output to the model |
 | Hidden shell command | `!!command` runs without sending output to the model |
+| Manual continue | Type `.` alone to resume the most recent intent without sending a new user message |
 | External editor | Ctrl+G opens `externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere |
 | Shortcut overlay | Type `?` on an empty editor to show a dismissible shortcut grid |
 | Startup tips | A rotating `Tip:` line in the startup banner and under the working status teaches features; disable with `"tips": false` |

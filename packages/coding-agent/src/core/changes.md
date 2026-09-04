@@ -39,6 +39,31 @@
 
 - LOW: `skills.ts` renderer body and `skills.test.ts` location assertion.
 
+
+## 2026-09-04 - Route bare "." submissions through a hidden manual-continue directive
+
+### What changed
+
+- `packages/coding-agent/src/core/manual-continue.ts` (new): `MANUAL_CONTINUE_CUSTOM_TYPE` (`"manual-continue"`) and `MANUAL_CONTINUE_DIRECTIVE`, the `<system-notice>` continue directive (resume most recent intent, complete unfinished work, resume where interrupted, never pause to summarize/re-confirm/ask).
+- `packages/coding-agent/src/core/agent-session.ts`: `prompt()` now intercepts `text.trim() === "."` on a session that already has messages BEFORE the extension input event is emitted. Instead of creating, persisting, or echoing a user message, it routes the directive through the existing `sendCustomMessage` path (custom message, `display: false`): `triggerTurn` starts a turn when idle, `steer`/`followUp` deliver while streaming (mapping `options.streamingBehavior`). The submission resolves as `promptDisposition("handled")` + `preflightResult(true)` so the interactive optimistic echo is cleared. An empty session, or a `.` submitted with image attachments (the user is sending the images, not asking to continue), falls through to ordinary prompt handling.
+- `packages/coding-agent/test/manual-continue-shortcut.test.ts` (new): pins the idle-turn, streaming-steer, and empty-session-fallthrough behaviors plus the echo disposition contract.
+- `packages/coding-agent/test/suite/regressions/pre-prompt-compaction-no-continue.test.ts`: the "dot retry" case now asserts the hidden `manual-continue` custom message instead of a literal `.` user message (the regression's subject — pre-prompt overflow compaction without `agent.continue()` — is unchanged and still covered).
+- `packages/coding-agent/docs/usage.md` + `packages/coding-agent/CHANGELOG.md`: one-line shortcut documentation and the `[Unreleased]` Added bullet.
+
+### Why
+
+- oh-my-pi maps `.`/`c` to a hidden agent-authored continue message so a one-keystroke nudge resumes the prior intent instead of second-guessing the interrupt. senpi had no equivalent: a bare `.` became a literal user turn ("." as prose), and the model would answer the punctuation rather than continue. senpi has no `developer` role; the equivalent hidden primitive is a custom message with `display: false`, which `convertToLlm` maps to a user-role directive for the provider.
+
+### Why an extension could not handle it
+
+- The shortcut must suppress user-message creation, persistence, and the optimistic echo inside `prompt()` itself, before the extension input event fires; an extension `input` handler can transform or handle text but cannot retroactively un-create the canonical user message or clear the TUI echo. The turn-driving primitive (`sendCustomMessage` with trigger/steer semantics and session-work serialization) is core session machinery.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts` — the top of `prompt()`'s `try` block (before the extension input emission), where queue-admission branches frequently change.
+- LOW: `packages/coding-agent/src/core/manual-continue.ts` (new file, no conflicts).
+- LOW: `packages/coding-agent/test/suite/regressions/pre-prompt-compaction-no-continue.test.ts` — the single assertion swap in the "dot retry" case.
+
 ## 2026-09-04 - Restore the selected model, not its upstream wire id, on resume
 
 ### What changed
