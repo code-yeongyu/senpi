@@ -38,7 +38,7 @@ import {
 import { formatLoopStatus, formatNoopFold, LoopStatusTicker } from "./status.ts";
 import { readLoopState, writeLoopState } from "./store.ts";
 import { buildTickMessage, type LoopFileSnapshot, type LoopMode, type TickDelivery } from "./tick-prompt.ts";
-import { registerLoopTools, type ScheduleWakeupTarget } from "./tools.ts";
+import { registerLoopTools, SCHEDULE_WAKEUP_TOOL, type ScheduleWakeupTarget } from "./tools.ts";
 import type {
 	CronEntry,
 	DeliveryId,
@@ -425,7 +425,26 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			ctx?.ui.notify(`/loop state could not be used and the affected loops were ended: ${message}`, "error");
 		}
 
+		/**
+		 * `schedule_wakeup` is search-exposed, so it is callable only while this extension keeps it
+		 * active: exactly when a dynamic loop is live (not ended, not suspended). Idempotent, so
+		 * every state transition can call it without churning the active tool list.
+		 */
+		function syncScheduleWakeupActivation(): void {
+			if (scheduler === undefined) return;
+			const wanted = Object.values(scheduler.getState().entries).some(
+				(entry) => entry.kind === "dynamic" && entry.phase !== "ended" && entry.phase !== "suspended",
+			);
+			const active = pi.getActiveTools();
+			const present = active.includes(SCHEDULE_WAKEUP_TOOL);
+			if (wanted === present) return;
+			pi.setActiveTools(
+				wanted ? [...active, SCHEDULE_WAKEUP_TOOL] : active.filter((name) => name !== SCHEDULE_WAKEUP_TOOL),
+			);
+		}
+
 		function refreshStatus(): void {
+			syncScheduleWakeupActivation();
 			if (scheduler === undefined) return;
 			const state = scheduler.getState();
 			// The ticker owns a repeating render timer, so it only runs while a loop is armed;
@@ -510,6 +529,9 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			attributedLoopId = entry.id;
 			attributedDeliveryId = tick.deliveryId;
 			attributionResolved = false;
+			// The tick prompt tells the model to call schedule_wakeup, so the tool must be active
+			// before the tick is queued, not after the turn has already read its tool list.
+			syncScheduleWakeupActivation();
 			pi.sendUserMessage(built.text, {
 				expandPromptTemplates: true,
 				...(busy ? { deliverAs: "followUp" as const } : {}),
