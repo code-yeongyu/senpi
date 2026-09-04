@@ -3,7 +3,13 @@ import { type Static, Type } from "typebox";
 import { APPROVED_MONITOR_PARENT } from "../monitor-permission.ts";
 import { MonitorRegistry } from "../monitor-registry.ts";
 import { DEFAULT_COLS, DEFAULT_ROWS, TERMINAL_MONITOR_TOOL } from "../shared.ts";
-import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
+import {
+	errorResult,
+	resolveTerminalId,
+	type TerminalToolContext,
+	type TerminalToolResult,
+	textResult,
+} from "./context.ts";
 import { renderMonitorCall } from "./render.ts";
 import { spawnCommandSession } from "./spawn.ts";
 
@@ -61,7 +67,7 @@ export const monitorSchema = Type.Object({
 		Type.Boolean({ description: "Keep watching until the command exits or kill_bash stops its bash_id." }),
 	),
 	bash_id: Type.Optional(
-		Type.String({ description: "Rearm: paused monitor bash_id to resume; omit to resume all paused monitors." }),
+		Type.String({ description: "Rearm: paused monitor id (mon_ or bash_id) to resume; omit for all paused." }),
 	),
 });
 export type MonitorInput = Static<typeof monitorSchema>;
@@ -123,8 +129,11 @@ async function createMonitor(
 		...(input.persistent ? {} : { timeoutMs: resolveTimeoutMs(input.timeout_ms) }),
 	});
 	ctx.onMonitorRearmed?.(id);
-	registry.register({ id, description: input.description, runtime, filter });
-	return textResult(`Monitor started with ID: ${id}`, { details: { bash_id: id, monitor: true } });
+	const monitorId = registry.register({ id, description: input.description, runtime, filter });
+	ctx.manager.bindMonitorId(monitorId, id);
+	return textResult(`Monitor started with ID: ${monitorId}`, {
+		details: { monitor_id: monitorId, bash_id: id, monitor: true },
+	});
 }
 
 /** Build the PTY-backed monitor tool. Monitor handles share TerminalManager's bash_N namespace. */
@@ -160,8 +169,7 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 		): Promise<TerminalToolResult> {
 			const registry = getRegistry();
 			if (input.action === "rearm") {
-				const bashId = input.bash_id;
-				if (bashId === undefined || bashId.length === 0) {
+				if (input.bash_id === undefined || input.bash_id.length === 0) {
 					const resumed = registry.resume();
 					if (resumed.length === 0) return textResult("No paused monitors to re-arm.");
 					ctx.onMonitorsResumed?.(resumed.map((monitor) => monitor.id));
@@ -172,6 +180,7 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 							: `Re-armed ${resumed.length} paused monitor(s).`,
 					);
 				}
+				const bashId = resolveTerminalId(ctx.manager, input.bash_id);
 				const dropped = registry.mutedDropped(bashId);
 				const outcome = registry.rearm(bashId);
 				if (outcome === "not_found") return errorResult(`No active monitor found with id: ${bashId}`);
@@ -192,7 +201,7 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 				if (!ctx.monitorRegistry)
 					return errorResult("Native file monitors require a lifecycle-owned monitor registry.");
 				try {
-					const id = await ctx.monitorRegistry.registerFile({
+					const { id, monitorId } = await ctx.monitorRegistry.registerFile({
 						description: input.description,
 						path: input.path,
 						event: input.event ?? "create",
@@ -206,8 +215,9 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 								}
 							: {}),
 					});
-					return textResult(`Monitor started with ID: ${id}`, {
-						details: { bash_id: id, watch_id: id, monitor: true },
+					ctx.manager.bindMonitorId(monitorId, id);
+					return textResult(`Monitor started with ID: ${monitorId}`, {
+						details: { monitor_id: monitorId, bash_id: id, monitor: true },
 					});
 				} catch (error) {
 					return errorResult(error instanceof Error ? error.message : String(error));

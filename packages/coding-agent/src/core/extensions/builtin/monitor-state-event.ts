@@ -51,6 +51,8 @@ export function isContinuationHoldStateEvent(data: unknown): data is Continuatio
 /** One live watch as broadcast on the monitor state event; mirrors MonitorSnapshotEntry. */
 export interface TerminalMonitorStateMonitorEntry {
 	readonly id: string;
+	/** Stable "mon_" identity surviving runtime id churn; absent in pre-enrichment payloads. */
+	readonly monitorId?: string;
 	readonly description: string;
 	readonly paused: boolean;
 	/** Epoch milliseconds when the watch registered; lets consumers render their own elapsed labels. */

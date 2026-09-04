@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { type FSWatcher, watch } from "node:fs";
 import { access, type FileHandle, lstat, open, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
@@ -28,8 +28,28 @@ export interface MonitorResumeResult {
 	readonly mutedDropped: number;
 }
 
+const MONITOR_ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/** Allocate a stable monitor identity: "mon_" + 16 Crockford base-32 chars (80 random bits). */
+export function allocateMonitorId(): string {
+	let id = "mon_";
+	let buffer = 0;
+	let bits = 0;
+	for (const byte of randomBytes(10)) {
+		buffer = (buffer << 8) | byte;
+		bits += 8;
+		while (bits >= 5) {
+			bits -= 5;
+			id += MONITOR_ID_ALPHABET[(buffer >> bits) & 31];
+		}
+	}
+	return id;
+}
+
 export interface MonitorSnapshotEntry {
 	readonly id: string;
+	/** Stable "mon_" identity carried alongside the runtime id; always set on live snapshots. */
+	readonly monitorId?: string;
 	readonly description: string;
 	readonly paused: boolean;
 	/** Epoch milliseconds when the watch registered; feeds the footer's live elapsed label. */
@@ -46,6 +66,8 @@ export interface MonitorRegistryOptions {
 export interface RegisterFileMonitorOptions {
 	readonly description: string;
 	readonly path: string;
+	/** Caller-supplied stable identity so a restore can re-bind the same "mon_" id. */
+	readonly monitorId?: string;
 	readonly event: "create" | "modify";
 	readonly timeoutMs: number;
 	readonly cwd: string;
@@ -54,6 +76,8 @@ export interface RegisterFileMonitorOptions {
 
 export interface RegisterMonitorOptions {
 	readonly id: string;
+	/** Caller-supplied stable identity so a restore can re-bind the same "mon_" id. */
+	readonly monitorId?: string;
 	readonly description: string;
 	readonly runtime: TerminalRuntimeSession;
 	readonly filter?: RegExp;
@@ -68,6 +92,8 @@ interface PendingFileRegistration {
 
 interface FileMonitorRecord {
 	readonly id: string;
+	readonly monitorId: string;
+	readonly sessionId: string;
 	readonly description: string;
 	readonly startedAtMs: number;
 	readonly path: string;
@@ -95,6 +121,8 @@ interface FileMonitorRecord {
 
 interface MonitorRecord {
 	readonly id: string;
+	readonly monitorId: string;
+	readonly sessionId: string;
 	readonly description: string;
 	readonly startedAtMs: number;
 	readonly runtime: TerminalRuntimeSession;
@@ -133,13 +161,14 @@ export class MonitorRegistry {
 	snapshot(): readonly MonitorSnapshotEntry[] {
 		return [...this.#records.values(), ...this.#files.values()].map((record) => ({
 			id: record.id,
+			monitorId: record.monitorId,
 			description: record.description,
 			paused: record.paused,
 			startedAtMs: record.startedAtMs,
 		}));
 	}
 
-	async registerFile(options: RegisterFileMonitorOptions): Promise<string> {
+	async registerFile(options: RegisterFileMonitorOptions): Promise<{ id: string; monitorId: string }> {
 		if (this.#disposed) throw new Error("Cannot create file monitor: monitor registry is disposed.");
 		this.#pendingRegistrations += 1;
 		const lifecycle = this.#lifecycle;
@@ -276,6 +305,8 @@ export class MonitorRegistry {
 		}
 		const record: FileMonitorRecord = {
 			id,
+			monitorId: options.monitorId ?? allocateMonitorId(),
+			sessionId: id,
 			description: options.description,
 			startedAtMs: Date.now(),
 			path,
@@ -311,7 +342,7 @@ export class MonitorRegistry {
 			throw new Error(registrationError ?? "Cannot create file monitor: monitor registry is disposed.");
 		}
 		this.#notifyChange();
-		return id;
+		return { id, monitorId: record.monitorId };
 	}
 
 	async stopFile(id: string): Promise<boolean> {
@@ -444,9 +475,11 @@ export class MonitorRegistry {
 		this.#settleFile(record, "watcher completed");
 	}
 
-	register(options: RegisterMonitorOptions): void {
+	register(options: RegisterMonitorOptions): string {
 		const record: MonitorRecord = {
 			id: options.id,
+			monitorId: options.monitorId ?? allocateMonitorId(),
+			sessionId: options.id,
 			description: options.description,
 			startedAtMs: Date.now(),
 			runtime: options.runtime,
@@ -467,6 +500,7 @@ export class MonitorRegistry {
 		record.unsubscribeOutput = record.runtime.onOutput((chunk) => this.#consume(record, chunk));
 		record.unsubscribeExit = record.runtime.session.onExit(() => this.#settle(record));
 		if (record.runtime.exited) this.#settle(record);
+		return record.monitorId;
 	}
 
 	pause(ids: readonly string[]): string[] {

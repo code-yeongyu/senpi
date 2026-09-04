@@ -1,6 +1,12 @@
 import { type Static, Type } from "typebox";
 import { TERMINAL_KILL_TOOL } from "../shared.ts";
-import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
+import {
+	errorResult,
+	resolveTerminalId,
+	type TerminalToolContext,
+	type TerminalToolResult,
+	textResult,
+} from "./context.ts";
 
 export const killBashSchema = Type.Object({
 	bash_id: Type.Optional(Type.String({ description: "Session id to tree-kill." })),
@@ -24,10 +30,11 @@ export function createKillBashTool(ctx: TerminalToolContext) {
 				return textResult(`Killed ${terminalCount + fileCount} session(s).`);
 			}
 			if (!input.bash_id) return errorResult("Provide `bash_id` or set `all:true`.");
-			if (await ctx.monitorRegistry?.stopFile(input.bash_id)) return textResult(`Killed ${input.bash_id}.`);
-			const runtime = ctx.manager.get(input.bash_id);
+			const sessionId = resolveTerminalId(ctx.manager, input.bash_id);
+			if (await ctx.monitorRegistry?.stopFile(sessionId)) return textResult(`Killed ${input.bash_id}.`);
+			const runtime = ctx.manager.get(sessionId);
 			if (!runtime) return errorResult(`No terminal session found with id: ${input.bash_id}`);
-			await ctx.manager.stop(input.bash_id);
+			await ctx.manager.stop(sessionId);
 			return textResult(`Killed ${input.bash_id}.`);
 		},
 	};

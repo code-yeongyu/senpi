@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Terminal monitors now expose a stable `mon_` id in their result while retaining the runtime `bash_N` handle as `details.bash_id`, and `bash_output`, `bash_input`, `bash_resize`, `kill_bash`, and monitor rearming accept either id.
+
 ### Fixed
 
 - A clean checkout no longer fails `bun install --frozen-lockfile`, because the committed lockfile now matches the `@anthropic-ai/sdk` override in `package.json`.
