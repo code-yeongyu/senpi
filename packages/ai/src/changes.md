@@ -17,6 +17,26 @@
 
 - LOW: `packages/ai/src/api/mistral-conversations.ts` tool-call block keying in `consumeChatStream` and `packages/ai/src/api/openai-responses.ts` in `getCompat` and `buildParams`.
 
+## 2026-09-04 - Failed assistant turns are dropped from converted LLM context
+
+### What changed
+
+- `packages/ai/src/utils/drop-failed-assistant-turns.ts` (new): `dropFailedAssistantTurns(messages)` removes every assistant message whose `stopReason` is `error` or `aborted`, plus every `toolResult` whose `toolCallId` was declared only by those dropped assistants; a call id re-declared by any kept assistant keeps its result, mirroring the `droppedCallIds` pairing in `api/transform-messages.ts`. Order and all other messages are preserved.
+- `packages/ai/src/index.ts`: the helper is exported from the package barrel.
+- `packages/ai/test/drop-failed-assistant-turns.test.ts` (new): pins the drop of error/aborted turns and their orphaned results, the re-declared-id keep, and the stop/length/toolUse pass-through.
+
+### Why
+
+- Two lanes build LLM requests straight from `convertToLlm` output with no `stopReason` filter (the claude-sdk-oauth prompt bridge and cursor turn building), so after a provider error or abort every subsequent request replayed the failed turn's partial text and unexecuted tool calls; token estimation counted them too. The provider transform layer already dropped them, but only for pi-ai API requests.
+
+### Why an extension could not handle it
+
+- The drop must happen inside `convertToLlm`, which both lanes consume before any extension seam runs; extensions observe the already-built context and cannot remove a failed assistant turn from every downstream request shape deterministically.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/index.ts` (one barrel line beside the other utils exports).
+
 ## GPT-6 Astra joins the xhigh and max effort families (2026-09-04)
 
 ### What changed
