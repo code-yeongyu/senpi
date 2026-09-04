@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Image generation no longer fails with an OpenAI 401 when a placeholder API key is stored for the `openai` provider. A seeded `SK-SENTINEL-DO-NOT-LOG` value is treated as absent instead of as a credential, so resolution falls through to a configured OpenAI-compatible gateway, and image generation is reported as not configured when no gateway exists.
+
 ### Removed
 
 ## [2026.9.4-2] - 2026-09-04
