@@ -32,6 +32,7 @@ export async function editInExternalEditor(options: ExternalEditorOptions): Prom
 			const child = spawn(editor, [...editorArgs, filePath], {
 				stdio: "inherit",
 				shell: process.platform === "win32",
+				windowsHide: true,
 			});
 			child.on("error", () => resolve({ launched: false }));
 			child.on("close", (code) => resolve({ launched: true, code }));
@@ -65,6 +66,7 @@ export async function editFileInExternalEditor(options: { command: string; path:
 		const child = spawn(editor, [...editorArgs, options.path], {
 			stdio: "inherit",
 			shell: process.platform === "win32",
+			windowsHide: true,
 		});
 		child.on("error", () => resolve({ launched: false }));
 		child.on("close", (code) => resolve({ launched: true, code }));

@@ -619,6 +619,29 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 
 - `main.ts` model/thinking option resolution block.
 
+## Windows console hide for top-level entry and config helpers (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: main entry re-spawn now passes `windowsHide:true`.
+- `packages/coding-agent/src/config.ts`: `readCommandOutput` via `spawnProcessSync` now passes `windowsHide:true`.
+- `packages/coding-agent/src/package-manager-cli.ts`: self-update step via `spawnProcess` now passes `windowsHide:true`.
+- `packages/coding-agent/src/self-update-bootstrap.ts`: npm update step via `spawn` now passes `windowsHide:true`.
+- `packages/coding-agent/src/beta/omo-local-update-worker.ts`: detached worker spawn now passes `windowsHide:true` alongside `detached:true`.
+
+### Why
+
+- Windows console less parents briefly show a conhost window for every spawn without `windowsHide:true`. Detached/background helpers run periodically, so flashes recur until all sites are hidden.
+
+### Why an extension could not handle it
+
+- Spawn options live inside the caller (helper, daemon, runner). Extensions cannot inject `windowsHide` from outside; the spawn site itself must set it.
+
+### Expected merge conflict zones
+
+- LOW: the spawn options literal in the patched file(s).
+
+
 ## Repository audit baseline for the src tracker (2026-08-17)
 
 ### What changed

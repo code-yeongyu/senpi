@@ -132,7 +132,7 @@ export async function copyToClipboard(text: string): Promise<void> {
 							// Await the exit code and only claim success on a clean exit, so a
 							// failed wl-copy falls through to the xclip/OSC 52 fallbacks.
 							const wlCopyExit = await new Promise<number>((resolve) => {
-								const proc = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"] });
+								const proc = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"], windowsHide: true });
 								proc.on("error", () => resolve(1));
 								proc.on("close", (code) => resolve(code ?? 1));
 								proc.stdin.on("error", () => {

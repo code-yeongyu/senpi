@@ -723,6 +723,25 @@ Expected merge conflict zones: MEDIUM in `main.ts` and `host-lifecycle.ts`; LOW 
 - HIGH: `multi-session-host.ts` host lifecycle and `session-event-writer.ts` scheduling/sink selection.
 - LOW: the missing-binding guard in `session-command-router.ts`.
 
+## Windows console hide for RPC child (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: RPC child `spawn` now passes `windowsHide:true`.
+
+### Why
+
+- Windows console less parents briefly show a conhost window for every spawn without `windowsHide:true`. Detached/background helpers run periodically, so flashes recur until all sites are hidden.
+
+### Why an extension could not handle it
+
+- Spawn options live inside the caller (helper, daemon, runner). Extensions cannot inject `windowsHide` from outside; the spawn site itself must set it.
+
+### Expected merge conflict zones
+
+- LOW: the spawn options literal in the patched file(s).
+
+
 ## Suppress initial command-surface invalidation events (2026-08-17)
 
 ### What changed

@@ -87,7 +87,7 @@ function findExecutableOnPath(executable: string): string | null {
 
 	// Unix: Use 'which' and trust its output (handles Termux and special filesystems)
 	try {
-		const result = spawnSync("which", [executable], { encoding: "utf-8", timeout: 5000 });
+		const result = spawnSync("which", [executable], { encoding: "utf-8", timeout: 5000, windowsHide: true });
 		if (result.status === 0 && result.stdout) {
 			const firstMatch = result.stdout.trim().split(/\r?\n/)[0];
 			if (firstMatch) {
