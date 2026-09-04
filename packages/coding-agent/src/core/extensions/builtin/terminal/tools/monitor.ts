@@ -3,7 +3,13 @@ import { type Static, Type } from "typebox";
 import { APPROVED_MONITOR_PARENT } from "../monitor-permission.ts";
 import { MonitorRegistry } from "../monitor-registry.ts";
 import { DEFAULT_COLS, DEFAULT_ROWS, TERMINAL_MONITOR_TOOL } from "../shared.ts";
-import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
+import {
+	errorResult,
+	resolveTerminalId,
+	type TerminalToolContext,
+	type TerminalToolResult,
+	textResult,
+} from "./context.ts";
 import { renderMonitorCall } from "./render.ts";
 import { spawnCommandSession } from "./spawn.ts";
 
@@ -174,7 +180,7 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 							: `Re-armed ${resumed.length} paused monitor(s).`,
 					);
 				}
-				const bashId = ctx.manager.resolveId(input.bash_id) ?? input.bash_id;
+				const bashId = resolveTerminalId(ctx.manager, input.bash_id);
 				const dropped = registry.mutedDropped(bashId);
 				const outcome = registry.rearm(bashId);
 				if (outcome === "not_found") return errorResult(`No active monitor found with id: ${bashId}`);

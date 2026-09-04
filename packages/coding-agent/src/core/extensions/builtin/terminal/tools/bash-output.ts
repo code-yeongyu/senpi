@@ -2,7 +2,13 @@ import { type Static, Type } from "typebox";
 import { formatTerminalToolOutput } from "../output-format.ts";
 import type { TerminalRuntimeSession } from "../runtime-session.ts";
 import { safeRegExp, TERMINAL_OUTPUT_TOOL } from "../shared.ts";
-import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
+import {
+	errorResult,
+	resolveTerminalId,
+	type TerminalToolContext,
+	type TerminalToolResult,
+	textResult,
+} from "./context.ts";
 import { renderBashOutputCall, renderBashOutputResult } from "./render.ts";
 import { describeExit } from "./spawn.ts";
 
@@ -50,7 +56,7 @@ export function createBashOutputTool(ctx: TerminalToolContext) {
 			"Peek at background bash session output (filter, screen view, status); watch patterns with monitor, completion arrives as a notification",
 		parameters: bashOutputSchema,
 		async execute(_toolCallId: string, input: BashOutputInput): Promise<TerminalToolResult> {
-			const sessionId = ctx.manager.resolveId(input.bash_id) ?? input.bash_id;
+			const sessionId = resolveTerminalId(ctx.manager, input.bash_id);
 			const runtime = ctx.manager.get(sessionId);
 			if (!runtime) return errorResult(`No terminal session found with id: ${input.bash_id}`);
 

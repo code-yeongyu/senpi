@@ -1,6 +1,12 @@
 import { type Static, Type } from "typebox";
 import { encodeKeys, TERMINAL_INPUT_TOOL } from "../shared.ts";
-import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
+import {
+	errorResult,
+	resolveTerminalId,
+	type TerminalToolContext,
+	type TerminalToolResult,
+	textResult,
+} from "./context.ts";
 
 export const bashInputSchema = Type.Object({
 	bash_id: Type.String({ description: "Session id returned by a run_in_background bash call." }),
@@ -28,7 +34,7 @@ export function createBashInputTool(ctx: TerminalToolContext) {
 		promptSnippet: "Send stdin/keys to a live background bash session (REPL steering, ctrl+c, etc.)",
 		parameters: bashInputSchema,
 		async execute(_toolCallId: string, input: BashInputInput, _signal?: AbortSignal): Promise<TerminalToolResult> {
-			const sessionId = ctx.manager.resolveId(input.bash_id) ?? input.bash_id;
+			const sessionId = resolveTerminalId(ctx.manager, input.bash_id);
 			const runtime = ctx.manager.get(sessionId);
 			if (!runtime) return errorResult(`No terminal session found with id: ${input.bash_id}`);
 			if (runtime.exited) return errorResult(`Session ${input.bash_id} is not running; cannot send input.`);

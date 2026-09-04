@@ -41,6 +41,20 @@ export interface TerminalToolResult {
 	isError?: boolean;
 }
 
+/**
+ * Resolve a stable "mon_" monitor id to its current runtime id (bash_N/watch_N), passing a
+ * runtime id through unchanged. Companion tools may run against a manager that does not
+ * implement `resolveId` (narrower embedder/test managers expose `get` only); such managers
+ * have never seen a `mon_` id, so falling back to the id verbatim preserves the lookup they
+ * already supported. This is the single choke point for that rule — do not inline it.
+ */
+export function resolveTerminalId(
+	manager: Pick<TerminalManager, "get"> & Partial<Pick<TerminalManager, "resolveId">>,
+	id: string,
+): string {
+	return manager.resolveId?.(id) ?? id;
+}
+
 export function textResult(
 	text: string,
 	extra?: { details?: Record<string, unknown>; isError?: boolean },

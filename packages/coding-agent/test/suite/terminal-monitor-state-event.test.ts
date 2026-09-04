@@ -12,10 +12,6 @@ interface MonitorStateEvent {
 	}>;
 }
 
-function resultText(result: { content?: Array<{ type: string; text?: string }> }): string {
-	return result.content?.find((part) => part.type === "text")?.text ?? "";
-}
-
 describe("terminal monitor liveness event", () => {
 	const harnesses: Harness[] = [];
 
@@ -55,8 +51,8 @@ describe("terminal monitor liveness event", () => {
 			command: "sleep 30",
 			persistent: true,
 		});
-		const bashId = /bash_\d+/.exec(resultText(started))?.[0];
-		if (!bashId) throw new Error("Monitor did not return a bash id");
+		const bashId = String((started.details as { bash_id?: string } | undefined)?.bash_id ?? "");
+		if (!/^bash_\d+$/.test(bashId)) throw new Error("Monitor did not return a bash id");
 
 		try {
 			expect(states).toContainEqual({
@@ -93,8 +89,8 @@ describe("terminal monitor liveness event", () => {
 				command: "sleep 30",
 				persistent: true,
 			});
-			const bashId = /bash_\d+/.exec(resultText(started))?.[0];
-			if (!bashId) throw new Error("Monitor did not return a bash id");
+			const bashId = String((started.details as { bash_id?: string } | undefined)?.bash_id ?? "");
+			if (!/^bash_\d+$/.test(bashId)) throw new Error("Monitor did not return a bash id");
 
 			try {
 				expect(rpcEvents).toContainEqual({
