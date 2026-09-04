@@ -1051,6 +1051,10 @@
 - Refreshed Vercel AI Gateway pricing for `alibaba/qwen3.8-27b` from zero-value placeholder metadata to the
   current upstream input, output, and cache-read rates ([#933](https://github.com/code-yeongyu/senpi/pull/933)).
 
+- Fixed interactive render signature hashing to process omitted array items and object keys iteratively, preventing stack
+  overflows on very large tool and assistant values while retaining tail-change cache invalidation
+  ([#782](https://github.com/code-yeongyu/senpi/pull/782) by [@achieve0410](https://github.com/achieve0410)).
+
 ### New Features
 
 ### Breaking Changes
