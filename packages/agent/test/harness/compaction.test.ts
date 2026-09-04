@@ -277,6 +277,44 @@ describe("harness compaction", () => {
 		expect(result.firstKeptEntryIndex).toBe(lastValidCutPointIndex);
 	});
 
+	it.each(["error", "aborted"] as const)("excludes trailing %s turns from the context estimate", (stopReason) => {
+		const big = "x".repeat(40_000);
+		const failed: AssistantMessage = {
+			...createAssistantMessage(big),
+			stopReason,
+			content: [
+				{ type: "text", text: big },
+				{ type: "toolCall", id: "c-failed", name: "bash", arguments: { command: "ls" } },
+			],
+		};
+		const orphanResult: AgentMessage = {
+			role: "toolResult",
+			toolCallId: "c-failed",
+			toolName: "bash",
+			content: [{ type: "text", text: big }],
+			isError: true,
+			timestamp: Date.now(),
+		};
+		const withFailed: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			failed,
+			orphanResult,
+			createUserMessage("next"),
+		];
+		const baseline: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			createUserMessage("next"),
+		];
+
+		const withFailedEstimate = estimateContextTokens(withFailed);
+		const baselineEstimate = estimateContextTokens(baseline);
+
+		expect(withFailedEstimate.tokens).toBe(baselineEstimate.tokens);
+		expect(withFailedEstimate.trailingTokens).toBe(baselineEstimate.trailingTokens);
+	});
+
 	it("estimates tokens and context usage across supported message roles", () => {
 		const usage = createMockUsage(10, 5, 3, 2);
 		const assistant = createAssistantMessage("assistant", usage);

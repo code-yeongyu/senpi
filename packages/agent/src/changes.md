@@ -96,6 +96,8 @@
 ### What changed
 
 - `packages/agent/src/harness/messages.ts`: the harness `convertToLlm` runs the shared `dropFailedAssistantTurns` from `@earendil-works/pi-ai` as its final step, removing assistant turns with `stopReason` `error`/`aborted` and the tool results orphaned by that drop from the returned `Message[]`; an id re-declared by a kept assistant keeps its result, and `stop`/`length`/`toolUse` turns pass through untouched.
+- `packages/agent/src/harness/compaction/compaction.ts`: `estimateContextTokens` applies the same `dropFailedAssistantTurns` before anchoring on usage and summing trailing tokens, so the estimate counts exactly the set the next request carries; failed turns and their orphaned results no longer inflate the compaction trigger.
+- `packages/agent/test/harness/convert-to-llm.test.ts` (new) and `packages/agent/test/harness/compaction.test.ts`: pin the harness `convertToLlm` drop (error, aborted, re-declared-id keep) and the estimator exclusion for both failure kinds.
 
 ### Why
 

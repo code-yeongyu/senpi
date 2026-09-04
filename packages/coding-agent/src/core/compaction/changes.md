@@ -1,5 +1,24 @@
 # changes.md — compaction
 
+## 2026-09-04 - Token estimation excludes failed provider turns
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `estimateContextTokens` runs the shared `dropFailedAssistantTurns` from `@earendil-works/pi-ai` on its input before anchoring on the last assistant usage and summing trailing tokens. Assistant turns with `stopReason` `error`/`aborted`, and the tool results orphaned by that drop, no longer count toward the context estimate.
+- `packages/coding-agent/test/compaction.test.ts`: pins the exclusion for both failure kinds (the estimate with a failed trailing turn equals the estimate without it).
+
+### Why
+
+- `convertToLlm` now drops failed turns from every request, so an estimator that still counted them overstated context usage after any provider error or abort and could trigger compaction the next request did not need. The estimate must measure what is actually sent.
+
+### Why an extension could not handle it
+
+- The estimator is called by the core compaction admission path with raw session messages before any extension seam; an extension cannot rewrite the count the core uses to decide whether to compact.
+
+### Expected merge conflict zones
+
+- LOW: the head of `estimateContextTokens` in `packages/coding-agent/src/core/compaction/compaction.ts` (the `countedMessages` prelude) and the `@earendil-works/pi-ai` import line.
+
 ## Ideal-pipeline settings split out of the compaction module (2026-08-29)
 
 ### What changed

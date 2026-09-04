@@ -2,6 +2,7 @@ import {
 	type Api,
 	type AssistantMessage,
 	type Context,
+	dropFailedAssistantTurns,
 	type Model,
 	type Models,
 	type RetryCallbacks,
@@ -214,11 +215,14 @@ function getLastAssistantUsageInfo(messages: AgentMessage[]): { usage: Usage; in
 
 /** Estimate context tokens for messages using provider usage when available. */
 export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEstimate {
-	const usageInfo = getLastAssistantUsageInfo(messages);
+	// Count the same set the next provider request will carry: convertToLlm drops
+	// failed (error/aborted) assistant turns and their orphaned tool results.
+	const countedMessages = dropFailedAssistantTurns(messages);
+	const usageInfo = getLastAssistantUsageInfo(countedMessages);
 
 	if (!usageInfo) {
 		let estimated = 0;
-		for (const message of messages) {
+		for (const message of countedMessages) {
 			estimated += estimateTokens(message);
 		}
 		return {
@@ -231,8 +235,8 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
 
 	const usageTokens = calculateContextTokens(usageInfo.usage);
 	let trailingTokens = 0;
-	for (let i = usageInfo.index + 1; i < messages.length; i++) {
-		trailingTokens += estimateTokens(messages[i]);
+	for (let i = usageInfo.index + 1; i < countedMessages.length; i++) {
+		trailingTokens += estimateTokens(countedMessages[i]);
 	}
 
 	return {

@@ -6,7 +6,13 @@
  */
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type RetryCallbacks, type RetryPolicy, retryAssistantCall, uuidv7 } from "@earendil-works/pi-ai";
+import {
+	dropFailedAssistantTurns,
+	type RetryCallbacks,
+	type RetryPolicy,
+	retryAssistantCall,
+	uuidv7,
+} from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	Context,
@@ -281,11 +287,14 @@ function getLastAssistantUsageInfo(messages: AgentMessage[]): { usage: Usage; in
  * If there are messages after the last usage, estimate their tokens with estimateTokens.
  */
 export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEstimate {
-	const usageInfo = getLastAssistantUsageInfo(messages);
+	// Count the same set the next provider request will carry: convertToLlm drops
+	// failed (error/aborted) assistant turns and their orphaned tool results.
+	const countedMessages = dropFailedAssistantTurns(messages);
+	const usageInfo = getLastAssistantUsageInfo(countedMessages);
 
 	if (!usageInfo) {
 		let estimated = 0;
-		for (const message of messages) {
+		for (const message of countedMessages) {
 			estimated += estimateTokens(message);
 		}
 		return {
@@ -298,8 +307,8 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
 
 	const usageTokens = calculateContextTokens(usageInfo.usage);
 	let trailingTokens = 0;
-	for (let i = usageInfo.index + 1; i < messages.length; i++) {
-		trailingTokens += estimateTokens(messages[i]);
+	for (let i = usageInfo.index + 1; i < countedMessages.length; i++) {
+		trailingTokens += estimateTokens(countedMessages[i]);
 	}
 
 	return {

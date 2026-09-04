@@ -1,5 +1,3 @@
-import type { AssistantMessage, Message } from "../types.ts";
-
 /**
  * Drop assistant turns that terminated in failure (`stopReason` "error" or
  * "aborted") from a converted LLM message list, together with every tool
@@ -14,26 +12,45 @@ import type { AssistantMessage, Message } from "../types.ts";
  * and unexecuted tool calls on lanes that build requests straight from
  * `convertToLlm` output (claude-sdk-oauth prompt bridge, cursor turns, token
  * estimation).
+ *
+ * The input is typed structurally so both the AI package `Message[]` and the
+ * harness/coding-agent `AgentMessage[]` (a superset with extra custom roles)
+ * pass through the same drop.
  */
-export function dropFailedAssistantTurns(messages: readonly Message[]): Message[] {
+export function dropFailedAssistantTurns<T extends { role: string }>(messages: readonly T[]): T[] {
 	const callIdsByKeptAssistants = new Set<string>();
 	const callIdsByFailedAssistants = new Set<string>();
 	for (const message of messages) {
-		if (message.role !== "assistant") continue;
-		const declared = isFailedAssistant(message) ? callIdsByFailedAssistants : callIdsByKeptAssistants;
-		for (const block of message.content) {
-			if (block.type === "toolCall") declared.add(block.id);
+		const assistant = asAssistantTurn(message);
+		if (!assistant) continue;
+		const declared = isFailedStop(assistant.stopReason) ? callIdsByFailedAssistants : callIdsByKeptAssistants;
+		for (const block of assistant.content) {
+			if (block.type === "toolCall" && typeof block.id === "string") declared.add(block.id);
 		}
 	}
 	for (const id of callIdsByKeptAssistants) callIdsByFailedAssistants.delete(id);
 
 	return messages.filter((message) => {
-		if (message.role === "assistant") return !isFailedAssistant(message);
-		if (message.role === "toolResult") return !callIdsByFailedAssistants.has(message.toolCallId);
+		const assistant = asAssistantTurn(message);
+		if (assistant) return !isFailedStop(assistant.stopReason);
+		if (message.role === "toolResult" && "toolCallId" in message && typeof message.toolCallId === "string") {
+			return !callIdsByFailedAssistants.has(message.toolCallId);
+		}
 		return true;
 	});
 }
 
-function isFailedAssistant(message: AssistantMessage): boolean {
-	return message.stopReason === "error" || message.stopReason === "aborted";
+function asAssistantTurn(message: {
+	role: string;
+}): { stopReason: unknown; content: readonly { type: string; id?: unknown }[] } | undefined {
+	if (message.role !== "assistant") return undefined;
+	if (!("content" in message) || !Array.isArray(message.content)) return undefined;
+	return {
+		stopReason: "stopReason" in message ? message.stopReason : undefined,
+		content: message.content,
+	};
+}
+
+function isFailedStop(stopReason: unknown): boolean {
+	return stopReason === "error" || stopReason === "aborted";
 }
