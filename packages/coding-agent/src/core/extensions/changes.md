@@ -1,5 +1,25 @@
 # Core Extensions Changes
 
+## 2026-09-04 - UI prompt lifecycle events
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: the extension UI context's blocking prompts (select, confirm, input, editor, custom) are wrapped with depth tracking; the outermost prompt emits `ui_prompt_start` and, when it settles, `ui_prompt_end`, queued via microtask so handlers cannot delay the prompt itself (upstream ccfe79ed2, #8355).
+- `packages/coding-agent/src/core/extensions/types.ts`: adds `UIPromptKind`, `UIPromptStartEvent`, and `UIPromptEndEvent` to the event union and `on` overloads, and clarifies that `setModel` and `setThinkingLevel` change the current session without changing the configured default for new sessions (upstream 8d1b1178c, #9009).
+- `packages/coding-agent/src/core/extensions/index.ts`: re-exports the new event types.
+
+### Why
+
+- RPC and UI hosts need to know when the agent is blocked on an extension-driven prompt to render a waiting state and to distinguish prompt-waits from model-waits; the runner is the only component that sees every nesting level of those prompts.
+
+### Why an extension could not handle it
+
+- The events describe the runner's own UI context; an extension cannot observe prompts issued by other extensions, and the emitting path must not let handlers delay the prompt they describe.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/extensions/runner.ts` UI-context wrapping and depth tracking; LOW: `packages/coding-agent/src/core/extensions/types.ts` event union and `packages/coding-agent/src/core/extensions/index.ts` export list.
+
 
 ## Expose the extension event bus for session activity signals (2026-08-31)
 

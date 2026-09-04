@@ -1,5 +1,24 @@
 # changes — senpi-monorepo root
 
+## @anthropic-ai/sdk 0.123.0 pin for the v0.84.4 upstream sync (2026-09-04)
+
+### What changed
+
+- `package.json` pins `@anthropic-ai/sdk` at 0.123.0 (was 0.120.0), the version the 2026-09-03 upstream sync of badlogic/pi-mono v0.84.4 resolved against.
+- `.npmrc` adds `min-release-age-exclude[]=@anthropic-ai/sdk` next to the existing excludes, with an in-file note to remove it after 2026-09-05.
+
+### Why
+
+- The fork's `min-release-age=2` supply-chain gate refuses packages younger than two days, so the freshly published 0.123.0 pin would fail installs until 2026-09-05. The exclude is time-boxed by its removal note instead of weakening the policy for every package.
+
+### Why an extension could not handle it
+
+- Root manifest pins and npm install policy execute before any package code, let alone an extension, runs.
+
+### Expected merge conflict zones
+
+- LOW: the `package.json` root dependency overrides block and the `.npmrc` exclude list on future upstream syncs and release bumps.
+
 ## Root workspace fan-out scripts no longer recurse under bun (2026-09-02)
 
 ### What changed

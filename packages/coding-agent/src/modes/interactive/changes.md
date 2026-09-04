@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-04 - Mark the current thinking level in the selector
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts`: item labels gain a `✓ ` prefix on the active level (two-space pad otherwise), and fuzzy filtering matches the raw level value plus the description instead of the decorated label (upstream f2a622789, #8900); the fork's selector tests were aligned to the marker in 9e64e52d1.
+
+### Why
+
+- With the check mark embedded in the label, typing a level name would no longer fuzzy-match it; filtering on the value keeps search working while the marker stays visible while browsing.
+
+### Why an extension could not handle it
+
+- The selector is an interactive TUI component rendering inside the host's fullscreen UI.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts` label construction and `applyFilter`.
+
 ## 2026-09-03 - Restore interactive lifecycle seams and branded terminal overrides
 
 ### What changed

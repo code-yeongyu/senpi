@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-04 - Export the UI prompt events and apply terminal overrides in main
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports `UIPromptStartEvent`, `UIPromptEndEvent`, and `UIPromptKind` so embedders can subscribe to the new extension prompt lifecycle events.
+- `packages/coding-agent/src/main.ts`: `main()` applies the settings manager's terminal capability overrides before HTTP proxy and dispatcher configuration, so non-interactive and RPC launches honor explicit capability settings too.
+
+### Why
+
+- Both are public surface wiring from the v0.84.4 sync: the prompt events are unusable by embedders unless exported from the package root, and capability overrides must be in place before any rendering or transport setup reads detected capabilities.
+
+### Why an extension could not handle it
+
+- Package export lists are compile-time surface, and `main()`'s startup ordering runs before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/index.ts` export list; MEDIUM: `packages/coding-agent/src/main.ts` startup ordering around services initialization.
+
 ## 2026-09-03 - Announce print-mode model fallback on stderr
 
 ### What changed

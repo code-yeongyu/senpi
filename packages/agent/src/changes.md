@@ -1,5 +1,42 @@
 # Changes
 
+## 2026-09-04 - Drop the byte count from write-tool results
+
+### What changed
+
+- `packages/agent/src/harness/tools/write.ts`: the write tool's success text reports `Successfully wrote to <path>` without the byte count, adopting upstream e583b290a; the fork's tool tests were aligned to the wording in 9e64e52d1.
+
+### Why
+
+- The count reported UTF-16 code units as bytes, which is wrong for any non-ASCII payload; upstream removed the count instead of rescanning the content.
+
+### Why an extension could not handle it
+
+- The result text is produced inside the built-in write tool before any extension hook can rewrite it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/harness/tools/write.ts` success-note wording during upstream syncs.
+
+## 2026-09-04 - Harden the proxy stream boundary and pass through provider thinking levels
+
+### What changed
+
+- `packages/agent/src/proxy.ts`: `streamProxy` flushes the decoder and processes a final SSE line that is not newline-terminated, and a clean EOF that never produced a done or error event pushes a synthesized error (`Connection closed by proxy server before the response completed`) instead of ending the stream with no result (upstream ebc374490, #8997).
+- `packages/agent/src/proxy.ts`: terminal done and error proxy events carry an optional `providerThinkingLevel` that is copied onto the partial assistant message, part of the sync's per-turn thinking-effort preservation (upstream 4e69b0c28).
+
+### Why
+
+- A proxy that dropped the connection mid-response left `EventStream.result()` pending forever because no terminal event ever arrived; consumers awaiting the result hung indefinitely. Surfacing the provider's actual thinking level lets the session observe what the provider admitted for the turn instead of inferring it from the request.
+
+### Why an extension could not handle it
+
+- The proxy SSE transport is the runtime streaming boundary beneath every extension hook; extensions cannot synthesize terminal events or repair a dropped stream.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/proxy.ts` read loop, residual-buffer flush, and terminal-event synthesis.
+
 ## 2026-09-04 - Run next-turn preparation after every completed turn
 
 ### What changed

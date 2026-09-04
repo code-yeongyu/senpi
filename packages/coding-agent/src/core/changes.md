@@ -1,5 +1,26 @@
 # changes
 
+## 2026-09-04 - Adopt the v0.84.4 core runtime fixes
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: an in-memory fork tears down the current runtime before creating the forked or branched session and links the new session's parent to the pre-fork leaf, so the active turn settles before the fork target exists (upstream 56c6fb33c, #8937).
+- `packages/coding-agent/src/core/http-dispatcher.ts`: the environment proxy agent sets `proxyTunnel` to keep HTTP origins on CONNECT tunnels as they behaved before Undici 8.7 (upstream 23842b1e6, #8134).
+- `packages/coding-agent/src/core/model-config.ts`: the models.json compat schemas gain optional `vllmPriority` (openai-completions), `supportsMaxOutputTokens` (openai-responses), and `supportsMidConvoEffort` (anthropic-messages) fields.
+- `packages/coding-agent/src/core/session-manager.ts`: opening an existing session file for append appends a newline when the file does not end with one, repairing an unterminated JSONL tail from the append-owning process only and never from read-only loads (upstream 0b5ee5d8b, #8345).
+
+### Why
+
+- Settling the turn before the fork target exists keeps the forked session from observing a half-written parent; without the tunnel flag proxied HTTP requests lost their origin after the Undici 8.7 behavior change; the compat flags expose provider capabilities the sync's provider clients now read; and a torn tail entry otherwise fuses with the next append and can swallow the rest of the session.
+
+### Why an extension could not handle it
+
+- Session file ownership, runtime teardown ordering, the HTTP dispatcher, and the models.json schema are core seams that run before or below extension hooks.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/session-manager.ts` append-side repair and `packages/coding-agent/src/core/agent-session-runtime.ts` fork ordering; LOW: `packages/coding-agent/src/core/model-config.ts` compat schema fields and `packages/coding-agent/src/core/http-dispatcher.ts` agent options.
+
 ## 2026-09-04 - Restore the selected model, not its upstream wire id, on resume
 
 ### What changed

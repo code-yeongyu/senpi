@@ -1,3 +1,22 @@
+## 2026-09-04 - Adopt the Mistral indexed-chunk and Responses max_output_tokens fixes
+
+### What changed
+
+- `packages/ai/src/api/mistral-conversations.ts`: streamed tool-call chunks are keyed by the provider chunk index when present, falling back to the derived call id, instead of the old callId-plus-index-or-zero key (upstream 6c87d9a02, #8387).
+- `packages/ai/src/api/openai-responses.ts`: a new `supportsMaxOutputTokens` compat flag (default true) gates sending `max_output_tokens`, so Responses-compatible gateways that reject the parameter can opt out (upstream b8b873b98, #8941).
+
+### Why
+
+- Mistral streams indexed argument chunks with missing or duplicated ids; the old key collapsed index 0 and an absent index into the same slot and mis-assembled tool calls. Some OpenAI Responses-compatible gateways (for example Codex-protocol proxies) reject `max_output_tokens` with a 400, and the API always sent it when `maxTokens` was set with no way to opt out.
+
+### Why an extension could not handle it
+
+- Stream chunk assembly and request body construction happen inside the provider API clients, below the extension boundary.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/mistral-conversations.ts` tool-call block keying in `consumeChatStream` and `packages/ai/src/api/openai-responses.ts` in `getCompat` and `buildParams`.
+
 ## GPT-6 Astra joins the xhigh and max effort families (2026-09-04)
 
 ### What changed

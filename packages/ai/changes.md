@@ -1,5 +1,26 @@
 # changes.md — ai
 
+## 2026-09-04 - Generator adopts the v0.84.4 routing rules
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: Anthropic compat gains a verified `supportsMidConvoEffort` set (anthropic and openrouter providers, `claude-opus-5` and `claude-fable`/`claude-mythos` 5.1 ids); flagged models merge an `off`-capable thinking-level map and their allowed fallback lists are filtered to models that also support mid-conversation effort changes.
+- `packages/ai/scripts/generate-models.ts`: OpenRouter `anthropic/` models (excluding `:batch`) route through `anthropic-messages` at `https://openrouter.ai/api` instead of `openai-completions` (upstream 4e69b0c28).
+- `packages/ai/scripts/generate-models.ts`: all Fireworks `glm-` models route through `openai-completions` (previously only `glm-5p2`, upstream 1e4fbe384), and GitHub Copilot `claude-fable-` joins the Claude models routed through Anthropic Messages (upstream 69afa1050).
+- The regenerated catalog data for these rules landed with the sync in 9f11abadf.
+
+### Why
+
+- Upstream v0.84.4 shipped these routing decisions for the new model generations and the per-turn effort semantics; adopting them in the generator keeps fork catalog regenerations in parity with upstream instead of re-diverging on every refresh.
+
+### Why an extension could not handle it
+
+- The generation script and the provider data it emits are build-time catalog artifacts inside this package; no runtime extension seam produces them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` compat helpers and routing rules; regenerate `packages/ai/src/providers/data/` rather than merging it.
+
 ## 2026-09-04 - GPT-6 Astra catalog
 
 ### What changed
