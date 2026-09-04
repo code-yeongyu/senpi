@@ -1,5 +1,21 @@
 # senpi-codemode fork changes
 
+## 2026-09-04 - eval tool description diet
+
+### What changed
+
+- `src/prompt/eval-prompt.ts`: dropped `REUSE_CHAIN_EXAMPLES` (three embedded JSON call examples), collapsed the `<workflow>` block to one dense rule sentence, merged the three state-persistence restatements into one, tightened the timeout/on_timeout/hard-limit/detach prose, and removed the per-dialect "sleeping/timed retries are not waiting" clause from the monitor bullets (the terminal section owns that doctrine). Helper signatures and dialect selection are unchanged. Fixed the workflow block's fused `handle=True{ handle: true }` into per-language correct forms.
+- `test/prompt.test.ts`: removed the reuse-chain filter test (its subject is gone), added the handle-form regression test, regenerated snapshots.
+
+### Why
+
+- The description cost ~2.0k tokens on every eval-enabled turn; the cuts are content the model already does by default or that the terminal section states. codex dialect 2002 -> 1588, claude 2058 -> 1648, kimi 2073 -> 1668, default 2079 -> 1668 (o200k).
+
+### Expected merge conflict zones
+
+- LOW: `eval-prompt.ts` template and the prompt snapshots; regenerate snapshots rather than merging.
+
+
 ## eval foreground window caps the interactive detach budget (2026-09-04)
 
 ### What changed

@@ -82,21 +82,6 @@ describe("buildEvalPrompt", () => {
 		expect(withSpawns).toContain("omit it to use `researcher`");
 	});
 
-	it("filters reuse-chain examples by enabled language", () => {
-		// Given: prompts exposing the Python example set and kernels without one.
-		const python = buildEvalPrompt({ py: true, js: false, rb: false, jl: false }, { spawns: false }).description;
-		const ruby = buildEvalPrompt({ py: false, js: false, rb: true, jl: false }, { spawns: false }).description;
-		const node = buildEvalPrompt({ py: false, js: true, rb: false, jl: false }, { spawns: false }).description;
-
-		// When: their embedded reuse-chain examples are rendered.
-		// Then: JS kernels carry the batched fan-out examples, Python kernels carry the kernel-hop example, and other languages have none.
-		expect(node).toContain("Count all TypeScript source files under src/ excluding tests");
-		expect(node).toContain("tool.grep");
-		expect(node).toContain("Promise.all");
-		expect(python).toContain("JS kernel is busy with a detached cell — continue in py");
-		expect(ruby).not.toContain("<examples>");
-	});
-
 	it("documents core helpers with Node wording and no excluded surface when no js runtime is given", () => {
 		const prompt = fullPrompt({ py: true, js: true, rb: true, jl: true });
 
@@ -190,6 +175,25 @@ describe("buildEvalPrompt", () => {
 					"event wakes the turn",
 				);
 			}
+		}
+	});
+
+	it("shows each enabled language its correctly-formed handle option, never a fused dialect", () => {
+		// Given: spawn-enabled prompts across kernel combinations.
+		const cases: Array<[{ py: boolean; js: boolean; rb: boolean; jl: boolean }, string[]]> = [
+			[{ py: false, js: true, rb: false, jl: false }, ["{ handle: true }"]],
+			[{ py: true, js: false, rb: false, jl: false }, ["handle=True"]],
+			[{ py: true, js: true, rb: false, jl: false }, ["handle=True", "{ handle: true }"]],
+		];
+
+		for (const [enabled, expectedForms] of cases) {
+			const prompt = buildEvalPrompt(enabled, { spawns: true }).description;
+
+			// Then: each enabled language's form is present and the two are never fused without a separator.
+			expect(prompt).not.toContain("handle=True{ handle: true }");
+			expect(prompt).not.toContain("True{");
+			for (const form of expectedForms) expect(prompt).toContain(form);
+			if (enabled.js) expect(prompt).not.toContain("`handle=True``{ handle: true }`");
 		}
 	});
 

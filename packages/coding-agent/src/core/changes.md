@@ -21,6 +21,24 @@
 
 - MEDIUM: `packages/coding-agent/src/core/session-manager.ts` append-side repair and `packages/coding-agent/src/core/agent-session-runtime.ts` fork ordering; LOW: `packages/coding-agent/src/core/model-config.ts` compat schema fields and `packages/coding-agent/src/core/http-dispatcher.ts` agent options.
 
+## 2026-09-04 - Skills prompt aliases each root to a short rN prefix
+
+### What changed
+
+- `skills.ts` `formatSkillsForPrompt`: emits a `<skill_roots></skill_roots>` table (one line per distinct root, `r0`, `r1`, ...) and renders each `<location>` as `alias/<name>/SKILL.md` plus a one-line expansion rule. `test/suite/skills-root-alias.test.ts` covers the table, alias re-join resolvability, and the character saving; `test/skills.test.ts` re-pins the location shape.
+
+### Why
+
+- The long absolute root was billed once per skill (145 skills): 23,381 -> 22,244 o200k tokens (-1,137) on the real set with no content removed.
+
+### Why an extension could not handle this differently
+
+- `skills.ts` owns the single renderer for the skills section; there is no extension seam for its formatting.
+
+### Expected merge conflict zones
+
+- LOW: `skills.ts` renderer body and `skills.test.ts` location assertion.
+
 ## 2026-09-04 - Restore the selected model, not its upstream wire id, on resume
 
 ### What changed
