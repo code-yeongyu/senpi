@@ -19,6 +19,7 @@ terminal/
 ├── settings.ts          # loadTerminalSettings / resolveTerminalSettings
 ├── shared.ts            # Defaults: 120x40, 10000 scrollback, 32 sessions, 1,000,000 output chars;
 │                         durability caps (MAX_DURABLE_MONITORS 5, DURABLE_MONITOR_EXPIRY_MS 7d)
+├── terminal-manifest-model.ts # Manifest data model: persisted types + version/debounce constants
 ├── terminal-manifest.ts # Durable per-session record + TerminalManifestWriter (transition writes,
 │                         debounced checkpoints, durableCount admission, adoptRestored)
 ├── restore.ts           # Manifest read side: strict fail-closed parse + restoreTerminalState
