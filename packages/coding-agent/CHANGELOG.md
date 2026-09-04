@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Make the reftable polling fallback detect content changes without relying on filesystem timestamp precision, and test the fallback with deterministic timer/event control.
+
 ### Removed
 
 ## [2026.9.4-3] - 2026-09-04

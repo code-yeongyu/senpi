@@ -6,6 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let resolvedBranch = "main";
 let branchResolutionDelivered: (() => void) | null = null;
+let tablesListPoll: ((current: unknown, previous: unknown) => void) | null = null;
+
+vi.mock("fs", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("fs")>();
+	return {
+		...actual,
+		watchFile: vi.fn((_path: string, _options: unknown, listener: (current: unknown, previous: unknown) => void) => {
+			tablesListPoll = listener;
+		}),
+		unwatchFile: vi.fn(),
+	};
+});
 
 vi.mock("child_process", () => ({
 	execFile: vi.fn(
@@ -69,20 +81,6 @@ function createReftableWorktree(tempDir: string): { worktreeDir: string; reftabl
 	return { worktreeDir, reftableDir };
 }
 
-async function awaitWithTimeout(event: Promise<void>, description: string, timeoutMs = 10000): Promise<void> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	try {
-		await Promise.race([
-			event,
-			new Promise<never>((_resolve, reject) => {
-				timer = setTimeout(() => reject(new Error(`Timed out waiting for ${description}`)), timeoutMs);
-			}),
-		]);
-	} finally {
-		if (timer) clearTimeout(timer);
-	}
-}
-
 describe("FooterDataProvider reftable detection without usable fs.watch", () => {
 	let originalCwd: string;
 	let tempDir: string;
@@ -92,6 +90,8 @@ describe("FooterDataProvider reftable detection without usable fs.watch", () => 
 		tempDir = mkdtempSync(join(tmpdir(), "footer-watch-fallback-"));
 		resolvedBranch = "main";
 		branchResolutionDelivered = null;
+		tablesListPoll = null;
+		vi.useFakeTimers();
 		vi.mocked(spawnSync).mockClear();
 		vi.mocked(execFile).mockClear();
 	});
@@ -101,6 +101,7 @@ describe("FooterDataProvider reftable detection without usable fs.watch", () => 
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
+		vi.useRealTimers();
 	});
 
 	it("still refreshes the branch through the polling fallback", async () => {
@@ -118,7 +119,13 @@ describe("FooterDataProvider reftable detection without usable fs.watch", () => 
 				branchResolutionDelivered = resolve;
 			});
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
-			await awaitWithTimeout(resolutionDelivered, "the polled reftable refresh to resolve the branch");
+			expect(tablesListPoll).not.toBeNull();
+			tablesListPoll?.(
+				{ mtimeMs: 1, ctimeMs: 1, size: 2 },
+				{ mtimeMs: 1, ctimeMs: 1, size: 2 },
+			);
+			await vi.advanceTimersByTimeAsync(500);
+			await resolutionDelivered;
 
 			expect(provider.getGitBranch()).toBe("foo");
 			expect(onBranchChange).toHaveBeenCalledTimes(1);
