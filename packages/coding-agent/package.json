@@ -68,7 +68,7 @@
 		"undici": "8.10.0",
 		"yaml": "2.9.0",
 		"@anthropic-ai/claude-agent-sdk": "0.3.259",
-		"@anthropic-ai/sdk": "0.120.0",
+		"@anthropic-ai/sdk": "0.123.0",
 		"@aws-sdk/client-bedrock-runtime": "3.1116.0",
 		"@bufbuild/protobuf": "2.14.0",
 		"@code-yeongyu/senpi-codemode": "^2026.9.4",
