@@ -6,6 +6,8 @@
 
 ### Added
 
+- Terminal monitors and background Bash sessions are now recorded per session, and a fresh startup reports what was carried over, lost, expired, or unreadable in exactly one notification instead of silently dropping the state; durable watches are reported as lost rather than resumed for now, while reloads continue preserving live terminal state without this report.
+
 ### Changed
 
 - Terminal monitors now expose a stable `mon_` id in their result while retaining the runtime `bash_N` handle as `details.bash_id`, and `bash_output`, `bash_input`, `bash_resize`, `kill_bash`, and monitor rearming accept either id.

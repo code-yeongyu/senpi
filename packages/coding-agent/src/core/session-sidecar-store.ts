@@ -90,7 +90,7 @@ export function createSidecarStore<T>(options: CreateSidecarStoreOptions<T>): Si
 	}
 
 	function mutate(fn: (current: T | null) => T | Promise<T>): Promise<T> {
-		return enqueue(filePath, async () => {
+		return serializeByKey(filePath, async () => {
 			const next = await fn(await read());
 			await write(next);
 			return next;
@@ -162,10 +162,15 @@ function parsePayload<T>(raw: string, options: CreateSidecarStoreOptions<T>, ref
 }
 
 /**
- * Serializes operations per file through a promise tail so concurrent callers
- * cannot interleave their read-modify-write cycles and lose an update.
+ * Serializes read-modify-write cycles per key across every sidecar consumer.
+ *
+ * `key` must be the resolved absolute file path of the sidecar (the same string
+ * `createSidecarStore` uses for that file). Callers that own their own writer
+ * (goal) call this directly around that writer. Callers that want the whole
+ * store (loop) go through `createSidecarStore`, whose `mutate` already uses
+ * this tail.
  */
-function enqueue<T>(key: string, operation: () => Promise<T>): Promise<T> {
+export function serializeByKey<T>(key: string, operation: () => Promise<T>): Promise<T> {
 	const previous = mutationTails.get(key) ?? Promise.resolve();
 	const run = previous.then(operation);
 	const tail = run.then(

@@ -26,6 +26,7 @@ import {
 	createSidecarStore,
 	InvalidSidecarStoreError,
 	type SidecarStore,
+	serializeByKey,
 	UnsupportedSidecarStoreVersionError,
 } from "../../src/core/session-sidecar-store.ts";
 
@@ -107,6 +108,35 @@ describe("sidecar store mutation serialization", () => {
 		await Promise.all(increments);
 
 		// Then: the persisted counter reflects all 20 increments.
+		const persisted = await store.read();
+		expect(persisted?.counter).toBe(20);
+	});
+
+	it("lands 10 serializeByKey increments and 10 mutate increments on the same file", async () => {
+		// Given: one file, two callers — the exported serializer (goal-style own writer)
+		// and store.mutate (loop-style), both keyed to the same resolved path.
+		const store = await tempStore("session-shared-tail");
+		const sessionId = "session-shared-tail";
+
+		// When: every operation is started before any of them resolves.
+		const viaSerializer = Array.from({ length: 10 }, () =>
+			serializeByKey(store.filePath, async () => {
+				const current = await store.read();
+				await Promise.resolve();
+				const next = stateFor(sessionId, (current?.counter ?? 0) + 1);
+				await store.write(next);
+				return next;
+			}),
+		);
+		const viaMutate = Array.from({ length: 10 }, () =>
+			store.mutate(async (current) => {
+				await Promise.resolve();
+				return stateFor(sessionId, (current?.counter ?? 0) + 1);
+			}),
+		);
+		await Promise.all([...viaSerializer, ...viaMutate]);
+
+		// Then: the shared tail landed every increment.
 		const persisted = await store.read();
 		expect(persisted?.counter).toBe(20);
 	});

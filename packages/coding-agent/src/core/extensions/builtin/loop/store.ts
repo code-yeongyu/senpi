@@ -1,19 +1,26 @@
 /**
  * Atomic, versioned, per-session sidecar store for `/loop` state.
  *
- * Mirrors the goal store's persistence discipline (temp file + rename, per-file mutation
- * serialization, strict versioned parsing) because scheduler state must never be half
- * written or silently reset: a corrupt file arms nothing and surfaces a typed error so
- * the extension can end affected loops with `error` instead of guessing.
+ * Persistence (temp file + rename, per-file mutation serialization, envelope
+ * version/session checks) lives in the shared session sidecar primitive. This
+ * module supplies the loop domain parser and keeps the historical exported
+ * surface so callers continue to catch {@link InvalidLoopStoreError} /
+ * {@link UnsupportedLoopStoreVersionError} by name.
  *
  * Session custom entries are deliberately NOT the authoritative store: they are branch
  * nodes, so a globally scanned "latest" entry can come from an abandoned branch, while
  * loop schedules are session-scoped.
  */
 
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import {
+	createSidecarStore,
+	encodedSessionId as encodeSidecarSessionId,
+	InvalidSidecarStoreError,
+	type SidecarStore,
+	type SidecarStoreRef,
+	sidecarFilePath,
+	UnsupportedSidecarStoreVersionError,
+} from "../../../session-sidecar-store.ts";
 import {
 	type CronEntry,
 	type DynamicCronEntry,
@@ -46,14 +53,14 @@ import {
 	type SentinelDeliveryState,
 } from "./types.ts";
 
-export class InvalidLoopStoreError extends Error {
+export class InvalidLoopStoreError extends InvalidSidecarStoreError {
 	constructor(message: string, options?: { cause?: unknown }) {
 		super(message, options);
 		this.name = "InvalidLoopStoreError";
 	}
 }
 
-export class UnsupportedLoopStoreVersionError extends Error {
+export class UnsupportedLoopStoreVersionError extends UnsupportedSidecarStoreVersionError {
 	constructor(message: string) {
 		super(message);
 		this.name = "UnsupportedLoopStoreVersionError";
@@ -63,19 +70,46 @@ export class UnsupportedLoopStoreVersionError extends Error {
 /** Mutation callback. May be async; its result becomes the next persisted state. */
 export type LoopStateMutation = (current: LoopState) => LoopState | Promise<LoopState>;
 
-const mutationTails = new Map<string, Promise<void>>();
-const snapshots = new Map<string, LoopState>();
+const stores = new Map<string, SidecarStore<LoopState>>();
 
 export function encodedSessionId(ref: LoopStoreRef): string {
-	return encodeURIComponent(ref.sessionId);
+	return encodeSidecarSessionId(ref.sessionId);
 }
 
 export function loopStateFilePath(ref: LoopStoreRef): string {
-	return join(ref.baseDir, `${encodedSessionId(ref)}.json`);
+	return sidecarFilePath(ref);
 }
 
 export function emptyLoopState(sessionId: string): LoopState {
 	return { version: LOOP_STATE_VERSION, sessionId, entries: {}, activeDynamicId: null, updatedAt: 0 };
+}
+
+function storeFor(ref: LoopStoreRef): SidecarStore<LoopState> {
+	const filePath = loopStateFilePath(ref);
+	const existing = stores.get(filePath);
+	if (existing !== undefined) return existing;
+	const store = createSidecarStore<LoopState>({
+		baseDir: ref.baseDir,
+		sessionId: ref.sessionId,
+		version: LOOP_STATE_VERSION,
+		tempPrefix: "loop",
+		parse: parseLoopPayload,
+	});
+	stores.set(filePath, store);
+	return store;
+}
+
+function remapLoopStoreError(error: unknown): never {
+	if (error instanceof InvalidLoopStoreError || error instanceof UnsupportedLoopStoreVersionError) {
+		throw error;
+	}
+	if (error instanceof UnsupportedSidecarStoreVersionError) {
+		throw new UnsupportedLoopStoreVersionError(error.message.replaceAll("sidecar store", "loop store"));
+	}
+	if (error instanceof InvalidSidecarStoreError) {
+		throw new InvalidLoopStoreError(error.message.replaceAll("sidecar store", "loop store"), { cause: error });
+	}
+	throw error;
 }
 
 /**
@@ -84,16 +118,11 @@ export function emptyLoopState(sessionId: string): LoopState {
  * unusable state so callers fail closed rather than resetting a user's schedule.
  */
 export async function readLoopState(ref: LoopStoreRef): Promise<LoopState | null> {
-	let raw: string;
 	try {
-		raw = await readFile(loopStateFilePath(ref), "utf8");
+		return await storeFor(ref).read();
 	} catch (error) {
-		if (isFileSystemError(error, "ENOENT")) return null;
-		throw error;
+		remapLoopStoreError(error);
 	}
-	const state = parseLoopState(raw, ref);
-	snapshots.set(loopStateFilePath(ref), state);
-	return state;
 }
 
 /** Like {@link readLoopState}, but returns an empty state when nothing is persisted. */
@@ -106,7 +135,7 @@ export async function loadLoopState(ref: LoopStoreRef): Promise<LoopState> {
  * (status line, tick attribution). Undefined until the store has been touched.
  */
 export function snapshotLoopState(ref: LoopStoreRef): LoopState | undefined {
-	return snapshots.get(loopStateFilePath(ref));
+	return storeFor(ref).snapshot();
 }
 
 /**
@@ -114,91 +143,33 @@ export function snapshotLoopState(ref: LoopStoreRef): LoopState | undefined {
  * timer, tool, and lifecycle writes cannot interleave and lose an update.
  */
 export function mutateLoopState(ref: LoopStoreRef, mutation: LoopStateMutation): Promise<LoopState> {
-	return enqueue(ref, async () => {
-		const current = await loadLoopState(ref);
-		const next = await mutation(current);
-		await writeLoopState(ref, next);
-		return next;
-	});
+	return storeFor(ref)
+		.mutate((current) => mutation(current ?? emptyLoopState(ref.sessionId)))
+		.catch((error: unknown) => remapLoopStoreError(error));
 }
 
 /** Persists a complete state atomically. Prefer {@link mutateLoopState} for updates. */
 export async function writeLoopState(ref: LoopStoreRef, state: LoopState): Promise<void> {
-	const filePath = loopStateFilePath(ref);
-	await mkdir(dirname(filePath), { recursive: true });
-	await writeAtomic(filePath, `${JSON.stringify(state, null, 2)}\n`);
-	snapshots.set(filePath, state);
+	await storeFor(ref).write(state);
 }
 
 /** Drops cached snapshots; used when a session ends or tests reset global state. */
 export function clearLoopStateSnapshot(ref: LoopStoreRef): void {
-	snapshots.delete(loopStateFilePath(ref));
+	storeFor(ref).clear();
 }
 
-function enqueue<T>(ref: LoopStoreRef, operation: () => Promise<T>): Promise<T> {
-	const key = loopStateFilePath(ref);
-	const previous = mutationTails.get(key) ?? Promise.resolve();
-	const run = previous.then(operation);
-	const tail = run.then(
-		() => undefined,
-		() => undefined,
-	);
-	mutationTails.set(key, tail);
-	void tail.then(() => {
-		if (mutationTails.get(key) === tail) mutationTails.delete(key);
-	});
-	return run;
-}
-
-async function writeAtomic(filePath: string, contents: string): Promise<void> {
-	const tempPath = join(dirname(filePath), `.loop-${randomUUID()}.tmp`);
-	try {
-		await writeFile(tempPath, contents, { encoding: "utf8", mode: 0o600 });
-		await rename(tempPath, filePath);
-	} catch (error) {
-		try {
-			await rm(tempPath, { force: true });
-		} catch (cleanupError) {
-			throw new AggregateError(
-				[error, cleanupError],
-				"loop store write failed and its temporary file could not be removed",
-			);
-		}
-		throw error;
-	}
-}
-
-function parseLoopState(raw: string, ref: LoopStoreRef): LoopState {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch (error) {
-		throw new InvalidLoopStoreError("loop store contains unparseable JSON", { cause: error });
-	}
-	if (!isRecord(parsed)) throw new InvalidLoopStoreError("loop store must be a JSON object");
-	if (parsed.version !== LOOP_STATE_VERSION) {
-		throw new UnsupportedLoopStoreVersionError(
-			`unsupported loop store version: ${JSON.stringify(parsed.version)} (expected ${LOOP_STATE_VERSION})`,
-		);
-	}
-	if (typeof parsed.sessionId !== "string" || parsed.sessionId.length === 0) {
-		throw new InvalidLoopStoreError("loop store is missing a sessionId");
-	}
-	if (parsed.sessionId !== ref.sessionId) {
-		throw new InvalidLoopStoreError(
-			`loop store sessionId ${parsed.sessionId} does not match the session it was loaded for`,
-		);
-	}
-	if (!isEpochMs(parsed.updatedAt)) throw new InvalidLoopStoreError("loop store has an invalid updatedAt");
-	if (!isRecord(parsed.entries)) throw new InvalidLoopStoreError("loop store entries must be an object");
+function parseLoopPayload(raw: unknown, ref: SidecarStoreRef): LoopState {
+	if (!isRecord(raw)) throw new InvalidLoopStoreError("loop store must be a JSON object");
+	if (!isEpochMs(raw.updatedAt)) throw new InvalidLoopStoreError("loop store has an invalid updatedAt");
+	if (!isRecord(raw.entries)) throw new InvalidLoopStoreError("loop store entries must be an object");
 
 	const entries: Record<string, CronEntry> = {};
-	for (const [id, value] of Object.entries(parsed.entries)) {
+	for (const [id, value] of Object.entries(raw.entries)) {
 		const entry = parseEntry(id, value);
 		entries[id] = entry;
 	}
 
-	const activeDynamicId = parsed.activeDynamicId;
+	const activeDynamicId = raw.activeDynamicId;
 	if (activeDynamicId !== null) {
 		if (typeof activeDynamicId !== "string") {
 			throw new InvalidLoopStoreError("loop store activeDynamicId must be a string or null");
@@ -211,10 +182,10 @@ function parseLoopState(raw: string, ref: LoopStoreRef): LoopState {
 
 	return {
 		version: LOOP_STATE_VERSION,
-		sessionId: parsed.sessionId,
+		sessionId: ref.sessionId,
 		entries,
 		activeDynamicId,
-		updatedAt: parsed.updatedAt,
+		updatedAt: raw.updatedAt,
 	};
 }
 
@@ -491,8 +462,4 @@ function isRequestedIntervalUnit(value: string): value is RequestedIntervalUnit 
 
 function isEffectiveIntervalUnit(value: string): value is EffectiveIntervalUnit {
 	return (EFFECTIVE_INTERVAL_UNITS as readonly string[]).includes(value);
-}
-
-function isFileSystemError(error: unknown, code: string): boolean {
-	return error instanceof Error && "code" in error && error.code === code;
 }
