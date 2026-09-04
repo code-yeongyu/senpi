@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -214,9 +214,19 @@ describe("checkpointed-file durability class", () => {
 		const saved = (await lane.writer.store.read())?.monitors[0]?.lastCheckpoint;
 
 		lane.restart();
-		await rm(path);
-		await writeFile(path, "replacement");
+		// Atomic replace, as a real writer (editors, writeAtomic, log rotation) performs it: the
+		// replacement is written at a sibling staging path in the same directory (same filesystem,
+		// so the rename is atomic) and renamed over the watched path. The original still holds its
+		// inode while the staging file is created, and two live files on one filesystem can never
+		// share an inode, so the identity swap is GUARANTEED — unlike rm + recreate, where the
+		// allocator may hand the freed inode straight back (which is how CI failed).
+		const staging = join(root, "swapped.txt.next");
+		await writeFile(staging, "replacement");
+		const staged = await stat(staging);
+		expect(staged.ino).not.toBe(saved?.ino);
+		await rename(staging, path);
 		const replacement = await stat(path);
+		expect(replacement.ino).toBe(staged.ino);
 		expect(replacement.ino).not.toBe(saved?.ino);
 
 		const digest = await lane.restore();
