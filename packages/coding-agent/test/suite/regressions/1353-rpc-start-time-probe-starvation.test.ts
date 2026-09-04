@@ -31,10 +31,11 @@ describe("waitForStartTime under a slow process-identity probe", () => {
 
 			// When: the caller waits with the same 10s budget host-ensure.ts uses.
 			const result = waitForStartTime(1234, 10_000, slowProbe, isLive);
-			const settled = vi.advanceTimersByTimeAsync(30_000).then(() => result);
+			const assertion = expect(result).resolves.toBeUndefined();
+			await vi.advanceTimersByTimeAsync(30_000);
 
 			// Then: a live process must never be reported as having no start time.
-			await expect(settled).resolves.toBeUndefined();
+			await assertion;
 			expect(attempts).toBeGreaterThan(0);
 		} finally {
 			vi.useRealTimers();
@@ -51,10 +52,13 @@ describe("waitForStartTime under a slow process-identity probe", () => {
 			};
 			const isLive = () => false;
 
-			// When / Then: a dead pid must still surface the startup failure.
+			// When / Then: a dead pid must still surface the startup failure. The rejection handler
+			// is attached BEFORE the timers advance; the promise rejects mid-advance, and a late
+			// handler would leave an unhandled rejection that Vitest counts as a run error.
 			const result = waitForStartTime(4321, 10_000, slowProbe, isLive);
-			const settled = vi.advanceTimersByTimeAsync(30_000).then(() => result);
-			await expect(settled).rejects.toThrow("had no process start time");
+			const assertion = expect(result).rejects.toThrow("had no process start time");
+			await vi.advanceTimersByTimeAsync(30_000);
+			await assertion;
 		} finally {
 			vi.useRealTimers();
 		}
