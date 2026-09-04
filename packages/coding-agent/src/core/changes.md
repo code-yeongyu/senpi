@@ -1447,6 +1447,24 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 - `provider-composer.ts` end of `ProviderConfigInput`; `model-runtime.ts` near `hasConfiguredAuth`;
   `model-registry.ts` near `isUsingOAuth`.
 
+## 2026-09-04 - Make reftable polling content-aware
+
+### What changed
+
+- `footer-data-provider.ts` now retains the last `tables.list` contents and compares content on each polling callback in addition to filesystem metadata.
+
+### Why
+
+- Filesystem timestamp precision can make a changed reftable table list look unchanged when its size and timestamps are identical, leaving the footer branch stale.
+
+### Why an extension could not handle it
+
+- Reftable detection is core footer session plumbing and is not observable or replaceable by an extension.
+
+### Expected merge conflict zones
+
+- LOW: `footer-data-provider.ts` reftable polling callback.
+
 ## 2026-08-19 upstream sync integration repair (footer-data-provider watcher fallback)
 
 ### What changed
