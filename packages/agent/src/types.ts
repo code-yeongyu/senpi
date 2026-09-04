@@ -259,10 +259,11 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext) => boolean | Promise<boolean>;
 
 	/**
-	 * Called after `turn_end` when the loop may continue, before the next provider request.
+	 * Called after each completed assistant turn, including a normal stop response, before the loop decides whether another provider request starts.
 	 * A terminating-tool continuation emits its `turn_start` boundary first so queue owners can clear
 	 * or replace pending input before preparation finishes and the continuation is admitted.
-	 * Return replacement context/model/thinking state to affect that turn.
+	 * `shouldStopAfterTurn` and an empty terminating tool batch can end the run before preparation.
+	 * Return replacement context/model/thinking state to affect the next turn.
 	 * Return undefined to keep using the current context/config.
 	 */
 	prepareNextTurn?: (

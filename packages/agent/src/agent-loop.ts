@@ -32,7 +32,6 @@ import type {
 	AgentTool,
 	AgentToolCall,
 	AgentToolResult,
-	PrepareNextTurnContext,
 	StreamFn,
 } from "./types.ts";
 
@@ -195,10 +194,10 @@ async function runLoop(
 ): Promise<void> {
 	let currentContext = initialContext;
 	let config = initialConfig;
-	let lastCompletedTurn: PrepareNextTurnContext | undefined;
+	let firstTurn = true;
 	let firstProviderRequest = true;
 	let drainedTerminatingQueue: "steering" | "followUp" | undefined;
-	let awaitingTerminatingContinuation = false;
+	let turnStartAlreadyEmitted = false;
 	const refreshTerminatingQueueDrain = async (): Promise<void> => {
 		if (!drainedTerminatingQueue || !config.restorePendingMessages) return;
 		await config.restorePendingMessages(drainedTerminatingQueue, pendingMessages);
@@ -218,67 +217,20 @@ async function runLoop(
 
 		// Inner loop: process tool calls and steering messages
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
-			if (lastCompletedTurn) {
-				if (awaitingTerminatingContinuation) {
-					// Give queue owners a boundary before refreshing messages drained from
-					// a terminating turn. A clear at turn_start must discard the local
-					// snapshot instead of only clearing the owner queue.
-					await emit({ type: "turn_start" });
-				}
-				let nextTurnSnapshot: AgentLoopTurnUpdate | undefined;
-				try {
-					nextTurnSnapshot = await config.prepareNextTurn?.(lastCompletedTurn);
-				} catch (error) {
-					if (drainedTerminatingQueue)
-						await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
-					throw error;
-				}
-				if (nextTurnSnapshot) {
-					currentContext = nextTurnSnapshot.context ?? currentContext;
-					config = {
-						...config,
-						model: nextTurnSnapshot.model ?? config.model,
-						reasoning:
-							nextTurnSnapshot.thinkingLevel === undefined
-								? config.reasoning
-								: nextTurnSnapshot.thinkingLevel === "off"
-									? undefined
-									: nextTurnSnapshot.thinkingLevel,
-						thinkingSelection:
-							nextTurnSnapshot.thinkingSelection === undefined
-								? config.thinkingSelection
-								: (nextTurnSnapshot.thinkingSelection ?? undefined),
-						abortServerSideFallback: nextTurnSnapshot.abortServerSideFallback ?? config.abortServerSideFallback,
-					};
-				}
-				// Preparation can be long-running (for example, compaction). Pick up steering
-				// queued while it ran. Only poll again if the earlier poll returned nothing;
-				// otherwise one-at-a-time mode would deliver two messages in this turn.
+			if (turnStartAlreadyEmitted) {
+				turnStartAlreadyEmitted = false;
+			} else if (!firstTurn) {
+				await emit({ type: "turn_start" });
+			} else {
+				firstTurn = false;
+			}
+			if (drainedTerminatingQueue) {
+				await refreshTerminatingQueueDrain();
 				if (pendingMessages.length === 0) {
-					pendingMessages = (await config.getSteeringMessages?.()) || [];
-				}
-				// Preparation can abort the run (for example, a cancelled compaction).
-				// Bail before the next provider request and hand any drained terminating
-				// queue back to its owner.
-				if (signal?.aborted) {
-					if (drainedTerminatingQueue)
-						await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
 					await emit({ type: "agent_end", messages: newMessages });
 					return;
 				}
-				if (drainedTerminatingQueue) {
-					await refreshTerminatingQueueDrain();
-					if (pendingMessages.length === 0) {
-						await emit({ type: "agent_end", messages: newMessages });
-						return;
-					}
-					drainedTerminatingQueue = undefined;
-				}
-				if (awaitingTerminatingContinuation) {
-					awaitingTerminatingContinuation = false;
-				} else {
-					await emit({ type: "turn_start" });
-				}
+				drainedTerminatingQueue = undefined;
 			}
 
 			// Process pending messages (inject before next assistant response)
@@ -359,14 +311,13 @@ async function runLoop(
 				return;
 			}
 
-			lastCompletedTurn = {
+			const nextTurnContext = {
 				message,
 				toolResults,
 				context: currentContext,
 				newMessages,
 			};
-
-			if (await config.shouldStopAfterTurn?.(lastCompletedTurn)) {
+			if (await config.shouldStopAfterTurn?.(nextTurnContext)) {
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}
@@ -381,10 +332,53 @@ async function runLoop(
 					await emit({ type: "agent_end", messages: newMessages });
 					return;
 				}
-				// Keep one boundary turn alive so a queue clear at turn_start can win
-				// over the drained messages before they are injected.
-				awaitingTerminatingContinuation = true;
-			} else {
+				// Give queue owners a boundary before preparation refreshes the drained
+				// snapshot, so a clear or replacement wins before admission.
+				await emit({ type: "turn_start" });
+				turnStartAlreadyEmitted = true;
+			}
+
+			let nextTurnSnapshot: AgentLoopTurnUpdate | undefined;
+			try {
+				nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);
+			} catch (error) {
+				if (drainedTerminatingQueue)
+					await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
+				throw error;
+			}
+			if (nextTurnSnapshot) {
+				currentContext = nextTurnSnapshot.context ?? currentContext;
+				config = {
+					...config,
+					model: nextTurnSnapshot.model ?? config.model,
+					reasoning:
+						nextTurnSnapshot.thinkingLevel === undefined
+							? config.reasoning
+							: nextTurnSnapshot.thinkingLevel === "off"
+								? undefined
+								: nextTurnSnapshot.thinkingLevel,
+					thinkingSelection:
+						nextTurnSnapshot.thinkingSelection === undefined
+							? config.thinkingSelection
+							: (nextTurnSnapshot.thinkingSelection ?? undefined),
+					abortServerSideFallback: nextTurnSnapshot.abortServerSideFallback ?? config.abortServerSideFallback,
+				};
+			}
+			if (signal?.aborted) {
+				if (drainedTerminatingQueue)
+					await config.restorePendingMessages?.(drainedTerminatingQueue, pendingMessages);
+				await emit({ type: "agent_end", messages: newMessages });
+				return;
+			}
+			if (drainedTerminatingQueue) {
+				await refreshTerminatingQueueDrain();
+				if (pendingMessages.length === 0) {
+					await emit({ type: "agent_end", messages: newMessages });
+					return;
+				}
+				drainedTerminatingQueue = undefined;
+			}
+			if (!toolBatchTerminated) {
 				pendingMessages = (await config.getSteeringMessages?.()) || [];
 			}
 		}

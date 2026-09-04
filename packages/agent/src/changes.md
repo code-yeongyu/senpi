@@ -1,5 +1,23 @@
 # Changes
 
+## 2026-09-04 - Run next-turn preparation after every completed turn
+
+### What changed
+
+- Invoke `prepareNextTurn` after every completed assistant turn that can reach the preparation boundary, including a normal stop response with no tool calls, while preserving the terminating queue boundary and ownership refresh before a continuation provider request.
+
+### Why
+
+- The upstream loop only prepared at the top of a re-entered inner loop, so a completed no-tool turn could emit `agent_end` without running the session's next-turn admission hook.
+
+### Why an extension could not handle it
+
+- Turn completion, queue draining, and provider admission ordering are owned by the core agent loop before extension callbacks can observe or alter them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` completed-turn preparation and terminating queue boundary; `types.ts` preparation callback contract.
+
 ## 2026-09-04 - Honor queue clears on terminating continuations
 
 ### What changed

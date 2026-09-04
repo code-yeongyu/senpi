@@ -2145,7 +2145,7 @@ describe("agentLoop with AgentMessage", () => {
 		}
 
 		expect(llmCalls).toBe(2);
-		expect(prepareCalls).toBe(1);
+		expect(prepareCalls).toBe(2);
 		expect(convertedSecondTurnSystemPrompt).toBe("second prompt");
 	});
 
