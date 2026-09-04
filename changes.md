@@ -1,5 +1,26 @@
 # changes — senpi-monorepo root
 
+## bun.lock refreshed wherever package-lock.json is refreshed (2026-09-04)
+
+### What changed
+
+- `package.json`: `version:patch`, `version:minor` and `version:major` append `bun install --lockfile-only` after `npm install --package-lock-only --ignore-scripts`.
+- `package.json`: `refresh-lock` does the same, so the manual lockfile-refresh path and the release path agree.
+
+### Why
+
+- `bun install --frozen-lockfile` broke on main twice in one day: release `v2026.9.4-2` (`a79aa2080`) rewrote `package-lock.json` while `bun.lock` kept 2026.9.3 workspace versions, and `d052dbb6b` added the `@anthropic-ai/sdk` override without regenerating it (fixed as a one-off in #1364).
+- Both incidents share one cause: every script that refreshes a lockfile refreshes only the npm one, and CI installs with `npm ci`, so the drift recurs at each bump with nothing observing it. #1364 cleared the symptom; this closes the source.
+
+### Why an extension could not handle it
+
+- These are the repo's own release and lockfile-maintenance scripts; nothing outside `package.json` decides which lockfiles a version bump rewrites.
+
+### Expected merge conflict zones
+
+- `package.json` `scripts` — the `version:*` and `refresh-lock` lines.
+
+
 ## @anthropic-ai/sdk 0.123.0 pin for the v0.84.4 upstream sync (2026-09-04)
 
 ### What changed
