@@ -6,6 +6,8 @@
 
 ### Added
 
+- Persistent monitors now survive repeated restarts: file watches are re-registered and compare their persisted checkpoint once, reporting exactly one detached created, replaced, or modified change (and nothing when unchanged), while command watches are re-run once under the same `mon_` id without replaying pre-restart output. Sessions may keep up to five durable watches; each expires seven days after creation without extending that deadline on restart or rearm, and a watch muted by the wake budget remains muted when restored.
+
 ### Changed
 
 ### Fixed

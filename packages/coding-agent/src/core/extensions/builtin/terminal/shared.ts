@@ -35,6 +35,17 @@ export const BACKGROUND_START_GRACE_MS = 250;
 export const KILLED_SESSION_EXIT_GRACE_MS = 5000;
 
 /**
+ * Admission cap on durable (restart-surviving) monitors per session. Ephemeral monitors
+ * never count against it: only entries the manifest keeps across a restart do.
+ */
+export const MAX_DURABLE_MONITORS = 5;
+/**
+ * Absolute lifetime of a durable monitor, measured from its registration. It is a deadline,
+ * never a sliding window: neither a restore nor a rearm extends it.
+ */
+export const DURABLE_MONITOR_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
  * Non-interactive environment for foreground one-shot commands (codex-style):
  * cooperative tools (`gh`, `git`, pagers, color libs) skip spinners/colors at
  * the source instead of flooding the captured stream with redraw frames.

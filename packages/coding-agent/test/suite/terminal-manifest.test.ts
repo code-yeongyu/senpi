@@ -119,11 +119,19 @@ describe("terminal manifest writer", () => {
 					event: "modify",
 					timeoutMs: 300_000,
 					cwd: "/tmp",
+					persistent: true,
 				},
 			});
 			expect(writeSpy).toHaveBeenCalledTimes(1);
 			for (let i = 1; i <= 5; i += 1) {
-				writer.scheduleCheckpoint("mon_file1", { dev: 1, ino: i, size: 100 + i, mtimeMs: 1_000 + i });
+				writer.scheduleCheckpoint("mon_file1", {
+					dev: 1,
+					ino: i,
+					size: 100 + i,
+					mtimeMs: 1_000 + i,
+					digest: `${100 + i}:digest-${i}`,
+					present: true,
+				});
 				await vi.advanceTimersByTimeAsync(5_000);
 			}
 			expect(writeSpy).toHaveBeenCalledTimes(1);
@@ -131,7 +139,14 @@ describe("terminal manifest writer", () => {
 			await writer.flush();
 			expect(writeSpy).toHaveBeenCalledTimes(2);
 			const manifest = await writer.store.read();
-			expect(manifest?.monitors[0]?.lastCheckpoint).toEqual({ dev: 1, ino: 5, size: 105, mtimeMs: 1_005 });
+			expect(manifest?.monitors[0]?.lastCheckpoint).toEqual({
+				dev: 1,
+				ino: 5,
+				size: 105,
+				mtimeMs: 1_005,
+				digest: "105:digest-5",
+				present: true,
+			});
 		} finally {
 			vi.useRealTimers();
 		}
@@ -243,6 +258,47 @@ describe("terminal manifest writer", () => {
 		await writer.recordBackgroundExit("bg-1");
 		expect(writeSpy).toHaveBeenCalledTimes(2);
 		expect((await writer.store.read())?.backgroundSessions).toEqual([]);
+	});
+
+	it("re-adopts a restored entry without a write, keeps every persisted field, clears suspended, and counts it as durable", async () => {
+		const { writer, sessionId } = await makeFixture();
+		const writeSpy = vi.spyOn(writer.store, "write");
+		const restored = manifestMonitor({
+			monitorId: "mon_readopt",
+			sessionId,
+			durabilityClass: "checkpointed-file",
+			runtimeKind: "file",
+			description: "standing artifact watch",
+			path: "out.bin",
+			event: "modify",
+			cwd: "/tmp",
+			approvedParent: "/tmp",
+			persistent: true,
+			suspended: true,
+			createdAt: 1_000,
+			expiresAt: 9_000,
+			lastCheckpoint: { dev: 7, ino: 11, size: 42, mtimeMs: 2_500, digest: "42:abc", present: true },
+			deliveryPaused: true,
+			wakeCount: 3,
+			fireWindow: { startMs: 1_500, count: 2 },
+		});
+		expect(writer.durableCount()).toBe(0);
+
+		writer.adoptRestored(restored);
+
+		// Re-adoption is recovery, not a transition: it must not write on its own.
+		expect(writeSpy).not.toHaveBeenCalled();
+		// The cap still holds after a restart because re-adopted durable entries are counted.
+		expect(writer.durableCount()).toBe(1);
+
+		// The next persist — any transition — now carries the restored entry instead of erasing it.
+		await writer.recordBackgroundStart("bg-after-restore", "echo hi", 123);
+		expect(writeSpy).toHaveBeenCalledTimes(1);
+		const persisted = (await writer.store.read())?.monitors ?? [];
+		expect(persisted).toEqual([{ ...restored, suspended: false }]);
+		// Explicitly: the durability deadline set at registration is not extended by a restore.
+		expect(persisted[0]?.expiresAt).toBe(9_000);
+		expect(persisted[0]?.createdAt).toBe(1_000);
 	});
 
 	it("surfaces an error for a snapshot entry missing its stable monitorId instead of skipping it", async () => {

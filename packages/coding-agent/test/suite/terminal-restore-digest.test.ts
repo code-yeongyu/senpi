@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerTerminalExtension } from "../../src/core/extensions/builtin/terminal/extension.ts";
+import { DURABLE_MONITOR_EXPIRY_MS } from "../../src/core/extensions/builtin/terminal/shared.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 import { initTheme, theme } from "../../src/modes/interactive/theme/theme.ts";
 
@@ -142,12 +144,33 @@ function createGeneration(cwd: string, sessionId: string, sessionDir: string): G
 	};
 }
 
+/** The registry's own digest shape for a file below its 64 KiB sample window: `size:sha256(bytes)`. */
+function fileCheckpoint(path: string, content: string) {
+	const live = statSync(path);
+	const bytes = Buffer.from(content);
+	return {
+		dev: live.dev,
+		ino: live.ino,
+		size: live.size,
+		mtimeMs: live.mtimeMs,
+		digest: `${bytes.length}:${createHash("sha256").update(bytes).digest("hex")}`,
+		present: true,
+	};
+}
+
 function terminalMessages(generation: Generation): SentMessage[] {
 	return generation.sent.filter((entry) => entry.message.customType === "senpi-terminal:notification");
 }
 
 function reminderContents(generation: Generation): string[] {
 	return terminalMessages(generation).map((entry) => entry.message.content);
+}
+
+/** Monitor line/summary injections travel on their own custom type, not the terminal one. */
+function monitorEventContents(generation: Generation): string[] {
+	return generation.sent
+		.filter((entry) => entry.message.customType === "senpi-monitor:notification")
+		.map((entry) => entry.message.content);
 }
 
 describe("terminal restore digest — lease, manifest restore, one resume digest", () => {
@@ -209,6 +232,26 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		return join(stateDir, `${encodeURIComponent(sessionId)}.json`);
 	}
 
+	interface ManifestFile {
+		monitors: Array<{
+			monitorId: string;
+			description: string;
+			suspended: boolean;
+			createdAt: number;
+			expiresAt: number | null;
+		}>;
+	}
+
+	function readManifest(): ManifestFile {
+		return JSON.parse(readFileSync(manifestPath(), "utf8")) as ManifestFile;
+	}
+
+	/** Descriptions as the manifest FILE currently holds them, in persisted order. */
+	function manifestDescriptions(): string[] {
+		if (!existsSync(manifestPath())) return [];
+		return readManifest().monitors.map((entry) => entry.description);
+	}
+
 	async function startMonitor(generation: Generation, description: string): Promise<void> {
 		const created = await generation.tools.get("monitor")?.execute(`mon-${description}`, {
 			description,
@@ -218,7 +261,7 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		expect(created?.isError, firstText(created)).toBeFalsy();
 	}
 
-	it("(a) restart after quit delivers exactly one digest naming every monitor and background session as lost", async () => {
+	it("(a) restart after quit delivers exactly one digest naming every restored monitor and every lost background session", async () => {
 		const gen1 = await start("startup");
 		expect(gen1.sent).toHaveLength(0);
 		trackers.restoreCalls = 0;
@@ -238,11 +281,54 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 
 		const gen2 = await start("resume");
 		expect(trackers.restoreCalls).toBe(1);
+		// The three persistent command monitors are durable, so the real restartable-command
+		// handler brings them back; a background session carries no durable identity and is lost.
 		expect(reminderContents(gen2)).toEqual([
-			"<system-reminder>Terminal state after restart: lost 4 (watch alpha, watch beta, watch gamma, background build log).</system-reminder>",
+			"<system-reminder>Terminal state after restart: restored 3 (watch alpha, watch beta, watch gamma); lost 1 (background build log).</system-reminder>",
 		]);
 		expect(terminalMessages(gen2)).toHaveLength(1);
 		expect(gen2.userMessages).toEqual([]);
+	});
+
+	it("(a2) a durable monitor survives TWO consecutive restarts even though the middle generation persists again", async () => {
+		// Generation 1: create the durable watch and shut down so it is persisted suspended.
+		const gen1 = await start("startup");
+		await startMonitor(gen1, "standing watch");
+		await gen1.emit("session_shutdown", { type: "session_shutdown", reason: "quit" });
+		live = [];
+		expect(manifestDescriptions()).toEqual(["standing watch"]);
+		const persisted = readManifest().monitors[0];
+		expect(persisted?.expiresAt).toBe((persisted?.createdAt ?? 0) + DURABLE_MONITOR_EXPIRY_MS);
+
+		// Generation 2: the watch comes back, then something else persists the manifest. Before
+		// re-adoption existed, that write rewrote the file from an in-memory map that never
+		// contained the restored entry, erasing it.
+		const gen2 = await start("resume");
+		expect(reminderContents(gen2)).toEqual([
+			"<system-reminder>Terminal state after restart: restored 1 (standing watch).</system-reminder>",
+		]);
+		await startMonitor(gen2, "second watch");
+		// The intervening persist really landed on disk, and it kept the restored entry.
+		await expect.poll(() => manifestDescriptions(), { timeout: 3000 }).toEqual(["standing watch", "second watch"]);
+		await gen2.emit("session_shutdown", { type: "session_shutdown", reason: "quit" });
+		live = [];
+		expect(manifestDescriptions()).toEqual(["standing watch", "second watch"]);
+
+		// Generation 3: the original durable monitor is STILL restored, not lost.
+		const gen3 = await start("resume");
+		expect(reminderContents(gen3)).toEqual([
+			"<system-reminder>Terminal state after restart: restored 2 (standing watch, second watch).</system-reminder>",
+		]);
+		// The stable mon_ handle from generation 1 still resolves two restarts later.
+		const standing = readManifest().monitors.find((entry) => entry.description === "standing watch");
+		expect(standing?.monitorId).toBe(persisted?.monitorId);
+		const peeked = await gen3.tools
+			.get("bash_output")
+			?.execute("peek-standing", { bash_id: standing?.monitorId, view: "screen" });
+		expect(peeked?.isError, firstText(peeked)).toBeFalsy();
+		// Two restarts later the deadline is still the one set at first registration: never extended.
+		expect(standing?.createdAt).toBe(persisted?.createdAt);
+		expect(standing?.expiresAt).toBe(persisted?.expiresAt);
 	});
 
 	it("(b) a reload start claims the parked bundle, sends no digest, and keeps the lease with the same pid", async () => {
@@ -337,6 +423,134 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		expect(generation.sent).toHaveLength(0);
 		expect(trackers.restoreCalls).toBeGreaterThanOrEqual(1);
 		expect(existsSync(leasePath())).toBe(true);
+	});
+
+	it("(g) the production restore path runs the REAL durable handlers: both entries come back restored", async () => {
+		const watched = join(cwd, "durable-artifact.txt");
+		writeFileSync(watched, "before-detach", "utf8");
+		const checkpoint = fileCheckpoint(watched, "before-detach");
+		// The file changes while no process is attached: the checkpointed-file handler must notice
+		// it once on restore, which is only possible if the production path builds the real handler.
+		writeFileSync(watched, "after-detach-change", "utf8");
+		mkdirSync(stateDir, { recursive: true });
+		writeFileSync(
+			manifestPath(),
+			JSON.stringify({
+				version: 1,
+				sessionId,
+				monitors: [
+					{
+						monitorId: "mon_WIREDFILE00000001",
+						sessionId,
+						description: "durable artifact watch",
+						runtimeKind: "file",
+						durabilityClass: "checkpointed-file",
+						path: watched,
+						event: "modify",
+						cwd,
+						createdAt: Date.now() - 1000,
+						expiresAt: null,
+						persistent: true,
+						suspended: true,
+						lastCheckpoint: checkpoint,
+						deliveryPaused: false,
+						wakeCount: 0,
+						fireWindow: { startMs: 1, count: 0 },
+					},
+					{
+						monitorId: "mon_WIREDCOMMAND00001",
+						sessionId,
+						description: "durable command watch",
+						runtimeKind: "command",
+						durabilityClass: "restartable-command",
+						command: "cat",
+						cwd,
+						createdAt: Date.now() - 1000,
+						expiresAt: null,
+						persistent: true,
+						suspended: true,
+						lastCheckpoint: null,
+						deliveryPaused: false,
+						wakeCount: 0,
+						fireWindow: { startMs: 1, count: 0 },
+					},
+				],
+				backgroundSessions: [],
+				updatedAt: Date.now(),
+			}),
+			"utf8",
+		);
+
+		const generation = await start("resume");
+
+		expect(reminderContents(generation)).toContain(
+			"<system-reminder>Terminal state after restart: restored 2 (durable artifact watch, durable command watch).</system-reminder>",
+		);
+		// Exactly one PTY for the restartable-command entry; the file watch spawns nothing.
+		expect(trackers.spawnCalls).toBe(1);
+		expect(trackers.handlerCalls).toBe(2);
+		// The detached change is reported once through the registry's normal event sink.
+		await expect
+			.poll(
+				() =>
+					monitorEventContents(generation).some((content) =>
+						content.includes(`changed while detached: modified ${watched}`),
+					),
+				{ timeout: 5000 },
+			)
+			.toBe(true);
+		// The restored command watch is steerable through its persisted mon_ id, so the fresh
+		// runtime id really is bound in this generation's manager.
+		const peeked = await generation.tools
+			.get("bash_output")
+			?.execute("peek-restored", { bash_id: "mon_WIREDCOMMAND00001", view: "screen" });
+		expect(peeked?.isError, firstText(peeked)).toBeFalsy();
+	});
+
+	it("(h) a restored durable monitor whose manifest entry is muted is re-muted and counted as muted", async () => {
+		mkdirSync(stateDir, { recursive: true });
+		writeFileSync(
+			manifestPath(),
+			JSON.stringify({
+				version: 1,
+				sessionId,
+				monitors: [
+					{
+						monitorId: "mon_WIREDMUTED0000001",
+						sessionId,
+						description: "muted durable command",
+						runtimeKind: "command",
+						durabilityClass: "restartable-command",
+						command: "cat",
+						cwd,
+						createdAt: Date.now() - 1000,
+						expiresAt: null,
+						persistent: true,
+						suspended: true,
+						lastCheckpoint: null,
+						deliveryPaused: true,
+						wakeCount: 0,
+						fireWindow: { startMs: 1, count: 0 },
+					},
+				],
+				backgroundSessions: [],
+				updatedAt: Date.now(),
+			}),
+			"utf8",
+		);
+
+		const generation = await start("resume");
+
+		expect(reminderContents(generation)).toContain(
+			"<system-reminder>Terminal state after restart: 1 still muted.</system-reminder>",
+		);
+		expect(trackers.spawnCalls).toBe(1);
+		// The mute was applied by the FRESH runtime id: bash_output reports the live monitor muted.
+		const peeked = await generation.tools
+			.get("bash_output")
+			?.execute("peek-muted", { bash_id: "mon_WIREDMUTED0000001", view: "screen" });
+		expect(peeked?.isError, firstText(peeked)).toBeFalsy();
+		expect(firstText(peeked)).toContain("muted");
 	});
 
 	it("(f) a non-reload shutdown flushes the manifest as suspended and releases the lease", async () => {
