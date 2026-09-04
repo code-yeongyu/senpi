@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerTerminalExtension } from "../../src/core/extensions/builtin/terminal/extension.ts";
-import { DURABLE_MONITOR_EXPIRY_MS } from "../../src/core/extensions/builtin/terminal/shared.ts";
+import {
+	DURABLE_MONITOR_EXPIRY_MS,
+	FIRE_BUDGET_AUTO_MUTE_SUMMARY,
+} from "../../src/core/extensions/builtin/terminal/shared.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 import { initTheme, theme } from "../../src/modes/interactive/theme/theme.ts";
 
@@ -19,6 +22,8 @@ const trackers = vi.hoisted(() => ({
 	handlerCalls: 0,
 	writerFlushes: 0,
 	spawnCalls: 0,
+	/** Every TerminalManifestWriter the extension constructs, so a test can await its own flush. */
+	writers: [] as Array<{ flush(): Promise<void> }>,
 }));
 
 vi.mock("../../src/core/extensions/builtin/terminal/restore.ts", async (importOriginal) => {
@@ -50,6 +55,10 @@ vi.mock("../../src/core/extensions/builtin/terminal/terminal-manifest.ts", async
 	return {
 		...original,
 		TerminalManifestWriter: class extends original.TerminalManifestWriter {
+			constructor(options: ConstructorParameters<typeof original.TerminalManifestWriter>[0]) {
+				super(options);
+				trackers.writers.push(this);
+			}
 			recordShutdown(): Promise<void> {
 				trackers.writerFlushes += 1;
 				return super.recordShutdown();
@@ -202,6 +211,7 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		trackers.handlerCalls = 0;
 		trackers.writerFlushes = 0;
 		trackers.spawnCalls = 0;
+		trackers.writers = [];
 	});
 
 	afterEach(async () => {
@@ -216,12 +226,45 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		else process.env.SENPI_CODING_AGENT_DIR = savedAgentDir;
 	});
 
-	async function start(reason: string): Promise<Generation> {
+	/** A generation with the extension registered but not yet started, so a subscription can be installed before session_start fires. */
+	function build(): Generation {
 		const generation = createGeneration(cwd, sessionId, sessionDir);
 		registerTerminalExtension(generation.pi);
 		live.push(generation);
+		return generation;
+	}
+
+	async function start(reason: string): Promise<Generation> {
+		const generation = build();
 		await generation.emit("session_start", { type: "session_start", reason });
 		return generation;
+	}
+
+	/**
+	 * Await the first monitor notification whose content satisfies `predicate`. The subscription
+	 * wraps the generation's model-channel callback BEFORE the action that produces the event, so
+	 * the await resolves on the production delivery itself, never on a timed retry. The channel
+	 * is restored on first match, so later sends pass through untouched.
+	 */
+	function nextMonitorNotification(generation: Generation, predicate: (content: string) => boolean): Promise<string> {
+		return new Promise((resolve) => {
+			const channel = generation.pi as unknown as {
+				sendMessage: (message: SentMessage["message"], options: SentMessage["options"]) => void;
+			};
+			const forward = channel.sendMessage.bind(channel);
+			channel.sendMessage = (message, options) => {
+				if (message.customType === "senpi-monitor:notification" && predicate(message.content)) {
+					channel.sendMessage = forward;
+					resolve(message.content);
+				}
+				return forward(message, options);
+			};
+		});
+	}
+
+	/** Await the manifest writer's own drain, so a manifest file read right after is deterministic. */
+	async function flushManifestWriters(): Promise<void> {
+		await Promise.all(trackers.writers.map((writer) => writer.flush()));
 	}
 
 	function leasePath(): string {
@@ -309,7 +352,8 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		]);
 		await startMonitor(gen2, "second watch");
 		// The intervening persist really landed on disk, and it kept the restored entry.
-		await expect.poll(() => manifestDescriptions(), { timeout: 3000 }).toEqual(["standing watch", "second watch"]);
+		await flushManifestWriters();
+		expect(manifestDescriptions()).toEqual(["standing watch", "second watch"]);
 		await gen2.emit("session_shutdown", { type: "session_shutdown", reason: "quit" });
 		live = [];
 		expect(manifestDescriptions()).toEqual(["standing watch", "second watch"]);
@@ -481,7 +525,12 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 			"utf8",
 		);
 
-		const generation = await start("resume");
+		// Subscribe before the resume fires: the restore's detached-change report is the awaited event.
+		const generation = build();
+		const detachedChange = nextMonitorNotification(generation, (content) =>
+			content.includes(`changed while detached: modified ${watched}`),
+		);
+		await generation.emit("session_start", { type: "session_start", reason: "resume" });
 
 		expect(reminderContents(generation)).toContain(
 			"<system-reminder>Terminal state after restart: restored 2 (durable artifact watch, durable command watch).</system-reminder>",
@@ -490,15 +539,11 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		expect(trackers.spawnCalls).toBe(1);
 		expect(trackers.handlerCalls).toBe(2);
 		// The detached change is reported once through the registry's normal event sink.
-		await expect
-			.poll(
-				() =>
-					monitorEventContents(generation).some((content) =>
-						content.includes(`changed while detached: modified ${watched}`),
-					),
-				{ timeout: 5000 },
-			)
-			.toBe(true);
+		const notice = await detachedChange;
+		expect(notice).toContain(`modified ${watched}`);
+		expect(
+			monitorEventContents(generation).filter((content) => content.includes("changed while detached")),
+		).toHaveLength(1);
 		// The restored command watch is steerable through its persisted mon_ id, so the fresh
 		// runtime id really is bound in this generation's manager.
 		const peeked = await generation.tools
@@ -553,10 +598,75 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		expect(firstText(peeked)).toContain("muted");
 	});
 
+	it("(i) production restore re-adopts a persisted fire window before the restored watch runs", async () => {
+		const now = Date.now();
+		const monitorId = "mon_WIREDFIREBUDGET01";
+		const createdAt = now - 1000;
+		mkdirSync(stateDir, { recursive: true });
+		writeFileSync(
+			manifestPath(),
+			JSON.stringify({
+				version: 1,
+				sessionId,
+				monitors: [
+					{
+						monitorId,
+						sessionId,
+						description: "restored fire-budget watch",
+						runtimeKind: "command",
+						durabilityClass: "restartable-command",
+						command: "cat",
+						cwd,
+						createdAt,
+						expiresAt: createdAt + DURABLE_MONITOR_EXPIRY_MS,
+						persistent: true,
+						suspended: true,
+						lastCheckpoint: null,
+						deliveryPaused: false,
+						wakeCount: 0,
+						fireWindow: { startMs: now, count: 150 },
+					},
+				],
+				backgroundSessions: [],
+				updatedAt: now,
+			}),
+			"utf8",
+		);
+
+		const generation = await start("resume");
+		// Subscribe before feeding: the coalesced delivery that carries the echoed lines is the
+		// signal that the PTY output was consumed, and whether that same delivery also carries
+		// the auto-mute summary is exactly what the persisted fire window decides.
+		const fireDelivery = nextMonitorNotification(generation, (content) => content.includes("restored-fire"));
+		const fed = await generation.tools.get("bash_input")?.execute("feed-fire-budget", {
+			bash_id: monitorId,
+			input: `${Array.from({ length: 50 }, () => "restored-fire").join("\n")}\n`,
+			submit: false,
+		});
+		expect(fed?.isError, firstText(fed)).toBeFalsy();
+
+		// The restored command receives exactly 50 matching lines through the real PTY and monitor
+		// runtime. With the persisted 150 fires, the 50th line reaches the 200-fire limit, so the
+		// one coalesced delivery carries the lines AND the auto-mute summary together.
+		const delivery = await fireDelivery;
+		expect(delivery).toContain(FIRE_BUDGET_AUTO_MUTE_SUMMARY);
+		expect(
+			monitorEventContents(generation).filter((content) => content.includes(FIRE_BUDGET_AUTO_MUTE_SUMMARY)),
+		).toHaveLength(1);
+
+		const peeked = await generation.tools.get("bash_output")?.execute("peek-fire-budget", {
+			bash_id: monitorId,
+			view: "screen",
+		});
+		expect(peeked?.isError, firstText(peeked)).toBeFalsy();
+		expect(firstText(peeked)).toContain("monitor muted");
+	});
+
 	it("(f) a non-reload shutdown flushes the manifest as suspended and releases the lease", async () => {
 		const generation = await start("startup");
 		await startMonitor(generation, "watch delta");
-		await expect.poll(() => existsSync(manifestPath()), { timeout: 3000 }).toBe(true);
+		await flushManifestWriters();
+		expect(existsSync(manifestPath())).toBe(true);
 		expect(existsSync(leasePath())).toBe(true);
 
 		await generation.emit("session_shutdown", { type: "session_shutdown", reason: "quit" });
