@@ -8,6 +8,8 @@
 
 ### Changed
 
+- CI now bounds pi-ai's Vitest fork pool and teardown time to prevent subprocess-heavy provider lifecycle tests from stranding workers on constrained runners.
+
 ### Fixed
 
 ### Removed
