@@ -29,8 +29,16 @@ const PROJECT_SOURCE: HookSourceMetadata = {
 
 const UPDATED_AT = "2026-06-29T00:00:00.000Z";
 const createdDirs: string[] = [];
+const restrictedDirs: string[] = [];
 
 afterEach(async () => {
+	for (const dir of restrictedDirs.splice(0)) {
+		try {
+			chmodSync(dir, 0o700);
+		} catch {
+			// Restore write access so recursive cleanup can remove the directory.
+		}
+	}
 	for (const dir of createdDirs.splice(0)) {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -357,6 +365,33 @@ describe("builtin hooks trust", () => {
 		// Then
 		expect(await readFile(statePath, "utf-8")).toContain('"version": 1');
 	});
+
+	it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)(
+		"returns empty trust state when the lock directory is not writable",
+		async () => {
+			// Given
+			const root = await mkdtemp(join(tmpdir(), "senpi-hooks-trust-"));
+			createdDirs.push(root);
+			const agentDir = join(root, "agent");
+			const cwd = join(root, "repo");
+			mkdirSync(agentDir, { recursive: true });
+			mkdirSync(cwd, { recursive: true });
+			chmodSync(agentDir, 0o500);
+			restrictedDirs.push(agentDir);
+			const storage = new FileHookStateStorage({ agentDir, cwd });
+
+			// When / Then
+			expect(storage.read("global")).toEqual({ version: 1, hooks: {} });
+
+			let updateError: unknown;
+			try {
+				storage.update("global", (current) => current);
+			} catch (error) {
+				updateError = error;
+			}
+			expect(updateError).toMatchObject({ code: "EACCES" });
+		},
+	);
 });
 
 function commandHook(

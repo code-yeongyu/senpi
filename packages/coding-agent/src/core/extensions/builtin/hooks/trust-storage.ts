@@ -44,7 +44,9 @@ export class FileHookStateStorage implements HookStateStorage {
 		try {
 			release = acquireHookStateLockSync(path);
 		} catch (error) {
-			if (errorCode(error) === "ELOCKED") {
+			const code = errorCode(error);
+			// Sandboxed/read-only children cannot mkdir the lock dir; fail open on read.
+			if (code === "ELOCKED" || code === "EPERM" || code === "EACCES" || code === "EROFS") {
 				return emptyHookTrustState();
 			}
 			throw error;
