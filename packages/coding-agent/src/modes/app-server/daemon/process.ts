@@ -116,11 +116,22 @@ export function processIsLive(pid: number): boolean {
 	}
 }
 
+/**
+ * Wait for a spawned pid's process identity.
+ *
+ * Returns `undefined` (UNKNOWN) when the budget is exhausted but the process is still alive:
+ * budget exhaustion is an OBSERVABILITY failure, not evidence the child failed to start. On a
+ * loaded Windows runner every `Get-CimInstance` probe can outlive `readProcessIdentity`'s 1s win32
+ * default, so all ~9 attempts inside a 10s budget time out and throw while the process runs
+ * normally (PR #1351/#1352 CI, runs 33839093178 / 33842155236). Only a pid that is really gone is
+ * a startup failure, so callers can distinguish "no identity yet" from "child died".
+ */
 export async function waitForStartTime(
 	pid: number,
 	timeoutMs: number,
 	readStartTime: (pid: number) => Promise<string | undefined> = readProcessStartTime,
-): Promise<string> {
+	isLive: (pid: number) => boolean = processIsLive,
+): Promise<string | undefined> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() <= deadline) {
 		let startTime: string | undefined;
@@ -134,6 +145,7 @@ export async function waitForStartTime(
 		if (startTime) return startTime;
 		await delay(20);
 	}
+	if (isLive(pid)) return undefined;
 	throw new Error(`spawned daemon pid ${pid} had no process start time`);
 }
 
