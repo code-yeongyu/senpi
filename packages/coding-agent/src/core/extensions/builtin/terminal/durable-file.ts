@@ -93,6 +93,8 @@ export function createCheckpointedFileRestoreHandler(deps: CheckpointedFileResto
 				cwd: monitor.cwd,
 				// Preserve the parent approved at permission time: registerFile re-checks it.
 				...(monitor.approvedParent !== undefined ? { approvedParent: monitor.approvedParent } : {}),
+				// The persisted deadline rides through verbatim; a restore never extends it.
+				...(monitor.expiresAt !== null ? { expiresAt: monitor.expiresAt } : {}),
 			});
 			runtimeId = registered.id;
 		} catch (error) {

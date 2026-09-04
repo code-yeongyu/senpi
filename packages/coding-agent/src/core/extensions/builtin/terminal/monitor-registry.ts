@@ -57,6 +57,8 @@ export interface MonitorSnapshotEntry {
 	readonly paused: boolean;
 	/** Epoch milliseconds when the watch registered; feeds the footer's live elapsed label. */
 	readonly startedAtMs: number;
+	/** Durability deadline of a restart-surviving watch; undefined for every ephemeral one. */
+	readonly expiresAt?: number;
 	readonly fireWindow?: MonitorFireWindow;
 }
 
@@ -76,6 +78,8 @@ export interface RegisterFileMonitorOptions {
 	readonly timeoutMs: number;
 	readonly cwd: string;
 	readonly approvedParent?: string;
+	/** Durability deadline of a `checkpointed-file` watch; omitted for a one-shot ephemeral one. */
+	readonly expiresAt?: number;
 }
 
 export interface RegisterMonitorOptions {
@@ -89,6 +93,8 @@ export interface RegisterMonitorOptions {
 	readonly durabilityClass?: MonitorDurabilityClass;
 	/** Persisted fire window re-bound by a restore, so a restart cannot reset the budget. */
 	readonly fireWindow?: MonitorFireWindow;
+	/** Durability deadline of a durable watch; omitted for an ephemeral one. */
+	readonly expiresAt?: number;
 }
 
 interface PendingFileRegistration {
@@ -104,6 +110,7 @@ interface FileMonitorRecord {
 	readonly sessionId: string;
 	readonly description: string;
 	readonly startedAtMs: number;
+	readonly expiresAt: number | undefined;
 	readonly path: string;
 	readonly canonicalPath: string;
 	readonly canonicalParent: string;
@@ -133,6 +140,7 @@ interface MonitorRecord {
 	readonly sessionId: string;
 	readonly description: string;
 	readonly startedAtMs: number;
+	readonly expiresAt: number | undefined;
 	readonly runtime: TerminalRuntimeSession;
 	readonly filter: RegExp | undefined;
 	lineBuffer: string;
@@ -174,6 +182,7 @@ export class MonitorRegistry {
 			description: record.description,
 			paused: record.paused,
 			startedAtMs: record.startedAtMs,
+			expiresAt: record.expiresAt,
 			fireWindow: "fireWindow" in record ? record.fireWindow : undefined,
 		}));
 	}
@@ -319,6 +328,7 @@ export class MonitorRegistry {
 			sessionId: id,
 			description: options.description,
 			startedAtMs: Date.now(),
+			expiresAt: options.expiresAt,
 			path,
 			canonicalPath,
 			canonicalParent: approvedParent,
@@ -509,6 +519,7 @@ export class MonitorRegistry {
 			sessionId: options.id,
 			description: options.description,
 			startedAtMs: Date.now(),
+			expiresAt: options.expiresAt,
 			runtime: options.runtime,
 			filter: options.filter,
 			lineBuffer: "",

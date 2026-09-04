@@ -99,6 +99,8 @@ export function createRestartableCommandHandler(deps: RestartableCommandDeps): R
 			description: monitor.description,
 			runtime: spawned.runtime,
 			filter: compileFilter(monitor.filter),
+			// The persisted deadline rides through verbatim; a restore never extends it.
+			...(monitor.expiresAt !== null ? { expiresAt: monitor.expiresAt } : {}),
 		});
 		deps.ctx.manager.bindMonitorId(monitor.monitorId, spawned.id);
 		deps.onRestored?.(monitor.monitorId, spawned.id);

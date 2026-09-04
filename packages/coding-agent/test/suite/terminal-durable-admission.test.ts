@@ -236,7 +236,6 @@ describe("durable monitor admission control", () => {
 			suspended: true,
 			lastCheckpoint: null,
 			deliveryPaused: false,
-			wakeCount: 0,
 			fireWindow: { startMs: 1, count: 0 },
 		};
 		await harness.writer.store.write({

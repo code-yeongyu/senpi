@@ -3,7 +3,13 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import { APPROVED_MONITOR_PARENT } from "../monitor-permission.ts";
 import { MonitorRegistry } from "../monitor-registry.ts";
-import { DEFAULT_COLS, DEFAULT_ROWS, MAX_DURABLE_MONITORS, TERMINAL_MONITOR_TOOL } from "../shared.ts";
+import {
+	DEFAULT_COLS,
+	DEFAULT_ROWS,
+	DURABLE_MONITOR_EXPIRY_MS,
+	MAX_DURABLE_MONITORS,
+	TERMINAL_MONITOR_TOOL,
+} from "../shared.ts";
 import type { MonitorRegistration, TerminalManifestWriter } from "../terminal-manifest.ts";
 import {
 	errorResult,
@@ -144,6 +150,8 @@ async function createMonitor(
 		filter,
 		// Only persistent command watches are restartable-command durable: those carry the fire budget.
 		durabilityClass: input.persistent === true ? "restartable-command" : "ephemeral",
+		// Same deadline the manifest writer persists, so the footer warns off the live record too.
+		...(input.persistent === true ? { expiresAt: Date.now() + DURABLE_MONITOR_EXPIRY_MS } : {}),
 	});
 	ctx.manager.bindMonitorId(monitorId, id);
 	// The tool call site is the only place the branch inputs (command, persistent, filter)
@@ -292,6 +300,7 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 						timeoutMs: resolveTimeoutMs(input.timeout_ms),
 						cwd: execCtx?.cwd ?? ctx.cwd,
 						...(approvedParent !== undefined ? { approvedParent } : {}),
+						...(input.persistent === true ? { expiresAt: Date.now() + DURABLE_MONITOR_EXPIRY_MS } : {}),
 					});
 					ctx.manager.bindMonitorId(monitorId, id);
 					// Same spec capture as the command branch: durability inputs live only here.

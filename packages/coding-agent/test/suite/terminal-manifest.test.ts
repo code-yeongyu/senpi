@@ -64,7 +64,6 @@ function manifestMonitor(
 		suspended: false,
 		lastCheckpoint: null,
 		deliveryPaused: false,
-		wakeCount: 0,
 		fireWindow: { startMs: 1, count: 0 },
 		...overrides,
 	};
@@ -186,6 +185,24 @@ describe("terminal manifest writer", () => {
 		expect(seen).toEqual([]);
 	});
 
+	it("still reads a manifest written before wakeCount was dropped: unknown keys are ignored, not rejected", async () => {
+		const { writer, sessionId } = await makeFixture();
+		await mkdir(dirname(writer.store.filePath), { recursive: true });
+		const legacy = {
+			...manifestMonitor({ monitorId: "mon_legacy", sessionId, durabilityClass: "ephemeral" }),
+			wakeCount: 4,
+		};
+		await writeFile(
+			writer.store.filePath,
+			JSON.stringify({ version: 1, sessionId, monitors: [legacy], backgroundSessions: [], updatedAt: 1 }),
+			"utf8",
+		);
+		const read = await writer.store.read();
+		expect(read?.monitors).toHaveLength(1);
+		expect(read?.monitors[0]?.monitorId).toBe("mon_legacy");
+		expect(read?.monitors[0]).not.toHaveProperty("wakeCount");
+	});
+
 	it("classifies restartable-command and checkpointed-file entries through their stub handler slots as lost", async () => {
 		const { writer, sessionId } = await makeFixture();
 		await writer.store.write({
@@ -279,7 +296,6 @@ describe("terminal manifest writer", () => {
 			expiresAt: 9_000,
 			lastCheckpoint: { dev: 7, ino: 11, size: 42, mtimeMs: 2_500, digest: "42:abc", present: true },
 			deliveryPaused: true,
-			wakeCount: 3,
 			fireWindow: { startMs: 1_500, count: 2 },
 		});
 		expect(writer.durableCount()).toBe(0);
