@@ -10,6 +10,7 @@ import {
 	type DaemonPidFile,
 	parseDaemonPidFile,
 	processMatchesPidFile,
+	readProcessStartTime,
 	waitForStartTime,
 } from "../app-server/daemon/process.ts";
 import {
@@ -210,12 +211,24 @@ async function startHost(
 			});
 		});
 		if (child.pid === undefined) throw new Error("failed to spawn RPC socket host");
-		const processStartTime = await Promise.race([
+		const observedStartTime = await Promise.race([
 			waitForStartTime(child.pid, 10_000),
 			childExit.then(() => {
 				throw new Error("RPC socket host exited before its start time could be read");
 			}),
 		]);
+		// UNKNOWN identity on a live child: the probe was starved, not the host. Give the CIM table
+		// one unhurried read (the per-attempt win32 default is 1s, which a loaded runner exceeds on
+		// every attempt) before deciding. Without an identity the pidfile cannot carry an ownership
+		// guard, so a healthy host must still be kept rather than torn down for an unreadable probe.
+		const processStartTime =
+			observedStartTime ??
+			(await readProcessStartTime(child.pid, process.platform, 15_000).catch(() => undefined));
+		if (processStartTime === undefined) {
+			throw new Error(
+				`RPC socket host pid ${child.pid} started but its process identity stayed unreadable; refusing to register an unguarded pidfile`,
+			);
+		}
 		pidFile = { pid: child.pid, processStartTime };
 		await testOptions?.beforePidFileWrite?.();
 		await writeFile(paths.pidFile, `${JSON.stringify(pidFile)}\n`, { mode: 0o600 });

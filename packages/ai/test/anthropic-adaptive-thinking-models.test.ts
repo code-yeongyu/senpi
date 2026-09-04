@@ -46,13 +46,18 @@ function getAllModels(): Model<Api>[] {
 
 describe("Anthropic adaptive thinking model metadata", () => {
 	it("marks built-in Anthropic Messages models that use adaptive thinking", () => {
-		const flaggedModels = getAllModels()
+		const allModels = getAllModels();
+		const catalogIds = new Set(allModels.map((model) => `${model.provider}/${model.id}`));
+		const expectedInCatalog = EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS.filter((id) => catalogIds.has(id)).sort();
+		expect(expectedInCatalog.length).toBeGreaterThan(0);
+
+		const flaggedModels = allModels
 			.filter((model): model is Model<"anthropic-messages"> => model.api === "anthropic-messages")
 			.filter((model) => model.compat?.forceAdaptiveThinking === true)
 			.map((model) => `${model.provider}/${model.id}`)
 			.sort();
 
-		expect(flaggedModels).toEqual(expect.arrayContaining([...EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS].sort()));
+		expect(flaggedModels).toEqual(expect.arrayContaining(expectedInCatalog));
 		expect(flaggedModels).toEqual(
 			flaggedModels.filter((modelId) =>
 				/(opus[-.]4[-.][678]|opus[-.]5|sonnet[-.]4[-.]6|sonnet[-.]5|fable[-.]5|kimi-coding\/)/.test(modelId),

@@ -17,6 +17,7 @@
 ### Fixed
 
 - Branded build labels now render verbatim in the startup UI instead of gaining a `v` prefix, and unorderable version pairs no longer advertise a bogus engine update.
+- Starting an RPC socket host or app-server daemon on a loaded Windows machine no longer fails with `spawned daemon pid N had no process start time` while the process is running normally. The process-identity probe defaults to a one-second timeout on Windows, so a busy `Get-CimInstance` could exhaust the whole startup budget; an unreadable identity for a live process is now treated as unknown and retried once at length instead of being reported as a startup failure.
 
 ### Breaking Changes
 

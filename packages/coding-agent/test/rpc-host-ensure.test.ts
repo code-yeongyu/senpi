@@ -265,7 +265,10 @@ async function startManagedFixture(
 	});
 	children.push(child);
 	if (child.pid === undefined) throw new Error("fixture did not spawn");
+	// The fixture child is live, so its identity must resolve; waitForStartTime returns undefined
+	// only when the probe is starved on a loaded host, which this fixture does not exercise.
 	const processStartTime = await waitForStartTime(child.pid, 2_000);
+	if (processStartTime === undefined) throw new Error("fixture child had no process identity");
 	await waitForProtocol(qa.socket);
 	const paths = createHostDaemonPaths(qa.agentDir);
 	await mkdir(paths.dir, { recursive: true });

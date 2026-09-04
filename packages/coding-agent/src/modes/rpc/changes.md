@@ -1,5 +1,21 @@
 # changes
 
+## `waitForStartTime`: a starved identity probe is UNKNOWN, not a dead child (2026-09-04)
+
+### What changed
+
+- `waitForStartTime` (`../app-server/daemon/process.ts`) takes an `isLive` probe (default `processIsLive`) and returns `string | undefined`. When the budget expires it now throws ONLY if the pid is really gone; a live pid yields `undefined` (UNKNOWN).
+- Both callers — `host-ensure.ts` (RPC socket host) and `app-server/daemon.ts` — treat UNKNOWN by taking one unhurried `readProcessStartTime(pid, platform, 15_000)` read, and only fail when that also comes back unreadable. Neither writes a pidfile without an ownership identity.
+
+### Why
+
+- Windows CI failed on PR #1351 and #1352 with `spawned daemon pid N had no process start time` (runs 33839093178, 33842155236) while the spawned host was healthy; both PRs touched only prompts, and `--failed` reruns passed.
+- `readProcessIdentity` defaults to a **1s** timeout on win32. `host-ensure.ts` called `waitForStartTime(pid, 10_000)` without a probe timeout, so on a loaded runner where `Get-CimInstance` needs longer than 1s, every attempt times out, throws, is swallowed by the existing retry, and the 10s budget dies after ~9 attempts. The retry was already there; the defect was that an OBSERVABILITY failure was reported as a startup failure, and liveness was never consulted on this path (#1294 added that distinction only to the lifecycle watchdog).
+
+### Why this cannot be expressed externally
+
+- The pidfile ownership guard requires a real process identity, so the decision between "no identity yet" and "child died" has to be made where the child handle is still owned. A caller outside this module cannot tell a timed-out probe from an absent process.
+
 ## `media_placeholders`: inline tool-result images are replaced at one choke point (2026-09-03)
 
 ### What changed

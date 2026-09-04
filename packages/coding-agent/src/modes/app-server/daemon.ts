@@ -197,12 +197,21 @@ async function spawnDaemon(paths: DaemonPaths, listen: AppServerListen): Promise
 		if (pid === undefined) throw new Error("failed to spawn daemon process");
 		let startTime: string;
 		try {
-			startTime = await Promise.race([
+			const observed = await Promise.race([
 				waitForStartTime(pid, 10_000),
 				exited.then(() => {
 					throw new Error(`spawned daemon ${pid} exited before its start time could be read`);
 				}),
 			]);
+			// UNKNOWN identity on a live daemon means the probe was starved, not that startup failed.
+			// The per-attempt win32 probe budget is 1s, which a loaded runner exceeds every time, so
+			// take one unhurried read before treating an unreadable identity as a startup error.
+			const resolved =
+				observed ?? (await readProcessStartTime(pid, process.platform, 15_000).catch(() => undefined));
+			if (resolved === undefined) {
+				throw new Error(`spawned daemon ${pid} started but its process identity stayed unreadable`);
+			}
+			startTime = resolved;
 		} catch (error: unknown) {
 			// Keep the handle owned until registration succeeds. This terminates the
 			// exact child even when start-time acquisition fails, without a raw PID.
