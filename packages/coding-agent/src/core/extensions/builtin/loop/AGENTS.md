@@ -73,7 +73,10 @@ user — a schedule that cannot be persisted must not keep running.
 
 ## MODEL SURFACE
 
-`schedule_wakeup` (`tools.ts`) is the only model-callable surface. Its TypeBox schema is a
+`schedule_wakeup` (`tools.ts`) is the only model-callable surface. It registers `exposure: "search"`
+with lazy activation disabled; `index.ts` activates it (`setActiveTools`) exactly while a dynamic loop
+is live and retires it when that loop ends or suspends, so no-loop sessions never pay for it.
+Its TypeBox schema is a
 flat object with no root union (several provider conversions rebuild schemas from top-level
 `properties`; a root `anyOf` would arrive empty — same reasoning as `terminal/tools/monitor.ts`).
 `delaySeconds` carries no schema bounds; the executor clamps out-of-range integers (60-3600s)
