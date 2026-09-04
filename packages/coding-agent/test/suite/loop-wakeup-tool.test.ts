@@ -128,12 +128,17 @@ describe("schedule_wakeup tool", () => {
 			expect(json.required).toEqual(["reason"]);
 		});
 
-		it("describes senpi tooling and cache-aware delays, never Claude Code tool names", () => {
-			expect(tool.description).toContain("monitor");
-			expect(tool.description).toContain("bash_output");
-			expect(tool.description).toContain("kill_bash");
-			expect(tool.description).toContain("task");
+		it("registers search-exposed with lazy activation disabled so only a live dynamic loop activates it", () => {
+			expect(tool.exposure).toBe("search");
+			expect(tool.allowLazyActivation).toBe(false);
+		});
+
+		it("describes cache-aware delays and leaves the waiting doctrine to the dynamic tick prompt", () => {
 			expect(tool.description).toContain("1200-1800");
+			expect(tool.description).toContain("fallback heartbeat");
+			// The dynamic tick prompt is the single home of the monitor/bash_output/kill_bash rule.
+			expect(tool.description).not.toContain("bash_output");
+			expect(tool.description).not.toContain("kill_bash");
 			expect(tool.description).not.toContain("Monitor(");
 			expect(tool.description).not.toContain("TaskList");
 			expect(tool.description).not.toContain("TaskStop");

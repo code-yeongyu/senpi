@@ -1,5 +1,46 @@
 # Builtin extensions changes
 
+## Loop-owned exposure for `schedule_wakeup` (2026-09-04)
+
+### What changed
+
+- `loop/tools.ts`: `registerLoopTools` registers `schedule_wakeup` with `exposure: "search"` and
+  `allowLazyActivation: false`, so the tool is absent from the default active list and from the
+  `tool_search` catalog. `SCHEDULE_WAKEUP_DESCRIPTION` keeps the clamp, idle-range, prompt-cache and
+  fallback-heartbeat guidance and drops the monitor/`bash_output`/`kill_bash`/`task` waiting rule;
+  `tick-prompt.ts`'s dynamic rule is that rule's single home.
+- `loop/index.ts`: `syncScheduleWakeupActivation()` derives the wanted state from scheduler state
+  (some `dynamic` entry whose phase is neither `ended` nor `suspended`) and calls `pi.setActiveTools`
+  only when the active list disagrees. It runs at the top of `refreshStatus()` (every command,
+  timer, tool, restore, and settle transition already ends there) and again in `dispatchTick`
+  before `sendUserMessage`, so the tool is active before the tick turn reads its tool list.
+- Tests: `loop-wakeup-tool.test.ts` pins the exposure contract and the trimmed description;
+  `loop-extension.test.ts` pins activation on dynamic start, one entry across the tick lifecycle,
+  retirement on stop, no activation for fixed loops, and re-activation on session restore;
+  `regressions/3592-no-builtin-tools-keeps-extension-tools.test.ts` no longer lists the tool as
+  resident.
+
+### Why
+
+- The tool is meaningful only inside a dynamic loop (every other call is a typed error), yet it
+  shipped 234 o200k tokens of description on every turn of every session. Search exposure with
+  loop-owned activation removes that cost without changing the loop contract: the dynamic tick
+  prompt still names a callable tool.
+- Lazy activation is disabled because a `tool_search` hit outside a loop would only activate a
+  tool that errors; explicit `setActiveTools` from the loop extension is the one legitimate path.
+
+### Why an extension could not handle it
+
+- `loop` is a builtin registered for every session; the activation decision needs the loop
+  scheduler's own state transitions (create, tick, settle, stop, suspend, restore), which only
+  `loop/index.ts` observes. No public event exposes those transitions to a sibling extension.
+
+### Expected merge conflict zones
+
+- LOW: `loop/index.ts` around `refreshStatus`/`dispatchTick` and the `./tools.ts` import;
+  `loop/tools.ts` description + registration object. Upstream has no `/loop` extension, so the
+  zone is fork-only.
+
 ## OpenAI Codex OAuth account command (2026-09-03)
 
 ### What changed

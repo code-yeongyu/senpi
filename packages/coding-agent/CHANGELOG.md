@@ -32,6 +32,7 @@
 
 ### Changed
 
+- `schedule_wakeup` is no longer a resident tool: it registers search-exposed with lazy activation disabled, and the `/loop` extension activates it only while a dynamic loop is live and retires it when that loop ends or suspends (-234 prompt tokens per turn in every session without a dynamic loop). Its description keeps the delay guidance and drops the monitor/`bash_output`/`kill_bash` waiting rule that the dynamic tick prompt already carries.
 - Changed selectors in `/thinking`, `/model`, `/scoped-models`, `/trust`, per-model thinking settings, and theme settings to keep active options marked while browsing. `/scoped-models` now uses consistent per-item toggles and strikes through unavailable models ([#8900](https://github.com/earendil-works/pi/pull/8900)).
 
 ### Fixed

@@ -93,6 +93,8 @@ interface Fixture {
 	readonly ctx: ExtensionContext;
 	readonly timers: FakeTimers;
 	readonly controller: LoopController;
+	readonly registeredTools: Array<{ name: string; exposure?: string; allowLazyActivation?: boolean }>;
+	activeTools(): string[];
 	readonly userMessages: SentUserMessage[];
 	readonly customMessages: SentCustomMessage[];
 	readonly entries: Array<{ customType: string; data: unknown }>;
@@ -152,9 +154,19 @@ async function fixture(
 		await writeFile(path, options.corruptStore, "utf8");
 	}
 
+	const registeredTools: Array<{ name: string; exposure?: string; allowLazyActivation?: boolean }> = [];
+	// Mirrors the session's active-tool list: search-exposed tools start inactive and only
+	// `setActiveTools` promotes them, exactly like `AgentSession.setActiveToolsByName`.
+	let activeTools: string[] = ["read", "bash"];
 	const pi = {
 		on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
-		registerTool: () => {},
+		registerTool: (tool: { name: string; exposure?: string; allowLazyActivation?: boolean }) => {
+			registeredTools.push(tool);
+		},
+		getActiveTools: () => [...activeTools],
+		setActiveTools: (names: string[]) => {
+			activeTools = [...names];
+		},
 		registerEntryRenderer: () => {},
 		registerCommand: () => {},
 		appendEntry: (customType: string, data: unknown) => entries.push({ customType, data }),
@@ -253,6 +265,8 @@ async function fixture(
 		ctx,
 		timers,
 		controller,
+		registeredTools,
+		activeTools: () => [...activeTools],
 		userMessages,
 		customMessages,
 		entries,
@@ -609,6 +623,63 @@ describe("loop extension sentinel delivery", () => {
 		await withoutAnchor.controller.fireDue(created.loopId);
 		const unanchoredTick = withoutAnchor.userMessages[withoutAnchor.userMessages.length - 1];
 		expect(unanchoredTick.text).toContain("do the tasks");
+	});
+});
+
+describe("loop extension schedule_wakeup exposure", () => {
+	it("registers schedule_wakeup search-exposed and keeps it inactive while no loop runs", async () => {
+		const f = await fixture();
+		await f.emit("session_start");
+
+		const tool = f.registeredTools.find((entry) => entry.name === "schedule_wakeup");
+		expect(tool?.exposure).toBe("search");
+		expect(tool?.allowLazyActivation).toBe(false);
+		expect(f.activeTools()).not.toContain("schedule_wakeup");
+	});
+
+	it("activates schedule_wakeup for a live dynamic loop and retires it when the loop ends", async () => {
+		const f = await fixture();
+		await f.emit("session_start");
+		const created = await f.controller.startDynamic({ originalArgs: "watch the queue", prompt: "watch the queue" });
+		if (!created.ok) throw new Error(created.message);
+
+		expect(f.activeTools()).toContain("schedule_wakeup");
+		// Idempotent across the tick lifecycle: one entry, never a duplicate.
+		await settleTurn(f, created.loopId);
+		expect(f.activeTools().filter((name) => name === "schedule_wakeup")).toHaveLength(1);
+
+		await f.controller.stop(created.loopId, "done");
+		expect(f.activeTools()).not.toContain("schedule_wakeup");
+		expect(f.activeTools()).toEqual(["read", "bash"]);
+	});
+
+	it("never activates schedule_wakeup for a fixed loop", async () => {
+		const f = await fixture();
+		await f.emit("session_start");
+		const created = await f.controller.startFixed({
+			originalArgs: "5m ping",
+			prompt: "ping",
+			requestedInterval: { value: 5, unit: "m", raw: "5m" },
+		});
+		if (!created.ok) throw new Error(created.message);
+
+		expect(f.activeTools()).not.toContain("schedule_wakeup");
+	});
+
+	it("re-activates schedule_wakeup when a dynamic loop is restored on session start", async () => {
+		const first = await fixture();
+		await first.emit("session_start");
+		const created = await first.controller.startDynamic({ originalArgs: "watch the queue", prompt: "watch the queue" });
+		if (!created.ok) throw new Error(created.message);
+		await settleTurn(first, created.loopId);
+		await first.emit("session_shutdown", { reason: "quit" });
+		const suspended = await first.persisted();
+		if (suspended === undefined) throw new Error("expected a suspended snapshot");
+
+		const resumed = await fixture({ now: first.now() + MINUTE, initialState: suspended });
+		expect(resumed.activeTools()).not.toContain("schedule_wakeup");
+		await resumed.emit("session_start", { reason: "resume" });
+		expect(resumed.activeTools()).toContain("schedule_wakeup");
 	});
 });
 
