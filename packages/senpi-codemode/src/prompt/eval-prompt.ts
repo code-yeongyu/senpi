@@ -67,7 +67,7 @@ type Context = Readonly<Record<string, ContextValue>>;
 const EVAL_PROMPT_TEMPLATE = `Run one step of code in a persistent kernel.
 
 <instruction>
-**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls{{#if spawns}} and \`task\` subagents{{/if}}: define helpers, datasets, and clients once and reuse them; never re-import, re-declare, or re-read what an earlier cell already holds. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\` proving it is gone, and check a sentinel variable first so a blind re-run cannot duplicate side effects.
+**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls{{#if spawns}}, tool calls and \`task\` subagents{{else}} and tool calls{{/if}}: define helpers and clients once and reuse them instead of re-importing or re-reading. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
 
 {{#if styleClaude}}<eval_first_batching>
 \`eval\` is your default execution surface: if a step needs more than one tool call, write ONE cell that performs the whole step — never issue the calls one at a time.
@@ -77,7 +77,7 @@ const EVAL_PROMPT_TEMPLATE = `Run one step of code in a persistent kernel.
 {{#if monitor}}- Start long-running work (build, test run, deploy, or watch) through \`tool.monitor({ command, filter })\`, putting the decisive-line filter inside the same cell, then keep working until its event wakes the turn.{{/if}}
 </eval_first_batching>{{/if}}{{#if styleGpt}}<gpt_eval_dialect>
 GPT eval: compose multi-tool work inside one cell with \`tool.<name>(args)\` and \`parallel(thunks)\`; do not split a planned step into serial tool calls.
-- Long pure-compute cells detach on timeout and notify on completion. Do not poll or re-run them; use \`eval({ action: "peek"|"stop", cell_id })\` only to inspect or stop a detached cell.
+- Long cells detach on timeout and notify on completion; do not poll or re-run them.
 - Filter, join, and aggregate tool results in the cell; return only decision-relevant facts.
 {{#if monitor}}- For long-running build, test run, deploy, or watch work, start \`tool.monitor({ command, filter })\` with the decisive-line filter in the same cell; keep working until its event wakes the turn.{{/if}}
 </gpt_eval_dialect>{{/if}}{{#if styleCodex}}Route multi-call steps through eval: one cell per step, independent lookups dispatched together via \`parallel(thunks)\`; keep work sequential only when one result determines the next action.
@@ -97,19 +97,11 @@ GPT eval: compose multi-tool work inside one cell with \`tool.<name>(args)\` and
 Host: {{hostLine}} — cells execute here. Size \`parallel(thunks)\` pools to its cores; \`tool.<name>()\` shell commands must fit this platform, even when the code you are writing targets another machine.
 {{/if}}
 
-Fields:
+\`language\`: {{#if py}}\`"py"\` IPython kernel{{/if}}{{#ifAll py js}}, {{/ifAll}}{{#if js}}\`"js"\` persistent JavaScript VM{{/if}}{{#if rb}}{{#ifAny py js}}, {{/ifAny}}\`"rb"\` persistent Ruby kernel{{/if}}{{#if jl}}{{#ifAny py js rb}}, {{/ifAny}}\`"jl"\` persistent Julia kernel{{/if}}.
 
-- \`language\` — {{#if py}}\`"py"\` IPython kernel{{/if}}{{#ifAll py js}}, {{/ifAll}}{{#if js}}\`"js"\` persistent JavaScript VM{{/if}}{{#if rb}}{{#ifAny py js}}, {{/ifAny}}\`"rb"\` persistent Ruby kernel{{/if}}{{#if jl}}{{#ifAny py js rb}}, {{/ifAny}}\`"jl"\` persistent Julia kernel{{/if}}.
-- \`code\` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
-- \`summary\` (REQUIRED for run) — ONE line in the USER'S conversational language stating WHAT this cell does and FOR WHAT PURPOSE (e.g. Korean conversation -> "src 전체에서 legacyClient 사용처 집계"); shown in the TUI while the cell runs; >80 chars is force-truncated.
-- \`timeout\` (optional) — seconds; raises the wall-clock kill deadline (default 1800s, never paused by tool calls, a killed cell notifies you). It does not hold the turn: interactive sessions detach the cell at a ~60s foreground window and it keeps running to the deadline.
-- \`on_timeout\` (optional) — \`"detach"\` (interactive default) frees the turn at the foreground window; \`"error"\` (print/json default) interrupts at the full \`timeout\` for deadline-sensitive work.
-- \`reset\` (optional) — wipe this language's kernel first.{{#ifAll py js}} Per-language: a \`py\` reset never touches the JS VM.{{/ifAll}}
-- \`action\` (optional) — defaults to \`"run"\`. A detached cell returns its id: \`eval({ action: "peek", cell_id })\` reads buffered output, \`eval({ action: "stop", cell_id })\` cancels it (the result says whether kernel state survived).
+A cell that outlives the foreground window detaches: it keeps its language kernel busy (another language can continue) and completes as one notification with its value or error and buffered output. Do not re-run a detached cell; read or cancel it with \`eval({ action: "peek", cell_id })\` / \`eval({ action: "stop", cell_id })\`.
 
-A detached cell keeps its language kernel busy until it finishes; another language can continue. Do not re-run a detached cell (the busy error names its cell id and output tail): completion arrives as one notification with the final value or error and the buffered output.
-
-{{#if py}}Live event loop: use top-level \`await\` directly; \`asyncio.run(…)\` raises "cannot be called from a running event loop".{{/if}}
+{{#if py}}Python runs on a live event loop: use top-level \`await\`; \`asyncio.run(…)\` raises.{{/if}}
 {{#if js}}{{#if jsBun}}JS runs in-process on Bun {{jsVersion}}: top-level \`await\`/\`return\` work; \`Bun.*\` builtins available.{{#if bunSkillPath}} MUST READ the bun-1-4 skill at {{bunSkillPath}} before your first js cell — its builtins replace the npm packages you would otherwise install.{{/if}}{{else}}JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.{{/if}}{{/if}}
 {{#if rb}}Ruby: synchronous; helper options are keyword args{{#if spawns}} (e.g. \`output("id", limit: 2)\`){{/if}}; the last expression auto-displays unless it is \`nil\`, an assignment, or a definition (like IRB).{{/if}}
 {{#if jl}}Julia: synchronous; helper options are standard keyword args{{#if spawns}} (e.g. \`output("id", limit=2)\`){{/if}}; the last expression auto-displays unless it is an assignment or a definition (like the Julia REPL).{{/if}}
@@ -128,22 +120,21 @@ read(path, offset?=1, limit?=None) → str
 write(path, content) → str
     Write file (creates parents) → resolved path. \`local://…\` persists across turns/subagents.
 env(key?=None, value?=None) → str | None | dict
-    No args → full env dict; one → value of \`key\`; two → set \`key=value\`, return value.
+    No args → full env dict; one → value; two → set \`key=value\`.
 {{#if spawns}}output(*ids, format?="raw", offset?=None, limit?=None) → str | dict | list[dict]
-    Task/agent output by id. Reads immediately: running tasks return their status; \`format\` selects full (\`"raw"\`) or trailing (\`"tail"\`) output.
+    Task/agent output by id. Reads immediately: running tasks return their status; \`format\` \`"raw"\` = full, \`"tail"\` = trailing.
 {{/if}}tool.<name>(args) → unknown
     Invoke any session tool; \`args\` = its parameter object.
 tool_schema(name?) → dict
-    Parameter schema of a tool (omit \`name\` to list tool names); check it before a first call, and a failed call also returns the expected parameters.
+    Parameter schema of a tool (omit \`name\` to list tool names); a failed \`tool.<name>()\` call also returns the expected parameters.
 completion(prompt, model?="default", system?=None, schema?=None) → str | dict
-    Oneshot, stateless (no history/tools). \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → structured output, parsed object.
+    Oneshot, stateless. \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → parsed structured output.
 {{#if spawns}}agent(prompt, agent?="{{spawnDefaultAgent}}", model?=None, label?=None, schema?=None, handle?=False) → str | dict
-    Run a subagent → final output. \`agent\` picks a discovered agent; omit it to use \`{{spawnDefaultAgent}}\`. \`schema\` as in completion(). \`handle\` → workflow node { text, output, handle: \`agent://<id>\`, id, agent } (parsed under \`data\` with \`schema\`).
-{{#if js}}    JS: options are ONE trailing object — agent(prompt, { agent, schema, handle }).
-{{/if}}{{/if}}parallel(thunks) → list
-    Thunks through a bounded pool (wide as a \`task\` batch — don't pre-shrink), input order kept; returns when all finish, a throwing thunk propagates.
+    Run a subagent → final output. \`agent\` picks a discovered agent. \`schema\` as in completion(). \`handle\` → workflow node { text, output, handle: \`agent://<id>\`, id, agent } (parsed under \`data\` with \`schema\`).
+{{/if}}parallel(thunks) → list
+    Thunks through a bounded pool (as wide as a \`task\` batch), input order kept; a throwing thunk propagates.
 pipeline(items, ...stages) → list
-    Map items through one-arg stages left-to-right, barrier between stages; stage 1 gets the item, later stages the previous result.
+    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.
 log(message) → None
     Progress line above the status tree.
 phase(title) → None
@@ -152,7 +143,7 @@ phase(title) → None
 </prelude>
 {{#if spawns}}
 <workflow>
-Build multi-agent work as an acyclic graph in code: one \`agent(…)\` node per step with its handle option ({{#if py}}\`handle=True\`{{/if}}{{#ifAll py js}} / {{/ifAll}}{{#if js}}\`{ handle: true }\`{{/if}}{{#if jl}}\`handle=true\`{{/if}}), \`parallel(thunks)\` for one wave of independent nodes, \`pipeline(items, *stages)\` for staged waves with a barrier between stages. Wire dependents by passing the upstream node's \`handle\` or \`output\` (or a \`write("local://…")\` URI for bulk text) in their prompt instead of re-inlining transcripts; wrap risky nodes in try/except so a failure aborts only its dependent subtree; a node never waits on its own descendant.
+Multi-agent work is an acyclic graph in code: one \`agent(…)\` node per step with its handle option ({{#if py}}\`handle=True\`{{/if}}{{#ifAll py js}} / {{/ifAll}}{{#if js}}\`{ handle: true }\`{{/if}}{{#if jl}}{{#ifAny py js}} / {{/ifAny}}\`handle=true\`{{/if}}), \`parallel(thunks)\` for independent nodes, \`pipeline(items, *stages)\` for staged waves. Pass an upstream node's \`handle\` or \`output\` (or a \`write("local://…")\` URI for bulk text) into dependents instead of re-inlining transcripts, and wrap risky nodes in try/except so a failure aborts only its subtree.
 </workflow>
 {{/if}}
 `;
