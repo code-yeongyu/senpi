@@ -17,7 +17,7 @@
 		"LICENSE"
 	],
 	"scripts": {
-		"test": "npx tsx ../../node_modules/vitest/dist/cli.js --run test/",
+		"test": "vitest run test/",
 		"clean": "node -e \"\"",
 		"build": "node -e \"\""
 	},
