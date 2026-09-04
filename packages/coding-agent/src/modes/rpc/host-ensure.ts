@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
@@ -8,7 +8,9 @@ import { fileURLToPath } from "node:url";
 import { ENV_AGENT_DIR, getAgentDir, isBunBinary, VERSION } from "../../config.ts";
 import {
 	type DaemonPidFile,
+	ProcessIdentityUnreadableError,
 	parseDaemonPidFile,
+	processIsLive,
 	processMatchesPidFile,
 	readProcessStartTime,
 	waitForStartTime,
@@ -152,7 +154,8 @@ async function ensureHostLocked(
 ): Promise<EnsuredHost> {
 	const pidFile = await readPidFile(paths);
 	const protocol = await probeProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
-	const pidMatches = pidFile ? await processMatchesPidFile(pidFile) : false;
+	const probe = testOptions?.readProcessStartTime ?? readProcessStartTime;
+	const pidMatches = pidFile ? await processMatchesPidFile(pidFile, probe) : false;
 	if (isCompatible(protocol)) {
 		// A compatible socket is attachable even when another client surface
 		// started it. Only hosts we spawned are eligible for lifecycle management.
@@ -162,11 +165,7 @@ async function ensureHostLocked(
 		throw new Error(`RPC socket ${socket} is owned by an unmanaged host`);
 	}
 	if (pidFile && pidMatches) {
-		await stopManagedHost(
-			pidFile,
-			testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
-			testOptions?.readProcessStartTime ?? readProcessStartTime,
-		);
+		await stopManagedHost(pidFile, testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS, probe);
 	}
 	await cleanupState(paths);
 	return startHost(paths, socket, agentDir, policy, testOptions);
@@ -217,8 +216,9 @@ async function startHost(
 			});
 		});
 		if (child.pid === undefined) throw new Error("failed to spawn RPC socket host");
+		const probe = testOptions?.readProcessStartTime ?? readProcessStartTime;
 		const observedStartTime = await Promise.race([
-			waitForStartTime(child.pid, 10_000),
+			waitForStartTime(child.pid, 10_000, probe),
 			childExit.then(() => {
 				throw new Error("RPC socket host exited before its start time could be read");
 			}),
@@ -278,10 +278,13 @@ async function startHost(
 	// failure here (unreadable identity, a host that outlives SIGKILL) would other-
 	// wise propagate instead of the readiness message and skip cleanupState below,
 	// leaving the pidfile and socket behind. Record it and keep going.
-	const stopFailure = await stopManagedHost(
-		pidFile,
+	// This child is ours and its handle is still attached: stop it through the handle.
+	// Validating ownership through the pidfile would re-run the identity probe whose
+	// failure is the very thing a loaded runner produces here.
+	const stopFailure = await stopSpawnedChild(
+		child,
+		childExit,
 		testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
-		testOptions?.readProcessStartTime ?? readProcessStartTime,
 	).then(
 		() => undefined,
 		(error: unknown) => (error instanceof Error ? error.message : String(error)),
@@ -302,6 +305,29 @@ async function startHost(
 	throw new Error(diagnostic);
 }
 
+async function stopSpawnedChild(
+	child: ChildProcess,
+	childExit: Promise<ChildExit>,
+	termTimeoutMs: number,
+): Promise<void> {
+	const exited = () => child.exitCode !== null || child.signalCode !== null;
+	if (exited()) return;
+	const signal = (name: NodeJS.Signals) => {
+		try {
+			child.kill(name);
+		} catch (error: unknown) {
+			if (!isNodeErrorCode(error, "ESRCH")) throw error;
+		}
+	};
+	const waitFor = (ms: number) => Promise.race([childExit.then(() => true), delay(ms).then(() => exited())]);
+	signal("SIGTERM");
+	if (await waitFor(termTimeoutMs)) return;
+	signal("SIGKILL");
+	if (!(await waitFor(SIGKILL_GRACE_MS))) {
+		throw new Error(`RPC socket host pid ${child.pid ?? "?"} remained alive after SIGKILL`);
+	}
+}
+
 async function stopManagedHost(
 	pidFile: DaemonPidFile,
 	termTimeoutMs: number,
@@ -315,19 +341,22 @@ async function stopManagedHost(
 	}
 }
 
-// An identity probe that FAILS proves nothing: it is an observability gap, not a
-// verdict about the pid. Treating the failure as "matches" would signal a pid this
-// start cannot prove it owns; letting it throw (the old behavior) aborted the
-// caller mid-teardown and discarded the diagnostic that explains WHY we are here.
-// Absorb it as "cannot prove ownership" and skip the signal.
-async function pidFileOwnsProcess(
+type PidFileOwnership = "owns" | "gone" | "unknown";
+
+// One probe per call: the teardown loops below are themselves the retry, so the
+// budget inside processMatchesPidFile would only multiply their wall time. A probe
+// that fails against a LIVE pid is "unknown" — it proves nothing about ownership, so
+// signalling on it would be unsafe and treating it as "gone" would abandon a host that
+// may still be running. A failed probe against a dead pid is "gone".
+async function resolvePidFileOwnership(
 	pidFile: DaemonPidFile,
 	readStartTime: (pid: number) => Promise<string | undefined>,
-): Promise<boolean> {
+): Promise<PidFileOwnership> {
 	try {
-		return await processMatchesPidFile(pidFile, readStartTime);
-	} catch {
-		return false;
+		return (await processMatchesPidFile(pidFile, readStartTime, processIsLive, { attempts: 1 })) ? "owns" : "gone";
+	} catch (error: unknown) {
+		if (error instanceof ProcessIdentityUnreadableError) return "unknown";
+		throw error;
 	}
 }
 
@@ -336,7 +365,7 @@ async function signalValidated(
 	signal: NodeJS.Signals,
 	readStartTime: (pid: number) => Promise<string | undefined> = readProcessStartTime,
 ): Promise<void> {
-	if (!(await pidFileOwnsProcess(pidFile, readStartTime))) return;
+	if ((await resolvePidFileOwnership(pidFile, readStartTime)) !== "owns") return;
 	try {
 		process.kill(pidFile.pid, signal);
 	} catch (error: unknown) {
@@ -351,10 +380,10 @@ async function waitForGone(
 ): Promise<boolean> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() <= deadline) {
-		if (!(await pidFileOwnsProcess(pidFile, readStartTime))) return true;
+		if ((await resolvePidFileOwnership(pidFile, readStartTime)) === "gone") return true;
 		await delay(50);
 	}
-	return !(await pidFileOwnsProcess(pidFile, readStartTime));
+	return (await resolvePidFileOwnership(pidFile, readStartTime)) === "gone";
 }
 
 type ChildExit = { readonly code: number | null; readonly signal: NodeJS.Signals | null };
@@ -488,7 +517,13 @@ async function reapOrphanedInternalHostDirs(): Promise<void> {
 							owner.processStartTime.length > 0 &&
 							owner.createdAt < Date.now() - 60_000 &&
 							(await readdir(join(tmpdir(), entry.name))).length === 1 &&
-							!(await processMatchesPidFile({ pid: owner.pid, processStartTime: owner.processStartTime }))
+							!(await processMatchesPidFile({ pid: owner.pid, processStartTime: owner.processStartTime }).catch(
+								(error: unknown) => {
+									// Unreadable but live: assume the owner is alive rather than steal its lock.
+									if (error instanceof ProcessIdentityUnreadableError) return true;
+									throw error;
+								},
+							))
 						)
 							await rm(join(tmpdir(), entry.name), { recursive: true, force: true });
 					} catch {}
