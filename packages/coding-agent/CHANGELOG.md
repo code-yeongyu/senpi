@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Interactive shared-host regression tests now wait for RPC child processes to exit before removing their temporary roots, preventing teardown `ENOTEMPTY` races.
+
 ### Removed
 
 ## [2026.9.4-3] - 2026-09-04
