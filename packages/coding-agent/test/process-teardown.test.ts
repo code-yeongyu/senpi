@@ -5,22 +5,28 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { teardownChildProcessesAndRoots } from "./helpers/process-teardown.ts";
 
-function spawnChurner(root: string, termMarker: string): ChildProcessWithoutNullStreams {
+function spawnChurner(root: string, termMarker: string, exitsOnTerm = false): ChildProcessWithoutNullStreams {
 	const script = `
 		const fs = require("node:fs");
 		const path = require("node:path");
 		const root = process.argv[1];
 		const termMarker = process.argv[2];
+		const exitsOnTerm = process.argv[3] === "true";
 		for (let i = 0; i < 20000; i++) {
 			fs.mkdirSync(path.join(root, "initial-" + i));
 		}
 		process.stdout.write("ready\\n");
 		let i = 0;
+		let interval;
 		process.on("SIGTERM", () => {
 			fs.writeFileSync(termMarker, "term-observed");
 			process.stdout.write("term-observed\\n");
+			if (exitsOnTerm) {
+				clearInterval(interval);
+				process.exit(0);
+			}
 		});
-		setInterval(() => {
+		interval = setInterval(() => {
 			try {
 				const dir = path.join(root, "live-" + i++);
 				fs.mkdirSync(dir);
@@ -28,7 +34,9 @@ function spawnChurner(root: string, termMarker: string): ChildProcessWithoutNull
 			} catch {}
 		}, 0);
 	`;
-	return spawn(process.execPath, ["-e", script, root, termMarker], { stdio: ["pipe", "pipe", "pipe"] });
+	return spawn(process.execPath, ["-e", script, root, termMarker, String(exitsOnTerm)], {
+		stdio: ["pipe", "pipe", "pipe"],
+	});
 }
 
 async function waitForExit(child: ChildProcessWithoutNullStreams): Promise<void> {
@@ -82,4 +90,17 @@ describe("process teardown", () => {
 		rmSync(newMarker, { force: true });
 		expect(() => rmSync(newRoot, { recursive: true })).toThrow(/ENOENT/);
 	}, 15000);
+
+	it("waits for a child that exits gracefully on SIGTERM", async () => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-teardown-graceful-"));
+		const marker = join(tmpdir(), `senpi-teardown-graceful-marker-${process.pid}`);
+		const child = spawnChurner(root, marker, true);
+		await waitForOutput(child, "ready");
+		await teardownChildProcessesAndRoots([child], [root]);
+		expect(readFileSync(marker, "utf8")).toBe("term-observed");
+		expect(child.exitCode).toBe(0);
+		expect(child.signalCode).not.toBe("SIGKILL");
+		rmSync(marker, { force: true });
+		expect(() => rmSync(root, { recursive: true })).toThrow(/ENOENT/);
+	});
 });
