@@ -23,7 +23,8 @@ export function createBashResizeTool(ctx: TerminalToolContext) {
 		promptSnippet: "Resize a background bash session's PTY so TUIs reflow",
 		parameters: bashResizeSchema,
 		async execute(_toolCallId: string, input: BashResizeInput, _signal?: AbortSignal): Promise<TerminalToolResult> {
-			const runtime = ctx.manager.get(input.bash_id);
+			const sessionId = ctx.manager.resolveId(input.bash_id) ?? input.bash_id;
+			const runtime = ctx.manager.get(sessionId);
 			if (!runtime) return errorResult(`No terminal session found with id: ${input.bash_id}`);
 			if (runtime.exited) return errorResult(`Session ${input.bash_id} is not running; cannot resize.`);
 			if (!valid(input.cols) || !valid(input.rows)) {

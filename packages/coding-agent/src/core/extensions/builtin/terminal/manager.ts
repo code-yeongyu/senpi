@@ -28,6 +28,8 @@ export interface CreatedTerminalSession {
 export class TerminalManager {
 	private readonly registry: SessionRegistry<TerminalSession>;
 	private readonly runtimes = new Map<string, TerminalRuntimeSession>();
+	/** Stable "mon_" identities bound to runtime session ids; survives PTY exit, then drops on session prune or teardown. */
+	private readonly monitorIds = new Map<string, string>();
 	private readonly scrollback?: number;
 	private readonly maxSessions: number;
 	private readonly exited = new Set<string>();
@@ -91,6 +93,21 @@ export class TerminalManager {
 		return this.runtimes.get(id) ?? null;
 	}
 
+	/** Bind a stable "mon_" id to its runtime session id; a later restore re-binds the same id. */
+	bindMonitorId(monitorId: string, sessionId: string): void {
+		this.monitorIds.set(monitorId, sessionId);
+	}
+
+	/**
+	 * Resolve a "mon_" monitor id to its current runtime "bash_N" (or "watch_N"), passing a
+	 * runtime id through unchanged; undefined when neither resolves. Bindings intentionally
+	 * outlive PTY exit for a final output read, then drop when the session is pruned or torn down.
+	 */
+	resolveId(idOrMonitorId: string): string | undefined {
+		if (idOrMonitorId.startsWith("mon_")) return this.monitorIds.get(idOrMonitorId);
+		return this.registry.get(idOrMonitorId) ? idOrMonitorId : undefined;
+	}
+
 	list(): { id: string; runtime: TerminalRuntimeSession }[] {
 		const result: { id: string; runtime: TerminalRuntimeSession }[] = [];
 		for (const entry of this.registry.list()) {
@@ -113,6 +130,7 @@ export class TerminalManager {
 		for (const runtime of this.runtimes.values()) runtime.dispose();
 		this.runtimes.clear();
 		this.exited.clear();
+		this.monitorIds.clear();
 	}
 
 	/** Dispose runtime wrappers whose registry entry was pruned (capacity/LRU eviction). */
@@ -123,6 +141,9 @@ export class TerminalManager {
 			runtime.dispose();
 			this.runtimes.delete(id);
 			this.exited.delete(id);
+			for (const [monitorId, sessionId] of this.monitorIds) {
+				if (sessionId === id) this.monitorIds.delete(monitorId);
+			}
 		}
 	}
 }

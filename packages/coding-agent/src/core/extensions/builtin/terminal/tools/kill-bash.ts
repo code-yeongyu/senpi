@@ -24,10 +24,11 @@ export function createKillBashTool(ctx: TerminalToolContext) {
 				return textResult(`Killed ${terminalCount + fileCount} session(s).`);
 			}
 			if (!input.bash_id) return errorResult("Provide `bash_id` or set `all:true`.");
-			if (await ctx.monitorRegistry?.stopFile(input.bash_id)) return textResult(`Killed ${input.bash_id}.`);
-			const runtime = ctx.manager.get(input.bash_id);
+			const sessionId = ctx.manager.resolveId(input.bash_id) ?? input.bash_id;
+			if (await ctx.monitorRegistry?.stopFile(sessionId)) return textResult(`Killed ${input.bash_id}.`);
+			const runtime = ctx.manager.get(sessionId);
 			if (!runtime) return errorResult(`No terminal session found with id: ${input.bash_id}`);
-			await ctx.manager.stop(input.bash_id);
+			await ctx.manager.stop(sessionId);
 			return textResult(`Killed ${input.bash_id}.`);
 		},
 	};

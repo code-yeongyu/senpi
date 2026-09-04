@@ -28,7 +28,8 @@ export function createBashInputTool(ctx: TerminalToolContext) {
 		promptSnippet: "Send stdin/keys to a live background bash session (REPL steering, ctrl+c, etc.)",
 		parameters: bashInputSchema,
 		async execute(_toolCallId: string, input: BashInputInput, _signal?: AbortSignal): Promise<TerminalToolResult> {
-			const runtime = ctx.manager.get(input.bash_id);
+			const sessionId = ctx.manager.resolveId(input.bash_id) ?? input.bash_id;
+			const runtime = ctx.manager.get(sessionId);
 			if (!runtime) return errorResult(`No terminal session found with id: ${input.bash_id}`);
 			if (runtime.exited) return errorResult(`Session ${input.bash_id} is not running; cannot send input.`);
 

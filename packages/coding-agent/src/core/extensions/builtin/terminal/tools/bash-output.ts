@@ -50,12 +50,13 @@ export function createBashOutputTool(ctx: TerminalToolContext) {
 			"Peek at background bash session output (filter, screen view, status); watch patterns with monitor, completion arrives as a notification",
 		parameters: bashOutputSchema,
 		async execute(_toolCallId: string, input: BashOutputInput): Promise<TerminalToolResult> {
-			const runtime = ctx.manager.get(input.bash_id);
+			const sessionId = ctx.manager.resolveId(input.bash_id) ?? input.bash_id;
+			const runtime = ctx.manager.get(sessionId);
 			if (!runtime) return errorResult(`No terminal session found with id: ${input.bash_id}`);
 
-			const monitorEntry = ctx.monitorRegistry?.snapshot().find((entry) => entry.id === input.bash_id);
+			const monitorEntry = ctx.monitorRegistry?.snapshot().find((entry) => entry.id === sessionId);
 			const muted = monitorEntry?.paused === true;
-			const mutedDropped = muted ? (ctx.monitorRegistry?.mutedDropped(input.bash_id) ?? 0) : 0;
+			const mutedDropped = muted ? (ctx.monitorRegistry?.mutedDropped(sessionId) ?? 0) : 0;
 			let mutedNote = "";
 			if (muted) {
 				mutedNote =

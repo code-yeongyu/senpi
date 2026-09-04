@@ -149,6 +149,7 @@ describe("MonitorRegistry change notification", () => {
 		expect(snapshots[0]).toEqual([
 			{
 				id: expect.stringContaining("bash"),
+				monitorId: expect.stringMatching(/^mon_[0-9A-HJKMNP-TV-Z]{16}$/),
 				description: "quick echo watch",
 				paused: false,
 				startedAtMs: expect.any(Number),
