@@ -1001,6 +1001,7 @@ const XHIGH_MODEL_IDS = [
 	"gpt-5.6-luna",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
+	"gpt-6-astra",
 	"deepseek-v4-pro",
 	"deepseek-v4-flash",
 	"opus-4-6",
@@ -1054,7 +1055,7 @@ const OPENAI_MAX_APIS: Api[] = [
 ];
 
 /** Model family that accepts native `max` effort on OpenAI-compatible APIs. */
-const GPT_56_SOL_ID = "gpt-5.6-sol";
+const OPENAI_MAX_MODEL_IDS = ["gpt-5.6-sol", "gpt-6-astra"];
 
 const MAX_MODEL_IDS = [
 	"opus-4-6",
@@ -1070,7 +1071,8 @@ const MAX_MODEL_IDS = [
 
 function supportsMaxModel<TApi extends Api>(model: Model<TApi>): boolean {
 	if (!model.reasoning) return false;
-	if (OPENAI_MAX_APIS.includes(model.api) && matchesModelFamily(model.id, GPT_56_SOL_ID)) return true;
+	if (OPENAI_MAX_APIS.includes(model.api) && OPENAI_MAX_MODEL_IDS.some((id) => matchesModelFamily(model.id, id)))
+		return true;
 	return MAX_MODEL_IDS.some((id) => matchesModelFamily(model.id, id));
 }
 

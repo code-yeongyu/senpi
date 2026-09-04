@@ -22,6 +22,8 @@
 - Added environment variables and advanced settings for overriding auto-detected terminal hyperlink, image, and truecolor capabilities ([#8665](https://github.com/earendil-works/pi/issues/8665)).
 - Added `fullscreenCopyOnSelect` to disable automatic fullscreen selection copy; when disabled, `Ctrl+X` copies the active text selection before falling back to the last assistant message, while `/tree` still copies the selected message ([#7720](https://github.com/earendil-works/pi/issues/7720)).
 
+- New `gpt-6-astra` prompt preset, written from scratch against the GPT-6 Astra prompting guide: every `gpt-6-astra` model id (bare, `-fast`, dated snapshots, provider-prefixed, Bedrock `openai.gpt-6-astra`, display name "GPT-6 Astra") now gets a full-core system prompt with an initiative section (bias to action, approval as the last step on a concrete result), explicit instruction precedence for skills and project files, an asynchronous-work section mapping Astra's async-tool training onto background sessions, monitors, child tasks, and detached eval cells (end the turn to wait; no wait tool), calibrated test-first verification, and an engineer-prose writing style with the guide's slop-phrase ban. `promptPreset: "gpt-6-astra"` forces it.
+
 ### Changed
 
 - Changed selectors in `/thinking`, `/model`, `/scoped-models`, `/trust`, per-model thinking settings, and theme settings to keep active options marked while browsing. `/scoped-models` now uses consistent per-item toggles and strikes through unavailable models ([#8900](https://github.com/earendil-works/pi/pull/8900)).
@@ -48,6 +50,9 @@
 - Fixed inherited OpenAI-compatible Chat Completions ignoring an explicitly requested `toolChoice` when no tools are defined.
 - Fixed inherited fragmented Mistral tool calls splitting when continuation chunks omit the tool-call ID ([#8387](https://github.com/earendil-works/pi/issues/8387)).
 
+- Anthropic Messages requests that carry deferred (`defer_loading`) tools no longer fail with `invalid_request_error: tools.N.tool_search_tool_bm25_20251119.name: Input should be 'tool_search_tool_bm25'`. The injected native tool-search server tool is now named `tool_search_tool_bm25` as the API contract requires; the local `tool_search` custom tool is unchanged.
+- The shared GPT eval-routing bridge no longer routes multi-call work to the `exec`/`wait` Code Mode tools that were removed in favor of detached `eval` cells; every GPT preset now points at `eval` only.
+- Resuming a session left on a `-fast` catalog variant (or any model with an `upstreamModelId`) now restores that exact selection instead of its upstream base model, so the priority tier and the fast indicator survive the resume; assistant messages no longer override an explicit same-provider model selection during session restore.
 - TTSR now interrupts a single streamed assistant message that repeats the same paragraph three times (a within-message narration loop such as re-announcing the same "now writing the DAG cell" step for minutes without ever issuing the tool call): the collapse guard gains a paragraph-repeat mechanism, truncates the message from the first repeat, and injects the usual recovery nudge. Scalar runs, short periods, and line cycles were the only mechanisms before, and blank lines reset line-cycle tracking, so paragraph-level loops streamed unchecked until the user aborted. Tool-argument streams are not affected.
 
 ### Removed

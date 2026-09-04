@@ -1,5 +1,24 @@
 # Tool Search Builtin Changes
 
+## 2026-09-04 - Name the Anthropic native tool-search server tool per the API contract
+
+### What changed
+
+- `native-search.ts`: `ANTHROPIC_TOOL_SEARCH_NAME` is now `tool_search_tool_bm25`. The injected server tool is `{ type: "tool_search_tool_bm25_20251119", name: "tool_search_tool_bm25" }`; the type is unchanged and the local `tool_search` custom tool keeps its own name.
+- `test/suite/regressions/0000-anthropic-native-tool-search-canonical-name.test.ts` pins the literal contract pair, keeps the local tool resident, and keeps non-Anthropic payloads byte-identical.
+
+### Why
+
+- Anthropic validates the server tool's `name` against the tool-search variant: every request carrying deferred tools was rejected with `invalid_request_error: tools.N.tool_search_tool_bm25_20251119.name: Input should be 'tool_search_tool_bm25'`, which then disabled native search for the session.
+
+### Why an extension could not handle it
+
+- The name is emitted by the builtin's own payload transform on `before_provider_request`; no extension hook rewrites an already-injected server tool.
+
+### Expected merge conflict zones
+
+- LOW: `native-search.ts` constant block.
+
 ## 2026-08-11 - Defer local tool registration until the catalog is searchable
 
 ### What changed

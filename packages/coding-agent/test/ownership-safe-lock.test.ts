@@ -9,6 +9,17 @@ const roots: string[] = [];
 const children: ChildProcess[] = [];
 const childSource = `
   import { acquireOwnershipSafeLock } from ${JSON.stringify(new URL("../src/modes/rpc/ownership-safe-lock.ts", import.meta.url).href)};
+  let signalGo = () => {};
+  const go = new Promise((resolve) => { signalGo = resolve; });
+  // "mark" is echoed on THIS child's stdout, so the parent can order the echo against this
+  // child's own later lines instead of racing a sibling process's pipe.
+  process.stdin.on("data", (chunk) => {
+    for (const raw of String(chunk).split("\\n")) {
+      const line = raw.trim();
+      if (line === "mark") console.log("MARK");
+      else if (line === "go") signalGo();
+    }
+  });
   console.log("TRYING");
   const lock = await acquireOwnershipSafeLock(process.argv[1]);
   console.log("ACQUIRED");
@@ -18,7 +29,7 @@ const childSource = `
     while (Date.now() < end) {}
     console.log("UNBLOCKED");
   }
-  if (process.argv[2] === "hold") await new Promise((resolve) => process.stdin.once("data", resolve));
+  if (process.argv[2] === "hold") await go;
   await lock();
   console.log("RELEASED");
 `;
@@ -66,16 +77,21 @@ describe("ownership-safe-lock", () => {
 		const events: string[] = [];
 		const holder = tracked(lockPath, events, "holder", "hold");
 		await holder.seen("ACQUIRED");
-		const waiter = tracked(lockPath, events, "waiter");
-		// The waiter is provably attempting acquisition before the holder is
-		// told to release; ordering (not a fixed absence window) is the proof:
-		// a non-exclusive mutant acquires before holder:RELEASED and fails the
-		// index assertion below deterministically.
+		const waiter = tracked(lockPath, events, "waiter", "hold");
+		// Ordering (not a fixed absence window) is the proof, and both ordered events come
+		// from the WAITER's own stdout: while the holder still holds, the parent makes the
+		// waiter echo MARK, so MARK strictly precedes any later line from that same pipe.
+		// Anchoring on the holder's RELEASED line instead raced two pipes - the holder drops
+		// the lock before it prints, so a legitimate waiter could be observed acquiring first
+		// and invert the events (observed as CI flake). A non-exclusive mutant still fails
+		// deterministically: it prints ACQUIRED before it ever processes the mark.
 		await waiter.seen("TRYING");
+		waiter.child.stdin?.write("mark\n");
+		await waiter.seen("MARK");
 		holder.child.stdin?.write("go\n");
 		await holder.seen("RELEASED");
 		await waiter.seen("ACQUIRED");
-		expect(events.indexOf("waiter:ACQUIRED")).toBeGreaterThan(events.indexOf("holder:RELEASED"));
+		expect(events.indexOf("waiter:ACQUIRED")).toBeGreaterThan(events.indexOf("waiter:MARK"));
 	});
 
 	it("releases a killed holder and keeps a blocked event loop exclusive", async () => {

@@ -1,5 +1,26 @@
 # changes.md — ai
 
+## 2026-09-04 - GPT-6 Astra catalog
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: hand-added `gpt-6-astra` entries for the `openai` and `openai-codex` providers (published pricing 10/50/1/12.5 per MTok with the >272k long-context tiers, 272k default context, 128k output, text+image input, `thinkingLevelMap` with `off`/`minimal` null and low through high, with xhigh/max merged by `supportsOpenAiXhigh`/`supportsOpenAiMax`); the id joins the tool-search, additional-tools, short-context-cap, long-context-pricing, and Priority `-fast` sets; a post-metadata override keeps `off`/`minimal` unavailable.
+- `packages/ai/src/models.ts`: `XHIGH_MODEL_IDS` gains `gpt-6-astra`; the sol-only max-effort family check is generalized to `OPENAI_MAX_MODEL_IDS` (`gpt-5.6-sol`, `gpt-6-astra`).
+- Regenerated `packages/ai/src/providers/data/openai.json`, `packages/ai/src/providers/data/openai-codex.json`, and `packages/ai/src/providers/data/.manifest.json` with only the Astra entries (plus their `-fast` variants) changing.
+- `packages/ai/test/gpt-6-astra-catalog.test.ts`: catalog entries, pricing tiers, context limits, thinking levels, xhigh/max support, and `-fast` variants.
+
+### Why
+
+- OpenAI released GPT-6 Astra (`gpt-6-astra`, Responses API, efforts low/medium/high/xhigh/max, no `none`/`minimal`) and Codex's model catalog lists it for the Codex backend; without catalog entries the model was unselectable through the built-in providers.
+
+### Why an extension could not handle it
+
+- The static provider catalogs are generated inside this package.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts` (hand-added OpenAI model lists and id sets), `packages/ai/src/models.ts` (xhigh/max id lists), `packages/ai/src/providers/data/*` (regenerate, don't merge).
+
 ## 2026-09-02 - Claude Fable 5.1 catalog
 
 ### What changed

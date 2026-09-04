@@ -9,6 +9,8 @@
 - Added Anthropic per-turn effort persistence, deterministic historical effort markers, and signed-thinking mismatch recovery for supported Claude models across Anthropic Messages transports, including OpenRouter.
 - Added the experimental vision-capable `deepseek-v4-flash-vision-exp` model to the DeepSeek catalog.
 
+- Added GPT-6 Astra to the OpenAI and OpenAI Codex model catalogs, including long-context pricing, reasoning efforts, tool search, and Priority `-fast` variants.
+
 ### Changed
 
 ### Fixed

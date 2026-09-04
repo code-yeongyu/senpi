@@ -1,3 +1,21 @@
+## GPT-6 Astra joins the xhigh and max effort families (2026-09-04)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `XHIGH_MODEL_IDS` gains `gpt-6-astra`, and the sol-only native `max` family check becomes `OPENAI_MAX_MODEL_IDS` (`gpt-5.6-sol`, `gpt-6-astra`), so map-less custom providers that ship the Astra id still surface both tiers.
+
+### Why
+
+- OpenAI documents `reasoning.effort` low/medium/high/xhigh/max for `gpt-6-astra`; the generated catalogs carry the map, and the id-based inference must agree for models registered without one.
+
+### Why an extension could not handle it
+
+- Effort-tier inference lives in this runtime module.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/models.ts` (id lists), trivially adjacent to upstream additions.
+
 ## 2026-09-03 - Align Anthropic beta-client fallback and thinking semantics
 
 ### What changed

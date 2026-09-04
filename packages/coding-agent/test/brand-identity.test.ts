@@ -8,6 +8,7 @@ import { buildClaudeFable51Prompt } from "../src/core/extensions/builtin/prompt-
 import { buildClaudeOpus5Prompt } from "../src/core/extensions/builtin/prompt-preset/claude-opus-5.ts";
 import { buildGpt55Prompt } from "../src/core/extensions/builtin/prompt-preset/gpt-5.5.ts";
 import { buildGpt56Prompt } from "../src/core/extensions/builtin/prompt-preset/gpt-5.6.ts";
+import { buildGpt6AstraPrompt } from "../src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts";
 import { buildGrok45Prompt } from "../src/core/extensions/builtin/prompt-preset/grok-4.5.ts";
 import { buildKimiK3Prompt } from "../src/core/extensions/builtin/prompt-preset/kimi-k3.ts";
 
@@ -31,6 +32,7 @@ const PRESET_FILES = [
 	"claude-opus-5.ts",
 	"gpt-5.5.ts",
 	"gpt-5.6.ts",
+	"gpt-6-astra.ts",
 	"grok-4.5.ts",
 	"kimi-k3.ts",
 ] as const;
@@ -41,6 +43,7 @@ const PRESET_BUILDERS = [
 	["claude-opus-5", buildClaudeOpus5Prompt],
 	["gpt-5.5", buildGpt55Prompt],
 	["gpt-5.6", buildGpt56Prompt],
+	["gpt-6-astra", buildGpt6AstraPrompt],
 	["grok-4.5", buildGrok45Prompt],
 	["kimi-k3", buildKimiK3Prompt],
 ] as const;

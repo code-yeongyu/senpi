@@ -1,5 +1,35 @@
 # changes
 
+## 2026-09-04 - Restore the selected model, not its upstream wire id, on resume
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `getSessionContextSettings()` now treats an
+  explicit selection (a manual `model_change`, or the primary model restored from a fallback window)
+  as authoritative over later assistant messages from the same provider. An assistant message only
+  redefines the restored model when no explicit selection is in force or when it comes from a
+  different provider, which preserves legacy assistant-only sessions and the existing fallback
+  window handling.
+
+### Why
+
+- A catalog entry that maps to an `upstreamModelId` (the `-fast` priority variants, e.g.
+  `quotio-openai/gpt-5.6-sol-fast` -> `gpt-5.6-sol`) persists the upstream id on every assistant
+  message, because the request went out with that id. The old restore let that echo overwrite the
+  recorded selection, so resuming the session came back on the base model with no priority tier:
+  the fast indicator was gone and `service_tier` left the wire. Regression:
+  `test/session-manager/upstream-model-id-restore.test.ts`.
+
+### Why an extension could not handle it
+
+- Model restoration happens inside `SessionManager.buildSessionContext()` before the session or any
+  extension exists; `session_start` observes the already-resolved (wrong) model.
+
+### Expected merge conflict zones
+
+- LOW: the `model` bookkeeping inside `getSessionContextSettings()` in `session-manager.ts`.
+
+
 ## 2026-09-04 - Gate next-turn compaction on real provider admission
 
 ### What changed

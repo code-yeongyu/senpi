@@ -18,6 +18,7 @@ import { buildGpt54Prompt } from "./gpt-5.4.ts";
 import { buildGpt55Prompt } from "./gpt-5.5.ts";
 import { buildGpt56Prompt } from "./gpt-5.6.ts";
 import { buildGpt5Prompt } from "./gpt-5.ts";
+import { buildGpt6AstraPrompt } from "./gpt-6-astra.ts";
 import { buildGrok45Prompt } from "./grok-4.5.ts";
 import { buildGrok46Prompt } from "./grok-4.6.ts";
 import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
@@ -40,6 +41,19 @@ export interface ResolvedPromptPreset {
 
 function normalizeModelId(modelId: string): string {
 	return modelId.toLowerCase().replace(/\s+/g, "-");
+}
+
+// GPT-6 Astra id shapes verified against the OpenAI model page, codex's
+// models.json, and Bedrock's catalog (2026-09-04): gpt-6-astra, gpt-6-astra-fast,
+// dated snapshots, openai/gpt-6-astra, openai.gpt-6-astra, global.openai.gpt-6-astra,
+// and the display name "GPT-6 Astra". Bare "gpt-6" and "astra" stay out: the guide
+// names no other GPT-6 model, and a future sibling deserves its own preset.
+function hasGpt6AstraSignal(value: string): boolean {
+	return /(?:^|[/@:._-])gpt[._-]?6[._-]astra(?:$|[/@:._-])/.test(normalizeModelId(value));
+}
+
+function isGpt6AstraModel(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGpt6AstraSignal(model.id) || (model.name !== undefined && hasGpt6AstraSignal(model.name));
 }
 
 type Gpt5Version = "gpt-5.2" | "gpt-5.3-codex" | "gpt-5.4" | "gpt-5.5" | "gpt-5.6";
@@ -207,6 +221,9 @@ export function resolvePresetName(
 		return modelPromptPreset;
 	}
 
+	if (isGpt6AstraModel(model)) {
+		return "gpt-6-astra";
+	}
 	const gpt5Version = extractGpt5Version(model.id);
 	if (gpt5Version) {
 		return gpt5Version;
@@ -261,6 +278,8 @@ export function resolvePresetName(
 
 function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPromptOptions): ResolvedPromptPreset {
 	switch (name) {
+		case "gpt-6-astra":
+			return { name, prompt: buildGpt6AstraPrompt(options) };
 		case "gpt-5.6":
 			return { name, prompt: buildGpt56Prompt(options) };
 		case "gpt-5.5":

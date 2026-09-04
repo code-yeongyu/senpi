@@ -6,7 +6,7 @@ import type { ToolSearchDocument } from "./engine/document.ts";
 // scope because it requires a provider-layer seam.
 
 export const ANTHROPIC_TOOL_SEARCH_TYPE = "tool_search_tool_bm25_20251119";
-export const ANTHROPIC_TOOL_SEARCH_NAME = "tool_search";
+export const ANTHROPIC_TOOL_SEARCH_NAME = "tool_search_tool_bm25";
 /** Anthropic caps a request at 10k tools; beyond that native search is invalid. */
 export const ANTHROPIC_MAX_TOOLS = 10000;
 
