@@ -107,7 +107,8 @@ function parseMonitor(entry: unknown): ManifestMonitor {
 		suspended: bool(entry, "suspended"),
 		lastCheckpoint: entry.lastCheckpoint === null ? null : checkpoint(entry.lastCheckpoint),
 		deliveryPaused: bool(entry, "deliveryPaused"),
-		wakeCount: num(entry, "wakeCount"),
+		// Unknown keys are ignored by this field-by-field parse, so a manifest written before
+		// `wakeCount` was dropped still reads back cleanly; no version bump is needed.
 		fireWindow: fireWindow(entry.fireWindow),
 	};
 }

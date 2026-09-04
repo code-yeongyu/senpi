@@ -44,6 +44,21 @@ export const MAX_DURABLE_MONITORS = 5;
  * never a sliding window: neither a restore nor a rearm extends it.
  */
 export const DURABLE_MONITOR_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Per-monitor rolling fire budget: one durable command watch may deliver at most this many
+ * matched line events inside any FIRE_BUDGET_WINDOW_MS window before the registry auto-mutes
+ * it. The session-global wake budget only counts consecutive line-only wakes on an idle
+ * session, so a busy session needs this per-monitor backstop against a runaway watch.
+ */
+export const DEFAULT_DURABLE_MONITOR_FIRE_BUDGET = 200;
+/** Width of the rolling fire-budget window: the budget replenishes after this span elapses. */
+export const FIRE_BUDGET_WINDOW_MS = 24 * 60 * 60 * 1000;
+/**
+ * The ONE summary emitted when the fire budget mutes a watch. Machine-consumed: the monitor
+ * notifier exempts exactly this summary from its completion handling, so the mute must not
+ * clear the session-global wake streak.
+ */
+export const FIRE_BUDGET_AUTO_MUTE_SUMMARY = `auto-muted: fire budget (${DEFAULT_DURABLE_MONITOR_FIRE_BUDGET}/24h) reached; rearm to resume`;
 
 /**
  * Non-interactive environment for foreground one-shot commands (codex-style):

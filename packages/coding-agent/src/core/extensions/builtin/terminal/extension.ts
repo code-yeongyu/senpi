@@ -284,7 +284,11 @@ async function adoptPersistedTerminalState(
 			// the manifest with it instead of erasing it: `restored` and `muted` both describe a
 			// live monitor (a mute only silences delivery). `lost`/`expired`/`attachedElsewhere`
 			// are deliberately not adopted — nothing is running for them here.
-			if (result.outcome === "restored" || result.outcome === "muted") writer.adoptRestored(monitor);
+			if (result.outcome === "restored" || result.outcome === "muted") {
+				writer.adoptRestored(monitor);
+				// Re-bind the persisted fire budget so a restart cannot hand the watch a fresh window.
+				registry.adoptFireWindow(monitor.monitorId, monitor.fireWindow);
+			}
 			return result;
 		};
 	};
@@ -361,6 +365,8 @@ function detachManifestWriter(state: TerminalExtensionState, sessionKey: string 
  */
 async function suspendAndFlushManifest(state: TerminalExtensionState, sessionKey: string): Promise<void> {
 	const writer = state.manifestWriter;
+	// Final live-state sync: the shutdown write must carry each watch's burned fire window.
+	if (writer && state.bundle) await writer.observeMonitorState(state.bundle.monitors.snapshot());
 	detachManifestWriter(state, sessionKey);
 	if (writer) await writer.recordShutdown();
 }

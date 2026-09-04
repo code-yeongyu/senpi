@@ -94,6 +94,25 @@ describe("formatMonitorStatus", () => {
 		expect((text ?? "").length).toBeLessThanOrEqual(48);
 	});
 
+	const HOUR_MS = 60 * 60 * 1000;
+
+	it("warns with the expiry suffix once a durable watch has under a day left", () => {
+		const durable: MonitorSnapshotEntry = { ...entry("bash_1", "deploy errors"), expiresAt: T0 + HOUR_MS };
+		expect(formatMonitorStatus([durable], T0)).toBe("◉ watching deploy errors (0s) (expires in 1d)");
+	});
+
+	it("stays quiet while a durable watch still has days left", () => {
+		const durable: MonitorSnapshotEntry = { ...entry("bash_1", "deploy errors"), expiresAt: T0 + 5 * 24 * HOUR_MS };
+		expect(formatMonitorStatus([durable], T0)).toBe("◉ watching deploy errors (0s)");
+	});
+
+	it("never shows an expiry suffix for an ephemeral watch that has no deadline", () => {
+		expect(formatMonitorStatus([entry("bash_1", "deploy errors")], T0)).toBe("◉ watching deploy errors (0s)");
+		expect(formatMonitorStatus([{ ...entry("bash_1", "deploy errors"), expiresAt: undefined }], T0)).toBe(
+			"◉ watching deploy errors (0s)",
+		);
+	});
+
 	it("marks paused watches and keeps the marker through truncation", () => {
 		const all = formatMonitorStatus([entry("bash_1", "a", true), entry("bash_2", "b", true)], T0 + 60_000);
 		expect(all).toBe("◉ watching 2: a, b (1m, muted)");

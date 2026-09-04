@@ -36,11 +36,15 @@ manual \`&\` backgrounding — use the built-in session tools:
     inside the command and print one sentinel (\`until <cond>; do sleep 1; done;
     printf 'READY\\n'\`). Stream: \`tail -n 0 -F | grep --line-buffered\`. Filter noise at the
     source and stop with \`kill_bash\`.
-  - \`${monitor}({ description, path, event? })\` natively watches one regular file and fires once —
-    prefer it over a shell poll loop. \`"create"\` (the default) fires only when the file appears
-    after registration, so watch an already-existing file with \`"modify"\`; registration needs the
-    parent directory to exist already, so poll with a \`command\` when the run creates that
-    directory too. This branch takes no \`filter\` and no \`persistent\`.
+  - \`${monitor}({ description, path, event?, persistent? })\` natively watches one regular file and
+    fires once — prefer it over a shell poll loop. \`"create"\` (the default) fires only when the file
+    appears after registration, so watch an already-existing file with \`"modify"\`; registration needs
+    the parent directory to exist already, so poll with a \`command\` when the run creates that
+    directory too. This branch takes no \`filter\`.
+  A standing watch is marked \`persistent: true\`: it has no deadline, survives a session restart
+  (the command is re-run once, the file rescanned and any change missed while detached reported),
+  expires 7 days after creation, is capped at 5 per session, and is accounted for in one
+  restart-report line on session start.
   Identical updates are deduped; repeated monitor-only wakes pause the noisy monitor(s) that
   caused them, not all monitors. Completion still wakes the session, and
   \`${monitor}({ action: "rearm", bash_id })\` resumes one while \`${monitor}({ action: "rearm" })\`

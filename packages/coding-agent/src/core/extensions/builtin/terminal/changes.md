@@ -1,5 +1,34 @@
 # terminal builtin extension — fork surface
 
+## `persistent` reads as the standing-watch switch (2026-09-04)
+
+### What changed
+
+- `tools/monitor.ts`: the `persistent` parameter description now states the whole durable contract in one breath — no deadline, survives a session restart (the command re-run once, the file rescanned with any detached change reported), expires 7 days after creation, at most 5 per session, stop one with `kill_bash`. `timeout_ms` says "ignored when persistent" instead of naming "persistent monitors" again, and the tool's top-level description was compressed to the branch contract (`command` XOR `path`, what each injects, `create` firing only on appearance, `filter` rejected on the path branch, `bash_id` returned immediately) — the dedup, restart and one-shot-gate teaching it duplicated already lives in `prompt.ts`. No new parameter and no new action value.
+- `prompt.ts`: the path-branch call shape gains `persistent?`, the false "takes no `persistent`" clause is gone, and one added sentence teaches the standing watch: `persistent: true`, no deadline, survives a restart, 7-day expiry, capped at 5, accounted for in the one restart-report line on session start.
+- Docs brought in line: `docs/terminal-tools.md` gains a "Standing watches" section (stable `mon_` id, per-class restore behavior, the one restore sentence with its real clause shapes, the 5/7-day caps, foreign-live-process case) and three anti-pattern rows; `AGENTS.md` documents the five durability modules and the four invariants (`persistent` = durable, ONE digest per restart, transition-only writes, runtime-id-only pause/resume/rearm).
+
+### Measured prompt budget
+
+- `monitor.ts` `description:` literals: **1630 → 1342 bytes** (ceiling 1476; P2/P3 had breached it by 154 while adding durability wording).
+- `buildTerminalPromptSection({ evalOnly: false })`: **2523 → 2839 bytes** (ceiling 3435). The tool surface paid for its own rewording; the prompt grew only by the one standing-watch sentence.
+
+### Fixed false doc claims
+
+- Both `prompt.ts` and `docs/terminal-tools.md` claimed the native file branch takes no `persistent`. That has been wrong since the `checkpointed-file` durability class landed: a persistent file watch is exactly what is checkpointed and restored. Both now show `persistent?` on the path branch.
+
+### Why
+
+- `persistent` was described as "keep watching until the command exits or kill_bash stops its bash_id" — a lifetime hint that says nothing about the durability the flag actually buys, while the bounds that make it safe to hand to a model (7-day expiry, cap of 5) lived only in the source. The switch has to read as what it is, and it has to do so without growing the per-turn prompt: the same guidance was being paid for twice, once in the tool schema and once in the terminal prompt section.
+
+### Why an extension could not handle it
+
+- Both surfaces are this builtin's own: the parameter descriptions are its TypeBox schema and the section is its prompt contribution. Nothing outside can reword them.
+
+### Expected merge conflict zones
+
+- LOW: `tools/monitor.ts` description literals and the `monitor` bullet in `prompt.ts` are fork-only prose; the docs are fork-only files.
+
 ## Prompt section renders the reachable bash/monitor call form (2026-09-03)
 
 ### What changed

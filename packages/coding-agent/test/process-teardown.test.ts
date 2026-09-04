@@ -15,12 +15,15 @@ function spawnChurner(root: string, termMarker: string, exitsOnTerm = false): Ch
 		for (let i = 0; i < 20000; i++) {
 			fs.mkdirSync(path.join(root, "initial-" + i));
 		}
-		process.stdout.write("ready\\n");
+		// fs.writeSync, not process.stdout.write: pipe writes are async on
+		// macOS, and process.exit() right after an async write discards it, so
+		// the acknowledgement the parent waits on would be lost under load.
+		fs.writeSync(1, "ready\\n");
 		let i = 0;
 		let interval;
 		process.on("SIGTERM", () => {
 			fs.writeFileSync(termMarker, "term-observed");
-			process.stdout.write("term-observed\\n");
+			fs.writeSync(1, "term-observed\\n");
 			if (exitsOnTerm) {
 				clearInterval(interval);
 				process.exit(0);
@@ -47,16 +50,31 @@ async function waitForExit(child: ChildProcessWithoutNullStreams): Promise<void>
 async function waitForOutput(child: ChildProcessWithoutNullStreams, expected: string): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
 		let output = "";
+		let settled = false;
+		const finish = (error?: Error) => {
+			if (settled) return;
+			settled = true;
+			child.stdout.off("data", onData);
+			child.off("close", onClose);
+			child.off("error", onError);
+			if (error) reject(error);
+			else resolve();
+		};
 		const onData = (chunk: Buffer) => {
 			output += chunk.toString();
-			if (output.includes(expected)) {
-				child.stdout.off("data", onData);
-				resolve();
-			}
+			if (output.includes(expected)) finish();
 		};
+		// "close" (exit + stdio drained), not "exit": the graceful churner
+		// writes its acknowledgement and exits in the same handler turn, and
+		// the exit event can beat the final stdout chunk. Pipe semantics
+		// guarantee pre-exit writes are readable before EOF, so close is the
+		// deterministic point at which "never wrote it" is provable.
+		const onClose = () =>
+			finish(new Error(`child closed before writing "${expected}"; saw: ${JSON.stringify(output)}`));
+		const onError = (error: Error) => finish(error);
 		child.stdout.on("data", onData);
-		child.once("error", reject);
-		child.once("exit", (code, signal) => reject(new Error(`churner exited: ${code ?? signal}`)));
+		child.once("close", onClose);
+		child.once("error", onError);
 	});
 }
 
@@ -85,7 +103,15 @@ describe("process teardown", () => {
 		const newMarker = join(tmpdir(), `senpi-teardown-new-marker-${process.pid}`);
 		const newChild = spawnChurner(newRoot, newMarker);
 		await waitForOutput(newChild, "ready");
-		await teardownChildProcessesAndRoots([newChild], [newRoot], 100);
+		await teardownChildProcessesAndRoots(
+			[newChild],
+			[newRoot],
+			100,
+			// This churner acknowledges SIGTERM but never exits, so teardown
+			// must escalate to SIGKILL; the acknowledgement wait guarantees the
+			// marker is written before escalation can fire.
+			(termChild) => waitForOutput(termChild, "term-observed"),
+		);
 		expect(readFileSync(newMarker, "utf8")).toBe("term-observed");
 		rmSync(newMarker, { force: true });
 		expect(() => rmSync(newRoot, { recursive: true })).toThrow(/ENOENT/);
@@ -96,7 +122,15 @@ describe("process teardown", () => {
 		const marker = join(tmpdir(), `senpi-teardown-graceful-marker-${process.pid}`);
 		const child = spawnChurner(root, marker, true);
 		await waitForOutput(child, "ready");
-		await teardownChildProcessesAndRoots([child], [root]);
+		await teardownChildProcessesAndRoots(
+			[child],
+			[root],
+			undefined,
+			// Await the child's own acknowledgement that it handled SIGTERM
+			// (it exits in the same handler turn), so the exit deadline can
+			// never preempt the graceful path under load.
+			(termChild) => waitForOutput(termChild, "term-observed"),
+		);
 		expect(readFileSync(marker, "utf8")).toBe("term-observed");
 		expect(child.exitCode).toBe(0);
 		expect(child.signalCode).not.toBe("SIGKILL");

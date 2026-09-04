@@ -80,7 +80,6 @@ function manifestMonitor(overrides: Partial<ManifestMonitor> & Pick<ManifestMoni
 		suspended: true,
 		lastCheckpoint: null,
 		deliveryPaused: false,
-		wakeCount: 0,
 		fireWindow: { startMs: 1, count: 0 },
 		...overrides,
 	};
