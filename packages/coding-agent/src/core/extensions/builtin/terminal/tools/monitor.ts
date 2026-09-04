@@ -3,6 +3,7 @@ import { type Static, Type } from "typebox";
 import { APPROVED_MONITOR_PARENT } from "../monitor-permission.ts";
 import { MonitorRegistry } from "../monitor-registry.ts";
 import { DEFAULT_COLS, DEFAULT_ROWS, TERMINAL_MONITOR_TOOL } from "../shared.ts";
+import type { MonitorRegistration, TerminalManifestWriter } from "../terminal-manifest.ts";
 import {
 	errorResult,
 	resolveTerminalId,
@@ -131,12 +132,47 @@ async function createMonitor(
 	ctx.onMonitorRearmed?.(id);
 	const monitorId = registry.register({ id, description: input.description, runtime, filter });
 	ctx.manager.bindMonitorId(monitorId, id);
+	// The tool call site is the only place the branch inputs (command, persistent, filter)
+	// live; hand the captured spec to the session's manifest writer for durable recording.
+	handMonitorSpec(manifestSessionKey(ctx), {
+		monitorId,
+		spec: {
+			kind: "command",
+			description: input.description,
+			command: input.command,
+			filter: input.filter,
+			cwd: execCtx?.cwd,
+			persistent: input.persistent === true,
+		},
+	});
 	return textResult(`Monitor started with ID: ${monitorId}`, {
 		details: { monitor_id: monitorId, bash_id: id, monitor: true },
 	});
 }
 
 /** Build the PTY-backed monitor tool. Monitor handles share TerminalManager's bash_N namespace. */
+const manifestWriters = new Map<string, TerminalManifestWriter>();
+
+/** Bind the session's manifest writer so monitor tool calls can hand it specs captured at the call site. */
+export function bindTerminalManifestWriter(sessionId: string, writer: TerminalManifestWriter): void {
+	manifestWriters.set(sessionId, writer);
+}
+
+export function unbindTerminalManifestWriter(sessionId: string): void {
+	manifestWriters.delete(sessionId);
+}
+
+/** The durability session key for a tool context: the agent session id, when the context carries one. */
+function manifestSessionKey(ctx: TerminalToolContext): string | undefined {
+	return ctx.getSessionContext?.()?.sessionManager?.getSessionId?.();
+}
+
+/** Hand a spec captured at the monitor tool call site to the session's bound writer, if any. */
+function handMonitorSpec(sessionKey: string | undefined, registration: MonitorRegistration): void {
+	const writer = sessionKey === undefined ? undefined : manifestWriters.get(sessionKey);
+	void writer?.recordRegister(registration);
+}
+
 export function createMonitorTool(ctx: TerminalToolContext) {
 	let fallbackRegistry: MonitorRegistry | undefined;
 	const getRegistry = (): MonitorRegistry => {
@@ -201,21 +237,31 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 				if (!ctx.monitorRegistry)
 					return errorResult("Native file monitors require a lifecycle-owned monitor registry.");
 				try {
+					const approvedParent = (input as Record<string | symbol, unknown>)[APPROVED_MONITOR_PARENT] as
+						| string
+						| undefined;
 					const { id, monitorId } = await ctx.monitorRegistry.registerFile({
 						description: input.description,
 						path: input.path,
 						event: input.event ?? "create",
 						timeoutMs: resolveTimeoutMs(input.timeout_ms),
 						cwd: execCtx?.cwd ?? ctx.cwd,
-						...((input as Record<string | symbol, unknown>)[APPROVED_MONITOR_PARENT] !== undefined
-							? {
-									approvedParent: (input as Record<string | symbol, unknown>)[
-										APPROVED_MONITOR_PARENT
-									] as string,
-								}
-							: {}),
+						...(approvedParent !== undefined ? { approvedParent } : {}),
 					});
 					ctx.manager.bindMonitorId(monitorId, id);
+					// Same spec capture as the command branch: durability inputs live only here.
+					handMonitorSpec(manifestSessionKey(ctx), {
+						monitorId,
+						spec: {
+							kind: "file",
+							description: input.description,
+							path: input.path,
+							event: input.event ?? "create",
+							timeoutMs: resolveTimeoutMs(input.timeout_ms),
+							cwd: execCtx?.cwd ?? ctx.cwd,
+							...(approvedParent !== undefined ? { approvedParent } : {}),
+						},
+					});
 					return textResult(`Monitor started with ID: ${monitorId}`, {
 						details: { monitor_id: monitorId, bash_id: id, monitor: true },
 					});
