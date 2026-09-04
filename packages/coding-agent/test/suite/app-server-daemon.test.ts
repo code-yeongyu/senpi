@@ -112,7 +112,10 @@ describe("app-server daemon state", () => {
 		});
 		await withTimeout(once(child, "spawn"), 2_000, "child process did not spawn");
 		if (child.pid === undefined) throw new Error("expected child pid");
+		// The fixture child is live, so its identity must resolve; waitForStartTime returns undefined
+		// only when the probe is starved on a loaded host, which this fixture does not exercise.
 		const processStartTime = await waitForStartTime(child.pid, 5_000);
+		if (processStartTime === undefined) throw new Error("fixture child had no process identity");
 		const pidFile = { pid: child.pid, processStartTime };
 		await rm(stateDir, { recursive: true, force: true });
 
