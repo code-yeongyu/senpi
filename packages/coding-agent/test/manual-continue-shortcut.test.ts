@@ -14,6 +14,7 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PromptDisposition } from "../src/core/agent-session.ts";
 import { MANUAL_CONTINUE_CUSTOM_TYPE, MANUAL_CONTINUE_DIRECTIVE } from "../src/core/manual-continue.ts";
+import type { CustomMessage } from "../src/core/messages.ts";
 import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./suite/harness.ts";
 
 type EchoRecorderOptions = {
@@ -39,9 +40,10 @@ function recordEchoResolution(): {
 	};
 }
 
-function getManualContinueMessages(harness: Harness) {
+function getManualContinueMessages(harness: Harness): CustomMessage[] {
 	return harness.session.messages.filter(
-		(message) => message.role === "custom" && message.customType === MANUAL_CONTINUE_CUSTOM_TYPE,
+		(message): message is CustomMessage =>
+			message.role === "custom" && message.customType === MANUAL_CONTINUE_CUSTOM_TYPE,
 	);
 }
 
