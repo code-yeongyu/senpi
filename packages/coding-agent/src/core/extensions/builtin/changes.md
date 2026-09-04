@@ -1,5 +1,30 @@
 # Builtin extensions changes
 
+## Hooks trust-state reads fail open when the lock directory is not writable (2026-09-04)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/trust-storage.ts`: `FileHookStateStorage.read()` still
+  parses the on-disk snapshot lock-free. When that parse is empty or malformed and lock acquisition then fails with
+  `EPERM`, `EACCES`, or `EROFS`, the reader now returns the same fail-open empty state already used for `ELOCKED`.
+  `update()` is unchanged and still throws on permission errors.
+
+### Why
+
+- Sandboxed or read-only children (macOS seatbelt `deny file-write*`, bwrap `--ro-bind`, a read-only HOME) cannot
+  mkdir the `hooks-state.json.lock` directory. That error used to propagate out of the tool_call hook and fail every
+  tool call. A reader that cannot take a lock must not break tool execution; writers must still fail closed.
+
+### Why an extension could not handle it
+
+- The hooks builtin owns this persistence path and calls `storage.read()` on session_start, input, tool_call, and
+  tool_result before any user extension can intercept the failure.
+
+### Expected merge conflict zones
+
+- LOW in `packages/coding-agent/src/core/extensions/builtin/hooks/trust-storage.ts` around `FileHookStateStorage.read`'s
+  lock-acquisition catch. Keep `EPERM`/`EACCES`/`EROFS` fail-open on read only; writers must still throw.
+
 ## Loop-owned exposure for `schedule_wakeup` (2026-09-04)
 
 ### What changed
