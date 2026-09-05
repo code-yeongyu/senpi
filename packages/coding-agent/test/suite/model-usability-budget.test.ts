@@ -243,8 +243,94 @@ describe("model usability budget", () => {
 				model: `${model.provider}/${model.id}`,
 				liveContextTokens: expect.any(Number),
 				usable: false,
+				admission: "resume",
+				speculationLeadTokens: 0,
 			},
 		});
+		expect(error).toBeInstanceOf(ModelUsabilityBudgetError);
+		if (!(error instanceof ModelUsabilityBudgetError)) throw new Error("expected resume budget rejection");
+		expect(error.message).toContain("cannot resume");
+		expect(error.message).not.toContain("cannot switch");
+		expect(error.message).not.toContain("retry the model switch");
+	});
+
+	it("resumes a restored transcript that only the speculation lead would have rejected", async () => {
+		// given
+		const harness = await createHarness({
+			models: [{ id: "startup", contextWindow: 1_050_000, maxTokens: 128_000 }],
+		});
+		harnesses.push(harness);
+		const model = harness.getModel();
+		const probe = await createAgentSession({
+			cwd: harness.tempDir,
+			agentDir: join(harness.tempDir, "resume-lead-probe"),
+			model,
+			sessionManager: SessionManager.inMemory(harness.tempDir),
+		});
+		const compaction = probe.session.settingsManager.getCompactionSettings();
+		const empty = projectModelUsabilityBudget({
+			model,
+			systemPrompt: probe.session.agent.state.systemPrompt,
+			tools: probe.session.agent.state.tools,
+			compaction,
+			includeSpeculationLead: false,
+			admission: "resume",
+		});
+		const withLead = projectModelUsabilityBudget({
+			model,
+			systemPrompt: probe.session.agent.state.systemPrompt,
+			tools: probe.session.agent.state.tools,
+			compaction,
+			includeSpeculationLead: true,
+			admission: "resume",
+		});
+		const systemPrompt = probe.session.agent.state.systemPrompt;
+		const tools = probe.session.agent.state.tools;
+		probe.session.dispose();
+		expect(withLead.speculationLeadTokens).toBeGreaterThan(1_000);
+		const liveContextTokens = model.contextWindow - empty.requiredTokens - withLead.speculationLeadTokens + 1_000;
+		expect(liveContextTokens).toBeGreaterThan(0);
+		expect(
+			projectModelUsabilityBudget({
+				model,
+				systemPrompt,
+				tools,
+				liveContextTokens,
+				compaction,
+				includeSpeculationLead: true,
+				admission: "resume",
+			}).usable,
+		).toBe(false);
+		expect(
+			projectModelUsabilityBudget({
+				model,
+				systemPrompt,
+				tools,
+				liveContextTokens,
+				compaction,
+				includeSpeculationLead: false,
+				admission: "resume",
+			}).usable,
+		).toBe(true);
+		const sessionManager = SessionManager.inMemory(harness.tempDir);
+		sessionManager.appendMessage({
+			role: "user",
+			// Spaces break the base64-run weighting so chars/4 stays 1:1 with liveContextTokens.
+			content: [{ type: "text", text: "! ".repeat(liveContextTokens * 2) }],
+			timestamp: Date.now(),
+		});
+
+		// when
+		const resumed = await createAgentSession({
+			cwd: harness.tempDir,
+			agentDir: join(harness.tempDir, "resume-lead-gap"),
+			model,
+			sessionManager,
+		});
+
+		// then
+		expect(resumed.session.agent.state.messages).toHaveLength(1);
+		resumed.session.dispose();
 	});
 
 	it("keeps fresh and fitting resumed sessions accepted", async () => {
@@ -303,6 +389,45 @@ describe("model usability budget", () => {
 		// then
 		expect(atBoundary).toMatchObject({ usable: true, requiredTokens: 36_769, shortfallTokens: 0 });
 		expect(belowBoundary).toMatchObject({ usable: false, requiredTokens: 36_769, shortfallTokens: 1 });
+	});
+
+	it("omits speculation lead from a restored-transcript projection when asked", async () => {
+		// given
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const model = { ...harness.getModel(), contextWindow: 1_050_000, maxTokens: 128_000 };
+		const compaction = harness.settingsManager.getCompactionSettings();
+		const liveContextTokens = 850_000;
+
+		// when
+		const charged = projectModelUsabilityBudget({
+			model,
+			systemPrompt: "x",
+			tools: [],
+			liveContextTokens,
+			compaction,
+			admission: "resume",
+		});
+		const omitted = projectModelUsabilityBudget({
+			model,
+			systemPrompt: "x",
+			tools: [],
+			liveContextTokens,
+			compaction,
+			includeSpeculationLead: false,
+			admission: "resume",
+		});
+
+		// then
+		expect(charged.speculationLeadTokens).toBeGreaterThan(0);
+		expect(omitted).toMatchObject({
+			speculationLeadTokens: 0,
+			admission: "resume",
+			liveContextTokens,
+		});
+		expect(charged.requiredTokens - omitted.requiredTokens).toBe(charged.speculationLeadTokens);
+		expect(charged.usable).toBe(false);
+		expect(omitted.usable).toBe(true);
 	});
 
 	it("preserves disabled compaction and speculation opt-outs", async () => {
