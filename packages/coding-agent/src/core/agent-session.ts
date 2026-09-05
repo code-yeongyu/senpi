@@ -451,6 +451,16 @@ export type AgentSessionEvent =
 			thinkingLevel: ThinkingLevel;
 			source: ModelSelectSource;
 	  }
+	| {
+			type: "model_change_skipped";
+			model: Model<any>;
+			contextWindow: number;
+			liveContextTokens: number;
+			requiredTokens: number;
+			shortfallTokens: number;
+			safetyMarginProfile: string;
+			direction: "forward" | "backward";
+	  }
 	/** Effective service tier or fast-mode state changed. */
 	| { type: "service_tier_changed"; tier?: ServiceTier; fastMode: boolean }
 	| {
@@ -801,6 +811,8 @@ export interface ModelCycleResult {
 	thinkingLevel: ThinkingLevel;
 	/** Whether cycling used the configured favorite model list */
 	isScoped: boolean;
+	/** Models skipped because their usability budget cannot admit the current context. */
+	skippedModels: readonly Model<any>[];
 	/** Present when the model switch also changed the active system prompt. */
 	systemPromptChange?: SystemPromptChangeEvent;
 }
@@ -1794,6 +1806,18 @@ export class AgentSession {
 		this.abortBranchSummary();
 		this._delegatedCompactionKey = undefined;
 		this._incrementMessageRevision();
+	}
+
+	private _modelChangeWouldExhaustContext(model: Model<Api>): ReturnType<typeof projectModelUsabilityBudget> | undefined {
+		if (model.contextWindow <= 0) return undefined;
+		const projection = projectModelUsabilityBudget({
+			model,
+			systemPrompt: this.agent.state.systemPrompt,
+			tools: this.agent.state.tools,
+			liveContextTokens: this._getDownswitchLiveContextTokens(model),
+			compaction: this.settingsManager.getCompactionSettings(),
+		});
+		return projection.usable ? undefined : projection;
 	}
 
 	private _getIdleWaitPromise(): Promise<void> {
@@ -4777,6 +4801,7 @@ export class AgentSession {
 		if (favoriteModels.length <= 1) return undefined;
 
 		const currentModel = this.model;
+		if (!currentModel) return undefined;
 		const currentIndex = favoriteModels.findIndex((sm) => modelsAreEqual(sm.model, currentModel));
 
 		let nextIndex: number;
@@ -4786,7 +4811,40 @@ export class AgentSession {
 			const len = favoriteModels.length;
 			nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
 		}
-		const next = favoriteModels[nextIndex];
+		const favoriteCount = favoriteModels.length;
+		const step = direction === "forward" ? 1 : -1;
+		let selectedIndex: number | undefined;
+		const skippedModels: Model<any>[] = [];
+		for (let offset = 0; offset < favoriteCount; offset++) {
+			const candidate = favoriteModels[(nextIndex + step * offset + favoriteCount) % favoriteCount];
+			if (modelsAreEqual(candidate.model, currentModel)) continue;
+			const admission = this._modelChangeWouldExhaustContext(candidate.model);
+			if (admission) {
+				skippedModels.push(candidate.model);
+				this._emit({
+					type: "model_change_skipped",
+					model: candidate.model,
+					contextWindow: candidate.model.contextWindow,
+					liveContextTokens: admission.liveContextTokens,
+					requiredTokens: admission.requiredTokens,
+					shortfallTokens: admission.shortfallTokens,
+					safetyMarginProfile: admission.safetyMarginProfile,
+					direction,
+				});
+				continue;
+			}
+			selectedIndex = (nextIndex + step * offset + favoriteCount) % favoriteCount;
+			break;
+		}
+		if (selectedIndex === undefined) {
+			return {
+				model: currentModel,
+				thinkingLevel: this.thinkingLevel,
+				isScoped: true,
+				skippedModels,
+			};
+		}
+		const next = favoriteModels[selectedIndex];
 		const liveContextTokens = this._getDownswitchLiveContextTokens(next.model);
 		this.assertModelUsable(next.model, liveContextTokens);
 		const invalidatesCompaction =
@@ -4828,6 +4886,7 @@ export class AgentSession {
 				model: next.model,
 				thinkingLevel: this.thinkingLevel,
 				isScoped: true,
+				skippedModels,
 			};
 			if (systemPromptChange) {
 				cycleResult.systemPromptChange = systemPromptChange;

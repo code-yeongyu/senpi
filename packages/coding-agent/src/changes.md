@@ -1,5 +1,29 @@
 # changes
 
+## 2026-09-05 - Ctrl+P skips favorites without context room
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` uses the existing model
+  usability projection before favorite cycling, emits `model_change_skipped`
+  events for rejected candidates, and reports all-skipped cycles explicitly.
+
+### Why
+
+- Ctrl+P is an explicit switch request. A model that cannot admit the current
+  context must be skipped instead of reaching the later usability assertion and
+  surfacing a failed switch.
+
+### Why an extension could not handle it
+
+- Favorite cycling and the session event stream are core runtime seams below the
+  extension API.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts` model event types and
+  favorite cycling.
+
 ## 2026-09-04 - Export the UI prompt events and apply terminal overrides in main
 
 ### What changed

@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
+import { modelsAreEqual, type AuthEvent, type AuthPrompt } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent, Usage } from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
@@ -4514,6 +4514,14 @@ export class InteractiveMode {
 				this.showStatus(`Thinking level: ${event.level}`);
 				break;
 
+			case "model_change_skipped":
+				this.showWarning(
+					`Skipped ${event.model.name || event.model.id}: current context needs ${event.shortfallTokens.toLocaleString()} ` +
+						`more tokens for its ${event.contextWindow.toLocaleString()}-token window ` +
+						`(${event.safetyMarginProfile} usability budget).`,
+				);
+				break;
+
 			case "high_reasoning_warning":
 				this.showHighReasoningWarning(event);
 				break;
@@ -6072,6 +6080,10 @@ export class InteractiveMode {
 						: buildFavoriteCycleStatusMessage("empty");
 				this.showStatus(msg);
 			} else {
+				if (result.skippedModels.length > 0 && modelsAreEqual(result.model, this.session.model)) {
+					this.showStatus("No favorite model can fit the current context. Compact the session or start a new one.");
+					return;
+				}
 				this.footer.invalidate();
 				// A model switch ends any external-owner delegation episode.
 				this.externalOwnerCompactionNoticeShown = false;

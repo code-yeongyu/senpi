@@ -1,5 +1,30 @@
 # changes
 
+## 2026-09-05 - Ctrl+P skips favorites without context room
+
+### What changed
+
+- `agent-session.ts` uses the existing `projectModelUsabilityBudget` projection
+  before favorite-model cycling, emits `model_change_skipped` for rejected
+  candidates, and continues in the requested direction. The cycle result
+  carries skipped models when every alternative is rejected.
+
+### Why
+
+- An explicit Ctrl+P switch request must skip a model that cannot admit the
+  current context instead of reaching the later usability assertion and
+  surfacing a failed switch.
+
+### Why an extension could not handle it
+
+- Favorite cycling and the session event stream are core runtime seams below the
+  extension API.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSessionEvent` union and `_cycleFavoriteModel` in
+  `agent-session.ts`.
+
 ## 2026-09-04 - File-storage locks wait through contention
 
 ### What changed

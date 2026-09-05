@@ -1,5 +1,33 @@
 # changes
 
+## 2026-09-05 - Ctrl+P skips favorites without context room
+
+### What changed
+
+- Favorite-model cycling emits a typed `model_change_skipped` event with the
+  target budget projection and continues in the requested direction.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` renders a
+  warning for each skipped model and a clear compact-or-new-session status when
+  every other favorite is rejected. The event is also forwarded through existing
+  session event transports, so desktop consumers do not need a desktop-specific
+  change.
+
+### Why
+
+- Ctrl+P is an explicit request to switch models. A target that cannot admit
+  the current context must be skipped rather than surfacing the later
+  `ModelUsabilityBudgetError` as a failed switch.
+
+### Why an extension could not handle it
+
+- Favorite cycling, model usability admission, and the session event stream are
+  core host seams below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: `AgentSessionEvent`, `ModelCycleResult`, and `_cycleFavoriteModel`.
+- LOW: the interactive `handleEvent` and cycle status path.
+
 ## 2026-09-04 - Branded build labels render verbatim in startup UI
 
 ### What changed
@@ -127,3 +155,47 @@
 ### Expected merge conflict zones
 
 - LOW: assistant diagnostics and thinking-toggle regression tests when upstream adds renderer-specific expectations.
+# 2026-09-05 - Ctrl+P skips models without context room
+
+### What changed
+
+- Favorite-model cycling emits a typed `model_change_skipped` event and continues
+  in the requested direction when a candidate model cannot leave the provider's
+  minimum answer room for the current conversation.
+- Interactive mode renders the event as a warning naming the skipped model and
+  the current context/window measurements. The desktop app can consume the event
+  without requiring a desktop-specific code change.
+
+### Why
+
+- Ctrl+P is an explicit request to switch, so a model that cannot admit the
+  current context must not block the request or silently look like a failed
+  switch. The next usable favorite is selected instead, while the skipped
+  candidate remains visible to the user.
+
+### Expected merge conflict zones
+
+- LOW: `AgentSessionEvent` model event union and `_cycleFavoriteModel`.
+- LOW: the interactive `handleEvent` switch.
+# 2026-09-05 - Ctrl+P skips models without context room
+
+### What changed
+
+- Favorite-model cycling emits a typed `model_change_skipped` event and continues
+  in the requested direction when a candidate model cannot leave the provider's
+  minimum answer room for the current conversation.
+- Interactive mode renders the event as a warning naming the skipped model and
+  the current context/window measurements. The desktop app can consume the event
+  without requiring a desktop-specific code change.
+
+### Why
+
+- Ctrl+P is an explicit request to switch, so a model that cannot admit the
+  current context must not block the request or silently look like a failed
+  switch. The next usable favorite is selected instead, while the skipped
+  candidate remains visible to the user.
+
+### Expected merge conflict zones
+
+- LOW: `AgentSessionEvent` model event union and `_cycleFavoriteModel`.
+- LOW: the interactive `handleEvent` switch.
