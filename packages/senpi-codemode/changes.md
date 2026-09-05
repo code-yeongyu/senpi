@@ -1,5 +1,40 @@
 # senpi-codemode fork changes
 
+## 2026-09-05 - GPT eval dialect routes waits through tool.monitor
+
+### What changed
+
+- `src/prompt/eval-prompt.ts`: in `<gpt_eval_dialect>` the `tool.monitor` line moves ahead of the
+  detach line and reads "A wait or a long run (build, test run, deploy, watch) starts through
+  `tool.monitor({ command, filter })` in that same cell with the decisive-line filter; its event wakes
+  the turn, so no cell sits on the wait and no child is spawned for it." The detach sentence is
+  unchanged and now describes computation cells. The GPT batching guideline (the line senpi renders
+  under `## Tool Guidelines`) becomes monitor-aware: with `monitor` reachable it reads "Use eval to
+  compose tool work in one cell; a wait or a long run starts through `tool.monitor` in that cell, so
+  no cell sits on it and nothing polls."; without it the previous detach wording stays.
+- `test/prompt.test.ts`: pins the monitor-aware guideline copy for `gpt-5.6` with `monitor: true`,
+  and that the gpt description names `tool.monitor(` before "detach on timeout" and carries "no cell
+  sits on the wait". Existing gating and dialect assertions are unchanged.
+
+### Why
+
+- The GPT guideline said "long cells detach on timeout and notify on completion, so do not poll" -
+  the only wait mechanism the system prompt named for GPT models, while the subscription route lived
+  three lines down in the tool description. A multi-round backtest against the real `gpt-6-astra`
+  (eval-only tool shape) showed the consequence on a CI-then-merge request: 2 of 3 samples awaited
+  `gh pr checks --watch` through `Bun.spawn` inside a cell, a form the guideline sanctioned. Two routes
+  for one situation is the contradiction the GPT-5.6 guide warns about; the guideline now names the
+  route, the description states the cost once (a cell that waits holds the kernel; a child spawned
+  to watch burns a session), and the detach fact stays as mechanics rather than advice.
+
+### Why extension system couldn't handle this differently
+
+- Prompt text owned by this package; no runtime behavior changed.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: fork-only dialect text and its test.
+
 ## 2026-09-04 - eval tool description diet, second pass
 
 ### What changed
