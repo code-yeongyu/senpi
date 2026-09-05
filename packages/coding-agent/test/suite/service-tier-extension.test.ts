@@ -73,8 +73,16 @@ describe("service-tier builtin extension", () => {
 			api: CODEX_API,
 			provider: CODEX_PROVIDER,
 			models: [
-				{ id: FAST_MODEL_ID, thinkingLevelMap: { off: null, low: "low", medium: "medium", high: "high" } },
-				{ id: BASE_MODEL_ID, thinkingLevelMap: { off: null, low: "low", medium: "medium", high: "high" } },
+				{
+					id: FAST_MODEL_ID,
+					reasoning: true,
+					thinkingLevelMap: { off: null, low: "low", medium: "medium", high: "high" },
+				},
+				{
+					id: BASE_MODEL_ID,
+					reasoning: true,
+					thinkingLevelMap: { off: null, low: "low", medium: "medium", high: "high" },
+				},
 			],
 			upstreamModelId: BASE_MODEL_ID,
 			serviceTier: "priority",
