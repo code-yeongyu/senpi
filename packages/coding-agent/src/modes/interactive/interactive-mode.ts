@@ -3182,13 +3182,6 @@ export class InteractiveMode {
 							this.getWorkingIndicatorOptions(),
 						),
 			);
-			this.showStatusIndicator(
-				new WorkingStatusIndicator(
-					this.ui,
-					this.workingMessage ?? this.defaultWorkingMessage,
-					this.workingIndicatorOptions,
-				),
-			);
 		}
 		this.ui.requestRender();
 	}
