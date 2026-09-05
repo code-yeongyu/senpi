@@ -6,10 +6,11 @@
 
 - Favorite-model cycling emits a typed `model_change_skipped` event with the
   target budget projection and continues in the requested direction.
-- Interactive mode renders a warning for each skipped model and a clear
-  compact-or-new-session status when every other favorite is rejected. The
-  event is also forwarded through existing session event transports, so desktop
-  consumers do not need a desktop-specific change.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` renders a
+  warning for each skipped model and a clear compact-or-new-session status when
+  every other favorite is rejected. The event is also forwarded through existing
+  session event transports, so desktop consumers do not need a desktop-specific
+  change.
 
 ### Why
 
