@@ -4839,6 +4839,18 @@ export class AgentSession {
 			break;
 		}
 		if (selectedIndex === undefined) {
+			// Every candidate was inadmissible. Skipping only makes sense when there was somewhere else
+			// to skip TO: with more than one alternative the cycle reports the skipped list and stays put
+			// (#1378's convenience). With a single alternative the user asked for THAT model, so the
+			// documented ModelUsabilityBudgetError still surfaces instead of a silent no-op.
+			const alternatives = favoriteModels.filter((entry) => !modelsAreEqual(entry.model, currentModel));
+			const onlyAlternative = alternatives.length === 1 ? alternatives[0] : undefined;
+			if (onlyAlternative) {
+				this.assertModelUsable(
+					onlyAlternative.model,
+					this._getDownswitchLiveContextTokens(onlyAlternative.model),
+				);
+			}
 			return {
 				model: currentModel,
 				thinkingLevel: this.thinkingLevel,

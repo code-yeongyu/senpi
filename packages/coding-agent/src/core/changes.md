@@ -26,6 +26,11 @@
   before favorite-model cycling, emits `model_change_skipped` for rejected
   candidates, and continues in the requested direction. The cycle result
   carries skipped models when every alternative is rejected.
+- Skipping requires somewhere to skip TO: when the rotation holds several
+  alternatives and all are rejected, the cycle reports the skipped list and
+  stays on the current model, but a lone rejected alternative is an explicit
+  switch request and still raises `ModelUsabilityBudgetError` as it did before
+  candidate skipping existed.
 
 ### Why
 

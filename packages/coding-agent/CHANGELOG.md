@@ -10,6 +10,10 @@
 - Persistent monitors now survive repeated restarts: file watches are re-registered and compare their persisted checkpoint once, reporting exactly one detached created, replaced, or modified change (and nothing when unchanged), while command watches are re-run once under the same `mon_` id without replaying pre-restart output. Sessions may keep up to five durable watches; each expires seven days after creation without extending that deadline on restart or rearm, and a watch muted by the wake budget remains muted when restored.
 - A standing watch that exceeds its 200-line matching-event budget within a rolling 24-hour window now mutes itself and says so once, telling you to rearm it; rearming resumes the watch, ordinary one-shot monitors are never counted, and the window survives restarts so a noisy watch cannot receive a fresh allowance.
 
+### Fixed
+
+- Favorite-model cycling (Ctrl+P) no longer breaks callers that predate the skipped-model list, and it raises the documented model-usability budget error again when the single alternative cannot host the current context instead of silently staying on the current model.
+
 ### Changed
 
 - The GPT-6 Astra prompt preset now treats the asynchronous form as the default for every call that offers one (child tasks and bash sessions start in the background, long eval cells detach) and names the only two cases for blocking, so a single dependent delegation is spawned in the background and the turn ends to wait instead of blocking on it.
