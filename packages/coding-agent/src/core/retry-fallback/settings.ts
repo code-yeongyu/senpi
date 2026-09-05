@@ -29,35 +29,10 @@ export interface ResolvedRetryFallbackSettings {
 }
 
 /**
- * Shipped defaults are declared as model families (bare ids, no provider prefix).
- * `canonicalizeFallbackChains` expands them against the live registry, so the
- * chain follows Fable 5 whichever provider serves it - the builtin Anthropic
- * provider, the Claude SDK OAuth extension, a gateway, or Bedrock.
+ * Fallback chains are explicit user configuration only. There is deliberately
+ * no shipped default or wildcard lane.
  */
-export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {
-	// `kimi-k3:max` is an alias entry for providers that expose Kimi K3 under the
-	// vendor-prefixed id `kimi-k3` (e.g. OpenCode Go), which the conservative `k3`
-	// family matcher intentionally cannot capture (issue #793).
-	"claude-fable-5-1": ["k3:max", "kimi-k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
-	"claude-fable-5": ["k3:max", "kimi-k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
-	// Last-resort lane for models with no chain of their own. resolveChainKey
-	// falls through exact -> base -> "*", so any current model whose upstream
-	// hard-fails can still escape instead of wedging the session terminal
-	// (desktop thread 487d7c29, 2026-08-28: nine consecutive upstream 500s on a
-	// chainless model, zero fallback attempts). Same lane order as the Fable
-	// default: cheap family escape first, then the Opus tiers. The candidate
-	// walk skips the failing model itself ("self"), tried selectors, cooldowns,
-	// and unauthenticated providers. Disable with the `"*": []` tombstone.
-	"*": ["k3:max", "kimi-k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
-};
-
-function cloneDefaultFallbackChains(): Record<string, readonly string[]> {
-	const chains: Record<string, readonly string[]> = {};
-	for (const [key, entries] of Object.entries(DEFAULT_FALLBACK_CHAINS)) {
-		chains[key] = [...entries];
-	}
-	return chains;
-}
+export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {};
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -80,15 +55,10 @@ function isStringArray(value: unknown): value is string[] {
  * `deepMergeSettings`; this only resolves defaults against the merged result.
  */
 function resolveFallbackChains(value: unknown): FallbackChains {
-	if (value === undefined) return cloneDefaultFallbackChains();
-	if (!isPlainObject(value)) return cloneDefaultFallbackChains();
-
-	const chains: Record<string, readonly string[]> = cloneDefaultFallbackChains();
+	if (value === undefined || !isPlainObject(value)) return {};
+	const chains: Record<string, readonly string[]> = {};
 	for (const [key, entries] of Object.entries(value)) {
-		if (!isStringArray(entries)) return cloneDefaultFallbackChains();
-		// An empty list stays in the map as a tombstone: canonicalization needs it to
-		// suppress the expanded default for that family or provider variant, and
-		// dropping it here would let the shipped default reappear after expansion.
+		if (!isStringArray(entries)) return {};
 		chains[key] = [...entries];
 	}
 	return chains;
