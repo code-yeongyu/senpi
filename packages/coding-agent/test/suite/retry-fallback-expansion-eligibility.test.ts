@@ -75,7 +75,8 @@ describe("bare expansion eligibility gate", () => {
 		const withCursor = [...catalog, model("cursor", OPUS5)];
 		const chains = canonicalizeFallbackChains(BARE_CHAINS, {
 			getAll: () => withCursor,
-			isUsingOAuth: (candidate: Model<Api>) => candidate.provider === "claude-sdk-oauth" || candidate.provider === "cursor",
+			isUsingOAuth: (candidate: Model<Api>) =>
+				candidate.provider === "claude-sdk-oauth" || candidate.provider === "cursor",
 		});
 
 		const entries = chains[`anthropic/${FABLE}`] ?? [];
