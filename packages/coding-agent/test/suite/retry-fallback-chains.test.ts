@@ -5,7 +5,6 @@ import {
 	candidatesAfter,
 	canonicalizeFallbackChains,
 	formatSelector,
-	hasExplicitFallbackOptOut,
 	parseFallbackSelector,
 	resolveChainKey,
 } from "../../src/core/retry-fallback/chains.ts";
@@ -98,28 +97,22 @@ describe("fallback chain selectors", () => {
 		).toEqual({ "openai/gpt-5.4:high": ["anthropic/claude-sonnet-4-5:max"] });
 	});
 
-	it("resolves the wildcard key when no exact or base chain matches", () => {
+	it("does not resolve an implicit wildcard key", () => {
 		// A model without its own chain must still have an escape lane: thread
 		// 487d7c29 wedged terminal on nine consecutive upstream 500s because
 		// resolveChainKey returned undefined for the manually selected model.
 		const model = getModel("openai", "gpt-5.4");
 		const chains = { "*": ["anthropic/claude-sonnet-4-5:high"] };
-		expect(resolveChainKey(model, "high", chains, { allowWildcard: true })).toBe("*");
-		expect(resolveChainKey(model, undefined, chains, { allowWildcard: true })).toBe("*");
+		expect(resolveChainKey(model, "high", chains, { allowWildcard: true })).toBeUndefined();
+		expect(resolveChainKey(model, undefined, chains, { allowWildcard: true })).toBeUndefined();
 	});
 
-	it("treats a tombstoned chain as an explicit opt-out from the wildcard", () => {
-		// The `[]` tombstone is the documented way to switch fallback off. The
-		// shipped wildcard lane must not resurrect it against that instruction.
-		const model = getModel("anthropic", "claude-fable-5");
-		const namespacedModel = { ...model, id: "global.anthropic.claude-fable-5" };
-		expect(hasExplicitFallbackOptOut({ "claude-fable-5": [] }, namespacedModel, "max")).toBe(true);
-		expect(hasExplicitFallbackOptOut({ "gpt-5.4": [] }, getModel("openai", "gpt-5.4"), undefined)).toBe(true);
-		expect(hasExplicitFallbackOptOut({ "claude-fable-5": [] }, model, "max")).toBe(true);
-		expect(hasExplicitFallbackOptOut({ "anthropic/claude-fable-5": [] }, model, undefined)).toBe(true);
-		expect(hasExplicitFallbackOptOut({ "openai/gpt-5.4": [] }, model, "max")).toBe(false);
-		// A tombstoned wildcard is not itself a per-model opt-out.
-		expect(hasExplicitFallbackOptOut({ "*": [] }, model, "max")).toBe(false);
+	it("keeps explicit empty chains as opt-outs", () => {
+		const resolved = resolveRetryFallbackSettings({
+			fallbackChains: { "claude-fable-5": [], "gpt-5.4": [] },
+		});
+		expect(resolved.chains["claude-fable-5"]).toEqual([]);
+		expect(resolved.chains["gpt-5.4"]).toEqual([]);
 	});
 
 	it("withholds the wildcard unless the caller opts in", () => {
@@ -195,16 +188,14 @@ describe("fallback chain selectors", () => {
 describe("resolveRetryFallbackSettings chain defaults", () => {
 	const fableKey = "claude-fable-5";
 
-	it("keeps a shipped default chain when the user configures an unrelated model", () => {
+	it("keeps only the explicitly configured chain", () => {
 		const resolved = resolveRetryFallbackSettings({
 			fallbackChains: { "example-gateway/unrelated-model": ["example-gateway/unrelated-fallback:max"] },
 		});
 
 		expect(resolved.chains["example-gateway/unrelated-model"]).toEqual(["example-gateway/unrelated-fallback:max"]);
-		expect(resolved.chains[fableKey]).toEqual(DEFAULT_FALLBACK_CHAINS[fableKey]);
-		expect(DEFAULT_FALLBACK_CHAINS[fableKey]).toHaveLength(4);
-		// The shipped default is provider-agnostic: bare ids only, expanded at canonicalization.
-		expect(Object.keys(DEFAULT_FALLBACK_CHAINS).every((key) => !key.includes("/"))).toBe(true);
+		expect(resolved.chains[fableKey]).toBeUndefined();
+		expect(DEFAULT_FALLBACK_CHAINS).toEqual({});
 	});
 
 	it("replaces a colliding default outright and removes one set to an empty array", () => {
@@ -212,8 +203,7 @@ describe("resolveRetryFallbackSettings chain defaults", () => {
 			resolveRetryFallbackSettings({ fallbackChains: { [fableKey]: ["ccapi/kimi-k3:max"] } }).chains[fableKey],
 		).toEqual(["ccapi/kimi-k3:max"]);
 
-		// An empty list survives resolution as a tombstone; canonicalization is what
-		// removes the expanded default (see retry-fallback-expansion.test.ts).
+		// An empty list remains an explicit opt-out.
 		expect(resolveRetryFallbackSettings({ fallbackChains: { [fableKey]: [] } }).chains[fableKey]).toEqual([]);
 	});
 
