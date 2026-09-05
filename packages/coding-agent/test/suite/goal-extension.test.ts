@@ -18,6 +18,7 @@ type SentMessage = { message: { customType: string; content: string; display: bo
 interface GoalHarness {
 	tools: Map<string, AnyTool>;
 	commands: Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>;
+	rpcHandlers: Map<string, (data: unknown) => Promise<unknown> | unknown>;
 	handlers: Map<string, Handler[]>;
 	sent: SentMessage[];
 	continuationQueued: Promise<void>;
@@ -26,6 +27,7 @@ interface GoalHarness {
 function createGoalHarness(): GoalHarness {
 	const tools = new Map<string, AnyTool>();
 	const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
+	const rpcHandlers = new Map<string, (data: unknown) => Promise<unknown> | unknown>();
 	const handlers = new Map<string, Handler[]>();
 	const sent: SentMessage[] = [];
 	let markContinuationQueued: () => void = () => {};
@@ -36,6 +38,11 @@ function createGoalHarness(): GoalHarness {
 		registerTool: (tool: AnyTool) => tools.set(tool.name, tool),
 		registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) =>
 			commands.set(name, options),
+		rpc: {
+			emit: () => {},
+			handle: (name: string, handler: (data: unknown) => Promise<unknown> | unknown) =>
+				rpcHandlers.set(name, handler),
+		},
 		on: (event: string, handler: Handler) => {
 			const list = handlers.get(event) ?? [];
 			list.push(handler);
@@ -49,7 +56,7 @@ function createGoalHarness(): GoalHarness {
 		appendEntry: () => {},
 	} as unknown as ExtensionAPI;
 	goalExtension(pi);
-	return { tools, commands, handlers, sent, continuationQueued };
+	return { tools, commands, rpcHandlers, handlers, sent, continuationQueued };
 }
 
 const tempDirs: string[] = [];
@@ -129,11 +136,36 @@ describe("goal extension contract (budget-free)", () => {
 		await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 	});
 
-	it("registers the three codex-aligned tools and the /goal command", () => {
-		const { tools, commands } = createGoalHarness();
+	it("registers the three codex-aligned tools, the /goal command, and direct goal control RPC", () => {
+		const { tools, commands, rpcHandlers } = createGoalHarness();
 		expect([...tools.keys()].sort()).toEqual(["create_goal", "get_goal", "update_goal"]);
 		expect(commands.has("goal")).toBe(true);
+		expect(rpcHandlers.has("omo.goal.control")).toBe(true);
 	});
+
+	it("controls pause, resume, and clear through the typed goal RPC", async () => {
+		const { tools, handlers, rpcHandlers } = createGoalHarness();
+		const ctx = await makeCtx("thread-rpc-control");
+		await tools.get("create_goal")?.execute("c1", { objective: "Control directly" }, undefined, undefined, ctx);
+		await runHandlers(handlers, "session_start", { type: "session_start", reason: "startup" }, ctx);
+		const control = rpcHandlers.get("omo.goal.control");
+		if (!control) throw new Error("missing goal control RPC");
+
+		await expect(control({ action: "pause" })).resolves.toMatchObject({ goal: { status: "paused" } });
+		await expect(control({ action: "resume" })).resolves.toMatchObject({ goal: { status: "active" } });
+		await expect(control({ action: "clear" })).resolves.toEqual({ action: "clear", cleared: true });
+		expect(await readGoal(storeRefFor(ctx))).toBeNull();
+	});
+
+	it.each([null, [], {}, { action: "" }, { action: "archive" }])(
+		"rejects malformed goal RPC data with a protocol error: %j",
+		async (data) => {
+			const { rpcHandlers } = createGoalHarness();
+			const control = rpcHandlers.get("omo.goal.control");
+			if (!control) throw new Error("missing goal control RPC");
+			await expect(control(data)).rejects.toThrow(/goal control/i);
+		},
+	);
 
 	it("exposes a budget-free create_goal schema (objective only)", () => {
 		const { tools } = createGoalHarness();

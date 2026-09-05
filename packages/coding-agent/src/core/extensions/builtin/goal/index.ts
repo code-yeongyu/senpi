@@ -4,7 +4,7 @@ import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { continueGoalAfterAgentEnd } from "./agent-end-continuation.ts";
 import { GOAL_CACHE_WARMUP_ENTRY_TYPE } from "./cache-warm.ts";
 import { renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
-import { registerGoalCommand } from "./command-registration.ts";
+import { registerGoalCommand, registerGoalControlRpc } from "./command-registration.ts";
 import { GOAL_CONTINUATION_CAP } from "./continuation.ts";
 import { GoalDirectInputLifecycle } from "./direct-input-lifecycle.ts";
 import { GoalElapsedTicker } from "./elapsed-ticker.ts";
@@ -80,6 +80,17 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		refreshGoalUi,
 	});
 	registerGoalCommand(pi, {
+		goalStoreRef: (ctx) => buildGoalStoreRef(ctx.sessionManager, ctx.cwd),
+		accountCurrentAgentTurn,
+		beginAgentGoalAccounting,
+		stopAgentGoalAccounting,
+		clearAgentGoalAccounting,
+		queueGoalContinuation: (extensionApi, commandCtx, goal) => {
+			void queueGoalContinuationForCurrentSession(extensionApi, commandCtx, goal);
+		},
+		refreshGoalUi,
+	});
+	registerGoalControlRpc(pi, () => activeContext, {
 		goalStoreRef: (ctx) => buildGoalStoreRef(ctx.sessionManager, ctx.cwd),
 		accountCurrentAgentTurn,
 		beginAgentGoalAccounting,
