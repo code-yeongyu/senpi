@@ -95,7 +95,7 @@ describe("service-tier builtin extension", () => {
 		harness.modelRegistry.find(CODEX_PROVIDER, BASE_MODEL_ID)!.thinkingLevelMap = thinkingLevelMap;
 		expect(harness.session.model?.id).toBe(FAST_MODEL_ID);
 		expect(harness.session.isFastModeActive()).toBe(true);
-		harness.session.setSessionThinkingLevel("high");
+		harness.session.agent.state.thinkingLevel = "high";
 		expect(harness.session.thinkingLevel).toBe("high");
 
 		// when
