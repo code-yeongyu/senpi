@@ -1,6 +1,18 @@
 
 ## 2026-09-05 - GPT-6 Astra configuration update exact-path coverage
 
+### Why
+
+- The entry records the exact production paths required by the changelog gate and explains the cache-preserving reasoning-update behavior.
+
+### Why this lives in the fork
+
+- These paths own the runtime/session/provider behavior and cannot be corrected by an extension-only change.
+
+### Expected merge conflict zones
+
+- GPT-6 Astra model/session and provider integration trackers.
+
 ### What changed
 
 - packages/ai/src/api/mistral-conversations.ts: covered by the GPT-6 Astra configuration-update implementation.
