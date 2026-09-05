@@ -179,7 +179,7 @@ function formatOpenAIResponsesError(error: unknown): string {
 export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
-	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast";
 	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
 }
 
@@ -454,7 +454,7 @@ function buildParams(
 	}
 
 	if (options?.serviceTier !== undefined) {
-		params.service_tier = options.serviceTier;
+		params.service_tier = options.serviceTier as ResponseCreateParamsStreaming["service_tier"];
 	}
 
 	if (toolPlacement.immediate.length > 0) {
@@ -879,12 +879,13 @@ function buildWebSocketHeaders(
 
 function getServiceTierCostMultiplier(
 	model: Pick<Model<"openai-responses">, "id">,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
 ): number {
 	switch (serviceTier) {
 		case "flex":
 			return 0.5;
 		case "priority":
+		case "fast":
 			return model.id === "gpt-5.5" ? 2.5 : 2;
 		default:
 			return 1;
@@ -893,7 +894,7 @@ function getServiceTierCostMultiplier(
 
 function applyServiceTierPricing(
 	usage: Usage,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
 	model: Pick<Model<"openai-responses">, "id">,
 ) {
 	const multiplier = getServiceTierCostMultiplier(model, serviceTier);

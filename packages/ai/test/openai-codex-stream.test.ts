@@ -1091,6 +1091,7 @@ describe("openai-codex streaming", () => {
 		["gpt-5.1-codex", "priority", 2],
 		["gpt-5.5", "flex", 0.5],
 		["gpt-5.5", "priority", 2.5],
+		["gpt-6-astra", "fast", 2],
 	] as const)(
 		"uses the client-sent %s service tier for %s when Codex echoes default",
 		async (modelId, serviceTier, multiplier) => {
@@ -1118,7 +1119,7 @@ describe("openai-codex streaming", () => {
 					type: "response.completed",
 					response: {
 						status: "completed",
-						service_tier: "default",
+						service_tier: serviceTier === "fast" ? "fast" : "default",
 						usage: {
 							input_tokens: 1000000,
 							output_tokens: 1000000,

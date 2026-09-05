@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed GPT-6 Astra Fast-mode responses being billed at the default rate instead of the 2x priority multiplier; widened flagship OpenAI and Codex catalog defaults to a 650,000-token context window.
+
 ### Removed
 
 ## [2026.9.4-3] - 2026-09-04

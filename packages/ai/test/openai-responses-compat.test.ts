@@ -541,6 +541,7 @@ describe("openai-responses provider defaults", () => {
 		["gpt-5.4", "priority", 2],
 		["gpt-5.5", "priority", 2.5],
 		["gpt-5.5", "flex", 0.5],
+		["gpt-6-astra", "fast", 2],
 	] as const)("applies %s %s service-tier cost multiplier", async (modelId, serviceTier, multiplier) => {
 		const model = getModel("openai", modelId);
 		const tokenCount = 100_000;

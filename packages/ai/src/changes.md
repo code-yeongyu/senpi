@@ -1,3 +1,21 @@
+## 2026-09-05 - Account for Fast-mode responses in OpenAI adapters
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/openai-responses-shared.ts` widen local service-tier handling with `fast`, apply the priority cost multiplier, and resolve Codex request/response tiers correctly.
+
+### Why
+
+- GPT-6 Astra echoes `fast` for Fast mode, and the pinned SDK union does not yet include that documented value; without this, usage was billed at the default rate.
+
+### Why an extension could not handle it
+
+- Response parsing, service-tier resolution, and usage accounting are implemented within the provider adapters before extension code can observe the completed usage.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-responses.ts` and `packages/ai/src/api/openai-codex-responses.ts` multiplier/resolution helpers; `packages/ai/src/api/openai-responses-shared.ts` stream option contracts.
+
 ## 2026-09-04 - Credential-store lock contention stays on the transient retry path
 
 ### What changed
