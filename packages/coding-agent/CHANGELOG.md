@@ -17,6 +17,7 @@
 
 ### Changed
 
+- The GPT-6 Astra prompt preset names the subscription form an eval session can call (`tool.monitor(...)` from the cell that starts the run) instead of gating the rule on a `monitor` tool the session withholds, lists the conditions worth a watch, and arms one the moment the user names such state, so a CI run, PR, deploy, or long command is subscribed to without being asked instead of polled.
 - The GPT-6 Astra prompt preset now treats the asynchronous form as the default for every call that offers one (child tasks and bash sessions start in the background, long eval cells detach) and names the only two cases for blocking, so a single dependent delegation is spawned in the background and the turn ends to wait instead of blocking on it.
 - The `monitor` tool's `persistent` option now reads as what it is — a standing watch: no deadline, survives a session restart (the command is re-run once, the file is rescanned and any change missed while detached is reported), expires seven days after creation, and at most five per session. The native file branch no longer claims to reject `persistent`, since a persistent file watch is exactly the one that is checkpointed and restored, and the guidance the tool description duplicated from the terminal prompt section was removed rather than restated, so the reworded switch and its bounds cost fewer prompt bytes than the wording they replace.
 

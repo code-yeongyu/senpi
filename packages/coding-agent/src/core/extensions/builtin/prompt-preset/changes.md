@@ -1,5 +1,29 @@
 # prompt-preset Extension Changes
 
+## GPT-6 Astra: the subscription rule names `tool.monitor` and the trigger (2026-09-05)
+
+### What changed
+
+- `gpt-6-astra.ts`: `monitor-conditions` no longer opens with "WHEN `monitor` IS AVAILABLE". It reads "EVERY CONDITION YOU WOULD OTHERWISE CHECK ON GETS A SUBSCRIPTION: `tool.monitor({ description, command, filter })` FROM THE EVAL CELL THAT STARTS THE RUN" (a direct `monitor` call only in a session without `eval`), lists the conditions (a build, install, or test run finishing; a CI check or PR turning green; a deploy landing; a log line; a file appearing; another session or machine changing state), says to arm the watch the moment the model's own work starts it *or the user names it, without being asked*, and states the cost once: the subscription is the whole cost of the wait and its matching line wakes you; a cell that awaits the wait holds the js kernel until the cell limit kills it. The steer/read/stop-through-session-tools sentence is unchanged. `async-default` now names the form a wait takes - "A WAIT IS A `tool.monitor` SUBSCRIPTION - NEVER A CELL THAT SITS ON A `--watch` OR A SPAWNED PROCESS, NEVER A CHILD SPAWNED TO WATCH" - next to the three forms it already listed, and "a long eval cell detaches" becomes "a long computation detaches its eval cell". The file header records why the rule names the form and the trigger.
+- `test/suite/prompt-presets-gpt-6-astra.test.ts`: one sentinel - the rendered `## Asynchronous Work` section contains `tool.monitor(` - captured RED on `7c1de741e` and GREEN after the edit. Rule ids, concerns, placement, and the emphasis set are unchanged.
+
+### Why
+
+- Category A per the prompt-engineering skill: since 2026-09-03 `bash` and `monitor` leave the model's direct tool list whenever the session has `eval` (terminal `prompt.ts` renders `tool.monitor(...)` shapes for that branch). A rule conditioned on `monitor` being available therefore evaluated false in every eval session - the only sessions omo runs - and the model behaved as if it had no subscription primitive.
+- Evidence, 17 `gpt-6-astra-fast` sessions of 2026-09-05 (`~/.omo/agent/sessions`): `tool.monitor` appeared in three sessions, each one whose request itself named the CI run or the async work; one orchestrator session polled `task_output` 35 times (status every ~40 s on the same child) and another blocked inside eval cells on `Bun.spawn` + `setTimeout(kill, 580-880 s)` for installs, builds, and test runs. A sandboxed backtest against the real model in the eval-only tool shape (no direct `bash`/`monitor`, real eval description and terminal section, omo task tool, effort high; `/tmp/ulw-astra-monitor/monitor-run.ts`) reproduced it before the edit: 0 of 12 valid first responses across three wait-shaped requests (a 12-minute test run with parallel reading, a CI-then-merge request, and a "CI is running on my push, meanwhile inspect this file" request) registered a subscription - the model read files, opened a todo list, or started the long command with `tool.bash({ run_in_background: true })` and no filter.
+- Category B for `async-default`: it listed background bash, a detached cell, and a background child as equally good asynchronous forms and said nothing about which form a *wait* takes, so once plain polling was ruled out the model awaited `gh pr checks --watch` through `Bun.spawn` inside a cell (2 of 3 multi-round samples on a CI-then-merge request; the cell detaches, which the rule sanctioned) or spawned a `quick` child whose whole brief was "monitor PR #7801 until green, then merge" - the child is a model session polling on its behalf. The wait form is now named in the same sentence as the other forms.
+- Category C for the trigger: the old list named only waits the model had started itself, so state the user mentioned (a CI run on their push) never became a watch. The GPT-5.6 guide's tool-routing rule applies - name the route when it is not obvious; generic "use it efficiently" wording does not produce it - and its decision-rule preference over absolute wording: "every condition you would otherwise check on" is the decision rule, and the bold/caps emphasis on this rule stays by the owner's standing direction.
+- Token cost (o200k, eval-only shape with the terminal section, same tool set): rendered prompt 4392 -> 4565; the async section 289 -> 451 carries the call form, the no-`eval` fallback, the trigger list, the wait-form clause in `async-default`, the in-scope clause for user-named state, and the one-sentence cost; the availability gate and the old four-item list were removed to pay for part of it. Nothing outside the two rules changed.
+- Real-model result (multi-round harness, effort high, 3 samples per cell, old = 7c1de741e preset, new = this change plus the senpi-codemode GPT dialect fix): a 12-minute test run with parallel reading 0/3 -> 3/3 `tool.monitor`; CI-then-merge 1/3 -> 3/3; "CI is running on my push, meanwhile inspect this file" 0/3 -> 2/3, the new samples arming `gh run watch <id> --exit-status` next to the read. With the ultrawork directive attached (2 samples per cell): CI-then-merge 0/2 -> 2/2. Evidence: `/tmp/ulw-astra-monitor/evidence/mr{3,4,5}-*/<request>/summary.json` on mengmotaHost.
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside this builtin's rule data.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `gpt-6-astra.ts` and its test are fork-only.
+
 ## GPT-6 Astra: asynchronous is the default form of every call (2026-09-05)
 
 ### What changed
