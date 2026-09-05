@@ -253,7 +253,9 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		}
 
 		sessionFastMode =
-			baseModel !== undefined || remembered === PRIORITY_TIER || (remembered === undefined && ctx.serviceTier === PRIORITY_TIER);
+			baseModel !== undefined ||
+			remembered === PRIORITY_TIER ||
+			(remembered === undefined && ctx.serviceTier === PRIORITY_TIER);
 		pi.setSessionFastMode(sessionFastMode);
 		const memoryModel = resolveServiceTierMemoryModel(ctx.modelRegistry, model);
 		liveMemoryKey = `${memoryModel.provider}/${memoryModel.id}`;
