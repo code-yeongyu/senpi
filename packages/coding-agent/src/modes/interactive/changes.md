@@ -1,4 +1,26 @@
 
+## 2026-09-05 - Restore Working text shimmer on turn start
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` now supplies the generated working indicator options when a turn starts.
+
+### Why
+
+- The turn-start path previously passed the unset raw options field, disabling the literal `Working` text shimmer formatter.
+
+### Why this lives in the fork
+
+- Interactive mode owns the working status indicator and its animation configuration.
+
+### Why an extension could not handle it
+
+- `InteractiveMode.showWorkingStatusIndicator` is engine-owned interactive TUI behavior below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: `InteractiveMode.showWorkingStatusIndicator` working-indicator construction.
+
 ## 2026-09-05 - Render Astra configuration updates as non-interactive session entries
 
 ### What changed
