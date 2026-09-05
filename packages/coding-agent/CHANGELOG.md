@@ -6,6 +6,7 @@
 
 ### Added
 
+- GPT-6 Astra (`gpt-6-astra`) is now a built-in recommended default model at thinking level `high`, placed ahead of GPT-5.6 Sol which remains the OpenAI fallback recommendation.
 - Persistent monitors now survive repeated restarts: file watches are re-registered and compare their persisted checkpoint once, reporting exactly one detached created, replaced, or modified change (and nothing when unchanged), while command watches are re-run once under the same `mon_` id without replaying pre-restart output. Sessions may keep up to five durable watches; each expires seven days after creation without extending that deadline on restart or rearm, and a watch muted by the wake budget remains muted when restored.
 - A standing watch that exceeds its 200-line matching-event budget within a rolling 24-hour window now mutes itself and says so once, telling you to rearm it; rearming resumes the watch, ordinary one-shot monitors are never counted, and the window survives restarts so a noisy watch cannot receive a fresh allowance.
 

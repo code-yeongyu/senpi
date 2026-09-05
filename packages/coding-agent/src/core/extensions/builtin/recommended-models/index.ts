@@ -14,6 +14,7 @@ const MODEL_ID_SUFFIXES = ["-ultrafast", "-unlocked", "-256k", "-fast"] as const
 
 export const RECOMMENDED_DEFAULT_MODELS = [
 	["kimi-k3", "max"],
+	["gpt-6-astra", "high"],
 	["gpt-5.6-sol", "medium"],
 	["claude-fable-5-1", "high"],
 	["claude-opus-5", "xhigh"],
