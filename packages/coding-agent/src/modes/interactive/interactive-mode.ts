@@ -3156,7 +3156,7 @@ export class InteractiveMode {
 			new WorkingStatusIndicator(
 				this.ui,
 				this.workingMessage ?? this.defaultWorkingMessage,
-				this.workingIndicatorOptions,
+				this.getWorkingIndicatorOptions(),
 			),
 		);
 	}
