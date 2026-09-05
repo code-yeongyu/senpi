@@ -165,10 +165,10 @@ describe("fallback chain selectors", () => {
 		expect(canonicalizeFallbackChains({ "*": [] }, models)).toEqual({});
 	});
 
-	it("ships a default wildcard lane that user config can tombstone", () => {
-		expect(DEFAULT_FALLBACK_CHAINS["*"]?.length ?? 0).toBeGreaterThan(0);
-		const resolved = resolveRetryFallbackSettings({ fallbackChains: { "*": [] } });
-		expect(resolved.chains["*"]).toEqual([]);
+	it("does not ship a wildcard fallback lane", () => {
+		expect(DEFAULT_FALLBACK_CHAINS["*"]).toBeUndefined();
+		const resolved = resolveRetryFallbackSettings(undefined);
+		expect(resolved.chains["*"]).toBeUndefined();
 	});
 
 	it("prefers an exact thinking key, then the base key", () => {

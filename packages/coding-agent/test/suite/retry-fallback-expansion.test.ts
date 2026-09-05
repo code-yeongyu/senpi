@@ -37,6 +37,18 @@ function lookup(models: Model<Api>[], oauthProviders: string[] = [], unauthentic
 	};
 }
 
+describe("bare fallback expansion provider policy", () => {
+	it("excludes Cursor models from bare fallback candidates", () => {
+		const cursorKimi = model("cursor", "kimi-k3");
+		const apitopiaKimi = model("apitopia", "kimi-k3");
+		const resolved = canonicalizeFallbackChains(
+			{ "openai/gpt-5.4": ["kimi-k3:max"] },
+			lookup([model("openai", "gpt-5.4"), cursorKimi, apitopiaKimi]),
+		);
+		expect(resolved["openai/gpt-5.4"]).toEqual(["apitopia/kimi-k3:max"]);
+	});
+});
+
 const sdkAndAnthropic = [
 	model("claude-sdk-oauth", FABLE),
 	model("claude-sdk-oauth", OPUS5),
