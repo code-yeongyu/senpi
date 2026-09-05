@@ -93,7 +93,8 @@ const EXPECTED_CONCERN: Record<Gpt6AstraRuleId, Gpt6AstraConcern> = {
 	delegation: "delegation",
 	"legible-messages": "delegation",
 	"todo-granularity": "todo-discipline",
-	"async-handles": "async-work",
+	"async-default": "async-work",
+	"foreground-exception": "async-work",
 	"turn-end-is-wait": "async-work",
 	"monitor-conditions": "async-work",
 	"verification-once": "verification",
@@ -124,7 +125,8 @@ const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	delegation: "Working the Task",
 	"legible-messages": "Working the Task",
 	"todo-granularity": "Working the Task",
-	"async-handles": "Asynchronous Work",
+	"async-default": "Asynchronous Work",
+	"foreground-exception": "Asynchronous Work",
 	"turn-end-is-wait": "Asynchronous Work",
 	"monitor-conditions": "Asynchronous Work",
 	"verification-once": "Verification",
@@ -256,7 +258,12 @@ describe("GPT-6 Astra behavior contract", () => {
 			expect(rule.directive).not.toMatch(/\p{Extended_Pictographic}/u);
 		}
 		const asyncRules = GPT6_ASTRA_RULES.filter((rule) => rule.concern === "async-work");
-		expect(asyncRules.length).toBeGreaterThanOrEqual(3);
+		expect(asyncRules.map((rule) => rule.id)).toEqual([
+			"async-default",
+			"foreground-exception",
+			"turn-end-is-wait",
+			"monitor-conditions",
+		]);
 	});
 
 	it("renders the eval-cell and asynchronous-execution rules with bold emphasis and no other rule in bold", () => {
@@ -264,7 +271,7 @@ describe("GPT-6 Astra behavior contract", () => {
 		const emphasized = new Set<Gpt6AstraRuleId>([
 			"eval-first-routing",
 			"parallel-batching",
-			"async-handles",
+			"async-default",
 			"turn-end-is-wait",
 			"monitor-conditions",
 		]);

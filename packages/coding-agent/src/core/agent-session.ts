@@ -1808,7 +1808,9 @@ export class AgentSession {
 		this._incrementMessageRevision();
 	}
 
-	private _modelChangeWouldExhaustContext(model: Model<Api>): ReturnType<typeof projectModelUsabilityBudget> | undefined {
+	private _modelChangeWouldExhaustContext(
+		model: Model<Api>,
+	): ReturnType<typeof projectModelUsabilityBudget> | undefined {
 		if (model.contextWindow <= 0) return undefined;
 		const projection = projectModelUsabilityBudget({
 			model,

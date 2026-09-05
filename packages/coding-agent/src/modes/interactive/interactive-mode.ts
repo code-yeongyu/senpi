@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { modelsAreEqual, type AuthEvent, type AuthPrompt } from "@earendil-works/pi-ai";
+import { type AuthEvent, type AuthPrompt, modelsAreEqual } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent, Usage } from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
@@ -6081,7 +6081,9 @@ export class InteractiveMode {
 				this.showStatus(msg);
 			} else {
 				if (result.skippedModels.length > 0 && modelsAreEqual(result.model, this.session.model)) {
-					this.showStatus("No favorite model can fit the current context. Compact the session or start a new one.");
+					this.showStatus(
+						"No favorite model can fit the current context. Compact the session or start a new one.",
+					);
 					return;
 				}
 				this.footer.invalidate();
