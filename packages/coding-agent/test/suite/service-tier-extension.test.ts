@@ -72,7 +72,10 @@ describe("service-tier builtin extension", () => {
 		const harness = await createHarness({
 			api: CODEX_API,
 			provider: CODEX_PROVIDER,
-			models: [{ id: FAST_MODEL_ID }, { id: BASE_MODEL_ID }],
+			models: [
+				{ id: FAST_MODEL_ID, thinkingLevelMap: { off: null, low: "low", medium: "medium", high: "high" } },
+				{ id: BASE_MODEL_ID, thinkingLevelMap: { off: null, low: "low", medium: "medium", high: "high" } },
+			],
 			upstreamModelId: BASE_MODEL_ID,
 			serviceTier: "priority",
 			settings: {
@@ -85,6 +88,7 @@ describe("service-tier builtin extension", () => {
 		const runner = harness.getExtensionRunner();
 		expect(harness.session.model?.id).toBe(FAST_MODEL_ID);
 		expect(harness.session.isFastModeActive()).toBe(true);
+		harness.session.setSessionThinkingLevel("high");
 
 		// when
 		await harness.session.bindExtensions({});
@@ -92,7 +96,13 @@ describe("service-tier builtin extension", () => {
 		// then
 		expect(harness.session.model?.id).toBe(BASE_MODEL_ID);
 		expect(harness.session.serviceTier).toBeUndefined();
-		expect(harness.session.isFastModeActive()).toBe(false);
+		expect(harness.session.isFastModeActive()).toBe(true);
+		expect(harness.session.thinkingLevel).toBe("high");
+		const startupPayload = { model: BASE_MODEL_ID };
+		expect(await runner.emitBeforeProviderRequest(startupPayload)).toEqual({
+			model: BASE_MODEL_ID,
+			service_tier: "priority",
+		});
 		expect(harness.settingsManager.getDefaultProvider()).toBe(CODEX_PROVIDER);
 		expect(harness.settingsManager.getDefaultModel()).toBe(BASE_MODEL_ID);
 
@@ -121,6 +131,52 @@ describe("service-tier builtin extension", () => {
 		expect(harness.settingsManager.getDefaultModel()).toBe(BASE_MODEL_ID);
 		const defaultPayload = { model: BASE_MODEL_ID };
 		expect(await runner.emitBeforeProviderRequest(defaultPayload)).toBe(defaultPayload);
+	});
+
+	it("keeps fast mode on when an explicit -fast selection outranks remembered auto", async () => {
+		const harness = await createHarness({
+			api: CODEX_API,
+			provider: CODEX_PROVIDER,
+			models: [{ id: FAST_MODEL_ID }, { id: BASE_MODEL_ID }],
+			serviceTier: "priority",
+			settings: { modelServiceTiers: { [`${CODEX_PROVIDER}/${BASE_MODEL_ID}`]: "auto" } },
+			extensionFactories: [serviceTierExtension],
+		});
+		harnesses.push(harness);
+		const runner = harness.getExtensionRunner();
+
+		await harness.session.bindExtensions({});
+
+		expect(harness.session.model?.id).toBe(BASE_MODEL_ID);
+		expect(harness.session.isFastModeActive()).toBe(true);
+		expect(await runner.emitBeforeProviderRequest({ model: BASE_MODEL_ID })).toEqual({
+			model: BASE_MODEL_ID,
+			service_tier: "priority",
+		});
+	});
+
+	it.each([
+		["auto", false],
+		["priority", true],
+	] as const)("keeps a base-model startup's remembered %s tier unchanged", async (remembered, fast) => {
+		const harness = await createHarness({
+			api: CODEX_API,
+			provider: CODEX_PROVIDER,
+			models: [{ id: BASE_MODEL_ID }],
+			settings: { modelServiceTiers: { [`${CODEX_PROVIDER}/${BASE_MODEL_ID}`]: remembered } },
+			extensionFactories: [serviceTierExtension],
+		});
+		harnesses.push(harness);
+		const runner = harness.getExtensionRunner();
+
+		await harness.session.bindExtensions({});
+
+		expect(harness.session.model?.id).toBe(BASE_MODEL_ID);
+		expect(harness.session.isFastModeActive()).toBe(fast);
+		const payload = { model: BASE_MODEL_ID };
+		expect(await runner.emitBeforeProviderRequest(payload)).toEqual(
+			fast ? { model: BASE_MODEL_ID, service_tier: "priority" } : payload,
+		);
 	});
 
 	it("is a clear no-op for non-Codex providers", async () => {
