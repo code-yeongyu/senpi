@@ -13,6 +13,9 @@ export function enabledLanguageList(enabled: EnabledEvalLanguages): EvalLanguage
 
 export const EVAL_SUMMARY_MAX_LENGTH = 80;
 
+const LANGUAGE_FIELD_DESCRIPTION =
+	"REQUIRED for run. Choose a kernel explicitly; there is no default. Omit for peek/stop.";
+
 const TIMEOUT_FIELD_DESCRIPTION =
 	"Seconds the cell may block the turn before it detaches, and the amount by which it raises the wall-clock hard limit. In interactive sessions the detach point is capped at the foreground window (default 60s), so a large value frees the turn at the window while the cell keeps running; on_timeout:'error' (and print/json) keep the full value as the uncapped deadline.";
 
@@ -43,7 +46,9 @@ const fullEvalInputSchema = Type.Object({
 		}),
 	),
 	language: Type.Optional(
-		Type.Union([Type.Literal("js"), Type.Literal("py"), Type.Literal("rb"), Type.Literal("jl")]),
+		Type.Union([Type.Literal("js"), Type.Literal("py"), Type.Literal("rb"), Type.Literal("jl")], {
+			description: LANGUAGE_FIELD_DESCRIPTION,
+		}),
 	),
 	code: Type.Optional(Type.String({ description: "Cell body, verbatim." })),
 	summary: Type.Optional(
@@ -71,8 +76,11 @@ export function createEvalInputSchema(enabled: EnabledEvalLanguages): EvalInputS
 	if (languages.length === 0) throw new Error("eval requires at least one enabled language");
 	const languageSchema =
 		languages.length === 1
-			? Type.Union([Type.Literal(languages[0])])
-			: Type.Union(languages.map((item) => Type.Literal(item)));
+			? Type.Union([Type.Literal(languages[0])], { description: LANGUAGE_FIELD_DESCRIPTION })
+			: Type.Union(
+					languages.map((item) => Type.Literal(item)),
+					{ description: LANGUAGE_FIELD_DESCRIPTION },
+				);
 	return Type.Unsafe<EvalToolRequest>(
 		Type.Object({
 			action: Type.Optional(
