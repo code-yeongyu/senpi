@@ -3321,8 +3321,22 @@ async function generateModels() {
 		applyOpenAIGrammarToolCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
-		if (model.id === "gpt-6-astra" && (model.provider === "openai" || model.provider === "openai-codex")) {
-			mergeThinkingLevelMap(model, { off: null, minimal: null });
+		if (
+			model.id.includes("gpt-6-astra") &&
+			(model.api === "openai-responses" ||
+				model.api === "azure-openai-responses" ||
+				model.api === "openai-codex-responses" ||
+				model.api === "openai-completions")
+		) {
+			mergeThinkingLevelMap(model, {
+				off: null,
+				minimal: null,
+				low: "low",
+				medium: "medium",
+				high: "high",
+				xhigh: "xhigh",
+				max: "max",
+			});
 		}
 	}
 	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));

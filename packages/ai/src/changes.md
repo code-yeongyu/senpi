@@ -1,3 +1,21 @@
+## 2026-09-05 - Infer map-less GPT-6 Astra reasoning controls
+
+### What changed
+
+- `packages/ai/src/models.ts` infers the canonical GPT-6 Astra OpenAI-family thinking ladder when model metadata omits a map; `packages/ai/src/api/openai-completions.ts` and `packages/ai/src/api/openai-responses.ts` use that inference for wire effort mapping.
+
+### Why
+
+- Custom map-less Astra models must clamp unsupported `minimal` and `off` selections to `low` instead of sending unsupported `minimal` or `none` values, while preserving xhigh/max and GPT-5.6 Sol behavior.
+
+### Why an extension could not handle it
+
+- Model capability inference and request effort serialization run inside the core model and provider adapter paths before extensions can modify the request.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/models.ts` model capability helpers; `packages/ai/src/api/openai-completions.ts` and `packages/ai/src/api/openai-responses.ts` reasoning mapping.
+
 ## 2026-09-05 - Account for Fast-mode responses in OpenAI adapters
 
 ### What changed

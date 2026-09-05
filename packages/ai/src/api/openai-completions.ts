@@ -12,7 +12,13 @@ import type {
 	ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions.js";
 import type { FunctionParameters } from "openai/resources/shared.js";
-import { calculateCost, clampThinkingLevel, supportsMax, supportsXhigh } from "../models.ts";
+import {
+	calculateCost,
+	clampThinkingLevel,
+	inferOpenAIThinkingLevelMap,
+	supportsMax,
+	supportsXhigh,
+} from "../models.ts";
 import type {
 	AssistantMessage,
 	CacheRetention,
@@ -154,9 +160,8 @@ function getThinkingLevelMap(
 	model: Model<"openai-completions">,
 	compat: ResolvedOpenAICompletionsCompat,
 ): ThinkingLevelMap | undefined {
-	if (model.thinkingLevelMap !== undefined) {
-		return model.thinkingLevelMap;
-	}
+	const inferred = inferOpenAIThinkingLevelMap(model);
+	if (inferred !== undefined) return inferred;
 
 	const id = model.id.toLowerCase();
 	const isKimiK3 = id === "k3" || id.startsWith("k3-") || /(?:^|[/:-])kimi-k3(?:$|[/.:_-])/.test(id);
@@ -1165,7 +1170,7 @@ function buildParams(
 		}
 		if (compat.supportsReasoningEffort) {
 			const requestedEffort = options?.reasoningEffort;
-			const mappedEffort = requestedEffort ? model.thinkingLevelMap?.[requestedEffort] : model.thinkingLevelMap?.off;
+			const mappedEffort = requestedEffort ? thinkingLevelMap?.[requestedEffort] : thinkingLevelMap?.off;
 			const effort = mappedEffort === undefined ? requestedEffort : mappedEffort;
 			if (typeof effort === "string") {
 				basetenParams.reasoning_effort = effort;

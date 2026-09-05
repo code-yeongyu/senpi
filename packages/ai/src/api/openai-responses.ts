@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { ResponseCreateParamsStreaming, ResponseStreamEvent } from "openai/resources/responses/responses.js";
-import { clampThinkingLevel, supportsMax, supportsXhigh } from "../models.ts";
+import { clampThinkingLevel, inferOpenAIThinkingLevelMap, supportsMax, supportsXhigh } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -417,8 +417,9 @@ function buildParams(
 			: undefined;
 	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
 	const requestedReasoningEffort = options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined);
+	const thinkingLevelMap = inferOpenAIThinkingLevelMap(model);
 	const mappedReasoningEffort =
-		requestedReasoningEffort === undefined ? undefined : model.thinkingLevelMap?.[requestedReasoningEffort];
+		requestedReasoningEffort === undefined ? undefined : thinkingLevelMap?.[requestedReasoningEffort];
 	const reasoningEffort = mappedReasoningEffort === undefined ? requestedReasoningEffort : mappedReasoningEffort;
 	const reasoningRequested = reasoningEffort !== undefined && reasoningEffort !== null;
 	const reasoningUnavailable = reasoningEffort === null;
@@ -475,9 +476,9 @@ function buildParams(
 				...(options?.reasoningSummary === null ? {} : { summary: options?.reasoningSummary || "auto" }),
 			};
 			params.include = ["reasoning.encrypted_content"];
-		} else if (!reasoningUnavailable && model.provider !== "github-copilot" && model.thinkingLevelMap?.off !== null) {
+		} else if (!reasoningUnavailable && model.provider !== "github-copilot" && thinkingLevelMap?.off !== null) {
 			params.reasoning = {
-				effort: (model.thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],
+				effort: (thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],
 			};
 		}
 		if (model.provider === "xai") params.include = ["reasoning.encrypted_content"];

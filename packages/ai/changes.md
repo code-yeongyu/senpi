@@ -1,5 +1,23 @@
 # changes.md — ai
 
+## 2026-09-05 - Normalize GPT-6 Astra reasoning maps across OpenAI-family catalogs
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` applies the canonical Astra thinking ladder to every generated OpenAI-family API entry, including Azure and OpenAI-compatible passthrough catalogs.
+
+### Why
+
+- Live metadata can provide a partial Astra map; normalization prevents supported low/medium/high tiers from disappearing and preserves the null vetoes for off/minimal.
+
+### Why an extension could not handle it
+
+- Generated provider metadata is produced before runtime extensions load.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` final model metadata normalization loop and regenerated provider data.
+
 ## 2026-09-05 - Widen GPT-6 Astra flagship context defaults
 
 ### What changed
