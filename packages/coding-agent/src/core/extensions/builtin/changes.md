@@ -1,5 +1,23 @@
 # Builtin extensions changes
 
+## Recommend GPT-6 Astra ahead of GPT-5.6 Sol (2026-09-05)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: insert `["gpt-6-astra", "high"]` immediately before `["gpt-5.6-sol", "medium"]` in `RECOMMENDED_DEFAULT_MODELS`. Astra is the new OpenAI flagship recommendation; Sol stays as the fallback. `canonicalModelId` is unchanged, so `gpt-6-astra-fast` still strips to `gpt-6-astra`.
+
+### Why
+
+- Sessions that land on an implicit OpenAI default should prefer GPT-6 Astra at thinking level `high` when `openai-codex/gpt-6-astra` (or a `-fast` variant) is authenticated, instead of stopping at GPT-5.6 Sol/`medium`. `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts` is the shipped priority list for that auto-switch.
+
+### Why an extension could not handle it
+
+- The shipped default lives in `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`. A user extension or `settings.recommendedModels` override can change one machine, not the binary default every session gets without an override.
+
+### Expected merge conflict zones
+
+- LOW in `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts` around `RECOMMENDED_DEFAULT_MODELS`. Keep `["gpt-6-astra", "high"]` immediately before `["gpt-5.6-sol", "medium"]`; do not reorder the other entries.
+
 ## Hooks trust-state reads fail open when the lock directory is not writable (2026-09-04)
 
 ### What changed

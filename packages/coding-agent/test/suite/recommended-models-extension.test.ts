@@ -2,6 +2,10 @@ import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-a
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
+import {
+	canonicalModelId,
+	RECOMMENDED_DEFAULT_MODELS,
+} from "../../src/core/extensions/builtin/recommended-models/index.ts";
 import type { SessionStartEvent } from "../../src/core/extensions/types.ts";
 import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { createAgentSession } from "../../src/core/sdk.ts";
@@ -17,6 +21,45 @@ afterEach(() => {
 });
 
 describe("recommended-models builtin", () => {
+	it("#given the shipped recommendation list #when order is read #then gpt-6-astra high sits directly before gpt-5.6-sol", () => {
+		const astraIndex = RECOMMENDED_DEFAULT_MODELS.findIndex(([modelId]) => modelId === "gpt-6-astra");
+		const solIndex = RECOMMENDED_DEFAULT_MODELS.findIndex(([modelId]) => modelId === "gpt-5.6-sol");
+
+		expect(astraIndex).toBeGreaterThanOrEqual(0);
+		expect(solIndex).toBe(astraIndex + 1);
+		expect(RECOMMENDED_DEFAULT_MODELS[astraIndex]?.[1]).toBe("high");
+	});
+
+	it("#given openai-codex/gpt-6-astra and sol #when an implicit-fallback provenance starts #then it switches to astra at high", async () => {
+		const astra = model("gpt-6-astra", "openai-codex");
+		const sol = model("gpt-5.6-sol", "openai-codex");
+		const harness = createHarness({
+			active: model("off-list"),
+			available: [sol, astra],
+		});
+
+		await harness.start("first-available");
+
+		expect(harness.getActiveModel()).toBe(astra);
+		expect(harness.getThinkingLevel()).toBe("high");
+		expect(harness.settings.getDefaultThinkingLevel()).toBe("high");
+		expect(harness.notices).toEqual([{ message: "Switched to recommended model 'gpt-6-astra'.", type: "info" }]);
+	});
+
+	it("#given gpt-6-astra-fast #when an implicit-fallback provenance starts #then it counts as recommended and is kept", async () => {
+		expect(canonicalModelId("gpt-6-astra-fast")).toBe("gpt-6-astra");
+
+		const harness = createHarness({
+			active: model("gpt-6-astra-fast"),
+			available: [model("gpt-5.6-sol", "openai-codex"), model("gpt-6-astra", "openai-codex")],
+		});
+
+		await harness.start("first-available");
+
+		expect(harness.getActiveModel().id).toBe("gpt-6-astra-fast");
+		expect(harness.notices).toEqual([]);
+	});
+
 	it("#given an off-list saved default #when settings provenance starts #then it keeps the saved default without switching, persisting, or notifying", async () => {
 		const offList = model("off-list");
 		const harness = createHarness({ active: offList, available: [model("kimi-k3", "kimi-coding")] });
