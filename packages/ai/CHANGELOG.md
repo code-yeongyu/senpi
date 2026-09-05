@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Remove per-turn Anthropic effort markers when thinking is disabled explicitly or for a cross-model tool continuation, without changing enabled xhigh/max reasoning or models that cannot disable thinking.
+
 ### Removed
 
 ## [2026.9.5-3] - 2026-09-05

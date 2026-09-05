@@ -1,4 +1,23 @@
 
+## 2026-09-05 - Remove effort markers only when Anthropic thinking is disabled
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `disableThinkingForRequest()` removes generated empty-content, effort-only system messages when it emits `thinking: { type: "disabled" }`. The cannot-disable early return, enabled xhigh/max markers, unrelated history, tool pairs, cache checkpoints, and caller-owned context remain unchanged.
+- `packages/ai/test/anthropic-mid-conversation-effort.test.ts`: captures final SDK fetch bodies for historical xhigh with explicit thinking-off, cross-model tool continuation, enabled xhigh/max, and cannot-disable family/compat gates.
+
+### Why
+
+- `packages/ai/src/api/anthropic-messages.ts` inserts historical and current effort markers before selecting thinking configuration. Removing only top-level effort left incompatible per-turn effort in requests disabled explicitly or degraded after cross-model signed-thinking loss.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/anthropic-messages.ts` owns both generated wire markers and the request-local disable decision. Filtering at that decision keeps persisted history intact and avoids globally clamping enabled reasoning or changing models that cannot disable thinking.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/anthropic-messages.ts` in `disableThinkingForRequest()` after the cannot-disable early return, alongside the generated marker shape in `insertThinkingLevelMessages()`.
+
 ## 2026-09-05 - Project Astra configuration updates at the Responses wire
 
 ### What changed
