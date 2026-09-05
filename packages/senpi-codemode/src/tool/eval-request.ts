@@ -1,5 +1,11 @@
 import type { ExtensionContext } from "@code-yeongyu/senpi";
-import { EVAL_SUMMARY_MAX_LENGTH, type EvalControlInput, type EvalToolInput, type EvalToolRequest } from "./types.ts";
+import {
+	EVAL_SUMMARY_MAX_LENGTH,
+	type EvalControlInput,
+	type EvalToolInput,
+	type EvalToolRequest,
+	evalLanguageOrder,
+} from "./types.ts";
 
 const NON_INTERACTIVE_MODES = new Set(["print", "json"]);
 
@@ -25,7 +31,10 @@ export function parseEvalRequest(params: unknown): EvalToolRequest {
 	}
 	if (params.action !== undefined && params.action !== "run")
 		throw new TypeError(`Unknown eval action "${String(params.action)}"`);
-	if (!isEvalLanguage(params.language)) throw new TypeError("eval run requires language");
+	if (params.language === undefined) throw new TypeError("eval run requires language");
+	if (!isEvalLanguage(params.language)) {
+		throw new TypeError(`eval run language must be one of: ${evalLanguageOrder.join(", ")}`);
+	}
 	if (typeof params.code !== "string") throw new TypeError("eval run requires code");
 	const summary = clampEvalSummary(params.summary);
 	if (summary === undefined)
