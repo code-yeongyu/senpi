@@ -6080,7 +6080,7 @@ export class InteractiveMode {
 						: buildFavoriteCycleStatusMessage("empty");
 				this.showStatus(msg);
 			} else {
-				if (result.skippedModels.length > 0 && modelsAreEqual(result.model, this.session.model)) {
+				if ((result.skippedModels?.length ?? 0) > 0 && modelsAreEqual(result.model, this.session.model)) {
 					this.showStatus(
 						"No favorite model can fit the current context. Compact the session or start a new one.",
 					);

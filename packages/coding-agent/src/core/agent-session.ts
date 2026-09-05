@@ -4839,6 +4839,14 @@ export class AgentSession {
 			break;
 		}
 		if (selectedIndex === undefined) {
+			// Every candidate was inadmissible. Skipping past an unusable model is a convenience;
+			// having NO usable target is the documented budget failure, so the caller still gets the
+			// ModelUsabilityBudgetError it had before candidate skipping existed. The immediate
+			// neighbour is the model the user actually asked to switch to, so it owns the message.
+			const attempted = favoriteModels[nextIndex];
+			if (attempted && !modelsAreEqual(attempted.model, currentModel)) {
+				this.assertModelUsable(attempted.model, this._getDownswitchLiveContextTokens(attempted.model));
+			}
 			return {
 				model: currentModel,
 				thinkingLevel: this.thinkingLevel,
