@@ -406,6 +406,8 @@ export interface AgentState {
 	 * alias explicitly chose a level. Absent for defaulted effective levels.
 	 */
 	thinkingSelection?: ThinkingSelection;
+	/** First reasoning effort on the branch, used to preserve Responses cache prefixes. */
+	reasoningBaseline?: string;
 	/** Available tools. Assigning a new array copies the top-level array. */
 	set tools(tools: AgentTool<any>[]);
 	get tools(): AgentTool<any>[];

@@ -1,3 +1,12 @@
+
+## [Unreleased]
+
+- packages/session-backends/sqlite-node/src/sqlite/repo.ts: decode durable GPT-6 Astra configuration_update entries with reasoning-effort validation.
+
+## [Unreleased]
+
+- `packages/session-backends/sqlite-node/src/sqlite/repo.ts`: decode durable GPT-6 Astra `configuration_update` session entries with reasoning-effort validation.
+
 # Changelog
 
 ## [Unreleased]

@@ -1,3 +1,44 @@
+
+## 2026-09-05 - Persist Astra reasoning configuration updates
+
+### What changed
+
+- packages/coding-agent/src/core/agent-session.ts: write and re-anchor Astra configuration updates during thinking changes and compaction.
+- packages/coding-agent/src/core/compaction/compaction.ts: preserve the configuration-update role during compaction.
+- packages/coding-agent/src/core/messages.ts: project durable entries into the configuration-update message role.
+- packages/coding-agent/src/core/sdk.ts: restore the reasoning baseline from session state.
+- packages/coding-agent/src/core/session-manager.ts: persist and replay configuration-update entries.
+
+### Why
+
+- Changing GPT-6 Astra reasoning through the request-level field breaks the prompt-cache prefix; the Responses API provides a positional configuration-update item for this transition.
+
+### Why this lives in the fork
+
+- Session lifecycle, compaction, and provider context assembly are core paths below extension interception.
+
+### Expected merge conflict zones
+
+- Agent-session thinking-level transitions, session-manager context assembly, and compaction lifecycle.
+
+## 2026-09-05 - Persist Astra reasoning configuration updates
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/messages.ts`, `packages/coding-agent/src/core/sdk.ts`, and core compaction paths persist and replay Astra configuration-update messages at their original positions, pin the request baseline, and re-anchor after compaction.
+
+### Why
+
+- Changing GPT-6 Astra reasoning through the request-level field breaks the prompt-cache prefix; the Responses API provides a positional configuration-update item for this transition.
+
+### Why this lives in the fork
+
+- Session lifecycle, compaction, and provider context assembly are core paths below extension interception.
+
+### Expected merge conflict zones
+
+- Agent-session thinking-level transitions, session-manager context assembly, and compaction lifecycle.
+
 # changes
 
 ## 2026-09-05 - Require explicit fallback chains

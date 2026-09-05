@@ -1,4 +1,21 @@
-# changes
+
+## 2026-09-05 - Render Astra configuration updates as non-interactive session entries
+
+### What changed
+
+- packages/coding-agent/src/modes/interactive/interactive-mode.ts: handle the configuration-update role without rendering it as a user-visible text message.
+
+### Why
+
+- The wire item affects provider configuration but is not user prose.
+
+### Why this lives in the fork
+
+- Interactive mode owns the terminal projection of session entries.
+
+### Expected merge conflict zones
+
+- Interactive session rendering and message-role handling.
 
 ## 2026-09-05 - Restore Working text shimmer formatter
 

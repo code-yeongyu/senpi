@@ -1,3 +1,21 @@
+## 2026-09-05 - Re-anchor Astra configuration updates after compaction
+
+### What changed
+
+- packages/coding-agent/src/core/compaction/compaction.ts: preserve the configuration-update message role at compaction boundaries.
+
+### Why
+
+- A compacted GPT-6 Astra session must retain the effective reasoning transition without changing the request-level cache baseline.
+
+### Why this lives in the fork
+
+- Compaction owns the context cut and cannot be corrected by an extension after the cut is selected.
+
+### Expected merge conflict zones
+
+- Compaction context selection and retained-tail assembly.
+
 # changes.md — compaction
 
 ## 2026-09-04 - Token estimation excludes failed provider turns

@@ -1,10 +1,11 @@
 import type { AgentMessage } from "../../types.ts";
 import { createBranchSummaryMessage, createCompactionSummaryMessage } from "../messages.ts";
-import type { CompactionEntry, CustomEntry, Entry } from "./types.ts";
+import type { CompactionEntry, ConfigurationUpdateEntry, CustomEntry, Entry } from "./types.ts";
 
 export interface SessionContext {
 	messages: AgentMessage[];
 	thinkingLevel: string;
+	configurationUpdate: ConfigurationUpdateEntry["reasoning"] | null;
 	model: { provider: string; modelId: string } | null;
 	activeToolNames: string[] | null;
 }
@@ -24,12 +25,15 @@ export interface SessionContextBuildOptions {
 
 function deriveSessionContextState(pathEntries: readonly Entry[]): Omit<SessionContext, "messages"> {
 	let thinkingLevel = "off";
+	let configurationUpdate: ConfigurationUpdateEntry["reasoning"] | null = null;
 	let model: { provider: string; modelId: string } | null = null;
 	let activeToolNames: string[] | null = null;
 
 	for (const entry of pathEntries) {
 		if (entry.type === "thinking_level_change") {
 			thinkingLevel = entry.thinkingLevel;
+		} else if (entry.type === "configuration_update") {
+			configurationUpdate = { ...entry.reasoning };
 		} else if (entry.type === "model_change") {
 			model = { provider: entry.provider, modelId: entry.modelId };
 		} else if (entry.type === "message" && entry.message.role === "assistant") {
@@ -39,7 +43,7 @@ function deriveSessionContextState(pathEntries: readonly Entry[]): Omit<SessionC
 		}
 	}
 
-	return { thinkingLevel, model, activeToolNames };
+	return { thinkingLevel, configurationUpdate, model, activeToolNames };
 }
 
 export function defaultContextEntryTransform(pathEntries: readonly Entry[]): Entry[] {

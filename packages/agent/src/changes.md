@@ -1,3 +1,48 @@
+
+## 2026-09-05 - Preserve Astra reasoning effort across session changes
+
+### What changed
+
+- packages/agent/src/agent.ts: preserve the branch reasoning baseline for GPT-6 Astra requests.
+- packages/agent/src/harness/agent-harness.ts: persist trusted configuration-update entries.
+- packages/agent/src/harness/compaction/branch-summarization.ts: preserve configuration-update entries through branch summaries.
+- packages/agent/src/harness/compaction/compaction.ts: keep configuration-update entries at compaction boundaries.
+- packages/agent/src/harness/reducer.ts: restore effective configuration-update state.
+- packages/agent/src/harness/session/context.ts: replay the latest configuration update.
+- packages/agent/src/harness/session/jsonl/codec.ts: decode configuration-update entries.
+- packages/agent/src/harness/session/types.ts: define the durable configuration-update entry.
+- packages/agent/src/types.ts: carry the configuration-update message role.
+
+### Why
+
+- GPT-6 Astra changes reasoning through a positional configuration-update item so request-level effort remains stable for prompt caching.
+
+### Why this lives in the fork
+
+- The agent loop and durable session contracts own baseline and replay state before provider adapters run.
+
+### Expected merge conflict zones
+
+- Agent loop configuration and session entry unions.
+
+## 2026-09-05 - Preserve Astra reasoning effort across session changes
+
+### What changed
+
+- `packages/agent/src/agent.ts`, `packages/agent/src/agent-loop.ts`, `packages/agent/src/types.ts`, and `packages/agent/src/harness/**` preserve the branch reasoning baseline and durable configuration-update state while keeping non-Astra thinking changes unchanged.
+
+### Why
+
+- GPT-6 Astra changes reasoning through a positional configuration-update item so request-level effort remains stable for prompt caching.
+
+### Why this lives in the fork
+
+- The agent loop and durable session contracts own baseline and replay state before provider adapters run.
+
+### Expected merge conflict zones
+
+- Agent loop configuration and session entry unions.
+
 # Changes
 
 ## 2026-09-04 - Drop the byte count from write-tool results

@@ -36,6 +36,11 @@ export interface ThinkingLevelEntry extends EntryBase {
 	thinkingLevel: string;
 }
 
+export interface ConfigurationUpdateEntry extends EntryBase {
+	type: "configuration_update";
+	reasoning: { effort: string };
+}
+
 export interface ActiveToolsEntry extends EntryBase {
 	type: "active_tools_change";
 	activeToolNames: string[];
@@ -68,6 +73,7 @@ export type Entry =
 	| MessageEntry
 	| ModelChangeEntry
 	| ThinkingLevelEntry
+	| ConfigurationUpdateEntry
 	| ActiveToolsEntry
 	| CompactionEntry
 	| BranchSummaryEntry

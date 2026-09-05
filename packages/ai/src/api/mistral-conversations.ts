@@ -795,6 +795,7 @@ function toChatMessages(messages: Message[], supportsImages: boolean): MistralCh
 	const result: MistralChatMessage[] = [];
 
 	for (const msg of messages) {
+		if (msg.role === "configurationUpdate") continue;
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				result.push({ role: "user", content: sanitizeSurrogates(msg.content) });

@@ -96,12 +96,20 @@ export interface CompactionSummaryMessage {
 	timestamp: number;
 }
 
+export interface ConfigurationUpdateMessage {
+	role: "configurationUpdate";
+	content: (TextContent | ImageContent)[];
+	effort: string;
+	timestamp: number;
+}
+
 // Extend CustomAgentMessages via declaration merging
 declare module "@earendil-works/pi-agent-core" {
 	interface CustomAgentMessages {
 		bashExecution: BashExecutionMessage;
 		custom: CustomMessage;
 		branchSummary: BranchSummaryMessage;
+		configurationUpdate: ConfigurationUpdateMessage;
 	}
 }
 
@@ -220,6 +228,8 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						],
 						timestamp: m.timestamp,
 					});
+				case "configurationUpdate":
+					return m;
 				case "user":
 				case "assistant":
 				case "toolResult":

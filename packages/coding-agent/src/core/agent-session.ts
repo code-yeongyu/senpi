@@ -4729,6 +4729,9 @@ export class AgentSession {
 		const thinking = this._getThinkingForModelSwitch(model, opts.ephemeralThinkingLevel);
 		const liveContextTokens = this._getDownswitchLiveContextTokens(model);
 		this.agent.state.model = model;
+		if (!(model.id === "gpt-6-astra" && (model.provider === "openai" || model.provider === "openai-codex"))) {
+			this.agent.state.reasoningBaseline = undefined;
+		}
 		this.agent.abortServerSideFallback =
 			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
 		if (opts.appendSessionEntry) {
@@ -4972,6 +4975,16 @@ export class AgentSession {
 
 		if (isChanging || selectionChanged) {
 			this.sessionManager.appendThinkingLevelChange(effectiveLevel, effectiveSelection);
+			const model = this.model;
+			if (
+				isChanging &&
+				model?.id === "gpt-6-astra" &&
+				(model.provider === "openai" || model.provider === "openai-codex")
+			) {
+				this.agent.state.reasoningBaseline ??= previousLevel;
+				this.sessionManager.appendConfigurationUpdate(effectiveLevel);
+				this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+			}
 			if (updateGlobalDefault && (this.supportsThinking() || effectiveLevel !== "off")) {
 				this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
 			}
@@ -5730,6 +5743,9 @@ export class AgentSession {
 				return await this._rejectCompaction(request, requestId, operationId, "would-overflow", false);
 			}
 
+			const latestConfigurationEffort = this.sessionManager
+				.getBranch()
+				.findLast((entry) => entry.type === "configuration_update")?.reasoning.effort;
 			const compactionEntryId = this.sessionManager.appendCompaction(
 				compactionResult.summary,
 				compactionResult.firstKeptEntryId,
@@ -5741,6 +5757,14 @@ export class AgentSession {
 			const savedEntry = this.sessionManager.getEntry(compactionEntryId);
 			if (savedEntry?.type !== "compaction") {
 				throw new Error("Compaction entry was not saved");
+			}
+			const modelAfterCompaction = this.model;
+			if (
+				latestConfigurationEffort !== undefined &&
+				modelAfterCompaction?.id === "gpt-6-astra" &&
+				(modelAfterCompaction.provider === "openai" || modelAfterCompaction.provider === "openai-codex")
+			) {
+				this.sessionManager.appendConfigurationUpdate(latestConfigurationEffort);
 			}
 
 			const sessionContext = this.sessionManager.buildSessionContext();
