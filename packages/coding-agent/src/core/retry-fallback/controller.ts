@@ -237,9 +237,7 @@ export class RetryFallbackController {
 		const chains = this.canonicalChains();
 		// A model's own chain wins; models without an explicitly configured chain
 		// do not enter an implicit fallback lane.
-		const chainKey =
-			resolveChainKey(current.model, current.thinkingLevel, chains) ??
-			this.state?.chainKey;
+		const chainKey = resolveChainKey(current.model, current.thinkingLevel, chains) ?? this.state?.chainKey;
 		const entries = chainKey ? chains[chainKey] : undefined;
 		if (!chainKey || !entries) {
 			if (reserve) this.deps.logger.debug("no_chain", { selector: formatSelector(current.model) });

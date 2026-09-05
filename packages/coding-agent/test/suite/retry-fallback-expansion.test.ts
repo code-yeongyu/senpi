@@ -1,7 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { canonicalizeFallbackChains } from "../../src/core/retry-fallback/chains.ts";
-import { DEFAULT_FALLBACK_CHAINS, resolveRetryFallbackSettings } from "../../src/core/retry-fallback/settings.ts";
+import { resolveRetryFallbackSettings } from "../../src/core/retry-fallback/settings.ts";
 
 function model(provider: string, id: string): Model<Api> {
 	return {
@@ -65,7 +65,7 @@ const sdkAndAnthropic = [
 	model("kimi-coding", "k3-256k"),
 ];
 
-	describe("bare model-id family expansion", () => {
+describe("bare model-id family expansion", () => {
 	it("expands an explicitly configured provider-agnostic chain with bare model ids", () => {
 		expect(EXPLICIT_FALLBACK_CHAINS).toEqual({
 			[FABLE51]: ["k3:max", "kimi-k3:max", `${OPUS5}:xhigh`, `${OPUS48}:xhigh`],

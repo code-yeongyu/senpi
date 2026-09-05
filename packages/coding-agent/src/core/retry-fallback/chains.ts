@@ -2,13 +2,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { isValidThinkingLevel } from "../../cli/args.ts";
 import { findExactModelReferenceMatch, parseModelPattern } from "../model-resolver.ts";
-import {
-	type FallbackAuthTiers,
-	MAX_PROVIDERS_PER_FAMILY,
-	matchesFamily,
-	parseBareSelector,
-	rankFamilyModels,
-} from "./expansion.ts";
+import { type FallbackAuthTiers, MAX_PROVIDERS_PER_FAMILY, parseBareSelector, rankFamilyModels } from "./expansion.ts";
 
 export interface FallbackSelector {
 	raw: string;
