@@ -1,3 +1,23 @@
+# 2026-09-05 - GPT-6 Astra async tool calling and WebSocket steering: deferred with design
+
+### What changed
+
+- No runtime change. This records the binding decision to DEFER two GPT-6 Astra wire features until the agent loop supports them, with the concrete designs below.
+
+### Why deferred
+
+- Async tool calling (`async: true`, late outputs on the original `call_id`): the agent loop executes tools synchronously and cannot proceed with a pending call. Proof: `packages/agent/src/agent-loop.ts:297` awaits `executeToolCalls` before `turn_end`, and the parallel batch barrier `await Promise.all(finalizedCalls)` at `packages/agent/src/agent-loop.ts:966` blocks until every `call_id` has a result. The Responses adapter sends one `response.create` (`packages/ai/src/api/openai-responses.ts:807`) and releases the socket after `response.completed`, with no call-id correlation surface. A payload-only `async: true` would advertise behavior the loop cannot honor.
+- Mid-turn steering over WebSocket: steering is polled only at turn boundaries (`packages/agent/src/agent-loop.ts:212`, `:325`, `:382` via `config.getSteeringMessages()`), never during `streamAssistant` or tool execution. The subscribe target for a future loop-owned dispatcher is `Agent.steeringQueue` (`packages/agent/src/agent.ts:209`, drained at `:445`/`:483`). Both the generic and Codex adapters have their own WebSocket paths (`packages/ai/src/api/openai-codex-responses.ts:299`/`:311`/`:1520`), so a bidirectional API must be built twice.
+
+### Designs (for future adoption)
+
+- Async: a loop-owned `PendingToolCall` registry keyed by provider `call_id` with durable session ownership, cancellation, duplicate/unknown handling, and a completion event that resumes the same response conversation; the adapter must expose a bidirectional Responses connection and serialize `function_call_output` on the original `call_id`.
+- Steering: a loop-owned active-turn command channel that subscribes to steering-queue mutation, assigns ordering/turn identity, encodes the steering event on the live socket, and defines interrupt-vs-queue-vs-merge semantics plus reconnect/abort behavior.
+
+### Exit criteria
+
+- Revisit only after a failing-first integration test proves (1) a detached tool returns after the model response preserving the original `call_id`, and (2) steering sent during an active WebSocket response is observed in that same turn, both with remote green evidence.
+
 # changes.md — ai
 
 ## 2026-09-05 - Normalize GPT-6 Astra reasoning maps across OpenAI-family catalogs
