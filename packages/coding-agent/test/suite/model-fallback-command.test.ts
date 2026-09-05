@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -46,6 +47,10 @@ function model(provider: string, id: string, reasoning: boolean): Model<Api> {
 		maxTokens: 1,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	};
+}
+
+function writeSettings(dir: string, settings: unknown): void {
+	writeFileSync(join(dir, "settings.json"), JSON.stringify(settings));
 }
 
 async function harness(): Promise<Map<string, Command>> {
@@ -189,13 +194,12 @@ describe("model fallback builtin command", () => {
 		expect(command?.description).toContain("fallback");
 	});
 
-	it("lists a default chain only for models the user can actually select", async () => {
+	it("reports empty state when no fallback chains are configured", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "senpi-fallback-command-"));
 		dirs.push(dir);
 		const notices: string[] = [];
 		const catalogOnly = model("github-copilot", "claude-fable-5", true);
-		// The builtin catalog publishes Fable 5 under many providers; only the SDK
-		// OAuth one is actually usable here, so only its chain belongs on screen.
+		// No shipped defaults exist anymore: with nothing configured the command says so.
 		const ctx = await context(
 			dir,
 			notices,
@@ -206,9 +210,32 @@ describe("model fallback builtin command", () => {
 
 		await (await harness()).get("fallback")?.handler("", ctx);
 
+		expect(notices.join("\n")).toContain("No fallback chains configured");
+	});
+
+	it("lists a configured chain for the provider the user actually pinned", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "senpi-fallback-command-"));
+		dirs.push(dir);
+		const notices: string[] = [];
+		// Chains resolve from the agent settings dir (repointed per-test in beforeEach).
+		const agentDir = process.env.SENPI_CODING_AGENT_DIR;
+		if (!agentDir) throw new Error("SENPI_CODING_AGENT_DIR not set");
+		writeSettings(agentDir, {
+			retry: { fallbackChains: { "claude-sdk-oauth/claude-fable-5": ["kimi-coding/k3:max"] } },
+		});
+		const ctx = await context(
+			dir,
+			notices,
+			["Show chains & live state"],
+			[sdkFable, sdkOpus5, kimiK3],
+			[sdkFable, sdkOpus5, kimiK3],
+		);
+
+		await (await harness()).get("fallback")?.handler("", ctx);
+
 		const rendered = notices.join("\n");
-		expect(rendered).toContain("claude-sdk-oauth/claude-fable-5 -> kimi-coding/k3:max");
-		expect(rendered).not.toContain("github-copilot/claude-fable-5 ->");
+		expect(rendered).toContain("claude-sdk-oauth/claude-fable-5 ->");
+		expect(rendered).toContain("kimi-coding/k3:max");
 	});
 
 	it("quick-set validates and persists a chain visible after a session-side reload", async () => {
@@ -244,37 +271,41 @@ describe("model fallback builtin command", () => {
 
 	it.each([
 		{
-			name: "all default models are available",
+			name: "all fallback models are available",
 			models: [primary, kimiK3, opus5, opus48],
-			expected:
-				"anthropic/claude-fable-5 -> kimi-coding/k3:max, anthropic/claude-opus-5:xhigh, anthropic/claude-opus-4-8:xhigh",
-		},
-		{
-			name: "Fable 5 is attached through the Claude SDK OAuth provider instead of anthropic",
-			models: [sdkFable, kimiK3, sdkOpus5],
-			expected: "claude-sdk-oauth/claude-fable-5 -> kimi-coding/k3:max, claude-sdk-oauth/claude-opus-5:xhigh",
+			mustList: ["kimi-coding/k3:max", "anthropic/claude-opus-5:xhigh"],
+			mustOmit: [] as string[],
 		},
 		{
 			name: "Kimi K3 is unavailable",
 			models: [primary, opus5, opus48],
-			expected: "anthropic/claude-fable-5 -> anthropic/claude-opus-5:xhigh, anthropic/claude-opus-4-8:xhigh",
+			mustList: ["anthropic/claude-opus-5:xhigh", "anthropic/claude-opus-4-8:xhigh"],
+			mustOmit: ["kimi-coding/k3:max"],
 		},
-		{
-			// Fable's own chain drops out with the model, but the shipped wildcard
-			// lane remains so a chainless model still has an escape route.
-			name: "Fable 5 is unavailable",
-			models: [opus5, opus48],
-			expected: "* -> anthropic/claude-opus-5:xhigh, anthropic/claude-opus-4-8:xhigh",
-		},
-	])("shows the availability-filtered default chain when $name", async ({ models, expected }) => {
+	])("filters a configured chain by live availability when $name", async ({ models, mustList, mustOmit }) => {
 		const dir = await mkdtemp(join(tmpdir(), "senpi-fallback-command-"));
 		dirs.push(dir);
 		const notices: string[] = [];
 		const choices = ["Show chains & live state"];
+		const agentDir = process.env.SENPI_CODING_AGENT_DIR;
+		if (!agentDir) throw new Error("SENPI_CODING_AGENT_DIR not set");
+		writeSettings(agentDir, {
+			retry: {
+				fallbackChains: {
+					"anthropic/claude-fable-5": [
+						"kimi-coding/k3:max",
+						"anthropic/claude-opus-5:xhigh",
+						"anthropic/claude-opus-4-8:xhigh",
+					],
+				},
+			},
+		});
 
 		await (await harness()).get("fallback")?.handler("", await context(dir, notices, choices, models));
 
-		expect(notices.join("\n")).toContain(expected);
+		const rendered = notices.join("\n");
+		for (const entry of mustList) expect(rendered).toContain(entry);
+		for (const entry of mustOmit) expect(rendered).not.toContain(entry);
 	});
 
 	it("handles a headless menu invocation cleanly", async () => {
