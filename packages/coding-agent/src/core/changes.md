@@ -1,25 +1,25 @@
 
-## 2026-09-05 - GPT-6 Astra configuration update exact-path coverage
-
-### Why
-
-- The entry records the exact production paths required by the changelog gate and explains the cache-preserving reasoning-update behavior.
-
-### Why this lives in the fork
-
-- These paths own the runtime/session/provider behavior and cannot be corrected by an extension-only change.
-
-### Expected merge conflict zones
-
-- GPT-6 Astra model/session and provider integration trackers.
+## 2026-09-05 - Persist Astra reasoning configuration updates
 
 ### What changed
 
-- packages/coding-agent/src/core/agent-session.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/coding-agent/src/core/compaction/compaction.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/coding-agent/src/core/messages.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/coding-agent/src/core/sdk.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/coding-agent/src/core/session-manager.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/coding-agent/src/core/agent-session.ts: write and re-anchor Astra configuration updates during thinking changes and compaction.
+- packages/coding-agent/src/core/compaction/compaction.ts: preserve the configuration-update role during compaction.
+- packages/coding-agent/src/core/messages.ts: project durable entries into the configuration-update message role.
+- packages/coding-agent/src/core/sdk.ts: restore the reasoning baseline from session state.
+- packages/coding-agent/src/core/session-manager.ts: persist and replay configuration-update entries.
+
+### Why
+
+- Changing GPT-6 Astra reasoning through the request-level field breaks the prompt-cache prefix; the Responses API provides a positional configuration-update item for this transition.
+
+### Why this lives in the fork
+
+- Session lifecycle, compaction, and provider context assembly are core paths below extension interception.
+
+### Expected merge conflict zones
+
+- Agent-session thinking-level transitions, session-manager context assembly, and compaction lifecycle.
 
 ## 2026-09-05 - Persist Astra reasoning configuration updates
 

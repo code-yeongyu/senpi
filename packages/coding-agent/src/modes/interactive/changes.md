@@ -1,23 +1,21 @@
 
-## 2026-09-05 - GPT-6 Astra configuration update exact-path coverage
-
-### Why
-
-- The entry records the exact production paths required by the changelog gate and explains the cache-preserving reasoning-update behavior.
-
-### Why this lives in the fork
-
-- These paths own the runtime/session/provider behavior and cannot be corrected by an extension-only change.
-
-### Expected merge conflict zones
-
-- GPT-6 Astra model/session and provider integration trackers.
+## 2026-09-05 - Render Astra configuration updates as non-interactive session entries
 
 ### What changed
 
-- packages/coding-agent/src/modes/interactive/interactive-mode.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/coding-agent/src/modes/interactive/interactive-mode.ts: handle the configuration-update role without rendering it as a user-visible text message.
 
-# changes
+### Why
+
+- The wire item affects provider configuration but is not user prose.
+
+### Why this lives in the fork
+
+- Interactive mode owns the terminal projection of session entries.
+
+### Expected merge conflict zones
+
+- Interactive session rendering and message-role handling.
 
 ## 2026-09-04 - Branded build labels render verbatim in startup UI
 

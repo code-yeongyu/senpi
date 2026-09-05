@@ -1,25 +1,25 @@
 
-## 2026-09-05 - GPT-6 Astra configuration update exact-path coverage
-
-### Why
-
-- The entry records the exact production paths required by the changelog gate and explains the cache-preserving reasoning-update behavior.
-
-### Why this lives in the fork
-
-- These paths own the runtime/session/provider behavior and cannot be corrected by an extension-only change.
-
-### Expected merge conflict zones
-
-- GPT-6 Astra model/session and provider integration trackers.
+## 2026-09-05 - Project Astra configuration updates at the Responses wire
 
 ### What changed
 
-- packages/ai/src/api/mistral-conversations.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/ai/src/api/openai-responses-shared.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/ai/src/providers/faux.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/ai/src/types.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/ai/src/utils/estimate.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/ai/src/api/mistral-conversations.ts: ignore the Astra-only configuration-update role on Mistral.
+- packages/ai/src/api/openai-responses-shared.ts: emit the configuration-update item at its original position for Astra Responses requests.
+- packages/ai/src/providers/faux.ts: ignore the Astra-only configuration-update role in faux providers.
+- packages/ai/src/types.ts: define the configuration-update message shape.
+- packages/ai/src/utils/estimate.ts: account for the non-token-bearing configuration-update role.
+
+### Why
+
+- The Responses API requires a positional configuration-update item for cache-preserving reasoning changes, while other providers must ignore it.
+
+### Why this lives in the fork
+
+- Message conversion and token estimation happen inside the AI provider boundary before extensions can alter the request.
+
+### Expected merge conflict zones
+
+- Responses message conversion and provider-specific message handling.
 
 ## 2026-09-05 - Infer map-less GPT-6 Astra reasoning controls
 

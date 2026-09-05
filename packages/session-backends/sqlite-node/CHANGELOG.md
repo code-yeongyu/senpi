@@ -1,21 +1,7 @@
 
-## 2026-09-05 - GPT-6 Astra configuration update exact-path coverage
+## [Unreleased]
 
-### Why
-
-- The entry records the exact production paths required by the changelog gate and explains the cache-preserving reasoning-update behavior.
-
-### Why this lives in the fork
-
-- These paths own the runtime/session/provider behavior and cannot be corrected by an extension-only change.
-
-### Expected merge conflict zones
-
-- GPT-6 Astra model/session and provider integration trackers.
-
-### What changed
-
-- packages/session-backends/sqlite-node/src/sqlite/repo.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/session-backends/sqlite-node/src/sqlite/repo.ts: decode durable GPT-6 Astra configuration_update entries with reasoning-effort validation.
 
 ## [Unreleased]
 

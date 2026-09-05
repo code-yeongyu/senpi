@@ -1,29 +1,29 @@
 
-## 2026-09-05 - GPT-6 Astra configuration update exact-path coverage
-
-### Why
-
-- The entry records the exact production paths required by the changelog gate and explains the cache-preserving reasoning-update behavior.
-
-### Why this lives in the fork
-
-- These paths own the runtime/session/provider behavior and cannot be corrected by an extension-only change.
-
-### Expected merge conflict zones
-
-- GPT-6 Astra model/session and provider integration trackers.
+## 2026-09-05 - Preserve Astra reasoning effort across session changes
 
 ### What changed
 
-- packages/agent/src/agent.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/agent/src/harness/agent-harness.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/agent/src/harness/compaction/branch-summarization.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/agent/src/harness/compaction/compaction.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/agent/src/harness/reducer.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/agent/src/harness/session/context.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/agent/src/harness/session/jsonl/codec.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/agent/src/harness/session/types.ts: covered by the GPT-6 Astra configuration-update implementation.
-- packages/agent/src/types.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/agent/src/agent.ts: preserve the branch reasoning baseline for GPT-6 Astra requests.
+- packages/agent/src/harness/agent-harness.ts: persist trusted configuration-update entries.
+- packages/agent/src/harness/compaction/branch-summarization.ts: preserve configuration-update entries through branch summaries.
+- packages/agent/src/harness/compaction/compaction.ts: keep configuration-update entries at compaction boundaries.
+- packages/agent/src/harness/reducer.ts: restore effective configuration-update state.
+- packages/agent/src/harness/session/context.ts: replay the latest configuration update.
+- packages/agent/src/harness/session/jsonl/codec.ts: decode configuration-update entries.
+- packages/agent/src/harness/session/types.ts: define the durable configuration-update entry.
+- packages/agent/src/types.ts: carry the configuration-update message role.
+
+### Why
+
+- GPT-6 Astra changes reasoning through a positional configuration-update item so request-level effort remains stable for prompt caching.
+
+### Why this lives in the fork
+
+- The agent loop and durable session contracts own baseline and replay state before provider adapters run.
+
+### Expected merge conflict zones
+
+- Agent loop configuration and session entry unions.
 
 ## 2026-09-05 - Preserve Astra reasoning effort across session changes
 
