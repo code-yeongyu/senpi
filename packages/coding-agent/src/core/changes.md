@@ -1,5 +1,34 @@
 # changes
 
+## 2026-09-05 - Skip live-history budget on same-model resume
+
+### What changed
+
+- `createAgentSession` treats a restored session as same-persisted-model when existing
+  messages are present and the saved provider/modelId equals the resolved model
+  provider/id. That path admits with `liveContextTokens = 0` so only the fixed prompt,
+  tools, and reserves are validated. Different explicit targets and fallback replacements
+  still sum the restored transcript. Resume still omits speculation lead
+  (`includeSpeculationLead: false`, `admission: "resume"`). `_setModel` and prompt
+  pre-compaction guards are unchanged.
+
+### Why
+
+- Same-model resume of an already-saved oversized history was rejected before the TUI
+  opened, so the user could not compact or continue. The history was produced by that
+  model; startup should not re-charge it as a downswitch. Switching to a different model
+  must still refuse a transcript that cannot fit.
+
+### Why an extension could not handle it
+
+- `createAgentSession` throws `ModelUsabilityBudgetError` before extensions are wired;
+  no extension hook can intercept that constructor-time reject.
+
+### Expected merge conflict zones
+
+- LOW: the startup `assertModelUsable` call in `sdk.ts`;
+  `test/suite/model-usability-budget.test.ts`.
+
 ## 2026-09-05 - Require explicit fallback chains
 
 ### What changed

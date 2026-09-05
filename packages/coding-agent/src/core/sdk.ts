@@ -516,9 +516,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
 	});
-	const liveContextTokens = hasExistingSession
-		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)
-		: 0;
+	const samePersistedModel =
+		hasExistingSession &&
+		existingSession.model != null &&
+		model != null &&
+		existingSession.model.provider === model.provider &&
+		existingSession.model.modelId === model.id;
+	const liveContextTokens =
+		hasExistingSession && !samePersistedModel
+			? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)
+			: 0;
 	session.assertModelUsable(
 		undefined,
 		liveContextTokens,
