@@ -242,7 +242,7 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		// swap to the base model. Preserve the requested level across that swap as well; the session
 		// setter clamps it against the base model's thinkingLevelMap without changing global defaults.
 		const remembered = getRememberedServiceTier(settingsManager, ctx.modelRegistry, model);
-		const requestedThinkingLevel = ctx.thinkingLevel;
+		const requestedThinkingLevel = pi.getThinkingLevel();
 
 		const baseModel = findBaseModel(ctx.modelRegistry, model);
 		if (baseModel) {

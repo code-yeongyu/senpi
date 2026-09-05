@@ -87,12 +87,16 @@ describe("service-tier builtin extension", () => {
 		harnesses.push(harness);
 		const runner = harness.getExtensionRunner();
 		const thinkingLevelMap = { off: null, low: "low", medium: "medium", high: "high" } as const;
+		harness.session.model!.reasoning = true;
 		harness.session.model!.thinkingLevelMap = thinkingLevelMap;
+		harness.modelRegistry.find(CODEX_PROVIDER, FAST_MODEL_ID)!.reasoning = true;
 		harness.modelRegistry.find(CODEX_PROVIDER, FAST_MODEL_ID)!.thinkingLevelMap = thinkingLevelMap;
+		harness.modelRegistry.find(CODEX_PROVIDER, BASE_MODEL_ID)!.reasoning = true;
 		harness.modelRegistry.find(CODEX_PROVIDER, BASE_MODEL_ID)!.thinkingLevelMap = thinkingLevelMap;
 		expect(harness.session.model?.id).toBe(FAST_MODEL_ID);
 		expect(harness.session.isFastModeActive()).toBe(true);
 		harness.session.setSessionThinkingLevel("high");
+		expect(harness.session.thinkingLevel).toBe("high");
 
 		// when
 		await harness.session.bindExtensions({});
