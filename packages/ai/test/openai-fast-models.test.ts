@@ -31,6 +31,7 @@ const PRIORITY_TIER_MODEL_IDS = [
 
 const OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const;
 const GPT_56_SOL_MODEL_IDS = ["gpt-5.6-sol", "gpt-5.6-sol-fast"] as const;
+const GPT_6_ASTRA_MODEL_IDS = ["gpt-6-astra", "gpt-6-astra-fast"] as const;
 
 const NON_PRIORITY_MODEL_IDS = [
 	"gpt-5-pro",
@@ -51,9 +52,12 @@ const NON_PRIORITY_MODEL_IDS = [
 ] as const;
 
 describe("OpenAI -fast priority-tier catalog variants", () => {
-	it("defaults GPT-5.6 Sol variants to a 650k context window", () => {
+	it.each([
+		["GPT-5.6 Sol", GPT_56_SOL_MODEL_IDS],
+		["GPT-6 Astra", GPT_6_ASTRA_MODEL_IDS],
+	] as const)("defaults %s variants to a 650k context window", (_family, modelIds) => {
 		for (const provider of ["openai", "openai-codex"] as const) {
-			for (const id of GPT_56_SOL_MODEL_IDS) {
+			for (const id of modelIds) {
 				const model = getModel(provider, id);
 				expect(model, `${provider}/${id} should exist`).toBeDefined();
 				expect(model!.contextWindow, `${provider}/${id}`).toBe(650_000);
