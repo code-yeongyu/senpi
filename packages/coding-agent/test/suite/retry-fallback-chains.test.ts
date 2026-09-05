@@ -148,10 +148,8 @@ describe("fallback chain selectors", () => {
 		).toBe("openai/gpt-5.4");
 	});
 
-	it("preserves the wildcard chain through canonicalization", () => {
-		expect(canonicalizeFallbackChains({ "*": ["ANTHROPIC/claude-sonnet-4-5:MAX"] }, models)).toEqual({
-			"*": ["anthropic/claude-sonnet-4-5:max"],
-		});
+	it("ignores wildcard chains through canonicalization", () => {
+		expect(canonicalizeFallbackChains({ "*": ["ANTHROPIC/claude-sonnet-4-5:MAX"] }, models)).toEqual({});
 	});
 
 	it("drops a tombstoned wildcard chain", () => {
