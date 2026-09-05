@@ -342,6 +342,7 @@ function findValidCutPoints(entries: Entry[], startIndex: number, endIndex: numb
 				break;
 			}
 			case "thinking_level_change":
+			case "configuration_update":
 			case "model_change":
 			case "active_tools_change":
 			case "compaction":

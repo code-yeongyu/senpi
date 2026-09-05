@@ -186,7 +186,8 @@ type ResponseInputItem =
 	| OpenAIResponseInputItem
 	| ResponseCustomToolCallItem
 	| ResponseCustomToolCallOutputItem
-	| AdditionalToolsInputItem;
+	| AdditionalToolsInputItem
+	| { type: "configuration_update"; reasoning: { effort: string } };
 
 export const CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL = "custom";
 
@@ -289,6 +290,19 @@ export function convertResponsesMessages<TApi extends Api>(
 
 	let msgIndex = 0;
 	for (const msg of transformedMessages) {
+		if (msg.role === "configurationUpdate") {
+			if (model.id !== "gpt-6-astra" || !["openai", "openai-codex"].includes(model.provider)) continue;
+			const previous = messages[messages.length - 1];
+			if (previous?.type === "configuration_update") {
+				messages[messages.length - 1] = {
+					type: "configuration_update",
+					reasoning: { effort: msg.effort },
+				};
+			} else {
+				messages.push({ type: "configuration_update", reasoning: { effort: msg.effort } });
+			}
+			continue;
+		}
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				messages.push(

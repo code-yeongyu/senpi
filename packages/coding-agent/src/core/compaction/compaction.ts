@@ -413,6 +413,8 @@ export function estimateTokens(message: AgentMessage): number {
 			chars = message.summary.length;
 			return Math.ceil(chars / 4);
 		}
+		case "configurationUpdate":
+			return 0;
 	}
 }
 
@@ -426,6 +428,7 @@ function isCutPointMessage(message: AgentMessage): boolean {
 		case "compactionSummary":
 			return true;
 		case "toolResult":
+		case "configurationUpdate":
 			return false;
 	}
 	return false;
@@ -441,6 +444,7 @@ function isTurnStartMessage(message: AgentMessage): boolean {
 			return true;
 		case "assistant":
 		case "toolResult":
+		case "configurationUpdate":
 			return false;
 	}
 	return false;

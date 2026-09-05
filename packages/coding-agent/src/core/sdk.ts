@@ -373,6 +373,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	).filter((name) => !excludedToolNameSet?.has(name));
 
 	let agent: Agent;
+	const reasoningBaseline = existingSession.configurationUpdate
+		? (sessionManager.getBranch().find((entry) => entry.type === "thinking_level_change")?.thinkingLevel ??
+			thinkingLevel)
+		: undefined;
 
 	// Read blockImages per request so a mid-session settings change takes effect.
 	const convertToLlmWithBlockImages = (messages: AgentMessage[]): Message[] =>
@@ -394,6 +398,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			model,
 			thinkingLevel,
 			thinkingSelection,
+			reasoningBaseline,
 			tools: [],
 		},
 		convertToLlm: convertToLlmWithBlockImages,

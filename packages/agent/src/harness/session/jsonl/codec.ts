@@ -8,6 +8,7 @@ const ENTRY_TYPES = new Set<Entry["type"]>([
 	"message",
 	"model_change",
 	"thinking_level_change",
+	"configuration_update",
 	"active_tools_change",
 	"compaction",
 	"branch_summary",

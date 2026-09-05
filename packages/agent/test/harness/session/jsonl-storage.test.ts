@@ -61,6 +61,17 @@ afterEach(() => {
 });
 
 describe("JSONL v4 per-session storage", () => {
+	it("round trips configuration_update entries", async () => {
+		const root = createTempDir();
+		const repository = createRepository(root);
+		const session = await repository.create({ id: "configuration-update", cwd: root });
+		await session.appendEntry({ type: "configuration_update", id: "update", reasoning: { effort: "high" } }, "main");
+		const restored = await reopen(root, session);
+		expect(await restored.getEntry("update")).toMatchObject({
+			type: "configuration_update",
+			reasoning: { effort: "high" },
+		});
+	});
 	it("round trips every entry type and bounded branch queries", async () => {
 		const root = createTempDir();
 		const session = await createRepository(root).create({ id: "entries", cwd: root });

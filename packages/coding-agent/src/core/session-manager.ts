@@ -46,6 +46,7 @@ function uuidv7(): string {
 
 import {
 	type BashExecutionMessage,
+	type ConfigurationUpdateMessage,
 	type CustomMessage,
 	createBranchSummaryMessage,
 	createCompactionSummaryMessage,
@@ -109,6 +110,11 @@ export interface ThinkingLevelChangeEntry extends SessionEntryBase {
 	thinkingLevel: string;
 	/** Explicit selector provenance. Omitted by legacy entries and SDK-defaulted fallbacks. */
 	thinkingSelection?: ThinkingSelection;
+}
+
+export interface ConfigurationUpdateEntry extends SessionEntryBase {
+	type: "configuration_update";
+	reasoning: { effort: string };
 }
 
 export interface ModelChangeEntry extends SessionEntryBase {
@@ -200,6 +206,7 @@ export interface CustomMessageEntry<T = unknown> extends SessionEntryBase {
 export type SessionEntry =
 	| SessionMessageEntry
 	| ThinkingLevelChangeEntry
+	| ConfigurationUpdateEntry
 	| ModelChangeEntry
 	| CompactionEntry
 	| BranchSummaryEntry
@@ -225,6 +232,7 @@ export interface SessionContext {
 	messages: AgentMessage[];
 	thinkingLevel: string;
 	thinkingSelection?: ThinkingSelection;
+	configurationUpdate?: { effort: string };
 	model: { provider: string; modelId: string } | null;
 }
 
@@ -419,9 +427,10 @@ function buildSessionPath(
 
 function getSessionContextSettings(
 	path: SessionEntry[],
-): Pick<SessionContext, "thinkingLevel" | "thinkingSelection" | "model"> {
+): Pick<SessionContext, "thinkingLevel" | "thinkingSelection" | "configurationUpdate" | "model"> {
 	let thinkingLevel = "off";
 	let thinkingSelection: ThinkingSelection | undefined;
+	let configurationUpdate: { effort: string } | undefined;
 	let model: { provider: string; modelId: string } | null = null;
 	// An explicit selection (a manual `model_change`, or the primary restored from a fallback
 	// window) outranks the model id echoed by later assistant messages from the SAME provider:
@@ -442,6 +451,8 @@ function getSessionContextSettings(
 		if (entry.type === "thinking_level_change") {
 			thinkingLevel = entry.thinkingLevel;
 			thinkingSelection = entry.thinkingSelection;
+		} else if (entry.type === "configuration_update") {
+			configurationUpdate = { effort: entry.reasoning.effort };
 		} else if (entry.type === "model_change") {
 			if (entry.reason === "fallback") {
 				if (!isInFallbackWindow) {
@@ -485,7 +496,7 @@ function getSessionContextSettings(
 		thinkingSelection = preFallbackThinkingSelection;
 	}
 
-	return { thinkingLevel, thinkingSelection, model };
+	return { thinkingLevel, thinkingSelection, configurationUpdate, model };
 }
 
 /**
@@ -504,6 +515,16 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 			return [withContextEntryId(entry.id, { ...message, content: [] })];
 		}
 		return [withContextEntryId(entry.id, message)];
+	}
+	if (entry.type === "configuration_update") {
+		return [
+			withContextEntryId(entry.id, {
+				role: "configurationUpdate",
+				content: [],
+				effort: entry.reasoning.effort,
+				timestamp: new Date(entry.timestamp).getTime(),
+			} satisfies ConfigurationUpdateMessage),
+		];
 	}
 	if (entry.type === "custom_message") {
 		return [
@@ -588,9 +609,9 @@ export function buildSessionContext(
 	byId?: Map<string, SessionEntry>,
 ): SessionContext {
 	const path = buildSessionPath(entries, leafId, byId);
-	const { thinkingLevel, thinkingSelection, model } = getSessionContextSettings(path);
+	const { thinkingLevel, thinkingSelection, model, configurationUpdate } = getSessionContextSettings(path);
 	const messages = buildContextEntries(entries, leafId, byId).flatMap(sessionEntryToContextMessages);
-	return { messages, thinkingLevel, thinkingSelection, model };
+	return { messages, thinkingLevel, thinkingSelection, model, configurationUpdate };
 }
 
 /**
@@ -1197,6 +1218,19 @@ export class SessionManager {
 			timestamp: new Date().toISOString(),
 			thinkingLevel,
 			thinkingSelection,
+		};
+		this._appendEntry(entry);
+		return entry.id;
+	}
+
+	/** Append a durable Responses configuration update as child of current leaf. */
+	appendConfigurationUpdate(effort: string): string {
+		const entry: ConfigurationUpdateEntry = {
+			type: "configuration_update",
+			id: generateId(this.byId),
+			parentId: this.leafId,
+			timestamp: new Date().toISOString(),
+			reasoning: { effort },
 		};
 		this._appendEntry(entry);
 		return entry.id;

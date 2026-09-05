@@ -5308,6 +5308,9 @@ export class InteractiveMode {
 				// Tool results are rendered inline with tool calls, handled separately
 				break;
 			}
+			case "configurationUpdate": {
+				break;
+			}
 			default: {
 				const exhaustive: never = message;
 				void exhaustive;

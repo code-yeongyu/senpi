@@ -429,7 +429,26 @@ export class AgentHarness implements AgentLane {
 		return this.thinkingLevel;
 	}
 	async setThinkingLevel(level: ThinkingLevel): Promise<void> {
+		if (this.closed) throw new HarnessClosed();
+		if (level === this.thinkingLevel) return;
 		this.thinkingLevel = level;
+		if (
+			this.model.id !== "gpt-6-astra" ||
+			(this.model.provider !== "openai" && this.model.provider !== "openai-codex")
+		) {
+			return;
+		}
+		const leaf = await this.durableSession.getLeafId();
+		const latest = leaf === null ? undefined : await this.durableSession.findEntryOnBranch({ start: leaf });
+		if (latest?.type === "configuration_update" && latest.reasoning.effort === level) return;
+		await this.durableSession.appendEntry(
+			{
+				type: "configuration_update",
+				id: crypto.randomUUID(),
+				reasoning: { effort: level },
+			},
+			"main",
+		);
 	}
 	async getActiveTools(): Promise<string[]> {
 		return [...this.activeToolNames];
