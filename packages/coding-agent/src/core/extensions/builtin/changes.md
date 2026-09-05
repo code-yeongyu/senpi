@@ -1,5 +1,23 @@
 # Builtin extensions changes
 
+## Preserve explicit fast variants at session start (2026-09-05)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: when session startup receives a compatible `-fast` catalog variant, it still swaps to the base model but preserves the selected thinking level with a session-scoped setter and keeps fast mode enabled. Remembered tier derivation remains unchanged for non-`-fast` starts.
+
+### Why
+
+- Selecting a `-fast` model at startup previously lost both the requested thinking level and the priority service tier when the extension normalized the variant to its base model.
+
+### Why an extension could not handle it
+
+- The startup model normalization and session fast-mode state are owned by this built-in extension's `session_start` handler.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/service-tier.ts` and its focused regression tests.
+
 ## Recommend GPT-6 Astra ahead of GPT-5.6 Sol (2026-09-05)
 
 ### What changed
