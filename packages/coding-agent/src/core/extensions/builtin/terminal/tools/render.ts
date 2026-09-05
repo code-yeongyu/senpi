@@ -1,4 +1,4 @@
-import { Text } from "@earendil-works/pi-tui";
+import { Text, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { truncateToVisualLines } from "../../../../../modes/interactive/components/visual-truncate.ts";
 import type { AgentToolResult, ToolDefinition } from "../../../types.ts";
 import type { BashOutputInput, bashOutputSchema } from "./bash-output.ts";
@@ -24,7 +24,7 @@ class BashOutputResultComponent {
 	}
 
 	render(width: number): string[] {
-		if (!this.#isPartial || this.#expanded) return this.#text.split("\n");
+		if (!this.#isPartial || this.#expanded) return wrapTextWithAnsi(this.#text, Math.max(1, width));
 		return truncateToVisualLines(this.#text, OUTPUT_PREVIEW_LINES, Math.max(1, width)).visualLines.map((line) =>
 			line.trimEnd(),
 		);

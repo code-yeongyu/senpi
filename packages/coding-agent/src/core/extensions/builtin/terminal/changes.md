@@ -1,5 +1,23 @@
 # terminal builtin extension — fork surface
 
+## bash_output completed/expanded TUI wrap (2026-09-05)
+
+### What changed
+
+- `tools/render.ts`: completed and expanded `bash_output` results wrap with `wrapTextWithAnsi(..., Math.max(1, width))` instead of raw `split("\n")`. Partial preview still uses `truncateToVisualLines`.
+
+### Why
+
+- A completed or expanded result could emit 102/180-column lines into a 98-column Box, overflowing the TUI width contract. Wrapping is display-only; it is not the process-exit root cause.
+
+### Why an extension could not handle it
+
+- The overflow is in this builtin's own `renderResult` component.
+
+### Expected merge conflict zones
+
+- LOW: `tools/render.ts` completed/expanded `render()` branch and `test/suite/terminal-bash-output-width.test.ts`.
+
 ## `persistent` reads as the standing-watch switch (2026-09-04)
 
 ### What changed
