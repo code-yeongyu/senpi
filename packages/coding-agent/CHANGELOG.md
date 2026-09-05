@@ -1328,6 +1328,8 @@
 
 ### Fixed
 
+- DeepSeek V4 (flash/flash-0731/pro) presets now carry delegation and visible-skill gates; Kimi K3 adds the skill gate alongside the redesigned core's existing bounded delegation rule. This remains a draft canary pending at least 20 qualified turns (see PR #912).
+
 - Extension selectors (including the `/fallback` model picker) now window long option lists around the
   highlighted row instead of rendering every entry. On large model registries the full list overflowed the
   viewport and the moved highlight was never painted, so arrow keys and j/k appeared to do nothing even
