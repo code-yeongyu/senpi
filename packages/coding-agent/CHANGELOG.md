@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Restored the literal `Working` text shimmer on turn start by supplying the generated working indicator options.
+
 ### Removed
 
 ## [2026.9.5] - 2026-09-05
