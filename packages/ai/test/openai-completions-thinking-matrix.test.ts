@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { stream, streamSimple } from "../src/api/openai-completions.ts";
 import { getModels } from "../src/compat.ts";
 import type { BuiltinProvider } from "../src/providers/all.ts";
-import type { Context, Model, SimpleStreamOptions } from "../src/types.ts";
+import type { Context, Model, ModelThinkingLevel, SimpleStreamOptions } from "../src/types.ts";
 
 type CapturedPayload = {
 	reasoning?: { effort?: string };
@@ -44,7 +44,7 @@ async function capturePayload(
 
 async function captureDirectPayload(
 	model: Model<"openai-completions">,
-	reasoningEffort: "high",
+	reasoningEffort: ModelThinkingLevel,
 ): Promise<CapturedPayload> {
 	let capturedPayload: CapturedPayload | undefined;
 	const payloadCaptureModel: Model<"openai-completions"> = {
@@ -54,7 +54,7 @@ async function captureDirectPayload(
 
 	const result = stream(payloadCaptureModel, context, {
 		apiKey: "fake-key",
-		reasoningEffort,
+		reasoningEffort: reasoningEffort as Exclude<ModelThinkingLevel, "off">,
 		onPayload: (payload) => {
 			capturedPayload = payload as CapturedPayload;
 			return payload;
@@ -79,6 +79,26 @@ function getOpenAICompletionsModel(provider: BuiltinProvider, id: string): Model
 }
 
 describe("OpenAI Completions thinking ladder fallbacks", () => {
+	it("infers the GPT-6 Astra ladder for map-less custom models", async () => {
+		const model = {
+			id: "gpt-6-astra",
+			name: "GPT-6 Astra",
+			api: "openai-completions",
+			provider: "quotio-openai",
+			baseUrl: "http://localhost:8000/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1050000,
+			maxTokens: 128000,
+		} satisfies Model<"openai-completions">;
+
+		expect(await captureDirectPayload(model, "minimal")).toMatchObject({ reasoning_effort: "low" });
+		expect(await captureDirectPayload(model, "off")).toMatchObject({ reasoning_effort: "low" });
+		expect(await captureDirectPayload(model, "xhigh")).toMatchObject({ reasoning_effort: "xhigh" });
+		expect(await captureDirectPayload(model, "max")).toMatchObject({ reasoning_effort: "max" });
+	});
+
 	it.each([
 		{
 			name: "DeepSeek's two-tier ladder on Alibaba Token Plan",
@@ -174,6 +194,24 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 		for (const field of absent) {
 			expect(payload).not.toHaveProperty(field);
 		}
+	});
+
+	it("preserves map-less GPT-5.6 Sol's existing effort behavior", async () => {
+		const model = {
+			id: "gpt-5.6-sol",
+			name: "GPT-5.6 Sol",
+			api: "openai-completions",
+			provider: "quotio-openai",
+			baseUrl: "http://localhost:8000/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 650000,
+			maxTokens: 128000,
+		} satisfies Model<"openai-completions">;
+
+		expect(await captureDirectPayload(model, "minimal")).toMatchObject({ reasoning_effort: "minimal" });
+		expect(await captureDirectPayload(model, "off")).toMatchObject({ reasoning_effort: "none" });
 	});
 
 	it("uses Ollama's none off sentinel and clamps max to its highest supported wire tier", async () => {

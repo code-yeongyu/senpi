@@ -31,6 +31,7 @@ import type {
 	ProviderRequestOptions,
 	ProviderStreams,
 	SimpleStreamOptions,
+	ThinkingLevelMap,
 	Usage,
 } from "./types.ts";
 import { operationSignal, raceWithAbortSignal } from "./utils/abort.ts";
@@ -944,12 +945,36 @@ export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage
 }
 
 const EXTENDED_THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const OPENAI_THINKING_APIS: Api[] = [
+	"openai-completions",
+	"openai-responses",
+	"azure-openai-responses",
+	"openai-codex-responses",
+];
+const GPT_6_ASTRA_THINKING_LEVEL_MAP: ThinkingLevelMap = {
+	off: null,
+	minimal: null,
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: "xhigh",
+	max: "max",
+};
+
+/** Infer documented OpenAI reasoning controls only when generated metadata is absent. */
+export function inferOpenAIThinkingLevelMap<TApi extends Api>(model: Model<TApi>): ThinkingLevelMap | undefined {
+	if (model.thinkingLevelMap !== undefined) return model.thinkingLevelMap;
+	if (OPENAI_THINKING_APIS.includes(model.api) && matchesModelFamily(model.id, "gpt-6-astra")) {
+		return GPT_6_ASTRA_THINKING_LEVEL_MAP;
+	}
+	return undefined;
+}
 
 export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {
 	if (!model.reasoning) return ["off"];
 
 	return EXTENDED_THINKING_LEVELS.filter((level) => {
-		const mapped = model.thinkingLevelMap?.[level];
+		const mapped = inferOpenAIThinkingLevelMap(model)?.[level];
 		if (mapped === null) return false;
 		if (level === "xhigh") return supportsXhigh(model);
 		if (level === "max") return supportsMax(model);
@@ -986,7 +1011,7 @@ export function clampThinkingLevel<TApi extends Api>(
  * that ship a reasoning model without generated catalog metadata still surface the tier.
  */
 export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
-	const mapped = model.thinkingLevelMap?.xhigh;
+	const mapped = inferOpenAIThinkingLevelMap(model)?.xhigh;
 	if (mapped === null) return false;
 	if (mapped !== undefined) return true;
 	if (model.thinkingLevelMap !== undefined) return false;
@@ -1039,7 +1064,7 @@ function supportsXhighModelId(modelId: string): boolean {
  * are inferred from the id.
  */
 export function supportsMax<TApi extends Api>(model: Model<TApi>): boolean {
-	const mapped = model.thinkingLevelMap?.max;
+	const mapped = inferOpenAIThinkingLevelMap(model)?.max;
 	if (mapped === null) return false;
 	if (mapped !== undefined) return true;
 	if (model.thinkingLevelMap !== undefined) return false;
