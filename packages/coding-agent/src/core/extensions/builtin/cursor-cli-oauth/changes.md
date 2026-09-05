@@ -1,5 +1,25 @@
 # cursor-cli-oauth extension changes
 
+## 2026-09-01 - Preserve Senpi context on first Cursor CLI turn
+
+### What changed
+
+- `settings.ts`, `stream.ts`, and `session-router.ts`: the turn boundary now detects when the immediately preceding assistant response came from another provider and requests a bounded Senpi context recap, covering both first-time Cursor use and returns to an existing Cursor chat. Provider-switch recap has its own `contextRecapOnProviderSwitch` setting and `SENPI_CURSOR_CLI_OAUTH_PROVIDER_RECAP` environment override (default on), independent from the existing model-switch recap option, and its recap header identifies the provider transition instead of claiming the model changed. Provider transitions still receive a recap when resume mode is disabled; only consecutive Cursor turns remain context-free. The current user prompt is removed from recap composition so it is sent exactly once. Successful Cursor turns persist their account ownership in an assistant diagnostic, so a process restart can restore the ownership proof without persisting transcript text; legacy or missing ownership fails closed. Same-turn failover and cross-turn account reselection both suppress the recap, and replacement accounts are forced off any older sticky chat, preserving the cross-account context-isolation contract.
+- `session-router.test.ts`, `stream.test.ts`, and `settings.test.ts`: add regressions for first-time and returning provider switches, independent provider/model recap opt-outs (including resume-fallback and end-to-end provider opt-out), single-copy current prompts on resume fallback, transition-specific recap headers, process-restart ownership recovery, same-turn/cross-turn account isolation, and replacement accounts with stale bindings under auto resume.
+- `docs/providers.md` and `docs/settings.md`: document both recap controls and their independent environment overrides.
+
+### Why
+
+- The router previously built recaps only for model switches inside an already-bound Cursor chat. Switching from another provider either had no Cursor routing record or resumed an older Cursor chat, so the CLI received only the latest user message and missed the intervening Senpi conversation.
+
+### Why an extension could not handle it
+
+- This is the builtin extension's private prompt-composition boundary. External hooks cannot access its in-memory Cursor chat binding or alter the subprocess prompt after routing.
+
+### Expected merge conflict zones
+
+- LOW: `settings.ts` around recap toggles, `stream.ts` around turn-input/failover composition, and `session-router.ts` around recap planning, plus their focused test suites.
+
 ## 2026-08-24 - Keep provider tool protocol out of assistant text
 
 ### What changed

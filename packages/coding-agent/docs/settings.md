@@ -327,6 +327,8 @@ When unset, senpi leaves provider payloads unchanged. This setting currently app
 |---------|------|---------|-------------|
 | `claudeSdkOauthProvider.enabled` | boolean | `false` | Enable the ambient (host-CLI-derived) lane of `claude-sdk-oauth`. Env override: `SENPI_CLAUDE_SDK_OAUTH_ENABLED`. Explicit senpi-side logins (stored OAuth accounts in `auth.json`, `CLAUDE_CODE_OAUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN_<n>` env accounts) keep the provider available with this unset |
 | `cursorCliOauthProvider.enabled` | boolean | `false` | Enable the `cursor-cli-oauth` fallback lane and automatic native credential bootstrap. Env override: `SENPI_CURSOR_CLI_OAUTH_ENABLED` |
+| `cursorCliOauthProvider.contextRecapOnModelSwitch` | boolean | `true` | Prepend a bounded recent-context recap when a resumed Cursor chat changes models. Env override: `SENPI_CURSOR_CLI_OAUTH_RECAP` |
+| `cursorCliOauthProvider.contextRecapOnProviderSwitch` | boolean | `true` | Prepend a bounded recent-context recap when entering `cursor-cli-oauth` after another provider. Env override: `SENPI_CURSOR_CLI_OAUTH_PROVIDER_RECAP` |
 
 Both ambient-auth providers are explicit opt-in: a vendor CLI being logged in on the machine is not consent to spend that subscription. Before these gates existed, a logged-in Claude Code or `cursor-agent` CLI made the lane available with no senpi-side action, so subscription usage could flow through a provider you never configured. Env overrides follow the usual precedence (`env > project settings > global settings > default`). See [providers.md](providers.md) for the full lane documentation.
 

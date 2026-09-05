@@ -98,6 +98,109 @@ describe("Cursor CLI OAuth session router", () => {
 		});
 	});
 
+	it("reinjects prior senpi context when switching into Cursor from another provider", async () => {
+		const router = makeRouter();
+		const prompt = "What was the codename?";
+		const recentExchanges: CursorCliRecapExchange[] = [
+			{ role: "user", text: "The codename is ORCHID." },
+			{ role: "assistant", text: "Understood." },
+			{ role: "user", text: prompt },
+		];
+		const { attempts, runAttempt } = scriptedRunner([[initEvent("chat-1", "model-a"), assistantEvent("ORCHID")]]);
+
+		await collect(
+			router.runTurn(
+				{ ...alphaContext, runAttempt, contextRecapOnModelSwitch: false },
+				{ prompt, model: "model-a", recentExchanges, contextRecapRequested: true },
+			),
+		);
+
+		const freshPrompt = attempts[0]?.prompt ?? "";
+		expect(attempts[0]?.resumeChatId).toBeUndefined();
+		expect(freshPrompt.startsWith(CURSOR_CLI_CONTEXT_RECAP_BEGIN)).toBe(true);
+		expect(freshPrompt).toContain("provider switched to cursor-cli-oauth");
+		expect(freshPrompt).toContain("The codename is ORCHID.");
+		expect(occurrences(freshPrompt, prompt)).toBe(1);
+		expect(freshPrompt.endsWith(prompt)).toBe(true);
+	});
+
+	it("honors the recap opt-out when switching into Cursor from another provider", async () => {
+		const router = makeRouter();
+		const { attempts, runAttempt } = scriptedRunner([[initEvent("chat-1", "model-a"), assistantEvent("answer")]]);
+
+		await collect(
+			router.runTurn(
+				{ ...alphaContext, runAttempt, contextRecapOnProviderSwitch: false },
+				{
+					prompt: "current question",
+					model: "model-a",
+					contextRecapRequested: true,
+					recentExchanges: [
+						{ role: "user", text: "private earlier context" },
+						{ role: "user", text: "current question" },
+					],
+				},
+			),
+		);
+
+		expect(attempts).toEqual([{ prompt: "current question", resumeChatId: undefined }]);
+	});
+
+	it("keeps the provider recap opt-out after a resumed chat falls back", async () => {
+		const router = makeRouter();
+		await primeChat(router, "chat-1", "model-a");
+		const { attempts, runAttempt } = scriptedRunner([
+			{ failure: { stderr: "Error: session chat-1 not found" } },
+			[initEvent("chat-2", "model-a"), assistantEvent("answer")],
+		]);
+
+		const events = await collect(
+			router.runTurn(
+				{ ...alphaContext, runAttempt, contextRecapOnProviderSwitch: false },
+				{
+					prompt: "current question",
+					model: "model-a",
+					contextRecapRequested: true,
+					recentExchanges: [
+						{ role: "assistant", text: "PRIVATE-OTHER-PROVIDER-CONTEXT" },
+						{ role: "user", text: "current question" },
+					],
+				},
+			),
+		);
+
+		expect(attempts).toEqual([
+			{ prompt: "current question", resumeChatId: "chat-1" },
+			{ prompt: "current question", resumeChatId: undefined },
+		]);
+		expect(restartNotice(events)?.message).not.toContain("re-injected");
+	});
+
+	it("reinjects intervening context when returning to an existing Cursor chat", async () => {
+		const router = makeRouter();
+		await primeChat(router, "chat-1", "model-a");
+		const { attempts, runAttempt } = scriptedRunner([[initEvent("chat-1", "model-a"), assistantEvent("ORCHID")]]);
+
+		await collect(
+			router.runTurn(
+				{ ...alphaContext, runAttempt },
+				{
+					prompt: "What changed?",
+					model: "model-a",
+					contextRecapRequested: true,
+					recentExchanges: [
+						{ role: "assistant", text: "The other provider established ORCHID." },
+						{ role: "user", text: "What changed?" },
+					],
+				},
+			),
+		);
+
+		expect(attempts[0]?.resumeChatId).toBe("chat-1");
+		expect(attempts[0]?.prompt).toContain("The other provider established ORCHID.");
+		expect(occurrences(attempts[0]?.prompt ?? "", "What changed?")).toBe(1);
+	});
+
 	it("resumes the recorded chat on same-model turns without a recap", async () => {
 		const router = makeRouter();
 		await primeChat(router, "chat-1", "model-a");
@@ -122,7 +225,7 @@ describe("Cursor CLI OAuth session router", () => {
 		const switchTurn = scriptedRunner([[initEvent("chat-1", "model-b"), assistantEvent("switched")]]);
 		await collect(
 			router.runTurn(
-				{ ...alphaContext, runAttempt: switchTurn.runAttempt },
+				{ ...alphaContext, runAttempt: switchTurn.runAttempt, contextRecapOnProviderSwitch: false },
 				{ prompt: "switch turn", model: "model-b", recentExchanges: recent },
 			),
 		);
@@ -177,6 +280,7 @@ describe("Cursor CLI OAuth session router", () => {
 		expect(attempts[1]?.resumeChatId).toBeUndefined();
 		expect(attempts[1]?.prompt.startsWith(CURSOR_CLI_CONTEXT_RECAP_BEGIN)).toBe(true);
 		expect(attempts[1]?.prompt.endsWith("second turn")).toBe(true);
+		expect(occurrences(attempts[1]?.prompt ?? "", "second turn")).toBe(1);
 
 		const notice = restartNotice(events);
 		expect(notice).toMatchObject({
@@ -318,17 +422,54 @@ describe("Cursor CLI OAuth session router", () => {
 		await collect(
 			router.runTurn(
 				{ senpiSessionId: alphaContext.senpiSessionId, accountName: "bravo", runAttempt },
-				{ prompt: "new account", model: "model-a" },
+				{
+					prompt: "new account",
+					model: "model-a",
+					contextRecapRequested: true,
+					recentExchanges: [
+						{ role: "assistant", text: "PRIVATE-ALPHA-CONTEXT" },
+						{ role: "user", text: "new account" },
+					],
+				},
 			),
 		);
 
 		expect(attempts[0]?.resumeChatId).toBeUndefined();
+		expect(attempts[0]?.prompt).toBe("new account");
+		expect(attempts[0]?.prompt).not.toContain("PRIVATE-ALPHA-CONTEXT");
 		expect(router.getRecord(alphaContext.senpiSessionId)).toEqual({
 			accountName: "bravo",
 			chatId: "chat-8",
 			lastModel: "model-a",
 			lastUsedAt: fixedNow,
 		});
+	});
+
+	it("keeps replacement-account attempts fresh and context-free with auto resume", async () => {
+		const router = makeRouter();
+		await primeChat(router, "replacement-old-chat", "model-a");
+		const { attempts, runAttempt } = scriptedRunner([
+			[initEvent("replacement-new-chat", "model-a"), assistantEvent("ok")],
+		]);
+
+		await collect(
+			router.runTurn(
+				{ ...alphaContext, runAttempt },
+				{
+					prompt: "replacement prompt",
+					model: "model-a",
+					contextRecapRequested: true,
+					contextRecapSuppressed: true,
+					forceFreshChat: true,
+					recentExchanges: [
+						{ role: "assistant", text: "PRIVATE-FAILED-ACCOUNT-CONTEXT" },
+						{ role: "user", text: "replacement prompt" },
+					],
+				},
+			),
+		);
+
+		expect(attempts).toEqual([{ prompt: "replacement prompt", resumeChatId: undefined }]);
 	});
 
 	it("never resumes when resumeMode is off", async () => {

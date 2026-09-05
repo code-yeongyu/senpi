@@ -5,6 +5,7 @@ import { CursorCliAbortError, CursorCliPromptTooLargeError, MAX_CURSOR_CLI_PROMP
 export const CURSOR_CLI_CONTEXT_RECAP_MAX_BYTES = 8 * 1024;
 export const CURSOR_CLI_CONTEXT_RECAP_BEGIN = "===== senpi context recap =====";
 export const CURSOR_CLI_CONTEXT_RECAP_END = "===== end senpi context recap =====";
+export type CursorCliContextRecapReason = "model-switch" | "provider-switch" | "chat-restart";
 
 export type CursorCliSessionRecord = {
 	readonly accountName: string;
@@ -18,6 +19,11 @@ export type CursorCliRecapExchange = {
 	readonly text: string;
 };
 
+export type CursorCliContextOwnership =
+	| { readonly kind: "new" }
+	| { readonly kind: "known"; readonly accountName: string }
+	| { readonly kind: "unknown" };
+
 export type CursorCliSessionTurnContext = {
 	readonly senpiSessionId: string;
 	readonly accountName: string;
@@ -27,11 +33,20 @@ export type CursorCliSessionTurnInput = {
 	readonly prompt: string;
 	readonly model: string | undefined;
 	readonly recentExchanges?: readonly CursorCliRecapExchange[];
+	/** The immediately preceding assistant turn came from another provider. */
+	readonly contextRecapRequested?: boolean;
+	/** Durable account ownership recovered from prior Cursor assistant diagnostics. */
+	readonly contextOwnership?: CursorCliContextOwnership;
+	/** A replacement account must never receive transcript context from the failed account. */
+	readonly contextRecapSuppressed?: boolean;
+	/** Cross-account failover promises a fresh chat even when this account has an older binding. */
+	readonly forceFreshChat?: boolean;
 };
 
 export type CursorCliSessionPolicy = {
 	readonly resumeMode?: CursorCliOauthResumeMode;
 	readonly contextRecapOnModelSwitch?: boolean;
+	readonly contextRecapOnProviderSwitch?: boolean;
 	readonly maxRecapBytes?: number;
 	readonly promptCeilingBytes?: number;
 };
@@ -44,6 +59,7 @@ export type CursorCliTurnPlan = {
 	readonly contextRecap: string | undefined;
 	readonly modelSwitch: boolean;
 	readonly recapDroppedForCeiling: boolean;
+	readonly freshChatRecapAllowed: boolean;
 };
 
 export type CursorCliSessionAttempt = {
@@ -107,12 +123,17 @@ export function buildCursorCliContextRecap(
 	model: string | undefined,
 	exchanges: readonly CursorCliRecapExchange[] | undefined,
 	maxRecapBytes: number = CURSOR_CLI_CONTEXT_RECAP_MAX_BYTES,
+	reason: CursorCliContextRecapReason = model === undefined ? "chat-restart" : "model-switch",
 ): string | undefined {
 	const usable = (exchanges ?? []).filter((exchange) => exchange.text.length > 0);
 	if (usable.length === 0) return undefined;
-	const header = `${CURSOR_CLI_CONTEXT_RECAP_BEGIN}\n(${
-		model === undefined ? "chat restarted" : `model switched to '${model}'`
-	}; recent conversation from senpi's own records follows)`;
+	const transition =
+		reason === "provider-switch"
+			? `provider switched to cursor-cli-oauth${model === undefined ? "" : ` using '${model}'`}`
+			: reason === "chat-restart"
+				? "chat restarted"
+				: `model switched to '${model}'`;
+	const header = `${CURSOR_CLI_CONTEXT_RECAP_BEGIN}\n(${transition}; recent conversation from senpi's own records follows)`;
 	const overheadBytes = byteLength(header) + 1 + byteLength(CURSOR_CLI_CONTEXT_RECAP_END) + 1;
 	if (overheadBytes >= maxRecapBytes) return undefined;
 	const budget = maxRecapBytes - overheadBytes;
@@ -139,6 +160,12 @@ export function buildCursorCliContextRecap(
 
 function composePrompt(recap: string | undefined, prompt: string): string {
 	return recap === undefined ? prompt : `${recap}\n\n${prompt}`;
+}
+
+function priorRecapExchanges(input: CursorCliSessionTurnInput): readonly CursorCliRecapExchange[] | undefined {
+	return input.recentExchanges?.at(-1)?.role === "user" && input.recentExchanges.at(-1)?.text === input.prompt
+		? input.recentExchanges.slice(0, -1)
+		: input.recentExchanges;
 }
 
 function shrinkToCeiling(
@@ -267,13 +294,32 @@ export class CursorCliSessionRouter {
 		const bound = this.records.get(context.senpiSessionId);
 		// Chats live inside each account's HOME, so a record bound to another
 		// account can never be resumed here.
-		const resumable = bound !== undefined && bound.accountName === context.accountName && resumeEnabled;
+		const resumable =
+			input.forceFreshChat !== true &&
+			bound !== undefined &&
+			bound.accountName === context.accountName &&
+			resumeEnabled;
 		const resumeChatId = resumable && bound !== undefined ? bound.chatId : undefined;
 		const modelSwitch = resumable && bound !== undefined && bound.lastModel !== input.model;
-		const recap =
-			modelSwitch && policy.contextRecapOnModelSwitch !== false
-				? buildCursorCliContextRecap(input.model, input.recentExchanges, policy.maxRecapBytes)
-				: undefined;
+		const ownership = input.contextOwnership ?? { kind: "new" };
+		const sameAccount =
+			bound !== undefined
+				? bound.accountName === context.accountName
+				: ownership.kind === "new" || (ownership.kind === "known" && ownership.accountName === context.accountName);
+		const providerSwitchRecap =
+			sameAccount && input.contextRecapRequested === true && policy.contextRecapOnProviderSwitch !== false;
+		const modelSwitchRecap = modelSwitch && policy.contextRecapOnModelSwitch !== false;
+		const needsRecap = input.contextRecapSuppressed !== true && (providerSwitchRecap || modelSwitchRecap);
+		const freshChatRecapAllowed =
+			input.contextRecapSuppressed !== true && (input.contextRecapRequested !== true || providerSwitchRecap);
+		const recap = needsRecap
+			? buildCursorCliContextRecap(
+					input.model,
+					priorRecapExchanges(input),
+					policy.maxRecapBytes,
+					providerSwitchRecap ? "provider-switch" : "model-switch",
+				)
+			: undefined;
 		const shrunk = shrinkToCeiling(recap, input.prompt, ceilingBytes);
 		return {
 			resumeChatId,
@@ -281,6 +327,7 @@ export class CursorCliSessionRouter {
 			contextRecap: shrunk.recapDropped ? undefined : recap,
 			modelSwitch,
 			recapDroppedForCeiling: shrunk.recapDropped,
+			freshChatRecapAllowed,
 		};
 	}
 
@@ -315,6 +362,7 @@ export class CursorCliSessionRouter {
 		const plan = this.planTurn(context, input, {
 			resumeMode: options.resumeMode,
 			contextRecapOnModelSwitch: options.contextRecapOnModelSwitch,
+			contextRecapOnProviderSwitch: options.contextRecapOnProviderSwitch,
 			maxRecapBytes: options.maxRecapBytes,
 			promptCeilingBytes: options.promptCeilingBytes,
 		});
@@ -348,7 +396,10 @@ export class CursorCliSessionRouter {
 				const reason: CursorCliSessionRestartReason =
 					classification.kind === "context_overflow" ? "context_overflow" : "resume_failed";
 				const recap =
-					plan.contextRecap ?? buildCursorCliContextRecap(undefined, input.recentExchanges, options.maxRecapBytes);
+					plan.contextRecap ??
+					(plan.freshChatRecapAllowed
+						? buildCursorCliContextRecap(undefined, priorRecapExchanges(input), options.maxRecapBytes)
+						: undefined);
 				const shrunk = shrinkToCeiling(recap, input.prompt, ceilingBytes);
 				yield restartNotice(previousChatId, reason, recap !== undefined && !shrunk.recapDropped);
 				attempt = { prompt: shrunk.prompt, resumeChatId: undefined };

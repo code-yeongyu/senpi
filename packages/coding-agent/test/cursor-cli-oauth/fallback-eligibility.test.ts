@@ -16,6 +16,7 @@ function settings(overrides: Partial<CursorCliOauthProviderSettings> = {}): Curs
 		resumeMode: "auto",
 		pinnedAccount: undefined,
 		contextRecapOnModelSwitch: true,
+		contextRecapOnProviderSwitch: true,
 		modelCatalogTtlHours: 24,
 		sandboxMode: undefined,
 		...overrides,

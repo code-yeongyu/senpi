@@ -21,6 +21,7 @@ import {
 	emptyCredential,
 } from "../../src/core/extensions/builtin/cursor-cli-oauth/accounts.ts";
 import { rendezvousOrder } from "../../src/core/extensions/builtin/cursor-cli-oauth/affinity.ts";
+import { CursorCliSessionRouter } from "../../src/core/extensions/builtin/cursor-cli-oauth/session-router.ts";
 import type { CursorCliOauthProviderSettings } from "../../src/core/extensions/builtin/cursor-cli-oauth/settings.ts";
 import {
 	CURSOR_CLI_OAUTH_PROVIDER_ID,
@@ -68,6 +69,7 @@ function enabledSettings(overrides: Partial<CursorCliOauthProviderSettings> = {}
 		resumeMode: "auto",
 		pinnedAccount: undefined,
 		contextRecapOnModelSwitch: true,
+		contextRecapOnProviderSwitch: true,
 		modelCatalogTtlHours: 24,
 		sandboxMode: undefined,
 		denyCommands: [],
@@ -90,6 +92,31 @@ const model: Model<Api> = {
 
 function context(prompt: string): Context {
 	return { messages: [{ role: "user", content: prompt, timestamp: NOW }] };
+}
+
+function providerSwitchContext(prompt: string, priorText: string): Context {
+	return {
+		messages: [
+			{
+				role: "assistant",
+				content: [{ type: "text", text: priorText }],
+				api: "openai-responses",
+				provider: "openai",
+				model: "gpt-test",
+				usage: {
+					input: 1,
+					output: 1,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 2,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: NOW - 1,
+			},
+			{ role: "user", content: prompt, timestamp: NOW },
+		],
+	};
 }
 
 function fixtureExecutable(directory: string, scenario: string): { executable: string; dump: string } {
@@ -199,6 +226,14 @@ function runTurn(deps: CursorCliStreamDeps, prompt: string, sessionId: string): 
 	return streamCursorCliOauth(model, context(prompt), { sessionId }, deps);
 }
 
+function runContextTurn(
+	deps: CursorCliStreamDeps,
+	turnContext: Context,
+	sessionId: string,
+): AssistantMessageEventStream {
+	return streamCursorCliOauth(model, turnContext, { sessionId }, deps);
+}
+
 async function collect(stream: AssistantMessageEventStream): Promise<AssistantMessageEvent[]> {
 	const events: AssistantMessageEvent[] = [];
 	for await (const event of stream) events.push(event);
@@ -280,6 +315,106 @@ describe("cursor-cli-oauth stream mapping", () => {
 		const sentPrompt = invocation(fixture.dump).argv[1];
 		expect(sentPrompt).toBe("hello stream test");
 		expect(sentPrompt.includes("--resume")).toBe(false);
+	});
+
+	it("reinjects prior context on the first turn after another provider", async () => {
+		const directory = temporaryDirectory();
+		const fixture = fixtureExecutable(directory, "happy");
+		const deps: CursorCliStreamDeps = {
+			cwd: directory,
+			agentDir: join(directory, "agent"),
+			store: await makeStore([account("alpha")]),
+			settings: enabledSettings(),
+			now: () => NOW,
+		};
+		process.env.SENPI_CURSOR_CLI_OAUTH_EXECUTABLE = fixture.executable;
+
+		const events = await collect(
+			runContextTurn(
+				deps,
+				providerSwitchContext("What was the codename?", "The codename is ORCHID."),
+				"stream-provider-switch",
+			),
+		);
+
+		expect(events.at(-1)?.type).toBe("done");
+		const sentPrompt = invocation(fixture.dump).argv[1] ?? "";
+		expect(sentPrompt).toContain("The codename is ORCHID.");
+		expect(sentPrompt.split("What was the codename?")).toHaveLength(2);
+	});
+
+	it("honors the provider-switch recap opt-out end to end", async () => {
+		const directory = temporaryDirectory();
+		const fixture = fixtureExecutable(directory, "happy");
+		const deps: CursorCliStreamDeps = {
+			cwd: directory,
+			agentDir: join(directory, "agent"),
+			store: await makeStore([account("alpha")]),
+			settings: enabledSettings({ contextRecapOnProviderSwitch: false }),
+			now: () => NOW,
+		};
+		process.env.SENPI_CURSOR_CLI_OAUTH_EXECUTABLE = fixture.executable;
+
+		const events = await collect(
+			runContextTurn(
+				deps,
+				providerSwitchContext("current question", "PRIVATE-PROVIDER-CONTEXT"),
+				"stream-provider-switch-opt-out",
+			),
+		);
+
+		expect(events.at(-1)?.type).toBe("done");
+		expect(invocation(fixture.dump).argv[1]).toBe("current question");
+	});
+
+	it("fails closed after restart when prior Cursor account ownership is unknown", async () => {
+		const directory = temporaryDirectory();
+		const fixture = fixtureExecutable(directory, "happy");
+		const deps: CursorCliStreamDeps = {
+			cwd: directory,
+			agentDir: join(directory, "agent"),
+			store: await makeStore([account("bravo")]),
+			settings: enabledSettings(),
+			now: () => NOW,
+			router: new CursorCliSessionRouter(),
+		};
+		process.env.SENPI_CURSOR_CLI_OAUTH_EXECUTABLE = fixture.executable;
+		const beforeRestart: CursorCliStreamDeps = {
+			...deps,
+			store: await makeStore([account("alpha")]),
+			router: new CursorCliSessionRouter(),
+		};
+		const priorCursor = doneMessage(
+			await collect(
+				runContextTurn(
+					beforeRestart,
+					providerSwitchContext("first Cursor turn", "PRIVATE-BEFORE-CURSOR"),
+					"stream-restart-owner",
+				),
+			),
+		);
+		const turnContext: Context = {
+			messages: [
+				priorCursor,
+				{
+					...priorCursor,
+					api: "openai-responses",
+					provider: "openai",
+					model: "gpt-test",
+					content: [{ type: "text", text: "PRIVATE-AFTER-CURSOR" }],
+					diagnostics: undefined,
+				},
+				{ role: "user", content: "current question", timestamp: NOW },
+			],
+		};
+
+		const events = await collect(runContextTurn(deps, turnContext, "stream-restart-owner"));
+
+		expect(events.at(-1)?.type).toBe("done");
+		const sent = invocation(fixture.dump);
+		expect(sent.argv[1]).toBe("current question");
+		expect(sent.argv).not.toContain("--resume");
+		expect(sent.env.HOME).toContain(join("accounts", "bravo", "home"));
 	});
 
 	it("isolates CLI usage numbers from AssistantMessage.usage and carries them only in a diagnostic", async () => {
@@ -396,6 +531,46 @@ describe("cursor-cli-oauth stream mapping", () => {
 		});
 	});
 
+	it("does not carry a provider-switch recap into a replacement account", async () => {
+		const directory = temporaryDirectory();
+		const accounts = [account("alpha"), account("bravo")];
+		const sessionId = "stream-failover-private";
+		const ordered = rendezvousOrder(sessionId, accounts);
+		const first = ordered[0];
+		const replacement = ordered[1];
+		const fixture = accountAwareFixture(directory, first.name);
+		const router = new CursorCliSessionRouter();
+		router.observeInit(
+			{ senpiSessionId: sessionId, accountName: replacement.name },
+			{ chatId: "replacement-old-chat", model: model.id },
+		);
+		const deps: CursorCliStreamDeps = {
+			cwd: directory,
+			agentDir: join(directory, "agent"),
+			store: await makeStore(accounts),
+			settings: enabledSettings(),
+			now: () => NOW,
+			router,
+		};
+		process.env.SENPI_CURSOR_CLI_OAUTH_EXECUTABLE = fixture.executable;
+
+		const events = await collect(
+			runContextTurn(
+				deps,
+				providerSwitchContext("answer without history", "PRIVATE-CROSS-ACCOUNT-CONTEXT"),
+				sessionId,
+			),
+		);
+
+		expect(events.at(-1)?.type).toBe("done");
+		const replacementInvocation = invocation(fixture.dump);
+		const replacementPrompt = replacementInvocation.argv[1] ?? "";
+		expect(replacementPrompt).toBe("answer without history");
+		expect(replacementPrompt).not.toContain("PRIVATE-CROSS-ACCOUNT-CONTEXT");
+		expect(replacementInvocation.argv).not.toContain("--resume");
+		expect(replacementInvocation.env.HOME).toContain(join("accounts", replacement.name, "home"));
+	});
+
 	it("re-selects settings and accounts freshly across back-to-back turns", async () => {
 		const directory = temporaryDirectory();
 		const fixture = fixtureExecutable(directory, "happy");
@@ -427,13 +602,17 @@ describe("cursor-cli-oauth stream mapping", () => {
 			};
 		});
 
-		const secondTurn = await collect(runTurn(deps, "second turn", "stream-stale"));
+		const secondTurn = await collect(
+			runContextTurn(deps, providerSwitchContext("second turn", "PRIVATE-PRIOR-ACCOUNT-CONTEXT"), "stream-stale"),
+		);
 		expect(secondTurn.at(-1)?.type).toBe("done");
 
 		const second = invocation(fixture.dump);
 		expect(second.env.HOME).toContain(join("accounts", "bravo", "home"));
 		// The new account owns no chat, so the turn must not resume the old one.
 		expect(second.argv).not.toContain("--resume");
+		expect(second.argv[1]).toBe("second turn");
+		expect(second.argv[1]).not.toContain("PRIVATE-PRIOR-ACCOUNT-CONTEXT");
 		expect(existsSync(join(agentDir, "cursor-cli-oauth", "accounts", "bravo", "home", ".cursor", "auth.json"))).toBe(
 			true,
 		);
