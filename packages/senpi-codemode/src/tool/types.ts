@@ -3,7 +3,7 @@ import { type TUnsafe, Type } from "typebox";
 import type { HostToKernelMessage, KernelToHostMessage } from "../bridge/protocol.ts";
 import type { TruncationMeta } from "../output/output-meta.ts";
 
-export const evalLanguageOrder = ["py", "js", "rb", "jl"] as const;
+export const evalLanguageOrder = ["js", "py", "rb", "jl"] as const;
 export type EvalLanguage = (typeof evalLanguageOrder)[number];
 export type EnabledEvalLanguages = Readonly<Record<EvalLanguage, boolean>>;
 
@@ -37,7 +37,7 @@ const fullEvalInputSchema = Type.Object({
 		}),
 	),
 	language: Type.Optional(
-		Type.Union([Type.Literal("py"), Type.Literal("js"), Type.Literal("rb"), Type.Literal("jl")]),
+		Type.Union([Type.Literal("js"), Type.Literal("py"), Type.Literal("rb"), Type.Literal("jl")]),
 	),
 	code: Type.Optional(Type.String({ description: "Cell body, verbatim." })),
 	summary: Type.Optional(
