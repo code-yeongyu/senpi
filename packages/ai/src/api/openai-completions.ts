@@ -969,14 +969,19 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 	const compat = getCompat(model);
 	const thinkingLevelMap = getThinkingLevelMap(model, compat);
 	const thinkingModel = thinkingLevelMap === model.thinkingLevelMap ? model : { ...model, thinkingLevelMap };
-	const clampedReasoning = options?.reasoning ? clampThinkingLevel(thinkingModel, options.reasoning) : undefined;
+	const clampedReasoning = options?.reasoning
+		? clampThinkingLevel(thinkingModel, options.reasoning)
+		: model.id.includes("gpt-6-astra")
+			? "off"
+			: undefined;
+	const normalizedReasoning =
+		clampedReasoning === "off" && model.id.includes("gpt-6-astra") ? "low" : clampedReasoning;
 	const reasoningEffort =
-		clampedReasoning === "off"
+		normalizedReasoning === "off"
 			? undefined
-			: clampedReasoning === "max" && supportsMax(thinkingModel)
+			: normalizedReasoning === "max" && supportsMax(thinkingModel)
 				? "max"
-				: clampMaxForOpenAI(clampedReasoning, supportsXhigh(thinkingModel));
-
+				: clampMaxForOpenAI(normalizedReasoning, supportsXhigh(thinkingModel));
 	return stream(model, context, {
 		...base,
 		reasoningEffort,

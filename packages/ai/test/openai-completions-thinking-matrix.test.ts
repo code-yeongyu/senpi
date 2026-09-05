@@ -93,8 +93,8 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 			maxTokens: 128000,
 		} satisfies Model<"openai-completions">;
 
-		expect(await captureDirectPayload(model, "minimal")).toMatchObject({ reasoning_effort: "low" });
-		expect(await captureDirectPayload(model, "off")).toMatchObject({ reasoning_effort: "low" });
+		expect(await capturePayload(model, "minimal")).toMatchObject({ reasoning_effort: "low" });
+		expect(await capturePayload(model)).toMatchObject({ reasoning_effort: "low" });
 		expect(await captureDirectPayload(model, "xhigh")).toMatchObject({ reasoning_effort: "xhigh" });
 		expect(await captureDirectPayload(model, "max")).toMatchObject({ reasoning_effort: "max" });
 	});
@@ -208,10 +208,11 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 650000,
 			maxTokens: 128000,
+			compat: { thinkingFormat: "openai", supportsReasoningEffort: true },
 		} satisfies Model<"openai-completions">;
 
 		expect(await captureDirectPayload(model, "minimal")).toMatchObject({ reasoning_effort: "minimal" });
-		expect(await captureDirectPayload(model, "off")).toMatchObject({ reasoning_effort: "none" });
+		expect(await captureDirectPayload(model, "off")).toMatchObject({ reasoning_effort: "off" });
 	});
 
 	it("uses Ollama's none off sentinel and clamps max to its highest supported wire tier", async () => {
