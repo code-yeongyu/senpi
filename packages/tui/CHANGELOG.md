@@ -6,11 +6,7 @@
 
 ### Added
 
-- Added `formatTerminalTitleSequence(title)` for building the terminal title escape sequence.
-
 ### Changed
-
-- `Terminal.setTitle()` now emits OSC 2 in addition to OSC 0. OSC 2 is the sequence Zed documents for terminal titles, and tmux/screen derive window names from it, so titles now reach more terminals.
 
 ### Fixed
 

@@ -5,7 +5,7 @@
 ### Added
 
 - Added the GLM 5.2 prompt preset with automatic model detection.
-- Added a working/idle agent status to the terminal title so terminal tabs show when a session is busy. The title is prefixed with `[working]` while the agent runs (and while compacting) and returns to the plain title when idle; the status is mirrored into `process.title` for terminals that build tab labels from the foreground process.
+- Added a working/idle agent status to the terminal title so a busy session is visible without focusing it. The title is prefixed with `[working]` while the agent runs (and while compacting) and returns to the plain title when idle. Terminals that take their tab/window title from the OSC title show this directly; Zed shows it in the terminal breadcrumbs, since Zed builds its tab label from the foreground process instead.
 
 ### Fixed
 

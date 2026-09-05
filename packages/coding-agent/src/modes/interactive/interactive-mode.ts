@@ -101,11 +101,7 @@ import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { checkForNewPiVersion } from "../../utils/version-check.ts";
 import { abortedErrorLabel } from "./aborted-error-label.ts";
-import {
-	type AgentActivityStatus,
-	formatAgentActivityProcessTitle,
-	formatAgentActivityTitle,
-} from "./agent-activity-status.ts";
+import { type AgentActivityStatus, formatAgentActivityTitle } from "./agent-activity-status.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
@@ -870,22 +866,11 @@ export class InteractiveMode {
 		this.ui.terminal.setTitle(formatAgentActivityTitle(this.agentActivityStatus, title));
 	}
 
-	/**
-	 * Mirror the working/idle status into `process.title`.
-	 *
-	 * Zed derives its terminal tab label from the foreground process rather than
-	 * from the OSC title, so argv is the only channel that can reach that label.
-	 */
-	private applyProcessActivityTitle(): void {
-		process.title = formatAgentActivityProcessTitle(this.agentActivityStatus, APP_NAME);
-	}
-
 	private setAgentActivityStatus(status: AgentActivityStatus): void {
 		if (this.agentActivityStatus === status) {
 			return;
 		}
 		this.agentActivityStatus = status;
-		this.applyProcessActivityTitle();
 		this.applyTerminalTitle();
 	}
 
