@@ -4,6 +4,8 @@
 
 ### Added
 
+- Optional per-message timestamps in the interactive TUI, off by default and togglable from settings ([#1206](https://github.com/code-yeongyu/senpi/pull/1206)).
+
 ### Fixed
 
 - The shared interactive host no longer surfaces raw `Error: Client not started` when its socket drops: the RPC client classifies transport loss with a typed error, the TUI runtime makes bounded reconnect attempts and then genuinely falls back to the local session with a single warning, and in-flight actions resolve as cancellations instead of error toasts ([#1220](https://github.com/code-yeongyu/senpi/pull/1220)).
