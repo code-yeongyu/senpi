@@ -397,7 +397,8 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
 const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
-const GPT_56_SOL_DEFAULT_CONTEXT_WINDOW = 650000;
+const OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOW = 650000;
+const OPENAI_FLAGSHIP_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-6-astra"]);
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
 	"gpt-5.5",
@@ -2683,8 +2684,8 @@ async function generateModels() {
 			candidate.contextWindow = OPENAI_LONG_CONTEXT_INPUT_THRESHOLD;
 			candidate.maxTokens = 128000;
 		}
-		if (candidate.provider === "openai" && candidate.id === "gpt-5.6-sol") {
-			candidate.contextWindow = GPT_56_SOL_DEFAULT_CONTEXT_WINDOW;
+		if (candidate.provider === "openai" && OPENAI_FLAGSHIP_MODEL_IDS.has(candidate.id)) {
+			candidate.contextWindow = OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOW;
 		}
 		if (candidate.provider === "openai" && OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS.has(candidate.id)) {
 			const standardCost = OPENAI_GPT_56_STANDARD_COSTS[candidate.id];
@@ -2916,7 +2917,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing({ input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 }),
-			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+			contextWindow: OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOW,
 			maxTokens: 128000,
 			thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high" },
 		},
@@ -2929,7 +2930,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing({ input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 }),
-			contextWindow: GPT_56_SOL_DEFAULT_CONTEXT_WINDOW,
+			contextWindow: OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOW,
 			maxTokens: 128000,
 		},
 		{
@@ -3172,7 +3173,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing({ input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 }),
-			contextWindow: CODEX_GPT_56_CONTEXT,
+			contextWindow: OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOW,
 			maxTokens: CODEX_MAX_TOKENS,
 			thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high" },
 		},
@@ -3197,7 +3198,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing({ input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 }),
-			contextWindow: GPT_56_SOL_DEFAULT_CONTEXT_WINDOW,
+			contextWindow: OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOW,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{
