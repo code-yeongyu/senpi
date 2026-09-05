@@ -399,13 +399,13 @@ const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-5.6
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
 // Flagship default context windows. OpenAI documents a 1,050,000-token window for both models;
 // the project deliberately ships cost-tier defaults (users widen through model overrides):
-// GPT-5.6 Sol keeps 650,000, GPT-6 Astra runs at 800,000.
+// GPT-5.6 Sol keeps 650,000; GPT-6 Astra ships the documented maximum (1,050,000 = 922,000 input + 128,000 output).
 const OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
 	["gpt-5.6-sol", 650000],
-	["gpt-6-astra", 800000],
+	["gpt-6-astra", 1050000],
 ]);
 const GPT_56_SOL_DEFAULT_CONTEXT_WINDOW = 650000;
-const GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW = 800000;
+const GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW = 1050000;
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
 	"gpt-5.5",

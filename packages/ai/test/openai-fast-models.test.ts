@@ -63,7 +63,7 @@ const NON_PRIORITY_MODEL_IDS = [
 describe("OpenAI -fast priority-tier catalog variants", () => {
 	it.each([
 		["GPT-5.6 Sol", GPT_56_SOL_MODEL_IDS, 650_000],
-		["GPT-6 Astra", GPT_6_ASTRA_MODEL_IDS, 800_000],
+		["GPT-6 Astra", GPT_6_ASTRA_MODEL_IDS, 1_050_000],
 	] as const)("defaults %s variants to the flagship context window", (_family, modelIds, contextWindow) => {
 		for (const provider of ["openai", "openai-codex"] as const) {
 			for (const id of modelIds) {
