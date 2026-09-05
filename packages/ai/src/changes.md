@@ -1,4 +1,22 @@
 
+## 2026-09-05 - Native Anthropic OAuth request fingerprint
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: native OAuth requests advertise the external CLI user-agent suffix and Agent SDK identity, and prepend a deterministic billing block derived from the first serialized user text block. Private Web Crypto SHA-256 hashing retains the existing Claude Code 2.1.251 floor, caller system/cache metadata, payload hooks, and retry behavior. API-key, Cloudflare, and Copilot paths are unchanged.
+
+### Why
+
+- `packages/ai/src/api/anthropic-messages.ts`: native OAuth requests lacked the billing fingerprint and external CLI identity used by the subscription request path, causing request rejection despite advertising a supported client version.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/anthropic-messages.ts`: native OAuth detection, SDK client headers, serialized first-user input, and retry payload construction are adapter-owned; an extension cannot supply a consistent default for all native callers.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/anthropic-messages.ts` around `claudeCodeVersion`, `createClient`, OAuth system blocks in `buildParams`, and pre-hook request preparation in `createRequest`.
+
 ## 2026-09-05 - Project Astra configuration updates at the Responses wire
 
 ### What changed

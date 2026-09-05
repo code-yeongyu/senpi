@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed native Anthropic OAuth requests missing the deterministic billing fingerprint and external CLI/Agent SDK identity, while preserving API-key behavior and prompt-cache metadata.
+
 ### Removed
 
 ## [2026.9.5-3] - 2026-09-05

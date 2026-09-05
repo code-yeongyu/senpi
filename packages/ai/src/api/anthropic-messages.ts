@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type {
 	BetaStopReason,
+	BetaTextBlockParam,
 	BetaThinkingDroppedInputTransformation,
 	BetaTool,
 	BetaCacheControlEphemeral as CacheControlEphemeral,
@@ -118,6 +119,27 @@ function getCacheControl(
 
 // Stealth mode: Mimic Claude Code's tool naming exactly
 const claudeCodeVersion = "2.1.251";
+
+async function buildOAuthBillingBlock(messages: MessageParam[]): Promise<BetaTextBlockParam> {
+	const firstUser = messages.find((message) => message.role === "user");
+	const text =
+		typeof firstUser?.content === "string"
+			? firstUser.content
+			: (firstUser?.content.find((block) => block.type === "text")?.text ?? "");
+	// Claude Code samples UTF-16 positions from the first serialized user text block.
+	const chars = [4, 7, 20].map((index) => text[index] || "0").join("");
+	const encoder = new TextEncoder();
+	const hashes = await Promise.all(
+		[`59cf53e54c78${chars}${claudeCodeVersion}`, text].map(async (value) => {
+			const digest = await globalThis.crypto.subtle.digest("SHA-256", encoder.encode(value));
+			return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+		}),
+	);
+	return {
+		type: "text",
+		text: `x-anthropic-billing-header: cc_version=${claudeCodeVersion}.${hashes[0].slice(0, 3)}; cc_entrypoint=sdk-cli; cch=${hashes[1].slice(0, 5)};`,
+	};
+}
 
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -1372,6 +1394,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					: getAnthropicCompat(model).unsignedThinkingReplay;
 			const createRequest = async (): Promise<{ params: MessageCreateParamsStreaming; response: Response }> => {
 				let params = buildParams(model, context, isOAuth, options, unsignedThinkingReplay);
+				if (isOAuth) {
+					// buildParams always supplies an identity/system block array for native OAuth.
+					params.system = [
+						await buildOAuthBillingBlock(params.messages),
+						...(params.system as BetaTextBlockParam[]),
+					];
+				}
 				const nextParams = await options?.onPayload?.(params, model);
 				if (nextParams !== undefined) {
 					params = nextParams as MessageCreateParamsStreaming;
@@ -1984,7 +2013,7 @@ function createClient(
 						accept: "application/json",
 						"anthropic-dangerous-direct-browser-access": "true",
 						"anthropic-beta": ["claude-code-20250219", "oauth-2025-04-20", ...betaFeatures].join(","),
-						"user-agent": `claude-cli/${claudeCodeVersion}`,
+						"user-agent": `claude-cli/${claudeCodeVersion} (external, cli)`,
 						"x-app": "cli",
 					},
 					model.headers,
@@ -2161,7 +2190,7 @@ function buildParams(
 		params.system = [
 			{
 				type: "text",
-				text: "You are Claude Code, Anthropic's official CLI for Claude.",
+				text: "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
 				...(!context.systemPrompt && cacheControl ? { cache_control: cacheControl } : {}),
 			},
 		];
