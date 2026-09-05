@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-05 - Require explicit fallback chains
+
+### What changed
+
+- Removed shipped Fable defaults and wildcard fallback resolution; fallback runs only for configured model keys. Cursor remains excluded from bare expansion while explicit Cursor selection remains supported.
+
+### Why
+
+- Implicit fallback can unexpectedly change the selected model and mishandles Astra variants when no chain was configured.
+
+### Why an extension could not handle it
+
+- Retry fallback chain resolution is a core controller and settings contract.
+
+### Expected merge conflict zones
+
+- LOW: retry-fallback chains, settings, and controller.
+
 ## 2026-09-05 - Ctrl+P skips favorites without context room
 
 ### What changed

@@ -7,7 +7,6 @@ import {
 	type FallbackChains,
 	type FallbackSelector,
 	formatSelector,
-	hasExplicitFallbackOptOut,
 	parseFallbackSelector,
 	resolveChainKey,
 } from "./chains.ts";
@@ -236,15 +235,11 @@ export class RetryFallbackController {
 		const current = this.deps.getCurrentSelector();
 		if (!settings.modelFallback || !current) return undefined;
 		const chains = this.canonicalChains();
-		// Order matters: a model's own chain wins, then the active episode keeps
-		// owning its walk (its last rung usually has no key of its own), and only
-		// a session with neither falls back to the wildcard lane.
+		// A model's own chain wins; models without an explicitly configured chain
+		// do not enter an implicit fallback lane.
 		const chainKey =
 			resolveChainKey(current.model, current.thinkingLevel, chains) ??
-			this.state?.chainKey ??
-			(hasExplicitFallbackOptOut(settings.chains, current.model, current.thinkingLevel)
-				? undefined
-				: resolveChainKey(current.model, current.thinkingLevel, chains, { allowWildcard: true }));
+			this.state?.chainKey;
 		const entries = chainKey ? chains[chainKey] : undefined;
 		if (!chainKey || !entries) {
 			if (reserve) this.deps.logger.debug("no_chain", { selector: formatSelector(current.model) });
