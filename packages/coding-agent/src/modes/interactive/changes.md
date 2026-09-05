@@ -13,6 +13,14 @@
 
 - Interactive mode owns the working status indicator and its animation configuration.
 
+### Why an extension could not handle it
+
+- `InteractiveMode.showWorkingStatusIndicator` is engine-owned interactive TUI behavior below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: `InteractiveMode.showWorkingStatusIndicator` working-indicator construction.
+
 ## 2026-09-05 - Render Astra configuration updates as non-interactive session entries
 
 ### What changed
