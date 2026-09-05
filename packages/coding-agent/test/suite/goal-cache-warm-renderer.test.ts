@@ -103,6 +103,21 @@ describe("goal cache-warm entry renderer", () => {
 		expect(text).toContain("ready 2026-07-29 00:04 UTC (4m 30s)");
 	});
 
+	it("describes automatic caching without inventing a TTL or savings", () => {
+		const text = renderToText({
+			phase: "scheduled",
+			goalId: "goal-automatic-cache",
+			delayMs: 3_570_000,
+			activeMonitorCount: 1,
+			cache: { cacheLifetime: "automatic", cachedTokens: 120_000 },
+		});
+		expect(text).toContain("provider caching is automatic");
+		expect(text).toContain("~120K tokens cached after the prior turn");
+		expect(text).not.toContain("prompt-cache TTL");
+		expect(text).not.toContain("kept warm");
+		expect(text).not.toContain("saved");
+	});
+
 	it("does not claim warmth or savings when the cache TTL may have elapsed", () => {
 		const scheduled = renderToText({
 			phase: "scheduled",

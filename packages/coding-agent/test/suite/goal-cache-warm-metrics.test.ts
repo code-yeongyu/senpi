@@ -1,4 +1,4 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, PromptCacheLifetime } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
 	estimateCacheWarmMetrics,
@@ -20,6 +20,18 @@ function anthropicModel(costOverrides: Partial<Model<Api>["cost"]> = {}): Model<
 	} as Model<Api>;
 }
 
+function deepseekModel(cacheRetention?: "none"): Model<Api> {
+	return {
+		...anthropicModel(),
+		id: "deepseek-v4",
+		name: "DeepSeek V4",
+		api: "openai-completions",
+		provider: "deepseek",
+		baseUrl: "https://api.deepseek.com/v1",
+		...(cacheRetention === undefined ? {} : { cacheRetention }),
+	} as Model<Api>;
+}
+
 describe("goal monitor continuation delay", () => {
 	it.each([
 		[undefined, undefined, 240_000],
@@ -33,6 +45,19 @@ describe("goal monitor continuation delay", () => {
 		[Number.NaN, undefined, 240_000],
 	] as const)("resolves cache-safe wait %s with ceiling %s to %sms", (safeWait, ceiling, expected) => {
 		expect(resolveGoalMonitorContinuationDelayMs(safeWait, ceiling)).toBe(expected);
+	});
+
+	it.each([
+		[undefined, 3_570_000],
+		[900, 900_000],
+	] as const)("uses a liveness backstop rather than a cache TTL for automatic lanes", (ceiling, expected) => {
+		const lifetime: PromptCacheLifetime = { kind: "automatic" };
+		expect(resolveGoalMonitorContinuationDelayMs(270, ceiling, lifetime)).toBe(expected);
+	});
+
+	it("ignores a stale cache-safe wait when caching is disabled", () => {
+		const lifetime: PromptCacheLifetime = { kind: "disabled" };
+		expect(resolveGoalMonitorContinuationDelayMs(270, undefined, lifetime)).toBe(240_000);
 	});
 });
 
@@ -61,6 +86,32 @@ describe("goal cache-warm metrics", () => {
 		expect(metrics?.cachedTokens).toBe(0);
 		expect(metrics?.ttlSeconds).toBe(300);
 		expect(metrics?.estimatedSavedUsd).toBeUndefined();
+	});
+
+	it("keeps automatic cache observations free of TTL and savings claims", () => {
+		expect(estimateCacheWarmMetrics(deepseekModel(), {}, { cacheRead: 100_000, cacheWrite: 20_000 })).toEqual({
+			cachedTokens: 120_000,
+			cacheLifetime: "automatic",
+		});
+	});
+
+	it("does not report cache metrics when retention is explicitly disabled", () => {
+		expect(
+			estimateCacheWarmMetrics(deepseekModel("none"), {}, { cacheRead: 100_000, cacheWrite: 20_000 }),
+		).toBeUndefined();
+	});
+
+	it("preserves legacy metrics for unknown cache lanes", () => {
+		const unknown = {
+			...anthropicModel(),
+			api: "google-generative-ai",
+			provider: "google",
+			baseUrl: "https://generativelanguage.googleapis.com",
+		} as Model<Api>;
+		expect(estimateCacheWarmMetrics(unknown, {}, { cacheRead: 100_000, cacheWrite: 20_000 })).toEqual({
+			cachedTokens: 120_000,
+			estimatedSavedUsd: 0.324,
+		});
 	});
 
 	it("clamps malformed usage and negative cache margins", () => {
