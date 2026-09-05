@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Restored the literal `Working` text shimmer and formatter by removing duplicate working status indicator construction.
 - Favorite-model cycling (Ctrl+P) no longer breaks callers that predate the skipped-model list, and it raises the documented model-usability budget error again when the single alternative cannot host the current context instead of silently staying on the current model.
 
 ### Changed
