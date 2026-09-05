@@ -4846,10 +4846,7 @@ export class AgentSession {
 			const alternatives = favoriteModels.filter((entry) => !modelsAreEqual(entry.model, currentModel));
 			const onlyAlternative = alternatives.length === 1 ? alternatives[0] : undefined;
 			if (onlyAlternative) {
-				this.assertModelUsable(
-					onlyAlternative.model,
-					this._getDownswitchLiveContextTokens(onlyAlternative.model),
-				);
+				this.assertModelUsable(onlyAlternative.model, this._getDownswitchLiveContextTokens(onlyAlternative.model));
 			}
 			return {
 				model: currentModel,

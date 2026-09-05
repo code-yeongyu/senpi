@@ -7,11 +7,7 @@ import { isValidThinkingLevel } from "../../cli/args.ts";
  * route a shipped default through a third-party reseller the user never chose.
  * An explicit `openrouter/...` selector the user wrote is unaffected.
  */
-const BARE_EXPANSION_DENYLIST: ReadonlySet<string> = new Set([
-	"cursor",
-	"openrouter",
-	"openrouter-images",
-]);
+const BARE_EXPANSION_DENYLIST: ReadonlySet<string> = new Set(["cursor", "openrouter", "openrouter-images"]);
 
 /**
  * Deterministic tie-break inside one auth tier. Earlier wins. Providers absent

@@ -112,7 +112,7 @@ On error, fix and re-run only the failing step; a normal error keeps state, whil
 {{#ifAll py js}}Same helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/\`await\`able, options = ONE trailing object literal, never positional (extras throw).{{else}}{{#if py}}Sync; options = trailing kwargs.{{/if}}{{#if js}}Async/\`await\`able; options = ONE trailing object literal, never positional (extras throw).{{/if}}{{/ifAll}}{{#if rb}} Ruby: sync, options = trailing keyword args.{{/if}}{{#if jl}} Julia: sync, options = trailing keyword args.{{/if}}
 \`\`\`
 display(value) → None
-    Cell output; figures/images/dataframes shown natively.
+    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its \`images[i]\`.
 print(value, ...) → None
     Text output.
 read(path, offset?=1, limit?=None) → str
@@ -123,8 +123,8 @@ env(key?=None, value?=None) → str | None | dict
     No args → full env dict; one → value; two → set \`key=value\`.
 {{#if spawns}}output(*ids, format?="raw", offset?=None, limit?=None) → str | dict | list[dict]
     Task/agent output by id. Reads immediately: running tasks return their status; \`format\` \`"raw"\` = full, \`"tail"\` = trailing.
-{{/if}}tool.<name>(args) → unknown
-    Invoke any session tool; \`args\` = its parameter object.
+{{/if}}tool.<name>(args) → { text, images?, details?, hasError? }
+    Invoke any session tool; image results (e.g. \`tool.read\` on a png) arrive in \`images[i]\` as { mimeType, dataBase64 }.
 tool_schema(name?) → dict
     Parameter schema of a tool (omit \`name\` to list tool names); a failed \`tool.<name>()\` call also returns the expected parameters.
 completion(prompt, model?="default", system?=None, schema?=None) → str | dict
