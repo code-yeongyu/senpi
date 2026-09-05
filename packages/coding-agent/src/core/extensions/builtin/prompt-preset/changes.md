@@ -1,5 +1,25 @@
 # prompt-preset Extension Changes
 
+## GPT-6 Astra: asynchronous is the default form of every call (2026-09-05)
+
+### What changed
+
+- `gpt-6-astra.ts`: `async-handles` becomes `async-default` ("asynchronous is the default form of every call that offers one: child tasks and bash sessions start in the background, and a long eval cell detaches"), and a new plain rule `foreground-exception` names the only two cases for blocking (a call that finishes within a reply and decides the very next call, or an approval-gated/destructive action watched directly) and states that a child task never meets the first test even when its result is the next input. `turn-end-is-wait` gains "and the task continues"; the Intent Gate stop line and the Stop Goal say the *task* is over, not the *turn*. `delegation` now names the form (spawn together, in the background) and adopts the Astra guide's decision rule (whenever running tracks beside your own work saves time or improves the result). The `Gpt6AstraRuleId` union and `GPT6_ASTRA_RULES` follow; the file header records the async section's design.
+- `test/suite/prompt-presets-gpt-6-astra.test.ts`: concern/placement tables carry the two async ids; the async-work concern is pinned to exactly `async-default`, `foreground-exception`, `turn-end-is-wait`, `monitor-conditions` in that order; the emphasis set swaps `async-handles` for `async-default` (the exception rule stays plain).
+
+### Why
+
+- Live backtest against the real `gpt-6-astra` (senpi openai-codex path, rendered through `resolvePreset`, omo's `task` tool attached): with the shipped preset the model spawned a single dependent child with `run_in_background: false` (3/3 samples) or omitted (3/3) and blocked on it, reasoning "I'll have the deep agent investigate ... then I'll run the tests". Diagnosis per the prompt-engineering skill: `RUN LONG WORK ASYNCHRONOUSLY` made async conditional on the model's own reading of "long", so a child whose result is the next input read as "needed now" (misframing); `delegation` said "send them together" without saying where children run (unsatisfiable under a blocking default); and the Stop Goal's "the turn is over the moment all of these hold" contradicted `END YOUR TURN; THE COMPLETION WAKES YOU", which an instruction-follower resolves by never ending the turn. Each defect is fixed at its source; nothing was appended on top.
+- Token cost (o200k, same tool set and omo task guidelines in both renders): 3779 -> 3854 (+75), all of it the exception rule (+~55) and the turn/task fix (+5); "never assume or invent what it will contain" left the async rule because Hard Limits already forbid presenting a pending result as fact.
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside this builtin's rule data.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `gpt-6-astra.ts` and its test are fork-only.
+
 ## GPT-6 Astra preset, written from scratch (2026-09-04)
 
 ### What changed

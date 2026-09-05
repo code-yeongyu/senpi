@@ -27,8 +27,9 @@
 //
 // Emphasis is deliberate and rationed: only the owner's two hard operating
 // rules render in capitals and bold - one js cell per multi-call step on the
-// Bun eval kernel, and asynchronous execution with `monitor` subscriptions in
-// place of waiting. Everything else stays plain so those two keep their weight.
+// Bun eval kernel, and asynchronous execution as the default form of every
+// call, with `monitor` subscriptions in place of waiting. Everything else
+// stays plain so those two keep their weight.
 //
 // Two harness facts Astra cannot derive get their own sections. Astra is
 // trained on async tool calling (an `async: true` call returns later on its
@@ -36,8 +37,14 @@
 // runs long work as background sessions, detached eval cells, monitors, and
 // child tasks whose completions arrive as injected messages, with no wait
 // tool at all. `## Asynchronous Work` maps the trained model onto these
-// surfaces: keep working, never invent the pending result, end the turn when
-// the next step needs it. Codex's own Astra template runs "code mode only"
+// surfaces: the asynchronous form is the default for every call that offers
+// one, blocking is a named exception (a call that finishes within a reply and
+// decides the very next call, or an approval-gated or destructive action
+// watched directly), and the turn ends when the next step needs a pending
+// result. A child task never meets the exception, even when its result is
+// the next input: an orchestrator that blocks on one child at a time forfeits
+// every other track, which is the failure this section exists to prevent.
+// Codex's own Astra template runs "code mode only"
 // (`functions.exec` batching independent calls with Promise.allSettled), so
 // senpi's eval-first orchestration rules fit Astra's prior directly.
 //
@@ -77,7 +84,8 @@ export type Gpt6AstraRuleId =
 	| "delegation"
 	| "legible-messages"
 	| "todo-granularity"
-	| "async-handles"
+	| "async-default"
+	| "foreground-exception"
 	| "turn-end-is-wait"
 	| "monitor-conditions"
 	| "verification-once"
@@ -152,7 +160,7 @@ const LSP_SYMBOL_ROUTING =
 	"Where LSP tools exist, let the language server answer symbol questions - a definition, its callers, the blast radius of a rename, the diagnostics on a file you just touched. Plain text search earns its place on literal strings, filenames, and commit history.";
 
 const DELEGATION =
-	"Independent tracks are worth handing to subagents or a team when the tools are there and the parallelism pays for the coordination. Send them together, each brief stating what to produce, where its edits may land, the observable condition that ends it, and the evidence it hands back for you to check. What you can close in a handful of calls, keep.";
+	"Hand independent tracks to subagents or a team whenever running them beside your own work saves time or improves the result: spawn them together in the background, each brief stating what to produce, where its edits may land, the observable condition that ends it, and the evidence it hands back for you to check. What you can close in a handful of calls, keep.";
 
 const LEGIBLE_MESSAGES =
 	"Messages to other agents and your final answer are read by people: full sentences, proper spaces between words and numbers, no private shorthand.";
@@ -160,11 +168,14 @@ const LEGIBLE_MESSAGES =
 const TODO_GRANULARITY =
 	"Given a todo tool, cut multi-step work into the smallest items that still stand alone - an edit paired with the check that proves it - and move each one the instant its state changes: opened, finished, newly discovered and appended, abandoned and dropped. A one-step ask carries no list.";
 
-const ASYNC_HANDLES =
-	"**RUN LONG WORK ASYNCHRONOUSLY.** A background bash session, a detached eval cell, or a child task returns at once with a handle and delivers its result later as a message in this conversation. Treat a handle exactly like a pending async call: keep working on everything that does not need it, and never assume or invent what it will contain.";
+const ASYNC_DEFAULT =
+	"**ASYNCHRONOUS IS THE DEFAULT FORM OF EVERY CALL THAT OFFERS ONE: CHILD TASKS AND BASH SESSIONS START IN THE BACKGROUND, AND A LONG EVAL CELL DETACHES.** Each returns a handle at once and delivers its result later as a message; treat the handle like a pending async call and keep working on everything that does not need it.";
+
+const FOREGROUND_EXCEPTION =
+	"Block only on a call that finishes within the time a reply takes and decides your very next call, or on an approval-gated or destructive action you must watch directly. A child task never meets the first test, even when its result is your next input; spawn it in the background and let the completion deliver it.";
 
 const TURN_END_IS_WAIT =
-	"**THERE IS NO WAIT TOOL. WHEN THE NEXT STEP NEEDS A PENDING RESULT, END YOUR TURN; THE COMPLETION WAKES YOU.** Repeated status reads, sleeps, and timed retries replay the whole context for nothing; a single peek serves a midpoint decision only.";
+	"**THERE IS NO WAIT TOOL. WHEN THE NEXT STEP NEEDS A PENDING RESULT, END YOUR TURN; THE COMPLETION WAKES YOU AND THE TASK CONTINUES.** Repeated status reads, sleeps, and timed retries replay the whole context for nothing; a single peek serves a midpoint decision only.";
 
 const MONITOR_CONDITIONS =
 	"**WHEN `monitor` IS AVAILABLE, USE IT FOR EVERY OBSERVABLE WAIT** - a log line, a build or test run finishing, a file appearing, a check turning green: register it, from inside the same cell when the run starts there, and keep working. Steer, read, or stop a running session or child through its session tools instead of launching a duplicate.";
@@ -213,7 +224,8 @@ export const GPT6_ASTRA_RULES = [
 	{ id: "delegation", concern: "delegation", directive: DELEGATION },
 	{ id: "legible-messages", concern: "delegation", directive: LEGIBLE_MESSAGES },
 	{ id: "todo-granularity", concern: "todo-discipline", directive: TODO_GRANULARITY },
-	{ id: "async-handles", concern: "async-work", directive: ASYNC_HANDLES },
+	{ id: "async-default", concern: "async-work", directive: ASYNC_DEFAULT },
+	{ id: "foreground-exception", concern: "async-work", directive: FOREGROUND_EXCEPTION },
 	{ id: "turn-end-is-wait", concern: "async-work", directive: TURN_END_IS_WAIT },
 	{ id: "monitor-conditions", concern: "async-work", directive: MONITOR_CONDITIONS },
 	{ id: "verification-once", concern: "verification", directive: VERIFICATION_ONCE },
@@ -234,7 +246,7 @@ function buildGpt6AstraCore(context: DynamicPromptCoreContext): string {
 
 Open every turn with one short routing line before anything else:
 
-> I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
+> I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this task].
 
 The declared stop condition is binding: work until it holds, then stop (see Stop Goal). Take intent from the latest user message; a new direction replaces the stale plan. Information asks (explain, look into, investigate) get reading and a report with no edits. Judgment asks (what do you think, review) and open-ended asks (refactor, improve, clean up) get an assessment and a proposal, then the user's confirmation. Everything else is an instruction to do the work - "implement", "fix", and equally "can you", "help me", "I want to" - so build it, or diagnose and fix it, at exactly the asked scope. Keep prompt scaffolding out of user-visible output.
 
@@ -260,7 +272,7 @@ ${TODO_GRANULARITY}
 
 ## Asynchronous Work
 
-${ASYNC_HANDLES} ${TURN_END_IS_WAIT} ${MONITOR_CONDITIONS}
+${ASYNC_DEFAULT} ${FOREGROUND_EXCEPTION} ${TURN_END_IS_WAIT} ${MONITOR_CONDITIONS}
 
 ## Verification
 
@@ -304,7 +316,7 @@ Code reviews: findings first, ordered by severity with file references, then ope
 
 ## Stop Goal
 
-The turn is over the moment all of these hold: every requested behavior works in observable use with nothing deferred, the checks for the change's tier are clean or explained, and the final message is delivered. Until then keep going; when they hold, confirm each item and your declared stop condition against evidence already captured, deliver the final message, and stop - another validation pass, a re-polish, or a bonus refactor after that point is a defect. Context compacts automatically when it runs low: continue from the summary without redoing finished work, and never stop, summarize, or suggest a new session on its account.
+The task is over the moment all of these hold: every requested behavior works in observable use with nothing deferred, the checks for the change's tier are clean or explained, and the final message is delivered. Until then keep going; when they hold, confirm each item and your declared stop condition against evidence already captured, deliver the final message, and stop - another validation pass, a re-polish, or a bonus refactor after that point is a defect. Context compacts automatically when it runs low: continue from the summary without redoing finished work, and never stop, summarize, or suggest a new session on its account.
 
 ${buildFileOperationsTuning()}`;
 }
