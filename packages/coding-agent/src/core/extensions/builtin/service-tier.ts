@@ -237,17 +237,23 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		// fast-active when nothing is remembered; an explicit remembered `"auto"` (`/fast off`)
 		// wins over that inheritance. Malformed values read back as undefined.
 		//
-		// The flag is derived from the POST-swap model: a `-fast` catalog variant swaps down to
-		// its base before this reads `ctx.serviceTier`, so inheritance is judged on the model the
-		// user actually ends up on.
+		// The flag is derived from the POST-swap model for ordinary starts, but an explicit `-fast`
+		// selection is an explicit fast-mode request even though its catalog tier disappears with the
+		// swap to the base model. Preserve the requested level across that swap as well; the session
+		// setter clamps it against the base model's thinkingLevelMap without changing global defaults.
 		const remembered = getRememberedServiceTier(settingsManager, ctx.modelRegistry, model);
+		const requestedThinkingLevel = ctx.thinkingLevel;
 
 		const baseModel = findBaseModel(ctx.modelRegistry, model);
 		if (baseModel) {
 			await pi.setSessionModel(baseModel);
+			if (requestedThinkingLevel !== undefined) {
+				pi.setSessionThinkingLevel(requestedThinkingLevel);
+			}
 		}
 
-		sessionFastMode = remembered === PRIORITY_TIER || (remembered === undefined && ctx.serviceTier === PRIORITY_TIER);
+		sessionFastMode =
+			baseModel !== undefined || remembered === PRIORITY_TIER || (remembered === undefined && ctx.serviceTier === PRIORITY_TIER);
 		pi.setSessionFastMode(sessionFastMode);
 		const memoryModel = resolveServiceTierMemoryModel(ctx.modelRegistry, model);
 		liveMemoryKey = `${memoryModel.provider}/${memoryModel.id}`;

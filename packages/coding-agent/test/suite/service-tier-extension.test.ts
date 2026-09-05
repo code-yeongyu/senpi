@@ -138,7 +138,9 @@ describe("service-tier builtin extension", () => {
 			api: CODEX_API,
 			provider: CODEX_PROVIDER,
 			models: [{ id: FAST_MODEL_ID }, { id: BASE_MODEL_ID }],
+			upstreamModelId: BASE_MODEL_ID,
 			serviceTier: "priority",
+			fileSettings: true,
 			settings: { modelServiceTiers: { [`${CODEX_PROVIDER}/${BASE_MODEL_ID}`]: "auto" } },
 			extensionFactories: [serviceTierExtension],
 		});
@@ -158,26 +160,31 @@ describe("service-tier builtin extension", () => {
 	it.each([
 		["auto", false],
 		["priority", true],
-	] as const)("keeps a base-model startup's remembered %s tier unchanged", async (remembered, fast) => {
-		const harness = await createHarness({
-			api: CODEX_API,
-			provider: CODEX_PROVIDER,
-			models: [{ id: BASE_MODEL_ID }],
-			settings: { modelServiceTiers: { [`${CODEX_PROVIDER}/${BASE_MODEL_ID}`]: remembered } },
-			extensionFactories: [serviceTierExtension],
-		});
-		harnesses.push(harness);
-		const runner = harness.getExtensionRunner();
+	] as const)(
+		"keeps a base-model startup's remembered %s tier unchanged",
+		async (remembered: "auto" | "priority", fast: boolean) => {
+			const harness = await createHarness({
+				api: CODEX_API,
+				provider: CODEX_PROVIDER,
+				models: [{ id: BASE_MODEL_ID }],
+				fileSettings: true,
+				settings: { modelServiceTiers: { [`${CODEX_PROVIDER}/${BASE_MODEL_ID}`]: remembered } },
+				extensionFactories: [serviceTierExtension],
+			});
+			harnesses.push(harness);
+			const runner = harness.getExtensionRunner();
 
-		await harness.session.bindExtensions({});
+			await harness.session.bindExtensions({});
 
-		expect(harness.session.model?.id).toBe(BASE_MODEL_ID);
-		expect(harness.session.isFastModeActive()).toBe(fast);
-		const payload = { model: BASE_MODEL_ID };
-		expect(await runner.emitBeforeProviderRequest(payload)).toEqual(
-			fast ? { model: BASE_MODEL_ID, service_tier: "priority" } : payload,
-		);
-	});
+			expect(harness.session.model?.id).toBe(BASE_MODEL_ID);
+			expect(harness.session.isFastModeActive()).toBe(fast);
+			const payload = { model: BASE_MODEL_ID };
+			expect(await runner.emitBeforeProviderRequest(payload)).toEqual(
+				fast ? { model: BASE_MODEL_ID, service_tier: "priority" } : payload,
+			);
+		},
+	);
+
 
 	it("is a clear no-op for non-Codex providers", async () => {
 		// given
