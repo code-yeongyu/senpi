@@ -243,8 +243,8 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 		);
 	});
 
-	it("accepts senpi package metadata that omits the host pty prebuild (pipe fallback)", () => {
-		// Given: all loader files present, but no host native prebuild.
+	it("issue 1193 rejects a tarball missing the release-built Linux x64 pty prebuild", () => {
+		// Given: all loader files are present, but the Linux x64 release artifact is absent.
 		const packed = {
 			files: [
 				{ path: "package/dist/cli.js" },
@@ -266,14 +266,42 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 			],
 		};
 
-		// When / Then: the native prebuild is optional (pipe fallback), so this must not throw.
-		const originalWarn = console.warn;
-		console.warn = () => {};
-		try {
-			assert.doesNotThrow(() => assertSenpiPackedWorkspaceFiles(packed));
-		} finally {
-			console.warn = originalWarn;
-		}
+		// When / Then
+		assert.throws(
+			() => assertSenpiPackedWorkspaceFiles(packed, { requiredNativePrebuildTargets: ["linux-x64"] }),
+			/native\/prebuilds\/linux-x64\/senpi_pty\.linux-x64\.node/,
+		);
+	});
+
+	it("accepts a tarball containing the required Linux x64 pty prebuild", () => {
+		// Given
+		const linuxPrebuild = nativePrebuildFile("linux-x64");
+		const packed = {
+			files: [
+				{ path: "package/dist/cli.js" },
+				...clientProtocolFiles(),
+				...telemetryFiles(),
+				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
+				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
+				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
+				{ path: "package/node_modules/@earendil-works/pi-ai/dist/index.js" },
+				{ path: "package/node_modules/@earendil-works/pi-pty/package.json" },
+				{ path: "package/node_modules/@earendil-works/pi-pty/dist/index.js" },
+				{ path: "package/node_modules/@earendil-works/pi-pty/native/index.js" },
+				{ path: `package/node_modules/@earendil-works/pi-pty/${linuxPrebuild}` },
+				{ path: "package/node_modules/@earendil-works/pi-tui/package.json" },
+				{ path: "package/node_modules/@earendil-works/pi-tui/dist/index.js" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/package.json" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/index.ts" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py/prelude.py" },
+				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/node_modules/@babel/parser/package.json" },
+			],
+		};
+
+		// When / Then
+		assert.doesNotThrow(() =>
+			assertSenpiPackedWorkspaceFiles(packed, { requiredNativePrebuildTargets: ["linux-x64"] }),
+		);
 	});
 
 	it("accepts an all-OS check when a target's prebuild is absent (pipe fallback)", () => {

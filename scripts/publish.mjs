@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	assertSenpiPackedWorkspaceFiles,
+	SUPPORTED_NATIVE_PREBUILD_TARGETS,
 	prepareSenpiBundledWorkspaces,
 	rewriteOwnedRegistryAliases,
 } from "./prepare-senpi-bundled-workspaces.mjs";
@@ -33,10 +34,19 @@ const sourceOnlyPackages = new Set(["@code-yeongyu/senpi-codemode"]);
 const temporaryPublishDirectories = [];
 
 const dryRun = process.argv.includes("--dry-run");
-const unknownArgs = process.argv.slice(2).filter((arg) => arg !== "--dry-run");
+const requiredNativePrebuildFlag = "--require-native-prebuild=";
+const requiredNativePrebuildTargets = process.argv.slice(2).flatMap((arg) =>
+	arg.startsWith(requiredNativePrebuildFlag) ? [arg.slice(requiredNativePrebuildFlag.length)] : [],
+);
+const unknownArgs = process.argv
+	.slice(2)
+	.filter((arg) => arg !== "--dry-run" && !arg.startsWith(requiredNativePrebuildFlag));
 
-if (unknownArgs.length > 0) {
-	console.error(`Usage: node scripts/publish.mjs [--dry-run]`);
+if (
+	unknownArgs.length > 0 ||
+	requiredNativePrebuildTargets.some((target) => !SUPPORTED_NATIVE_PREBUILD_TARGETS.includes(target))
+) {
+	console.error(`Usage: node scripts/publish.mjs [--dry-run] [--require-native-prebuild=<platform>-<arch>]`);
 	process.exit(1);
 }
 
@@ -104,6 +114,7 @@ function validatePack(directory, sourceDirectory) {
 	const packageJson = readPackageJson(directory);
 	if (sourceDirectory === "packages/coding-agent") {
 		assertSenpiPackedWorkspaceFiles(packed, {
+			requiredNativePrebuildTargets,
 			runtimeDependencies: [
 				...Object.keys(packageJson.dependencies ?? {}),
 				...Object.keys(packageJson.optionalDependencies ?? {}),
@@ -162,7 +173,7 @@ const publishArgs = dryRun ? undefined : buildPublishArgs({ githubActions: proce
 console.log(`Publishing senpi packages at ${versions[0]}${dryRun ? " (dry run)" : ""}\n`);
 
 await materializeMissingPublishRuntime();
-prepareSenpiBundledWorkspaces();
+prepareSenpiBundledWorkspaces(undefined, { requiredNativePrebuildTargets });
 
 const packageStates = packages.map((pkg) => ({
 	...pkg,

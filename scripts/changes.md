@@ -1,5 +1,32 @@
 # changes
 
+## Require Linux x64 PTY prebuild in publish-only packaging (2026-08-31)
+
+### What changed
+
+- `scripts/publish.mjs` accepts `--require-native-prebuild=<target>` and passes
+  the required target through staging and final npm-pack validation. The
+  publish-only workflow now builds native artifacts through a reusable workflow,
+  downloads the consumer-relative `native/prebuilds/<host>/` tree, and requires
+  the Linux x64 PTY binary in the published Senpi package.
+
+### Why
+
+- The native workflow produced a Linux x64 addon, but release staging never
+  consumed it. The resulting npm package silently fell back to the pipe backend
+  on Linux x64 even though the loader expects a shipped native prebuild.
+
+### Why an extension could not handle it
+
+- Native compilation, GitHub Actions artifact transfer, and npm tarball
+  validation occur in release tooling before Senpi runtime extensions load.
+
+### Expected merge conflict zones
+
+- `.github/workflows/native-prebuilds.yml`, `.github/workflows/publish-npm.yml`,
+  `scripts/publish.mjs`, and `scripts/prepare-senpi-bundled-workspaces.mjs`
+  remain high-conflict release and staging paths.
+
 ## Browser-smoke exempts @anthropic-ai/sdk-internal Node builtins (2026-08-26)
 
 ### What changed

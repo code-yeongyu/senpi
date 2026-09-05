@@ -310,8 +310,12 @@ export function copyPublishDependencies(repoRoot) {
 }
 
 export function assertSenpiPackedWorkspaceFiles(packed, options = {}) {
-	const nativeTargets = options.nativePrebuildTargets ?? [nativePrebuildTarget()];
+	const requiredNativePrebuildTargets = options.requiredNativePrebuildTargets ?? [];
+	const nativeTargets = [
+		...new Set([...(options.nativePrebuildTargets ?? [nativePrebuildTarget()]), ...requiredNativePrebuildTargets]),
+	];
 	const prebuildFiles = new Set(nativeTargets.map(nativePrebuildFile));
+	const requiredPrebuildFiles = new Set(requiredNativePrebuildTargets.map(nativePrebuildFile));
 	const filePaths = new Set((packed.files ?? []).map((file) => file.path));
 	const resolverVisibleVendor = [...filePaths].find(
 		(path) =>
@@ -359,10 +363,13 @@ export function assertSenpiPackedWorkspaceFiles(packed, options = {}) {
 			const path = `${packageRoot}/${requiredFile}`;
 			const dryRunPath = `${dryRunPackageRoot}/${requiredFile}`;
 			if (filePaths.has(path) || filePaths.has(dryRunPath)) continue;
-			// The platform native prebuild (.node) is optional — the pty loader falls back
-			// to a child_process pipe when it is absent, so a host without a committed/built
-			// prebuild (e.g. linux-x64 in the npm-publish job) must not fail the pack check.
+			// Native prebuilds are optional unless publishing explicitly requires the target:
+			// on every other host, the pty loader falls back to a child_process pipe.
 			if (prebuildFiles.has(requiredFile)) {
+				if (requiredPrebuildFiles.has(requiredFile)) {
+					missing.push(`${path} or ${dryRunPath}`);
+					continue;
+				}
 				console.warn(`Warning: packed ${packageName} has no native prebuild ${requiredFile} (pipe fallback at runtime).`);
 				continue;
 			}
@@ -390,7 +397,9 @@ export function assertSenpiPackedWorkspaceFiles(packed, options = {}) {
 	}
 }
 
-export function prepareSenpiBundledWorkspaces(repoRoot = root) {
+export function prepareSenpiBundledWorkspaces(repoRoot = root, options = {}) {
+	const requiredNativePrebuildTargets = options.requiredNativePrebuildTargets ?? [];
+	const requiredPrebuildFiles = new Set(requiredNativePrebuildTargets.map(nativePrebuildFile));
 	const publishDependencies = copyPublishDependencies(repoRoot);
 	const codingAgentNodeModules = join(repoRoot, "packages/coding-agent/node_modules");
 
@@ -403,16 +412,18 @@ export function prepareSenpiBundledWorkspaces(repoRoot = root) {
 
 		// Loader files (package.json, dist/index.js, native/index.js) are hard-required.
 		// The platform-specific native prebuild (.node) is NOT: when it is absent the pty
-		// loader uses its child_process pipe fallback (same tolerance as build-binaries.sh,
-		// and the published package historically shipped with no prebuilds at all). So a
-		// missing host prebuild must warn, not fail the publish on a runner whose platform
-		// has no committed or built prebuild (e.g. linux-x64 in the npm-publish job).
-		const prebuildFiles = new Set(workspace.nativePrebuild ? [nativePrebuildFile(nativePrebuildTarget())] : []);
-		const requiredFiles = requiredFilesForWorkspace(workspace, [nativePrebuildTarget()]);
+		// loader uses its child_process pipe fallback unless this publish explicitly
+		// requires the target. A missing non-required prebuild must remain a warning.
+		const nativePrebuildTargets = [...new Set([nativePrebuildTarget(), ...requiredNativePrebuildTargets])];
+		const prebuildFiles = new Set(workspace.nativePrebuild ? nativePrebuildTargets.map(nativePrebuildFile) : []);
+		const requiredFiles = requiredFilesForWorkspace(workspace, nativePrebuildTargets);
 		for (const requiredFile of requiredFiles) {
 			const requiredPath = join(sourceRoot, requiredFile);
 			if (existsSync(requiredPath)) continue;
 			if (prebuildFiles.has(requiredFile)) {
+				if (requiredPrebuildFiles.has(requiredFile)) {
+					throw new Error(`Missing ${requiredPath}. ${workspace.packageName} requires this native prebuild for publishing.`);
+				}
 				console.warn(
 					`Warning: ${workspace.packageName} has no native prebuild at ${requiredFile}; bundling without it (pipe fallback at runtime).`,
 				);
