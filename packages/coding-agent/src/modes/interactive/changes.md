@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-05 - Restore Working text shimmer formatter
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` no longer constructs a duplicate working status indicator, preserving the literal `Working` text shimmer and formatter wiring.
+
+### Why
+
+- The duplicate construction overwrote the beta.36 conditional chrome-vs-default indicator and its shimmer formatter.
+
+### Why an extension could not handle it
+
+- `InteractiveMode.setWorkingVisible` is engine-owned interactive TUI behavior below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: `InteractiveMode.setWorkingVisible` working-indicator construction.
+
 ## 2026-09-05 - Ctrl+P skips favorites without context room
 
 ### What changed
