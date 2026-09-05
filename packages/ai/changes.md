@@ -22,11 +22,11 @@
 
 ### What changed
 
-- `packages/ai/scripts/generate-models.ts` applies the 650,000-token flagship default to GPT-5.6 Sol and GPT-6 Astra on OpenAI and OpenAI Codex, while retaining the 272,000-token Terra/Luna defaults and long-context pricing tiers.
+- `packages/ai/scripts/generate-models.ts` applies per-model flagship context defaults on OpenAI and OpenAI Codex: GPT-5.6 Sol keeps 650,000 tokens and GPT-6 Astra gets 800,000 tokens (generated `-fast` variants inherit), while retaining the 272,000-token Terra/Luna defaults and long-context pricing tiers.
 
 ### Why
 
-- OpenAI documents GPT-6 Astra with a 1,050,000-token context window and the project deliberately uses the same 650,000-token cost-tier default already selected for Sol.
+- OpenAI documents GPT-6 Astra with a 1,050,000-token context window; the project deliberately ships a cost-tier default instead of the maximum, and the owner set Astra's default to 800,000 tokens (Sol stays at the 650,000 selected earlier).
 
 ### Why an extension could not handle it
 
