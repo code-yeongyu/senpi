@@ -1,3 +1,18 @@
+
+## 2026-09-05 - GPT-6 Astra configuration update exact-path coverage
+
+### What changed
+
+- packages/agent/src/agent.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/agent/src/harness/agent-harness.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/agent/src/harness/compaction/branch-summarization.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/agent/src/harness/compaction/compaction.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/agent/src/harness/reducer.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/agent/src/harness/session/context.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/agent/src/harness/session/jsonl/codec.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/agent/src/harness/session/types.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/agent/src/types.ts: covered by the GPT-6 Astra configuration-update implementation.
+
 ## 2026-09-05 - Preserve Astra reasoning effort across session changes
 
 ### What changed

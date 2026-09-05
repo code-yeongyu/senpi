@@ -1,3 +1,14 @@
+
+## 2026-09-05 - GPT-6 Astra configuration update exact-path coverage
+
+### What changed
+
+- packages/coding-agent/src/core/agent-session.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/coding-agent/src/core/compaction/compaction.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/coding-agent/src/core/messages.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/coding-agent/src/core/sdk.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/coding-agent/src/core/session-manager.ts: covered by the GPT-6 Astra configuration-update implementation.
+
 ## 2026-09-05 - Persist Astra reasoning configuration updates
 
 ### What changed

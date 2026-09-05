@@ -1,3 +1,10 @@
+
+## 2026-09-05 - GPT-6 Astra configuration update exact-path coverage
+
+### What changed
+
+- packages/session-backends/sqlite-node/src/sqlite/repo.ts: covered by the GPT-6 Astra configuration-update implementation.
+
 ## [Unreleased]
 
 - `packages/session-backends/sqlite-node/src/sqlite/repo.ts`: decode durable GPT-6 Astra `configuration_update` session entries with reasoning-effort validation.

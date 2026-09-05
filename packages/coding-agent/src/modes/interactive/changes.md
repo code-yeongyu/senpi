@@ -1,3 +1,10 @@
+
+## 2026-09-05 - GPT-6 Astra configuration update exact-path coverage
+
+### What changed
+
+- packages/coding-agent/src/modes/interactive/interactive-mode.ts: covered by the GPT-6 Astra configuration-update implementation.
+
 # changes
 
 ## 2026-09-04 - Branded build labels render verbatim in startup UI

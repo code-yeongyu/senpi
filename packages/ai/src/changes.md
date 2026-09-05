@@ -1,3 +1,14 @@
+
+## 2026-09-05 - GPT-6 Astra configuration update exact-path coverage
+
+### What changed
+
+- packages/ai/src/api/mistral-conversations.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/ai/src/api/openai-responses-shared.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/ai/src/providers/faux.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/ai/src/types.ts: covered by the GPT-6 Astra configuration-update implementation.
+- packages/ai/src/utils/estimate.ts: covered by the GPT-6 Astra configuration-update implementation.
+
 ## 2026-09-05 - Infer map-less GPT-6 Astra reasoning controls
 
 ### What changed
