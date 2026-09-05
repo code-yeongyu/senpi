@@ -60,24 +60,26 @@ describe("bare expansion eligibility gate", () => {
 		expect(entries.some((entry) => entry.includes(OPUS5))).toBe(true);
 	});
 
-	it("keeps an eligible OAuth provider while Cursor stays out of bare expansion by policy", () => {
-		const chains = canonicalizeFallbackChains(BARE_CHAINS, lookup(catalog, ["claude-sdk-oauth", "cursor-cli-oauth"]));
+	it("keeps an eligible OAuth provider while the exact Cursor provider stays out of bare expansion by policy", () => {
+		// cursor (the exact denylisted provider id) never enters bare expansion even with an
+		// OAuth credential; cursor-cli-oauth is a different provider id and is NOT denylisted.
+		const withCursor = [...catalog, model("cursor", OPUS5)];
+		const chains = canonicalizeFallbackChains(BARE_CHAINS, lookup(withCursor, ["claude-sdk-oauth", "cursor"]));
 
 		const entries = chains[`anthropic/${FABLE}`] ?? [];
 		expect(entries.some((entry) => entry.startsWith("claude-sdk-oauth/"))).toBe(true);
-		// Cursor is on the bare-expansion denylist regardless of the eligibility gate;
-		// only an explicit cursor selector can route there.
-		expect(entries.some((entry) => entry.startsWith("cursor-cli-oauth/"))).toBe(false);
+		expect(entries.some((entry) => entry.startsWith("cursor/"))).toBe(false);
 	});
 
 	it("keeps eligible providers when the registry exposes no eligibility gate", () => {
+		const withCursor = [...catalog, model("cursor", OPUS5)];
 		const chains = canonicalizeFallbackChains(BARE_CHAINS, {
-			getAll: () => catalog,
-			isUsingOAuth: (candidate: Model<Api>) => candidate.provider === "claude-sdk-oauth",
+			getAll: () => withCursor,
+			isUsingOAuth: (candidate: Model<Api>) => candidate.provider === "claude-sdk-oauth" || candidate.provider === "cursor",
 		});
 
 		const entries = chains[`anthropic/${FABLE}`] ?? [];
 		expect(entries.some((entry) => entry.startsWith("claude-sdk-oauth/"))).toBe(true);
-		expect(entries.some((entry) => entry.startsWith("cursor-cli-oauth/"))).toBe(false);
+		expect(entries.some((entry) => entry.startsWith("cursor/"))).toBe(false);
 	});
 });
