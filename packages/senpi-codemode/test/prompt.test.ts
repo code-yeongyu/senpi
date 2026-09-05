@@ -220,6 +220,9 @@ describe("buildEvalPrompt", () => {
 		expect(gpt).toContain("<gpt_eval_dialect>");
 		expect(gpt).toContain("detach on timeout");
 		expect(gpt).not.toContain("<eval_first_batching>");
+		const gptWithMonitor = buildEvalPrompt(enabled, { spawns: false, modelId: "gpt-5.6", monitor: true }).description;
+		expect(gptWithMonitor.indexOf("tool.monitor(")).toBeLessThan(gptWithMonitor.indexOf("detach on timeout"));
+		expect(gptWithMonitor).toContain("no cell sits on the wait");
 		expect(gpt).not.toContain("EVAL IS YOUR PRIMARY EXECUTION SURFACE");
 		const kimiInstruction = kimi.slice(0, kimi.indexOf("<prelude>"));
 		expect(kimiInstruction).toContain("EVAL IS YOUR SUPERPOWER");
@@ -241,6 +244,9 @@ describe("buildEvalPrompt", () => {
 		);
 		expect(guideline("gpt-5.6")).toBe(
 			"Use eval to compose tool work in one cell; long cells detach on timeout and notify on completion, so do not poll.",
+		);
+		expect(buildEvalPrompt(enabled, { spawns: false, modelId: "gpt-5.6", monitor: true }).promptGuidelines[0]).toBe(
+			"Use eval to compose tool work in one cell; a wait or a long run starts through `tool.monitor` in that cell, so no cell sits on it and nothing polls.",
 		);
 		expect(guideline("kimi-k2.6")).toBe(
 			"**EVAL IS YOUR SUPERPOWER — DEFAULT TO IT.** Execute EVERY multi-call step as ONE eval cell: run ALL independent calls simultaneously via parallel(thunks), handle failures per item in code, and return ONLY distilled facts.",

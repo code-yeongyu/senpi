@@ -8,6 +8,8 @@
 
 ### Changed
 
+- The GPT eval dialect now routes a wait or a long run through `tool.monitor` inside the cell (the subscription line precedes the detach note, and the `## Tool Guidelines` line says so when `monitor` is reachable), so a GPT model no longer reads "long cells detach" as the way to wait on a `--watch`.
+
 ### Fixed
 
 ### Removed

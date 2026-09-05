@@ -77,9 +77,9 @@ const EVAL_PROMPT_TEMPLATE = `Run one step of code in a persistent kernel.
 {{#if monitor}}- Start long-running work (build, test run, deploy, or watch) through \`tool.monitor({ command, filter })\`, putting the decisive-line filter inside the same cell, then keep working until its event wakes the turn.{{/if}}
 </eval_first_batching>{{/if}}{{#if styleGpt}}<gpt_eval_dialect>
 GPT eval: compose multi-tool work inside one cell with \`tool.<name>(args)\` and \`parallel(thunks)\`; do not split a planned step into serial tool calls.
-- Long cells detach on timeout and notify on completion; do not poll or re-run them.
+{{#if monitor}}- A wait or a long run (build, test run, deploy, watch) starts through \`tool.monitor({ command, filter })\` in that same cell with the decisive-line filter; its event wakes the turn, so no cell sits on the wait and no child is spawned for it.
+{{/if}}- Long cells detach on timeout and notify on completion; do not poll or re-run them.
 - Filter, join, and aggregate tool results in the cell; return only decision-relevant facts.
-{{#if monitor}}- For long-running build, test run, deploy, or watch work, start \`tool.monitor({ command, filter })\` with the decisive-line filter in the same cell; keep working until its event wakes the turn.{{/if}}
 </gpt_eval_dialect>{{/if}}{{#if styleCodex}}Route multi-call steps through eval: one cell per step, independent lookups dispatched together via \`parallel(thunks)\`; keep work sequential only when one result determines the next action.
 - Loop or comprehend over file sets with \`read()\`/stdlib instead of reading files one call at a time; post-process \`tool.<name>()\` results programmatically — filter, join, aggregate.
 - Wrap failable calls in try/except inside the cell; a failed item degrades only itself. After two distinct failed strategies for the same fact, fall back to direct tool calls.
@@ -182,7 +182,7 @@ export function buildEvalPrompt(
 		description,
 		promptSnippet: "Run one incremental code cell in a persistent language kernel.",
 		promptGuidelines: [
-			BATCHING_GUIDELINES[style],
+			style === "gpt" && context.monitor === true ? GPT_MONITOR_BATCHING_GUIDELINE : BATCHING_GUIDELINES[style],
 			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
 		],
 	};
@@ -191,8 +191,13 @@ export function buildEvalPrompt(
 /**
  * System-prompt guideline per emphasis dialect. The default dialect carries
  * maximum emphasis so unmapped models still batch through eval; the others are
- * tuned to what steers that family reliably.
+ * tuned to what steers that family reliably. The GPT line routes waits to the
+ * subscription when `monitor` is reachable, because a GPT model that reads
+ * "long cells detach" as the way to wait awaits a `--watch` inside a cell.
  */
+const GPT_MONITOR_BATCHING_GUIDELINE =
+	"Use eval to compose tool work in one cell; a wait or a long run starts through `tool.monitor` in that cell, so no cell sits on it and nothing polls.";
+
 const BATCHING_GUIDELINES: Record<EvalEmphasisStyle, string> = {
 	default:
 		"**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",

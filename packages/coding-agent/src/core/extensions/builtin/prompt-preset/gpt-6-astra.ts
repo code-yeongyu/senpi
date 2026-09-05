@@ -44,6 +44,12 @@
 // result. A child task never meets the exception, even when its result is
 // the next input: an orchestrator that blocks on one child at a time forfeits
 // every other track, which is the failure this section exists to prevent.
+// The subscription rule names the form the session can call - `bash` and
+// `monitor` leave the direct tool list whenever `eval` exists, so
+// `tool.monitor` inside a cell is the only form there is and a rule
+// conditioned on `monitor` being available never fires - and names the
+// trigger as state the user mentions, not only a wait the model itself
+// started.
 // Codex's own Astra template runs "code mode only"
 // (`functions.exec` batching independent calls with Promise.allSettled), so
 // senpi's eval-first orchestration rules fit Astra's prior directly.
@@ -169,7 +175,7 @@ const TODO_GRANULARITY =
 	"Given a todo tool, cut multi-step work into the smallest items that still stand alone - an edit paired with the check that proves it - and move each one the instant its state changes: opened, finished, newly discovered and appended, abandoned and dropped. A one-step ask carries no list.";
 
 const ASYNC_DEFAULT =
-	"**ASYNCHRONOUS IS THE DEFAULT FORM OF EVERY CALL THAT OFFERS ONE: CHILD TASKS AND BASH SESSIONS START IN THE BACKGROUND, AND A LONG EVAL CELL DETACHES.** Each returns a handle at once and delivers its result later as a message; treat the handle like a pending async call and keep working on everything that does not need it.";
+	"**ASYNCHRONOUS IS THE DEFAULT FORM OF EVERY CALL THAT OFFERS ONE: CHILD TASKS AND BASH SESSIONS START IN THE BACKGROUND, A LONG COMPUTATION DETACHES ITS EVAL CELL, AND A WAIT IS A `tool.monitor` SUBSCRIPTION - NEVER A CELL THAT SITS ON A `--watch` OR A SPAWNED PROCESS, NEVER A CHILD SPAWNED TO WATCH.** Each returns a handle at once and delivers its result later as a message; treat the handle like a pending async call and keep working on everything that does not need it.";
 
 const FOREGROUND_EXCEPTION =
 	"Block only on a call that finishes within the time a reply takes and decides your very next call, or on an approval-gated or destructive action you must watch directly. A child task never meets the first test, even when its result is your next input; spawn it in the background and let the completion deliver it.";
@@ -178,7 +184,7 @@ const TURN_END_IS_WAIT =
 	"**THERE IS NO WAIT TOOL. WHEN THE NEXT STEP NEEDS A PENDING RESULT, END YOUR TURN; THE COMPLETION WAKES YOU AND THE TASK CONTINUES.** Repeated status reads, sleeps, and timed retries replay the whole context for nothing; a single peek serves a midpoint decision only.";
 
 const MONITOR_CONDITIONS =
-	"**WHEN `monitor` IS AVAILABLE, USE IT FOR EVERY OBSERVABLE WAIT** - a log line, a build or test run finishing, a file appearing, a check turning green: register it, from inside the same cell when the run starts there, and keep working. Steer, read, or stop a running session or child through its session tools instead of launching a duplicate.";
+	"**EVERY CONDITION YOU WOULD OTHERWISE CHECK ON GETS A SUBSCRIPTION: `tool.monitor({ description, command, filter })` FROM THE EVAL CELL THAT STARTS THE RUN** (a direct `monitor` call only in a session without `eval`). A build, install, or test run finishing, a CI check or PR turning green, a deploy landing, a log line, a file appearing, another session or machine changing state: arm the watch the moment your work starts it or the user names it. A run, check, PR, or deploy the user mentions is in scope even when the ask is about something else - it gets its watch in the same turn, without being asked. The subscription is the whole cost of the wait and its matching line wakes you; a cell that awaits the wait holds the js kernel until the cell limit kills it. Steer, read, or stop a running session or child through its session tools instead of launching a duplicate.";
 
 const VERIFICATION_ONCE =
 	"Broaden or repeat checks only when a new change, a failure, or an open concern justifies it; otherwise keep moving toward completion.";

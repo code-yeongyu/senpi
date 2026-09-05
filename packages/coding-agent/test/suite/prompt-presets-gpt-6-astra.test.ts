@@ -296,6 +296,15 @@ describe("GPT-6 Astra behavior contract", () => {
 		}
 	});
 
+	it("names the eval-cell form of the monitor subscription in Asynchronous Work", () => {
+		// given: bash and monitor leave the direct tool list whenever eval exists, so
+		// the only callable form of a subscription is tool.monitor(...) inside a cell.
+		const sections = sectionsOf(buildPrompt("gpt-6-astra", "gpt-6-astra"));
+
+		// then
+		expect(sections.get("Asynchronous Work")).toContain("tool.monitor(");
+	});
+
 	it("keeps the shared GPT code-execution routing bridge and file-operations tuning once each", () => {
 		// given
 		const prompt = buildPrompt("gpt-6-astra", "gpt-6-astra");
