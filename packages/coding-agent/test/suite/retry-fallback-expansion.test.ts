@@ -66,16 +66,16 @@ const sdkAndAnthropic = [
 ];
 
 describe("bare model-id family expansion", () => {
-	it("ships a provider-agnostic default chain with bare model ids", () => {
+	it("expands an explicitly configured provider-agnostic chain with bare model ids", () => {
 		expect(DEFAULT_FALLBACK_CHAINS).toEqual({
 			[FABLE51]: ["k3:max", "kimi-k3:max", `${OPUS5}:xhigh`, `${OPUS48}:xhigh`],
 			[FABLE]: ["k3:max", "kimi-k3:max", `${OPUS5}:xhigh`, `${OPUS48}:xhigh`],
 		});
 	});
 
-	it("expands the shipped kimi-k3 alias to providers that expose the model as kimi-k3", () => {
+	it("expands an explicit kimi-k3 alias to providers that expose the model as kimi-k3", () => {
 		// Issue #793: OpenCode Go serves Kimi K3 as `kimi-k3`, which the bare `k3`
-		// family cannot match; the shipped chain carries an explicit alias entry.
+		// family cannot match; the explicit fixture carries an alias entry.
 		const registry = [...sdkAndAnthropic, model("opencode-go", "kimi-k3")];
 		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(registry));
 
