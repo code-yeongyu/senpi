@@ -126,6 +126,16 @@ describe("service-tier builtin extension", () => {
 		// when
 		await harness.session.prompt("/fast");
 
+		// then: startup's explicit fast intent toggles off before it can swap to the sibling.
+		expect(harness.session.model?.id).toBe(BASE_MODEL_ID);
+		expect(harness.session.serviceTier).toBeUndefined();
+		expect(harness.session.isFastModeActive()).toBe(false);
+		const defaultPayload = { model: BASE_MODEL_ID };
+		expect(await runner.emitBeforeProviderRequest(defaultPayload)).toBe(defaultPayload);
+
+		// when
+		await harness.session.prompt("/fast");
+
 		// then
 		expect(harness.session.model?.id).toBe(FAST_MODEL_ID);
 		expect(harness.session.serviceTier).toBe("priority");
@@ -137,17 +147,8 @@ describe("service-tier builtin extension", () => {
 			model: BASE_MODEL_ID,
 			service_tier: "priority",
 		});
-
-		// when
-		await harness.session.prompt("/fast");
-
-		// then
-		expect(harness.session.model?.id).toBe(BASE_MODEL_ID);
-		expect(harness.session.serviceTier).toBeUndefined();
 		expect(harness.settingsManager.getDefaultProvider()).toBe(CODEX_PROVIDER);
 		expect(harness.settingsManager.getDefaultModel()).toBe(BASE_MODEL_ID);
-		const defaultPayload = { model: BASE_MODEL_ID };
-		expect(await runner.emitBeforeProviderRequest(defaultPayload)).toBe(defaultPayload);
 	});
 
 	it("keeps fast mode on when an explicit -fast selection outranks remembered auto", async () => {
