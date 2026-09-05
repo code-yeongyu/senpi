@@ -112,12 +112,12 @@ options object and asynchronous helpers are `await`-able.
 
 | Helper | Contract |
 | --- | --- |
-| `display(value)` | Emits text, structured JSON, markdown, or supported image display data. |
+| `display(value)` | Emits text, structured JSON, markdown, or image display data. Images reach the model only through `display`: pass a figure, raw image bytes (PNG/JPEG/GIF/WebP/BMP sniffed), a `data:` URL, a `Blob`-like or `Bun.Image` value, a marshalled tool result, or one of its `images[i]` frames. |
 | `print(value, ...)` | Emits text output. |
 | `read(path, offset?, limit?)` | Reads text with 1-indexed line slicing. `local://` paths resolve under the session artifact root. |
 | `write(path, content)` | Creates parent directories and writes text. `local://` paths persist in the session artifact root. |
 | `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. |
-| `tool.<name>(args)` | Invokes an active Senpi tool through the normal `pi.executeTool` pipeline. |
+| `tool.<name>(args)` | Invokes an active Senpi tool through the normal `pi.executeTool` pipeline and returns `{ text, images?, details?, hasError? }` in every kernel; image blocks arrive as `images[i] = { mimeType, dataBase64 }`. |
 | `tool_schema(name?)` | Returns a tool's parameter schema without calling it; omit `name` to list tool names. |
 | `completion(prompt, model?, system?, schema?)` | Requests a one-shot host completion; `schema` asks the host to parse structured output. |
 | `agent(prompt, ...)` | Delegates to the configured active `taskTools.task` tool. Supports background handles and structured JSON results. |

@@ -2,13 +2,12 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { inspect } from "node:util";
+import { encodeDisplayImage, resolveDisplayOps } from "./display-image.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
 import { installShellCapture } from "./worker-shell-capture.js";
 
 const PREPARED_CELL_PREFIX = "/*senpi:prepared-cell*/";
 const INTERNAL_URL = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/iu;
-const BASE64_STRICT_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
-const DECIMAL_CSV_RE = /^\d{1,3}(?:,\d{1,3})*$/u;
 
 export class JsWorkerRuntime {
 	#cwd;
@@ -16,6 +15,7 @@ export class JsWorkerRuntime {
 	#localRoots;
 	#env = new Map();
 	#hooks = null;
+	#pendingDisplays = [];
 
 	constructor(options) {
 		this.#cwd = options.cwd;
@@ -36,9 +36,20 @@ export class JsWorkerRuntime {
 				({ prelude, code: cellCode } = prepared);
 			}
 			if (prelude) indirectEval(prelude, `${cellId}:prelude`);
-			return await awaitMaybePromise(indirectEval(wrapUserCode(cellCode), cellId));
+			const value = await awaitMaybePromise(indirectEval(wrapUserCode(cellCode), cellId));
+			await this.#drainPendingDisplays();
+			return value;
 		} finally {
+			this.#pendingDisplays = [];
 			this.#hooks = null;
+		}
+	}
+
+	async #drainPendingDisplays() {
+		while (this.#pendingDisplays.length > 0) {
+			const pending = this.#pendingDisplays;
+			this.#pendingDisplays = [];
+			await Promise.all(pending);
 		}
 	}
 
@@ -112,22 +123,8 @@ export class JsWorkerRuntime {
 				this.#hooks?.emit({ type: "display", mimeType: "text/markdown", dataBase64: encodeBase64(value.text) });
 				return;
 			}
-			if (value.type === "image" && typeof value.mimeType === "string") {
-				const dataBase64 = imageBase64(value.data);
-				if (dataBase64 !== undefined) {
-					this.#hooks?.emit({ type: "display", mimeType: value.mimeType, dataBase64 });
-					return;
-				}
-				this.#emitText(
-					"stdout",
-					`[display: image dropped — \`data\` must be a base64 string, Uint8Array/Buffer, or ArrayBuffer; got ${describeImageData(value.data)}]\n`,
-				);
-				return;
-			}
-			if (typeof value.mimeType === "string" && typeof value.dataBase64 === "string") {
-				this.#hooks?.emit({ type: "display", mimeType: value.mimeType, dataBase64: value.dataBase64 });
-				return;
-			}
+			const ops = resolveDisplayOps(value);
+			if (ops !== undefined) return this.#applyDisplayOps(ops);
 			try {
 				this.#hooks?.emit({ type: "display", mimeType: "application/json", dataBase64: encodeBase64(JSON.stringify(value)) });
 			} catch (error) {
@@ -137,6 +134,19 @@ export class JsWorkerRuntime {
 			return;
 		}
 		this.#emitText("stdout", `${String(value)}\n`);
+	}
+
+	#applyDisplayOps(ops) {
+		let pending;
+		for (const op of ops) {
+			if (op.kind === "frame") this.#hooks?.emit({ type: "display", mimeType: op.mimeType, dataBase64: op.dataBase64 });
+			else if (op.kind === "text") this.#emitText("stdout", `${op.text}\n`);
+			else {
+				pending = encodeDisplayImage(op.value).then((encoded) => this.#applyDisplayOps(encoded));
+				this.#pendingDisplays.push(pending);
+			}
+		}
+		return pending;
 	}
 
 	#envHelper(key, value) {
@@ -355,47 +365,6 @@ async function writeData(value) {
 	if (value instanceof ArrayBuffer) return new Uint8Array(value);
 	if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
 	throw new TypeError("write() expects string, Blob, ArrayBuffer, or TypedArray data");
-}
-
-function imageBase64(data) {
-	if (typeof data === "string") {
-		if (isStrictBase64(data)) return data;
-		if (!DECIMAL_CSV_RE.test(data)) return undefined;
-		const parts = data.split(",");
-		const bytes = new Uint8Array(parts.length);
-		for (let index = 0; index < parts.length; index += 1) {
-			const byte = Number(parts[index]);
-			if (!Number.isInteger(byte) || byte < 0 || byte > 255) return undefined;
-			bytes[index] = byte;
-		}
-		return Buffer.from(bytes).toString("base64");
-	}
-	if (data instanceof Uint8Array) return Buffer.from(data).toString("base64");
-	if (data instanceof ArrayBuffer) return Buffer.from(data).toString("base64");
-	if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("base64");
-	if (isPlainObject(data) && data.type === "Buffer" && Array.isArray(data.data)) {
-		const bytes = new Uint8Array(data.data.length);
-		for (let index = 0; index < data.data.length; index += 1) {
-			const byte = data.data[index];
-			if (typeof byte !== "number" || !Number.isInteger(byte) || byte < 0 || byte > 255) return undefined;
-			bytes[index] = byte;
-		}
-		return Buffer.from(bytes).toString("base64");
-	}
-	return undefined;
-}
-
-function isStrictBase64(value) {
-	return value.length > 0 && value.length % 4 === 0 && BASE64_STRICT_RE.test(value);
-}
-
-function describeImageData(data) {
-	if (data === null) return "null";
-	if (data instanceof Uint8Array) return "Uint8Array";
-	if (data instanceof ArrayBuffer) return "ArrayBuffer";
-	if (ArrayBuffer.isView(data)) return data.constructor.name;
-	if (typeof data === "string") return `string(${data.length})`;
-	return typeof data;
 }
 
 function chunkToString(chunk, encoding) {
