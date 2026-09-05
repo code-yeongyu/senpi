@@ -22,11 +22,19 @@ describe("model fallback host wiring", () => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
-	it("uses the first available candidate from the shipped Fable 5 chain", async () => {
+	it("uses the first available candidate from a configured Fable 5 chain", async () => {
 		const harness = await createHarness({
 			provider: "anthropic",
 			models: [{ id: "claude-fable-5" }, { id: "claude-opus-5" }, { id: "claude-opus-4-8" }],
-			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0 } },
+			// No shipped default exists any more; the chain must be configured explicitly.
+			settings: {
+				retry: {
+					enabled: true,
+					baseDelayMs: 1,
+					maxRetries: 0,
+					fallbackChains: { "claude-fable-5": ["claude-opus-5:xhigh", "claude-opus-4-8:xhigh"] },
+				},
+			},
 		});
 		harnesses.push(harness);
 		harness.setResponses([
@@ -34,7 +42,7 @@ describe("model fallback host wiring", () => {
 			fauxAssistantMessage("recovered"),
 		]);
 
-		await harness.session.prompt("use the default Fable fallback chain");
+		await harness.session.prompt("use the configured Fable fallback chain");
 
 		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([
 			{ from: "anthropic/claude-fable-5", to: "anthropic/claude-opus-5" },
@@ -52,8 +60,7 @@ describe("model fallback host wiring", () => {
 
 		expect(harness.settingsManager.getRawFallbackChains()).toBeUndefined();
 		await getFallbackCommand(harness).handler(`${primary} ${fallback}`, context);
-		// The quick-set chain is what must reach the engine; shipped defaults for
-		// other models stay resolved alongside it.
+		// The quick-set chain is what must reach the engine.
 		expect(harness.settingsManager.getRetryFallbackSettings().chains[primary]).toEqual([fallback]);
 
 		harness.setResponses([
