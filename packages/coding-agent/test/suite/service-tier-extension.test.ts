@@ -82,7 +82,10 @@ describe("service-tier builtin extension", () => {
 				defaultProvider: CODEX_PROVIDER,
 				defaultModel: BASE_MODEL_ID,
 			},
-			extensionFactories: [serviceTierExtension],
+			extensionFactories: [
+				(pi) => pi.on("session_start", () => pi.setSessionThinkingLevel("high")),
+				serviceTierExtension,
+			],
 		});
 		harnesses.push(harness);
 		const runner = harness.getExtensionRunner();
@@ -95,8 +98,6 @@ describe("service-tier builtin extension", () => {
 		harness.modelRegistry.find(CODEX_PROVIDER, BASE_MODEL_ID)!.thinkingLevelMap = thinkingLevelMap;
 		expect(harness.session.model?.id).toBe(FAST_MODEL_ID);
 		expect(harness.session.isFastModeActive()).toBe(true);
-		harness.session.agent.state.thinkingLevel = "high";
-		expect(harness.session.thinkingLevel).toBe("high");
 
 		// when
 		await harness.session.bindExtensions({});
