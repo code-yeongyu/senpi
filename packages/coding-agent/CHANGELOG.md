@@ -5,6 +5,7 @@
 ### Added
 
 - Added the GLM 5.2 prompt preset with automatic model detection.
+- Added a working/idle agent status to the terminal title so terminal tabs show when a session is busy. The title is prefixed with `[working]` while the agent runs (and while compacting) and returns to the plain title when idle; the status is mirrored into `process.title` for terminals that build tab labels from the foreground process.
 
 ### Fixed
 

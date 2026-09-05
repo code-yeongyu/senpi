@@ -16,6 +16,17 @@ const DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS = 7;
 const KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS = 150;
 const KITTY_KEYBOARD_PROTOCOL_QUERY = `\x1b[>${DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1b[?u\x1b[c`;
 
+/**
+ * Build the escape sequence that sets the terminal title.
+ *
+ * Emits OSC 0 (icon name + window title) followed by OSC 2 (window title).
+ * OSC 2 is the sequence Zed documents for terminal titles, and tmux/screen
+ * derive their window names from it, so both are needed for full coverage.
+ */
+export function formatTerminalTitleSequence(title: string): string {
+	return `\x1b]0;${title}\x07\x1b]2;${title}\x07`;
+}
+
 export type KeyboardProtocolNegotiationSequence =
 	| { type: "kitty-flags"; flags: number }
 	| { type: "device-attributes" };
@@ -513,8 +524,11 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	setTitle(title: string): void {
-		// OSC 0;title BEL - set terminal window title
-		process.stdout.write(`\x1b]0;${title}\x07`);
+		// OSC 0 sets icon name + window title; OSC 2 sets the window/tab title only.
+		// Zed documents OSC 2 as the sequence it reads for terminal titles, and
+		// multiplexers (tmux/screen) key their window names off OSC 2 as well, so
+		// emit both for the widest terminal coverage.
+		process.stdout.write(formatTerminalTitleSequence(title));
 	}
 
 	setProgress(active: boolean): void {

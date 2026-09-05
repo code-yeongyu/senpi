@@ -1,6 +1,6 @@
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import xterm from "@xterm/headless";
-import type { Terminal } from "../src/terminal.ts";
+import { formatTerminalTitleSequence, type Terminal } from "../src/terminal.ts";
 
 // Extract Terminal class from the module
 const XtermTerminal = xterm.Terminal;
@@ -96,8 +96,7 @@ export class VirtualTerminal implements Terminal {
 	}
 
 	setTitle(title: string): void {
-		// OSC 0;title BEL - set terminal window title
-		this.xterm.write(`\x1b]0;${title}\x07`);
+		this.xterm.write(formatTerminalTitleSequence(title));
 	}
 
 	setProgress(_active: boolean): void {}

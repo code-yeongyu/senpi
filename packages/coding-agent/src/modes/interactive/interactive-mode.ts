@@ -101,6 +101,11 @@ import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { checkForNewPiVersion } from "../../utils/version-check.ts";
 import { abortedErrorLabel } from "./aborted-error-label.ts";
+import {
+	type AgentActivityStatus,
+	formatAgentActivityProcessTitle,
+	formatAgentActivityTitle,
+} from "./agent-activity-status.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
@@ -378,6 +383,7 @@ export class InteractiveMode {
 	private hookStatusIntervalId: NodeJS.Timeout | undefined = undefined;
 	private activeToolTerminalTitle: string | undefined = undefined;
 	private extensionTerminalTitle: string | undefined = undefined;
+	private agentActivityStatus: AgentActivityStatus = "idle";
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
@@ -856,12 +862,31 @@ export class InteractiveMode {
 	}
 
 	private applyTerminalTitle(): void {
-		this.ui.terminal.setTitle(
+		const title =
 			this.activeToolTerminalTitle ??
-				this.activeToolExecutionTerminalTitle ??
-				this.extensionTerminalTitle ??
-				this.getNormalTerminalTitle(),
-		);
+			this.activeToolExecutionTerminalTitle ??
+			this.extensionTerminalTitle ??
+			this.getNormalTerminalTitle();
+		this.ui.terminal.setTitle(formatAgentActivityTitle(this.agentActivityStatus, title));
+	}
+
+	/**
+	 * Mirror the working/idle status into `process.title`.
+	 *
+	 * Zed derives its terminal tab label from the foreground process rather than
+	 * from the OSC title, so argv is the only channel that can reach that label.
+	 */
+	private applyProcessActivityTitle(): void {
+		process.title = formatAgentActivityProcessTitle(this.agentActivityStatus, APP_NAME);
+	}
+
+	private setAgentActivityStatus(status: AgentActivityStatus): void {
+		if (this.agentActivityStatus === status) {
+			return;
+		}
+		this.agentActivityStatus = status;
+		this.applyProcessActivityTitle();
+		this.applyTerminalTitle();
 	}
 
 	private updateTerminalTitle(): void {
@@ -3071,6 +3096,7 @@ export class InteractiveMode {
 				this.clearPendingTools();
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
+				this.setAgentActivityStatus("working");
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(true);
 				}
@@ -3262,6 +3288,7 @@ export class InteractiveMode {
 			}
 
 			case "agent_end":
+				this.setAgentActivityStatus("idle");
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
 				}
@@ -3281,6 +3308,7 @@ export class InteractiveMode {
 				break;
 
 			case "compaction_start": {
+				this.setAgentActivityStatus("working");
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(true);
 				}
@@ -3327,6 +3355,9 @@ export class InteractiveMode {
 			}
 
 			case "compaction_end": {
+				if (!this.session.isStreaming) {
+					this.setAgentActivityStatus("idle");
+				}
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
 				}
@@ -6119,6 +6150,7 @@ export class InteractiveMode {
 	}
 
 	stop(): void {
+		this.setAgentActivityStatus("idle");
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}
