@@ -1,3 +1,39 @@
+## 2026-09-05 - Infer map-less GPT-6 Astra reasoning controls
+
+### What changed
+
+- `packages/ai/src/models.ts` infers the canonical GPT-6 Astra OpenAI-family thinking ladder when model metadata omits a map; `packages/ai/src/api/openai-completions.ts` and `packages/ai/src/api/openai-responses.ts` use that inference for wire effort mapping.
+
+### Why
+
+- Custom map-less Astra models must clamp unsupported `minimal` and `off` selections to `low` instead of sending unsupported `minimal` or `none` values, while preserving xhigh/max and GPT-5.6 Sol behavior.
+
+### Why an extension could not handle it
+
+- Model capability inference and request effort serialization run inside the core model and provider adapter paths before extensions can modify the request.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/models.ts` model capability helpers; `packages/ai/src/api/openai-completions.ts` and `packages/ai/src/api/openai-responses.ts` reasoning mapping.
+
+## 2026-09-05 - Account for Fast-mode responses in OpenAI adapters
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/openai-responses-shared.ts` widen local service-tier handling with `fast`, apply the priority cost multiplier, and resolve Codex request/response tiers correctly.
+
+### Why
+
+- GPT-6 Astra echoes `fast` for Fast mode, and the pinned SDK union does not yet include that documented value; without this, usage was billed at the default rate.
+
+### Why an extension could not handle it
+
+- Response parsing, service-tier resolution, and usage accounting are implemented within the provider adapters before extension code can observe the completed usage.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-responses.ts` and `packages/ai/src/api/openai-codex-responses.ts` multiplier/resolution helpers; `packages/ai/src/api/openai-responses-shared.ts` stream option contracts.
+
 ## 2026-09-04 - Credential-store lock contention stays on the transient retry path
 
 ### What changed

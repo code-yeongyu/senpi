@@ -1,5 +1,59 @@
 # changes.md — ai
 
+## 2026-09-05 - Normalize GPT-6 Astra reasoning maps across OpenAI-family catalogs
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` applies the canonical Astra thinking ladder to every generated OpenAI-family API entry, including Azure and OpenAI-compatible passthrough catalogs.
+
+### Why
+
+- Live metadata can provide a partial Astra map; normalization prevents supported low/medium/high tiers from disappearing and preserves the null vetoes for off/minimal.
+
+### Why an extension could not handle it
+
+- Generated provider metadata is produced before runtime extensions load.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` final model metadata normalization loop and regenerated provider data.
+
+## 2026-09-05 - Widen GPT-6 Astra flagship context defaults
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` applies per-model flagship context defaults on OpenAI and OpenAI Codex: GPT-5.6 Sol keeps 650,000 tokens and GPT-6 Astra gets 800,000 tokens (generated `-fast` variants inherit), while retaining the 272,000-token Terra/Luna defaults and long-context pricing tiers.
+
+### Why
+
+- OpenAI documents GPT-6 Astra with a 1,050,000-token context window; the project deliberately ships a cost-tier default instead of the maximum, and the owner set Astra's default to 800,000 tokens (Sol stays at the 650,000 selected earlier).
+
+### Why an extension could not handle it
+
+- Model defaults and generated provider catalogs are established by the package build-time generator.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` OpenAI flagship constants and explicit catalog entries; regenerated provider data.
+
+## 2026-09-05 - Account for Fast-mode service tiers
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/openai-responses-shared.ts` accept the local `fast` service-tier spelling, apply the priority multiplier to it, and preserve Codex request-tier resolution.
+
+### Why
+
+- GPT-6 Astra responses echo `fast` even though the generated `-fast` catalog variants continue to send the wire-compatible `priority` value; treating `fast` as default under-billed those responses.
+
+### Why an extension could not handle it
+
+- Service-tier resolution and usage-cost mutation happen inside the provider stream adapters below extension hooks.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-responses.ts` and `packages/ai/src/api/openai-codex-responses.ts` service-tier helpers; shared stream option types.
+
 ## 2026-09-04 - Bound pi-ai CI Vitest fork concurrency
 
 ### What changed

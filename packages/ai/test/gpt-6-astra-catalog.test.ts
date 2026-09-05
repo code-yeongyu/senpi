@@ -41,7 +41,8 @@ for (const provider of ["openai", "openai-codex"] as const) {
 				baseUrl: provider === "openai" ? "https://api.openai.com/v1" : "https://chatgpt.com/backend-api",
 				reasoning: true,
 				input: ["text", "image"],
-				contextWindow: 272000,
+				// Project default (cost tier), not the documented 1,050,000 maximum; see generate-models.ts.
+				contextWindow: 800000,
 				maxTokens: 128000,
 				cost: EXPECTED_COST,
 			});

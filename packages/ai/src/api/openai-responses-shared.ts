@@ -129,15 +129,15 @@ function convertToolResultOutput<TApi extends Api>(
 }
 
 export interface OpenAIResponsesStreamOptions {
-	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast";
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	resolveServiceTier?: (
-		responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
-		requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
-	) => ResponseCreateParamsStreaming["service_tier"] | undefined;
+		responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
+		requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
+	) => ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined;
 	applyServiceTierPricing?: (
 		usage: Usage,
-		serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
+		serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
 	) => void;
 }
 
