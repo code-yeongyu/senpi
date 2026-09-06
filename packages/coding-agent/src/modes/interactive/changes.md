@@ -1,4 +1,22 @@
 
+## 2026-09-06 - Keep progressive transcript warming private until completion (#1076)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts` now keeps separate visible and warmed history boundaries. Background chunks populate deferred child caches without changing the incomplete frame; only the completed pass publishes the full transcript in its existing single repaint.
+
+### Why
+
+- The previous shared boundary moved after every warm chunk. Any unrelated TUI render, including a live append or resize, could expose a partial history prefix before hydration had completed, making a resumed transcript visibly jump. The fixed visible boundary preserves the original tail and live appends at every width until the atomic full-history reveal.
+
+### Why an extension could not handle it
+
+- The boundary controls the private render scheduling and child range passed to the interactive TUI container before extension UI can observe or alter the frame.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts` around hydration boundary initialization, chunk completion, and reset handling.
+
 ## 2026-09-05 - Restore Working text shimmer on turn start
 
 ### What changed
