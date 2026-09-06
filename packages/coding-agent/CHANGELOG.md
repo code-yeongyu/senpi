@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Preserve Claude SDK OAuth compaction boundaries and idle settings across replay.
+
 - Preserve Claude SDK OAuth terminal results and failure attribution across replay races.
 
 ### Removed

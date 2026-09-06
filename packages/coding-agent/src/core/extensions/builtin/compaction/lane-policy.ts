@@ -26,8 +26,9 @@ export const CLAUDE_SDK_OAUTH_COMPACT_ENTRY_TYPE = "claude-sdk-oauth-compact";
 export const CLAUDE_SDK_OAUTH_COMPACT_BOUNDARY_DIAGNOSTIC = "claude_sdk_oauth_compact_boundary";
 /**
  * Reason reported when senpi declines to compact an SDK-native lane. The
- * `external-owner` rejection cause carries the machine-readable policy while
- * this string is what the user and the compaction log see.
+ * structured `rejectionCause` stays `cancelled-by-extension` (a closed union
+ * shared with the RPC surface); this string is what the user and the compaction
+ * log see.
  */
 export const SDK_NATIVE_LANE_REJECTION_REASON = "the Claude Agent SDK owns compaction for this session";
 const COMPACT_BOUNDARY_SCHEMA = "senpi.claude-sdk-oauth.compact-boundary.v1";
@@ -45,6 +46,13 @@ export interface SdkNativeLaneInput {
 export interface LaneContext {
 	cwd: string;
 	model: LaneModel | undefined;
+	/**
+	 * Optional resolved-settings getter (present on the real ExtensionContext).
+	 * Used to read a configured `compaction.model` override. When an override is
+	 * set the lane hands summarization to a senpi-owned model, so the SDK-native
+	 * stand-down no longer applies even with a resident SDK session.
+	 */
+	getCompactionSettings?: () => { model?: string };
 }
 
 export interface CompactionLanePolicy {
@@ -86,6 +94,10 @@ export function createCompactionLanePolicy(
 	return {
 		disablesSenpiCompaction(context: LaneContext): boolean {
 			if (context.model?.provider !== CLAUDE_SDK_OAUTH_PROVIDER_ID) return false;
+			// A configured compaction model override makes senpi own summarization
+			// for the lane, so the SDK-native stand-down no longer applies. This is
+			// the escape hatch for lanes whose SDK never fires native compaction.
+			if (context.getCompactionSettings?.().model) return false;
 			// Per-cwd cache is the intended contract (pinned by lane-policy.test.ts):
 			// resumeMode is read once per cwd. A mid-session switch takes effect on
 			// the next cwd or session.
