@@ -1,12 +1,39 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	expandHome,
 	extractExternalPaths,
 	isExternalPath,
 } from "../../src/core/extensions/builtin/permission-system/external-dir.ts";
+
+const openingSyscalls = vi.hoisted(() => [] as string[]);
+
+function recordOpeningCall(name: string, actualFn: unknown): unknown {
+	return (...args: unknown[]): unknown => {
+		openingSyscalls.push(name);
+		return (actualFn as (...forwarded: unknown[]) => unknown)(...args);
+	};
+}
+
+vi.mock("node:fs", async (importOriginal) => {
+	const actual = (await importOriginal()) as typeof fs;
+	return {
+		...actual,
+		realpathSync: Object.assign(
+			recordOpeningCall("realpathSync", actual.realpathSync) as typeof actual.realpathSync,
+			{
+				native: recordOpeningCall(
+					"realpathSync.native",
+					actual.realpathSync.native,
+				) as typeof actual.realpathSync.native,
+			},
+		),
+		statSync: recordOpeningCall("statSync", actual.statSync) as typeof actual.statSync,
+		existsSync: recordOpeningCall("existsSync", actual.existsSync) as typeof actual.existsSync,
+	};
+});
 
 describe("external-dir", () => {
 	describe("expandHome", () => {
@@ -262,6 +289,77 @@ describe("external-dir", () => {
 			const command = "touch /Users/other/file.txt";
 			const result = extractExternalPaths(command, cwd);
 			expect(result).toEqual(["/Users/other/file.txt"]);
+		});
+	});
+
+	// Regression coverage for https://github.com/code-yeongyu/senpi/issues/1416
+	describe("path resolution never opens the classified path", () => {
+		beforeEach(() => {
+			openingSyscalls.length = 0;
+		});
+
+		it("classifies paths without realpathSync, statSync, or existsSync", () => {
+			expect(isExternalPath("/Users/other/deeply/nested/missing.txt", "/Users/me/project")).toBe(true);
+			expect(extractExternalPaths("bash /home/user/work/poll-fdl.sh", "/Users/me/project")).toEqual([
+				"/home/user/work/poll-fdl.sh",
+			]);
+
+			expect(openingSyscalls).toEqual([]);
+		});
+
+		it.skipIf(process.platform === "win32")("still resolves symlinked components", () => {
+			const realRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "external-dir-walk-real-")));
+			const linkRoot = path.join(os.tmpdir(), `external-dir-walk-link-${process.pid}-${Date.now()}`);
+			fs.mkdirSync(path.join(realRoot, "nested"));
+			fs.symlinkSync(realRoot, linkRoot, "dir");
+			openingSyscalls.length = 0;
+			try {
+				expect(isExternalPath(path.join(linkRoot, "nested", "missing.ts"), path.join(realRoot, "nested"))).toBe(
+					false,
+				);
+				expect(openingSyscalls).toEqual([]);
+			} finally {
+				fs.rmSync(linkRoot, { force: true });
+				fs.rmSync(realRoot, { recursive: true, force: true });
+			}
+		});
+
+		it.skipIf(process.platform === "win32")("follows a chain of symlinks to the same real directory", () => {
+			const realRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "external-dir-chain-real-")));
+			const firstLink = path.join(os.tmpdir(), `external-dir-chain-a-${process.pid}-${Date.now()}`);
+			const secondLink = path.join(os.tmpdir(), `external-dir-chain-b-${process.pid}-${Date.now()}`);
+			fs.symlinkSync(realRoot, firstLink, "dir");
+			fs.symlinkSync(firstLink, secondLink, "dir");
+			try {
+				expect(isExternalPath(path.join(secondLink, "src", "missing.ts"), realRoot)).toBe(false);
+			} finally {
+				fs.rmSync(secondLink, { force: true });
+				fs.rmSync(firstLink, { force: true });
+				fs.rmSync(realRoot, { recursive: true, force: true });
+			}
+		});
+
+		it.skipIf(process.platform === "win32")("returns a verdict for a symlink cycle instead of hanging", () => {
+			const realRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "external-dir-loop-")));
+			fs.symlinkSync(path.join(realRoot, "b"), path.join(realRoot, "a"), "dir");
+			fs.symlinkSync(path.join(realRoot, "a"), path.join(realRoot, "b"), "dir");
+			openingSyscalls.length = 0;
+			try {
+				expect(isExternalPath(path.join(realRoot, "a", "file.txt"), realRoot)).toBe(false);
+				expect(openingSyscalls).toEqual([]);
+			} finally {
+				fs.rmSync(realRoot, { recursive: true, force: true });
+			}
+		});
+
+		it.skipIf(process.platform === "win32")("keeps non-existent trailing components verbatim", () => {
+			const realRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "external-dir-tail-")));
+			try {
+				expect(isExternalPath(path.join(realRoot, "a", "b", "c.txt"), realRoot)).toBe(false);
+				expect(isExternalPath(path.join(realRoot, "..", "elsewhere", "c.txt"), realRoot)).toBe(true);
+			} finally {
+				fs.rmSync(realRoot, { recursive: true, force: true });
+			}
 		});
 	});
 });

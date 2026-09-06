@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- The permission system's external-directory classifier now resolves symlinks with `lstat` + `readlink` instead of `realpathSync`, so classifying a command that merely mentions an autofs trigger such as `/home`, a stalled network mount, or a FIFO can no longer block the host main thread and freeze the TUI ([#1416](https://github.com/code-yeongyu/senpi/issues/1416))
+
 ### Removed
 
 ## [2026.9.6] - 2026-09-06

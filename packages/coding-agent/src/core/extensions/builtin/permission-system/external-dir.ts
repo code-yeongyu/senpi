@@ -18,21 +18,61 @@ export function expandHome(inputPath: string): string {
 	return inputPath;
 }
 
+const MAX_SYMLINK_HOPS = 40;
+
+function splitSegments(value: string): string[] {
+	return value.split(/[\\/]+/).filter((segment) => segment.length > 0);
+}
+
+/**
+ * realpath(3) equivalent that resolves symlinks with lstat + readlink only.
+ *
+ * This runs on the host main thread for every classified path, so it must never
+ * open(2) a component: Bun implements realpathSync (and its native variant) with
+ * open(), which forces an automount for autofs triggers such as /home or /net and
+ * blocks forever on a wedged map, freezing the whole TUI. lstat and readlink never
+ * open the entry they inspect. Trailing components that do not exist are kept
+ * verbatim after the last resolvable one, and any other failure falls back to the
+ * unresolved path, matching the previous realpathSync-based behaviour.
+ */
 function normalizePath(inputPath: string): string {
-	let candidate = path.normalize(inputPath);
-	const suffix: string[] = [];
-	for (;;) {
-		try {
-			const resolved = fs.realpathSync(candidate);
-			return suffix.length === 0 ? resolved : path.join(resolved, ...suffix.reverse());
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") return candidate;
-			const parent = path.dirname(candidate);
-			if (parent === candidate) return candidate;
-			suffix.push(path.basename(candidate));
-			candidate = parent;
+	const normalized = path.normalize(inputPath);
+	const root = path.parse(normalized).root;
+	const pending = splitSegments(normalized.slice(root.length));
+	let resolved = root;
+	let hops = 0;
+
+	while (pending.length > 0) {
+		const segment = pending.shift();
+		if (segment === undefined || segment === ".") continue;
+		if (segment === "..") {
+			resolved = path.dirname(resolved);
+			continue;
 		}
+
+		const candidate = path.join(resolved, segment);
+		let linkTarget: string | undefined;
+		try {
+			const entry = fs.lstatSync(candidate, { throwIfNoEntry: false });
+			if (!entry) return path.join(candidate, ...pending);
+			if (entry.isSymbolicLink()) linkTarget = fs.readlinkSync(candidate);
+		} catch {
+			return normalized;
+		}
+
+		if (linkTarget === undefined) {
+			resolved = candidate;
+			continue;
+		}
+		if (++hops > MAX_SYMLINK_HOPS) return normalized;
+
+		const target = path.normalize(linkTarget);
+		const targetRoot = path.parse(target).root;
+		if (targetRoot.length > 0) resolved = targetRoot;
+		pending.unshift(...splitSegments(target.slice(targetRoot.length)));
 	}
+
+	return resolved.length > 0 ? resolved : normalized;
 }
 
 export function isExternalPath(inputPath: string, cwd: string): boolean {
