@@ -5,6 +5,7 @@ import type { BuiltinProvider } from "../src/providers/all.ts";
 import type { Context, Model, ModelThinkingLevel, SimpleStreamOptions } from "../src/types.ts";
 
 type CapturedPayload = {
+	enable_thinking?: boolean;
 	reasoning?: { effort?: string };
 	reasoning_effort?: string;
 	thinking?: { type?: string } | string;
@@ -101,16 +102,16 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 
 	it.each([
 		{
-			name: "DeepSeek's two-tier ladder on Alibaba Token Plan",
+			name: "DeepSeek's enable switch on Alibaba Token Plan",
 			model: getOpenAICompletionsModel("alibaba-token-plan", "deepseek-v3.2"),
 			reasoning: "minimal" as const,
-			expected: { thinking: { type: "enabled" }, reasoning_effort: "high" },
+			expected: { thinking: { type: "enabled" } },
 		},
 		{
-			name: "DeepSeek's max tier on Alibaba Token Plan",
+			name: "DeepSeek's enable switch on Alibaba Token Plan",
 			model: getOpenAICompletionsModel("alibaba-token-plan", "deepseek-v3.2"),
-			reasoning: "xhigh" as const,
-			expected: { thinking: { type: "enabled" }, reasoning_effort: "max" },
+			reasoning: "high" as const,
+			expected: { thinking: { type: "enabled" } },
 		},
 		{
 			name: "OpenRouter DeepSeek's high-only ladder",
@@ -194,6 +195,67 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 		for (const field of absent) {
 			expect(payload).not.toHaveProperty(field);
 		}
+	});
+
+	it.each([
+		{
+			name: "Alibaba DeepSeek",
+			model: getOpenAICompletionsModel("alibaba-token-plan", "deepseek-v3.2"),
+			on: { thinking: { type: "enabled" } },
+			off: { thinking: { type: "disabled" } },
+		},
+		{
+			name: "Qwen Token Plan",
+			model: getOpenAICompletionsModel("qwen-token-plan", "qwen3.7-max"),
+			on: { enable_thinking: true },
+			off: { enable_thinking: false },
+		},
+		{
+			name: "Moonshot Kimi",
+			model: getOpenAICompletionsModel("moonshotai", "kimi-k2.6"),
+			on: { thinking: { type: "enabled" } },
+			off: { thinking: { type: "disabled" } },
+		},
+		{
+			name: "Xiaomi MiMo",
+			model: getOpenAICompletionsModel("xiaomi", "mimo-v2.5-pro"),
+			on: { thinking: { type: "enabled" } },
+			off: { thinking: { type: "disabled" } },
+		},
+		{
+			name: "Z.AI GLM",
+			model: getOpenAICompletionsModel("zai", "glm-5-turbo"),
+			on: { thinking: { type: "enabled" } },
+			off: { thinking: { type: "disabled" } },
+		},
+	])("serializes every on/off effort request identically for $name", async ({ model, on, off }) => {
+		const enabledPayloads = await Promise.all(
+			(["minimal", "low", "medium", "high"] as const).map((level) => captureDirectPayload(model, level)),
+		);
+
+		for (const payload of enabledPayloads) {
+			expect(payload).toMatchObject(on);
+			expect(payload.reasoning_effort).toBeUndefined();
+		}
+		expect(await capturePayload(model)).toMatchObject(off);
+	});
+
+	it("keeps Qwen's documented graded control distinct on the wire", async () => {
+		const model = getOpenAICompletionsModel("qwen-token-plan", "qwen3.8-max");
+
+		expect(await captureDirectPayload(model, "low")).toMatchObject({
+			enable_thinking: true,
+			reasoning_effort: "low",
+		});
+		expect(await captureDirectPayload(model, "medium")).toMatchObject({
+			enable_thinking: true,
+			reasoning_effort: "medium",
+		});
+		expect(await captureDirectPayload(model, "xhigh")).toMatchObject({
+			enable_thinking: true,
+			reasoning_effort: "xhigh",
+		});
+		expect(await capturePayload(model)).toMatchObject({ enable_thinking: false });
 	});
 
 	it("preserves map-less GPT-5.6 Sol's existing effort behavior", async () => {

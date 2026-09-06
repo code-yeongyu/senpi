@@ -79,7 +79,6 @@ function normalizeBuiltinModel<TApi extends Api>(model: Model<TApi> | undefined)
 				...model.compat,
 				requiresReasoningContentOnAssistantMessages: true,
 				thinkingFormat: "deepseek",
-				supportsDisabledThinking: false,
 			},
 		} as Model<TApi>;
 	}

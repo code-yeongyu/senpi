@@ -20,6 +20,27 @@
 
 # changes.md — ai
 
+## 2026-09-06 - Scope generated model updates to selected providers
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` accepts `--providers <comma-separated IDs>` for strict, provider-scoped data regeneration. It preserves every unselected data file byte-for-byte, rebuilds the manifest over the mixed staged set, validates the complete catalog atomically, and leaves generated TypeScript shards untouched. `--generated-at` pins a reproducible manifest timestamp for scoped runs.
+- `packages/ai/scripts/generate-models.ts` emits explicit reasoning maps for the affected built-in models instead of advertising effort levels their adapters do not distinguish. Documented graded controls remain graded, and custom-provider fallback behavior is unchanged.
+- Provider selectors must be own catalog entries; inherited names such as `__proto__` are rejected before generated artifacts are replaced.
+
+### Why
+
+- A capability-only catalog correction must not pick up unrelated live-provider price, context, or inventory churn from full regeneration.
+- Toggle-only controls must not appear as a configurable effort ladder. Where current upstream documentation is incomplete, the maps describe the control surface implemented by the existing Senpi adapter, not unverified upstream capabilities.
+
+### Why an extension could not handle it
+
+- Model-data generation and manifest integrity run at build time before extensions load.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` option parsing and staged data writer.
+
 ## 2026-09-05 - Normalize GPT-6 Astra reasoning maps across OpenAI-family catalogs
 
 ### What changed

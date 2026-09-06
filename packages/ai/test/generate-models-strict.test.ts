@@ -75,6 +75,96 @@ describe("strict model generation", () => {
 		}
 	});
 
+	it("regenerates selected providers without changing unselected artifacts", () => {
+		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-generate-models-selected-"));
+		temporaryRoots.push(fixtureRoot);
+		const isolatedPackageRoot = join(fixtureRoot, "package");
+		mkdirSync(isolatedPackageRoot);
+		for (const entry of ["package.json", "scripts", "src"]) {
+			cpSync(join(packageRoot, entry), join(isolatedPackageRoot, entry), { recursive: true });
+		}
+		const preloadPath = join(fixtureRoot, "mock-models-dev.mjs");
+		const catalog = {
+			"zai-coding-plan": {
+				models: {
+					"glm-4.7": { id: "glm-4.7", name: "GLM 4.7", tool_call: true, reasoning: true },
+				},
+			},
+			"zhipuai-coding-plan": {
+				models: {
+					"glm-4.7": { id: "glm-4.7", name: "GLM 4.7 CN", tool_call: true, reasoning: true },
+				},
+			},
+		};
+		writeFileSync(
+			preloadPath,
+			`const catalog = ${JSON.stringify(catalog)};\n` +
+				`globalThis.fetch = async (input) => {\n` +
+				`  const url = String(input);\n` +
+				`  if (url === "https://models.dev/api.json") return new Response(JSON.stringify(catalog), { status: 200 });\n` +
+				`  if (url === "https://openrouter.ai/api/v1/models") return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
+				`  if (url === "https://ai-gateway.vercel.sh/v1/models") return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
+				`  if (url === "https://apis.opengateway.ai/v1/models") return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
+				`  if (url.includes("api.nvidia.com")) return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
+				`  throw new Error(\`Unexpected fetch: \${url}\`);\n` +
+				`};\n`,
+		);
+		const selected = ["zai", "zai-coding-cn"];
+		const unselectedPath = join(isolatedPackageRoot, "src/providers/data/openrouter.json");
+		const unselectedBefore = readFileSync(unselectedPath, "utf8");
+		const args = [
+			"--import",
+			pathToFileURL(preloadPath).href,
+			"scripts/generate-models.ts",
+			"--providers",
+			selected.join(","),
+			"--generated-at",
+			"2026-09-06T00:00:00.000Z",
+		];
+
+		const first = spawnSync(process.execPath, args, { cwd: isolatedPackageRoot, encoding: "utf8", timeout: 10_000 });
+		expect(first.status, `${first.stdout}\n${first.stderr}`).toBe(0);
+		expect(readFileSync(unselectedPath, "utf8")).toBe(unselectedBefore);
+		const selectedFirst = selected.map((provider) =>
+			readFileSync(join(isolatedPackageRoot, `src/providers/data/${provider}.json`), "utf8"),
+		);
+		const manifestFirst = readFileSync(join(isolatedPackageRoot, "src/providers/data/.manifest.json"), "utf8");
+
+		const second = spawnSync(process.execPath, args, { cwd: isolatedPackageRoot, encoding: "utf8", timeout: 10_000 });
+		expect(second.status, `${second.stdout}\n${second.stderr}`).toBe(0);
+		expect(
+			selected.map((provider) =>
+				readFileSync(join(isolatedPackageRoot, `src/providers/data/${provider}.json`), "utf8"),
+			),
+		).toEqual(selectedFirst);
+		expect(readFileSync(join(isolatedPackageRoot, "src/providers/data/.manifest.json"), "utf8")).toBe(manifestFirst);
+		expect(
+			spawnSync(process.execPath, ["scripts/check-model-data.ts"], { cwd: isolatedPackageRoot, encoding: "utf8" })
+				.status,
+		).toBe(0);
+
+		const invalid = spawnSync(
+			process.execPath,
+			["--import", pathToFileURL(preloadPath).href, "scripts/generate-models.ts", "--providers", "zai,missing"],
+			{ cwd: isolatedPackageRoot, encoding: "utf8", timeout: 10_000 },
+		);
+		expect(invalid.status).toBe(1);
+		expect(`${invalid.stdout}\n${invalid.stderr}`).toContain("Unknown provider selector: missing");
+		expect(readFileSync(unselectedPath, "utf8")).toBe(unselectedBefore);
+		for (const providerId of ["__proto__", "constructor", "toString"]) {
+			const inherited = spawnSync(
+				process.execPath,
+				["--import", pathToFileURL(preloadPath).href, "scripts/generate-models.ts", "--providers", providerId],
+				{ cwd: isolatedPackageRoot, encoding: "utf8", timeout: 10_000 },
+			);
+			expect(inherited.status, `${providerId}: ${inherited.stdout}\n${inherited.stderr}`).toBe(1);
+			expect(readFileSync(join(isolatedPackageRoot, "src/providers/data/.manifest.json"), "utf8")).toBe(
+				manifestFirst,
+			);
+			expect(readFileSync(unselectedPath, "utf8")).toBe(unselectedBefore);
+		}
+	});
+
 	it("fails before mutating generated data when an Individual model loses tool support", () => {
 		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-generate-models-"));
 		temporaryRoots.push(fixtureRoot);
