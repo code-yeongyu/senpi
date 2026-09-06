@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Retry fallback logs `no_chain` and `candidates_exhausted` again when an attempt finds no admissible candidate; the atomic-admission change had tied those decision logs to candidate reservation, which the attempt path no longer performs before the switch is admitted.
 - Fallback activation now validates context admission before persisting or
   emitting model changes, and unusable refusal or transient fallback candidates
   fail closed without leaking internal admission errors.

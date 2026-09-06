@@ -107,7 +107,7 @@ export class RetryFallbackController {
 	}
 
 	canTryFallback(): boolean {
-		return this.nextCandidate(false) !== undefined;
+		return this.nextCandidate({ reserve: false, log: false }) !== undefined;
 	}
 
 	/**
@@ -199,11 +199,14 @@ export class RetryFallbackController {
 		failure: { errorMessage?: string; retryAfterMs?: number },
 	): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();
-		const candidate = this.nextCandidate(false);
+		// Reservation happens only after the switch is admitted (atomic activation),
+		// but the decision log is part of the attempt itself: an exhausted or missing
+		// chain must still be recorded even though nothing was reserved.
+		const candidate = this.nextCandidate({ reserve: false, log: true });
 		if (!current || !candidate) return false;
 		const currentBase = formatSelector(current.model);
 		if (reason === "transient" || reason === "hard-error" || reason === "billing") {
-				this.deps.cooldowns.note(currentBase, failure);
+			this.deps.cooldowns.note(currentBase, failure);
 			this.deps.logger.info("cooldown_noted", { selector: currentBase, errorMessage: failure.errorMessage });
 		}
 
@@ -229,9 +232,10 @@ export class RetryFallbackController {
 		return true;
 	}
 
-	private nextCandidate(
+	private nextCandidate({
 		reserve = true,
-	): { chainKey: string; selector: FallbackSelector; model: Model<Api> } | undefined {
+		log = reserve,
+	}: { reserve?: boolean; log?: boolean } = {}): { chainKey: string; selector: FallbackSelector; model: Model<Api> } | undefined {
 		const settings = this.deps.getSettings();
 		const current = this.deps.getCurrentSelector();
 		if (!settings.modelFallback || !current) return undefined;
@@ -241,7 +245,7 @@ export class RetryFallbackController {
 		const chainKey = resolveChainKey(current.model, current.thinkingLevel, chains) ?? this.state?.chainKey;
 		const entries = chainKey ? chains[chainKey] : undefined;
 		if (!chainKey || !entries) {
-			if (reserve) this.deps.logger.debug("no_chain", { selector: formatSelector(current.model) });
+			if (log) this.deps.logger.debug("no_chain", { selector: formatSelector(current.model) });
 			return undefined;
 		}
 		for (const raw of candidatesAfter(entries, formatSelector(current.model, current.thinkingLevel))) {
@@ -276,7 +280,7 @@ export class RetryFallbackController {
 			return { chainKey, selector, model };
 		}
 		this.lastExhaustedChainKey = chainKey;
-		if (reserve) this.deps.logger.info("candidates_exhausted", { chainKey });
+		if (log) this.deps.logger.info("candidates_exhausted", { chainKey });
 		return undefined;
 	}
 
