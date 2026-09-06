@@ -352,6 +352,13 @@ describe("external-dir", () => {
 			}
 		});
 
+		it.skipIf(process.platform === "win32")("treats a backslash as a filename character on posix", () => {
+			expect(isExternalPath("/tmp/project\\outside/file", "/tmp/project")).toBe(true);
+			expect(extractExternalPaths("cat /tmp/project\\outside/file", "/tmp/project")).toEqual([
+				"/tmp/project\\outside/file",
+			]);
+		});
+
 		it.skipIf(process.platform === "win32")("keeps non-existent trailing components verbatim", () => {
 			const realRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "external-dir-tail-")));
 			try {

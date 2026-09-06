@@ -20,8 +20,8 @@ export function expandHome(inputPath: string): string {
 
 const MAX_SYMLINK_HOPS = 40;
 
-function splitSegments(value: string): string[] {
-	return value.split(/[\\/]+/).filter((segment) => segment.length > 0);
+function splitNormalizedSegments(value: string): string[] {
+	return value.split(path.sep).filter((segment) => segment.length > 0);
 }
 
 /**
@@ -38,7 +38,7 @@ function splitSegments(value: string): string[] {
 function normalizePath(inputPath: string): string {
 	const normalized = path.normalize(inputPath);
 	const root = path.parse(normalized).root;
-	const pending = splitSegments(normalized.slice(root.length));
+	const pending = splitNormalizedSegments(normalized.slice(root.length));
 	let resolved = root;
 	let hops = 0;
 
@@ -69,7 +69,7 @@ function normalizePath(inputPath: string): string {
 		const target = path.normalize(linkTarget);
 		const targetRoot = path.parse(target).root;
 		if (targetRoot.length > 0) resolved = targetRoot;
-		pending.unshift(...splitSegments(target.slice(targetRoot.length)));
+		pending.unshift(...splitNormalizedSegments(target.slice(targetRoot.length)));
 	}
 
 	return resolved.length > 0 ? resolved : normalized;
