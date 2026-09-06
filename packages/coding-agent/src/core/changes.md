@@ -41,6 +41,24 @@
 
 # changes
 
+## 2026-09-05 - Read project trust without writer-lock contention
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`: project-trust reads load the last published `trust.json` snapshot without acquiring the writer lock; writes remain serialized by proper-lockfile and now publish through a same-directory temporary file plus atomic rename.
+
+### Why
+
+- A trust read during another process's write previously retried the writer lock synchronously and then threw `ELOCKED`, interrupting startup and session-state projection even though the prior complete trust snapshot was safe to read.
+
+### Why an extension could not handle it
+
+- Project trust is loaded by core startup, package-command, interactive, and RPC paths before or below extension interception; only the store can separate snapshot reads from serialized read-modify-write publication.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/trust-manager.ts` read and write helpers.
+
 ## 2026-09-05 - Require explicit fallback chains
 
 ### What changed

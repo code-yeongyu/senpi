@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
@@ -131,7 +132,21 @@ function writeTrustFile(path: string, data: TrustFile): void {
 		}
 	}
 	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, `${JSON.stringify(sorted, null, 2)}\n`, "utf-8");
+	const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+	try {
+		writeFileSync(tempPath, `${JSON.stringify(sorted, null, 2)}\n`, "utf-8");
+		renameSync(tempPath, path);
+	} catch (publicationError) {
+		try {
+			rmSync(tempPath, { force: true });
+		} catch (cleanupError) {
+			throw new AggregateError(
+				[publicationError, cleanupError],
+				"Failed to publish and clean up project trust snapshot",
+			);
+		}
+		throw publicationError;
+	}
 }
 
 function acquireTrustLockSync(path: string): () => void {
@@ -218,10 +233,8 @@ export class ProjectTrustStore {
 	}
 
 	getEntry(cwd: string): ProjectTrustStoreEntry | null {
-		return withTrustFileLock(this.trustPath, () => {
-			const data = readTrustFile(this.trustPath);
-			return findNearestTrustEntry(data, cwd);
-		});
+		const data = readTrustFile(this.trustPath);
+		return findNearestTrustEntry(data, cwd);
 	}
 
 	set(cwd: string, decision: ProjectTrustDecision): void {
