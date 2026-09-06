@@ -41,6 +41,24 @@
 
 # changes
 
+## 2026-09-06 - Run before_agent_start for idle custom trigger turns (#1329)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` routes an idle `sendCustomMessage(..., { triggerTurn: true })` through `before_agent_start` after core pre-provider compaction and before final provider admission. Hook custom messages and system-prompt overrides use the same application path as ordinary prompts. A user abort while an awaited hook is held prevents a ghost provider turn and retains the trigger in its selected queue.
+
+### Why
+
+- Extension-triggered turns bypassed `before_agent_start`, so hook-provided context and system-prompt changes were absent from their actual provider request. Awaiting the newly-added hook also created an abort window where a released hook could start a turn after the user cancelled it.
+
+### Why an extension could not handle it
+
+- The idle trigger-turn branch chooses provider admission, cancellation ownership, and invokes the agent loop inside `AgentSession`; extensions only receive the lifecycle hook after the host emits it.
+
+### Expected merge conflict zones
+
+- MEDIUM: `sendCustomMessage` trigger-turn admission, cancellation generation, and the shared `before_agent_start` result application in `packages/coding-agent/src/core/agent-session.ts`.
+
 ## 2026-09-06 - Preserve inline skill anchors in composed prompts
 
 ### What changed
