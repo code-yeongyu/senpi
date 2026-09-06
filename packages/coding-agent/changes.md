@@ -1,5 +1,16 @@
 # Local fork changes
 
+## 2026-09-06 - Preserve Claude SDK OAuth compaction boundaries
+
+### What changed
+
+- Keep Claude SDK OAuth compaction on the SDK-native lane, mirror SDK compact boundaries, and preserve idle compaction settings across replay and resume flows.
+
+### Why
+
+- Prevent duplicate Senpi compaction and lost compaction state when Claude SDK OAuth sessions compact.
+
+
 ## 2026-09-04 - Restore the @anthropic-ai/sdk 0.123.0 pin the R4b merge dropped
 
 ### What changed

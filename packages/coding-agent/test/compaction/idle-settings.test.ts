@@ -12,3 +12,15 @@ describe("idleCompactionEnabled setting", () => {
 		expect(sm.getCompactionSettings().idleCompactionEnabled).toBe(false);
 	});
 });
+
+describe("compaction model override setting", () => {
+	it("defaults to undefined", () => {
+		const sm = SettingsManager.inMemory();
+		expect(sm.getCompactionSettings().model).toBeUndefined();
+	});
+
+	it("passes through a configured provider/model override", () => {
+		const sm = SettingsManager.inMemory({ compaction: { model: "deepseek/deepseek-chat" } });
+		expect(sm.getCompactionSettings().model).toBe("deepseek/deepseek-chat");
+	});
+});
