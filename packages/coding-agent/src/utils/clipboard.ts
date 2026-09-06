@@ -1,3 +1,4 @@
+import { wrapTmuxPassthrough } from "@earendil-works/pi-tui";
 import { type ExecFileSyncOptionsWithStringEncoding, execFileSync, execSync, spawn } from "child_process";
 import { platform } from "os";
 import { isWaylandSession } from "./clipboard-image.ts";
@@ -23,12 +24,37 @@ function isRemoteSession(env: NodeJS.ProcessEnv = process.env): boolean {
 	return Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.MOSH_CONNECTION);
 }
 
+const TMUX_PASSTHROUGH_OPTIONS: ExecFileSyncOptionsWithStringEncoding = {
+	encoding: "utf8",
+	timeout: 250,
+	stdio: ["ignore", "pipe", "ignore"],
+};
+
+function tmuxAllowsPassthrough(): boolean {
+	if (!process.env.TMUX) return false;
+
+	const args = ["display-message", "-p"];
+	const pane = process.env.TMUX_PANE;
+	if (pane && /^%\d+$/.test(pane)) {
+		args.push("-t", pane);
+	}
+	args.push("#{allow-passthrough}");
+
+	try {
+		const value = execFileSync("tmux", args, TMUX_PASSTHROUGH_OPTIONS).trim().toLowerCase();
+		return value === "1" || value === "on" || value === "all";
+	} catch {
+		return false;
+	}
+}
+
 function emitOsc52(text: string): boolean {
 	const encoded = Buffer.from(text).toString("base64");
 	if (encoded.length > MAX_OSC52_ENCODED_LENGTH) {
 		return false;
 	}
-	process.stdout.write(`\x1b]52;c;${encoded}\x07`);
+	const sequence = `\x1b]52;c;${encoded}\x07`;
+	process.stdout.write(tmuxAllowsPassthrough() ? wrapTmuxPassthrough(sequence) : sequence);
 	return true;
 }
 

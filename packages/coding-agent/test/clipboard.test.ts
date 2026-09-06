@@ -52,8 +52,12 @@ let originalWrite: typeof process.stdout.write;
 let stdoutWrites: string[];
 let nativeResolved = false;
 
+function isClipboardSequence(write: string): boolean {
+	return write.startsWith("\x1b]52;c;") || write.startsWith("\x1bPtmux;");
+}
+
 function osc52Writes(): string[] {
-	return stdoutWrites.filter((write) => write.startsWith("\x1b]52;c;"));
+	return stdoutWrites.filter(isClipboardSequence);
 }
 
 beforeEach(() => {
@@ -61,11 +65,14 @@ beforeEach(() => {
 	vi.stubEnv("SSH_CONNECTION", "");
 	vi.stubEnv("SSH_CLIENT", "");
 	vi.stubEnv("MOSH_CONNECTION", "");
+	vi.stubEnv("TMUX", "");
+	vi.stubEnv("TMUX_PANE", "");
 	stdoutWrites = [];
 	nativeResolved = false;
 	mocks.clipboard.getText.mockReset();
 	mocks.clipboard.setText.mockReset();
 	mocks.execFileSync.mockReset();
+	mockedExecFileSync.mockReturnValue("");
 	mocks.execSync.mockReset();
 	mocks.spawn.mockReset();
 	mocks.platform.mockReset();
@@ -74,13 +81,12 @@ beforeEach(() => {
 	mocks.isWaylandSession.mockReturnValue(false);
 	mocks.clipboard.getText.mockResolvedValue("");
 	mocks.clipboard.setText.mockImplementation(async () => {
-		await new Promise((resolve) => setTimeout(resolve, 1));
 		nativeResolved = true;
 	});
 	originalWrite = process.stdout.write.bind(process.stdout);
 	process.stdout.write = ((...args: Parameters<typeof process.stdout.write>) => {
 		const [chunk] = args;
-		if (typeof chunk === "string" && chunk.startsWith("\x1b]52;c;")) {
+		if (typeof chunk === "string" && isClipboardSequence(chunk)) {
 			stdoutWrites.push(chunk);
 			return true;
 		}
@@ -160,16 +166,52 @@ describe("copyToClipboard", () => {
 
 	test("remote native success emits OSC 52 after native write", async () => {
 		vi.stubEnv("SSH_CONNECTION", "client server");
+		const nativeWrite = Promise.withResolvers<void>();
 		mocks.clipboard.setText.mockImplementation(async () => {
-			await new Promise((resolve) => setTimeout(resolve, 1));
-			expect(osc52Writes()).toHaveLength(0);
+			await nativeWrite.promise;
 			nativeResolved = true;
 		});
 
-		await copyToClipboard("hello");
+		const copying = copyToClipboard("hello");
+		expect(mocks.clipboard.setText).toHaveBeenCalledWith("hello");
+		expect(osc52Writes()).toHaveLength(0);
+		nativeWrite.resolve();
+		await copying;
 
 		expect(nativeResolved).toBe(true);
-		expect(osc52Writes()).toHaveLength(1);
+		expect(osc52Writes()).toEqual(["\x1b]52;c;aGVsbG8=\x07"]);
+		expect(mockedExecSync).not.toHaveBeenCalled();
+	});
+
+	test("remote tmux copy wraps OSC 52 in DCS passthrough", async () => {
+		vi.stubEnv("SSH_CONNECTION", "client server");
+		vi.stubEnv("TMUX", "/tmp/tmux-1000/default,1,0");
+		vi.stubEnv("TMUX_PANE", "%7");
+		mockedExecFileSync.mockReturnValue("on\n");
+
+		await copyToClipboard("hello");
+
+		expect(osc52Writes()).toEqual(["\x1bPtmux;\x1b\x1b]52;c;aGVsbG8=\x07\x1b\\"]);
+		expect(mockedExecFileSync).toHaveBeenCalledWith(
+			"tmux",
+			["display-message", "-p", "-t", "%7", "#{allow-passthrough}"],
+			{
+				encoding: "utf8",
+				timeout: 250,
+				stdio: ["ignore", "pipe", "ignore"],
+			},
+		);
+		expect(mockedExecSync).not.toHaveBeenCalled();
+	});
+
+	test("remote tmux copy keeps raw OSC 52 when DCS passthrough is disabled", async () => {
+		vi.stubEnv("SSH_CONNECTION", "client server");
+		vi.stubEnv("TMUX", "/tmp/tmux-1000/default,1,0");
+		mockedExecFileSync.mockReturnValue("off\n");
+
+		await copyToClipboard("hello");
+
+		expect(osc52Writes()).toEqual(["\x1b]52;c;aGVsbG8=\x07"]);
 		expect(mockedExecSync).not.toHaveBeenCalled();
 	});
 
