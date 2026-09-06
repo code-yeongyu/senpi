@@ -44,13 +44,7 @@ export interface RpcSessionEntry {
 }
 
 export class RpcSessionRegistryError extends Error {
-	readonly code:
-		| "unknown_session"
-		| "session_closing"
-		| "session_path_in_use"
-		| "invalid_path"
-		| "open_failed"
-		| "too_many_sessions";
+	readonly code: "unknown_session" | "session_closing" | "session_path_in_use" | "invalid_path" | "open_failed";
 
 	constructor(code: RpcSessionRegistryError["code"], reason?: string) {
 		super(code === "open_failed" && reason ? `${code}: ${reason}` : code);
@@ -64,8 +58,6 @@ export interface RpcSessionRegistryOptions {
 	createRuntime: CreateAgentSessionRuntimeFactory;
 	/** Injectable clock (defaults to Date.now) so idle bookkeeping is testable. */
 	now?: () => number;
-	/** Cap on concurrently opening/open sessions; attach-on-open is exempt. */
-	maxSessions?: number;
 	/** Maximum time to wait for graceful runtime teardown before forced release. */
 	closeGraceMs?: number;
 }
@@ -142,13 +134,6 @@ export class RpcSessionRegistry {
 				sessionPath: entry.sessionPath,
 				attached: true,
 			};
-		}
-		const maxSessions = this.options.maxSessions;
-		if (maxSessions !== undefined && this.countActiveSessions() >= maxSessions) {
-			// Reconnect-churn backstop: every open_session owns a complete runtime
-			// (hundreds of MB measured), so admission is bounded. Attachments to a
-			// live session add none and stay allowed via the branch above.
-			throw new RpcSessionRegistryError("too_many_sessions");
 		}
 		if (sessionPath) this.reservations.add(sessionPath);
 
@@ -329,13 +314,5 @@ export class RpcSessionRegistry {
 		if (!isAbsolute(profile.cwd) || (profile.sessionPath !== undefined && !isAbsolute(profile.sessionPath))) {
 			throw new RpcSessionRegistryError("invalid_path");
 		}
-	}
-
-	private countActiveSessions(): number {
-		let count = 0;
-		for (const entry of this.entries.values()) {
-			if (entry.state === "opening" || entry.state === "open") count += 1;
-		}
-		return count;
 	}
 }

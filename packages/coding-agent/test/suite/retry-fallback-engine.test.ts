@@ -75,6 +75,35 @@ describe("retry fallback engine", () => {
 		while (harnesses.length) harnesses.pop()?.cleanup();
 	});
 
+	it("blocks recovery when the fallback cannot admit the live context", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", contextWindow: 100_000, maxTokens: 64 },
+				{ id: "faux-2", contextWindow: 20_000, maxTokens: 64 },
+			],
+			settings: {
+				compaction: { enabled: false },
+				retry: { enabled: true, maxRetries: 0, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "long context ".repeat(8_000) }],
+			timestamp: Date.now() - 1,
+		});
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "unauthorized" }),
+		]);
+
+		await harness.session.prompt("recover");
+
+		expect(harness.session.model?.id).toBe("faux-1");
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
+	});
+
 	it("retries the same model within budget instead of switching to the chain", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],

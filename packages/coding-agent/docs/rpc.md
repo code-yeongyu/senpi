@@ -188,16 +188,16 @@ occupancy bounds itself, independent of the supervisor and of client cooperation
   background terminal jobs and any other published wake source (terminal monitors, loop-guard holds), compaction,
   and barrier-held session work all defer eviction, and the idle clock restarts when that work settles. An evicted
   session resumes like any other: the next `open_session` with the same `sessionPath` reopens it.
-- **Session cap**: `open_session` beyond `SENPI_RPC_MAX_SESSIONS` concurrently opening/open sessions (default 8)
-  fails with `too_many_sessions`. Attaching to an already-hosted session (`attached: true`) adds no runtime and never
-  counts against the cap, so resume and second-surface flows keep working while at it.
+- **Logical sessions**: `open_session` has no session-count admission limit. Every logical session remains isolated
+  by its routing handle and provider scope inside this one shared daemon; idle eviction and empty-host shutdown
+  reclaim resident resources without rejecting a new session.
 - **Empty-host exit**: when the registry holds zero sessions AND no client is connected, continuously for
   `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
   removal), for stdio and `--listen` hosts alike. A connected client counts as occupancy even with no session open,
   so the host never drops a live socket under itself. Supervised hosts stay clean either way: a supervisor reads a
   child exit of 0 without a signal as an intentional idle stop and exits 0 with the same cleanup, not as a crash.
 
-Values are positive integers; invalid values fall through to the defaults. These bounds run inside the host process,
+Values are positive integers; invalid values fall through to the defaults. These lifecycle windows run inside the host process,
 so they hold even for embedders and hand-started hosts that have no supervisor.
 
 ### D1 normative table (multi-session mode)
@@ -205,7 +205,7 @@ so they hold even for embedders and hand-started hosts that have no supervisor.
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi" }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session` plus the negotiated launch capabilities. |
-| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Fails with `too_many_sessions` at the occupancy cap (see [Shared host occupancy](#shared-host-occupancy-idle-eviction-session-cap-empty-host-exit)); idle sessions past the eviction window are closed by the host itself. |
+| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. |
 | `close_session` | `sessionId` | `{}` | Aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then force-releases the session; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). A concurrent close joins the same teardown and receives its own successful response. |
 | `list_sessions` | - | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status }] }` | Includes `opening`/`closing` entries with their status. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
@@ -224,7 +224,6 @@ In the response `error` field, machine-matchable:
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
 - `invalid_path` (relative `sessionPath`/`cwd`)
-- `too_many_sessions` (`open_session` while `SENPI_RPC_MAX_SESSIONS` sessions are already opening/open; attaching to a live session never fails this way)
 - `open_failed: <detail>`
 - `media_not_found` (`get_media` for an unknown `toolCallId`, or a `contentIndex` that does not point at an image block)
 

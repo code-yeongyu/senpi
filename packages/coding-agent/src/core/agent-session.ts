@@ -7742,9 +7742,20 @@ export class AgentSession {
 			// Billing-class failures never recover on this account, so the fallback
 			// switch pins as the session model instead of reverting after the cooldown.
 			const reason = isBillingErrorMessage(errorMessage) ? "billing" : "hard-error";
-			switchedFallback = await this._retryFallback.tryFallback(reason, {
-				errorMessage,
-			});
+			try {
+				switchedFallback = await this._retryFallback.tryFallback(reason, {
+					errorMessage,
+				});
+			} catch (error) {
+				// A fallback that cannot admit the live context is not a provider
+				// failure. Do not continue expanding the chain: preserve the session
+				// model and terminate recovery deterministically.
+				if (error instanceof ModelUsabilityBudgetError) {
+					this._resolveRetry();
+					return "blocked";
+				}
+				throw error;
+			}
 			if (!switchedFallback) {
 				const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 				if (exhaustedChainKey) {

@@ -4925,3 +4925,27 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/settings-manager.ts` `Settings.compaction` typing and `getCompactionSettings()` return value.
+## 2026-09-06 - Fail closed when recovery fallback cannot admit context
+
+### What changed
+
+- packages/coding-agent/src/core/agent-session.ts now preserves the active
+  session model and ends retry recovery deterministically when a fallback
+  candidate fails the live context usability admission check.
+
+### Why
+
+- Authentication and compaction failures could otherwise advance through
+  unrelated fallback providers after a candidate was already proven unable to
+  hold the live session context.
+
+### Why this lives in the fork
+
+- Retry ownership and fallback switching are core `AgentSession` behavior below
+  the extension API.
+
+### Expected merge conflict zones
+
+- LOW: `_handleRetryableError` fallback admission in
+  packages/coding-agent/src/core/agent-session.ts.
+

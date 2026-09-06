@@ -1,5 +1,26 @@
 # changes
 
+## Shared-host logical sessions are unlimited by default (2026-09-06)
+
+### What changed
+
+- `multi-session-host.ts` and `session-registry.ts`: the session-count admission gate is removed. Logical session admission is unlimited; attach/path/lifecycle safety and idle/empty-host resource reclamation remain.
+- `docs/rpc.md`: the occupancy and D1 sections now define unlimited logical sessions as the only production behavior.
+- `test/rpc-session-occupancy.test.ts`: regression coverage opens 12 distinct sessions through the registry and 9 through the host core, then verifies close/reopen/attach lifecycle behavior.
+
+### Why
+
+- The cap refused `open_session` with `too_many_sessions` once 8 sessions were concurrently opening/open, which is a client-visible failure for an ordinary desktop workload that keeps more than eight logical sessions around. Admission control was the wrong lever: idle eviction and empty-host exit reclaim resident resources without failing a user's open.
+- A user session is never rejected because another session exists. Resident-resource reclamation remains lifecycle-driven and does not evict or borrow another user session as an admission workaround.
+
+### Why an extension could not handle it
+
+- Admission happens inside `RpcSessionRegistry.openSession`, beneath every extension surface; no extension observes or overrides the registry's open path.
+
+### Expected merge conflict zones
+
+- LOW: the `resolveHostIdlePolicy` tail in `multi-session-host.ts`, the occupancy section in `docs/rpc.md`, and the `(4.2)` regression block in `test/rpc-session-occupancy.test.ts`.
+
 ## `ensureHost` teardown never outranks the readiness diagnostic (2026-09-04)
 
 ### What changed

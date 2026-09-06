@@ -24,7 +24,8 @@ import { type RpcSessionLaunchProfile, RpcSessionRegistry } from "../src/modes/r
  * - (4.1) sessions idle beyond a configurable window are evicted through the
  *   normal close path (never one with an active turn), and a host whose
  *   registry stays empty exits instead of residenting forever;
- * - (4.2) concurrent open_session is capped.
+ * - (4.2) concurrent open_session is capped ONLY when a cap is configured
+ *   explicitly; the default admits logical sessions without bound.
  *
  * Time is driven exclusively by vitest fake timers plus the injected `now`
  * clocks, so nothing here depends on wall-clock sleeps.
@@ -127,12 +128,11 @@ function createRouterRig(
 	dir: string,
 	createRuntime: CreateAgentSessionRuntimeFactory,
 	idle?: RpcSessionIdlePolicy,
-	maxSessions?: number,
 ): RouterRig {
 	const records: Array<Record<string, unknown>> = [];
 	let bindingDisposals = 0;
 	let uiRequestsCancelled = 0;
-	const registry = new RpcSessionRegistry({ agentDir: dir, createRuntime, maxSessions });
+	const registry = new RpcSessionRegistry({ agentDir: dir, createRuntime });
 	const writer = new SessionEventWriter(
 		(chunk) => records.push(JSON.parse(chunk) as Record<string, unknown>),
 		(flush) => flush(),
@@ -176,7 +176,6 @@ const createHostCore = (
 				now?: () => number;
 				idleEvictionMs?: number;
 				emptyExitMs?: number;
-				maxSessions?: number;
 				onEmptyExit?: () => void;
 			},
 		) => { router: unknown; handle: (line: string) => Promise<void> };
@@ -465,79 +464,73 @@ describe("shared RPC host occupancy", () => {
 		expect(onEmptyExit).toHaveBeenCalledTimes(1);
 	});
 
-	test("(4.2) rejects new open_session beyond the concurrent session cap while attach still works", async () => {
+	test("(4.2) admits logical sessions without bound under the default policy", async () => {
 		const dir = await tempDir();
 		const { createRuntime } = createRuntimeFactory();
-		const registry = new RpcSessionRegistry({ agentDir: dir, createRuntime, maxSessions: 2 });
-		await registry.openSession(profile(dir, join(dir, "one.jsonl")));
-		await registry.openSession(profile(dir, join(dir, "two.jsonl")));
+		// No maxSessions and no SENPI_RPC_MAX_SESSIONS: the production default.
+		const registry = new RpcSessionRegistry({ agentDir: dir, createRuntime });
+		const opens = 12;
 
-		await expect(registry.openSession(profile(dir, join(dir, "three.jsonl")))).rejects.toMatchObject({
-			code: "too_many_sessions",
-		});
-		// Attaching to a live session adds no runtime and must stay allowed at cap.
-		await expect(registry.openSession(profile(dir, join(dir, "one.jsonl")))).resolves.toMatchObject({
+		const sessions = [];
+		for (let index = 0; index < opens; index += 1) {
+			sessions.push(await registry.openSession(profile(dir, join(dir, `unbounded-${index}.jsonl`))));
+		}
+
+		// Every open is a distinct logical session, well past the former cap of 8.
+		expect(new Set(sessions.map((session) => session.sessionId)).size).toBe(opens);
+		expect(sessions.every((session) => session.attached === undefined)).toBe(true);
+		expect(registry.list()).toHaveLength(opens);
+		expect(registry.list().every((entry) => entry.status === "open")).toBe(true);
+
+		// Lifecycle still works at that occupancy: a close releases exactly its own
+		// session and leaves every sibling open.
+		const closed = sessions[0]!;
+		await registry.close(closed.sessionId);
+		expect(registry.list()).toHaveLength(opens - 1);
+		expect(registry.list().some((entry) => entry.sessionId === closed.sessionId)).toBe(false);
+		// The released path reopens, and attach-on-open still joins a live session.
+		// A fresh open OMITS `attached` entirely (it is only set to true on an attach),
+		// so assert on the resolved value rather than matching a present-but-undefined key.
+		const reopened = await registry.openSession(profile(dir, join(dir, "unbounded-0.jsonl")));
+		expect(reopened.attached).toBeUndefined();
+		await expect(registry.openSession(profile(dir, join(dir, "unbounded-1.jsonl")))).resolves.toMatchObject({
 			attached: true,
 		});
-		expect(registry.list()).toHaveLength(2);
 	});
 
-	test("(4.2) frees capacity when a capped session closes", async () => {
+	test("(4.2) the host core default policy leaves open_session uncapped", async () => {
 		const dir = await tempDir();
 		const { createRuntime } = createRuntimeFactory();
-		const registry = new RpcSessionRegistry({ agentDir: dir, createRuntime, maxSessions: 1 });
-		const first = await registry.openSession(profile(dir, join(dir, "solo.jsonl")));
-		await registry.close(first.sessionId);
-		await expect(registry.openSession(profile(dir, join(dir, "next.jsonl")))).resolves.toMatchObject({
-			sessionId: expect.any(String),
-		});
-	});
-
-	test("(4.2) surfaces the cap as a typed open_session error through the router", async () => {
-		const dir = await tempDir();
-		const { createRuntime } = createRuntimeFactory();
-		const rig = createRouterRig(
-			dir,
-			createRuntime,
-			{ idleEvictionMs: Number.POSITIVE_INFINITY, emptyExitMs: Number.POSITIVE_INFINITY },
-			1,
-		);
-		await rig.router.handle({ id: "open", type: "open_session", cwd: dir, sessionPath: join(dir, "cap.jsonl") });
-		const response = await rig.router.handle({
-			id: "over",
-			type: "open_session",
-			cwd: dir,
-			sessionPath: join(dir, "over.jsonl"),
-		});
-		expect(response).toMatchObject({ success: false, error: "too_many_sessions" });
-	});
-
-	test("(4.2) host core resolves the session cap from SENPI_RPC_MAX_SESSIONS", async () => {
-		const dir = await tempDir();
-		const { createRuntime } = createRuntimeFactory();
-		vi.stubEnv("SENPI_RPC_MAX_SESSIONS", "1");
 		const records: Array<Record<string, unknown>> = [];
 		const writer = new SessionEventWriter(
 			(chunk) => records.push(JSON.parse(chunk) as Record<string, unknown>),
 			(flush) => flush(),
 		);
+		// Only the windows are overridden, so the session cap resolves the way a real
+		// host resolves it with SENPI_RPC_MAX_SESSIONS unset.
 		const { handle } = requireHostCore()(
 			{ agentDir: dir, createRuntime, cwd: dir, createBinding: fakeBindingFactory() },
 			writer,
 			[],
-			{
-				idleEvictionMs: Number.POSITIVE_INFINITY,
-				emptyExitMs: Number.POSITIVE_INFINITY,
-			},
+			{ idleEvictionMs: Number.POSITIVE_INFINITY, emptyExitMs: Number.POSITIVE_INFINITY },
 		);
-		const line = (command: Record<string, unknown>): string => JSON.stringify(command);
 
-		await handle(line({ id: "first", type: "open_session", cwd: dir, sessionPath: join(dir, "env-one.jsonl") }));
-		expect(records.some((record) => record.command === "open_session" && record.success === false)).toBe(false);
-		await handle(line({ id: "second", type: "open_session", cwd: dir, sessionPath: join(dir, "env-two.jsonl") }));
+		for (let index = 0; index < 9; index += 1) {
+			await handle(
+				JSON.stringify({
+					id: `open-${index}`,
+					type: "open_session",
+					cwd: dir,
+					sessionPath: join(dir, `host-unbounded-${index}.jsonl`),
+				}),
+			);
+		}
 
-		expect(records.find((record) => record.command === "open_session" && record.success === false)).toMatchObject({
-			error: "too_many_sessions",
-		});
+		const opened = records.filter((record) => record.command === "open_session" && record.success !== false);
+		expect(opened).toHaveLength(9);
+		// Nine DISTINCT routing handles: a cap would have failed the 9th, and a routing
+		// bug that reused one handle must not read as nine successful opens.
+		expect(new Set(opened.map((record) => record.sessionId)).size).toBe(9);
+		expect(records.filter((record) => record.command === "open_session" && record.success === false)).toEqual([]);
 	});
 });

@@ -1,5 +1,28 @@
 # senpi-codemode fork changes
 
+## 2026-09-06 - Bun eval description steers away from Bun.spawnSync
+
+### What changed
+
+- `src/prompt/eval-prompt.ts`: the Bun runtime sentence gains one instruction after the WebView
+  clause: "Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks
+  the worker, so a stop or timeout then loses every variable."
+
+### Why
+
+- Session audit (#1403): models wrapped shell commands in `Bun.spawnSync` inside cells; a worker blocked
+  in a synchronous call cannot honour `interrupt`, so the stop that #1406 made bounded still has to
+  replace the worker and drop its globals. The model cannot derive the worker-thread limit; the async
+  forms settle cooperatively and keep the kernel.
+
+### Why an extension could not handle it
+
+- Prompt text owned by this package; no runtime behavior changed.
+
+### Expected merge conflict zones
+
+- LOW: fork-only description text.
+
 ## 2026-09-06 - JS kernel: cooperative interrupt, bounded stop, stdin isolation (#1403)
 
 ### What changed

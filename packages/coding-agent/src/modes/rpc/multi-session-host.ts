@@ -42,16 +42,12 @@ export interface MultiSessionHostOptions {
 
 /** Environment override for the idle-session eviction window, in milliseconds. */
 export const RPC_SESSION_IDLE_EVICTION_MS_ENV = "SENPI_RPC_SESSION_IDLE_EVICTION_MS";
-/** Environment override for the concurrent open-session cap. */
-export const RPC_MAX_SESSIONS_ENV = "SENPI_RPC_MAX_SESSIONS";
 /** Environment override for the empty-host exit window, in milliseconds. */
 export const RPC_HOST_EMPTY_EXIT_MS_ENV = "SENPI_RPC_HOST_EMPTY_EXIT_MS";
 /** Environment override for the graceful close_session teardown window, in milliseconds. */
 export const RPC_CLOSE_GRACE_MS_ENV = "SENPI_RPC_CLOSE_GRACE_MS";
 /** Default idle-eviction window: 30 minutes after a session's last routed command or settled turn. */
 export const DEFAULT_SESSION_IDLE_EVICTION_MS = 30 * 60_000;
-/** Default session cap: an idle session holds a full runtime (~340-510 MB RSS measured). */
-export const DEFAULT_MAX_SESSIONS = 8;
 /** Default empty-host exit: 15 minutes with zero open sessions, matching the supervisor's idle window. */
 export const DEFAULT_HOST_EMPTY_EXIT_MS = 15 * 60_000;
 /** Win32 named-pipe close can leave libuv's server callback pending after handles are destroyed. */
@@ -62,7 +58,6 @@ export interface HostIdleOverrides {
 	now?: () => number;
 	idleEvictionMs?: number;
 	emptyExitMs?: number;
-	maxSessions?: number;
 	closeGraceMs?: number;
 	/** Shutdown hook the empty-exit window invokes; hosts pass their exit path. */
 	onEmptyExit?: () => void;
@@ -70,17 +65,13 @@ export interface HostIdleOverrides {
 	canExitWhenEmpty?: () => boolean;
 }
 
-function parseSessionCap(value: string | undefined): number | undefined {
-	if (value === undefined || !/^\d+$/.test(value.trim())) return undefined;
-	const parsed = Number(value.trim());
-	return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-/** Precedence: explicit overrides beat environment variables beat documented defaults. */
+/**
+ * Resolve the host's idle lifecycle policy.
+ */
 export function resolveHostIdlePolicy(
 	env: Readonly<Record<string, string | undefined>>,
 	overrides: HostIdleOverrides = {},
-): { now: () => number; idleEvictionMs: number; emptyExitMs: number; maxSessions: number } {
+): { now: () => number; idleEvictionMs: number; emptyExitMs: number } {
 	return {
 		now: overrides.now ?? Date.now,
 		idleEvictionMs:
@@ -89,7 +80,6 @@ export function resolveHostIdlePolicy(
 			DEFAULT_SESSION_IDLE_EVICTION_MS,
 		emptyExitMs:
 			overrides.emptyExitMs ?? parseIdleExitMs(env[RPC_HOST_EMPTY_EXIT_MS_ENV]) ?? DEFAULT_HOST_EMPTY_EXIT_MS,
-		maxSessions: overrides.maxSessions ?? parseSessionCap(env[RPC_MAX_SESSIONS_ENV]) ?? DEFAULT_MAX_SESSIONS,
 	};
 }
 
@@ -123,7 +113,6 @@ export function createHostCore(
 			agentDir: options.agentDir,
 			createRuntime: options.createRuntime,
 			now: policy.now,
-			maxSessions: policy.maxSessions,
 			closeGraceMs: idle.closeGraceMs ?? parseIdleExitMs(process.env[RPC_CLOSE_GRACE_MS_ENV]) ?? 10_000,
 		}),
 		writer,
