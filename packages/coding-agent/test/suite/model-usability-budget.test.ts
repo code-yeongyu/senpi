@@ -367,6 +367,157 @@ describe("model usability budget", () => {
 		fitting.session.dispose();
 	});
 
+	it("resumes a same-saved-model transcript that exceeds the startup budget", async () => {
+		// given
+		const harness = await createHarness({
+			models: [{ id: "startup", contextWindow: 100_000, maxTokens: 4_000 }],
+		});
+		harnesses.push(harness);
+		const model = harness.getModel();
+		const sessionManager = SessionManager.inMemory(harness.tempDir);
+		sessionManager.appendModelChange(model.provider, model.id);
+		sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "restored transcript ".repeat(200_000) }],
+			timestamp: Date.now(),
+		});
+
+		// when
+		const resumed = await createAgentSession({
+			cwd: harness.tempDir,
+			agentDir: join(harness.tempDir, "same-saved-agent"),
+			model,
+			sessionManager,
+		});
+
+		// then
+		expect(resumed.session.agent.state.messages).toEqual(sessionManager.buildSessionContext().messages);
+		expect(resumed.session.model?.id).toBe(model.id);
+		resumed.session.dispose();
+	});
+
+	it("rejects a same-saved-model resume when the fixed prompt and reserves cannot fit", async () => {
+		// given
+		const harness = await createHarness({
+			models: [{ id: "startup", contextWindow: 16_000, maxTokens: 4_000 }],
+		});
+		harnesses.push(harness);
+		const model = harness.getModel();
+		const sessionManager = SessionManager.inMemory(harness.tempDir);
+		sessionManager.appendModelChange(model.provider, model.id);
+		sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "restored transcript ".repeat(200_000) }],
+			timestamp: Date.now(),
+		});
+
+		// when
+		const error = await createAgentSession({
+			cwd: harness.tempDir,
+			agentDir: join(harness.tempDir, "same-saved-fixed-base"),
+			model,
+			sessionManager,
+		}).then(
+			() => undefined,
+			(reason: unknown) => reason,
+		);
+
+		// then
+		expect(error).toBeInstanceOf(ModelUsabilityBudgetError);
+		if (!(error instanceof ModelUsabilityBudgetError)) throw new Error("expected fixed-base resume rejection");
+		expect(error.projection).toMatchObject({
+			model: `${model.provider}/${model.id}`,
+			usable: false,
+			liveContextTokens: 0,
+			admission: "resume",
+			speculationLeadTokens: 0,
+			contextWindow: 16_000,
+		});
+	});
+
+	it("rejects a resumed transcript when the explicit target differs from the saved model", async () => {
+		// given
+		const harness = await createHarness({
+			models: [
+				{ id: "saved", contextWindow: 100_000, maxTokens: 4_000 },
+				{ id: "other", contextWindow: 100_000, maxTokens: 4_000 },
+			],
+		});
+		harnesses.push(harness);
+		const saved = harness.getModel("saved");
+		const other = harness.getModel("other");
+		if (!saved) throw new Error("missing saved model fixture");
+		if (!other) throw new Error("missing other model fixture");
+		const sessionManager = SessionManager.inMemory(harness.tempDir);
+		sessionManager.appendModelChange(saved.provider, saved.id);
+		sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "restored transcript ".repeat(200_000) }],
+			timestamp: Date.now(),
+		});
+
+		// when
+		const error = await createAgentSession({
+			cwd: harness.tempDir,
+			agentDir: join(harness.tempDir, "different-target-agent"),
+			model: other,
+			sessionManager,
+		}).then(
+			() => undefined,
+			(reason: unknown) => reason,
+		);
+
+		// then
+		expect(error).toBeInstanceOf(ModelUsabilityBudgetError);
+		if (!(error instanceof ModelUsabilityBudgetError)) throw new Error("expected different-target resume rejection");
+		expect(error.projection).toMatchObject({
+			model: `${other.provider}/${other.id}`,
+			usable: false,
+			admission: "resume",
+			speculationLeadTokens: 0,
+		});
+		expect(error.projection.liveContextTokens).toBeGreaterThan(0);
+	});
+
+	it("rejects a resumed transcript when fallback replaces an unrestorable saved model", async () => {
+		// given
+		const harness = await createHarness({
+			models: [{ id: "startup", contextWindow: 100_000, maxTokens: 4_000 }],
+		});
+		harnesses.push(harness);
+		const fallback = harness.getModel();
+		const sessionManager = SessionManager.inMemory(harness.tempDir);
+		sessionManager.appendModelChange("gone", "gone");
+		sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "restored transcript ".repeat(200_000) }],
+			timestamp: Date.now(),
+		});
+
+		// when
+		const error = await createAgentSession({
+			cwd: harness.tempDir,
+			agentDir: join(harness.tempDir, "fallback-target-agent"),
+			sessionManager,
+			modelRegistry: harness.modelRegistry,
+			authStorage: harness.authStorage,
+		}).then(
+			() => undefined,
+			(reason: unknown) => reason,
+		);
+
+		// then
+		expect(error).toBeInstanceOf(ModelUsabilityBudgetError);
+		if (!(error instanceof ModelUsabilityBudgetError)) throw new Error("expected fallback resume rejection");
+		expect(error.projection).toMatchObject({
+			model: `${fallback.provider}/${fallback.id}`,
+			usable: false,
+			admission: "resume",
+			speculationLeadTokens: 0,
+		});
+		expect(error.projection.liveContextTokens).toBeGreaterThan(0);
+	});
+
 	it("accepts the exact minimum and rejects one token below it", async () => {
 		// given
 		const harness = await createHarness();
