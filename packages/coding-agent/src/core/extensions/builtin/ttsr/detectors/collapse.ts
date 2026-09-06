@@ -52,7 +52,7 @@ function checkDelta(state: CollapseState, delta: string, context: DetectorContex
 			updateWhitespaceFlood(state.whitespace, entry) ??
 			updateShortPeriods(state.periods, entry, state.tailRing) ??
 			updateLineCycles(state.lines, entry) ??
-			(watchParagraphs ? updateParagraphRepeats(state.paragraphs, entry) : null);
+			(watchParagraphs ? updateParagraphRepeats(state.paragraphs, entry, context.toolProgressEpoch) : null);
 		if (match !== null) {
 			state.latched = match;
 			return match;

@@ -187,6 +187,10 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 	pi.on("message_update", (event: MessageUpdateEvent, ctx) => {
 		ensureInitialized(ctx);
 		if (disabled || manager === null || watcher === null) return;
+		const eventType = event.assistantMessageEvent.type;
+		if (eventType === "toolcall_start" || eventType === "toolcall_delta" || eventType === "toolcall_end") {
+			watcher.observeToolProgress();
+		}
 		const streamDelta = getTtsrStreamDelta(event);
 		if (streamDelta === null) return;
 		const { source, streamKey, delta, toolName } = streamDelta;

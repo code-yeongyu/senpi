@@ -1,4 +1,22 @@
 
+## 2026-09-06 - Track awaited custom-trigger admission through settlement
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` registers idle custom-trigger admission and execution with the session work barrier, including awaited `before_agent_start` handlers.
+
+### Why
+
+- A recovery turn scheduled from `agent_settled` can still be in its hook when the preceding prompt returns. Hosts must not treat that pending turn as completed work.
+
+### Why an extension could not handle it
+
+- The host owns the session work barrier and the lifetime of custom-trigger admission.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts` idle `sendCustomMessage` admission and its existing finally cleanup.
+
 ## 2026-09-05 - Persist Astra reasoning configuration updates
 
 ### What changed

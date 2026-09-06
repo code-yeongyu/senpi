@@ -144,6 +144,8 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			await session.prompt(message, { sessionTitlePrompt: false });
 		}
 
+		await session.waitForSettledSessionWork();
+
 		if (mode === "text") {
 			const state = session.state;
 			const lastMessage = state.messages.findLast((message) => message.role === "assistant");
@@ -166,7 +168,6 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			}
 		}
 
-		await session.waitForSettledSessionWork();
 		return exitCode;
 	} catch (error: unknown) {
 		console.error(error instanceof Error ? error.message : String(error));

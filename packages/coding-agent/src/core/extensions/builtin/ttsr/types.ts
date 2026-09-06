@@ -43,6 +43,7 @@ export interface DetectorContext {
 	readonly source: TtsrStreamSource;
 	readonly streamKey: string;
 	readonly generation: number;
+	readonly toolProgressEpoch: number;
 }
 
 export interface DetectorMatch {

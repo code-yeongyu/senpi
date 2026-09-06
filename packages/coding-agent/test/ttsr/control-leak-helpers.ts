@@ -25,7 +25,12 @@ export function bracket(name: string): string {
 	return [LEFT_BRACKET, name, RIGHT_BRACKET].join("");
 }
 
-export const CONTROL_LEAK_CTX: DetectorContext = { source: "thinking", streamKey: "fixture", generation: 1 };
+export const CONTROL_LEAK_CTX: DetectorContext = {
+	source: "thinking",
+	streamKey: "fixture",
+	generation: 1,
+	toolProgressEpoch: 0,
+};
 
 export const PLAIN_PROSE_PREFIX =
 	"We reviewed the failing render together and compared both panels side by side. " +

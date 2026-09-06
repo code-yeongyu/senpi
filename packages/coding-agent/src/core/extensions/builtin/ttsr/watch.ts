@@ -20,6 +20,7 @@ export class StreamWatcher {
 	readonly #leakDetector = createControlLeakDetector();
 	readonly #disabledBuiltin: ReadonlySet<string>;
 	readonly #tracks = new Map<string, StreamTrack>();
+	#toolProgressEpoch = 0;
 
 	constructor(manager: TtsrManager, disabledBuiltinRules: readonly string[]) {
 		this.#manager = manager;
@@ -28,7 +29,12 @@ export class StreamWatcher {
 
 	reset(): void {
 		this.#tracks.clear();
+		this.#toolProgressEpoch = 0;
 		this.#manager.resetBuffers();
+	}
+
+	observeToolProgress(): void {
+		this.#toolProgressEpoch += 1;
 	}
 
 	handleDelta(
@@ -39,7 +45,12 @@ export class StreamWatcher {
 		toolName?: string,
 	): WatchOutcome {
 		const track = this.#trackFor(source, streamKey);
-		const detectorCtx: DetectorContext = { source, streamKey, generation };
+		const detectorCtx: DetectorContext = {
+			source,
+			streamKey,
+			generation,
+			toolProgressEpoch: this.#toolProgressEpoch,
+		};
 		const leakMatch = this.#disabledBuiltin.has(CONTROL_LEAK_RULE_NAME)
 			? null
 			: this.#leakDetector.checkDelta(track.leak, delta, detectorCtx);

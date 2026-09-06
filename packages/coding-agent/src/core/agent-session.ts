@@ -4337,6 +4337,7 @@ export class AgentSession {
 					this.agent.steer(appMessage);
 				}
 			} else if (options?.triggerTurn) {
+				finishSessionWork ??= this._sessionWorkBarrier.begin();
 				const messages: AgentMessage[] = [appMessage];
 				const queueTriggerForLater = (): void => {
 					if (options.deliverAs === "followUp") {
