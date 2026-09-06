@@ -100,6 +100,23 @@ describe("v4 session context", () => {
 		expect(context.messages.map((message) => message.role)).toEqual(["branchSummary", "user"]);
 	});
 
+	it("replays the latest trusted configuration update", () => {
+		const entries: Entry[] = [
+			entry(
+				{
+					type: "configuration_update",
+					id: "configuration",
+					parentId: null,
+					reasoning: { effort: "high" },
+				},
+				1,
+			),
+			entry({ type: "message", id: "user", parentId: "configuration", message: userMessage("next") }, 2),
+		];
+
+		expect(buildSessionContext(entries).configurationUpdate).toEqual({ effort: "high" });
+	});
+
 	it("projects custom entries and omits deferred assistant handles", () => {
 		const deferred: AssistantMessage = {
 			...assistantMessage(""),

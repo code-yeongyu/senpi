@@ -36,6 +36,8 @@ const EVENTS = new Set([
 	"skip_cursor_mid_turn",
 	"threshold_trigger",
 	"hard_limit_trigger",
+	"grace_deferred",
+	"breaker_deterministic_fallback",
 	"emergency_prune",
 	"ineffective_counted",
 	"summary_failed",
@@ -56,6 +58,8 @@ export type CompactionLoggerEvent =
 	| "skip_cursor_mid_turn"
 	| "threshold_trigger"
 	| "hard_limit_trigger"
+	| "grace_deferred"
+	| "breaker_deterministic_fallback"
 	| "emergency_prune"
 	| "ineffective_counted"
 	| "idle_trigger"

@@ -32,7 +32,7 @@ export function createWriteTool<TContext extends ExecutionToolContext = Executio
 				if (signal?.aborted) throw new Error("Operation aborted");
 				const outcome = await runPostMutate(postMutate, { tool: "write", path: absolutePath, signal });
 				if (signal?.aborted) throw new Error("Operation aborted");
-				const text = appendPostMutateNote(`Successfully wrote ${content.length} bytes to ${path}`, outcome.note);
+				const text = appendPostMutateNote(`Successfully wrote to ${path}`, outcome.note);
 				return {
 					content: [{ type: "text", text }],
 					details: undefined,

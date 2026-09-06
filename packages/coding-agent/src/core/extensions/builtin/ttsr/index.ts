@@ -218,6 +218,10 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("message_end", (event) => {
+		// A completed message ends its stream: nothing it buffered can match a
+		// later message's deltas, so drop the tail windows now instead of holding
+		// them until the next turn_start reset.
+		manager?.resetBuffers();
 		if (genState.userCancelled) return undefined;
 		if (event.message.role !== "assistant") return undefined;
 		const turnText = collectAssistantText(event.message);

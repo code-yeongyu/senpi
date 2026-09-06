@@ -6,7 +6,7 @@ import type {
 	RetryStagePolicy,
 	RetryTieredHintStrategy,
 } from "@earendil-works/pi-ai/utils/retry-profile/types";
-import type { TuiMode as RendererTuiMode, ScrollViewScrollbar } from "@earendil-works/pi-tui";
+import type { TuiMode as RendererTuiMode, ScrollViewScrollbar, TerminalCapabilities } from "@earendil-works/pi-tui";
 import { createHash, randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
@@ -17,8 +17,22 @@ import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { envValue } from "./brand.ts";
+import type { CompactionSettings } from "./compaction-settings-access.ts";
+import {
+	compactionEnabled,
+	compactionKeepRecentTokens,
+	compactionReserveTokens,
+} from "./compaction-settings-access.ts";
+import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
-import { FILE_STORAGE_LOCK_OPTIONS } from "./lockfile-policy.ts";
+import {
+	CredentialStoreBusyError,
+	FILE_STORAGE_LOCK_OPTIONS,
+	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
+	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
+	isLockError,
+} from "./lockfile-policy.ts";
 import type { RetryPolicyOverride } from "./retry-fallback/profile-override.ts";
 import { validateRetryProviderOverrides } from "./retry-fallback/profile-override.ts";
 import {
@@ -29,99 +43,25 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
+import type {
+	ImageSettings,
+	LookAtSettings,
+	MarkdownSettings,
+	MermaidRenderingMode,
+	OpenAISettings,
+	PromptCacheKeepAliveSettings,
+	PromptCacheSettings,
+	ThinkingBudgetsSettings,
+} from "./settings-shapes.ts";
+import type { BranchSummarySettings, TerminalSettings } from "./terminal-settings.ts";
 
-export type {
-	ProviderRetrySettings,
-	RetrySettings,
-} from "./retry-fallback/settings.ts";
+export type * from "./settings-public-types.ts";
 
-export const DEFAULT_STREAM_START_TIMEOUT_MS = 90_000;
+export const DEFAULT_STREAM_START_TIMEOUT_MS = 300_000;
 export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
-
-export interface CompactionSettings {
-	enabled?: boolean; // default: true
-	reserveTokens?: number; // default: 16384
-	keepRecentTokens?: number; // default: 20000
-	speculativeEnabled?: boolean; // default: true
-	speculativeFraction?: number; // default: 0.75
-	speculativeCooldownMs?: number; // default: 30000
-	restorationEnabled?: boolean; // default: true
-	restorationMaxItems?: number; // default: 10
-	restorationMaxTokensPerItem?: number; // default: 5000
-	restorationMaxTotalTokens?: number; // default: 50000
-	restorationContextRatio?: number; // default: 0.15
-	idleCompactionEnabled?: boolean; // default: true
-}
-
-export interface BranchSummarySettings {
-	reserveTokens?: number; // default: 16384 (tokens reserved for prompt + LLM response)
-	skipPrompt?: boolean; // default: false - when true, skips "Summarize branch?" prompt and defaults to no summary
-}
 
 export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
-
-export interface TerminalSettings {
-	showImages?: boolean; // default: true (only relevant if terminal supports images)
-	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
-	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
-	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
-	// Persistent-terminal tool suite (builtin `terminal` extension) config.
-	defaultCols?: number; // default: 120 (PTY width for new sessions)
-	defaultRows?: number; // default: 40 (PTY height for new sessions)
-	scrollback?: number; // default: 10000 (xterm scrollback lines per session)
-	maxSessions?: number; // default: 32 (concurrent background sessions before LRU-exited pruning)
-	timeoutAction?: "background" | "kill"; // default: "background" (fate of a foreground timeout)
-	notify?: "wake" | "next-turn" | "off"; // default: "wake" (async completion wake behavior)
-	monitorCoalesceWindowMs?: number; // default: 2000 (event batching window)
-	monitorRateLimitMs?: number; // default: 5000 (minimum interval per monitor injection)
-	monitorMaxLinesPerInjection?: number; // default: 50 (bounded monitor event batch)
-	monitorMaxCharsPerInjection?: number; // default: 4096 (bounded monitor event batch)
-	monitorWakeBudget?: number; // default: 5 (consecutive monitor-only wake limit)
-}
-
-export interface PromptCacheKeepAliveSettings {
-	enabled?: boolean; // default: false
-	maxRequestsPerSession?: number; // default: 3
-	maxCostUsdPerSession?: number; // default: 0.05
-	marginSeconds?: number; // default: 60
-}
-
-export interface PromptCacheSettings {
-	cacheAwareTimeouts?: boolean; // default: true (size foreground tool waits by the model's prompt-cache TTL)
-	safetyBufferSeconds?: number; // default: 30 (headroom subtracted from the cache TTL)
-	goalBackstopMaxSeconds?: number; // default: 3570 (maximum Goal monitor continuation backstop)
-	keepAlive?: PromptCacheKeepAliveSettings;
-}
-
-export interface ImageSettings {
-	autoResize?: boolean; // default: true (resize images to 2000x2000 max for better model compatibility)
-	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers
-	maxHistoricalImages?: number; // default: undefined (preserve existing transport behavior)
-}
-
-export interface LookAtSettings {
-	enabled?: boolean; // default: true
-	models?: string[]; // default: undefined (use the default look-at chain)
-}
-
-export interface ThinkingBudgetsSettings {
-	minimal?: number;
-	low?: number;
-	medium?: number;
-	high?: number;
-}
-
-export type MermaidRenderingMode = "off" | "final" | "streaming";
-
-export interface MarkdownSettings {
-	codeBlockIndent?: string; // default: "  "
-	mermaid?: MermaidRenderingMode; // default: "streaming"
-}
-
-export interface OpenAISettings {
-	serviceTier?: "auto" | "flex" | "priority";
-}
 
 /** Service tier remembered per model; "auto" is an explicit opt-out of an inherited priority tier. */
 export type ModelServiceTier = "auto" | "flex" | "priority";
@@ -177,7 +117,7 @@ export type PackageSource =
 	  };
 
 export interface ExperimentalSettings {
-	bashEvalOnly?: boolean;
+	sharedHost?: boolean;
 }
 
 export interface Settings {
@@ -246,6 +186,7 @@ export interface Settings {
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 	experimental?: ExperimentalSettings;
+	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -551,31 +492,27 @@ export class FileSettingsStorage implements SettingsStorage {
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
-		const maxAttempts = 10;
-		const delayMs = 20;
-		let lastError: unknown;
-
-		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		const startedAt = Date.now();
+		let attempt = 0;
+		while (true) {
 			try {
-				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS });
+				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 			} catch (error) {
-				const code =
-					typeof error === "object" && error !== null && "code" in error
-						? String((error as { code?: unknown }).code)
-						: undefined;
-				if (code !== "ELOCKED" || attempt === maxAttempts) {
-					throw error;
+				if (!isLockError(error)) throw error;
+				const waitedMs = Date.now() - startedAt;
+				if (waitedMs >= FILE_STORAGE_SYNC_LOCK_BUDGET_MS) {
+					throw new CredentialStoreBusyError(path, waitedMs, error);
 				}
-				lastError = error;
-				// Atomics.wait sleeps the thread without spinning, so contended lock retries
-				// no longer burn a CPU core per waiter (root cause of the TUI freeze under
-				// provider-error storms). Stays synchronous to keep callers unchanged.
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_SYNC_LOCK_BUDGET_MS - waitedMs,
+				);
+				attempt++;
 				const sleeper = new Int32Array(new SharedArrayBuffer(4));
 				Atomics.wait(sleeper, 0, 0, delayMs);
 			}
 		}
-
-		throw (lastError as Error) ?? new Error("Failed to acquire settings lock");
 	}
 
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void {
@@ -1287,7 +1224,7 @@ export class SettingsManager {
 	}
 
 	getCompactionEnabled(): boolean {
-		return this.settings.compaction?.enabled ?? true;
+		return compactionEnabled(this.settings.compaction);
 	}
 
 	setCompactionEnabled(enabled: boolean): void {
@@ -1300,41 +1237,15 @@ export class SettingsManager {
 	}
 
 	getCompactionReserveTokens(): number {
-		return this.settings.compaction?.reserveTokens ?? 16384;
+		return compactionReserveTokens(this.settings.compaction);
 	}
 
 	getCompactionKeepRecentTokens(): number {
-		return this.settings.compaction?.keepRecentTokens ?? 20000;
+		return compactionKeepRecentTokens(this.settings.compaction);
 	}
 
-	getCompactionSettings(): {
-		enabled: boolean;
-		reserveTokens: number;
-		keepRecentTokens: number;
-		speculativeEnabled: boolean;
-		speculativeFraction: number;
-		speculativeCooldownMs: number;
-		restorationEnabled: boolean;
-		restorationMaxItems: number;
-		restorationMaxTokensPerItem: number;
-		restorationMaxTotalTokens: number;
-		restorationContextRatio: number;
-		idleCompactionEnabled: boolean;
-	} {
-		return {
-			enabled: this.getCompactionEnabled(),
-			reserveTokens: this.getCompactionReserveTokens(),
-			keepRecentTokens: this.getCompactionKeepRecentTokens(),
-			speculativeEnabled: this.settings.compaction?.speculativeEnabled ?? true,
-			speculativeFraction: this.settings.compaction?.speculativeFraction ?? 0.75,
-			speculativeCooldownMs: this.settings.compaction?.speculativeCooldownMs ?? 30000,
-			restorationEnabled: this.settings.compaction?.restorationEnabled ?? true,
-			restorationMaxItems: this.settings.compaction?.restorationMaxItems ?? 10,
-			restorationMaxTokensPerItem: this.settings.compaction?.restorationMaxTokensPerItem ?? 5000,
-			restorationMaxTotalTokens: this.settings.compaction?.restorationMaxTotalTokens ?? 50_000,
-			restorationContextRatio: this.settings.compaction?.restorationContextRatio ?? 0.15,
-			idleCompactionEnabled: this.settings.compaction?.idleCompactionEnabled ?? true,
-		};
+	getCompactionSettings(): ResolvedCompactionSettings {
+		return resolveCompactionSettings(this.settings.compaction);
 	}
 
 	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {
@@ -1368,7 +1279,9 @@ export class SettingsManager {
 	} {
 		return {
 			enabled: this.getRetryEnabled(),
-			maxRetries: this.settings.retry?.maxRetries ?? 3,
+			// Derived, not duplicated: the one `retry.maxRetries` key must mean the
+			// same budget on every consumer, so the default tracks the shipped profile.
+			maxRetries: this.settings.retry?.maxRetries ?? SENPI_DEFAULT_RETRY_PROFILE.turn.maxRetries,
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? 2000,
 		};
 	}
@@ -1594,7 +1507,7 @@ export class SettingsManager {
 	 * accepts the request but never answers is otherwise bounded only by the
 	 * idle timeout (default 5 minutes) — long enough to make a session feel
 	 * permanently stuck. `retry.provider.streamStartTimeoutMs` overrides the
-	 * 90s default (0 disables). The default never exceeds the idle timeout and
+	 * 300s default (0 disables). The default never exceeds the idle timeout and
 	 * is disabled together with a disabled idle guard.
 	 */
 	getAgentStreamStartTimeoutMs(): number | undefined {
@@ -1888,6 +1801,33 @@ export class SettingsManager {
 		return this.settings.thinkingBudgets;
 	}
 
+	getTerminalCapabilityOverrides(): Partial<TerminalCapabilities> {
+		const terminal = this.settings.terminal;
+		const imageSetting = terminal?.images;
+		const imageOverride = imageSetting !== undefined ? imageSetting : envValue("IMAGE_PROTOCOL")?.toLowerCase();
+		const trueColorSetting = terminal?.trueColor;
+		const trueColorOverride = trueColorSetting !== undefined ? trueColorSetting : envValue("TRUE_COLOR");
+		const hyperlinksSetting = terminal?.hyperlinks;
+		const hyperlinksOverride = hyperlinksSetting !== undefined ? hyperlinksSetting : envValue("HYPERLINKS");
+		return {
+			...(imageOverride === "kitty" || imageOverride === "iterm2"
+				? { images: imageOverride }
+				: imageOverride === false || imageOverride === "none" || imageOverride === "0"
+					? { images: null }
+					: {}),
+			...(typeof trueColorOverride === "boolean"
+				? { trueColor: trueColorOverride }
+				: trueColorOverride === "1" || trueColorOverride === "0"
+					? { trueColor: trueColorOverride === "1" }
+					: {}),
+			...(typeof hyperlinksOverride === "boolean"
+				? { hyperlinks: hyperlinksOverride }
+				: hyperlinksOverride === "1" || hyperlinksOverride === "0"
+					? { hyperlinks: hyperlinksOverride === "1" }
+					: {}),
+		};
+	}
+
 	getShowImages(): boolean {
 		return this.settings.terminal?.showImages ?? true;
 	}
@@ -1979,6 +1919,16 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getFullscreenCopyOnSelect(): boolean {
+		return this.settings.fullscreenCopyOnSelect ?? true;
+	}
+
+	setFullscreenCopyOnSelect(enabled: boolean): void {
+		this.globalSettings.fullscreenCopyOnSelect = enabled;
+		this.markModified("fullscreenCopyOnSelect");
+		this.save();
+	}
+
 	getImageAutoResize(): boolean {
 		return this.settings.images?.autoResize ?? true;
 	}
@@ -2033,8 +1983,8 @@ export class SettingsManager {
 		return tools ? [...tools] : undefined;
 	}
 
-	getExperimentalBashEvalOnly(): boolean {
-		return this.settings.experimental?.bashEvalOnly === true;
+	getExperimentalSharedHost(): boolean {
+		return this.settings.experimental?.sharedHost === true;
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

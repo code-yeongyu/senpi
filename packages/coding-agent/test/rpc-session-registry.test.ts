@@ -3,13 +3,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getApiProvider, registerApiProvider } from "@earendil-works/pi-ai/compat";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
 	AgentSessionRuntime,
 	type CreateAgentSessionRuntimeFactory,
 	type CreateAgentSessionRuntimeResult,
 } from "../src/core/agent-session-runtime.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import { type RpcSessionLaunchProfile, RpcSessionRegistry } from "../src/modes/rpc/session-registry.ts";
@@ -26,11 +27,18 @@ function runtime(
 	options: Parameters<CreateAgentSessionRuntimeFactory>[0],
 	controls?: { waitForIdle?: () => Promise<void> },
 ) {
+	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 	return {
 		session: {
 			sessionManager: options.sessionManager,
+			agentDir: options.agentDir,
 			// Projected into the `open_session` wire state, which shares one builder with get_state.
 			isFastModeActive: () => false,
+			getContextUsage: () => undefined,
+			favoriteModels: [],
+			scopedModels: [],
+			isBashRunning: false,
+			isStreaming: false,
 			extensionRunner: { hasHandlers: () => false, emit: async () => {} },
 			abort: async () => {},
 			abortBash: () => {},
@@ -121,6 +129,112 @@ describe("RPC session registry", () => {
 		await closing;
 		expect(disposed).toBe(true);
 		await expect(registry.openSession(profile(dir, path))).resolves.toMatchObject({ sessionId: expect.any(String) });
+	});
+
+	test("bounds a stuck abort and releases the path reservation", async () => {
+		const { dir } = await createRegistry();
+		let disposed = false;
+		const samePath = join(dir, "stuck.jsonl");
+		const registry = new RpcSessionRegistry({
+			agentDir: dir,
+			closeGraceMs: 50,
+			createRuntime: async (options) => {
+				const result = runtime(options);
+				result.session.abort = () => new Promise<void>(() => {});
+				result.session.dispose = () => {
+					disposed = true;
+				};
+				return result;
+			},
+		});
+		const opened = await registry.openSession(profile(dir, samePath));
+		const started = Date.now();
+		await registry.close(opened.sessionId);
+		expect(Date.now() - started).toBeLessThan(500);
+		expect(registry.list()).toEqual([]);
+		expect(disposed).toBe(true);
+		await expect(registry.openSession(profile(dir, samePath))).resolves.toMatchObject({
+			sessionId: expect.any(String),
+		});
+	});
+
+	test("force-releases a stuck abort while independently closing runtime and scope", async () => {
+		const { dir } = await createRegistry();
+		const samePath = join(dir, "stuck-scope.jsonl");
+		let scopeClosed!: () => void;
+		const scopeClosedSignal = new Promise<void>((resolve) => {
+			scopeClosed = resolve;
+		});
+		const scopeClose = vi.fn(async () => scopeClosed());
+		const dispose = vi.fn(async () => {});
+		const waitForIdle = vi.fn(async () => {
+			throw new Error("idle failed");
+		});
+		const registry = new RpcSessionRegistry({
+			agentDir: dir,
+			closeGraceMs: 50,
+			createRuntime: async (options) => {
+				const result = runtime(options, { waitForIdle });
+				result.session.abort = () => new Promise<void>(() => {});
+				result.session.dispose = dispose;
+				return result;
+			},
+		});
+		const opened = await registry.openSession(profile(dir, samePath));
+		const entry = registry.peek(opened.sessionId);
+		if (!entry) throw new Error("session was not opened");
+		entry.scope.close = scopeClose;
+		await expect(registry.close(opened.sessionId)).resolves.toBeUndefined();
+		await scopeClosedSignal;
+		expect(dispose).toHaveBeenCalledTimes(1);
+		expect(scopeClose).toHaveBeenCalledTimes(1);
+	});
+
+	test("closes a responsive runtime before the grace deadline", async () => {
+		const { dir } = await createRegistry();
+		let disposeCount = 0;
+		const registry = new RpcSessionRegistry({
+			agentDir: dir,
+			closeGraceMs: 50,
+			createRuntime: async (options) => {
+				const result = runtime(options);
+				result.session.dispose = () => {
+					disposeCount += 1;
+				};
+				return result;
+			},
+		});
+		const opened = await registry.openSession(profile(dir, join(dir, "responsive.jsonl")));
+		await registry.close(opened.sessionId);
+		expect(disposeCount).toBe(1);
+		expect(registry.list()).toEqual([]);
+	});
+
+	test("joins concurrent closes and disposes the runtime once", async () => {
+		const { dir } = await createRegistry();
+		let releaseAbort!: () => void;
+		const abortFinished = new Promise<void>((resolve) => {
+			releaseAbort = resolve;
+		});
+		let disposeCount = 0;
+		const registry = new RpcSessionRegistry({
+			agentDir: dir,
+			closeGraceMs: 500,
+			createRuntime: async (options) => {
+				const result = runtime(options);
+				result.session.abort = () => abortFinished;
+				result.session.dispose = () => {
+					disposeCount += 1;
+				};
+				return result;
+			},
+		});
+		const opened = await registry.openSession(profile(dir, join(dir, "joined.jsonl")));
+		const first = registry.close(opened.sessionId);
+		const second = registry.close(opened.sessionId);
+		releaseAbort();
+		await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+		expect(disposeCount).toBe(1);
 	});
 
 	test("marks closing before binding disposal so a concurrent command cannot enter its handler", async () => {
@@ -229,6 +343,64 @@ describe("RPC session registry", () => {
 		expect(attached.durableSessionId).toBe(first.durableSessionId);
 		expect(attached.attached).toBe(true);
 		expect(registry.list()).toHaveLength(1);
+	});
+
+	test("moves path attachment metadata after runtime replacement", async () => {
+		const { dir } = await createRegistry();
+		let openedRuntime!: CreateAgentSessionRuntimeResult;
+		const registry = new RpcSessionRegistry({
+			agentDir: dir,
+			createRuntime: async (options) => {
+				openedRuntime = runtime(options);
+				return openedRuntime;
+			},
+		});
+		const oldPath = join(dir, "replaced-old.jsonl");
+		const newPath = join(dir, "replaced-new.jsonl");
+		const first = await registry.openSession(profile(dir, oldPath));
+
+		openedRuntime.session.sessionManager.setSessionFile(newPath);
+		const second = await registry.openSession(profile(dir, oldPath));
+
+		expect(second.attached).not.toBe(true);
+		expect(second.sessionId).not.toBe(first.sessionId);
+		expect(
+			registry
+				.list()
+				.map((session) => session.sessionPath)
+				.map((path) => path?.endsWith("replaced-old.jsonl")),
+		).toContain(true);
+		expect(
+			registry
+				.list()
+				.map((session) => session.sessionPath)
+				.map((path) => path?.endsWith("replaced-new.jsonl")),
+		).toContain(true);
+
+		await expect(registry.openSession(profile(dir, newPath))).resolves.toMatchObject({
+			sessionId: first.sessionId,
+			attached: true,
+		});
+	});
+
+	test("routes a multi-session switch through the live runtime with its cwd override", async () => {
+		const { dir, registry } = await createRegistry();
+		const initialCwd = await mkdtemp(join(tmpdir(), "senpi-rpc-initial-"));
+		const replacementCwd = await mkdtemp(join(tmpdir(), "senpi-rpc-replacement-"));
+		directories.push(initialCwd, replacementCwd);
+		const opened = await registry.openSession(profile(initialCwd, join(dir, "initial.jsonl")));
+		const entry = registry.getForCommand(opened.sessionId, "switch_session");
+		const initialRuntime = entry.runtime;
+
+		const result = await entry.switchSession!(join(dir, "replacement.jsonl"), {
+			cwdOverride: replacementCwd,
+		});
+
+		expect(result).toEqual({ cancelled: false });
+		expect(entry.runtime).not.toBe(initialRuntime);
+		expect(entry.runtime?.session.sessionManager.getCwd()).toBe(replacementCwd);
+		expect(registry.list()[0]?.cwd).toBe(replacementCwd);
+		await registry.close(opened.sessionId);
 	});
 
 	test("keeps the runtime alive until the last attachment closes", async () => {

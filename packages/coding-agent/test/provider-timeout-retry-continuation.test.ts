@@ -1,5 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { providerRetryWatchdogAbortMessage } from "../src/core/agent-session.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "../src/core/provider-timeout-retry.ts";
 
 const STREAM_START_TIMEOUT_MS = 90_000;
@@ -9,7 +10,7 @@ const STREAM_RETRY_TIMEOUT_MS = 30_000;
 function stallMessage() {
 	return fauxAssistantMessage("", {
 		stopReason: "error",
-		errorMessage: `Provider stream start timed out after ${STREAM_START_TIMEOUT_MS}ms`,
+		errorMessage: `Provider stream start timed out after ${STREAM_START_TIMEOUT_MS}ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)`,
 	});
 }
 
@@ -41,6 +42,17 @@ async function runRetryAttempt(watchdogTimeoutMs: number | undefined, respondsAf
 }
 
 describe("bounded retry continuation", () => {
+	it("pins the enabled watchdog guidance", () => {
+		expect(providerRetryWatchdogAbortMessage(12_345, 6_789)).toBe(
+			"Provider retry continuation watchdog timed out after 12345ms (stream-start guard: 6789ms; raise retry.provider.streamStartTimeoutMs, 0 disables)",
+		);
+	});
+
+	it("pins the disabled stream-start watchdog guidance", () => {
+		expect(providerRetryWatchdogAbortMessage(12_345, undefined)).toBe(
+			"Provider retry continuation watchdog timed out after 12345ms (stream-start guard disabled; raise retry.provider.streamStartTimeoutMs, 0 disables)",
+		);
+	});
 	beforeEach(() => {
 		vi.useFakeTimers();
 	});

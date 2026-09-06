@@ -1,5 +1,212 @@
 # senpi-codemode fork changes
 
+## 2026-09-05 - GPT eval dialect routes waits through tool.monitor
+
+### What changed
+
+- `src/prompt/eval-prompt.ts`: in `<gpt_eval_dialect>` the `tool.monitor` line moves ahead of the
+  detach line and reads "A wait or a long run (build, test run, deploy, watch) starts through
+  `tool.monitor({ command, filter })` in that same cell with the decisive-line filter; its event wakes
+  the turn, so no cell sits on the wait and no child is spawned for it." The detach sentence is
+  unchanged and now describes computation cells. The GPT batching guideline (the line senpi renders
+  under `## Tool Guidelines`) becomes monitor-aware: with `monitor` reachable it reads "Use eval to
+  compose tool work in one cell; a wait or a long run starts through `tool.monitor` in that cell, so
+  no cell sits on it and nothing polls."; without it the previous detach wording stays.
+- `test/prompt.test.ts`: pins the monitor-aware guideline copy for `gpt-5.6` with `monitor: true`,
+  and that the gpt description names `tool.monitor(` before "detach on timeout" and carries "no cell
+  sits on the wait". Existing gating and dialect assertions are unchanged.
+
+### Why
+
+- The GPT guideline said "long cells detach on timeout and notify on completion, so do not poll" -
+  the only wait mechanism the system prompt named for GPT models, while the subscription route lived
+  three lines down in the tool description. A multi-round backtest against the real `gpt-6-astra`
+  (eval-only tool shape) showed the consequence on a CI-then-merge request: 2 of 3 samples awaited
+  `gh pr checks --watch` through `Bun.spawn` inside a cell, a form the guideline sanctioned. Two routes
+  for one situation is the contradiction the GPT-5.6 guide warns about; the guideline now names the
+  route, the description states the cost once (a cell that waits holds the kernel; a child spawned
+  to watch burns a session), and the detach fact stays as mechanics rather than advice.
+
+### Why extension system couldn't handle this differently
+
+- Prompt text owned by this package; no runtime behavior changed.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: fork-only dialect text and its test.
+
+## 2026-09-04 - eval tool description diet, second pass
+
+### What changed
+
+- `src/prompt/eval-prompt.ts`: the `Fields:` block is gone; the description names the enabled
+  `language` values and defers every per-field rule (`summary`, `timeout`, `on_timeout`, `reset`,
+  `action`) to the parameter schema, which already carries each of them. The detach paragraph is one
+  sentence pair (what detaches, how to peek/stop). Helper doc lines drop restated words but keep every
+  signature; the `<workflow>` block keeps the graph rules in one sentence each. The `jl` handle form
+  now gets a separator when it follows `py`/`js` (`/ \`handle=true\``), fixing a fused
+  `}\`\`handle=true\`` render that the all-languages snapshot had pinned.
+- `test/prompt.test.ts` + snapshot: the field-semantics test now asserts the schema is the single home
+  (no `- \`timeout\``/`\`on_timeout\`` in the description) and that the guideline still states reset
+  scope; the handle-form test gains the four-language case and rejects the fused `jl` form.
+
+### Why
+
+- After the first diet the gpt/codex dialect still rendered 1,489 o200k tokens (description +
+  guidelines, py+js, spawns). The `Fields:` list restated the parameter schema word for word (198
+  tokens of schema text billed twice), and the detach/busy-kernel text said the same thing in three
+  places. Every deleted sentence has a surviving home; no helper signature or dialect block changed.
+
+### Why an extension could not handle it
+
+- The description is built inside this package's `buildEvalPrompt`; there is no hook that lets an
+  outer extension shorten a tool description it does not own.
+
+### Expected merge conflict zones
+
+- LOW: `EVAL_PROMPT_TEMPLATE` prose and the three snapshot files. Upstream pi has no codemode
+  package, so the zone is fork-only.
+
+## 2026-09-04 - eval tool description diet
+
+### What changed
+
+- `src/prompt/eval-prompt.ts`: dropped `REUSE_CHAIN_EXAMPLES` (three embedded JSON call examples), collapsed the `<workflow>` block to one dense rule sentence, merged the three state-persistence restatements into one, tightened the timeout/on_timeout/hard-limit/detach prose, and removed the per-dialect "sleeping/timed retries are not waiting" clause from the monitor bullets (the terminal section owns that doctrine). Helper signatures and dialect selection are unchanged. Fixed the workflow block's fused `handle=True{ handle: true }` into per-language correct forms.
+- `test/prompt.test.ts`: removed the reuse-chain filter test (its subject is gone), added the handle-form regression test, regenerated snapshots.
+
+### Why
+
+- The description cost ~2.0k tokens on every eval-enabled turn; the cuts are content the model already does by default or that the terminal section states. codex dialect 2002 -> 1588, claude 2058 -> 1648, kimi 2073 -> 1668, default 2079 -> 1668 (o200k).
+
+### Expected merge conflict zones
+
+- LOW: `eval-prompt.ts` template and the prompt snapshots; regenerate snapshots rather than merging.
+
+
+## eval foreground window caps the interactive detach budget (2026-09-04)
+
+### What changed
+
+- `packages/senpi-codemode/src/config/settings.ts` adds `foregroundWindowSeconds` to the settings schema, `CodemodeSettings`, `defaultCodemodeSettings` (`60`), and `mergeSettings`, plus `DEFAULT_FOREGROUND_WINDOW_SECONDS`, `FOREGROUND_WINDOW_ENVIRONMENT_FLAG` (`SENPI_CODEMODE_FOREGROUND_SECONDS`), and `resolveForegroundWindowSeconds()` mirroring the hard-limit resolver.
+- `packages/senpi-codemode/src/tool/eval-tool.ts` computes the timeout behavior first, then clamps the detach watchdog budget to `min(timeout ?? cellTimeoutSeconds, foregroundWindowSeconds)` only when the behavior is `"detach"`; `"error"` keeps the unclamped deadline. The wall-clock hard limit (`max(hardLimitSeconds, timeout)`) is untouched.
+- `packages/senpi-codemode/src/tool/eval-tool-options.ts` adds the optional `foregroundWindowSeconds` factory option; `packages/senpi-codemode/src/index.ts` passes `resolveForegroundWindowSeconds(...)` at both eval registration sites.
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts` and `packages/senpi-codemode/src/tool/types.ts` document that `timeout` is the detach budget capped at the foreground window and that a larger value extends the hard limit, not the foreground block.
+
+### Why
+
+- A real session passed `timeout: 7000` to keep a long detached orchestration cell alive; because `timeout` had no cap it blocked the agent loop for ~2h and then hit the 7000s hard limit, killing the cell and restarting the kernel. The bash tool already separates a 60s foreground window from the kill deadline; eval had no equivalent, so `timeout` did the worst of both worlds.
+
+### Why an extension could not handle it
+
+- The detach-vs-error decision and the idle watchdog budget are computed inside this package's `runEvalCell`; no downstream hook can re-cap the detach timer before the cell is scheduled, and the setting must live in this package's settings schema and registration path.
+
+### Expected merge conflict zones
+
+- LOW in `src/config/settings.ts` around the settings schema, defaults, and resolver functions.
+- LOW in `src/tool/eval-tool.ts` around the `timeoutMs` computation in `runEvalCell`.
+- LOW in `src/index.ts` at the two `createEvalTool` registration sites.
+- LOW in `src/tool/types.ts` and `src/prompt/eval-prompt.ts` around the `timeout`/`on_timeout` descriptions.
+
+
+## Eval description subscribes to monitor events when available (2026-09-03)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts` adds a capability-gated monitor-subscription bullet to each emphasis dialect and folds filter/join/aggregate wording into the existing result-reduction bullets.
+- `packages/senpi-codemode/src/tool/eval-tool-options.ts` carries the optional `monitor` capability, and `packages/senpi-codemode/src/tool/eval-tool.ts` forwards it to prompt construction.
+- `packages/senpi-codemode/src/index.ts` detects `monitor` in `pi.getAllTools()` for session-runtime eval registration; the pre-extension fallback registration passes `false` deliberately because monitor is not loaded yet.
+- `packages/senpi-codemode/test/prompt.test.ts` asserts both gated directions across all five dialects, and `packages/senpi-codemode/test/__snapshots__/prompt.test.ts.snap` records the intentional result-reduction wording change.
+
+### Why
+
+- With monitor reachable only through an eval cell, the eval description is the only model-facing surface that can teach the callable `tool.monitor({ command, filter })` form and the event-driven wait stance without naming an unavailable tool. The existing monitor rule is being removed from the preset, so this compact addition preserves the contract while consolidating result reduction.
+
+### Why an extension could not handle it
+
+- The description is composed by the eval tool factory before the model can invoke a cell; an external extension cannot add a capability-gated instruction to that tool's registered description or change its dialect rendering.
+
+### Expected merge conflict zones
+
+- LOW in `src/prompt/eval-prompt.ts` around the dialect template, `src/tool/eval-tool-options.ts` and `src/tool/eval-tool.ts` around prompt options, and `src/index.ts` around baseline/session-runtime eval registration.
+
+## Bun child-process output stays inside the JS cell (2026-09-03)
+
+### What changed
+
+- New `src/kernels/js/worker-shell-capture.js` (+ `.d.ts`): `installShellCapture({ isActive, emitText })` replaces `Bun.$` and `Bun.spawn` on the worker's `Bun` global. While a cell is active, every `Bun.$` promise is switched to native quiet mode before its command starts and its captured stdout/stderr are echoed once into the cell's `text` stream when it settles — unless the cell reads it through `.quiet()`/`.text()`/`.json()`/`.lines()`/`.arrayBuffer()`/`.bytes()`/`.blob()`, which Bun itself keeps silent. Shell-level `env`/`cwd`/`nothrow`/`throws` chain on the captured shell; the `Shell`/`ShellPromise`/`ShellError`/`braces`/`escape` statics are carried over. `Bun.spawn` calls that leave `stderr` at its default get `stderr: "pipe"` and the pipe is drained into the cell's stderr stream; explicit `stderr`/`stdio` choices pass through. Outside an active cell both surfaces behave exactly as before (inline-worker mode shares the host globals). On Node the installer is a no-op.
+- `src/kernels/js/worker-runtime.js` installs the capture beside the existing `console`/`process.stdout.write` routing and restores it from `__senpi_restore_console__`.
+- `test/js-kernel-shell-capture.test.ts` pins the contract against a fake that mirrors the verified Bun 1.4 `ShellPromise` behavior (lazy start on `then`, internal quiet for the read methods, same-object chaining); `test/js-kernel-shell-capture-bun.test.ts` runs the real kernel under `bun` (skipped when `bun` is absent) and asserts the markers never reach the driver's fd 1/2.
+
+### Why
+
+- Bun's shell streams a command's output to the process' fd 1/2 unless `.quiet()` is applied or the output is read through a `.text()`-style helper (verified on bun 1.4.0: `await Bun.$\`echo x\`.nothrow()` prints `x` to stdout AND captures it), and `Bun.spawn` defaults `stderr` to `inherit`. Inside the JS kernel those fds are the interactive TUI's terminal, so a cell doing `await $\`vibe-notion page get … --pretty\`.nothrow().then(r => r.stdout)` dumped the whole pretty-printed JSON onto the screen (observed 2026-09-03: a Notion page's block JSON landed in the user's editor and was pasted into the next prompt). The existing `routeWrite` only intercepts JS-level `process.stdout.write`; native child-output writes bypass it.
+- Echoing the captured output into the cell instead of only silencing it keeps Bun's documented "the output is visible" semantics at the correct sink, consistent with how `console.log` is routed today.
+
+### Why an extension could not handle it
+
+- The worker's `Bun` global and the cell-activity gate (`#hooks`) live inside this package's worker runtime; nothing outside the worker can wrap `Bun.$` before a cell's first `then` or attribute an emission to the running cell.
+
+### Expected merge conflict zones
+
+- LOW in `src/kernels/js/worker-runtime.js` around `#installGlobals` (import plus install/restore lines).
+- NONE for the new module and tests.
+## Binary skill resolution and stdout-safe miss reporting (2026-09-02)
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/skill-contribution.ts` resolves the bundled
+  `bun-1-4` SKILL.md through `resolveCodemodeRuntimeAsset`, so a compiled binary falls
+  back to the sidecar at
+  `node_modules/@code-yeongyu/senpi-codemode/src/skill/bun-1-4/SKILL.md` next to the
+  executable instead of only probing the embedded module-relative path.
+- The "skill not found" notice moves from `console.debug` to `console.error`.
+- `test/bun-skill-contribution.test.ts` pins both contracts: sidecar resolution in a
+  compiled-binary layout, and stderr-only reporting with stdout untouched.
+
+### Why
+
+- The compiled binary has no readable module-relative asset, so the skill was silently
+  skipped for every binary user, and the notice was written to stdout - the same stream
+  that carries the RPC JSONL protocol. `scripts/smoke-standalone-binary.mjs` parses that
+  stream and failed with `received malformed RPC output`, which failed the `Build binaries`
+  job of `build-binaries.yml` and skipped its final `Dispatch publish-npm.yml` job. Both
+  the v2026.9.2 and v2026.9.2-2 tag runs failed this way, so neither release reached npm.
+- The Ruby and Julia kernel runners already resolve their assets through the same sidecar
+  helper; this brings the skill asset onto that established path.
+
+## Eval QA owns its temporary agent directory (2026-08-30)
+
+### What changed
+
+- `packages/senpi-codemode/scripts/qa-e2e-eval.ts` now always creates its own
+  temporary agent directory instead of reusing an inherited
+  `SENPI_CODING_AGENT_DIR`.
+- `test/qa-e2e-eval-sandbox.test.ts` runs the real QA driver with an external
+  sentinel agent directory and proves the directory remains unchanged after
+  the driver exits.
+
+### Why
+
+- A QA command launched from an active Senpi or branded Omo session inherits
+  the live runtime's agent directory. The driver previously treated that path
+  as QA-owned scratch space, wrote test settings into it, and recursively
+  removed it during cleanup.
+- In the observed incident, deleting the live sessions directory made the
+  running UI appear to open a new session. The surviving processes recreated
+  headerless JSONL fragments, so the resume picker no longer found the recent
+  sessions.
+
+### Why an extension could not handle it
+
+- The destructive path selection and cleanup happen in the standalone QA
+  driver before extension behavior can impose a filesystem boundary. The
+  driver itself must create and own the paths it removes.
+
+### Expected merge conflict zones
+
+- LOW in `scripts/qa-e2e-eval.ts` around sandbox setup and cleanup.
+- LOW in the new focused QA sandbox regression test.
+
 ## Compiled eval kernels resolve runtime assets from the sidecar (2026-08-27)
 
 ### What changed

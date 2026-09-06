@@ -59,10 +59,10 @@ turn-adapter.ts       Agent/session events to app-server turn events
 ## VALIDATION
 
 - Run focused app-server Vitest suites from `packages/coding-agent`.
-- Run `npm run qa:app-server` for the handshake, multiclient, approval, and real-client probes. For source-oracle parity, run `node scripts/qa-app-server/differential/build-oracle.mjs` and then `node scripts/qa-app-server/differential/run.mjs --scenario handshake`; the allowlist may never hide audience, frame-order, or array-order differences.
+- Run `bun run qa:app-server` for the handshake, multiclient, approval, and real-client probes. For source-oracle parity, run `bun scripts/qa-app-server/differential/build-oracle.mjs` and then `bun scripts/qa-app-server/differential/run.mjs --scenario handshake`; the allowlist may never hide audience, frame-order, or array-order differences.
 - Run the matching `packages/coding-agent/test/qa/app-server/` driver for focused Unix-socket, malformed-input, and lifecycle scenarios.
 - Protocol or documentation changes must keep `packages/coding-agent/docs/app-server.md` examples and `packages/coding-agent/test/qa/app-server/` checks aligned.
-- Runtime changes also require root `npm run check` and the applicable real CLI QA evidence gate.
+- Runtime changes also require root `bun run check` and the applicable real CLI QA evidence gate.
 
 ---
 Generated: 2026-08-07 | Commit: `4f26b8282`

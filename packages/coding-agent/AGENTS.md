@@ -83,7 +83,7 @@ src/changes.md                     Root fork-change record
 ## VALIDATION
 
 - Run changed test files from this package; issue regressions use `<issue>-<slug>.test.ts`.
-- Code changes require root `npm run check` plus the applicable `senpi-qa` CLI channel and saved evidence.
+- Code changes require root `bun run check` plus the applicable `senpi-qa` CLI channel and saved evidence.
 - Interactive changes also follow `src/modes/interactive/AGENTS.md`; extension/tool changes follow their nearest child guide.
 - App-server, test, and example changes follow their local `AGENTS.md` files.
 - Keep `src/changes.md`, nested `changes.md`, public docs, and examples aligned with fork behavior.

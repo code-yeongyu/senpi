@@ -1,5 +1,44 @@
 # Core Extensions Changes
 
+## 2026-09-04 - UI prompt lifecycle events
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: the extension UI context's blocking prompts (select, confirm, input, editor, custom) are wrapped with depth tracking; the outermost prompt emits `ui_prompt_start` and, when it settles, `ui_prompt_end`, queued via microtask so handlers cannot delay the prompt itself (upstream ccfe79ed2, #8355).
+- `packages/coding-agent/src/core/extensions/types.ts`: adds `UIPromptKind`, `UIPromptStartEvent`, and `UIPromptEndEvent` to the event union and `on` overloads, and clarifies that `setModel` and `setThinkingLevel` change the current session without changing the configured default for new sessions (upstream 8d1b1178c, #9009).
+- `packages/coding-agent/src/core/extensions/index.ts`: re-exports the new event types.
+
+### Why
+
+- RPC and UI hosts need to know when the agent is blocked on an extension-driven prompt to render a waiting state and to distinguish prompt-waits from model-waits; the runner is the only component that sees every nesting level of those prompts.
+
+### Why an extension could not handle it
+
+- The events describe the runner's own UI context; an extension cannot observe prompts issued by other extensions, and the emitting path must not let handlers delay the prompt they describe.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/extensions/runner.ts` UI-context wrapping and depth tracking; LOW: `packages/coding-agent/src/core/extensions/types.ts` event union and `packages/coding-agent/src/core/extensions/index.ts` export list.
+
+
+## Expose the extension event bus for session activity signals (2026-08-31)
+
+### What changed
+
+- `runner.ts`: `ExtensionRunner.onBusEvent(channel, handler)` subscribes to a raw bus channel and returns an unsubscribe, mirroring the existing `onRpcEvent` helper.
+
+### Why
+
+- The session must observe `wake_source_state` publications (background terminal jobs, terminal monitors, loop-guard holds) to know whether work outlives the current turn; the shared RPC host's idle eviction consults that through `AgentSession.isSessionBusy`. The bus was private to the runner, so the session had no way to read activity extensions already publish.
+
+### Why an extension could not handle it
+
+- The subscription is made by the session that owns the runner, beneath every extension surface; an extension cannot grant the host visibility into another extension's activity.
+
+### Expected merge conflict zones
+
+- LOW: the accessor block next to `onRpcEvent` in `runner.ts`.
+
 
 ## Builtin /account command (2026-08-27)
 

@@ -13,7 +13,7 @@ token-spending eval surface in the repo.
 | Comparative tables, reporting | `src/vitest-evals/harness-table.ts`, `summary.ts`, `reporter.ts` |
 | Artifact recording | `src/vitest-evals/artifacts.ts` |
 | Runner | `scripts/run-evals.mjs` |
-| Unit tests (no tokens) | `test/` via `npm test` |
+| Unit tests (no tokens) | `test/` via `bun run test` |
 
 ## CONVENTIONS
 
@@ -38,11 +38,11 @@ token-spending eval surface in the repo.
 ## COMMANDS
 
 ```bash
-npm run eval -- --provider openai --model gpt-5.6-sol   # provider+model together, or none
-PI_PROVIDER=openai PI_MODEL=gpt-5.6-sol npm run eval    # env equivalent
-npm run eval -- src/extensions.eval.ts                  # forwards file filters to Vitest
-npm run eval -- -t "<pattern>"                          # forwards -t filters
-npm test                                                # unit tests, config vitest.test.config.ts
+bun run eval --provider openai --model gpt-5.6-sol   # provider+model together, or none
+PI_PROVIDER=openai PI_MODEL=gpt-5.6-sol bun run eval    # env equivalent
+bun run eval src/extensions.eval.ts                  # forwards file filters to Vitest
+bun run eval -t "<pattern>"                          # forwards -t filters
+bun run test                                                # unit tests, config vitest.test.config.ts
 ```
 
 `PI_EVAL_ARTIFACT_DIR` overrides the artifact directory.

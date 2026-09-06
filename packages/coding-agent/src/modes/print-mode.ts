@@ -107,6 +107,13 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
 		unsubscribe = session.subscribe((event) => {
+			if (event.type === "retry_fallback_applied") {
+				console.error(`Model fallback: ${event.from} -> ${event.to} (${event.reason})`);
+			} else if (event.type === "retry_fallback_exhausted") {
+				console.error(`Model fallback exhausted: ${event.chainKey} (${event.lastError})`);
+			} else if (event.type === "retry_fallback_reverted") {
+				console.error(`Model fallback reverted: ${event.from} -> ${event.to}`);
+			}
 			if (mode === "json") {
 				writeRawStdout(`${JSON.stringify(toJsonEvent(event))}\n`);
 			}

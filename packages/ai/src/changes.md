@@ -1,3 +1,498 @@
+
+## 2026-09-05 - Project Astra configuration updates at the Responses wire
+
+### What changed
+
+- packages/ai/src/api/mistral-conversations.ts: ignore the Astra-only configuration-update role on Mistral.
+- packages/ai/src/api/openai-responses-shared.ts: emit the configuration-update item at its original position for Astra Responses requests.
+- packages/ai/src/providers/faux.ts: ignore the Astra-only configuration-update role in faux providers.
+- packages/ai/src/types.ts: define the configuration-update message shape.
+- packages/ai/src/utils/estimate.ts: account for the non-token-bearing configuration-update role.
+
+### Why
+
+- The Responses API requires a positional configuration-update item for cache-preserving reasoning changes, while other providers must ignore it.
+
+### Why this lives in the fork
+
+- Message conversion and token estimation happen inside the AI provider boundary before extensions can alter the request.
+
+### Expected merge conflict zones
+
+- Responses message conversion and provider-specific message handling.
+
+## 2026-09-05 - Infer map-less GPT-6 Astra reasoning controls
+
+### What changed
+
+- `packages/ai/src/models.ts` infers the canonical GPT-6 Astra OpenAI-family thinking ladder when model metadata omits a map; `packages/ai/src/api/openai-completions.ts` and `packages/ai/src/api/openai-responses.ts` use that inference for wire effort mapping.
+
+### Why
+
+- Custom map-less Astra models must clamp unsupported `minimal` and `off` selections to `low` instead of sending unsupported `minimal` or `none` values, while preserving xhigh/max and GPT-5.6 Sol behavior.
+
+### Why an extension could not handle it
+
+- Model capability inference and request effort serialization run inside the core model and provider adapter paths before extensions can modify the request.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/models.ts` model capability helpers; `packages/ai/src/api/openai-completions.ts` and `packages/ai/src/api/openai-responses.ts` reasoning mapping.
+
+## 2026-09-05 - Account for Fast-mode responses in OpenAI adapters
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/openai-responses-shared.ts` widen local service-tier handling with `fast`, apply the priority cost multiplier, and resolve Codex request/response tiers correctly.
+
+### Why
+
+- GPT-6 Astra echoes `fast` for Fast mode, and the pinned SDK union does not yet include that documented value; without this, usage was billed at the default rate.
+
+### Why an extension could not handle it
+
+- Response parsing, service-tier resolution, and usage accounting are implemented within the provider adapters before extension code can observe the completed usage.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-responses.ts` and `packages/ai/src/api/openai-codex-responses.ts` multiplier/resolution helpers; `packages/ai/src/api/openai-responses-shared.ts` stream option contracts.
+
+## 2026-09-04 - Credential-store lock contention stays on the transient retry path
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `RETRYABLE_PROVIDER_ERROR_PATTERN` recognises the coding-agent's `Credential store is busy: lock ...` message (`CredentialStoreBusyError`), so an exhausted local credential/auth/settings lock wait is classified as retryable infrastructure contention.
+
+### Why
+
+- Without the pattern the message fell through as an unknown provider error, which the fallback machinery treated as a model failure and hopped providers (oh-my-openagent#7748: claude-sdk-oauth -> opengateway 401). Lock contention between omo processes sharing `~/.omo` is transient and local; the same provider should simply be retried.
+
+### Why an extension could not handle it
+
+- Retry classification runs inside pi-ai's provider retry loop before any extension observes the assistant error.
+
+### Expected merge conflict zones
+
+- LOW: the retryable pattern list in `retry.ts`.
+
+## 2026-09-04 - Adopt the Mistral indexed-chunk and Responses max_output_tokens fixes
+
+### What changed
+
+- `packages/ai/src/api/mistral-conversations.ts`: streamed tool-call chunks are keyed by the provider chunk index when present, falling back to the derived call id, instead of the old callId-plus-index-or-zero key (upstream 6c87d9a02, #8387).
+- `packages/ai/src/api/openai-responses.ts`: a new `supportsMaxOutputTokens` compat flag (default true) gates sending `max_output_tokens`, so Responses-compatible gateways that reject the parameter can opt out (upstream b8b873b98, #8941).
+
+### Why
+
+- Mistral streams indexed argument chunks with missing or duplicated ids; the old key collapsed index 0 and an absent index into the same slot and mis-assembled tool calls. Some OpenAI Responses-compatible gateways (for example Codex-protocol proxies) reject `max_output_tokens` with a 400, and the API always sent it when `maxTokens` was set with no way to opt out.
+
+### Why an extension could not handle it
+
+- Stream chunk assembly and request body construction happen inside the provider API clients, below the extension boundary.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/mistral-conversations.ts` tool-call block keying in `consumeChatStream` and `packages/ai/src/api/openai-responses.ts` in `getCompat` and `buildParams`.
+
+## 2026-09-04 - Failed assistant turns are dropped from converted LLM context
+
+### What changed
+
+- `packages/ai/src/utils/drop-failed-assistant-turns.ts` (new): `dropFailedAssistantTurns(messages)` removes every assistant message whose `stopReason` is `error` or `aborted`, plus every `toolResult` whose `toolCallId` was declared only by those dropped assistants; a call id re-declared by any kept assistant keeps its result, mirroring the `droppedCallIds` pairing in `api/transform-messages.ts`. Order and all other messages are preserved.
+- `packages/ai/src/index.ts`: the helper is exported from the package barrel.
+- `packages/ai/test/drop-failed-assistant-turns.test.ts` (new): pins the drop of error/aborted turns and their orphaned results, the re-declared-id keep, and the stop/length/toolUse pass-through.
+
+### Why
+
+- Two lanes build LLM requests straight from `convertToLlm` output with no `stopReason` filter (the claude-sdk-oauth prompt bridge and cursor turn building), so after a provider error or abort every subsequent request replayed the failed turn's partial text and unexecuted tool calls; token estimation counted them too. The provider transform layer already dropped them, but only for pi-ai API requests.
+
+### Why an extension could not handle it
+
+- The drop must happen inside `convertToLlm`, which both lanes consume before any extension seam runs; extensions observe the already-built context and cannot remove a failed assistant turn from every downstream request shape deterministically.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/index.ts` (one barrel line beside the other utils exports).
+
+## GPT-6 Astra joins the xhigh and max effort families (2026-09-04)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `XHIGH_MODEL_IDS` gains `gpt-6-astra`, and the sol-only native `max` family check becomes `OPENAI_MAX_MODEL_IDS` (`gpt-5.6-sol`, `gpt-6-astra`), so map-less custom providers that ship the Astra id still surface both tiers.
+
+### Why
+
+- OpenAI documents `reasoning.effort` low/medium/high/xhigh/max for `gpt-6-astra`; the generated catalogs carry the map, and the id-based inference must agree for models registered without one.
+
+### Why an extension could not handle it
+
+- Effort-tier inference lives in this runtime module.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/models.ts` (id lists), trivially adjacent to upstream additions.
+
+## 2026-09-03 - Align Anthropic beta-client fallback and thinking semantics
+
+### What changed
+
+- Anthropic managed effort requests retain the stable top-level `output_config.effort: "high"` while selected per-turn effort remains in the marker; thinking-off managed models now emit `thinking.type: "disabled"` when supported.
+- The Anthropic beta request path continues to preserve the pre-output fallback receipt behavior and the unsupported mid-output fallback error.
+
+### Why
+
+- The upstream SDK contract uses `client.beta.messages.create`; managed model semantics require per-turn effort markers and a real disabled-thinking request when the user turns reasoning off.
+
+### Why this cannot be expressed externally
+
+- Request construction, SSE fallback handling, and thinking normalization are owned by the Anthropic adapter below extension hooks.
+
+### Expected merge conflict zones
+
+- MEDIUM: `api/anthropic-messages.ts` request construction and SSE event loop during future upstream syncs.
+
+## 2026-09-03 - Restore Anthropic mid-output fallback failure path after upstream sync
+
+### What changed
+
+- Restored the Anthropic SSE guard that fails immediately when a `fallback` content block arrives after output has begun, preserving the explicit `unsupported mid-output model fallback` error instead of allowing an incomplete stream to report only a missing `message_stop`.
+- Restored the managed-provider argument to Anthropic message conversion so persisted per-turn effort levels reconstruct their exact historical marker prefix; managed requests retain the stable top-level `output_config: { effort: "high" }` while per-turn markers carry the selected effort.
+
+### Why
+
+- The upstream re-integration retained beta-client and effort-marker machinery but lost two fork-side merge behaviors. Without the SSE guard, Anthropic could replace a partially emitted response without a safe error. Without provider-scoped conversion, historical effort metadata was not associated with assistant messages and the marker prefix was omitted.
+
+### Why this cannot be expressed externally
+
+- Both behaviors are owned by the Anthropic adapter: the fallback decision occurs inside the SSE event loop, and effort markers are constructed while converting persisted conversation history into Anthropic wire messages before extension hooks can repair the payload.
+
+### Expected merge conflict zones
+
+- MEDIUM: `api/anthropic-messages.ts` SSE `content_block_start` handling and `buildParams()` / `convertMessages()` effort-marker plumbing during future upstream syncs.
+
+## OpenRouter native Anthropic routing declared ahead of the catalog (2026-09-03)
+
+### What changed
+
+- `providers/openrouter.ts`: the provider is now built with an explicit
+  `createProvider<"anthropic-messages" | "openai-completions">` type argument so the upstream
+  `anthropic-messages` entry in its `api` map type-checks. The committed catalog
+  (`providers/data/openrouter.json`) still declares every `anthropic/*` model as `openai-completions`,
+  because the generator rule that flips them (`scripts/generate-models.ts`, `useAnthropicMessages`)
+  only takes effect on a live regeneration, which this merge deliberately did not run.
+- `openai-responses-compat.ts`: added `supportsMaxOutputTokens`, which upstream reads in
+  `api/openai-responses.ts` but which the fork's extracted Responses compat interface was missing.
+- `utils/prompt-cache-ttl.ts`: resolver defaults for the new compat flags -
+  `supportsMaxOutputTokens` defaults to `true`, `vllmPriority` stays unset (off by default) and is
+  therefore excluded from `ResolvedOpenAICompletionsCompat`'s `Required<>` core, and
+  `supportsMidConvoEffort` is excluded from the Anthropic resolver because every consumer reads it
+  straight off `model.compat`.
+
+### Why
+
+- Adopting upstream's per-turn effort and OpenRouter Claude routing requires the compat surface and
+  provider typing to exist even before the model catalog is regenerated; without these the tree does
+  not compile.
+
+### Why an extension could not handle it
+
+- Provider construction, the compat type surface, and catalog resolution are core `packages/ai`
+  wiring that runs before any extension is loaded.
+
+### Expected merge conflict zones
+
+- MEDIUM: `providers/openrouter.ts` and the compat resolvers will conflict on the next sync if
+  upstream keeps extending Responses/Completions compat flags. Regenerating the model catalog will
+  flip the `anthropic/*` entries and make the explicit type argument redundant.
+
+## Upstream AI provider compatibility merge (2026-09-03)
+
+### What changed
+
+- Merged Anthropic Messages beta request types and per-turn effort persistence, including provider-scoped mid-conversation effort markers while retaining Senpi's refusal fallback, signature replay, tool-pairing, and cache checkpoint behavior.
+- Added OpenAI Completions vLLM priority and upstream model routing/catalog compatibility while retaining Senpi request retry and reasoning-detail handling. Pinned `@anthropic-ai/sdk` to `0.123.0` for the beta stop-reason and dropped-input transformation types.
+
+### Why
+
+- The upstream provider behavior is required for Claude 5 effort changes, OpenRouter native Anthropic routing, Fireworks GLM completions, and vLLM scheduling without regressing Senpi's provider-specific safeguards.
+
+### Why an extension could not handle this
+
+- These changes are shared wire-format construction, generated model metadata, and SDK type contracts executed below the extension/provider composition boundary.
+
+### Expected merge conflict zones
+
+- LOW: future upstream syncs in `api/anthropic-messages.ts`, `api/openai-completions.ts`, `types.ts`, `scripts/generate-models.ts`, and provider-composition model defaults.
+
+## Provider requests are refused, not shrunk to one token, once the context window is exhausted (2026-09-03)
+
+### What changed
+
+- `packages/ai/src/api/context-room.ts` (new): owns `clampMaxTokensToContext`, `CONTEXT_SAFETY_TOKENS`,
+  `MIN_ANSWER_TOKENS`, and the new `ContextWindowExhaustedError`. The clamp still fits the requested output budget into
+  `contextWindow - estimateContextTokens(context).tokens - CONTEXT_SAFETY_TOKENS`, but when that room drops below
+  `MIN_ANSWER_TOKENS` (1024) it throws `ContextWindowExhaustedError` instead of flooring `max_tokens` at 1. Windows
+  smaller than `CONTEXT_GUARD_MIN_WINDOW` (5120 = safety margin + one answer) cannot satisfy that geometry at all and
+  keep the previous one-token floor, so tiny-window fixtures and models behave exactly as before. The error
+  message names the estimate and the window ("Context window exhausted: the conversation is estimated at X of Y tokens,
+  leaving fewer than 1024 tokens for a response. Compact the conversation, enable auto-compaction, or start a new session
+  before retrying.") and carries `estimatedTokens` / `contextWindow` as typed fields.
+- `packages/ai/src/api/simple-options.ts`: `clampMaxTokensToContext` and `MIN_ANSWER_TOKENS` moved to
+  `context-room.ts`; `simple-options.ts` re-exports them (plus `CONTEXT_SAFETY_TOKENS` and
+  `ContextWindowExhaustedError`) so `buildBaseOptions`, `anthropic-messages.ts`, `bedrock-converse-stream.ts`, and tests
+  keep their import sites. `buildBaseOptions` therefore throws before any provider request is built once the window is
+  exhausted; the lazy API boundary (`lazyStream`) turns that throw into an assistant `stopReason: "error"` message with
+  the text above, and the harness `ModelRuntime` / provider-composer `lazyStream` wrappers do the same for extension
+  providers.
+- `packages/ai/src/utils/overflow.ts`: `OVERFLOW_PATTERNS` gains `/^Context window exhausted: /` so
+  `isContextOverflow` classifies the guard's error as a context overflow; the retry classifier leaves it `unknown`
+  (never retried).
+
+### Why
+
+- Observed on 2026-09-03 (session `01a06520`, anthropic `claude-fable-5-1`, 1M window, auto-compaction disabled): at
+  an estimated 995,154 tokens the clamp produced `max_tokens: 750`; the model's tool call was cut mid-arguments and the
+  agent loop reported "Tool call stream ended before completion. Re-issue the tool call with complete arguments."; the
+  re-issued request got `max_tokens: 1`, stopped after one token, and the TUI rendered "Model stopped because it reached
+  the maximum output token limit". Both messages hid the real cause and each doomed request billed ~1M cached tokens.
+- A request that cannot produce a minimal answer is never worth sending. Refusing it with a typed, overflow-classified
+  error lets the existing overflow route compact and retry when auto-compaction is enabled, and gives the user an
+  actionable message (compact / enable auto-compaction / new session) when it is not.
+
+### Why an extension could not handle it
+
+- The clamp runs inside `buildBaseOptions`, in every provider adapter, after the harness has emitted its last
+  `before_provider_request` hook; no extension seam sits between the token estimate and the request body. Extensions also
+  cannot see the `max_tokens` the adapter is about to send, so they cannot tell a doomed request from a normal one.
+
+### Expected merge conflict zones
+
+- LOW: the `clampMaxTokensToContext` / `MIN_ANSWER_TOKENS` region of `packages/ai/src/api/simple-options.ts` (upstream
+  keeps both definitions inline; the fork re-exports them from `context-room.ts`).
+- LOW: the head of `OVERFLOW_PATTERNS` in `packages/ai/src/utils/overflow.ts` and its provider list comment.
+
+## A legacy flat credential is promoted, not overwritten, by a second login (2026-09-03)
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` whole-writes the login result only when there is no stored
+  credential at all (`if (!current)`), instead of also whole-writing whenever the stored credential is flat. A flat
+  `current` now takes the `upsertSlot` path, so `listSlots` synthesizes its `default` slot from the flat fields and the
+  fresh login is appended as the next generated `login-N`. The provider-owned pool guard added for senpi#1279 keeps its
+  place ahead of both branches and is unchanged, as is the pooled-`current` append.
+- `packages/ai/src/auth/pool/slots.ts`: `removeSlot` re-projects the flat top-level fields from the first surviving slot
+  when the removed slot was the one those fields mirrored (matched by `access`/`refresh` for OAuth, by `key` for an API
+  key). Removing a slot whose material the flat fields never carried still leaves them byte-identical, the last-slot
+  removal still returns `undefined`, and a pin naming the removed slot is still cleared. `accounts` is preserved in every
+  surviving case, so a one-slot pool stays a pool rather than collapsing to a bare flat credential; only its projection
+  moves to the survivor.
+
+### Why
+
+- `openai-codex` OAuth `login` returns a plain flat `OAuthCredential` with no `accounts` array, so the #1279 guard never
+  fires for it and the old flat-current disjunct did. A second `/login openai-codex` (or the coding-agent `AuthStorage.set`
+  RPC path) therefore replaced the first account's tokens outright: the user lost the credential they were already using
+  and the pool they were trying to build never came into existence (senpi LAB-109). Promotion is the same transition
+  `setSlot` already performs, and `upsertSlot` keeps the pre-existing flat fields as the top-level projection, so a build
+  that ignores `accounts` still authenticates with exactly the bytes it authenticated with before.
+- Promotion alone made removal unsafe. After promotion the flat fields are the legacy `default`'s material, so removing
+  `default` used to leave the pool listing only `login-2` while the flat projection still held the deleted account's
+  tokens. That is not cosmetic: `mightHoldCredentialPool` in the coding-agent model runtime only routes through
+  credential rotation when `accounts.length > 1`, so a pool with one slot left resolves through `resolveProviderAuth`'s
+  flat branch and kept authenticating as exactly the account the user had just removed, with no way to pin around it.
+  Re-projecting from the survivor makes the remaining account the effective credential the moment the removal lands.
+- This supersedes the sentence in the 2026-09-03 senpi#1279 entry below that says a flat `current` still stores the flat
+  credential as-is; that branch is what this pass changes. Every other branch it describes is still accurate.
+
+### Why an extension could not handle it
+
+- `appendLoginSlot` is the shared write step inside `ModelsImpl.login` and the coding-agent auth storage `set`, running
+  after the provider's `login` resolves and before the credential is persisted. No provider or extension seam exists
+  between producing the credential and the write that was discarding the previous account.
+- `removeSlot` is the shared slot algebra behind `ModelsImpl.logout({ slotId })`, `AuthStorage.removeSlot` and
+  `removeCredentialAccount`. Every removal caller reaches the flat projection only through it, so nothing above it can
+  keep the projection and the surviving slot in agreement.
+
+### Expected merge conflict zones
+
+- LOW: the second condition of `appendLoginSlot` and its JSDoc in `auth/pool/slots.ts`, immediately below the senpi#1279
+  guard that the open PRs #1304 and #1196 also touch.
+- LOW: the `removeSlot` body and the two projection helpers added directly above it in `auth/pool/slots.ts`.
+
+## OAuth prompt types carry the provider's cancellation signal (2026-09-03)
+
+### What changed
+
+- `src/compat/extension-oauth-types.ts`: `OAuthPrompt` and `OAuthSelectPrompt` gained an optional `signal?: AbortSignal`. Purely additive; every existing field and callback signature is untouched.
+
+### Why
+
+- `AuthStorage.handleLegacyPrompt` already hands the richer `AuthPrompt` (which carries `signal`) to `onPrompt` and `onSelect`, but the public callback types didn't say so. Extension and RPC callbacks that park a prompt on a dialog need that signal to notice when the provider gives up on the prompt (`loginAnthropic` aborts its `manual_code` prompt once the browser callback wins the race) and to release the dialog instead of leaving it dangling. The RPC login-prompt bridge for senpi#1316 is the first consumer.
+
+### Why an extension could not handle it
+
+- It's a type on the shared callback contract; an extension can only read what the type declares.
+
+### Expected merge conflict zones
+
+- LOW: the two interface bodies in `compat/extension-oauth-types.ts`.
+
+## Login keeps a provider-owned credential pool intact (2026-09-03)
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` returns the login result untouched when that result already carries a populated `accounts` array. Every other branch is unchanged: an absent or flat `current` still stores the flat credential as-is, and an unnamed flat credential against a pooled `current` still becomes the next generated `login-N` slot with its own material.
+
+### Why
+
+- A provider whose own `login` returns the complete pooled credential (claude-sdk-oauth builds it with `addAccount`) was double-pooled: the shared login path read that result's top-level fields as if they were a flat credential and appended them as a second slot. For claude-sdk-oauth those top-level fields are the managed sentinel, so a second account produced a `login-2` slot holding `claude-sdk-oauth-managed` instead of the newly issued tokens, and selecting that slot failed authentication (senpi#1279).
+
+### Why an extension could not handle it
+
+- `appendLoginSlot` is the shared write step inside `ModelsImpl.login` and the coding-agent auth storage `set`; it runs after the provider's `login` returns and before the credential is persisted, so no provider or extension seam exists between producing the pool and mangling it.
+
+### Expected merge conflict zones
+
+- LOW: the guard at the top of `appendLoginSlot` and its JSDoc in `auth/pool/slots.ts`. The same hunk appears in the open PRs #1304 and #1196.
+
+## Anthropic OAuth advertises Claude Code 2.1.251 (2026-09-02)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `claudeCodeVersion` goes from `2.1.75` to `2.1.251`, so the OAuth client's `user-agent` header is `claude-cli/2.1.251`. Same value as upstream pi commit `96317e50`; the OAuth beta list, `x-app`, and tool naming are untouched.
+
+### Why
+
+- Anthropic now rejects OAuth requests for Claude Fable 5.1 and Opus 5 whose advertised Claude Code version is below 2.1.251 (`error_code: claude_code_version_too_old`), regardless of the Claude Code actually installed on the machine. Tracked as oh-my-openagent#7650. `test/anthropic-oauth-claude-code-version.test.ts` pins the advertised version at or above that minimum.
+
+### Why an extension could not handle it
+
+- The header is assembled inside `createClient()` before `onPayload` hooks run and is not part of the model or request options an extension can override; the SDK client is constructed with it as a default header.
+
+### Expected merge conflict zones
+
+- LOW: the single `claudeCodeVersion` constant near the top of `api/anthropic-messages.ts`; upstream already carries the identical value, so the next pin sync should resolve cleanly.
+
+## senpi-default retry profile is more patient with slow providers (2026-09-02)
+
+### What changed
+
+- `utils/retry-profile/profiles.ts`: `SENPI_DEFAULT_RETRY_PROFILE.turn.maxRetries` goes from 3 to 5. Backoff shapes, the server-hint policies, `providerRequest.maxRetries` (still 0, so no hidden second budget), and `KIMI_CODE_RETRY_PROFILE` are untouched.
+
+### Why
+
+- Opus/Fable-class models with xhigh thinking make transient provider failures more likely per turn, and the previous turn budget was the least tolerant of the harnesses we compared: opencode retries a session 5 times, codex defaults to `stream_max_retries` 5, and oh-my-pi allows up to 10 agent retries. The `providerRequest` server-hint ceiling was deliberately left alone: `planRetryDelay` has no production caller today, so changing that constant would have been an inert edit dressed up as a fix.
+
+### Why an extension could not handle it
+
+- Shipped profile constants are read by the provider-request and turn retry planners before any extension seam exists; an extension can only override them per provider through settings, not change what every session inherits.
+
+### Expected merge conflict zones
+
+- LOW: the two constant lines inside `SENPI_DEFAULT_RETRY_PROFILE` in `utils/retry-profile/profiles.ts`.
+
+## Actionable provider stream-start timeout guidance (2026-09-02)
+
+### What changed
+
+- `isProviderTimeoutError` accepts the actionable guidance suffix now appended to stream-start timeout messages while preserving strict matching of unrelated timeout text.
+
+### Why
+
+- Adding the setting name to a provider timeout must not disable retry classification.
+
+### Why an extension could not handle it
+
+- Timeout classification is centralized in the AI package and runs before coding-agent retry policy.
+
+### Expected merge conflict zones
+
+- LOW: `utils/retry.ts` provider timeout pattern.
+
+## 2026-09-02 - Anthropic OAuth callback bind fallback
+
+### What changed
+
+- The login abort handler now aborts the manual `manual_code` prompt as well as the callback wait, so cancelling a manual-only login (callback port unavailable) settles instead of leaving `loginAnthropic` pending.
+- `auth/oauth/anthropic.ts`: Anthropic OAuth now falls back to manual redirect URL entry when local callback port 53692 cannot bind with EACCES, EADDRINUSE, or EPERM, while preserving the registered localhost redirect URI.
+
+### Why
+
+- Fixed or restricted callback ports can be unavailable on Windows, sandboxed hosts, or when another senpi/Claude process is already listening, so login must not fail before presenting its existing manual-code path.
+
+### Why an extension could not handle it
+
+- The callback listener is created and owned inside the Anthropic provider OAuth implementation before auth interaction events are emitted; an extension cannot intercept its bind failure or preserve the provider's registered redirect URI.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/auth/oauth/anthropic.ts` callback listener startup, auth URL instructions, and cleanup.
+- LOW: `test/anthropic-oauth.test.ts` OAuth interaction coverage.
+
+## Cursor conversation cache eviction cannot break a live request (2026-08-31)
+
+### What changed
+
+- `api/cursor-agent.ts`: `ConversationBlobStore` is now a true LRU (reads promote recency, not only writes) and pins every blob the in-flight request stores or the server reads back, for the lifetime of that request's stream. The byte cap evicts unpinned blobs only; if the pinned working set alone exceeds the cap the store stays temporarily over budget and logs once, and trims back when the stream settles.
+- `api/cursor-agent.ts`: the conversation count cap is enforced per owning session (the `conversationId -> sessionId` map added in this pass) instead of over the process-global maps, and never evicts a conversation with a request in flight.
+- `api/cursor-agent.ts`: a process-global blob ceiling (`PI_CURSOR_CONVERSATION_TOTAL_BLOB_LIMIT_BYTES`, default 1 GiB) bounds every cached conversation together, shedding cold conversations before live ones and never dropping a pinned blob.
+
+### Why
+
+- Cursor resolves history blobs by id mid-turn (`getBlobArgs`); the client answers a miss with an unset `blobData`. Immediate byte-cap eviction could drop a blob the request being built or streamed still references, so a long history silently lost context or failed the turn.
+- The count cap iterated the process-global maps, so session B's 65th conversation could forget session A's live conversation key; A's retry/resume then re-entered through the same global map and fell back to fresh empty state.
+- Per-conversation caps multiply (count cap x byte cap per session), so the only number that actually bounds the process is a shared ceiling.
+
+### Why an extension could not handle it
+
+- The conversation state cache, blob stores and their eviction are module-local to the Cursor adapter; no extension seam can observe a blob id the wire protocol resolves mid-stream.
+
+### Expected merge conflict zones
+
+- MEDIUM: `ConversationBlobStore` and the cache-limit helpers in `api/cursor-agent.ts`.
+- LOW: the per-attempt live/pin retain-release pair in the `stream` retry loop.
+
+## Session-scoped provider state hygiene (2026-08-31)
+
+### What changed
+
+- `api/anthropic-messages.ts`: the learned unsigned-thinking text-replay fallback set is cleared for a session when its session resources are cleaned up (registered on the shared session-resource cleanup seam).
+- `api/openai-responses.ts`: the session-websocket idle expiry re-arms itself when it fires while the socket is busy, and drops a busy entry whose socket already died, so a lost release can no longer pin a cached websocket forever.
+
+### Why
+
+- Both collections previously lived for process lifetime once touched: long-lived multi-session hosts accumulated one fallback key per (session, base URL, model) that ever hit the invalid-signature retry, and a cached websocket whose release path never ran stayed pinned forever. Part of the #1024 memory-hygiene pass.
+
+### Why an extension could not handle it
+
+- The fallback set and the websocket session cache are module-local state inside the provider adapters; no extension seam can reach or dispose them.
+
+### Expected merge conflict zones
+
+- LOW: the fallback set declaration and its cleanup registration in `api/anthropic-messages.ts`.
+- LOW: the `scheduleSessionWebSocketExpiry` timer body in `api/openai-responses.ts`.
+
+## Stop replaying the Anthropic server-side fallback marker (2026-08-30)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES` no longer contains `fallback`. The stored marker (`providerNative` subtype `fallback`) remains session audit metadata and still drives declined-attempt pruning (`lastAnthropicFallbackBoundary`, `collectDiscardedFallbackToolCallIds`), but it is never serialized into request params.
+- `packages/ai/test/anthropic-provider-native-replay.test.ts`: new regression test `never replays the fallback marker itself into request content`; the three existing fallback replay expectations updated to the marker-absent contract.
+
+### Why
+
+- Production 400 loop (omo session 01a050f8, 2026-08-30): after a client retry-fallback switched the session to the model that had served a server-side fallback (`claude-opus-4-8`), `isSameAnthropicModel` became true and the raw `{type:"fallback"}` marker replayed verbatim as `messages.253.content.0`. The Messages API rejected every subsequent request with `Input tag 'fallback' found using 'type' does not match any of the expected tags`, wedging the session permanently.
+- Live wire probes (2026-08-30, ccapi): a marker-bearing assistant input 400s with exactly that error on routes without the `server-side-fallback` beta and is merely tolerated on beta routes, while the marker-stripped shape is accepted on both. Replaying the marker buys nothing and breaks every cross-route/model-switch replay, so the marker is stored-only now.
+
+### Why an extension could not handle it
+
+- The replay set is provider serialization internals in `convertMessages`; no extension hook exists between stored assistant content and the Anthropic payload.
+
+### Expected merge conflict zones
+
+- LOW: the `REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES` literal and its comment block.
+- LOW: expectation arrays in `anthropic-provider-native-replay.test.ts`.
+
 ## Measure Cursor history at the wire representation (2026-08-29)
 
 ### What changed

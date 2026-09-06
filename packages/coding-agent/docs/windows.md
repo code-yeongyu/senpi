@@ -30,7 +30,7 @@ Or enable both while comparing behavior:
 
 The `!` and `!!` editor commands still use Bash.
 
-With `experimental.bashEvalOnly` enabled, both `bash` and `powershell` run only inside eval cells; see [Settings](settings.md#tools).
+Whenever the `eval` tool is available, both `bash` and `powershell` run only inside eval cells; see [Settings](settings.md#tools).
 
 ## Custom Bash Path
 

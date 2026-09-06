@@ -46,7 +46,8 @@ describe("AgentHarness tools postMutate", () => {
 		expect(calls).toHaveLength(1);
 		expect(calls[0]?.path).toBe(getOrThrow(await env.absolutePath("nested/file.txt")));
 		expect(calls[0]?.tool).toBe("write");
-		expect(textOutput(result)).toBe("Successfully wrote 5 bytes to nested/file.txt\nformatted with biome");
+		// Upstream sync: write success text is `Successfully wrote to <path>` (fork details kept).
+		expect(textOutput(result)).toBe("Successfully wrote to nested/file.txt\nformatted with biome");
 	});
 
 	it("observes the freshly written bytes from inside postMutate", async () => {
@@ -183,9 +184,8 @@ describe("AgentHarness tools postMutate", () => {
 		);
 
 		expect(getOrThrow(await env.readTextFile("file.txt"))).toBe("payload");
-		expect(textOutput(result)).toBe(
-			"Successfully wrote 7 bytes to file.txt\npostMutate hook failed: formatter exploded",
-		);
+		// Upstream sync: write success text is `Successfully wrote to <path>` (fork details kept).
+		expect(textOutput(result)).toBe("Successfully wrote to file.txt\npostMutate hook failed: formatter exploded");
 	});
 
 	it("surfaces a throwing postMutate as a warning note without losing the landed edit", async () => {
@@ -331,8 +331,9 @@ describe("AgentHarness tools postMutate", () => {
 			{ env },
 		);
 
+		// Upstream sync: write success text is `Successfully wrote to <path>` (fork details kept).
 		expect(writeResult).toEqual({
-			content: [{ type: "text", text: "Successfully wrote 5 bytes to file.txt" }],
+			content: [{ type: "text", text: "Successfully wrote to file.txt" }],
 			details: undefined,
 		});
 		expect(textOutput(editResult)).toBe("Successfully replaced 1 block(s) in edit.txt.");

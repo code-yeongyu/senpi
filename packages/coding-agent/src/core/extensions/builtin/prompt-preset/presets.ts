@@ -1,6 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.ts";
 import { buildClaudeFable5Prompt } from "./claude-fable-5.ts";
+import { buildClaudeFable51Prompt } from "./claude-fable-5-1.ts";
 import { buildClaudeOpus45Prompt } from "./claude-opus-4-5.ts";
 import { buildClaudeOpus46Prompt } from "./claude-opus-4-6.ts";
 import { buildClaudeOpus47Prompt } from "./claude-opus-4-7.ts";
@@ -17,6 +18,7 @@ import { buildGpt54Prompt } from "./gpt-5.4.ts";
 import { buildGpt55Prompt } from "./gpt-5.5.ts";
 import { buildGpt56Prompt } from "./gpt-5.6.ts";
 import { buildGpt5Prompt } from "./gpt-5.ts";
+import { buildGpt6AstraPrompt } from "./gpt-6-astra.ts";
 import { buildGrok45Prompt } from "./grok-4.5.ts";
 import { buildGrok46Prompt } from "./grok-4.6.ts";
 import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
@@ -39,6 +41,19 @@ export interface ResolvedPromptPreset {
 
 function normalizeModelId(modelId: string): string {
 	return modelId.toLowerCase().replace(/\s+/g, "-");
+}
+
+// GPT-6 Astra id shapes verified against the OpenAI model page, codex's
+// models.json, and Bedrock's catalog (2026-09-04): gpt-6-astra, gpt-6-astra-fast,
+// dated snapshots, openai/gpt-6-astra, openai.gpt-6-astra, global.openai.gpt-6-astra,
+// and the display name "GPT-6 Astra". Bare "gpt-6" and "astra" stay out: the guide
+// names no other GPT-6 model, and a future sibling deserves its own preset.
+function hasGpt6AstraSignal(value: string): boolean {
+	return /(?:^|[/@:._-])gpt[._-]?6[._-]astra(?:$|[/@:._-])/.test(normalizeModelId(value));
+}
+
+function isGpt6AstraModel(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGpt6AstraSignal(model.id) || (model.name !== undefined && hasGpt6AstraSignal(model.name));
 }
 
 type Gpt5Version = "gpt-5.2" | "gpt-5.3-codex" | "gpt-5.4" | "gpt-5.5" | "gpt-5.6";
@@ -154,8 +169,20 @@ function isGrok46Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGrok46Signal(model.id) || (model.name !== undefined && hasGrok46Signal(model.name));
 }
 
+// Claude Mythos shares each Fable release's prompting guide ("Prompting Claude
+// Fable 5.1" covers Fable 5.1 and Mythos 5.1; "Prompting Claude Fable 5"
+// covers Fable 5 and Mythos 5), so Mythos ids route to the matching Fable preset.
+const CLAUDE_FABLE_51_MARKERS = ["fable-5-1", "fable-5.1", "mythos-5-1", "mythos-5.1"] as const;
+const CLAUDE_FABLE_5_MARKERS = ["fable-5", "mythos-5"] as const;
+
+function isClaudeFable51Model(modelId: string): boolean {
+	const normalized = normalizeModelId(modelId);
+	return CLAUDE_FABLE_51_MARKERS.some((marker) => normalized.includes(marker));
+}
+
 function isClaudeFable5Model(modelId: string): boolean {
-	return normalizeModelId(modelId).includes("fable-5");
+	const normalized = normalizeModelId(modelId);
+	return CLAUDE_FABLE_5_MARKERS.some((marker) => normalized.includes(marker));
 }
 
 function isClaudeOpus5Model(modelId: string): boolean {
@@ -194,6 +221,9 @@ export function resolvePresetName(
 		return modelPromptPreset;
 	}
 
+	if (isGpt6AstraModel(model)) {
+		return "gpt-6-astra";
+	}
 	const gpt5Version = extractGpt5Version(model.id);
 	if (gpt5Version) {
 		return gpt5Version;
@@ -206,6 +236,10 @@ export function resolvePresetName(
 	}
 	if (isKimiK26Model(model)) {
 		return "kimi-k2-6";
+	}
+	// The dotted release must resolve before the generic fable-5 substring.
+	if (isClaudeFable51Model(model.id)) {
+		return "claude-fable-5-1";
 	}
 	if (isClaudeFable5Model(model.id)) {
 		return "claude-fable-5";
@@ -244,6 +278,8 @@ export function resolvePresetName(
 
 function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPromptOptions): ResolvedPromptPreset {
 	switch (name) {
+		case "gpt-6-astra":
+			return { name, prompt: buildGpt6AstraPrompt(options) };
 		case "gpt-5.6":
 			return { name, prompt: buildGpt56Prompt(options) };
 		case "gpt-5.5":
@@ -276,6 +312,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildKimiK27Prompt(options) };
 		case "kimi-k2-6":
 			return { name, prompt: buildKimiK26Prompt(options) };
+		case "claude-fable-5-1":
+			return { name, prompt: buildClaudeFable51Prompt(options) };
 		case "claude-fable-5":
 			return { name, prompt: buildClaudeFable5Prompt(options) };
 		case "claude-opus-5":

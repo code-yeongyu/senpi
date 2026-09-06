@@ -64,10 +64,12 @@ describe("Anthropic adjacent user and toolResult coalescence", () => {
 	it("coalesces a user message immediately following a toolResult into a single alternating user turn", async () => {
 		let captured: WirePayload | undefined;
 		const client = {
-			messages: {
-				create: (params: unknown) => {
-					captured = params as WirePayload;
-					return { asResponse: async () => createSseResponse() };
+			beta: {
+				messages: {
+					create: (params: unknown) => {
+						captured = params as WirePayload;
+						return { asResponse: async () => createSseResponse() };
+					},
 				},
 			},
 		} as Anthropic;
@@ -111,10 +113,12 @@ describe("Anthropic adjacent user and toolResult coalescence", () => {
 	it("preserves standalone string user messages as string content", async () => {
 		let captured: WirePayload | undefined;
 		const client = {
-			messages: {
-				create: (params: unknown) => {
-					captured = params as WirePayload;
-					return { asResponse: async () => createSseResponse() };
+			beta: {
+				messages: {
+					create: (params: unknown) => {
+						captured = params as WirePayload;
+						return { asResponse: async () => createSseResponse() };
+					},
 				},
 			},
 		} as Anthropic;
@@ -136,10 +140,12 @@ describe("Anthropic adjacent user and toolResult coalescence", () => {
 	it("coalesces consecutive user text messages into a single user turn", async () => {
 		let captured: WirePayload | undefined;
 		const client = {
-			messages: {
-				create: (params: unknown) => {
-					captured = params as WirePayload;
-					return { asResponse: async () => createSseResponse() };
+			beta: {
+				messages: {
+					create: (params: unknown) => {
+						captured = params as WirePayload;
+						return { asResponse: async () => createSseResponse() };
+					},
 				},
 			},
 		} as Anthropic;

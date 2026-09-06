@@ -35,6 +35,6 @@ Permission-system coverage: parsers, evaluation, presets, config merge/expand, s
 ## COMMANDS
 
 ```bash
-npm --prefix packages/coding-agent test -- --run test/permission/<file>.test.ts
-npm --prefix packages/coding-agent test -- --run test/permission
+bun run --cwd packages/coding-agent test --run test/permission/<file>.test.ts
+bun run --cwd packages/coding-agent test --run test/permission
 ```

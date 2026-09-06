@@ -154,12 +154,12 @@ describe("Anthropic provider-native replay", () => {
 		]);
 	});
 
-	it("keeps the served attempt and the fallback marker, dropping the discarded thinking before it", async () => {
+	it("keeps the served attempt, dropping the discarded thinking and the fallback marker", async () => {
 		// Server-side fallback (server-side-fallback-2026-06-01 beta) emits a
 		// `fallback` content block mid-response. Blocks *before* the marker belong
-		// to the declined attempt; per the replay contract they must be omitted
-		// (the marker onward is the serving model's output and replays verbatim).
-		// The marker itself is kept as an audit block.
+		// to the declined attempt and must be omitted; blocks after it are the
+		// serving model's output and replay verbatim. The marker itself is
+		// stored-only audit metadata: the API rejects `fallback` as an input tag.
 		const model = getModel("anthropic", "claude-fable-5");
 		const fallbackBlock = {
 			type: "fallback",
@@ -192,7 +192,6 @@ describe("Anthropic provider-native replay", () => {
 
 		const assistantPayload = payload.messages?.find((message) => message.role === "assistant");
 		expect(assistantPayload?.content).toEqual([
-			fallbackBlock,
 			{ type: "thinking", thinking: "after fallback", signature: "sig_2" },
 			{ type: "tool_use", id: "toolu_1", name: "read", input: { path: "README.md" } },
 		]);
@@ -247,7 +246,6 @@ describe("Anthropic provider-native replay", () => {
 
 		const assistantPayload = payload.messages?.find((message) => message.role === "assistant");
 		expect(assistantPayload?.content).toEqual([
-			fallbackBlock,
 			{ type: "thinking", thinking: "served", signature: "sig_post" },
 			{ type: "tool_use", id: "toolu_post", name: "read", input: { path: "README.md" } },
 		]);
@@ -328,7 +326,6 @@ describe("Anthropic provider-native replay", () => {
 					},
 				],
 			},
-			fallbackBlock,
 			{ type: "thinking", thinking: "served", signature: "sig_post" },
 			{ type: "tool_use", id: "toolu_post", name: "read", input: { path: "README.md" } },
 		]);
@@ -352,6 +349,49 @@ describe("Anthropic provider-native replay", () => {
 
 		const assistantPayload = payload.messages?.find((message) => message.role === "assistant");
 		expect(assistantPayload?.content).toEqual([{ type: "text", text: "kept" }]);
+	});
+
+	it("never replays the fallback marker itself into request content", async () => {
+		// Production 400 (omo session 01a050f8, "messages.253.content.0: Input tag
+		// 'fallback' found using 'type' does not match any of the expected tags"):
+		// the Messages API rejects `fallback` as an *input* content tag even on a
+		// same-model request. The marker is response metadata — it stays stored to
+		// mark the declined-attempt boundary but must never serialize into params.
+		const model = getModel("anthropic", "claude-fable-5");
+		const fallbackBlock = {
+			type: "fallback",
+			from: { model: "claude-fable-5" },
+			to: { model: "claude-opus-4-8" },
+			trigger: { type: "refusal", category: "reasoning_extraction" },
+		};
+		const assistant = assistantMessage(
+			[
+				{ type: "providerNative", subtype: "fallback", raw: fallbackBlock },
+				{ type: "text", text: "served" },
+				{ type: "toolCall", id: "toolu_post", name: "read", arguments: { path: "README.md" } },
+			],
+			{ stopReason: "toolUse", model: "claude-fable-5" },
+		);
+
+		const payload = await capturePayload(model, [
+			{ role: "user", content: "hello", timestamp: 1 },
+			assistant,
+			{
+				role: "toolResult",
+				toolCallId: "toolu_post",
+				toolName: "read",
+				content: [{ type: "text", text: "out" }],
+				isError: false,
+				timestamp: 2,
+			},
+		]);
+
+		const assistantPayload = payload.messages?.find((message) => message.role === "assistant");
+		expect(assistantPayload?.content).toEqual([
+			{ type: "text", text: "served" },
+			{ type: "tool_use", id: "toolu_post", name: "read", input: { path: "README.md" } },
+		]);
+		expect(JSON.stringify(payload)).not.toContain('"type":"fallback"');
 	});
 
 	it("drops fallback blocks from a different model's assistant message", async () => {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
+import { __setAnthropicOAuthNodeApisForTests, anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
 import type { AuthEvent, AuthPrompt } from "../src/auth/types.ts";
 
 const neverAbortedSignal = new AbortController().signal;
@@ -36,6 +36,105 @@ function getJsonBody(init?: RequestInit): Record<string, string> {
 describe.sequential("Anthropic OAuth", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
+		__setAnthropicOAuthNodeApisForTests(null);
+	});
+
+	function installFailingListen(code: string): { close: ReturnType<typeof vi.fn> } {
+		const error = Object.assign(new Error(`listen ${code}: 127.0.0.1:53692`), { code });
+		const listeners = new Map<string, (...args: unknown[]) => void>();
+		const close = vi.fn();
+		__setAnthropicOAuthNodeApisForTests({
+			createServer: (() => {
+				const server = {
+					on: (event: string, listener: (...args: unknown[]) => void) => {
+						listeners.set(event, listener);
+						return server;
+					},
+					listen: () => {
+						queueMicrotask(() => listeners.get("error")?.(error));
+						return server;
+					},
+					close,
+				};
+				return server;
+			}) as never,
+		});
+		return { close };
+	}
+
+	for (const code of ["EACCES", "EADDRINUSE", "EPERM"]) {
+		it(`falls back to manual redirect URL entry when the callback port fails with ${code}`, async () => {
+			const { close } = installFailingListen(code);
+			const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit): Promise<Response> => {
+				const body = getJsonBody(init);
+				expect(body.redirect_uri).toBe("http://localhost:53692/callback");
+				expect(body.code).toBe("manual-code");
+				return jsonResponse({ access_token: "access", refresh_token: "refresh", expires_in: 3600 });
+			});
+			vi.stubGlobal("fetch", fetchMock);
+			const events: AuthEvent[] = [];
+			const credential = await anthropicOAuth.login({
+				signal: neverAbortedSignal,
+				notify: (event) => events.push(event),
+				prompt: async (prompt) => {
+					if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
+					const authUrl = events.find((event) => event.type === "auth_url");
+					if (authUrl?.type !== "auth_url") throw new Error("Missing auth URL");
+					const url = new URL(authUrl.url);
+					return `http://localhost:53692/callback?code=manual-code&state=${url.searchParams.get("state")}`;
+				},
+			});
+			const authUrl = events.find((event) => event.type === "auth_url");
+			expect(authUrl?.type).toBe("auth_url");
+			const instructions = authUrl?.type === "auth_url" ? authUrl.instructions : "";
+			expect(instructions).toContain("53692");
+			expect(instructions).toContain(code);
+			expect(instructions).toMatch(/redirect URL/i);
+			expect(credential.access).toBe("access");
+			expect(close).not.toHaveBeenCalled();
+			expect(fetchMock).toHaveBeenCalledOnce();
+		});
+	}
+
+	it("aborts a manual-only login while the manual prompt is still open", async () => {
+		installFailingListen("EADDRINUSE");
+		const controller = new AbortController();
+		let promptSignal: AbortSignal | undefined;
+		// Resolve the moment the login opens its manual prompt, so the abort below is
+		// ordered after the prompt exists instead of racing a macrotask tick.
+		let promptOpened!: () => void;
+		const opened = new Promise<void>((resolve) => {
+			promptOpened = resolve;
+		});
+		const login = anthropicOAuth.login({
+			signal: controller.signal,
+			notify: vi.fn(),
+			prompt: (prompt) =>
+				new Promise<string>((_resolve, reject) => {
+					promptSignal = prompt.signal;
+					prompt.signal?.addEventListener("abort", () => reject(new Error("prompt aborted")), { once: true });
+					promptOpened();
+				}),
+		});
+		const settled = login.then(
+			() => "resolved",
+			(error: unknown) => (error instanceof Error ? error.message : String(error)),
+		);
+		await opened;
+		controller.abort();
+		expect(await settled).toBe("prompt aborted");
+		expect(promptSignal?.aborted).toBe(true);
+	});
+
+	it("rejects non-bind callback errors with the callback host and port", async () => {
+		installFailingListen("EUNKNOWN");
+		await expect(
+			anthropicOAuth.login({
+				signal: neverAbortedSignal,
+				notify: vi.fn(),
+				prompt: vi.fn(),
+			}),
+		).rejects.toThrow(/127\.0\.0\.1:53692/);
 	});
 
 	it("keeps the localhost redirect_uri for manual callback login", async () => {

@@ -1,5 +1,211 @@
 # Builtin extensions changes
 
+## Preserve explicit fast variants at session start (2026-09-05)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: when session startup receives a compatible `-fast` catalog variant, it still swaps to the base model but preserves the selected thinking level with a session-scoped setter and keeps fast mode enabled. Remembered tier derivation remains unchanged for non-`-fast` starts.
+
+### Why
+
+- Selecting a `-fast` model at startup previously lost both the requested thinking level and the priority service tier when the extension normalized the variant to its base model.
+
+### Why an extension could not handle it
+
+- The startup model normalization and session fast-mode state are owned by this built-in extension's `session_start` handler.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/service-tier.ts` and its focused regression tests.
+
+## Recommend GPT-6 Astra ahead of GPT-5.6 Sol (2026-09-05)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: insert `["gpt-6-astra", "high"]` immediately before `["gpt-5.6-sol", "medium"]` in `RECOMMENDED_DEFAULT_MODELS`. Astra is the new OpenAI flagship recommendation; Sol stays as the fallback. `canonicalModelId` is unchanged, so `gpt-6-astra-fast` still strips to `gpt-6-astra`.
+
+### Why
+
+- Sessions that land on an implicit OpenAI default should prefer GPT-6 Astra at thinking level `high` when `openai-codex/gpt-6-astra` (or a `-fast` variant) is authenticated, instead of stopping at GPT-5.6 Sol/`medium`. `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts` is the shipped priority list for that auto-switch.
+
+### Why an extension could not handle it
+
+- The shipped default lives in `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`. A user extension or `settings.recommendedModels` override can change one machine, not the binary default every session gets without an override.
+
+### Expected merge conflict zones
+
+- LOW in `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts` around `RECOMMENDED_DEFAULT_MODELS`. Keep `["gpt-6-astra", "high"]` immediately before `["gpt-5.6-sol", "medium"]`; do not reorder the other entries.
+
+## Hooks trust-state reads fail open when the lock directory is not writable (2026-09-04)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/trust-storage.ts`: `FileHookStateStorage.read()` still
+  parses the on-disk snapshot lock-free. When that parse is empty or malformed and lock acquisition then fails with
+  `EPERM`, `EACCES`, or `EROFS`, the reader now returns the same fail-open empty state already used for `ELOCKED`.
+  `update()` is unchanged and still throws on permission errors.
+
+### Why
+
+- Sandboxed or read-only children (macOS seatbelt `deny file-write*`, bwrap `--ro-bind`, a read-only HOME) cannot
+  mkdir the `hooks-state.json.lock` directory. That error used to propagate out of the tool_call hook and fail every
+  tool call. A reader that cannot take a lock must not break tool execution; writers must still fail closed.
+
+### Why an extension could not handle it
+
+- The hooks builtin owns this persistence path and calls `storage.read()` on session_start, input, tool_call, and
+  tool_result before any user extension can intercept the failure.
+
+### Expected merge conflict zones
+
+- LOW in `packages/coding-agent/src/core/extensions/builtin/hooks/trust-storage.ts` around `FileHookStateStorage.read`'s
+  lock-acquisition catch. Keep `EPERM`/`EACCES`/`EROFS` fail-open on read only; writers must still throw.
+
+## Loop-owned exposure for `schedule_wakeup` (2026-09-04)
+
+### What changed
+
+- `loop/tools.ts`: `registerLoopTools` registers `schedule_wakeup` with `exposure: "search"` and
+  `allowLazyActivation: false`, so the tool is absent from the default active list and from the
+  `tool_search` catalog. `SCHEDULE_WAKEUP_DESCRIPTION` keeps the clamp, idle-range, prompt-cache and
+  fallback-heartbeat guidance and drops the monitor/`bash_output`/`kill_bash`/`task` waiting rule;
+  `tick-prompt.ts`'s dynamic rule is that rule's single home.
+- `loop/index.ts`: `syncScheduleWakeupActivation()` derives the wanted state from scheduler state
+  (some `dynamic` entry whose phase is neither `ended` nor `suspended`) and calls `pi.setActiveTools`
+  only when the active list disagrees. It runs at the top of `refreshStatus()` (every command,
+  timer, tool, restore, and settle transition already ends there) and again in `dispatchTick`
+  before `sendUserMessage`, so the tool is active before the tick turn reads its tool list.
+- Tests: `loop-wakeup-tool.test.ts` pins the exposure contract and the trimmed description;
+  `loop-extension.test.ts` pins activation on dynamic start, one entry across the tick lifecycle,
+  retirement on stop, no activation for fixed loops, and re-activation on session restore;
+  `regressions/3592-no-builtin-tools-keeps-extension-tools.test.ts` no longer lists the tool as
+  resident.
+
+### Why
+
+- The tool is meaningful only inside a dynamic loop (every other call is a typed error), yet it
+  shipped 234 o200k tokens of description on every turn of every session. Search exposure with
+  loop-owned activation removes that cost without changing the loop contract: the dynamic tick
+  prompt still names a callable tool.
+- Lazy activation is disabled because a `tool_search` hit outside a loop would only activate a
+  tool that errors; explicit `setActiveTools` from the loop extension is the one legitimate path.
+
+### Why an extension could not handle it
+
+- `loop` is a builtin registered for every session; the activation decision needs the loop
+  scheduler's own state transitions (create, tick, settle, stop, suspend, restore), which only
+  `loop/index.ts` observes. No public event exposes those transitions to a sibling extension.
+
+### Expected merge conflict zones
+
+- LOW: `loop/index.ts` around `refreshStatus`/`dispatchTick` and the `./tools.ts` import;
+  `loop/tools.ts` description + registration object. Upstream has no `/loop` extension, so the
+  zone is fork-only.
+
+## OpenAI Codex OAuth account command (2026-09-03)
+
+### What changed
+
+- `gpt-account.ts` (new): `/gpt-account` is the dedicated OpenAI Codex OAuth account manager, mirroring the
+  `/claude-account` action set. `add` runs an interactive `openai-codex` oauth login through
+  `ctx.modelRegistry.modelRuntime.login` and emits `emitProviderAccountsChanged` so subscribed clients re-read the pool;
+  `remove <name>`, `pin <name>` and `unpin` go through `credential-accounts.ts` (which emits on its own); the
+  no-argument form lists every stored slot as `name | source | available|blocked` with the pin marked. Only names,
+  sources and health are rendered, never key or token material.
+- `index.ts`: registers `{ id: "gpt-account", factory: gptAccountExtension }` immediately after the provider-neutral
+  `account` builtin, so the Codex lane keeps its own command name the way `claude-sdk-oauth` and `cursor-cli-oauth` do.
+
+### Why
+
+- The provider-neutral `/account` command lists, pins, unpins and removes accounts for any provider but has no `add`, so
+  the only way to put a second `openai-codex` account into the pool was `/login openai-codex` - the shared write path
+  that this same pass fixes for LAB-109. Codex users need the add/remove/pin surface that claude-sdk-oauth users already
+  have from `/claude-account`, and keeping it in its own command leaves the Codex-specific login wiring (interactive
+  prompt relay, auth-url notices) out of the provider-neutral command.
+
+### Why an extension could not handle it
+
+- The command has to exist for every session, which means being present in the `builtinExtensions` registry in
+  `index.ts`; a user extension cannot insert itself there. It also drives `modelRuntime.login` and the coding-agent auth
+  storage pool directly, and that login/persist seam is core state with no extension-visible hook between producing a
+  credential and writing it.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the `builtinExtensions` array in `index.ts`, where every new provider lane adds a line.
+  `gpt-account.ts` itself is new and fork-only.
+
+## Shared eval-only routing predicate for prompt surfaces (2026-09-03)
+
+### What changed
+
+- `eval-only-routing.ts` (new): `isEvalOnlyRouting(pi)` returns whether the session registry holds an `eval` tool, which is the session's own condition for withholding `bash`, `powershell`, `workflow` and `monitor` from the model's direct tool list. `terminal/extension.ts` and `bash-timeout/index.ts` both consume it when rendering their system-prompt sections.
+
+### Why
+
+- Two builtins must render the same call form for the same tools, and each re-deriving the condition invites them to drift apart. One predicate keeps both surfaces on the session's actual arming rule, and keeps eval-less child agents (`explore`, `librarian`) on the direct forms they can really call.
+
+### Why an extension could not handle it
+
+- The consumers are builtins whose prompt sections are appended before the agent loop; a user extension cannot rewrite another builtin's section.
+
+### Expected merge conflict zones
+
+- LOW: the module is new and fork-only.
+
+## Hooks trust-state snapshots publish atomically for same-account application state (2026-08-31)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/trust-storage.ts`: complete trust-state snapshots remain on a
+  lock-free read path. After any malformed or empty read, the reader boundedly acquires the exact writer lock and
+  re-reads while excluding writers. It returns a complete exclusive reread, returns fail-closed empty state when the
+  exclusive reread is still malformed, and also fails closed without surfacing `ELOCKED` when a live writer outlasts
+  the bounded acquisition window.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/trust-state-json.ts`: snapshot JSON parsing now reports
+  completeness separately from the fail-closed empty state, allowing storage to retry only incomplete reads without
+  changing trust parsing behavior.
+- Serialized writers create a same-directory temporary snapshot, apply an ordinary same-account destination's numeric
+  POSIX mode (or `0600` for a new file) with `chmod` after creation so process umask cannot mask it, and atomically
+  publish it with rename. Hooks state is internal application state at `<agentDir>/hooks-state.json` or
+  `<cwd>/.senpi/hooks-state.json`; externally reassigned ownership, supplementary-group ownership, named POSIX/macOS
+  ACLs, and custom Windows DACLs are outside this storage contract.
+- Failed publication removes the temporary snapshot. Operation failures remain unchanged when lock release succeeds,
+  release-only failures propagate unchanged, and simultaneous failures become a flat causal `AggregateError`. Existing
+  publication+cleanup entries precede the release failure.
+
+### Why
+
+- Concurrent session startup only reads hook trust state and must not fail because another process temporarily owns the
+  writer lock. New writers publish by rename, but mixed-version deployments still include legacy writers that truncate
+  the destination under the same lock before rewriting it. Sampling lock absence before and after an incomplete read is
+  ABA-vulnerable: a legacy writer can acquire, truncate, publish, and unlock between both samples. Acquiring the writer
+  lock after an incomplete read establishes a writer-excluding revalidation interval, making that ABA harmless without
+  making complete reads contend. Applying the numeric mode after creation keeps ordinary same-account existing modes
+  and the private new-file mode independent of process umask without claiming preservation of external security
+  metadata.
+- Cleanup and lock-release failures must not mask the operation that caused them. Flattened causal ordering preserves
+  the actionable primary failure while retaining every later cleanup failure.
+- Lock acquisition intentionally inherits proper-lockfile's `stale: 10_000` and `update: stale / 2` defaults. An
+  actively refreshed lease gets ten bounded acquisition attempts and then fails closed on `ELOCKED`; stale recovery is
+  proper-lockfile's inherited crash-recovery behavior. A writer suspended beyond that stale threshold has no stronger
+  guarantee in this contract.
+
+### Why an extension could not handle it
+
+- The hooks builtin is the extension that owns this persistence implementation. Atomic filesystem publication, file
+  modes, writer-lock coordination, and failure propagation occur inside its storage boundary before any hook event can
+  run, so no separate extension hook can intercept or replace them safely.
+
+### Expected merge conflict zones
+
+- LOW in `packages/coding-agent/src/core/extensions/builtin/hooks/trust-storage.ts` around `FileHookStateStorage.read`
+  and `FileHookStateStorage.update`, and in `trust-state-json.ts` around snapshot completeness parsing. Upstream edits to
+  hook trust persistence should retain lock-free complete reads, writer-excluding bounded revalidation for incomplete
+  reads, fail-closed `ELOCKED` exhaustion, same-directory atomic publication, ordinary same-account numeric-mode
+  retention/default `0600`, the explicit exclusion of custom ownership/ACL/DACL preservation, and flat causal
+  operation/cleanup/release errors.
+
 ## service-tier: clear the fast indicator when the session leaves the Codex family (2026-08-28)
 
 ### What changed

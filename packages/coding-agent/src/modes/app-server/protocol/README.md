@@ -29,7 +29,7 @@ checkout comparison, set `SENPI_CODEX_CHECKOUT` to a checkout already positioned
 at the pinned commit:
 
 ```bash
-SENPI_CODEX_CHECKOUT=/path/to/codex npm test -- \
+SENPI_CODEX_CHECKOUT=/path/to/codex bun run test -- \
   test/suite/app-server-protocol-pin.test.ts
 ```
 

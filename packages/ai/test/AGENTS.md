@@ -45,10 +45,10 @@ No mirroring of `src/` structure. Filenames encode provider + behavior: `anthrop
 ## COMMANDS
 
 ```bash
-npm --prefix packages/ai test                          # vitest --run, whole package
-npm --prefix packages/ai test -- test/stream.test.ts   # one file
-npm --prefix packages/ai test -- test/anthropic-       # provider group by prefix
-PI_ENABLE_LIVE_API_TESTS=1 npm --prefix packages/ai test   # opt into live suites
+bun run --cwd packages/ai test                          # vitest --run, whole package
+bun run --cwd packages/ai test test/stream.test.ts   # one file
+bun run --cwd packages/ai test test/anthropic-       # provider group by prefix
+PI_ENABLE_LIVE_API_TESTS=1 bun run --cwd packages/ai test   # opt into live suites
 ```
 
 ## HOTSPOTS

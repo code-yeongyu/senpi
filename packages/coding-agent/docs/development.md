@@ -7,8 +7,8 @@ See [AGENTS.md](../../../AGENTS.md) at the monorepo root for fork-specific guide
 ```bash
 git clone https://github.com/code-yeongyu/senpi
 cd senpi
-npm install
-npm run build
+bun install
+bun run build
 ```
 
 Run from source:
@@ -36,7 +36,7 @@ Change `name`, `configDir`, and `bin` field for your fork. Affects CLI banner, c
 
 ## Path Resolution
 
-Three execution modes: npm install, standalone binary (`bun build --compile`), tsx from source.
+Three execution modes: bun install, standalone binary (`bun build --compile`), tsx from source.
 
 **Always use `src/config.ts`** for package assets:
 
@@ -55,17 +55,17 @@ Never use `__dirname` directly for package assets.
 ## Testing
 
 ```bash
-npm test            # Vitest across workspaces (skips live-API; default test runner)
+bun run test            # Vitest across workspaces (skips live-API; default test runner)
 ./pi-test.sh        # Launch the CLI from source via tsx for manual testing (--no-env unsets API keys)
-npm run check       # Biome + tsc + browser-smoke check (pre-commit equivalent)
+bun run check       # Biome + tsc + browser-smoke check (pre-commit equivalent)
 ```
 
-Live-API tests are env-gated vitest tests. Set `PI_ENABLE_LIVE_API_TESTS=1` (or a per-provider flag from `packages/ai/test/live-api-gates.ts`) plus the provider API keys, then run `npm test`.
+Live-API tests are env-gated vitest tests. Set `PI_ENABLE_LIVE_API_TESTS=1` (or a per-provider flag from `packages/ai/test/live-api-gates.ts`) plus the provider API keys, then run `bun run test`.
 
 Run a specific test:
 
 ```bash
-npm test --workspace @code-yeongyu/senpi -- test/specific.test.ts
+bun run test --workspace @code-yeongyu/senpi -- test/specific.test.ts
 ```
 
 ## Project Structure

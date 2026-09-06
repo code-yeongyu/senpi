@@ -1,5 +1,226 @@
 # prompt-preset Extension Changes
 
+## GPT-6 Astra: the subscription rule names `tool.monitor` and the trigger (2026-09-05)
+
+### What changed
+
+- `gpt-6-astra.ts`: `monitor-conditions` no longer opens with "WHEN `monitor` IS AVAILABLE". It reads "EVERY CONDITION YOU WOULD OTHERWISE CHECK ON GETS A SUBSCRIPTION: `tool.monitor({ description, command, filter })` FROM THE EVAL CELL THAT STARTS THE RUN" (a direct `monitor` call only in a session without `eval`), lists the conditions (a build, install, or test run finishing; a CI check or PR turning green; a deploy landing; a log line; a file appearing; another session or machine changing state), says to arm the watch the moment the model's own work starts it *or the user names it, without being asked*, and states the cost once: the subscription is the whole cost of the wait and its matching line wakes you; a cell that awaits the wait holds the js kernel until the cell limit kills it. The steer/read/stop-through-session-tools sentence is unchanged. `async-default` now names the form a wait takes - "A WAIT IS A `tool.monitor` SUBSCRIPTION - NEVER A CELL THAT SITS ON A `--watch` OR A SPAWNED PROCESS, NEVER A CHILD SPAWNED TO WATCH" - next to the three forms it already listed, and "a long eval cell detaches" becomes "a long computation detaches its eval cell". The file header records why the rule names the form and the trigger.
+- `test/suite/prompt-presets-gpt-6-astra.test.ts`: one sentinel - the rendered `## Asynchronous Work` section contains `tool.monitor(` - captured RED on `7c1de741e` and GREEN after the edit. Rule ids, concerns, placement, and the emphasis set are unchanged.
+
+### Why
+
+- Category A per the prompt-engineering skill: since 2026-09-03 `bash` and `monitor` leave the model's direct tool list whenever the session has `eval` (terminal `prompt.ts` renders `tool.monitor(...)` shapes for that branch). A rule conditioned on `monitor` being available therefore evaluated false in every eval session - the only sessions omo runs - and the model behaved as if it had no subscription primitive.
+- Evidence, 17 `gpt-6-astra-fast` sessions of 2026-09-05 (`~/.omo/agent/sessions`): `tool.monitor` appeared in three sessions, each one whose request itself named the CI run or the async work; one orchestrator session polled `task_output` 35 times (status every ~40 s on the same child) and another blocked inside eval cells on `Bun.spawn` + `setTimeout(kill, 580-880 s)` for installs, builds, and test runs. A sandboxed backtest against the real model in the eval-only tool shape (no direct `bash`/`monitor`, real eval description and terminal section, omo task tool, effort high; `/tmp/ulw-astra-monitor/monitor-run.ts`) reproduced it before the edit: 0 of 12 valid first responses across three wait-shaped requests (a 12-minute test run with parallel reading, a CI-then-merge request, and a "CI is running on my push, meanwhile inspect this file" request) registered a subscription - the model read files, opened a todo list, or started the long command with `tool.bash({ run_in_background: true })` and no filter.
+- Category B for `async-default`: it listed background bash, a detached cell, and a background child as equally good asynchronous forms and said nothing about which form a *wait* takes, so once plain polling was ruled out the model awaited `gh pr checks --watch` through `Bun.spawn` inside a cell (2 of 3 multi-round samples on a CI-then-merge request; the cell detaches, which the rule sanctioned) or spawned a `quick` child whose whole brief was "monitor PR #7801 until green, then merge" - the child is a model session polling on its behalf. The wait form is now named in the same sentence as the other forms.
+- Category C for the trigger: the old list named only waits the model had started itself, so state the user mentioned (a CI run on their push) never became a watch. The GPT-5.6 guide's tool-routing rule applies - name the route when it is not obvious; generic "use it efficiently" wording does not produce it - and its decision-rule preference over absolute wording: "every condition you would otherwise check on" is the decision rule, and the bold/caps emphasis on this rule stays by the owner's standing direction.
+- Token cost (o200k, eval-only shape with the terminal section, same tool set): rendered prompt 4392 -> 4565; the async section 289 -> 451 carries the call form, the no-`eval` fallback, the trigger list, the wait-form clause in `async-default`, the in-scope clause for user-named state, and the one-sentence cost; the availability gate and the old four-item list were removed to pay for part of it. Nothing outside the two rules changed.
+- Real-model result (multi-round harness, effort high, 3 samples per cell, old = 7c1de741e preset, new = this change plus the senpi-codemode GPT dialect fix): a 12-minute test run with parallel reading 0/3 -> 3/3 `tool.monitor`; CI-then-merge 1/3 -> 3/3; "CI is running on my push, meanwhile inspect this file" 0/3 -> 2/3, the new samples arming `gh run watch <id> --exit-status` next to the read. With the ultrawork directive attached (2 samples per cell): CI-then-merge 0/2 -> 2/2. Evidence: `/tmp/ulw-astra-monitor/evidence/mr{3,4,5}-*/<request>/summary.json` on mengmotaHost.
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside this builtin's rule data.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `gpt-6-astra.ts` and its test are fork-only.
+
+## GPT-6 Astra: asynchronous is the default form of every call (2026-09-05)
+
+### What changed
+
+- `gpt-6-astra.ts`: `async-handles` becomes `async-default` ("asynchronous is the default form of every call that offers one: child tasks and bash sessions start in the background, and a long eval cell detaches"), and a new plain rule `foreground-exception` names the only two cases for blocking (a call that finishes within a reply and decides the very next call, or an approval-gated/destructive action watched directly) and states that a child task never meets the first test even when its result is the next input. `turn-end-is-wait` gains "and the task continues"; the Intent Gate stop line and the Stop Goal say the *task* is over, not the *turn*. `delegation` now names the form (spawn together, in the background) and adopts the Astra guide's decision rule (whenever running tracks beside your own work saves time or improves the result). The `Gpt6AstraRuleId` union and `GPT6_ASTRA_RULES` follow; the file header records the async section's design.
+- `test/suite/prompt-presets-gpt-6-astra.test.ts`: concern/placement tables carry the two async ids; the async-work concern is pinned to exactly `async-default`, `foreground-exception`, `turn-end-is-wait`, `monitor-conditions` in that order; the emphasis set swaps `async-handles` for `async-default` (the exception rule stays plain).
+
+### Why
+
+- Live backtest against the real `gpt-6-astra` (senpi openai-codex path, rendered through `resolvePreset`, omo's `task` tool attached): with the shipped preset the model spawned a single dependent child with `run_in_background: false` (3/3 samples) or omitted (3/3) and blocked on it, reasoning "I'll have the deep agent investigate ... then I'll run the tests". Diagnosis per the prompt-engineering skill: `RUN LONG WORK ASYNCHRONOUSLY` made async conditional on the model's own reading of "long", so a child whose result is the next input read as "needed now" (misframing); `delegation` said "send them together" without saying where children run (unsatisfiable under a blocking default); and the Stop Goal's "the turn is over the moment all of these hold" contradicted `END YOUR TURN; THE COMPLETION WAKES YOU", which an instruction-follower resolves by never ending the turn. Each defect is fixed at its source; nothing was appended on top.
+- Token cost (o200k, same tool set and omo task guidelines in both renders): 3779 -> 3854 (+75), all of it the exception rule (+~55) and the turn/task fix (+5); "never assume or invent what it will contain" left the async rule because Hard Limits already forbid presenting a pending result as fact.
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside this builtin's rule data.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `gpt-6-astra.ts` and its test are fork-only.
+
+## GPT-6 Astra preset, written from scratch (2026-09-04)
+
+### What changed
+
+- `gpt-6-astra.ts`: new full-core preset (`corePrompt` override, `workstationDialect: "codex"`, shared `buildTestDisciplineSection()` + `buildGptEvalRoutingTuning()` + `buildFileOperationsTuning()`). Sections: Intent Gate, Initiative, Instructions From Files, Working the Task, Asynchronous Work, Verification, Scope and Recovery, Hard Limits, Writing, Reporting, Stop Goal. 28 directives live in `GPT6_ASTRA_RULES` (typed rule data, ids -> concerns) and render exactly once each at their point of use.
+- `presets.ts`: `hasGpt6AstraSignal` / `isGpt6AstraModel` (regex `gpt[._-]?6[._-]astra` with `[/@:._-]` boundaries on id or display name), checked before the GPT-5.x version extractor; `resolvePresetName` branch + `buildPreset` case. Bare `gpt-6` and bare `astra` deliberately do not match.
+- `settings.ts`: `"gpt-6-astra"` joins `PromptPresetName` and `VALID_PRESETS`; `docs/settings.md`, `AGENTS.md`, `builtin/AGENTS.md` list it.
+- `gpt-eval-routing.ts`: the shared GPT bridge dropped its `exec`/`wait` clause. Those Code Mode tools were removed in commit 6bea3a3b4 (`registerRemovedToolHint` in senpi-codemode proves models still reached for them), so the bridge was category-A wrong information for every GPT preset; it now names `eval` only. `prompt-presets-gpt-eval-routing.test.ts` stops registering the removed tools, covers `gpt-6-astra`, and asserts the bridge names no removed tool.
+- `test/suite/prompt-presets-gpt-6-astra.test.ts`: id-shape resolution (bare, `-fast`, dated snapshot, openrouter `openai/`, Bedrock `openai.` and `global.openai.`, `azure/`, display name, underscore id), non-routing of `gpt-5.6-sol` / `gpt-5.6-astra` / `gpt-6` / `gpt-6-mini` / `gpt-6.1` / `astral-v1` / `astra`, distinctness from gpt-5.6, settings force, catalog sweep, rule-data placement table, once-only rendering, emphasis restricted to the eval-cell and async rules, no emoji, and two-way isolation from the GPT-5.6 / GPT-5.5 contracts.
+- `.agents/skills/senpi-qa/scripts/gpt-6-astra-preset-mock-loop.mjs`: Channel 3 proof that the preset reaches the wire (fake OpenAI Responses server, `--print --provider openai --model gpt-6-astra`, asserts the developer message carries the Astra-only sections and none of the GPT-5.6-only ones). Runs under bun.
+
+### Why, section by section (GPT-6 Astra guide, developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra, read 2026-09-04)
+
+- Written from scratch instead of adapting `gpt-5.6.ts`: the guide describes Astra as more capable than 5.6 Sol but with five behavior shifts, and the GPT-5.6 guide's simplify-first doctrine still applies (minimal prompts beat process-heavy ones in OpenAI's evals). Reusing the 5.6 text would have carried its 5.6-specific framing (the Hephaestus "Implement, don't propose" voice, three restatements of the stop contract) into a model that mirrors prompt phrasing.
+- Identity + Intent Gate: the fork's binding declared-stop-condition contract (per-turn routing line) is kept because Astra "persists" and "stays coherent during long tasks" - the same over-run risk the 5.6 guide's mandatory stop rules address. The three intent families (information / judgment / change) are stated once; the guide's "can you", "help me", "I want to" phrasing joins the change family because the guide names those exact surface forms as ones Astra may answer with capability instead of work.
+- Initiative (guide: "Initiative and follow-through"): Astra "is more likely to ask for clarification where earlier models would make assumptions" and "likes to ask non-blocking questions". The section carries the guide's remedies in this fork's words: bias to action with routine gaps filled from context, persistence through failures and long turns, authorization persisting across the session, and approval only as the last step on a concrete reviewable result (the guide's deploy / external write / merge / publish example). "No unsolicited warnings, disclaimers, approval flows, or safety/compliance checklists due to hypothetical risk" is the guide's own sentence, kept because Astra's alignment training makes it the likeliest new failure. Steering semantics (fold in corrections, answer status in a sentence, drop only on cancel or incompatible objective) match senpi's steer/follow-up queues and Astra's documented strength at incorporating new requirements mid-task.
+- Instructions From Files (guide: "Instruction following"): Astra "can be more sensitive to instructions contained in skills and other files, such as AGENTS.md" and "unclear or conflicting guidance in a skill file may cause the model to pause and block work early". The guide prescribes two prompts - user precedence over skills, and naming/quoting the SKILL.md line that caused a pause, distinguishing explicit requirements from interpretation - both rendered here as one rule each. senpi's skills section and project-context section render after the core, so this is the only place the precedence order is stated.
+- Working the Task: eval-first orchestration is this fork's standing execution discipline and, for Astra, matches the model's own prior - codex's Astra template runs `tool_mode: code_mode_only` with `functions.exec` batching independent calls through `Promise.allSettled`. Per the owner's direction the eval-cell rule and the parallel fan-out rule are the only orchestration text rendered in capitals and bold; over-call bias, in-kernel reduction, the stay-direct exceptions, and the new `bun-runtime` rule (read the bun-1-4 skill the eval tool names before the first js cell; Bun builtins before dependencies) stay plain. Delegation is explicit because the guide says Astra "may delegate less often than desired" and recommends telling it when to parallelize through collaboration tools; the legibility rule ("proper spaces between words and/or numbers") is the guide's own observation about inter-agent messages. LSP symbol routing and finest-grain todo transitions are fork standing orders Astra cannot derive.
+- Asynchronous Work: Astra is trained on async tool calling (a `function_call` with `async: true` returns on its original `call_id` later, optionally gated by an app-defined `wait_for_tasks` tool; OpenAI's own example instructs "never invent" the pending result). senpi has no `async: true` wire support and no wait tool: long work runs as PTY bash sessions that auto-detach, detached eval cells, `monitor` subscriptions, and background `task` children whose completions arrive as injected messages when the turn ends or at the next tool boundary. The section maps the trained model onto that: a handle is a pending async call, keep working, never invent the result, end the turn to wait, one peek only for a midpoint decision, and `monitor` for every observable condition. Rendered in bold/caps by owner direction (async execution and monitor use are enforced, not suggested).
+- Verification (guide: "Testing and verification"): Astra "tends to be thorough in testing" and "for smaller tasks this can result in broader tests than the task requires". The fork's tiered scope stays; the guide's calibration ("run tests appropriate to the change ... broaden or repeat testing only when new changes, failures, or unresolved concerns justify it") is rendered as `verification-once`, deduplicated against the shared single-pass-runner rule. Test-first stays a fork order but is scoped to one failing test at the touched seam, and the guide's "do not write tests ... that mirror the implementation" is folded into the same rule so the two never conflict.
+- Scope and Recovery: smallest-correct-change, boundary-only validation, no speculative shims, and the three-materially-different-attempts cap are the fork's contracts (also in 5.6), stated once each.
+- Hard Limits: commit/destructive-git rules, shared-workspace rule, never-suppress, never-invent, plus codex's "do not use tools to send messages to others unless explicit authorization is already provided" - adopted because senpi ships chat, email, and issue-comment tools through skills and an autonomous Astra with persistent authorization must not post on its own.
+- Writing (guide: "Personality and writing style"): Astra "tends toward detailed, formatted responses and may use recurring phrases". The section asks for the prose a careful engineer writes to a colleague (plain words, exact paths/commands/numbers, connected paragraphs, point first, lists only for parallel items, headings only for long multi-part replies), bans the guide's slop list verbatim ("delve", "leverage", "foster", "it's worth noting", "importantly", "genuinely", "Bottom line:", "In short:", "Question? Answer.", "this isn't about X, it's about Y", hyphen-chained descriptors, invented compound labels, canned transitions), and adopts the guide's "state the intended action directly ... avoid contrastive framing" as `direct-statements`. Because Astra mirrors prompt phrasing, the preset itself avoids "X, not Y" constructions and uses "genuinely" nowhere outside the ban list. The fork's tone rules (opinion, no flattery, user's language, no refusals) are stated once.
+- Reporting: progress updates only at plan changes (the 5.6 guide's sparse-update rule; codex's 60-second commentary cadence is a commentary-channel feature senpi lacks); final message = outcome, then evidence ordered for checking rather than chronology (guide: "Present reasoning and evidence in the order that makes the conclusion easiest to assess"); preserve-first when shrinking (5.6 guide: replace brevity with prioritization); review shape; terminal-safe references (`src/auth.ts:42`, fenced code, ASCII, no emoji) instead of codex's clickable-link syntax, which the TUI cannot render; commit messages and PR descriptions described for a reviewer who never saw the conversation (codex's PR-description guidance, kept because it is a real behavior delta).
+- Stop Goal: the four-part stop contract in its shortest form (observable completion, tier checks clean or explained, final message delivered; stop immediately; compaction is automatic so context limits never end a task). The per-result stop check lives in the eval-cell rules; the failure cap in Scope and Recovery.
+- Left out of codex's Astra template, each for a reason: the `commentary`/`final` channel mechanics and 60-second cadence (senpi streams one assistant message), clickable file-link syntax and visualization guidance (terminal renderer), Apps/Plugins/notes/history tools (not senpi surfaces), the multi-agent role prompts (senpi's `task`/team tools carry their own contracts), and the GPT-5.6 Sol template's "old friend" personality block (persona prose with no behavioral consequence, the same reason senpi's 5.6 preset never adopted it).
+
+### Token evidence (o200k via gpt-tokenizer; eval, monitor, grep, glob, read, bash, task, todo selected; empty snippets)
+
+- gpt-6-astra 3047 tokens (14,427 chars) vs gpt-5.6 2867 (after the bridge fix; 2969 before). Per section: identity 40, Intent Gate 191, Initiative 264, Instructions From Files 92, Working the Task ~570, Asynchronous Work ~212, Verification ~400, Scope and Recovery 155, Hard Limits ~190, Writing ~320, Reporting 228, Stop Goal ~120.
+- The +180 over 5.6 is the two sections 5.6 has no counterpart for (Instructions From Files + Asynchronous Work, ~300 tokens, both guide- or harness-mandated) plus the owner-directed bun-runtime rule; every other section was cut against its first draft (Initiative -60, orchestration rules -120, Verification -45, Stop Goal -20, one process line and a duplicated compaction clause removed, the run-once rule merged with the shared single-pass-runner rule). Excluding the two new sections the core is ~2740 tokens, under the 5.6 core.
+
+### Decisions recorded
+
+- `high-reasoning-warning.ts` is intentionally NOT extended to gpt-6-astra (the catalog PR #1334 deferred this). That warning guards the gpt-5.x Sol over-run failure; the Astra guide describes Astra as "our most aligned model yet" that "excels at exercising care, respecting task boundaries", the opposite failure mode, so no warning is warranted. The residual from #1334 is closed by this note, not by a code change.
+- `brand-identity.test.ts` gains gpt-6-astra in its `PRESET_FILES` / `PRESET_BUILDERS` sweep (the guard that no full-core preset hardcodes the product name), following the claude-fable-5-1 precedent.
+
+### Why extension system couldn't handle this differently
+
+- Content-only addition inside this builtin, following the established `corePrompt` preset architecture; the bridge fix is a one-line correction of shared tuning text.
+
+### Known follow-up (out of scope here)
+
+- `file-operations.ts` names `apply_patch` / `read` / `grep` unconditionally, and every GPT preset appends it unconditionally (documented convention in this folder's AGENTS.md). Making that block derive its tool names from the active tool set is a cross-cutting change across all GPT presets and their tests, tracked separately rather than bundled into this preset.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `gpt-6-astra.ts` is fork-only; `presets.ts` / `settings.ts` touch shared lists (adjacent-line conflicts only if upstream adds presets); `gpt-eval-routing.ts` is fork-only.
+
+## Wait-as-subscription stance moves to the eval tool description (2026-09-03)
+
+### What changed
+
+- `execution-tooling.ts`: the `monitor-subscribe` rule, the `async-waiting` concern, and the exported `CODEX_MONITOR_SUBSCRIBE_DIRECTIVE` are deleted. `ExecutionToolingRuleId` keeps the three `code-cell-routing` ids, `ExecutionToolingConcern` narrows to that single concern, `ExecutionToolingRule.directive` drops its optional `codex` member, and `CONCERN_TOOL` maps the one remaining concern to `eval`.
+- `gpt-5.6.ts`: the `monitor-subscribe` entry leaves `GPT56_EXECUTION_RULES`, `buildCodexMonitorClause()` is deleted along with its interpolation in the Tool-orchestration paragraph, and `"monitor-subscribe"` leaves the `Gpt56ExecutionRuleId` union.
+- `test/suite/prompt-presets-execution-tooling.test.ts` and `test/suite/prompt-presets-gpt-5-6.test.ts`: the deleted rule leaves the concern/placement tables, the gating cases assert eval alone, and each file gains a case pinning that the stance is absent here.
+
+### Why
+
+- `monitor` is now withheld from the model's direct tool list whenever the session has an `eval` tool. Both surfaces gated this rule on `monitor` being a *selected* tool, so the anti-polling stance would silently stop rendering in every eval session — exactly the regression the gating contract was written to prevent. Only the eval tool description can teach the `tool.monitor(...)` form the model must actually type, so the stance moves there and is stated once.
+
+### Why an extension could not handle it
+
+- Content-only change inside this builtin's own rule data; the presets are fork-only surfaces.
+
+### Expected merge conflict zones
+
+- LOW: both touched files are fork-only presets, and the change is a deletion.
+
+## Kimi K3 core redesign for excessive proactiveness (2026-09-03)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/kimi-k3.ts`: the core is rebuilt on the Fable 5.1 skeleton (Intent Gate / Scope / Working the Task / Verification / Hard Limits / Style). New homes: a Scope section (the request is the deliverable; a pre-existing bug, performance concern, or unmentioned behavior is a follow-up for the summary unless the requested behavior cannot work without it; a blocked part means finishing every other part and naming what was left out; scratch checks are discarded and tests are committed only where the task asks or the repository keeps tests for that kind of change), a reflect-then-ask ambiguity gate that first does every part not depending on the answer, a bounded failure cap (three materially different attempts, then restore in-flight edits and ask one precise question), one delegation sentence with a propagated stop condition, and evidence-backed reporting. Two anchor phrases are bold: `deliver all of it and only it` and `An invented assumption is a defect.`
+- Deleted as duplicates: the "never speculate" hard limit (the re-read rule owns it), the closing stop-condition restatement and the enumerated past-stop defects, the re-litigation sentence (the confirmation-turn rule owns it), the V1/V2/V3 labels, the quoted filler anti-examples, the "Read wide" sentence (the execution-tooling paragraph owns breadth when `eval` is selected), and Claude-default style traits. The act-bias rule that appeared in four places ("decisive" identity, decide-and-act, act-then-report / do-the-next-step / no-permission-begging, the closing keep-working line) now appears once, scoped to "reversible steps the request already covers".
+- Every fork contract is preserved: README routing line (confirmation turns included), binding declared stop condition, `buildExecutionToolingParagraph` in the kimi dialect, `buildTestDisciplineSection()`, non-refusal, auto-compaction continuation, `workstationDialect: "kimi"`. Measured with the Kimi K3 tokenizer (HF `moonshotai/Kimi-K3` `tiktoken.model`): 1894 -> 1883 tokens for the full render with eval/monitor/grep/glob selected, 1608 -> 1597 bare.
+- `AGENTS.md`: the K3 FILES row and the `corePrompt` exception paragraph describe the new rationale.
+
+### Why
+
+- The previous core was written through the K2.6 lens (kimi.md practitioner overlay: an overthinker that needs act-bias and terminal conditions and must not see prohibitions). Moonshot's own K3 release notes (technical blog, Limitations) describe the opposite failure - "excessive proactiveness": on minor issues or ambiguous user intent K3 "may make unexpected decisions on the user's behalf", and the recommended remedy is "more explicit behavioral constraints in the system prompt or AGENTS.md". Four act-bias statements against one reflect-then-ask clause let the trained prior win; the 2026-08-03 corpus (K3 writing more test files than any other model) is the same failure on the test axis.
+- The Fable 5.1 guide's Delivering-work and changes-and-tests blocks are the documented cure for exactly this behavior on Claude (unrequested additions and committed test code drop with no change in task success); the GPT-5.6 guide's bounded failure cap converts the "minor issue" trigger into a decision with a terminal condition. Both are stated once, in positive DO-framing per the Kimi first-party prompt guide, without all-caps prohibitions.
+- Prompt-growth defense: the additions are paid for by the duplicate deletions above; the rendered prompt is 11 tokens shorter than before.
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside this builtin's K3 core via the builder's existing `corePrompt` override; no core prompt code changed.
+
+### Expected merge conflict zones on next upstream sync
+
+- NONE expected: `kimi-k3.ts` and this tracker are fork-only files.
+
+## Opus 4.x / Opus 5 / GLM 5.x preset parity with the dieted cores (2026-09-03)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-opus-5.ts`: rebuilt on the claude-fable-5-1 skeleton (one home per rule, a `## Scope` section, literal register). The 2026-07-24 core stated the stop contract three times in one paragraph, scope twice, kept quoted anti-example scaffolding, a default-trait list, and a Hard Limit the claim-audit rule already covers; it lacked the Opus 5 guide's outcome-first final-summary shape and the 5.1 blocks (test scope, pre-existing bug as follow-up, blocked-part handling, ask after answer-independent work, surgical edits, claim audit). Every Opus 5 guide behavior is kept once where it binds: bounded single-pass verification, delegation caps fused with keep-working-while-they-run, narration cadence, correction filter, document length, the guide's short conciseness line. Rendered prompt (eval+monitor+task selected): 1,877 -> 1,984 o200k tokens; the growth is the missing documented behaviors, the repetition is gone.
+- `claude-opus-4-8.ts` / `claude-opus-4-7.ts`: tuning keeps only the guide-documented deltas the dieted core lacks (literal scope, tool-over-reasoning, house-style counter) and adds the guide's same-turn subagent fan-out direction (the guide: both models spawn fewer subagents by default and are steerable). 4.8 keeps its interactive-turn delta reduced to the non-duplicate half ("reason over what changed"). The compaction-continuation line and the "do not re-derive facts" clause are dropped: the core now carries both.
+- `claude-opus-4-6.ts`: tuning text removed entirely. Its three lines were the one-plan rule (now core Working the Task), scope literalism (documented for 4.7+, not 4.6), and compaction continuation (now core Style with the mechanism). claude.md documents nothing further for 4.6 that the dieted core lacks, so the preset renders the execution-tooling stance and the claude workstation dialect only. Rendered: 1,945 -> 1,916 tokens.
+- `claude-opus-4-5.ts`: compaction line dropped (same reason); the 4.5 ordered-steps tuning is unchanged.
+- `glm-5.ts` (new) + `glm-5-2.ts` / `glm-5-3.ts`: one shared builder. Removed from the old identical tunings: the lineage preamble ("Opus 4.6-class ... Fable 5 decisiveness ... GPT 5.5 outcome-first" - a model claim with no behavioral consequence), "the routing line is non-optional" (duplicates the Intent Gate), the "ultrawork mode" sentence (a mode the prompt never defines; omo's directive carries its own rules), the unconditional `todo` procedure (names a tool the turn may not have; the tool section carries it when present), "define the outcome ... stopping condition" and "prove completion with evidence" (Intent Gate / Verification). Added: the execution-tooling stance in the claude dialect (GLM is Claude-distilled; it was the only Claude-dialect preset without eval/monitor routing) and `GLM5_TUNING` - two sentences: tool call over deliberation, short act-inspect-verify loops (GLM-5 paper: strongest on repo exploration, weakest on long chained tasks where errors compound). 5.2 and 5.3 render identically: same base model, post-training delta only, no prompt-level guidance distinguishing them. Rendered: 1,776 -> 1,966 tokens, all of it the execution-tooling block.
+- `packages/coding-agent/test/suite/prompt-presets-execution-tooling.test.ts`: glm-5.2/glm-5.3 join `PRESET_DIALECT` (claude); OUT_OF_SCOPE keeps gpt-5.5/grok-4.6/deepseek-v4-flash. `prompt-presets-glm-5-2.test.ts` / `-5-3`: prose pins ("running on GLM", "absolute certainty", "todo") replaced by shipped-copy containment of `GLM5_TUNING`. `prompt-presets-model-switch.test.ts`: the 4.6 switch asserts the 4.7 literalism sentinel is absent instead of pinning removed 4.6 prose.
+- `AGENTS.md`: file table, WHERE TO LOOK, and conventions updated (documented-delta rule, no restating the dieted core).
+
+### Why
+
+- Prompt-engineering audit of every preset against the per-model guides (claude.md, Opus 4.7/4.8, Opus 5 at platform.claude.com, Fable 5/5.1, GPT-5.6, Kimi, Z.ai GLM-5/5.3 docs + the GLM-5 paper) after the universal core diet (#1302) moved the shared contracts into the core. Thin tunings that predated that diet now restated core rules (attention competition, no behavior gain); GLM carried undefined references and a tool name the turn may lack; the Opus 5 core repeated the very rule the guide says compounds with the model's own over-verification and lacked the guide's final-summary contract. The two core additions (conditional delegation, compaction mechanism - see `dynamic-prompt/changes.md`) give those behaviors one home so every thin preset drops its copy.
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside this builtin plus two sentences in the core builder it wraps.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: all preset files are fork-only; `glm-5.ts` is new.
+## Execution tooling stance: eval-default + monitor subscription (2026-09-02)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts`: new shared rule data `EXECUTION_TOOLING_RULES` (ids `eval-default-surface`, `eval-real-code`, `eval-stay-direct` under `code-cell-routing`; `monitor-subscribe` under `async-waiting`) with a claude dialect (tagged `<execution_tooling>` block, uppercase key verbs) and a kimi dialect (bold DO-framing, terminal conditions, no all-caps NEVER), plus the codex wording of the monitor rule. `buildExecutionToolingSection` renders the eval rules only when `eval` is a selected tool and the monitor rule only when `monitor` is, so no preset names a tool the session lacks.
+- Claude cores (`claude-fable-5-1.ts`, `claude-fable-5.ts`, `claude-opus-5.ts`) and `kimi-k3.ts` render it inside Working the Task after the batching paragraph; Opus 4.5-4.8 and Kimi K2.6/K2.7 prepend it to their tuning section; `gpt-5.6.ts` adds `monitor-subscribe` to `GPT56_EXECUTION_RULES` at the orchestration point of use (its eval stance was already maximal).
+- `test/suite/prompt-presets-execution-tooling.test.ts`: rule-data shape, exactly-once rendering per preset/dialect, eval/monitor gating, out-of-scope presets untouched. `prompt-presets-gpt-5-6.test.ts` expects the new rule.
+
+### Why
+
+- The eval tool description teaches cell mechanics and the terminal prompt documents monitor, but neither makes the routing decision: models still default to serial or native-parallel tool calls and to sleep/poll waits. The owner's standing workflow (one code cell per multi-call step with real control flow and maximal parallel batching; every wait as a monitor subscription) needs a system-prompt stance, written per family per the prompt-engineering references.
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside this builtin; the rule-data module follows the `verification.ts` / `GPT56_EXECUTION_RULES` pattern.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: all touched files are fork-only presets; `execution-tooling.ts` is new.
+
+## Mythos routing + Fable 5.1 preset diet (2026-09-02)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/presets.ts`: `CLAUDE_FABLE_51_MARKERS`/`CLAUDE_FABLE_5_MARKERS` gain `mythos-5-1`/`mythos-5.1` and `mythos-5`, so Claude Mythos ids resolve to the matching Fable preset; the 5.1 marker set still resolves before the generic 5 set.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-1.ts`: dieted full-core rewrite. Duplicated rules (scope, stop contract, evidence audit, user's-call-final) stated once each; new `## Scope` section carries the 5.1 "Delivering work" + "changes and tests" blocks with the Fable 5 anti-over-engineering rule; model-default style traits and rationale flourishes removed; Fable 5 delegation guidance and the 5.1 ask-after-independent-work clause added. Rendered static core ~8.1k -> ~6.7k chars (-16.5%) through the real builder.
+- `packages/coding-agent/test/suite/prompt-presets-claude-fable-5-1.test.ts` / `prompt-presets-claude-fable-5.test.ts`: mythos id-shape cases (5.1-before-5 precedence both ways) and a TEST_DISCIPLINE_RULES sweep on the 5.1 preset.
+
+### Why
+
+- Anthropic publishes one prompting guide per Fable/Mythos release pair; Mythos ids previously fell through to the default dynamic prompt. The 5.1 preset carried rules two or three times and restated model-default behavior, which costs attention and tokens on every turn.
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside this builtin; follows the established corePrompt preset architecture.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `claude-fable-5-1.ts` is fork-only; `presets.ts` matcher block may conflict trivially if upstream adds presets.
+
+## Claude Fable 5.1 preset (2026-09-02)
+
+### What changed
+
+- `claude-fable-5-1.ts`: new full-core preset. Baseline is the dieted claude-fable-5 core (the Fable 5.1 guide states existing Fable 5 prompts carry over), plus surgical deltas mapped 1:1 to documented 5.1 behavior differences: scope-is-the-deliverable paragraph in the intent gate, per-response independent-call batching framing, surgical-edit-over-rewrite line, follow-up/test-scope sentences in Verification, bidirectional formatting rule replacing bullets-suppression, literal-phrase (anti-mannered-prose) clause, and progress-note encouragement replacing the shorthand permission.
+- `presets.ts`: `isClaudeFable51Model` matcher (fable-5-1 / fable-5.1), checked before the generic `fable-5` substring so the dotted release is not swallowed; `resolvePresetName` branch + `buildPreset` case.
+- `settings.ts`: `"claude-fable-5-1"` joins `PromptPresetName` and `VALID_PRESETS`.
+- `docs/settings.md`: preset value list gains `claude-fable-5-1`.
+- `test/suite/prompt-presets-claude-fable-5-1.test.ts`: id-shape resolution, fable-5/fable-5-1 precedence both ways, settings force. `prompt-presets-claude-fable-5.test.ts` catalog signal now excludes the 5.1 release; `brand-identity.test.ts` covers the new preset file.
+
+### Why
+
+- Claude Fable 5.1 shipped in the anthropic/bedrock/openrouter/vercel catalogs; without a matcher the generic fable-5 substring routed it to the Fable 5 preset, and the 5.1 guide documents behavior deltas that preset does not address.
+
+### Why extension system couldn't handle this differently
+
+- Content-only addition inside this builtin; follows the established corePrompt preset architecture.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `claude-fable-5-1.ts` is fork-only; `presets.ts`/`settings.ts` touch shared lists — trivial adjacent-line conflicts if upstream adds presets.
+
 ## Grok 4.6 preset (2026-08-17)
 
 ### What changed

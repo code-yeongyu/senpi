@@ -100,6 +100,8 @@ async function createRuntimeHost(options: {
 }): Promise<{
 	runtimeHost: AgentSessionRuntime;
 	cleanup: () => Promise<void>;
+	releaseResponse: () => void;
+	streamStarted: Promise<void>;
 }> {
 	const tempDir = join(tmpdir(), `pi-rpc-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
@@ -108,6 +110,8 @@ async function createRuntimeHost(options: {
 	if (!model) {
 		throw new Error("Test model not found");
 	}
+	const streamStarted = Promise.withResolvers<void>();
+	let releaseResponse = () => {};
 
 	const agent = new Agent({
 		getApiKey: () => "test-key",
@@ -118,11 +122,12 @@ async function createRuntimeHost(options: {
 		},
 		streamFn: (_model, _context, _options) => {
 			const stream = new MockAssistantStream();
+			const finish = () => stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
+			if (options.holdResponse) releaseResponse = finish;
 			queueMicrotask(() => {
 				stream.push({ type: "start", partial: createAssistantMessage("") });
+				streamStarted.resolve();
 				if (!options.holdResponse) {
-					const finish = () =>
-						stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
 					if (options.responseDelayMs !== undefined) setTimeout(finish, options.responseDelayMs);
 					else finish();
 				}
@@ -158,11 +163,11 @@ async function createRuntimeHost(options: {
 
 	return {
 		runtimeHost,
+		releaseResponse: () => releaseResponse(),
+		streamStarted: streamStarted.promise,
 		cleanup: async () => {
 			try {
-				if (session.isStreaming) {
-					await session.abort();
-				}
+				await session.abort();
 			} catch {
 				// ignore test cleanup failures
 			}
@@ -182,15 +187,22 @@ async function startRpcMode(options: {
 }): Promise<{
 	lineHandler: (line: string) => void;
 	cleanup: () => Promise<void>;
+	releaseResponse: () => void;
+	streamStarted: Promise<void>;
 }> {
 	rpcIo.outputLines = [];
 	rpcIo.lineHandler = undefined;
 
-	const { runtimeHost, cleanup } = await createRuntimeHost(options);
+	const { runtimeHost, cleanup, releaseResponse, streamStarted } = await createRuntimeHost(options);
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
-	return { lineHandler: rpcIo.lineHandler!, cleanup };
+	return {
+		lineHandler: rpcIo.lineHandler!,
+		cleanup,
+		releaseResponse: () => releaseResponse(),
+		streamStarted,
+	};
 }
 
 describe("RPC prompt response semantics", () => {
@@ -288,6 +300,40 @@ describe("RPC prompt response semantics", () => {
 				});
 			});
 		} finally {
+			await cleanup();
+		}
+	});
+
+	it("acks abort while the session is still streaming", async () => {
+		const { lineHandler, cleanup, releaseResponse, streamStarted } = await startRpcMode({
+			withAuth: true,
+			holdResponse: true,
+		});
+
+		try {
+			lineHandler(JSON.stringify({ id: "abort-start", type: "prompt", message: "Hold this" }));
+			await vi.waitFor(() => {
+				expect(getPromptResponses(rpcIo.outputLines, "abort-start")).toHaveLength(1);
+			});
+			await streamStarted;
+
+			lineHandler(JSON.stringify({ id: "abort-1", type: "abort" }));
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
+					id: "abort-1",
+					type: "response",
+					command: "abort",
+					success: true,
+				});
+			});
+			const records = parseOutputLines(rpcIo.outputLines);
+			const abortResponseIndex = records.findIndex((record) => record.id === "abort-1");
+			const agentEndIndex = records.findIndex((record) => record.type === "agent_end");
+			expect(abortResponseIndex).toBeGreaterThanOrEqual(0);
+			expect(agentEndIndex).toBeGreaterThanOrEqual(0);
+			expect(abortResponseIndex).toBeLessThan(agentEndIndex);
+		} finally {
+			releaseResponse();
 			await cleanup();
 		}
 	});

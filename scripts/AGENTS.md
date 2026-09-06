@@ -6,7 +6,7 @@ Build, validation, release, publish, lockfile, and environment tooling for the s
 
 All `.mjs` files carry `#!/usr/bin/env node` and run as ES modules; `devenv-setup.sh`/
 `.ps1` locate Node and delegate to `devenv-setup.mjs` (they own no logic). Colocated
-`*.test.mjs` run via root `npm run test:scripts`; root `preinstall` runs
+`*.test.mjs` run via root `bun run test:scripts`; root `preinstall` runs
 `create-bin-stubs.mjs`. `scripts/qa/` render assertions go through `xterm-render.mjs`'s
 cell grid. Prefixes encode role:
 
@@ -33,10 +33,10 @@ cell grid. Prefixes encode role:
 - Lock plumbing: `generate-coding-agent-{shrinkwrap,install-lock}.mjs`,
   `generate-claude-agent-sdk-platform-lock.mjs`, `hydrate-lock-registry-metadata.mjs`,
   `materialize-publish-runtime.mjs`, `npm-pack-json.mjs`, helpers in `install-lock-*.mjs`;
-  root `npm run refresh-lock` chains them.
+  root `bun run refresh-lock` chains them.
 - Gates/catalog: `check-pr-changelog.mjs`, `check-upstream-release.mjs`, `check-pinned-deps.mjs`,
   `check-ts-relative-imports.mjs`, `check-browser-smoke.mjs`, `diff-model-catalog.mjs`,
-  `publish-model-catalog.mjs`, `generate-thinking-capabilities.mjs` — `npm run check` chains them.
+  `publish-model-catalog.mjs`, `generate-thinking-capabilities.mjs` — `bun run check` chains them.
 
 ## changes.md tracker
 
@@ -66,7 +66,7 @@ Staging dirties `packages/coding-agent/package.json`; restore with `git checkout
 - Don't hardcode `npm` as the child process manager. Use the detected PM from `build-all.mjs`.
 - Never hand-edit `publish-deps.lock.json` or `coding-agent-install-lock.json`; regenerate
   with the `generate-*` scripts.
-- Never run `node scripts/publish.mjs` without a prior build; it checks `dist/` exists, not
+- Never run `bun scripts/publish.mjs` without a prior build; it checks `dist/` exists, not
   freshness. Never commit `.env` files or print credentials in build logs.
 - Lock generators refuse unreviewed install scripts; the allowlist is keyed by exact
   `name@version` — bump the allowlist entry together with the dependency.

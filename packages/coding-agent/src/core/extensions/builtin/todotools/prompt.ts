@@ -31,8 +31,7 @@ Example: {"op":"init","list":[{"phase":"Setup","items":["Survey code","Write tes
 - Mark tasks done immediately after finishing, then re-check the list against the newest user message. Complete phases in order.
 - NEVER make a todo call your turn's only tool call — batch it with the real work: init with the first reads/edits, each done/start with the next action. Solo todo turns waste a round trip.
 - Blocked? append a task to the active phase, or drop.
-- Keep task/phase strings stable once introduced.
-- Lost the exact task text? view echoes the list — NEVER guess from memory. done/start/drop take the task's EXACT text — copy it verbatim from the latest todo result, never re-type from memory.
+- Keep task/phase strings stable once introduced. done/start/drop take the task's EXACT text — copy it verbatim from the latest todo result; when it is lost, view echoes the list.
 
 ## When to create a list
 - Task requires 3+ distinct steps
@@ -48,11 +47,9 @@ User hands you a multi-step plan — phased todo, numbered/bulleted checklist, o
 
 export const TASK_MANAGEMENT_SECTION = `
 <Task_Management>
-## Todo Management (CRITICAL)
+## Todo Management
 
-Use the todo tool for multi-step work. It is one operation at a time: initialize a phased list, then start, complete, abandon, append, remove, or view tasks by their exact content. The earliest open task auto-promotes after each completion.
-
-${TODO_TOOL_DESCRIPTION}
+Use the todo tool for multi-step work; its description carries the operations, anatomy, and rules. Mark each item done the moment it finishes and reconcile the list against the newest user message before ending a turn.
 
 ## Evidence
 - File edit: inspect the changed files and diagnostics.

@@ -26,7 +26,7 @@ The runtime example shows how to build a recreate function that closes over proc
 
 ```bash
 cd packages/coding-agent
-npx tsx examples/sdk/01-minimal.ts
+bunx tsx examples/sdk/01-minimal.ts
 ```
 
 ## Quick Reference

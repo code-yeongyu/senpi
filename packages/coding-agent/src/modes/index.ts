@@ -14,11 +14,14 @@ export {
 	PINNED_HOST_CLIENT_CAPABILITIES,
 } from "./rpc/host-ensure.ts";
 export {
+	isTransportGoneError,
 	type ModelInfo,
 	RpcClient,
 	type RpcClientEvent,
+	RpcClientOpenInFlightError,
 	type RpcClientOptions,
 	type RpcEventListener,
+	RpcTransportGoneError,
 } from "./rpc/rpc-client.ts";
 export { runRpcMode } from "./rpc/rpc-mode.ts";
 export type {

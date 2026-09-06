@@ -1,4 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { convertToLlm } from "../../../messages.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
 import {
@@ -6,7 +7,7 @@ import {
 	BINDING_MARKER,
 	type BindingInvalidation,
 	bindingFromStoredBranch,
-	sentHashesFromBranch,
+	storedBindingFromBinding,
 	storedBindingFromEntry,
 } from "./session-binding.ts";
 import { deleteStoredBinding, readStoredBinding, writeStoredBinding } from "./session-binding-store.ts";
@@ -16,7 +17,7 @@ import {
 	isResidentAssistant,
 	isTerminalFailure,
 } from "./session-commit-boundary.ts";
-import { bindingFromEntry, forgetBinding, rememberBinding } from "./session-reattach.ts";
+import { bindingFromEntry, forgetBinding, getBinding, rememberBinding } from "./session-reattach.ts";
 import {
 	closeSession,
 	getSession,
@@ -24,7 +25,7 @@ import {
 	recordPendingFork,
 	switchSessionModel,
 } from "./session-registry.ts";
-import { sentHashesForEntry } from "./session-sync.ts";
+import { sentHashesForEntry, sentMessageHashes, sentMessages } from "./session-sync.ts";
 
 const commitBoundary = new AssistantCommitBoundary();
 
@@ -122,12 +123,14 @@ export function registerSessionRegistry(
 		if (event.message.role !== "assistant") return;
 		const sessionId = ctx.sessionManager.getSessionId();
 		const entry = getSession(sessionId);
-		if (!entry) return;
+		const binding = getBinding(sessionId);
+		const modelId = entry?.modelId ?? binding?.modelId;
+		if (!modelId) return;
 		if (isTerminalFailure(event.message)) {
 			commitBoundary.forget(sessionId);
 			return;
 		}
-		const outcome = commitBoundary.commit(sessionId, event.message, entry.modelId);
+		const outcome = commitBoundary.commit(sessionId, event.message, modelId);
 		if (outcome === "rewritten") {
 			recordPendingFork(sessionId, "assistant_rewritten");
 			await invalidateBinding(pi, ctx, "assistant_rewritten");
@@ -137,20 +140,31 @@ export function registerSessionRegistry(
 		if (outcome !== "clean") return;
 		const sessionFile = ctx.sessionManager.getSessionFile?.();
 		if (!sessionFile || !pi.appendEntry) return;
-		const hashes = sentHashesFromBranch(ctx.sessionManager.getBranch());
-		if (hashes.length === 0) return;
-		pi.appendEntry(BINDING_ENTRY_TYPE, BINDING_MARKER);
-		const markerEntryId = ctx.sessionManager.getLeafId();
-		if (!markerEntryId) return;
-		await writeStoredBinding(
-			sessionFile,
-			storedBindingFromEntry(entry, hashes, {
+		const context = ctx.sessionManager.buildSessionContext();
+		const hashes = sentMessageHashes(sentMessages({ ...context, messages: convertToLlm(context.messages) }));
+		const committedAssistantHash = assistantContentHash(event.message);
+		const recordFor = (markerEntryId: string) => {
+			const anchor = {
 				sessionPath: sessionFile,
 				sessionId,
 				markerEntryId,
-				assistantContentHash: assistantContentHash(event.message),
-			}),
-		);
+				assistantContentHash: committedAssistantHash,
+			};
+			return entry
+				? storedBindingFromEntry(entry, hashes, anchor)
+				: binding
+					? storedBindingFromBinding(binding, hashes, anchor)
+					: undefined;
+		};
+		// Validate before touching the branch: a rejected closed-entry fallback must
+		// not leave a marker-only entry that retires the still-valid older sidecar.
+		if (!recordFor("pending")) return;
+		pi.appendEntry(BINDING_ENTRY_TYPE, BINDING_MARKER);
+		const markerEntryId = ctx.sessionManager.getLeafId();
+		if (!markerEntryId) return;
+		const stored = recordFor(markerEntryId);
+		if (!stored) return;
+		await writeStoredBinding(sessionFile, stored);
 	});
 	pi.on("session_shutdown", (event, ctx) => {
 		closeSession(ctx.sessionManager.getSessionId(), event.reason);

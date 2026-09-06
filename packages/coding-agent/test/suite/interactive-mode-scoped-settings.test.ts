@@ -186,6 +186,7 @@ function createSettingsManagerStub() {
 		getTuiMode: () => "regular",
 		getFullscreenExitOutput: () => "transcript",
 		getFullscreenScrollbar: () => "auto",
+		getFullscreenCopyOnSelect: () => true,
 		getSmoothStreaming: () => false,
 		getSmoothStreamingFps: () => 30,
 		getMermaidRenderingMode: () => "streaming",

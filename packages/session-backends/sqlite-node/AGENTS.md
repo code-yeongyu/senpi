@@ -35,8 +35,8 @@ Package exports only `.` (dist/index.js). Migrations are plain `.sql` files copi
 ## CONVENTIONS
 
 - ESM with `.ts`-suffixed relative imports; `tsc -p tsconfig.build.json` build.
-- `npm run build` runs `prepare-dist.mjs copy-sqlite-migrations` after `tsc`.
-- Tests are Vitest (`npm test` -> `vitest --run`), not the Node test runner.
+- `bun run build` runs `prepare-dist.mjs copy-sqlite-migrations` after `tsc`.
+- Tests are Vitest (`bun run test` -> `vitest --run`), not the Node test runner.
 - Storage functions are named `read/insert/delete/create*` per table module.
 
 ## ANTI-PATTERNS

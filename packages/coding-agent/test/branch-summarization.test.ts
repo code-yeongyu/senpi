@@ -129,9 +129,7 @@ describe("branch summarization custom messages", () => {
 		expect(promptText).toContain("Investigate compaction regression.");
 		expect(promptText).toContain("I am checking branch summarization.");
 		expect(promptText).toContain("Remember the branch-specific observation.");
-		expect(streamSimpleMock.mock.calls[0][2]).toMatchObject({
-			toolChoice: "none",
-		});
+		expect(streamSimpleMock.mock.calls[0][2]).not.toHaveProperty("toolChoice");
 	});
 
 	it("rejects tool calls from branch summaries", async () => {

@@ -55,5 +55,5 @@ gpt-apply-patch/
 ## NOTES
 
 - The `apply_patch` tool exposes `promptSnippet` + `promptGuidelines` that the dynamic prompt picks up; prompt-preset's `file-operations.ts` reinforces "use apply_patch, not python heredoc" for GPT presets.
-- The schema golden lives at `packages/coding-agent/test/goldens/codex-apply-patch-schema.json` (consumed by `test/suite/regressions/codex-apply-patch-schema-parity.test.ts`). Re-extract from upstream with `node scripts/extract-codex-apply-patch-golden.mjs` at the repo root (requires a local `openai/codex` checkout).
+- The schema golden lives at `packages/coding-agent/test/goldens/codex-apply-patch-schema.json` (consumed by `test/suite/regressions/codex-apply-patch-schema-parity.test.ts`). Re-extract from upstream with `bun scripts/extract-codex-apply-patch-golden.mjs` at the repo root (requires a local `openai/codex` checkout).
 - `streaming-parser.ts` powers partial render during model streaming — keep it tolerant of incomplete blocks.

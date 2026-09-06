@@ -1,5 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
+import { omitInlineMedia } from "./media-placeholders.ts";
+import {
+	RENDERED_COMPONENT_RECORD,
+	SessionEventFanout,
+	type SessionEventWriterConnection,
+} from "./session-event-fanout.ts";
+
+export { RENDERED_COMPONENT_RECORD, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 
 type RawWriter = (chunk: string) => void;
 type BackpressureWaiter = () => Promise<void>;
@@ -48,6 +57,12 @@ function compactDelta(value: RpcRecord): { type: CompactDeltaType; contentIndex:
 	};
 }
 
+/** The delta-only form of a compact message_update: cumulative snapshot fields blanked, delta kept. */
+function demoteToDeltaOnly(value: RpcRecord): RpcRecord {
+	const event = value.assistantMessageEvent as Record<string, unknown>;
+	return { ...value, message: null, assistantMessageEvent: { ...event, partial: null } };
+}
+
 function toolUpdateKey(value: RpcRecord): string | undefined {
 	return value.type === "tool_execution_update" && typeof value.toolCallId === "string"
 		? `tool:${value.toolCallId}`
@@ -63,14 +78,9 @@ function toolUpdateKey(value: RpcRecord): string | undefined {
  * by itself: coalescing records from different sessions would obscure the
  * scheduling boundary and violate D9.
  */
-export interface SessionEventWriterConnection {
-	readonly writeRaw: RawWriter;
-	readonly waitForBackpressure: BackpressureWaiter;
-}
-
 export class SessionEventWriter {
 	private readonly queues = new Map<string, RecordQueue>();
-	private readonly connections = new Map<string, SessionEventWriterConnection>();
+	private readonly fanout = new SessionEventFanout();
 	private readonly connectionContext = new AsyncLocalStorage<string>();
 	private readonly controlQueue: RecordQueue = { latestByKey: new Map(), ready: false };
 	private readonly readyQueues: RecordQueue[] = [];
@@ -117,12 +127,44 @@ export class SessionEventWriter {
 		return bytes;
 	}
 
-	registerConnection(id: string, connection: SessionEventWriterConnection): void {
-		this.connections.set(id, connection);
+	registerConnection(
+		id: string,
+		connection: SessionEventWriterConnection,
+		options: { readonly maxQueueBytes?: number } = {},
+	): void {
+		this.fanout.registerConnection(id, connection, options);
 	}
 
 	unregisterConnection(id: string): void {
-		this.connections.delete(id);
+		this.fanout.unregisterConnection(id);
+	}
+
+	attachConnectionToSession(id: string, sessionId: string): void {
+		this.fanout.attachConnectionToSession(id, sessionId);
+	}
+
+	detachConnectionFromSession(id: string, sessionId: string): void {
+		this.fanout.detachConnectionFromSession(id, sessionId);
+	}
+
+	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
+		this.fanout.setConnectionCapabilities(id, capabilities);
+	}
+
+	clearConnectionCapabilities(id: string): void {
+		this.fanout.clearConnectionCapabilities(id);
+	}
+
+	hasRegisteredConnectionCapabilities(id: string): boolean {
+		return this.fanout.hasRegisteredConnectionCapabilities(id);
+	}
+
+	getConnectionCapabilities(id: string): readonly string[] | undefined {
+		return this.fanout.getConnectionCapabilities(id);
+	}
+
+	hasCapableConnection(sessionId: string): boolean {
+		return this.fanout.hasCapableConnection(sessionId);
 	}
 
 	/** Execute a connection's command with its response destination in context. */
@@ -135,16 +177,48 @@ export class SessionEventWriter {
 		return this.connectionContext.getStore();
 	}
 
-	/** Queue a session record. Lifecycle/events are broadcast; responses/UI are targeted. */
+	/** Queue a session record. Content events target connections attached to the session. */
 	enqueue(sessionId: string, value: object): boolean {
 		if (this.sealedSessions.has(sessionId)) return false;
 		const targetId = this.connectionContext.getStore();
 		const record = value as RpcRecord;
-		const isTargeted = record.type === "response" || record.type === "extension_ui_request";
-		const targets = isTargeted ? [targetId] : this.connections.size > 0 ? [...this.connections.keys()] : [undefined];
+		const isTargeted =
+			record.type === "response" ||
+			record.type === "bash_execution_update" ||
+			(record.type === "extension_ui_request" &&
+				["select", "confirm", "input", "editor"].includes(String(record.method)));
+		const tagged = { ...value, sessionId } as RpcRecord;
+		const { [RENDERED_COMPONENT_RECORD]: _rendered, ...wireTagged } = tagged;
+		const line = serializeJsonLine(wireTagged);
+		const targets = this.fanout.targets(
+			sessionId,
+			targetId,
+			isTargeted,
+			record[RENDERED_COMPONENT_RECORD] === true,
+			record.type,
+		);
+		// A record is only walked and re-serialized when a target asked for placeholders;
+		// otherwise this is byte-for-byte today's path, with serializeJsonLine called once.
+		const hasPlaceholderTarget = targets.some((target) =>
+			this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY),
+		);
+		const redacted = hasPlaceholderTarget ? omitInlineMedia(wireTagged) : wireTagged;
+		const placeholderLine = redacted === wireTagged ? undefined : serializeJsonLine(redacted);
+		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine, wireTagged);
 		for (const target of targets) {
-			if (target !== undefined && !this.connections.has(target)) continue;
-			this.appendSessionRecord(sessionId, { ...value, sessionId }, target);
+			if (target !== undefined && !this.fanout.get(target)) continue;
+			const registered = target === undefined ? undefined : this.fanout.get(target);
+			const wants =
+				placeholderLine !== undefined && this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY);
+			if (registered) {
+				const keyed = compactDelta(tagged) !== undefined && tagged.message !== null;
+				registered.actor.enqueue(
+					wants ? placeholderLine : line,
+					keyed ? MESSAGE_KEY : undefined,
+					undefined,
+					keyed ? serializeJsonLine(demoteToDeltaOnly(wireTagged)) : undefined,
+				);
+			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : wireTagged, target);
 		}
 		this.requestFlush();
 		return true;
@@ -154,6 +228,11 @@ export class SessionEventWriter {
 	enqueueControl(value: object): Promise<void> {
 		if (this.failure !== undefined) return Promise.reject(this.failure);
 		const targetId = this.connectionContext.getStore();
+		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
+		if (registered) {
+			registered.actor.enqueue(serializeJsonLine(value));
+			return Promise.resolve();
+		}
 		const queue = targetId === undefined ? this.controlQueue : this.connectionQueue(targetId);
 		const completion = new Promise<void>((resolve, reject) => {
 			this.append(queue, { ...value }, undefined, resolve, reject);
@@ -173,11 +252,34 @@ export class SessionEventWriter {
 		this.sealedSessions.add(sessionId);
 		const targetId = this.connectionContext.getStore();
 		const lifecycle = { type: "session_closed", sessionId };
-		for (const connectionId of this.connections.keys()) {
-			this.appendSessionRecord(sessionId, lifecycle, connectionId);
-		}
-		this.appendSessionRecord(sessionId, { ...response, sessionId }, targetId);
+		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
+		else this.fanout.broadcast(serializeJsonLine(lifecycle));
+		const taggedResponse = { ...response, sessionId };
+		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
+		if (registered) registered.actor.enqueue(serializeJsonLine(taggedResponse));
+		else this.appendSessionRecord(sessionId, taggedResponse, targetId);
 		this.requestFlush();
+	}
+
+	/** Queue a successful response for a joined close after the terminal lifecycle record. */
+	enqueueClosedResponse(sessionId: string, response: object): void {
+		const targetId = this.connectionContext.getStore();
+		const taggedResponse = { ...response, sessionId };
+		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
+		if (registered) registered.actor.enqueue(serializeJsonLine(taggedResponse));
+		else this.appendSessionRecord(sessionId, taggedResponse, targetId);
+		this.requestFlush();
+	}
+
+	/**
+	 * Drops per-session bookkeeping for a handle whose runtime is fully disposed.
+	 * Routing handles are unique per process epoch, so nothing can legitimately
+	 * emit under this id again; without this every host-closed session would
+	 * leave a permanent sealed-handle (and snapshot) entry behind.
+	 */
+	forgetSession(sessionId: string): void {
+		this.sealedSessions.delete(sessionId);
+		this.fanout.forgetSession(sessionId);
 	}
 
 	/** Drain every retained lane and the current in-flight record. */
@@ -185,7 +287,8 @@ export class SessionEventWriter {
 		if (this.failure !== undefined) return Promise.reject(this.failure);
 		this.flushScheduled = false;
 		if (this.drainPromise) return this.drainPromise;
-		if (this.readyQueues.length === 0) return Promise.resolve();
+		if (this.readyQueues.length === 0)
+			return Promise.all([...this.fanout.values()].map(({ actor }) => actor.flush())).then(() => undefined);
 		let resolveDrain!: () => void;
 		let rejectDrain!: (cause: unknown) => void;
 		const drain = new Promise<void>((resolve, reject) => {
@@ -197,6 +300,7 @@ export class SessionEventWriter {
 		void drain.then(
 			() => {
 				if (this.drainPromise === drain) this.drainPromise = undefined;
+				if (this.readyQueues.length > 0) this.requestFlush();
 			},
 			(cause) => {
 				if (this.drainPromise === drain) this.drainPromise = undefined;
@@ -210,6 +314,7 @@ export class SessionEventWriter {
 		do {
 			await this.drainReadyQueues();
 		} while (this.readyQueues.length > 0);
+		await Promise.all([...this.fanout.values()].map(({ actor }) => actor.flush()));
 	}
 
 	private async drainReadyQueues(): Promise<void> {
@@ -224,7 +329,7 @@ export class SessionEventWriter {
 			try {
 				// D9: exactly one complete record per raw write. The next lane is not
 				// selected until this record has cleared stdout backpressure.
-				const connection = queue.targetId ? this.connections.get(queue.targetId) : undefined;
+				const connection = queue.targetId ? this.fanout.get(queue.targetId)?.connection : undefined;
 				const writeRaw = connection?.writeRaw ?? this.writeRaw;
 				const waitForBackpressure = connection?.waitForBackpressure ?? this.waitForBackpressure;
 				if (!connection && queue.targetId) {
@@ -298,12 +403,7 @@ export class SessionEventWriter {
 	}
 
 	private demoteAndMerge(queue: RecordQueue, node: QueueNode): void {
-		const event = node.value.assistantMessageEvent as Record<string, unknown>;
-		node.value = {
-			...node.value,
-			message: null,
-			assistantMessageEvent: { ...event, partial: null },
-		};
+		node.value = demoteToDeltaOnly(node.value);
 		const current = compactDelta(node.value);
 		const preceding = node.previous;
 		const previous = preceding ? compactDelta(preceding.value) : undefined;

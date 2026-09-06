@@ -6,7 +6,7 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 
 | File | Role |
 |---|---|
-| `controller.ts` | `RetryFallbackController`: turn-scoped tried-selector set, `ActiveFallbackState`, `tryFallback` / `maybeRestorePrimary(revertPolicy)` / `clearForManualModelChange`, content-keyed memo of canonicalized chains |
+| `controller.ts` | `RetryFallbackController`: turn-scoped tried-selector set, `ActiveFallbackState`, `tryFallback` / `maybeRestorePrimary(revertPolicy)` / `notifyCompactionApplied` / `clearForManualModelChange`, content-keyed memo of canonicalized chains |
 | `chains.ts` | Selector parse/format, chain-key resolution, `canonicalizeFallbackChains` (bare-selector expansion + registry eligibility) |
 | `expansion.ts` | Bare-selector family expansion; OpenRouter denylist; OAuth-first auth tiers; `PROVIDER_PRECEDENCE` tie-break |
 | `hint-policy.ts` | Pure 429 hint tiers (`no-hint-fast-fallback` / `tier1-in-turn` / `tier2-fallback-probe-back` / `tier3-fallback-only`) + probe schedule math |
@@ -32,7 +32,7 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 
 - Everything time- or randomness-dependent is injected (`now`, `random`, `setTimeout`/`clearTimeout`) — tests drive it deterministically with fake timers; never read `Date.now()` directly here.
 - Cooldowns are runtime-only and deliberately never persisted to settings or session files.
-- Billing-class errors pin the fallback candidate as the session model; `transient`/`refusal`/`hard-error` fallbacks revert per `fallbackRevertPolicy` (`cooldown-expiry` | `never`).
+- Billing-class errors pin the fallback candidate as the session model and NEVER release; refusal pins release when a senpi-owned compaction successfully applies (context changed => one fresh primary attempt); `transient`/`hard-error` fallbacks revert per `fallbackRevertPolicy` (`cooldown-expiry` | `never`).
 - `canonicalizeFallbackChains` is memoized on chains content — provider-error handling calls it several times per error.
 - `fallback.log` scrubs by construction: blocked keys (`headers`, `env`, `authorization`, …), allowlisted data keys only, bearer/api-key text patterns truncated.
 - Consumers: `agent-session.ts` (controller wiring), `settings-manager.ts` (resolution), `builtin/model-fallback/` (validate + canonicalize for `/model-fallback`), `builtin/cursor-cli-oauth/settings.ts` (`isFallbackEligible` probe).

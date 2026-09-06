@@ -65,7 +65,7 @@ test/                            Vitest contracts and the omp parity ledger
 
 - Add or update a focused Vitest contract before changing runtime behavior; run
   it red, then green.
-- Run `npm test` from this package and `npm run check` from the repository root
+- Run `bun run test` from this package and `bun run check` from the repository root
   before committing.
 - Run the relevant `scripts/qa-*.ts` driver for kernel, bridge, extension,
   output, or renderer changes; capture evidence without secrets.

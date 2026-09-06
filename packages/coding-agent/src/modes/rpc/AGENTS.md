@@ -50,7 +50,7 @@ changes.md                Fork-specific RPC behavior record
 - Focused tests live in `packages/coding-agent/test/rpc-*.test.ts` (rpc-jsonl, rpc-input-validation, rpc-command-invocation, rpc-commands-changed, rpc-multi-session-input, rpc-loaded-surfaces, rpc-classic-compat, rpc-prompt-response-semantics).
 - End-to-end scenarios: `.agents/skills/senpi-qa/scripts/scenarios/dollar-skill-invocation-qa.mjs` and `rpc-input-hardening-qa.mjs`.
 - Behavior changes update `changes.md` here and `docs/rpc.md` in the same increment.
-- Runtime changes require root `npm run check` and real CLI QA evidence.
+- Runtime changes require root `bun run check` and real CLI QA evidence.
 
 ---
 Generated: 2026-08-17 | Commit `abae968e8`

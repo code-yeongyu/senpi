@@ -46,14 +46,17 @@ describe("buildEvalPrompt", () => {
 		expect(buildEvalPrompt(enabled, options)).toMatchSnapshot();
 	});
 
-	it("documents only enabled language fields and reset scope", () => {
+	it("documents only enabled languages and leaves field semantics to the parameter schema", () => {
 		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false });
 
 		expect(prompt).toContain('`"py"` IPython kernel');
 		expect(prompt).toContain('`"js"` persistent JavaScript VM');
 		expect(prompt).not.toContain('`"rb"` persistent Ruby kernel');
 		expect(prompt).not.toContain('`"jl"` persistent Julia kernel');
-		expect(prompt).toContain("a `py` reset never touches the JS VM");
+		// The parameter schema is the single home of the per-field semantics; the guideline keeps reset scope.
+		expect(prompt).not.toContain("- `timeout`");
+		expect(prompt).not.toContain("`on_timeout`");
+		expect(prompt).toContain("reset is scoped to the selected language");
 	});
 
 	it("omits disabled and missing languages from the prompt", () => {
@@ -79,25 +82,9 @@ describe("buildEvalPrompt", () => {
 		expect(withSpawns).toContain('agent(prompt, agent?="researcher"');
 		expect(withSpawns).toContain('output(*ids, format?="raw"');
 		expect(withSpawns).toContain("<workflow>");
-		expect(withSpawns).toContain("omit it to use `researcher`");
 	});
 
-	it("filters reuse-chain examples by enabled language", () => {
-		// Given: prompts exposing the Python example set and kernels without one.
-		const python = buildEvalPrompt({ py: true, js: false, rb: false, jl: false }, { spawns: false }).description;
-		const ruby = buildEvalPrompt({ py: false, js: false, rb: true, jl: false }, { spawns: false }).description;
-		const node = buildEvalPrompt({ py: false, js: true, rb: false, jl: false }, { spawns: false }).description;
-
-		// When: their embedded reuse-chain examples are rendered.
-		// Then: JS kernels carry the batched fan-out examples, Python kernels carry the kernel-hop example, and other languages have none.
-		expect(node).toContain("Count all TypeScript source files under src/ excluding tests");
-		expect(node).toContain("tool.grep");
-		expect(node).toContain("Promise.all");
-		expect(python).toContain("JS kernel is busy with a detached cell — continue in py");
-		expect(ruby).not.toContain("<examples>");
-	});
-
-	it("documents core helpers with Node wording and no excluded surface", () => {
+	it("documents core helpers with Node wording and no excluded surface when no js runtime is given", () => {
 		const prompt = fullPrompt({ py: true, js: true, rb: true, jl: true });
 
 		for (const helperName of coreHelperNames) {
@@ -109,10 +96,10 @@ describe("buildEvalPrompt", () => {
 		}
 	});
 
-	it("documents timeout detachment, busy-kernel discipline, and detached-cell controls", () => {
+	it("documents detachment, busy-kernel discipline, and the detached-cell controls", () => {
 		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false });
 
-		expect(prompt).toContain("`on_timeout`");
+		expect(prompt).toContain("outlives the foreground window detaches");
 		expect(prompt).toContain('eval({ action: "peek", cell_id })');
 		expect(prompt).toContain('eval({ action: "stop", cell_id })');
 		expect(prompt).toContain("Do not re-run a detached cell");
@@ -159,6 +146,61 @@ describe("buildEvalPrompt", () => {
 		expect(evalEmphasisStyle(undefined)).toBe("default");
 	});
 
+	it("gates the monitor subscription stance on monitor availability in every dialect", () => {
+		// Given: each eval emphasis dialect with and without the reachable monitor tool.
+		const enabled = { py: true, js: true, rb: false, jl: false };
+		const dialects = [undefined, "claude-opus-4-8", "gpt-5.6", "o3-mini", "kimi-k2.6"] as const;
+		const render = (modelId: (typeof dialects)[number], monitor?: boolean): string => {
+			const options: { spawns: boolean; modelId?: string; monitor?: boolean } = {
+				spawns: false,
+				...(modelId === undefined ? {} : { modelId }),
+				...(monitor === undefined ? {} : { monitor }),
+			};
+			return buildEvalPrompt(enabled, options).description;
+		};
+
+		// When: the prompt is built with the registry-gated monitor capability.
+		for (const modelId of dialects) {
+			const withMonitor = render(modelId, true);
+			expect(withMonitor.match(/tool\.monitor\(/g) ?? [], `model=${modelId ?? "default"}`).toHaveLength(1);
+			expect(withMonitor, `model=${modelId ?? "default"}`).toContain("event wakes the turn");
+		}
+
+		// Then: unavailable monitor capability leaves no unreachable call or stance behind.
+		for (const modelId of dialects) {
+			for (const monitor of [false, undefined]) {
+				const withoutMonitor = render(modelId, monitor);
+				expect(withoutMonitor, `model=${modelId ?? "default"}, monitor=${monitor ?? "omitted"}`).not.toContain(
+					"tool.monitor(",
+				);
+				expect(withoutMonitor, `model=${modelId ?? "default"}, monitor=${monitor ?? "omitted"}`).not.toContain(
+					"event wakes the turn",
+				);
+			}
+		}
+	});
+
+	it("shows each enabled language its correctly-formed handle option, never a fused dialect", () => {
+		// Given: spawn-enabled prompts across kernel combinations.
+		const cases: Array<[{ py: boolean; js: boolean; rb: boolean; jl: boolean }, string[]]> = [
+			[{ py: false, js: true, rb: false, jl: false }, ["{ handle: true }"]],
+			[{ py: true, js: false, rb: false, jl: false }, ["handle=True"]],
+			[{ py: true, js: true, rb: false, jl: false }, ["handle=True", "{ handle: true }"]],
+			[{ py: true, js: true, rb: true, jl: true }, ["`handle=True` / `{ handle: true }` / `handle=true`"]],
+		];
+
+		for (const [enabled, expectedForms] of cases) {
+			const prompt = buildEvalPrompt(enabled, { spawns: true }).description;
+
+			// Then: each enabled language's form is present and the two are never fused without a separator.
+			expect(prompt).not.toContain("handle=True{ handle: true }");
+			expect(prompt).not.toContain("True{");
+			expect(prompt).not.toContain("}``handle=true");
+			for (const form of expectedForms) expect(prompt).toContain(form);
+			if (enabled.js) expect(prompt).not.toContain("`handle=True``{ handle: true }`");
+		}
+	});
+
 	it("renders exactly one batching dialect selected by the model id", () => {
 		// Given: the same kernel set rendered for each model family.
 		const enabled = { py: true, js: true, rb: false, jl: false };
@@ -178,6 +220,9 @@ describe("buildEvalPrompt", () => {
 		expect(gpt).toContain("<gpt_eval_dialect>");
 		expect(gpt).toContain("detach on timeout");
 		expect(gpt).not.toContain("<eval_first_batching>");
+		const gptWithMonitor = buildEvalPrompt(enabled, { spawns: false, modelId: "gpt-5.6", monitor: true }).description;
+		expect(gptWithMonitor.indexOf("tool.monitor(")).toBeLessThan(gptWithMonitor.indexOf("detach on timeout"));
+		expect(gptWithMonitor).toContain("no cell sits on the wait");
 		expect(gpt).not.toContain("EVAL IS YOUR PRIMARY EXECUTION SURFACE");
 		const kimiInstruction = kimi.slice(0, kimi.indexOf("<prelude>"));
 		expect(kimiInstruction).toContain("EVAL IS YOUR SUPERPOWER");
@@ -200,6 +245,9 @@ describe("buildEvalPrompt", () => {
 		expect(guideline("gpt-5.6")).toBe(
 			"Use eval to compose tool work in one cell; long cells detach on timeout and notify on completion, so do not poll.",
 		);
+		expect(buildEvalPrompt(enabled, { spawns: false, modelId: "gpt-5.6", monitor: true }).promptGuidelines[0]).toBe(
+			"Use eval to compose tool work in one cell; a wait or a long run starts through `tool.monitor` in that cell, so no cell sits on it and nothing polls.",
+		);
 		expect(guideline("kimi-k2.6")).toBe(
 			"**EVAL IS YOUR SUPERPOWER — DEFAULT TO IT.** Execute EVERY multi-call step as ONE eval cell: run ALL independent calls simultaneously via parallel(thunks), handle failures per item in code, and return ONLY distilled facts.",
 		);
@@ -218,6 +266,42 @@ describe("buildEvalPrompt", () => {
 		expect(withHost).toContain("Host: darwin arm64 \u00b7 Apple M5 Max \u00b7 18 cores — cells execute here.");
 		expect(withHost).toContain("Size `parallel(thunks)` pools to its cores");
 		expect(withoutHost).not.toContain("Host:");
+	});
+
+	it("describes the Bun kernel and names the bun-1-4 skill as MUST READ only while it is active", () => {
+		// Given: the same kernel set under a bun kernel with the skill, a bun kernel without it, and a node kernel.
+		const enabled = { py: true, js: true, rb: false, jl: false };
+		const bunSkillPath = "/opt/senpi/skill/bun-1-4/SKILL.md";
+		const bunWithSkill = buildEvalPrompt(enabled, {
+			spawns: false,
+			jsRuntime: { name: "bun", version: "1.4.0", path: "/usr/local/bin/bun" },
+			bunSkillPath,
+		}).description;
+		const bunWithoutSkill = buildEvalPrompt(enabled, {
+			spawns: false,
+			jsRuntime: { name: "bun", version: "1.3.9", path: "/usr/local/bin/bun" },
+		}).description;
+		const node = buildEvalPrompt(enabled, {
+			spawns: false,
+			jsRuntime: { name: "node", version: "26.7.0", path: "/usr/local/bin/node" },
+			bunSkillPath,
+		}).description;
+		const jsDisabled = buildEvalPrompt(
+			{ py: true, js: false, rb: false, jl: false },
+			{ spawns: false, jsRuntime: { name: "bun", version: "1.4.0" }, bunSkillPath },
+		).description;
+
+		// Then: only the bun kernel with an active skill carries the pointer; node keeps its wording.
+		expect(bunWithSkill).toContain("JS runs in-process on Bun 1.4.0");
+		expect(bunWithSkill).toContain(`MUST READ the bun-1-4 skill at ${bunSkillPath} before your first js cell`);
+		expect(bunWithSkill).not.toContain("Node.js worker");
+		expect(bunWithoutSkill).toContain("JS runs in-process on Bun 1.3.9");
+		expect(bunWithoutSkill).not.toContain("MUST READ");
+		expect(node).toContain("Node.js worker");
+		expect(node).not.toContain("MUST READ");
+		expect(node).not.toContain(bunSkillPath);
+		expect(jsDisabled).not.toContain("Bun");
+		expect(jsDisabled).not.toContain(bunSkillPath);
 	});
 
 	it("throws when no kernels are enabled", () => {

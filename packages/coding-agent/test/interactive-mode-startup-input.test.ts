@@ -47,6 +47,13 @@ type InputContext = {
 type StartupSubmitContext = {
 	editor: { setText: (text: string) => void };
 	showStatus: (message: string) => void;
+	shutdown?: () => Promise<void>;
+};
+
+type ExtensionShutdownContext = {
+	shutdownRequested: boolean;
+	session: { isIdle: boolean };
+	shutdown: () => Promise<void>;
 };
 
 type RunContext = {
@@ -80,6 +87,8 @@ type RunContext = {
 
 type InteractiveModePrivate = {
 	handleStartupSubmit(this: StartupSubmitContext, text: string): void;
+	requestExtensionShutdown(this: ExtensionShutdownContext): void;
+	checkShutdownRequested(this: ExtensionShutdownContext): Promise<void>;
 	setupEditorSubmitHandler(this: SubmitContext): void;
 	getUserInput(this: InputContext): Promise<{ text: string; images?: unknown[] }>;
 	takeSubmissionImages(this: SubmitContext, submittedText: string): unknown[];
@@ -131,6 +140,65 @@ describe("InteractiveMode startup input", () => {
 
 		expect(context.editor.setText).toHaveBeenCalledWith("early prompt");
 		expect(context.showStatus).toHaveBeenCalledWith("Startup is still in progress");
+	});
+
+	it.each(["/quit", "/exit"])(
+		"shuts down when %s is submitted while managed-tool setup is running",
+		(command: string) => {
+			const context: StartupSubmitContext = {
+				editor: { setText: vi.fn() },
+				showStatus: vi.fn(),
+				shutdown: vi.fn(async () => {}),
+			};
+
+			interactiveModePrototype.handleStartupSubmit.call(context, command);
+
+			// The quit command is a control action, not a prompt: it must not be parked in
+			// the editor, because a non-empty editor also disables the Ctrl+D quit escape.
+			expect(context.shutdown).toHaveBeenCalledTimes(1);
+			expect(context.editor.setText).not.toHaveBeenCalledWith(command);
+			expect(context.showStatus).not.toHaveBeenCalledWith("Startup is still in progress");
+		},
+	);
+
+	it("honors an extension shutdown request immediately while the session is idle", () => {
+		const context: ExtensionShutdownContext = {
+			shutdownRequested: false,
+			session: { isIdle: true },
+			shutdown: vi.fn(async () => {}),
+		};
+
+		interactiveModePrototype.requestExtensionShutdown.call(context);
+
+		// An idle session emits no further agent_settled event, so a deferred request
+		// would strand until the user happened to run another turn.
+		expect(context.shutdownRequested).toBe(true);
+		expect(context.shutdown).toHaveBeenCalledTimes(1);
+	});
+
+	it("defers an extension shutdown request raised mid-turn", () => {
+		const context: ExtensionShutdownContext = {
+			shutdownRequested: false,
+			session: { isIdle: false },
+			shutdown: vi.fn(async () => {}),
+		};
+
+		interactiveModePrototype.requestExtensionShutdown.call(context);
+
+		expect(context.shutdownRequested).toBe(true);
+		expect(context.shutdown).not.toHaveBeenCalled();
+	});
+
+	it("consumes a pending shutdown request when the agent reaches idle", async () => {
+		const context: ExtensionShutdownContext = {
+			shutdownRequested: true,
+			session: { isIdle: true },
+			shutdown: vi.fn(async () => {}),
+		};
+
+		await interactiveModePrototype.checkShutdownRequested.call(context);
+
+		expect(context.shutdown).toHaveBeenCalledTimes(1);
 	});
 
 	it("queues a normal prompt submitted before the input callback is installed", async () => {

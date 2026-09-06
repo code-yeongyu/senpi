@@ -12,6 +12,7 @@ import { createToolWatch, registerToolWatch } from "../src/core/extensions/built
 import {
 	BUILTIN_SDK_TOOLS,
 	canUseTool,
+	HOST_TOOL_EXECUTION_DENIED_MESSAGE,
 	mapPiToolNameToSdk,
 	mapSdkToolNameToPi,
 	mapToolArgs,
@@ -45,6 +46,14 @@ describe("Claude SDK OAuth tool integration", () => {
 	it("builds one in-process custom-tools MCP server for active custom tools", async () => {
 		const servers = await buildCustomToolServers([tool("repoSearch")]);
 		expect(Object.keys(servers ?? {})).toEqual(["custom-tools"]);
+	});
+
+	it("states host-tool denial as a fact without telling the model to end the turn", () => {
+		expect(HOST_TOOL_EXECUTION_DENIED_MESSAGE).toBe(
+			"Senpi executes this tool on the host and returns its result as the next user message. Wait for that result; this denial is not a failure.",
+		);
+		expect(TOOL_EXECUTION_DENIED_MESSAGE).toBe(HOST_TOOL_EXECUTION_DENIED_MESSAGE);
+		expect(HOST_TOOL_EXECUTION_DENIED_MESSAGE).not.toMatch(/end the turn/i);
 	});
 
 	it("always denies Claude Code-side tool execution", async () => {

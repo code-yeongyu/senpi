@@ -9,6 +9,7 @@
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
+import { setCapabilityOverrides } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { handleAppServerCommand } from "./cli/app-server-command.ts";
 import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
@@ -73,6 +74,7 @@ import {
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
+import { shouldJoinSharedHost } from "./core/shared-host-policy.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
@@ -81,7 +83,8 @@ import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { createInteractiveHostRuntime } from "./modes/interactive/interactive-host-runtime.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { runPrintMode } from "./modes/print-mode.ts";
-import { parseSupervisorArgs, runHostSupervisor } from "./modes/rpc/host-lifecycle.ts";
+import { AUTO_TITLE_SESSIONS_CAPABILITY, parseClientCapabilities } from "./modes/rpc/custom-capability.ts";
+import { findInternalSupervisorArgs, parseSupervisorArgs, runHostSupervisor } from "./modes/rpc/host-lifecycle.ts";
 import { runMultiSessionHost } from "./modes/rpc/multi-session-host.ts";
 import { runRpcMode } from "./modes/rpc/rpc-mode.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
@@ -177,13 +180,23 @@ function toProjectTrustMode(appMode: AppMode): AppMode {
 }
 
 /**
- * Interactive launches auto-title by default; every other app mode (RPC with or
- * without `--multi-session`, print, json, app-server) opts in with
+ * Interactive launches auto-title by default. RPC clients can opt in through
+ * `auto_title_sessions`; every other non-interactive app mode opts in with
  * `--auto-title-sessions`. Sessions resumed with existing context messages are
- * never retitled, whatever the mode or flag.
+ * never retitled, whatever the mode, capability, or flag.
  */
-export function resolveAutoTitleSessions(appMode: AppMode, parsed: Args, hasContextMessages: boolean): boolean {
-	return (appMode === "interactive" || parsed.autoTitleSessions === true) && !hasContextMessages;
+export function resolveAutoTitleSessions(
+	appMode: AppMode,
+	parsed: Args,
+	hasContextMessages: boolean,
+	clientCapabilities: readonly string[] = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
+): boolean {
+	return (
+		(appMode === "interactive" ||
+			parsed.autoTitleSessions === true ||
+			(appMode === "rpc" && clientCapabilities.includes(AUTO_TITLE_SESSIONS_CAPABILITY))) &&
+		!hasContextMessages
+	);
 }
 
 function isPlainRuntimeMetadataCommand(parsed: Args): boolean {
@@ -694,10 +707,15 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	// Internal launch surface used by bundled/rebranded runtimes. It is deliberately
-	// not accepted by parseArgs, so existing CLI modes remain unchanged.
-	if (args[0] === "--internal-rpc-host-supervisor") {
-		const launch = parseSupervisorArgs(args.slice(1));
+	// not accepted by parseArgs, so existing CLI modes remain unchanged. A rebranded
+	// wrapper may prepend its own `--extension <dir>` before forwarding argv, so the
+	// route is matched through the bounded scan rather than at argv[0] alone.
+	const supervisorArgs = findInternalSupervisorArgs(args);
+	if (supervisorArgs) {
+		const launch = parseSupervisorArgs(supervisorArgs);
 		if (!launch) {
+			// Fail closed: an internal protocol fault must never fall through to the
+			// public parser and surface as a confusing "Unknown option" error.
 			console.error("invalid internal RPC host supervisor arguments");
 			process.exit(2);
 		}
@@ -1059,7 +1077,12 @@ export async function main(args: string[], options?: MainOptions) {
 			excludeTools: sessionOptions.excludeTools,
 			noTools: sessionOptions.noTools,
 			customTools: sessionOptions.customTools,
-			autoTitleSessions: resolveAutoTitleSessions(appMode, parsed, sessionManager.hasContextMessages()),
+			autoTitleSessions: resolveAutoTitleSessions(
+				appMode,
+				parsed,
+				sessionManager.hasContextMessages(),
+				parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
+			),
 		});
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
@@ -1100,7 +1123,19 @@ export async function main(args: string[], options?: MainOptions) {
 	});
 	time("createAgentSessionRuntime");
 	let selectedRuntime = runtime;
-	if (appMode === "interactive" && !isTruthyEnvFlag(envValue("DISABLE_SHARED_HOST"))) {
+	if (isTruthyEnvFlag(envValue("DISABLE_SHARED_HOST"))) {
+		console.error(
+			chalk.yellow(
+				"DISABLE_SHARED_HOST is obsolete: the shared session host is now off by default. Enable the experimental.sharedHost setting (or set the brand-prefixed ENABLE_SHARED_HOST=1 env flag) to opt in.",
+			),
+		);
+	}
+	if (
+		shouldJoinSharedHost(appMode, {
+			enableEnv: isTruthyEnvFlag(envValue("ENABLE_SHARED_HOST")),
+			settingEnabled: runtime.services.settingsManager.getExperimentalSharedHost(),
+		})
+	) {
 		const socket = envValue("RPC_SOCKET") ?? resolve(agentDir, "rpc", "rpc.sock");
 		selectedRuntime = await createInteractiveHostRuntime(runtime, {
 			socket,
@@ -1110,6 +1145,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	const { services, session, modelFallbackMessage } = selectedRuntime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;
+	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
 	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
 

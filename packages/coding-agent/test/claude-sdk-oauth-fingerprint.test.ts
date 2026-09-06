@@ -1,6 +1,7 @@
 import type { Context } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import type { Options } from "../src/core/extensions/builtin/claude-sdk-oauth/sdk-boundary.ts";
+import { decideNativeContinuity } from "../src/core/extensions/builtin/claude-sdk-oauth/session-continuity.ts";
 import { configFingerprint } from "../src/core/extensions/builtin/claude-sdk-oauth/session-sync.ts";
 import { HOST_TOOL_POLICY_FINGERPRINT } from "../src/core/extensions/builtin/claude-sdk-oauth/tools.ts";
 
@@ -111,8 +112,34 @@ describe("claude-sdk-oauth config fingerprint stability", () => {
 			"primary",
 		);
 
-		expect(HOST_TOOL_POLICY_FINGERPRINT).toBe("host-tool-denial-v1");
+		expect(HOST_TOOL_POLICY_FINGERPRINT).toBe("host-tool-denial-v2");
 		expect(withDifferentCallbackIdentity.toolsetHash).toBe(policyProbe.toolsetHash);
+	});
+
+	it("cold-seeds a restart binding persisted under an older host-tool policy version", () => {
+		// The sidecar stores toolsetHash; after a policy bump the first admission
+		// must not resume the pre-bump SDK session (its hooks carried the old reason).
+		const current = configFingerprint(options(), context(), "oauth-slots", "primary");
+		const decision = decideNativeContinuity({
+			entry: undefined,
+			binding: {
+				sdkSessionId: "sdk-v1",
+				sentCount: 1,
+				sentHashes: ["h1"],
+				sentPrefixHash: undefined,
+				lastAssistantUuid: "a1",
+				accountName: "primary",
+				modelId: "claude-opus-4-5",
+				systemPromptHash: current.systemPromptHash,
+				toolsetHash: "toolset-hash-from-host-tool-denial-v1",
+			},
+			currentHashes: ["h1"],
+			accountName: "primary",
+			modelId: "claude-opus-4-5",
+			fingerprint: current,
+			transcriptAvailable: true,
+		});
+		expect(decision).toEqual({ kind: "flatten", reason: "options_changed" });
 	});
 
 	it("stays fail-closed when the resolved Claude executable changes", () => {

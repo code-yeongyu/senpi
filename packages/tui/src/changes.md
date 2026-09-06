@@ -1,5 +1,78 @@
 # TUI delta rendering fork changes
 
+## 2026-09-04 - Port upstream terminal capability overrides
+
+### What changed
+
+- `packages/tui/src/terminal-image.ts`: adds an environment-based capability detection path (`detectCapabilitiesFromEnvironment` with a tmux client-termfeatures hyperlink probe, per-terminal classification including Zed, and conservative defaults for unknown terminals) used when the tmux probes are unavailable, honors the `PI_HYPERLINKS`, `PI_IMAGE_PROTOCOL`, and `PI_TRUE_COLOR` overrides, and merges stored overrides in `getCapabilities`; `setCapabilityOverrides` replaces the overrides and resets the cache (upstream e86823096 #8665 and 649214477 #8828).
+- `packages/tui/src/index.ts`: exports `setCapabilityOverrides`.
+
+### Why
+
+- Auto-detection misfires on unknown, multiplexed, or non-queried terminals; explicit overrides give users and branded distributions (the fork bridges the `SENPI_*` names through settings) a deterministic way to force hyperlink, image-protocol, and truecolor behavior.
+
+### Why an extension could not handle it
+
+- Capability detection and caching run inside the TUI package before components render; no extension seam sits between environment detection and the cached capabilities.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/tui/src/terminal-image.ts` detection, environment fallback, and override merging; LOW: `packages/tui/src/index.ts` export list.
+
+## 2026-09-04 - Wrap the SIGWINCH self-signal
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: `refreshTerminalDimensions` wraps the self-directed SIGWINCH in a try/catch that skips the refresh on failure, and `ProcessTerminal.start` uses it, so environments whose seccomp or LSM policies deny `kill` for the process no longer crash startup (upstream 605a1b038, #8898).
+
+### Why
+
+- The dimensions refresh after suspend/resume is best-effort; a policy-restricted signal threw during terminal start and aborted the whole TUI for a purely cosmetic refresh.
+
+### Why an extension could not handle it
+
+- The signal is sent from `ProcessTerminal` construction, below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/terminal.ts` `refreshTerminalDimensions` and its call site in `ProcessTerminal.start`.
+
+## 2026-09-04 - Order nested autocomplete results deterministically
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: fuzzy file completion merges a depth-1 listing of the base directory ahead of the recursive fd results (deduplicated), `walkDirectoryWithFd` accepts a `maxDepth`, and equal-score results tie-break by shallower depth, then shorter path, then locale order (upstream b37ebb7f2, #8669).
+
+### Why
+
+- Nested results previously interleaved unpredictably when scores tied; shallow matches first mirrors shell completion expectations and makes the ordering deterministic.
+
+### Why an extension could not handle it
+
+- The fd-backed provider internals score and order suggestions inside the TUI package.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/autocomplete.ts` suggestion merge and sort comparators.
+
+## 2026-09-04 - Fullscreen selection word joining and copy-on-select control
+
+### What changed
+
+- `packages/tui/src/tui-alt-screen.ts`: adds a `copyOnSelect` option (default true) with getter and setter, gates mouse-release auto-copy on it, joins slash and hyphen word segments during selection so paths and kebab-case tokens stay whole, and factors out `getActiveSelectionText`, `copyActiveSelectionToClipboard`, and `hasActiveSelection` for keyboard-driven copy (upstream 4e4949299 #8731 and 1ac6128e6 #8676).
+
+### Why
+
+- Fullscreen mode owns mouse selection, so it must mirror terminal word-selection behavior itself, and hosting modes need a seam to disable auto-copy and drive copying from a keybinding instead.
+
+### Why an extension could not handle it
+
+- Alt-screen viewport mouse handling and clipboard writes are TUI-internal.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/tui/src/tui-alt-screen.ts` word-selection joining and the mouse-release copy path.
+
 ## 2026-08-29 - Preserve upstream terminal input fixes
 
 ### What changed
@@ -911,3 +984,21 @@ Component-level caching is added in coding-agent components because high-frequen
 
 - MEDIUM: `packages/tui/src/components/editor.ts` (segment handling around cursor movement and deletion) and `packages/tui/src/paste-markers.ts` (the generalized segmentation shared with paste markers).
 - LOW: `packages/tui/src/image-markers.ts` (new fork-owned file, no upstream counterpart), `packages/tui/src/editor-component.ts` (additive optional interface members), and the `packages/tui/src/index.ts` export lists.
+
+## 2026-09-03 - Port upstream #8028 bounded main-screen rendering
+
+### What changed
+
+- `packages/tui/src/tui.ts`: main-screen render writes are emitted in bounded 1 MiB chunks, including full redraws and differential updates, so large image-heavy frames cannot exceed V8 string limits while preserving the fork's synchronized frames and viewport renderer.
+
+### Why
+
+- Upstream #8028 prevents V8 string-length crashes when a main-screen render contains very large terminal-image payloads. The fork renderer lives in `TuiBase`, so the bounded write behavior is ported there rather than replacing the fork's thin `TuiMainScreen` subclass.
+
+### Why this lives in the fork
+
+- `TuiBase` owns the fork's main-screen differential renderer, insert-scroll path, scrollback handling, and lifecycle state; no extension boundary can safely split its terminal frame writes.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts` around full-render and differential-render terminal writes; `packages/tui/src/tui-main-screen.ts` remains a thin state-capture subclass.

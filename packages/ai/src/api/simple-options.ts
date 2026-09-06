@@ -7,7 +7,15 @@ import type {
 	ThinkingBudgets,
 	ThinkingLevel,
 } from "../types.ts";
-import { estimateContextTokens } from "../utils/estimate.ts";
+import { clampMaxTokensToContext, MIN_ANSWER_TOKENS } from "./context-room.ts";
+
+export {
+	CONTEXT_GUARD_MIN_WINDOW,
+	CONTEXT_SAFETY_TOKENS,
+	ContextWindowExhaustedError,
+	clampMaxTokensToContext,
+	MIN_ANSWER_TOKENS,
+} from "./context-room.ts";
 
 /**
  * Merge user-supplied extraBody fields into a provider request payload, skipping
@@ -120,21 +128,6 @@ export const BEDROCK_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
 	"requestMetadata",
 ]);
 
-const CONTEXT_SAFETY_TOKENS = 4096;
-const MIN_MAX_TOKENS = 1;
-
-export function clampMaxTokensToContext(model: Model<Api>, context: Context, maxTokens: number): number {
-	if (model.contextWindow <= 0) {
-		return Number.isFinite(maxTokens) && maxTokens > 0
-			? Math.max(MIN_MAX_TOKENS, Math.floor(maxTokens))
-			: MIN_MAX_TOKENS;
-	}
-	const available = model.contextWindow - estimateContextTokens(context).tokens - CONTEXT_SAFETY_TOKENS;
-	const safeAvailable = Math.max(MIN_MAX_TOKENS, available);
-	const requested = Number.isFinite(maxTokens) && maxTokens > 0 ? Math.floor(maxTokens) : safeAvailable;
-	return Math.min(requested, safeAvailable);
-}
-
 export function buildBaseOptions(
 	model: Model<Api>,
 	context: Context,
@@ -169,9 +162,6 @@ export function buildBaseOptions(
 		env: options?.env,
 	};
 }
-
-/** Tokens always left for the answer when a thinking budget shares the response ceiling. */
-export const MIN_ANSWER_TOKENS = 1024;
 
 export const DEFAULT_THINKING_BUDGETS: ThinkingBudgets = {
 	minimal: 1024,

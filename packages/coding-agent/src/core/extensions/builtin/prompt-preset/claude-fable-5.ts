@@ -27,6 +27,7 @@ import type { DynamicPromptCoreContext } from "../../../dynamic-prompt/build.ts"
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
 import { getToolsPromptDisplay } from "../../../dynamic-prompt/tool-categorization.ts";
 import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
+import { buildExecutionToolingParagraph } from "./execution-tooling.ts";
 
 function buildSearchLine(context: DynamicPromptCoreContext): string {
 	const triggerTools = getToolsPromptDisplay(context.tools);
@@ -58,7 +59,7 @@ Derive intent from the latest user turn alone: a new direction drops the stale p
 
 Fire independent tool calls as one parallel wave, and bias toward breadth when context is thin - wasted reads cost almost nothing; stale assumptions cost the turn. Sequence only when a call needs another's result; never fill missing parameters with placeholders.
 
-Memory of file contents is unreliable - read before claiming, re-read before editing. Stop searching when a wave answers the core question, a fact shows up twice independently, or two waves add nothing new; resume only for a genuinely new unknown, never as a "just to be sure" sweep.
+${buildExecutionToolingParagraph({ toolNames: context.tools.map((tool) => tool.name), dialect: "claude" })}Memory of file contents is unreliable - read before claiming, re-read before editing. Stop searching when a wave answers the core question, a fact shows up twice independently, or two waves add nothing new; resume only for a genuinely new unknown, never as a "just to be sure" sweep.
 
 When you have enough information to act, act. Do not re-derive facts already established in the conversation, re-litigate a decision the user has already made, or narrate options you will not pursue. When weighing a choice, give a recommendation, not a survey.
 

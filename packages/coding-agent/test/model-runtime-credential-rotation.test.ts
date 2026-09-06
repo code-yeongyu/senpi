@@ -93,7 +93,12 @@ describe("credential rotation over a pooled provider", () => {
 		const faux = fauxProvider();
 		const credentials = AuthStorage.inMemory();
 		await credentials.modify("faux", async () => pooled());
-		const runtime = await ModelRuntime.create({ credentials, modelsPath: null, allowModelNetwork: false });
+		const runtime = await ModelRuntime.create({
+			credentials,
+			modelsPath: null,
+			agentDir: dir,
+			allowModelNetwork: false,
+		});
 		runtime.registerNativeProvider(faux.provider);
 		await runtime.refresh({ allowNetwork: false, providers: ["faux"] });
 		const pool = (await (runtime as any).loadCredentialPool()).repository as CredentialSlotRepository;
@@ -131,6 +136,7 @@ describe("credential rotation over a pooled provider", () => {
 		const runtime = await ModelRuntime.create({
 			credentials: AuthStorage.inMemory(),
 			modelsPath: join(dir, "models.json"),
+			agentDir: dir,
 			allowModelNetwork: false,
 		});
 		runtime.registerNativeProvider(faux.provider);
@@ -153,6 +159,7 @@ describe("credential rotation over a pooled provider", () => {
 		const runtime = await ModelRuntime.create({
 			credentials: AuthStorage.inMemory(),
 			modelsPath: join(configDir, "models.json"),
+			agentDir: configDir,
 			allowModelNetwork: false,
 		});
 		runtime.registerNativeProvider(faux.provider);

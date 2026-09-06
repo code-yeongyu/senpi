@@ -1,8 +1,9 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
 import type { StoredBinding } from "./session-binding-store.ts";
 import { assistantContentHash } from "./session-commit-boundary.ts";
 import type { ContinuityBinding } from "./session-reattach.ts";
-import { isTransmittedMessage, type SentMessage, sentHashPrefixDigest, sentMessageHashes } from "./session-sync.ts";
+import { sentHashPrefixDigest } from "./session-sync.ts";
 
 export const BINDING_ENTRY_TYPE = "claude-sdk-oauth-binding";
 export const BINDING_MARKER = { schemaVersion: 2, marker: true } as const;
@@ -66,25 +67,33 @@ export function storedBindingFromEntry(
 	};
 }
 
-/** Hashes for the user/toolResult messages the persisted branch already carries. */
-export function sentHashesFromBranch(branch: readonly BranchEntry[]): string[] {
-	// This walk is not compaction-aware, but admission compares against the
-	// compaction-truncated context. Anchoring across a boundary would inflate
-	// sentCount and flatten every later restart, so decline to anchor instead.
-	if (branch.some((entry) => entry.type === "compaction")) return [];
-	const messages: SentMessage[] = [];
-	for (const entry of branch) {
-		if (entry.type !== "message") continue;
-		if (isSentMessage(entry.message)) messages.push(entry.message);
-	}
-	return sentMessageHashes(messages);
-}
-
-function isSentMessage(value: unknown): value is SentMessage {
-	if (typeof value !== "object" || value === null) return false;
-	if (!("role" in value) || typeof value.role !== "string" || !("content" in value)) return false;
-	// Same selection rule the context path uses, so the digests cannot diverge.
-	return isTransmittedMessage(value as { role: string });
+/** Persist a completed turn whose resident registry entry closed before `message_end`. */
+export function storedBindingFromBinding(
+	binding: ContinuityBinding,
+	hashes: readonly string[],
+	anchor: StoredBindingAnchor,
+): StoredBinding | undefined {
+	if (binding.sdkSessionIdConfirmed === false) return undefined;
+	if (binding.sentCount !== hashes.length) return undefined;
+	const expectedDigest = sentHashPrefixDigest(hashes);
+	const bindingDigest =
+		binding.sentPrefixHash ?? (binding.sentHashes.length > 0 ? sentHashPrefixDigest(binding.sentHashes) : undefined);
+	if (bindingDigest === undefined || bindingDigest !== expectedDigest) return undefined;
+	return {
+		schemaVersion: 1,
+		sessionPath: anchor.sessionPath,
+		sessionId: anchor.sessionId,
+		markerEntryId: anchor.markerEntryId,
+		sdkSessionId: binding.sdkSessionId,
+		sentCount: hashes.length,
+		sentPrefixHash: sentHashPrefixDigest(hashes),
+		assistantContentHash: anchor.assistantContentHash,
+		lastAssistantUuid: binding.lastAssistantUuid,
+		accountName: binding.accountName,
+		modelId: binding.modelId,
+		systemPromptHash: binding.systemPromptHash,
+		toolsetHash: binding.toolsetHash,
+	};
 }
 
 export function bindingFromStoredBranch(
@@ -118,10 +127,12 @@ const SAFE_BINDING_SUFFIX_TYPES: ReadonlySet<string> = new Set([
 	"senpi.hooks.stop-output",
 	"pi-rules.scan",
 	"rule-activation",
+	"goal-cache-warmup",
 ]);
 
 function isSafeBindingSuffix(entry: BranchEntry): boolean {
 	if (entry.type === "label") return true;
+	if (entry.type === "custom_message") return entry.customType === GOAL_CONTINUATION_MESSAGE_TYPE;
 	return entry.type === "custom" && entry.customType !== undefined && SAFE_BINDING_SUFFIX_TYPES.has(entry.customType);
 }
 

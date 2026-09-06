@@ -82,16 +82,42 @@ export function upsertSlot(credential: PooledCredential | undefined, slot: Crede
 	return { ...base, accounts };
 }
 
+/** Whether the flat top-level fields are this slot's material rather than a sibling's. */
+function slotMirrorsFlat(credential: PooledCredential, slot: CredentialSlot): boolean {
+	if (credential.type === "oauth") return slot.access === credential.access || slot.refresh === credential.refresh;
+	return slot.key === credential.key;
+}
+
+/** Rewrites the flat top-level projection to carry the given slot's material. */
+function projectFlatFields(credential: PooledCredential, slot: CredentialSlot): PooledCredential {
+	if (credential.type === "oauth") {
+		if (slot.access === undefined || slot.refresh === undefined || slot.expires === undefined) return credential;
+		return { ...credential, access: slot.access, refresh: slot.refresh, expires: slot.expires };
+	}
+	return { ...credential, key: slot.key };
+}
+
 /**
  * Removes one slot. The credential is dropped entirely once its last slot is gone,
  * and a pin naming the removed slot is cleared so selection never points at a slot
  * that no longer exists.
+ *
+ * When the removed slot was the one the flat top-level fields projected, those
+ * fields are re-projected from the first survivor. Without that the pool keeps
+ * authenticating with the deleted account's material: a credential with a single
+ * remaining slot does not enter the rotation path, so ordinary requests resolve
+ * the flat projection and would keep using exactly the account the user removed.
+ * `accounts` is preserved either way, so the entry stays a pool.
  */
 export function removeSlot(credential: PooledCredential | undefined, name: string): PooledCredential | undefined {
 	if (!credential) return undefined;
-	const accounts = listSlots(credential).filter((slot) => slot.name !== name);
+	const existing = listSlots(credential);
+	const removed = existing.find((slot) => slot.name === name);
+	const accounts = existing.filter((slot) => slot.name !== name);
 	if (accounts.length === 0) return undefined;
-	const next: PooledCredential = { ...credential, accounts };
+	const reprojected =
+		removed && slotMirrorsFlat(credential, removed) ? projectFlatFields(credential, accounts[0]) : credential;
+	const next: PooledCredential = { ...reprojected, accounts };
 	if (next.pinned === name) delete next.pinned;
 	return next;
 }
@@ -141,12 +167,21 @@ function nextLoginSlotName(credential: PooledCredential): string {
 }
 
 /**
- * Appends an unnamed flat credential to a pool as a generated `login-N` slot. A
- * flat or absent current entry keeps today's whole-write shape so no existing
- * user's stored bytes change until a second credential actually exists.
+ * Appends an unnamed flat credential to a pool as a generated `login-N` slot.
+ * An absent current entry keeps today's whole-write shape; a flat current entry
+ * is promoted to a pool so the legacy credential stays reachable as `default`
+ * instead of being overwritten by the second login.
+ *
+ * A login result that already carries its own populated `accounts` array is a
+ * provider-owned pool: it IS the complete post-login credential, so it is
+ * written through untouched. Reading its top-level fields as a flat credential
+ * would append the provider's placeholder material as a second slot.
  */
 export function appendLoginSlot(current: PooledCredential | undefined, flat: Credential): Credential {
-	if (!current || !Array.isArray(current.accounts) || current.accounts.length === 0) {
+	if ("accounts" in flat && Array.isArray(flat.accounts) && flat.accounts.length > 0) {
+		return flat;
+	}
+	if (!current) {
 		return flat;
 	}
 	return upsertSlot(current, slotFromFlatCredentialNamed(flat, nextLoginSlotName(current)));

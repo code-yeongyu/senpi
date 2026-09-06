@@ -12,6 +12,7 @@ import cursorCliOauthExtension from "./cursor-cli-oauth/index.ts";
 import diffExtension from "./diff.ts";
 import filesExtension from "./files.ts";
 import goalExtension from "./goal/index.ts";
+import gptAccountExtension from "./gpt-account.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
 import helpExtension from "./help/index.ts";
 import historySearchExtension from "./history-search/index.ts";
@@ -102,6 +103,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Provider-neutral account listing; sits before the provider lanes so their
 	// dedicated commands (claude-account, cursor accounts) keep their own names.
 	{ id: "account", factory: accountExtension },
+	{ id: "gpt-account", factory: gptAccountExtension },
 	{ id: "claude-sdk-oauth", factory: claudeSdkOauthExtension },
 	// Registers unconditionally and reports executable/auth state through its oauth check, so it stays beside the other provider lane.
 	{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension },

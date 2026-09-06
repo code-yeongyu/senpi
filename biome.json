@@ -36,8 +36,7 @@
 			"!**/api/cursor-agent/gen",
 			"!**/*.models.ts",
 			"!packages/mom/data/**/*",
-			"!!**/node_modules",
-			"!!**/.codegraph"
+			"!!**/node_modules"
 		]
 	}
 }

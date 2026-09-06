@@ -17,6 +17,12 @@ export interface CellExecutionOptions {
 	readonly callerSignal: AbortSignal;
 	readonly cellId: string;
 	readonly timeoutMs: number;
+	/**
+	 * Caps how long a host-bridge pause may suspend the idle watchdog. When the cell will detach on
+	 * timeout this is set to the foreground window so a bridge-parked cell still frees the turn at the
+	 * window; left undefined (error mode) it keeps the idle-timeout default grace.
+	 */
+	readonly maxPauseGraceMs?: number;
 	readonly timeoutFactory: EvalTimeoutFactory;
 	readonly onTimeout: (error: Error) => void;
 	readonly onAbort: (error: Error) => void;
@@ -46,6 +52,7 @@ export class CellExecution {
 		this.#watchdog = options.timeoutFactory.create({
 			cellId: options.cellId,
 			timeoutMs: options.timeoutMs,
+			...(options.maxPauseGraceMs === undefined ? {} : { maxPauseGraceMs: options.maxPauseGraceMs }),
 			onTimeout: ({ error }) => options.onTimeout(error),
 		});
 		this.#callerSignal.addEventListener("abort", this.#handleCallerAbort, {

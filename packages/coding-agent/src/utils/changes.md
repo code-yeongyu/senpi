@@ -25,6 +25,87 @@
 
 - LOW: `packages/coding-agent/src/utils/clipboard.ts` around `emitOsc52()` and its TUI import.
 
+## Keep synchronous Windows process-tree kill; never throw on missing taskkill (2026-09-03)
+
+### What changed
+
+- `shell.ts` keeps the fork's synchronous `killWindowsProcessTree(pid, taskkillPaths)` /
+  `killProcessTree` / `killTrackedDetachedChildren` path (`spawnSync` over
+  `windowsTaskkillCandidates`). Upstream 7af2d27dc's async `spawn` + `child.once("error")` is not
+  adopted because RPC host shutdown and hooks call the killer in the same tick as `process.exit`.
+- The ENOENT / spawn-failure guard is already the fork `spawnSync` `result.error` / try-catch
+  path: a missing or failed `taskkill` never throws. Regression `6596-taskkill-enoent` is adapted
+  to mock `spawnSync` instead of async `spawn`.
+
+### Why
+
+- Adopting upstream's async kill would make shutdown reaping fire-and-forget and leave orphaned
+  children. Dropping the ENOENT guard (or leaving the upstream test mocking `spawn`) would crash
+  or false-pass when `taskkill` is absent from PATH.
+
+### Why an extension could not handle it
+
+- Process-tree kill runs from RPC host shutdown, hooks, and bash abort inside core utilities
+  before any extension hook can wrap it.
+
+### Expected merge conflict zones
+
+- `shell.ts` import of `spawn` vs `spawnSync`, and the win32 branch of `killProcessTree`.
+
+## Branded build labels never advertise a bogus engine update (2026-09-04)
+
+### What changed
+
+- `packages/coding-agent/src/utils/version-check.ts`: `isNewerPackageVersion` returns `false` for version pairs it cannot order instead of falling back to string inequality, so branded build labels (for example `omo@c6e7dd7 2026-09-04 10:17 +09:00`) stop advertising an engine update on every startup.
+
+### Why
+
+- A branded distribution injects a free-form `SENPI_BRAND.displayVersion` that no version parser can order against a registry CalVer. The old inequality fallback made every such pair look "newer", showing a false update toast.
+
+### Why an extension could not handle it
+
+- The comparison lives in the engine's own update-check utility; extensions cannot replace its semantics.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `isNewerPackageVersion` in `packages/coding-agent/src/utils/version-check.ts`.
+
+## Fix biome import-order format drift from #1230 (2026-08-31)
+
+### What changed
+
+- `packages/coding-agent/src/utils/fs-watch.ts` import specifiers reordered by `biome check --write` (type-only `FSWatcher` after `realpathSync`). Formatting only; zero behavior change.
+
+### Why
+
+- #1230 merged with biome format drift on this file, so every subsequent contributor's pre-commit `--write` pass re-fixed it and smuggled the hunk into unrelated commits. Same class as #1231.
+
+### Why an extension could not handle it
+
+- Not applicable: repository formatting hygiene, no runtime surface.
+
+### Expected merge conflict zones
+
+- LOW: `fs-watch.ts` import block only.
+
+## Canonicalize Windows fs.watch paths before watching (2026-08-31)
+
+### What changed
+
+- `packages/coding-agent/src/utils/fs-watch.ts` resolves existing watch paths with `realpathSync.native()` on Windows before calling `fs.watch()`, keeping the raw path when resolution fails (missing paths still surface through the existing `onError` flow).
+
+### Why
+
+- libuv's Windows fs-event implementation `abort()`s the whole process (`Assertion failed: !_wcsnicmp(filename, dir, dirlen), src\win\fs-event.c:72`) when a watched directory path carries a non-canonical component (8.3 short name, junction) and an incoming event's long-path conversion no longer prefix-matches the stored watch path. Entering a session from the `/resume` selector re-creates the runtime while such watchers are armed, killing the app ([#1229](https://github.com/code-yeongyu/senpi/issues/1229)).
+
+### Why an extension could not handle it
+
+- The abort happens inside libuv native code before any JavaScript `error` event fires, and every repository watcher (footer git watchers, theme watcher, config-reload) routes through this shared wrapper.
+
+### Expected merge conflict zones
+
+- LOW: the `watchWithErrorHandler` body in `packages/coding-agent/src/utils/fs-watch.ts`.
+
 ## Utils re-diverge from upstream dcd4619 (2026-08-25)
 
 ### What changed

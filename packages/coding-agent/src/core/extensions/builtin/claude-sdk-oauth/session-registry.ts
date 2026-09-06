@@ -82,6 +82,7 @@ export type SessionBranchInfo = { oldLeafId: string; newLeafId: string };
 export interface ClaudeSdkOauthSessionEntry {
 	senpiSessionId: string;
 	sdkSessionId: string;
+	sdkSessionIdConfirmed: boolean;
 	generation: number;
 	accountName: string;
 	modelId: string;
@@ -148,7 +149,15 @@ function evictable(entry: ClaudeSdkOauthSessionEntry): boolean {
 
 export class ClaudeSdkOauthSessionRegistry {
 	private readonly entries = new Map<string, ClaudeSdkOauthSessionEntry>();
-	private readonly generations = new Map<string, number>();
+	/**
+	 * Monotonic per-registry generation counter. Numbers are never reused for
+	 * a session id, so stale async work gated on `isCurrentGeneration` cannot be
+	 * mistaken for current after a close/reopen cycle. A per-id map of last-used
+	 * numbers would grow once per distinct session id for process lifetime;
+	 * this counter provides the same (stronger, process-wide) uniqueness with no
+	 * residue at all.
+	 */
+	private generationCounter = 0;
 	private readonly reaper = new SessionReapScheduler({
 		now: () => activeSessionRegistryBoundary.now(),
 		scheduleTimer: (callback, delayMs) => activeSessionRegistryBoundary.scheduleReap(callback, delayMs),
@@ -182,7 +191,7 @@ export class ClaudeSdkOauthSessionRegistry {
 		this.evictExpired();
 		this.ensureCapacity();
 		const now = activeSessionRegistryBoundary.now();
-		const generation = (this.generations.get(input.senpiSessionId) ?? 0) + 1;
+		const generation = ++this.generationCounter;
 		const sdkSessionId = input.resume?.sdkSessionId ?? createSessionUuid(now);
 		const inputController = new StreamingInputController();
 		const lineageOptions = input.resume
@@ -203,6 +212,7 @@ export class ClaudeSdkOauthSessionRegistry {
 		const target: ClaudeSdkOauthSessionEntry = {
 			...entryInput,
 			sdkSessionId,
+			sdkSessionIdConfirmed: input.resume !== undefined,
 			generation,
 			query,
 			inputController,
@@ -229,7 +239,6 @@ export class ClaudeSdkOauthSessionRegistry {
 				return true;
 			},
 		});
-		this.generations.set(input.senpiSessionId, generation);
 		this.entries.set(input.senpiSessionId, entry);
 		return entry;
 	}

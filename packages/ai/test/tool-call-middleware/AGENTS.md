@@ -36,9 +36,9 @@ Generated: 2026-08-24. Commit `baf15a54d`.
 ## COMMANDS
 
 ```bash
-npm --prefix packages/ai test -- test/tool-call-middleware
-npm --prefix packages/ai test -- test/tool-call-middleware/stream-integration.test.ts
-npm --prefix packages/ai test -- test/tool-call-middleware/truncation-e2e.test.ts
+bun run --cwd packages/ai test test/tool-call-middleware
+bun run --cwd packages/ai test test/tool-call-middleware/stream-integration.test.ts
+bun run --cwd packages/ai test test/tool-call-middleware/truncation-e2e.test.ts
 ```
 
 ## HOTSPOTS

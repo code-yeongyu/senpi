@@ -135,7 +135,7 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			"create_goal",
 			"update_goal",
 			"get_goal",
-			"schedule_wakeup",
+			// schedule_wakeup is search-exposed: the loop extension activates it only for a live dynamic loop.
 		]);
 		expect(session.systemPrompt).toContain("- todo:");
 		expect(session.systemPrompt).not.toContain("- read:");

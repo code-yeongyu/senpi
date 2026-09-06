@@ -1,5 +1,521 @@
+
+## 2026-09-05 - Persist Astra reasoning configuration updates
+
+### What changed
+
+- packages/coding-agent/src/core/agent-session.ts: write and re-anchor Astra configuration updates during thinking changes and compaction.
+- packages/coding-agent/src/core/compaction/compaction.ts: preserve the configuration-update role during compaction.
+- packages/coding-agent/src/core/messages.ts: project durable entries into the configuration-update message role.
+- packages/coding-agent/src/core/sdk.ts: restore the reasoning baseline from session state.
+- packages/coding-agent/src/core/session-manager.ts: persist and replay configuration-update entries.
+
+### Why
+
+- Changing GPT-6 Astra reasoning through the request-level field breaks the prompt-cache prefix; the Responses API provides a positional configuration-update item for this transition.
+
+### Why this lives in the fork
+
+- Session lifecycle, compaction, and provider context assembly are core paths below extension interception.
+
+### Expected merge conflict zones
+
+- Agent-session thinking-level transitions, session-manager context assembly, and compaction lifecycle.
+
+## 2026-09-05 - Persist Astra reasoning configuration updates
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/messages.ts`, `packages/coding-agent/src/core/sdk.ts`, and core compaction paths persist and replay Astra configuration-update messages at their original positions, pin the request baseline, and re-anchor after compaction.
+
+### Why
+
+- Changing GPT-6 Astra reasoning through the request-level field breaks the prompt-cache prefix; the Responses API provides a positional configuration-update item for this transition.
+
+### Why this lives in the fork
+
+- Session lifecycle, compaction, and provider context assembly are core paths below extension interception.
+
+### Expected merge conflict zones
+
+- Agent-session thinking-level transitions, session-manager context assembly, and compaction lifecycle.
+
 # changes
 
+## 2026-09-05 - Require explicit fallback chains
+
+### What changed
+
+- Removed shipped Fable defaults and wildcard fallback resolution; fallback runs only for configured model keys. Cursor remains excluded from bare expansion while explicit Cursor selection remains supported.
+
+### Why
+
+- Implicit fallback can unexpectedly change the selected model and mishandles Astra variants when no chain was configured.
+
+### Why an extension could not handle it
+
+- Retry fallback chain resolution is a core controller and settings contract.
+
+### Expected merge conflict zones
+
+- LOW: retry-fallback chains, settings, and controller.
+
+## 2026-09-05 - Ctrl+P skips favorites without context room
+
+### What changed
+
+- `agent-session.ts` uses the existing `projectModelUsabilityBudget` projection
+  before favorite-model cycling, emits `model_change_skipped` for rejected
+  candidates, and continues in the requested direction. The cycle result
+  carries skipped models when every alternative is rejected.
+- Skipping requires somewhere to skip TO: when the rotation holds several
+  alternatives and all are rejected, the cycle reports the skipped list and
+  stays on the current model, but a lone rejected alternative is an explicit
+  switch request and still raises `ModelUsabilityBudgetError` as it did before
+  candidate skipping existed.
+
+### Why
+
+- An explicit Ctrl+P switch request must skip a model that cannot admit the
+  current context instead of reaching the later usability assertion and
+  surfacing a failed switch.
+
+### Why an extension could not handle it
+
+- Favorite cycling and the session event stream are core runtime seams below the
+  extension API.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSessionEvent` union and `_cycleFavoriteModel` in
+  `agent-session.ts`.
+
+## 2026-09-04 - File-storage locks wait through contention
+
+### What changed
+
+- `packages/coding-agent/src/core/lockfile-policy.ts`: `FILE_STORAGE_LOCK_OPTIONS` gains a bounded proper-lockfile retry schedule (8 retries, factor 2, 100ms..1,000ms, ~5.5s total = `FILE_STORAGE_LOCK_RETRY_BUDGET_MS`) under the unchanged 30s stale / 10s update window; a separate `FILE_STORAGE_SYNC_LOCK_BUDGET_MS = 1_000` bounds main-thread waiters; exhausted `ELOCKED` becomes `CredentialStoreBusyError` carrying the lock path and elapsed wait, and `isLockError()` centralises the ELOCKED test.
+- `packages/coding-agent/src/core/credential-pool/state-store.ts`: `withDocument` acquires through its own bounded wait loop (same schedule and budget as the auth store) instead of a single `lockfile.lock` call, and surfaces exhaustion as `CredentialStoreBusyError`. A single-shot acquire under the shared `retries: 0` policy died on the first contender, which is the omo#7748 failure itself.
+- `packages/coding-agent/src/core/auth-storage.ts`: the async auth lock keeps its OWN retry loop (proper-lockfile acquires with `retries: 0`) but bounds it with `FILE_STORAGE_LOCK_RETRY_BUDGET_MS`; delegating to proper-lockfile's internal `retries` was rejected because an `AbortSignal` would then only be observed after the whole 5.5s wait and `onCompromised` would not be rebound per attempt. The sync path replaces the fixed 10 x 20ms spin with the shared 100/200/400ms Atomics.wait schedule truncated to the 1s sync budget.
+- `packages/coding-agent/src/core/settings-manager.ts`: the sync settings lock adopts the same 1s sync schedule and error type.
+
+### Why
+
+- On `claude-sdk-oauth`, `refreshSlot()` took the credential-pool lock with no retries, so any concurrent omo process sharing `~/.omo` made the turn die with the bare `Lock file is already being held` and burn the fallback chain (oh-my-openagent#7748). Contention is infrastructure, not a provider failure: it must be waited out and, when exhausted, reported as a typed transient error.
+- Sync callers block the TUI main thread; Atomics.wait removed the CPU spin (#1056) but not the freeze, so their budget stays short (1s) while async refreshers may wait ~5.5s.
+- Stale-lock recovery stays with proper-lockfile; its ownership-unsafe recovery/release sequences remain the documented residual risk and this change does not fork the library.
+
+### Why an extension could not handle it
+
+- The locks are taken inside core storage backends (`auth-storage.ts`, `settings-manager.ts`, `credential-pool/state-store.ts`) below the extension boundary; no hook runs between `lockfile.lock` and the caller.
+
+### Expected merge conflict zones
+
+- LOW: `lockfile-policy.ts` constants block.
+- LOW: the lock-acquire helpers in `auth-storage.ts`, `settings-manager.ts`, `credential-pool/state-store.ts`.
+## 2026-09-04 - Adopt the v0.84.4 core runtime fixes
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: an in-memory fork tears down the current runtime before creating the forked or branched session and links the new session's parent to the pre-fork leaf, so the active turn settles before the fork target exists (upstream 56c6fb33c, #8937).
+- `packages/coding-agent/src/core/http-dispatcher.ts`: the environment proxy agent sets `proxyTunnel` to keep HTTP origins on CONNECT tunnels as they behaved before Undici 8.7 (upstream 23842b1e6, #8134).
+- `packages/coding-agent/src/core/model-config.ts`: the models.json compat schemas gain optional `vllmPriority` (openai-completions), `supportsMaxOutputTokens` (openai-responses), and `supportsMidConvoEffort` (anthropic-messages) fields.
+- `packages/coding-agent/src/core/session-manager.ts`: opening an existing session file for append appends a newline when the file does not end with one, repairing an unterminated JSONL tail from the append-owning process only and never from read-only loads (upstream 0b5ee5d8b, #8345).
+
+### Why
+
+- Settling the turn before the fork target exists keeps the forked session from observing a half-written parent; without the tunnel flag proxied HTTP requests lost their origin after the Undici 8.7 behavior change; the compat flags expose provider capabilities the sync's provider clients now read; and a torn tail entry otherwise fuses with the next append and can swallow the rest of the session.
+
+### Why an extension could not handle it
+
+- Session file ownership, runtime teardown ordering, the HTTP dispatcher, and the models.json schema are core seams that run before or below extension hooks.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/session-manager.ts` append-side repair and `packages/coding-agent/src/core/agent-session-runtime.ts` fork ordering; LOW: `packages/coding-agent/src/core/model-config.ts` compat schema fields and `packages/coding-agent/src/core/http-dispatcher.ts` agent options.
+
+## 2026-09-04 - Skills prompt aliases each root to a short rN prefix
+
+### What changed
+
+- `skills.ts` `formatSkillsForPrompt`: emits a `<skill_roots></skill_roots>` table (one line per distinct root, `r0`, `r1`, ...) and renders each `<location>` as `alias/<name>/SKILL.md` plus a one-line expansion rule. `test/suite/skills-root-alias.test.ts` covers the table, alias re-join resolvability, and the character saving; `test/skills.test.ts` re-pins the location shape.
+
+### Why
+
+- The long absolute root was billed once per skill (145 skills): 23,381 -> 22,244 o200k tokens (-1,137) on the real set with no content removed.
+
+### Why an extension could not handle this differently
+
+- `skills.ts` owns the single renderer for the skills section; there is no extension seam for its formatting.
+
+### Expected merge conflict zones
+
+- LOW: `skills.ts` renderer body and `skills.test.ts` location assertion.
+
+
+## 2026-09-04 - Route bare "." submissions through a hidden manual-continue directive
+
+### What changed
+
+- `packages/coding-agent/src/core/manual-continue.ts` (new): `MANUAL_CONTINUE_CUSTOM_TYPE` (`"manual-continue"`) and `MANUAL_CONTINUE_DIRECTIVE`, the `<system-notice>` continue directive (resume most recent intent, complete unfinished work, resume where interrupted, never pause to summarize/re-confirm/ask).
+- `packages/coding-agent/src/core/agent-session.ts`: `prompt()` now intercepts `text.trim() === "."` on a session that already has messages BEFORE the extension input event is emitted. Instead of creating, persisting, or echoing a user message, it routes the directive through the existing `sendCustomMessage` path (custom message, `display: false`): `triggerTurn` starts a turn when idle, `steer`/`followUp` deliver while streaming (mapping `options.streamingBehavior`). The submission resolves as `promptDisposition("handled")` + `preflightResult(true)` so the interactive optimistic echo is cleared. An empty session, or a `.` submitted with image attachments (the user is sending the images, not asking to continue), falls through to ordinary prompt handling.
+- `packages/coding-agent/test/manual-continue-shortcut.test.ts` (new): pins the idle-turn, streaming-steer, and empty-session-fallthrough behaviors plus the echo disposition contract.
+- `packages/coding-agent/test/suite/regressions/pre-prompt-compaction-no-continue.test.ts`: the "dot retry" case now asserts the hidden `manual-continue` custom message instead of a literal `.` user message (the regression's subject — pre-prompt overflow compaction without `agent.continue()` — is unchanged and still covered).
+- `packages/coding-agent/docs/usage.md` + `packages/coding-agent/CHANGELOG.md`: one-line shortcut documentation and the `[Unreleased]` Added bullet.
+
+### Why
+
+- oh-my-pi maps `.`/`c` to a hidden agent-authored continue message so a one-keystroke nudge resumes the prior intent instead of second-guessing the interrupt. senpi had no equivalent: a bare `.` became a literal user turn ("." as prose), and the model would answer the punctuation rather than continue. senpi has no `developer` role; the equivalent hidden primitive is a custom message with `display: false`, which `convertToLlm` maps to a user-role directive for the provider.
+
+### Why an extension could not handle it
+
+- The shortcut must suppress user-message creation, persistence, and the optimistic echo inside `prompt()` itself, before the extension input event fires; an extension `input` handler can transform or handle text but cannot retroactively un-create the canonical user message or clear the TUI echo. The turn-driving primitive (`sendCustomMessage` with trigger/steer semantics and session-work serialization) is core session machinery.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts` — the top of `prompt()`'s `try` block (before the extension input emission), where queue-admission branches frequently change.
+- LOW: `packages/coding-agent/src/core/manual-continue.ts` (new file, no conflicts).
+- LOW: `packages/coding-agent/test/suite/regressions/pre-prompt-compaction-no-continue.test.ts` — the single assertion swap in the "dot retry" case.
+
+
+## 2026-09-04 - Failed provider turns leave the LLM context on every lane
+
+### What changed
+
+- `packages/coding-agent/src/core/messages.ts`: `convertToLlm` runs the shared `dropFailedAssistantTurns` from `@earendil-works/pi-ai` as its final step, removing assistant turns with `stopReason` `error`/`aborted` and the tool results orphaned by that drop from the returned `Message[]`. `convertToLlmForTransport` inherits the drop through `convertToLlm`.
+- `packages/coding-agent/test/convert-to-llm-drops-failed-turns.test.ts` (new): `convertToLlm` on `[user, assistant(error, "PARTIAL" + toolCall), toolResult, user]` yields no `PARTIAL` text and no orphaned tool call; same for an aborted turn.
+- `packages/coding-agent/test/claude-sdk-oauth-prompt-bridge.test.ts`: regression pinning that `buildPromptBlocks` over `convertToLlm`-processed history renders no failed-turn text and no orphaned tool call id.
+
+### Why
+
+- The claude-sdk-oauth prompt bridge (`buildPromptBlocks`) rendered every history assistant into `<conversation_history>` with no `stopReason` filter, so a failed provider turn's partial text and unexecuted tool calls were replayed to the SDK on every subsequent request; `estimateContextTokens(buildSessionContext(...))` counted the failed turns as live tokens. The provider transform layer already dropped them for pi-ai APIs only, leaving these two lanes and token estimation exposed.
+
+### Why an extension could not handle it
+
+- Both lanes consume `convertToLlm` output directly inside core request building (`prompt-bridge.ts`, cursor turn building, token estimation); no extension seam sits between the session message list and those builders.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `convertToLlm` in `packages/coding-agent/src/core/messages.ts` (the new `dropFailedAssistantTurns` return).
+- LOW: `packages/coding-agent/test/claude-sdk-oauth-prompt-bridge.test.ts` (one new `it` before the stream test).
+
+## 2026-09-04 - Restore the selected model, not its upstream wire id, on resume
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `getSessionContextSettings()` now treats an
+  explicit selection (a manual `model_change`, or the primary model restored from a fallback window)
+  as authoritative over later assistant messages from the same provider. An assistant message only
+  redefines the restored model when no explicit selection is in force or when it comes from a
+  different provider, which preserves legacy assistant-only sessions and the existing fallback
+  window handling.
+
+### Why
+
+- A catalog entry that maps to an `upstreamModelId` (the `-fast` priority variants, e.g.
+  `quotio-openai/gpt-5.6-sol-fast` -> `gpt-5.6-sol`) persists the upstream id on every assistant
+  message, because the request went out with that id. The old restore let that echo overwrite the
+  recorded selection, so resuming the session came back on the base model with no priority tier:
+  the fast indicator was gone and `service_tier` left the wire. Regression:
+  `test/session-manager/upstream-model-id-restore.test.ts`.
+
+### Why an extension could not handle it
+
+- Model restoration happens inside `SessionManager.buildSessionContext()` before the session or any
+  extension exists; `session_start` observes the already-resolved (wrong) model.
+
+### Expected merge conflict zones
+
+- LOW: the `model` bookkeeping inside `getSessionContextSettings()` in `session-manager.ts`.
+
+
+## 2026-09-04 - Gate next-turn compaction on real provider admission
+
+### What changed
+
+- Keep the next-turn callback running every completed turn, but enforce compaction only when a tool continuation or queued message will be admitted to a provider; retain the late queue re-sample and one bounded callback replay after compaction.
+
+### Why
+
+- Restoring the every-turn preparation contract must not reintroduce compaction on a completed turn that has no provider continuation, while queued work arriving during preparation still needs a consistent compacted context.
+
+### Why an extension could not handle it
+
+- Compaction admission, queue ownership, and callback replay span AgentSession persistence and provider lifecycle state beneath the extension event surface.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` next-turn preparation and compaction admission around `_installAgentNextTurnRefresh`.
+
+## 2026-09-03 - Restore provider-level api inheritance for models.json models
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts` composes models.json custom models with a defaults object that always carries the extension-registered provider's `api` and `baseUrl`, so a definition that omits both still inherits them when no built-in default exists; upstream's api-aware `findModelDefaults` remains the built-in lookup, and the missing-api/missing-baseUrl errors are unchanged when neither source provides a value.
+
+### Why
+
+- The upstream sync kept `findModelDefaults` but gated the extension fallback behind a truthy defaults check, so a models.json model under an extension-registered provider with an empty base catalog failed composition with `no "api" specified` before the extension layer could run.
+
+### Why an extension could not handle it
+
+- Provider composition order and models.json merging happen inside `applyModelsJson`/`modelFromJson` in `packages/coding-agent/src/core/provider-composer.ts`, before extension model behavior can repair the intermediate layer.
+
+### Expected merge conflict zones
+
+- LOW: models.json model upsert loop in `packages/coding-agent/src/core/provider-composer.ts` (`applyModelsJson`), plus the `modelFromJson` defaults parameter type.
+
+## 2026-09-03 - Route required compaction failures through admission state
+
+### What changed
+
+- Preserved the RequiredCompactionError turn/admission markers used to convert asynchronous compaction rejection into a controlled prompt error.
+
+### Why
+
+- Required compaction must reject the originating prompt without escaping as an unhandled event-queue rejection.
+
+### Why an extension could not handle it
+
+- Admission state is owned by AgentSession and spans agent event persistence, retry, and compaction scheduling.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` compaction admission and `_processAgentEvent` handling.
+
+## 2026-09-03 - Bridge branded terminal capability overrides
+
+### What changed
+
+- `settings-manager.ts` resolves unset terminal hyperlink, image-protocol, and truecolor settings from `SENPI_*` environment variables, falling back to the legacy `PI_*` names through the brand environment helper.
+
+### Why
+
+- Branded Senpi launches need terminal capability overrides to reach the shared TUI detection path without duplicating environment-resolution policy.
+
+### Why an extension could not handle it
+
+- Settings resolution occurs before interactive rendering and is core-owned configuration behavior outside extension hooks.
+
+### Expected merge conflict zones
+
+- LOW: `settings-manager.ts` terminal capability override resolution.
+
+## 2026-09-03 - Make eval-only tool routing unconditional and registry-aware
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: replaces the settings-gated bash/workflow policy with the fixed eval-only set `bash`, `powershell`, `workflow`, and `monitor`; keeps SDK overrides, routes monitor guidance through its required `description` and command fields, filters prompt/hint names to the session registry, and preserves reload resolution and hint withdrawal.
+- `packages/coding-agent/src/core/settings-manager.ts`: removes the deleted `experimental.bashEvalOnly` and `experimental.workflowEvalOnly` settings and getters while retaining `experimental.sharedHost`.
+
+### Why
+
+- Eval is the execution boundary for shell, workflow, and monitor operations whenever the registry provides it, so a settings key could disable the intended default and stale `powershell` guidance could reach macOS sessions that cannot provide that tool.
+
+### Why an extension could not handle it
+
+- Active-tool withholding, registry-backed execution, removed-tool hints, and system-prompt assembly are coordinated inside `AgentSession` before extension code can atomically enforce the policy; settings schema and getters are core load-time behavior.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts` around eval-only policy constants, hint publication, prompt suffix assembly, tool registry refresh, and reload.
+- LOW: `packages/coding-agent/src/core/settings-manager.ts` around `ExperimentalSettings` and the experimental getter block.
+
+## 2026-09-02 - Provider stream-start default raised to 300s for slow thinking models
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `DEFAULT_STREAM_START_TIMEOUT_MS` goes from 90_000 to 300_000, so the default provider stream-start watchdog grants 300s for the first SSE event. The effective value is still `min(default, idle timeout)`, explicit `retry.provider.streamStartTimeoutMs` overrides win unchanged, and `0` still disables the watchdog.
+- `packages/coding-agent/src/core/settings-manager.ts`: `getRetrySettings()` now defaults `maxRetries` to 5 instead of 3, matching `SENPI_DEFAULT_RETRY_PROFILE.turn.maxRetries`. Without this the one `retry.maxRetries` key meant 5 on the turn stage but 3 on every `getRetrySettings()` consumer (session-title retry, compaction summarization retry, the agent-session retry gate), and the documented default could only be true for one of them.
+- `packages/coding-agent/docs/settings.md`: the defaults table and the JSON example track the new default.
+
+### Why
+
+- Opus/Fable-class models with xhigh thinking routinely take longer than 90s to emit the first stream event, so the old default aborted healthy requests (`Provider stream start timed out after 90000ms`) and support had to tell users to raise the timeout by hand. Every comparable harness already grants 300s here (opencode's header timeout, codex's stream idle timeout, oh-my-pi's first-event timeout), and senpi's own stream idle default is already 300s.
+
+### Why an extension could not handle it
+
+- The value is a shipped core constant that applies only when no explicit setting exists; extensions can set `retry.provider.streamStartTimeoutMs` per session but cannot change the unset default every session inherits.
+
+### Expected merge conflict zones
+
+- LOW: the two default lines in `settings-manager.ts` (`DEFAULT_STREAM_START_TIMEOUT_MS`, the `getRetrySettings()` fallback) plus the matching rows in `docs/settings.md`.
+
+## 2026-09-02 - Inherit extension provider settings for models.json custom models
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts` now lets models.json custom models inherit an extension-registered provider's `api` and `baseUrl`, and preserves extension catalog models when adding new custom IDs.
+
+### Why
+
+- A custom models.json model under an extension provider previously failed before the extension could compose it because the models.json layer could not see the extension's provider-level settings; models.json custom definitions not declared by the extension catalog were also dropped.
+
+### Why an extension could not handle it
+
+- Provider composition order and models.json merging are core responsibilities in `packages/coding-agent/src/core/provider-composer.ts`, before extension model behavior can repair the intermediate layer.
+
+### Expected merge conflict zones
+
+- LOW: models.json and extension composition in `packages/coding-agent/src/core/provider-composer.ts`.
+
+## 2026-09-02 - Name the retry stream-start setting
+
+### What changed
+
+- Provider retry continuation watchdog abort messages now name `retry.provider.streamStartTimeoutMs` and explain that `0` disables the guard.
+
+### Why
+
+- Users need an actionable setting name when a retry continuation watchdog reports a provider stream-start stall.
+
+### Why an extension could not handle it
+
+- The watchdog is owned by `AgentSession` and aborts the core agent directly, before extension hooks can rewrite the error.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` retry watchdog abort message builder.
+
+## 2026-08-31 - Session activity contract for host occupancy decisions
+
+### What changed
+
+- `session-activity.ts` (new): the single definition of session-owned activity - `SessionActivitySnapshot` (agent run, bash, compaction, session-work barrier), `WakeSourceTracker` for extension-published `wake_source_state` counts, and the `isSessionBusySnapshot()` predicate composing them.
+- `agent-session.ts`: `AgentSession` exposes `activitySnapshot` and `isSessionBusy`, and subscribes to `wake_source_state` on every extension bind so background terminal jobs, terminal monitors, and loop-guard holds count as live work; the subscription is dropped on dispose and counts deliberately survive an extension reload.
+- `extensions/runner.ts`: `onBusEvent(channel, handler)` exposes the session's extension event bus for those activity signals, alongside the existing `onRpcEvent`.
+
+### Why
+
+- The shared RPC host's idle eviction asked only `isStreaming`/`isBashRunning`, so a session whose work outlives the turn - an auto-detached background terminal job, a running compaction, or barrier-held continuation work - could be torn down at the idle threshold, killing the user's job. Teardown decisions now consult one composed predicate, so a future activity source is picked up by every call site at once instead of being missed per call site.
+
+### Why an extension could not handle it
+
+- The predicate is consumed by host lifecycle code beneath every extension surface, and it must aggregate in-session state (`_isAgentRunActive`, the compaction lifecycle, the session-work barrier) that no extension can observe.
+
+### Expected merge conflict zones
+
+- LOW: the new `session-activity.ts` module, the activity getters and `_bindExtensionCore` subscription in `agent-session.ts`, and the `onBusEvent` helper in `extensions/runner.ts`.
+
+## 2026-08-31 - Release refusal fallback pins on compaction
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts` records pin provenance and exposes `notifyCompactionApplied` to release refusal-caused pin contributions.
+- `packages/coding-agent/src/core/agent-session.ts` calls `_onCompactionContextChanged` at the `_executeCompaction` success seam and eagerly restores the original model; billing pins and `fallbackRevertPolicy "never"` are unaffected, and there is no new settings key.
+
+### Why
+
+- Refusal pins encode "same context refuses again"; compaction rewrites the context, so one fresh primary attempt per successful apply is correct. This is always-on by user decision, with no config key.
+
+### Why an extension could not handle it
+
+- The pin state and restore gate live inside core retry-fallback controller state and the agent-session compaction apply seam. Extensions observe compaction events but cannot mutate `ActiveFallbackState` or re-enter the internal restore gate.
+
+### Expected merge conflict zones
+
+- The prepend zone at the top of `packages/coding-agent/src/core/changes.md`.
+- The `tryFallback` state-write hunk in `retry-fallback/controller.ts`.
+- The `_executeCompaction` success tail in `agent-session.ts` (near other compaction-lifecycle work).
+
+## 2026-08-31 - Bound the session manager's in-memory mirror
+
+### What changed
+
+- `session-resident-store.ts` now evicts oldest externalized strings above a conservative 64 MiB per-session budget.
+- `session-manager.ts` trims superseded pre-compaction entries from its live mirror and reloads the JSONL when a pruned branch is selected.
+
+### Why
+
+- The JSONL is the source of truth; retaining every serialized tool result and historical entry in RAM caused active sessions to grow without bound.
+
+### Why an extension could not handle it
+
+- Session persistence, compaction, branching, and the resident mirror are core `SessionManager` responsibilities below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: resident string storage and `appendCompaction()` mirror maintenance.
+## 2026-08-31 - Shared session host is OFF by default (opt-in)
+
+- Interactive sessions no longer join the shared RPC host implicitly. `main.ts` now gates
+  `createInteractiveHostRuntime` on `shouldJoinSharedHost()` (`core/shared-host-policy.ts`): a bare
+  interactive session stays purely local and never opens `<agentDir>/rpc/rpc.sock`.
+- Opt in persistently with the `experimental.sharedHost` setting, or per-process with the
+  brand-prefixed `ENABLE_SHARED_HOST` env flag (`SENPI_ENABLE_SHARED_HOST=1` / `OMO_ENABLE_SHARED_HOST=1`) (`SettingsManager.getExperimentalSharedHost()`). Non-interactive
+  modes (print, json, rpc, app-server) are unaffected; the app-server / `--multi-session` host owns
+  its own transport.
+- The former opt-out `DISABLE_SHARED_HOST` is obsolete: it is now the default, and setting it prints a
+  one-time notice pointing at the opt-in flag.
+
+## 2026-08-30 - Durable entry notifications are rpc-scoped
+
+## 2026-08-30 - Wire ideal compaction execution through AgentSession
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` routes compaction through the ideal compaction execution pipeline while preserving the existing session lifecycle and transcript accounting contracts.
+
+### Why
+
+- The feature's compaction policy and execution layers need the session-owned model, settings, and transcript state at the integration boundary.
+
+### Why an extension could not handle it
+
+- Compaction dispatch is owned by `AgentSession`, before extension-level behavior can replace the session lifecycle integration.
+
+### Expected merge conflict zones
+
+- LOW: compaction dispatch in `agent-session.ts`.
+
+## 2026-08-30 - Do not cancel client work from a binding-time tool change
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `setActiveToolsByName()` calls `abortCompaction()` and `_incrementMessageRevision()` only when the tool change happens outside extension binding, detected through the existing `_extensionBindingPromptReadiness` scope that `bindExtensions()` already maintains.
+
+### Why
+
+- A session replacement responds as soon as the swap is committed and rebinds extensions afterwards, by design: awaiting the bind would deadlock a client whose `session_start` handler blocks on an `extension_ui_request`. During that bind, `session_start` handlers deactivate tools for the active model (`video-in`, `look-at`), the tool set changes, and the abort plus revision bump cancelled a compaction the client had already started against the committed session - "Compaction cancelled" on roughly 4 of 6 runs, verified by capturing the abort stack inside the host process. Tool activation performed while binding is part of the binding, not a mid-session context change, so it must not invalidate that work. Mid-session tool changes still abort and bump exactly as before.
+
+### Why an extension could not handle it
+
+- The abort is core session lifecycle beneath the extension API, and the extensions involved are the ones whose binding triggers it.
+
+### Expected merge conflict zones
+
+- LOW: the `activeToolNamesChanged` branch in `setActiveToolsByName()`.
+
+
+## 2026-08-30 - Drop the classic host-UI no-op stub
+
+- `agent-session.ts`: `_emitEntryAppended` only fires while the session is bound in `rpc`
+  mode. The notifications exist to hydrate the shared-host RPC proxy mirror; emitting them
+  on classic/print streams injected extra labels into the released event-order contract
+  (`agent-session-retry-events`, `retry-fallback-engine` pin the full ordered label list and
+  the byte-for-byte no-chain retry contract).
+- `agent-session-prompt.test.ts` binds `mode: "rpc"` before asserting durable prompt entries,
+  so the new-behavior test exercises the lane the contract actually covers instead of the
+  default print lane.
+
+
+## 2026-08-30 - Experimental workflow eval-only policy
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: adds the `experimental.workflowEvalOnly` setting and its getter.
+- `packages/coding-agent/src/core/agent-session.ts`: resolves the policy from settings in the constructor and on reload, hides the `workflow` tool while the registered `eval` tool is present, executes it through the registry without activation, publishes an eval-cell hint, adds system-prompt guidance, and retains the withheld tool so disarming restores direct access.
+
+### Why
+
+- Codemode can keep invoking the workflow (dag) tool from eval cells while preventing it from being advertised as a direct model tool. The policy is inert when codemode's `eval` tool is unavailable, so workflow access is never lost.
+
+### Why an extension could not handle it
+
+- Active tool visibility, lazy activation, the wrapped registry, and the agent-loop removed-tool hint map are coordinated inside `AgentSession`; an extension cannot atomically enforce these boundaries.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: active-tool selection, tool registry refresh, reload, and system-prompt assembly.
 ## 2026-08-29 - Bound Cursor serialized tool-result admissions
 
 ### What changed
@@ -130,6 +646,113 @@
 ### Expected merge conflict zones
 
 - `agent-session.ts`: active-tool selection, tool registry refresh, reload, and system-prompt assembly.
+
+## Compaction settings resolution moved out of the settings manager (2026-08-29)
+
+### What changed
+
+- `settings-manager.ts` delegates compaction knob resolution to `compaction-settings-resolver.ts`
+  instead of resolving every field inline. The manager keeps its public accessor shape; the resolver
+  owns the defaults for the ideal-pipeline knobs (grace band, tool admission, reminder, reserve
+  scaling, speculative lead).
+
+### Why
+
+- `settings-manager.ts` was already well past the module size ceiling. This branch adds compaction
+  knobs, and the project rule forbids growing an already-oversized file, so the added resolution
+  became its own module.
+
+### Why an extension could not handle it
+
+- These defaults are read by core admission before any extension runs, so they cannot be supplied
+  from extension space.
+
+### Expected merge conflict zones
+
+- Upstream changes to `getCompactionSettings` now touch `compaction-settings-resolver.ts` as well as
+  `settings-manager.ts`.
+
+## Reject model downswitches that exceed the target budget (2026-08-30)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` adds current live-context usage to the assembled
+  model budget before direct or favorite-cycle downswitches. Rejected switches leave the active
+  model, persisted session history, and global defaults unchanged.
+- The rejection reports every measured budget component and directs callers to compact, revalidate,
+  and retry. A successful manual compaction reduces the live projection, so the same explicit switch
+  can then be retried normally.
+
+### Why
+
+- A session accumulated under a million-token model could previously commit a 372K model before
+  discovering that its live transcript plus prompt, tools, and reserves did not fit. The next turn
+  then entered emergency overflow recovery from a model state that was invalid when selected.
+
+### Why an extension could not handle it
+
+- Direct and favorite-cycle model selection mutate private session state and persistence before a
+  post-selection extension hook runs. Admission must happen at that shared pre-commit boundary.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts` around `_setModel`,
+  `_cycleFavoriteModel`, and the model-budget assertion.
+
+## Reject models with unusable assembled context budgets (2026-08-30)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` projects the selected model against the current
+  assembled system prompt, active tool schemas, output reserve, effective compaction reserve,
+  speculation lead, and model-family safety margin before mutating explicit model selection.
+- `packages/coding-agent/src/core/sdk.ts` runs the same projection after `AgentSession` construction,
+  when the initial runtime prompt and active tools have been assembled, and rejects setup with the
+  projection's precise budget diagnostic when the model is unusable.
+
+### Why
+
+- A small context window can put the fixed speculation lead at or beyond its compaction threshold.
+  Accepting that model creates a session with no useful conversation budget and causes permanent
+  compaction; setup and explicit selection now fail before provider traffic or model mutation.
+
+### Why an extension could not handle it
+
+- Session construction and explicit model mutation are core boundaries. Extensions cannot reject
+  initial creation after the final prompt/tool assembly or atomically guard every model-selection
+  caller before persistence.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts` around `_setModel` and the public budget
+  assertion used by runtime setup.
+- LOW: `packages/coding-agent/src/core/sdk.ts` immediately after `AgentSession` construction.
+
+## Compaction settings resolution moved out of the settings manager (2026-08-29)
+
+### What changed
+
+- `settings-manager.ts` delegates compaction knob resolution to `compaction-settings-resolver.ts`
+  instead of resolving every field inline. The manager keeps its public accessor shape; the resolver
+  owns the defaults for the ideal-pipeline knobs (grace band, tool admission, reminder, reserve
+  scaling, speculative lead).
+
+### Why
+
+- `settings-manager.ts` was already well past the module size ceiling. This branch adds compaction
+  knobs, and the project rule forbids growing an already-oversized file, so the added resolution
+  became its own module.
+
+### Why an extension could not handle it
+
+- These defaults are read by core admission before any extension runs, so they cannot be supplied
+  from extension space.
+
+### Expected merge conflict zones
+
+- Upstream changes to `getCompactionSettings` now touch `compaction-settings-resolver.ts` as well as
+  `settings-manager.ts`.
+
 ## 2026-08-29 - Withheld tools are filtered at the advertisement seam
 
 ### What changed
@@ -913,6 +1536,24 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 - `provider-composer.ts` end of `ProviderConfigInput`; `model-runtime.ts` near `hasConfiguredAuth`;
   `model-registry.ts` near `isUsingOAuth`.
 
+## 2026-09-04 - Make reftable polling content-aware
+
+### What changed
+
+- `footer-data-provider.ts` now retains the last `tables.list` contents and compares content on each polling callback in addition to filesystem metadata.
+
+### Why
+
+- Filesystem timestamp precision can make a changed reftable table list look unchanged when its size and timestamps are identical, leaving the footer branch stale.
+
+### Why an extension could not handle it
+
+- Reftable detection is core footer session plumbing and is not observable or replaceable by an extension.
+
+### Expected merge conflict zones
+
+- LOW: `footer-data-provider.ts` reftable polling callback.
+
 ## 2026-08-19 upstream sync integration repair (footer-data-provider watcher fallback)
 
 ### What changed
@@ -1071,7 +1712,7 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
   reproduced the identical defect one layer up: `runBoundedRetryContinuation` aborted the attempt at 30s while
   the request still had 60s of its configured 90s stream-start budget left.
 - No attempt could therefore finish, so the bounded `retry.maxRetries` budget (default 3) collapsed into the
-  single user-visible `Provider stream start timed out after 90000ms` / `Aborted after 1 retry attempt`
+  single user-visible `Provider stream start timed out after 90000ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)` / `Aborted after 1 retry attempt`
   outcome. A slow-but-alive provider was again judged dead on a deadline it was never given.
 - Raising the watchdog to the granted guard preserves the wedge protection it was added for: the provider
   guards still fail a dead upstream, and the watchdog still cancels a retry that outlives every guard it was
@@ -4176,3 +4817,21 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 ### Expected merge conflict zones
 
 - Agent event dispatch and custom-message queue handling.
+
+## 2026-09-03 - Reconcile upstream agent-session admission and runtime replacement
+
+### What changed and why
+
+- Kept senpi compaction admission, abort, model persistence, and event-union behavior while removing the obsolete queued-message gate and callback re-sample from next-turn refresh; runtime replacement now settles the outgoing session before creating the fork target and preserves extension spill reporting.
+
+### Why
+
+- Upstream loop ordering already drains continuation messages into loop-local state before preparation, so the old gate skipped required threshold compaction. Settling before fork creation preserves outgoing JSONL and active-turn lifecycle ordering.
+
+### Why an extension could not handle this
+
+- Session admission, persistence, abort, and runtime replacement are core lifecycle boundaries below extension interception.
+
+### Expected merge conflict zones
+
+- `src/core/agent-session.ts` next-turn refresh and compaction lifecycle; `src/core/agent-session-runtime.ts` replacement ordering.

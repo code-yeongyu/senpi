@@ -49,7 +49,7 @@ test/                  Vitest suites plus support harness
 From the package root, or with `--workspace=@earendil-works/pi-client` from the repo root:
 
 ```bash
-npm run build        # tsc -p tsconfig.build.json
-npm test             # vitest --run
-npm run typecheck    # tsc -p tsconfig.test.json
+bun run build        # tsc -p tsconfig.build.json
+bun run test             # vitest --run
+bun run typecheck    # tsc -p tsconfig.test.json
 ```

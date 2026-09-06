@@ -12,7 +12,13 @@ import type {
 	ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions.js";
 import type { FunctionParameters } from "openai/resources/shared.js";
-import { calculateCost, clampThinkingLevel, supportsMax, supportsXhigh } from "../models.ts";
+import {
+	calculateCost,
+	clampThinkingLevel,
+	inferOpenAIThinkingLevelMap,
+	supportsMax,
+	supportsXhigh,
+} from "../models.ts";
 import type {
 	AssistantMessage,
 	CacheRetention,
@@ -154,9 +160,8 @@ function getThinkingLevelMap(
 	model: Model<"openai-completions">,
 	compat: ResolvedOpenAICompletionsCompat,
 ): ThinkingLevelMap | undefined {
-	if (model.thinkingLevelMap !== undefined) {
-		return model.thinkingLevelMap;
-	}
+	const inferred = inferOpenAIThinkingLevelMap(model);
+	if (inferred !== undefined) return inferred;
 
 	const id = model.id.toLowerCase();
 	const isKimiK3 = id === "k3" || id.startsWith("k3-") || /(?:^|[/:-])kimi-k3(?:$|[/.:_-])/.test(id);
@@ -456,6 +461,15 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			timestamp: Date.now(),
 		};
 
+		// `reasoning_details` are replay metadata, not user-visible stream deltas.
+		// Keep them in memory during streaming and serialize once when the block is finalized.
+		let streamedReasoningDetails: OpenAIReasoningDetail[] | undefined;
+		const applyStreamedReasoningDetails = (block: ThinkingContent): void => {
+			if (streamedReasoningDetails !== undefined) {
+				block.thinkingSignature = JSON.stringify(streamedReasoningDetails);
+			}
+		};
+
 		try {
 			const clientAuth = resolveOpenAIClientAuth(model.provider, options?.apiKey, options?.headers);
 			const compat = getCompat(model);
@@ -579,6 +593,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						partial: output,
 					});
 				} else if (block.type === "thinking") {
+					applyStreamedReasoningDetails(block);
 					stream.push({
 						type: "thinking_end",
 						contentIndex,
@@ -911,6 +926,9 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			stream.end();
 		} catch (error) {
 			for (const block of output.content) {
+				if (block.type === "thinking") {
+					applyStreamedReasoningDetails(block);
+				}
 				delete (block as { index?: number }).index;
 				// Streaming scratch buffers are only used during parsing; never persist them.
 				delete (block as { partialArgs?: string }).partialArgs;
@@ -951,14 +969,19 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 	const compat = getCompat(model);
 	const thinkingLevelMap = getThinkingLevelMap(model, compat);
 	const thinkingModel = thinkingLevelMap === model.thinkingLevelMap ? model : { ...model, thinkingLevelMap };
-	const clampedReasoning = options?.reasoning ? clampThinkingLevel(thinkingModel, options.reasoning) : undefined;
+	const clampedReasoning = options?.reasoning
+		? clampThinkingLevel(thinkingModel, options.reasoning)
+		: model.id.includes("gpt-6-astra")
+			? "off"
+			: undefined;
+	const normalizedReasoning =
+		clampedReasoning === "off" && model.id.includes("gpt-6-astra") ? "low" : clampedReasoning;
 	const reasoningEffort =
-		clampedReasoning === "off"
+		normalizedReasoning === "off"
 			? undefined
-			: clampedReasoning === "max" && supportsMax(thinkingModel)
+			: normalizedReasoning === "max" && supportsMax(thinkingModel)
 				? "max"
-				: clampMaxForOpenAI(clampedReasoning, supportsXhigh(thinkingModel));
-
+				: clampMaxForOpenAI(normalizedReasoning, supportsXhigh(thinkingModel));
 	return stream(model, context, {
 		...base,
 		reasoningEffort,
@@ -1086,8 +1109,12 @@ function buildParams(
 		applyAnthropicCacheControl(messages, params.tools, cacheControl);
 	}
 
-	if (options?.toolChoice && params.tools?.length) {
+	if (options?.toolChoice) {
 		params.tool_choice = options.toolChoice;
+	}
+
+	if (compat.vllmPriority !== undefined) {
+		(params as any).priority = compat.vllmPriority;
 	}
 
 	const thinkingTokenBudgetField = resolveThinkingTokenBudgetField(compat);
@@ -1148,7 +1175,7 @@ function buildParams(
 		}
 		if (compat.supportsReasoningEffort) {
 			const requestedEffort = options?.reasoningEffort;
-			const mappedEffort = requestedEffort ? model.thinkingLevelMap?.[requestedEffort] : model.thinkingLevelMap?.off;
+			const mappedEffort = requestedEffort ? thinkingLevelMap?.[requestedEffort] : thinkingLevelMap?.off;
 			const effort = mappedEffort === undefined ? requestedEffort : mappedEffort;
 			if (typeof effort === "string") {
 				basetenParams.reasoning_effort = effort;

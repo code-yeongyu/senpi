@@ -65,15 +65,15 @@ Legacy root helpers: `test-harness.ts` (superseded), `utilities.ts`, `model-runt
 ## LIVE AND MANUAL SURFACES
 
 - `integration/` is opt-in only with `PI_RUN_INTEGRATION=1`; it may use real credentials and incur cost.
-- `qa/app-server/` contains focused real-surface drivers. The separate `npm run qa:app-server` command runs the packaged handshake, multiclient, approval, and real-client probes.
+- `qa/app-server/` contains focused real-surface drivers. The separate `bun run qa:app-server` command runs the packaged handshake, multiclient, approval, and real-client probes.
 - Runtime changes covered here still require the repository's `senpi-qa` evidence gate when the root guide requires it.
 
 ## VALIDATION
 
 - Run every added or changed test file directly until green.
 - Run the narrow owning directory or package suite when shared harnesses, fixtures, or lifecycle behavior change.
-- Package runner is Vitest: `npm --prefix packages/coding-agent test -- --run <path>`.
-- Root `npm run check` is static validation and does not replace tests.
+- Package runner is Vitest: `bun run --cwd packages/coding-agent test --run <path>`.
+- Root `bun run check` is static validation and does not replace tests.
 
 ---
 Generated: 2026-08-24 | Commit: `baf15a54d`

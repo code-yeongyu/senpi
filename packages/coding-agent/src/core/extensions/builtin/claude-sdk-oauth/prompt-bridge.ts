@@ -1,10 +1,9 @@
-import type { AssistantMessage, Context, ImageContent, TextContent } from "@earendil-works/pi-ai";
-import type { Base64ImageSource, ContentBlockParam, SDKUserMessage } from "./sdk-boundary.ts";
+import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
+import { appendSdkContentBlocks } from "./content-blocks.ts";
+import type { ContentBlockParam, SDKUserMessage } from "./sdk-boundary.ts";
 import { mapPiToolNameToSdk } from "./tools.ts";
 
 export { mapPiToolNameToSdk } from "./tools.ts";
-
-type PromptContent = string | readonly (TextContent | ImageContent)[];
 
 export function contentToText(
 	content: AssistantMessage["content"],
@@ -22,29 +21,8 @@ export function contentToText(
 		.join("\n");
 }
 
-function appendContentBlocks(blocks: ContentBlockParam[], content: PromptContent): boolean {
-	if (typeof content === "string") {
-		if (content.length > 0) blocks.push({ type: "text", text: content });
-		return content.trim().length > 0;
-	}
-
-	let hasText = false;
-	for (const block of content) {
-		if (block.type === "text") {
-			blocks.push({ type: "text", text: block.text });
-			hasText ||= block.text.trim().length > 0;
-		} else {
-			blocks.push({
-				type: "image",
-				source: {
-					type: "base64",
-					media_type: block.mimeType as Base64ImageSource["media_type"],
-					data: block.data,
-				},
-			});
-		}
-	}
-	return hasText;
+function appendContentBlocks(blocks: ContentBlockParam[], content: string | readonly unknown[]): boolean {
+	return appendSdkContentBlocks(blocks, content);
 }
 
 export function buildPromptBlocks(
@@ -80,6 +58,7 @@ export function buildPromptBlocks(
 				if (text.length > 0) pushText(text);
 				continue;
 			}
+			if (message.role === "configurationUpdate") continue;
 			pushPrefix(
 				`TOOL RESULT (historical ${mapPiToolNameToSdk(message.toolName, customToolNameToSdk)}, id=${message.toolCallId}):`,
 			);

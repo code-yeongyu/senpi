@@ -56,5 +56,5 @@ changes.md              Fork-specific interactive behavior
 
 - Run focused component/interactive tests from `packages/coding-agent`.
 - Run `packages/tui/test/tui-render.test.ts` when render frequency or memoization changes.
-- Every UI change requires root `npm run check`, `senpi-qa` TUI smoke evidence, and visual inspection across relevant terminal sizes.
+- Every UI change requires root `bun run check`, `senpi-qa` TUI smoke evidence, and visual inspection across relevant terminal sizes.
 - Record fork-visible changes in `changes.md` and preserve them during upstream merges.

@@ -1635,11 +1635,13 @@ describe("macOS recursive watch offload", () => {
 			kind: "watch",
 			id: 1,
 			path: "/Users/dev/large-workspace",
+			recursive: true,
 		});
 		expect(worker.postMessage).toHaveBeenCalledWith({
 			kind: "watch",
 			id: 2,
 			path: "/Users/dev/another-config-root",
+			recursive: true,
 		});
 		expect(listener).toHaveBeenCalledWith("change", ".omo/omo.json");
 		expect(onError).not.toHaveBeenCalled();
@@ -1652,9 +1654,12 @@ describe("macOS recursive watch offload", () => {
 		expect(worker.terminate).toHaveBeenCalledTimes(1);
 	});
 
-	it("keeps darwin non-recursive watches on the main thread", () => {
-		// Given: a darwin event source whose worker factory must stay unused
-		const createRecursiveWorker = vi.fn(() => new DarwinWorkerProbe());
+	it("routes darwin non-recursive watches through the worker too", () => {
+		// Given: a darwin event source with an injected fake worker. Non-recursive
+		// FSEvents setup blocks the main thread for seconds under load (measured
+		// 2.7-8.0s per watch-engine target), so it must be offloaded like recursive.
+		const worker = new DarwinWorkerProbe();
+		const createRecursiveWorker = vi.fn(() => worker);
 		const agentDir = mkdtempSync(join(tmpdir(), "senpi-darwin-nonrecursive-"));
 		agentDirs.push(agentDir);
 		const source = createFsWatchEventSource(vi.fn(), { platform: "darwin", createRecursiveWorker });
@@ -1662,9 +1667,15 @@ describe("macOS recursive watch offload", () => {
 		// When: a non-recursive watch is registered
 		const unsubscribe = source(agentDir, vi.fn(), { recursive: false });
 
-		// Then: no worker is spawned
-		expect(createRecursiveWorker).not.toHaveBeenCalled();
+		// Then: setup went to the worker with the non-recursive flag
+		expect(worker.postMessage).toHaveBeenCalledWith({
+			kind: "watch",
+			id: 1,
+			path: agentDir,
+			recursive: false,
+		});
 
 		unsubscribe();
+		expect(worker.terminate).toHaveBeenCalledTimes(1);
 	});
 });

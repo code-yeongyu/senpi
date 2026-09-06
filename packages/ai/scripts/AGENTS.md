@@ -22,10 +22,10 @@ transform-cursor-agent-proto.mjs Rewrites protoc-gen-es enums to const objects f
 
 | Invocation | Flags | Effect |
 |---|---|---|
-| `npm run generate-models` | `--strict` | Full: `data/` JSON + `models.generated.ts` |
-| `npm run hydrate-model-data` | `--strict --data-only` | `data/` JSON only; rejects any JSON-catalog flag |
-| `npm run generate-model-catalog` | `--strict --json-only --json-output <dir>` | Publishable catalog to `.artifacts/model-catalog`; `--json-only` requires `--json-output` |
-| `npm run check:model-data` | — | Validates manifest hashes; fails with "run `npm run hydrate:model-data` from the repository root" |
+| `bun run generate-models` | `--strict` | Full: `data/` JSON + `models.generated.ts` |
+| `bun run hydrate-model-data` | `--strict --data-only` | `data/` JSON only; rejects any JSON-catalog flag |
+| `bun run generate-model-catalog` | `--strict --json-only --json-output <dir>` | Publishable catalog to `.artifacts/model-catalog`; `--json-only` requires `--json-output` |
+| `bun run check:model-data` | — | Validates manifest hashes; fails with "run `bun run hydrate:model-data` from the repository root" |
 
 `--strict` turns per-provider fetch failures into a thrown error instead of a skip. Without it a network hiccup silently ships a shrunken catalog — always keep it on for committed regeneration.
 
@@ -42,9 +42,9 @@ transform-cursor-agent-proto.mjs Rewrites protoc-gen-es enums to const objects f
 - Hand-editing `src/providers/data/*.json`, `src/models.generated.ts`, or `src/image-models.generated.ts` instead of rerunning the generator — the manifest will catch it, but only at `check:model-data` time.
 - Running generation without `--strict` and committing the diff.
 - Adding a provider fetcher that does not honor the deprecated-status skip or the staging/rename path.
-- Editing `src/api/cursor-agent/gen/agent_pb.ts` by hand: regenerate via `buf generate` on `proto/cursor/agent.proto`, then `node scripts/transform-cursor-agent-proto.mjs <in> <out>` (the exact `buf` invocation is in that file's header comment).
+- Editing `src/api/cursor-agent/gen/agent_pb.ts` by hand: regenerate via `buf generate` on `proto/cursor/agent.proto`, then `bun scripts/transform-cursor-agent-proto.mjs <in> <out>` (the exact `buf` invocation is in that file's header comment).
 
 ## VALIDATION
 
-- After any regeneration: `npm run check:model-data`, then inspect the `data/` diff for unintended model removals.
-- Root-level entry points are `npm run generate:models`, `npm run hydrate:model-data`, `npm run check:model-data`; the `packages/ai` scripts are what they delegate to.
+- After any regeneration: `bun run check:model-data`, then inspect the `data/` diff for unintended model removals.
+- Root-level entry points are `bun run generate:models`, `bun run hydrate:model-data`, `bun run check:model-data`; the `packages/ai` scripts are what they delegate to.

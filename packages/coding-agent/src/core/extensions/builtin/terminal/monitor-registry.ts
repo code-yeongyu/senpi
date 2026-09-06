@@ -1,8 +1,10 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { type FSWatcher, watch } from "node:fs";
 import { access, type FileHandle, lstat, open, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { TerminalRuntimeSession } from "./runtime-session.ts";
+import { DEFAULT_DURABLE_MONITOR_FIRE_BUDGET, FIRE_BUDGET_AUTO_MUTE_SUMMARY, FIRE_BUDGET_WINDOW_MS } from "./shared.ts";
+import type { MonitorDurabilityClass } from "./terminal-manifest.ts";
 import { describeExit } from "./tools/spawn.ts";
 
 export interface MonitorLineEvent {
@@ -23,12 +25,41 @@ export type MonitorEvent = MonitorLineEvent | MonitorSummaryEvent;
 
 export type MonitorRearmResult = "rearmed" | "not_paused" | "not_found";
 
+export interface MonitorResumeResult {
+	readonly id: string;
+	readonly mutedDropped: number;
+}
+
+const MONITOR_ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/** Allocate a stable monitor identity: "mon_" + 16 Crockford base-32 chars (80 random bits). */
+export function allocateMonitorId(): string {
+	let id = "mon_";
+	let buffer = 0;
+	let bits = 0;
+	for (const byte of randomBytes(10)) {
+		buffer = (buffer << 8) | byte;
+		bits += 8;
+		while (bits >= 5) {
+			bits -= 5;
+			id += MONITOR_ID_ALPHABET[(buffer >> bits) & 31];
+		}
+	}
+	return id;
+}
+
+export type MonitorFireWindow = { startMs: number; count: number };
 export interface MonitorSnapshotEntry {
 	readonly id: string;
+	/** Stable "mon_" identity carried alongside the runtime id; always set on live snapshots. */
+	readonly monitorId?: string;
 	readonly description: string;
 	readonly paused: boolean;
 	/** Epoch milliseconds when the watch registered; feeds the footer's live elapsed label. */
 	readonly startedAtMs: number;
+	/** Durability deadline of a restart-surviving watch; undefined for every ephemeral one. */
+	readonly expiresAt?: number;
+	readonly fireWindow?: MonitorFireWindow;
 }
 
 export interface MonitorRegistryOptions {
@@ -41,17 +72,29 @@ export interface MonitorRegistryOptions {
 export interface RegisterFileMonitorOptions {
 	readonly description: string;
 	readonly path: string;
+	/** Caller-supplied stable identity so a restore can re-bind the same "mon_" id. */
+	readonly monitorId?: string;
 	readonly event: "create" | "modify";
 	readonly timeoutMs: number;
 	readonly cwd: string;
 	readonly approvedParent?: string;
+	/** Durability deadline of a `checkpointed-file` watch; omitted for a one-shot ephemeral one. */
+	readonly expiresAt?: number;
 }
 
 export interface RegisterMonitorOptions {
 	readonly id: string;
+	/** Caller-supplied stable identity so a restore can re-bind the same "mon_" id. */
+	readonly monitorId?: string;
 	readonly description: string;
 	readonly runtime: TerminalRuntimeSession;
 	readonly filter?: RegExp;
+	/** Durability class from the manifest spec; non-ephemeral records carry the fire budget. */
+	readonly durabilityClass?: MonitorDurabilityClass;
+	/** Persisted fire window re-bound by a restore, so a restart cannot reset the budget. */
+	readonly fireWindow?: MonitorFireWindow;
+	/** Durability deadline of a durable watch; omitted for an ephemeral one. */
+	readonly expiresAt?: number;
 }
 
 interface PendingFileRegistration {
@@ -63,8 +106,11 @@ interface PendingFileRegistration {
 
 interface FileMonitorRecord {
 	readonly id: string;
+	readonly monitorId: string;
+	readonly sessionId: string;
 	readonly description: string;
 	readonly startedAtMs: number;
+	readonly expiresAt: number | undefined;
 	readonly path: string;
 	readonly canonicalPath: string;
 	readonly canonicalParent: string;
@@ -90,13 +136,18 @@ interface FileMonitorRecord {
 
 interface MonitorRecord {
 	readonly id: string;
+	readonly monitorId: string;
+	readonly sessionId: string;
 	readonly description: string;
 	readonly startedAtMs: number;
+	readonly expiresAt: number | undefined;
 	readonly runtime: TerminalRuntimeSession;
 	readonly filter: RegExp | undefined;
 	lineBuffer: string;
+	mutedDropped: number;
 	paused: boolean;
 	settled: boolean;
+	fireWindow: MonitorFireWindow | undefined;
 	unsubscribeOutput: (() => void) | undefined;
 	unsubscribeExit: (() => void) | undefined;
 }
@@ -127,13 +178,16 @@ export class MonitorRegistry {
 	snapshot(): readonly MonitorSnapshotEntry[] {
 		return [...this.#records.values(), ...this.#files.values()].map((record) => ({
 			id: record.id,
+			monitorId: record.monitorId,
 			description: record.description,
 			paused: record.paused,
 			startedAtMs: record.startedAtMs,
+			expiresAt: record.expiresAt,
+			fireWindow: "fireWindow" in record ? record.fireWindow : undefined,
 		}));
 	}
 
-	async registerFile(options: RegisterFileMonitorOptions): Promise<string> {
+	async registerFile(options: RegisterFileMonitorOptions): Promise<{ id: string; monitorId: string }> {
 		if (this.#disposed) throw new Error("Cannot create file monitor: monitor registry is disposed.");
 		this.#pendingRegistrations += 1;
 		const lifecycle = this.#lifecycle;
@@ -270,8 +324,11 @@ export class MonitorRegistry {
 		}
 		const record: FileMonitorRecord = {
 			id,
+			monitorId: options.monitorId ?? allocateMonitorId(),
+			sessionId: id,
 			description: options.description,
 			startedAtMs: Date.now(),
+			expiresAt: options.expiresAt,
 			path,
 			canonicalPath,
 			canonicalParent: approvedParent,
@@ -305,7 +362,23 @@ export class MonitorRegistry {
 			throw new Error(registrationError ?? "Cannot create file monitor: monitor registry is disposed.");
 		}
 		this.#notifyChange();
-		return id;
+		return { id, monitorId: record.monitorId };
+	}
+
+	/** Live identity tuple of one file watch; undefined when the id is not a live file watch. */
+	fileCheckpoint(id: string) {
+		const r = this.#files.get(id);
+		return (
+			r && { dev: r.device, ino: r.inode, size: r.size, mtimeMs: r.mtimeMs, digest: r.digest, present: r.present }
+		);
+	}
+
+	/** Emit one restored-watch line through the SAME sink a live watch uses (coalescing, wake budget). */
+	emitFileLine(id: string, line: string): boolean {
+		const record = this.#files.get(id);
+		if (!record || record.settled) return false;
+		this.#emit({ type: "line", id: record.id, description: record.description, line });
+		return true;
 	}
 
 	async stopFile(id: string): Promise<boolean> {
@@ -438,16 +511,22 @@ export class MonitorRegistry {
 		this.#settleFile(record, "watcher completed");
 	}
 
-	register(options: RegisterMonitorOptions): void {
+	register(options: RegisterMonitorOptions): string {
+		const durable = options.durabilityClass !== undefined && options.durabilityClass !== "ephemeral";
 		const record: MonitorRecord = {
 			id: options.id,
+			monitorId: options.monitorId ?? allocateMonitorId(),
+			sessionId: options.id,
 			description: options.description,
 			startedAtMs: Date.now(),
+			expiresAt: options.expiresAt,
 			runtime: options.runtime,
 			filter: options.filter,
 			lineBuffer: "",
+			mutedDropped: 0,
 			paused: false,
 			settled: false,
+			fireWindow: durable ? { ...(options.fireWindow ?? { startMs: Date.now(), count: 0 }) } : undefined,
 			unsubscribeOutput: undefined,
 			unsubscribeExit: undefined,
 		};
@@ -460,12 +539,14 @@ export class MonitorRegistry {
 		record.unsubscribeOutput = record.runtime.onOutput((chunk) => this.#consume(record, chunk));
 		record.unsubscribeExit = record.runtime.session.onExit(() => this.#settle(record));
 		if (record.runtime.exited) this.#settle(record);
+		return record.monitorId;
 	}
 
-	pauseAll(): string[] {
+	pause(ids: readonly string[]): string[] {
 		const paused: string[] = [];
-		for (const record of [...this.#records.values(), ...this.#files.values()]) {
-			if (record.paused) continue;
+		for (const id of ids) {
+			const record = this.#records.get(id) ?? this.#files.get(id);
+			if (!record || record.paused) continue;
 			record.paused = true;
 			paused.push(record.id);
 		}
@@ -473,14 +554,48 @@ export class MonitorRegistry {
 		return paused;
 	}
 
+	pauseAll(): string[] {
+		return this.pause([...this.#records.keys(), ...this.#files.keys()]);
+	}
+
+	resume(ids?: readonly string[]): MonitorResumeResult[] {
+		const candidates = ids ?? [...this.#records.keys(), ...this.#files.keys()];
+		const resumed: MonitorResumeResult[] = [];
+		for (const id of candidates) {
+			const record = this.#records.get(id) ?? this.#files.get(id);
+			if (!record?.paused) continue;
+			record.paused = false;
+			const mutedDropped = "mutedDropped" in record ? record.mutedDropped : 0;
+			if ("mutedDropped" in record) record.mutedDropped = 0;
+			// A rearm (or any resume) restarts the rolling fire budget while keeping its window start.
+			if ("fireWindow" in record && record.fireWindow !== undefined) record.fireWindow.count = 0;
+			resumed.push({ id: record.id, mutedDropped });
+			if ("pendingChange" in record && record.pendingChange) void this.#checkFile(record.id);
+		}
+		if (resumed.length > 0) this.#notifyChange();
+		return resumed;
+	}
+
+	mutedDropped(id: string): number {
+		return this.#records.get(id)?.mutedDropped ?? 0;
+	}
+
 	rearm(id: string): MonitorRearmResult {
 		const record = this.#records.get(id) ?? this.#files.get(id);
 		if (!record) return "not_found";
 		if (!record.paused) return "not_paused";
-		record.paused = false;
-		this.#notifyChange();
-		if ("pendingChange" in record && record.pendingChange) void this.#checkFile(record.id);
+		this.resume([id]);
 		return "rearmed";
+	}
+
+	/** Re-bind a persisted fire window onto the record for a durable monitor id (a restore re-arms the budget). */
+	adoptFireWindow(monitorId: string, fireWindow: MonitorFireWindow): boolean {
+		for (const record of this.#records.values()) {
+			if (record.monitorId !== monitorId) continue;
+			record.fireWindow = { ...fireWindow };
+			return true;
+		}
+		return false;
 	}
 
 	dispose(): void {
@@ -575,8 +690,29 @@ export class MonitorRegistry {
 			const rawLine = remaining.slice(0, newline);
 			remaining = remaining.slice(newline + 1);
 			const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-			if (record.paused || (record.filter && !record.filter.test(line))) continue;
+			const matchesFilter = !record.filter || record.filter.test(line);
+			if (!matchesFilter) continue;
+			if (record.paused) {
+				record.mutedDropped += 1;
+				continue;
+			}
 			this.#emit({ type: "line", id: record.id, description: record.description, line });
+			if (record.fireWindow !== undefined) {
+				const now = Date.now();
+				if (now - record.fireWindow.startMs >= FIRE_BUDGET_WINDOW_MS)
+					record.fireWindow = { startMs: now, count: 0 };
+				record.fireWindow.count += 1;
+				if (record.fireWindow.count >= DEFAULT_DURABLE_MONITOR_FIRE_BUDGET) {
+					record.paused = true;
+					this.#emit({
+						type: "summary",
+						id: record.id,
+						description: record.description,
+						summary: FIRE_BUDGET_AUTO_MUTE_SUMMARY,
+					});
+					this.#notifyChange();
+				}
+			}
 		}
 		record.lineBuffer = remaining;
 	}

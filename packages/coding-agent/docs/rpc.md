@@ -1,5 +1,7 @@
 # RPC Mode
 
+Shared-host clients may advertise the `rendered_components` capability to receive factory-rendered widget, header, and footer records. In a shared session, component rendering uses the minimum width reported by currently attached connections, defaulting to 80 when none report a width; disconnected connections no longer contribute.
+
 The shared Unix socket host uses `<agentDir>/rpc-host-daemon/host.pid` and `settings.json` as its ownership state. Clients attach to a compatible existing host regardless of which client surface started it; only incompatible unmanaged owners are refused.
 
 RPC mode enables headless operation of the coding agent via a JSON protocol over stdin/stdout. This is useful for embedding the agent in other applications, IDEs, or custom UIs.
@@ -7,6 +9,10 @@ RPC mode enables headless operation of the coding agent via a JSON protocol over
 **Note for Node.js/TypeScript users**: If you're building a Node.js application, consider using `AgentSession` directly from `@code-yeongyu/senpi` instead of spawning a subprocess. See [`src/core/agent-session.ts`](../src/core/agent-session.ts) for the API. For a subprocess-based TypeScript client, see [`src/modes/rpc/rpc-client.ts`](../src/modes/rpc/rpc-client.ts).
 
 ## Starting RPC Mode
+
+### RPC client lifecycle
+
+`RpcClient` accepts an `onDisconnect` callback for an established socket and rejects subsequent transport operations with the typed `RpcTransportGoneError` (also detectable with `isTransportGoneError`). Callers should use the callback to begin recovery and keep the error text out of user-facing output.
 
 ```bash
 senpi --mode rpc [options]
@@ -33,6 +39,33 @@ Rebranded distributions read the equivalent variable under their configured envi
 `extension_events` opts the client into generic extension-owned event records; clients that omit it
 retain the previous wire stream unchanged.
 
+#### media_placeholders
+
+A client that advertises `media_placeholders` in `set_client_info` tells the host it does not want
+inline media bytes on the wire. For that connection the host replaces every image block inside a
+tool result (`ToolResultMessage.content` and `tool_execution_end.result.content`, including the
+entries carried by `get_entries`, `get_messages`, `get_tree`, `open_session` state and attach-time
+snapshot replay) with an `image_ref` placeholder:
+
+```json
+{
+  "type": "image_ref",
+  "mimeType": "image/png",
+  "byteLength": 553000,
+  "ref": {"toolCallId": "call_abc123", "contentIndex": 1}
+}
+```
+
+`byteLength` is the decoded size of the omitted payload. The original block is fetched on demand with
+[`get_media`](#get_media) using the `ref`. User-authored images (`prompt`/`steer`/`follow_up`
+`images`) are never replaced.
+
+A connection that does not advertise the capability receives byte-identical output to before. The
+capability is advertised by the host in `get_protocol_info.capabilities` in both classic and
+multi-session mode, but the transform itself is applied only by the multi-session host: classic
+single-connection stdio mode never rewrites its output, so a stdio client always receives inline
+media even if it names the capability. `get_media` is answered in both modes.
+
 ## Multi-session mode (D1 wire protocol)
 
 Multi-session mode lets one `senpi --mode rpc` process serve several independent conversations concurrently over the same stdio JSONL stream. Classic single-session mode is byte-identical to today; the only additive classic-mode behavior is that `get_protocol_info` is answered.
@@ -43,7 +76,7 @@ Multi-session mode lets one `senpi --mode rpc` process serve several independent
 # Shared JSONL over stdio (legacy multi-session host)
 senpi --mode rpc --multi-session [options]
 
-# One shared host over a Unix socket; each accepted connection has its own JSONL feed
+# One shared host over a local socket; each accepted connection has its own JSONL feed
 senpi --mode rpc --listen unix:///tmp/senpi-rpc.sock [options]
 senpi --mode rpc --listen /tmp/senpi-rpc.sock [options]
 ```
@@ -52,10 +85,30 @@ senpi --mode rpc --listen /tmp/senpi-rpc.sock [options]
 `unix://@name` where supported by the host platform. Socket mode accepts concurrent connections while retaining one
 process-global session registry.
 
-Socket event visibility is an all-sessions broadcast: every connected client receives lifecycle and agent events from
-every open session, each tagged with its routing `sessionId`. Correlated responses and extension UI requests are sent
-only to the connection that issued the command. This lets a non-owner observe a foreign turn without requiring a
-separate subscription protocol.
+On Windows, listeners and clients deterministically map the logical socket path to
+`\\.\pipe\senpi-rpc-<sha256[:32]>`. Callers keep using the same `unix://` CLI value; the logical path remains the
+ownership and settings identity, and callers never construct the pipe name themselves.
+
+Socket event visibility is attachment-scoped for session content: each connection receives agent output only from sessions
+attached to that connection, with every record tagged by its routing `sessionId`. Content-free lifecycle records
+(`agent_start`, `agent_settled`, `agent_idle`, `session_opened`, and `session_closed`) are broadcast to all registered
+connections, including the supervisor's unattached observer, so host lifecycle accounting remains accurate without exposing
+session content. Correlated responses and dialog extension UI
+requests (select, confirm, input, and editor) are requester-only; other extension UI state records go to the session's
+attached connections. To observe a foreign session, open it by its existing
+`sessionPath`; the host attaches that connection during `open_session`.
+
+### Client information and rendered components
+
+Clients may send `set_client_info` with `{ sessionId, width, capabilities? }`. Advertising `rendered_components` registers
+that connection to receive factory-rendered `setWidget`, `setHeader`, and `setFooter` records. Those records are filtered
+per connection; array/undefined widget records and dialog requests retain their existing delivery semantics. Width is
+shared per session using the minimum of attached clients, and a closed or dropped connection no longer contributes its
+width or capability registration. Snapshot replay preserves rendered-component provenance and applies the same capability
+filter to late joiners; a client that registers `rendered_components` while a snapshot is active receives its retained
+factory-rendered records. On a shared socket host, `rendered_components` is registration-only: it is never inherited from the host environment and must be sent in `set_client_info` for each client connection. Registration applies to the sessions attached by that connection; closing one session removes only that session's width and capability association, while socket disposal removes all associations. Clients must re-register `width` and `capabilities` after every reconnect. When the last
+capable connection leaves a still-attached binding, live component renderers and footer data providers are disposed but
+their factories are retained; a later capable connection recreates and re-renders them.
 
 ### Session auto-titling
 
@@ -76,9 +129,23 @@ Startup: `senpi --mode rpc --multi-session` → NO default session is constructe
 
 Interactive launches use the shared RPC host by default when a persisted session is available. A cold start takes approximately 1.3 seconds on the first launch; warm attachment to an existing compatible host is fast. To use the local runtime directly for a launch, set `SENPI_DISABLE_SHARED_HOST=1`. This uses the same local fallback runtime and does not change RPC socket behavior for other clients.
 
+### Session replacement
+
+A replacement (`new_session`, `switch_session`, `fork`) responds as soon as the swap is committed; the derived-surface refresh that rebinds extensions continues afterwards. That refresh does not disturb work the client starts against the committed session: tool activation performed while extensions are still binding no longer cancels an in-flight compaction or invalidates its context. `loaded_surfaces_changed` is emitted only when the surface digest actually changes, so it is NOT a settle barrier clients can wait on.
+
+#### Replacement identity event
+
+When `new_session`, `switch_session`, or `fork` swaps the live session - including replacements an extension drives, which a client never issued - every attached connection receives:
+
+```json
+{ "type": "session_replaced", "durableSessionId": "…", "sessionFile": "…", "cwd": "…", "sessionName": "…" }
+```
+
+The command response reports only `{ cancelled }`, so this event is the only push channel carrying the new identity. The identity is `durableSessionId`, never `sessionId`: top-level `sessionId` is reserved for the per-connection routing handle that multi-session hosts tag every record with, and that tag is applied last, so reusing the key would overwrite the identity the event exists to deliver. Classic mode emits the event untagged.
+
 ### Shared host lifecycle (cold start + idle exit)
 
-The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route.
+The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route. Compiled standalone binaries also re-enter themselves through this route automatically: a bun executable always boots its embedded entrypoint, so the script-path re-entry used under a JS runtime would be parsed as CLI arguments (`Unknown option: --socket`) and the host could never start.
 
 Hosts started through `ensureHost()` are wrapped by a lifecycle supervisor that owns the public socket and spawns the
 real RPC host on a private internal hop. The policy lives in `<agentDir>/rpc-host-daemon/settings.json`:
@@ -108,13 +175,38 @@ internal directory. The supervisor also exports `SENPI_RPC_HOST_WATCH_PPID` as a
 set only by the supervisor: a host started any other way (plain `senpi --mode rpc --listen …`, embedders, hand-started
 hosts) sees neither variable and is unaffected. A host whose supervisor is alive is never touched by this binding.
 
+### Shared host occupancy (idle eviction, session cap, empty-host exit)
+
+Every open session owns a complete runtime (a lone idle session measures 340-510 MB RSS), so the host enforces three
+occupancy bounds itself, independent of the supervisor and of client cooperation:
+
+- **Idle eviction**: a session with no routed command and no session-owned work for
+  `SENPI_RPC_SESSION_IDLE_EVICTION_MS` (default 30 minutes) is closed through the exact `close_session` sequence
+  (abort → waitForIdle → dispose, all attachments drained, path reservation released) and every attached connection
+  receives that handle's `session_closed` broadcast plus a final `close_session` response record. "Session-owned
+  work" is the complete activity contract, not just a streaming turn: an agent run, a running bash command,
+  background terminal jobs and any other published wake source (terminal monitors, loop-guard holds), compaction,
+  and barrier-held session work all defer eviction, and the idle clock restarts when that work settles. An evicted
+  session resumes like any other: the next `open_session` with the same `sessionPath` reopens it.
+- **Session cap**: `open_session` beyond `SENPI_RPC_MAX_SESSIONS` concurrently opening/open sessions (default 8)
+  fails with `too_many_sessions`. Attaching to an already-hosted session (`attached: true`) adds no runtime and never
+  counts against the cap, so resume and second-surface flows keep working while at it.
+- **Empty-host exit**: when the registry holds zero sessions AND no client is connected, continuously for
+  `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
+  removal), for stdio and `--listen` hosts alike. A connected client counts as occupancy even with no session open,
+  so the host never drops a live socket under itself. Supervised hosts stay clean either way: a supervisor reads a
+  child exit of 0 without a signal as an intentional idle stop and exits 0 with the same cleanup, not as a crash.
+
+Values are positive integers; invalid values fall through to the defaults. These bounds run inside the host process,
+so they hold even for embedders and hand-started hosts that have no supervisor.
+
 ### D1 normative table (multi-session mode)
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi" }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session` plus the negotiated launch capabilities. |
-| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. |
-| `close_session` | `sessionId` | `{}` | Aborts active work, awaits agent idle + settled persistence, flushes queued events, detaches subscriptions; its response is the LAST record tagged with that handle — no events after (test-pinned). |
+| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Fails with `too_many_sessions` at the occupancy cap (see [Shared host occupancy](#shared-host-occupancy-idle-eviction-session-cap-empty-host-exit)); idle sessions past the eviction window are closed by the host itself. |
+| `close_session` | `sessionId` | `{}` | Aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then force-releases the session; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). A concurrent close joins the same teardown and receives its own successful response. |
 | `list_sessions` | - | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status }] }` | Includes `opening`/`closing` entries with their status. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
 
@@ -132,7 +224,9 @@ In the response `error` field, machine-matchable:
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
 - `invalid_path` (relative `sessionPath`/`cwd`)
+- `too_many_sessions` (`open_session` while `SENPI_RPC_MAX_SESSIONS` sessions are already opening/open; attaching to a live session never fails this way)
 - `open_failed: <detail>`
+- `media_not_found` (`get_media` for an unknown `toolCallId`, or a `contentIndex` that does not point at an image block)
 
 ### Tagging
 
@@ -144,7 +238,7 @@ Strict FIFO per session; one total stdout order; cross-session order unspecified
 
 ### Duplicate/idempotency
 
-Duplicate `open_session` while a path reservation is held by a fully-open session → ATTACH (`attached: true`, same handle); while held by an `opening`/`closing` entry → `session_path_in_use`. `close_session` releases one attachment; the runtime is disposed only when the last attachment closes. `close_session` on unknown/already-closed → `unknown_session` error. Request `id`s are client-owned; the server echoes them without dedup.
+Duplicate `open_session` while a path reservation is held by a fully-open session → ATTACH (`attached: true`, same handle); while held by an `opening`/`closing` entry → `session_path_in_use`. `close_session` releases one attachment; the runtime is disposed only when the last attachment closes. A close for an entry already `closing` joins its in-flight teardown. `close_session` on unknown/already-closed → `unknown_session` error. The grace window is configurable by the host through `SENPI_RPC_CLOSE_GRACE_MS`. Request `id`s are client-owned; the server echoes them without dedup.
 
 ## Protocol Overview
 
@@ -267,7 +361,7 @@ See [set_follow_up_mode](#set_follow_up_mode) for controlling how follow-up mess
 
 #### abort
 
-Abort the current agent operation.
+Abort the current operation and wait for the session to become idle before responding.
 
 ```json
 {"type": "abort"}
@@ -382,6 +476,51 @@ Response:
 ```
 
 Messages are `AgentMessage` objects (see [Message Types](#message-types)).
+
+#### get_media
+
+Fetch one media block that was omitted for a [`media_placeholders`](#media_placeholders) client. The
+parameters are exactly the placeholder's `ref`.
+
+```json
+{"type": "get_media", "toolCallId": "call_abc123", "contentIndex": 1}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_media",
+  "success": true,
+  "data": {
+    "toolCallId": "call_abc123",
+    "contentIndex": 1,
+    "content": {"type": "image", "data": "<base64>", "mimeType": "image/png"}
+  }
+}
+```
+
+`content` is the original `ImageContent` block, byte-for-byte. `contentIndex` indexes the tool
+result's `content` array. The host looks the tool call up in the durable session entries first (so a
+block stays fetchable after the live message window moved on), then in the current messages for a
+result that has not been persisted yet.
+
+When the tool call is unknown, the index is out of range, or the index points at a non-image block,
+the response fails with `error` and `errorCode` both set to `media_not_found`:
+
+```json
+{
+  "type": "response",
+  "command": "get_media",
+  "success": false,
+  "error": "media_not_found",
+  "errorCode": "media_not_found"
+}
+```
+
+The command is answered in classic and multi-session mode alike; in multi-session mode it takes the
+usual `sessionId` envelope. It is answerable regardless of whether the connection advertised
+`media_placeholders`.
 
 ### Model
 
@@ -844,8 +983,10 @@ Response:
 Load a different session file. Can be cancelled by a `session_before_switch` extension event handler.
 
 ```json
-{"type": "switch_session", "sessionPath": "/path/to/session.jsonl"}
+{"type": "switch_session", "sessionPath": "/path/to/session.jsonl", "cwdOverride": "/path/to/project"}
 ```
+
+`cwdOverride` is optional. When supplied, the replacement session and its cwd-bound settings and runtime state are rebuilt for that directory instead of using the session file's stored cwd. The host also resolves `projectTrusted` from its saved project trust store for the replacement cwd; an absent or false decision keeps project-scoped settings and resources disabled.
 
 Response:
 ```json
@@ -1641,6 +1782,37 @@ Emitted when an extension throws an error.
 }
 ```
 
+## OAuth login
+
+Logins are fire-command-then-subscribe: the command answers as soon as the flow has started, and the URL plus the terminal result arrive as events.
+
+- `login_start` `{provider}`: responds immediately with `success: true` (flow started). A second `login_start` for the same provider aborts the earlier attempt.
+- `auth_login_url` `{provider, url}`: the URL (or device-code verification URL) the user must open.
+- `auth_login_end` `{provider, success, error?}`: exactly one per login; `error` is a non-secret message.
+- `login_cancel` `{provider}`: aborts the in-flight login; the client then sees `auth_login_end` with `success: false`.
+
+Some providers need input mid-flow (a pasted authorization code, a text or secret value, a choice between accounts). Those prompts reuse the extension UI dialog channel described in the next section:
+
+- `text`, `secret`, and `manual_code` prompts arrive as an `extension_ui_request` with `method: "input"`. `title` is the provider's prompt message and `placeholder` is present when the provider supplied one.
+- `select` prompts arrive with `method: "select"`; `options` holds the option labels.
+
+Answer with `extension_ui_response` `{id, value}`. For `select`, `value` is the chosen label and is mapped back to the option id in-process. Sending `{id, cancelled: true}` cancels the login, and `auth_login_end` reports `success: false` with `error: "Login cancelled"`.
+
+A client that never answers loses nothing. The browser/callback completion path still finishes the login, and the pending request is released when the login ends or is cancelled, so an open dialog never blocks completion. Secrets don't cross the wire in either direction: only the prompt message, placeholder, and labels are emitted, and the answer is consumed in-process and never echoed.
+
+Example exchange (Anthropic, user pastes the code instead of finishing in the browser):
+
+```jsonl
+{"id": "login-1", "type": "login_start", "provider": "anthropic"}
+{"id": "login-1", "type": "response", "command": "login_start", "success": true}
+{"type": "auth_login_url", "provider": "anthropic", "url": "https://claude.ai/oauth/authorize?..."}
+{"type": "extension_ui_request", "id": "uuid-7", "method": "input", "title": "Complete login in your browser, or paste the authorization code / redirect URL here:", "placeholder": "http://localhost:53692/callback"}
+{"type": "extension_ui_response", "id": "uuid-7", "value": "<pasted code>"}
+{"type": "auth_login_end", "provider": "anthropic", "success": true}
+```
+
+If the user completes the flow in the browser instead, the same `extension_ui_request` is emitted, no response is needed, and `auth_login_end` arrives on its own.
+
 ## Extension UI Protocol
 
 Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()`, etc. In RPC mode, these are translated into a request/response sub-protocol on top of the base command/event flow.
@@ -1648,13 +1820,13 @@ Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()
 There are two categories of extension UI methods:
 
 - **Dialog methods** (`select`, `confirm`, `input`, `editor`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
-- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
+- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setHeader`, `setFooter`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
 
 If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The client does not need to track timeouts.
 
 Some `ExtensionUIContext` methods are not supported or degraded in RPC mode because they require direct TUI access:
 - `custom()` returns `undefined`
-- `setWorkingMessage()`, `setWorkingIndicator()`, `setFooter()`, `setHeader()`, `setEditorComponent()`, `setToolsExpanded()` are no-ops
+- `setWorkingMessage()`, `setWorkingIndicator()`, `setEditorComponent()`, `setToolsExpanded()` are no-ops. `setFooter()` and `setHeader()` render factory components for clients advertising `rendered_components`.
 - `getEditorText()` returns `""`
 - `getToolsExpanded()` returns `false`
 - `pasteToEditor()` delegates to `setEditorText()` (no paste/collapse handling)
@@ -1781,7 +1953,22 @@ Set or clear a widget (block of text lines) displayed above or below the editor.
 }
 ```
 
-Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Only string arrays are supported in RPC mode; component factories are ignored.
+Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Component factories are rendered by the host using the attached client's terminal width.
+
+#### setHeader / setFooter
+
+Set or clear the extension header or footer using rendered text lines. Clients that do not understand these additive methods ignore them.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-10",
+  "method": "setHeader",
+  "widgetLines": ["Header line"]
+}
+```
+
+Omit `widgetLines` to restore the built-in surface. Attached clients send `set_client_info` with their terminal width after attach and on resize; hosts default to width 80 when no width is supplied.
 
 #### setTitle
 

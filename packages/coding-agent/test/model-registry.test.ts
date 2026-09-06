@@ -1880,6 +1880,19 @@ describe("ModelRegistry", () => {
 			});
 
 			test("getAvailable filters GitHub Copilot OAuth models to account picker availability", async () => {
+				writeRawModelsJson({
+					"github-copilot": {
+						models: [
+							{
+								id: "gpt-4.1",
+								name: "GPT-4.1",
+								reasoning: false,
+								input: ["text"],
+							},
+						],
+					},
+				});
+
 				await authStorage.modify("github-copilot", async () => ({
 					type: "oauth",
 					refresh: "github-access-token",

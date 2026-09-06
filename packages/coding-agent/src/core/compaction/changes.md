@@ -1,4 +1,68 @@
+## 2026-09-05 - Re-anchor Astra configuration updates after compaction
+
+### What changed
+
+- packages/coding-agent/src/core/compaction/compaction.ts: preserve the configuration-update message role at compaction boundaries.
+
+### Why
+
+- A compacted GPT-6 Astra session must retain the effective reasoning transition without changing the request-level cache baseline.
+
+### Why this lives in the fork
+
+- Compaction owns the context cut and cannot be corrected by an extension after the cut is selected.
+
+### Expected merge conflict zones
+
+- Compaction context selection and retained-tail assembly.
+
 # changes.md — compaction
+
+## 2026-09-04 - Token estimation excludes failed provider turns
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `estimateContextTokens` runs the shared `dropFailedAssistantTurns` from `@earendil-works/pi-ai` on its input before anchoring on the last assistant usage and summing trailing tokens. Assistant turns with `stopReason` `error`/`aborted`, and the tool results orphaned by that drop, no longer count toward the context estimate.
+- `packages/coding-agent/test/compaction.test.ts`: pins the exclusion for both failure kinds (the estimate with a failed trailing turn equals the estimate without it).
+
+### Why
+
+- `convertToLlm` now drops failed turns from every request, so an estimator that still counted them overstated context usage after any provider error or abort and could trigger compaction the next request did not need. The estimate must measure what is actually sent.
+
+### Why an extension could not handle it
+
+- The estimator is called by the core compaction admission path with raw session messages before any extension seam; an extension cannot rewrite the count the core uses to decide whether to compact.
+
+### Expected merge conflict zones
+
+- LOW: the head of `estimateContextTokens` in `packages/coding-agent/src/core/compaction/compaction.ts` (the `countedMessages` prelude) and the `@earendil-works/pi-ai` import line.
+
+## Ideal-pipeline settings split out of the compaction module (2026-08-29)
+
+### What changed
+
+- `compaction.ts` no longer declares the compaction settings surface inline. `CompactionSettings`
+  and `DEFAULT_COMPACTION_SETTINGS` move to `compaction-settings.ts`, and the knobs this branch adds
+  (grace band, tool admission, reminder, reserve scaling, speculative lead) live in
+  `ideal-compaction-settings.ts`, which that type composes. `compaction.ts` re-exports both names, so
+  every existing importer keeps its path.
+
+### Why
+
+- `compaction.ts` was already far past the module size ceiling, and the project rule forbids growing
+  a file that is already over it. Splitting the settings surface by responsibility keeps the added
+  knobs out of an oversized module instead of appending to it.
+
+### Why an extension could not handle it
+
+- The settings shape is the contract the builtin compaction extension and the session manager both
+  resolve against; an external extension cannot introduce fields that core admission reads before
+  any extension runs.
+
+### Expected merge conflict zones
+
+- Upstream edits to the `CompactionSettings` interface or to `DEFAULT_COMPACTION_SETTINGS` now land
+  in `compaction-settings.ts` rather than in `compaction.ts`.
 
 ## Compaction re-diverges from upstream dcd4619 (2026-08-25)
 
@@ -483,3 +547,21 @@ The branch summarization path did not emit a compaction event before building it
 ### Migration notes
 
 If upstream changes branch summary preparation or adds new branch summary data sources, keep the `session_before_compact` hook emission before default prompt construction and update the `CompactionPreparation` mapping to match the new data flow. The `BRANCH_SUMMARY_PROMPT` fallback must remain intact for sessions without the compaction extension.
+
+## 2026-09-03 - Preserve compaction request identity without forcing tool choice
+
+### What changed and why
+
+- Removed the unconditional `toolChoice: "none"` from `completeSummarization` while retaining senpi cache retention, affinity/session identity split, retry, and watchdog behavior.
+
+### Why
+
+- Providers without tools can reject a tool-choice directive even though summarization does not require it; provider-specific tool-call refusal remains owned by the speculative-summary extension.
+
+### Why an extension could not handle this
+
+- The request options are assembled at the shared core summarization choke point before extensions can affect the provider call.
+
+### Expected merge conflict zones
+
+- `compaction.ts` around `completeSummarization` request option construction.

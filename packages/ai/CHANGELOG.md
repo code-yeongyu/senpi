@@ -10,6 +10,256 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.9.5-3] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.5-2] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.5] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed GPT-6 Astra Fast-mode responses being billed at the default rate instead of the 2x priority multiplier; the GPT-6 Astra OpenAI and Codex catalog default now uses the documented 1,050,000-token context window (GPT-5.6 Sol stays at 650,000).
+
+### Removed
+
+## [2026.9.4-3] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- CI now bounds pi-ai's Vitest fork pool and teardown time, and Cursor stream attempts clear their health timers, preventing subprocess-heavy lifecycle tests from stranding workers on constrained runners.
+
+### Fixed
+
+### Removed
+
+## [2026.9.4-2] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+- Added Anthropic per-turn effort persistence, deterministic historical effort markers, and signed-thinking mismatch recovery for supported Claude models across Anthropic Messages transports, including OpenRouter.
+- Added the experimental vision-capable `deepseek-v4-flash-vision-exp` model to the DeepSeek catalog.
+
+### Changed
+
+### Fixed
+
+- Fixed GitHub Copilot Claude Fable 5 requests to use the Anthropic Messages adapter so selected reasoning levels are sent ([#8961](https://github.com/earendil-works/pi/issues/8961)).
+- Fixed OpenAI-compatible Chat Completions ignoring an explicitly requested `toolChoice` when no tools are defined.
+- Fixed thinking signature serialization to run once after the signature is complete ([#8671](https://github.com/earendil-works/pi/pull/8671)).
+- Fixed fragmented Mistral tool calls splitting when continuation chunks omit the tool-call ID ([#8387](https://github.com/earendil-works/pi/issues/8387)).
+- Fixed OpenAI-compatible reasoning replay to merge consecutive streamed text and summary `reasoning_details` deltas.
+- Fixed the Cloudflare AI Gateway catalog to include supported `workers-ai/*` passthrough models omitted by models.dev.
+- Fixed OpenRouter reasoning controls by deriving `off` support and available effort levels from OpenRouter's model metadata, preventing reasoning-mandatory models from receiving `effort: "none"` ([#8614](https://github.com/earendil-works/pi/pull/8614) by [@davidbrai](https://github.com/davidbrai)).
+
+- New shared helper `dropFailedAssistantTurns` (exported from the package barrel) removes assistant turns with `stopReason` `error` or `aborted` from a converted LLM message list, together with every tool result whose `toolCallId` was declared only by those dropped assistants; a call id re-declared by a kept assistant keeps its result, mirroring the provider-layer `droppedCallIds` pairing in `transform-messages.ts`. Order and every other message are preserved. Consumed by both `convertToLlm` implementations (coding-agent core and agent harness) so every LLM request built from converted context excludes failed provider turns.
+
+### Removed
+
+## [2026.9.4] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+- Added GPT-6 Astra to the OpenAI and OpenAI Codex model catalogs, including long-context pricing, reasoning efforts, tool search, and Priority `-fast` variants.
+
+### Changed
+
+### Fixed
+
+- Provider requests are no longer sent with `max_tokens` shrunk to a handful of tokens (down to 1) once the estimated context fills the model window. `buildBaseOptions` now throws `ContextWindowExhaustedError` when fewer than 1024 tokens of answer room remain after the safety margin (windows under 5120 tokens cannot hold that geometry and keep the previous behavior); the lazy API boundary surfaces it as an assistant error ("Context window exhausted: the conversation is estimated at X of Y tokens, leaving fewer than 1024 tokens for a response. Compact the conversation, enable auto-compaction, or start a new session before retrying.") that `isContextOverflow` classifies as a context overflow, so auto-compaction can recover when it is enabled and the user sees the real cause when it is not. Previously such requests returned truncated tool calls ("Tool call stream ended before completion") or a one-token "length" stop while billing the whole prompt.
+
+### Removed
+
+## [2026.9.3-3] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Adding a second account to a provider whose stored credential predates credential pools (a flat entry with no `accounts` array, which is what `openai-codex` OAuth login writes) no longer overwrites the first one. `appendLoginSlot` now promotes that legacy credential into the pool as the `default` slot and stores the new login beside it as `login-2`, so both accounts remain usable and the flat top-level fields still authenticate a build predating pools. First login (no stored credential) still writes the flat credential as-is, and a provider that returns its own populated `accounts` array is still written through untouched.
+- Removing the account whose material the flat top-level credential fields projected no longer leaves the pool authenticating as the deleted account. `removeSlot` now re-projects those fields from the first surviving slot, so a pool left with a single account (which does not enter credential rotation and therefore resolves through the flat projection) immediately uses the account that remains. `accounts` is kept, removing a non-projected slot still leaves the flat fields untouched, and removing the last slot still drops the credential entirely.
+
+### Removed
+
+## [2026.9.3-2] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+- `OAuthPrompt` and `OAuthSelectPrompt` carry an optional `signal` so login callbacks can observe a provider abandoning a prompt (for example a manual-code prompt raced against a local callback server) ([#1316](https://github.com/code-yeongyu/senpi/issues/1316)).
+### Changed
+
+### Fixed
+
+- Adding a second account to a provider that manages its own credential pool no longer stored the provider's placeholder tokens as an extra `login-2` slot; the pooled login result is now written through untouched ([#1279](https://github.com/code-yeongyu/senpi/issues/1279)).
+
+### Removed
+
+## [2026.9.3] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-4] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-3] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The `senpi-default` retry profile is more patient with slow long-thinking providers (Opus/Fable-class with xhigh thinking): the turn-stage retry budget rises from 3 to 5 attempts, matching opencode's session retry budget and codex's `stream_max_retries` default. Backoff shapes, failure classification, `providerRequest.maxRetries` (still 0) and `KIMI_CODE_RETRY_PROFILE` are unchanged.
+
+### Fixed
+
+- Anthropic OAuth requests advertise `claude-cli/2.1.251` instead of the stale `2.1.75`, so Claude Fable 5.1 and Opus 5 no longer fail with `claude_code_version_too_old` (syncs upstream pi `96317e50`) ([oh-my-openagent#7650](https://github.com/code-yeongyu/oh-my-openagent/issues/7650)).
+- Anthropic OAuth now falls back to manual redirect URL entry when callback port 53692 cannot be opened.
+
+### Removed
+
+## [2026.9.2-2] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+- Claude Fable 5.1 (`claude-fable-5-1`) joins the generated model catalog for the anthropic, amazon-bedrock, openrouter, and vercel-ai-gateway providers with its release specs: 1M context window, 128k max output, $10/$50 pricing with cache reads at $0.25/MTok, xhigh+max thinking levels, adaptive-only thinking, and Opus 4.8/Opus 5 as the permitted refusal-fallback targets. The same strict regeneration carries current upstream drift (nvidia retires nemotron-3-nano, openrouter adds mercury-2.5-preview and retires three opus `-fast` variants, vercel retires deepseek-v3).
+
+### Changed
+
+- OpenGateway `moonshotai/kimi-k3-ultrafast` now registers a 256k (262144) default context window instead of inheriting the base model's full 1M window, so sessions compact at the serving default; the strict model-data regeneration also carries current upstream catalog drift (opengateway, openrouter, google, groq, vercel-ai-gateway).
+
+### Fixed
+
+### Removed
+
+## [2026.8.31] - 2026-08-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Cursor conversation caches no longer grow for process lifetime: entries are dropped when their session's resources are cleaned up, the pre-rotation key is deleted when a poisoned conversation rotates to a fresh wire id, rotation records are count-bounded, and defensive byte/count bounds cap the state and blob stores for sessions that never dispose.
+
+- Cursor conversation cache eviction can no longer break a live request: blobs the in-flight request references are pinned for the duration of its stream (the byte cap evicts only unpinned blobs and reads promote recency, so the server's mid-turn `getBlobArgs` always resolves), the conversation count cap is enforced per owning session instead of across the process (one session's churn can no longer forget another session's conversation) and never evicts a conversation with a request in flight, and a new process-global blob ceiling (`PI_CURSOR_CONVERSATION_TOTAL_BLOB_LIMIT_BYTES`, default 1 GiB) bounds all cached conversations together, shedding cold conversations first.
+
+- The Anthropic unsigned-thinking replay fallback capability is forgotten when its session's resources are cleaned up, so long-lived multi-session hosts stop collecting one entry per (session, model) that ever hit the invalid-signature retry.
+
+- The OpenAI Responses session websocket idle expiry re-arms itself when it fires while a socket is busy, and drops a busy entry whose socket already died, so a lost release can no longer pin a cached websocket forever.
+
+### Removed
+
+## [2026.8.30-3] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30-2] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Stop replaying the Anthropic server-side fallback marker into request params; the stored marker remains audit metadata and keeps pruning the declined attempt, so same-model replays no longer 400 with "Input tag 'fallback'".
+
+### Removed
+
+## [2026.8.30] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Preserve GLM-5.3 Flash and Highspeed reasoning effort mappings and Z.AI thinking serialization.
 - Coalesced adjacent Anthropic user and tool-result turns without changing standalone string user-message content.
 - Anthropic prompt caching now retains the previous checkpoint while tool loops append a new result, avoiding repeated prefix reprocessing for API-key and OAuth requests.

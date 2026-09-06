@@ -42,6 +42,6 @@ Earned by score 15 — contract layer and fixture hub (95 code files, ~12k LOC).
 ## COMMANDS
 
 ```bash
-npm test                                                              # whole suite, from package root
-npx tsx ../../node_modules/vitest/dist/cli.js --run test/eval-render.test.ts  # one file
+bun run test                                                              # whole suite, from package root
+bunx tsx ../../node_modules/vitest/dist/cli.js --run test/eval-render.test.ts  # one file
 ```

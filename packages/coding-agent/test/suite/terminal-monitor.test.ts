@@ -31,6 +31,8 @@ import {
 	MonitorRegistry,
 	type MonitorSummaryEvent,
 } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
+import { createPtyBashTool } from "../../src/core/extensions/builtin/terminal/tools/bash.ts";
+import { createBashOutputTool } from "../../src/core/extensions/builtin/terminal/tools/bash-output.ts";
 import type { TerminalToolContext } from "../../src/core/extensions/builtin/terminal/tools/context.ts";
 import { createKillBashTool } from "../../src/core/extensions/builtin/terminal/tools/kill-bash.ts";
 import {
@@ -127,11 +129,33 @@ describe("terminal monitor tool", () => {
 		expect(firstText(result)).toContain("command");
 	});
 
-	it("rejects rearm without bash_id", async () => {
-		const tool = createMonitorTool(ctx);
-		const result = await tool.execute("monitor-rearm-missing", { action: "rearm" } as MonitorInput);
-		expect(result.isError).toBe(true);
-		expect(firstText(result)).toContain("bash_id");
+	it("rearms all paused monitors without bash_id", async () => {
+		let resumedIds: readonly string[] | undefined;
+		const registry = new MonitorRegistry((event) => sink.push(event));
+		const tool = createMonitorTool({
+			...ctx,
+			monitorRegistry: registry,
+			onMonitorsResumed: (ids) => (resumedIds = ids),
+		});
+		const first = await tool.execute("monitor-rearm-all-a", { description: "paused a", command: "sleep 30" });
+		const second = await tool.execute("monitor-rearm-all-b", { description: "paused b", command: "sleep 30" });
+		const firstId = String(first.details?.bash_id ?? "");
+		const secondId = String(second.details?.bash_id ?? "");
+		if (!/^bash_\d+$/.test(firstId) || !/^bash_\d+$/.test(secondId)) {
+			throw new Error("Monitors did not return bash_ids");
+		}
+
+		expect(registry.pause([firstId, secondId])).toEqual([firstId, secondId]);
+		expect(registry.resume()).toEqual([
+			{ id: firstId, mutedDropped: 0 },
+			{ id: secondId, mutedDropped: 0 },
+		]);
+		expect(registry.pause([firstId, secondId])).toEqual([firstId, secondId]);
+		const result = await tool.execute("monitor-rearm-all", { action: "rearm" } as MonitorInput);
+		expect(result.isError).not.toBe(true);
+		expect(firstText(result)).toContain("Re-armed 2 paused monitor(s).");
+		expect(resumedIds).toEqual([firstId, secondId]);
+		expect(registry.snapshot().every((entry) => !entry.paused)).toBe(true);
 	});
 
 	it("returns a bash_id immediately and emits complete stdout lines in order before its summary", async () => {
@@ -143,9 +167,9 @@ describe("terminal monitor tool", () => {
 			command: "printf 'ONE\\nTWO\\n'",
 		});
 
-		const bashId = /ID: (bash_\d+)/.exec(firstText(result))?.[1];
-		expect(bashId).toBeDefined();
-		expect(manager.get(bashId!)).not.toBeNull();
+		const bashId = String(result.details?.bash_id ?? "");
+		expect(bashId).toMatch(/^bash_\d+$/);
+		expect(manager.get(bashId)).not.toBeNull();
 		await summary;
 		expect(sink.events.map((event) => (event.type === "line" ? event.line : event.summary))).toEqual([
 			"ONE",
@@ -162,8 +186,8 @@ describe("terminal monitor tool", () => {
 			command: "printf 'KEEP_ONE\\nDROP\\nKEEP_TWO\\n'",
 			filter: "^KEEP",
 		});
-		const bashId = /ID: (bash_\d+)/.exec(firstText(result))?.[1];
-		if (!bashId) throw new Error("Monitor did not return a bash_id");
+		const bashId = String(result.details?.bash_id ?? "");
+		if (!/^bash_\d+$/.test(bashId)) throw new Error("Monitor did not return a bash_id");
 
 		await summary;
 		expect(sink.events.filter((event) => event.type === "line").map((event) => event.line)).toEqual([
@@ -184,7 +208,7 @@ describe("terminal monitor tool", () => {
 			command: "sleep 30",
 			timeout_ms: 50,
 		});
-		expect(firstText(timedResult)).toMatch(/ID: bash_\d+/);
+		expect(firstText(timedResult)).toMatch(/^Monitor started with ID: mon_[0-9A-HJKMNP-TV-Z]{16}$/);
 		expect(summaryEvent(await timedOut).summary).toContain("timed_out");
 
 		const persistent = sink.waitFor(
@@ -204,8 +228,8 @@ describe("terminal monitor tool", () => {
 		const tool = createMonitorTool(ctx);
 		const ended = sink.waitFor((event) => event.type === "summary", "killed monitor summary");
 		const started = await tool.execute("monitor-live", { description: "live", command: "sleep 30" });
-		const bashId = /ID: (bash_\d+)/.exec(firstText(started))?.[1];
-		if (!bashId) throw new Error("Monitor did not return a bash_id");
+		const bashId = String(started.details?.bash_id ?? "");
+		if (!/^bash_\d+$/.test(bashId)) throw new Error("Monitor did not return a bash_id");
 
 		const rearm = await tool.execute("monitor-rearm", { action: "rearm", bash_id: bashId });
 		expect(firstText(rearm)).toContain("not paused");
@@ -214,17 +238,143 @@ describe("terminal monitor tool", () => {
 		expect(summaryEvent(await ended).summary).toContain("killed");
 	});
 
-	it("emits a final summary when a wake-budget-paused monitor exits", async () => {
+	it("emits a final summary for one muted monitor without resuming another", async () => {
 		const registry = new MonitorRegistry((event) => sink.push(event));
 		const tool = createMonitorTool({ ...ctx, monitorRegistry: registry });
-		const ended = sink.waitFor((event) => event.type === "summary", "paused monitor completion");
-		const started = await tool.execute("monitor-paused-exit", { description: "paused exit", command: "sleep 30" });
-		const bashId = /ID: (bash_\d+)/.exec(firstText(started))?.[1];
-		if (!bashId) throw new Error("Monitor did not return a bash_id");
+		const first = await tool.execute("monitor-paused-exit-a", { description: "paused a", command: "sleep 30" });
+		const second = await tool.execute("monitor-paused-exit-b", { description: "paused b", command: "sleep 30" });
+		const firstId = String(first.details?.bash_id ?? "");
+		const secondId = String(second.details?.bash_id ?? "");
+		if (!/^bash_\d+$/.test(firstId) || !/^bash_\d+$/.test(secondId)) {
+			throw new Error("Monitors did not return bash_ids");
+		}
+		const ended = sink.waitFor(
+			(event) => event.type === "summary" && event.id === firstId,
+			"muted monitor completion",
+		);
 
-		registry.pauseAll();
-		await createKillBashTool(ctx).execute("kill-paused", { bash_id: bashId });
+		expect(registry.pause([firstId, secondId])).toEqual([firstId, secondId]);
+		await createKillBashTool(ctx).execute("kill-paused", { bash_id: firstId });
 		expect(summaryEvent(await ended).summary).toContain("killed");
+		expect(registry.snapshot()).toEqual([expect.objectContaining({ id: secondId, paused: true })]);
+	});
+
+	it("reports filter-matching lines dropped while muted and resets the count on a second rearm", async () => {
+		const registry = new MonitorRegistry((event) => sink.push(event));
+		const tool = createMonitorTool({ ...ctx, monitorRegistry: registry });
+		const started = await tool.execute("monitor-dropped-count", {
+			description: "dropped count",
+			command: "read _; printf 'KEEP_ONE\\nDROP\\nKEEP_TWO\\n'; sleep 30",
+			filter: "^KEEP",
+			persistent: true,
+		});
+		const bashId = String(started.details?.bash_id ?? "");
+		if (!/^bash_\d+$/.test(bashId)) throw new Error("Monitor did not return a bash_id");
+		const output = manager.get(bashId);
+		if (!output) throw new Error("Monitor runtime was not retained");
+		expect(registry.pause([bashId])).toEqual([bashId]);
+		const outputSeen = new Promise<void>((resolve) => {
+			const unsubscribe = output.onOutput((chunk) => {
+				if (!chunk.includes("KEEP_TWO")) return;
+				unsubscribe();
+				resolve();
+			});
+		});
+		output.session.write("\n");
+		await outputSeen;
+
+		const rearmed = await tool.execute("monitor-dropped-count-rearm", { action: "rearm", bash_id: bashId });
+		expect(firstText(rearmed)).toContain("2 line(s) dropped while muted");
+		expect(registry.pause([bashId])).toEqual([bashId]);
+		const secondRearm = await tool.execute("monitor-dropped-count-rearm-again", {
+			action: "rearm",
+			bash_id: bashId,
+		});
+		expect(firstText(secondRearm)).toBe(`Monitor ${bashId} re-armed.`);
+		await createKillBashTool(ctx).execute("kill-dropped-count", { bash_id: bashId });
+	});
+
+	describe("bash_output muted monitor metadata", () => {
+		it("returns monitorMuted details and a muted note while preserving runtime history", async () => {
+			const registry = new MonitorRegistry((event) => sink.push(event));
+			const tool = createMonitorTool({ ...ctx, monitorRegistry: registry });
+			const outputTool = createBashOutputTool({ ...ctx, monitorRegistry: registry });
+			const started = await tool.execute("monitor-bash-output-muted", {
+				description: "muted peek",
+				command: "read _; printf 'KEEP_ONE\\nDROP\\nKEEP_TWO\\n'; sleep 30",
+				filter: "^KEEP",
+				persistent: true,
+			});
+			const bashId = String(started.details?.bash_id ?? "");
+			if (!/^bash_\d+$/.test(bashId)) throw new Error("Monitor did not return a bash_id");
+			const output = manager.get(bashId);
+			if (!output) throw new Error("Monitor runtime was not retained");
+			expect(registry.pause([bashId])).toEqual([bashId]);
+			const outputSeen = new Promise<void>((resolve, reject) => {
+				const timer = setTimeout(() => reject(new Error("KEEP_TWO never arrived")), 5000);
+				const unsubscribe = output.onOutput((chunk) => {
+					if (!chunk.includes("KEEP_TWO")) return;
+					clearTimeout(timer);
+					unsubscribe();
+					resolve();
+				});
+			});
+			output.session.write("\n");
+			await outputSeen;
+
+			const screen = await outputTool.execute("peek-muted-screen", { bash_id: bashId, view: "screen" });
+			expect(screen.details).toEqual({ monitorMuted: true, mutedDropped: 2 });
+			expect(firstText(screen)).toMatch(/muted/i);
+			expect(firstText(screen)).toContain("status:");
+
+			const peeked = await outputTool.execute("peek-muted-log", { bash_id: bashId });
+			expect(peeked.details).toEqual({ monitorMuted: true, mutedDropped: 2 });
+			const text = firstText(peeked);
+			expect(text).toMatch(/muted/i);
+			expect(text).toContain("status:");
+			expect(text).toContain("KEEP_ONE");
+			expect(text).toContain("KEEP_TWO");
+			await createKillBashTool(ctx).execute("kill-bash-output-muted", { bash_id: bashId });
+		});
+
+		it("clears muted metadata on bash_output after resume", async () => {
+			const registry = new MonitorRegistry((event) => sink.push(event));
+			const tool = createMonitorTool({ ...ctx, monitorRegistry: registry });
+			const outputTool = createBashOutputTool({ ...ctx, monitorRegistry: registry });
+			const started = await tool.execute("monitor-bash-output-resume", {
+				description: "resume peek",
+				command: "sleep 30",
+			});
+			const bashId = String(started.details?.bash_id ?? "");
+			if (!/^bash_\d+$/.test(bashId)) throw new Error("Monitor did not return a bash_id");
+			expect(registry.pause([bashId])).toEqual([bashId]);
+			expect(registry.resume([bashId])).toEqual([{ id: bashId, mutedDropped: 0 }]);
+
+			const peeked = await outputTool.execute("peek-resumed", { bash_id: bashId });
+			expect(peeked.details).toEqual({ monitorMuted: false, mutedDropped: 0 });
+			expect(firstText(peeked)).not.toMatch(/muted/i);
+			expect(firstText(peeked)).toContain("status:");
+			await createKillBashTool(ctx).execute("kill-bash-output-resume", { bash_id: bashId });
+		});
+
+		it("leaves non-monitor bash_output results unchanged", async () => {
+			const registry = new MonitorRegistry((event) => sink.push(event));
+			const bash = createPtyBashTool({ ...ctx, monitorRegistry: registry });
+			const outputTool = createBashOutputTool({ ...ctx, monitorRegistry: registry });
+			const started = await bash.execute("plain-bg", {
+				command: "sleep 30",
+				run_in_background: true,
+			});
+			const bashId = /ID: (bash_\d+)/.exec(firstText(started))?.[1];
+			if (!bashId) throw new Error("Background bash did not return a bash_id");
+
+			const peeked = await outputTool.execute("peek-plain", { bash_id: bashId });
+			expect(peeked.isError).not.toBe(true);
+			expect(peeked.details).toBeUndefined();
+			expect(firstText(peeked)).toContain("status:");
+			expect(firstText(peeked)).not.toMatch(/muted/i);
+			await createKillBashTool(ctx).execute("kill-plain", { bash_id: bashId });
+		});
 	});
 
 	it("rearms a wake-budget-paused monitor and notifies the session delivery controller", async () => {
@@ -233,8 +383,8 @@ describe("terminal monitor tool", () => {
 		const tool = createMonitorTool({ ...ctx, monitorRegistry: registry, onMonitorRearmed: (id) => (rearmedId = id) });
 		const ended = sink.waitFor((event) => event.type === "summary", "rearmed monitor completion");
 		const started = await tool.execute("monitor-paused", { description: "paused", command: "sleep 30" });
-		const bashId = /ID: (bash_\d+)/.exec(firstText(started))?.[1];
-		if (!bashId) throw new Error("Monitor did not return a bash_id");
+		const bashId = String(started.details?.bash_id ?? "");
+		if (!/^bash_\d+$/.test(bashId)) throw new Error("Monitor did not return a bash_id");
 
 		expect(registry.pauseAll()).toEqual([bashId]);
 		const rearmed = await tool.execute("monitor-resume", { action: "rearm", bash_id: bashId });
@@ -274,8 +424,8 @@ describe("terminal monitor tool", () => {
 				description: "artifact",
 				path: join(root, "artifact"),
 			} as MonitorInput);
-			const id = /ID: (watch_\d+)/.exec(firstText(started))?.[1];
-			expect(id).toMatch(/^watch_/);
+			const id = String(started.details?.bash_id ?? "");
+			expect(id).toMatch(/^watch_\d+$/);
 			await writeFile(join(root, "artifact"), "created");
 			expect((await line).type).toBe("line");
 		} finally {
@@ -708,8 +858,8 @@ describe("terminal monitor tool", () => {
 				description: "artifact",
 				path: join(root, "artifact"),
 			} as MonitorInput);
-			const id = /ID: (watch_\d+)/.exec(firstText(started))?.[1];
-			expect(id).toBeDefined();
+			const id = String(started.details?.bash_id ?? "");
+			expect(id).toMatch(/^watch_\d+$/);
 			const killed = await createKillBashTool({ ...ctx, monitorRegistry: registry }).execute("kill", {
 				bash_id: id,
 			});
@@ -860,15 +1010,14 @@ describe("terminal monitor tool", () => {
 				if (created.runtime.exited) resolve();
 				else created.runtime.session.onExit(() => resolve());
 			});
-			await expect(
-				registry.registerFile({
-					description: "after exit",
-					path: join(root, "new"),
-					event: "create",
-					timeoutMs: 1000,
-					cwd: root,
-				}),
-			).resolves.toMatch(/^watch_/);
+			const { id } = await registry.registerFile({
+				description: "after exit",
+				path: join(root, "new"),
+				event: "create",
+				timeoutMs: 1000,
+				cwd: root,
+			});
+			expect(id).toMatch(/^watch_/);
 		} finally {
 			await registry.stopAllFiles();
 			await limited.teardown();

@@ -19,6 +19,7 @@ export const codemodeSettingsSchema = Type.Object(
 			),
 		),
 		cellTimeoutSeconds: Type.Optional(Type.Number({ minimum: 1 })),
+		foregroundWindowSeconds: Type.Optional(Type.Number({ minimum: 1 })),
 		hardLimitSeconds: Type.Optional(Type.Number({ minimum: 1 })),
 		parallelPoolWidth: Type.Optional(Type.Number({ minimum: 1 })),
 		taskTools: Type.Optional(
@@ -64,6 +65,13 @@ export interface CodemodeSettings {
 		readonly jl: boolean;
 	};
 	readonly cellTimeoutSeconds: number;
+	/**
+	 * Longest an interactive eval call blocks the agent loop before the cell detaches, independent
+	 * of `timeout` (which becomes the detach budget only up to this window). A still-running cell
+	 * keeps living up to the hard limit; this only frees the turn. Ignored for `on_timeout: "error"`
+	 * (and print/json) calls, where `timeout` stays the unclamped deadline.
+	 */
+	readonly foregroundWindowSeconds: number;
 	/** Wall-clock kill deadline for a single cell; bounds detached cells too. */
 	readonly hardLimitSeconds: number;
 	readonly parallelPoolWidth: number;
@@ -98,6 +106,16 @@ export const DEFAULT_HARD_LIMIT_SECONDS = 1800;
 
 export const HARD_LIMIT_ENVIRONMENT_FLAG = "SENPI_CODEMODE_HARD_LIMIT_SECONDS";
 
+/**
+ * Bash parity: `terminal/tools/foreground-window.ts` auto-detaches a still-running bash command to a
+ * background session at 60s regardless of its `timeout` kill deadline. An eval cell gets the same
+ * default foreground window so a large `timeout` extends the cell's lifetime without holding the turn
+ * hostage for hours.
+ */
+export const DEFAULT_FOREGROUND_WINDOW_SECONDS = 60;
+
+export const FOREGROUND_WINDOW_ENVIRONMENT_FLAG = "SENPI_CODEMODE_FOREGROUND_SECONDS";
+
 // OMP settings-schema.ts:3211-3299 has language/path settings only; eval.ts:427
 // defaults timeout to 30s, and codemode pins concurrency-bridge.ts:30 width to 4.
 export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
@@ -108,6 +126,7 @@ export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
 		jl: false,
 	},
 	cellTimeoutSeconds: 30,
+	foregroundWindowSeconds: DEFAULT_FOREGROUND_WINDOW_SECONDS,
 	hardLimitSeconds: DEFAULT_HARD_LIMIT_SECONDS,
 	parallelPoolWidth: 4,
 	taskTools: {
@@ -166,6 +185,15 @@ export function resolveHardLimitSeconds(settings: CodemodeSettings, env: Environ
 	return parsed;
 }
 
+/** Environment override wins over the settings file; a non-positive or malformed value is ignored. */
+export function resolveForegroundWindowSeconds(settings: CodemodeSettings, env: Environment = process.env): number {
+	const override = env[FOREGROUND_WINDOW_ENVIRONMENT_FLAG];
+	if (override === undefined) return settings.foregroundWindowSeconds;
+	const parsed = Number.parseInt(override, 10);
+	if (!Number.isFinite(parsed) || parsed <= 0) return settings.foregroundWindowSeconds;
+	return parsed;
+}
+
 async function loadSettingsFile(path: string): Promise<LoadedCodemodeSettings> {
 	const raw = await readFile(path, "utf8");
 	let parsed: unknown;
@@ -200,6 +228,7 @@ function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
 			jl: input.languages?.jl ?? defaultCodemodeSettings.languages.jl,
 		},
 		cellTimeoutSeconds: input.cellTimeoutSeconds ?? defaultCodemodeSettings.cellTimeoutSeconds,
+		foregroundWindowSeconds: input.foregroundWindowSeconds ?? defaultCodemodeSettings.foregroundWindowSeconds,
 		hardLimitSeconds: input.hardLimitSeconds ?? defaultCodemodeSettings.hardLimitSeconds,
 		parallelPoolWidth: input.parallelPoolWidth ?? defaultCodemodeSettings.parallelPoolWidth,
 		taskTools: {

@@ -29,10 +29,13 @@ senpi periodically merges selected upstream releases from `upstream` (i.e. `badl
 ## Before Submitting a PR
 
 ```bash
-node scripts/devenv-setup.mjs                 # default: npm prebuilds, no Rust toolchain required
-node scripts/devenv-setup.mjs --with-native   # optional: install pinned Rust toolchain and build native Rust workspace
-npm run check     # Biome + tsc + browser-smoke check (pre-commit equivalent)
-npm test          # Vitest across workspaces (skips live-API)
+# Bun is the fleet-standard invocation.
+bun install --ignore-scripts
+npm install --ignore-scripts # Contributor-compatible alternative
+bun scripts/devenv-setup.mjs                 # default: npm prebuilds, no Rust toolchain required
+bun scripts/devenv-setup.mjs --with-native   # optional: install pinned Rust toolchain and build native Rust workspace
+bun run check     # Biome + tsc + browser-smoke check (pre-commit equivalent)
+bun run test          # Vitest across workspaces (skips live-API)
 ./pi-test.sh      # Optional: live-API integration suite (env-gated; requires API keys)
 ```
 
@@ -41,9 +44,9 @@ Use `--with-native` only when working on native Rust code; it reads `rust-toolch
 toolchain when `rustup` is available, and then runs the Rust native build/check path when a Cargo workspace exists. If Rust is
 missing, the setup prints the exact rustup command to run instead of bootstrapping global tooling silently.
 
-`npm run check` and `npm test` must pass. `./pi-test.sh` is only required when your change touches a provider that the live tests exercise.
+`bun run check` and `bun run test` must pass. The legacy npm equivalents remain supported for contributors. `./pi-test.sh` is only required when your change touches a provider that the live tests exercise.
 If you touch MCP dependencies, keep `@modelcontextprotocol/sdk` exact-pinned and verify the workspace install with
-`npm ls @modelcontextprotocol/sdk --workspace @code-yeongyu/senpi`.
+`bun pm ls @modelcontextprotocol/sdk` (npm equivalent: `npm ls @modelcontextprotocol/sdk --workspace @code-yeongyu/senpi`).
 
 Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
 
@@ -57,8 +60,8 @@ senpi uses **CalVer** (Calendar Versioning), distinct from upstream `badlogic/pi
 
 Locally:
 ```bash
-npm run release             # uses today's UTC date
-npm run release -- --dry-run   # preview without committing
+bun run release             # uses today's UTC date
+bun run release --dry-run   # preview without committing
 ```
 
 The release script (`scripts/release.mjs`) imports `scripts/calver.mjs` to compute the next version, then:
@@ -72,7 +75,7 @@ The release script (`scripts/release.mjs`) imports `scripts/calver.mjs` to compu
 7. After npm succeeds, the binary workflow makes the staged GitHub Release public.
 
 Source workspace manifests are intentionally private. Real npm publication is
-only supported through the trusted workflow; use `npm run publish:dry` for local
+only supported through the trusted workflow; use `bun run publish:dry` for local
 package validation.
 
 ### CalVer rules

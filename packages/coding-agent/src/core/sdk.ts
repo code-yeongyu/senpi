@@ -7,6 +7,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
+import { estimateTokens } from "./compaction/compaction.ts";
 import { createSessionCursorExecBridge } from "./cursor-exec-bridge-session.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
@@ -372,6 +373,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	).filter((name) => !excludedToolNameSet?.has(name));
 
 	let agent: Agent;
+	const reasoningBaseline = existingSession.configurationUpdate
+		? (sessionManager.getBranch().find((entry) => entry.type === "thinking_level_change")?.thinkingLevel ??
+			thinkingLevel)
+		: undefined;
 
 	// Read blockImages per request so a mid-session settings change takes effect.
 	const convertToLlmWithBlockImages = (messages: AgentMessage[]): Message[] =>
@@ -393,6 +398,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			model,
 			thinkingLevel,
 			thinkingSelection,
+			reasoningBaseline,
 			tools: [],
 		},
 		convertToLlm: convertToLlmWithBlockImages,
@@ -515,6 +521,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
 	});
+	const liveContextTokens = hasExistingSession
+		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)
+		: 0;
+	session.assertModelUsable(
+		undefined,
+		liveContextTokens,
+		hasExistingSession ? { includeSpeculationLead: false, admission: "resume" } : { admission: "start" },
+	);
 	cursorBridgeSessionRef.current = session;
 	const extensionsResult = resourceLoader.getExtensions();
 

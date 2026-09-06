@@ -27,6 +27,8 @@ export type ContinuityBindingSnapshot = {
 	toolsetHash: string;
 	/** Sent-stream digest of a turn that was pushed but never answered (retry checkpoint). */
 	unansweredTurnDigest?: string;
+	/** False until the SDK acknowledged the id; a resume/fork of an unconfirmed id is never attempted. */
+	sdkSessionIdConfirmed?: boolean;
 };
 
 export type ContinuityDecisionInput = {
@@ -132,6 +134,23 @@ function retryCheckpointDecision(
 	};
 }
 
+/**
+ * A binding whose SDK id was minted locally and never acknowledged (no init, no
+ * replay echo before the attempt failed) must not be resumed: Claude Code
+ * answers "No conversation found with session ID" and every retry would mint
+ * another dead id (oh-my-openagent#7562). Cold-seed instead.
+ */
+function withoutUnconfirmedResume(
+	decision: ContinuityDecision,
+	binding: ContinuityBindingSnapshot,
+): ContinuityDecision {
+	if (binding.sdkSessionIdConfirmed !== false) return decision;
+	if (decision.kind === "reattach" || decision.kind === "fork") {
+		return { kind: "flatten", reason: "session_unconfirmed" };
+	}
+	return decision;
+}
+
 function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBindingSnapshot): ContinuityDecision {
 	if (!input.transcriptAvailable) return { kind: "flatten", reason: "transcript_missing" };
 	const drift = identityDrift(input, binding);
@@ -213,7 +232,7 @@ export function decideNativeContinuity(input: ContinuityDecisionInput): Continui
 	const { entry, binding } = input;
 	if (!entry) {
 		if (!binding) return { kind: "bootstrap" };
-		return decideFromBinding(input, binding);
+		return withoutUnconfirmedResume(decideFromBinding(input, binding), binding);
 	}
 
 	const divergence = entry.pendingForkReason ?? entry.taintedReason;

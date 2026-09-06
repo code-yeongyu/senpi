@@ -574,7 +574,7 @@ async function consumeChatStream(
 	let currentBlock: TextContent | ThinkingContent | null = null;
 	const blocks = output.content;
 	const blockIndex = () => blocks.length - 1;
-	const toolBlocksByKey = new Map<string, number>();
+	const toolBlocksByKey = new Map<string | number, number>();
 
 	const finishCurrentBlock = (block?: typeof currentBlock) => {
 		if (!block) return;
@@ -703,7 +703,7 @@ async function consumeChatStream(
 				toolCall.id && toolCall.id !== "null"
 					? toolCall.id
 					: deriveMistralToolCallId(`toolcall:${toolCall.index ?? 0}`, 0);
-			const key = `${callId}:${toolCall.index || 0}`;
+			const key = toolCall.index ?? callId;
 			const existingIndex = toolBlocksByKey.get(key);
 			let block: (ToolCall & { partialArgs?: string }) | undefined;
 
@@ -795,6 +795,7 @@ function toChatMessages(messages: Message[], supportsImages: boolean): MistralCh
 	const result: MistralChatMessage[] = [];
 
 	for (const msg of messages) {
+		if (msg.role === "configurationUpdate") continue;
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				result.push({ role: "user", content: sanitizeSurrogates(msg.content) });

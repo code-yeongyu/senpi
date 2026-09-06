@@ -43,7 +43,7 @@ test/fixtures/*.mjs              Native-addon child processes for callback/worke
 
 ## VALIDATION
 
-- Run `npm test` from this package.
-- Run `npm run check:prebuild` when native artifacts or ABI loading changes.
+- Run `bun run test` from this package.
+- Run `bun run check:prebuild` when native artifacts or ABI loading changes.
 - Lifecycle changes need focused race tests for exactly-once exit, idempotent kill, and process-tree cleanup.
-- Run root `npm run check` for repository integration.
+- Run root `bun run check` for repository integration.

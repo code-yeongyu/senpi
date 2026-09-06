@@ -2,19 +2,27 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
 import {
+	ProcessIdentityUnreadableError,
 	processMatchesPidFile,
 	readProcessStartTime,
 	waitForStartTime,
 } from "../src/modes/app-server/daemon/process.ts";
-import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
+import { createHostDaemonPaths, defaultHostLaunch, ensureHost } from "../src/modes/rpc/host-ensure.ts";
+import {
+	readSocketSecret,
+	resolveSocketTransportAddress,
+	sendSocketHandshake,
+	socketSecretPath,
+} from "../src/modes/rpc/socket-transport.ts";
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
 const fixture = join(import.meta.dirname, "fixtures", "rpc-host-fixture.mjs");
+const incompatibleProtocolFixture = join(import.meta.dirname, "fixtures", "rpc-incompatible-protocol-host.ts");
 
 afterEach(async () => {
 	for (const child of children.splice(0)) await stopChild(child);
@@ -25,6 +33,81 @@ afterEach(async () => {
 });
 
 describe("ensureHost", () => {
+	it("serializes concurrent starts for one socket across agent directories", async () => {
+		const qa = await scratch("cross-agent-race");
+		const secondAgentDir = join(qa.root, "other-agent");
+		let releaseFirst!: () => void;
+		let signalFirstLocked!: () => void;
+		const firstLocked = new Promise<void>((resolve) => (releaseFirst = resolve));
+		const firstAcquired = new Promise<void>((resolve) => (signalFirstLocked = resolve));
+		const first = ensureHost({
+			agentDir: qa.agentDir,
+			socket: qa.socket,
+			_test: {
+				afterLockAcquired: async () => {
+					signalFirstLocked();
+					await firstLocked;
+				},
+				spawn: {
+					command: process.execPath,
+					args: [fixture, qa.socket, VERSION, "multi_session,extension_events", "answer"],
+				},
+			},
+		});
+		await firstAcquired;
+		const second = ensureHost({
+			agentDir: secondAgentDir,
+			socket: qa.socket,
+			_test: {
+				spawn: {
+					command: process.execPath,
+					args: [fixture, qa.socket, VERSION, "multi_session,extension_events", "answer"],
+				},
+			},
+		});
+		releaseFirst();
+		const [firstResult, secondResult] = await Promise.all([first, second]);
+		expect(firstResult.reused).toBe(false);
+		expect(secondResult).toMatchObject({ socket: qa.socket, reused: true });
+	}, 45_000);
+
+	it("waits for a holder whose critical section outlasts the previous ten-second lock budget", async () => {
+		const qa = await scratch("long-critical-section");
+		const secondAgentDir = join(qa.root, "other-agent");
+		let signalFirstLocked!: () => void;
+		const firstAcquired = new Promise<void>((resolve) => (signalFirstLocked = resolve));
+		const first = ensureHost({
+			agentDir: qa.agentDir,
+			socket: qa.socket,
+			_test: {
+				afterLockAcquired: async () => {
+					signalFirstLocked();
+					// Longer than the old cumulative wait (100 x 100ms): a waiter that still
+					// used it gave up with a raw "database is locked" instead of reusing.
+					await new Promise<void>((resolve) => setTimeout(resolve, 12_000));
+				},
+				spawn: {
+					command: process.execPath,
+					args: [fixture, qa.socket, VERSION, "multi_session,extension_events", "answer"],
+				},
+			},
+		});
+		await firstAcquired;
+		const second = ensureHost({
+			agentDir: secondAgentDir,
+			socket: qa.socket,
+			_test: {
+				spawn: {
+					command: process.execPath,
+					args: [fixture, qa.socket, VERSION, "multi_session,extension_events", "answer"],
+				},
+			},
+		});
+		const [firstResult, secondResult] = await Promise.all([first, second]);
+		expect(firstResult.reused).toBe(false);
+		expect(secondResult).toMatchObject({ socket: qa.socket, reused: true });
+	}, 60_000);
+
 	it("starts a missing host and reuses it on the second call", async () => {
 		const qa = await scratch("start-reuse");
 		const first = await ensureFixtureHost(qa);
@@ -55,7 +138,7 @@ describe("ensureHost", () => {
 		expect(result.reused).toBe(false);
 		expect(result.pid).not.toBe(old.pid);
 		await expectGone(old.pidFile);
-	});
+	}, 15_000);
 
 	it("replaces a host missing a required capability", async () => {
 		const qa = await scratch("missing-capability");
@@ -64,7 +147,7 @@ describe("ensureHost", () => {
 		expect(result.reused).toBe(false);
 		expect(result.pid).not.toBe(old.pid);
 		await expectGone(old.pidFile);
-	});
+	}, 15_000);
 
 	it("cleans a stale dead pidfile and starts fresh", async () => {
 		const qa = await scratch("stale-pidfile");
@@ -84,9 +167,9 @@ describe("ensureHost", () => {
 		const startedAt = Date.now();
 		const result = await ensureFixtureHost(qa, { stopTimeoutMs: 200 });
 		expect(result.pid).not.toBe(old.pid);
-		expect(Date.now() - startedAt).toBeLessThan(5_000);
+		expect(Date.now() - startedAt).toBeLessThan(8_000);
 		await expectGone(old.pidFile);
-	});
+	}, 15_000);
 
 	it("fails within the readiness budget and includes stderr diagnostics", async () => {
 		const qa = await scratch("readiness-failure");
@@ -103,10 +186,181 @@ describe("ensureHost", () => {
 		await expect(access(paths.pidFile)).rejects.toMatchObject({ code: "ENOENT" });
 		await expect(access(qa.socket)).rejects.toMatchObject({ code: "ENOENT" });
 	}, 10_000);
+
+	it("keeps the readiness diagnostic and cleans up when the identity probe fails during teardown", async () => {
+		const qa = await scratch("readiness-failure-probe-error");
+		// Startup succeeds (the pidfile gets a real identity); the probe starts failing only
+		// once teardown begins - the exact shape of the Windows CI failure.
+		let registered = false;
+		await expect(
+			ensureFixtureHost(qa, {
+				readinessTimeoutMs: 300,
+				beforePidFileWrite: async () => {
+					registered = true;
+				},
+				readProcessStartTime: (pid) =>
+					registered
+						? Promise.reject(new Error("Command failed: powershell.exe -NoProfile"))
+						: readProcessStartTime(pid),
+				spawn: {
+					command: process.execPath,
+					args: ["-e", "process.stderr.write('fixture readiness diagnostic\\n'); setInterval(() => {}, 1000)"],
+				},
+			}),
+		).rejects.toThrow(/did not answer get_protocol_info.*fixture readiness diagnostic/s);
+		const paths = createHostDaemonPaths(qa.agentDir);
+		await expect(access(paths.pidFile)).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(access(qa.socket)).rejects.toMatchObject({ code: "ENOENT" });
+	}, 10_000);
+
+	it("reports the readiness diagnostic even when teardown cannot confirm the host died", async () => {
+		const qa = await scratch("readiness-failure-stop-stuck");
+		// After registration the probe keeps reporting the recorded identity even once the
+		// host is dead, so any pidfile-based wait would never observe "gone". The readiness
+		// diagnostic must still be the error the caller sees.
+		let pinned: string | undefined;
+		await expect(
+			ensureFixtureHost(qa, {
+				readinessTimeoutMs: 300,
+				stopTimeoutMs: 50,
+				beforePidFileWrite: async () => {
+					pinned = "pinned";
+				},
+				readProcessStartTime: async (pid) =>
+					pinned ? ((await readProcessStartTime(pid)) ?? pinned) : readProcessStartTime(pid),
+				spawn: {
+					command: process.execPath,
+					args: ["-e", "process.stderr.write('fixture readiness diagnostic\\n'); setInterval(() => {}, 1000)"],
+				},
+			}),
+		).rejects.toThrow(/did not answer get_protocol_info.*fixture readiness diagnostic/s);
+		const paths = createHostDaemonPaths(qa.agentDir);
+		await expect(access(paths.pidFile)).rejects.toMatchObject({ code: "ENOENT" });
+	}, 10_000);
+
+	it("serializes concurrent starts even when the identity probe fails transiently on a live pid", async () => {
+		// The Windows CI variant: Get-CimInstance exits non-zero under load for a process that is
+		// very much alive. Observation failure must read as UNKNOWN (retry), never as "gone" or
+		// as an error that escapes ensureHost.
+		const qa = await scratch("race-flaky");
+		const secondAgentDir = join(qa.root, "other-agent");
+		let failuresLeft = 3;
+		const flakyProbe = async (pid: number): Promise<string | undefined> => {
+			if (failuresLeft > 0) {
+				failuresLeft -= 1;
+				throw new Error(
+					`Command failed: powershell.exe -NoProfile Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"`,
+				);
+			}
+			return readProcessStartTime(pid);
+		};
+		let releaseFirst!: () => void;
+		let signalFirstLocked!: () => void;
+		const firstLocked = new Promise<void>((resolve) => (releaseFirst = resolve));
+		const firstAcquired = new Promise<void>((resolve) => (signalFirstLocked = resolve));
+		const spawnFixture = {
+			command: process.execPath,
+			args: [fixture, qa.socket, VERSION, "multi_session,extension_events", "answer"],
+		};
+		const first = ensureHost({
+			agentDir: qa.agentDir,
+			socket: qa.socket,
+			_test: {
+				readProcessStartTime: flakyProbe,
+				afterLockAcquired: async () => {
+					signalFirstLocked();
+					await firstLocked;
+				},
+				spawn: spawnFixture,
+			},
+		});
+		await firstAcquired;
+		const second = ensureHost({
+			agentDir: secondAgentDir,
+			socket: qa.socket,
+			_test: { readProcessStartTime: flakyProbe, spawn: spawnFixture },
+		});
+		releaseFirst();
+		const [a, b] = await Promise.all([first, second]);
+		expect(a.reused).toBe(false);
+		expect(a.pid).toBeGreaterThan(0);
+		expect(b).toMatchObject({ socket: qa.socket, reused: true });
+		// The flaky probe was exercised to exhaustion and never escaped as an error.
+		expect(failuresLeft).toBe(0);
+	}, 20_000);
+
+	it("treats a failing probe against a dead pid as gone and starts a fresh host", async () => {
+		const qa = await scratch("dead-probe");
+		// A real process that has already exited: liveness is genuinely false.
+		const dead = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+		await new Promise<void>((resolve) => dead.once("exit", () => resolve()));
+		const paths = createHostDaemonPaths(qa.agentDir);
+		await mkdir(dirname(paths.pidFile), { recursive: true });
+		await writeFile(paths.pidFile, `${JSON.stringify({ pid: dead.pid, processStartTime: "stale" })}\n`);
+		let probeCalls = 0;
+		const host = await ensureFixtureHost(qa, {
+			readProcessStartTime: async (pid) => {
+				probeCalls += 1;
+				if (pid === dead.pid) throw new Error("Command failed: powershell.exe -NoProfile");
+				return readProcessStartTime(pid);
+			},
+		});
+		expect(host.reused).toBe(false);
+		expect(host.pid).not.toBe(dead.pid);
+		expect(probeCalls).toBeGreaterThan(0);
+	}, 20_000);
+
+	it("fails fast when the spawned host exits before readiness", async () => {
+		const qa = await scratch("early-exit");
+		const startedAt = Date.now();
+		await expect(
+			ensureFixtureHost(qa, {
+				readinessTimeoutMs: 5_000,
+				spawn: { command: process.execPath, args: ["-e", "process.exit(7)"] },
+			}),
+		).rejects.toThrow(/exited.*7/);
+		expect(Date.now() - startedAt).toBeLessThan(2_500);
+	}, 10_000);
+
+	it("reports an incompatible protocol answer instead of a readiness timeout", async () => {
+		const qa = await scratch("incompatible-answer");
+		await expect(
+			ensureFixtureHost(qa, {
+				readinessTimeoutMs: 10_000,
+				spawn: {
+					command: process.execPath,
+					args: ["--import", "tsx", incompatibleProtocolFixture, qa.socket],
+				},
+			}),
+		).rejects.toThrow(/incompatible|0\\.0\\.0-wrong/);
+	}, 30_000);
+});
+
+describe("defaultHostLaunch", () => {
+	it("re-enters through the internal supervisor route in compiled binaries", () => {
+		expect(defaultHostLaunch("/tmp/qa.sock", ["--provider", "mock"], true)).toEqual({
+			command: process.execPath,
+			args: ["--internal-rpc-host-supervisor", "--socket", "/tmp/qa.sock", "--provider", "mock"],
+		});
+	});
+
+	it("re-enters through the host-lifecycle script outside compiled binaries", () => {
+		const launch = defaultHostLaunch("/tmp/qa.sock", ["--provider", "mock"], false);
+		expect(launch.command).toBe(process.execPath);
+		const args = launch.args.slice(process.execArgv.length);
+		expect(args[0]).toMatch(/host-lifecycle\.(ts|js)$/);
+		expect(args.slice(1)).toEqual(["--socket", "/tmp/qa.sock", "--provider", "mock"]);
+	});
 });
 
 type Qa = { root: string; agentDir: string; socket: string };
-type Overrides = { readinessTimeoutMs?: number; stopTimeoutMs?: number; spawn?: { command: string; args: string[] } };
+type Overrides = {
+	readinessTimeoutMs?: number;
+	stopTimeoutMs?: number;
+	spawn?: { command: string; args: string[] };
+	readProcessStartTime?: (pid: number) => Promise<string | undefined>;
+	beforePidFileWrite?: () => Promise<void>;
+};
 
 async function scratch(label: string): Promise<Qa> {
 	const root = await mkdtemp(join(tmpdir(), `senpi-host-ensure-${label}-`));
@@ -125,6 +379,8 @@ function ensureFixtureHost(qa: Qa, overrides: Overrides = {}) {
 				command: process.execPath,
 				args: [fixture, qa.socket, VERSION, "multi_session,extension_events", "answer"],
 			},
+			readProcessStartTime: overrides.readProcessStartTime,
+			beforePidFileWrite: overrides.beforePidFileWrite,
 		},
 	});
 }
@@ -141,7 +397,10 @@ async function startManagedFixture(
 	});
 	children.push(child);
 	if (child.pid === undefined) throw new Error("fixture did not spawn");
+	// The fixture child is live, so its identity must resolve; waitForStartTime returns undefined
+	// only when the probe is starved on a loaded host, which this fixture does not exercise.
 	const processStartTime = await waitForStartTime(child.pid, 2_000);
+	if (processStartTime === undefined) throw new Error("fixture child had no process identity");
 	await waitForProtocol(qa.socket);
 	const paths = createHostDaemonPaths(qa.agentDir);
 	await mkdir(paths.dir, { recursive: true });
@@ -151,8 +410,9 @@ async function startManagedFixture(
 }
 
 async function protocolInfo(socketPath: string): Promise<Record<string, unknown>> {
+	const secret = process.platform === "win32" ? await readSocketSecret(socketSecretPath(socketPath)) : undefined;
 	return new Promise((resolve, reject) => {
-		const socket = createConnection(socketPath);
+		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
 		let buffer = "";
 		const timer = setTimeout(() => finish(new Error("protocol timeout")), 1_000);
 		const finish = (error?: Error, value?: Record<string, unknown>) => {
@@ -160,7 +420,10 @@ async function protocolInfo(socketPath: string): Promise<Record<string, unknown>
 			socket.destroy();
 			error ? reject(error) : resolve(value!);
 		};
-		socket.once("connect", () => socket.write('{"id":"probe","type":"get_protocol_info"}\n'));
+		socket.once("connect", () => {
+			if (secret) sendSocketHandshake(socket, secret);
+			socket.write('{"id":"probe","type":"get_protocol_info"}\n');
+		});
 		socket.on("data", (chunk) => {
 			buffer += chunk.toString("utf8");
 			const newline = buffer.indexOf("\n");
@@ -214,3 +477,53 @@ async function stopChild(child: ChildProcess): Promise<void> {
 		process.kill(child.pid, "SIGKILL");
 	} catch {}
 }
+
+describe("processMatchesPidFile", () => {
+	it("retries a probe that fails transiently against a live pid and then answers", async () => {
+		let failures = 2;
+		let calls = 0;
+		const matches = await processMatchesPidFile(
+			{ pid: process.pid, processStartTime: "self" },
+			async () => {
+				calls += 1;
+				if (failures > 0) {
+					failures -= 1;
+					throw new Error("Command failed: powershell.exe -NoProfile");
+				}
+				return "self";
+			},
+			() => true,
+			{ attempts: 5, delayMs: 5 },
+		);
+		expect(matches).toBe(true);
+		expect(calls).toBe(3);
+	});
+
+	it("reads a failing probe against a dead pid as gone without retrying", async () => {
+		let calls = 0;
+		const matches = await processMatchesPidFile(
+			{ pid: 999_999, processStartTime: "x" },
+			async () => {
+				calls += 1;
+				throw new Error("Command failed: powershell.exe -NoProfile");
+			},
+			() => false,
+			{ attempts: 5, delayMs: 5 },
+		);
+		expect(matches).toBe(false);
+		expect(calls).toBe(1);
+	});
+
+	it("surfaces an exhausted probe on a live pid as ProcessIdentityUnreadableError, not the raw probe error", async () => {
+		await expect(
+			processMatchesPidFile(
+				{ pid: process.pid, processStartTime: "self" },
+				async () => {
+					throw new Error("Command failed: powershell.exe -NoProfile");
+				},
+				() => true,
+				{ attempts: 3, delayMs: 5 },
+			),
+		).rejects.toBeInstanceOf(ProcessIdentityUnreadableError);
+	});
+});

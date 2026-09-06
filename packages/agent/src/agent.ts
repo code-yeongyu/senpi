@@ -31,6 +31,7 @@ import type {
 	QueueMode,
 	ShouldStopAfterTurnContext,
 	StreamFn,
+	ThinkingLevel,
 	ToolExecutionMode,
 } from "./types.ts";
 
@@ -81,6 +82,7 @@ function createMutableAgentState(
 		systemPrompt: initialState?.systemPrompt ?? "",
 		model: initialState?.model ?? DEFAULT_MODEL,
 		thinkingLevel: initialState?.thinkingLevel ?? "off",
+		reasoningBaseline: initialState?.reasoningBaseline,
 		get tools() {
 			return tools;
 		},
@@ -579,9 +581,10 @@ export class Agent {
 		let steeringQueueGeneration = this.steeringQueue.getClearGeneration();
 		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
 		const shouldStopAfterTurn = this.shouldStopAfterTurn;
+		const reasoning = (this._state.reasoningBaseline as ThinkingLevel | undefined) ?? this._state.thinkingLevel;
 		return {
 			model: this._state.model,
-			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
+			reasoning: reasoning === "off" ? undefined : reasoning,
 			thinkingSelection: this._state.thinkingSelection,
 			sessionId: this.sessionId,
 			onPayload: this.onPayload,

@@ -49,8 +49,8 @@ bench/                          event-stream + model-registry micro-benchmarks
 
 - `src/providers/data/` is committed generated source: 41 provider JSONs plus `.manifest.json` (schemaVersion 3, sha256 map per file + structureHash). Never hand-edit.
 - Ordinary build copies `data/` into `dist` (`build:offline` runs `check:model-data` first, then `shx cp -r src/providers/data dist/providers/data`). No network.
-- Networked regeneration is explicit: `npm run generate-models` (full) or `npm run hydrate-model-data` (`--data-only`).
-- Validators: `scripts/model-data.ts` (shared schema/load) and `scripts/check-model-data.ts` (`npm run check:model-data`).
+- Networked regeneration is explicit: `bun run generate-models` (full) or `bun run hydrate-model-data` (`--data-only`).
+- Validators: `scripts/model-data.ts` (shared schema/load) and `scripts/check-model-data.ts` (`bun run check:model-data`).
 
 ## ARCHITECTURE
 
@@ -80,7 +80,7 @@ bench/                          event-stream + model-registry micro-benchmarks
 ## INVARIANTS
 
 - Dynamic imports are limited to lazy API and browser-safe credential/OAuth boundaries; ordinary source uses top-level imports.
-- Generated model files are never hand-edited. Regenerate and commit intentional catalog changes. `src/api/cursor-agent/gen/agent_pb.ts` is likewise generated: run `buf generate` against `proto/cursor/agent.proto`, then `node scripts/transform-cursor-agent-proto.mjs <in> <out>` to rewrite enums for `erasableSyntaxOnly`.
+- Generated model files are never hand-edited. Regenerate and commit intentional catalog changes. `src/api/cursor-agent/gen/agent_pb.ts` is likewise generated: run `buf generate` against `proto/cursor/agent.proto`, then `bun scripts/transform-cursor-agent-proto.mjs <in> <out>` to rewrite enums for `erasableSyntaxOnly`.
 - Unit tests use `src/providers/faux.ts`; live APIs require explicit key/feature gating and must not be part of default success.
 - Keep `extraBody`, tool definitions, reasoning options, usage, stop reasons, errors, and abort behavior consistent across APIs.
 - Inspect installed SDK types before changing external request/response shapes.
@@ -88,8 +88,8 @@ bench/                          event-stream + model-registry micro-benchmarks
 
 ## VALIDATION
 
-- Run the affected focused Vitest file, then `npm test` for broad provider changes.
-- Run `npm run check:browser-smoke` from the root for import/export boundary changes.
-- Runtime changes require root `npm run check` and real CLI QA evidence.
+- Run the affected focused Vitest file, then `bun run test` for broad provider changes.
+- Run `bun run check:browser-smoke` from the root for import/export boundary changes.
+- Runtime changes require root `bun run check` and real CLI QA evidence.
 - Read `src/changes.md` and the nearest child `AGENTS.md` before editing provider or middleware internals.
 - Live suites are opt-in through `test/live-api-gates.ts` (`PI_ENABLE_LIVE_API_TESTS` or a per-provider `PI_ENABLE_*` flag); see `test/AGENTS.md` before adding network coverage.

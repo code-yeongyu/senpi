@@ -41,9 +41,9 @@ differential/expected-gaps.json, capability-manifest.json   pinned expectations
 ## COMMANDS
 
 ```bash
-npx tsx packages/coding-agent/test/qa/app-server/task<N>-<behavior>.ts
-npm --prefix packages/coding-agent test -- --run test/qa/app-server/task8-thread-search-support.test.ts
-npm run qa:app-server        # packaged handshake / multiclient / approval / real-client probes
+bunx tsx packages/coding-agent/test/qa/app-server/task<N>-<behavior>.ts
+bun run --cwd packages/coding-agent test --run test/qa/app-server/task8-thread-search-support.test.ts
+bun run qa:app-server        # packaged handshake / multiclient / approval / real-client probes
 ```
 
 Differential scenarios run through the repository's differential harness (`scripts/qa-app-server/differential/driver.mjs`), never as individual node invocations.

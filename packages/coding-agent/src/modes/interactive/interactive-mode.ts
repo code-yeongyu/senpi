@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
+import { type AuthEvent, type AuthPrompt, modelsAreEqual } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent, Usage } from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
@@ -37,6 +37,7 @@ import {
 	ProcessTerminal,
 	Spacer,
 	sanitizeTerminalLabel,
+	setCapabilityOverrides,
 	setKeybindings,
 	Text,
 	TruncatedText,
@@ -227,6 +228,7 @@ import { buildTmuxSetupWarning } from "./tmux-setup.ts";
 import { ToolArgsRevealController } from "./tool-args-reveal.ts";
 import { readToolProgress } from "./tool-progress.ts";
 import { ToolResultRevealController } from "./tool-result-reveal.ts";
+import { formatDisplayVersion } from "./version-label.ts";
 import {
 	blendWorkingStatusShimmerRgbColor,
 	formatActiveToolWorkingLabel,
@@ -713,12 +715,54 @@ export interface InteractiveModeOptions {
 	initialThemeSetting?: string;
 }
 
+/** Extension UI request forwarded from the shared interactive host. */
+type HostUiRequest = {
+	id: string;
+	method: string;
+	title?: string;
+	options?: string[];
+	message?: string;
+	prefill?: string;
+	placeholder?: string;
+	statusKey?: string;
+	statusText?: string;
+	widgetKey?: string;
+	widgetLines?: string[];
+	widgetPlacement?: "aboveEditor" | "belowEditor";
+	extensionName?: string;
+	text?: string;
+};
+
+type HostUiResponse =
+	| { type: "extension_ui_response"; id: string; value: string }
+	| { type: "extension_ui_response"; id: string; confirmed: boolean }
+	| { type: "extension_ui_response"; id: string; cancelled: true };
+
+/**
+ * Optional runtime capability: only the shared interactive host proxies extension
+ * UI requests back to this mode. The classic local runtime does not implement it.
+ */
+type HostUiCapableRuntime = {
+	setHostUiHandler(callback?: (request: HostUiRequest) => Promise<HostUiResponse | undefined>): void;
+	setClientInfo?(width: number): void;
+};
+
+function linesFactory(lines: string[] | undefined): ((tui: TUI, thm: Theme) => Component) | undefined {
+	if (lines === undefined) return undefined;
+	return () => {
+		const container = new Container();
+		for (const line of lines) container.addChild(new Text(line, 1, 0));
+		return container;
+	};
+}
+
 interface InteractiveTuiOptions {
 	tuiMode: TuiMode;
 	showHardwareCursor: boolean;
 	logDirectory: string;
 	terminal?: Terminal;
 	onRightClickPaste?: () => void;
+	fullscreenCopyOnSelect?: boolean;
 }
 
 /** Composition root for selecting the interactive terminal renderer. */
@@ -731,6 +775,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
 			openUrl: openBrowser,
 			onRightClickPaste: options.onRightClickPaste,
+			copyOnSelect: options.fullscreenCopyOnSelect,
 			copySelection: async (text) => {
 				try {
 					await copyToClipboard(text);
@@ -980,7 +1025,7 @@ export class InteractiveMode {
 	// The session may be the local AgentSession or the shared-host RPC proxy; the
 	// four reads widened on InteractiveSession must be awaited at every call site.
 	private get session(): InteractiveSession {
-		return this.runtimeHost.session;
+		return this.runtimeHost?.session;
 	}
 	private get sessionManager() {
 		return this.session.sessionManager;
@@ -1004,12 +1049,17 @@ export class InteractiveMode {
 			await this.rebindCurrentSession({ renderBeforeBind: true });
 			await this.themeController.applyFromSettings();
 		});
+		// Host-driven extension UI only exists on the shared-host lane; the classic
+		// local runtime renders extension UI in-process and has no such hook.
+		const hostUiRuntime = this.runtimeHost as Partial<HostUiCapableRuntime>;
+		hostUiRuntime.setHostUiHandler?.((request) => this.handleHostUiRequest(request as HostUiRequest));
 		this.version = DISPLAY_VERSION;
 		this.renderer = createInteractiveTui({
 			tuiMode,
 			showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 			logDirectory: getAgentDir(),
 			onRightClickPaste: this.onRightClickPaste,
+			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect?.() ?? true,
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.streamingReveal = new StreamingRevealController({
@@ -1318,6 +1368,7 @@ export class InteractiveMode {
 			logDirectory: getAgentDir(),
 			terminal,
 			onRightClickPaste: this.onRightClickPaste,
+			fullscreenCopyOnSelect: this.runtimeHost?.session?.settingsManager?.getFullscreenCopyOnSelect?.() ?? true,
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;
@@ -1427,6 +1478,7 @@ export class InteractiveMode {
 			throw error;
 		}
 		this.isInitialized = true;
+		(this.runtimeHost as Partial<HostUiCapableRuntime> | undefined)?.setClientInfo?.(this.ui.terminal.columns);
 
 		await this.themeController.applyFromSettings();
 
@@ -1437,7 +1489,8 @@ export class InteractiveMode {
 			this.headerContainer.addChild(this.builtInHeader);
 			this.headerContainer.addChild(new Spacer(1));
 		} else if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
+			const logo =
+				theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` ${formatDisplayVersion(this.version)}`);
 
 			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
@@ -2577,8 +2630,12 @@ export class InteractiveMode {
 	}
 
 	private applyRuntimeSettings(): void {
+		setCapabilityOverrides(this.settingsManager.getTerminalCapabilityOverrides());
 		configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
 		this.applyFullscreenScrollbarSetting();
+		if (this.renderer instanceof TuiAltScreen) {
+			this.renderer.setCopyOnSelect(this.settingsManager.getFullscreenCopyOnSelect?.() ?? true);
+		}
 		this.footer.setSession(this.session);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
@@ -2697,7 +2754,7 @@ export class InteractiveMode {
 			requestReload: () => this.handleReloadCommand(),
 			isCompacting: () => this.session.isCompacting,
 			shutdown: () => {
-				this.shutdownRequested = true;
+				this.requestExtensionShutdown();
 			},
 			getContextUsage: () => this.session.getContextUsage(),
 			getCompactionSettings: () => this.settingsManager.getCompactionSettings(),
@@ -2746,6 +2803,67 @@ export class InteractiveMode {
 			}
 			return false;
 		};
+	}
+
+	private async handleHostUiRequest(request: HostUiRequest): Promise<HostUiResponse | undefined> {
+		switch (request.method) {
+			case "select": {
+				const value = await this.showExtensionSelector(request.title ?? "", request.options ?? []);
+				return value === undefined
+					? { type: "extension_ui_response", id: request.id, cancelled: true }
+					: { type: "extension_ui_response", id: request.id, value };
+			}
+			case "confirm":
+				return {
+					type: "extension_ui_response",
+					id: request.id,
+					confirmed: await this.showExtensionConfirm(request.title ?? "", request.message ?? ""),
+				};
+			case "input": {
+				const value = await this.showExtensionInput(request.title ?? "", request.placeholder);
+				return value === undefined
+					? { type: "extension_ui_response", id: request.id, cancelled: true }
+					: { type: "extension_ui_response", id: request.id, value };
+			}
+			case "editor": {
+				const value = await this.showExtensionEditor(request.title ?? "", request.prefill);
+				return value === undefined
+					? { type: "extension_ui_response", id: request.id, cancelled: true }
+					: { type: "extension_ui_response", id: request.id, value };
+			}
+			case "notify":
+				this.showExtensionNotify(request.message ?? "");
+				return undefined;
+			case "setStatus":
+				this.setExtensionStatus(request.statusKey ?? "", request.statusText);
+				return undefined;
+			case "setTitle":
+				this.extensionTerminalTitle = request.title ?? "";
+				this.applyTerminalTitle();
+				return undefined;
+			case "set_editor_text":
+				this.editor.setText(request.text ?? "");
+				return undefined;
+			case "setWidget":
+				this.setExtensionWidget(request.widgetKey ?? "", request.widgetLines, {
+					placement: request.widgetPlacement,
+				});
+				return undefined;
+			case "setHeader":
+				this.setExtensionHeader(linesFactory(request.widgetLines));
+				return undefined;
+			case "setFooter":
+				this.setExtensionFooter(linesFactory(request.widgetLines));
+				return undefined;
+			case "custom_unsupported":
+				this.showExtensionNotify(
+					`${request.extensionName ?? "This extension"} requires the classic TUI; its component widget cannot be rendered in the shared host.`,
+					"warning",
+				);
+				return undefined;
+			default:
+				return undefined;
+		}
 	}
 
 	/**
@@ -3031,6 +3149,16 @@ export class InteractiveMode {
 			this.idleStatus.setHeight(idleHeight);
 			this.statusContainer.addChild(this.idleStatus);
 		}
+	}
+
+	private showWorkingStatusIndicator(): void {
+		this.showStatusIndicator(
+			new WorkingStatusIndicator(
+				this.ui,
+				this.workingMessage ?? this.defaultWorkingMessage,
+				this.getWorkingIndicatorOptions(),
+			),
+		);
 	}
 
 	private setWorkingVisible(visible: boolean): void {
@@ -3808,7 +3936,9 @@ export class InteractiveMode {
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
 			if (this.session.isStreaming || this.session.retryAttempt > 0) {
-				void this.abortAndFireQueuedMessages();
+				void this.abortAndFireQueuedMessages().catch((error) =>
+					this.showError(error instanceof Error ? error.message : String(error)),
+				);
 			} else if (this.session.isBashRunning) {
 				this.session.abortBash();
 			} else if (this.isBashMode) {
@@ -3861,7 +3991,10 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
 		this.defaultEditor.onAction("app.editor.external", () => void this.handleOpenExternalEditor());
-		this.defaultEditor.onAction("app.message.copy", () => void this.handleCopyCommand({ flashConfirmation: true }));
+		this.defaultEditor.onAction(
+			"app.message.copy",
+			() => void this.handleCopyCommand({ flashConfirmation: true, preferSelection: true }),
+		);
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
 		this.defaultEditor.onAction("app.message.dequeue", () => this.handleDequeue());
 		this.defaultEditor.onAction("app.session.new", () => this.handleClearCommand());
@@ -4028,6 +4161,14 @@ export class InteractiveMode {
 	}
 
 	private handleStartupSubmit(text: string): void {
+		// Quit is a control action, not a prompt: honor it even while managed-tool setup
+		// is still running. Parking it in the editor would also disable the Ctrl+D quit
+		// escape, which CustomEditor only forwards while the editor is empty.
+		if (text.trim() === "/quit" || text.trim() === "/exit") {
+			this.editor.setText("");
+			void this.shutdown();
+			return;
+		}
 		this.editor.setText(text);
 		this.showStatus("Startup is still in progress");
 	}
@@ -4315,26 +4456,21 @@ export class InteractiveMode {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(true);
 				}
+				this.pendingTools?.clear();
 				// Restore main escape handler if retry handler is still active
 				// (retry success event fires later, but we need main handler now)
 				if (this.retryEscapeHandler) {
 					this.defaultEditor.onEscape = this.retryEscapeHandler;
 					this.retryEscapeHandler = undefined;
 				}
+				break;
+
+			case "turn_start":
+				if (this.settingsManager.getShowTerminalProgress() && this.ui.terminal) {
+					this.ui.terminal.setProgress(true);
+				}
 				if (this.workingVisible) {
-					this.showStatusIndicator(
-						this.chrome
-							? this.chrome.createWorkingIndicator(
-									this.ui,
-									this.workingMessage ?? this.defaultWorkingMessage,
-									this.getWorkingIndicatorOptions(),
-								)
-							: new WorkingStatusIndicator(
-									this.ui,
-									this.workingMessage ?? this.defaultWorkingMessage,
-									this.getWorkingIndicatorOptions(),
-								),
-					);
+					this.showWorkingStatusIndicator();
 				} else {
 					this.clearStatusIndicator();
 				}
@@ -4369,6 +4505,14 @@ export class InteractiveMode {
 				this.footer.invalidate();
 				this.updateEditorBorderColor();
 				this.showStatus(`Thinking level: ${event.level}`);
+				break;
+
+			case "model_change_skipped":
+				this.showWarning(
+					`Skipped ${event.model.name || event.model.id}: current context needs ${event.shortfallTokens.toLocaleString()} ` +
+						`more tokens for its ${event.contextWindow.toLocaleString()}-token window ` +
+						`(${event.safetyMarginProfile} usability budget).`,
+				);
 				break;
 
 			case "high_reasoning_warning":
@@ -4474,6 +4618,7 @@ export class InteractiveMode {
 						for (const [, component] of this.pendingTools.entries()) {
 							component.setArgsComplete();
 						}
+						this.maybeShowAssistantDiagnostics(this.streamingMessage);
 						this.maybeShowCacheMissNotice(this.streamingMessage);
 					}
 					this.streamingComponent = undefined;
@@ -4548,7 +4693,7 @@ export class InteractiveMode {
 			}
 
 			case "agent_end":
-				if (this.settingsManager.getShowTerminalProgress()) {
+				if (this.settingsManager.getShowTerminalProgress() && this.ui.terminal) {
 					this.ui.terminal.setProgress(false);
 				}
 				this.clearActiveToolExecutionStatus();
@@ -4583,7 +4728,7 @@ export class InteractiveMode {
 				break;
 
 			case "compaction_start": {
-				if (this.settingsManager.getShowTerminalProgress()) {
+				if (this.settingsManager.getShowTerminalProgress() && this.ui.terminal) {
 					this.ui.terminal.setProgress(true);
 				}
 				// Keep editor active; submissions are queued during compaction.
@@ -4617,7 +4762,7 @@ export class InteractiveMode {
 			}
 
 			case "compaction_end": {
-				if (this.settingsManager.getShowTerminalProgress()) {
+				if (this.settingsManager.getShowTerminalProgress() && this.ui.terminal) {
 					this.ui.terminal.setProgress(false);
 				}
 				InteractiveMode.restoreCompactionEscapeOverride(this);
@@ -5164,6 +5309,9 @@ export class InteractiveMode {
 				// Tool results are rendered inline with tool calls, handled separately
 				break;
 			}
+			case "configurationUpdate": {
+				break;
+			}
 			default: {
 				const exhaustive: never = message;
 				void exhaustive;
@@ -5332,6 +5480,7 @@ export class InteractiveMode {
 					}
 				}
 				if (message.stopReason !== "aborted" && message.stopReason !== "error") {
+					this.maybeShowAssistantDiagnostics?.(message);
 					const miss = cacheMisses.get(message);
 					if (miss) this.addCacheMissNotice(miss);
 				}
@@ -5396,6 +5545,32 @@ export class InteractiveMode {
 		this.chatContainer.addChild(
 			new Text(theme.fg("warning", `${label}: ${formatTokens(tokens)} tokens billed${cost}`), 1, 0),
 		);
+	}
+
+	private maybeShowAssistantDiagnostics(message: AssistantMessage): void {
+		if (!this.settingsManager.getShowCacheMissNotices()) return;
+
+		for (const diagnostic of message.diagnostics ?? []) {
+			if (diagnostic.type !== "anthropic_input_transformations") continue;
+			const transformations = diagnostic.details?.transformations;
+			if (!Array.isArray(transformations)) continue;
+
+			const dropped = transformations.flatMap((transformation): string[] => {
+				if (typeof transformation !== "object" || transformation === null) return [];
+				const details = transformation as Record<string, unknown>;
+				if (details.type !== "thinking_dropped") return [];
+				const reason = typeof details.reason === "string" ? details.reason : "unknown reason";
+				const location = typeof details.path === "string" ? ` at ${details.path}` : "";
+				return [`${reason}${location}`];
+			});
+			if (dropped.length === 0) continue;
+
+			const noun = dropped.length === 1 ? "thinking block" : `${dropped.length} thinking blocks`;
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(
+				new Text(theme.fg("warning", `Anthropic dropped ${noun}: ${dropped.join("; ")}`), 1, 0),
+			);
+		}
 	}
 
 	/**
@@ -5585,8 +5760,12 @@ export class InteractiveMode {
 		this.themeController.disableAutoSync();
 		await this.ui.terminal.drainInput(1000);
 
-		this.stop();
-		await this.runtimeHost.dispose();
+		this.stop({ restoreStderr: false });
+		try {
+			await this.runtimeHost.dispose();
+		} finally {
+			restoreInteractiveStderr();
+		}
 
 		const resumeCommand = formatResumeCommand(this.sessionManager);
 		if (resumeCommand) {
@@ -5666,6 +5845,20 @@ export class InteractiveMode {
 	}
 
 	/**
+	 * Record an extension shutdown request and honor it as soon as it is safe to do so.
+	 *
+	 * An idle session emits no further `agent_settled`, and that event is the only
+	 * consumer of the deferred flag, so an idle request must shut down here or it
+	 * strands until the user happens to run another turn.
+	 */
+	private requestExtensionShutdown(): void {
+		this.shutdownRequested = true;
+		if (this.session.isIdle) {
+			void this.shutdown();
+		}
+	}
+
+	/**
 	 * Check if shutdown was requested and perform shutdown if so.
 	 */
 	private async checkShutdownRequested(): Promise<void> {
@@ -5679,6 +5872,14 @@ export class InteractiveMode {
 		const signals: NodeJS.Signals[] = ["SIGTERM"];
 		if (process.platform !== "win32") {
 			signals.push("SIGHUP");
+		}
+
+		if (process.platform !== "win32") {
+			const resizeHandler = () => {
+				(this.runtimeHost as Partial<HostUiCapableRuntime> | undefined)?.setClientInfo?.(this.ui.terminal.columns);
+			};
+			process.on("SIGWINCH", resizeHandler);
+			this.signalCleanupHandlers.push(() => process.off("SIGWINCH", resizeHandler));
 		}
 
 		for (const signal of signals) {
@@ -5875,6 +6076,12 @@ export class InteractiveMode {
 						: buildFavoriteCycleStatusMessage("empty");
 				this.showStatus(msg);
 			} else {
+				if ((result.skippedModels?.length ?? 0) > 0 && modelsAreEqual(result.model, this.session.model)) {
+					this.showStatus(
+						"No favorite model can fit the current context. Compact the session or start a new one.",
+					);
+					return;
+				}
 				this.footer.invalidate();
 				// A model switch ends any external-owner delegation episode.
 				this.externalOwnerCompactionNoticeShown = false;
@@ -5920,9 +6127,12 @@ export class InteractiveMode {
 		this.hideThinkingBlock = !this.hideThinkingBlock;
 		this.settingsManager.setHideThinkingBlock(this.hideThinkingBlock);
 
-		// Rebuild chat from session messages
-		this.chatContainer.clear();
-		this.rebuildChatFromMessages();
+		// Rebuild chat from session messages when the full mode is available. Test
+		// and embedding fakes may omit the rebuild seam; preserve their live chat.
+		if (this.rebuildChatFromMessages) {
+			this.chatContainer.clear();
+			this.rebuildChatFromMessages();
+		}
 
 		// If streaming, re-add the streaming component with updated visibility and re-render
 		if (this.streamingComponent && this.streamingMessage) {
@@ -6456,6 +6666,7 @@ export class InteractiveMode {
 					tuiMode: this.ui.mode,
 					fullscreenExitOutput: this.settingsManager.getFullscreenExitOutput(),
 					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
+					fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect?.() ?? true,
 					warnings: this.settingsManager.getWarnings(),
 				},
 				{
@@ -6646,6 +6857,10 @@ export class InteractiveMode {
 					onFullscreenScrollbarChange: (mode) => {
 						this.settingsManager.setFullscreenScrollbar(mode);
 						this.applyFullscreenScrollbarSetting();
+					},
+					onFullscreenCopyOnSelectChange: (enabled) => {
+						this.settingsManager.setFullscreenCopyOnSelect(enabled);
+						if (this.renderer instanceof TuiAltScreen) this.renderer.setCopyOnSelect(enabled);
 					},
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
@@ -7986,8 +8201,8 @@ export class InteractiveMode {
 				activeHeader.setExpanded(this.toolOutputExpanded);
 			}
 			setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
-			await this.themeController.applyFromSettings();
 			this.applyRuntimeSettings();
+			await this.themeController.applyFromSettings();
 			this.setupAutocompleteProvider();
 			const runner = this.session.extensionRunner;
 			this.setupExtensionShortcuts(runner);
@@ -8208,7 +8423,19 @@ export class InteractiveMode {
 		}
 	}
 
-	private async handleCopyCommand(options: { flashConfirmation?: boolean } = {}): Promise<void> {
+	private async handleCopyCommand(
+		options: { flashConfirmation?: boolean; preferSelection?: boolean } = {},
+	): Promise<void> {
+		if (
+			options.preferSelection &&
+			this.ui instanceof TuiAltScreen &&
+			!this.ui.getCopyOnSelect() &&
+			this.ui.hasActiveSelection()
+		) {
+			await this.ui.copyActiveSelectionToClipboard();
+			return;
+		}
+
 		const text = this.session.getLastAssistantText();
 		if (!text) {
 			this.showError("No agent messages to copy yet.");
@@ -8640,7 +8867,9 @@ export class InteractiveMode {
 		}
 	}
 
-	stop(fullscreenExitOutput?: FullscreenExitOutput): void {
+	stop(options?: FullscreenExitOutput | { restoreStderr?: boolean }): void {
+		const fullscreenExitOutput = typeof options === "string" ? options : undefined;
+		const restoreStderr = typeof options === "string" || options?.restoreStderr !== false;
 		InteractiveMode.restoreCompactionEscapeOverride(this);
 		this.streamingReveal.stop();
 		this.toolResultReveal.stop();
@@ -8665,9 +8894,9 @@ export class InteractiveMode {
 				this.stopInteractiveTui(fullscreenExitOutput ?? this.settingsManager.getFullscreenExitOutput());
 			} finally {
 				this.isInitialized = false;
-				restoreInteractiveStderr();
+				if (restoreStderr) restoreInteractiveStderr();
 			}
-		} else {
+		} else if (restoreStderr) {
 			restoreInteractiveStderr();
 		}
 		this.unregisterSignalHandlers();

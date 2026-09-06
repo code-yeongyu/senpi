@@ -92,12 +92,16 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		});
 	}
 
-	// Subprocess kernels (py/rb/jl) reach the host only through this route, so reserved
-	// helper names must dispatch exactly as the in-process JS path does in tool/cell-handler.ts.
-	// Forwarding them to executeTool made agent() fail with "Unknown tool __agent__".
+	// Subprocess kernels (py/rb/jl) reach the host only through this route, so every reply
+	// must match the in-process JS path in tool/cell-handler.ts: reserved helper names dispatch
+	// through runReservedTool (forwarding them made agent() fail with "Unknown tool __agent__"),
+	// and ordinary tool results are marshalled to { text, images, details, hasError } — the raw
+	// { content } shape left python cells unable to reach tool.read image blocks.
 	async #call(request: { toolName: string; args: unknown; callId: string; signal: AbortSignal }): Promise<unknown> {
 		if (!isReservedToolName(request.toolName)) {
-			return await this.#options.executeTool(request.toolName, request.args, { signal: request.signal });
+			return marshalToolResult(
+				await this.#options.executeTool(request.toolName, request.args, { signal: request.signal }),
+			);
 		}
 		const taskTools = this.#options.settings.taskTools ?? defaultCodemodeSettings.taskTools;
 		return await runReservedTool(request.toolName, {

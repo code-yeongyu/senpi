@@ -8,6 +8,7 @@ import {
 	mkdirSync,
 	openSync,
 	readdirSync,
+	readFileSync,
 	readSync,
 	statSync,
 	writeFileSync,
@@ -45,6 +46,7 @@ function uuidv7(): string {
 
 import {
 	type BashExecutionMessage,
+	type ConfigurationUpdateMessage,
 	type CustomMessage,
 	createBranchSummaryMessage,
 	createCompactionSummaryMessage,
@@ -108,6 +110,11 @@ export interface ThinkingLevelChangeEntry extends SessionEntryBase {
 	thinkingLevel: string;
 	/** Explicit selector provenance. Omitted by legacy entries and SDK-defaulted fallbacks. */
 	thinkingSelection?: ThinkingSelection;
+}
+
+export interface ConfigurationUpdateEntry extends SessionEntryBase {
+	type: "configuration_update";
+	reasoning: { effort: string };
 }
 
 export interface ModelChangeEntry extends SessionEntryBase {
@@ -199,6 +206,7 @@ export interface CustomMessageEntry<T = unknown> extends SessionEntryBase {
 export type SessionEntry =
 	| SessionMessageEntry
 	| ThinkingLevelChangeEntry
+	| ConfigurationUpdateEntry
 	| ModelChangeEntry
 	| CompactionEntry
 	| BranchSummaryEntry
@@ -224,6 +232,7 @@ export interface SessionContext {
 	messages: AgentMessage[];
 	thinkingLevel: string;
 	thinkingSelection?: ThinkingSelection;
+	configurationUpdate?: { effort: string };
 	model: { provider: string; modelId: string } | null;
 }
 
@@ -418,10 +427,18 @@ function buildSessionPath(
 
 function getSessionContextSettings(
 	path: SessionEntry[],
-): Pick<SessionContext, "thinkingLevel" | "thinkingSelection" | "model"> {
+): Pick<SessionContext, "thinkingLevel" | "thinkingSelection" | "configurationUpdate" | "model"> {
 	let thinkingLevel = "off";
 	let thinkingSelection: ThinkingSelection | undefined;
+	let configurationUpdate: { effort: string } | undefined;
 	let model: { provider: string; modelId: string } | null = null;
+	// An explicit selection (a manual `model_change`, or the primary restored from a fallback
+	// window) outranks the model id echoed by later assistant messages from the SAME provider:
+	// the persisted message id is the wire id, which differs from the catalog id whenever the
+	// catalog entry maps to an `upstreamModelId` (a `-fast` priority variant is the common case),
+	// so trusting the echo would resume the base model and silently drop the tier. A message
+	// from another provider still wins, since no `model_change` recorded that hop.
+	let isModelSelectionExplicit = false;
 	let isInFallbackWindow = false;
 	// A fallback switch applies an ephemeral thinking level to the fallback model, so
 	// the level recorded inside the window must not outlive it: restoring the primary
@@ -434,6 +451,8 @@ function getSessionContextSettings(
 		if (entry.type === "thinking_level_change") {
 			thinkingLevel = entry.thinkingLevel;
 			thinkingSelection = entry.thinkingSelection;
+		} else if (entry.type === "configuration_update") {
+			configurationUpdate = { effort: entry.reasoning.effort };
 		} else if (entry.type === "model_change") {
 			if (entry.reason === "fallback") {
 				if (!isInFallbackWindow) {
@@ -441,6 +460,7 @@ function getSessionContextSettings(
 					preFallbackThinkingSelection = thinkingSelection;
 					if (entry.originalProvider && entry.originalModelId) {
 						model = { provider: entry.originalProvider, modelId: entry.originalModelId };
+						isModelSelectionExplicit = true;
 					}
 				}
 				isInFallbackWindow = true;
@@ -454,10 +474,18 @@ function getSessionContextSettings(
 				// A manual model switch abandons the window: the level the user set inside
 				// it is a deliberate choice and carries over to the newly selected model.
 				isInFallbackWindow = false;
-				model = { provider: entry.provider, modelId: entry.modelId };
+				// Session files are parsed without validation, so an entry missing its provider or
+				// model id must not become an authoritative selection; the fallback-original restore
+				// above guards the same way, and a later assistant message still restores the model.
+				if (entry.provider && entry.modelId) {
+					model = { provider: entry.provider, modelId: entry.modelId };
+					isModelSelectionExplicit = true;
+				}
 			}
 		} else if (entry.type === "message" && entry.message.role === "assistant" && !isInFallbackWindow) {
+			if (isModelSelectionExplicit && model?.provider === entry.message.provider) continue;
 			model = { provider: entry.message.provider, modelId: entry.message.model };
+			isModelSelectionExplicit = false;
 		}
 	}
 
@@ -468,7 +496,7 @@ function getSessionContextSettings(
 		thinkingSelection = preFallbackThinkingSelection;
 	}
 
-	return { thinkingLevel, thinkingSelection, model };
+	return { thinkingLevel, thinkingSelection, configurationUpdate, model };
 }
 
 /**
@@ -487,6 +515,16 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 			return [withContextEntryId(entry.id, { ...message, content: [] })];
 		}
 		return [withContextEntryId(entry.id, message)];
+	}
+	if (entry.type === "configuration_update") {
+		return [
+			withContextEntryId(entry.id, {
+				role: "configurationUpdate",
+				content: [],
+				effort: entry.reasoning.effort,
+				timestamp: new Date(entry.timestamp).getTime(),
+			} satisfies ConfigurationUpdateMessage),
+		];
 	}
 	if (entry.type === "custom_message") {
 		return [
@@ -571,9 +609,9 @@ export function buildSessionContext(
 	byId?: Map<string, SessionEntry>,
 ): SessionContext {
 	const path = buildSessionPath(entries, leafId, byId);
-	const { thinkingLevel, thinkingSelection, model } = getSessionContextSettings(path);
+	const { thinkingLevel, thinkingSelection, model, configurationUpdate } = getSessionContextSettings(path);
 	const messages = buildContextEntries(entries, leafId, byId).flatMap(sessionEntryToContextMessages);
-	return { messages, thinkingLevel, thinkingSelection, model };
+	return { messages, thinkingLevel, thinkingSelection, model, configurationUpdate };
 }
 
 /**
@@ -623,11 +661,11 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 	if (!existsSync(resolvedFilePath)) return [];
 
 	const entries: FileEntry[] = [];
+	let pending = "";
 	const fd = openSync(resolvedFilePath, "r");
 	try {
 		const decoder = new StringDecoder("utf8");
 		const buffer = Buffer.allocUnsafe(SESSION_READ_BUFFER_SIZE);
-		let pending = "";
 
 		while (true) {
 			const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
@@ -652,7 +690,7 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 		closeSync(fd);
 	}
 
-	// Validate session header
+	// Validate session header before repairing the file.
 	if (entries.length === 0) return entries;
 	const header = entries[0];
 	if (header.type !== "session" || typeof header.id !== "string") {
@@ -773,6 +811,17 @@ export function findMostRecentSession(sessionDir: string, cwd?: string): string 
  * Use buildSessionContext() to get the resolved message list for the LLM, which
  * handles compaction summaries and follows the path from root to current leaf.
  */
+let sessionEntryLoader = loadEntriesFromFile;
+
+/** Test seam for observing disk reloads without mocking ESM filesystem exports. */
+export function setSessionEntryLoaderForTesting(loader: typeof loadEntriesFromFile): () => void {
+	const previous = sessionEntryLoader;
+	sessionEntryLoader = loader;
+	return () => {
+		sessionEntryLoader = previous;
+	};
+}
+
 export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
@@ -792,6 +841,8 @@ export class SessionManager {
 	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
 	private residentStore = new ResidentStringStore();
+	private mirrorTrimmed = false;
+	private compactEntriesCache: { mutation: number; entries: SessionEntry[] } | null = null;
 	// Monotonic counter bumped by every mutator; memoized materialized views are
 	// keyed on it so read hot paths (footer, RPC) never re-materialize unchanged sessions.
 	private mutationCount = 0;
@@ -838,7 +889,16 @@ export class SessionManager {
 	 */
 	reloadFromDisk(): void {
 		if (!this.sessionFile || !existsSync(this.sessionFile)) return;
-		this._setSessionFile(this.sessionFile);
+
+		// A live session file can be observed between truncate and rewrite. Treat
+		// that window (and an invalid replacement) as unavailable rather than
+		// routing it through the create/recover path in _setSessionFile().
+		const fileEntries = loadEntriesFromFile(this.sessionFile);
+		if (fileEntries.length === 0) {
+			if (statSync(this.sessionFile).size === 0) return;
+			throw new Error(`Session file is not a valid ${APP_NAME} session: ${this.sessionFile}`);
+		}
+		this._setSessionFile(this.sessionFile, fileEntries);
 	}
 
 	/** Switch to a different session file (used for resume and branching) */
@@ -848,6 +908,7 @@ export class SessionManager {
 
 	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
 		this.sessionFile = resolvePath(sessionFile);
+		this.mirrorTrimmed = false;
 		this.residentStore.clear();
 		if (existsSync(this.sessionFile)) {
 			this.fileEntries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
@@ -899,6 +960,7 @@ export class SessionManager {
 			parentSession: options?.parentSession,
 		};
 		this.fileEntries = [header];
+		this.mirrorTrimmed = false;
 		this.residentStore.clear();
 		this.byId.clear();
 		this.entryOrdersById.clear();
@@ -1067,7 +1129,17 @@ export class SessionManager {
 	}
 
 	private _materializeEntry(entry: SessionEntry): SessionEntry {
-		const materialized = this.residentStore.materialize(entry);
+		let missingResidentString = false;
+		const materialized = this.residentStore.materialize(entry, () => {
+			missingResidentString = true;
+			return undefined;
+		});
+		// The resident store is a bounded cache. The JSONL remains authoritative
+		// when an evicted blob is needed by a branch or read operation.
+		if (missingResidentString && this.sessionFile) {
+			const persisted = loadEntriesFromFile(this.sessionFile).find((candidate) => candidate.id === entry.id);
+			if (persisted) return persisted as SessionEntry;
+		}
 		if (materialized.type === "message") {
 			const order = this.entryOrdersById.get(materialized.id);
 			if (order !== undefined) {
@@ -1151,6 +1223,19 @@ export class SessionManager {
 		return entry.id;
 	}
 
+	/** Append a durable Responses configuration update as child of current leaf. */
+	appendConfigurationUpdate(effort: string): string {
+		const entry: ConfigurationUpdateEntry = {
+			type: "configuration_update",
+			id: generateId(this.byId),
+			parentId: this.leafId,
+			timestamp: new Date().toISOString(),
+			reasoning: { effort },
+		};
+		this._appendEntry(entry);
+		return entry.id;
+	}
+
 	/** Append a model change as child of current leaf, then advance leaf. Returns entry id. */
 	appendModelChange(
 		provider: string,
@@ -1196,10 +1281,36 @@ export class SessionManager {
 			fromHook,
 		};
 		this._appendEntry(entry);
+		this._trimMirrorAfterCompaction(entry);
 		return entry.id;
 	}
 
-	/** Append a custom entry (for extensions) as child of current leaf, then advance leaf. Returns entry id. */
+	private _trimMirrorAfterCompaction(compaction: CompactionEntry): void {
+		if (!this.persist) return;
+		const firstKeptIndex = this.fileEntries.findIndex((entry) => entry.id === compaction.firstKeptEntryId);
+		const compactionIndex = this.fileEntries.findIndex((entry) => entry.id === compaction.id);
+		if (firstKeptIndex < 0 || compactionIndex < firstKeptIndex) return;
+
+		const header = this.fileEntries.find((entry) => entry.type === "session");
+		const retained = [
+			...this.fileEntries.slice(0, firstKeptIndex).filter((entry) => entry.type !== "message"),
+			...this.fileEntries.slice(firstKeptIndex, compactionIndex + 1),
+		];
+		let parentId: string | null = null;
+		for (const entry of retained) {
+			if (entry.type !== "session") entry.parentId = parentId;
+			parentId = entry.type === "session" ? null : entry.id;
+		}
+		this.residentStore.clear();
+		this.mirrorTrimmed = true;
+		this.fileEntries = [header, ...retained]
+			.filter((entry): entry is FileEntry => entry !== undefined)
+			.map((entry) => this.residentStore.externalize(entry));
+		this._buildIndex();
+		this.mutationCount++;
+	}
+
+	/** Append a custom entry (for extensions) as child of current leaf, then advance leaf. */
 	appendCustomEntry(customType: string, data?: unknown): string {
 		const entry: CustomEntry = {
 			type: "custom",
@@ -1279,7 +1390,12 @@ export class SessionManager {
 
 	getEntry(id: string): SessionEntry | undefined {
 		const entry = this.byId.get(id);
-		return entry ? this._materializeEntry(entry) : undefined;
+		if (entry) return this._materializeEntry(entry);
+		if (this.mirrorTrimmed && this.sessionFile) {
+			const persisted = this._loadFullHistoryEntries().find((candidate) => candidate.id === id);
+			return persisted ? (this.residentStore.materialize(persisted) as SessionEntry) : undefined;
+		}
+		return undefined;
 	}
 
 	/**
@@ -1348,10 +1464,18 @@ export class SessionManager {
 		}
 		const path: SessionEntry[] = [];
 		const startId = fromId ?? this.leafId;
-		let current = startId ? this.byId.get(startId) : undefined;
+		let entriesById = this.byId;
+		if (fromId !== undefined && !entriesById.has(fromId) && this.mirrorTrimmed && this.sessionFile) {
+			entriesById = new Map(
+				this._loadFullHistoryEntries()
+					.filter((entry) => entry.type !== "session")
+					.map((entry) => [entry.id, this.residentStore.materialize(entry) as SessionEntry]),
+			);
+		}
+		let current = startId ? entriesById.get(startId) : undefined;
 		while (current) {
 			path.unshift(this._materializeEntry(current));
-			current = current.parentId ? this.byId.get(current.parentId) : undefined;
+			current = current.parentId ? entriesById.get(current.parentId) : undefined;
 		}
 		if (fromId === undefined) {
 			this.branchCache = { leafId: this.leafId, mutation: this.mutationCount, entries: path };
@@ -1364,7 +1488,7 @@ export class SessionManager {
 	 * Uses tree traversal from current leaf.
 	 */
 	buildContextEntries(): SessionEntry[] {
-		return buildContextEntries(this.getEntries(), this.leafId);
+		return buildContextEntries(this._getCompactEntries(), this.leafId);
 	}
 
 	/**
@@ -1372,7 +1496,7 @@ export class SessionManager {
 	 * Uses tree traversal from current leaf.
 	 */
 	buildSessionContext(): SessionContext {
-		return buildSessionContext(this.getEntries(), this.leafId);
+		return buildSessionContext(this._getCompactEntries(), this.leafId);
 	}
 
 	hasContextMessages(): boolean {
@@ -1425,6 +1549,11 @@ export class SessionManager {
 	 * you need to filter/reorder.
 	 */
 	getEntries(): SessionEntry[] {
+		if (this.mirrorTrimmed && this.sessionFile) {
+			return this._loadFullHistoryEntries()
+				.filter((e): e is SessionEntry => e.type !== "session")
+				.map((entry) => this.residentStore.materialize(entry));
+		}
 		if (this.entriesCache !== null && this.entriesCache.mutation === this.mutationCount) {
 			return this.entriesCache.entries;
 		}
@@ -1433,6 +1562,44 @@ export class SessionManager {
 			.map((entry) => this._materializeEntry(entry));
 		this.entriesCache = { mutation: this.mutationCount, entries };
 		return entries;
+	}
+
+	private _getCompactEntries(): SessionEntry[] {
+		if (this.compactEntriesCache?.mutation !== this.mutationCount) {
+			this.compactEntriesCache = {
+				mutation: this.mutationCount,
+				entries: this.fileEntries.filter((e): e is SessionEntry => e.type !== "session"),
+			};
+		}
+
+		const entries = this.compactEntriesCache.entries;
+		const missingEntryIds = new Set<string>();
+		for (const entry of entries) {
+			this.residentStore.materialize(entry, () => {
+				missingEntryIds.add(entry.id);
+				return undefined;
+			});
+		}
+		if (missingEntryIds.size > 0 && this.sessionFile) {
+			const persistedById = new Map(this._loadFullHistoryEntries().map((entry) => [entry.id, entry]));
+			for (let index = 0; index < entries.length; index++) {
+				const entry = entries[index]!;
+				if (!missingEntryIds.has(entry.id)) continue;
+				const persisted = persistedById.get(entry.id);
+				if (persisted) entries[index] = this.residentStore.externalize(persisted) as SessionEntry;
+			}
+		}
+		const materialized = entries.map((entry) => this.residentStore.materialize(entry) as SessionEntry);
+		for (const entry of materialized) {
+			if (entry.type !== "message") continue;
+			const order = this.entryOrdersById.get(entry.id);
+			if (order !== undefined) this.messageEntryPositions.set(entry.message, { entryId: entry.id, order });
+		}
+		return materialized;
+	}
+
+	private _loadFullHistoryEntries(): FileEntry[] {
+		return this.sessionFile ? sessionEntryLoader(this.sessionFile) : this.fileEntries;
 	}
 
 	/**
@@ -1491,6 +1658,9 @@ export class SessionManager {
 	 * are not modified or deleted.
 	 */
 	branch(branchFromId: string): void {
+		if (!this.byId.has(branchFromId) && this.sessionFile) {
+			this.reloadFromDisk();
+		}
 		if (!this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
@@ -1606,6 +1776,7 @@ export class SessionManager {
 			}
 
 			this.residentStore.clear();
+			this.mirrorTrimmed = false;
 			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
 				this.residentStore.externalize(entry),
 			);
@@ -1686,6 +1857,12 @@ export class SessionManager {
 				const firstEntry = preloadedFileEntries[0];
 				header = firstEntry?.type === "session" ? firstEntry : null;
 			}
+		}
+		// This process opens the session for append; normalize a final unterminated
+		// JSONL entry here, never from read-only loadEntriesFromFile callers.
+		if (existsSync(resolvedPath)) {
+			const content = readFileSync(resolvedPath);
+			if (content.length > 0 && content[content.length - 1] !== 10) appendFileSync(resolvedPath, "\n");
 		}
 		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory

@@ -1,5 +1,52 @@
 # Tool Search Builtin Changes
 
+## 2026-09-04 - Gate native tool-search on model support and fix the tool_reference field
+
+### What changed
+
+- New `native-support.ts` owns `supportsAnthropicNativeToolSearch()`. Injection now requires a model that
+  actually carries tool search, not merely the `anthropic-messages` api: it honours an explicit
+  `compat.supportsToolReferences`, otherwise mirrors pi-ai's private default (first-party `anthropic`
+  provider, no Haiku, Opus/Sonnet/Fable 4.5+). A bare api string keeps the old api-only contract.
+- `addAnthropicNativeToolSearch()` and `AnthropicNativeToolSearchAdapter.applyBeforeRequest()` take that
+  target instead of an api string; `index.ts` passes `event.model ?? ctx.model`.
+- `buildToolReferenceBlocks()` emits `{ type: "tool_reference", tool_name }`. It previously emitted `name`,
+  which the API rejects as a malformed content block. `test/mcp/fixtures/native-search-mocks.ts` read the
+  same wrong field, so its expander agreed with the bug.
+- `test/suite/regressions/0000-anthropic-native-tool-search-contract.test.ts` pins the wire contract and the
+  gate; each assertion was verified by mutating the production hunk and observing RED.
+
+### Why
+
+- Anthropic documents `tool_reference` blocks as carrying `tool_name`, and lists tool search as available
+  only on Opus/Sonnet 4.5+, Fable/Mythos, and Haiku 4.5 (which rejects client-side `tool_reference`).
+- Anthropic-compatible endpoints (gateways, proxies, kimi-coding) answer the same api and reject the server
+  tool. Injecting there 400s the request, which permanently disables native search for that session — the
+  same failure mode the 2026-09-04 name fix addressed, one layer up.
+
+### Expected merge conflict zones
+
+- LOW: `native-search.ts` signature block; new `native-support.ts` is additive.
+
+## 2026-09-04 - Name the Anthropic native tool-search server tool per the API contract
+
+### What changed
+
+- `native-search.ts`: `ANTHROPIC_TOOL_SEARCH_NAME` is now `tool_search_tool_bm25`. The injected server tool is `{ type: "tool_search_tool_bm25_20251119", name: "tool_search_tool_bm25" }`; the type is unchanged and the local `tool_search` custom tool keeps its own name.
+- `test/suite/regressions/0000-anthropic-native-tool-search-canonical-name.test.ts` pins the literal contract pair, keeps the local tool resident, and keeps non-Anthropic payloads byte-identical.
+
+### Why
+
+- Anthropic validates the server tool's `name` against the tool-search variant: every request carrying deferred tools was rejected with `invalid_request_error: tools.N.tool_search_tool_bm25_20251119.name: Input should be 'tool_search_tool_bm25'`, which then disabled native search for the session.
+
+### Why an extension could not handle it
+
+- The name is emitted by the builtin's own payload transform on `before_provider_request`; no extension hook rewrites an already-injected server tool.
+
+### Expected merge conflict zones
+
+- LOW: `native-search.ts` constant block.
+
 ## 2026-08-11 - Defer local tool registration until the catalog is searchable
 
 ### What changed

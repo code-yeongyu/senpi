@@ -6,11 +6,13 @@
  */
 
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model } from "@earendil-works/pi-ai";
+import type { ImageContent, Model, ThinkingSelection } from "@earendil-works/pi-ai";
+import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
+import type { ContextUsage } from "../../core/extensions/types.ts";
 import type { SessionEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
@@ -31,6 +33,7 @@ type RpcSessionCommand =
 			images?: ImageContent[];
 			streamingBehavior?: "steer" | "followUp";
 			thinkingLevel?: ThinkingLevel;
+			sessionTitlePrompt?: string | false;
 			expandPromptTemplates?: boolean;
 	  }
 	| {
@@ -62,7 +65,9 @@ type RpcSessionCommand =
 
 	// Model
 	| { id?: string; type: "set_model"; provider: string; modelId: string }
-	| { id?: string; type: "cycle_model" }
+	| { id?: string; type: "set_favorite_models"; models: RpcSessionModelEntry[] }
+	| { id?: string; type: "set_scoped_models"; models: RpcSessionModelEntry[] }
+	| { id?: string; type: "cycle_model"; direction?: "forward" | "backward" }
 	| { id?: string; type: "get_available_models" }
 
 	// Thinking
@@ -91,6 +96,8 @@ type RpcSessionCommand =
 			id?: string;
 			type: "bash";
 			command: string;
+			/** Identifies output chunks to the requesting client. */
+			bashId?: string;
 			excludeFromContext?: boolean;
 			executionId?: string;
 			operations?: Record<string, unknown>;
@@ -111,7 +118,7 @@ type RpcSessionCommand =
 
 	// Session
 	| { id?: string; type: "get_session_stats" }
-	| { id?: string; type: "export_html"; outputPath?: string }
+	| { id?: string; type: "export_html"; outputPath?: string; themeName?: string }
 	| { id?: string; type: "export_jsonl"; outputPath?: string }
 	| { id?: string; type: "switch_session"; sessionPath: string; cwdOverride?: string }
 	| { id?: string; type: "fork"; entryId: string; position?: "before" | "at" }
@@ -125,6 +132,12 @@ type RpcSessionCommand =
 
 	// Messages
 	| { id?: string; type: "get_messages" }
+	/**
+	 * Fetch one media block a `media_placeholders` client received as an `image_ref`
+	 * stub. `contentIndex` indexes the toolResult's `content` array and must point at
+	 * an image block; anything else answers `media_not_found`.
+	 */
+	| { id?: string; type: "get_media"; toolCallId: string; contentIndex: number }
 
 	// Commands and loaded runtime surfaces
 	| { id?: string; type: "get_commands" }
@@ -145,7 +158,8 @@ type RpcSessionCommand =
 	// lives in ../omo-desktop-app/packages/contracts/src/rpc.ts and is updated separately.
 	| { id?: string; type: "get_provider_accounts"; provider: string }
 	| { id?: string; type: "account_pin"; provider: string; name: string | null }
-	| { id?: string; type: "account_remove"; provider: string; name: string };
+	| { id?: string; type: "account_remove"; provider: string; name: string }
+	| { id?: string; type: "set_client_info"; width: number; capabilities?: string[] };
 
 /** Stable multi-session protocol error codes. */
 export const RPC_ERROR_UNKNOWN_SESSION = "unknown_session";
@@ -155,6 +169,8 @@ export const RPC_ERROR_MISSING_SESSION_ID = "missing_session_id";
 export const RPC_ERROR_MULTI_SESSION_DISABLED = "multi_session_disabled";
 export const RPC_ERROR_INVALID_PATH = "invalid_path";
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
+export const RPC_ERROR_TOO_MANY_SESSIONS = "too_many_sessions";
+export const RPC_ERROR_MEDIA_NOT_FOUND = "media_not_found";
 
 export type RpcErrorCode =
 	| typeof RPC_ERROR_UNKNOWN_SESSION
@@ -163,7 +179,9 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_MISSING_SESSION_ID
 	| typeof RPC_ERROR_MULTI_SESSION_DISABLED
 	| typeof RPC_ERROR_INVALID_PATH
-	| typeof RPC_ERROR_OPEN_FAILED;
+	| typeof RPC_ERROR_OPEN_FAILED
+	| typeof RPC_ERROR_TOO_MANY_SESSIONS
+	| typeof RPC_ERROR_MEDIA_NOT_FOUND;
 
 /** Every established command accepts an additive routing envelope. */
 export type RpcCommand =
@@ -257,9 +275,29 @@ export interface RpcLoadedMcpServer {
 // RPC State
 // ============================================================================
 
+export interface RpcSessionModelEntry {
+	model: Model<any>;
+	thinkingLevel?: ThinkingLevel;
+	thinkingSelection?: ThinkingSelection;
+	serviceTier?: ServiceTier;
+}
+
 export interface RpcSessionState {
 	model?: Model<any>;
 	thinkingLevel: ThinkingLevel;
+	/**
+	 * Explicit selector provenance for `thinkingLevel`, absent for SDK-defaulted
+	 * effective levels. An attached client cannot distinguish "the user chose high"
+	 * from "high is simply the effective level" without it.
+	 */
+	thinkingSelection?: ThinkingSelection;
+	/**
+	 * Abort owner of the most recent aborted turn, or the in-flight one while it is
+	 * still settling. Retained after settle: the live session getter is transient, so a
+	 * client that snapshots state after the turn ends would otherwise see nothing and
+	 * fall back to generic wording instead of "Operation aborted".
+	 */
+	lastAbortSource?: AgentAbortSource;
 	/** Service tier the session resolved for the active model, if any. */
 	serviceTier?: ServiceTier;
 	/** True when the active model is served at the priority ("fast") tier. */
@@ -276,6 +314,8 @@ export interface RpcSessionState {
 	projectTrusted: boolean;
 	/** Authoritative entries for setup-only sessions whose deferred file does not exist yet. */
 	entries?: SessionEntry[];
+	favoriteModels: RpcSessionModelEntry[];
+	scopedModels: RpcSessionModelEntry[];
 	steering: string[];
 	followUp: string[];
 	ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;
@@ -283,6 +323,7 @@ export interface RpcSessionState {
 	messageCount: number;
 	pendingMessageCount: number;
 	usageTotals: UsageTotals;
+	contextUsage?: ContextUsage;
 	retryAttempt: number;
 	isBashRunning: boolean;
 }
@@ -373,6 +414,8 @@ export type RpcResponse =
 			success: true;
 			data: Model<any> & { systemPromptName?: string };
 	  }
+	| { id?: string; type: "response"; command: "set_favorite_models"; success: true }
+	| { id?: string; type: "response"; command: "set_scoped_models"; success: true }
 	| {
 			id?: string;
 			type: "response";
@@ -484,6 +527,13 @@ export type RpcResponse =
 
 	// Messages
 	| { id?: string; type: "response"; command: "get_messages"; success: true; data: { messages: AgentMessage[] } }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_media";
+			success: true;
+			data: { toolCallId: string; contentIndex: number; content: ImageContent };
+	  }
 
 	// Commands and loaded runtime surfaces
 	| {
@@ -582,6 +632,12 @@ export type RpcExtensionUIRequest =
 			widgetLines: string[] | undefined;
 			widgetPlacement?: "aboveEditor" | "belowEditor";
 	  }
+	| {
+			type: "extension_ui_request";
+			id: string;
+			method: "setHeader" | "setFooter";
+			widgetLines: string[] | undefined;
+	  }
 	| { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
 	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string }
 	// Additive (task 13/14): emitted ONLY when the client advertised the
@@ -610,6 +666,12 @@ export type RpcExtensionUIResponse =
 export interface RpcThinkingLevelChangedEvent {
 	type: "thinking_level_changed";
 	level: ThinkingLevel;
+	/**
+	 * Selector provenance in force after the change; absent when the level is an
+	 * SDK-defaulted effective level rather than an explicit choice. Additive: an old
+	 * client that does not know the field ignores it.
+	 */
+	thinkingSelection?: ThinkingSelection;
 }
 
 export interface RpcHighReasoningWarningEvent {
@@ -651,6 +713,8 @@ export interface RpcModelChangedEvent {
 	thinkingLevel: ThinkingLevel;
 	/** Why the model changed: "set", "cycle", "restore", "fallback", or "fallback-revert". */
 	source: string;
+	/** Selector provenance for `thinkingLevel` after the switch, when one was explicit. */
+	thinkingSelection?: ThinkingSelection;
 }
 
 /** Emitted when the effective service tier or fast-mode state of the session changes. */
@@ -659,6 +723,32 @@ export interface RpcServiceTierChangedEvent {
 	tier?: ServiceTier;
 	fastMode: boolean;
 }
+/**
+ * Emitted after the host swapped the live session behind this connection (new session,
+ * fork, or switch), carrying the new authoritative identity.
+ *
+ * A replacement can be initiated by ANY attached client. Without this event the other
+ * attached clients keep their stale identity and keep routing replacement-dependent
+ * actions at the session that no longer exists. Additive: an old client that does not
+ * know the type filters it out.
+ */
+export interface RpcSessionReplacedEvent {
+	type: "session_replaced";
+	/**
+	 * Durable session id of the session now bound to this connection.
+	 *
+	 * Deliberately NOT `sessionId`: top-level `sessionId` is reserved for the
+	 * per-connection routing handle that multi-session hosts tag every record
+	 * with, and that tag is applied last - it would overwrite this value and
+	 * leave the event carrying no identity at all.
+	 */
+	durableSessionId: string;
+	/** Session file backing the new session, absent for a deferred setup-only session. */
+	sessionFile?: string;
+	cwd: string;
+	sessionName?: string;
+}
+
 /** Emitted after the loaded skill, extension, or MCP inventory changes. */
 export interface RpcLoadedSurfacesChangedEvent {
 	type: "loaded_surfaces_changed";

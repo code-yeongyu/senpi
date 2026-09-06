@@ -8,11 +8,262 @@
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [2026.9.5-3] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.5-2] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The GPT eval dialect now routes a wait or a long run through `tool.monitor` inside the cell (the subscription line precedes the detach note, and the `## Tool Guidelines` line says so when `monitor` is reachable), so a GPT model no longer reads "long cells detach" as the way to wait on a `--watch`.
+
+### Fixed
+
+### Removed
+
+## [2026.9.5] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.4-3] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The package `test` script runs `vitest run test/` instead of `npx tsx …/vitest/dist/cli.js`, matching every other workspace package. The old form spawned npm and tsx to reach the vitest CLI that is already a direct dependency.
+### Fixed
+
+### Removed
+
+## [2026.9.4-2] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+- `foregroundWindowSeconds` codemode setting (default `60`, env `SENPI_CODEMODE_FOREGROUND_SECONDS`): the longest an interactive `eval` call blocks the turn before the cell detaches. A larger `timeout` now frees the turn at this window while the cell keeps running to the hard limit, instead of blocking the agent loop for the whole `timeout`.
+
+### Changed
+
+- The Bun kernel line of the `eval` description now names `new Bun.WebView()` as the headless browser and states when to reach for it (a page that needs JS, a login, or a screenshot) instead of `curl` or a browser CLI. The line previously advertised `Bun.*` builtins generically, so sessions on a Bun kernel resolved page work to `curl`/`fetch` and never discovered the in-process browser. Node kernels are unchanged.
+- The `eval` tool description is dieted a second time: the `Fields:` list now defers to the parameter schema (its single home), the detach guidance is one paragraph, and helper lines keep every signature with fewer words. gpt/codex dialect 1,489 -> 1,087 o200k tokens (description + guidelines); claude 1,173, kimi 1,190, default 1,189. Also fixes the fused `jl` handle form in the all-languages render.
+
+- The `eval` tool description is dieted from ~2002 to ~1588 tokens (codex dialect): the three reuse-chain JSON examples, the `<workflow>` graph prose, the repeated state-persistence rules, and the per-dialect wait-doctrine clause are removed or folded; every helper signature and dialect routing is kept. The workflow block's fused `handle=True{ handle: true }` is fixed into per-language correct forms.
+
+### Fixed
+
+### Removed
+
+## [2026.9.4] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.3-3] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.3-2] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- JavaScript eval cells no longer leak child-process output onto the host terminal under Bun: `Bun.$` commands awaited without `.quiet()`/`.text()` and `Bun.spawn` children with the default stderr now route their output into the cell's stdout/stderr streams instead of the inherited fd 1/2 that the interactive TUI owns.
+
+### Removed
+
+## [2026.9.3] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-4] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-3] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The eval prompt's JS runtime line is now runtime-aware: on a bun kernel it names `Bun <version>` and
+  `Bun.*` builtins, and only while the bundled `bun-1-4` skill is active it adds a MUST READ pointer to
+  that skill's absolute path before the first js cell; node kernels keep the Node.js worker wording.
+  `activeBunSkillPath()` exposes the same gate the `resources_discover` contribution uses.
+- The bundled `bun-1-4` skill description is rewritten as a fact-framed MUST READ notice with
+  English-only copy (Korean trigger words removed; the `Bun.stringWidth` example no longer uses Hangul).
+
+### Fixed
+
+- Compiled binaries now contribute the bundled `bun-1-4` skill by resolving the codemode sidecar shipped next to the executable, and a missing skill is reported on stderr so it can no longer corrupt the RPC protocol stream on stdout.
+
+### Removed
+
+## [2026.9.2-2] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.31] - 2026-08-31
+
+### Breaking Changes
+
+### Added
+
+- The codemode extension now bundles the `bun-1-4` skill and contributes it via `resources_discover` only
+  when the js eval kernel itself runs bun >= 1.4 (`process.versions.bun`); node-kernel sessions never
+  receive the skill, regardless of any bun binary on PATH.
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30-3] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30-2] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
 - The eval prompt's dependency-graph section is now `<workflow>` and states its contract directly:
   define the workflow spec in code, one node per logically distinct step, rather than hand-authoring
   the graph as a single opaque call.
 
 ### Fixed
+
+- The JavaScript kernel persistence transform no longer truncates declarations whose multi-line
+  initializers contain interior `//` comments (previously emitted unparseable code such as
+  `globalThis["jobs"] = {;`, failing cells with `Unexpected token ';'. Expected a property name.`),
+  and no longer re-evaluates comment-bearing initializers when persisting bindings — such
+  declarations are kept verbatim and their bindings persisted by reference.
+- Last-expression capture no longer inserts `return` before continuation lines (`else`/`catch`/`finally`
+  clauses and leading-`.`/operator method-chain lines), and now scans template literals (including
+  nested templates in interpolations), regexes, and comments with the same literal-aware scanner as
+  the persistence transform — fixing `return else …`, `return .replace(…)`, and mid-argument
+  `return )` corruption of valid cells.
+- Last-expression capture now follows real ASI statement semantics: a parenthesized/bracketed/template
+  line after a closed block starts a new statement (echo restored), expressions split after a trailing
+  operator or `await` stay one statement, tagged templates split across lines invoke the tag, regexes
+  directly after a control-structure condition no longer desync the scanner, and labeled final
+  statements are left uncaptured instead of emitting invalid `return label: …`.
+- Destructuring patterns carrying interior line comments now persist their bindings, and declarations
+  with a dangling trailing comma are left untransformed so the original syntax error surfaces instead
+  of being silently "repaired".
+- Rewritten destructuring assignments are emitted with a leading defensive semicolon so they can no
+  longer ASI-merge into a preceding unterminated expression statement as a bogus call
+  (`foo()\n({…} = …)` previously became `foo()({…} = …)`).
 
 ### Removed
 
@@ -66,6 +317,7 @@
 
 ### Fixed
 
+- An explicit `timeout` no longer silently disables detach for interactive `eval` cells. Previously `timeout` was both the detach budget and the hard-limit extension with no cap, so a call like `timeout: 7000` (intended to keep a long detached cell alive) blocked the agent loop for ~2h before the hard limit killed it. The detach point is now capped at the foreground window; `on_timeout: "error"` (and print/json) keep `timeout` as the unclamped deadline, and the hard-limit extension (`max(hardLimitSeconds, timeout)`) is unchanged.
 - Detached-eval same-language busy errors now name each idle enabled kernel and tell the agent to continue the step there (`continue this step in an idle kernel: js`), instead of only pointing at peek and the output tail. A busy Python kernel no longer reads as "eval is unavailable", which previously sent agents to `bash`+`python3` while JavaScript (or another idle kernel) was free. Single-language sessions and fully-busy sessions omit the idle-kernel claim.
 - JavaScript eval cells now persist only top-level declarations, including destructuring bindings and uninitialized variables, without rewriting declaration-shaped text inside literals or comments.
 - Eval completion and detached-cell handling retain explicit lifecycle observability: nested tool counts, wall/kernel timing, detach state, `peek`, `stop`, hard limits, and crash recovery remain bounded and machine-readable for hosts and telemetry consumers.

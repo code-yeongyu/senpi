@@ -1,4 +1,179 @@
+
+## 2026-09-05 - Preserve Astra reasoning effort across session changes
+
+### What changed
+
+- packages/agent/src/agent.ts: preserve the branch reasoning baseline for GPT-6 Astra requests.
+- packages/agent/src/harness/agent-harness.ts: persist trusted configuration-update entries.
+- packages/agent/src/harness/compaction/branch-summarization.ts: preserve configuration-update entries through branch summaries.
+- packages/agent/src/harness/compaction/compaction.ts: keep configuration-update entries at compaction boundaries.
+- packages/agent/src/harness/reducer.ts: restore effective configuration-update state.
+- packages/agent/src/harness/session/context.ts: replay the latest configuration update.
+- packages/agent/src/harness/session/jsonl/codec.ts: decode configuration-update entries.
+- packages/agent/src/harness/session/types.ts: define the durable configuration-update entry.
+- packages/agent/src/types.ts: carry the configuration-update message role.
+
+### Why
+
+- GPT-6 Astra changes reasoning through a positional configuration-update item so request-level effort remains stable for prompt caching.
+
+### Why this lives in the fork
+
+- The agent loop and durable session contracts own baseline and replay state before provider adapters run.
+
+### Expected merge conflict zones
+
+- Agent loop configuration and session entry unions.
+
+## 2026-09-05 - Preserve Astra reasoning effort across session changes
+
+### What changed
+
+- `packages/agent/src/agent.ts`, `packages/agent/src/agent-loop.ts`, `packages/agent/src/types.ts`, and `packages/agent/src/harness/**` preserve the branch reasoning baseline and durable configuration-update state while keeping non-Astra thinking changes unchanged.
+
+### Why
+
+- GPT-6 Astra changes reasoning through a positional configuration-update item so request-level effort remains stable for prompt caching.
+
+### Why this lives in the fork
+
+- The agent loop and durable session contracts own baseline and replay state before provider adapters run.
+
+### Expected merge conflict zones
+
+- Agent loop configuration and session entry unions.
+
 # Changes
+
+## 2026-09-04 - Drop the byte count from write-tool results
+
+### What changed
+
+- `packages/agent/src/harness/tools/write.ts`: the write tool's success text reports `Successfully wrote to <path>` without the byte count, adopting upstream e583b290a; the fork's tool tests were aligned to the wording in 9e64e52d1.
+
+### Why
+
+- The count reported UTF-16 code units as bytes, which is wrong for any non-ASCII payload; upstream removed the count instead of rescanning the content.
+
+### Why an extension could not handle it
+
+- The result text is produced inside the built-in write tool before any extension hook can rewrite it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/harness/tools/write.ts` success-note wording during upstream syncs.
+
+## 2026-09-04 - Harden the proxy stream boundary and pass through provider thinking levels
+
+### What changed
+
+- `packages/agent/src/proxy.ts`: `streamProxy` flushes the decoder and processes a final SSE line that is not newline-terminated, and a clean EOF that never produced a done or error event pushes a synthesized error (`Connection closed by proxy server before the response completed`) instead of ending the stream with no result (upstream ebc374490, #8997).
+- `packages/agent/src/proxy.ts`: terminal done and error proxy events carry an optional `providerThinkingLevel` that is copied onto the partial assistant message, part of the sync's per-turn thinking-effort preservation (upstream 4e69b0c28).
+
+### Why
+
+- A proxy that dropped the connection mid-response left `EventStream.result()` pending forever because no terminal event ever arrived; consumers awaiting the result hung indefinitely. Surfacing the provider's actual thinking level lets the session observe what the provider admitted for the turn instead of inferring it from the request.
+
+### Why an extension could not handle it
+
+- The proxy SSE transport is the runtime streaming boundary beneath every extension hook; extensions cannot synthesize terminal events or repair a dropped stream.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/proxy.ts` read loop, residual-buffer flush, and terminal-event synthesis.
+
+## 2026-09-04 - Run next-turn preparation after every completed turn
+
+### What changed
+
+- Invoke `prepareNextTurn` after every completed assistant turn that can reach the preparation boundary, including a normal stop response with no tool calls, while preserving the terminating queue boundary and ownership refresh before a continuation provider request.
+
+### Why
+
+- The upstream loop only prepared at the top of a re-entered inner loop, so a completed no-tool turn could emit `agent_end` without running the session's next-turn admission hook.
+
+### Why an extension could not handle it
+
+- Turn completion, queue draining, and provider admission ordering are owned by the core agent loop before extension callbacks can observe or alter them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` completed-turn preparation and terminating queue boundary; `types.ts` preparation callback contract.
+
+## 2026-09-04 - Honor queue clears on terminating continuations
+
+### What changed
+
+- Emit the terminating continuation boundary before refreshing drained queue messages, so a queue clear or replacement at `turn_start` wins before pending input is injected.
+
+### Why
+
+- A terminating tool previously moved queued input into loop-local state before the continuation boundary, allowing cleared steering or follow-up messages to reach the provider.
+
+### Why an extension could not handle it
+
+- Terminating queue ownership and continuation-boundary ordering are enforced inside the core agent loop before extension hooks can change the provider request.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` terminating queue refresh and continuation turn admission; `types.ts` loop configuration contract.
+
+## 2026-09-03 - Restore queue ownership and preflight abort barriers
+
+### What changed
+
+- Restored classifier refusals as terminal assistant turns, preserved terminating queue re-poll/restore ownership across next-turn preparation, and completed all parallel tool preflight checks before releasing execution.
+
+### Why
+
+- The upstream loop merge allowed refused calls, cleared queue snapshots, and already-prepared tools to cross the next provider/execution boundary.
+
+### Why an extension could not handle it
+
+- Queue drain ownership and tool execution scheduling are core agent-loop responsibilities before extension hooks can observe or veto execution.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` turn admission, queue restoration, and parallel tool scheduling.
+
+## 2026-09-04 - Failed provider turns leave the LLM context on every lane
+
+### What changed
+
+- `packages/agent/src/harness/messages.ts`: the harness `convertToLlm` runs the shared `dropFailedAssistantTurns` from `@earendil-works/pi-ai` as its final step, removing assistant turns with `stopReason` `error`/`aborted` and the tool results orphaned by that drop from the returned `Message[]`; an id re-declared by a kept assistant keeps its result, and `stop`/`length`/`toolUse` turns pass through untouched.
+- `packages/agent/src/harness/compaction/compaction.ts`: `estimateContextTokens` applies the same `dropFailedAssistantTurns` before anchoring on usage and summing trailing tokens, so the estimate counts exactly the set the next request carries; failed turns and their orphaned results no longer inflate the compaction trigger.
+- `packages/agent/test/harness/convert-to-llm.test.ts` (new) and `packages/agent/test/harness/compaction.test.ts`: pin the harness `convertToLlm` drop (error, aborted, re-declared-id keep) and the estimator exclusion for both failure kinds.
+
+### Why
+
+- Compaction, branch summarization, and any consumer building an LLM request from the converted list had no `stopReason` filter, so after a provider error or abort every subsequent request replayed the failed turn's partial text and unexecuted tool calls; the provider transform layer dropped them for pi-ai API requests only.
+
+### Why an extension could not handle it
+
+- The drop must happen inside `convertToLlm`, which consumers call before any extension seam runs; extensions observe the already-built context and cannot remove a failed assistant turn from every downstream request shape deterministically.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `convertToLlm` in `packages/agent/src/harness/messages.ts` (the new `dropFailedAssistantTurns` return).
+- LOW: the head of `estimateContextTokens` and the `counted` parameter of `getLastAssistantUsageInfo` in `packages/agent/src/harness/compaction/compaction.ts`.
+
+## 2026-09-02 - Name the stream-start timeout setting
+
+### What changed
+
+- `StreamStartTimeoutError` now names `retry.provider.streamStartTimeoutMs` and explains that `0` disables the guard.
+
+### Why
+
+- A provider stream-start timeout must tell users which setting to raise when the configured bound is too aggressive.
+
+### Why an extension could not handle it
+
+- The error is constructed inside the core provider stream loop before extension code can alter its user-visible message.
+
+### Expected merge conflict zones
+
+- LOW: `agent-loop.ts` stream-start timeout error wording.
 
 ## 2026-08-29 - Propagate asynchronous shell capture callbacks
 
@@ -764,7 +939,7 @@ Conflict zone: `agent-loop.ts` `streamAssistantResponse` catch.
   session for 300s with zero events, zero usage, and nothing persisted. Observed in a donated
   5h session log where the same session hung deterministically on reopen while new sessions
   worked. After the first event arrives the idle bound governs as before.
-- The failure message `Provider stream start timed out after <ms>ms` deliberately contains
+- The failure message `Provider stream start timed out after <ms>ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)` deliberately contains
   "timed out" so the existing retryable-error classifier (`isRetryableErrorMessage`) retries
   it instead of dead-ending the session; the request-local abort controller tears the dead
   request down exactly like an idle timeout.

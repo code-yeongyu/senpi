@@ -1,5 +1,202 @@
 # terminal builtin extension — fork surface
 
+## `persistent` reads as the standing-watch switch (2026-09-04)
+
+### What changed
+
+- `tools/monitor.ts`: the `persistent` parameter description now states the whole durable contract in one breath — no deadline, survives a session restart (the command re-run once, the file rescanned with any detached change reported), expires 7 days after creation, at most 5 per session, stop one with `kill_bash`. `timeout_ms` says "ignored when persistent" instead of naming "persistent monitors" again, and the tool's top-level description was compressed to the branch contract (`command` XOR `path`, what each injects, `create` firing only on appearance, `filter` rejected on the path branch, `bash_id` returned immediately) — the dedup, restart and one-shot-gate teaching it duplicated already lives in `prompt.ts`. No new parameter and no new action value.
+- `prompt.ts`: the path-branch call shape gains `persistent?`, the false "takes no `persistent`" clause is gone, and one added sentence teaches the standing watch: `persistent: true`, no deadline, survives a restart, 7-day expiry, capped at 5, accounted for in the one restart-report line on session start.
+- Docs brought in line: `docs/terminal-tools.md` gains a "Standing watches" section (stable `mon_` id, per-class restore behavior, the one restore sentence with its real clause shapes, the 5/7-day caps, foreign-live-process case) and three anti-pattern rows; `AGENTS.md` documents the five durability modules and the four invariants (`persistent` = durable, ONE digest per restart, transition-only writes, runtime-id-only pause/resume/rearm).
+
+### Measured prompt budget
+
+- `monitor.ts` `description:` literals: **1630 → 1342 bytes** (ceiling 1476; P2/P3 had breached it by 154 while adding durability wording).
+- `buildTerminalPromptSection({ evalOnly: false })`: **2523 → 2839 bytes** (ceiling 3435). The tool surface paid for its own rewording; the prompt grew only by the one standing-watch sentence.
+
+### Fixed false doc claims
+
+- Both `prompt.ts` and `docs/terminal-tools.md` claimed the native file branch takes no `persistent`. That has been wrong since the `checkpointed-file` durability class landed: a persistent file watch is exactly what is checkpointed and restored. Both now show `persistent?` on the path branch.
+
+### Why
+
+- `persistent` was described as "keep watching until the command exits or kill_bash stops its bash_id" — a lifetime hint that says nothing about the durability the flag actually buys, while the bounds that make it safe to hand to a model (7-day expiry, cap of 5) lived only in the source. The switch has to read as what it is, and it has to do so without growing the per-turn prompt: the same guidance was being paid for twice, once in the tool schema and once in the terminal prompt section.
+
+### Why an extension could not handle it
+
+- Both surfaces are this builtin's own: the parameter descriptions are its TypeBox schema and the section is its prompt contribution. Nothing outside can reword them.
+
+### Expected merge conflict zones
+
+- LOW: `tools/monitor.ts` description literals and the `monitor` bullet in `prompt.ts` are fork-only prose; the docs are fork-only files.
+
+## Prompt section renders the reachable bash/monitor call form (2026-09-03)
+
+### What changed
+
+- `prompt.ts`: the `TERMINAL_PROMPT_SECTION` constant becomes `buildTerminalPromptSection({ evalOnly })`. Under `evalOnly` the `bash` and `monitor` call shapes render as `tool.bash(` / `tool.monitor(` (including both create branches and the `rearm` shapes); otherwise the direct shapes are unchanged. The steering companions `bash_output`, `bash_input`, `bash_resize` and `kill_bash` keep their direct shapes in both branches because the policy never withholds them.
+- `extension.ts`: the `before_agent_start` handler calls the builder with `evalOnly: isEvalOnlyRouting(pi)`.
+
+### Why
+
+- This section is appended to the system prompt unconditionally, so its hardcoded direct shapes taught a call the model cannot make in any session that routes shell tools through eval cells. A prompt that describes an impossible call is worse than a silent one.
+
+### Why an extension could not handle it
+
+- The section is this builtin's own prompt surface; only it can render the branch its tools are registered under.
+
+### Expected merge conflict zones
+
+- LOW: `prompt.ts` is a fork-only surface; the `extension.ts` change is a single handler line.
+
+## bash_output muted-monitor metadata (2026-09-02)
+
+### What changed
+
+- `bash_output` looks up the peeked `bash_id` in `monitorRegistry.snapshot()`. When that monitor is paused, it prepends a concise muted note (including `mutedDropped` when lines were dropped) to both log and screen results and attaches `{ monitorMuted, mutedDropped }` details. Non-monitor sessions are unchanged: no note, no monitor details.
+
+### Why
+
+- The one-shot pause notice can scroll away or disappear after compaction, and the footer is not in the model's textual context. `bash_output` is a surface the model reads directly, so muted state and the dropped-line count need to stay legible there without altering runtime history.
+
+### Why an extension could not handle it
+
+- `bash_output` is the builtin peek surface over the terminal manager and monitor registry; only it can prepend the note onto the result the model reads.
+
+### Expected merge conflict zones
+
+- LOW: `tools/bash-output.ts` and `test/suite/terminal-monitor.test.ts`.
+
+## Muted monitor dropped-line counts (2026-09-02)
+
+### What changed
+
+- Filter-matching complete lines received while a command monitor is muted are counted and reported when the monitor is re-armed; the count resets on resume.
+
+### Why
+
+- A re-arm report tells the agent how much matching output it missed without retaining or replaying dropped text.
+
+### Why an extension could not handle it
+
+- The monitor registry owns line consumption, pause state, and the re-arm lifecycle.
+
+### Expected merge conflict zones
+
+- LOW: `monitor-registry.ts`, `tools/monitor.ts`, and terminal monitor tests.
+
+## Monitor footer muted label (2026-09-02)
+
+### What changed
+
+- The monitor footer now renders paused monitors as `muted` or `N muted`.
+- The `paused` wire field remains unchanged.
+
+### Why
+
+- `muted` communicates temporary silencing without implying that the monitor is frozen or stuck.
+
+### Why an extension could not handle it
+
+- The footer formatter owns the human-readable monitor status label.
+
+### Expected merge conflict zones
+
+- LOW: `monitor-status.ts` and terminal monitor footer tests.
+
+## External user input resumes paused monitors (2026-09-02)
+
+### What changed
+
+- Interactive and RPC user input now resumes all paused monitors and clears their notifier delivery bookkeeping; extension-generated input and tool calls remain streak-reset-only and do not resume monitors.
+
+### Why
+
+- Real user input is an intentional re-engagement signal, while agent-owned activity must preserve wake-storm protection.
+
+### Why an extension could not handle it
+
+- The authoritative monitor registry and notifier delivery bookkeeping are private to the builtin terminal extension's session state.
+
+### Expected merge conflict zones
+
+- LOW: `extension.ts` input handling, `prompt.ts`, and the terminal monitor external-resume regression test.
+
+## Scoped monitor wake-budget pauses (2026-09-02)
+
+### What changed
+
+- Monitor pause state is authoritative in the registry; wake-budget exhaustion pauses only the noisy monitor(s) that contributed to that injection. Rearming one monitor or all paused monitors clears delivery bookkeeping so intermediate events resume correctly.
+
+### Why
+
+- A global notifier pause could mute quiet monitors permanently after a noisy monitor exhausted the shared wake budget.
+
+### Why an extension could not handle it
+
+- The registry owns monitor lifecycle and pause state, while the notifier owns wake-budget batching and deduplication; only the builtin terminal extension coordinates both.
+
+### Expected merge conflict zones
+
+- LOW: `monitor-registry.ts`, `monitor-notify.ts`, `tools/monitor.ts`, `extension.ts`, and terminal monitor tests.
+
+
+## Teach the monitor file branch on every prompt surface (2026-09-02)
+
+### What changed
+
+- `prompt.ts`: the monitor bullet now states `command` XOR `path` and documents both branches.
+  It previously published the signature as
+  `monitor({ description, command, filter?, timeout_ms?, persistent? })`, which omitted the file
+  branch added on 2026-08-29 and presented `command` as unconditionally required.
+- `tools/monitor.ts`: the tool `description` and `promptSnippet` no longer scope the tool to a
+  command's output, and the schema branch labels are symmetric — `command` reads
+  "Create, command branch (XOR path)" and `path` reads "Create, file branch (XOR command)".
+  Previously `command` claimed "Create (required)" while `path` carried no branch label at all,
+  so the prose asserted a requirement that `execute` does not enforce.
+- `docs/terminal-tools.md`: the "File or port transition" recipe is split. Awaiting a file is now
+  the native `path` branch; the sleep loop survives only in the port recipe, which has no native
+  watch. The summary Tools table row now shows `command` XOR `path` instead of a command-only
+  signature, and anti-pattern rows cover polling `test -f`, passing both branches, and using the
+  default `create` event on a file that already exists.
+- Every file-branch surface states that `create` fires only when the file appears after
+  registration. `registerFile` records `present: initial !== null` and the create predicate is
+  `!record.present && present`, so a `create` watch on an already-existing file can never fire and
+  silently waits out its timeout; that surface needs `event: "modify"`.
+- The same surfaces state the branch's registration preconditions, because `registerFile` rejects
+  a missing parent directory, a symlink, and a non-regular file outright. Recommending it as a
+  drop-in for `test -f` polling was wrong for the common case of awaiting a build artifact whose
+  directory the build itself creates; that case keeps a `command` poll loop.
+- Deleted the trailing "Typical flow" paragraph in `prompt.ts`: it restated the bullets above it
+  and duplicated the bash_output completion-notification sentence verbatim.
+
+### Why
+
+- The 2026-08-29 feature landed in the schema and in `execute` but in no narrative surface. Models
+  following the prompt literally do not generalize a documented `command` signature into an
+  undocumented `path` branch, and the XOR rule existed only in a runtime error string. An agent
+  reading these surfaces concluded that the schema forced both `command` and `path`, declared
+  monitor impossible to register, and fell back to a background bash session — losing event
+  injection, dedup, and rearm for no reason. Nothing in the schema marks any field required:
+  every property is `Type.Optional` and no provider conversion adds `required`
+  (`tool-schema-compat.ts` only narrows it to the intersection of branches).
+- `test/monitor-branch-prompt-surface.test.ts` locks the gap class: every create-branch schema
+  property must appear on the shipped prompt surfaces, each branch must show its own
+  `monitor({ ... })` call shape, and the file branch's `modify` caveat must accompany it wherever
+  it is taught. Bare name presence alone is too weak — deleting the file-branch bullet still
+  leaves `path` in the XOR sentence and `filter`/`persistent` in its negation — so the call-shape
+  assertion is what actually detects a dropped branch. It keys on schema properties and call
+  shapes, never on prose wording.
+
+### Why this cannot be expressed externally
+
+- These are the builtin's own tool description, prompt section, and shipped docs.
+
+### Expected merge conflict zones
+
+- LOW: the monitor bullet in `prompt.ts`, the `description`/`promptSnippet`/schema labels in
+  `tools/monitor.ts`, and the monitor recipe list in `docs/terminal-tools.md`.
+
+
 ## Add native one-shot file monitors (2026-08-29)
 
 ### What changed

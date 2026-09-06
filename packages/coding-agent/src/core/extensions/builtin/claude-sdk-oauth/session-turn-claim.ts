@@ -25,12 +25,12 @@ export function bufferBeforeReplay(
 	if (!registry.isCurrentGeneration(entry.senpiSessionId, turn.generation)) turn.preReplay.length = 0;
 }
 
-export function claimTurn(entry: ClaudeSdkOauthSessionEntry, turn: ActiveTurn): void {
+export function claimTurn(entry: ClaudeSdkOauthSessionEntry, turn: ActiveTurn): SDKMessage[] {
 	turn.claimed = true;
 	transitionToTurnClaimed(entry);
-	for (const buffered of turn.preReplay) deliver(entry, turn, buffered);
-	turn.preReplay.length = 0;
+	const buffered = turn.preReplay.splice(0);
 	turn.preReplayBytes = 0;
+	return buffered;
 }
 
 export function isReplayFor(message: SDKMessage, uuid: string): boolean {

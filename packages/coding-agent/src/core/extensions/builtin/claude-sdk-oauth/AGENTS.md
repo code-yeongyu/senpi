@@ -36,12 +36,13 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 - Fork point is the last assistant boundary strictly before the divergence.
 - Non-fork reattach passes `resume` and must omit `sessionId` (the SDK rejects the pair). Fork adds `resumeSessionAt` + `forkSession`.
 - Abort never taints and never flattens; `interrupt()` receipts gate keep-vs-close.
-- Fingerprint normalizes the `Current date:` line (no midnight retirement); cwd and other regions stay fail-closed. `config-dir` lane failover is the one declared residual that still flattens.
+- Fingerprint normalizes the `Current date:` line (no midnight retirement); cwd and other regions stay fail-closed. Host-tool denial copy is versioned by `HOST_TOOL_POLICY_FINGERPRINT` in `toolsetHash`; bump it when the copy changes so resident sessions re-fingerprint instead of keeping the old reason. `config-dir` lane failover is the one declared residual that still flattens.
 - Every main turn emits exactly one continuity observation; TUI notices only for degradations.
 - `resumeMode: "off"` / `SENPI_CLAUDE_SDK_OAUTH_RESUME=off` restores legacy per-turn behavior.
 - `full`/`override` prompt modes default `settingSources` to `[]` (no CLAUDE.md double-injection). The CLI still prepends its own agent preamble; `full` means senpi's prompt arrives intact, not alone.
 - Env precedence: env > project settings > global settings > default. All `SENPI_*` vars are stripped from the subprocess env on every lane.
 - Subscription-limit responses classify as account-failover conditions, not terminal errors.
+- A continuity binding is resumable only after the SDK acknowledged its session id (`system/init` or the replay echo); unconfirmed ids cold-seed (`session_unconfirmed`) and an id Claude Code reports missing is forgotten, never retried.
 - Idle resident sessions retire after 30 minutes; at most 32 stay resident; in-flight sessions are never evicted.
 
 ## TESTS

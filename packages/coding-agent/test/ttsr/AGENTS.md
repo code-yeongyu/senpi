@@ -33,6 +33,6 @@ Coverage for the ttsr stream-rule extension (`src/core/extensions/builtin/ttsr/`
 ## COMMANDS
 
 ```bash
-npm --prefix packages/coding-agent test -- --run test/ttsr/<file>.test.ts
-npm --prefix packages/coding-agent test -- --run test/ttsr
+bun run --cwd packages/coding-agent test --run test/ttsr/<file>.test.ts
+bun run --cwd packages/coding-agent test --run test/ttsr
 ```

@@ -1,4 +1,179 @@
+# 2026-09-05 - GPT-6 Astra async tool calling and WebSocket steering: deferred with design
+
+### What changed
+
+- No runtime change. This records the binding decision to DEFER two GPT-6 Astra wire features until the agent loop supports them, with the concrete designs below.
+
+### Why deferred
+
+- Async tool calling (`async: true`, late outputs on the original `call_id`): the agent loop executes tools synchronously and cannot proceed with a pending call. Proof: `packages/agent/src/agent-loop.ts:297` awaits `executeToolCalls` before `turn_end`, and the parallel batch barrier `await Promise.all(finalizedCalls)` at `packages/agent/src/agent-loop.ts:966` blocks until every `call_id` has a result. The Responses adapter sends one `response.create` (`packages/ai/src/api/openai-responses.ts:807`) and releases the socket after `response.completed`, with no call-id correlation surface. A payload-only `async: true` would advertise behavior the loop cannot honor.
+- Mid-turn steering over WebSocket: steering is polled only at turn boundaries (`packages/agent/src/agent-loop.ts:212`, `:325`, `:382` via `config.getSteeringMessages()`), never during `streamAssistant` or tool execution. The subscribe target for a future loop-owned dispatcher is `Agent.steeringQueue` (`packages/agent/src/agent.ts:209`, drained at `:445`/`:483`). Both the generic and Codex adapters have their own WebSocket paths (`packages/ai/src/api/openai-codex-responses.ts:299`/`:311`/`:1520`), so a bidirectional API must be built twice.
+
+### Designs (for future adoption)
+
+- Async: a loop-owned `PendingToolCall` registry keyed by provider `call_id` with durable session ownership, cancellation, duplicate/unknown handling, and a completion event that resumes the same response conversation; the adapter must expose a bidirectional Responses connection and serialize `function_call_output` on the original `call_id`.
+- Steering: a loop-owned active-turn command channel that subscribes to steering-queue mutation, assigns ordering/turn identity, encodes the steering event on the live socket, and defines interrupt-vs-queue-vs-merge semantics plus reconnect/abort behavior.
+
+### Exit criteria
+
+- Revisit only after a failing-first integration test proves (1) a detached tool returns after the model response preserving the original `call_id`, and (2) steering sent during an active WebSocket response is observed in that same turn, both with remote green evidence.
+
 # changes.md — ai
+
+## 2026-09-05 - Normalize GPT-6 Astra reasoning maps across OpenAI-family catalogs
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` applies the canonical Astra thinking ladder to every generated OpenAI-family API entry, including Azure and OpenAI-compatible passthrough catalogs.
+
+### Why
+
+- Live metadata can provide a partial Astra map; normalization prevents supported low/medium/high tiers from disappearing and preserves the null vetoes for off/minimal.
+
+### Why an extension could not handle it
+
+- Generated provider metadata is produced before runtime extensions load.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` final model metadata normalization loop and regenerated provider data.
+
+## 2026-09-05 - Widen GPT-6 Astra flagship context defaults
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` applies per-model flagship context defaults on OpenAI and OpenAI Codex: GPT-5.6 Sol keeps 650,000 tokens and GPT-6 Astra ships its documented 1,050,000-token maximum (generated `-fast` variants inherit), while retaining the 272,000-token Terra/Luna defaults and long-context pricing tiers.
+
+### Why
+
+- OpenAI documents GPT-6 Astra with a 1,050,000-token context window; the owner wants Astra to run at that full documented maximum by default (922,000 input + 128,000 output), while Sol stays at the 650,000-token cost-tier default selected earlier.
+
+### Why an extension could not handle it
+
+- Model defaults and generated provider catalogs are established by the package build-time generator.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` OpenAI flagship constants and explicit catalog entries; regenerated provider data.
+
+## 2026-09-05 - Account for Fast-mode service tiers
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/openai-responses-shared.ts` accept the local `fast` service-tier spelling, apply the priority multiplier to it, and preserve Codex request-tier resolution.
+
+### Why
+
+- GPT-6 Astra responses echo `fast` even though the generated `-fast` catalog variants continue to send the wire-compatible `priority` value; treating `fast` as default under-billed those responses.
+
+### Why an extension could not handle it
+
+- Service-tier resolution and usage-cost mutation happen inside the provider stream adapters below extension hooks.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-responses.ts` and `packages/ai/src/api/openai-codex-responses.ts` service-tier helpers; shared stream option types.
+
+## 2026-09-04 - Bound pi-ai CI Vitest fork concurrency
+
+### What changed
+
+- `packages/ai/vitest.config.ts` uses the forks pool with two workers and a bounded teardown timeout when CI is running; `packages/ai/src/api/cursor-agent.ts` clears the stream-health timer when each attempt ends.
+
+### Why
+
+- Provider lifecycle tests create real network clients and subprocesses; unbounded fork concurrency can strand workers while a constrained CI runner tears down the pool.
+
+### Why this lives in the fork
+
+- Vitest execution policy is package-owned test infrastructure and cannot be configured by a runtime extension.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/vitest.config.ts` test settings.
+
+## 2026-09-04 - Credential-store lock contention remains transient
+
+- `src/utils/retry.ts` recognizes exhausted local credential-store lock waits as retryable infrastructure, preventing provider fallback hopping.
+
+## 2026-09-04 - Restore the @anthropic-ai/sdk 0.123.0 pin the R4b merge dropped
+
+### What changed
+
+- `packages/ai/package.json`: `@anthropic-ai/sdk` 0.120.0 -> 0.123.0, restoring the declaration the 2026-09-03 upstream sync carried before the R4b re-integration reverted it; `09e23825a` resyncs the root `package-lock.json` to the restored pin.
+
+### Why
+
+- The synced lockfiles and the `.npmrc` `min-release-age-exclude[]=@anthropic-ai/sdk` entry assume 0.123.0, so the reverted manifest left `npm ci` resolving a manifest/lockfile mismatch.
+
+### Why an extension could not handle it
+
+- Dependency resolution happens from the package manifest during install, before any runtime or extension code loads.
+
+### Expected merge conflict zones
+
+- LOW: the `@anthropic-ai/sdk` line in `packages/ai/package.json` and the corresponding lockfile entries.
+
+## 2026-09-04 - Generator adopts the v0.84.4 routing rules
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: Anthropic compat gains a verified `supportsMidConvoEffort` set (anthropic and openrouter providers, `claude-opus-5` and `claude-fable`/`claude-mythos` 5.1 ids); flagged models merge an `off`-capable thinking-level map and their allowed fallback lists are filtered to models that also support mid-conversation effort changes.
+- `packages/ai/scripts/generate-models.ts`: OpenRouter `anthropic/` models (excluding `:batch`) route through `anthropic-messages` at `https://openrouter.ai/api` instead of `openai-completions` (upstream 4e69b0c28).
+- `packages/ai/scripts/generate-models.ts`: all Fireworks `glm-` models route through `openai-completions` (previously only `glm-5p2`, upstream 1e4fbe384), and GitHub Copilot `claude-fable-` joins the Claude models routed through Anthropic Messages (upstream 69afa1050).
+- The regenerated catalog data for these rules landed with the sync in 9f11abadf.
+
+### Why
+
+- Upstream v0.84.4 shipped these routing decisions for the new model generations and the per-turn effort semantics; adopting them in the generator keeps fork catalog regenerations in parity with upstream instead of re-diverging on every refresh.
+
+### Why an extension could not handle it
+
+- The generation script and the provider data it emits are build-time catalog artifacts inside this package; no runtime extension seam produces them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` compat helpers and routing rules; regenerate `packages/ai/src/providers/data/` rather than merging it.
+
+## 2026-09-04 - GPT-6 Astra catalog
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: hand-added `gpt-6-astra` entries for the `openai` and `openai-codex` providers (published pricing 10/50/1/12.5 per MTok with the >272k long-context tiers, 272k default context, 128k output, text+image input, `thinkingLevelMap` with `off`/`minimal` null and low through high, with xhigh/max merged by `supportsOpenAiXhigh`/`supportsOpenAiMax`); the id joins the tool-search, additional-tools, short-context-cap, long-context-pricing, and Priority `-fast` sets; a post-metadata override keeps `off`/`minimal` unavailable.
+- `packages/ai/src/models.ts`: `XHIGH_MODEL_IDS` gains `gpt-6-astra`; the sol-only max-effort family check is generalized to `OPENAI_MAX_MODEL_IDS` (`gpt-5.6-sol`, `gpt-6-astra`).
+- Regenerated `packages/ai/src/providers/data/openai.json`, `packages/ai/src/providers/data/openai-codex.json`, and `packages/ai/src/providers/data/.manifest.json` with only the Astra entries (plus their `-fast` variants) changing.
+- `packages/ai/test/gpt-6-astra-catalog.test.ts`: catalog entries, pricing tiers, context limits, thinking levels, xhigh/max support, and `-fast` variants.
+
+### Why
+
+- OpenAI released GPT-6 Astra (`gpt-6-astra`, Responses API, efforts low/medium/high/xhigh/max, no `none`/`minimal`) and Codex's model catalog lists it for the Codex backend; without catalog entries the model was unselectable through the built-in providers.
+
+### Why an extension could not handle it
+
+- The static provider catalogs are generated inside this package.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts` (hand-added OpenAI model lists and id sets), `packages/ai/src/models.ts` (xhigh/max id lists), `packages/ai/src/providers/data/*` (regenerate, don't merge).
+
+## 2026-09-02 - Claude Fable 5.1 catalog
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `ANTHROPIC_ALLOWED_FALLBACK_MODELS` gains `claude-fable-5-1` -> opus-4-8/opus-5 (the permitted refusal-fallback targets per the Fable 5.1 release notes).
+- Regenerated `src/providers/data/` against live sources: `claude-fable-5-1` lands in anthropic, amazon-bedrock (3 regional ids), openrouter, and vercel-ai-gateway with 1M context, 128k output, cache reads at 0.25/MTok, xhigh+max thinking map, and adaptive-only compat. Incidental upstream drift in the same regeneration: nvidia retires nemotron-3-nano-30b-a3b, openrouter adds mercury-2.5-preview and retires three opus `-fast` variants, vercel retires deepseek-v3, fireworks/nvidia metadata churn.
+
+### Why
+
+- Anthropic released Claude Fable 5.1; models.dev already carries it, so the committed catalog regeneration is the canonical path. Family markers (`fable-5` substring/regex) already cover the 5.1 id at runtime.
+
+### Why an extension could not handle it
+
+- The committed provider catalog is generated inside this package.
+
+### Expected merge conflict zones
+
+- `scripts/generate-models.ts` (fallback map), `src/providers/data/*` (regenerated wholesale on both sides; regenerate, don't merge).
 
 ## 2026-08-29 - Narrow GLM-5.3 serializer matching
 

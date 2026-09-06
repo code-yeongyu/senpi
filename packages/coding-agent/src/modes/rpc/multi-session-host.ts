@@ -12,13 +12,21 @@ import {
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
+import { parseIdleExitMs } from "./host-lifecycle.ts";
 import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
-import { SessionCommandRouter } from "./session-command-router.ts";
+import { type RpcBindingFactory, SessionCommandRouter } from "./session-command-router.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
 import { RpcSessionRegistry } from "./session-registry.ts";
+import {
+	authenticateSocket,
+	ensureSocketSecret,
+	resolveSocketTransportAddress,
+	SOCKET_SECRET_FILE_ENV,
+	socketSecretPath,
+} from "./socket-transport.ts";
 
 export interface MultiSessionHostOptions {
 	agentDir: string;
@@ -28,6 +36,61 @@ export interface MultiSessionHostOptions {
 	creationModel?: { provider: string; modelId: string };
 	initialThinkingLevel?: string;
 	listen?: string;
+	/** Test seam: defaults to the real shared-session binding. */
+	createBinding?: RpcBindingFactory;
+}
+
+/** Environment override for the idle-session eviction window, in milliseconds. */
+export const RPC_SESSION_IDLE_EVICTION_MS_ENV = "SENPI_RPC_SESSION_IDLE_EVICTION_MS";
+/** Environment override for the concurrent open-session cap. */
+export const RPC_MAX_SESSIONS_ENV = "SENPI_RPC_MAX_SESSIONS";
+/** Environment override for the empty-host exit window, in milliseconds. */
+export const RPC_HOST_EMPTY_EXIT_MS_ENV = "SENPI_RPC_HOST_EMPTY_EXIT_MS";
+/** Environment override for the graceful close_session teardown window, in milliseconds. */
+export const RPC_CLOSE_GRACE_MS_ENV = "SENPI_RPC_CLOSE_GRACE_MS";
+/** Default idle-eviction window: 30 minutes after a session's last routed command or settled turn. */
+export const DEFAULT_SESSION_IDLE_EVICTION_MS = 30 * 60_000;
+/** Default session cap: an idle session holds a full runtime (~340-510 MB RSS measured). */
+export const DEFAULT_MAX_SESSIONS = 8;
+/** Default empty-host exit: 15 minutes with zero open sessions, matching the supervisor's idle window. */
+export const DEFAULT_HOST_EMPTY_EXIT_MS = 15 * 60_000;
+/** Win32 named-pipe close can leave libuv's server callback pending after handles are destroyed. */
+const WINDOWS_SHUTDOWN_HARD_EXIT_MS = 2_000;
+
+/** Explicit occupancy-policy overrides for createHostCore; tests inject clocks and hooks here. */
+export interface HostIdleOverrides {
+	now?: () => number;
+	idleEvictionMs?: number;
+	emptyExitMs?: number;
+	maxSessions?: number;
+	closeGraceMs?: number;
+	/** Shutdown hook the empty-exit window invokes; hosts pass their exit path. */
+	onEmptyExit?: () => void;
+	/** Gate consulted before the empty-exit window advances (connected clients block it). */
+	canExitWhenEmpty?: () => boolean;
+}
+
+function parseSessionCap(value: string | undefined): number | undefined {
+	if (value === undefined || !/^\d+$/.test(value.trim())) return undefined;
+	const parsed = Number(value.trim());
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+/** Precedence: explicit overrides beat environment variables beat documented defaults. */
+export function resolveHostIdlePolicy(
+	env: Readonly<Record<string, string | undefined>>,
+	overrides: HostIdleOverrides = {},
+): { now: () => number; idleEvictionMs: number; emptyExitMs: number; maxSessions: number } {
+	return {
+		now: overrides.now ?? Date.now,
+		idleEvictionMs:
+			overrides.idleEvictionMs ??
+			parseIdleExitMs(env[RPC_SESSION_IDLE_EVICTION_MS_ENV]) ??
+			DEFAULT_SESSION_IDLE_EVICTION_MS,
+		emptyExitMs:
+			overrides.emptyExitMs ?? parseIdleExitMs(env[RPC_HOST_EMPTY_EXIT_MS_ENV]) ?? DEFAULT_HOST_EMPTY_EXIT_MS,
+		maxSessions: overrides.maxSessions ?? parseSessionCap(env[RPC_MAX_SESSIONS_ENV]) ?? DEFAULT_MAX_SESSIONS,
+	};
 }
 
 interface Connection {
@@ -38,24 +101,42 @@ interface Connection {
 }
 
 /**
- * Socket event visibility is an all-sessions broadcast: every connected client
- * receives every session lifecycle/agent event, tagged with its routing
- * sessionId. Responses and extension UI requests remain requester-only. This
- * keeps observers stateless while preventing correlated replies from leaking.
+ * Socket agent events are delivered only to connections attached to their
+ * session, tagged with its routing sessionId. Content-free session lifecycle
+ * events remain visible to every connection. Responses and extension UI
+ * requests remain requester-only; foreign observation uses attach-on-open.
  */
 export async function runMultiSessionHost(options: MultiSessionHostOptions): Promise<never> {
 	if (options.listen === undefined || options.listen === "stdio://") return runStdioHost(options);
 	return runSocketHost(options, resolveSocketPath(options.listen, options.agentDir));
 }
 
-function createHostCore(options: MultiSessionHostOptions, writer: SessionEventWriter) {
-	const capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES"));
+export function createHostCore(
+	options: MultiSessionHostOptions,
+	writer: SessionEventWriter,
+	capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
+	idle: HostIdleOverrides = {},
+) {
+	const policy = resolveHostIdlePolicy(process.env, idle);
 	const router = new SessionCommandRouter(
-		new RpcSessionRegistry({ agentDir: options.agentDir, createRuntime: options.createRuntime }),
+		new RpcSessionRegistry({
+			agentDir: options.agentDir,
+			createRuntime: options.createRuntime,
+			now: policy.now,
+			maxSessions: policy.maxSessions,
+			closeGraceMs: idle.closeGraceMs ?? parseIdleExitMs(process.env[RPC_CLOSE_GRACE_MS_ENV]) ?? 10_000,
+		}),
 		writer,
 		options,
-		undefined,
+		options.createBinding,
 		{ capabilities },
+		{
+			now: policy.now,
+			idleEvictionMs: policy.idleEvictionMs,
+			emptyExitMs: policy.emptyExitMs,
+			onEmptyExit: idle.onEmptyExit,
+			canExitWhenEmpty: idle.canExitWhenEmpty,
+		},
 	);
 	const handle = async (line: string): Promise<void> => {
 		let parsed: unknown;
@@ -81,7 +162,11 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 	takeOverStdout();
 	const sink: RpcConnectionSink = { writeRaw: writeRawStdout, waitForBackpressure: waitForRawStdoutBackpressure };
 	const writer = new SessionEventWriter(sink.writeRaw, sink.waitForBackpressure);
-	const { router, handle } = createHostCore(options, writer);
+	// An empty host (no session ever opened, or all closed) must not stay resident
+	// forever: exit through the normal shutdown path once the window elapses.
+	const { router, handle } = createHostCore(options, writer, undefined, {
+		onEmptyExit: () => void shutdown(0),
+	});
 	let shuttingDown = false;
 	const shutdown = async (exitCode = 0): Promise<never> => {
 		if (shuttingDown) process.exit(exitCode);
@@ -109,83 +194,124 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 async function runSocketHost(options: MultiSessionHostOptions, socketPath: string): Promise<never> {
 	await prepareSocketPath(socketPath);
 	const writer = new SessionEventWriter(() => {});
-	const { router, handle } = createHostCore(options, writer);
 	const connections = new Map<string, Connection>();
+	const { router, handle } = createHostCore(
+		options,
+		writer,
+		parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")).filter(
+			(capability) => capability !== "rendered_components",
+		),
+		// Supervised hosts idle-exit via the supervisor, but a socket host that
+		// outlives its supervisor (or is started bare) still self-exits when empty.
+		// A connected client counts as occupancy even with no session open: exiting
+		// under it would drop its socket and read as a crash to the supervisor.
+		{ onEmptyExit: () => void shutdown(0), canExitWhenEmpty: () => connections.size === 0 },
+	);
 	let nextConnection = 0;
 	let shuttingDown = false;
+	const secret =
+		process.platform === "win32"
+			? await ensureSocketSecret(process.env[SOCKET_SECRET_FILE_ENV] ?? socketSecretPath(socketPath))
+			: undefined;
 	const server = createServer((socket) => {
-		const id = `socket-${++nextConnection}`;
-		const sink = socketSink(socket);
-		writer.registerConnection(id, sink);
-		const detachReader = attachJsonlLineReader(
-			socket,
-			(line) => {
-				// Do not serialize awaited commands: extension_ui_response and other
-				// re-entrant frames must be able to resolve a command already awaiting them.
-				void writer
-					.withConnection(id, () => handle(line))
-					.catch((cause) => {
-						process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`);
-					});
-			},
-			{
-				maxLineLength: MAX_RPC_LINE_CHARACTERS,
-				onOversizedLine: () => {
+		const accept = (): void => {
+			const id = `socket-${++nextConnection}`;
+			const sink = socketSink(socket);
+			writer.registerConnection(id, sink);
+			const detachReader = attachJsonlLineReader(
+				socket,
+				(line) => {
+					// Do not serialize awaited commands: extension_ui_response and other
+					// re-entrant frames must be able to resolve a command already awaiting them.
 					void writer
-						.withConnection(id, () => writer.enqueueControl(parseError(oversizedLineError())))
-						.catch((cause) =>
-							process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`),
-						);
+						.withConnection(id, () => handle(line))
+						.catch((cause) => {
+							process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`);
+						});
 				},
-			},
-		);
-		let detached = false;
-		const detach = () => {
-			if (detached) return;
-			detached = true;
-			detachReader();
-			writer.unregisterConnection(id);
-			connections.delete(id);
-			// A socket that dies without close_session still owns its sessions' attachments
-			// and path reservations. Release them on the command chain so this runs after any
-			// in-flight command for this connection settles, otherwise the path stays pinned
-			// by a runtime whose client is gone and later resumes attach to that orphan.
-			void router.releaseConnection(id).catch((cause) => {
-				process.stderr.write(`senpi rpc connection ${id} release failed: ${errorMessage(cause)}\n`);
-			});
+				{
+					maxLineLength: MAX_RPC_LINE_CHARACTERS,
+					onOversizedLine: () => {
+						void writer
+							.withConnection(id, () => writer.enqueueControl(parseError(oversizedLineError())))
+							.catch((cause) =>
+								process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`),
+							);
+					},
+				},
+			);
+			let detached = false;
+			const detach = () => {
+				if (detached) return;
+				detached = true;
+				detachReader();
+				writer.unregisterConnection(id);
+				connections.delete(id);
+				// A socket that dies without close_session still owns its sessions' attachments
+				// and path reservations. Release them on the command chain so this runs after any
+				// in-flight command for this connection settles, otherwise the path stays pinned
+				// by a runtime whose client is gone and later resumes attach to that orphan.
+				void router.releaseConnection(id).catch((cause) => {
+					process.stderr.write(`senpi rpc connection ${id} release failed: ${errorMessage(cause)}\n`);
+				});
+			};
+			connections.set(id, { id, sink, detach, close: () => socket.destroy() });
+			socket.once("close", detach);
+			socket.once("error", () => detach());
 		};
-		connections.set(id, { id, sink, detach, close: () => socket.destroy() });
-		socket.once("close", detach);
-		socket.once("error", () => detach());
+		if (secret) authenticateSocket(socket, secret, accept);
+		else accept();
 	});
 	server.on("error", (cause) => {
 		if (!shuttingDown) process.stderr.write(`senpi rpc socket listener failed: ${errorMessage(cause)}\n`);
 	});
-	await listen(server, socketPath);
-	process.stderr.write(`senpi rpc listening on ${formatSocketAddress(socketPath)}\n`);
-
-	const shutdown = async (exitCode = 0): Promise<never> => {
+	const shutdown = async (exitCode = 0, watchdogCleanup?: Promise<void>): Promise<never> => {
 		if (shuttingDown) process.exit(exitCode);
 		shuttingDown = true;
-		for (const connection of connections.values()) {
-			connection.detach();
-			connection.close();
+		// On Windows, destroying named-pipe sockets does not always make libuv's
+		// server.close callback fire: connected pipe instances can remain in the
+		// kernel after the JavaScript handles are destroyed. Keep the normal drain
+		// path, but never let that platform-specific close stall orphan the host.
+		try {
+			for (const connection of connections.values()) {
+				connection.detach();
+				connection.close();
+			}
+			await (process.platform === "win32"
+				? Promise.race([closeServer(server), delay(WINDOWS_SHUTDOWN_HARD_EXIT_MS)])
+				: closeServer(server));
+			await router.dispose();
+			await writer.flush();
+			await removeSocketPath(socketPath);
+			if (watchdogCleanup) await watchdogCleanup;
+		} finally {
+			// Explicitly terminate after every shutdown trigger. Windows named-pipe
+			// handles are not fully controllable from JS, and an unresolved cleanup
+			// must not leave this daemon or its public endpoint alive.
+			process.exit(exitCode);
 		}
-		await closeServer(server);
-		await router.dispose();
-		await writer.flush();
-		await removeSocketPath(socketPath);
-		process.exit(exitCode);
 	};
 	registerShutdownSignals(shutdown);
+	// Arm before listen: a supervisor death during the listen transition must
+	// still close the child and clean its private endpoint.
+	armHostWatchdog(readHostWatchdogConfigFromBrandEnv(), (reason, cleanup) => {
+		process.stderr.write(`senpi rpc host: ${reason}; shutting down\n`);
+		// Enter shutdown before killing session-owned child processes. The Windows
+		// tree killer is synchronous, while the shutdown fallback must be armed
+		// before any such cleanup can delay the event loop.
+		void shutdown(0, cleanup);
+		setImmediate(killTrackedDetachedChildren);
+	});
+	await listen(server, socketPath, secret);
+	process.stderr.write(`senpi rpc listening on ${formatSocketAddress(socketPath)}\n`);
+
 	// Opt-in only: set by the lifecycle supervisor so this host can never outlive
 	// it, including when the supervisor is SIGKILLed and runs no handler at all.
-	armHostWatchdog(readHostWatchdogConfigFromBrandEnv(), (reason) => {
-		process.stderr.write(`senpi rpc host: ${reason}; shutting down\n`);
-		killTrackedDetachedChildren();
-		void shutdown(0);
-	});
 	return new Promise(() => {});
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parseError(error: string): RpcResponse {
@@ -221,6 +347,9 @@ function socketSink(socket: Socket): RpcConnectionSink {
 		writeRaw(chunk) {
 			if (!socket.destroyed) needsDrain = !socket.write(chunk);
 		},
+		close() {
+			socket.destroy();
+		},
 		waitForBackpressure() {
 			if (socket.destroyed || !needsDrain) return Promise.resolve();
 			needsDrain = false;
@@ -238,7 +367,7 @@ function socketSink(socket: Socket): RpcConnectionSink {
 }
 
 async function prepareSocketPath(socketPath: string): Promise<void> {
-	if (socketPath.startsWith("\0")) return;
+	if (process.platform === "win32" || socketPath.startsWith("\0")) return;
 	await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
 	try {
 		await access(socketPath);
@@ -252,7 +381,7 @@ async function prepareSocketPath(socketPath: string): Promise<void> {
 
 function probeSocket(socketPath: string): Promise<boolean> {
 	return new Promise((resolve) => {
-		const socket = createConnection(socketPath);
+		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform));
 		const settle = (live: boolean) => {
 			socket.destroy();
 			resolve(live);
@@ -263,13 +392,17 @@ function probeSocket(socketPath: string): Promise<boolean> {
 	});
 }
 
-function listen(server: Server, socketPath: string): Promise<void> {
+function listen(server: Server, socketPath: string, secret?: Uint8Array): Promise<void> {
 	return new Promise((resolve, reject) => {
 		server.once("error", reject);
-		server.listen(socketPath, async () => {
+		server.listen(resolveSocketTransportAddress(socketPath, process.platform, secret), async () => {
 			server.off("error", reject);
-			if (!socketPath.startsWith("\0")) await chmod(socketPath, 0o600);
-			resolve();
+			try {
+				if (process.platform !== "win32" && !socketPath.startsWith("\0")) await chmod(socketPath, 0o600);
+				resolve();
+			} catch (cause) {
+				reject(cause);
+			}
 		});
 	});
 }
@@ -281,7 +414,7 @@ function closeServer(server: Server): Promise<void> {
 }
 
 async function removeSocketPath(socketPath: string): Promise<void> {
-	if (socketPath.startsWith("\0")) return;
+	if (process.platform === "win32" || socketPath.startsWith("\0")) return;
 	try {
 		await unlink(socketPath);
 	} catch (cause) {

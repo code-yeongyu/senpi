@@ -7,7 +7,6 @@ import {
 	type FallbackChains,
 	type FallbackSelector,
 	formatSelector,
-	hasExplicitFallbackOptOut,
 	parseFallbackSelector,
 	resolveChainKey,
 } from "./chains.ts";
@@ -19,6 +18,10 @@ export interface ActiveFallbackState {
 	originalSelector: string;
 	originalThinkingLevel?: ThinkingLevel;
 	lastAppliedThinkingLevel?: ThinkingLevel;
+	/** Pin provenance: refusal contributions release on compaction, billing never. */
+	pinnedByRefusal: boolean;
+	pinnedByBilling: boolean;
+	/** Derived OR of the two provenance flags - the only field consumers read. */
 	pinned: boolean;
 }
 
@@ -158,6 +161,30 @@ export class RetryFallbackController {
 		if (this.state) this.state.lastAppliedThinkingLevel = undefined;
 	}
 
+	/**
+	 * A senpi-owned compaction successfully rewrote the conversation context, the
+	 * one safe moment to re-attempt a refusal-pinned fallback's original model:
+	 * the refusal assumption ("the same context refuses again") no longer holds.
+	 * Refusal contributions clear; billing contributions never release - retrying
+	 * the same account never recovers it. Returns true only when the overall pin
+	 * transitioned true -> false, i.e. the caller may now restore the primary via
+	 * the existing maybeRestorePrimary gate.
+	 */
+	notifyCompactionApplied(): boolean {
+		const state = this.state;
+		if (!state) return false;
+		state.pinnedByRefusal = false;
+		const wasPinned = state.pinned;
+		state.pinned = state.pinnedByBilling;
+		if (!wasPinned || state.pinned) return false;
+		this.deps.logger.info("refusal_pin_released", {
+			chainKey: state.chainKey,
+			originalSelector: state.originalSelector,
+			trigger: "compaction",
+		});
+		return true;
+	}
+
 	/** A user-driven model change abandons the fallback window entirely. */
 	clearForManualModelChange(model: Model<Api>): void {
 		if (this.state) {
@@ -184,12 +211,17 @@ export class RetryFallbackController {
 		await this.deps.switchModel(candidate.model, thinking, "fallback");
 		const from = formatSelector(current.model);
 		const to = formatSelector(candidate.model);
+		const prior = this.state;
+		const pinnedByRefusal = prior?.pinnedByRefusal === true || reason === "refusal";
+		const pinnedByBilling = prior?.pinnedByBilling === true || reason === "billing";
 		this.state = {
 			chainKey: candidate.chainKey,
-			originalSelector: this.state?.originalSelector ?? from,
-			originalThinkingLevel: this.state?.originalThinkingLevel ?? current.thinkingLevel,
+			originalSelector: prior?.originalSelector ?? from,
+			originalThinkingLevel: prior?.originalThinkingLevel ?? current.thinkingLevel,
 			lastAppliedThinkingLevel: thinking,
-			pinned: this.state?.pinned === true || reason === "refusal" || reason === "billing",
+			pinnedByRefusal,
+			pinnedByBilling,
+			pinned: pinnedByRefusal || pinnedByBilling,
 		};
 		this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason });
 		this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason });
@@ -203,15 +235,9 @@ export class RetryFallbackController {
 		const current = this.deps.getCurrentSelector();
 		if (!settings.modelFallback || !current) return undefined;
 		const chains = this.canonicalChains();
-		// Order matters: a model's own chain wins, then the active episode keeps
-		// owning its walk (its last rung usually has no key of its own), and only
-		// a session with neither falls back to the wildcard lane.
-		const chainKey =
-			resolveChainKey(current.model, current.thinkingLevel, chains) ??
-			this.state?.chainKey ??
-			(hasExplicitFallbackOptOut(settings.chains, current.model, current.thinkingLevel)
-				? undefined
-				: resolveChainKey(current.model, current.thinkingLevel, chains, { allowWildcard: true }));
+		// A model's own chain wins; models without an explicitly configured chain
+		// do not enter an implicit fallback lane.
+		const chainKey = resolveChainKey(current.model, current.thinkingLevel, chains) ?? this.state?.chainKey;
 		const entries = chainKey ? chains[chainKey] : undefined;
 		if (!chainKey || !entries) {
 			if (reserve) this.deps.logger.debug("no_chain", { selector: formatSelector(current.model) });

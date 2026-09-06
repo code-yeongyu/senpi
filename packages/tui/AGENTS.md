@@ -71,9 +71,9 @@ native/                     Optional Darwin/Win32 modifier binaries (prebuilt, l
 
 ## VALIDATION
 
-- Tests use `node --test --import tsx`, not Vitest; the test script also imports `test/setup-multiplexer-env.mjs`. Run `npm test` from this package.
+- Tests use `node --test --import tsx`, not Vitest; the test script also imports `test/setup-multiplexer-env.mjs`. Run `bun run test` from this package.
 - Alt-screen/layout changes: see `test/tui-alt-screen.test.ts`, `test/layout.test.ts`, `test/viewport-render.test.ts`.
 - Rendering changes must include focused headless-terminal assertions and preserve flicker budgets.
-- Runtime changes require root `npm run check`, `senpi-qa` TUI smoke evidence, and visual terminal QA.
+- Runtime changes require root `bun run check`, `senpi-qa` TUI smoke evidence, and visual terminal QA.
 - Read `src/changes.md` before altering renderer or loader behavior.
-- Native modifier binaries: `npm run build:native:darwin`; `npm run build:native:win32` (toolchain via `PI_TUI_WIN32_TOOLCHAIN=msvc|mingw`).
+- Native modifier binaries: `bun run build:native:darwin`; `bun run build:native:win32` (toolchain via `PI_TUI_WIN32_TOOLCHAIN=msvc|mingw`).

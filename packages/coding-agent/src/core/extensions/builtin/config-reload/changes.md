@@ -1,5 +1,37 @@
 # config-reload Extension Changes
 
+## Offload non-recursive watch creation to the worker (2026-09-02)
+
+### What changed
+
+- `watch-event-source.ts` routes EVERY `fs.watch` subscription — recursive and
+  non-recursive — through the existing watch worker on darwin and linux. The
+  worker message gained a `recursive` flag; the worker passes it to `fs.watch`.
+- Windows (and other platforms) keep the direct main-thread `fs.watch` path.
+
+### Why
+
+- The per-directory watch redesign (2026-08-20) made every engine subscription
+  `{ recursive: false }`, which silently bypassed the worker offload added for
+  recursive watches: the offload gate required `watchOptions.recursive`. Every
+  FSEvents stream was again created synchronously on the interactive main
+  thread. Measured with PI_TIMING + dist probes on an M4 Pro under load:
+  `#attach` cost 8.0s for `~/.omo/agent/extensions` and 2.7s for the cwd
+  target; `rebuildWatchers` inside config-reload's `session_start` handler hit
+  89s worst-case, dominating the reload `lifecycle` phase (2.0-3.2s idle,
+  12s+ loaded). After offloading: lifecycle ~150ms, reload total ~180-230ms.
+
+### Why an extension could not handle it
+
+- The event source is internal to this builtin; nothing outside it controls how
+  subscriptions reach `fs.watch`.
+
+### Expected merge conflict zones
+
+- LOW: `watch-event-source.ts` offload gate and worker source string;
+  `config-reload-extension.test.ts` macOS offload describe block.
+
+
 ## Watch only in-scope directories instead of whole subtrees (2026-08-20)
 
 ### What changed

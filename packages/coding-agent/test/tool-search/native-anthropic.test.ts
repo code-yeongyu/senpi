@@ -65,6 +65,8 @@ describe("todo 9 generalized catalog injection", () => {
 		};
 		const harness = await createHarness({
 			api: "anthropic-messages",
+			provider: "anthropic",
+			models: [{ id: "claude-opus-5" }],
 			extensionFactories: [
 				{ factory: toolSearchExtension, path: "<builtin:tool-search>" },
 				{ factory: searchableExtension, path: "/workspace/extensions/weather.ts" },

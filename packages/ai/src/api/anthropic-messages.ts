@@ -1,14 +1,18 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type {
-	CacheControlEphemeral,
-	ContentBlockParam,
+	BetaStopReason,
+	BetaThinkingDroppedInputTransformation,
+	BetaTool,
+	BetaCacheControlEphemeral as CacheControlEphemeral,
+	BetaContentBlockParam as ContentBlockParam,
 	MessageCreateParamsNonStreaming,
 	MessageCreateParamsStreaming,
-	MessageParam,
-	RawMessageStreamEvent,
-	RefusalStopDetails,
-} from "@anthropic-ai/sdk/resources/messages.js";
+	BetaMessageParam as MessageParam,
+	BetaRawMessageStreamEvent as RawMessageStreamEvent,
+	BetaRefusalStopDetails as RefusalStopDetails,
+} from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 import { calculateCost } from "../models.ts";
+import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
 	AnthropicRefusalFallback,
 	Api,
@@ -113,7 +117,7 @@ function getCacheControl(
 }
 
 // Stealth mode: Mimic Claude Code's tool naming exactly
-const claudeCodeVersion = "2.1.75";
+const claudeCodeVersion = "2.1.251";
 
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -229,9 +233,10 @@ export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export type AnthropicThinkingDisplay = "summarized" | "omitted";
 
-type MessageCreateParamsStreamingWithFallbacks = MessageCreateParamsStreaming & {
-	fallbacks?: AnthropicRefusalFallback;
-};
+// SDK 0.123.0's beta MessageCreateParams already declares `fallbacks`
+// (BetaFallbacksParam), which the fork's AnthropicRefusalFallback matches
+// structurally, so this alias no longer needs to widen the params type.
+type MessageCreateParamsStreamingWithFallbacks = MessageCreateParamsStreaming;
 
 const FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
 const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
@@ -276,11 +281,32 @@ const UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS = [
 ] as const;
 const SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
+function shouldUseServerSideFallbackBeta(model: Model<"anthropic-messages">): boolean {
+	return (model.compat?.allowedFallbackModels?.length ?? 0) > 0;
+}
+
+const MID_CONVERSATION_OUTPUT_CONFIG_BETA = "mid-conversation-output-config-2026-07-01";
+const THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01";
+
 type UnsignedThinkingReplay = "text" | "empty-signature";
 
 // A provider can reject its own empty signatures. Learn that capability for one
 // conversation without changing the shared model definition used by other sessions.
 const unsignedThinkingTextReplayFallbacks = new Set<string>();
+
+registerSessionResourceCleanup((sessionId?: string) => {
+	// One small entry per (session, base URL, model) that ever hit the fallback;
+	// drop the session's entries at teardown so long-lived hosts do not collect
+	// them for every session that ever ran.
+	if (sessionId === undefined) {
+		unsignedThinkingTextReplayFallbacks.clear();
+		return;
+	}
+	const prefix = `${sessionId}\u0000`;
+	for (const key of unsignedThinkingTextReplayFallbacks) {
+		if (key.startsWith(prefix)) unsignedThinkingTextReplayFallbacks.delete(key);
+	}
+});
 
 function unsignedThinkingFallbackKey(
 	model: Model<"anthropic-messages">,
@@ -437,12 +463,13 @@ const REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES: ReadonlySet<string> = new Set(
 	"text_editor_code_execution_tool_result",
 	"tool_search_tool_result",
 	"container_upload",
-	// Server-side fallback beta (server-side-fallback-2026-06-01) emits a
-	// `fallback` marker mid-response. The marker itself is replayed as a kept
-	// audit block. Blocks emitted *before* the final marker are the declined
-	// attempt and are pruned in convertMessages (see lastAnthropicFallbackBoundary
-	// and collectDiscardedFallbackToolCallIds); the marker onward replays verbatim.
-	"fallback",
+	// The server-side fallback marker (`fallback`, server-side-fallback-2026-06-01
+	// beta) is deliberately absent: the Messages API rejects it as an *input* tag
+	// ("Input tag 'fallback' found using 'type' does not match any of the expected
+	// tags"), so replaying it 400s every subsequent same-model request. The stored
+	// marker is audit metadata and still drives declined-attempt pruning in
+	// convertMessages (see lastAnthropicFallbackBoundary and
+	// collectDiscardedFallbackToolCallIds); blocks after it replay verbatim.
 ]);
 
 function isReplayableAnthropicProviderNativeBlock(raw: unknown): raw is ContentBlockParam {
@@ -1269,12 +1296,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	const stream = new AssistantMessageEventStream();
 
 	(async () => {
+		const providerThinkingLevel = model.compat?.supportsMidConvoEffort ? (options?.effort ?? "high") : undefined;
 		const output: AssistantMessage = {
 			role: "assistant",
 			content: [],
 			api: model.api as Api,
 			provider: model.provider,
 			model: model.id,
+			...(providerThinkingLevel === undefined ? {} : { providerThinkingLevel }),
 			usage: {
 				input: 0,
 				output: 0,
@@ -1295,6 +1324,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			let client: Anthropic;
 			let isOAuth: boolean;
 			let usageModel = model;
+			let inputTransformations: BetaThinkingDroppedInputTransformation[] | undefined;
 
 			if (options?.client) {
 				client = options.client;
@@ -1360,12 +1390,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					...(payloadRequestMetadata.headers ? { headers: payloadRequestMetadata.headers } : {}),
 				};
 				try {
-					const response = await client.messages.create({ ...params, stream: true }, requestOptions).asResponse();
+					const response = await client.beta.messages
+						.create({ ...params, stream: true }, requestOptions)
+						.asResponse();
 					return { params, response };
 				} catch (error) {
 					if (isForcedToolChoiceUnsupportedError(error, isForcedAnthropicToolChoice(params.tool_choice))) {
 						params = omitToolChoiceParam(params);
-						const response = await client.messages
+						const response = await client.beta.messages
 							.create({ ...params, stream: true }, requestOptions)
 							.asResponse();
 						return { params, response };
@@ -1405,6 +1437,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			for await (const event of iterateAnthropicEvents(response, requestSignal)) {
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
+					const transformations = event.message.input_transformations;
+					if (Array.isArray(transformations)) inputTransformations = transformations;
 					output.model = event.message.model;
 					const fallback =
 						output.model === model.id
@@ -1438,6 +1472,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						break;
 					}
 				} else if (event.type === "content_block_start") {
+					if (event.content_block.type === "fallback" && output.content.length > 0) {
+						throw new Error("Anthropic performed an unsupported mid-output model fallback");
+					}
 					const receipt =
 						options?.abortServerSideFallback === true
 							? parseServerFallbackReceipt(event.content_block)
@@ -1587,6 +1624,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						}
 					}
 				} else if (event.type === "message_delta") {
+					const transformations = event.input_transformations;
+					if (Array.isArray(transformations)) inputTransformations = transformations;
 					if (event.delta.stop_reason) {
 						output.rawStopReason = event.delta.stop_reason;
 						const stopReasonResult = mapStopReason(event.delta.stop_reason, event.delta.stop_details);
@@ -1613,11 +1652,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						if (event.usage.cache_creation_input_tokens != null) {
 							output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
 						}
-						// Anthropic reports reasoning tokens in `output_tokens_details.thinking_tokens` on the
-						// final message_delta usage (a subset of output_tokens). SDK 0.91.1 omits the field from
-						// its Usage type, so read it through a narrow cast. Verified against the live API.
-						const thinkingTokens = (event.usage as { output_tokens_details?: { thinking_tokens?: number } })
-							.output_tokens_details?.thinking_tokens;
+						// Anthropic reports reasoning tokens as a subset of output tokens.
+						const thinkingTokens = event.usage.output_tokens_details?.thinking_tokens;
 						if (thinkingTokens != null) {
 							output.usage.reasoning = thinkingTokens;
 						}
@@ -1642,6 +1678,19 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			}
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
 				throw new Error(output.errorMessage || "An unknown error occurred");
+			}
+			if (inputTransformations && inputTransformations.length > 0) {
+				appendAssistantMessageDiagnostic(output, {
+					type: "anthropic_input_transformations",
+					timestamp: Date.now(),
+					details: {
+						transformations: inputTransformations.map((transformation) => ({
+							type: transformation.type ?? undefined,
+							path: transformation.path ?? undefined,
+							reason: transformation.reason ?? undefined,
+						})),
+					},
+				});
 			}
 
 			combinedAbort.cleanup();
@@ -1729,7 +1778,6 @@ function cannotDisableThinking(
 	compat: { supportsDisabledThinking: boolean },
 ): boolean {
 	if (!compat.supportsDisabledThinking) return true;
-	if (model.thinkingLevelMap?.off === null) return true;
 	return matchesModelMarker(model, DISABLED_THINKING_REJECTING_MODEL_MARKERS);
 }
 
@@ -2000,6 +2048,47 @@ export function buildAnthropicWarmPromptCacheParams(
 	}) as MessageCreateParamsNonStreaming;
 }
 
+function getBetaFeatures(
+	model: Model<"anthropic-messages">,
+	context: Context,
+	isOAuthToken: boolean,
+	options?: AnthropicOptions,
+): NonNullable<MessageCreateParamsStreaming["betas"]> {
+	let configuredFeatures: string | null | undefined;
+	for (const headers of [model.headers, options?.headers]) {
+		for (const [name, value] of Object.entries(headers ?? {})) {
+			if (name.toLowerCase() === "anthropic-beta") configuredFeatures = value;
+		}
+	}
+	if (configuredFeatures === null) return [];
+	if (configuredFeatures !== undefined) {
+		return [
+			...new Set(
+				configuredFeatures
+					.split(",")
+					.map((feature) => feature.trim())
+					.filter(Boolean),
+			),
+		];
+	}
+	const features: NonNullable<MessageCreateParamsStreaming["betas"]> = [];
+	if (isOAuthToken) features.push("claude-code-20250219", "oauth-2025-04-20");
+	if (shouldUseFineGrainedToolStreamingBeta(model, context)) features.push(FINE_GRAINED_TOOL_STREAMING_BETA);
+	if (
+		model.reasoning &&
+		options?.thinkingEnabled === true &&
+		(options.interleavedThinking ?? true) &&
+		!supportsAdaptiveThinking(model)
+	) {
+		features.push(INTERLEAVED_THINKING_BETA);
+	}
+	if (shouldUseServerSideFallbackBeta(model)) features.push(SERVER_SIDE_FALLBACK_BETA);
+	if (model.compat?.supportsMidConvoEffort === true) {
+		features.push(MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA);
+	}
+	return [...new Set(features)];
+}
+
 function buildParams(
 	model: Model<"anthropic-messages">,
 	context: Context,
@@ -2033,19 +2122,38 @@ function buildParams(
 		deferredTools = [];
 	}
 	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
-	const params: MessageCreateParamsStreamingWithFallbacks = {
+	const activeEffort = options?.effort ?? "high";
+	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, options);
+	const convertedMessages = convertMessages(
+		transformedMessages,
+		model,
+		isOAuthToken,
+		cacheControl,
+		unsignedThinkingReplay,
+		deferredToolNames,
+		normalizeToolName,
+		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
+	);
+	const messages =
+		model.compat?.supportsMidConvoEffort === true
+			? insertThinkingLevelMessages(convertedMessages, activeEffort)
+			: convertedMessages.messages;
+	// Effort markers are appended after history; re-run the fork's final-user cache checkpoint
+	// against the actual last user/tool-result message so the marker cannot displace cache_control.
+	if (model.compat?.supportsMidConvoEffort === true && cacheControl) {
+		for (let index = messages.length - 1; index >= 0; index--) {
+			if (messages[index].role === "user") {
+				markUserMessageCacheCheckpoint(messages[index], cacheControl);
+				break;
+			}
+		}
+	}
+	const params: MessageCreateParamsStreaming = {
 		model: model.id,
-		messages: convertMessages(
-			transformedMessages,
-			model,
-			isOAuthToken,
-			cacheControl,
-			unsignedThinkingReplay,
-			deferredToolNames,
-			normalizeToolName,
-		),
+		messages,
 		max_tokens: options?.maxTokens ?? model.maxTokens,
 		stream: true,
+		...(betaFeatures.length > 0 ? { betas: betaFeatures } : {}),
 	};
 
 	// For OAuth tokens, we MUST include Claude Code identity
@@ -2105,8 +2213,17 @@ function buildParams(
 		];
 	}
 
-	// Configure thinking mode: adaptive, budget-based, or explicitly disabled.
-	if (model.reasoning) {
+	// Managed effort models always use adaptive thinking so prefix mismatches can
+	// be dropped instead of surfacing as persistent 400 responses. Thinking-off is
+	// handled before this managed branch because these models accept `disabled`.
+	if (model.compat?.supportsMidConvoEffort === true && options?.thinkingEnabled !== false) {
+		params.thinking = {
+			type: "adaptive",
+			display: options?.thinkingDisplay ?? "summarized",
+			block_binding: { prefix_mismatch_behavior: "drop_block" },
+		};
+		params.output_config = { effort: "high" };
+	} else if (model.reasoning) {
 		if (options?.thinkingEnabled) {
 			// Default to "summarized" so Opus 4.7 and Mythos Preview behave like
 			// older Claude 4 models (whose API default is also "summarized").
@@ -2164,7 +2281,9 @@ function buildParams(
 	applyExtraBodyToAnthropicParams(params, options?.extraBody);
 
 	if (options?.refusalFallbacks !== undefined) {
-		params.fallbacks = options.refusalFallbacks;
+		// AnthropicRefusalFallback models a readonly list; the SDK's BetaFallbacksParam
+		// is mutable, so copy rather than widen the fork's public type.
+		params.fallbacks = options.refusalFallbacks === "default" ? "default" : [...options.refusalFallbacks];
 	}
 
 	return params;
@@ -2237,6 +2356,11 @@ function convertToolResult(
 	};
 }
 
+interface ConvertedAnthropicMessages {
+	messages: MessageParam[];
+	assistantLevels: Map<number, AnthropicEffort>;
+}
+
 function convertMessages(
 	transformedMessages: Message[],
 	model: Model<"anthropic-messages">,
@@ -2245,8 +2369,10 @@ function convertMessages(
 	unsignedThinkingReplay: UnsignedThinkingReplay = "text",
 	deferredToolNames: ReadonlySet<string> = new Set(),
 	normalizeToolName: (name: string) => string = (name) => name,
-): MessageParam[] {
+	managedProvider?: string,
+): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
+	const assistantLevels = new Map<number, AnthropicEffort>();
 	const loadedToolNames = new Set<string>();
 	// Tool calls from a declined pre-fallback attempt are dropped from their
 	// assistant turn below; drop their tool_results in lockstep so none dangle.
@@ -2313,7 +2439,8 @@ function convertMessages(
 			const blocks: ContentBlockParam[] = [];
 			const isSameModel = isSameAnthropicModel(msg, model);
 			// Blocks before the final fallback marker are the declined attempt; the
-			// marker onward is the serving model's output and replays verbatim.
+			// blocks after it are the serving model's output and replay verbatim. The
+			// marker itself never replays: the API rejects `fallback` as an input tag.
 			const fallbackBoundary = isSameModel ? lastAnthropicFallbackBoundary(msg.content) : -1;
 			const preBoundaryPairedServerToolUseIds =
 				fallbackBoundary >= 0
@@ -2397,10 +2524,19 @@ function convertMessages(
 				}
 			}
 			if (blocks.length === 0) continue;
+			const messageIndex = params.length;
 			params.push({
 				role: "assistant",
 				content: blocks,
 			});
+			if (
+				managedProvider !== undefined &&
+				msg.api === "anthropic-messages" &&
+				msg.provider === managedProvider &&
+				isAnthropicEffort(msg.providerThinkingLevel)
+			) {
+				assistantLevels.set(messageIndex, msg.providerThinkingLevel);
+			}
 		} else if (msg.role === "toolResult") {
 			// Collect all consecutive toolResult messages, needed for z.ai Anthropic endpoint.
 			const toolResults: ContentBlockParam[] = [];
@@ -2442,7 +2578,27 @@ function convertMessages(
 		}
 	}
 
-	return params;
+	return { messages: params, assistantLevels };
+}
+
+function isAnthropicEffort(value: unknown): value is AnthropicEffort {
+	return value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max";
+}
+
+function insertThinkingLevelMessages(
+	converted: ConvertedAnthropicMessages,
+	activeEffort: AnthropicEffort,
+): MessageParam[] {
+	const messages: MessageParam[] = [];
+	for (let index = 0; index < converted.messages.length; index++) {
+		const historicalEffort = converted.assistantLevels.get(index);
+		if (historicalEffort !== undefined) {
+			messages.push({ role: "system", content: [], output_config: { effort: historicalEffort } });
+		}
+		messages.push(converted.messages[index]);
+	}
+	messages.push({ role: "system", content: [], output_config: { effort: activeEffort } });
+	return messages;
 }
 
 function shouldUseFineGrainedToolStreamingBeta(model: Model<"anthropic-messages">, context: Context): boolean {
@@ -2456,7 +2612,7 @@ function convertTools(
 	supportsStrictTools: boolean,
 	cacheControl?: CacheControlEphemeral,
 	deferLoading = false,
-): Anthropic.Messages.Tool[] {
+): BetaTool[] {
 	if (!tools) return [];
 
 	return tools.map((tool, index) => {
@@ -2494,7 +2650,7 @@ function convertTools(
 }
 
 function mapStopReason(
-	reason: Anthropic.Messages.StopReason | string,
+	reason: BetaStopReason | string,
 	stopDetails?: RefusalStopDetails | null,
 ): { stopReason: StopReason; errorMessage?: string; stopDetails?: AssistantStopDetails } {
 	const explanation = stopDetails?.explanation;

@@ -1,9 +1,23 @@
+import { resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import { APPROVED_MONITOR_PARENT } from "../monitor-permission.ts";
 import { MonitorRegistry } from "../monitor-registry.ts";
-import { DEFAULT_COLS, DEFAULT_ROWS, TERMINAL_MONITOR_TOOL } from "../shared.ts";
-import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
+import {
+	DEFAULT_COLS,
+	DEFAULT_ROWS,
+	DURABLE_MONITOR_EXPIRY_MS,
+	MAX_DURABLE_MONITORS,
+	TERMINAL_MONITOR_TOOL,
+} from "../shared.ts";
+import type { MonitorRegistration, TerminalManifestWriter } from "../terminal-manifest.ts";
+import {
+	errorResult,
+	resolveTerminalId,
+	type TerminalToolContext,
+	type TerminalToolResult,
+	textResult,
+} from "./context.ts";
 import { renderMonitorCall } from "./render.ts";
 import { spawnCommandSession } from "./spawn.ts";
 
@@ -31,12 +45,21 @@ export const monitorSchema = Type.Object({
 	),
 	command: Type.Optional(
 		Type.String({
-			description: "Create (required): shell command to run and watch in a PTY-backed monitor session.",
+			description:
+				"Create, command branch (XOR path): shell command to run and watch in a PTY-backed monitor session.",
 		}),
 	),
-	path: Type.Optional(Type.String({ minLength: 1, description: "File path to watch for a native event." })),
+	path: Type.Optional(
+		Type.String({
+			minLength: 1,
+			description:
+				"Create, file branch (XOR command): one regular file to watch natively, whose parent directory must already exist; takes no filter.",
+		}),
+	),
 	event: Type.Optional(
-		StringEnum(["create", "modify"] as const, { description: "Native file event (defaults to create)." }),
+		StringEnum(["create", "modify"] as const, {
+			description: "File branch only: which file event fires the watch (defaults to create).",
+		}),
 	),
 	filter: Type.Optional(
 		Type.String({ description: "Only PTY output lines matching this regex become monitor events." }),
@@ -45,13 +68,18 @@ export const monitorSchema = Type.Object({
 		Type.Number({
 			minimum: 1,
 			maximum: MAX_MONITOR_TIMEOUT_MS,
-			description: "Watcher deadline in milliseconds (default 300000; ignored by persistent monitors).",
+			description: "Watcher deadline in milliseconds (default 300000; ignored when persistent).",
 		}),
 	),
 	persistent: Type.Optional(
-		Type.Boolean({ description: "Keep watching until the command exits or kill_bash stops its bash_id." }),
+		Type.Boolean({
+			description:
+				"Standing watch: no deadline, and it survives a session restart (command re-run once, file rescanned and any detached change reported). Expires 7 days after creation; max 5 per session; stop one with kill_bash.",
+		}),
 	),
-	bash_id: Type.Optional(Type.String({ description: "Rearm (required): paused monitor bash_id to resume." })),
+	bash_id: Type.Optional(
+		Type.String({ description: "Rearm: paused monitor id (mon_ or bash_id) to resume; omit for all paused." }),
+	),
 });
 export type MonitorInput = Static<typeof monitorSchema>;
 
@@ -104,19 +132,96 @@ async function createMonitor(
 		return errorResult(`Invalid monitor filter regex: ${input.filter}`);
 	}
 
+	// Durability needs an absolute directory: a restore runs in a different process whose
+	// process cwd is unrelated, so the spec must carry the resolved path the spawn used.
+	const cwd = resolve(execCtx?.cwd ?? ctx.cwd);
 	const { id, runtime } = await spawnCommandSession(ctx, {
 		command: input.command,
 		cols: resolveDimension(undefined, ctx.defaultCols || DEFAULT_COLS),
 		rows: resolveDimension(undefined, ctx.defaultRows || DEFAULT_ROWS),
-		cwd: execCtx?.cwd,
+		cwd,
 		...(input.persistent ? {} : { timeoutMs: resolveTimeoutMs(input.timeout_ms) }),
 	});
 	ctx.onMonitorRearmed?.(id);
-	registry.register({ id, description: input.description, runtime, filter });
-	return textResult(`Monitor started with ID: ${id}`, { details: { bash_id: id, monitor: true } });
+	const monitorId = registry.register({
+		id,
+		description: input.description,
+		runtime,
+		filter,
+		// Only persistent command watches are restartable-command durable: those carry the fire budget.
+		durabilityClass: input.persistent === true ? "restartable-command" : "ephemeral",
+		// Same deadline the manifest writer persists, so the footer warns off the live record too.
+		...(input.persistent === true ? { expiresAt: Date.now() + DURABLE_MONITOR_EXPIRY_MS } : {}),
+	});
+	ctx.manager.bindMonitorId(monitorId, id);
+	// The tool call site is the only place the branch inputs (command, persistent, filter)
+	// live; hand the captured spec to the session's manifest writer for durable recording.
+	handMonitorSpec(manifestSessionKey(ctx), {
+		monitorId,
+		spec: {
+			kind: "command",
+			description: input.description,
+			command: input.command,
+			filter: input.filter,
+			cwd,
+			persistent: input.persistent === true,
+		},
+	});
+	return textResult(`Monitor started with ID: ${monitorId}`, {
+		details: { monitor_id: monitorId, bash_id: id, monitor: true },
+	});
 }
 
 /** Build the PTY-backed monitor tool. Monitor handles share TerminalManager's bash_N namespace. */
+const manifestWriters = new Map<string, TerminalManifestWriter>();
+
+/** Bind the session's manifest writer so monitor tool calls can hand it specs captured at the call site. */
+export function bindTerminalManifestWriter(sessionId: string, writer: TerminalManifestWriter): void {
+	manifestWriters.set(sessionId, writer);
+}
+
+export function unbindTerminalManifestWriter(sessionId: string): void {
+	manifestWriters.delete(sessionId);
+}
+
+/** The durability session key for a tool context: the agent session id, when the context carries one. */
+function manifestSessionKey(ctx: TerminalToolContext): string | undefined {
+	return ctx.getSessionContext?.()?.sessionManager?.getSessionId?.();
+}
+
+/** Hand a spec captured at the monitor tool call site to the session's bound writer, if any. */
+function handMonitorSpec(sessionKey: string | undefined, registration: MonitorRegistration): void {
+	const writer = sessionKey === undefined ? undefined : manifestWriters.get(sessionKey);
+	void writer?.recordRegister(registration);
+}
+
+/** Persist a durable file watch's baseline checkpoint through the writer's debounced path. */
+function handFileCheckpoint(
+	sessionKey: string | undefined,
+	monitorId: string,
+	registry: MonitorRegistry,
+	runtimeId: string,
+): void {
+	const writer = sessionKey === undefined ? undefined : manifestWriters.get(sessionKey);
+	const checkpoint = registry.fileCheckpoint(runtimeId);
+	if (writer && checkpoint) writer.scheduleCheckpoint(monitorId, checkpoint);
+}
+
+/**
+ * Admission control for a durable create: refuse once the session already holds
+ * MAX_DURABLE_MONITORS restart-surviving monitors. Checked BEFORE any spawn or registry
+ * registration so a refused call leaves no PTY and no manifest entry behind. A context
+ * with no bound writer persists nothing, so it has no durable population to cap.
+ */
+function durableAdmissionError(ctx: TerminalToolContext): TerminalToolResult | undefined {
+	const sessionKey = manifestSessionKey(ctx);
+	const writer = sessionKey === undefined ? undefined : manifestWriters.get(sessionKey);
+	if (writer === undefined || writer.durableCount() < MAX_DURABLE_MONITORS) return undefined;
+	return errorResult(
+		`Cannot start another persistent monitor: this session already holds ${MAX_DURABLE_MONITORS} durable monitors (the maximum). Stop one with kill_bash first.`,
+	);
+}
+
 export function createMonitorTool(ctx: TerminalToolContext) {
 	let fallbackRegistry: MonitorRegistry | undefined;
 	const getRegistry = (): MonitorRegistry => {
@@ -129,10 +234,12 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 		name: TERMINAL_MONITOR_TOOL,
 		label: "monitor",
 		description:
-			"Subscribe to a command's output instead of polling: newline-terminated PTY output lines (stderr merged) that match filter arrive as injected events while you keep working; command exit always delivers a summary event. Identical consecutive line-only update batches are deduped, so a watcher reprinting unchanged status does not re-wake the session. Returns a bash_id immediately; peek with bash_output, stop with kill_bash.",
-		promptSnippet: "Subscribe to a command's PTY output lines as injected events instead of polling",
+			"Subscribe to a change instead of polling. Pass command XOR path, never both: command watches a PTY session, injecting matching newline-terminated output lines (stderr merged) plus an exit summary; path natively watches one file and fires once, where create (the default) fires only when the file appears after registration, so use event modify for an existing file, and filter is rejected. Returns a bash_id immediately; peek with bash_output, stop with kill_bash.",
+		promptSnippet:
+			"Subscribe to a command's output or a file's create/modify event as injected events instead of polling",
 		promptGuidelines: [
-			"Waiting on observable state (CI checks, builds, log patterns, deploys) means a monitor, never a foreground sleep/poll loop.",
+			"Waiting on observable state (CI checks, builds, log patterns, deploys, a file landing) means a monitor, never a foreground sleep/poll loop.",
+			'Waiting for one file to appear or change is the path branch: `monitor({ description, path, event? })` beats wrapping `test -f` in a shell poll loop; a file that already exists needs `event: "modify"`, since `create` only fires on appearance, and registration needs the parent directory to exist already — when the run creates that directory too, use the `command` branch instead.',
 			"Shape the command for the events you need: one-shot gate = `until <cond>; do sleep 1; done; printf 'READY\\n'` with filter ^READY$; stream = `tail -n 0 -F <log> | grep --line-buffered <pat>` with persistent: true, then kill_bash.",
 			"Sleep loops belong INSIDE the monitor command, never in your turn: about to sleep, re-poll bash_output, or foreground-block on a long command means register a monitor and keep working.",
 		],
@@ -147,39 +254,75 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 		): Promise<TerminalToolResult> {
 			const registry = getRegistry();
 			if (input.action === "rearm") {
-				const bashId = input.bash_id;
-				if (bashId === undefined || bashId.length === 0) return errorResult("monitor rearm requires bash_id.");
+				if (input.bash_id === undefined || input.bash_id.length === 0) {
+					const resumed = registry.resume();
+					if (resumed.length === 0) return textResult("No paused monitors to re-arm.");
+					ctx.onMonitorsResumed?.(resumed.map((monitor) => monitor.id));
+					const total = resumed.reduce((sum, monitor) => sum + monitor.mutedDropped, 0);
+					return textResult(
+						total > 0
+							? `Re-armed ${resumed.length} paused monitor(s) (${total} line(s) dropped while muted).`
+							: `Re-armed ${resumed.length} paused monitor(s).`,
+					);
+				}
+				const bashId = resolveTerminalId(ctx.manager, input.bash_id);
+				const dropped = registry.mutedDropped(bashId);
 				const outcome = registry.rearm(bashId);
 				if (outcome === "not_found") return errorResult(`No active monitor found with id: ${bashId}`);
 				if (outcome === "not_paused") return textResult(`Monitor ${bashId} is not paused; no action taken.`);
 				ctx.onMonitorRearmed?.(bashId);
-				return textResult(`Monitor ${bashId} re-armed.`);
+				return textResult(
+					dropped > 0
+						? `Monitor ${bashId} re-armed (${dropped} line(s) dropped while muted).`
+						: `Monitor ${bashId} re-armed.`,
+				);
 			}
 			const fileInput = isFileCreateInput(input);
 			const commandInput = isCreateInput(input);
 			if (fileInput && commandInput) return errorResult("monitor accepts either command or path, not both.");
+			// Admission runs before either create branch touches a PTY or the registry.
+			if (input.persistent === true && (fileInput || commandInput)) {
+				const refused = durableAdmissionError(ctx);
+				if (refused) return refused;
+			}
 			if (fileInput) {
-				if (input.filter !== undefined || input.persistent)
-					return errorResult("Native file monitors do not support filter or persistent.");
+				if (input.filter !== undefined) return errorResult("Native file monitors do not support filter.");
 				if (!ctx.monitorRegistry)
 					return errorResult("Native file monitors require a lifecycle-owned monitor registry.");
 				try {
-					const id = await ctx.monitorRegistry.registerFile({
+					const approvedParent = (input as Record<string | symbol, unknown>)[APPROVED_MONITOR_PARENT] as
+						| string
+						| undefined;
+					const { id, monitorId } = await ctx.monitorRegistry.registerFile({
 						description: input.description,
 						path: input.path,
 						event: input.event ?? "create",
 						timeoutMs: resolveTimeoutMs(input.timeout_ms),
 						cwd: execCtx?.cwd ?? ctx.cwd,
-						...((input as Record<string | symbol, unknown>)[APPROVED_MONITOR_PARENT] !== undefined
-							? {
-									approvedParent: (input as Record<string | symbol, unknown>)[
-										APPROVED_MONITOR_PARENT
-									] as string,
-								}
-							: {}),
+						...(approvedParent !== undefined ? { approvedParent } : {}),
+						...(input.persistent === true ? { expiresAt: Date.now() + DURABLE_MONITOR_EXPIRY_MS } : {}),
 					});
-					return textResult(`Monitor started with ID: ${id}`, {
-						details: { bash_id: id, watch_id: id, monitor: true },
+					ctx.manager.bindMonitorId(monitorId, id);
+					// Same spec capture as the command branch: durability inputs live only here.
+					const sessionKey = manifestSessionKey(ctx);
+					handMonitorSpec(sessionKey, {
+						monitorId,
+						spec: {
+							kind: "file",
+							description: input.description,
+							path: input.path,
+							event: input.event ?? "create",
+							timeoutMs: resolveTimeoutMs(input.timeout_ms),
+							cwd: execCtx?.cwd ?? ctx.cwd,
+							persistent: input.persistent === true,
+							...(approvedParent !== undefined ? { approvedParent } : {}),
+						},
+					});
+					// A durable watch checkpoints the registry's own identity tuple straight away, so a
+					// restart before the first change still has a baseline (digest included) to compare to.
+					if (input.persistent === true) handFileCheckpoint(sessionKey, monitorId, ctx.monitorRegistry, id);
+					return textResult(`Monitor started with ID: ${monitorId}`, {
+						details: { monitor_id: monitorId, bash_id: id, monitor: true },
 					});
 				} catch (error) {
 					return errorResult(error instanceof Error ? error.message : String(error));

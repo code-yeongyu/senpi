@@ -20,12 +20,21 @@ export const PI_TO_SDK_TOOL_NAME: Readonly<Record<string, string>> = {
 	glob: "Glob",
 };
 
-export const HOST_TOOL_POLICY_FINGERPRINT = "host-tool-denial-v1";
+/**
+ * Versioned host-tool denial policy. `configFingerprint` in session-sync.ts hashes this as
+ * `hostToolPolicy` into `toolsetHash`; a mismatch is `options_changed` and retires the live
+ * resident query. The same hash is persisted in the restart sidecar, so a bump also makes
+ * the first admission after an upgrade cold-seed (`flatten` / `options_changed`) instead of
+ * resuming the pre-bump SDK session - once per session, intended. Bump when denial copy or
+ * hooks change so wording-only edits cannot keep serving the old reason.
+ */
+export const HOST_TOOL_POLICY_FINGERPRINT = "host-tool-denial-v2";
 
 export const BUILTIN_SDK_TOOLS = ["Read", "Write", "Edit", "Bash", "Grep", "Glob"] as const;
-export const TOOL_EXECUTION_DENIED_MESSAGE = "Tool execution is unavailable in this environment.";
-export const HOST_TOOL_EXECUTION_DENIED_MESSAGE =
-	"This tool call is captured and executed by the host. Do not retry with other tools; end the turn.";
+export const TOOL_EXECUTION_DENIED_MESSAGE =
+	"Senpi executes this tool on the host and returns its result as the next user message. " +
+	"Wait for that result; this denial is not a failure.";
+export const HOST_TOOL_EXECUTION_DENIED_MESSAGE = TOOL_EXECUTION_DENIED_MESSAGE;
 export const CUSTOM_TOOLS_MCP_SERVER_NAME = "custom-tools";
 export const CUSTOM_TOOLS_MCP_PREFIX = `mcp__${CUSTOM_TOOLS_MCP_SERVER_NAME}__`;
 export const HOST_CAPTURED_SDK_TOOL_MATCHER = "Bash|Write|Edit|Read|Grep|Glob|mcp__custom-tools__.*";

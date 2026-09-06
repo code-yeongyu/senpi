@@ -8,15 +8,14 @@ describe("buildPoliciesSection", () => {
 		expect(result).toContain("## Policies");
 		expect(result).toContain("### Hard Blocks");
 		expect(result).toContain("git commit");
-		expect(result).toContain("speculate");
+		expect(result).toContain("unread code");
 	});
 
-	test("includes language-agnostic anti-patterns", () => {
+	test("includes test-integrity and error-visibility blocks", () => {
 		const result = buildPoliciesSection();
 
-		expect(result).toContain("### Anti-Patterns");
 		expect(result).toContain("failing tests");
-		expect(result).toContain("shotgun debugging");
+		expect(result).toContain("shotgun-debug");
 	});
 
 	test("does not hardcode TypeScript-specific rules", () => {

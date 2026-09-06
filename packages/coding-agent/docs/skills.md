@@ -132,7 +132,7 @@ description: What this skill does and when to use it. Be specific.
 
 Run once before first use:
 ```bash
-cd /path/to/skill && npm install
+cd /path/to/skill && bun install
 ```
 
 ## Usage
@@ -249,7 +249,7 @@ description: Web search and content extraction via Brave Search API. Use for sea
 ## Setup
 
 ```bash
-cd /path/to/brave-search && npm install
+cd /path/to/brave-search && bun install
 ```
 
 ## Search

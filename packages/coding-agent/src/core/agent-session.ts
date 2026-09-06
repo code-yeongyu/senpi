@@ -108,6 +108,13 @@ import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import {
+	type ModelUsabilityAdmission,
+	ModelUsabilityBudgetError,
+	projectModelUsabilityBudget,
+} from "./extensions/builtin/compaction/model-usability-budget.ts";
+import { resolveReserveTokens } from "./extensions/builtin/compaction/policy.ts";
+import { WAKE_SOURCE_STATE_EVENT } from "./extensions/builtin/monitor-state-event.ts";
 import { CODEX_RESPONSES_API, type ServiceTier } from "./extensions/builtin/service-tier.ts";
 import { deriveExtensionRegistrationId } from "./extensions/builtin/tool-search/engine/marker.ts";
 import { getToolSearchService } from "./extensions/builtin/tool-search/service.ts";
@@ -153,6 +160,7 @@ import type {
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
+import { MANUAL_CONTINUE_CUSTOM_TYPE, MANUAL_CONTINUE_DIRECTIVE } from "./manual-continue.ts";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
@@ -181,6 +189,7 @@ import {
 import { createFallbackLogger } from "./retry-fallback/log.ts";
 import { ProbeBackScheduler } from "./retry-fallback/probe-scheduler.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
+import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import {
@@ -202,8 +211,16 @@ import { createAllToolDefinitions, temporarilyDisabledToolNames } from "./tools/
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
-/** Built-in shell tools routed exclusively through eval when experimental.bashEvalOnly is enabled. */
-const EVAL_ONLY_POLICY_TOOL_NAMES: readonly string[] = ["bash", "powershell"];
+/** Tools routed exclusively through eval while the registered eval tool is available. */
+const EVAL_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["bash", "powershell", "workflow", "monitor"]);
+
+/** Sample eval-cell call for an eval-only tool, using the argument name that tool actually takes. */
+function evalHelperCall(name: string): string {
+	if (name === "bash" || name === "powershell") return `tool.${name}({ command: "..." })`;
+	if (name === "workflow") return `tool.${name}({ action: "..." })`;
+	if (name === "monitor") return `tool.monitor({ description: "...", command: "...", filter: "..." })`;
+	return `tool.${name}({ ... })`;
+}
 const TURN_RETRY_SUPPRESSION_PREFIX = "senpi:no-turn-retry:";
 const DEFERRED_RETRY_QUEUE_OWNERS = new WeakSet<object>();
 
@@ -435,8 +452,24 @@ export type AgentSessionEvent =
 			thinkingLevel: ThinkingLevel;
 			source: ModelSelectSource;
 	  }
+	| {
+			type: "model_change_skipped";
+			model: Model<any>;
+			contextWindow: number;
+			liveContextTokens: number;
+			requiredTokens: number;
+			shortfallTokens: number;
+			safetyMarginProfile: string;
+			direction: "forward" | "backward";
+	  }
 	/** Effective service tier or fast-mode state changed. */
 	| { type: "service_tier_changed"; tier?: ServiceTier; fastMode: boolean }
+	| {
+			type: "session_settings_changed";
+			steeringMode: "all" | "one-at-a-time";
+			followUpMode: "all" | "one-at-a-time";
+			autoCompactionEnabled: boolean;
+	  }
 	| {
 			type: "compaction_end";
 			reason: CompactionReason;
@@ -779,6 +812,8 @@ export interface ModelCycleResult {
 	thinkingLevel: ThinkingLevel;
 	/** Whether cycling used the configured favorite model list */
 	isScoped: boolean;
+	/** Models skipped because their usability budget cannot admit the current context. */
+	skippedModels: readonly Model<any>[];
 	/** Present when the model switch also changed the active system prompt. */
 	systemPromptChange?: SystemPromptChangeEvent;
 }
@@ -956,6 +991,18 @@ export function truncateToolResultBodies(
 // AgentSession Class
 // ============================================================================
 
+export function providerRetryWatchdogAbortMessage(
+	retryTimeoutMs: number | undefined,
+	streamStartTimeoutMs: number | undefined,
+): string {
+	return (
+		`Provider retry continuation watchdog timed out after ${retryTimeoutMs}ms` +
+		(streamStartTimeoutMs === undefined
+			? " (stream-start guard disabled; raise retry.provider.streamStartTimeoutMs, 0 disables)"
+			: ` (stream-start guard: ${streamStartTimeoutMs}ms; raise retry.provider.streamStartTimeoutMs, 0 disables)`)
+	);
+}
+
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
@@ -1011,6 +1058,14 @@ export class AgentSession {
 	private _pendingCompactionAdmission: PendingCompactionAdmission | undefined = undefined;
 	private readonly _compactionLifecycle = new CompactionLifecycleCoordinator();
 	private readonly _sessionWorkBarrier = new SessionWorkBarrier();
+	/**
+	 * Extension-published activity that outlives a turn (background terminal
+	 * jobs, terminal monitors, loop-guard holds). Counts persist across extension
+	 * reloads on purpose: a stale "busy" only delays reclamation, while a lost
+	 * one would let the host evict a session still doing work.
+	 */
+	private readonly _wakeSources = new WakeSourceTracker();
+	private _unsubscribeWakeSources: (() => void) | undefined;
 	private _overflowRecoveryAttempted = false;
 	private _compactionSkippedTooSmall = false;
 	private _requiredCompactionAdmissionError: RequiredCompactionError | undefined;
@@ -1082,10 +1137,12 @@ export class AgentSession {
 	private _initialActiveToolNames?: string[];
 	private _defaultToolNames?: Set<string>;
 	private _evalOnlyToolNames?: ReadonlySet<string>;
-	/** Explicit config override; when supplied it wins over the settings-derived policy across reloads. */
+	/** Explicit config override; when supplied it wins over the fixed policy across reloads. */
 	private readonly _evalOnlyToolNamesOverride?: ReadonlySet<string>;
 	/** Policy tools withheld from the model, retained so disarming can restore direct access. */
 	private readonly _withheldEvalOnlyToolNames = new Set<string>();
+	/** Eval-only hint names this session published, so a disarm can withdraw exactly those. */
+	private readonly _publishedEvalOnlyHintNames = new Set<string>();
 	/** Active-tool selection as requested by callers, before eval-only filtering. */
 	private _requestedActiveToolNames?: string[];
 	private _allowedToolNames?: Set<string>;
@@ -1567,6 +1624,19 @@ export class AgentSession {
 	// =========================================================================
 
 	/** Emit an event to all listeners */
+	private _emitEntryAppended(entryId: string): void {
+		if (this._extensionMode !== "rpc") return;
+		const entry = this.sessionManager.getEntry(entryId);
+		if (entry) this._emit({ type: "entry_appended", entry });
+	}
+
+	/** Append a transport-provided entry and publish it on the RPC event stream. */
+	appendSessionEntry(entry: SessionEntry): void {
+		this.sessionManager.appendEntry(entry);
+		this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+		this._emitEntryAppended(entry.id);
+	}
+
 	private _emit(event: AgentSessionEvent): void {
 		this._logSessionEvent(event);
 		for (const l of this._eventListeners) {
@@ -1737,6 +1807,20 @@ export class AgentSession {
 		this.abortBranchSummary();
 		this._delegatedCompactionKey = undefined;
 		this._incrementMessageRevision();
+	}
+
+	private _modelChangeWouldExhaustContext(
+		model: Model<Api>,
+	): ReturnType<typeof projectModelUsabilityBudget> | undefined {
+		if (model.contextWindow <= 0) return undefined;
+		const projection = projectModelUsabilityBudget({
+			model,
+			systemPrompt: this.agent.state.systemPrompt,
+			tools: this.agent.state.tools,
+			liveContextTokens: this._getDownswitchLiveContextTokens(model),
+			compaction: this.settingsManager.getCompactionSettings(),
+		});
+		return projection.usable ? undefined : projection;
 	}
 
 	private _getIdleWaitPromise(): Promise<void> {
@@ -1910,7 +1994,9 @@ export class AgentSession {
 					})
 				: processing;
 
-		// Keep queue alive if an event handler fails
+		// Keep queue alive if an event handler fails, including the promise created
+		// by finally() above. The originating prompt observes the stored admission
+		// error after the queue settles; no rejection should become unhandled.
 		this._agentEventQueue.catch(() => {});
 	};
 
@@ -2240,7 +2326,7 @@ export class AgentSession {
 				event.message.role === "toolResult"
 			) {
 				// Regular LLM message - persist as SessionMessageEntry
-				this.sessionManager.appendMessage(event.message);
+				this._emitEntryAppended(this.sessionManager.appendMessage(event.message));
 				this._incrementMessageRevision();
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
@@ -2755,8 +2841,32 @@ export class AgentSession {
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;
+		this._unsubscribeWakeSources?.();
+		this._unsubscribeWakeSources = undefined;
 		this._eventListeners = [];
 		cleanupSessionResources(this.sessionId);
+	}
+
+	/** Live in-session activity signals; see `session-activity.ts` for the contract. */
+	get activitySnapshot(): SessionActivitySnapshot {
+		return {
+			isStreaming: this._isAgentRunActive,
+			isBashRunning: this.isBashRunning,
+			isCompacting: this.isCompacting,
+			hasSessionWork: this._sessionWorkBarrier.hasActiveWork,
+			hasActiveWakeSource: this._wakeSources.hasActive,
+		};
+	}
+
+	/**
+	 * Whether this session owns work that must outlive a teardown decision: an
+	 * agent run, bash, compaction, barrier-held session work, or an
+	 * extension-published wake source. Occupancy sweeps (the shared RPC host's
+	 * idle eviction) MUST consult this rather than individual flags, so a new
+	 * activity source is picked up by every call site at once.
+	 */
+	get isSessionBusy(): boolean {
+		return isSessionBusySnapshot(this.activitySnapshot);
 	}
 
 	// =========================================================================
@@ -3031,21 +3141,31 @@ export class AgentSession {
 		return this._evalOnlyToolNames !== undefined && this._toolRegistry.has("eval");
 	}
 
-	/**
-	 * Resolve the eval-only policy from settings so a reload picks up a flag change.
-	 * An explicitly configured set stays authoritative for SDK embedders and tests.
-	 */
-	private _resolveEvalOnlyToolNames(): ReadonlySet<string> | undefined {
-		if (this._evalOnlyToolNamesOverride !== undefined) return this._evalOnlyToolNamesOverride;
-		return this.settingsManager.getExperimentalBashEvalOnly() ? new Set(EVAL_ONLY_POLICY_TOOL_NAMES) : undefined;
+	/** Resolve the fixed eval-only policy, unless an SDK embedder supplied an override. */
+	private _resolveEvalOnlyToolNames(): ReadonlySet<string> {
+		return this._evalOnlyToolNamesOverride ?? EVAL_ONLY_TOOL_NAMES;
 	}
 
-	/** Publish per-tool eval-only redirect hints so a direct call names its own eval helper. */
+	/**
+	 * Publish per-tool eval-only redirect hints so a direct call names its own eval helper.
+	 *
+	 * Hints published here are tracked so a disarm - or a shrinking armed set, e.g. bash+workflow
+	 * down to workflow only - withdraws the stale ones. Only tracked names are ever deleted, so
+	 * hints owned by other publishers survive.
+	 */
 	private _publishEvalOnlyToolHints(): void {
-		if (!this._isEvalOnlyPolicyArmed()) return;
-		for (const name of this._evalOnlyToolNames ?? []) {
+		const armed = this._isEvalOnlyPolicyArmed() ? (this._evalOnlyToolNames ?? new Set<string>()) : undefined;
+		const registered = armed ? new Set([...armed].filter((name) => this._toolRegistry.has(name))) : undefined;
+		for (const name of this._publishedEvalOnlyHintNames) {
+			if (registered?.has(name)) continue;
+			delete this.agent.removedToolHints[name];
+		}
+		this._publishedEvalOnlyHintNames.clear();
+		if (!registered) return;
+		for (const name of registered) {
 			this.agent.removedToolHints[name] =
-				`Run ${name} inside an eval cell via tool.${name}({ command: "..." }); hooks and permissions still apply.`;
+				`Run ${name} inside an eval cell via ${evalHelperCall(name)}; hooks and permissions still apply.`;
+			this._publishedEvalOnlyHintNames.add(name);
 		}
 	}
 
@@ -3102,7 +3222,7 @@ export class AgentSession {
 		} else {
 			this._withheldEvalOnlyToolNames.clear();
 		}
-		// Remember the unfiltered request so a later disarm can restore withheld shell tools.
+		// Remember the unfiltered request so a later disarm can restore withheld eval-only tools.
 		this._requestedActiveToolNames = [...new Set([...toolNames, ...this._withheldEvalOnlyToolNames])];
 		for (const name of filteredToolNames) {
 			const tool = this._toolRegistry.get(name);
@@ -3120,8 +3240,14 @@ export class AgentSession {
 		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
 		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
 		if (activeToolNamesChanged) {
-			this.abortCompaction();
-			this._incrementMessageRevision();
+			// A tool change emitted while extensions are still binding belongs to the
+			// binding itself, not to a mid-session change. The session was already
+			// committed to the client, so cancelling or invalidating work it started
+			// against that session would be spurious.
+			if (this._extensionBindingPromptReadiness === undefined) {
+				this.abortCompaction();
+				this._incrementMessageRevision();
+			}
 		}
 	}
 
@@ -3261,9 +3387,19 @@ export class AgentSession {
 
 	private _rebuildSystemPrompt(toolNames: string[]): string {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
+		// An eval-only tool is hidden from the model but still callable as `tool.<name>(...)`,
+		// so its own snippet and guidelines still apply and must survive the withholding.
+		// `selectedTools` stays the model-visible list; only the contributions are widened.
+		// This can run before the field initializers below it during construction, so the
+		// withheld set is read defensively rather than spread directly.
+		const withheld = this._withheldEvalOnlyToolNames ?? new Set<string>();
+		const contributingToolNames = [
+			...validToolNames,
+			...[...withheld].filter((name) => this._toolRegistry.has(name) && !validToolNames.includes(name)),
+		];
 		const toolSnippets: Record<string, string> = {};
 		const promptGuidelines: string[] = [];
-		for (const name of validToolNames) {
+		for (const name of contributingToolNames) {
 			const snippet = this._toolPromptSnippets.get(name);
 			if (snippet) {
 				toolSnippets[name] = snippet;
@@ -3294,10 +3430,30 @@ export class AgentSession {
 		const prompt =
 			loaderAppendSystemPrompt.length > 0 ? `${basePrompt}\n\n${loaderAppendSystemPrompt.join("\n\n")}` : basePrompt;
 		if (!this._isEvalOnlyPolicyArmed()) return prompt;
-		const helpers = [...(this._evalOnlyToolNames ?? [])]
-			.map((name) => `tool.${name}({ command: "..." })`)
-			.join(" or ");
-		return `${prompt}\n\nShell commands run ONLY inside eval cells via ${helpers}; hooks and permissions still apply.`;
+		const armed = this._evalOnlyToolNames ?? new Set<string>();
+		const registered = new Set([...armed].filter((name) => this._toolRegistry.has(name)));
+		const sentences: string[] = [];
+		const shellHelpers = ["bash", "powershell"].filter((name) => registered.has(name)).map(evalHelperCall);
+		if (shellHelpers.length > 0) {
+			sentences.push(
+				`Shell commands run ONLY inside eval cells via ${shellHelpers.join(" or ")}; hooks and permissions still apply.`,
+			);
+		}
+		if (registered.has("workflow")) {
+			sentences.push(
+				`The workflow tool runs ONLY inside eval cells via ${evalHelperCall("workflow")}; hooks and permissions still apply.`,
+			);
+		}
+		// SDK embedders can arm names outside the built-in groups; they still need eval guidance.
+		const otherHelpers = [...registered]
+			.filter((name) => name !== "bash" && name !== "powershell" && name !== "workflow")
+			.map(evalHelperCall);
+		if (otherHelpers.length > 0) {
+			sentences.push(
+				`These tools run ONLY inside eval cells via ${otherHelpers.join(" or ")}; hooks and permissions still apply.`,
+			);
+		}
+		return sentences.length > 0 ? `${prompt}\n\n${sentences.join("\n\n")}` : prompt;
 	}
 
 	/**
@@ -3441,6 +3597,30 @@ export class AgentSession {
 		};
 
 		try {
+			// Bare "." on a session that already has messages is the manual-continue
+			// shortcut: it never becomes a visible user turn. Route it through the
+			// hidden custom-message path before extensions see an input event, so a
+			// "." cannot be echoed, transformed, or persisted as literal text. An
+			// empty session, or a "." carrying image attachments (the user is sending
+			// the images, not asking to continue), falls through to ordinary prompt
+			// handling below.
+			if (text.trim() === "." && this.agent.state.messages.length > 0 && !options?.images?.length) {
+				await this.sendCustomMessage(
+					{
+						customType: MANUAL_CONTINUE_CUSTOM_TYPE,
+						content: MANUAL_CONTINUE_DIRECTIVE,
+						display: false,
+					},
+					{
+						triggerTurn: true,
+						deliverAs: options?.streamingBehavior === "followUp" ? "followUp" : "steer",
+					},
+				);
+				promptDisposition?.("handled");
+				preflightResult?.(true);
+				return;
+			}
+
 			// Emit input event for extension interception (before skill/template expansion)
 			let currentText = text;
 			let currentImages = options?.images;
@@ -4159,11 +4339,13 @@ export class AgentSession {
 
 	private _appendCustomMessage(appMessage: CustomMessage): void {
 		this.agent.state.messages.push(appMessage);
-		this.sessionManager.appendCustomMessageEntry(
-			appMessage.customType,
-			appMessage.content,
-			appMessage.display,
-			appMessage.details,
+		this._emitEntryAppended(
+			this.sessionManager.appendCustomMessageEntry(
+				appMessage.customType,
+				appMessage.content,
+				appMessage.display,
+				appMessage.details,
+			),
 		);
 		this._incrementMessageRevision();
 		this._emit({ type: "message_start", message: appMessage });
@@ -4427,6 +4609,47 @@ export class AgentSession {
 		return this._setModel(model, true);
 	}
 
+	assertModelUsable(
+		model: Model<Api> | undefined = this.model,
+		liveContextTokens = 0,
+		options?: { includeSpeculationLead?: boolean; admission?: ModelUsabilityAdmission },
+	): void {
+		if (!model || model.contextWindow <= 0) return;
+		const projection = projectModelUsabilityBudget({
+			model,
+			systemPrompt: this.agent.state.systemPrompt,
+			tools: this.agent.state.tools,
+			liveContextTokens,
+			compaction: this.settingsManager.getCompactionSettings(),
+			includeSpeculationLead: options?.includeSpeculationLead,
+			admission: options?.admission,
+		});
+		if (!projection.usable) throw new ModelUsabilityBudgetError(projection);
+	}
+
+	private _getDownswitchLiveContextTokens(model: Model<Api>): number {
+		const currentModel = this.model;
+		if (!currentModel) return 0;
+		const compaction = this.settingsManager.getCompactionSettings();
+		const currentBudget = projectModelUsabilityBudget({
+			model: currentModel,
+			systemPrompt: this.agent.state.systemPrompt,
+			tools: this.agent.state.tools,
+			compaction,
+		});
+		const targetBudget = projectModelUsabilityBudget({
+			model,
+			systemPrompt: this.agent.state.systemPrompt,
+			tools: this.agent.state.tools,
+			compaction,
+		});
+		const currentUsableContext = currentBudget.contextWindow - currentBudget.requiredTokens;
+		const targetUsableContext = targetBudget.contextWindow - targetBudget.requiredTokens;
+		if (targetUsableContext >= currentUsableContext) return 0;
+		const fixedPrefixTokens = currentBudget.systemPromptTokens + currentBudget.activeToolSchemaTokens;
+		return Math.max(0, (this.getContextUsage()?.tokens ?? 0) - fixedPrefixTokens);
+	}
+
 	/**
 	 * Set the model for this session without changing the global model defaults.
 	 * The selection is still persisted in this session's history.
@@ -4439,6 +4662,7 @@ export class AgentSession {
 		model: Model<Api>,
 		updateGlobalDefaults: boolean,
 	): Promise<SystemPromptChangeEvent | undefined> {
+		this.assertModelUsable(model, this._getDownswitchLiveContextTokens(model));
 		if (!(await this._modelRuntime.checkAuth(model.provider))) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
@@ -4470,6 +4694,17 @@ export class AgentSession {
 		}
 	}
 
+	/**
+	 * A senpi-owned compaction just rewrote the conversation context: release any
+	 * refusal-caused fallback pin (the "same context refuses again" assumption no
+	 * longer holds) and, while no run is active, eagerly re-attempt the original
+	 * model through the existing revert gate. Billing-caused pins never release.
+	 */
+	private async _onCompactionContextChanged(): Promise<void> {
+		const released = this._retryFallback.notifyCompactionApplied();
+		if (released && !this.isStreaming) await this._maybeRestoreFallbackPrimary();
+	}
+
 	private async _switchActiveModel(
 		model: Model<Api>,
 		opts: {
@@ -4492,7 +4727,11 @@ export class AgentSession {
 			this._invalidateCompactionForModelSelection();
 		}
 		const thinking = this._getThinkingForModelSwitch(model, opts.ephemeralThinkingLevel);
+		const liveContextTokens = this._getDownswitchLiveContextTokens(model);
 		this.agent.state.model = model;
+		if (!(model.id === "gpt-6-astra" && (model.provider === "openai" || model.provider === "openai-codex"))) {
+			this.agent.state.reasoningBaseline = undefined;
+		}
 		this.agent.abortServerSideFallback =
 			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
 		if (opts.appendSessionEntry) {
@@ -4531,7 +4770,17 @@ export class AgentSession {
 		this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
 
 		if (!opts.emitModelSelect) return undefined;
-		return await this._emitModelSelect(model, previousModel, opts.modelSelectSource);
+		const previousSystemPrompt = this.agent.state.systemPrompt;
+		try {
+			const systemPromptChange = await this._emitModelSelect(model, previousModel, opts.modelSelectSource);
+			this.assertModelUsable(model, liveContextTokens);
+			return systemPromptChange;
+		} catch (error) {
+			if (previousModel) this.agent.state.model = previousModel;
+			else delete (this.agent.state as { model?: Model<Api> }).model;
+			this.agent.state.systemPrompt = previousSystemPrompt;
+			throw error;
+		}
 	}
 
 	private _applyEphemeralThinkingLevel(level: ThinkingLevel): void {
@@ -4564,6 +4813,7 @@ export class AgentSession {
 		if (favoriteModels.length <= 1) return undefined;
 
 		const currentModel = this.model;
+		if (!currentModel) return undefined;
 		const currentIndex = favoriteModels.findIndex((sm) => modelsAreEqual(sm.model, currentModel));
 
 		let nextIndex: number;
@@ -4573,7 +4823,51 @@ export class AgentSession {
 			const len = favoriteModels.length;
 			nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
 		}
-		const next = favoriteModels[nextIndex];
+		const favoriteCount = favoriteModels.length;
+		const step = direction === "forward" ? 1 : -1;
+		let selectedIndex: number | undefined;
+		const skippedModels: Model<any>[] = [];
+		for (let offset = 0; offset < favoriteCount; offset++) {
+			const candidate = favoriteModels[(nextIndex + step * offset + favoriteCount) % favoriteCount];
+			if (modelsAreEqual(candidate.model, currentModel)) continue;
+			const admission = this._modelChangeWouldExhaustContext(candidate.model);
+			if (admission) {
+				skippedModels.push(candidate.model);
+				this._emit({
+					type: "model_change_skipped",
+					model: candidate.model,
+					contextWindow: candidate.model.contextWindow,
+					liveContextTokens: admission.liveContextTokens,
+					requiredTokens: admission.requiredTokens,
+					shortfallTokens: admission.shortfallTokens,
+					safetyMarginProfile: admission.safetyMarginProfile,
+					direction,
+				});
+				continue;
+			}
+			selectedIndex = (nextIndex + step * offset + favoriteCount) % favoriteCount;
+			break;
+		}
+		if (selectedIndex === undefined) {
+			// Every candidate was inadmissible. Skipping only makes sense when there was somewhere else
+			// to skip TO: with more than one alternative the cycle reports the skipped list and stays put
+			// (#1378's convenience). With a single alternative the user asked for THAT model, so the
+			// documented ModelUsabilityBudgetError still surfaces instead of a silent no-op.
+			const alternatives = favoriteModels.filter((entry) => !modelsAreEqual(entry.model, currentModel));
+			const onlyAlternative = alternatives.length === 1 ? alternatives[0] : undefined;
+			if (onlyAlternative) {
+				this.assertModelUsable(onlyAlternative.model, this._getDownswitchLiveContextTokens(onlyAlternative.model));
+			}
+			return {
+				model: currentModel,
+				thinkingLevel: this.thinkingLevel,
+				isScoped: true,
+				skippedModels,
+			};
+		}
+		const next = favoriteModels[selectedIndex];
+		const liveContextTokens = this._getDownswitchLiveContextTokens(next.model);
+		this.assertModelUsable(next.model, liveContextTokens);
 		const invalidatesCompaction =
 			this._modelSelectionChangesContext(currentModel, next.model) ||
 			currentModel?.provider !== next.model.provider ||
@@ -4604,17 +4898,27 @@ export class AgentSession {
 		});
 		this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
 
-		const systemPromptChange = await this._emitModelSelect(next.model, currentModel, "cycle");
+		const previousSystemPrompt = this.agent.state.systemPrompt;
+		try {
+			const systemPromptChange = await this._emitModelSelect(next.model, currentModel, "cycle");
+			this.assertModelUsable(next.model, liveContextTokens);
 
-		const cycleResult: ModelCycleResult = {
-			model: next.model,
-			thinkingLevel: this.thinkingLevel,
-			isScoped: true,
-		};
-		if (systemPromptChange) {
-			cycleResult.systemPromptChange = systemPromptChange;
+			const cycleResult: ModelCycleResult = {
+				model: next.model,
+				thinkingLevel: this.thinkingLevel,
+				isScoped: true,
+				skippedModels,
+			};
+			if (systemPromptChange) {
+				cycleResult.systemPromptChange = systemPromptChange;
+			}
+			return cycleResult;
+		} catch (error) {
+			if (currentModel) this.agent.state.model = currentModel;
+			else delete (this.agent.state as { model?: Model<Api> }).model;
+			this.agent.state.systemPrompt = previousSystemPrompt;
+			throw error;
 		}
-		return cycleResult;
 	}
 
 	// =========================================================================
@@ -4671,6 +4975,16 @@ export class AgentSession {
 
 		if (isChanging || selectionChanged) {
 			this.sessionManager.appendThinkingLevelChange(effectiveLevel, effectiveSelection);
+			const model = this.model;
+			if (
+				isChanging &&
+				model?.id === "gpt-6-astra" &&
+				(model.provider === "openai" || model.provider === "openai-codex")
+			) {
+				this.agent.state.reasoningBaseline ??= previousLevel;
+				this.sessionManager.appendConfigurationUpdate(effectiveLevel);
+				this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+			}
 			if (updateGlobalDefault && (this.supportsThinking() || effectiveLevel !== "off")) {
 				this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
 			}
@@ -4808,6 +5122,7 @@ export class AgentSession {
 	setSteeringMode(mode: "all" | "one-at-a-time"): void {
 		this.agent.steeringMode = mode;
 		this.settingsManager.setSteeringMode(mode);
+		this._emitSessionSettingsChanged();
 	}
 
 	/**
@@ -4817,6 +5132,7 @@ export class AgentSession {
 	setFollowUpMode(mode: "all" | "one-at-a-time"): void {
 		this.agent.followUpMode = mode;
 		this.settingsManager.setFollowUpMode(mode);
+		this._emitSessionSettingsChanged();
 	}
 
 	// =========================================================================
@@ -5427,6 +5743,9 @@ export class AgentSession {
 				return await this._rejectCompaction(request, requestId, operationId, "would-overflow", false);
 			}
 
+			const latestConfigurationEffort = this.sessionManager
+				.getBranch()
+				.findLast((entry) => entry.type === "configuration_update")?.reasoning.effort;
 			const compactionEntryId = this.sessionManager.appendCompaction(
 				compactionResult.summary,
 				compactionResult.firstKeptEntryId,
@@ -5438,6 +5757,14 @@ export class AgentSession {
 			const savedEntry = this.sessionManager.getEntry(compactionEntryId);
 			if (savedEntry?.type !== "compaction") {
 				throw new Error("Compaction entry was not saved");
+			}
+			const modelAfterCompaction = this.model;
+			if (
+				latestConfigurationEffort !== undefined &&
+				modelAfterCompaction?.id === "gpt-6-astra" &&
+				(modelAfterCompaction.provider === "openai" || modelAfterCompaction.provider === "openai-codex")
+			) {
+				this.sessionManager.appendConfigurationUpdate(latestConfigurationEffort);
 			}
 
 			const sessionContext = this.sessionManager.buildSessionContext();
@@ -5502,6 +5829,11 @@ export class AgentSession {
 				willRetry: request.willRetry,
 			});
 
+			// Shared success seam: every senpi-owned compaction apply (manual /compact,
+			// extension applyCompaction, pre-prompt and auto compaction) funnels through
+			// here after the compaction entry is appended and the success event emitted.
+			await this._onCompactionContextChanged();
+
 			return {
 				accepted: true,
 				requestId,
@@ -5562,7 +5894,11 @@ export class AgentSession {
 		}
 		const contextTokens = estimateMessagesTokens(filterContextExcludedMessages(simulatedMessages));
 		const settings = this.settingsManager.getCompactionSettings();
-		return contextTokens > model.contextWindow - settings.reserveTokens;
+		const reserveTokens =
+			settings.reserveScalingEnabled === false
+				? settings.reserveTokens
+				: resolveReserveTokens(model.contextWindow, settings.reserveTokens);
+		return contextTokens > model.contextWindow - reserveTokens;
 	}
 
 	/**
@@ -5756,6 +6092,10 @@ export class AgentSession {
 		const model = this.model;
 		if (!model) return;
 		const settings = this.settingsManager.getCompactionSettings();
+		const reserveTokens =
+			settings.reserveScalingEnabled === false
+				? settings.reserveTokens
+				: resolveReserveTokens(model.contextWindow, settings.reserveTokens);
 		const isOversized = (): boolean => {
 			const providerMessages = filterContextExcludedMessages([...this.agent.state.messages, ...messages]);
 			const estimate = estimateContextTokens(providerMessages);
@@ -5767,7 +6107,7 @@ export class AgentSession {
 				usageMessage?.role === "assistant" && this._isAssistantFromBeforeLatestCompaction(usageMessage)
 					? estimateMessagesTokens(providerMessages)
 					: estimate.tokens;
-			return contextTokens > model.contextWindow - settings.reserveTokens;
+			return contextTokens > model.contextWindow - reserveTokens;
 		};
 
 		if (!settings.enabled || !isOversized()) return;
@@ -6092,6 +6432,22 @@ export class AgentSession {
 		try {
 			if (this.agent.state.isStreaming) return "taken-over";
 
+			// Pre-admission restore point. A senpi-owned compaction that succeeds
+			// while a run is still active releases its refusal pin through
+			// _onCompactionContextChanged() but cannot restore there: model-select
+			// work must stay ordered behind the session-work barrier while the run
+			// owns it. Every post-compaction continuation admission - auto/overflow
+			// compaction recovery, _resumeQueuedMessagesAfterCompaction(), the
+			// agent_end queued continuation and the retry continuation - is scheduled
+			// through _scheduleContinuationAfterCurrentEvent() and funnels here, so
+			// this is the single choke point every such request passes before
+			// reaching the provider. Restoring here (a no-op when nothing is pending)
+			// keeps the guarantee that the very next request after a compaction runs
+			// on the primary, and precedes the admission revalidation below so that
+			// check samples the restored model's context window - the same ordering
+			// the retry-continuation restore uses.
+			await this._maybeRestoreFallbackPrimary();
+
 			await this._revalidateScheduledContinuationAdmission();
 			if (this.agent.state.isStreaming) return "taken-over";
 
@@ -6115,10 +6471,7 @@ export class AgentSession {
 				abortActive: () =>
 					this.agent.abort(
 						new ProviderRetryWatchdogAbortError(
-							`Provider retry continuation watchdog timed out after ${retryTimeoutMs}ms` +
-								(this.agent.streamStartTimeoutMs === undefined
-									? " (stream-start guard disabled)"
-									: ` (stream-start guard: ${this.agent.streamStartTimeoutMs}ms)`),
+							providerRetryWatchdogAbortMessage(retryTimeoutMs, this.agent.streamStartTimeoutMs),
 						),
 					),
 				timeoutMs: retryTimeoutMs,
@@ -6339,6 +6692,16 @@ export class AgentSession {
 	 */
 	setAutoCompactionEnabled(enabled: boolean): void {
 		this.settingsManager.setCompactionEnabled(enabled);
+		this._emitSessionSettingsChanged();
+	}
+
+	private _emitSessionSettingsChanged(): void {
+		this._emit({
+			type: "session_settings_changed",
+			steeringMode: this.steeringMode,
+			followUpMode: this.followUpMode,
+			autoCompactionEnabled: this.autoCompactionEnabled,
+		});
 	}
 
 	/** Whether auto-compaction is enabled */
@@ -6474,6 +6837,14 @@ export class AgentSession {
 	}
 
 	private _bindExtensionCore(runner: ExtensionRunner): void {
+		// Activity extensions publish about work outliving a turn (background
+		// terminal jobs, monitors, holds) feeds the session-busy contract. Re-bound
+		// per runner; counts survive the swap so a reload cannot make live work
+		// look idle to an occupancy sweep.
+		this._unsubscribeWakeSources?.();
+		this._unsubscribeWakeSources = runner.onBusEvent(WAKE_SOURCE_STATE_EVENT, (data) =>
+			this._wakeSources.observe(data),
+		);
 		const getCommands = (): SlashCommandInfo[] => {
 			const extensionCommands: SlashCommandInfo[] = runner.getRegisteredCommands().map((command) => ({
 				name: command.invocationName,
@@ -6987,7 +7358,7 @@ export class AgentSession {
 		const previousFlagValues = oldExtensionRunner.getFlagValues();
 		const previousActiveToolRegistrationIds = new Map<string, string>();
 		// Cover withheld eval-only tools too: the rebuild drops any seeded name missing from this
-		// map, which would strand shell tools when the policy disarms during this reload.
+		// map, which would strand eval-only tools when the policy disarms during this reload.
 		for (const name of this._requestedActiveToolNames ?? this.getActiveToolNames()) {
 			const entry = this._toolDefinitions.get(name);
 			if (entry) previousActiveToolRegistrationIds.set(name, deriveExtensionRegistrationId(entry.sourceInfo, name));
@@ -7000,9 +7371,9 @@ export class AgentSession {
 		await this.settingsManager.reload();
 		this._delegatedCompactionKey = undefined;
 		// Capture the unfiltered request BEFORE the rebuild reassigns it, so a policy that
-		// disarms during this reload can still restore its withheld shell tools.
+		// disarms during this reload can still restore its withheld eval-only tools.
 		const requestedActiveToolNamesBeforeRebuild = [...(this._requestedActiveToolNames ?? this.getActiveToolNames())];
-		// A flag change must take effect on reload, matching documented settings hot-reload behavior.
+		// Re-resolve the fixed policy (or SDK override) so reload cannot regress it.
 		this._evalOnlyToolNames = this._resolveEvalOnlyToolNames();
 		this.syncQueueModesFromSettings();
 		resetApiProviders();

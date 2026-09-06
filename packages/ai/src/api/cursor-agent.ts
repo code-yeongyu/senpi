@@ -22,6 +22,7 @@ import { create, fromBinary, fromJson, type JsonValue as PbJsonValue, toBinary, 
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { CURSOR_COMPOSER_PROMPT, isCursorComposerModel } from "../cursor/composer-prompt.ts";
 import { calculateCost } from "../models.ts";
+import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -320,7 +321,309 @@ const NOT_IMPLEMENTED_SUFFIX = "not implemented by this client";
 const NOT_IMPLEMENTED = "Not implemented by this client";
 /** Bare gRPC `resource_exhausted` end-streams (also inside a Connect error message). */
 const conversationStateCache = new Map<string, ConversationStateStructure>();
-const conversationBlobStores = new Map<string, Map<string, Uint8Array>>();
+const conversationBlobStores = new Map<string, ConversationBlobStore>();
+/** Cache key -> the senpi session that owns it, so session teardown can evict. */
+const conversationCacheKeySessions = new Map<string, string>();
+
+/**
+ * Defensive ceiling on how many conversations stay cached (#1024), enforced
+ * PER OWNING SESSION: the maps are process-global, so a global cap would let
+ * one session's churn forget another session's live conversation key (its
+ * retry/resume then re-enters with empty state and silently loses history).
+ * Eviction is FIFO by first use within the overflowing session, never touching
+ * another session's keys nor a conversation with a request in flight.
+ */
+const DEFAULT_CONVERSATION_CACHE_LIMIT = 64;
+/**
+ * Defensive ceiling on the bytes one conversation's blob store may retain.
+ * Blobs are content-addressed and every live turn's history is re-stored each
+ * request, so evicting from the cold end only drops blobs no longer referenced
+ * by the rebuilt conversation state. Blobs the in-flight request references are
+ * pinned for the duration of the stream, because the server resolves them by id
+ * mid-turn and an evicted id would come back as an empty blob (silent context
+ * loss or a failed request).
+ */
+const DEFAULT_CONVERSATION_BLOB_LIMIT_BYTES = 256 * 1024 * 1024;
+/**
+ * Ceiling on the blob bytes ALL cached conversations may retain in one process.
+ * The per-conversation cap alone multiplies out to (count cap x byte cap) per
+ * session, so this is the number that actually bounds the process. Trimming is
+ * cold-conversation-first and never touches a live conversation or a pinned
+ * blob, so it can only drop history that a later turn re-stores from
+ * `context.messages` anyway.
+ */
+const DEFAULT_CONVERSATION_TOTAL_BLOB_LIMIT_BYTES = 1024 * 1024 * 1024;
+
+function readPositiveIntEnv(raw: string | undefined, fallback: number): number {
+	const parsed = Number(raw);
+	return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function conversationCacheLimit(): number {
+	return readPositiveIntEnv(process.env.PI_CURSOR_CONVERSATION_CACHE_LIMIT, DEFAULT_CONVERSATION_CACHE_LIMIT);
+}
+
+function conversationBlobLimitBytes(): number {
+	return readPositiveIntEnv(
+		process.env.PI_CURSOR_CONVERSATION_BLOB_LIMIT_BYTES,
+		DEFAULT_CONVERSATION_BLOB_LIMIT_BYTES,
+	);
+}
+
+function conversationTotalBlobLimitBytes(): number {
+	return readPositiveIntEnv(
+		process.env.PI_CURSOR_CONVERSATION_TOTAL_BLOB_LIMIT_BYTES,
+		DEFAULT_CONVERSATION_TOTAL_BLOB_LIMIT_BYTES,
+	);
+}
+
+/**
+ * A conversation's blob store with byte accounting, true LRU ordering and
+ * pinning for the request currently being built or streamed.
+ *
+ * Both `set` and `get` re-insert the key, so iteration order is least-recently
+ * used first: the cold end is the dead weight (pre-compaction turns, superseded
+ * server pushes) while everything this turn touched sits at the hot end.
+ *
+ * While a request holds pins (`beginRequestPins` .. `releaseRequestPins`),
+ * every blob it stores or the server reads back is pinned and exempt from cap
+ * eviction. If the pinned set alone exceeds the budget the store stays
+ * temporarily over budget and logs once, rather than answering the server's
+ * `getBlobArgs` with an empty blob mid-turn; releasing the pins trims it back.
+ */
+class ConversationBlobStore extends Map<string, Uint8Array> {
+	private blobBytes = 0;
+	private readonly pinnedKeys = new Set<string>();
+	/** Nesting depth of in-flight requests pinning into this store. */
+	private pinHolders = 0;
+	private warnedOverBudget = false;
+
+	override set(key: string, value: Uint8Array): this {
+		const previous = super.get(key);
+		if (previous !== undefined) {
+			this.blobBytes -= previous.byteLength;
+			super.delete(key);
+		}
+		this.blobBytes += value.byteLength;
+		super.set(key, value);
+		if (this.pinHolders > 0) this.pinnedKeys.add(key);
+		this.trimToBudget();
+		return this;
+	}
+
+	override get(key: string): Uint8Array | undefined {
+		const value = super.get(key);
+		if (value === undefined) return undefined;
+		// Recency promotion: a blob the server just asked for is live context, so
+		// it must not sit at the eviction end of the map.
+		super.delete(key);
+		super.set(key, value);
+		if (this.pinHolders > 0) this.pinnedKeys.add(key);
+		return value;
+	}
+
+	override delete(key: string): boolean {
+		const existing = super.get(key);
+		this.pinnedKeys.delete(key);
+		if (existing === undefined) return super.delete(key);
+		this.blobBytes -= existing.byteLength;
+		return super.delete(key);
+	}
+
+	override clear(): void {
+		this.blobBytes = 0;
+		this.pinnedKeys.clear();
+		super.clear();
+	}
+
+	get totalBytes(): number {
+		return this.blobBytes;
+	}
+
+	get pinnedCount(): number {
+		return this.pinnedKeys.size;
+	}
+
+	/** Starts pinning everything the request touches; balanced by `releaseRequestPins`. */
+	beginRequestPins(): void {
+		this.pinHolders += 1;
+	}
+
+	/**
+	 * Evicts unpinned blobs, least recently used first, until at most `keepBytes`
+	 * remain in this store. Returns the bytes actually released.
+	 */
+	shedUnpinnedBytes(keepBytes: number): number {
+		let released = 0;
+		for (const [key, value] of this) {
+			if (this.blobBytes <= keepBytes) break;
+			if (this.pinnedKeys.has(key)) continue;
+			this.blobBytes -= value.byteLength;
+			released += value.byteLength;
+			super.delete(key);
+		}
+		return released;
+	}
+
+	/** Drops this request's pins once its stream settled, then re-applies the cap. */
+	releaseRequestPins(): void {
+		if (this.pinHolders === 0) return;
+		this.pinHolders -= 1;
+		if (this.pinHolders > 0) return;
+		this.pinnedKeys.clear();
+		this.warnedOverBudget = false;
+		this.trimToBudget();
+	}
+
+	private trimToBudget(): void {
+		const limit = conversationBlobLimitBytes();
+		if (this.blobBytes <= limit) return;
+		for (const [key, value] of this) {
+			if (this.blobBytes <= limit) break;
+			if (this.pinnedKeys.has(key)) continue;
+			this.blobBytes -= value.byteLength;
+			super.delete(key);
+		}
+		if (this.blobBytes <= limit || this.warnedOverBudget) return;
+		this.warnedOverBudget = true;
+		// Breaking the live request is worse than holding its working set: report
+		// the overshoot and keep every pinned blob resolvable until the turn ends.
+		console.warn(
+			`[cursor-agent] conversation blob store over budget: ${this.blobBytes} bytes pinned by the in-flight request exceed the ${limit} byte cap (${this.pinnedKeys.size} pinned blobs); the cap applies again when the stream settles`,
+		);
+	}
+}
+
+function registerConversationCacheKey(sessionId: string | undefined, conversationId: string): void {
+	if (!sessionId) return;
+	conversationCacheKeySessions.set(conversationId, sessionId);
+}
+
+function forgetConversationCacheKey(conversationId: string): void {
+	conversationStateCache.delete(conversationId);
+	conversationBlobStores.delete(conversationId);
+	conversationCacheKeySessions.delete(conversationId);
+}
+
+/**
+ * Conversation keys with a request in flight. A live conversation is never a
+ * cap-eviction candidate: its state and blobs are what the running stream (and
+ * its retry/resume attempt) reads back.
+ */
+const liveConversationKeys = new Map<string, number>();
+
+function retainLiveConversation(conversationId: string): void {
+	liveConversationKeys.set(conversationId, (liveConversationKeys.get(conversationId) ?? 0) + 1);
+}
+
+function releaseLiveConversation(conversationId: string): void {
+	const holders = liveConversationKeys.get(conversationId);
+	if (holders === undefined) return;
+	if (holders <= 1) liveConversationKeys.delete(conversationId);
+	else liveConversationKeys.set(conversationId, holders - 1);
+}
+
+/**
+ * Trims the overflowing session's own conversations, oldest first. Keys owned by
+ * other sessions are untouchable (the maps are process-global but the budget is
+ * per session), and neither the newest key nor any conversation with a request
+ * in flight is evictable. Keys with no owning session (raw SDK use without
+ * `sessionId`) share one bucket keyed by `undefined`.
+ */
+function enforceConversationCacheLimit(newestKey: string, sessionId?: string): void {
+	const limit = conversationCacheLimit();
+	const owner = sessionId ?? conversationCacheKeySessions.get(newestKey);
+	const ownedKeys = [...conversationBlobStores.keys()].filter(
+		(key) => conversationCacheKeySessions.get(key) === owner,
+	);
+	let owned = ownedKeys.length;
+	for (const key of ownedKeys) {
+		if (owned <= limit) return;
+		if (key === newestKey) continue;
+		if (liveConversationKeys.has(key)) continue;
+		forgetConversationCacheKey(key);
+		owned -= 1;
+	}
+}
+
+/**
+ * Applies the process-global blob ceiling across every cached conversation.
+ * Cold conversations are shed first (least recently used key order); a live
+ * conversation is only shed after every cold one, and pinned blobs are never
+ * dropped, so an in-flight request keeps every id the server can ask for.
+ */
+function enforceConversationTotalBlobLimit(): void {
+	const limit = conversationTotalBlobLimitBytes();
+	let total = 0;
+	for (const store of conversationBlobStores.values()) total += store.totalBytes;
+	if (total <= limit) return;
+	const cold: [string, ConversationBlobStore][] = [];
+	const live: [string, ConversationBlobStore][] = [];
+	for (const entry of conversationBlobStores) {
+		(liveConversationKeys.has(entry[0]) ? live : cold).push(entry);
+	}
+	for (const [key, store] of [...cold, ...live]) {
+		if (total <= limit) break;
+		total -= store.shedUnpinnedBytes(Math.max(0, store.totalBytes - (total - limit)));
+		if (store.size === 0 && !liveConversationKeys.has(key)) forgetConversationCacheKey(key);
+	}
+	if (total <= limit) return;
+	console.warn(
+		`[cursor-agent] cursor conversation blobs total ${total} bytes over the ${limit} byte process ceiling; the remainder is pinned by in-flight requests and is released when their streams settle`,
+	);
+}
+
+function getOrCreateConversationBlobStore(conversationId: string, sessionId?: string): ConversationBlobStore {
+	const existing = conversationBlobStores.get(conversationId);
+	if (existing) return existing;
+	const store = new ConversationBlobStore();
+	conversationBlobStores.set(conversationId, store);
+	enforceConversationCacheLimit(conversationId, sessionId);
+	return store;
+}
+
+/**
+ * Drops every cache entry owned by `sessionId`. With no session id this is a
+ * global teardown and clears everything (mirrors the codex WS cleanup).
+ */
+function releaseConversationCacheForSession(sessionId?: string): void {
+	if (sessionId === undefined) {
+		conversationStateCache.clear();
+		conversationBlobStores.clear();
+		conversationCacheKeySessions.clear();
+		// An explicit global teardown owns the bookkeeping too; a stale live hold
+		// would otherwise make a future same-named key permanently unevictable.
+		liveConversationKeys.clear();
+		return;
+	}
+	for (const [key, owner] of conversationCacheKeySessions) {
+		if (owner !== sessionId) continue;
+		conversationStateCache.delete(key);
+		conversationBlobStores.delete(key);
+		conversationCacheKeySessions.delete(key);
+	}
+}
+
+registerSessionResourceCleanup((sessionId?: string) => {
+	releaseConversationCacheForSession(sessionId);
+});
+
+/** Size telemetry for the conversation caches (#1024 verification seam). */
+export function getCursorConversationCacheStats(): {
+	conversations: number;
+	states: number;
+	blobBytes: number;
+	keys: string[];
+} {
+	let blobBytes = 0;
+	for (const store of conversationBlobStores.values()) blobBytes += store.totalBytes;
+	return {
+		conversations: conversationBlobStores.size,
+		states: conversationStateCache.size,
+		blobBytes,
+		keys: [...conversationBlobStores.keys()],
+	};
+}
 /**
  * Base conversation id → rotated wire id. Cursor's backend can pin a
  * per-conversation rejection (bare `resource_exhausted`, zero tokens) to one
@@ -471,10 +774,6 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 		const settleH2 = (error?: unknown): void => {
 			if (h2Settled) return;
 			h2Settled = true;
-			if (streamHealthTimer) {
-				clearTimeout(streamHealthTimer);
-				streamHealthTimer = null;
-			}
 			if (error !== undefined) {
 				rejectH2(error);
 				return;
@@ -514,6 +813,9 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 				rejectH2 = reject;
 			});
 			let attemptSawCheckpoint = false;
+			// This attempt's live hold and blob pins, released when it settles.
+			let attemptLiveKey: string | undefined;
+			let attemptPinnedStore: ConversationBlobStore | undefined;
 			try {
 				const apiKey = options?.apiKey;
 				if (!apiKey) {
@@ -522,8 +824,15 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 
 				baseConversationId = options?.conversationId ?? options?.sessionId ?? randomUUID();
 				conversationId = rotationStore().getWireId(baseConversationId);
-				const blobStore = conversationBlobStores.get(conversationId) ?? new Map<string, Uint8Array>();
-				conversationBlobStores.set(conversationId, blobStore);
+				registerConversationCacheKey(options?.sessionId, conversationId);
+				// Claim the conversation before the cap can see it: the count cap never
+				// evicts a live key, and every blob this attempt touches stays pinned
+				// until the stream settles.
+				attemptLiveKey = conversationId;
+				retainLiveConversation(conversationId);
+				const blobStore = getOrCreateConversationBlobStore(conversationId, options?.sessionId);
+				attemptPinnedStore = blobStore;
+				blobStore.beginRequestPins();
 				const cachedState = conversationStateCache.get(conversationId);
 				const { requestBytes, conversationState, requestedModel, modelDetails } = await buildGrpcRequest(
 					model,
@@ -541,6 +850,9 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 				pinnedRequestedModel ??= requestedModel;
 				pinnedModelDetails ??= modelDetails;
 				conversationStateCache.set(conversationId, conversationState);
+				// This request's working set is pinned now, so the process ceiling can
+				// reclaim from cold conversations without touching what it needs.
+				enforceConversationTotalBlobLimit();
 				const requestContextTools = buildMcpToolDefinitions(context.tools);
 
 				const baseUrl = model.baseUrl || CURSOR_API_URL;
@@ -905,6 +1217,12 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 							if (cached) conversationStateCache.set(decision.wireId, cached);
 							const blobs = conversationBlobStores.get(conversationId);
 							if (blobs) conversationBlobStores.set(decision.wireId, blobs);
+							registerConversationCacheKey(options?.sessionId, decision.wireId);
+							enforceConversationCacheLimit(decision.wireId, options?.sessionId);
+							// The rotated key fully replaces the old one: later attempts
+							// resolve through rotationStore().getWireId, so keeping the
+							// pre-rotation entries is a pure leak (#1024).
+							if (decision.wireId !== conversationId) forgetConversationCacheKey(conversationId);
 							retryAttempt = true;
 						} else {
 							message = CURSOR_CONVERSATION_POISONED_MESSAGE;
@@ -918,9 +1236,16 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 					stream.end();
 				}
 			} finally {
+				attemptPinnedStore?.releaseRequestPins();
+				if (attemptLiveKey !== undefined) releaseLiveConversation(attemptLiveKey);
+				if (attemptPinnedStore) enforceConversationTotalBlobLimit();
 				if (heartbeatTimer) {
 					clearInterval(heartbeatTimer);
 					heartbeatTimer = null;
+				}
+				if (streamHealthTimer) {
+					clearTimeout(streamHealthTimer);
+					streamHealthTimer = null;
 				}
 				h2Request?.close();
 				h2Client?.close();

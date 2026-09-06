@@ -1,5 +1,25 @@
 # changes
 
+## Cross-platform daemon process identity and lightweight exit waits (2026-09-01)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/daemon/process.ts` reads process start time from the live `Win32_Process` CIM table through PowerShell on Windows and preserves `ps -o lstart=` on POSIX.
+- Process identity is validated with a platform-specific start-time reader before signaling managed children; exit waits repeat that identity check while waiting for termination. On Windows the bounded probe queries the live `Win32_Process` CIM table, so a terminated process retained by an open handle cannot appear live indefinitely.
+
+### Why
+
+- Git for Windows exposes an MSYS `ps` that rejects `-o`; Windows daemons and shared RPC supervisors therefore received a pid but failed ownership registration with “had no process start time.”
+- Start time is the PID-reuse ownership proof and is still checked before signaling. The same identity check is repeated while waiting so a reused PID cannot be mistaken for the managed child.
+
+### Why an extension could not handle it
+
+- Daemon ownership and signal safety run before the app-server or RPC extension surfaces exist.
+
+### Expected merge conflict zones
+
+- LOW: `readProcessStartTime`, `waitForGone`, and the adjacent process helper tail in `daemon/process.ts`.
+
 ## Provider-neutral account app-server routes (2026-08-27)
 
 ### What changed

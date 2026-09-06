@@ -1,11 +1,11 @@
 /**
- * Real-surface QA driver for experimental.bashEvalOnly.
+ * Real-surface QA driver for the default eval-only policy.
  *
  * Drives the shipped SDK entrypoint (createAgentSession) against a scratch
- * project directory whose .senpi/settings.json carries the flag, using the
- * faux provider so no credentials or network model calls are involved.
+ * project directory with no policy setting, using the faux provider so no
+ * credentials or network model calls are involved.
  *
- * Usage: npx tsx test/manual-qa/bash-eval-only-qa.ts <scratchDir> <mode:armed|control> <outDir>
+ * Usage: bunx tsx test/manual-qa/bash-eval-only-qa.ts <scratchDir> <outDir>
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -19,9 +19,9 @@ import { SessionManager } from "../../src/core/session-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 
-const [scratchDir, mode, outDir] = process.argv.slice(2);
-if (!scratchDir || !mode || !outDir) {
-	throw new Error("usage: bash-eval-only-qa.ts <scratchDir> <armed|control> <outDir>");
+const [scratchDir, outDir] = process.argv.slice(2);
+if (!scratchDir || !outDir) {
+	throw new Error("usage: bash-eval-only-qa.ts <scratchDir> <outDir>");
 }
 
 const lines: string[] = [];
@@ -101,10 +101,9 @@ async function main(): Promise<void> {
 	});
 
 	try {
-		log(`# bash-eval-only QA (${mode})`);
+		log("# bash-eval-only QA (default)");
 		log(`scratch: ${scratchDir}`);
-		log(`project settings file: ${join(scratchDir, ".senpi", "settings.json")}`);
-		log(`getExperimentalBashEvalOnly(): ${settingsManager.getExperimentalBashEvalOnly()}`);
+		log("policy: fixed default (armed when eval is registered)");
 		log("");
 
 		// (i) active tool list
@@ -170,10 +169,10 @@ async function main(): Promise<void> {
 		log(`model-issued bash toolResult: ${resultText}`);
 		log("");
 
-		writeFileSync(join(outDir, `tool-call-receipts-${mode}.json`), `${JSON.stringify(toolCallReceipts, null, 2)}\n`);
-		writeFileSync(join(outDir, `system-prompt-${mode}.txt`), prompt);
-		log(`receipts file: ${join(outDir, `tool-call-receipts-${mode}.json`)}`);
-		log(`system prompt file: ${join(outDir, `system-prompt-${mode}.txt`)}`);
+		writeFileSync(join(outDir, "tool-call-receipts-default.json"), `${JSON.stringify(toolCallReceipts, null, 2)}\n`);
+		writeFileSync(join(outDir, "system-prompt-default.txt"), prompt);
+		log(`receipts file: ${join(outDir, "tool-call-receipts-default.json")}`);
+		log(`system prompt file: ${join(outDir, "system-prompt-default.txt")}`);
 	} finally {
 		session.dispose();
 		faux.unregister();
@@ -181,4 +180,4 @@ async function main(): Promise<void> {
 }
 
 await main();
-writeFileSync(join(outDir, `${mode}.log`), `${lines.join("\n")}\n`);
+writeFileSync(join(outDir, "default.log"), `${lines.join("\n")}\n`);

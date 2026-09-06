@@ -541,6 +541,7 @@ describe("openai-responses provider defaults", () => {
 		["gpt-5.4", "priority", 2],
 		["gpt-5.5", "priority", 2.5],
 		["gpt-5.5", "flex", 0.5],
+		["gpt-6-astra", "fast", 2],
 	] as const)("applies %s %s service-tier cost multiplier", async (modelId, serviceTier, multiplier) => {
 		const model = getModel("openai", modelId);
 		const tokenCount = 100_000;
@@ -582,5 +583,80 @@ describe("openai-responses provider defaults", () => {
 		expect(result.usage.cost.input).toBe(model.cost.input * multiplier * tokenScale);
 		expect(result.usage.cost.output).toBe(model.cost.output * multiplier * tokenScale);
 		expect(result.usage.cost.total).toBe((model.cost.input + model.cost.output) * multiplier * tokenScale);
+	});
+});
+
+describe("openai-responses max_output_tokens compat", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("sends max_output_tokens by default", async () => {
+		let capturedPayload: { max_output_tokens?: number } | undefined;
+
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			getModel("openai", "gpt-5.4"),
+			{
+				systemPrompt: "sys",
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test-key",
+				maxTokens: 1024,
+				onPayload: (payload) => {
+					capturedPayload = payload as { max_output_tokens?: number };
+				},
+			},
+		);
+
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		expect(capturedPayload?.max_output_tokens).toBe(1024);
+	});
+
+	it("omits max_output_tokens when supportsMaxOutputTokens is false", async () => {
+		const baseModel = getModel("openai", "gpt-5.4");
+		const model: Model<"openai-responses"> = {
+			...baseModel,
+			compat: { ...baseModel.compat, supportsMaxOutputTokens: false },
+		};
+		let capturedPayload: { max_output_tokens?: number } | undefined;
+
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			model,
+			{
+				systemPrompt: "sys",
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test-key",
+				maxTokens: 1024,
+				onPayload: (payload) => {
+					capturedPayload = payload as { max_output_tokens?: number };
+				},
+			},
+		);
+
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		expect(capturedPayload?.max_output_tokens).toBeUndefined();
 	});
 });

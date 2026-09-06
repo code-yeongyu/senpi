@@ -1,20 +1,34 @@
-import { execFileSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import {
+	closeSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer as createHttpServer, type Server as HttpServer, type ServerResponse } from "node:http";
-import { type AddressInfo, createConnection, type Socket } from "node:net";
+import { type AddressInfo, createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
-import { processMatchesPidFile, readProcessStartTime } from "../src/modes/app-server/daemon/process.ts";
+import { processIsLive, processMatchesPidFile, readProcessStartTime } from "../src/modes/app-server/daemon/process.ts";
 import { createHostDaemonPaths, ensureHost, type HostLifecyclePolicyInput } from "../src/modes/rpc/host-ensure.ts";
 import {
 	DEFAULT_HOST_IDLE_EXIT_MS,
+	findInternalSupervisorArgs,
 	HOST_COLD_START_ENV,
 	HOST_IDLE_EXIT_MS_ENV,
 	IdleExitDecider,
+	INTERNAL_SUPERVISOR_FLAG,
+	resolveHostChildLaunch,
 	resolveHostPolicy,
+	spawnableChildLaunch,
 } from "../src/modes/rpc/host-lifecycle.ts";
 import {
 	armHostWatchdog,
@@ -23,19 +37,34 @@ import {
 	HOST_WATCH_PPID_ENV,
 	readHostWatchdogConfig,
 } from "../src/modes/rpc/host-watchdog.ts";
+import {
+	authenticateSocket,
+	createSocketSecret,
+	readSocketSecret,
+	resolveSocketTransportAddress,
+	sendSocketHandshake,
+	socketSecretPath,
+} from "../src/modes/rpc/socket-transport.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
 
 const roots: string[] = [];
 const peers: JsonlPeer[] = [];
 const models: HeldAnthropicModel[] = [];
 const managed: Array<{ pidFile: { pid: number; processStartTime: string }; pidFilePath: string }> = [];
+const collisionChildFixture = join(import.meta.dirname, "fixtures", "rpc-collision-child.ts");
+// Windows supervisor-exit observation is load-dependent; teardown is eventually
+// consistent within the watchdog fallback bound, so the affected waits allow 30s.
+const WINDOWS_SUPERVISOR_EXIT_TIMEOUT_MS = 30_000;
 
 afterEach(async () => {
 	for (const peer of peers.splice(0)) peer.destroy();
 	for (const model of models.splice(0)) await model.close();
 	for (const entry of managed.splice(0)) await stopHostProcess(entry.pidFile, entry.pidFilePath);
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
-}, 30_000);
+	// Budget: teardown liveness probe (~1s) + SIGTERM exit wait (30s) + SIGKILL
+	// escalation (2s) per host, with headroom; the old 30s cap already sat below
+	// the pre-existing 33s worst case.
+}, 60_000);
 
 type RecordValue = Record<string, unknown>;
 
@@ -139,7 +168,7 @@ describe("ensureHost-spawned host lifecycle", () => {
 		await waitForHostExit(entry);
 		expect(existsSync(entry.pidFilePath)).toBe(false);
 		expect(existsSync(createHostDaemonPaths(qa.agentDir).settingsFile)).toBe(false);
-		expect(existsSync(qa.socket)).toBe(false);
+		expect(await endpointLive(qa.socket)).toBe(false);
 		expect(listInternalSocketDirs().filter((dir) => !internalBefore.includes(dir))).toEqual([]);
 	}, 45_000);
 
@@ -149,7 +178,7 @@ describe("ensureHost-spawned host lifecycle", () => {
 		const entry = currentManaged();
 		const peer = await JsonlPeer.connect(qa.socket);
 		await delay(2_000);
-		expect(await hostAlive(entry.pidFile)).toBe(true);
+		await expectHostAlive(qa, entry.pidFile);
 		peer.destroy();
 		await waitForHostExit(entry);
 	}, 45_000);
@@ -172,7 +201,7 @@ describe("ensureHost-spawned host lifecycle", () => {
 		await agentStart;
 		peer.destroy();
 		await delay(2_500);
-		expect(await hostAlive(entry.pidFile)).toBe(true);
+		await expectHostAlive(qa, entry.pidFile);
 		model.release();
 		await waitForHostExit(entry, 20_000);
 	}, 60_000);
@@ -197,9 +226,42 @@ describe("ensureHost-spawned host lifecycle", () => {
 		});
 		const entry = currentManaged();
 		await delay(2_500);
-		expect(await hostAlive(entry.pidFile)).toBe(true);
-		process.kill(entry.pidFile.pid, "SIGTERM");
-		await waitForHostExit(entry);
+		await expectHostAlive(qa, entry.pidFile);
+		terminateSupervisor(entry.pidFile.pid, "SIGTERM");
+		await waitForHostExit(entry, WINDOWS_SUPERVISOR_EXIT_TIMEOUT_MS);
+	}, 45_000);
+
+	it("preserves a live public socket when supervisor startup cannot bind it", async () => {
+		const qa = scratch("collision");
+		const secret = process.platform === "win32" ? await createSocketSecret(socketSecretPath(qa.socket)) : undefined;
+		const live = createServer((socket) => {
+			if (secret) authenticateSocket(socket, secret, () => socket.resume());
+			else socket.resume();
+		});
+		await new Promise<void>((resolve) =>
+			live.listen(resolveSocketTransportAddress(qa.socket, process.platform, secret), resolve),
+		);
+		const supervisor = spawn(
+			process.execPath,
+			[
+				"--import",
+				"tsx",
+				hostLifecycleEntry(),
+				"--socket",
+				qa.socket,
+				"--child-command",
+				process.execPath,
+				"--child-args",
+				JSON.stringify(["--import", "tsx", collisionChildFixture]),
+			],
+			{ stdio: ["ignore", "ignore", "pipe"] },
+		);
+		const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+			supervisor.once("exit", (code, signal) => resolve({ code, signal })),
+		);
+		expect(exit).toMatchObject({ code: 1 });
+		expect(await endpointLive(qa.socket)).toBe(true);
+		live.close();
 	}, 45_000);
 
 	it("reaps the internal host when the supervisor is SIGKILLed (no catchable-signal path)", async () => {
@@ -208,14 +270,20 @@ describe("ensureHost-spawned host lifecycle", () => {
 		// A long idle window leaves the supervisor-lifetime binding as the only thing
 		// that can reap the internal host during this test.
 		const ensured = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600_000 } });
+		const entry = currentManaged();
 		const internalHosts = await waitForChildPids(ensured.pid);
 		expect(internalHosts.length).toBeGreaterThan(0);
 		const leakedDirs = listInternalSocketDirs().filter((dir) => !internalBefore.includes(dir));
 
-		process.kill(ensured.pid, "SIGKILL");
+		terminateSupervisor(ensured.pid, "SIGKILL");
 		await waitForPidsGone(internalHosts, 10_000);
 		expect(internalHosts.filter(processAlive)).toEqual([]);
 		expect(leakedDirs.filter((dir) => existsSync(join(tmpdir(), dir)))).toEqual([]);
+		expect(await endpointLive(qa.socket)).toBe(false);
+		// Win32 endpoint close and metadata unlink are separate operations; poll the
+		// identity-aware lifecycle helper instead of asserting the pidfile atomically.
+		await waitForHostExit(entry, WINDOWS_SUPERVISOR_EXIT_TIMEOUT_MS);
+		expect(existsSync(createHostDaemonPaths(qa.agentDir).settingsFile)).toBe(false);
 	}, 60_000);
 });
 
@@ -243,26 +311,165 @@ describe("host watchdog configuration", () => {
 		).toEqual({ fd: 3, ppid: 4242, scratchDir: "/tmp/senpi-rpc-host-internal-abc" });
 	});
 
-	it("fires on inherited-pipe EOF and removes the supervisor's private directory", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "senpi-hlc-wd-"));
+	it("ignores an unavailable watchdog fd when the supervisor is still alive", async () => {
+		let fired = false;
+		const disarm = armHostWatchdog({ fd: 999_999, ppid: process.pid }, () => {
+			fired = true;
+		});
+		await delay(300);
+		disarm();
+		expect(fired).toBe(false);
+	});
+
+	it.skipIf(process.platform === "win32")("removes supervisor public state on inherited-pipe EOF", async () => {
+		if (process.platform === "win32") {
+			// This fixture models POSIX FIFO EOF and synchronous filesystem cleanup;
+			// Windows named-pipe handle close and fs.rm completion are asynchronous,
+			// so the real Win32 lifecycle test covers those semantics instead.
+			return;
+		}
+		const dir = mkdtempSync(join(tmpdir(), "senpi-hlc-wd-state-"));
 		roots.push(dir);
-		const scratchDir = join(dir, "internal");
-		mkdirSync(scratchDir, { recursive: true });
 		const fifo = join(dir, "pipe");
+		const socket = join(dir, "rpc.sock");
+		const pidFile = join(dir, "host.pid");
+		const settings = join(dir, "settings.json");
 		execFileSync("mkfifo", [fifo]);
-		// Opening both ends keeps the fifo alive until the write end is closed, which
-		// is exactly the EOF the supervisor's death produces on the inherited pipe.
+		writeFileSync(socket, "socket");
+		writeFileSync(pidFile, "pid");
+		writeFileSync(settings, "settings");
 		const writeEnd = openSync(fifo, "w+");
 		const readEnd = openSync(fifo, "r");
-		// armHostWatchdog takes ownership of the read end, so the test only closes
-		// the write end - that close is what the supervisor's death looks like.
 		const reason = new Promise<string>((resolve) => {
-			armHostWatchdog({ fd: readEnd, scratchDir }, resolve);
+			armHostWatchdog({ fd: readEnd, cleanupPaths: [socket, pidFile, settings] }, resolve);
 		});
 		closeSync(writeEnd);
-		expect(await reason).toContain("closed");
-		expect(existsSync(scratchDir)).toBe(false);
-	}, 15_000);
+		await reason;
+		expect(existsSync(socket)).toBe(false);
+		expect(existsSync(pidFile)).toBe(false);
+		expect(existsSync(settings)).toBe(false);
+	});
+
+	it.skipIf(process.platform === "win32")(
+		"fires on inherited-pipe EOF and removes the supervisor's private directory",
+		async () => {
+			if (process.platform === "win32") {
+				// This fixture models POSIX FIFO EOF and synchronous filesystem cleanup;
+				// Windows named-pipe handle close and fs.rm completion are asynchronous,
+				// so the real Win32 lifecycle test covers those semantics instead.
+				return;
+			}
+			const dir = mkdtempSync(join(tmpdir(), "senpi-hlc-wd-"));
+			roots.push(dir);
+			const scratchDir = join(dir, "internal");
+			mkdirSync(scratchDir, { recursive: true });
+			const fifo = join(dir, "pipe");
+			execFileSync("mkfifo", [fifo]);
+			// Opening both ends keeps the fifo alive until the write end is closed, which
+			// is exactly the EOF the supervisor's death produces on the inherited pipe.
+			const writeEnd = openSync(fifo, "w+");
+			const readEnd = openSync(fifo, "r");
+			// armHostWatchdog takes ownership of the read end, so the test only closes
+			// the write end - that close is what the supervisor's death looks like.
+			const reason = new Promise<string>((resolve) => {
+				armHostWatchdog({ fd: readEnd, scratchDir }, resolve);
+			});
+			closeSync(writeEnd);
+			expect(await reason).toContain("closed");
+			expect(existsSync(scratchDir)).toBe(false);
+		},
+		15_000,
+	);
+});
+
+describe("findInternalSupervisorArgs", () => {
+	it("dispatches when the sentinel leads argv", () => {
+		expect(findInternalSupervisorArgs([INTERNAL_SUPERVISOR_FLAG, "--socket", "/tmp/qa.sock"])).toEqual([
+			"--socket",
+			"/tmp/qa.sock",
+		]);
+	});
+
+	it("dispatches through a rebranded wrapper's injected --extension prefix", () => {
+		// packages/omo-native prepends this pair to every non-early command, which
+		// is exactly the argv shape that used to miss the route entirely.
+		expect(
+			findInternalSupervisorArgs([
+				"--extension",
+				"/opt/branded/plugin",
+				INTERNAL_SUPERVISOR_FLAG,
+				"--socket",
+				"/tmp/qa.sock",
+			]),
+		).toEqual(["--socket", "/tmp/qa.sock"]);
+	});
+
+	it("refuses a sentinel that follows a positional operand", () => {
+		expect(
+			findInternalSupervisorArgs(["explain this", INTERNAL_SUPERVISOR_FLAG, "--socket", "/tmp/x"]),
+		).toBeUndefined();
+	});
+
+	it("refuses a sentinel escaped behind --", () => {
+		expect(findInternalSupervisorArgs(["--", INTERNAL_SUPERVISOR_FLAG, "--socket", "/tmp/x"])).toBeUndefined();
+	});
+
+	it("refuses a sentinel behind an unknown flag", () => {
+		expect(findInternalSupervisorArgs(["--print", INTERNAL_SUPERVISOR_FLAG])).toBeUndefined();
+	});
+
+	it("refuses a dangling prefix flag with no value", () => {
+		expect(findInternalSupervisorArgs(["--extension"])).toBeUndefined();
+	});
+
+	it("returns undefined when the sentinel is absent", () => {
+		expect(findInternalSupervisorArgs(["--mode", "rpc"])).toBeUndefined();
+	});
+});
+
+describe("resolveHostChildLaunch", () => {
+	const baseLaunch = { socket: "/tmp/qa-public.sock", hostArgs: ["--provider", "mock"] } as const;
+
+	it("forwards explicit child commands untouched", () => {
+		const launch = { ...baseLaunch, childCommand: "/opt/branded/omo", childArgs: ["--mode", "rpc"] };
+		expect(resolveHostChildLaunch(launch, "/tmp/internal.sock", true)).toEqual({
+			command: "/opt/branded/omo",
+			args: ["--mode", "rpc", "--listen", "unix:///tmp/internal.sock"],
+		});
+	});
+
+	it("quotes cmd launchers before adding shell metacharacter escaping", () => {
+		const launch = spawnableChildLaunch(
+			{ command: "C:\\Program Files\\launcher.cmd", args: ["hello world", "x&y"] },
+			"win32",
+		);
+		expect(launch.shell).toBe(true);
+		expect(launch.command).toBe('"C:\\Program Files\\launcher.cmd"');
+		expect(launch.args).toEqual(['"hello world"', '"x^&y"']);
+	});
+
+	it("passes the mode flags directly to the executable in compiled binaries", () => {
+		expect(resolveHostChildLaunch(baseLaunch, "/tmp/internal.sock", true)).toEqual({
+			command: process.execPath,
+			args: ["--mode", "rpc", "--multi-session", "--listen", "unix:///tmp/internal.sock", "--provider", "mock"],
+		});
+	});
+
+	it("re-enters the committed CLI entry outside compiled binaries", () => {
+		const launch = resolveHostChildLaunch(baseLaunch, "/tmp/internal.sock", false);
+		expect(launch.command).toBe(process.execPath);
+		const args = launch.args.slice(process.execArgv.length);
+		expect(args[0]).toMatch(/cli-main\.(ts|js)$/);
+		expect(args.slice(1)).toEqual([
+			"--mode",
+			"rpc",
+			"--multi-session",
+			"--listen",
+			"unix:///tmp/internal.sock",
+			"--provider",
+			"mock",
+		]);
+	});
 });
 
 function scratch(label: string): Scratch {
@@ -299,23 +506,60 @@ function processAlive(pid: number): boolean {
 	}
 }
 
+/** Direct children of `pid`. `pgrep` is POSIX-only, so Windows queries CIM. */
+function readChildPids(pid: number): number[] {
+	const command =
+		process.platform === "win32"
+			? {
+					executable: "powershell.exe",
+					args: [
+						"-NoProfile",
+						"-NonInteractive",
+						"-Command",
+						`Get-CimInstance Win32_Process -Filter "ParentProcessId=${String(pid)}" | ForEach-Object { $_.ProcessId }`,
+					],
+				}
+			: { executable: "pgrep", args: ["-P", String(pid)] };
+	let output = "";
+	try {
+		output = execFileSync(command.executable, command.args, { encoding: "utf8", windowsHide: true });
+	} catch {
+		output = "";
+	}
+	return output
+		.split("\n")
+		.map((value) => Number(value.trim()))
+		.filter((value) => Number.isInteger(value) && value > 0);
+}
+
 async function waitForChildPids(pid: number, timeoutMs = 10_000): Promise<number[]> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() <= deadline) {
-		let output = "";
-		try {
-			output = execFileSync("pgrep", ["-P", String(pid)], { encoding: "utf8" });
-		} catch {
-			output = "";
-		}
-		const children = output
-			.split("\n")
-			.map((value) => Number(value.trim()))
-			.filter((value) => Number.isInteger(value) && value > 0);
+		const children = readChildPids(pid);
 		if (children.length > 0) return children;
 		await delay(100);
 	}
 	return [];
+}
+
+/**
+ * Whether the public endpoint still accepts a connection. A Windows named pipe
+ * is not a filesystem entry, so `existsSync` on the logical socket path can
+ * never observe it; connectability is the contract on both platforms.
+ */
+async function endpointLive(socketPath: string): Promise<boolean> {
+	const secret = process.platform === "win32" ? await readSocketSecret(socketSecretPath(socketPath)) : undefined;
+	return new Promise((resolve) => {
+		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
+		if (secret) sendSocketHandshake(socket, secret);
+		const settle = (live: boolean): void => {
+			socket.destroy();
+			resolve(live);
+		};
+		socket.once("connect", () => settle(true));
+		socket.once("error", () => settle(false));
+		socket.setTimeout(1_000, () => settle(false));
+	});
 }
 
 async function waitForPidsGone(pids: readonly number[], timeoutMs: number): Promise<void> {
@@ -332,7 +576,12 @@ function hostLifecycleEntry(): string {
 
 async function ensureLifecycleHost(
 	qa: Scratch,
-	options: { policy?: HostLifecyclePolicyInput; hostArgs?: string[]; env?: Record<string, string> } = {},
+	options: {
+		policy?: HostLifecyclePolicyInput;
+		hostArgs?: string[];
+		env?: Record<string, string>;
+		spawn?: { command: string; args: string[] };
+	} = {},
 ) {
 	const hostArgs = options.hostArgs ?? [];
 	try {
@@ -351,18 +600,42 @@ async function ensureLifecycleHost(
 					...(options.env ?? {}),
 				},
 				hostArgs,
-				spawn: { command: process.execPath, args: [hostLifecycleEntry(), "--socket", qa.socket, ...hostArgs] },
+				spawn: options.spawn
+					? {
+							command: process.execPath,
+							args: [
+								hostLifecycleEntry(),
+								"--socket",
+								qa.socket,
+								"--child-command",
+								options.spawn.command,
+								"--child-args",
+								JSON.stringify(options.spawn.args),
+							],
+						}
+					: { command: process.execPath, args: [hostLifecycleEntry(), "--socket", qa.socket, ...hostArgs] },
 			},
 		});
-		managed.push({
-			pidFile: JSON.parse(await readFile(qa.pidFilePath, "utf8")) as { pid: number; processStartTime: string },
-			pidFilePath: qa.pidFilePath,
-		});
+		managed.push({ pidFile: await recordedPidFile(qa.pidFilePath, ensured.pid), pidFilePath: qa.pidFilePath });
 		return ensured;
 	} catch (error) {
 		throw new Error(
 			`${error instanceof Error ? error.message : String(error)}\n[supervisor stderr]\n${readSupervisorStderr(qa)}`,
 		);
+	}
+}
+
+/**
+ * The transient supervisor can idle-exit between answering the handshake and
+ * ensureHost returning, so the pidfile may already be gone; the returned pid is
+ * still the identity every later liveness/exit probe needs.
+ */
+async function recordedPidFile(pidFilePath: string, pid: number): Promise<{ pid: number; processStartTime: string }> {
+	try {
+		return JSON.parse(await readFile(pidFilePath, "utf8")) as { pid: number; processStartTime: string };
+	} catch (error: unknown) {
+		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+		return { pid, processStartTime: (await readProcessStartTime(pid)) ?? "" };
 	}
 }
 
@@ -380,8 +653,42 @@ function currentManaged(): { pidFile: { pid: number; processStartTime: string };
 	return entry;
 }
 
+/**
+ * Liveness assertions must not fail on a flaky identity probe: the Windows CIM
+ * query is a 1s-bounded PowerShell that can throw (timeout) or report a live
+ * pid as ABSENT for one read while the process is alive (issue #1290 variant 2
+ * hit both shapes on CI - the production callers got throw-retry in 1640d9b67,
+ * and PR #1291's own CI run then proved a lone false read occurs too). Treat
+ * "alive" as decisive on the first read, and require two consecutive agreeing
+ * "not alive" reads before reporting dead; a genuinely dead host settles in one
+ * extra 500ms probe, while a transient miss cannot fail an assertion.
+ */
+/**
+ * Asserts liveness with the supervisor's own stderr attached: when the probe
+ * (now double-checked) still reports the host gone, the next CI failure must
+ * show WHY - a genuine early exit logs "idle shutdown"/signal lines, while a
+ * silent log with a dead pid points at process death, and a live-looking log
+ * points at the CIM observer (#1290).
+ */
+async function expectHostAlive(qa: Scratch, pidFile: { pid: number; processStartTime: string }): Promise<void> {
+	const alive = await hostAlive(pidFile);
+	if (!alive) throw new Error(`host ${pidFile.pid} reported dead\n[supervisor stderr]\n${readSupervisorStderr(qa)}`);
+}
+
 async function hostAlive(pidFile: { pid: number; processStartTime: string }): Promise<boolean> {
-	return processMatchesPidFile(pidFile, readProcessStartTime);
+	const deadline = Date.now() + 10_000;
+	let consecutiveNotAlive = 0;
+	for (;;) {
+		try {
+			if (await processMatchesPidFile(pidFile, readProcessStartTime)) return true;
+			consecutiveNotAlive += 1;
+			if (consecutiveNotAlive >= 2 || Date.now() > deadline) return false;
+		} catch (cause) {
+			consecutiveNotAlive = 0;
+			if (Date.now() > deadline) throw cause;
+		}
+		await delay(500);
+	}
 }
 
 async function waitForHostExit(
@@ -390,28 +697,115 @@ async function waitForHostExit(
 ): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() <= deadline) {
-		const running = await processMatchesPidFile(entry.pidFile, readProcessStartTime);
-		if (!running && !existsSync(entry.pidFilePath)) return;
-		await delay(50);
+		let currentIdentity: string | undefined;
+		let probeTimedOut = false;
+		if (process.platform === "win32") {
+			// Serialize the Windows CIM query: one bounded PowerShell probe at a time
+			// avoids the 50ms polling storm that caused every probe to time out.
+			const probe = probeWindowsProcessIdentity(entry.pidFile.pid, 10_000);
+			currentIdentity = probe.identity;
+			// A probe that timed out reports UNKNOWN, not ALIVE. kill(pid, 0) answers
+			// liveness deterministically, so a host that really exited is recognized here
+			// instead of spinning until the deadline and failing with "did not exit".
+			probeTimedOut = probe.timedOut && processIsLive(entry.pidFile.pid);
+		} else {
+			currentIdentity = await readProcessStartTime(entry.pidFile.pid);
+		}
+		if (currentIdentity === entry.pidFile.processStartTime) {
+			await delay(process.platform === "win32" ? 1_000 : 50);
+			continue;
+		}
+		if (!probeTimedOut) {
+			if (!existsSync(entry.pidFilePath)) return;
+			// Force-kill teardown can leave a stale pidfile after the recorded process
+			// is already gone and the endpoint is no longer connectable. A nonmatching
+			// identity is the test's live-CIM stale-state proof,
+			// not a raw PID-liveness guess. File deletion and process death are not
+			// atomic; remove the stale state before the next lifecycle scenario.
+			rmSync(entry.pidFilePath, { force: true });
+			rmSync(join(dirname(entry.pidFilePath), "settings.json"), { force: true });
+			return;
+		}
+		await delay(1_000);
 	}
 	throw new Error(`RPC socket host pid ${entry.pidFile.pid} did not exit within ${timeoutMs}ms`);
 }
 
+function probeWindowsProcessIdentity(pid: number, timeoutMs: number): { identity?: string; timedOut: boolean } {
+	const command = `$process = Get-CimInstance Win32_Process -Filter "ProcessId=${String(pid)}" -ErrorAction Stop; if ($null -eq $process) { exit 1 }; $process.CreationDate.ToFileTimeUtc().ToString("D", [Globalization.CultureInfo]::InvariantCulture)`;
+	try {
+		const output = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {
+			encoding: "utf8",
+			windowsHide: true,
+			timeout: timeoutMs,
+		});
+		return { identity: output.trim() || undefined, timedOut: false };
+	} catch (cause) {
+		const error = cause as { code?: unknown; killed?: unknown; signal?: unknown };
+		return {
+			identity: undefined,
+			timedOut: error.code === "ETIMEDOUT" || error.killed === true || error.signal === "SIGTERM",
+		};
+	}
+}
+
 async function stopHostProcess(pidFile: { pid: number; processStartTime: string }, pidFilePath: string): Promise<void> {
 	try {
-		if (await hostAlive(pidFile)) {
-			signalIfAlive(pidFile.pid, "SIGTERM");
-			await waitForHostExit({ pidFile, pidFilePath }, 5_000).catch(async () => {
-				// A host that idle-exits on its own between the SIGTERM and this
-				// escalation is a normal teardown, not a failure: signal only if the
-				// pid is still ours, so teardown can never fail with ESRCH.
-				signalIfAlive(pidFile.pid, "SIGKILL");
-				await waitForHostExit({ pidFile, pidFilePath }, 2_000).catch(() => undefined);
-			});
+		// Teardown must not spend hostAlive()'s assertion-grade retry window: one
+		// probe decides, and an unreadable identity is treated as alive so the stop
+		// path still runs (stopping an already-dead pid is harmless downstream).
+		const alive = await processMatchesPidFile(pidFile, readProcessStartTime).catch(() => true);
+		if (alive) {
+			if (process.platform === "win32") {
+				// Detached Win32 supervisors require Stop-Process; process.kill does not
+				// reliably terminate them and can leak handles into the next test.
+				terminateSupervisor(pidFile.pid, "SIGTERM");
+				await waitForHostExit({ pidFile, pidFilePath }, WINDOWS_SUPERVISOR_EXIT_TIMEOUT_MS).catch(async () => {
+					terminateSupervisor(pidFile.pid, "SIGKILL");
+					await waitForHostExit({ pidFile, pidFilePath }, 2_000).catch(() => undefined);
+				});
+			} else {
+				signalIfAlive(pidFile.pid, "SIGTERM");
+				await waitForHostExit({ pidFile, pidFilePath }, 5_000).catch(async () => {
+					// A host that idle-exits on its own between the SIGTERM and this
+					// escalation is a normal teardown, not a failure: signal only if the
+					// pid is still ours, so teardown can never fail with ESRCH.
+					signalIfAlive(pidFile.pid, "SIGKILL");
+					await waitForHostExit({ pidFile, pidFilePath }, 2_000).catch(() => undefined);
+				});
+			}
 		}
 	} catch (error: unknown) {
 		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
 	}
+}
+
+function terminateSupervisor(pid: number, signal: NodeJS.Signals): void {
+	if (process.platform === "win32") {
+		// Bun cannot deliver catchable POSIX signals to detached Windows processes.
+		// taskkill is the real Windows termination primitive; the child watchdog must
+		// still perform the cleanup assertions below when this bypasses JS handlers.
+		try {
+			execFileSync(
+				"powershell.exe",
+				["-NoProfile", "-NonInteractive", "-Command", `Stop-Process -Id ${String(pid)} -Force`],
+				{ stdio: "ignore", windowsHide: true },
+			);
+		} catch (cause) {
+			// The supervisor idle-exits on its own timer, so it can vanish between the
+			// caller's liveness check and this Stop-Process: an already-gone pid is the
+			// outcome the caller wanted, not a failure.
+			//
+			// Liveness is decided by kill(pid, 0), not by the PowerShell CIM probe: that
+			// probe has its own timeout, and a loaded runner hitting it reported
+			// `timedOut` for a process that had genuinely exited, which rethrew and made
+			// teardown fail on runner slowness alone. A timeout means UNKNOWN, never ALIVE.
+			if (!processIsLive(pid)) return;
+			throw cause;
+		}
+		return;
+	}
+	process.kill(pid, signal);
 }
 
 function signalIfAlive(pid: number, signal: NodeJS.Signals): void {
@@ -430,8 +824,9 @@ function openedSessionId(response: RecordValue): string {
 }
 
 async function protocolInfo(socketPath: string): Promise<RecordValue> {
+	const secret = process.platform === "win32" ? await readSocketSecret(socketSecretPath(socketPath)) : undefined;
 	return new Promise((resolve, reject) => {
-		const socket = createConnection(socketPath);
+		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
 		let buffer = "";
 		const timer = setTimeout(() => finish(new Error("protocol info timeout")), 5_000);
 		const finish = (error?: Error, value?: RecordValue) => {
@@ -440,7 +835,10 @@ async function protocolInfo(socketPath: string): Promise<RecordValue> {
 			if (error || value === undefined) reject(error ?? new Error("no protocol info"));
 			else resolve(value);
 		};
-		socket.once("connect", () => socket.write('{"id":"probe","type":"get_protocol_info"}\n'));
+		socket.once("connect", () => {
+			if (secret) sendSocketHandshake(socket, secret);
+			socket.write('{"id":"probe","type":"get_protocol_info"}\n');
+		});
 		socket.on("data", (chunk) => {
 			buffer += chunk.toString("utf8");
 			const newline = buffer.indexOf("\n");
@@ -466,11 +864,13 @@ class JsonlPeer {
 	}
 
 	static async connect(socketPath: string): Promise<JsonlPeer> {
-		const socket = createConnection(socketPath);
+		const secret = process.platform === "win32" ? await readSocketSecret(socketSecretPath(socketPath)) : undefined;
+		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
 		await new Promise<void>((resolve, reject) => {
 			socket.once("connect", resolve);
 			socket.once("error", reject);
 		});
+		if (secret) sendSocketHandshake(socket, secret);
 		const peer = new JsonlPeer(socket);
 		peers.push(peer);
 		return peer;

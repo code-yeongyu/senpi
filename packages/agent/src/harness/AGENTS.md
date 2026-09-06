@@ -23,7 +23,7 @@ Earned its own file: 41 files / ~10k LOC, distinct domain from the browser-safe 
 
 - `docs/harness.md` is the normative implementation spec (entries + registers + usage ledger, transactional writes, op-state recovery). When code and spec contradict, stop for review; do not improvise a new durable contract.
 - Operational failures are tagged errors inside `Result` values, never untyped exceptions.
-- Telemetry is schema-first: edit the const schemas in `telemetry.ts`, then regenerate `docs/telemetry-schema.md` (`npm run generate-telemetry-docs`; `npm run check:telemetry-docs` verifies CI-exact output).
+- Telemetry is schema-first: edit the const schemas in `telemetry.ts`, then regenerate `docs/telemetry-schema.md` (`bun run generate-telemetry-docs`; `bun run check:telemetry-docs` verifies CI-exact output).
 - Harness tools are `AgentTool & { replay?: "never" | "safe" }` (`HarnessTool`); only tools marked replay-safe re-run after recovery.
 - Harness tests run under `vitest.harness.config.ts` (`test/harness/**`; coverage limited to `src/harness/**` plus `src/agent.ts` and `src/agent-loop.ts`).
 

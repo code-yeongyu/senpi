@@ -67,6 +67,34 @@ async function collect<T>(stream: AsyncIterable<T>): Promise<T[]> {
 	return events;
 }
 
+const apiRetryMessage = sdkMessage({
+	type: "system",
+	subtype: "api_retry",
+	attempt: 1,
+	max_retries: 2,
+	retry_delay_ms: 1,
+	error_status: 429,
+	error: "rate limited",
+	uuid: "api-retry-1",
+	session_id: "session-1",
+});
+
+const assistantStreamMessages = [
+	sdkMessage({
+		type: "stream_event",
+		event: { type: "message_start", message: { usage: { input_tokens: 1, output_tokens: 0 } } },
+	}),
+	sdkMessage({
+		type: "stream_event",
+		event: { type: "content_block_start", index: 0, content_block: { type: "text" } },
+	}),
+	sdkMessage({
+		type: "stream_event",
+		event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hello" } },
+	}),
+	sdkMessage({ type: "stream_event", event: { type: "content_block_stop", index: 0 } }),
+];
+
 const scriptedMessages = [
 	sdkMessage({
 		type: "stream_event",
@@ -207,12 +235,22 @@ class ResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage> {
 	readonly options: Options;
 	closes = 0;
 	private readonly initializationError: Error | undefined;
+	private readonly includeApiRetry: boolean;
+	private readonly apiRetryGate: { promise: Promise<void>; release: () => void } | undefined;
 	private readonly queued: SDKMessage[] = [];
 	private readonly readers: Array<(value: IteratorResult<SDKMessage>) => void> = [];
 
-	constructor(prompt: AsyncIterable<SDKUserMessage>, options: Options, initializationError?: Error) {
+	constructor(
+		prompt: AsyncIterable<SDKUserMessage>,
+		options: Options,
+		initializationError?: Error,
+		includeApiRetry = false,
+		apiRetryGate?: { promise: Promise<void>; release: () => void },
+	) {
 		this.options = options;
 		this.initializationError = initializationError;
+		this.includeApiRetry = includeApiRetry;
+		this.apiRetryGate = apiRetryGate;
 		void this.consume(prompt);
 	}
 
@@ -250,6 +288,11 @@ class ResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage> {
 			const uuid = message.uuid ?? `submitted-${this.submitted.length}`;
 			const sessionId = message.session_id;
 			this.emit(sdkMessage({ ...message, uuid, session_id: sessionId, isReplay: true }));
+			if (this.includeApiRetry) {
+				this.emit(apiRetryMessage);
+				if (textFrom(message) === "next") await this.apiRetryGate?.promise;
+				for (const streamMessage of assistantStreamMessages) this.emit(streamMessage);
+			}
 			this.emit(
 				sdkMessage({
 					type: "assistant",
@@ -270,6 +313,16 @@ class ResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage> {
 				}),
 			);
 		}
+	}
+}
+
+class ResidentQueryWithApiRetry extends ResidentQuery {
+	constructor(
+		prompt: AsyncIterable<SDKUserMessage>,
+		options: Options,
+		apiRetryGate: { promise: Promise<void>; release: () => void },
+	) {
+		super(prompt, options, undefined, true, apiRetryGate);
 	}
 }
 
@@ -403,6 +456,63 @@ afterEach(() => {
 });
 
 describe("Claude SDK OAuth stream events", () => {
+	it("counts api_retry as the first event on the non-resident query path", async () => {
+		overrideSdkBoundary({
+			query: scriptedQuery([
+				apiRetryMessage,
+				...assistantStreamMessages,
+				sdkMessage({ type: "result", subtype: "success", result: "hello", stop_reason: "end_turn" }),
+			]),
+		});
+		const events = await collect(streamClaudeSdkOauth(model, { messages: [] }));
+		expect(events[0]).toMatchObject({ type: "start" });
+		expect(events.findIndex((event) => event.type === "start")).toBeLessThan(
+			events.findIndex((event) => event.type === "text_delta"),
+		);
+	});
+
+	it("counts api_retry as the first event on the resident pump path after replay claim", async () => {
+		let releaseApiRetry!: () => void;
+		const apiRetryGate = {
+			promise: new Promise<void>((resolve) => {
+				releaseApiRetry = resolve;
+			}),
+			release: () => releaseApiRetry(),
+		};
+		residentBoundary(new Set(), (prompt, options) => new ResidentQueryWithApiRetry(prompt, options, apiRetryGate));
+		const sessionId = "resident-api-retry-start";
+		const first = await streamClaudeSdkOauth(
+			model,
+			{ messages: [{ role: "user", content: "seed", timestamp: 1 }] },
+			mainOptions(sessionId),
+		);
+		await first.result();
+		const stream = streamClaudeSdkOauth(
+			model,
+			{
+				messages: [
+					{ role: "user", content: "seed", timestamp: 1 },
+					assistant("old", 2),
+					{ role: "user", content: "next", timestamp: 3 },
+				],
+			},
+			mainOptions(sessionId),
+		);
+		const iterator = stream[Symbol.asyncIterator]();
+		try {
+			const start = await iterator.next();
+			expect(start).toMatchObject({ value: { type: "start" }, done: false });
+			const eventsPromise = collect({ [Symbol.asyncIterator]: () => iterator });
+			releaseApiRetry();
+			const events = [start.value!, ...(await eventsPromise)];
+			expect(events.findIndex((event) => event.type === "start")).toBeLessThan(
+				events.findIndex((event) => event.type === "text_delta"),
+			);
+		} finally {
+			releaseApiRetry();
+		}
+	});
+
 	it("maps stream events, drains through the terminal result, and uses its usage and stop reason", async () => {
 		let consumedTerminalResult = false;
 		overrideSdkBoundary({

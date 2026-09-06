@@ -1,5 +1,58 @@
 # Local fork changes
 
+## 2026-09-04 - Restore the @anthropic-ai/sdk 0.123.0 pin the R4b merge dropped
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/sdk` 0.120.0 -> 0.123.0, restoring the declaration the 2026-09-03 upstream sync carried before the R4b re-integration reverted it; `09e23825a` resyncs the root lockfile and the generated publish/install locks to the restored pin.
+
+### Why
+
+- The synced lockfiles and the `.npmrc` `min-release-age-exclude[]=@anthropic-ai/sdk` entry assume 0.123.0, so the reverted manifest left `npm ci` resolving a manifest/lockfile mismatch.
+
+### Why an extension could not handle it
+
+- Dependency resolution happens from the package manifest during install, before any runtime or extension code loads.
+
+### Expected merge conflict zones
+
+- LOW: the `@anthropic-ai/sdk` line in `packages/coding-agent/package.json` and the generated `publish-deps.lock.json` / `install-lock` entries.
+
+## 2026-09-03 - Bump @anthropic-ai/claude-agent-sdk to 0.3.259
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.241 -> 0.3.259. Regenerated the coding-agent publish dependency closure, install lock, Claude Agent SDK platform lock, and root lockfiles from the refreshed pin.
+- `bun.lock`: besides the SDK entries, `bun install` also catches the workspace package versions up from `2026.9.2-4` to `2026.9.3`. The release commit `240fff144` bumped every workspace `package.json` and the npm locks but never regenerated `bun.lock`, so the tracked Bun lockfile was already stale on main; this PR records the state `bun install` produces from the current manifests and adds no dependency beyond the SDK's own optional platform packages.
+
+### Why
+
+- SDK 0.3.241 bundles Claude Code 2.1.241, which the API rejects for `claude-fable-5-1` (`version 2.1.251 or newer is required`). 0.3.259 bundles Claude Code 2.1.259 and satisfies that floor.
+
+### Why an extension could not handle it
+
+- The bundled Claude Code binary is selected by the package pin and install graph before any extension loads. `CLAUDE_CODE_EXECUTABLE` is only a session-local workaround.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/package.json` and the generated publish/install/platform locks.
+
+## 2026-09-02 - RPC host lifecycle teardown treats a timed-out probe as unknown, not alive
+
+- `test/rpc-host-lifecycle.test.ts` decides Windows process liveness with the production `processIsLive(pid)` (`kill(pid, 0)`) instead of trusting the PowerShell CIM probe's `timedOut` flag. A loaded `windows-latest` runner could time the 10s CIM probe out for a supervisor that had genuinely idle-exited; `terminateSupervisor()` then rethrew the `Stop-Process` failure (`starts a fresh host transparently on the next ensure after an idle exit`), and `waitForHostExit()` spun to its deadline and threw `did not exit within Nms`. A timed-out probe means the state is unknown, so it is re-decided by `kill(pid, 0)` (`ESRCH` -> gone, `EPERM` -> alive); a process that is really still alive still rethrows / still keeps waiting.
+
+## 2026-09-01 - Acknowledge RPC abort before quiesce
+
+- The RPC `abort` command now acknowledges immediately after dispatching the abort signal, while observing quiesce failures through the existing `rpc_error` event path.
+
+- `abort_bash` and `abort_retry` remain unchanged because they synchronously dispatch their abort actions and do not await session quiescence.
+
+
+## 2026-08-30 - Make interactive-host entry-parity tests rules-hermetic
+
+- The spawned RPC host in `test/interactive-host-runtime.test.ts` now sets `PI_RULES_DISABLED=1`, so the rules extension's asynchronous `pi-rules.scan` custom entry can no longer race the host-vs-local entry parity assertions (flaky `transports setup mutations to the authoritative host before rebind` on CI shard 1/3).
+- The tree-navigation regression now asserts navigation through its real contract: `SessionManager.branch()` is a memory-only leaf-pointer move, so the test proves the host applied it by checking that the next host append (`session_info`) lands as a root entry. The old persisted-leaf-changed assertion only ever passed when the rules extension's async scan entry happened to append after the branch, which was the flake.
+
 ## 2026-08-29 - GLM-5.3 default and prompt preset
 
 - Use GLM-5.3 as the Z.AI global and China default, with the matching built-in prompt preset from current main.

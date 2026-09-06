@@ -15,6 +15,7 @@ export type EnvCredentialSlot = {
  * canonical mapping lists several variables.
  */
 export function primaryEnvVar(providerId: string): string | undefined {
+	if (providerId === "claude-sdk-oauth") return "CLAUDE_CODE_OAUTH_TOKEN";
 	const envVars = getApiKeyEnvVars(providerId);
 	if (!envVars || envVars.length === 0) return undefined;
 	return envVars.find((name) => name.endsWith("_API_KEY")) ?? envVars[0];

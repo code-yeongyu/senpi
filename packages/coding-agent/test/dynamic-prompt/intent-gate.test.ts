@@ -3,34 +3,31 @@ import { buildIntentGate } from "../../src/core/dynamic-prompt/intent-gate.ts";
 import type { AvailableTool } from "../../src/core/dynamic-prompt/types.ts";
 
 describe("buildIntentGate", () => {
-	test("includes intent verbalization table", () => {
+	test("includes intent routing rules", () => {
 		const result = buildIntentGate({ tools: [] });
 
-		expect(result).toContain("Intent");
-		expect(result).toContain("Surface Form");
-		expect(result).toContain("True Intent");
+		expect(result).toContain("## Intent Gate");
+		expect(result).toContain("Route by true intent, not surface form");
 	});
 
-	test("includes request classification steps", () => {
+	test("covers the three intent families", () => {
 		const result = buildIntentGate({ tools: [] });
 
-		expect(result).toContain("Trivial");
-		expect(result).toContain("Explicit");
-		expect(result).toContain("Exploratory");
-		expect(result).toContain("Open-ended");
-		expect(result).toContain("Ambiguous");
+		expect(result).toContain("Information asks");
+		expect(result).toContain("Judgment asks");
+		expect(result).toContain("Change asks");
 	});
 
-	test("includes context-completion gate", () => {
+	test("includes scope fidelity rule", () => {
 		const result = buildIntentGate({ tools: [] });
 
-		expect(result).toContain("Context-Completion Gate");
+		expect(result).toContain("scope asked");
 	});
 
-	test("includes turn-local intent reset", () => {
+	test("includes turn-local intent derivation", () => {
 		const result = buildIntentGate({ tools: [] });
 
-		expect(result).toContain("Turn-Local Intent Reset");
+		expect(result).toContain("latest user turn");
 	});
 
 	test("adds search trigger when search tools are available", () => {
@@ -40,31 +37,27 @@ describe("buildIntentGate", () => {
 		expect(result).toContain("grep");
 	});
 
-	test("forces intent verbalization with the routing line", () => {
+	test("omits the search trigger without search tools", () => {
+		const result = buildIntentGate({ tools: [] });
+
+		expect(result).not.toContain("Specialized search available this turn");
+	});
+
+	test("forces intent verbalization with a binding stop condition", () => {
 		const result = buildIntentGate({ tools: [] });
 
 		expect(result).toContain("I read this as");
-		expect(result).toContain("The routing line is required");
+		expect(result).toContain("I'll stop when");
 		expect(result).not.toContain("Keep the routing decision internal");
 		expect(result).not.toContain("Do not expose classification labels");
 	});
 
-	test("includes routing map with surface form to approach mapping", () => {
+	test("routes common surface forms", () => {
 		const result = buildIntentGate({ tools: [] });
 
 		expect(result).toContain("explain");
 		expect(result).toContain("implement");
 		expect(result).toContain("error");
 		expect(result).toContain("refactor");
-	});
-
-	test("includes search triggers when search tools present", () => {
-		const tools: AvailableTool[] = [
-			{ name: "grep", category: "search" },
-			{ name: "read", category: "other" },
-		];
-		const result = buildIntentGate({ tools });
-
-		expect(result).toContain("grep");
 	});
 });

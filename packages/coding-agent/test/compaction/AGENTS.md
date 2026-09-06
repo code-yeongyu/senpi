@@ -37,6 +37,6 @@ Compaction mechanics and policy: blocking, speculative, idle/warm, pruning, rout
 ## COMMANDS
 
 ```bash
-npm --prefix packages/coding-agent test -- --run test/compaction/<file>.test.ts
-npm --prefix packages/coding-agent test -- --run test/compaction
+bun run --cwd packages/coding-agent test --run test/compaction/<file>.test.ts
+bun run --cwd packages/coding-agent test --run test/compaction
 ```

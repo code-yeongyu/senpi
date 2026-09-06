@@ -102,7 +102,7 @@ const OPENGATEWAY_MODEL_OVERRIDES: Record<string, OpenGatewayModelOverride> = {
 		name: "Kimi K3 Ultrafast",
 		reasoning: true,
 		cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
-		contextWindow: 1048576,
+		contextWindow: 262144,
 		maxTokens: 131072,
 	},
 	"z-ai/glm-5.2-ultrafast": {

@@ -25,7 +25,7 @@
 import { writeFileSync } from "fs";
 import { Type } from "typebox";
 import { beforeAll, describe, expect, it } from "vitest";
-import { completeSimple, getEnvApiKey, getModel } from "../src/compat.ts";
+import { completeSimple, getEnvApiKey, getModel, getModels } from "../src/compat.ts";
 import type { Api, AssistantMessage, Message, Model, Tool, ToolResultMessage } from "../src/types.ts";
 import { hasAzureOpenAICredentials } from "./azure-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
@@ -52,6 +52,14 @@ interface ProviderModelPair {
 	upstreamApiKeyEnv?: string;
 }
 
+function requireCatalogFamilyModelId(provider: Parameters<typeof getModels>[0], family: RegExp): string {
+	const model = getModels(provider).find((candidate) => family.test(candidate.id));
+	if (!model) {
+		throw new Error(`No ${provider} catalog model matching ${family}`);
+	}
+	return model.id;
+}
+
 const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	// Anthropic
 	{ provider: "anthropic", model: "claude-sonnet-4-5", label: "anthropic-claude-sonnet-4-5" },
@@ -68,11 +76,27 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "azure-openai-responses", model: "gpt-4o-mini", label: "azure-openai-responses-gpt-4o-mini" },
 	// OpenAI Codex
 	{ provider: "openai-codex", model: "gpt-5.5", label: "openai-codex-gpt-5.5" },
-	// GitHub Copilot
-	{ provider: "github-copilot", model: "claude-sonnet-4.5", label: "copilot-claude-sonnet-4.5" },
-	{ provider: "github-copilot", model: "gpt-5.1-codex", label: "copilot-gpt-5.1-codex" },
-	{ provider: "github-copilot", model: "gemini-3-flash-preview", label: "copilot-gemini-3-flash-preview" },
-	{ provider: "github-copilot", model: "grok-code-fast-1", label: "copilot-grok-code-fast-1" },
+	// GitHub Copilot — resolve families from the live catalog so release regenerations cannot pin dead ids.
+	{
+		provider: "github-copilot",
+		model: requireCatalogFamilyModelId("github-copilot", /claude-sonnet/),
+		label: "copilot-claude-sonnet",
+	},
+	{
+		provider: "github-copilot",
+		model: requireCatalogFamilyModelId("github-copilot", /codex/),
+		label: "copilot-codex",
+	},
+	{
+		provider: "github-copilot",
+		model: requireCatalogFamilyModelId("github-copilot", /^gemini-/),
+		label: "copilot-gemini",
+	},
+	{
+		provider: "github-copilot",
+		model: requireCatalogFamilyModelId("github-copilot", /^grok-/),
+		label: "copilot-grok",
+	},
 	// Amazon Bedrock
 	{
 		provider: "amazon-bedrock",
@@ -123,7 +147,11 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "opencode", model: "claude-sonnet-4-5", label: "zen-claude-sonnet-4-5" },
 	{ provider: "opencode", model: "gemini-3-flash", label: "zen-gemini-3-flash" },
 	{ provider: "opencode", model: "glm-4.7-free", label: "zen-glm-4.7-free" },
-	{ provider: "opencode", model: "gpt-5.2-codex", label: "zen-gpt-5.2-codex" },
+	{
+		provider: "opencode",
+		model: requireCatalogFamilyModelId("opencode", /codex/),
+		label: "zen-codex",
+	},
 	{ provider: "opencode", model: "minimax-m2.1-free", label: "zen-minimax-m2.1-free" },
 	// OpenCode Go
 	{ provider: "opencode-go", model: "kimi-k2.5", label: "go-kimi-k2.5" },

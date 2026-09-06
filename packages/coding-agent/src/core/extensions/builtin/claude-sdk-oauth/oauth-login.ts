@@ -109,9 +109,15 @@ export function createOAuthConfig(deps: {
 		environment?: Record<string, string>,
 	): Promise<boolean> => {
 		const storedAccounts = stored?.type === "oauth" && Array.isArray(stored.accounts) ? stored.accounts : [];
+		// Slot-scoped resolution projects one account onto the flat credential shape,
+		// stripping `accounts`; its concrete (non-sentinel) tokens are that account.
+		const selectedStoredAccount =
+			stored?.type === "oauth" &&
+			stored.access !== SENTINEL_OAUTH_FIELDS.access &&
+			stored.refresh !== SENTINEL_OAUTH_FIELDS.refresh;
 		const effectiveEnvironment = environment ?? (await claudeEnvironment(ctx));
 		const environmentTokenCount = Object.values(effectiveEnvironment).filter(Boolean).length;
-		const accountCount = storedAccounts.length + environmentTokenCount;
+		const accountCount = storedAccounts.length + (selectedStoredAccount ? 1 : 0) + environmentTokenCount;
 		const settings = deps.readSettings?.();
 		const lane = settings?.tokenInjection ?? (accountCount > 0 ? "oauth-slots" : "ambient");
 		if (lane === "ambient") {

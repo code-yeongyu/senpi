@@ -155,6 +155,7 @@ export {
 	renderImage,
 	resetCapabilitiesCache,
 	setCapabilities,
+	setCapabilityOverrides,
 	setCellDimensions,
 	type TerminalCapabilities,
 	type TmuxPassthroughState,

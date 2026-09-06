@@ -24,12 +24,16 @@ function createModel(id: string): Model<Api> {
 	};
 }
 
-function buildPrompt(presetName: PromptPresetName, modelId: string): string {
+function buildPrompt(
+	presetName: PromptPresetName,
+	modelId: string,
+	selectedTools: readonly string[] = ["eval", "monitor", "read", "bash"],
+): string {
 	const settings: PromptPresetSettings = { promptPreset: presetName };
 	const preset = resolvePreset(createModel(modelId), settings, {
 		cwd: "/repo",
-		selectedTools: ["eval", "read", "bash"],
-		toolSnippets: { eval: "Run one persistent code cell." },
+		selectedTools: [...selectedTools],
+		toolSnippets: Object.fromEntries(selectedTools.map((name) => [name, `${name} snippet`])),
 		promptGuidelines: [],
 		contextFiles: [],
 		skills: [],
@@ -116,6 +120,15 @@ describe("GPT-5.6 execution discipline", () => {
 			expect(section, `missing section for ${rule.id}`).toBeDefined();
 			expect(section).toContain(rule.directive);
 		}
+	});
+
+	it("leaves the wait-as-subscription stance to the eval tool description", () => {
+		// given
+		const prompt = buildPrompt("gpt-5.6", "gpt-5.6-sol", ["eval", "monitor", "read"]);
+
+		// then
+		expect(GPT56_EXECUTION_RULES.map((rule) => rule.id)).not.toContain("monitor-subscribe");
+		expect(prompt).not.toMatch(/register monitor with a filter/i);
 	});
 
 	it("keeps the shared GPT code-execution routing bridge at the orchestration point of use", () => {

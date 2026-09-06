@@ -660,7 +660,8 @@ describe("agentLoop with AgentMessage", () => {
 			const { events, messages } = await collectAgentEvents(stream, 500);
 			const assistantMessage = messages.find((message): message is AssistantMessage => message.role === "assistant");
 			expect(assistantMessage?.stopReason).toBe("error");
-			expect(assistantMessage?.errorMessage).toBe("Provider stream start timed out after 20ms");
+			expect(assistantMessage?.errorMessage).toContain("Provider stream start timed out after 20ms");
+			expect(assistantMessage?.errorMessage).toContain("retry.provider.streamStartTimeoutMs");
 			expect(events.map((event) => event.type)).toEqual([
 				"agent_start",
 				"turn_start",
@@ -2092,11 +2093,13 @@ describe("agentLoop with AgentMessage", () => {
 			tools: [tool],
 		};
 		let convertedSecondTurnSystemPrompt = "";
+		let prepareCalls = 0;
 		let prepared = false;
 		const config: AgentLoopConfig = {
 			model: createModel(),
 			convertToLlm: identityConverter,
 			prepareNextTurn: async ({ context: currentContext }) => {
+				prepareCalls++;
 				if (prepared) return undefined;
 				prepared = true;
 				return {
@@ -2142,6 +2145,7 @@ describe("agentLoop with AgentMessage", () => {
 		}
 
 		expect(llmCalls).toBe(2);
+		expect(prepareCalls).toBe(2);
 		expect(convertedSecondTurnSystemPrompt).toBe("second prompt");
 	});
 

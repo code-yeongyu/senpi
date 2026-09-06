@@ -27,6 +27,23 @@ import { consumeTmuxFocusEvent, DISABLE_FOCUS_REPORTING, ENABLE_FOCUS_REPORTING 
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
+const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
+
+function writeBounded(terminal: Terminal, data: string): void {
+	for (let offset = 0; offset < data.length; offset += MAX_RENDER_WRITE_CHARS) {
+		let end = Math.min(data.length, offset + MAX_RENDER_WRITE_CHARS);
+		if (
+			end < data.length &&
+			data.charCodeAt(end - 1) >= 0xd800 &&
+			data.charCodeAt(end - 1) <= 0xdbff &&
+			data.charCodeAt(end) >= 0xdc00 &&
+			data.charCodeAt(end) <= 0xdfff
+		)
+			end--;
+		if (end === offset) end++;
+		terminal.write(data.slice(offset, end));
+	}
+}
 
 interface KittyImageHeader {
 	ids: number[];
@@ -1801,7 +1818,7 @@ export abstract class TuiBase extends Container {
 
 		const finalCursorRow = plan.viewportTop + finalPaintedScreenRow;
 		buffer = this.finishFrame(buffer, cursorPos, newLines.length, finalCursorRow);
-		this.terminal.write(buffer);
+		writeBounded(this.terminal, buffer);
 
 		this.cursorRow = Math.max(0, newLines.length - 1);
 		this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
@@ -1840,7 +1857,7 @@ export abstract class TuiBase extends Container {
 		}
 
 		buffer = this.finishFrame(buffer, cursorPos, newLines.length, bufferLength - 1);
-		this.terminal.write(buffer);
+		writeBounded(this.terminal, buffer);
 
 		this.cursorRow = Math.max(0, newLines.length - 1);
 		this.maxLinesRendered = newLines.length;
@@ -1879,7 +1896,7 @@ export abstract class TuiBase extends Container {
 
 		const finalCursorRow = viewportTop + Math.max(0, height - 1);
 		buffer = this.finishFrame(buffer, cursorPos, newLines.length, finalCursorRow);
-		this.terminal.write(buffer);
+		writeBounded(this.terminal, buffer);
 
 		this.muxViewportRepaintCount += 1;
 		this.cursorRow = Math.max(0, newLines.length - 1);
@@ -2057,7 +2074,7 @@ export abstract class TuiBase extends Container {
 			}
 			const finalCursorRow = Math.max(0, newLines.length - 1);
 			buffer = this.finishFrame(buffer, cursorPos, newLines.length, finalCursorRow);
-			this.terminal.write(buffer);
+			writeBounded(this.terminal, buffer);
 			this.cursorRow = Math.max(0, newLines.length - 1);
 			// Reset max lines when clearing, otherwise track growth
 			if (clear) {
@@ -2207,7 +2224,7 @@ export abstract class TuiBase extends Container {
 					buffer += `\x1b[${moveBack}A`;
 				}
 				buffer = this.finishFrame(buffer, cursorPos, newLines.length, targetRow);
-				this.terminal.write(buffer);
+				writeBounded(this.terminal, buffer);
 				this.cursorRow = targetRow;
 			} else {
 				this.positionHardwareCursor(cursorPos, newLines.length);
@@ -2316,7 +2333,7 @@ export abstract class TuiBase extends Container {
 
 				const finalCursorRow = viewportTop + Math.max(0, height - 1);
 				buffer = this.finishFrame(buffer, cursorPos, newLines.length, finalCursorRow);
-				this.terminal.write(buffer);
+				writeBounded(this.terminal, buffer);
 
 				this.cursorRow = Math.max(0, newLines.length - 1);
 				this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
@@ -2479,7 +2496,7 @@ export abstract class TuiBase extends Container {
 		}
 
 		// Write entire buffer at once
-		this.terminal.write(buffer);
+		writeBounded(this.terminal, buffer);
 
 		// Track cursor position for next render
 		// cursorRow tracks end of content (for viewport calculation)

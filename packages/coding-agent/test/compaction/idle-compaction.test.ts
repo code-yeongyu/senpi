@@ -25,6 +25,7 @@ interface IdleHarness {
 	ctx: ExtensionContext;
 	applyCompaction: ReturnType<typeof vi.fn>;
 	beginCompaction: ReturnType<typeof vi.fn>;
+	getApiKeyAndHeaders: ReturnType<typeof vi.spyOn>;
 }
 
 /**
@@ -52,8 +53,17 @@ function createIdleHarness(options: {
 	usageTokens?: number;
 	contextWindow?: number;
 	idleCompactionEnabled?: boolean;
+	openAiRemoteCapable?: boolean;
 }): IdleHarness {
-	const registration = registerFauxProvider();
+	const registration = registerFauxProvider(
+		options.openAiRemoteCapable
+			? {
+					api: "openai-responses",
+					provider: "openai",
+					models: [{ id: "gpt-remote-idle", contextWindow: options.contextWindow ?? 100_000 }],
+				}
+			: {},
+	);
 	registrations.push(registration);
 	const model = registration.getModel();
 	const authStorage = AuthStorage.inMemory();
@@ -75,6 +85,7 @@ function createIdleHarness(options: {
 			baseUrl: registeredModel.baseUrl,
 		})),
 	});
+	const getApiKeyAndHeaders = vi.spyOn(modelRegistry, "getApiKeyAndHeaders");
 
 	const sessionManager = SessionManager.inMemory();
 	const now = Date.now();
@@ -139,7 +150,7 @@ function createIdleHarness(options: {
 		getSystemPrompt: () => "TEST AGENT SYSTEM PROMPT",
 	} as unknown as ExtensionContext;
 
-	return { agentEnd, beforeAgentStart, registration, ctx, applyCompaction, beginCompaction };
+	return { agentEnd, beforeAgentStart, registration, ctx, applyCompaction, beginCompaction, getApiKeyAndHeaders };
 }
 
 function createAgentEndEvent(overrides?: Partial<AgentEndEvent>): AgentEndEvent {
@@ -252,6 +263,20 @@ describe("proactive idle compaction (agent_end wiring)", () => {
 
 		expect(harness.beginCompaction).not.toHaveBeenCalled();
 	});
+
+	it("skips sub-threshold local warming when the OpenAI remote lane will own threshold compaction", async () => {
+		const harness = createIdleHarness({
+			usageTokens: 50_000,
+			contextWindow: 100_000,
+			openAiRemoteCapable: true,
+		});
+		harness.registration.setResponses([fauxAssistantMessage("local summary should not be requested")]);
+
+		await harness.agentEnd(createAgentEndEvent(), harness.ctx);
+
+		expect(harness.getApiKeyAndHeaders).not.toHaveBeenCalled();
+		expect(harness.applyCompaction).not.toHaveBeenCalled();
+	});
 });
 
 // Upper bound covering IDLE_WARMUP_RETRY_DELAY_MS; the retry must fire within this window.
@@ -269,6 +294,31 @@ function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
 describe("idle warm-up retry", () => {
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	it("retries a transient sub-threshold warm-up before later threshold admission", async () => {
+		vi.useFakeTimers();
+		const harness = createIdleHarness({ usageTokens: 50_000, contextWindow: 100_000 });
+		const firstRequested = createDeferred();
+		harness.registration.setResponses([
+			() => {
+				firstRequested.resolve();
+				return fauxAssistantMessage("summary failure", {
+					stopReason: "error",
+					errorMessage: "provider overloaded",
+				});
+			},
+			() => fauxAssistantMessage("sub-threshold warm summary after retry"),
+		]);
+
+		await harness.agentEnd(createAgentEndEvent(), harness.ctx);
+		await firstRequested.promise;
+		await vi.advanceTimersByTimeAsync(0);
+		expect(harness.registration.state.callCount).toBe(1);
+		await vi.advanceTimersByTimeAsync(RETRY_ADVANCE_MS);
+
+		expect(harness.registration.state.callCount).toBe(2);
+		expect(harness.applyCompaction).not.toHaveBeenCalled();
 	});
 
 	it("retries a transient idle warm-up failure and applies the retried summary at idle", async () => {

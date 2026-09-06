@@ -2,6 +2,11 @@
  * The `schedule_wakeup` model tool: the ONLY model-callable surface of the `/loop`
  * extension. It lets a dynamic (self-paced) loop pick its own next delay, or end itself.
  *
+ * Exposure: the tool is registered `exposure: "search"` with lazy activation disabled, so it is
+ * absent from the resident tool list (and from `tool_search`) until the loop extension activates it
+ * for a live dynamic loop and retires it when that loop ends. Outside a dynamic loop every call is
+ * an error, so a resident registration only cost prompt tokens.
+ *
  * Two deliberate shape decisions:
  * - The TypeBox schema is a FLAT object with no root union. Several provider payload
  *   conversions rebuild tool schemas from top-level `properties` only, so a root
@@ -28,7 +33,7 @@ export const MAX_WAKEUP_DELAY_SECONDS = 3600;
 
 export const SCHEDULE_WAKEUP_DESCRIPTION = `Schedule when to resume work in /loop dynamic mode. Always pass the \`prompt\` argument unless stopping. Call this as the last action before ending a dynamic loop iteration so the loop remains alive; call with \`stop: true\` to end the active dynamic loop immediately.
 
-\`delaySeconds\` is clamped to ${MIN_WAKEUP_DELAY_SECONDS}-${MAX_WAKEUP_DELAY_SECONDS} seconds. For idle polling, normally use 1200-1800 seconds. Avoid choosing 300 seconds merely to poll: short polling repeatedly loses prompt-cache value on many API paths. When work is gated on observable terminal state, use \`monitor\` instead of sleeping or polling; inspect it with \`bash_output\` and stop the watcher with \`kill_bash\`. For delegated work, use the available \`task\` output and control tools and let task completion notifications wake the session. When a monitor or task notification is the primary wake source, the scheduled delay is only a fallback heartbeat.
+\`delaySeconds\` is clamped to ${MIN_WAKEUP_DELAY_SECONDS}-${MAX_WAKEUP_DELAY_SECONDS} seconds; 1200-1800 is the normal idle range, and a short delay chosen merely to poll loses prompt-cache value on many API paths. When a monitor or task notification is the primary wake source, the scheduled delay is only a fallback heartbeat.
 
 For normal dynamic re-entry, set \`prompt\` to the complete original command, for example \`/loop check the deploy\`, preserving the user's text verbatim. Set \`noop: true\` only when this iteration found no actionable change; consecutive noop iterations are folded in the terminal view. Omit \`noop\` when stopping. Notify the user only when state changes in a way worth acting on, not once per tick.`;
 
@@ -266,6 +271,8 @@ export function registerLoopTools(pi: ExtensionAPI, deps: LoopToolRegistrationDe
 		label: "Schedule Wakeup",
 		description: SCHEDULE_WAKEUP_DESCRIPTION,
 		parameters: scheduleWakeupSchema,
+		exposure: "search",
+		allowLazyActivation: false,
 		// Sequential so two concurrent model tool calls cannot race scheduler state.
 		executionMode: "sequential",
 		async execute(_toolCallId, params): Promise<AgentToolResult<ScheduleWakeupDetails>> {

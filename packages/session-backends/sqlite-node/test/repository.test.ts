@@ -91,6 +91,18 @@ function createCloseCountingSqliteFactory(): {
 }
 
 describe("SQLite session repository", () => {
+	it("round trips configuration_update entries", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const databasePath = join(root, "sessions.sqlite");
+		await using repo = new SqliteSessionRepository({ env, sqlite: createNodeSqliteFactory(), databasePath });
+		const session = await repo.create({ cwd: root, id: "configuration-update" });
+		await session.appendEntry({ type: "configuration_update", id: "update", reasoning: { effort: "high" } }, "main");
+		expect(await session.getEntry("update")).toMatchObject({
+			type: "configuration_update",
+			reasoning: { effort: "high" },
+		});
+	});
 	it("persists session metadata through create, list, open, and fork", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");

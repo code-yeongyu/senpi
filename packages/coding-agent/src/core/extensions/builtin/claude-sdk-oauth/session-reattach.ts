@@ -10,6 +10,11 @@ export type ContinuityBinding = {
 	sentCount: number;
 	sentHashes: readonly string[];
 	sentPrefixHash?: string;
+	/**
+	 * False while the SDK has not yet acknowledged this session id (no init and
+	 * no replay echo): continuity must never resume or fork such an id.
+	 */
+	sdkSessionIdConfirmed?: boolean;
 	lastAssistantUuid: string | null;
 	accountName: string;
 	modelId: string;
@@ -76,12 +81,14 @@ export function bindingFromEntry(
 		| "systemPromptHash"
 		| "toolsetHash"
 		| "assistantUuidByIndex"
+		| "sdkSessionIdConfirmed"
 	>,
 	sentHashes: readonly string[],
 ): ContinuityBinding {
 	return {
 		senpiSessionId: entry.senpiSessionId,
 		sdkSessionId: entry.sdkSessionId,
+		sdkSessionIdConfirmed: entry.sdkSessionIdConfirmed,
 		sentCount: entry.sentCount,
 		sentHashes: [...sentHashes],
 		lastAssistantUuid: entry.assistantUuidByIndex.get(entry.sentCount) ?? null,

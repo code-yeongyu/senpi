@@ -1,7 +1,89 @@
 # changes — senpi-monorepo root
 
+## bun.lock refreshed wherever package-lock.json is refreshed (2026-09-04)
+
+### What changed
+
+- `package.json`: `version:patch`, `version:minor` and `version:major` append `bun install --lockfile-only` after `npm install --package-lock-only --ignore-scripts`.
+- `package.json`: `refresh-lock` does the same, so the manual lockfile-refresh path and the release path agree.
+
+### Why
+
+- `bun install --frozen-lockfile` broke on main twice in one day: release `v2026.9.4-2` (`a79aa2080`) rewrote `package-lock.json` while `bun.lock` kept 2026.9.3 workspace versions, and `d052dbb6b` added the `@anthropic-ai/sdk` override without regenerating it (fixed as a one-off in #1364).
+- Both incidents share one cause: every script that refreshes a lockfile refreshes only the npm one, and CI installs with `npm ci`, so the drift recurs at each bump with nothing observing it. #1364 cleared the symptom; this closes the source.
+
+### Why an extension could not handle it
+
+- These are the repo's own release and lockfile-maintenance scripts; nothing outside `package.json` decides which lockfiles a version bump rewrites.
+
+### Expected merge conflict zones
+
+- `package.json` `scripts` — the `version:*` and `refresh-lock` lines.
+
+
+## @anthropic-ai/sdk 0.123.0 pin for the v0.84.4 upstream sync (2026-09-04)
+
+### What changed
+
+- `package.json` pins `@anthropic-ai/sdk` at 0.123.0 (was 0.120.0), the version the 2026-09-03 upstream sync of badlogic/pi-mono v0.84.4 resolved against.
+- `.npmrc` adds `min-release-age-exclude[]=@anthropic-ai/sdk` next to the existing excludes, with an in-file note to remove it after 2026-09-05.
+
+### Why
+
+- The fork's `min-release-age=2` supply-chain gate refuses packages younger than two days, so the freshly published 0.123.0 pin would fail installs until 2026-09-05. The exclude is time-boxed by its removal note instead of weakening the policy for every package.
+
+### Why an extension could not handle it
+
+- Root manifest pins and npm install policy execute before any package code, let alone an extension, runs.
+
+### Expected merge conflict zones
+
+- LOW: the `package.json` root dependency overrides block and the `.npmrc` exclude list on future upstream syncs and release bumps.
+
+## Root workspace fan-out scripts no longer recurse under bun (2026-09-02)
+
+### What changed
+
+- `package.json`: the three root scripts that fan out to workspaces stop passing workspace flags after the script name. `test` and `clean` move the flags before the script name (`npm run --workspaces --if-present <script>`), and `eval` moves its flag before `run` (`npm --workspace=@code-yeongyu/senpi-evals run eval --`). npm behavior is unchanged in all three cases.
+- `scripts/root-workspace-scripts.test.mjs` (new): parses the root manifest and fails a root script for either recursion-prone shape — a workspace flag after the script name, or a singular `--workspace` on an `npm run` call (which bun ignores, re-entering the root script). Both shipped shapes are covered; a mutation check confirms reverting `eval` to `npm run --workspace=<name> eval` fails the guard.
+
+### Why
+
+- Bun rewrites `npm run <name>` to `bun run <name>` inside script text, and bun appends flags placed after the script name to the script itself instead of parsing them. `npm run test --workspaces --if-present` therefore re-invoked the ROOT script with an ever-growing flag suffix (`bun run test --workspaces --if-present --workspaces --if-present ...`) and spun forever instead of running the workspace suites — it never failed, so it read as a slow suite. `clean` and `eval` had the same defect. Verified in a throwaway fixture: the flag-before form fans out under both npm and bun, while the singular `--workspace=<name>` form still recurses under bun (bun does not recognize it), which is why `eval` needs the flag before `run` so no `npm run` substring remains to rewrite.
+
+### Why an extension could not handle it
+
+- These are root package manifest scripts consumed by the release gate (`scripts/release.mjs`, `scripts/local-release.mjs` run `CI=1 npm test`) and by contributors directly; no extension surface exists above the package manager.
+
+### Expected merge conflict zones
+
+- LOW: the `test`, `clean`, and `eval` lines in the root `package.json` scripts block.
+
+## Shared-host rendering isolation (2026-08-30)
+
+Shared socket clients now register `rendered_components` through additive `set_client_info` capabilities. Factory-rendered component records are filtered per connection, including capability-aware snapshot replay. Capabilities remain connection-wide across sessions and are cleared only on socket release; explicit close removes only the closing width. Shared bindings retain factories while disposing live renderers and footer providers when no capable connection remains, recreating them for later capable joiners.
+
 Root tracker for repository-level divergence from upstream `badlogic/pi-mono`.
 Owns every audited production path whose nearest tracker is the repository root.
+
+## CodeGraph reference cleanup (2026-09-02)
+
+### What changed
+
+- `biome.json` drops the `!!**/.codegraph` ignore entry.
+
+### Why
+
+- The omo product removed its CodeGraph integration, so nothing writes a `.codegraph` directory anymore. An ignore entry for a directory that is never created is dead configuration that implies the integration still exists.
+- The matching `EXCLUDED_ROOT_PATHS` change in `packages/coding-agent/src/beta/omo-local-update-fingerprint.ts` is recorded in `packages/coding-agent/src/changes.md`, that path's nearest ancestor tracker.
+
+### Why this lives in the fork
+
+- The biome ignore list is fork-owned: it is an omo-specific surface that upstream `badlogic/pi-mono` does not carry.
+
+### Expected merge conflict zones
+
+- LOW: `biome.json` ignore list ordering during upstream syncs.
 
 ## @anthropic-ai/sdk peer alignment (2026-08-26)
 

@@ -81,7 +81,6 @@ beforeEach(() => {
 	mocks.isWaylandSession.mockReturnValue(false);
 	mocks.clipboard.getText.mockResolvedValue("");
 	mocks.clipboard.setText.mockImplementation(async () => {
-		await new Promise((resolve) => setTimeout(resolve, 1));
 		nativeResolved = true;
 	});
 	originalWrite = process.stdout.write.bind(process.stdout);
@@ -167,13 +166,17 @@ describe("copyToClipboard", () => {
 
 	test("remote native success emits OSC 52 after native write", async () => {
 		vi.stubEnv("SSH_CONNECTION", "client server");
+		const nativeWrite = Promise.withResolvers<void>();
 		mocks.clipboard.setText.mockImplementation(async () => {
-			await new Promise((resolve) => setTimeout(resolve, 1));
-			expect(osc52Writes()).toHaveLength(0);
+			await nativeWrite.promise;
 			nativeResolved = true;
 		});
 
-		await copyToClipboard("hello");
+		const copying = copyToClipboard("hello");
+		expect(mocks.clipboard.setText).toHaveBeenCalledWith("hello");
+		expect(osc52Writes()).toHaveLength(0);
+		nativeWrite.resolve();
+		await copying;
 
 		expect(nativeResolved).toBe(true);
 		expect(osc52Writes()).toEqual(["\x1b]52;c;aGVsbG8=\x07"]);

@@ -21,6 +21,12 @@ export interface CreateEvalToolOptions {
 	readonly enabledLanguages: EnabledEvalLanguages;
 	readonly kernelManager: EvalKernelManager;
 	readonly cellTimeoutSeconds: number;
+	/**
+	 * Longest an interactive (detach-behavior) call blocks the agent loop before the cell detaches,
+	 * capping the `timeout` detach budget. Defaults to {@link DEFAULT_FOREGROUND_WINDOW_SECONDS}.
+	 * Does not affect `on_timeout: "error"` calls or the wall-clock hard limit.
+	 */
+	readonly foregroundWindowSeconds?: number;
 	/** Wall-clock kill deadline applied to every cell; only used when this factory creates its own manager. */
 	readonly hardLimitSeconds?: number;
 	readonly executeTool: ExecuteTool;
@@ -36,11 +42,15 @@ export interface CreateEvalToolOptions {
 	readonly proxyExecutor?: (params: EvalToolInput, signal?: AbortSignal) => Promise<AgentToolResult<EvalToolDetails>>;
 	readonly renderers?: Pick<ToolDefinition<EvalInputSchema, EvalToolDetails>, "renderCall" | "renderResult">;
 	readonly spawns?: boolean;
+	/** Whether the session registry exposes the monitor tool through eval. */
+	readonly monitor?: boolean;
 	readonly spawnDefaultAgent?: string;
 	readonly modelId?: string;
 	readonly hostLine?: string;
-	/** Display identity of each language's runtime, shown in headers and details. */
+	/** Display identity of each language's runtime, shown in headers and details; `js` also selects the prompt's runtime line. */
 	readonly runtimes?: EvalRuntimes;
+	/** Absolute path of the active bun-1-4 skill; the prompt names it as MUST READ on a bun kernel. */
+	readonly bunSkillPath?: string;
 }
 
 export interface EvalCellInvocation {

@@ -37,7 +37,7 @@ function defaultSupportsToolReferences(model: Model<"anthropic-messages">): bool
 
 export function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
-): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking">> {
+): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking" | "supportsMidConvoEffort">> {
 	// Auto-detect session affinity and cache control support from provider
 	const isFireworks = model.provider === "fireworks";
 	const isCloudflareAiGatewayAnthropic =
@@ -71,6 +71,7 @@ export function getAnthropicCompat(
 
 export type ResolvedOpenAICompletionsCompat = Omit<
 	Required<OpenAICompletionsCompat>,
+	| "vllmPriority"
 	| "cacheControlFormat"
 	| "toolCallFormat"
 	| "deferredToolsMode"
@@ -88,6 +89,8 @@ export type ResolvedOpenAICompletionsCompat = Omit<
 	chatTemplateArgs?: OpenAICompletionsCompat["chatTemplateArgs"];
 	supportsThinkingTokenBudget?: OpenAICompletionsCompat["supportsThinkingTokenBudget"];
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
+	/** vLLM `priority`; off by default and never set on the generated catalog. */
+	vllmPriority?: OpenAICompletionsCompat["vllmPriority"];
 };
 
 /**
@@ -188,6 +191,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Reso
 		deferredToolsMode: undefined,
 		sessionAffinityFormat: isOpenRouter ? "openrouter" : "openai",
 		supportsPromptCacheKey: isMoonshot || baseUrl.includes("api.openai.com"),
+		supportsMaxOutputTokens: true,
 		supportsLongCacheRetention: !(
 			isTogether ||
 			isCloudflareWorkersAI ||
@@ -238,6 +242,8 @@ export function getOpenAICompletionsCompat(model: Model<"openai-completions">): 
 		deferredToolsMode: model.compat.deferredToolsMode ?? detected.deferredToolsMode,
 		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,
 		supportsPromptCacheKey: model.compat.supportsPromptCacheKey ?? detected.supportsPromptCacheKey,
+		supportsMaxOutputTokens: model.compat.supportsMaxOutputTokens ?? detected.supportsMaxOutputTokens,
+		vllmPriority: model.compat.vllmPriority ?? detected.vllmPriority,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
 	};
 }

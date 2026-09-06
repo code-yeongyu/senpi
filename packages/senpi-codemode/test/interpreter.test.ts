@@ -99,6 +99,7 @@ describe("interpreter detection", () => {
 			{
 				languages: { py: true, js: true, rb: false, jl: false },
 				cellTimeoutSeconds: 30,
+				foregroundWindowSeconds: 60,
 				hardLimitSeconds: 1800,
 				parallelPoolWidth: 4,
 			},

@@ -89,6 +89,7 @@ export interface HarnessOptions {
 	settingsFileName?: "settings.json" | "settings.jsonc";
 	settingsContent?: string;
 	retryProfile?: import("@earendil-works/pi-ai/utils/retry-profile/types").RetryPolicyProfile;
+	evalOnlyToolNames?: string[];
 }
 
 export interface Harness {
@@ -243,6 +244,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		initialActiveToolNames: options.initialActiveToolNames,
 		allowedToolNames: options.allowedToolNames,
 		excludedToolNames: options.excludedToolNames,
+		evalOnlyToolNames: options.evalOnlyToolNames,
 		extensionRunnerRef,
 		autoTitleSessions: options.autoTitleSessions,
 		fallbackNow: options.fallbackNow,

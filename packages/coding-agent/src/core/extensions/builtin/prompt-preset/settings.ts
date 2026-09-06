@@ -3,6 +3,7 @@ import type { Settings, SettingsManager } from "../../../settings-manager.ts";
 export type PromptPresetName =
 	| "auto"
 	| "claude-fable-5"
+	| "claude-fable-5-1"
 	| "claude-opus-5"
 	| "claude-opus-4-8"
 	| "claude-opus-4-7"
@@ -23,7 +24,8 @@ export type PromptPresetName =
 	| "gpt-5.3-codex"
 	| "gpt-5.4"
 	| "gpt-5.5"
-	| "gpt-5.6";
+	| "gpt-5.6"
+	| "gpt-6-astra";
 
 export interface PromptPresetSettings {
 	promptPreset: PromptPresetName;
@@ -34,6 +36,7 @@ type SettingsWithPromptPreset = Settings & { promptPreset?: string };
 const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"auto",
 	"claude-fable-5",
+	"claude-fable-5-1",
 	"claude-opus-5",
 	"claude-opus-4-8",
 	"claude-opus-4-7",
@@ -55,6 +58,7 @@ const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"gpt-5.4",
 	"gpt-5.5",
 	"gpt-5.6",
+	"gpt-6-astra",
 ]);
 
 export function parsePromptPreset(value: string | undefined): PromptPresetName | undefined {

@@ -12,6 +12,8 @@ import type { RpcSessionEntry } from "./session-registry.ts";
 /** A session-owned adapter around the classic command and extension-UI wiring. */
 export interface RpcSessionBinding {
 	handle(command: object): Promise<void>;
+	cancelPendingExtensionUiRequests?(): void;
+	rerenderComponents?(): void;
 	dispose(): Promise<void>;
 }
 
@@ -30,15 +32,32 @@ export async function createRpcSessionBinding(
 	entry: RpcSessionEntry,
 	writer: SessionEventWriter,
 	requestClose: () => void,
-	options: Pick<RpcConnectionOptions, "capabilities"> = {},
+	options: Pick<RpcConnectionOptions, "capabilities" | "sharedWidth"> = {},
 ): Promise<RpcSessionBinding> {
 	if (!entry.runtime) throw new Error("Session runtime was not created");
+	// Attachments share one entry, so resolve the host from the live runtime. In
+	// particular, switch_session must use the entry's replacement-aware method
+	// instead of a runtime captured during open_session.
+	const runtimeHost = new Proxy({} as AgentSessionRuntime, {
+		get(_target, property) {
+			if (property === "switchSession" && entry.switchSession) return entry.switchSession;
+			if (property === "setRebindSession")
+				return (callback?: Parameters<AgentSessionRuntime["setRebindSession"]>[0]) => {
+					entry.rebindSession = callback;
+					entry.runtime?.setRebindSession(callback);
+				};
+			const runtime = entry.runtime;
+			if (!runtime) throw new Error("Session runtime was not created");
+			const value = Reflect.get(runtime, property, runtime);
+			return typeof value === "function" ? value.bind(runtime) : value;
+		},
+	});
 	const handler: RpcConnectionHandler = await runWithProviderScope(entry.scope, async () => {
 		const taggedSink: RpcConnectionSink = {
 			writeRaw: bindToProviderScope((chunk: string) => enqueueRecords(writer, sessionId, chunk)),
 			waitForBackpressure: bindToProviderScope(async () => {}),
 		};
-		return createRpcConnectionHandler(entry.runtime! as AgentSessionRuntime, taggedSink, {
+		return createRpcConnectionHandler(runtimeHost, taggedSink, {
 			sessionId,
 			shutdownHandler: bindToProviderScope(requestClose),
 			disposeRuntime: false,
@@ -48,6 +67,9 @@ export async function createRpcSessionBinding(
 	await handler.ready;
 	return {
 		handle: (command) => runWithProviderScope(entry.scope, () => handler.handleInputLine(JSON.stringify(command))),
+		cancelPendingExtensionUiRequests: () =>
+			runWithProviderScope(entry.scope, () => handler.cancelPendingExtensionUiRequests()),
+		rerenderComponents: () => runWithProviderScope(entry.scope, () => handler.rerenderComponents()),
 		dispose: () => runWithProviderScope(entry.scope, () => handler.dispose()),
 	};
 }

@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-04 - Account for providerThinkingLevel in the protocol types
+
+### What changed
+
+- `packages/server/src/protocol.ts`: the AssistantMessage field-accounting assertion gains `providerThinkingLevel`, mirroring the field the v0.84.4 sync added to the shared AI message type (upstream 4e69b0c28).
+
+### Why
+
+- The server protocol type must stay in lockstep with the shared AssistantMessage shape; the exhaustiveness assertion fails compilation when a field is added upstream but not accounted for here.
+
+### Why an extension could not handle it
+
+- The protocol type is the compiled wire contract shared by server and clients; extensions operate above it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/server/src/protocol.ts` field-accounting list whenever upstream extends the AssistantMessage shape.
+
 ## Server manifest re-diverges from upstream dcd4619 (2026-08-25)
 
 ### What changed

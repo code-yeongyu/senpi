@@ -1,5 +1,160 @@
 # changes
 
+## 2026-09-05 - Ctrl+P skips favorites without context room
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` uses the existing model
+  usability projection before favorite cycling, emits `model_change_skipped`
+  events for rejected candidates, and reports all-skipped cycles explicitly.
+
+### Why
+
+- Ctrl+P is an explicit switch request. A model that cannot admit the current
+  context must be skipped instead of reaching the later usability assertion and
+  surfacing a failed switch.
+
+### Why an extension could not handle it
+
+- Favorite cycling and the session event stream are core runtime seams below the
+  extension API.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts` model event types and
+  favorite cycling.
+
+## 2026-09-04 - Export the UI prompt events and apply terminal overrides in main
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports `UIPromptStartEvent`, `UIPromptEndEvent`, and `UIPromptKind` so embedders can subscribe to the new extension prompt lifecycle events.
+- `packages/coding-agent/src/main.ts`: `main()` applies the settings manager's terminal capability overrides before HTTP proxy and dispatcher configuration, so non-interactive and RPC launches honor explicit capability settings too.
+
+### Why
+
+- Both are public surface wiring from the v0.84.4 sync: the prompt events are unusable by embedders unless exported from the package root, and capability overrides must be in place before any rendering or transport setup reads detected capabilities.
+
+### Why an extension could not handle it
+
+- Package export lists are compile-time surface, and `main()`'s startup ordering runs before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/index.ts` export list; MEDIUM: `packages/coding-agent/src/main.ts` startup ordering around services initialization.
+
+## Branded build labels render verbatim in startup UI (2026-09-04)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/version-label.ts` (new): `formatDisplayVersion` prefixes `v` only when the version string starts with a digit, so release semver/CalVer keep the `v` while branded build labels pass through verbatim.
+- `packages/coding-agent/src/modes/interactive/grok/welcome-card.ts`: both welcome card render sites use the same helper.
+- `packages/coding-agent/src/utils/version-check.ts`: `isNewerPackageVersion` returns `false` for version pairs it cannot order instead of falling back to string inequality.
+
+### Why
+
+- Branded distributions inject free-form `SENPI_BRAND.displayVersion` labels such as `omo@c6e7dd7 2026-09-04 10:17 +09:00`. The hardcoded `v` prefix rendered `OmO vomo@c6e7dd7 …`, and the string-inequality fallback advertised a bogus engine update on every branded startup.
+
+### Why an extension could not handle it
+
+- These are the engine's own startup chrome and update comparison. A branded repackage only injects the label string; it cannot alter render sites or comparison semantics inside the engine.
+
+### Expected merge conflict zones
+
+- LOW: the logo line in `packages/coding-agent/src/modes/interactive/interactive-mode.ts` and the two template literals in `packages/coding-agent/src/modes/interactive/grok/welcome-card.ts`.
+
+## 2026-09-03 - Announce print-mode model fallback on stderr
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts` writes one stderr line when `retry_fallback_applied`, `retry_fallback_exhausted`, or `retry_fallback_reverted` fires, in both text and json print modes, without changing JSON stdout.
+
+### Why
+
+- `senpi -p` answered on a fallback model with no human-visible notice, so users could treat the wrong model's output as the requested model's. JSON mode already streamed `retry_fallback_applied` on stdout; stderr is the channel that does not corrupt that stream.
+
+### Why an extension could not handle it
+
+- Print mode owns the `-p` / `--mode json` I/O path and is the only subscriber that can write stderr without going through the interactive TUI. Retry fallback already emits session events; the hole is print-mode rendering, not the controller.
+
+### Expected merge conflict zones
+
+- LOW: the `session.subscribe` callback in `packages/coding-agent/src/modes/print-mode.ts`.
+
+## 2026-09-02 - Export the RPC open-in-flight client error
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` and `packages/coding-agent/src/modes/index.ts` re-export `RpcClientOpenInFlightError` beside `RpcClient` and `RpcTransportGoneError` so embedders can classify a rejected concurrent `open_session`.
+
+### Why
+
+- `RpcClient` now holds exactly one lease and rejects a second `openSession()` while one is in flight (`code: "open_session_in_flight"`); the public client surface needs the typed error to distinguish that programming error from transport loss.
+
+### Why an extension could not handle it
+
+- The client lease and its pending-open buffering live in the RPC transport layer below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: the export lists in `index.ts` and `modes/index.ts`.
+
+## 2026-09-01 - Negotiate RPC session auto-titling
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` enables RPC session auto-titling when the client advertises `auto_title_sessions`, while preserving the context-message guard and default behavior for clients without the capability.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, and `packages/coding-agent/src/modes/rpc/session-command-router.ts` define and advertise the capability in both RPC protocol surfaces.
+
+### Why
+
+- RPC clients that support native session titles need the engine to generate titles and forward the existing `session_info_changed` event without changing the default wire contract.
+
+### Why an extension could not handle it
+
+- The auto-title decision is made while the entrypoint constructs each `AgentSession`, before extension code loads.
+
+### Expected merge conflict zones
+
+- LOW: the `resolveAutoTitleSessions` helper and `autoTitleSessions` option in `main.ts`, plus RPC capability declarations and protocol responses.
+
+## 2026-08-30 - Export the RPC transport-gone classifier
+
+### What changed
+
+- `index.ts` and `modes/index.ts` re-export `RpcTransportGoneError` and `isTransportGoneError` beside `RpcClient` so embedders can classify shared-host transport loss.
+
+### Why
+
+- The reconnect-or-fallback orchestration rejects sends with the typed error; consumers of the public client surface need the classifier to distinguish transport loss from real failures.
+
+### Why an extension could not handle it
+
+- Package export surfaces are compile-time module structure; extensions cannot add public exports.
+
+### Expected merge conflict zones
+
+- LOW: export lists in `index.ts` and `modes/index.ts`.
+
+## 2026-08-30 - Dispatch the internal RPC host route through wrapper-injected argv
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` matches the hidden `--internal-rpc-host-supervisor` route through `findInternalSupervisorArgs()` instead of a strict `args[0]` comparison, and still fails closed with `exit(2)` when the payload does not parse.
+
+### Why
+
+- A rebranded wrapper re-dispatches this binary through its own entry and prepends `--extension <dir>` for every non-early command, which pushed the sentinel off `args[0]`. The internal route then never fired and the spawned helper died on `--socket`, so compiled wrapper builds could never start the shared host.
+
+### Why an extension could not handle it
+
+- The dispatch happens in the CLI entry before argument parsing and before any extension host exists, so no extension hook can observe or rewrite it.
+
+### Expected merge conflict zones
+
+- LOW: the internal-route dispatch block near the top of `main()`.
+
+
 ## Measure Cursor tool-result history at the wire representation (2026-08-29)
 
 ### What changed
@@ -2031,6 +2186,7 @@ other provider-bound image transport behavior that owns the same payload path.
 - Fast path (2026-07-29): the skip decision now compares a build-input fingerprint of `origin/dev` (`src/beta/omo-local-update-fingerprint.ts`: sha256 over root tree entries minus documentation/agent-config paths) instead of the bare commit sha, so docs/CI-only churn in the omo monorepo no longer triggers the ~30s rebuild. When a rebuild IS needed, the bare-update foreground now only fetches and compares (~1s) and hands the build to a detached worker (`src/beta/omo-local-update-worker.ts`, hidden `senpi update --omo-local-update-worker` flag, output to `<agentDir>/omo-local-update/worker.log`); the worker serializes through the existing pid lock and swaps/stamps exactly like the former inline path. `SENPI_OMO_LOCAL_UPDATE_SYNC=1` restores the old blocking foreground behavior.
 - The fast skip also checks the updater's current required-artifact contract independently of the historical stamp inventory. A legacy, stale, or externally damaged stamp can no longer hide a missing packaged LSP daemon CLI; the next update rebuilds and atomically repairs the plugin.
 - Removal is exactly three steps: delete all `src/beta/omo-local-update*.ts` files; delete all `test/omo-local-update*` files; delete the BETA-marked touch points (the import, the hook calls, and the `--omo-local-update-worker` flag) in `package-manager-cli.ts`.
+- CodeGraph cleanup (2026-09-02): `src/beta/omo-local-update-fingerprint.ts` drops `.codegraph` from `EXCLUDED_ROOT_PATHS`. The omo product removed its CodeGraph integration, so that directory is never created and excluding it from the fingerprint no longer skips anything.
 
 ## App-server daemon launch diagnostics and hermetic lifecycle coverage (2026-07-24)
 
