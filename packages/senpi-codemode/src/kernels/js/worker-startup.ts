@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { type CodemodeRuntimeAssetEnvironment, resolveCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
+import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import { createInlineWorker, type WorkerLike } from "./inline-worker.ts";
 import { type JavaScriptKernelOptions, localBridgeConnection } from "./local-module-loader.ts";
 import { spawnNodeWorker, WorkerStartupCancelledError, waitForReady } from "./worker-host.ts";
@@ -11,7 +11,7 @@ export interface JavaScriptWorkerEntryUrlOptions extends CodemodeRuntimeAssetEnv
 
 export function resolveJsWorkerEntryUrl(options: JavaScriptWorkerEntryUrlOptions = {}): URL {
 	const localPath = options.localPath ?? join(dirname(fileURLToPath(import.meta.url)), "worker-entry.js");
-	return pathToFileURL(resolveCodemodeRuntimeAsset(localPath, join("kernels", "js", "worker-entry.js"), options));
+	return pathToFileURL(requireCodemodeRuntimeAsset(localPath, join("kernels", "js", "worker-entry.js"), options));
 }
 
 export interface WorkerStartupHooks {

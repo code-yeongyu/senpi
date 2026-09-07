@@ -10,6 +10,25 @@
 
 ### Fixed
 
+- The permission system's external-directory check no longer freezes the whole session when a `bash` or `monitor` command mentions a path such as `/home/user/...`: path normalization now resolves symlinks with `lstat`/`readlink` per component instead of `fs.realpathSync`, which under Bun `open(2)`s every directory it resolves and blocks forever on an autofs trigger (macOS `/home`) or misclassifies files under execute-only directories as external.
+
+### Removed
+
+## [2026.9.6] - 2026-09-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The deterministic compaction fallback now retains a prepared suffix whose tool results carry a well-formed image block instead of rejecting it as unsafe content and leaving the session stuck above the threshold; malformed blocks stay rejected and the fallback records each candidate's rejection reason in its diagnostics.
+- Fallback decision logging remains visible when atomic admission probes reject or exhaust candidates.
+- Fallback activation now validates context admission before persisting or
+  emitting model changes, and unusable refusal or transient fallback candidates
+  fail closed without leaking internal admission errors.
 - Recovery now fails closed when a fallback model cannot admit the live context: the session keeps its identity and enters deterministic blocked recovery instead of hopping through unrelated providers after auth/compaction failures.
 - Preserve Claude SDK OAuth terminal results and failure attribution across replay races.
 - Re-enable senpi compaction on Claude SDK OAuth lanes when `compaction.model` is configured, using that provider/model only for summarization and falling back safely to the session model when it cannot be resolved.

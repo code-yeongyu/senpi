@@ -72,7 +72,7 @@ Legacy root helpers: `test-harness.ts` (superseded), `utilities.ts`, `model-runt
 
 - Run every added or changed test file directly until green.
 - Run the narrow owning directory or package suite when shared harnesses, fixtures, or lifecycle behavior change.
-- Package runner is Vitest: `bun run --cwd packages/coding-agent test --run <path>`.
+- Package runner is Vitest: `bun run --cwd packages/coding-agent test <path>` (the `test` script already passes `--run`; passing it again makes vitest reject the duplicated flag).
 - Root `bun run check` is static validation and does not replace tests.
 
 ---

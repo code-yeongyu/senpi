@@ -8,7 +8,7 @@ import {
 	isKernelToHostMessage,
 	type KernelToHostMessage,
 } from "../../bridge/protocol.ts";
-import { type CodemodeRuntimeAssetEnvironment, resolveCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
+import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import {
 	defaultSpawn,
 	hardKill,
@@ -53,7 +53,7 @@ export interface PythonPreludePathOptions extends CodemodeRuntimeAssetEnvironmen
 }
 
 export function resolvePythonPreludePath(options: PythonPreludePathOptions = {}): string {
-	return resolveCodemodeRuntimeAsset(
+	return requireCodemodeRuntimeAsset(
 		options.localPath ?? join(dirname(fileURLToPath(import.meta.url)), "prelude.py"),
 		join("kernels", "py", "prelude.py"),
 		options,

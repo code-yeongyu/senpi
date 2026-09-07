@@ -22,6 +22,22 @@ Full port of opencode's permission system to senpi-mono as a builtin extension.
 ## Why Builtin Extension?
 Following pi-mono's extension-first philosophy. All permission logic is in the extension, zero core tool modifications.
 
+## 2026-09-06 - external-dir path normalization never opens path components
+
+### What changed
+
+- `external-dir.ts` `normalizePath()` resolves symlinks with a component walker built on `fs.lstatSync` + `fs.readlinkSync` (bounded by `MAX_SYMLINK_HOPS`), keeping components from the first missing one onward verbatim. It replaces the `fs.realpathSync` walk-up that climbed a non-existent path to its nearest existing ancestor.
+
+### Why
+
+- `extractExternalPaths()` runs inside the `tool_call` hook on the host main thread for every `bash`/`monitor` command. Bun implements `fs.realpathSync`, `realpathSync.native`, and `fs.promises.realpath` by `open(2)`-ing the path, so a command that merely mentioned `/home/user/work/x` (a path on a remote Linux box) climbed to `realpathSync("/home")`, an autofs trigger on macOS; the wedged automount never returned and the whole TUI froze (senpi #1416). The same open-based resolution fails with EACCES on execute-only directories, so files under them inside the project were reported as external.
+- `lstat` needs only search permission and never triggers a mount; this is what realpath(3) itself does.
+
+### Expected merge conflict zones
+
+- `external-dir.ts` `normalizePath` body.
+- `test/permission/external-dir-resolution.test.ts` (new file: filesystem-backed `isExternalPath` cases — symlinked cwd, execute-only directory, symlink escape, symlink loop; the symlinked-cwd case moved here from `external-dir.test.ts`).
+
 ## 2026-08-21 - Fix unhandled rejection on session shutdown with pending permissions
 
 ### What changed

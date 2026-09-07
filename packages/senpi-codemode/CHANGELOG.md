@@ -8,6 +8,18 @@
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [2026.9.6] - 2026-09-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
 - The Bun eval description now tells the model to shell out through `Bun.$` or `Bun.spawn` and never `Bun.spawnSync`, because a synchronous child blocks the worker and a stop or timeout then loses every variable.
 - JavaScript eval cells now interrupt cooperatively: `stop` and kernel timeouts first ask the worker to settle the cell (pending bridge `tool.*` calls are rejected, `Bun.spawn` children are killed) and keep the worker VM and its globals when the cell settles within a 2 s grace; only an unsettled cell restarts the worker.
 

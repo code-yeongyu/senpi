@@ -93,9 +93,7 @@ describe("retry fallback engine", () => {
 			timestamp: Date.now() - 1,
 		});
 		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
-		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "unauthorized" }),
-		]);
+		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "unauthorized" })]);
 
 		await harness.session.prompt("recover");
 

@@ -18,21 +18,52 @@ export function expandHome(inputPath: string): string {
 	return inputPath;
 }
 
+/** Symlink hops allowed while resolving one path; realpath(3) reports ELOOP past this. */
+const MAX_SYMLINK_HOPS = 40;
+
+function splitComponents(normalizedPath: string): { readonly root: string; readonly parts: readonly string[] } {
+	const { root } = path.parse(normalizedPath);
+	const parts = normalizedPath
+		.slice(root.length)
+		.split(path.sep)
+		.filter((part) => part.length > 0);
+	return { root, parts };
+}
+
+/**
+ * Resolve symlinks the way realpath(3) does — one lstat/readlink per component — without ever
+ * open(2)-ing a component. Bun's `fs.realpath*` opens every directory it resolves, so an autofs
+ * trigger such as macOS `/home` blocks the whole process (the classifier runs on the host main
+ * thread, freezing the TUI) and an execute-only directory fails with EACCES; lstat needs only
+ * search permission and never mounts anything. Components from the first missing one onward are
+ * kept verbatim, so a file that does not exist yet still lands where its symlinked parent points.
+ */
 function normalizePath(inputPath: string): string {
-	let candidate = path.normalize(inputPath);
-	const suffix: string[] = [];
-	for (;;) {
+	const { root, parts } = splitComponents(path.normalize(inputPath));
+	const pending = [...parts];
+	let resolved = root;
+	let hops = 0;
+	while (pending.length > 0) {
+		const part = pending.shift();
+		if (part === undefined) break;
+		const candidate = path.join(resolved, part);
+		let link: string;
 		try {
-			const resolved = fs.realpathSync(candidate);
-			return suffix.length === 0 ? resolved : path.join(resolved, ...suffix.reverse());
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") return candidate;
-			const parent = path.dirname(candidate);
-			if (parent === candidate) return candidate;
-			suffix.push(path.basename(candidate));
-			candidate = parent;
+			if (!fs.lstatSync(candidate).isSymbolicLink()) {
+				resolved = candidate;
+				continue;
+			}
+			hops += 1;
+			if (hops > MAX_SYMLINK_HOPS) return path.join(candidate, ...pending);
+			link = fs.readlinkSync(candidate);
+		} catch {
+			return path.join(candidate, ...pending);
 		}
+		const target = splitComponents(path.resolve(resolved, link));
+		resolved = target.root;
+		pending.unshift(...target.parts);
 	}
+	return resolved;
 }
 
 export function isExternalPath(inputPath: string, cwd: string): boolean {

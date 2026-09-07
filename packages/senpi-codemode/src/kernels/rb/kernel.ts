@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
-import { type CodemodeRuntimeAssetEnvironment, resolveCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
+import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import { SubprocessKernel, type SubprocessSpawn } from "../shared/subprocess-kernel.ts";
 
 export interface RubyKernelStartOptions {
@@ -17,7 +17,7 @@ export interface RubyRunnerPathOptions extends CodemodeRuntimeAssetEnvironment {
 }
 
 export function resolveRubyRunnerPath(options: RubyRunnerPathOptions = {}): string {
-	return resolveCodemodeRuntimeAsset(
+	return requireCodemodeRuntimeAsset(
 		options.localPath ?? join(import.meta.dirname, "runner.rb"),
 		join("kernels", "rb", "runner.rb"),
 		options,

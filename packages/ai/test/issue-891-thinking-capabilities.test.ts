@@ -40,12 +40,7 @@ const CAPABILITY_CASES: CapabilityCase[] = [
 	{ provider: "qwen-token-plan-individual", id: "qwen3.6-flash", levels: ON_OFF },
 	{ provider: "qwen-token-plan-individual", id: "qwen3.7-max", levels: ON_OFF },
 	{ provider: "qwen-token-plan-individual", id: "qwen3.7-plus", levels: ON_OFF },
-	...(["moonshotai", "moonshotai-cn"] as const).flatMap((provider) => [
-		{ provider, id: "kimi-k2-thinking", levels: ON_OFF },
-		{ provider, id: "kimi-k2-thinking-turbo", levels: ON_OFF },
-		{ provider, id: "kimi-k2.5", levels: ON_OFF },
-		{ provider, id: "kimi-k2.6", levels: ON_OFF },
-	]),
+	...(["moonshotai", "moonshotai-cn"] as const).flatMap((provider) => [{ provider, id: "kimi-k2.6", levels: ON_OFF }]),
 	{ provider: "opencode", id: "kimi-k2.6", levels: ON_OFF },
 	{ provider: "opencode-go", id: "qwen3.6-plus", levels: ON_OFF },
 	{ provider: "xiaomi", id: "mimo-v2.5", levels: ON_OFF },
@@ -65,6 +60,21 @@ const CAPABILITY_CASES: CapabilityCase[] = [
 ];
 
 describe("issue #891 generated thinking capabilities", () => {
+	it.each(
+		(["moonshotai", "moonshotai-cn"] as const).flatMap((provider) =>
+			[
+				"kimi-k2-0711-preview",
+				"kimi-k2-0905-preview",
+				"kimi-k2-thinking",
+				"kimi-k2-thinking-turbo",
+				"kimi-k2-turbo-preview",
+				"kimi-k2.5",
+			].map((id) => ({ provider, id })),
+		),
+	)("does not restore upstream-retired $provider/$id", ({ provider, id }) => {
+		expect(getModels(provider).map((model) => model.id)).not.toContain(id);
+	});
+
 	it.each(CAPABILITY_CASES)("limits $provider/$id to its serialized control surface", ({ provider, id, levels }) => {
 		const model = getModels(provider).find((candidate) => candidate.id === id);
 

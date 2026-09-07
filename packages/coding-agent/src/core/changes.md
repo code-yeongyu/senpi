@@ -1,3 +1,22 @@
+## 2026-09-07 - Dedupe skills from duplicate copies of one package
+
+### What changed
+
+- `src/core/package-identity.ts`: `findNearestPackageIdentity` and `dedupePathsByPackageIdentity` moved out of the resource loader as pure functions (nearest `package.json` name + relative resource path).
+- `src/core/resource-loader.ts`: skill paths assembled during `reload()` are deduped by package identity the same way extension paths already were, so a second physical copy of one package contributes no skills and no collision diagnostics.
+
+### Why
+
+- omo-ai loads its plugin via `--extension`; when `settings.packages` also held a worktree checkout of `@code-yeongyu/omo-senpi`, extensions deduped by package name but every one of the 24 skills raised a "name collision" warning at startup. Skills and extensions from one package identity now follow one rule: the earliest registration wins.
+
+### Why an extension could not handle it
+
+- Skill discovery and collision diagnostics run in the core loader before any extension code executes.
+
+### Expected merge conflict zones
+
+- LOW: `resource-loader.ts` around skill path assembly and the former private package-identity helpers.
+
 
 ## 2026-09-06 - Track awaited custom-trigger admission through settlement
 
@@ -76,6 +95,24 @@
 ### Expected merge conflict zones
 
 - MEDIUM: `sendCustomMessage` trigger-turn admission, cancellation generation, and the shared `before_agent_start` result application in `packages/coding-agent/src/core/agent-session.ts`.
+
+## 2026-09-06 - Preserve fallback decision logs across atomic admission
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: separates fallback decision logging from candidate reservation, so actual fallback attempts still record `no_chain` and `candidates_exhausted` without reserving a candidate before context admission succeeds.
+
+### Why
+
+- The atomic admission fix correctly moved reservation until after model admission, but also suppressed the diagnostic logger on the same probe path. That removed the only durable fallback decision observable and caused `fallback.log` to disappear for no-chain and exhausted-chain decisions.
+
+### Why an extension could not handle it
+
+- Candidate reservation and fallback decision logging are private retry-controller state and lifecycle behavior below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: `RetryFallbackController.tryFallback` and `nextCandidate` decision handling.
 
 ## 2026-09-06 - Preserve inline skill anchors in composed prompts
 
@@ -4948,3 +4985,29 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 
 - LOW: `_handleRetryableError` fallback admission in
   packages/coding-agent/src/core/agent-session.ts.
+
+## 2026-09-06 - Make fallback activation atomic for unusable candidates
+
+### What changed
+
+- packages/coding-agent/src/core/agent-session.ts performs model-select hooks
+  and usability admission before persisting or emitting a model change.
+- packages/coding-agent/src/core/retry-fallback/controller.ts reserves fallback
+  candidates only after a successful model switch.
+
+### Why
+
+- An over-budget fallback could mutate session state and announce a rejected
+  model before admission failed, causing false model-change/retry events and
+  leaking the typed usability error.
+
+### Why this lives in the fork
+
+- Retry ownership, model admission, and fallback switching are core session
+  behavior below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: fallback switch admission in
+  packages/coding-agent/src/core/agent-session.ts and candidate reservation in
+  packages/coding-agent/src/core/retry-fallback/controller.ts.

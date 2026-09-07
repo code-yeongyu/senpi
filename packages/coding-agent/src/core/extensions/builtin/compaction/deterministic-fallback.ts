@@ -42,6 +42,10 @@ interface DeterministicFallbackDetails {
 
 export interface DeterministicFallbackDiagnostic {
 	rejectionReason?: DeterministicFallbackRejectionReason;
+	candidateRejections?: Array<{
+		firstKeptEntryId: string;
+		rejectionReason: DeterministicFallbackRejectionReason;
+	}>;
 	candidatesChecked?: number;
 	budgetExceeded?: boolean;
 }
@@ -251,6 +255,14 @@ export function createRequiredCompactionFallback(
 	): CompactionResult<DeterministicFallbackDetails> | undefined => {
 		candidateCount++;
 		const details = { ...baseDetails, retainedSuffix };
+		const reject = (rejectionReason: DeterministicFallbackRejectionReason): undefined => {
+			if (diagnostics) {
+				diagnostics.rejectionReason = rejectionReason;
+				diagnostics.candidateRejections ??= [];
+				diagnostics.candidateRejections.push({ firstKeptEntryId, rejectionReason });
+			}
+			return undefined;
+		};
 		const result: CompactionResult<DeterministicFallbackDetails> = {
 			summary,
 			firstKeptEntryId,
@@ -258,19 +270,10 @@ export function createRequiredCompactionFallback(
 			details,
 		};
 		const startIndex = messageIndexesByEntryId.get(firstKeptEntryId);
-		if (startIndex === undefined) {
-			if (diagnostics) diagnostics.rejectionReason = "context-reconstruction-failed";
-			return undefined;
-		}
+		if (startIndex === undefined) return reject("context-reconstruction-failed");
 		const retainedStart = Math.min(startIndex, projectedMessages.length);
-		if (unsafeSuffix[retainedStart]) {
-			if (diagnostics) diagnostics.rejectionReason = "unsafe-retained-content";
-			return undefined;
-		}
-		if (!toolChainValidAt[retainedStart]) {
-			if (diagnostics) diagnostics.rejectionReason = "atomic-tool-chain-cut";
-			return undefined;
-		}
+		if (unsafeSuffix[retainedStart]) return reject("unsafe-retained-content");
+		if (!toolChainValidAt[retainedStart]) return reject("atomic-tool-chain-cut");
 		// The hard-limit valve reserves the scaled budget, so accepting against the raw
 		// configured reserve would admit a context that valve immediately compacts again.
 		const budget = contextWindow - resolveEffectiveReserveTokens(contextWindow, preparation.settings);
@@ -283,11 +286,8 @@ export function createRequiredCompactionFallback(
 					);
 		const retainedTokens = (tokenSuffix[retainedStart] ?? Number.POSITIVE_INFINITY) + summaryTokens;
 		if (retainedTokens > budget) {
-			if (diagnostics) {
-				diagnostics.rejectionReason = "retained-token-budget-exceeded";
-				diagnostics.budgetExceeded = true;
-			}
-			return undefined;
+			if (diagnostics) diagnostics.budgetExceeded = true;
+			return reject("retained-token-budget-exceeded");
 		}
 		return { ...result, estimatedTokensAfter: retainedTokens };
 	};

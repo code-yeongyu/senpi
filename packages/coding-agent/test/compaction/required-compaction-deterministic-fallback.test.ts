@@ -3,11 +3,12 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { convertMessages as convertGoogleMessages } from "../../../ai/src/api/google-shared.ts";
 import { transformMessages } from "../../../ai/src/api/transform-messages.ts";
-import { prepareCompaction } from "../../src/core/compaction/index.ts";
+import { DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "../../src/core/compaction/index.ts";
 import { StreamDurationBudgetError } from "../../src/core/compaction/stream-watchdog.ts";
 import {
 	classifyRequiredCompactionFallbackFailure,
 	createRequiredCompactionFallback,
+	type DeterministicFallbackDiagnostic,
 } from "../../src/core/extensions/builtin/compaction/deterministic-fallback.ts";
 import { resolveCompactionGeometry } from "../../src/core/extensions/builtin/compaction/orchestration.ts";
 import { SummaryRequestError } from "../../src/core/extensions/builtin/compaction/speculative.ts";
@@ -294,6 +295,112 @@ describe("required compaction deterministic fallback", () => {
 			true,
 		);
 		expect(JSON.stringify(harness.sessionManager.buildSessionContext().messages)).toContain("Keep latest request");
+	});
+
+	it("retains a prepared tool result with a well-formed image block", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: "Inspect the image.",
+			timestamp: 4,
+		});
+		const preparedBoundaryId = harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("", { timestamp: 5, stopReason: "toolUse" }),
+			api: "openai-responses",
+			provider: "openai",
+			content: [{ type: "toolCall", id: "t", name: "read", arguments: { path: "image.png" } }],
+		});
+		harness.sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "t",
+			toolName: "read",
+			content: [
+				{ type: "text", text: "Image result" },
+				{
+					type: "image",
+					mimeType: "image/png",
+					data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1EAAAAASUVORK5CYII=",
+				},
+			],
+			isError: false,
+			timestamp: 6,
+		});
+		const branchEntries = harness.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS, true);
+		expect(preparation).toBeDefined();
+		const diagnostics: DeterministicFallbackDiagnostic = {};
+		const result = createRequiredCompactionFallback(
+			{
+				...preparation!,
+				firstKeptEntryId: preparedBoundaryId,
+				tokensBefore: 10_000,
+				settings: DEFAULT_COMPACTION_SETTINGS,
+			},
+			1_000_000,
+			"summarization-timeout",
+			{},
+			branchEntries,
+			diagnostics,
+		);
+
+		expect(result).toMatchObject({
+			firstKeptEntryId: preparedBoundaryId,
+			details: { retainedSuffix: "prepared" },
+		});
+		expect(diagnostics).toEqual({ candidatesChecked: 1 });
+	});
+
+	it("rejects malformed image blocks in retained tool results", () => {
+		for (const image of [
+			{ type: "image", mimeType: "image/png" },
+			{ type: "image", mimeType: "text/plain", data: "not-an-image" },
+		]) {
+			const harness = createBlockingContext({ usageTokens: 9_900 });
+			harness.sessionManager.appendMessage({
+				role: "user",
+				content: "Inspect the image.",
+				timestamp: 4,
+			});
+			const preparedBoundaryId = harness.sessionManager.appendMessage({
+				...fauxAssistantMessage("", { timestamp: 5, stopReason: "toolUse" }),
+				api: "openai-responses",
+				provider: "openai",
+				content: [{ type: "toolCall", id: "t", name: "read", arguments: { path: "image.png" } }],
+			});
+			harness.sessionManager.appendMessage({
+				role: "toolResult",
+				toolCallId: "t",
+				toolName: "read",
+				content: [{ type: "text", text: "Image result" }, image] as never,
+				isError: false,
+				timestamp: 6,
+			});
+			const branchEntries = harness.sessionManager.getBranch();
+			const preparation = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS, true);
+			expect(preparation).toBeDefined();
+			const diagnostics: DeterministicFallbackDiagnostic = {};
+
+			const result = createRequiredCompactionFallback(
+				{
+					...preparation!,
+					firstKeptEntryId: preparedBoundaryId,
+					tokensBefore: 10_000,
+					settings: DEFAULT_COMPACTION_SETTINGS,
+				},
+				1_000_000,
+				"summarization-timeout",
+				{},
+				branchEntries,
+				diagnostics,
+			);
+
+			expect(result).toBeUndefined();
+			expect(diagnostics.rejectionReason).toBe("unsafe-retained-content");
+			expect(diagnostics.candidateRejections).toContainEqual({
+				firstKeptEntryId: preparedBoundaryId,
+				rejectionReason: "unsafe-retained-content",
+			});
+		}
 	});
 
 	it("fails closed instead of throwing on malformed retained content blocks", () => {
