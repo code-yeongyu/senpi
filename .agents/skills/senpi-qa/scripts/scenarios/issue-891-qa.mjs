@@ -23,8 +23,8 @@ import { TargetRpcClient } from "../lib/target-rpc-client.mjs";
 
 const XIAOMI_PROVIDER = "xiaomi";
 const XIAOMI_MODEL = "mimo-v2.5-pro";
-const QWEN_PROVIDER = "qwen-token-plan";
-const QWEN_MODEL = "qwen3.8-max";
+const ALIBABA_PROVIDER = "alibaba-token-plan";
+const ALIBABA_MODEL = "qwen3.8-max";
 const ON_OFF_ERROR = `Reasoning effort is not configurable for ${XIAOMI_PROVIDER}/${XIAOMI_MODEL}; this model supports on/off only. Use /reasoning on or /reasoning off.`;
 
 function argument(name, fallback) {
@@ -39,7 +39,7 @@ function writeOverrides(agentDir, baseUrl) {
 			{
 				providers: {
 					[XIAOMI_PROVIDER]: { baseUrl, apiKey: "xiaomi-local-qa", api: "openai-completions" },
-					[QWEN_PROVIDER]: { baseUrl, apiKey: "qwen-local-qa", api: "openai-completions" },
+					[ALIBABA_PROVIDER]: { baseUrl, apiKey: "alibaba-local-qa", api: "openai-completions" },
 				},
 			},
 			null,
@@ -62,7 +62,13 @@ async function main() {
 
 	try {
 		server = await startFakeModelServer({
-			turns: [{ text: "OFF-WIRE" }, { text: "ON-WIRE" }, { text: "GRADED-WIRE" }],
+			turns: [
+				{ text: "OFF-WIRE" },
+				{ text: "ON-WIRE" },
+				{ text: "GRADED-LOW-WIRE" },
+				{ text: "GRADED-MEDIUM-WIRE" },
+				{ text: "GRADED-XHIGH-WIRE" },
+			],
 		});
 		writeOverrides(box.agentDir, server.url);
 		client = new TargetRpcClient({ env, cwd: box.cwd, targetRoot: repoRoot(), extraArgs: ["--multi-session"] });
@@ -117,36 +123,51 @@ async function main() {
 		checks.ok("/efforts is refused for an on/off model", effortNotification.message.message === ON_OFF_ERROR);
 		checks.ok("refused Xiaomi effort makes no provider request", server.requests.length === 2);
 
-		const openQwen = await client.send({
+		const openAlibaba = await client.send({
 			type: "open_session",
 			cwd: box.cwd,
-			provider: QWEN_PROVIDER,
-			modelId: QWEN_MODEL,
+			provider: ALIBABA_PROVIDER,
+			modelId: ALIBABA_MODEL,
 		});
-		const qwenSession = openQwen.data?.sessionId;
-		checks.ok("opens the built-in graded Qwen model", openQwen.success === true && !!qwenSession);
-		const sendQwen = (command) => client.send({ ...command, sessionId: qwenSession });
+		const alibabaSession = openAlibaba.data?.sessionId;
+		checks.ok("opens the built-in graded Alibaba model", openAlibaba.success === true && !!alibabaSession);
+		const sendAlibaba = (command) => client.send({ ...command, sessionId: alibabaSession });
 
-		const gradedNotify = client.waitFor(
-			(event) => event.message.type === "extension_ui_request" && event.message.method === "notify" && event.message.sessionId === qwenSession,
-		);
-		await sendQwen({ type: "prompt", message: "/efforts low" });
-		const gradedNotification = await gradedNotify;
-		checks.ok("graded /efforts low is accepted", gradedNotification.message.message?.startsWith("Reasoning effort: low."));
+		for (const [effort, requestIndex] of [
+			["low", 2],
+			["medium", 3],
+			["xhigh", 4],
+		]) {
+			const gradedNotify = client.waitFor(
+				(event) =>
+					event.message.type === "extension_ui_request" &&
+					event.message.method === "notify" &&
+					event.message.sessionId === alibabaSession,
+			);
+			await sendAlibaba({ type: "prompt", message: `/efforts ${effort}` });
+			const gradedNotification = await gradedNotify;
+			checks.ok(
+				`graded /efforts ${effort} is accepted`,
+				gradedNotification.message.message === `Reasoning effort: ${effort}. Available: low, medium, xhigh.`,
+			);
 
-		const gradedEnd = client.waitFor((event) => event.message.type === "agent_end" && event.message.sessionId === qwenSession);
-		await sendQwen({ type: "prompt", message: "Return GRADED-WIRE." });
-		await gradedEnd;
-		checks.ok(
-			"graded Qwen request preserves its documented low effort",
-			server.requests[2]?.body?.enable_thinking === true && server.requests[2]?.body?.reasoning_effort === "low",
-			JSON.stringify(server.requests[2]?.body),
-		);
+			const gradedEnd = client.waitFor(
+				(event) => event.message.type === "agent_end" && event.message.sessionId === alibabaSession,
+			);
+			await sendAlibaba({ type: "prompt", message: `Return GRADED-${effort.toUpperCase()}-WIRE.` });
+			await gradedEnd;
+			checks.ok(
+				`graded Alibaba request preserves its documented ${effort} effort`,
+				server.requests[requestIndex]?.body?.enable_thinking === true &&
+					server.requests[requestIndex]?.body?.reasoning_effort === effort,
+				JSON.stringify(server.requests[requestIndex]?.body),
+			);
+		}
 
 		const settings = JSON.parse(readFileSync(join(box.agentDir, "settings.json"), "utf8"));
 		checks.ok(
-			"valid graded effort persists in sandbox settings",
-			settings.modelThinkingLevels?.[`${QWEN_PROVIDER}/${QWEN_MODEL}`] === "low",
+			"valid graded Alibaba effort persists in sandbox settings",
+			settings.modelThinkingLevels?.[`${ALIBABA_PROVIDER}/${ALIBABA_MODEL}`] === "xhigh",
 			JSON.stringify(settings.modelThinkingLevels),
 		);
 		writeFileSync(

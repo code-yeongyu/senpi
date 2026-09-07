@@ -298,9 +298,6 @@ const ALIBABA_TOKEN_PLAN_ON_OFF_MODEL_IDS = new Set([
 	"qwen3.6-plus",
 	"qwen3.7-max",
 	"qwen3.7-plus",
-	"qwen3.8-flash",
-	"qwen3.8-max",
-	"qwen3.8-max-preview",
 ]);
 const MOONSHOT_ON_OFF_MODEL_IDS = new Set(["kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2.5", "kimi-k2.6"]);
 const XIAOMI_ON_OFF_MODEL_IDS = new Set(["mimo-v2.5", "mimo-v2.5-pro", "mimo-v2.5-pro-ultraspeed"]);
@@ -351,6 +348,7 @@ const QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP = {
 	xhigh: "xhigh",
 	max: null,
 } as const;
+const QWEN38_MODEL_IDS = new Set(["qwen3.8-flash", "qwen3.8-max", "qwen3.8-max-preview"]);
 const QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS = new Set([
 	"MiniMax-M2.5",
 	"deepseek-v3.2",
@@ -2670,7 +2668,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					...(supportsReasoningEffort
 						? {
 								thinkingLevelMap:
-									modelId === "qwen3.8-max"
+									QWEN38_MODEL_IDS.has(modelId)
 										? QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP
 										: QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP,
 							}
@@ -2724,11 +2722,13 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				}
 
 				const thinkingLevelMap =
-					modelId === "kimi-k2.7-code"
-						? ALWAYS_ON_THINKING_LEVEL_MAP
-						: ALIBABA_TOKEN_PLAN_ON_OFF_MODEL_IDS.has(modelId)
-							? ON_OFF_THINKING_LEVEL_MAP
-							: undefined;
+					QWEN38_MODEL_IDS.has(modelId)
+						? QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP
+						: modelId === "kimi-k2.7-code"
+							? ALWAYS_ON_THINKING_LEVEL_MAP
+							: ALIBABA_TOKEN_PLAN_ON_OFF_MODEL_IDS.has(modelId)
+								? ON_OFF_THINKING_LEVEL_MAP
+								: undefined;
 				models.push({
 					id: modelId,
 					name: m.name || modelId,

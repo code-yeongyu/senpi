@@ -1,3 +1,21 @@
+## 2026-09-07 - Correct direct Qwen3.8 Token Plan effort controls (#891)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` applies the existing documented Qwen3.8 graded map to Flash, Max, and Max Preview on Alibaba Token Plan and to every present Qwen Token Plan Qwen3.8 row. Regenerated `alibaba-token-plan.json`, `qwen-token-plan.json`, `qwen-token-plan-cn.json`, and their manifest now change only the five previously incorrect maps.
+
+### Why
+
+- Alibaba's Qwen3.8 OpenAI-compatible API accepts `low`, `medium`, and `xhigh`; `minimal` aliases to low, `high`/`max` alias to xhigh, and off must send only `enable_thinking: false`. The previous catalog selected toggle-only or high/max metadata for five direct rows, causing the existing serializer to clamp requests to the wrong wire value.
+
+### Why an extension could not handle it
+
+- Built-in model capabilities are generated and loaded before extension hooks run, while the existing OpenAI Completions serializer consumes the generated thinking map to construct the request.
+
+### Expected merge conflict zones
+
+- LOW: Qwen/Alibaba thinking-map selection in `packages/ai/scripts/generate-models.ts` and the three regenerated provider data files.
+
 ## 2026-09-07 - One context window for the whole GPT-6 Astra series
 
 ### What changed

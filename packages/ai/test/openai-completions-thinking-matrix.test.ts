@@ -15,6 +15,27 @@ const context: Context = {
 	messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
 };
 
+const DIRECT_QWEN38_MODEL_CASES = [
+	{ provider: "alibaba-token-plan", id: "qwen3.8-flash" },
+	{ provider: "alibaba-token-plan", id: "qwen3.8-max" },
+	{ provider: "alibaba-token-plan", id: "qwen3.8-max-preview" },
+	{ provider: "qwen-token-plan", id: "qwen3.8-flash" },
+	{ provider: "qwen-token-plan", id: "qwen3.8-max" },
+	{ provider: "qwen-token-plan-cn", id: "qwen3.8-flash" },
+	{ provider: "qwen-token-plan-cn", id: "qwen3.8-max" },
+	{ provider: "qwen-token-plan-individual", id: "qwen3.8-max" },
+] as const;
+
+const QWEN38_SELECTOR_CASES = [
+	{ reasoning: "off", expected: { enable_thinking: false } },
+	{ reasoning: "minimal", expected: { enable_thinking: true, reasoning_effort: "low" } },
+	{ reasoning: "low", expected: { enable_thinking: true, reasoning_effort: "low" } },
+	{ reasoning: "medium", expected: { enable_thinking: true, reasoning_effort: "medium" } },
+	{ reasoning: "high", expected: { enable_thinking: true, reasoning_effort: "xhigh" } },
+	{ reasoning: "xhigh", expected: { enable_thinking: true, reasoning_effort: "xhigh" } },
+	{ reasoning: "max", expected: { enable_thinking: true, reasoning_effort: "xhigh" } },
+] as const;
+
 async function capturePayload(
 	model: Model<"openai-completions">,
 	reasoning?: SimpleStreamOptions["reasoning"],
@@ -240,23 +261,22 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 		expect(await capturePayload(model)).toMatchObject(off);
 	});
 
-	it("keeps Qwen's documented graded control distinct on the wire", async () => {
-		const model = getOpenAICompletionsModel("qwen-token-plan", "qwen3.8-max");
+	it.each(DIRECT_QWEN38_MODEL_CASES)(
+		"serializes Qwen3.8's documented selector ladder for $provider/$id",
+		async ({ provider, id }) => {
+			const model = getOpenAICompletionsModel(provider, id);
 
-		expect(await captureDirectPayload(model, "low")).toMatchObject({
-			enable_thinking: true,
-			reasoning_effort: "low",
-		});
-		expect(await captureDirectPayload(model, "medium")).toMatchObject({
-			enable_thinking: true,
-			reasoning_effort: "medium",
-		});
-		expect(await captureDirectPayload(model, "xhigh")).toMatchObject({
-			enable_thinking: true,
-			reasoning_effort: "xhigh",
-		});
-		expect(await capturePayload(model)).toMatchObject({ enable_thinking: false });
-	});
+			for (const { reasoning, expected } of QWEN38_SELECTOR_CASES) {
+				const payload = await capturePayload(model, reasoning === "off" ? undefined : reasoning);
+
+				expect(payload).toMatchObject(expected);
+				expect(payload).not.toHaveProperty("thinking_budget");
+				if (reasoning === "off") {
+					expect(payload).not.toHaveProperty("reasoning_effort");
+				}
+			}
+		},
+	);
 
 	it("preserves map-less GPT-5.6 Sol's existing effort behavior", async () => {
 		const model = {

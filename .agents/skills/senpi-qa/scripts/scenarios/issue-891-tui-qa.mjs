@@ -3,7 +3,7 @@
  * Native-PTY TUI proof for #891 reasoning capabilities.
  *
  * Drives the source CLI under Bun inside a sandbox. The built-in Xiaomi and
- * Qwen model records remain authoritative; only their sandbox provider URLs
+ * Alibaba model records remain authoritative; only their sandbox provider URLs
  * and keys point at the local fake server.
  *
  * Usage:
@@ -28,7 +28,7 @@ import { teardownPty } from "../lib/tui-resume-teardown.mjs";
 const require = createRequire(import.meta.url);
 const BUN = process.env.SENPI_QA_BUN || "bun";
 const XIAOMI = { provider: "xiaomi", model: "mimo-v2.5-pro" };
-const QWEN = { provider: "qwen-token-plan", model: "qwen3.8-max" };
+const ALIBABA = { provider: "alibaba-token-plan", model: "qwen3.8-max" };
 const ROWS = 32;
 const BOOT_TIMEOUT_MS = 60_000;
 
@@ -65,7 +65,7 @@ function writeOverrides(agentDir, baseUrl) {
 			{
 				providers: {
 					[XIAOMI.provider]: { baseUrl, apiKey: "xiaomi-local-qa", api: "openai-completions" },
-					[QWEN.provider]: { baseUrl, apiKey: "qwen-local-qa", api: "openai-completions" },
+					[ALIBABA.provider]: { baseUrl, apiKey: "alibaba-local-qa", api: "openai-completions" },
 				},
 			},
 			null,
@@ -268,27 +268,27 @@ async function main() {
 		captureRun(xiaomi, actions);
 		await closeTui(xiaomi, actions);
 
-		const qwen = await openTui({ root, box, bun, env, model: QWEN, actions, name: "qwen", runs });
-		await resize(qwen, 120, actions);
-		await command(qwen, "/efforts low", "Reasoning effort: low. Available: low, medium, xhigh.", actions);
-		await resize(qwen, 80, actions);
-		await command(qwen, "/reasoning off", "Reasoning: off.", actions);
-		await command(qwen, "/reasoning on", "Reasoning: on (low).", actions);
-		captureRun(qwen, actions);
-		await closeTui(qwen, actions);
+		const alibaba = await openTui({ root, box, bun, env, model: ALIBABA, actions, name: "alibaba", runs });
+		await resize(alibaba, 120, actions);
+		await command(alibaba, "/efforts low", "Reasoning effort: low. Available: low, medium, xhigh.", actions);
+		await resize(alibaba, 80, actions);
+		await command(alibaba, "/reasoning off", "Reasoning: off.", actions);
+		await command(alibaba, "/reasoning on", "Reasoning: on (low).", actions);
+		captureRun(alibaba, actions);
+		await closeTui(alibaba, actions);
 
 		const settings = JSON.parse(readFileSync(join(box.agentDir, "settings.json"), "utf8"));
 		checks.ok(
-			"graded effort persists in sandbox settings",
-			settings.modelThinkingLevels?.[`${QWEN.provider}/${QWEN.model}`] === "low",
+			"graded Alibaba effort persists in sandbox settings",
+			settings.modelThinkingLevels?.[`${ALIBABA.provider}/${ALIBABA.model}`] === "low",
 			JSON.stringify(settings.modelThinkingLevels),
 		);
 
-		const qwenRestart = await openTui({ root, box, bun, env, model: QWEN, actions, name: "qwen-restart", runs });
-		await resize(qwenRestart, 120, actions);
-		await command(qwenRestart, "/reasoning", "Reasoning: on (low).", actions);
-		captureRun(qwenRestart, actions);
-		await closeTui(qwenRestart, actions);
+		const alibabaRestart = await openTui({ root, box, bun, env, model: ALIBABA, actions, name: "alibaba-restart", runs });
+		await resize(alibabaRestart, 120, actions);
+		await command(alibabaRestart, "/reasoning", "Reasoning: on (low).", actions);
+		captureRun(alibabaRestart, actions);
+		await closeTui(alibabaRestart, actions);
 
 		const capturedRaw = (run) => run.stream.raw.slice(0, run.capture.rawCutoff);
 		const capturedEvents = (run) => run.events.slice(0, run.capture.eventCutoff);
@@ -296,8 +296,8 @@ async function main() {
 		checks.ok("native PTY ran with Bun >=1.4", true, `${bun.command} ${bun.version}`);
 		checks.ok("on/off model accepted /reasoning off and on", normalized(capturedRaw(xiaomi)).includes("Reasoning: off.") && normalized(capturedRaw(xiaomi)).includes("Reasoning: on (high)."));
 		checks.ok("on/off model refused /efforts low", normalized(capturedRaw(xiaomi)).includes("this model supports on/off only."));
-		checks.ok("graded model accepted /efforts low", normalized(capturedRaw(qwen)).includes("Reasoning effort: low. Available: low, medium, xhigh."));
-		checks.ok("restart observed the persisted graded level", normalized(capturedRaw(qwenRestart)).includes("Reasoning: on (low)."));
+		checks.ok("graded Alibaba model accepted /efforts low", normalized(capturedRaw(alibaba)).includes("Reasoning effort: low. Available: low, medium, xhigh."));
+		checks.ok("restart observed the persisted graded Alibaba level", normalized(capturedRaw(alibabaRestart)).includes("Reasoning: on (low)."));
 		checks.ok(
 			"captured ANSI prefixes equal ordered PTY output writes",
 			runs.every((run) => capturedEvents(run).some((event) => event.type === "write") && replay(run) === capturedRaw(run)),

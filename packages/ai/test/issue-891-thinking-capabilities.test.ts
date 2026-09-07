@@ -1,15 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { getModel, getModels, getSupportedThinkingLevels } from "../src/compat.ts";
+import { getModels, getSupportedThinkingLevels } from "../src/compat.ts";
 import type { ModelThinkingLevel } from "../src/types.ts";
 
 type CapabilityCase = {
-	provider: Parameters<typeof getModel>[0];
+	provider: Parameters<typeof getModels>[0];
 	id: string;
 	levels: ModelThinkingLevel[];
 };
 
 const ON_OFF: ModelThinkingLevel[] = ["off", "high"];
 const ALWAYS_ON: ModelThinkingLevel[] = ["high"];
+const QWEN38_GRADED: ModelThinkingLevel[] = ["off", "low", "medium", "xhigh"];
+
+const DIRECT_QWEN38_CAPABILITY_CASES: CapabilityCase[] = [
+	{ provider: "alibaba-token-plan", id: "qwen3.8-flash", levels: QWEN38_GRADED },
+	{ provider: "alibaba-token-plan", id: "qwen3.8-max", levels: QWEN38_GRADED },
+	{ provider: "alibaba-token-plan", id: "qwen3.8-max-preview", levels: QWEN38_GRADED },
+	{ provider: "qwen-token-plan", id: "qwen3.8-flash", levels: QWEN38_GRADED },
+	{ provider: "qwen-token-plan", id: "qwen3.8-max", levels: QWEN38_GRADED },
+	{ provider: "qwen-token-plan-cn", id: "qwen3.8-flash", levels: QWEN38_GRADED },
+	{ provider: "qwen-token-plan-cn", id: "qwen3.8-max", levels: QWEN38_GRADED },
+	{ provider: "qwen-token-plan-individual", id: "qwen3.8-max", levels: QWEN38_GRADED },
+];
 
 // #891: Every current map-less reasoning row must have an explicit catalog capability.
 // This is intentionally a complete current-row table: a removed or renamed row fails instead
@@ -23,9 +35,9 @@ const CAPABILITY_CASES: CapabilityCase[] = [
 	{ provider: "alibaba-token-plan", id: "qwen3.6-plus", levels: ON_OFF },
 	{ provider: "alibaba-token-plan", id: "qwen3.7-max", levels: ON_OFF },
 	{ provider: "alibaba-token-plan", id: "qwen3.7-plus", levels: ON_OFF },
-	{ provider: "alibaba-token-plan", id: "qwen3.8-flash", levels: ON_OFF },
-	{ provider: "alibaba-token-plan", id: "qwen3.8-max", levels: ON_OFF },
-	{ provider: "alibaba-token-plan", id: "qwen3.8-max-preview", levels: ON_OFF },
+	{ provider: "alibaba-token-plan", id: "qwen3.8-flash", levels: QWEN38_GRADED },
+	{ provider: "alibaba-token-plan", id: "qwen3.8-max", levels: QWEN38_GRADED },
+	{ provider: "alibaba-token-plan", id: "qwen3.8-max-preview", levels: QWEN38_GRADED },
 	...(["qwen-token-plan", "qwen-token-plan-cn"] as const).flatMap((provider) => [
 		{ provider, id: "MiniMax-M2.5", levels: ON_OFF },
 		{ provider, id: "deepseek-v3.2", levels: ON_OFF },
@@ -83,11 +95,14 @@ describe("issue #891 generated thinking capabilities", () => {
 		expect(getSupportedThinkingLevels(model)).toEqual(levels);
 	});
 
-	it("keeps documented Qwen reasoning effort controls graded", () => {
-		const model = getModel("qwen-token-plan", "qwen3.8-max");
+	it.each(DIRECT_QWEN38_CAPABILITY_CASES)(
+		"keeps documented Qwen3.8 reasoning effort controls graded for $provider/$id",
+		({ provider, id, levels }) => {
+			const model = getModels(provider).find((candidate) => candidate.id === id);
 
-		expect(model).toBeDefined();
-		if (!model) throw new Error("missing qwen-token-plan/qwen3.8-max");
-		expect(getSupportedThinkingLevels(model)).toEqual(["off", "low", "medium", "xhigh"]);
-	});
+			expect(model).toBeDefined();
+			if (!model) throw new Error(`missing ${provider}/${id}`);
+			expect(getSupportedThinkingLevels(model)).toEqual(levels);
+		},
+	);
 });

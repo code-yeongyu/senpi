@@ -109,6 +109,14 @@ const QWEN_REASONING_EFFORT_MODEL_CASES: QwenTokenPlanModelCase[] = [
 	})),
 ];
 
+const QWEN38_THINKING_MODEL_CASES: QwenTokenPlanModelCase[] = [
+	{ provider: "qwen-token-plan", modelId: "qwen3.8-flash" },
+	{ provider: "qwen-token-plan", modelId: "qwen3.8-max" },
+	{ provider: "qwen-token-plan-cn", modelId: "qwen3.8-flash" },
+	{ provider: "qwen-token-plan-cn", modelId: "qwen3.8-max" },
+	{ provider: "qwen-token-plan-individual", modelId: "qwen3.8-max" },
+];
+
 describe("Qwen Token Plan models", () => {
 	it("exposes exactly the documented Individual text models", () => {
 		const modelIds = getModels("qwen-token-plan-individual")
@@ -190,12 +198,12 @@ describe("Qwen Token Plan models", () => {
 		},
 	);
 
-	it.each(["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const)(
-		"exposes qwen3.8 reasoning_effort levels on %s",
-		(provider) => {
-			const model = getModels(provider).find((candidate) => candidate.id === "qwen3.8-max");
+	it.each(QWEN38_THINKING_MODEL_CASES)(
+		"exposes qwen3.8 reasoning_effort levels on $provider/$modelId",
+		({ provider, modelId }) => {
+			const model = getModels(provider).find((candidate) => candidate.id === modelId);
 			expect(model).toBeDefined();
-			if (!model) throw new Error(`Missing model: ${provider}/qwen3.8-max`);
+			if (!model) throw new Error(`Missing model: ${provider}/${modelId}`);
 
 			expect(model.thinkingLevelMap).toMatchObject({
 				minimal: null,
@@ -248,37 +256,43 @@ describe("Qwen Token Plan models", () => {
 		},
 	);
 
-	it.each(["qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"] as const)(
-		"sends qwen3.8 max reasoning_effort on %s",
-		async (provider) => {
-			const model = getModels(provider).find((candidate) => candidate.id === "qwen3.8-max");
+	it.each(QWEN38_THINKING_MODEL_CASES)(
+		"sends qwen3.8 reasoning_effort on $provider/$modelId",
+		async ({ provider, modelId }) => {
+			const model = getModels(provider).find((candidate) => candidate.id === modelId);
 			expect(model).toBeDefined();
-			if (!model) throw new Error(`Missing model: ${provider}/qwen3.8-max`);
+			if (!model) throw new Error(`Missing model: ${provider}/${modelId}`);
 
-			let payload: unknown;
-			await streamSimple(
-				model,
-				{
-					messages: [
-						{
-							role: "user",
-							content: "Hi",
-							timestamp: Date.now(),
-						},
-					],
-				},
-				{
-					apiKey: "test",
-					reasoning: "xhigh",
-					onPayload: (params) => {
-						payload = params;
+			for (const [reasoning, reasoningEffort] of [
+				["low", "low"],
+				["medium", "medium"],
+				["xhigh", "xhigh"],
+			] as const) {
+				let payload: unknown;
+				await streamSimple(
+					model,
+					{
+						messages: [
+							{
+								role: "user",
+								content: "Hi",
+								timestamp: Date.now(),
+							},
+						],
 					},
-				},
-			).result();
+					{
+						apiKey: "test",
+						reasoning,
+						onPayload: (params) => {
+							payload = params;
+						},
+					},
+				).result();
 
-			expect(payload).toHaveProperty("enable_thinking", true);
-			expect(payload).toHaveProperty("reasoning_effort", "xhigh");
-			expect(payload).not.toHaveProperty("thinking");
+				expect(payload).toHaveProperty("enable_thinking", true);
+				expect(payload).toHaveProperty("reasoning_effort", reasoningEffort);
+				expect(payload).not.toHaveProperty("thinking");
+			}
 		},
 	);
 });
