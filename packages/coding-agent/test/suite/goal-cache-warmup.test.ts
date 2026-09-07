@@ -30,6 +30,21 @@ function cacheModel(): Model<Api> {
 	} as Model<Api>;
 }
 
+function automaticCacheModel(cacheRetention?: "none"): Model<Api> {
+	return {
+		...cacheModel(),
+		id: "deepseek-cache",
+		api: "openai-completions",
+		provider: "deepseek",
+		baseUrl: "https://api.deepseek.com/v1",
+		...(cacheRetention === undefined ? {} : { cacheRetention }),
+	} as Model<Api>;
+}
+
+function disabledCacheModel(): Model<Api> {
+	return automaticCacheModel("none");
+}
+
 async function setupWarmHarness(
 	threadId: string,
 ): Promise<{ harness: GoalHarness; notices: string[]; ctx: Awaited<ReturnType<typeof makeGoalContext>> }> {
@@ -101,6 +116,70 @@ describe("goal cache-warm continuation story", () => {
 				cache: expect.objectContaining({ cachedTokens: 120_000, ttlSeconds: 300 }),
 			}),
 		);
+	});
+
+	it("uses the automatic-cache liveness backstop without TTL or savings metrics", async () => {
+		vi.useFakeTimers();
+		const notices: string[] = [];
+		const harness = createGoalHarness();
+		const ctx = await makeGoalContext(notices, "thread-cache-automatic", {
+			pendingMessages: false,
+			model: automaticCacheModel(),
+			cacheSafeWaitSeconds: 270,
+		});
+		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		await harness.tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
+		harness.events.emit("terminal_monitor_state", { activeCount: 1 });
+		await harness.events.flush();
+		await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runGoalHandlers(
+			harness.handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [cleanAssistantStop({ cacheRead: 100_000, cacheWrite: 20_000 })] },
+			ctx,
+		);
+
+		expect(channelEvents(harness, "goal_continuation_scheduled")).toEqual([
+			expect.objectContaining({
+				delayMs: 3_570_000,
+				cache: { cachedTokens: 120_000, cacheLifetime: "automatic" },
+			}),
+		]);
+	});
+
+	it("keeps the goal alive without cache-preservation events when caching is disabled", async () => {
+		vi.useFakeTimers();
+		const notices: string[] = [];
+		const harness = createGoalHarness();
+		const ctx = await makeGoalContext(notices, "thread-cache-disabled", {
+			pendingMessages: false,
+			model: disabledCacheModel(),
+			cacheSafeWaitSeconds: 270,
+		});
+		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		await harness.tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
+		harness.events.emit("terminal_monitor_state", { activeCount: 1 });
+		await harness.events.flush();
+		await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runGoalHandlers(
+			harness.handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [cleanAssistantStop({ cacheRead: 100_000, cacheWrite: 20_000 })] },
+			ctx,
+		);
+
+		expect(channelEvents(harness, "goal_continuation_scheduled")).toEqual([]);
+		expect(warmupEntryData(harness)).toEqual([]);
+
+		const delivered = waitForSentCount(harness, 1);
+		await vi.advanceTimersByTimeAsync(240_000);
+		await delivered;
+		expect(channelEvents(harness, "goal_continuation_resumed")).toEqual([]);
+		expect(warmupEntryData(harness)).toEqual([]);
 	});
 
 	it("celebrates the cache-warm wake when the deferred continuation fires", async () => {
