@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import * as packageManager from "./package-manager.mjs";
 import {
 	cleanEnv,
 	detectPackageManager,
@@ -69,6 +70,56 @@ describe("package-manager", () => {
 		assert.deepEqual(runScriptArguments({ cmd: "bun" }, "test", ["--grep", "x"]), ["run", "test", "--", "--grep", "x"]);
 		assert.deepEqual(runScriptArguments({ cmd: "pnpm" }, "test", ["--grep", "x"]), ["run", "test", "--grep", "x"]);
 		assert.deepEqual(runScriptArguments({ cmd: "pnpm" }, "test", []), ["run", "test"]);
+	});
+
+	// signalGroup takes its process primitives as parameters so BOTH platform
+	// branches run on every runner: CI executes scripts tests on ubuntu only and
+	// Windows delivers no catchable SIGTERM, so without injection the taskkill
+	// branch would never execute under test anywhere.
+	function recordingPrimitives(platform, { killError } = {}) {
+		const calls = { kill: [], spawnSync: [] };
+		const primitives = {
+			platform,
+			kill: (pid, signal) => {
+				calls.kill.push([pid, signal]);
+				if (killError) throw killError;
+			},
+			spawnSync: (command, args) => {
+				calls.spawnSync.push([command, args]);
+				return { status: 0 };
+			},
+		};
+		return { calls, primitives };
+	}
+
+	it("signals the whole process group on POSIX and never shells out", () => {
+		const { calls, primitives } = recordingPrimitives("linux");
+
+		packageManager.signalGroup({ pid: 4242 }, "SIGTERM", primitives);
+
+		assert.deepEqual(calls.kill, [[-4242, "SIGTERM"]]);
+		assert.deepEqual(calls.spawnSync, []);
+	});
+
+	it("terminates the process tree through taskkill on win32 and never sends a POSIX signal", () => {
+		const { calls, primitives } = recordingPrimitives("win32");
+
+		packageManager.signalGroup({ pid: 4242 }, "SIGTERM", primitives);
+
+		assert.deepEqual(calls.spawnSync, [["taskkill", ["/pid", "4242", "/T", "/F"]]]);
+		assert.deepEqual(calls.kill, []);
+	});
+
+	it("treats a group that is already gone as success and does nothing without a pid", () => {
+		const gone = Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+		const { calls, primitives } = recordingPrimitives("darwin", { killError: gone });
+
+		assert.doesNotThrow(() => packageManager.signalGroup({ pid: 7 }, "SIGINT", primitives));
+		assert.equal(calls.kill.length, 1, "the signal was attempted exactly once before the error was swallowed");
+
+		const idle = recordingPrimitives("linux");
+		packageManager.signalGroup({ pid: undefined }, "SIGTERM", idle.primitives);
+		assert.deepEqual(idle.calls, { kill: [], spawnSync: [] });
 	});
 
 	it("strips pnpm-only npm_config keys without touching the rest of the environment", () => {

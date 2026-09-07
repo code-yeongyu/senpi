@@ -95,15 +95,23 @@ const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
  * signals (npm -> sh -> node leaves node running), so signalling only the
  * direct child orphans the real work. The child is spawned as its own group
  * leader (`detached`), so the negative-pid kill reaches every descendant at
- * once with no dependence on process-listing timing.
+ * once with no dependence on process-listing timing. Windows has no process
+ * groups or catchable SIGTERM, so the tree is terminated through taskkill.
+ *
+ * The process primitives are parameters so both platform branches run under
+ * test on every runner; production callers pass nothing.
  */
-function signalGroup(child, signal) {
+export function signalGroup(
+	child,
+	signal,
+	{ platform = process.platform, kill = process.kill, spawnSync: spawnSyncImpl = spawnSync } = {},
+) {
 	if (child.pid === undefined) return;
 	try {
-		if (process.platform === "win32") {
-			spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+		if (platform === "win32") {
+			spawnSyncImpl("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
 		} else {
-			process.kill(-child.pid, signal);
+			kill(-child.pid, signal);
 		}
 	} catch {
 		// the group is already gone

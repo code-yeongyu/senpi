@@ -1,5 +1,25 @@
 # Builtin extensions changes
 
+## Plugin-root containment resolves against the filesystem (2026-09-07)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/safety.ts`: the two calls that build the plugin-root containment decision (`realTarget`, `realRoot`) resolve through `realpathSync.native`.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/plugin-manifest.ts`: the same for `resolveContainedPath`'s `realPath` and its `pluginRoot` comparand.
+- The lexical pre-gates in both files are deliberately unchanged: they are syntactic checks over the declared path and are correct at that job.
+
+### Why
+
+- Node's JS-implemented `realpathSync` collapses a `..` inside a symlink target lexically, before following the symlink that segment sits behind. A hook target that walked back up through a symlinked directory inside the plugin root therefore resolved to a location reported as contained while the kernel opened a file outside the root, and the containment check accepted it. Measured on Linux and macOS: `realpathSync` answered `<root>/escape.mjs` while `readFileSync` on the same path returned the bytes of `<outside>/escape.mjs`. Corrective on Node; `dist/cli.js` is node-shebanged, so those are the default semantics on the CLI path. Behaviour-preserving on Bun, whose `realpathSync` already agrees with the kernel.
+
+### Why an extension could not handle it
+
+- The containment decision runs inside hook-manifest validation, before any extension can observe or veto a hook target, and it is the check that decides whether an extension's hook loads at all.
+
+### Expected merge conflict zones
+
+- LOW: two `realpathSync` lines in each validator; one-line changes with no signature or control-flow edits.
+
 ## Preserve explicit fast variants at session start (2026-09-05)
 
 ### What changed

@@ -1,3 +1,21 @@
+## Workspace trust keys resolve strictly (2026-09-07)
+
+### What changed
+
+- `trust-manager.ts`: `normalizeCwd` resolves through `canonicalizePathStrict` and falls back to the resolved-but-unconfirmed path only when the filesystem will not confirm it, instead of silently accepting whatever `canonicalizePath` handed back.
+
+### Why
+
+- Trust keys are compared as strings, so a path the filesystem never confirmed could be keyed by its raw spelling and inherit a decision recorded for a different directory that merely writes the same way. Resolving strictly makes the unconfirmed case explicit; because no stored key can match a location the kernel does not agree on, the effect is that the user is asked again rather than inheriting. This also retires keys written by the previous path-collapsing resolver: they no longer match, so they no longer grant trust.
+
+### Why an extension could not handle it
+
+- Trust is resolved before extensions load and gates whether project resources may be read at all, so nothing downstream can re-key or revoke a decision the store has already returned.
+
+### Expected merge conflict zones
+
+- LOW: the body of `normalizeCwd` and the `../utils/paths.ts` import line.
+
 ## 2026-09-07 - Dedupe skills from duplicate copies of one package
 
 ### What changed

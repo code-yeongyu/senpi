@@ -1,5 +1,26 @@
 # changes.md — builtin compaction policy
 
+## Count retained image tokens separately from serialized payload bytes (2026-09-07)
+
+### What changed
+
+- `deterministic-fallback.ts` replaces only the escaped `data` bytes of validated top-level tool-result image blocks with their existing `estimateTokens` image cost.
+- The conservative serialized-byte floor still includes all text, JSON delimiters, image metadata, tool arguments, and unrelated `data` fields. Image costs remain additive when that text floor dominates the ordinary estimator.
+- Bounded-value checks, malformed-content rejection, atomic tool-chain validation, effective reserve scaling, and transport byte budgets are unchanged.
+
+### Why
+
+- Issue #1455: a valid 512x512 PNG costs 1,200 estimated image tokens but its Base64 payload exceeds 1.3 million bytes. Charging those bytes against the token window rejected the prepared suffix after summarization failed, even after #1412 allowed valid image blocks.
+
+### Why an extension could not handle it
+
+- Required-compaction fallback admission is owned by this builtin. A later extension cannot correct its rejection without bypassing normal recovery.
+
+### Expected merge conflict zones
+
+- LOW: retained-message sizing in `deterministic-fallback.ts`.
+- Tests: `test/suite/regressions/issue-1455-*`.
+
 ## Allow explicit manual compaction on SDK-owned automatic lanes (2026-09-07)
 
 ### What changed

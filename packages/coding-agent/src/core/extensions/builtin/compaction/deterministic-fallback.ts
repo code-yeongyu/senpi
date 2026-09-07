@@ -194,10 +194,21 @@ export function createRequiredCompactionFallback(
 		try {
 			messageUnsafe = hasUnsafeRetainedContent([message]);
 			serialized = isSafeBoundedValue(message) ? JSON.stringify(message) : undefined;
+			let imagePayloadBytes = 0;
+			let imageTokens = 0;
+			if (!messageUnsafe && serialized !== undefined && message.role === "toolResult") {
+				for (const block of message.content) {
+					if (block.type !== "image") continue;
+					// Keep the JSON delimiters and metadata charged, but replace only
+					// this validated image's escaped payload bytes with its token cost.
+					imagePayloadBytes += Buffer.byteLength(JSON.stringify(block.data)) - 2;
+					imageTokens += estimateTokens({ ...message, content: [block] });
+				}
+			}
 			tokenSuffix[index] +=
 				serialized === undefined
 					? Number.POSITIVE_INFINITY
-					: Math.max(estimateTokens(message), Buffer.byteLength(serialized));
+					: Math.max(estimateTokens(message), Buffer.byteLength(serialized) - imagePayloadBytes + imageTokens);
 		} catch {
 			messageUnsafe = true;
 			tokenSuffix[index] = Number.POSITIVE_INFINITY;

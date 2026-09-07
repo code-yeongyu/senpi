@@ -27,10 +27,24 @@ export interface PathInputOptions {
  */
 export function canonicalizePath(path: string): string {
 	try {
-		return realpathSync(path);
+		return realpathSync.native(path);
 	} catch {
 		return path;
 	}
+}
+
+/**
+ * {@link canonicalizePath} that refuses to guess.
+ *
+ * The convenience form hands back its input when resolution fails, which is what most callers
+ * want: they compare two canonical spellings and an unresolvable path simply compares unequal.
+ * A security decision cannot use that, because the raw input is indistinguishable from a
+ * canonical answer - so a path that could not be resolved would be keyed, compared, or trusted
+ * under a spelling the filesystem never confirmed. This form throws instead, leaving the caller
+ * to decide what an unresolvable path means.
+ */
+export function canonicalizePathStrict(path: string): string {
+	return realpathSync.native(path);
 }
 
 /** Symlink hops allowed while resolving one path; realpath(3) reports ELOOP past this. */
