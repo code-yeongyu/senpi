@@ -1,5 +1,41 @@
 # changes.md — builtin compaction policy
 
+## Slice an over-budget restored session and force first-turn recovery compaction (2026-09-07)
+
+### What changed
+
+- `createAgentSession` resume admission now slices a restored transcript that exceeds the
+  usability budget: a synthetic deterministic `resume-admission` compaction entry replaces the
+  dropped prefix (the JSONL transcript remains verbatim), the admission passes, and the session opens.
+- The summary is an equivalent minimal no-LLM checkpoint rather than the extension fallback:
+  admission occurs before extensions are wired, while the cut-point selection preserves atomic
+  tool-call/result pairs.
+- `AgentSession` arms the existing required-compaction route, so the first turn after such a
+  resume runs a real recovery compaction before the user's prompt reaches the provider.
+- Admission emits one structured `resume_admission_slice` session-log line with dropped entries,
+  token counts before/after, model, and shortfall.
+
+
+### Why
+
+- A session that outgrew its model's window (live transcript > window - output/compaction
+  reserve - margins) could never open again: `assertModelUsable` threw before any compaction
+  existed, and the desktop retried the identical doomed `thread.turn.start` (live miss:
+  thread a9a178a0, 922k window / 963,249-token requirement / 41,249 shortfall, 2026-09-07).
+- The fix keeps every transcript byte on disk while only the *context* is reduced, and the
+  recovery compaction on the first turn restores a usable budget before the real prompt runs.
+
+### Why an extension could not handle it
+
+- Admission runs inside `createAgentSession` before the compaction extension is wired, and
+  the pending-recovery marker must travel through the session constructor - no external hook
+  can intercept either.
+
+### Expected merge conflict zones
+
+- `sdk.ts` resume admission block; `agent-session.ts` constructor options + first-turn
+  required-compaction reason; `model-usability-budget.test.ts`.
+
 ## Omit speculation lead from resumed-session admission (2026-09-03)
 
 ### What changed
