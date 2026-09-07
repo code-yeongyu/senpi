@@ -1072,6 +1072,7 @@ export class AgentSession {
 	private _autoCompactionSessionOverride: boolean | undefined;
 	private _compactionSkippedTooSmall = false;
 	private _requiredCompactionAdmissionError: RequiredCompactionError | undefined;
+	private _resumeRecoveryPending = false;
 	// Preserve provenance across agent-core's conversion of our admission error
 	// into an assistant error message. Matching provider text alone is not proof
 	// that AgentSession initiated required-compaction recovery.
@@ -1285,6 +1286,27 @@ export class AgentSession {
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
 		});
+	}
+
+	/** Whether resume admission reduced the context and the first prompt still needs recovery compaction. */
+	hasPendingResumeRecovery(): boolean {
+		return this._resumeRecoveryPending;
+	}
+
+	/** Arm the existing required-compaction route after resume admission reduced context. */
+	armResumeRecovery(): void {
+		this._resumeRecoveryPending = true;
+	}
+
+	/** Record a structured resume-admission diagnostic in the session log. */
+	logResumeAdmissionSlice(data: {
+		droppedEntries: number;
+		tokensBefore: number;
+		tokensAfter: number;
+		model: string;
+		shortfall: number;
+	}): void {
+		this._sessionLogger.info("resume_admission_slice", data);
 	}
 
 	get modelRuntime(): ModelRuntime {
@@ -3831,7 +3853,19 @@ export class AgentSession {
 			}
 
 			// The user's new prompt is sent below, so do not call agent.continue() here.
-			await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
+			if (this._resumeRecoveryPending) {
+				const compacted = await this._runPrePromptCompaction(
+					this._findLastAssistantMessage(),
+					false,
+					"pre_prompt",
+					false,
+					true,
+				);
+				if (!compacted) throw new RequiredCompactionError();
+				this._resumeRecoveryPending = false;
+			} else {
+				await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
+			}
 
 			// Build messages array (custom message if any, then user message)
 			messages = [];

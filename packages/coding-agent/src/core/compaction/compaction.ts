@@ -1019,7 +1019,7 @@ export function prepareCompaction(
 	forceProgress = false,
 	allowSummaryOnly = false,
 ): CompactionPreparation | undefined {
-	if (pathEntries.length > 0 && pathEntries[pathEntries.length - 1].type === "compaction") {
+	if (pathEntries.length > 0 && pathEntries[pathEntries.length - 1].type === "compaction" && !allowSummaryOnly) {
 		return undefined;
 	}
 
