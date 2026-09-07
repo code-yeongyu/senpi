@@ -96,8 +96,8 @@ function identityDrift(
 ): ContinuityReason | null {
 	if (entry.accountName !== input.accountName) return "account_changed";
 	if (entry.modelId !== input.modelId) return "model_changed";
-	if (entry.systemPromptHash !== input.fingerprint.systemPromptHash) return "options_changed";
-	if (entry.toolsetHash !== input.fingerprint.toolsetHash) return "options_changed";
+	if (entry.systemPromptHash !== input.fingerprint.systemPromptHash) return "system_prompt_changed";
+	if (entry.toolsetHash !== input.fingerprint.toolsetHash) return "toolset_changed";
 	return null;
 }
 
@@ -154,7 +154,12 @@ function withoutUnconfirmedResume(
 function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBindingSnapshot): ContinuityDecision {
 	if (!input.transcriptAvailable) return { kind: "flatten", reason: "transcript_missing" };
 	const drift = identityDrift(input, binding);
-	if (drift) return { kind: "flatten", reason: drift };
+	// Account/model identity drift fails closed: the persisted identity no longer
+	// matches the turn. Prompt/toolset drift instead reattaches like the live path
+	// (oh-my-openagent#7884) - a restart has no live query, so the resume builds a
+	// fresh query carrying the CURRENT options and hooks, and flattening would
+	// re-send the whole conversation for drift the SDK applies per-query anyway.
+	if (drift === "account_changed" || drift === "model_changed") return { kind: "flatten", reason: drift };
 	const retry = retryCheckpointDecision(input, binding);
 	if (retry) return retry;
 	if (binding.sentPrefixHash !== undefined) {
@@ -166,7 +171,7 @@ function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBi
 				kind: "reattach",
 				sdkSessionId: binding.sdkSessionId,
 				from: binding.sentCount,
-				reason: "registry_miss",
+				reason: drift ?? "registry_miss",
 			};
 		}
 		return {
@@ -176,7 +181,12 @@ function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBi
 	}
 	const shared = commonPrefixLength(binding.sentHashes, input.currentHashes);
 	if (shared === binding.sentCount) {
-		return { kind: "reattach", sdkSessionId: binding.sdkSessionId, from: binding.sentCount, reason: "registry_miss" };
+		return {
+			kind: "reattach",
+			sdkSessionId: binding.sdkSessionId,
+			from: binding.sentCount,
+			reason: drift ?? "registry_miss",
+		};
 	}
 	if (!binding.lastAssistantUuid) return { kind: "flatten", reason: "registry_miss" };
 	return {
@@ -224,9 +234,9 @@ export function decideFailoverContinuity(input: FailoverContinuityInput): Contin
 
 /**
  * Resume-first: a live session is never abandoned for a flattened re-send. Only a
- * missing transcript or an unrecoverable boundary reaches `flatten`; every other
- * divergence resolves to `fork` (same lineage, new branch) or `reattach` (same
- * session, new query).
+ * missing transcript, an unrecoverable boundary, or account/model identity drift
+ * on a persisted binding reaches `flatten`; every other divergence resolves to
+ * `fork` (same lineage, new branch) or `reattach` (same session, new query).
  */
 export function decideNativeContinuity(input: ContinuityDecisionInput): ContinuityDecision {
 	const { entry, binding } = input;

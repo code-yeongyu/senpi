@@ -38,13 +38,23 @@ export type GoalContinuationInput = {
 	readonly recentNormalizedOutputHashes: readonly string[];
 	readonly toollessContinuationStreak: number;
 	readonly continuationPending: boolean;
+	/** The last turn was rejected (or silently starved) by context size and recovery did not shrink it. */
+	readonly lastTurnStuckOnContextOverflow: boolean;
 };
 
 export type GoalContinuationVerdict =
 	| { kind: "continue"; prompt: "full" | "minimal"; stallNotice: boolean }
 	| {
 			kind: "deny";
-			reason: "not-eligible" | "single-flight" | "cap" | "stale" | "repetition" | "length-exhausted" | "unattended";
+			reason:
+				| "not-eligible"
+				| "single-flight"
+				| "cap"
+				| "stale"
+				| "repetition"
+				| "length-exhausted"
+				| "unattended"
+				| "context-overflow";
 	  };
 
 export function shouldQueueGoalContinuationWhenIdle(
@@ -97,6 +107,10 @@ function isAbortedToolResult(message: ToolResultAgentMessage): boolean {
 }
 
 export function evaluateGoalContinuation(input: GoalContinuationInput): GoalContinuationVerdict {
+	// Re-sending an overflowed context fails identically on every path (#1422).
+	if (input.goal?.status === "active" && input.lastTurnStuckOnContextOverflow) {
+		return { kind: "deny", reason: "context-overflow" };
+	}
 	if (!isEligibleForGoalContinuation(input)) return { kind: "deny", reason: "not-eligible" };
 	if (input.continuationPending) return { kind: "deny", reason: "single-flight" };
 	if (hasRepeatedNormalizedOutputHash(input.recentNormalizedOutputHashes))

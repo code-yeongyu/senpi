@@ -36,6 +36,25 @@
 
 - `packages/coding-agent/src/core/agent-session.ts` idle `sendCustomMessage` admission and its existing finally cleanup.
 
+## 2026-09-07 - Overflow recovery outlives the auto-compaction flag; session-scoped toggle (#1422)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_getAutoCompactionReason` and `_checkCompaction` gate only the threshold path on `compaction.enabled`; a turn that `isTurnStuckOnContextOverflow` (new `core/compaction/stuck-overflow.ts`) still runs the one-shot overflow recovery. Silent overflow on a completed answer and truncated `length` stops stay under the flag.
+- `AgentSession.setAutoCompactionEnabled` stores a session override instead of calling `SettingsManager.setCompactionEnabled`; every compaction read (`_getCompactionSettings`) and the extension context's `getCompactionSettings` observe it, and `autoCompactionEnabled` reports it. The interactive `/settings` toggle persists through the settings manager itself.
+
+### Why
+
+- Session `01a07542` (gpt-6-astra) died at 916,628 prompt tokens with zero compactions: OmO Desktop's per-thread toggle had persisted `compaction.enabled=false` machine-wide through the RPC command, and that one flag also switched off provider-overflow recovery, so nothing could shrink the context automatically.
+
+### Why this lives in the fork
+
+- Compaction admission and the settings toggle are `AgentSession` internals below the extension API.
+
+### Expected merge conflict zones
+
+- MEDIUM: `_getAutoCompactionReason`, `_checkCompaction`, and the `setAutoCompactionEnabled`/`autoCompactionEnabled` pair in `agent-session.ts`; every `settingsManager.getCompactionSettings()` read there now goes through `_getCompactionSettings()`.
+
 ## 2026-09-05 - Persist Astra reasoning configuration updates
 
 ### What changed

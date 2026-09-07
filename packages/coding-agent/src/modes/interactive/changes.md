@@ -17,6 +17,24 @@
 
 - LOW: `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts` around hydration boundary initialization, chunk completion, and reset handling.
 
+## 2026-09-07 - /settings auto-compaction toggle persists explicitly (#1422)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `onAutoCompactChange` calls `settingsManager.setCompactionEnabled` itself and then applies the session override through `session.setAutoCompactionEnabled`.
+
+### Why
+
+- `AgentSession.setAutoCompactionEnabled` no longer persists (it is the RPC session command's implementation), and the settings dialog is the one surface that should.
+
+### Why this lives in the fork
+
+- The settings dialog wiring is interactive-mode code.
+
+### Expected merge conflict zones
+
+- LOW: the `onAutoCompactChange` callback.
+
 ## 2026-09-05 - Restore Working text shimmer on turn start
 
 ### What changed

@@ -933,6 +933,7 @@ describe("goal continuation while a monitor is active", () => {
 						lastContinuationSignature: goal.lastContinuationSignature,
 						currentSignature: undefined,
 						consecutiveLengthRecoveries: 0,
+						lastTurnStuckOnContextOverflow: false,
 						recentNormalizedOutputHashes: [],
 						toollessContinuationStreak: 0,
 						continuationPending: false,

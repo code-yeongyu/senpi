@@ -1,5 +1,21 @@
 # goal Extension Changes
 
+## 2026-09-07 - Block continuation after an unrecovered context overflow (#1422)
+
+### What changed
+
+- `continuation.ts`: `GoalContinuationInput.lastTurnStuckOnContextOverflow` and the `context-overflow` deny reason; `evaluateGoalContinuation` denies on every automatic path when the last turn was stuck on a context overflow, before eligibility.
+- `continuation-recovery.ts`: `CONTEXT_OVERFLOW_BLOCKED_REASON` ("context overflow ended the turn (compaction did not recover)") joins the mechanical blocks, so accepted direct input resumes the goal.
+- `lifecycle-helpers.ts` / `monitor-continuation.ts`: the verdict input derives the flag from the last assistant message through `core/compaction/stuck-overflow.ts` (agent-end paths and session-start).
+
+### Why
+
+- A provider overflow was treated like any terminal provider error: `providerRecovery` re-sent the identical context and the provider rejected it identically, three times in 30 s in the reported session. The context does not change between attempts, so re-prompting is deterministic failure.
+
+### Expected merge conflict zones
+
+- LOW: the verdict input type, the deny-reason union, and `blockedReasonForContinuationGuard`.
+
 ## 2026-09-04 - update_goal points at the audits instead of restating them
 
 ### What changed

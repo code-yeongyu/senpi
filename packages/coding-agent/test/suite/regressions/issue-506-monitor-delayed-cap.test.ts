@@ -127,6 +127,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 						lastContinuationSignature: undefined,
 						currentSignature: `${goal.id}:0/0:deadbeef`,
 						consecutiveLengthRecoveries: 0,
+						lastTurnStuckOnContextOverflow: false,
 						recentNormalizedOutputHashes: [],
 						toollessContinuationStreak: 0,
 						continuationPending: false,

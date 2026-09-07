@@ -14,8 +14,10 @@
  * This module also owns the shape of the mirrored `compact_boundary` ledger
  * entry, so the SDK's native compactions stay visible in senpi history.
  */
+
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessageDiagnostic } from "@earendil-works/pi-ai";
+import type { CompactionReason } from "../../types.ts";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../claude-sdk-oauth/account-management.ts";
 import type { ClaudeSdkOauthProviderSettings } from "../claude-sdk-oauth/settings.ts";
 import { loadClaudeSdkOauthProviderSettingsFromDisk } from "../claude-sdk-oauth/settings.ts";
@@ -57,6 +59,8 @@ export interface LaneContext {
 export interface CompactionLanePolicy {
 	/** True when the SDK owns this lane's context and senpi compaction must stand down. */
 	disablesSenpiCompaction(context: LaneContext): boolean;
+	/** Manual requests are explicitly owned by senpi for recovery, even on SDK lanes. */
+	ownsCompaction(context: LaneContext, reason: CompactionReason): boolean;
 }
 
 export interface CompactBoundaryEntry {
@@ -90,28 +94,36 @@ export function createCompactionLanePolicy(
 	const load = options.loadProviderSettings ?? loadClaudeSdkOauthProviderSettingsFromDisk;
 	let cachedCwd: string | undefined;
 	let cachedResumeMode: string | undefined;
-	return {
-		disablesSenpiCompaction(context: LaneContext): boolean {
-			if (context.model?.provider !== CLAUDE_SDK_OAUTH_PROVIDER_ID) return false;
-			// A configured compaction model override makes senpi own summarization
-			// for the lane, so the SDK-native stand-down no longer applies. This is
-			// the escape hatch for lanes whose SDK never fires native compaction.
-			if (context.getCompactionSettings?.().model) return false;
-			// Per-cwd cache is the intended contract (pinned by lane-policy.test.ts):
-			// resumeMode is read once per cwd. A mid-session switch takes effect on
-			// the next cwd or session.
-			if (cachedCwd !== context.cwd) {
-				try {
-					cachedResumeMode = load(context.cwd).resumeMode;
-				} catch {
-					// A settings read failure must never silently disable senpi compaction:
-					// fail closed by keeping senpi's own compaction fully active.
-					cachedCwd = undefined;
-					return false;
-				}
-				cachedCwd = context.cwd;
+	// Declared as a local so `ownsCompaction` never depends on `this`: the policy object
+	// is routinely destructured at call sites, which would otherwise unbind the receiver.
+	const disablesSenpiCompaction = (context: LaneContext): boolean => {
+		if (context.model?.provider !== CLAUDE_SDK_OAUTH_PROVIDER_ID) return false;
+		// A configured compaction model override makes senpi own summarization
+		// for the lane, so the SDK-native stand-down no longer applies. This is
+		// the escape hatch for lanes whose SDK never fires native compaction.
+		if (context.getCompactionSettings?.().model) return false;
+		// Per-cwd cache is the intended contract (pinned by lane-policy.test.ts):
+		// resumeMode is read once per cwd. A mid-session switch takes effect on
+		// the next cwd or session.
+		if (cachedCwd !== context.cwd) {
+			try {
+				cachedResumeMode = load(context.cwd).resumeMode;
+			} catch {
+				// A settings read failure must never silently disable senpi compaction:
+				// fail closed by keeping senpi's own compaction fully active.
+				cachedCwd = undefined;
+				return false;
 			}
-			return isSdkNativeCompactionLane({ model: context.model, resumeMode: cachedResumeMode });
+			cachedCwd = context.cwd;
+		}
+		return isSdkNativeCompactionLane({ model: context.model, resumeMode: cachedResumeMode });
+	};
+	return {
+		disablesSenpiCompaction,
+		ownsCompaction(context: LaneContext, reason: CompactionReason): boolean {
+			// Manual is senpi-owned everywhere: it is the user's explicit recovery path,
+			// including on an SDK-native lane whose automatic routes stay SDK-owned.
+			return reason === "manual" || !disablesSenpiCompaction(context);
 		},
 	};
 }

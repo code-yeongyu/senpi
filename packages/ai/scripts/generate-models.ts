@@ -455,15 +455,50 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
 const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
+// OpenAI budgets input and output separately: the Responses API rejects a request with
+// `context_too_large` once the prompt alone exceeds (documented context window - max output),
+// whatever `max_output_tokens` asks for. senpi's `contextWindow` is the prompt budget, so the
+// catalog stores the input cap: 272,000 for the 400,000 tier and 922,000 for the 1,050,000 tier.
+// The split follows the model, not the gateway: `applyOpenAiInputCap` runs over every provider's
+// GPT-5.x / GPT-6 rows (Azure, Bedrock, Copilot, OpenRouter, Vercel, OpenGateway, OpenCode...)
+// because those gateways forward the same upstream limit. Issue #1422.
+const OPENAI_DOCUMENTED_CONTEXT_WINDOW_INPUT_CAPS: ReadonlyMap<number, number> = new Map([
+	[400000, OPENAI_LONG_CONTEXT_INPUT_THRESHOLD],
+	[1050000, 922000],
+]);
+const OPENAI_MAX_CONTEXT_INPUT_CAP = 922000;
 // Flagship default context windows. OpenAI documents a 1,050,000-token window for both models;
 // the project deliberately ships cost-tier defaults (users widen through model overrides):
-// GPT-5.6 Sol keeps 650,000; GPT-6 Astra ships the documented maximum (1,050,000 = 922,000 input + 128,000 output).
+// GPT-5.6 Sol keeps 650,000; GPT-6 Astra keeps 600,000.
+const GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW = 600000;
 const OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
 	["gpt-5.6-sol", 650000],
-	["gpt-6-astra", 1050000],
+	["gpt-6-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
 ]);
 const GPT_56_SOL_DEFAULT_CONTEXT_WINDOW = 650000;
-const GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW = 1050000;
+
+function toOpenAiInputCap(contextWindow: number, maxTokens: number): number {
+	if (maxTokens !== 128000) return contextWindow;
+	return OPENAI_DOCUMENTED_CONTEXT_WINDOW_INPUT_CAPS.get(contextWindow) ?? contextWindow;
+}
+
+const OPENAI_GATEWAY_ID_PREFIX = /^(?:[a-z]{2}\.)?(?:global\.)?openai[./]/;
+
+/** GPT-5.x / GPT-6 rows on any provider: the OpenAI input/output split follows the model, not the gateway. */
+function isOpenAiFlagshipFamilyId(id: string): boolean {
+	const bare = id.replace(OPENAI_GATEWAY_ID_PREFIX, "");
+	return /^gpt-(?:5|6)(?:[.-]|$)/.test(bare) && !bare.startsWith("gpt-oss");
+}
+
+function applyOpenAiInputCap(model: Model<Api>): void {
+	if (!isOpenAiFlagshipFamilyId(model.id)) return;
+	// models.dev (and the gateways that mirror it) report gpt-5-pro output as 272000,
+	// a duplicate of the input sub-limit; the documented max output is 128000.
+	if (model.id.replace(OPENAI_GATEWAY_ID_PREFIX, "") === "gpt-5-pro" && model.maxTokens === 272000) {
+		model.maxTokens = 128000;
+	}
+	model.contextWindow = toOpenAiInputCap(model.contextWindow, model.maxTokens);
+}
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
 	"gpt-5.5",
@@ -1025,6 +1060,16 @@ function applyOpenAIExplicitPromptCacheMetadata(model: Model<Api>): void {
 		...(model.compat as OpenAIResponsesCompat | undefined),
 		supportsExplicitPromptCacheMode: true,
 	};
+}
+
+// Every catalog that ships a GPT-6 Astra entry declares the same context window.
+// Upstream passthrough catalogs (opencode, openrouter, github-copilot,
+// vercel-ai-gateway) otherwise inherit the documented 1,050,000 window while the
+// first-party OpenAI catalogs carry the input cap, so the effective Astra budget
+// changed with the provider that routed the request.
+function applyGpt6AstraContextWindow(model: Model<Api>): void {
+	if (!model.id.includes("gpt-6-astra")) return;
+	model.contextWindow = GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW;
 }
 
 function isGemini3ProModel(modelId: string): boolean {
@@ -2785,11 +2830,6 @@ async function generateModels() {
 			const standardCost = OPENAI_GPT_56_STANDARD_COSTS[candidate.id];
 			if (standardCost) candidate.cost = withOpenAiLongContextPricing(standardCost);
 		}
-		// models.dev reports gpt-5-pro output as 272000 (a duplicate of the input sub-limit);
-		// the actual max output is 128000. Also propagates to the derived Azure clone.
-		if (candidate.provider === "openai" && candidate.id === "gpt-5-pro") {
-			candidate.maxTokens = 128000;
-		}
 		// Keep Kimi K3's canonical output limit when gateway metadata is missing or incorrect.
 		if (
 			(candidate.provider === "openrouter" && OPENROUTER_KIMI_K3_MODEL_IDS.has(candidate.id)) ||
@@ -3378,11 +3418,11 @@ async function generateModels() {
 	// Azure Foundry deploys these with larger context windows than OpenAI's own short-tier defaults.
 	// See models-sold-directly-by-azure docs.
 	const AZURE_CONTEXT_WINDOW_OVERRIDES: Record<string, number> = {
-		"gpt-5.4": 1050000,
-		"gpt-5.5": 1050000,
-		"gpt-5.6-luna": 1050000,
-		"gpt-5.6-sol": 1050000,
-		"gpt-5.6-terra": 1050000,
+		"gpt-5.4": OPENAI_MAX_CONTEXT_INPUT_CAP,
+		"gpt-5.5": OPENAI_MAX_CONTEXT_INPUT_CAP,
+		"gpt-5.6-luna": OPENAI_MAX_CONTEXT_INPUT_CAP,
+		"gpt-5.6-sol": OPENAI_MAX_CONTEXT_INPUT_CAP,
+		"gpt-5.6-terra": OPENAI_MAX_CONTEXT_INPUT_CAP,
 	};
 	const azureOpenAiModels: Model<Api>[] = allModels
 		.filter((model) => model.provider === "openai" && model.api === "openai-responses")
@@ -3402,6 +3442,7 @@ async function generateModels() {
 	allModels.push(...azureOpenAiModels);
 
 	for (const model of allModels) {
+		applyOpenAiInputCap(model);
 		applyOpenAICompletionsCompatMetadata(model);
 		applyAnthropicMessagesCompatMetadata(model);
 		applyModelsDevReasoningOptionMetadata(model);
@@ -3410,6 +3451,7 @@ async function generateModels() {
 		applyOpenAIGrammarToolCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
+		applyGpt6AstraContextWindow(model);
 		if (
 			model.id.includes("gpt-6-astra") &&
 			(model.api === "openai-responses" ||

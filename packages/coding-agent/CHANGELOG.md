@@ -8,8 +8,31 @@
 
 ### Changed
 
+- The GPT-6 Astra series now declares a 600,000-token context window on every provider that serves it. The effective prompt budget no longer depends on the route: the first-party OpenAI catalogs and the opencode, openrouter, github-copilot, and vercel-ai-gateway passthrough catalogs all agree. Set a different budget through model overrides if you want one.
+
 ### Fixed
 
+- Explicit `/compact` now works on Claude SDK-owned sessions after a rejected smaller-model switch, so the recommended recovery from a failed downswitch is usable again ([#1423](https://github.com/code-yeongyu/senpi/pull/1423) by [@realsigridjin](https://github.com/realsigridjin)). Automatic threshold, overflow, pre-prompt, and speculative compaction stay SDK-owned, and failed manual attempts are now recorded by the compaction circuit breaker instead of being invisible to it.
+- A plain `--session <id>` resume on the `claude-sdk-oauth` provider no longer re-sends the whole conversation with `Session continuity lost (options_changed)` after a restart (code-yeongyu/oh-my-openagent#7884). A restored session binding whose system prompt or toolset fingerprint drifted - an engine upgrade, a prompt-content change, or the UTC date rolling over - now reattaches to the existing SDK session and sends only the new turn, the same way a live session already did; only an account or model identity change still cold-seeds. The continuity observation names which half drifted (`system_prompt_changed` / `toolset_changed`) instead of the bare `options_changed`.
+- The `Current date:` line is normalized out of the `claude-sdk-oauth` prompt fingerprint even when extension prompt sections follow the `Current working directory:` line, which is the shape every real session has. Previously the normalization only matched when that line ended the prompt, so the fingerprint changed at every UTC midnight.
+
+### Removed
+
+## [2026.9.7] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Context overflow is failure-proof again (#1422). `compaction.enabled=false` now switches off only proactive threshold compaction: a turn the provider rejected as a context overflow (or a zero-output `length` stop that filled the window) still gets its one-shot compact-and-retry recovery instead of leaving the session with no automatic way forward.
+- The RPC `set_auto_compaction` command is session-scoped: it no longer rewrites the persisted global `compaction.enabled` setting, so one OmO Desktop thread toggling auto-compaction cannot disable it for every other session on the machine. The interactive `/settings` toggle still persists.
+- A goal no longer re-prompts a context that the provider just rejected as too large; every automatic continuation path now blocks mechanically with `context overflow ended the turn (compaction did not recover)`, and the next user message resumes it. Ordinary provider errors keep their single recovery continuation.
+- The OpenAI input-cap rule now covers every provider that serves a GPT-5.x/GPT-6 model (Amazon Bedrock, Azure, GitHub Copilot, OpenRouter, Vercel AI Gateway, OpenGateway, Cloudflare AI Gateway, OpenCode): 128 catalog rows move from the 400,000/1,050,000 totals to the 272,000/922,000 prompt budgets (luna, terra, sol, astra and the pro models included), and `gpt-5-pro` reports its documented 128,000 max output instead of the mirrored 272,000. A catalog test now fails if any such row carries a total window again.
+- OpenAI catalog `contextWindow` values now store the documented prompt budget: 922,000 for the 1,050,000-token tier (`gpt-6-astra`, `gpt-5.4-pro`, `gpt-5.5-pro`, the Azure flagship deployments) and 272,000 for the 400,000-token tier (`gpt-5` through `gpt-5.4-nano`). OpenAI rejects a request with `context_too_large` once the prompt alone exceeds window minus max output, so the previous totals let sessions run past the point where compaction could still help.
 - The permission system's external-directory check no longer freezes the whole session when a `bash` or `monitor` command mentions a path such as `/home/user/...`: path normalization now resolves symlinks with `lstat`/`readlink` per component instead of `fs.realpathSync`, which under Bun `open(2)`s every directory it resolves and blocks forever on an autofs trigger (macOS `/home`) or misclassifies files under execute-only directories as external.
 
 ### Removed

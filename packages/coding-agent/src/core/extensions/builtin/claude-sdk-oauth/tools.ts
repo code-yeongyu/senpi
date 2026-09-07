@@ -22,11 +22,12 @@ export const PI_TO_SDK_TOOL_NAME: Readonly<Record<string, string>> = {
 
 /**
  * Versioned host-tool denial policy. `configFingerprint` in session-sync.ts hashes this as
- * `hostToolPolicy` into `toolsetHash`; a mismatch is `options_changed` and retires the live
- * resident query. The same hash is persisted in the restart sidecar, so a bump also makes
- * the first admission after an upgrade cold-seed (`flatten` / `options_changed`) instead of
- * resuming the pre-bump SDK session - once per session, intended. Bump when denial copy or
- * hooks change so wording-only edits cannot keep serving the old reason.
+ * `hostToolPolicy` into `toolsetHash`; a mismatch is `toolset_changed` and retires the live
+ * resident query (reattach with the current hooks). The same hash is persisted in the
+ * restart sidecar, so the first admission after an upgrade also reattaches with
+ * `toolset_changed` - the resumed query carries the current hooks, so the pre-bump
+ * denial text is never served again. Bump when denial copy or hooks change so
+ * wording-only edits cannot keep serving the old reason.
  */
 export const HOST_TOOL_POLICY_FINGERPRINT = "host-tool-denial-v2";
 

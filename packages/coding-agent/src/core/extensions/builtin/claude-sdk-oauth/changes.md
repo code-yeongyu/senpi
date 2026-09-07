@@ -1,5 +1,28 @@
 # claude-sdk-oauth
 
+## 2026-09-07 - Reattach restart bindings across prompt/toolset drift; date-line normalization survives trailing appends
+
+### What changed
+
+- `session-continuity.ts`: `identityDrift` now reports `system_prompt_changed` / `toolset_changed` instead of the bare `options_changed`. `decideFromBinding` flattens only on `account_changed` / `model_changed`; prompt/toolset drift falls through to the normal prefix checks and a matching prefix reattaches with the drift reason (divergence reasons still win). The live-entry path is unchanged structurally and simply surfaces the split reasons.
+- `session-sync.ts`: `GENERATED_DATE_LINE` no longer anchors the `Current working directory:` line to end-of-string, so the date/cwd pair is neutralized wherever it sits in the prompt.
+- Tests: `claude-sdk-oauth-restart-binding-drift.test.ts` (new) pins the restart contract and midnight stability with trailing appends; `claude-sdk-oauth-fingerprint.test.ts`, `claude-sdk-oauth-restored-security.test.ts`, `claude-sdk-oauth-continuity-decision.test.ts`, `claude-sdk-oauth-session-registry-wiring.test.ts` expectations moved from `options_changed` / `flatten` to the split reasons / `reattach`.
+
+### Why
+
+- oh-my-openagent#7884: a plain `omo --session <id>` resume after a restart printed `Session continuity lost - resent the full conversation (options_changed) - sent 485.5KB`. Two defects compounded: (1) a restart binding flattened on any fingerprint drift, while the live path reattaches on the same drift; (2) the date-line normalization required the cwd line to be the last line of the prompt, but a real prompt carries hundreds of lines of extension appends (`<Task_Management>`, bash timeout policy, terminal prompt, memory) after it, so `systemPromptHash` drifted at every UTC midnight and every restart-resume across a midnight or an engine/prompt upgrade re-sent the whole conversation.
+- A restart has no live query: the resume builds a fresh `query()` carrying the CURRENT options and hooks, so the 2026-09-0x note that a `HOST_TOOL_POLICY_FINGERPRINT` bump "cold-seeds once" on the first admission after upgrade is superseded - the bump now reattaches with `toolset_changed`, and resident sessions still re-fingerprint through the live path as before. Account/model drift keeps failing closed because those are lineage identity, not per-query options.
+- The split reasons answer the issue's request to see WHICH option group changed: `session.log` continuity events now carry `system_prompt_changed` or `toolset_changed`. `options_changed` stays in the sanitized vocabulary for historical log lines but is no longer emitted.
+
+### Why an extension could not handle it
+
+- The continuity decision table, the persisted binding admission, and the fingerprint digest are private to this builtin provider; no extension hook observes the restart binding or the hash inputs.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-continuity.ts` `identityDrift` and the head of `decideFromBinding` (drift gate + reattach reasons).
+- LOW: `session-sync.ts` `GENERATED_DATE_LINE` regex and its docblock; the four updated test files around `options_changed` expectations.
+
 ## 2026-09-06 - Preserve early terminal results during turn claim
 
 ### What changed

@@ -1,3 +1,17 @@
+## 2026-09-07 - Stuck-overflow classification (#1422)
+
+### What changed
+
+- New `packages/coding-agent/src/core/compaction/stuck-overflow.ts`: `isTurnStuckOnContextOverflow(message, contextWindow)` is true for a provider overflow error and for a zero-output `length` stop that filled the window, false for a completed answer whose usage merely exceeds the window. Imported by path from `agent-session.ts` and the goal extension; the barrel stays selective.
+
+### Why
+
+- Overflow recovery and the goal continuation guard need one definition of "this turn cannot progress by re-sending the same context".
+
+### Expected merge conflict zones
+
+- None upstream; the module is fork-only.
+
 ## 2026-09-05 - Re-anchor Astra configuration updates after compaction
 
 ### What changed

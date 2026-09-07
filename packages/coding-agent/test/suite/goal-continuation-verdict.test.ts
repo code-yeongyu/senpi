@@ -43,6 +43,7 @@ function makeInput(overrides: Partial<VerdictInput> = {}): VerdictInput {
 		recentNormalizedOutputHashes: [],
 		toollessContinuationStreak: 0,
 		continuationPending: false,
+		lastTurnStuckOnContextOverflow: false,
 		...overrides,
 	};
 }
@@ -198,6 +199,23 @@ describe("goal continuation verdict", () => {
 				makeInput({ path: "systemRecovery", isIdle: false, lastStopReason: "error", ...overrides }),
 			),
 		).toEqual({ kind: "deny", reason });
+	});
+
+	it("denies with context-overflow on every automatic path when the last turn was stuck on a context overflow", () => {
+		for (const path of [
+			"immediate",
+			"monitorDelayed",
+			"userGrace",
+			"sessionStart",
+			"systemRecovery",
+			"providerRecovery",
+		] as const) {
+			expect(
+				evaluateGoalContinuation(
+					makeInput({ path, isIdle: false, lastStopReason: "error", lastTurnStuckOnContextOverflow: true }),
+				),
+			).toEqual({ kind: "deny", reason: "context-overflow" });
+		}
 	});
 
 	it("keeps provider recovery eligible while the session is settling", () => {

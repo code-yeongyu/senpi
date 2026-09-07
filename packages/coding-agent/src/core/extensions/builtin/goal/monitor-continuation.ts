@@ -28,6 +28,7 @@ import { lastAssistantMessage } from "./last-assistant-message.ts";
 import {
 	admitAndQueueGoalContinuation,
 	buildCurrentGoalContinuationSignature,
+	isLastTurnStuckOnContextOverflow,
 	lastAssistantText,
 } from "./lifecycle-helpers.ts";
 import type {
@@ -510,6 +511,7 @@ export class MonitorAwareGoalContinuation {
 			recentNormalizedOutputHashes: this.#recentNormalizedOutputHashes,
 			toollessContinuationStreak: this.#toollessContinuationStreak,
 			continuationPending: this.#isContinuationPending(),
+			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(ctx, lastAssistant),
 		};
 	}
 

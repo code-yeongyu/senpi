@@ -1,5 +1,25 @@
 # changes.md — builtin compaction policy
 
+## Allow explicit manual compaction on SDK-owned automatic lanes (2026-09-07)
+
+### What changed
+
+- `lane-policy.ts` exposes one reason-aware `ownsCompaction` predicate: manual requests are senpi-owned for recovery even on SDK-native lanes; automatic threshold, overflow, pre-prompt, and speculative routes remain SDK-owned. The predicate is used for the before-compact admission and failure-accounting sites; the message-end degradation site is automatic-only and remains unchanged.
+- Failed manual compactions are recorded by the circuit breaker, including on SDK-native lanes; manual requests no longer bypass the breaker.
+- Concurrent SDK/native and senpi work is protected by the existing speculative generation and message-revision checks before generated results are applied.
+
+### Why
+
+- A rejected downsizing leaves the larger model selected so the user can compact first. Cancelling explicit `/compact` with `external-owner` blocked that recovery; manual requests must reach the existing summary generation and persistence path without weakening model admission.
+
+### Why an extension could not handle it
+
+- The cancellation is owned by this builtin hook. Another extension cannot safely undo its rejection or replace the coordinated compaction lifecycle.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts` around the SDK-native lane guard in `session_before_compact`.
+
 ## Omit speculation lead from resumed-session admission (2026-09-03)
 
 ### What changed

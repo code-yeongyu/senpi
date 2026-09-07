@@ -111,13 +111,15 @@ export function recordSyncedStream(entry: ClaudeSdkOauthSessionEntry, hashes: re
 	entry.branchInfo = null;
 }
 
-const GENERATED_DATE_LINE = /\nCurrent date: \d{4}-\d{2}-\d{2}(?=\nCurrent working directory: [^\n]*$)/;
+const GENERATED_DATE_LINE = /\nCurrent date: \d{4}-\d{2}-\d{2}(?=\nCurrent working directory: [^\n]*)/;
 
 /**
  * The generated date line advances at UTC midnight while the conversation is
  * unchanged; hashing it verbatim retires a live session at midnight for no
- * semantic reason. Only that exact terminal line is neutralized - cwd and every
- * other prompt region stay fail-closed.
+ * semantic reason. Only that exact date-plus-cwd pair is neutralized - cwd and
+ * every other prompt region stay fail-closed. Extension appends legitimately
+ * follow the cwd line (oh-my-openagent#7884), so the pair is matched wherever
+ * it appears, not only at the end of the prompt.
  */
 function fingerprintSystemPrompt(systemPrompt: Options["systemPrompt"]): unknown {
 	if (typeof systemPrompt !== "string") return systemPrompt ?? null;

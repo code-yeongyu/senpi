@@ -31,12 +31,12 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 
 ## INVARIANTS (from changes.md)
 
-- Resume-first: every live query replacement re-attaches with `resume`; persisted restarts reattach only when the private sidecar, session marker, committed assistant, identity, prefix, and SDK transcript agree. A live session is never abandoned for a flattened re-send.
+- Resume-first: every live query replacement re-attaches with `resume`; persisted restarts reattach only when the private sidecar, session marker, committed assistant, account/model identity, prefix, and SDK transcript agree - prompt/toolset fingerprint drift reattaches with `system_prompt_changed` / `toolset_changed` instead of flattening (oh-my-openagent#7884). A live session is never abandoned for a flattened re-send.
 - The SDK ledger is authoritative for divergence; decide at the `message_end` commit boundary. Result-only turns are a supported shape, not divergence.
 - Fork point is the last assistant boundary strictly before the divergence.
 - Non-fork reattach passes `resume` and must omit `sessionId` (the SDK rejects the pair). Fork adds `resumeSessionAt` + `forkSession`.
 - Abort never taints and never flattens; `interrupt()` receipts gate keep-vs-close.
-- Fingerprint normalizes the `Current date:` line (no midnight retirement); cwd and other regions stay fail-closed. Host-tool denial copy is versioned by `HOST_TOOL_POLICY_FINGERPRINT` in `toolsetHash`; bump it when the copy changes so resident sessions re-fingerprint instead of keeping the old reason. `config-dir` lane failover is the one declared residual that still flattens.
+- Fingerprint normalizes the `Current date:` line wherever the date/cwd pair sits (extension appends follow it; no midnight retirement); cwd and other regions stay fail-closed. Host-tool denial copy is versioned by `HOST_TOOL_POLICY_FINGERPRINT` in `toolsetHash`; bump it when the copy changes so resident sessions re-fingerprint instead of keeping the old reason. `config-dir` lane failover is the one declared residual that still flattens.
 - Every main turn emits exactly one continuity observation; TUI notices only for degradations.
 - `resumeMode: "off"` / `SENPI_CLAUDE_SDK_OAUTH_RESUME=off` restores legacy per-turn behavior.
 - `full`/`override` prompt modes default `settingSources` to `[]` (no CLAUDE.md double-injection). The CLI still prepends its own agent preamble; `full` means senpi's prompt arrives intact, not alone.

@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { isTurnStuckOnContextOverflow } from "../../../compaction/stuck-overflow.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
@@ -11,6 +12,7 @@ import {
 	hashAssistantText,
 } from "./continuation.ts";
 import {
+	CONTEXT_OVERFLOW_BLOCKED_REASON,
 	CONTINUATION_CAP_BLOCKED_REASON,
 	continuationCapRecoveryHint,
 	LENGTH_EXHAUSTED_BLOCKED_REASON,
@@ -113,6 +115,10 @@ export async function queueGoalContinuation(
 			recentNormalizedOutputHashes: [],
 			toollessContinuationStreak: 0,
 			continuationPending: options.continuationPending,
+			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(
+				ctx,
+				lastAssistantFromEntries(ctx.sessionManager.getBranch()),
+			),
 		},
 		content: () => buildContinuationPrompt(goal),
 		markContinuationPending: options.markContinuationPending,
@@ -139,11 +145,25 @@ export function lastAssistantText(messages: readonly AgentMessage[]): string {
 }
 
 function lastAssistantTextFromEntries(entries: readonly SessionEntry[]): string {
+	const assistant = lastAssistantFromEntries(entries);
+	return assistant === undefined ? "" : textContent(assistant);
+}
+
+function lastAssistantFromEntries(
+	entries: readonly SessionEntry[],
+): Extract<AgentMessage, { role: "assistant" }> | undefined {
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index];
-		if (entry?.type === "message" && entry.message.role === "assistant") return textContent(entry.message);
+		if (entry?.type === "message" && entry.message.role === "assistant") return entry.message;
 	}
-	return "";
+	return undefined;
+}
+
+export function isLastTurnStuckOnContextOverflow(
+	ctx: ExtensionContext,
+	lastAssistant: Extract<AgentMessage, { role: "assistant" }> | undefined,
+): boolean {
+	return lastAssistant !== undefined && isTurnStuckOnContextOverflow(lastAssistant, ctx.model?.contextWindow ?? 0);
 }
 
 function textContent(message: Extract<AgentMessage, { role: "assistant" }>): string {
@@ -190,6 +210,8 @@ function blockedReasonForContinuationGuard(
 			return REPETITION_BLOCKED_REASON;
 		case "length-exhausted":
 			return LENGTH_EXHAUSTED_BLOCKED_REASON;
+		case "context-overflow":
+			return CONTEXT_OVERFLOW_BLOCKED_REASON;
 		case "not-eligible":
 		case "single-flight":
 		case "stale":

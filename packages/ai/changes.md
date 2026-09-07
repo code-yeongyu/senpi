@@ -1,3 +1,59 @@
+## 2026-09-07 - One context window for the whole GPT-6 Astra series
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW` is 600,000, and the new `applyGpt6AstraContextWindow` stamps it onto every model whose id carries `gpt-6-astra` in the final metadata pass, after `applyOpenAiInputCap` and before provider grouping. Regenerated `packages/ai/src/providers/data/` (13 Astra rows across azure-openai-responses, github-copilot, openai-codex, openai, opencode, openrouter and vercel-ai-gateway) plus `packages/ai/src/providers/data/.manifest.json`.
+- `packages/ai/test/gpt-6-astra-context-window.test.ts` walks every generated catalog and requires the whole series to agree; `gpt-6-astra-catalog.test.ts`, `openai-fast-models.test.ts` and `openai-input-cap-catalog.test.ts` move their Astra expectations to the series value.
+
+### Why
+
+- `contextWindow` is the prompt budget senpi gates on, and the Astra series had no budget of its own: it inherited whatever the input-cap pass produced, so the model's usable window was a side effect of the provider that served it. A single series default makes the budget the same on every route, and users who want a wider or narrower one still set it through model overrides.
+
+### Why an extension could not handle it
+
+- Catalog data is loaded before any extension runs, so only the generator can change what every consumer of `contextWindow` sees.
+
+### Expected merge conflict zones
+
+- LOW: the OpenAI flagship constants block and the final `for (const model of allModels)` metadata pass in the generator.
+
+## 2026-09-07 - OpenAI input cap applied on every provider (#1422 follow-up)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `applyOpenAiInputCap` runs in the final metadata pass over every provider's GPT-5.x / GPT-6 rows (`isOpenAiFlagshipFamilyId` strips the `openai/`, `openai.`, `global.openai.` gateway prefixes and excludes `gpt-oss`), mapping the 400,000 / 1,050,000 totals to 272,000 / 922,000 when `maxTokens` is 128,000, and correcting `gpt-5-pro`'s mirrored 272,000 max output to 128,000 before the mapping. The earlier `provider === "openai"`-only call and the openai-only `gpt-5-pro` fix are folded into it. Regenerated `packages/ai/src/providers/data/` (128 rows across bedrock, azure, cloudflare, copilot, openai, opencode, opencode-go, opengateway, openrouter, vercel) plus `packages/ai/src/providers/data/.manifest.json`.
+- `packages/ai/test/openai-input-cap-catalog.test.ts` pins the invariant for the whole builtin catalog.
+
+### Why
+
+- The input/output split is a property of the model, not of the gateway: OpenRouter, Vercel, OpenGateway, Copilot and the cloud hosts forward the same upstream rejection, so luna/terra/sol/astra rows on those providers still let a session run 128k tokens past the point where the provider rejects the prompt.
+
+### Why an extension could not handle it
+
+- Catalog data is loaded before any extension runs; only the generator can change what every consumer of `contextWindow` sees.
+
+### Expected merge conflict zones
+
+- LOW: the final `for (const model of allModels)` metadata pass and the OpenAI constants block in the generator.
+
+## 2026-09-07 - OpenAI catalog contextWindow stores the documented input cap (#1422)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `toOpenAiInputCap` maps the documented OpenAI window tiers to their prompt budgets for provider `openai` (400,000 -> 272,000; 1,050,000 -> 922,000 when `maxTokens` is 128,000), `GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW` and the Azure flagship overrides use the 922,000 cap. Regenerated `packages/ai/src/providers/data/openai.json`, `packages/ai/src/providers/data/openai-codex.json`, `packages/ai/src/providers/data/azure-openai-responses.json`, `packages/ai/src/providers/data/.manifest.json` (the same run picked up one OpenRouter price refresh).
+
+### Why
+
+- The Responses API rejects a request with `context_too_large` once the prompt alone exceeds window minus max output, regardless of `max_output_tokens`. senpi uses `contextWindow` as the prompt budget everywhere (compaction gates, usage meter, output clamp), so the totals put every gate above the point where the provider already rejects. The catalog already used the input-cap convention for gpt-5.4/5.5/5.6 (272,000); the flagship rows were the inconsistent ones.
+
+### Why an extension could not handle it
+
+- The catalog generator and its committed data are the source of every model's `contextWindow`; no extension hook runs before the catalog is loaded.
+
+### Expected merge conflict zones
+
+- LOW: the OpenAI normalization block and the flagship constants in the generator.
+
 # 2026-09-05 - GPT-6 Astra async tool calling and WebSocket steering: deferred with design
 
 ### What changed

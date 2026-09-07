@@ -93,12 +93,6 @@ describe("claude-sdk-oauth restored security", () => {
 		it.each([
 			["account", { accountName: "secondary" }, "account_changed"],
 			["model", { modelId: "claude-sonnet-5" }, "model_changed"],
-			[
-				"system-prompt",
-				{ fingerprint: { systemPromptHash: "prompt-v2", toolsetHash: "tools-v1" } },
-				"options_changed",
-			],
-			["toolset", { fingerprint: { systemPromptHash: "prompt-v1", toolsetHash: "tools-v2" } }, "options_changed"],
 		] as const)("cold-seeds a persisted binding when %s drifts", (_label, override, reason) => {
 			const decision = decideNativeContinuity(baseInput(override));
 			expect(decision).toEqual({ kind: "flatten", reason });
@@ -110,11 +104,23 @@ describe("claude-sdk-oauth restored security", () => {
 			[
 				"system-prompt",
 				{ fingerprint: { systemPromptHash: "prompt-v2", toolsetHash: "tools-v1" } },
-				"options_changed",
+				"system_prompt_changed",
 			],
-			["toolset", { fingerprint: { systemPromptHash: "prompt-v1", toolsetHash: "tools-v2" } }, "options_changed"],
+			["toolset", { fingerprint: { systemPromptHash: "prompt-v1", toolsetHash: "tools-v2" } }, "toolset_changed"],
 		] as const)("keeps live-entry reattach behavior when %s drifts", (_label, override, reason) => {
 			const decision = decideNativeContinuity(baseInput({ entry: liveEntry(), ...override }));
+			expect(decision).toMatchObject({ kind: "reattach", reason, sdkSessionId: SDK_SESSION_ID, from: 2 });
+		});
+
+		it.each([
+			[
+				"system-prompt",
+				{ fingerprint: { systemPromptHash: "prompt-v2", toolsetHash: "tools-v1" } },
+				"system_prompt_changed",
+			],
+			["toolset", { fingerprint: { systemPromptHash: "prompt-v1", toolsetHash: "tools-v2" } }, "toolset_changed"],
+		] as const)("reattaches a persisted binding when %s drifts (#7884)", (_label, override, reason) => {
+			const decision = decideNativeContinuity(baseInput(override));
 			expect(decision).toMatchObject({ kind: "reattach", reason, sdkSessionId: SDK_SESSION_ID, from: 2 });
 		});
 	});

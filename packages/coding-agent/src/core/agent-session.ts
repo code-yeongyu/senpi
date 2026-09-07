@@ -102,6 +102,7 @@ import {
 	shouldCompact,
 } from "./compaction/index.ts";
 import { CompactionLifecycleCoordinator, type CompactionLifecycleState } from "./compaction/lifecycle.ts";
+import { isTurnStuckOnContextOverflow } from "./compaction/stuck-overflow.ts";
 import { isWarmSummaryAnchorValid } from "./compaction/warm-anchor.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "./dynamic-prompt/index.ts";
@@ -1070,6 +1071,7 @@ export class AgentSession {
 	private readonly _wakeSources = new WakeSourceTracker();
 	private _unsubscribeWakeSources: (() => void) | undefined;
 	private _overflowRecoveryAttempted = false;
+	private _autoCompactionSessionOverride: boolean | undefined;
 	private _compactionSkippedTooSmall = false;
 	private _requiredCompactionAdmissionError: RequiredCompactionError | undefined;
 	// Preserve provenance across agent-core's conversion of our admission error
@@ -1377,7 +1379,7 @@ export class AgentSession {
 	 * session model so compaction never silently breaks.
 	 */
 	private _resolveCompactionModel(sessionModel: Model<any>): Model<any> {
-		const override = this.settingsManager.getCompactionSettings().model;
+		const override = this._getCompactionSettings().model;
 		if (!override) return sessionModel;
 		const slash = override.indexOf("/");
 		if (slash <= 0 || slash === override.length - 1) return sessionModel;
@@ -1839,7 +1841,7 @@ export class AgentSession {
 			systemPrompt: this.agent.state.systemPrompt,
 			tools: this.agent.state.tools,
 			liveContextTokens: this._getDownswitchLiveContextTokens(model),
-			compaction: this.settingsManager.getCompactionSettings(),
+			compaction: this._getCompactionSettings(),
 		});
 		return projection.usable ? undefined : projection;
 	}
@@ -2105,9 +2107,14 @@ export class AgentSession {
 		return resolveThresholdContextTokens(directContextTokens, estimateMessagesTokens(messages));
 	}
 
+	/**
+	 * `compaction.enabled=false` disables proactive (threshold) compaction only.
+	 * A provider-confirmed overflow is an error the session cannot progress past
+	 * by any other route, so overflow recovery stays armed regardless (#1422).
+	 */
 	private _getAutoCompactionReason(message: AssistantMessage): "overflow" | "threshold" | undefined {
-		const settings = this.settingsManager.getCompactionSettings();
-		if (!settings.enabled || message.stopReason === "aborted") {
+		const settings = this._getCompactionSettings();
+		if (message.stopReason === "aborted") {
 			return undefined;
 		}
 
@@ -2126,11 +2133,15 @@ export class AgentSession {
 			contextUsage !== undefined &&
 			contextUsage.tokens !== null &&
 			shouldCompact(contextUsage.tokens, contextUsage.contextWindow, settings);
-		if (isContextOverflow(message, model.contextWindow) && (sameModel || currentContextNeedsCompaction)) {
-			return "overflow";
+		const isOverflow =
+			(isContextOverflow(message, model.contextWindow) && (sameModel || currentContextNeedsCompaction)) ||
+			this._isCursorPayloadOverflow(message);
+		if (isOverflow) {
+			if (settings.enabled || isTurnStuckOnContextOverflow(message, model.contextWindow)) return "overflow";
+			return undefined;
 		}
-		if (this._isCursorPayloadOverflow(message)) {
-			return "overflow";
+		if (!settings.enabled) {
+			return undefined;
 		}
 
 		let contextTokens: number;
@@ -4673,7 +4684,7 @@ export class AgentSession {
 			systemPrompt: this.agent.state.systemPrompt,
 			tools: this.agent.state.tools,
 			liveContextTokens,
-			compaction: this.settingsManager.getCompactionSettings(),
+			compaction: this._getCompactionSettings(),
 			includeSpeculationLead: options?.includeSpeculationLead,
 			admission: options?.admission,
 		});
@@ -4683,7 +4694,7 @@ export class AgentSession {
 	private _getDownswitchLiveContextTokens(model: Model<Api>): number {
 		const currentModel = this.model;
 		if (!currentModel) return 0;
-		const compaction = this.settingsManager.getCompactionSettings();
+		const compaction = this._getCompactionSettings();
 		const currentBudget = projectModelUsabilityBudget({
 			model: currentModel,
 			systemPrompt: this.agent.state.systemPrompt,
@@ -5409,11 +5420,7 @@ export class AgentSession {
 		const model = this.model;
 		if (!model) throw new Error(formatNoModelSelectedMessage());
 		const pathEntries = this.sessionManager.getBranch();
-		const settings = cursorOverflowCompactionSettings(
-			this.settingsManager.getCompactionSettings(),
-			model.provider,
-			"manual",
-		);
+		const settings = cursorOverflowCompactionSettings(this._getCompactionSettings(), model.provider, "manual");
 		if (!prepareCompaction(pathEntries, settings)) {
 			const requestId = randomUUID();
 			const lastEntry = pathEntries[pathEntries.length - 1];
@@ -5676,7 +5683,7 @@ export class AgentSession {
 			}
 			const pathEntries = this.sessionManager.getBranch();
 			const settings = cursorOverflowCompactionSettings(
-				this.settingsManager.getCompactionSettings(),
+				this._getCompactionSettings(),
 				this.model?.provider,
 				request.reason,
 			);
@@ -5957,7 +5964,7 @@ export class AgentSession {
 			simulatedMessages = truncateToolResultBodies(simulatedMessages).messages ?? simulatedMessages;
 		}
 		const contextTokens = estimateMessagesTokens(filterContextExcludedMessages(simulatedMessages));
-		const settings = this.settingsManager.getCompactionSettings();
+		const settings = this._getCompactionSettings();
 		const reserveTokens =
 			settings.reserveScalingEnabled === false
 				? settings.reserveTokens
@@ -6099,7 +6106,7 @@ export class AgentSession {
 			throw new RequiredCompactionError();
 		}
 
-		const settings = this.settingsManager.getCompactionSettings();
+		const settings = this._getCompactionSettings();
 		const model = this.model;
 		const contextTokens = estimateContextTokens(
 			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
@@ -6155,7 +6162,7 @@ export class AgentSession {
 
 		const model = this.model;
 		if (!model) return;
-		const settings = this.settingsManager.getCompactionSettings();
+		const settings = this._getCompactionSettings();
 		const reserveTokens =
 			settings.reserveScalingEnabled === false
 				? settings.reserveTokens
@@ -6196,8 +6203,7 @@ export class AgentSession {
 		inlineReason?: "pre_prompt" | "threshold",
 		retryAfterCompaction = false,
 	): Promise<boolean> {
-		const settings = this.settingsManager.getCompactionSettings();
-		if (!settings.enabled) return false;
+		const settings = this._getCompactionSettings();
 
 		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
 		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return false;
@@ -6236,6 +6242,9 @@ export class AgentSession {
 			(isContextOverflow(assistantMessage, contextWindow) && (sameModel || currentContextNeedsCompaction)) ||
 			recoverableLength ||
 			this._isCursorPayloadOverflow(assistantMessage);
+		if (isOverflow && !settings.enabled && !isTurnStuckOnContextOverflow(assistantMessage, contextWindow)) {
+			return false;
+		}
 		if (
 			isOverflow &&
 			assistantMessage.stopReason === "stop" &&
@@ -6314,6 +6323,10 @@ export class AgentSession {
 			}
 			return compacted;
 		}
+
+		// Stuck-overflow recovery above runs regardless of the flag; threshold
+		// compaction below is the proactive path the user switched off (#1422).
+		if (!settings.enabled) return false;
 
 		// The first ordinary response can carry provider usage calculated before
 		// compaction. Consume that exemption only after proving this is not an
@@ -6466,7 +6479,7 @@ export class AgentSession {
 
 	private async _revalidateScheduledContinuationAdmission(): Promise<void> {
 		const model = this.model;
-		const settings = this.settingsManager.getCompactionSettings();
+		const settings = this._getCompactionSettings();
 		if (!model || !settings.enabled) return;
 
 		const canonicalMessages = filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages);
@@ -6662,11 +6675,7 @@ export class AgentSession {
 
 			const preparation = prepareCompaction(
 				this.sessionManager.getBranch(),
-				cursorOverflowCompactionSettings(
-					this.settingsManager.getCompactionSettings(),
-					this.model?.provider,
-					reason,
-				),
+				cursorOverflowCompactionSettings(this._getCompactionSettings(), this.model?.provider, reason),
 				reason === "overflow",
 			);
 			if (!preparation) {
@@ -6752,11 +6761,20 @@ export class AgentSession {
 	}
 
 	/**
-	 * Toggle auto-compaction setting.
+	 * Toggle auto-compaction for this session only. Persisting the flag is a
+	 * settings-editor concern; a session-level command (RPC `set_auto_compaction`,
+	 * one thread of a multi-session host) must never rewrite the global setting
+	 * for every other session on the machine (#1422).
 	 */
 	setAutoCompactionEnabled(enabled: boolean): void {
-		this.settingsManager.setCompactionEnabled(enabled);
+		this._autoCompactionSessionOverride = enabled;
 		this._emitSessionSettingsChanged();
+	}
+
+	private _getCompactionSettings(): ReturnType<SettingsManager["getCompactionSettings"]> {
+		const settings = this.settingsManager.getCompactionSettings();
+		if (this._autoCompactionSessionOverride === undefined) return settings;
+		return { ...settings, enabled: this._autoCompactionSessionOverride };
 	}
 
 	private _emitSessionSettingsChanged(): void {
@@ -6768,9 +6786,9 @@ export class AgentSession {
 		});
 	}
 
-	/** Whether auto-compaction is enabled */
+	/** Whether auto-compaction is enabled for this session */
 	get autoCompactionEnabled(): boolean {
-		return this.settingsManager.getCompactionEnabled();
+		return this._autoCompactionSessionOverride ?? this.settingsManager.getCompactionEnabled();
 	}
 
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
@@ -7039,7 +7057,7 @@ export class AgentSession {
 					this._extensionShutdownHandler?.();
 				},
 				getContextUsage: () => this.getContextUsage(),
-				getCompactionSettings: () => this.settingsManager.getCompactionSettings(),
+				getCompactionSettings: () => this._getCompactionSettings(),
 				getPromptCacheSafeWaitSeconds: () => this.resolvePromptCacheSafeWaitSeconds(),
 				getPromptCacheGoalBackstopMaxSeconds: () => this.settingsManager.getPromptCacheGoalBackstopMaxSeconds(),
 				getPromptCacheKeepAliveSettings: () => this.settingsManager.getPromptCacheKeepAliveSettings(),
@@ -8123,7 +8141,7 @@ export class AgentSession {
 		// the prior retry checks. Revalidate canonical session context immediately
 		// before the continuation so a rejected compaction never admits that model.
 		const model = this.model;
-		const compactionSettings = this.settingsManager.getCompactionSettings();
+		const compactionSettings = this._getCompactionSettings();
 		const contextTokens = estimateContextTokens(
 			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
 		).tokens;

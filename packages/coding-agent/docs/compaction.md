@@ -411,8 +411,8 @@ Configure compaction in `~/.senpi/agent/settings.json` or `<project-dir>/.senpi/
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `enabled` | `true` | Enable auto-compaction |
+| `enabled` | `true` | Enable proactive (threshold) auto-compaction; provider-overflow recovery stays armed |
 | `reserveTokens` | `16384` | Tokens to reserve for LLM response |
 | `keepRecentTokens` | `20000` | Recent tokens to keep (not summarized) |
 
-Disable auto-compaction with `"enabled": false`. You can still compact manually with `/compact`.
+Disable proactive auto-compaction with `"enabled": false`. You can still compact manually with `/compact`, and a context the provider rejects as too large is still compacted once and retried automatically.

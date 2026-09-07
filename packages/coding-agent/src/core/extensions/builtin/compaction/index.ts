@@ -556,7 +556,7 @@ export default function compactionExtension(
 		let warmJobConsumed = false;
 		invalidateSpeculativeCompaction(ctx);
 		try {
-			if (lanePolicy.disablesSenpiCompaction(ctx)) {
+			if (!lanePolicy.ownsCompaction(ctx, event.reason)) {
 				return {
 					cancel: true,
 					rejectionCause: "external-owner",
@@ -763,7 +763,7 @@ export default function compactionExtension(
 			return;
 		}
 		if (compactEvent.rejectionCause === "external-owner") return;
-		if (!lanePolicy.disablesSenpiCompaction(ctx)) {
+		if (lanePolicy.ownsCompaction(ctx, compactEvent.reason)) {
 			state = breaker.recordFailure(state, Date.now(), { route: compactEvent.reason });
 		}
 	});

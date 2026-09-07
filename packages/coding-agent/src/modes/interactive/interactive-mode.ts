@@ -6671,6 +6671,7 @@ export class InteractiveMode {
 				},
 				{
 					onAutoCompactChange: (enabled) => {
+						this.settingsManager.setCompactionEnabled(enabled);
 						this.session.setAutoCompactionEnabled(enabled);
 						this.footer.setAutoCompactEnabled(enabled);
 					},

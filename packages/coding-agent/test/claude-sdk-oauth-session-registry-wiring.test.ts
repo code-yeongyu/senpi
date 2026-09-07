@@ -264,7 +264,7 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 			transcriptAvailable: true,
 		});
 
-		expect(decision).toMatchObject({ kind: "reattach", reason: "options_changed" });
+		expect(decision).toMatchObject({ kind: "reattach", reason: "toolset_changed" });
 		expect(decision.kind).not.toBe("flatten");
 	});
 
