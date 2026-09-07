@@ -11,6 +11,8 @@
 - The GPT-6 Astra series now declares a 600,000-token context window on every provider that serves it. The effective prompt budget no longer depends on the route: the first-party OpenAI catalogs and the opencode, openrouter, github-copilot, and vercel-ai-gateway passthrough catalogs all agree. Set a different budget through model overrides if you want one.
 
 ### Fixed
+- Run `before_agent_start` for idle extension-triggered turns and wait for deferred recovery before selecting print-mode output.
+- Keep progressively hydrated transcript history private until completion so unrelated renders and resizes do not expose partial history.
 - Fixed deterministic compaction recovery rejecting realistic tool-result images because their Base64 bytes were counted against the token window. Image tokens are now charged separately while text, metadata, and genuine overflow protections remain intact ([#1455](https://github.com/code-yeongyu/senpi/issues/1455) by [@ayden94](https://github.com/ayden94)).
 - Plugin hook targets are now checked for containment against the filesystem rather than a path-collapsing resolver. A hook path that walked back up through a symlinked directory inside the plugin root could resolve to a file outside that root while still being reported as contained, so it was accepted; containment now resolves through `realpathSync.native`, which agrees with the kernel. Corrective on Node, behaviour-preserving on Bun.
 
