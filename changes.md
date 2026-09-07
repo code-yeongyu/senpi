@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## Root scripts reach workspaces only through scripts/run-workspaces.mjs (2026-09-07)
+
+### What changed
+
+- `package.json`: `test`, `clean`, `eval`, `dev`, `dev:tsc`, `generate:models`, `generate:model-catalog`, `hydrate:model-data`, and `check:model-data` delegate into workspaces through `node scripts/run-workspaces.mjs [--if-present] [--workspace <path>] <script>` instead of `npm run --workspaces --if-present <script>`, `npm --workspace=<name> run`, `npm --prefix <dir> run`, or `cd <dir> && npm run` lanes inside concurrently. `dev` keeps only the `packages/ai` and `packages/coding-agent` lanes, the two workspaces that define a `dev` script. `version:*` keep `npm version --workspaces` (npm's version bookkeeping, not a script delegation); `refresh-lock`, `publish*`, and `release*` are untouched.
+
+### Why
+
+- Under bun the old shapes worked only where bun happened to rewrite `npm run` to `bun run`, and bun's `--workspaces` fans out in parallel while npm runs sequentially; `--prefix`, `--workspace=`, and `cd <dir> && npm run` never reach bun or pnpm and always execute real npm, against the `scripts/AGENTS.md` rule of not hardcoding the child package manager. The runner executes every workspace script with the manager that launched the root script, sequentially and in path order, with one PASS / SKIP / FAIL summary, so `bun run test`, `npm run test`, and `pnpm run test` behave identically. The `packages/agent` and `packages/tui` dev lanes pointed at scripts that do not exist.
+
+### Why an extension could not handle it
+
+- Root manifest scripts run before any Senpi runtime starts; the package manager is the only surface above them.
+
+### Expected merge conflict zones
+
+- LOW: the nine script lines in the root `package.json` `scripts` block. Upstream still spells these in npm's dialect; keep the runner form on sync.
+
 ## bun.lock refreshed wherever package-lock.json is refreshed (2026-09-04)
 
 ### What changed

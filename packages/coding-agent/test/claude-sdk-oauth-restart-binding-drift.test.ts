@@ -38,6 +38,7 @@ function input(overrides: Partial<ContinuityDecisionInput> = {}): ContinuityDeci
 		modelId: "claude-opus-4-5",
 		fingerprint: FINGERPRINT,
 		transcriptAvailable: true,
+		crossAccountResumeSupported: true,
 		...overrides,
 	};
 }
@@ -105,17 +106,36 @@ describe("claude-sdk-oauth restart binding drift (#7884)", () => {
 		expect(decision.kind === "reattach" && decision.reason).not.toBe("system_prompt_changed");
 	});
 
-	it.each([
-		["account", { accountName: "secondary" }, "account_changed"],
-		["model", { modelId: "claude-sonnet-5" }, "model_changed"],
-	] as const)("still flattens fail-closed when the %s drifts", (_label, override, reason) => {
-		expect(decideNativeContinuity(input(override))).toEqual({ kind: "flatten", reason });
+	it("still flattens fail-closed when the model drifts", () => {
+		expect(decideNativeContinuity(input({ modelId: "claude-sonnet-5" }))).toEqual({
+			kind: "flatten",
+			reason: "model_changed",
+		});
+	});
+
+	// senpi#1432: a failover to another account on a shared-root lane must not
+	// re-send the conversation; the binding path reattaches like the live path.
+	it("reattaches with account_changed when the account drifts on a shared-root lane", () => {
+		expect(decideNativeContinuity(input({ accountName: "secondary" }))).toEqual({
+			kind: "reattach",
+			sdkSessionId: "sdk-1",
+			from: 2,
+			reason: "account_changed",
+		});
+	});
+
+	it("flattens with cross_root_unsupported when the account drifts on the config-dir lane", () => {
+		expect(decideNativeContinuity(input({ accountName: "secondary", crossAccountResumeSupported: false }))).toEqual({
+			kind: "flatten",
+			reason: "cross_root_unsupported",
+		});
 	});
 
 	it("still flattens transcript_missing before any drift is considered", () => {
 		const decision = decideNativeContinuity(
 			input({
 				transcriptAvailable: false,
+				crossAccountResumeSupported: true,
 				fingerprint: { systemPromptHash: "prompt-v2", toolsetHash: "tools-v2" },
 			}),
 		);

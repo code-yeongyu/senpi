@@ -1,5 +1,28 @@
 # terminal builtin extension — fork surface
 
+## File monitors resolve parent identity without realpath and gate `fs.watch` behind a bounded open (2026-09-07)
+
+### What changed
+
+- `monitor-registry.ts`: the five `fs.promises.realpath` calls (approved parent at registration, target identity after open, activation parent before `watch`, and both re-checks in `#checkFileImpl`) now use `realpathWithoutOpen` from `src/utils/paths.ts` — the lstat/readlink walker the permission parser uses for the approved parent, so both sides compute the same string by construction.
+- Immediately before the synchronous `fs.watch(parent)`, registration awaits `probeDirectoryOpenable(parent)` (`src/utils/fs-watch.ts`: `opendir` + one `read` + `close`) through `#registrationAwait`, so a directory whose open never returns fails the registration at `timeoutMs` instead of blocking the host main thread inside `watch()`.
+- The watch target goes through `canonicalWatchPath` (`src/utils/fs-watch.ts`), which resolves `realpathSync.native` on Windows only; that keeps the issue #1229 guarantee (libuv aborts on a non-canonical 8.3 directory watch) without touching realpath on POSIX.
+
+### Why
+
+- Bun implements every `fs.realpath*` by `open(2)`-ing each directory. On a macOS host whose autofs automounter is wedged, `realpath("/home")` never returns: on the permission parser's main-thread call that froze the TUI (#1416 follow-up), and in the registry it parked a pool thread until the deadline. With the parser no longer opening anything, the registry had to switch too — Bun's realpath canonicalises case, the walker preserves it, and the TOCTOU checks compare the two strings for equality.
+- Removing realpath from the registry would otherwise have let a wedged parent reach `fs.watch`, which opens the directory synchronously on the main thread; the bounded `opendir` probe restores the deadline that the async realpath used to provide.
+
+### Why an extension could not handle it
+
+- The registry and the permission parser are both fork builtins; the approved-parent handshake between them is internal.
+
+### Expected merge conflict zones
+
+- `monitor-registry.ts` imports, `registerFile` (parent identity, target identity, activation + `watch`), `#checkFileImpl` re-checks.
+- `src/utils/fs-watch.ts` (`canonicalWatchPath`, `probeDirectoryOpenable`; `watchWithErrorHandler` now delegates its win32 canonicalisation).
+- `test/suite/terminal-monitor-parent-resolution.test.ts` (new: registration with realpath rejecting, deadline on a non-openable parent, parser/registry symlink agreement, swapped-parent rejection).
+
 ## `persistent` reads as the standing-watch switch (2026-09-04)
 
 ### What changed

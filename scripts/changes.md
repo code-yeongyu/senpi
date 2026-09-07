@@ -1,5 +1,27 @@
 # changes
 
+## Root workspace fan-out moves into a package-manager-agnostic runner (2026-09-07)
+
+### What changed
+
+- `scripts/package-manager.mjs` (new): npm/bun/pnpm detection (user agent first, then the `npm_execpath` basename, so a pnpm installed under `~/.bun/bin` is pnpm), pnpm-only `npm_config_*` scrubbing, execpath-aware spawning that forwards SIGINT/SIGTERM/SIGHUP to the child and re-raises the signal once the child exits, and `runScriptArguments` (npm and bun take `-- <args>`; pnpm 10 forwards every token after the script name verbatim, separator included).
+- `scripts/run-workspaces.mjs` (new): `node scripts/run-workspaces.mjs [--if-present] [--workspace <name|path>]... <script> [-- <args>]` resolves the root `workspaces` field (exact paths and `*` segments), runs `<pm> run <script>` per workspace sequentially in path order with the invoking manager, never re-enters the root, keeps going after a failure, prints a PASS / SKIP / FAIL summary, and exits with the first failing workspace's code (1 for a missing script without `--if-present`, 2 for usage errors).
+- `scripts/build-all.mjs`: imports the shared helpers instead of inlining them.
+- `scripts/root-workspace-scripts.test.mjs`: the guard forbids any package-manager workspace flag (`--workspaces`, `--workspace`, `--prefix`, `--filter`, `-r`, ...) or `cd` in a root script, quoted lanes included, instead of matching the two known recursion shapes.
+- Tests: `scripts/run-workspaces.test.mjs`, `scripts/run-workspaces.signals.test.mjs` (shared fixture in `scripts/run-workspaces.test-support.mjs`), `scripts/package-manager.test.mjs`.
+
+### Why
+
+- The root manifest reached into workspaces in npm's dialect; under bun that worked only through bun's `npm run` rewrite (and `--workspaces` then fanned out in parallel), while `--prefix` / `--workspace=` / `cd` lanes always ran real npm. One runner that uses the invoking manager makes `bun run <script>`, `npm run <script>`, and `pnpm run <script>` behave the same, and a guard that enforces the invariant replaces one that only knew two bad shapes.
+
+### Why an extension could not handle it
+
+- These scripts run underneath the package manager, before any Senpi runtime or extension exists.
+
+### Expected merge conflict zones
+
+- LOW: none of the new files exist upstream; the import block of `scripts/build-all.mjs` on sync.
+
 ## Browser-smoke exempts @anthropic-ai/sdk-internal Node builtins (2026-08-26)
 
 ### What changed

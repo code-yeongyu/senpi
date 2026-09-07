@@ -13,11 +13,23 @@ export function installShellCapture(options) {
 	if (!isBunRuntime(bun)) return () => {};
 	const originalShell = bun.$;
 	const originalSpawn = bun.spawn;
+	const originalSpawnSync = typeof bun.spawnSync === "function" ? bun.spawnSync : null;
+	const deletedKeys = globalThis.__senpi_session_env_deletions__;
+	const pinEnv =
+		globalThis.__senpi_session_env_applied__ === true || (Array.isArray(deletedKeys) && deletedKeys.length > 0);
+	if (pinEnv && typeof originalShell.env === "function") {
+		// Bun.spawn without an explicit env inherits the OS environ, not the worker's process.env,
+		// and deleting from process.env does not unsetenv under Bun. Pinning the worker's
+		// environment view mirrors the bash tool, which always spawns with an explicit env.
+		originalShell.env({ ...process.env });
+	}
 	bun.$ = capturedShell(originalShell, options);
-	bun.spawn = capturedSpawn(originalSpawn, options);
+	bun.spawn = capturedSpawn(originalSpawn, options, pinEnv);
+	if (originalSpawnSync !== null) bun.spawnSync = capturedSpawnSync(originalSpawnSync, pinEnv);
 	return () => {
 		bun.$ = originalShell;
 		bun.spawn = originalSpawn;
+		if (originalSpawnSync !== null) bun.spawnSync = originalSpawnSync;
 	};
 }
 
@@ -103,20 +115,44 @@ function outputText(value) {
 	return typeof value === "string" ? value : "";
 }
 
-function capturedSpawn(originalSpawn, options) {
+// Bun.spawnSync inherits the OS environ the same way Bun.spawn does, so a cell calling it
+// without an explicit env must get the worker's view pinned too (measured on Bun 1.4.0).
+function capturedSpawnSync(originalSpawnSync, pinEnv) {
+	return (...args) => {
+		if (!pinEnv) return originalSpawnSync(...args);
+		const [first, second] = args;
+		if (Array.isArray(first)) {
+			const spawnOptions = second === undefined ? {} : second;
+			if (spawnOptions === null || typeof spawnOptions !== "object" || spawnOptions.env !== undefined)
+				return originalSpawnSync(...args);
+			return originalSpawnSync(first, { ...spawnOptions, env: { ...process.env } });
+		}
+		if (first !== null && typeof first === "object" && first.env === undefined)
+			return originalSpawnSync({ ...first, env: { ...process.env } });
+		return originalSpawnSync(...args);
+	};
+}
+
+function capturedSpawn(originalSpawn, options, pinEnv) {
 	return (...args) => {
 		if (!options.isActive()) return originalSpawn(...args);
 		const [first, second] = args;
 		let child;
 		if (Array.isArray(first)) {
 			const spawnOptions = second === undefined ? {} : second;
-			child = needsStderrCapture(spawnOptions)
-				? drainStderr(originalSpawn(first, { ...spawnOptions, stderr: "pipe" }), options.emitText)
-				: originalSpawn(...args);
+			const effective = pinEnv && spawnOptions.env === undefined ? { ...spawnOptions, env: { ...process.env } } : spawnOptions;
+			child = needsStderrCapture(effective)
+				? drainStderr(originalSpawn(first, { ...effective, stderr: "pipe" }), options.emitText)
+				: effective === spawnOptions
+					? originalSpawn(...args)
+					: originalSpawn(first, effective);
 		} else {
-			child = needsStderrCapture(first)
-				? drainStderr(originalSpawn({ ...first, stderr: "pipe" }), options.emitText)
-				: originalSpawn(...args);
+			const effective = pinEnv && first !== null && typeof first === "object" && first.env === undefined ? { ...first, env: { ...process.env } } : first;
+			child = needsStderrCapture(effective)
+				? drainStderr(originalSpawn({ ...effective, stderr: "pipe" }), options.emitText)
+				: effective === first
+					? originalSpawn(...args)
+					: originalSpawn(effective);
 		}
 		options.onChild?.(child);
 		return child;

@@ -179,7 +179,9 @@ export async function hasPython3(): Promise<boolean> {
 	return (await detector.detect("py")).ok;
 }
 
-export async function liveKernel(options: Pick<PythonKernelStartOptions, "onMessage"> = {}): Promise<PythonKernel> {
+export async function liveKernel(
+	options: Pick<PythonKernelStartOptions, "onMessage" | "sessionEnv"> = {},
+): Promise<PythonKernel> {
 	const detector = createInterpreterDetector();
 	const detected = await detector.detect("py");
 	if (!detected.ok) throw new Error("python unavailable");

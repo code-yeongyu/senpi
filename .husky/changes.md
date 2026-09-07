@@ -2,6 +2,24 @@
 
 Tracker for git hook divergence from upstream `badlogic/pi-mono`.
 
+## Pre-commit package-manager verify also triggers on scripts/package-manager.mjs (2026-09-07)
+
+### What changed
+
+- `.husky/pre-commit`: `scripts/package-manager.mjs` joins `scripts/build-all.mjs`, `scripts/create-bin-stubs.mjs`, and `scripts/verify-package-managers.mjs` in the staged-file list that triggers `npm run verify:pms`.
+
+### Why
+
+- The npm/bun/pnpm detection and spawning that `scripts/build-all.mjs` used to inline now live in `scripts/package-manager.mjs`; a change there alters how every package manager's build is spawned, which is exactly what the multi-manager verify exists to catch.
+
+### Why an extension could not handle it
+
+- The pre-commit hook is repository git policy executed by Husky before any Senpi runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `case` pattern list in `.husky/pre-commit`.
+
 ## Repository-wide upstream divergence audit (2026-08-17)
 
 ### What changed

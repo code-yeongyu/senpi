@@ -44,7 +44,7 @@ Use `--with-native` only when working on native Rust code; it reads `rust-toolch
 toolchain when `rustup` is available, and then runs the Rust native build/check path when a Cargo workspace exists. If Rust is
 missing, the setup prints the exact rustup command to run instead of bootstrapping global tooling silently.
 
-`bun run check` and `bun run test` must pass. The legacy npm equivalents remain supported for contributors. `./pi-test.sh` is only required when your change touches a provider that the live tests exercise.
+`bun run check` and `bun run test` must pass. The legacy npm equivalents remain supported for contributors: root scripts fan out through `scripts/run-workspaces.mjs` with the package manager you invoked, so `bun run test`, `npm run test`, and `pnpm run test` run the same suites in the same order. `./pi-test.sh` is only required when your change touches a provider that the live tests exercise.
 If you touch MCP dependencies, keep `@modelcontextprotocol/sdk` exact-pinned and verify the workspace install with
 `bun pm ls @modelcontextprotocol/sdk` (npm equivalent: `npm ls @modelcontextprotocol/sdk --workspace @code-yeongyu/senpi`).
 

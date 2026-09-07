@@ -1,7 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { type FSWatcher, watch } from "node:fs";
-import { access, type FileHandle, lstat, open, realpath, stat } from "node:fs/promises";
+import { access, type FileHandle, lstat, open, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { canonicalWatchPath, probeDirectoryOpenable } from "../../../../utils/fs-watch.ts";
+import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import type { TerminalRuntimeSession } from "./runtime-session.ts";
 import { DEFAULT_DURABLE_MONITOR_FIRE_BUDGET, FIRE_BUDGET_AUTO_MUTE_SUMMARY, FIRE_BUDGET_WINDOW_MS } from "./shared.ts";
 import type { MonitorDurabilityClass } from "./terminal-manifest.ts";
@@ -208,7 +210,9 @@ export class MonitorRegistry {
 		let approvedParent: string;
 		try {
 			await this.#registrationAwait(pending, access(parent));
-			approvedParent = await this.#registrationAwait(pending, realpath(parent));
+			// Identity is derived without open(2), with the same walker the permission parser used, so the
+			// two sides agree byte-for-byte and neither can block on a wedged mount.
+			approvedParent = realpathWithoutOpen(parent);
 			const approvedParentAtPermission = options.approvedParent;
 			if (approvedParentAtPermission !== undefined && approvedParent !== approvedParentAtPermission) {
 				throw new Error(`Cannot watch file: parent directory changed during permission approval: ${parent}`);
@@ -235,7 +239,7 @@ export class MonitorRegistry {
 			});
 			initial = await this.#registrationAwait(pending, initialHandle.stat());
 			if (!initial.isFile()) throw new Error(`Cannot watch file: target is not a regular file: ${path}`);
-			const resolvedTarget = await this.#registrationAwait(pending, realpath(path));
+			const resolvedTarget = realpathWithoutOpen(path);
 			if (resolvedTarget !== join(approvedParent, basename(path)))
 				throw new Error(`Cannot watch file: target identity changed: ${path}`);
 			const rebound = await this.#registrationAwait(pending, lstat(path));
@@ -260,11 +264,14 @@ export class MonitorRegistry {
 		const id = `watch_${this.#nextFileId++}`;
 		let watcher: FSWatcher;
 		try {
-			const activationParent = await this.#registrationAwait(pending, realpath(parent));
+			const activationParent = realpathWithoutOpen(parent);
 			if (activationParent !== approvedParent) {
 				throw new Error(`Cannot watch file: parent directory changed during registration: ${parent}`);
 			}
-			watcher = watch(activationParent, (_kind, name) => {
+			// watch() opens the directory synchronously on this thread; prove the open completes on the
+			// async pool first so a wedged mount fails at the registration deadline instead of freezing.
+			await this.#registrationAwait(pending, probeDirectoryOpenable(activationParent));
+			watcher = watch(canonicalWatchPath(activationParent), (_kind, name) => {
 				if (!name || basename(String(name)) === basename(path)) void this.#checkFile(id);
 			});
 		} catch (error) {
@@ -443,14 +450,14 @@ export class MonitorRegistry {
 		let current: Awaited<ReturnType<typeof stat>> | null = null;
 		let handle: FileHandle | undefined;
 		try {
-			const currentParent = await realpath(dirname(record.path));
+			const currentParent = realpathWithoutOpen(dirname(record.path));
 			if (currentParent !== record.canonicalParent) {
 				this.#settleFile(record, `watcher error: monitored parent changed: ${dirname(record.path)}`);
 				return;
 			}
 			const target = await lstat(record.canonicalPath);
 			if (target.isSymbolicLink()) throw new Error(`Cannot watch file: target identity changed: ${record.path}`);
-			const resolvedTarget = await realpath(record.canonicalPath);
+			const resolvedTarget = realpathWithoutOpen(record.canonicalPath);
 			if (resolvedTarget !== record.canonicalPath)
 				throw new Error(`Cannot watch file: target identity changed: ${record.path}`);
 			handle = await open(record.canonicalPath, "r");

@@ -31,7 +31,7 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 
 ## INVARIANTS (from changes.md)
 
-- Resume-first: every live query replacement re-attaches with `resume`; persisted restarts reattach only when the private sidecar, session marker, committed assistant, account/model identity, prefix, and SDK transcript agree - prompt/toolset fingerprint drift reattaches with `system_prompt_changed` / `toolset_changed` instead of flattening (oh-my-openagent#7884). A live session is never abandoned for a flattened re-send.
+- Resume-first: every live query replacement re-attaches with `resume`; persisted restarts reattach only when the private sidecar, session marker, committed assistant, model identity, prefix, and SDK transcript agree - prompt/toolset fingerprint drift reattaches with `system_prompt_changed` / `toolset_changed` instead of flattening (oh-my-openagent#7884). Account drift on a shared-root lane (oauth-slots, ambient) reattaches or forks like the live path (senpi#1432); only the config-dir lane flattens it with cross_root_unsupported. A live session is never abandoned for a flattened re-send.
 - The SDK ledger is authoritative for divergence; decide at the `message_end` commit boundary. Result-only turns are a supported shape, not divergence.
 - Fork point is the last assistant boundary strictly before the divergence.
 - Non-fork reattach passes `resume` and must omit `sessionId` (the SDK rejects the pair). Fork adds `resumeSessionAt` + `forkSession`.

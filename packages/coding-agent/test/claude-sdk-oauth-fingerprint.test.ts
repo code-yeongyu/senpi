@@ -139,6 +139,7 @@ describe("claude-sdk-oauth config fingerprint stability", () => {
 			modelId: "claude-opus-4-5",
 			fingerprint: current,
 			transcriptAvailable: true,
+			crossAccountResumeSupported: true,
 		});
 		expect(decision).toEqual({ kind: "reattach", sdkSessionId: "sdk-v1", from: 1, reason: "toolset_changed" });
 	});

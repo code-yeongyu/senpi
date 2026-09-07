@@ -88,6 +88,7 @@ async function sessionCwd(): Promise<string> {
 function wiringContext(cwd: string): ExtensionContext {
 	const base = fakeExtensionContext();
 	const sessionManager = Object.create(null);
+	sessionManager.getSessionId = (): string => "wiring-test-session";
 	sessionManager.getSessionFile = (): string => join(artifactsRoot, `${crypto.randomUUID()}.jsonl`);
 	return { ...base, cwd, sessionManager };
 }

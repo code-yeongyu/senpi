@@ -54,6 +54,19 @@ task-tool names are known.
 A missing optional interpreter removes that language from the session's `eval`
 schema; it is not an installation failure.
 
+### Session environment
+
+Every kernel starts with the active session's `PI_*` environment — `PI_SESSION_ID`,
+`PI_SESSION_FILE` (when the session is persistent), `PI_PROVIDER`, `PI_MODEL`, and
+`PI_REASONING_LEVEL` (when set) — resolved at session start, mirroring the bash tool's
+session environment contract. The values are visible to `env()`/`process.env`/`os.environ`
+inside cells and are inherited by every child process a cell spawns
+(`Bun.$`, `Bun.spawn`, `child_process`, `subprocess`, ...). Inherited `PI_*` values from
+the launching environment are dropped first, so a child spawned from a cell sees exactly
+what a child spawned from the bash tool sees. The values snapshot at kernel start, so a
+mid-session model switch updates the bash tool's next command but not already-running
+kernels; a new session starts fresh kernels with fresh values.
+
 ## Settings
 
 Configuration is loaded in this order:
@@ -116,7 +129,7 @@ options object and asynchronous helpers are `await`-able.
 | `print(value, ...)` | Emits text output. |
 | `read(path, offset?, limit?)` | Reads text with 1-indexed line slicing. `local://` paths resolve under the session artifact root. |
 | `write(path, content)` | Creates parent directories and writes text. `local://` paths persist in the session artifact root. |
-| `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. |
+| `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. Includes the session's `PI_*` values (see [Session environment](#session-environment)). |
 | `tool.<name>(args)` | Invokes an active Senpi tool through the normal `pi.executeTool` pipeline and returns `{ text, images?, details?, hasError? }` in every kernel; image blocks arrive as `images[i] = { mimeType, dataBase64 }`. |
 | `tool_schema(name?)` | Returns a tool's parameter schema without calling it; omit `name` to list tool names. |
 | `completion(prompt, model?, system?, schema?)` | Requests a one-shot host completion; `schema` asks the host to parse structured output. |

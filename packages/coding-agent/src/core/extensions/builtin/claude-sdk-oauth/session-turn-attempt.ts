@@ -83,6 +83,14 @@ export function createSessionTurnAttempt(
 				} else {
 					rememberRetryCheckpoint(entry, hashes);
 				}
+				// Emit only when this attempt was consumed to completion (retained). A
+				// discarded attempt (failover to another account) unwinds through the
+				// generator's return() and never reaches here; an internally-failed
+				// attempt throws to the catch below. Both stay silent so the turn yields
+				// exactly one continuity observation - this retained attempt, or the
+				// single terminal observation residentSessionMessages emits when every
+				// attempt fails.
+				staged.emit();
 			} catch (error) {
 				// The queue failed (completion rejected: pump failure, query end,
 				// attribution error). The payload was still pushed, so the retry needs
@@ -94,8 +102,6 @@ export function createSessionTurnAttempt(
 					rememberRetryCheckpoint(entry, hashes);
 				}
 				throw error;
-			} finally {
-				staged.emit();
 			}
 		})(),
 		discard: (): void => {

@@ -143,6 +143,7 @@ function extensionContext(cwd = process.cwd()): ExtensionContext {
 		cwd,
 		sessionManager: {
 			...base.sessionManager,
+			getSessionId: () => "extension-test-session",
 			getSessionFile: () => join(extensionArtifactsRoot, `${crypto.randomUUID()}.jsonl`),
 		},
 	};

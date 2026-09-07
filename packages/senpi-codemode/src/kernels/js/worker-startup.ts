@@ -64,6 +64,7 @@ async function initializeWorker(
 		type: "init",
 		sessionId: options.sessionId,
 		connection: localBridgeConnection(options),
+		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
 	});
 	await ready;
 }

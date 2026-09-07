@@ -39,6 +39,8 @@ export type ContinuityDecisionInput = {
 	modelId: string;
 	fingerprint: { systemPromptHash: string; toolsetHash: string };
 	transcriptAvailable: boolean;
+	/** false only on the config-dir lane, whose per-account credential roots cannot share a transcript root, so cross-account resume is impossible there. */
+	crossAccountResumeSupported: boolean;
 	idleExpired?: boolean;
 };
 
@@ -154,12 +156,18 @@ function withoutUnconfirmedResume(
 function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBindingSnapshot): ContinuityDecision {
 	if (!input.transcriptAvailable) return { kind: "flatten", reason: "transcript_missing" };
 	const drift = identityDrift(input, binding);
-	// Account/model identity drift fails closed: the persisted identity no longer
-	// matches the turn. Prompt/toolset drift instead reattaches like the live path
+	// Model identity drift fails closed: the persisted identity no longer matches the turn.
+	// Account drift flattens only on the config-dir lane, whose per-account roots cannot
+	// share a transcript; on shared-root lanes it falls through like prompt/toolset drift
+	// (senpi#1432), so the retry checkpoint forks a same-turn failover at the pre-turn
+	// boundary and a matching prefix reattaches with reason account_changed.
+	if (drift === "model_changed") return { kind: "flatten", reason: drift };
+	if (drift === "account_changed" && !input.crossAccountResumeSupported)
+		return { kind: "flatten", reason: "cross_root_unsupported" };
+	// Prompt/toolset drift instead reattaches like the live path
 	// (oh-my-openagent#7884) - a restart has no live query, so the resume builds a
 	// fresh query carrying the CURRENT options and hooks, and flattening would
 	// re-send the whole conversation for drift the SDK applies per-query anyway.
-	if (drift === "account_changed" || drift === "model_changed") return { kind: "flatten", reason: drift };
 	const retry = retryCheckpointDecision(input, binding);
 	if (retry) return retry;
 	if (binding.sentPrefixHash !== undefined) {
@@ -198,45 +206,12 @@ function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBi
 	};
 }
 
-export type FailoverLane = "oauth-slots" | "ambient" | "config-dir";
-
-export type FailoverContinuityInput = {
-	authLane: FailoverLane;
-	crossAccountResumeSupported: boolean;
-	entry: { sdkSessionId: string; sentCount: number; lastAssistantUuid: string | null };
-};
-
-/**
- * The config-dir lane keeps each account's credentials inside its own
- * CLAUDE_CONFIG_DIR, and no official SDK API moves a transcript across roots, so
- * its failover is the one declared residual that must still flatten.
- */
-export function decideFailoverContinuity(input: FailoverContinuityInput): ContinuityDecision {
-	const { entry } = input;
-	if (input.authLane === "config-dir") return { kind: "flatten", reason: "cross_root_unsupported" };
-	if (input.crossAccountResumeSupported) {
-		return {
-			kind: "reattach",
-			sdkSessionId: entry.sdkSessionId,
-			from: entry.sentCount,
-			reason: "account_changed",
-		};
-	}
-	if (!entry.lastAssistantUuid) return { kind: "flatten", reason: "branch_boundary_unavailable" };
-	return {
-		kind: "fork",
-		sdkSessionId: entry.sdkSessionId,
-		atUuid: entry.lastAssistantUuid,
-		from: entry.sentCount,
-		reason: "account_changed",
-	};
-}
-
 /**
  * Resume-first: a live session is never abandoned for a flattened re-send. Only a
- * missing transcript, an unrecoverable boundary, or account/model identity drift
- * on a persisted binding reaches `flatten`; every other divergence resolves to
- * `fork` (same lineage, new branch) or `reattach` (same session, new query).
+ * missing transcript, an unrecoverable boundary, a model identity drift, or account
+ * drift on the config-dir lane on a persisted binding reaches `flatten`; every other
+ * divergence resolves to `fork` (same lineage, new branch) or `reattach` (same
+ * session, new query).
  */
 export function decideNativeContinuity(input: ContinuityDecisionInput): ContinuityDecision {
 	const { entry, binding } = input;

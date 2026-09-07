@@ -1,5 +1,48 @@
 # changes
 
+## Watchdog reads the ownership token before it removes the scratch directory (2026-09-07)
+
+### What changed
+
+- `host-watchdog.ts`: `HostWatchdogConfig.beforeCleanup` runs when the watchdog fires, before `scratchDir` and `cleanupPaths` are removed; a failing hook never blocks the cleanup or the shutdown behind it.
+- `multi-session-host.ts`: a supervised host passes a hook that reads the supervisor's `public-socket.owner` token if the startup wait has not loaded it yet, so the ownership-checked removal of the public socket has something to prove with.
+- `test/suite/rpc-socket-ownership.test.ts`: the two removal assertions wait, bounded, for the path to disappear instead of stat-ing one snapshot at `close`.
+
+### Why
+
+The supervisor publishes the token right after its `listen()` and prints `ready` immediately after, while the host learns the token through a 25 ms poll. Under load (CI, or the earlier cases of the same test file) the supervisor could be SIGKILLed while the host was still polling. The watchdog then removed the scratch directory first, the host's shutdown ran `unlinkOwnedSocket(publicSocket, undefined)`, correctly refused (`ownership unknown; leaving it`), and the public socket outlived both processes. `test/suite/rpc-socket-ownership.test.ts` failed on `main` exactly this way (senpi #1442); standalone the same sequence passed, which is why it read as a flaky test rather than the startup race it is.
+
+### Why an extension could not handle it
+
+The watchdog fires inside the host's transport lifecycle below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `host-watchdog.ts` config field and `fire()`; the `armHostWatchdog` call in `multi-session-host.ts`; the two assertions in the ownership test.
+
+## Socket teardown is ownership-checked, never path-only (2026-09-07)
+
+### What changed
+
+- New `socket-ownership.ts`: `statSocketIdentity()` (dev+ino of a socket path entry), an ownership token sidecar in the lifecycle supervisor's private scratch directory (`public-socket.owner`), and `unlinkOwnedSocket()`, which unlinks a socket path only while its current stat identity matches the recorded one. ENOENT is nothing to do; a mismatch logs `socket path ... now owned by another host; leaving it`; an unknown identity is never guessed at and the path is left.
+- `multi-session-host.ts`: the socket host records its bound entry's identity right after `listen()` (same step as the existing 0600 chmod) and its shutdown replaces the unconditional `unlink(socketPath)` with the ownership-checked removal. A supervised host additionally removes the supervisor's public socket through the same check, using the token its supervisor published; that covers the watchdog crash path, which previously removed the public socket by path from `HOST_CLEANUP_PATHS`.
+- `host-lifecycle.ts`: the supervisor stats the public entry it just bound, publishes the token into its scratch directory for its child, and its shutdown replaces `rm(publicSocket)` with the ownership-checked removal. On POSIX the public socket is no longer listed in `HOST_CLEANUP_PATHS` (the child removes it token-checked); Windows named pipes keep the old behavior since they have no filesystem entry to own.
+- `test/suite/rpc-socket-ownership.test.ts`: for both a direct multi-session host and a supervisor-managed one, a replacement socket renamed over the live path (the takeover dance) survives SIGTERM shutdown and still connects, while the no-takeover path is removed and an already-absent path is tolerated; a supervisor SIGKILL (watchdog crash path) preserves a taken-over path and still removes an untaken one.
+
+### Why
+
+The startup path already refuses to touch a socket path owned by a live server (`prepareSocketPath` probes before unlinking), but every teardown path removed by path only. The OmO desktop replaces a socketless host by starting the new host on `<socket>.takeover-<pid>`, renaming it over `rpc.sock`, then SIGTERMing the old host; the old host's shutdown unlinked `rpc.sock` - now the NEW host's entry - leaving the supervisor alive, `rpc host ready on .../rpc.sock` logged, the socket absent, and every desktop session failing `connect ENOENT rpc.sock`. The same blind removal existed on the supervisor's own shutdown and on the child watchdog's crash-path cleanup (`HOST_CLEANUP_PATHS`). A probe-if-live check alone does not close this: after the rename and before the new host's listen completes, a probe would also fail, and crash/signal paths reintroduce the race. The dev+ino token captured at bind is what closes every teardown path deterministically.
+
+### Why an extension could not handle it
+
+Socket bind, unlink, and process-teardown ordering are transport lifecycle internals below every extension hook; no extension observes or intercepts host shutdown.
+
+### Expected merge conflict zones
+
+- LOW: `socket-ownership.ts` is fork-only and additive.
+- LOW: the `listen()` tail and shutdown-removal call in `multi-session-host.ts`, and the public-socket cleanup swap plus token write in `host-lifecycle.ts`.
+- LOW: `test/suite/rpc-socket-ownership.test.ts` (new).
+
 ## Shared-host logical sessions are unlimited by default (2026-09-06)
 
 ### What changed

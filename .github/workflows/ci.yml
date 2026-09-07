@@ -177,6 +177,11 @@ jobs:
           node-version: "24"
           cache: npm
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.0"
+
       - name: Install system dependencies
         run: |
           sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
@@ -193,17 +198,25 @@ jobs:
       - name: Script tests
         run: npm run test:scripts
 
+      # The same script tests launched by bun: scripts/run-workspaces.test.mjs drives the
+      # workspace runner with whichever package manager started the run, so this step is
+      # the CI proof that root `bun run <script>` fans out through bun, not npm.
+      - name: Script tests (bun)
+        run: bun run test:scripts
+
+      # The workspace runner is the same code path root `npm run test` / `bun run test` use.
       - name: Workspace tests (all but coding-agent)
         timeout-minutes: 25
         run: >
-          npm run test
+          node scripts/run-workspaces.mjs
+          --if-present
           --workspace packages/agent
           --workspace packages/ai
           --workspace packages/pty
           --workspace packages/senpi-codemode
           --workspace packages/server
           --workspace packages/tui
-          --if-present
+          test
 
       - name: Workflow summary
         if: always()

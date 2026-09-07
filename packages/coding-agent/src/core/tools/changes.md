@@ -1,5 +1,49 @@
 # core/tools changes
 
+## Canonical identity is resolved, not guessed (2026-09-07)
+
+### What changed
+
+- `bounded-realpath.ts` (new) holds the shared pieces: `withResolutionDeadline` races a resolution against `RESOLUTION_DEADLINE_MS` (2s) and attaches a handler to the abandoned promise, `isMissingPathError`, and `foldPathForCaseInsensitiveFilesystem`.
+- `filesystem-policy.ts` `canonicalizeFilesystemPath` goes back to the `realpath` walk-up it used before the same-day open-free change, now raced against that deadline; past the deadline `realpathWithoutOpenStrict` answers instead.
+- `file-mutation-queue.ts` `getMutationQueueKey` likewise resolves with `realpath` under the deadline, keeps the ENOENT tolerance, falls back to the strict walker, and folds the key on filesystems that ignore case.
+
+### Why
+
+- The open-free walker cannot supply what these two callers need. It preserves the caller's spelling, so on a case-insensitive volume `Notes.txt` and `notes.txt` became two mutation-queue keys for one file and concurrent edits stopped being serialized. It also tolerated every error, so EACCES/EIO/ELOOP produced an unresolved path presented as canonical where `realpath` had failed closed. Only the kernel knows the on-disk spelling, so correctness has to come from `realpath` and boundedness from the deadline, not the reverse.
+- The deadline keeps the wedged-mount fix: `realpath` never returns on a macOS autofs trigger, and these run before every read/ls/grep/find/edit/write, so the caller still gets an answer while the doomed I/O is what fails.
+
+### Why an extension could not handle it
+
+- Both functions are core tool infrastructure that the built-in file tools call before any extension hook runs; the canonical path they produce is the input to extension containment policies.
+
+### Expected merge conflict zones
+
+- `filesystem-policy.ts` import block and `canonicalizeFilesystemPath` (upstream keeps a plain realpath walk-up); `file-mutation-queue.ts` `getMutationQueueKey`; `bounded-realpath.ts` is fork-only.
+- `test/canonical-path-identity.test.ts`, `test/bounded-realpath.test.ts` (new).
+
+## Filesystem canonicalization never opens a path component (2026-09-07)
+
+### What changed
+
+- `filesystem-policy.ts` `canonicalizeFilesystemPath` is now `realpathWithoutOpen(resolve(filePath))` (shared walker in `src/utils/paths.ts`) instead of an `fs.promises.realpath` walk-up that climbed to the nearest existing ancestor, retrying `lstat`/`readlink` per level. The walker keeps the same contract — symlinks resolved, missing descendants appended verbatim — so the local `isMissingPathError` helper is gone.
+- `file-mutation-queue.ts` `getMutationQueueKey` uses the same walker, so the queue key for a path that does not exist yet is still its resolved form.
+
+### Why
+
+- `canonicalizeFilesystemPath` runs before every `read`/`ls`/`grep`/`find`/`edit`/`write` and has no deadline of its own. Bun implements `fs.realpath*` by `open(2)`-ing every directory it resolves, so a path under a wedged mount (a macOS autofs trigger whose automounter never answers) stalled the tool call forever — measured on such a host: `canonicalizeFilesystemPath(<trigger>/probe.log)` was still pending after 4s with no error, while the `lstat` walker returns immediately. The same open-based resolution also fails with EACCES under an execute-only directory, which #1419 already fixed for the permission classifier.
+- The mutation-queue key must be stable for the same file, so it needs the same resolver the policy layer uses.
+
+### Why an extension could not handle it
+
+- Both functions are core tool infrastructure invoked by the built-in file tools before any extension hook runs.
+
+### Expected merge conflict zones
+
+- `filesystem-policy.ts` import block and the `canonicalizeFilesystemPath` body (upstream keeps the realpath walk-up).
+- `file-mutation-queue.ts` import block and `getMutationQueueKey`.
+- `test/filesystem-policy-canonicalize.test.ts` (new: symlinked parent, missing descendants, no-realpath proof, execute-only directory).
+
 ## Adopt upstream ctx.cwd tool resolution without dropping fork tool surfaces (2026-09-03)
 
 ### What changed

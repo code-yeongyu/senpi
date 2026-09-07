@@ -1,5 +1,5 @@
-import { realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { BashArity } from "../permission-system/arity.ts";
 import { extractExternalPaths, isExternalPath } from "../permission-system/external-dir.ts";
@@ -144,11 +144,10 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 	registry.register("monitor", (toolName, input, cwd) => {
 		const path = getString(input, "path");
 		if (path) {
-			try {
-				setApprovedMonitorParent(input, realpathSync(dirname(resolve(cwd, path))));
-			} catch {
-				// Registration performs the authoritative access and canonical-parent check.
-			}
+			// This runs on the host main thread: the parent identity must be derived without open(2)
+			// (realpath opens directories and blocks forever on a wedged autofs trigger). Registration
+			// performs the authoritative access check and re-derives the parent the same way.
+			setApprovedMonitorParent(input, realpathWithoutOpen(dirname(resolve(cwd, path))));
 			return withExternalDirectoryRequests(
 				[{ permission: "read", patterns: [path], always: [path] }],
 				[path],

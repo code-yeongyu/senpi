@@ -38,6 +38,8 @@ describe("JS kernel shell output capture", () => {
 	afterEach(() => {
 		restore();
 		restore = () => {};
+		Reflect.deleteProperty(globalThis, "__senpi_session_env_deletions__");
+		Reflect.deleteProperty(globalThis, "__senpi_session_env_applied__");
 		if (hadBun) Object.defineProperty(globalThis, "Bun", { value: originalBun, configurable: true, writable: true });
 		else Reflect.deleteProperty(globalThis, "Bun");
 	});
@@ -201,6 +203,97 @@ describe("JS kernel shell output capture", () => {
 
 		expect(fake.spawnCalls).toEqual([{ cmd: ["ls"], options: { cmd: ["ls"], stdout: "pipe", stderr: "pipe" } }]);
 		expect(emitted).toEqual([{ stream: "stderr", data: "child stderr for ls\n" }]);
+	});
+
+	it("Given deleted session keys when capture installs then Bun spawns pin the worker's environment view", async () => {
+		const fake = installFakeBun();
+		process.env.PI_SESSION_ID = "capture-pin-session";
+		globalThis.__senpi_session_env_deletions__ = ["PI_SESSION_FILE"];
+		const { emitText } = emitter();
+		try {
+			restore = installShellCapture({ isActive: () => true, emitText });
+
+			fake.bun.spawn(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
+			fake.bun.spawn(["keep"], { env: { CUSTOM: "1" } });
+			await new Promise<void>((resolve) => setImmediate(resolve));
+
+			const pinned = fake.spawnCalls[0]?.options;
+			expect(pinned?.env).toEqual({ ...process.env });
+			expect(pinned?.stderr).toBe("pipe");
+			expect(fake.spawnCalls[1]?.options.env).toEqual({ CUSTOM: "1" });
+			// The shell default environment is seeded from the same view before wrapping.
+			expect(fake.bun.$.calls).toContain("env");
+		} finally {
+			delete process.env.PI_SESSION_ID;
+		}
+	});
+
+	it("Given a session environment applied without deletions when Bun.spawn runs without env then the worker view is pinned", async () => {
+		const fake = installFakeBun();
+		process.env.PI_SESSION_ID = "capture-applied-session";
+		globalThis.__senpi_session_env_deletions__ = [];
+		globalThis.__senpi_session_env_applied__ = true;
+		const { emitText } = emitter();
+		try {
+			restore = installShellCapture({ isActive: () => true, emitText });
+
+			fake.bun.spawn(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
+			await new Promise<void>((resolve) => setImmediate(resolve));
+
+			const pinned = fake.spawnCalls[0]?.options;
+			expect(pinned?.env).toEqual({ ...process.env });
+			expect(pinned?.env).toHaveProperty("PI_SESSION_ID", "capture-applied-session");
+		} finally {
+			delete process.env.PI_SESSION_ID;
+		}
+	});
+
+	it("Given a session environment when Bun.spawnSync runs without env then the worker view is pinned and explicit env is kept", () => {
+		const fake = installFakeBun();
+		process.env.PI_SESSION_ID = "capture-sync-session";
+		globalThis.__senpi_session_env_applied__ = true;
+		try {
+			restore = installShellCapture({ isActive: () => true, emitText: emitter().emitText });
+
+			fake.bun.spawnSync(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
+			fake.bun.spawnSync(["keep"], { env: { CUSTOM: "1" } });
+			fake.bun.spawnSync({ cmd: ["obj"] });
+
+			expect(fake.spawnSyncCalls[0]?.options.env).toEqual({ ...process.env });
+			expect(fake.spawnSyncCalls[0]?.options.env).toHaveProperty("PI_SESSION_ID", "capture-sync-session");
+			expect(fake.spawnSyncCalls[1]?.options.env).toEqual({ CUSTOM: "1" });
+			expect(fake.spawnSyncCalls[2]?.options.env).toEqual({ ...process.env });
+		} finally {
+			delete process.env.PI_SESSION_ID;
+		}
+	});
+
+	it("Given no session environment when Bun.spawnSync runs then it passes through unchanged and restore reinstates it", () => {
+		const fake = installFakeBun();
+		const originalSpawnSync = fake.bun.spawnSync;
+		restore = installShellCapture({ isActive: () => true, emitText: emitter().emitText });
+		expect(fake.bun.spawnSync).not.toBe(originalSpawnSync);
+
+		fake.bun.spawnSync(["sh", "-c", "true"]);
+		expect(fake.spawnSyncCalls).toEqual([{ cmd: ["sh", "-c", "true"], options: {} }]);
+
+		restore();
+		restore = () => {};
+		expect(fake.bun.spawnSync).toBe(originalSpawnSync);
+	});
+
+	it("Given no session environment when capture installs then spawn options pass through unchanged", async () => {
+		const fake = installFakeBun();
+		const { emitText } = emitter();
+		restore = installShellCapture({ isActive: () => true, emitText });
+
+		fake.bun.spawn(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(fake.spawnCalls).toEqual([
+			{ cmd: ["sh", "-c", 'printf %s "$PI_SESSION_ID"'], options: { stderr: "pipe" } },
+		]);
+		expect(fake.bun.$.calls).toEqual([]);
 	});
 
 	it("Given explicit stdio choices or no active cell when Bun.spawn runs then the options pass through unchanged", async () => {

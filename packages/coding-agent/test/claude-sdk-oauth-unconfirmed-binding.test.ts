@@ -85,6 +85,7 @@ function decide(binding: ReturnType<typeof getBinding>) {
 		modelId: "claude-test",
 		fingerprint: { toolsetHash: "tools-v1", systemPromptHash: "prompt-v1" },
 		transcriptAvailable: true,
+		crossAccountResumeSupported: true,
 	});
 }
 

@@ -1,5 +1,44 @@
 # claude-sdk-oauth
 
+## 2026-09-07 - Emit one continuity observation per turn (discarded attempts stay silent)
+
+### What changed
+
+- `session-turn-attempt.ts`: `staged.emit()` moved out of the attempt generator's `finally` onto the retained-completion path. A discarded attempt (account failover unwinds the generator via `return()`) and an internally-failed attempt (throws to `catch`) now emit nothing; only an attempt consumed to completion emits, so a turn yields exactly one continuity observation. A turn where every attempt fails still yields the single terminal observation from `residentSessionMessages`.
+
+### Why
+
+- senpi#1432 follow-up: the observability contract (session-observability.ts head comment and the AGENTS.md invariant) promises exactly one observation per completed turn, but the `finally` emitted the discarded attempt's staged decision too. A two-account failover turn therefore logged two `claude_sdk_oauth_session_continuity` events (the discarded `delta` plus the retained `fork`), and a fully-failed turn logged its staged decision plus the terminal error - inflating the continuity counts the #1432 report was built on.
+
+### Why an extension could not handle it
+
+- The attempt lifecycle and the staged-observation emit are private to this builtin provider; no extension hook observes attempt retention.
+
+### Expected merge conflict zones
+
+- LOW: `session-turn-attempt.ts` around the generator `try/catch` tail (the removed `finally`).
+
+
+## 2026-09-07 - Reattach across account failover; retire the unwired failover decision
+
+### What changed
+
+- `session-continuity.ts`: `ContinuityDecisionInput.crossAccountResumeSupported` is a required boolean, filled by `session-stream.ts` from `auth.authLane !== "config-dir"`. `decideFromBinding` flattens account drift only with `cross_root_unsupported` on the config-dir lane; otherwise it falls through to the retry checkpoint (same-turn failover forks at the pre-turn boundary with reason `timeout_retry`) and the prefix checks (a matching prefix reattaches with reason `account_changed`). `model_changed` still flattens.
+- Removed `decideFailoverContinuity`, `FailoverContinuityInput`, `FailoverLane`, and `test/claude-sdk-oauth-failover-continuity.test.ts`. Tests were flipped in `claude-sdk-oauth-restart-binding-drift.test.ts`, `claude-sdk-oauth-restored-security.test.ts`, and `claude-sdk-oauth-continuity-retry-checkpoint.test.ts`; added regression coverage in `suite/regressions/1432-claude-sdk-oauth-failover-reattach.test.ts`.
+
+### Why
+
+- Issue #1432: on multi-account sessions a rate-limited attempt is discarded (`session-turn-attempt.ts` `discard()` closes the live entry), the next account's attempt takes the binding path, and `decideFromBinding` flattened on `account_changed` before the retry checkpoint could run, so every failover re-sent the whole conversation (observed 100 `flatten`/`account_changed` in one day, count up to 409). The session-stable HRW ranking re-selects the primary account when its 60 s block expires, so the cycle repeated. `decideFailoverContinuity` (3b8a5f828, 2026-08-01) described the intended behavior but was never called, and the "shared-root lanes reattach on failover" invariant documented below was never implemented.
+
+### Why an extension could not handle it
+
+- The decision table and the binding admission are private to this builtin.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-continuity.ts` (`ContinuityDecisionInput`, head of `decideFromBinding`, removed failover block).
+- LOW: `session-stream.ts` `decideNativeContinuity` call site; the flipped test files.
+
 ## 2026-09-07 - Reattach restart bindings across prompt/toolset drift; date-line normalization survives trailing appends
 
 ### What changed

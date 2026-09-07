@@ -208,6 +208,7 @@ function wiringContext(cwd: string, calls: StatusCall[]): ExtensionContext {
 	};
 	ui.theme = theme;
 	const sessionManager = Object.create(null);
+	sessionManager.getSessionId = (): string => "wake-source-test-session";
 	sessionManager.getSessionFile = (): string => join(artifactsRoot, `${crypto.randomUUID()}.jsonl`);
 	return { ...base, cwd, mode: "tui", hasUI: true, ui, sessionManager };
 }

@@ -1,5 +1,23 @@
 # changes
 
+## test-workspaces proves the bun path of the root scripts (2026-09-07)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `test-workspaces` job installs bun 1.4.0 through the same pinned `oven-sh/setup-bun` action as `rpc-windows`, runs `bun run test:scripts` next to `npm run test:scripts`, and runs the "all but coding-agent" workspace suites through `node scripts/run-workspaces.mjs --if-present --workspace ... test` instead of npm's own `--workspace` flags.
+
+### Why
+
+- `scripts/run-workspaces.test.mjs` drives the workspace runner with whichever package manager launched the test process, so the bun step is the CI proof that root `bun run <script>` fans out through bun while the npm step keeps proving npm. Routing the real workspace suites through the runner exercises the code path root `npm run test` and `bun run test` take.
+
+### Why an extension could not handle it
+
+- CI workflow wiring is repository build plumbing evaluated on GitHub's runners; no runtime extension surface can add a step to a GitHub Actions workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `test-workspaces` step list in `.github/workflows/ci.yml` whenever upstream reshapes its test job.
+
 ## Windows RPC named-pipe suites gain a real Windows CI job (2026-09-01)
 
 ### What changed

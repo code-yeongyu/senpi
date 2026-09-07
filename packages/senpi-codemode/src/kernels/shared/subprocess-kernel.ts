@@ -1,6 +1,7 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { decodeBridgeFrame, encodeBridgeFrame, isKernelToHostMessage } from "../../bridge/protocol.ts";
 import type { KernelInterruptHandle } from "../../tool/types.ts";
+import { applySessionEnvironment } from "../session-env.ts";
 import type { KernelResult, KernelRunInput, SubprocessKernelOptions, ToolCallMessage } from "./subprocess-contract.ts";
 import { type SubprocessLike, SubprocessProcess, type SubprocessSpawn, spawnSubprocess } from "./subprocess-process.ts";
 import { SubprocessRunQueue } from "./subprocess-queue.ts";
@@ -133,7 +134,14 @@ export class SubprocessKernel {
 	}
 
 	private spawnProcess(): void {
-		const child = spawnSubprocess(this.options.spawn, this.options);
+		const child = spawnSubprocess(this.options.spawn, {
+			...this.options,
+			env:
+				this.options.env ??
+				(this.options.sessionEnv
+					? applySessionEnvironment(globalThis.process.env, this.options.sessionEnv)
+					: undefined),
+		});
 		const process = new SubprocessProcess(child, {
 			onLine: (source, line) => this.handleLine(source, line),
 			onStderr: (source, data) => this.handleMessage(source, { type: "text", stream: "stderr", data }),

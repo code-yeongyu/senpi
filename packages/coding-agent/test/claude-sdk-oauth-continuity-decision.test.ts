@@ -49,6 +49,7 @@ function input(overrides: Partial<ContinuityDecisionInput> = {}): ContinuityDeci
 		modelId: "claude-opus-4-5",
 		fingerprint: FINGERPRINT,
 		transcriptAvailable: true,
+		crossAccountResumeSupported: true,
 		...overrides,
 	};
 }
@@ -151,6 +152,7 @@ describe("claude-sdk-oauth native continuity decisions", () => {
 					toolsetHash: FINGERPRINT.toolsetHash,
 				},
 				transcriptAvailable: false,
+				crossAccountResumeSupported: true,
 			}),
 		);
 
@@ -183,6 +185,7 @@ describe("claude-sdk-oauth native continuity decisions", () => {
 					toolsetHash: FINGERPRINT.toolsetHash,
 				},
 				transcriptAvailable: true,
+				crossAccountResumeSupported: true,
 				currentHashes: ["h1", "h2-rewritten", "h3"],
 			}),
 		);

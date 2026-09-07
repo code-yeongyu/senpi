@@ -57,6 +57,7 @@ function decide(sentHashes: readonly string[], currentHashes: readonly string[])
 		modelId: MODEL,
 		fingerprint: { systemPromptHash: SYSTEM_PROMPT_HASH, toolsetHash: TOOLSET_HASH },
 		transcriptAvailable: true,
+		crossAccountResumeSupported: true,
 		idleExpired: false,
 	});
 	// Compared as an explicit shape so the observed reason is printed on failure

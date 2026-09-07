@@ -62,10 +62,11 @@ bun run check       # Biome + tsc + browser-smoke check (pre-commit equivalent)
 
 Live-API tests are env-gated vitest tests. Set `PI_ENABLE_LIVE_API_TESTS=1` (or a per-provider flag from `packages/ai/test/live-api-gates.ts`) plus the provider API keys, then run `bun run test`.
 
-Run a specific test:
+Run a specific test from the package, or from the repository root through the workspace runner (the root form runs the `scripts/` tests first):
 
 ```bash
-bun run test --workspace @code-yeongyu/senpi -- test/specific.test.ts
+bun run --cwd packages/coding-agent test -- test/specific.test.ts
+bun run test --workspace packages/coding-agent -- test/specific.test.ts
 ```
 
 ## Project Structure

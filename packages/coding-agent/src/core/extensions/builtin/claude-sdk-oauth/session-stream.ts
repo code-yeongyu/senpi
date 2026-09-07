@@ -92,6 +92,7 @@ async function createResidentAttempt(
 		modelId: input.model.id,
 		fingerprint,
 		transcriptAvailable,
+		crossAccountResumeSupported: auth.authLane !== "config-dir",
 		idleExpired: existing ? isIdleExpired(existing) : false,
 	});
 	const firstTurn = existing === undefined && getBinding(sessionId) === undefined && hashes.length <= 1;

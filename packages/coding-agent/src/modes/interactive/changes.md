@@ -17,6 +17,25 @@
 
 - LOW: `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts` around hydration boundary initialization, chunk completion, and reset handling.
 
+## 2026-09-07 - Add a workflow tip for the report-bug skill
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/tips/catalog/subagent-tips.ts`: added a workflow tip that points users to the report-bug skill and explains that it records provider and model details, routes the issue, and waits for confirmation before filing.
+- The tip is gated with requiresCommand: "tasks" like every other workflow tip, so it only surfaces where the omo-senpi task command exists.
+
+### Why
+
+- Users need a concise discovery path when they encounter a bug.
+
+### Why this lives in the fork
+
+- This tip describes a workflow skill shipped by the fork.
+
+### Expected merge conflict zones
+
+- LOW: appended array element in `subagent-tips.ts` and the `expectedTips` list.
+
 ## 2026-09-07 - /settings auto-compaction toggle persists explicitly (#1422)
 
 ### What changed

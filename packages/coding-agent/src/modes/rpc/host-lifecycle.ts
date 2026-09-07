@@ -50,11 +50,20 @@ import { processIsLive, readProcessStartTime } from "../app-server/daemon/proces
 import { createHostDaemonPaths } from "./host-ensure.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
+	HOST_PUBLIC_SOCKET_ENV,
 	HOST_SCRATCH_DIR_ENV,
 	HOST_WATCH_FD_ENV,
 	HOST_WATCH_PPID_ENV,
 } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
+import {
+	PUBLIC_SOCKET_IDENTITY_FILE,
+	type SocketFileIdentity,
+	shieldSocketDuringClose,
+	statSocketIdentity,
+	unlinkOwnedSocket,
+	writeSocketIdentityFile,
+} from "./socket-ownership.ts";
 import {
 	authenticateSocket,
 	createSocketSecret,
@@ -390,8 +399,15 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			[HOST_CLEANUP_PATHS_ENV]: [
 				paths.pidFile,
 				paths.settingsFile,
-				...(process.platform === "win32" ? [] : [publicSocket]),
+				// POSIX public sockets are removed ownership-checked by the host child
+				// (token: the scratch-directory sidecar plus HOST_PUBLIC_SOCKET_ENV),
+				// never by path from a crash-path cleanup: a blind removal here would
+				// unlink a newer host's freshly published entry after a takeover.
+				// Windows named pipes have no filesystem entry to own, so they stay
+				// listed for the crash-path cleanup.
+				...(process.platform === "win32" ? [publicSocket] : []),
 			].join("\n"),
+			...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
 		},
 		// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
 		// wait on and keeps the write end owned by this process alone.
@@ -498,7 +514,10 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		try {
 			writeStderrLine(`senpi rpc host supervisor: ${reason} shutdown`);
 			for (const client of clientSockets) client.destroy();
-			await closeServer(server);
+			// libuv unlinks the bound NAME when the listening handle closes - which
+			// would delete a newer host's entry renamed over this path. Shield the
+			// current entry for the close, then let the ownership check decide.
+			await shieldSocketDuringClose(publicSocket, () => closeServer(server));
 			// Unlink the private directory BEFORE the child stop, which can take seconds:
 			// an external SIGKILL landing during that wait (ensureHost escalates while
 			// replacing a host) would otherwise leave the directory behind. The child
@@ -507,7 +526,12 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			if (internal.dir) await rm(internal.dir, { recursive: true, force: true });
 			await stopChild(child);
 			observer?.destroy();
-			if (publicSocketOwned && process.platform !== "win32") await rm(publicSocket, { force: true });
+			if (publicSocketOwned && process.platform !== "win32") {
+				// Ownership-checked: after a takeover, a newer host may have published
+				// a fresh entry at this path; only the entry THIS supervisor bound is
+				// removed. (The host child applies the same rule to its crash path.)
+				await unlinkOwnedSocket(publicSocket, publicSocketIdentity, supervisorLog);
+			}
 			// Mirror ensureHost's cleanupState: the pidfile and settings describe a
 			// live host only; the stderr log stays for diagnostics.
 			await rm(paths.pidFile, { force: true });
@@ -523,6 +547,10 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 
 	let observer: Socket | undefined;
 	let publicSocketOwned = false;
+	let publicSocketIdentity: SocketFileIdentity | undefined;
+	function supervisorLog(message: string): void {
+		writeStderrLine(`senpi rpc host supervisor: ${message}`);
+	}
 	// Registered before the startup handshake, not after it: the private internal
 	// directory already exists at this point, so a SIGTERM arriving during host
 	// startup must run the same cleanup instead of Node's default kill, which
@@ -534,6 +562,13 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		await prepareSocketPath(publicSocket);
 		await listen(server, publicSocket, publicSecret);
 		publicSocketOwned = true;
+		publicSocketIdentity = await statSocketIdentity(publicSocket);
+		// Publish the ownership token inside this supervisor's private scratch
+		// directory (which no replacement supervisor writes): the host child's
+		// crash-path cleanup compares the public path against THIS entry only.
+		if (publicSocketIdentity && internal.dir) {
+			await writeSocketIdentityFile(join(internal.dir, PUBLIC_SOCKET_IDENTITY_FILE), publicSocketIdentity);
+		}
 	} catch (cause) {
 		await shutdown(`startup failed: ${errorMessage(cause)}`, 1);
 	}

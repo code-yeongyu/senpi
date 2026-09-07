@@ -122,6 +122,7 @@ describe("issue #6981 headless restart continuity", () => {
 				modelId: "claude-test",
 				fingerprint: { systemPromptHash: PROMPT_HASH, toolsetHash: TOOLSET_HASH },
 				transcriptAvailable: true,
+				crossAccountResumeSupported: true,
 			}),
 		).toMatchObject({ kind: "reattach", reason: "registry_miss" });
 	});
@@ -177,6 +178,7 @@ describe("issue #6981 headless restart continuity", () => {
 				modelId: entry.modelId,
 				fingerprint: { systemPromptHash: PROMPT_HASH, toolsetHash: TOOLSET_HASH },
 				transcriptAvailable: true,
+				crossAccountResumeSupported: true,
 			}),
 		).toMatchObject({ kind: "reattach" });
 	});

@@ -173,6 +173,7 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 			modelId: "claude-test",
 			fingerprint: { toolsetHash: "tools-v1", systemPromptHash: "prompt-v1" },
 			transcriptAvailable: true,
+			crossAccountResumeSupported: true,
 		});
 
 		expect(getSession("provider-switch")).toBeUndefined();
@@ -228,6 +229,7 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 			modelId: entry.modelId,
 			fingerprint: { systemPromptHash: entry.systemPromptHash, toolsetHash: entry.toolsetHash },
 			transcriptAvailable: true,
+			crossAccountResumeSupported: true,
 		});
 
 		expect(decision).toMatchObject({ kind: "fork", reason: "assistant_rewritten" });
@@ -262,6 +264,7 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 			modelId: "claude-test",
 			fingerprint: configFingerprint({ maxThinkingTokens: 8_192 }, resident, "oauth-slots", "default"),
 			transcriptAvailable: true,
+			crossAccountResumeSupported: true,
 		});
 
 		expect(decision).toMatchObject({ kind: "reattach", reason: "toolset_changed" });

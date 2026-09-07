@@ -10,6 +10,11 @@
 
 ### Fixed
 
+- The JS kernel's shell capture now pins the worker's environment view for `Bun.spawnSync` as well as `Bun.spawn`, so a cell calling it without an explicit `env` sees the session's `PI_*` values instead of the inherited OS environ.
+- Eval kernels and every child they spawn now see the active session's `PI_*` environment (`PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`) exactly as bash-tool children do: inherited `PI_*` values are dropped before the session values are applied, so subprocesses such as `omo-agent-toolkit ulw-loop` resolve the same session as the `bash` tool instead of a cwd-global one.
+- JavaScript eval cells no longer lose their completion value when a nested function, callback, or try/catch helper contains `return`: the cell wrapper now skips last-expression capture only for a genuine top-level `return`, and a property named `return` no longer primes the statement scanner as the keyword (#1439).
+- Eval output truncation notices now name the real cause: a width-clamped line reports `N line(s) clamped to M columns (… dropped)`, a byte-capped tail reports the actual cap, and a notice never presents the output's own size as a limit.
+
 ### Removed
 
 ## [2026.9.7] - 2026-09-07

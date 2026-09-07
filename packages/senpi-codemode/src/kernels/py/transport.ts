@@ -8,6 +8,7 @@ import {
 	isKernelToHostMessage,
 	type KernelToHostMessage,
 } from "../../bridge/protocol.ts";
+import { applySessionEnvironment, type SessionEnvironment } from "../session-env.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import {
 	defaultSpawn,
@@ -36,6 +37,8 @@ export interface PythonTransportOptions {
 	readonly cwd: string;
 	readonly connection: BridgeConnectionConfig;
 	readonly env?: NodeJS.ProcessEnv;
+	/** Per-session PI_* values merged into the interpreter environment at spawn. */
+	readonly sessionEnv?: SessionEnvironment;
 	readonly startupTimeoutMs: number;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly spawnProcess?: KernelSpawnProcess;
@@ -83,7 +86,12 @@ export class PythonKernelTransport {
 			command: invocation.command,
 			args: [...invocation.args, "-u", scriptPath],
 			cwd: options.cwd,
-			env: { ...process.env, ...options.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8" },
+			env: {
+				...applySessionEnvironment(process.env, options.sessionEnv),
+				...options.env,
+				PYTHONUNBUFFERED: "1",
+				PYTHONIOENCODING: "utf-8",
+			},
 		};
 		const child = (options.spawnProcess ?? defaultSpawn)(spawnOptions);
 		const transport = new PythonKernelTransport(options, child);

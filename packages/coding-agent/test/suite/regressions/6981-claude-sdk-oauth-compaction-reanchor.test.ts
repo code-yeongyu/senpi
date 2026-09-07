@@ -102,6 +102,7 @@ describe("issue #6981 compaction restart continuity", () => {
 				modelId: "claude-test",
 				fingerprint: { systemPromptHash: PROMPT_HASH, toolsetHash: TOOLSET_HASH },
 				transcriptAvailable: true,
+				crossAccountResumeSupported: true,
 			}),
 		).toMatchObject({ kind: "reattach", reason: "registry_miss" });
 	});

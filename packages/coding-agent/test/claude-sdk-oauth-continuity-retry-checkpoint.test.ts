@@ -36,6 +36,7 @@ function input(overrides: Partial<ContinuityDecisionInput> = {}): ContinuityDeci
 		modelId: "claude-opus-4-5",
 		fingerprint: FINGERPRINT,
 		transcriptAvailable: true,
+		crossAccountResumeSupported: true,
 		...overrides,
 	};
 }
@@ -87,14 +88,28 @@ describe("claude-sdk-oauth retry checkpoint continuity", () => {
 		expect(decision).toMatchObject({ kind: "fork", atUuid: "uuid-a2", from: 2, reason: "timeout_retry" });
 	});
 
-	it("does not let a checkpoint outrank an identity drift", () => {
+	it("does not let a checkpoint outrank a model drift", () => {
 		expect(decideNativeContinuity(input({ modelId: "claude-sonnet-5" }))).toEqual({
 			kind: "flatten",
 			reason: "model_changed",
 		});
-		expect(decideNativeContinuity(input({ accountName: "secondary" }))).toEqual({
+	});
+
+	// senpi#1432: the same turn failing over to another account is exactly the
+	// checkpoint's case - fork past the un-answered message under the new account.
+	it("lets the checkpoint fork a same-turn account failover on a shared-root lane", () => {
+		expect(decideNativeContinuity(input({ accountName: "secondary" }))).toMatchObject({
+			kind: "fork",
+			atUuid: "uuid-a2",
+			from: 2,
+			reason: "timeout_retry",
+		});
+	});
+
+	it("does not let a checkpoint outrank the config-dir lane limit", () => {
+		expect(decideNativeContinuity(input({ accountName: "secondary", crossAccountResumeSupported: false }))).toEqual({
 			kind: "flatten",
-			reason: "account_changed",
+			reason: "cross_root_unsupported",
 		});
 	});
 

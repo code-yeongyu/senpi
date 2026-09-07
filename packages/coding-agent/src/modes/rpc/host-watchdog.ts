@@ -23,6 +23,8 @@ import { readProcessIdentity } from "../app-server/daemon/process.ts";
 export const HOST_WATCH_FD_ENV = "SENPI_RPC_HOST_WATCH_FD";
 /** Supervisor-owned private directory the host removes on watchdog shutdown. */
 export const HOST_SCRATCH_DIR_ENV = "SENPI_RPC_HOST_SCRATCH_DIR";
+/** Public socket path the supervisor bound; the host removes it ownership-checked. */
+export const HOST_PUBLIC_SOCKET_ENV = "SENPI_RPC_HOST_PUBLIC_SOCKET";
 /** Fallback binding when no inherited fd is available: poll this pid. */
 export const HOST_WATCH_PPID_ENV = "SENPI_RPC_HOST_WATCH_PPID";
 /** Poll cadence for the ppid fallback. */
@@ -36,6 +38,15 @@ export interface HostWatchdogConfig {
 	readonly ppid?: number;
 	readonly scratchDir?: string;
 	readonly cleanupPaths?: readonly string[];
+	readonly publicSocket?: string;
+	/**
+	 * Runs when the watchdog fires, BEFORE `scratchDir` and `cleanupPaths` are removed. The
+	 * host uses it to read state that lives inside the supervisor's private directory and
+	 * that its shutdown still needs - the public-socket ownership token above all. A
+	 * supervisor killed while the host is still starting up leaves that token unread, and
+	 * removing the directory first would turn the public socket into an unprovable orphan.
+	 */
+	readonly beforeCleanup?: () => Promise<void>;
 }
 
 function parsePositiveInteger(value: string | undefined): number | undefined {
@@ -57,11 +68,13 @@ export function readHostWatchdogConfig(
 	if (fd === undefined && ppid === undefined) return undefined;
 	const scratchDir = env[HOST_SCRATCH_DIR_ENV];
 	const cleanupPaths = env[HOST_CLEANUP_PATHS_ENV]?.split("\n").filter(Boolean);
+	const publicSocket = env[HOST_PUBLIC_SOCKET_ENV];
 	return {
 		fd,
 		ppid,
 		scratchDir: scratchDir === undefined || scratchDir === "" ? undefined : scratchDir,
 		cleanupPaths,
+		publicSocket: publicSocket === "" ? undefined : publicSocket,
 	};
 }
 
@@ -75,6 +88,7 @@ export function readHostWatchdogConfigFromBrandEnv(): HostWatchdogConfig | undef
 		[HOST_WATCH_FD_ENV]: process.env[HOST_WATCH_FD_ENV] ?? envValue("RPC_HOST_WATCH_FD"),
 		[HOST_WATCH_PPID_ENV]: process.env[HOST_WATCH_PPID_ENV] ?? envValue("RPC_HOST_WATCH_PPID"),
 		[HOST_SCRATCH_DIR_ENV]: process.env[HOST_SCRATCH_DIR_ENV] ?? envValue("RPC_HOST_SCRATCH_DIR"),
+		[HOST_PUBLIC_SOCKET_ENV]: process.env[HOST_PUBLIC_SOCKET_ENV] ?? envValue("RPC_HOST_PUBLIC_SOCKET"),
 		[HOST_CLEANUP_PATHS_ENV]: process.env[HOST_CLEANUP_PATHS_ENV] ?? envValue("RPC_HOST_CLEANUP_PATHS"),
 	});
 }
@@ -96,14 +110,15 @@ export function armHostWatchdog(
 	if (!config) return () => {};
 	const fire = (reason: string): void => {
 		disarm();
+		const captured = captureBeforeCleanup(config);
 		if (process.platform === "win32") {
 			// Arm the host shutdown fallback before attempting metadata cleanup. The
 			// synchronous Win32 removal below handles the state files deterministically,
 			// while the fallback still covers a named-pipe close that never completes.
-			const cleanup = Promise.resolve().then(() => cleanupWatchdogPaths(config));
+			const cleanup = captured.then(() => cleanupWatchdogPaths(config));
 			onSupervisorGone(reason, cleanup);
 		} else {
-			void cleanupWatchdogPaths(config).finally(() => onSupervisorGone(reason));
+			void captured.then(() => cleanupWatchdogPaths(config)).finally(() => onSupervisorGone(reason));
 		}
 	};
 	const disarmers: Array<() => void> = [];
@@ -200,6 +215,14 @@ function processAlive(pid: number): boolean {
 	} catch (cause) {
 		return cause instanceof Error && "code" in cause && cause.code !== "ESRCH";
 	}
+}
+
+// A failing capture must never block the cleanup or the shutdown it precedes.
+function captureBeforeCleanup(config: HostWatchdogConfig): Promise<void> {
+	if (config.beforeCleanup === undefined) return Promise.resolve();
+	return Promise.resolve()
+		.then(config.beforeCleanup)
+		.catch(() => undefined);
 }
 
 async function cleanupWatchdogPaths(config: HostWatchdogConfig): Promise<void> {

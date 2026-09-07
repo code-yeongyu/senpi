@@ -15,6 +15,7 @@ runner/prelude assets).
 | Ruby kernel | `rb/kernel.ts` + `rb/prelude.rb`, `rb/runner.rb` |
 | Julia kernel | `jl/kernel.ts` + `jl/prelude.jl`, `jl/runner.jl` |
 | Shared subprocess layer | `shared/subprocess-kernel.ts`, `subprocess-{contract,process,queue,run}.ts`, `runtime-asset.ts` |
+| Session environment | `session-env.ts` (PI_* contract shared by all kernels; mirrors the core bash tool) |
 
 ## CONVENTIONS
 
@@ -29,6 +30,12 @@ runner/prelude assets).
   framed subprocesses through `shared/`.
 - Subprocess retirement/restart, worker recovery, timeout, and interrupt
   semantics live here, never in the tool layer.
+- Every kernel exposes the active session's `PI_*` environment (`session-env.ts`):
+  inherited values are deleted before the session's values are applied, so any
+  child spawned from a cell sees the same session environment a bash-tool child
+  sees. The JS worker applies it at init (`worker-core.js`; shell capture pins
+  the env view under Bun because `delete process.env.X` does not unsetenv),
+  and py/rb/jl spawn with it merged into the interpreter environment.
 
 ## ANTI-PATTERNS
 

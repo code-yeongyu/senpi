@@ -132,10 +132,12 @@ export function createFakeBun(): {
 	bun: FakeBun;
 	printed: string[];
 	spawnCalls: FakeSpawnCall[];
+	spawnSyncCalls: FakeSpawnCall[];
 	outputs: Map<string, FakeShellOutput>;
 } {
 	const printed: string[] = [];
 	const spawnCalls: FakeSpawnCall[] = [];
+	const spawnSyncCalls: FakeSpawnCall[] = [];
 	const outputs = new Map<string, FakeShellOutput>();
 	const shell = ((strings: TemplateStringsArray) => {
 		const joined = strings.join("");
@@ -185,8 +187,17 @@ export function createFakeBun(): {
 				: undefined;
 		return { stderr, exited: Promise.resolve(0) };
 	};
-	const bun: FakeBun = { $: shell, spawn, spawnSync: () => ({}) };
-	return { bun, printed, spawnCalls, outputs };
+	const spawnSync = (...args: unknown[]): unknown => {
+		const [first, second] = args;
+		const options: Record<string, unknown> = Array.isArray(first)
+			? { ...(second as Record<string, unknown> | undefined) }
+			: { ...(first as Record<string, unknown>) };
+		const cmd = Array.isArray(first) ? (first as string[]) : (options.cmd as string[]);
+		spawnSyncCalls.push({ cmd, options });
+		return { stdout: Buffer.from(""), stderr: Buffer.from(""), exitCode: 0 };
+	};
+	const bun: FakeBun = { $: shell, spawn, spawnSync };
+	return { bun, printed, spawnCalls, spawnSyncCalls, outputs };
 }
 
 export function installFakeBun(): ReturnType<typeof createFakeBun> {

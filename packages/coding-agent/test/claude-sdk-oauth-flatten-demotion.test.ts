@@ -34,6 +34,7 @@ function decide(overrides: Record<string, unknown> = {}) {
 		modelId: "claude-opus-4-5",
 		fingerprint: FINGERPRINT,
 		transcriptAvailable: true,
+		crossAccountResumeSupported: true,
 		...overrides,
 	} as Parameters<typeof decideNativeContinuity>[0]);
 }
@@ -64,6 +65,7 @@ describe("claude-sdk-oauth flatten demotion", () => {
 		const orphanedBinding = decide({
 			entry: undefined,
 			transcriptAvailable: false,
+			crossAccountResumeSupported: true,
 			binding: {
 				sdkSessionId: "sdk-gone",
 				sentCount: 3,

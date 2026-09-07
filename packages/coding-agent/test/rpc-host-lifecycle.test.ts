@@ -380,6 +380,44 @@ describe("host watchdog configuration", () => {
 		},
 		15_000,
 	);
+
+	it.skipIf(process.platform === "win32")(
+		"runs beforeCleanup while the private directory still exists, then cleans up, then reports",
+		async () => {
+			const dir = mkdtempSync(join(tmpdir(), "senpi-hlc-wd-order-"));
+			roots.push(dir);
+			const scratchDir = join(dir, "internal");
+			mkdirSync(scratchDir, { recursive: true });
+			const sidecar = join(scratchDir, "public-socket.owner");
+			writeFileSync(sidecar, JSON.stringify({ dev: 1, ino: 2 }));
+			const fifo = join(dir, "pipe");
+			execFileSync("mkfifo", [fifo]);
+			const writeEnd = openSync(fifo, "w+");
+			const readEnd = openSync(fifo, "r");
+			const order: string[] = [];
+			const reason = new Promise<string>((resolve) => {
+				armHostWatchdog(
+					{
+						fd: readEnd,
+						scratchDir,
+						beforeCleanup: async () => {
+							order.push(`beforeCleanup sidecar=${existsSync(sidecar)}`);
+						},
+					},
+					(fired) => {
+						order.push(`gone scratch=${existsSync(scratchDir)}`);
+						resolve(fired);
+					},
+				);
+			});
+			closeSync(writeEnd);
+			expect(await reason).toContain("closed");
+			// The host reads its ownership token in beforeCleanup; cleanup must not have
+			// destroyed the directory yet, and the shutdown report comes last.
+			expect(order).toEqual(["beforeCleanup sidecar=true", "gone scratch=false"]);
+		},
+		15_000,
+	);
 });
 
 describe("findInternalSupervisorArgs", () => {

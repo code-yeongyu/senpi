@@ -5,7 +5,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BUILD_PHASES, cleanEnv, detectPackageManager, parseArgs } from "./build-all.mjs";
+import { BUILD_PHASES, parseArgs } from "./build-all.mjs";
+import { cleanEnv, detectPackageManager } from "./package-manager.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 

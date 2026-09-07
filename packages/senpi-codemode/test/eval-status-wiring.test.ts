@@ -102,6 +102,7 @@ function wiringContext(cwd: string, mode: "tui" | "rpc", calls: StatusCall[], th
 	};
 	ui.theme = theme;
 	const sessionManager = Object.create(null);
+	sessionManager.getSessionId = (): string => "status-wiring-test-session";
 	sessionManager.getSessionFile = (): string => join(artifactsRoot, `${crypto.randomUUID()}.jsonl`);
 	return { ...base, cwd, mode, hasUI: true, ui, sessionManager };
 }

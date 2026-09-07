@@ -24,7 +24,10 @@ function collectAstraEntries(): AstraEntry[] {
 	for (const file of readdirSync(dataDirectory)
 		.filter((name) => name.endsWith(".json"))
 		.sort()) {
-		const parsed = JSON.parse(readFileSync(`${dataDirectory}${file}`, "utf8")) as Record<string, Record<string, CatalogEntry>>;
+		const parsed = JSON.parse(readFileSync(`${dataDirectory}${file}`, "utf8")) as Record<
+			string,
+			Record<string, CatalogEntry>
+		>;
 		for (const [api, models] of Object.entries(parsed)) {
 			if (!models || typeof models !== "object") continue;
 			for (const [id, model] of Object.entries(models)) {

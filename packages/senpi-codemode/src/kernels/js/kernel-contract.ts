@@ -1,4 +1,5 @@
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
+import type { SessionEnvironment } from "../session-env.ts";
 
 export type ResultMessage = Extract<KernelToHostMessage, { type: "result" }>;
 export type ToolCallMessage = Extract<KernelToHostMessage, { type: "tool-call" }>;
@@ -11,6 +12,8 @@ export interface JavaScriptKernelOptions {
 	readonly parallelPoolWidth: number;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly workerEntryUrl?: URL;
+	/** Per-session PI_* values applied to the worker environment before the first cell runs. */
+	readonly sessionEnv?: SessionEnvironment;
 }
 
 export interface JavaScriptRunInput {
