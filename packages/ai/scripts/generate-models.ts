@@ -28,6 +28,7 @@ import {
 	type ModelDataStructure,
 	MODEL_DATA_MANIFEST_FILE,
 	readModelDataProviderIds,
+	readModelDataStructure,
 	validateGeneratedModelData,
 	validateModelDataDirectory,
 } from "./model-data.ts";
@@ -42,12 +43,16 @@ function readGeneratorOptions(args: string[]): {
 	jsonOnly: boolean;
 	jsonOutputDir: string | undefined;
 	pretty: boolean;
+	providerIds: string[] | undefined;
+	generatedAt: string | undefined;
 } {
 	let strict = false;
 	let dataOnly = false;
 	let jsonOnly = false;
 	let jsonOutputDir: string | undefined;
 	let pretty = false;
+	let providerIds: string[] | undefined;
+	let generatedAt: string | undefined;
 
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
@@ -73,12 +78,32 @@ function readGeneratorOptions(args: string[]): {
 			jsonOutputDir = resolve(value);
 			continue;
 		}
+		if (arg === "--providers") {
+			const value = args[++index];
+			if (!value) throw new Error("--providers requires a comma-separated provider list");
+			const values = value.split(",").map((providerId) => providerId.trim());
+			if (values.some((providerId) => providerId.length === 0)) {
+				throw new Error("--providers cannot contain empty provider IDs");
+			}
+			providerIds = Array.from(new Set(values)).sort();
+			if (providerIds.length !== values.length) throw new Error("--providers cannot contain duplicate provider IDs");
+			continue;
+		}
+		if (arg === "--generated-at") {
+			const value = args[++index];
+			if (!value || Number.isNaN(Date.parse(value))) throw new Error("--generated-at requires an ISO timestamp");
+			generatedAt = new Date(value).toISOString();
+			continue;
+		}
 		throw new Error(`Unknown argument: ${arg}`);
 	}
 
 	if (jsonOnly && !jsonOutputDir) throw new Error("--json-only requires --json-output");
 	if (dataOnly && (jsonOnly || jsonOutputDir)) throw new Error("--data-only cannot be combined with JSON catalog output");
-	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty };
+	if (providerIds && (dataOnly || jsonOnly || jsonOutputDir)) {
+		throw new Error("--providers cannot be combined with --data-only or JSON catalog output");
+	}
+	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty, providerIds, generatedAt };
 }
 
 const generatorOptions = readGeneratorOptions(process.argv.slice(2));
@@ -247,6 +272,36 @@ const ZAI_GLM52_THINKING_LEVEL_MAP = {
 	xhigh: null,
 	max: "max",
 } as const;
+
+// These OpenAI-compatible adapters only serialize a thinking enable/disable
+// switch for these models; they have no distinct effort payload.
+const ON_OFF_THINKING_LEVEL_MAP = {
+	minimal: null,
+	low: null,
+	medium: null,
+	xhigh: null,
+	max: null,
+} as const;
+const ALWAYS_ON_THINKING_LEVEL_MAP = {
+	off: null,
+	minimal: null,
+	low: null,
+	medium: null,
+	xhigh: null,
+	max: null,
+} as const;
+const ALIBABA_TOKEN_PLAN_ON_OFF_MODEL_IDS = new Set([
+	"deepseek-v3.2",
+	"kimi-k2.5",
+	"kimi-k2.6",
+	"qwen3.6-flash",
+	"qwen3.6-plus",
+	"qwen3.7-max",
+	"qwen3.7-plus",
+]);
+const MOONSHOT_ON_OFF_MODEL_IDS = new Set(["kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2.5", "kimi-k2.6"]);
+const XIAOMI_ON_OFF_MODEL_IDS = new Set(["mimo-v2.5", "mimo-v2.5-pro", "mimo-v2.5-pro-ultraspeed"]);
+const ZAI_ON_OFF_MODEL_IDS = new Set(["glm-4.6v", "glm-5-turbo", "glm-5.1", "glm-5v-turbo"]);
 const OPENCODE_GO_GLM52_THINKING_LEVEL_MAP = {
 	off: null,
 	minimal: null,
@@ -293,6 +348,7 @@ const QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP = {
 	xhigh: "xhigh",
 	max: null,
 } as const;
+const QWEN38_MODEL_IDS = new Set(["qwen3.8-flash", "qwen3.8-max", "qwen3.8-max-preview"]);
 const QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS = new Set([
 	"MiniMax-M2.5",
 	"deepseek-v3.2",
@@ -2013,6 +2069,16 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				const isGlm5x = isGlm52 || /^(?:glm-5\.3)(?:-(?:flash|highspeed))?$/.test(modelId);
 				const referenceCost = modelId === "glm-5.2-highspeed" ? undefined : data.zai?.models[modelId]?.cost ?? m.cost;
 
+				const thinkingLevelMap =
+					modelId === "glm-4.7"
+						? ALWAYS_ON_THINKING_LEVEL_MAP
+						: ZAI_ON_OFF_MODEL_IDS.has(modelId)
+							? ON_OFF_THINKING_LEVEL_MAP
+							: isGlm52
+								? ZAI_GLM52_THINKING_LEVEL_MAP
+								: isGlm5x
+									? getEffortThinkingLevelMap(m.reasoning_options ?? [])
+									: undefined;
 				models.push({
 					id: modelId,
 					name: m.name || modelId,
@@ -2020,11 +2086,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider,
 					baseUrl,
 					reasoning: m.reasoning === true,
-					...(isGlm52
-						? { thinkingLevelMap: ZAI_GLM52_THINKING_LEVEL_MAP }
-						: isGlm5x
-							? { thinkingLevelMap: getEffortThinkingLevelMap(m.reasoning_options ?? []) }
-							: {}),
+					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 					input: supportsImage ? ["text", "image"] : ["text"],
 					cost: {
 						input: referenceCost?.input || 0,
@@ -2260,6 +2322,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					}
 				}
 
+				const thinkingLevelMap =
+					variant.provider === "opencode" && modelId === "kimi-k2.6"
+						? ON_OFF_THINKING_LEVEL_MAP
+						: variant.provider === "opencode-go" && modelId === "qwen3.6-plus"
+							? ON_OFF_THINKING_LEVEL_MAP
+							: undefined;
 				models.push({
 					id: modelId,
 					name: m.name || modelId,
@@ -2267,6 +2335,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider: variant.provider,
 					baseUrl,
 					reasoning: m.reasoning === true,
+					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || 0,
@@ -2468,6 +2537,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider,
 					baseUrl,
 					reasoning: isKimiK3 || m.reasoning === true,
+					...(MOONSHOT_ON_OFF_MODEL_IDS.has(modelId) ? { thinkingLevelMap: ON_OFF_THINKING_LEVEL_MAP } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || (isKimiK3 ? KIMI_K3_COST.input : 0),
@@ -2490,7 +2560,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		const xiaomiCompat: OpenAICompletionsCompat = {
 			requiresReasoningContentOnAssistantMessages: true,
 			thinkingFormat: "deepseek",
-			supportsDisabledThinking: false,
+			supportsReasoningEffort: false,
 		};
 		const xiaomiVariants = [
 			{ source: "xiaomi", provider: "xiaomi", baseUrl: "https://api.xiaomimimo.com/v1" },
@@ -2528,6 +2598,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl,
 					compat: xiaomiCompat,
 					reasoning: m.reasoning === true,
+					...(XIAOMI_ON_OFF_MODEL_IDS.has(modelId) ? { thinkingLevelMap: ON_OFF_THINKING_LEVEL_MAP } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || 0,
@@ -2597,11 +2668,11 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					...(supportsReasoningEffort
 						? {
 								thinkingLevelMap:
-									modelId === "qwen3.8-max"
+									QWEN38_MODEL_IDS.has(modelId)
 										? QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP
 										: QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP,
 							}
-						: {}),
+						: { thinkingLevelMap: ON_OFF_THINKING_LEVEL_MAP }),
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
@@ -2644,11 +2715,20 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				} else if (family.startsWith("deepseek")) {
 					compat.requiresReasoningContentOnAssistantMessages = true;
 					compat.thinkingFormat = "deepseek";
+					if (modelId === "deepseek-v3.2") compat.supportsReasoningEffort = false;
 				} else if (family.startsWith("kimi")) {
 					compat.thinkingFormat = "deepseek";
 					compat.supportsReasoningEffort = false;
 				}
 
+				const thinkingLevelMap =
+					QWEN38_MODEL_IDS.has(modelId)
+						? QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP
+						: modelId === "kimi-k2.7-code"
+							? ALWAYS_ON_THINKING_LEVEL_MAP
+							: ALIBABA_TOKEN_PLAN_ON_OFF_MODEL_IDS.has(modelId)
+								? ON_OFF_THINKING_LEVEL_MAP
+								: undefined;
 				models.push({
 					id: modelId,
 					name: m.name || modelId,
@@ -2657,6 +2737,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl: alibabaTokenPlanBaseUrl,
 					compat,
 					reasoning: m.reasoning === true,
+					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || 0,
@@ -3445,9 +3526,15 @@ async function generateModels() {
 
 	const serializeJson = (value: unknown) => `${JSON.stringify(value, null, generatorOptions.pretty ? 2 : undefined)}\n`;
 	const writeJson = (path: string, value: unknown) => writeFileSync(path, serializeJson(value));
-	const generatedDataProviderIds = generatorOptions.dataOnly
-		? readModelDataProviderIds(packageRoot)
-		: sortedProviderIds;
+	const existingModelDataStructure = generatorOptions.providerIds ? readModelDataStructure(packageRoot) : undefined;
+	const unknownProviderIds =
+		generatorOptions.providerIds?.filter(
+			(providerId) => existingModelDataStructure === undefined || !Object.hasOwn(existingModelDataStructure, providerId),
+		) ?? [];
+	if (unknownProviderIds.length > 0) {
+		throw new Error(`Unknown provider selector: ${unknownProviderIds.join(", ")}`);
+	}
+	const generatedDataProviderIds = generatorOptions.providerIds ?? (generatorOptions.dataOnly ? readModelDataProviderIds(packageRoot) : sortedProviderIds);
 	const missingProviderIds = generatedDataProviderIds.filter((providerId) => !jsonProviders[providerId]);
 	if (missingProviderIds.length > 0) {
 		throw new Error(`Cannot hydrate missing providers: ${missingProviderIds.join(", ")}`);
@@ -3455,7 +3542,7 @@ async function generateModels() {
 
 	// Only the ignored internal data is grouped by API for type derivation. Public JSON catalog output stays flat.
 	const generatedDataProviders: Record<string, Record<string, Record<string, Model<Api>>>> = {};
-	const modelDataStructure: ModelDataStructure = {};
+	const modelDataStructure: ModelDataStructure = { ...existingModelDataStructure };
 	for (const providerId of generatedDataProviderIds) {
 		const models = jsonProviders[providerId];
 		generatedDataProviders[providerId] = {};
@@ -3471,7 +3558,7 @@ async function generateModels() {
 		}
 	}
 
-	const generatedAt = new Date().toISOString();
+	const generatedAt = generatorOptions.generatedAt ?? new Date().toISOString();
 
 	if (!generatorOptions.jsonOnly) {
 		// Stage and validate all provider values before replacing the current generated data.
@@ -3484,9 +3571,12 @@ async function generateModels() {
 		try {
 			mkdirSync(stagedDataDir, { recursive: true });
 			const fileContents: Record<string, string> = {};
-			for (const providerId of generatedDataProviderIds) {
+			const stagedProviderIds = existingModelDataStructure ? Object.keys(existingModelDataStructure).sort() : generatedDataProviderIds;
+			for (const providerId of stagedProviderIds) {
 				const filename = `${providerId}.json`;
-				const content = serializeJson(generatedDataProviders[providerId]);
+				const content = generatedDataProviders[providerId]
+					? serializeJson(generatedDataProviders[providerId])
+					: readFileSync(join(dataDir, filename), "utf8");
 				fileContents[filename] = content;
 				writeFileSync(join(stagedDataDir, filename), content);
 			}
@@ -3496,7 +3586,7 @@ async function generateModels() {
 			);
 			validateModelDataDirectory(modelDataStructure, stagedDataDir);
 
-			if (!generatorOptions.dataOnly) {
+			if (!generatorOptions.dataOnly && !generatorOptions.providerIds) {
 				const previousShardContents = new Map(
 					readdirSync(providersDir)
 						.filter((entry) => entry.endsWith(".models.ts"))

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { fauxAssistantMessage, fauxText, fauxThinking } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import ttsrExtension from "../../src/core/extensions/builtin/ttsr/index.ts";
@@ -24,6 +24,10 @@ interface PersistedEntry {
 
 function ctrlToken(name: string): string {
 	return ["<", "|", name, "|", ">"].join("");
+}
+
+function numericParagraph(first: number, second: number): string {
+	return `This status report records ${first} completed checks and ${second} pending checks while the implementation team preserves every scoped result, documents each concrete action, and keeps the recovery path precise for the next review.`;
 }
 
 function readSessionLines(harness: Harness): string[] {
@@ -129,9 +133,26 @@ describe("fabricated unavailable-tool call remediation", () => {
 
 describe("collapse remediation persistence", () => {
 	let harness: Harness;
+	let abortSources: Array<string | undefined>;
+	let streamEventTypes: string[];
 
 	beforeEach(async () => {
-		harness = await createHarness({ extensionFactories: [ttsrExtension], persistSession: true });
+		abortSources = [];
+		streamEventTypes = [];
+		harness = await createHarness({
+			extensionFactories: [
+				ttsrExtension,
+				(pi) => {
+					pi.on("agent_end", (event) => {
+						abortSources.push(event.abortSource);
+					});
+					pi.on("message_update", (event) => {
+						streamEventTypes.push(event.assistantMessageEvent.type);
+					});
+				},
+			],
+			persistSession: true,
+		});
 	});
 
 	afterEach(() => {
@@ -172,6 +193,79 @@ describe("collapse remediation persistence", () => {
 		}
 
 		expect(getMessageText(assistantEntries[1]?.message)).toContain("recovered answer");
+	});
+
+	it("interrupts a numeric-only paragraph loop, truncates it, and completes one recovery turn", async () => {
+		const paragraphs = [numericParagraph(101, 201), numericParagraph(102, 202), numericParagraph(103, 203)];
+		const loopText = `${paragraphs.join("\n\n")}\n\n`;
+		harness.setResponses([
+			fauxAssistantMessage([fauxText(loopText)]),
+			fauxAssistantMessage([fauxText("recovered after numeric paragraph loop")]),
+		]);
+
+		await harness.session.prompt("do work");
+
+		const entries = readSessionEntries(harness);
+		const assistants = entries.filter((entry) => entry.type === "message" && entry.message?.role === "assistant");
+		const aborted = assistants[0]?.message;
+		expect(abortSources).toEqual(["system", undefined]);
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+		expect(aborted?.stopReason).toBe("aborted");
+		expect(streamText(aborted, "text")).toContain(paragraphs[0]);
+		expect(streamText(aborted, "text")).not.toContain(paragraphs[1]);
+		expect(ttsrNudges(harness)).toHaveLength(1);
+		expect(streamText(assistants[1]?.message, "text")).toContain("recovered after numeric paragraph loop");
+	});
+
+	it("keeps numeric paragraphs when tool progress separates them", async () => {
+		const paragraphs = [numericParagraph(101, 201), numericParagraph(102, 202), numericParagraph(103, 203)];
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxText(`${paragraphs[0]}\n\n`),
+					fauxToolCall("bash", { command: "printf first-progress" }, { id: "first-progress" }),
+					fauxText(`${paragraphs[1]}\n\n`),
+					fauxToolCall("bash", { command: "printf second-progress" }, { id: "second-progress" }),
+					fauxText(`${paragraphs[2]}\n\n`),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage([fauxText("final after tool progress")]),
+		]);
+
+		await harness.session.prompt("do work");
+
+		const entries = readSessionEntries(harness);
+		const assistants = entries.filter((entry) => entry.type === "message" && entry.message?.role === "assistant");
+		expect(abortSources).toEqual([undefined]);
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+		expect(ttsrNudges(harness)).toEqual([]);
+		expect(streamText(assistants[0]?.message, "text")).toContain(paragraphs[2]);
+		expect(streamText(assistants[1]?.message, "text")).toContain("final after tool progress");
+		const firstToolEnd = streamEventTypes.indexOf("toolcall_end");
+		const secondTextStart = streamEventTypes.indexOf("text_start", firstToolEnd + 1);
+		const secondToolEnd = streamEventTypes.indexOf("toolcall_end", secondTextStart + 1);
+		const thirdTextStart = streamEventTypes.indexOf("text_start", secondToolEnd + 1);
+		expect(firstToolEnd).toBeGreaterThan(streamEventTypes.indexOf("text_end"));
+		expect(secondTextStart).toBeGreaterThan(firstToolEnd);
+		expect(secondToolEnd).toBeGreaterThan(secondTextStart);
+		expect(thirdTextStart).toBeGreaterThan(secondToolEnd);
+	});
+
+	it("keeps three single-digit code and fenced-code paragraphs without a remediation", async () => {
+		const codeParagraph = (value: number) =>
+			`const retryLimit = ${value}; const detail = "This code paragraph stays long enough to be eligible while its literal is meaningful program data.";`;
+		const unfenced = [3, 4, 5].map(codeParagraph).join("\n\n");
+		const fenced = `\`\`\`ts\n${[3, 4, 5].map(codeParagraph).join("\n\n")}\n\`\`\``;
+		harness.setResponses([fauxAssistantMessage([fauxText(`${unfenced}\n\n${fenced}\n\n`)])]);
+
+		await harness.session.prompt("do work");
+
+		expect(abortSources).toEqual([undefined]);
+		expect(harness.faux.getCallLog()).toHaveLength(1);
+		expect(ttsrNudges(harness)).toEqual([]);
+		expect(getMessageText(harness.session.messages.at(-1))).toContain(codeParagraph(5));
+		expect(streamEventTypes.filter((type) => type === "text_delta")).not.toHaveLength(0);
 	});
 });
 

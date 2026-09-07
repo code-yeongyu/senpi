@@ -1,6 +1,7 @@
 import { type ChildProcessByStdio, spawn, spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { createServer } from "node:net";
-import type { Readable } from "node:stream";
+import { PassThrough, type Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 
@@ -17,6 +18,42 @@ interface RunResult {
 	readonly stdout: string;
 	readonly stderr: string;
 	readonly states: readonly InspectorState[];
+}
+
+class FakeInspectorSocket extends EventTarget {
+	static readonly CONNECTING = 0;
+	static readonly OPEN = 1;
+	static readonly CLOSED = 3;
+	static instances: FakeInspectorSocket[] = [];
+
+	readyState = FakeInspectorSocket.CONNECTING;
+	closeCalls = 0;
+	readonly sent: string[] = [];
+	readonly url: string;
+
+	constructor(url: string) {
+		super();
+		this.url = url;
+		FakeInspectorSocket.instances.push(this);
+	}
+
+	send(message: string): void {
+		this.sent.push(message);
+	}
+
+	close(): void {
+		this.closeCalls += 1;
+		this.readyState = FakeInspectorSocket.CLOSED;
+	}
+
+	open(): void {
+		this.readyState = FakeInspectorSocket.OPEN;
+		this.dispatchEvent(new Event("open"));
+	}
+
+	receive(message: object): void {
+		this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(message) }));
+	}
 }
 
 function findFreePort(): Promise<number> {
@@ -105,6 +142,7 @@ function attachDebugger(url: string, sockets: WebSocket[], states: InspectorStat
 		}
 		if (message.id === 3) {
 			state.resumed = true;
+			socket.close();
 		}
 	});
 	socket.addEventListener("error", () => {
@@ -126,7 +164,6 @@ function driveRun(child: ChildProcessByStdio<null, Readable, Readable>): Promise
 		timer.unref();
 		child.stdout.on("data", (chunk: Buffer) => {
 			stdout += chunk.toString();
-			if (stdout.includes("Usage:")) for (const socket of sockets) socket.close();
 		});
 		child.stderr.on("data", (chunk: Buffer) => {
 			stderr += chunk.toString();
@@ -135,11 +172,6 @@ function driveRun(child: ChildProcessByStdio<null, Readable, Readable>): Promise
 				if (url === undefined || attached.has(url)) continue;
 				attached.add(url);
 				attachDebugger(url, sockets, states);
-			}
-			if (stderr.includes("Waiting for the debugger to disconnect")) {
-				for (const socket of sockets) {
-					if (socket.readyState === WebSocket.OPEN) socket.close();
-				}
 			}
 		});
 		child.once("error", (error) => {
@@ -175,6 +207,58 @@ async function runInspectorHandoff(cliPath: string): Promise<{ result: RunResult
 	}
 	throw new Error("Inspector port collided before launch on every attempt");
 }
+
+test("closes only the debugger socket acknowledged by its own resume", async () => {
+	const originalWebSocket = globalThis.WebSocket;
+	const stdout = new PassThrough();
+	const stderr = new PassThrough();
+	const child = Object.assign(new EventEmitter(), {
+		exitCode: null,
+		stderr,
+		stdout,
+	}) as unknown as ChildProcessByStdio<null, Readable, Readable>;
+	FakeInspectorSocket.instances = [];
+	globalThis.WebSocket = FakeInspectorSocket as unknown as typeof WebSocket;
+	const run = driveRun(child);
+
+	try {
+		stderr.write(`Debugger listening on ws://127.0.0.1:60457/first
+`);
+		const first = FakeInspectorSocket.instances[0];
+		expect(first).toBeDefined();
+		first?.open();
+		first?.receive({ id: 1 });
+		first?.receive({ method: "Debugger.paused" });
+		first?.receive({ id: 3 });
+		expect(first?.closeCalls).toBe(1);
+
+		stderr.write(`Waiting for the debugger to disconnect...
+`);
+		stderr.write(`Debugger listening on ws://127.0.0.1:60457/second
+`);
+		const second = FakeInspectorSocket.instances[1];
+		expect(second).toBeDefined();
+		second?.open();
+		second?.receive({ id: 1 });
+		second?.receive({ method: "Debugger.paused" });
+		stderr.write(`Debugger attached.
+`);
+		expect(second?.closeCalls).toBe(0);
+		second?.receive({ id: 3 });
+		expect(second?.closeCalls).toBe(1);
+	} finally {
+		child.emit("close", 0);
+		globalThis.WebSocket = originalWebSocket;
+	}
+
+	const result = await run;
+	expect(result.states).toHaveLength(2);
+	for (const state of result.states) {
+		expect(state.enabled).toBe(true);
+		expect(state.paused).toBe(true);
+		expect(state.resumed).toBe(true);
+	}
+});
 
 test("classifies only pre-endpoint address conflicts as retryable", () => {
 	const collision = { code: 1, stdout: "", stderr: "EADDRINUSE", states: [] };

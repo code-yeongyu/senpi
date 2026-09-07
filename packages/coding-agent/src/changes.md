@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-06 - Print the settled recovery result
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts` waits for settled session work before selecting the final assistant result and exit status.
+
+### Why
+
+- Awaited hooks in a recovery turn could leave the preceding aborted response visible while the next turn was still starting. Reading it early printed a stale error or response.
+
+### Why an extension could not handle it
+
+- Result selection, process exit status, and runtime disposal belong to the print-mode host.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/print-mode.ts` final output selection and settlement ordering.
+
 ## 2026-09-06 - Preserve inline skill anchors in composed prompts
 
 ### What changed

@@ -1,4 +1,22 @@
 
+## 2026-09-06 - Preserve generated Xiaomi disabled-thinking capability
+
+### What changed
+
+- `packages/ai/src/providers/all.ts` no longer overwrites the generated Xiaomi MiMo `supportsDisabledThinking` compatibility value when normalizing `mimo-v2.5-pro`.
+
+### Why
+
+- Xiaomi's documented OpenAI-compatible API accepts `thinking.type: "disabled"`; the stale runtime override made `/reasoning off` omit the disable request after catalog generation had correctly enabled it.
+
+### Why an extension could not handle it
+
+- Builtin model normalization and outbound provider metadata resolve before extension command handling.
+
+### Expected merge conflict zones
+
+- LOW: the Xiaomi `normalizeBuiltinModel` compatibility merge in `packages/ai/src/providers/all.ts`.
+
 ## 2026-09-05 - Project Astra configuration updates at the Responses wire
 
 ### What changed

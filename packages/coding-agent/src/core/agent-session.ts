@@ -1028,6 +1028,8 @@ export class AgentSession {
 	private _isAgentRunActive = false;
 	private _toolExecutionDepth = 0;
 	private _promptStartPending = false;
+	/** User-abort generation at the start of an idle trigger turn's awaited admission hooks. */
+	private _triggerTurnAdmissionAbortGeneration: number | undefined;
 	private _nextInputId = 0;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
@@ -3863,29 +3865,7 @@ export class AgentSession {
 				this._baseSystemPrompt,
 				this._baseSystemPromptOptions,
 			);
-			// Add all custom messages from extensions
-			if (result?.messages) {
-				for (const msg of result.messages) {
-					messages.push({
-						role: "custom",
-						customType: msg.customType,
-						// Untyped extensions can pass null/missing content; normalize at ingestion.
-						content: msg.content ?? [],
-						display: msg.display,
-						details: msg.details,
-						timestamp: Date.now(),
-					});
-				}
-			}
-			// Apply extension-modified system prompt, or reset to base
-			if (result?.systemPrompt !== undefined) {
-				this._systemPromptOverride = result.systemPrompt;
-				this.agent.state.systemPrompt = result.systemPrompt;
-			} else {
-				// Ensure we're using the base prompt (in case previous turn had modifications)
-				this._systemPromptOverride = undefined;
-				this.agent.state.systemPrompt = this._baseSystemPrompt;
-			}
+			this._applyBeforeAgentStartResult(messages, result);
 
 			// The preflight above only sees persisted session context. These prompt,
 			// next-turn, and before_agent_start additions are also provider-visible,
@@ -3930,6 +3910,34 @@ export class AgentSession {
 		}
 		if (titlePrompt !== undefined) {
 			this._startSessionTitleGeneration(titlePrompt);
+		}
+	}
+
+	/** Apply before_agent_start additions and reset any prior turn's system-prompt override. */
+	private _applyBeforeAgentStartResult(
+		messages: AgentMessage[],
+		result: Awaited<ReturnType<ExtensionRunner["emitBeforeAgentStart"]>>,
+	): void {
+		if (result?.messages) {
+			for (const msg of result.messages) {
+				messages.push({
+					role: "custom",
+					customType: msg.customType,
+					// Untyped extensions can pass null/missing content; normalize at ingestion.
+					content: msg.content ?? [],
+					display: msg.display,
+					details: msg.details,
+					timestamp: Date.now(),
+				});
+			}
+		}
+		if (result?.systemPrompt !== undefined) {
+			this._systemPromptOverride = result.systemPrompt;
+			this.agent.state.systemPrompt = result.systemPrompt;
+		} else {
+			// Ensure we're using the base prompt (in case a previous turn had modifications).
+			this._systemPromptOverride = undefined;
+			this.agent.state.systemPrompt = this._baseSystemPrompt;
 		}
 	}
 
@@ -4340,22 +4348,45 @@ export class AgentSession {
 					this.agent.steer(appMessage);
 				}
 			} else if (options?.triggerTurn) {
-				try {
-					await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
-					await this._enforceFinalProviderAdmission([appMessage]);
-				} catch (error) {
-					// Mirror sendUserMessage's retention contract: an admission
-					// rejection must retain the message for later delivery instead
-					// of silently dropping it (the fire-and-forget extension action
-					// swallows this rejection).
+				finishSessionWork ??= this._sessionWorkBarrier.begin();
+				const messages: AgentMessage[] = [appMessage];
+				const queueTriggerForLater = (): void => {
 					if (options.deliverAs === "followUp") {
 						this.agent.followUp(appMessage);
 					} else {
 						this.agent.steer(appMessage);
 					}
+				};
+				this._triggerTurnAdmissionAbortGeneration = userAbortGeneration;
+				try {
+					await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
+					const result = await this._extensionRunner.emitBeforeAgentStart(
+						contentText(appMessage.content, ""),
+						undefined,
+						this._baseSystemPrompt,
+						this._baseSystemPromptOptions,
+					);
+					if (userAbortGeneration !== this._userAbortGeneration) {
+						queueTriggerForLater();
+						return;
+					}
+					this._applyBeforeAgentStartResult(messages, result);
+					await this._enforceFinalProviderAdmission(messages);
+					if (userAbortGeneration !== this._userAbortGeneration) {
+						queueTriggerForLater();
+						return;
+					}
+				} catch (error) {
+					// Mirror sendUserMessage's retention contract: an admission
+					// rejection must retain the message for later delivery instead
+					// of silently dropping it (the fire-and-forget extension action
+					// swallows this rejection).
+					queueTriggerForLater();
 					throw error;
+				} finally {
+					this._triggerTurnAdmissionAbortGeneration = undefined;
 				}
-				await this._promptAgent(appMessage, deferredTurnClaim);
+				await this._promptAgent(messages, deferredTurnClaim);
 			} else if (this.isStreaming) {
 				this._pendingCustomMessages.push(appMessage);
 			} else {
@@ -4561,13 +4592,16 @@ export class AgentSession {
 		// Streaming aborts are carried by agent_end provenance; only gaps need session_abort.
 		const wasMidRun = this.isStreaming && this._retryAbortController === undefined;
 		const hadRetryBackoff = this._retryAbortController !== undefined;
-		const hadCompactionOrPending = !this.isStreaming && (this.isCompacting || this.pendingMessageCount > 0);
+		const hasPendingTriggerTurnAdmission = this._triggerTurnAdmissionAbortGeneration === this._userAbortGeneration;
+		const hadCompactionOrPending =
+			!this.isStreaming && (this.isCompacting || this.pendingMessageCount > 0 || hasPendingTriggerTurnAdmission);
 		const hadClearedQueues = this._hadClearedQueuedMessages;
 		const joinedAgentEndBoundary = this._abortProvenance.hasOpenAgentEndBoundary;
 		this._hadClearedQueuedMessages = false;
 		const shouldEmitAbort =
 			!joinedAgentEndBoundary && !wasMidRun && (hadRetryBackoff || hadCompactionOrPending || hadClearedQueues);
 		this.abortCompaction();
+		if (hasPendingTriggerTurnAdmission) this._recordUserAbort();
 		await this._abortActiveAgentAndRetry("user");
 		if (!shouldEmitAbort) return;
 		try {

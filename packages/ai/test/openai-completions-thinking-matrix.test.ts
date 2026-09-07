@@ -5,6 +5,7 @@ import type { BuiltinProvider } from "../src/providers/all.ts";
 import type { Context, Model, ModelThinkingLevel, SimpleStreamOptions } from "../src/types.ts";
 
 type CapturedPayload = {
+	enable_thinking?: boolean;
 	reasoning?: { effort?: string };
 	reasoning_effort?: string;
 	thinking?: { type?: string } | string;
@@ -13,6 +14,27 @@ type CapturedPayload = {
 const context: Context = {
 	messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
 };
+
+const DIRECT_QWEN38_MODEL_CASES = [
+	{ provider: "alibaba-token-plan", id: "qwen3.8-flash" },
+	{ provider: "alibaba-token-plan", id: "qwen3.8-max" },
+	{ provider: "alibaba-token-plan", id: "qwen3.8-max-preview" },
+	{ provider: "qwen-token-plan", id: "qwen3.8-flash" },
+	{ provider: "qwen-token-plan", id: "qwen3.8-max" },
+	{ provider: "qwen-token-plan-cn", id: "qwen3.8-flash" },
+	{ provider: "qwen-token-plan-cn", id: "qwen3.8-max" },
+	{ provider: "qwen-token-plan-individual", id: "qwen3.8-max" },
+] as const;
+
+const QWEN38_SELECTOR_CASES = [
+	{ reasoning: "off", expected: { enable_thinking: false } },
+	{ reasoning: "minimal", expected: { enable_thinking: true, reasoning_effort: "low" } },
+	{ reasoning: "low", expected: { enable_thinking: true, reasoning_effort: "low" } },
+	{ reasoning: "medium", expected: { enable_thinking: true, reasoning_effort: "medium" } },
+	{ reasoning: "high", expected: { enable_thinking: true, reasoning_effort: "xhigh" } },
+	{ reasoning: "xhigh", expected: { enable_thinking: true, reasoning_effort: "xhigh" } },
+	{ reasoning: "max", expected: { enable_thinking: true, reasoning_effort: "xhigh" } },
+] as const;
 
 async function capturePayload(
 	model: Model<"openai-completions">,
@@ -101,16 +123,16 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 
 	it.each([
 		{
-			name: "DeepSeek's two-tier ladder on Alibaba Token Plan",
+			name: "DeepSeek's enable switch on Alibaba Token Plan",
 			model: getOpenAICompletionsModel("alibaba-token-plan", "deepseek-v3.2"),
 			reasoning: "minimal" as const,
-			expected: { thinking: { type: "enabled" }, reasoning_effort: "high" },
+			expected: { thinking: { type: "enabled" } },
 		},
 		{
-			name: "DeepSeek's max tier on Alibaba Token Plan",
+			name: "DeepSeek's enable switch on Alibaba Token Plan",
 			model: getOpenAICompletionsModel("alibaba-token-plan", "deepseek-v3.2"),
-			reasoning: "xhigh" as const,
-			expected: { thinking: { type: "enabled" }, reasoning_effort: "max" },
+			reasoning: "high" as const,
+			expected: { thinking: { type: "enabled" } },
 		},
 		{
 			name: "OpenRouter DeepSeek's high-only ladder",
@@ -195,6 +217,66 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 			expect(payload).not.toHaveProperty(field);
 		}
 	});
+
+	it.each([
+		{
+			name: "Alibaba DeepSeek",
+			model: getOpenAICompletionsModel("alibaba-token-plan", "deepseek-v3.2"),
+			on: { thinking: { type: "enabled" } },
+			off: { thinking: { type: "disabled" } },
+		},
+		{
+			name: "Qwen Token Plan",
+			model: getOpenAICompletionsModel("qwen-token-plan", "qwen3.7-max"),
+			on: { enable_thinking: true },
+			off: { enable_thinking: false },
+		},
+		{
+			name: "Moonshot Kimi",
+			model: getOpenAICompletionsModel("moonshotai", "kimi-k2.6"),
+			on: { thinking: { type: "enabled" } },
+			off: { thinking: { type: "disabled" } },
+		},
+		{
+			name: "Xiaomi MiMo",
+			model: getOpenAICompletionsModel("xiaomi", "mimo-v2.5-pro"),
+			on: { thinking: { type: "enabled" } },
+			off: { thinking: { type: "disabled" } },
+		},
+		{
+			name: "Z.AI GLM",
+			model: getOpenAICompletionsModel("zai", "glm-5-turbo"),
+			on: { thinking: { type: "enabled" } },
+			off: { thinking: { type: "disabled" } },
+		},
+	])("serializes every on/off effort request identically for $name", async ({ model, on, off }) => {
+		const enabledPayloads = await Promise.all(
+			(["minimal", "low", "medium", "high"] as const).map((level) => captureDirectPayload(model, level)),
+		);
+
+		for (const payload of enabledPayloads) {
+			expect(payload).toMatchObject(on);
+			expect(payload.reasoning_effort).toBeUndefined();
+		}
+		expect(await capturePayload(model)).toMatchObject(off);
+	});
+
+	it.each(DIRECT_QWEN38_MODEL_CASES)(
+		"serializes Qwen3.8's documented selector ladder for $provider/$id",
+		async ({ provider, id }) => {
+			const model = getOpenAICompletionsModel(provider, id);
+
+			for (const { reasoning, expected } of QWEN38_SELECTOR_CASES) {
+				const payload = await capturePayload(model, reasoning === "off" ? undefined : reasoning);
+
+				expect(payload).toMatchObject(expected);
+				expect(payload).not.toHaveProperty("thinking_budget");
+				if (reasoning === "off") {
+					expect(payload).not.toHaveProperty("reasoning_effort");
+				}
+			}
+		},
+	);
 
 	it("preserves map-less GPT-5.6 Sol's existing effort behavior", async () => {
 		const model = {

@@ -16,6 +16,8 @@
 
 - LOW: the body of `normalizeCwd` and the `../utils/paths.ts` import line.
 
+## 2026-09-07 - Dedupe skills from duplicate copies of one package
+
 ### What changed
 
 - `src/core/package-identity.ts`: `findNearestPackageIdentity` and `dedupePathsByPackageIdentity` moved out of the resource loader as pure functions (nearest `package.json` name + relative resource path).
@@ -34,7 +36,23 @@
 - LOW: `resource-loader.ts` around skill path assembly and the former private package-identity helpers.
 
 
-## 2026-09-07 - Dedupe skills from duplicate copies of one package
+## 2026-09-06 - Track awaited custom-trigger admission through settlement
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` registers idle custom-trigger admission and execution with the session work barrier, including awaited `before_agent_start` handlers.
+
+### Why
+
+- A recovery turn scheduled from `agent_settled` can still be in its hook when the preceding prompt returns. Hosts must not treat that pending turn as completed work.
+
+### Why an extension could not handle it
+
+- The host owns the session work barrier and the lifetime of custom-trigger admission.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts` idle `sendCustomMessage` admission and its existing finally cleanup.
 
 ## 2026-09-07 - Overflow recovery outlives the auto-compaction flag; session-scoped toggle (#1422)
 
@@ -96,6 +114,24 @@
 - Agent-session thinking-level transitions, session-manager context assembly, and compaction lifecycle.
 
 # changes
+
+## 2026-09-06 - Run before_agent_start for idle custom trigger turns (#1329)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` routes an idle `sendCustomMessage(..., { triggerTurn: true })` through `before_agent_start` after core pre-provider compaction and before final provider admission. Hook custom messages and system-prompt overrides use the same application path as ordinary prompts. A user abort while an awaited hook is held prevents a ghost provider turn and retains the trigger in its selected queue.
+
+### Why
+
+- Extension-triggered turns bypassed `before_agent_start`, so hook-provided context and system-prompt changes were absent from their actual provider request. Awaiting the newly-added hook also created an abort window where a released hook could start a turn after the user cancelled it.
+
+### Why an extension could not handle it
+
+- The idle trigger-turn branch chooses provider admission, cancellation ownership, and invokes the agent loop inside `AgentSession`; extensions only receive the lifecycle hook after the host emits it.
+
+### Expected merge conflict zones
+
+- MEDIUM: `sendCustomMessage` trigger-turn admission, cancellation generation, and the shared `before_agent_start` result application in `packages/coding-agent/src/core/agent-session.ts`.
 
 ## 2026-09-06 - Preserve fallback decision logs across atomic admission
 
@@ -4986,6 +5022,7 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 
 - LOW: `_handleRetryableError` fallback admission in
   packages/coding-agent/src/core/agent-session.ts.
+
 ## 2026-09-06 - Make fallback activation atomic for unusable candidates
 
 ### What changed
@@ -5011,5 +5048,3 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 - LOW: fallback switch admission in
   packages/coding-agent/src/core/agent-session.ts and candidate reservation in
   packages/coding-agent/src/core/retry-fallback/controller.ts.
-
-

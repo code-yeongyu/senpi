@@ -1,3 +1,21 @@
+## 2026-09-07 - Correct direct Qwen3.8 Token Plan effort controls (#891)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` applies the existing documented Qwen3.8 graded map to Flash, Max, and Max Preview on Alibaba Token Plan and to every present Qwen Token Plan Qwen3.8 row. Regenerated `alibaba-token-plan.json`, `qwen-token-plan.json`, `qwen-token-plan-cn.json`, and their manifest now change only the five previously incorrect maps.
+
+### Why
+
+- Alibaba's Qwen3.8 OpenAI-compatible API accepts `low`, `medium`, and `xhigh`; `minimal` aliases to low, `high`/`max` alias to xhigh, and off must send only `enable_thinking: false`. The previous catalog selected toggle-only or high/max metadata for five direct rows, causing the existing serializer to clamp requests to the wrong wire value.
+
+### Why an extension could not handle it
+
+- Built-in model capabilities are generated and loaded before extension hooks run, while the existing OpenAI Completions serializer consumes the generated thinking map to construct the request.
+
+### Expected merge conflict zones
+
+- LOW: Qwen/Alibaba thinking-map selection in `packages/ai/scripts/generate-models.ts` and the three regenerated provider data files.
+
 ## 2026-09-07 - One context window for the whole GPT-6 Astra series
 
 ### What changed
@@ -75,6 +93,27 @@
 - Revisit only after a failing-first integration test proves (1) a detached tool returns after the model response preserving the original `call_id`, and (2) steering sent during an active WebSocket response is observed in that same turn, both with remote green evidence.
 
 # changes.md — ai
+
+## 2026-09-06 - Scope generated model updates to selected providers
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` accepts `--providers <comma-separated IDs>` for strict, provider-scoped data regeneration. It preserves every unselected data file byte-for-byte, rebuilds the manifest over the mixed staged set, validates the complete catalog atomically, and leaves generated TypeScript shards untouched. `--generated-at` pins a reproducible manifest timestamp for scoped runs.
+- `packages/ai/scripts/generate-models.ts` emits explicit reasoning maps for the affected built-in models instead of advertising effort levels their adapters do not distinguish. Documented graded controls remain graded, and custom-provider fallback behavior is unchanged.
+- Provider selectors must be own catalog entries; inherited names such as `__proto__` are rejected before generated artifacts are replaced.
+
+### Why
+
+- A capability-only catalog correction must not pick up unrelated live-provider price, context, or inventory churn from full regeneration.
+- Toggle-only controls must not appear as a configurable effort ladder. Where current upstream documentation is incomplete, the maps describe the control surface implemented by the existing Senpi adapter, not unverified upstream capabilities.
+
+### Why an extension could not handle it
+
+- Model-data generation and manifest integrity run at build time before extensions load.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` option parsing and staged data writer.
 
 ## 2026-09-05 - Normalize GPT-6 Astra reasoning maps across OpenAI-family catalogs
 

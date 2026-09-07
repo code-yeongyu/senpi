@@ -10,6 +10,9 @@
 
 ### Fixed
 
+- Correct built-in reasoning capability maps and preserve Xiaomi's disabled-thinking request control.
+- Preserve distinct `low`, `medium`, and `xhigh` efforts for supported Qwen3.8 models on Alibaba and Qwen Token Plan providers.
+
 ### Removed
 
 ## [2026.9.7] - 2026-09-07

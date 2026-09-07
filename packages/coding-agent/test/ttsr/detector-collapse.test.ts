@@ -41,8 +41,13 @@ interface FeedOutcome {
 	readonly latchedStable: boolean;
 }
 
-const FEED_CONTEXT: DetectorContext = { source: "thinking", streamKey: "collapse-test", generation: 1 };
-const TOOL_FEED_CONTEXT: DetectorContext = { source: "tool", streamKey: "tool:0", generation: 1 };
+const FEED_CONTEXT: DetectorContext = {
+	source: "thinking",
+	streamKey: "collapse-test",
+	generation: 1,
+	toolProgressEpoch: 0,
+};
+const TOOL_FEED_CONTEXT: DetectorContext = { source: "tool", streamKey: "tool:0", generation: 1, toolProgressEpoch: 0 };
 
 function feedChunks(chunks: readonly string[]): FeedOutcome {
 	const state = createCollapseState();

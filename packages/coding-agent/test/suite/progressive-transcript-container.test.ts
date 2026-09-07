@@ -55,6 +55,11 @@ function countingLines(index: number): readonly [string, string] {
 	return [`component-${index}-w${WIDTH}`, `component-${index}-body`];
 }
 
+function firstRenderedComponentIndex(lines: readonly string[]): number | undefined {
+	const first = lines.find((line) => /^component-\d+-w\d+$/u.test(line));
+	return first === undefined ? undefined : Number(/^component-(\d+)-w\d+$/u.exec(first)?.[1]);
+}
+
 function createProgressive(rerender: () => void): ProgressiveTranscriptContainer {
 	return new ProgressiveTranscriptContainer({
 		tailBudget: TAIL_BUDGET,
@@ -100,6 +105,45 @@ describe("ProgressiveTranscriptContainer", () => {
 		const expectedTail = components.slice(LARGE_TRANSCRIPT - TAIL_BUDGET);
 		expect(rendered).toStrictEqual([...expectedTail]);
 		expect(lines).toStrictEqual(expectedTail.flatMap((component) => countingLines(component.index)));
+	});
+
+	// Issue #1076: warming cached head components must not publish a partial prefix.
+	it("keeps the initial tail boundary through unrelated renders and a resize while hydration is incomplete", async () => {
+		// Given: enough deferred history that one warm chunk cannot finish hydration
+		const container = createProgressive(() => {});
+		populate(container, LARGE_TRANSCRIPT);
+
+		// When: the first tail frame is followed by exactly one warming macrotask
+		const firstFrame = container.render(120);
+		const firstVisible = firstRenderedComponentIndex(firstFrame);
+		expect(firstVisible).toBe(LARGE_TRANSCRIPT - TAIL_BUDGET);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(container.isFullyHydrated).toBe(false);
+
+		// And: a live child arrives while an unrelated render and resize occur.
+		const live = new CountingComponent(LARGE_TRANSCRIPT);
+		container.addChild(live);
+		const resizedFrame = container.render(80);
+
+		// Then: only the original tail and the live append are visible; warmed head
+		// rows do not leak into the incomplete frame.
+		expect(firstRenderedComponentIndex(resizedFrame)).toBe(firstVisible);
+		expect(resizedFrame).toContain(`component-${firstVisible}-w80`);
+		expect(resizedFrame.slice(-2)).toStrictEqual([
+			`component-${LARGE_TRANSCRIPT}-w80`,
+			`component-${LARGE_TRANSCRIPT}-body`,
+		]);
+		expect(live.renderCount).toBe(1);
+
+		// And: the one atomic completion reveal still publishes the full history at
+		// the resized width, including the appended live tail.
+		await awaitHydration(container, LARGE_TRANSCRIPT / WARM_CHUNK + 8);
+		const complete = container.render(80);
+		expect(firstRenderedComponentIndex(complete)).toBe(0);
+		expect(complete.slice(-2)).toStrictEqual([
+			`component-${LARGE_TRANSCRIPT}-w80`,
+			`component-${LARGE_TRANSCRIPT}-body`,
+		]);
 	});
 
 	it("eventually renders the full history exactly like an ordinary Container", async () => {

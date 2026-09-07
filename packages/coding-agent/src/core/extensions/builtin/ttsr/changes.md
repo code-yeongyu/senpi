@@ -1,5 +1,67 @@
 # TTSR Fork Tracker
 
+## 2026-09-06 - Preserve nested fenced examples during numeric detection
+
+### What changed
+
+- `detectors/collapse-paragraphs.ts` retains the opening fence marker and length. Shorter nested fences and fence lines with trailing non-whitespace do not end the protected code region.
+
+### Why
+
+- Three numeric prose examples inside a four-backtick Markdown example were incorrectly treated as a model loop after an inner triple-backtick line.
+
+### Why an extension could not handle it
+
+- This remains within the existing TTSR extension's streaming scanner and remediation boundary.
+
+### Expected merge conflict zones
+
+- `detectors/collapse-paragraphs.ts` code-fence state and line safety checks.
+- Regression: nested shorter fences, invalid closing lines, and numeric repetition after the actual closing fence.
+
+## 2026-09-06 - Single-digit numeric paragraph repetition safety
+
+### What changed
+
+- Normalized paragraph evidence now includes standalone single-digit counters, covering the original no-progress `step 3`/`step 4`/`step 5` loop.
+- Numbered `1.`/`1)` lists, identifier digits, structured `step N of ...` plans, code punctuation, and fenced code remain ineligible. Fence state persists across blank paragraph boundaries until its matching closing fence.
+
+### Why
+
+The multi-digit floor missed the original reported loop. A lexical safety boundary is more precise than a digit-width boundary: it catches an isolated prose counter while retaining meaningful numbered plans and code/math data.
+
+### Why an extension could not handle it
+
+Not applicable: stream evidence and its code-fence context belong to the extension-local paragraph scanner; no provider or `AgentSession` change is required.
+
+### Expected merge conflict zones
+
+- LOW: `detectors/collapse-paragraphs.ts` digit-run eligibility and fence state.
+- Coverage: direct original-loop RED/GREEN plus nonvacuous tool-progress, code, fenced-code, exact-repeat, and user-cancellation regressions; real CLI evidence saves raw output and cleanup receipts.
+
+## 2026-09-06 - Conservative numeric paragraph repetition
+
+### What changed
+
+- `detectors/collapse-paragraphs.ts` retains its byte-exact hashes and adds a second hash only for conservative prose numeric drift: one sentinel replaces a bounded multi-digit ASCII run only when it is whitespace-bounded.
+- Normalized candidates are rejected for code/math syntax, numbered-list lines, identifiers, more than two numeric runs per paragraph, and any paragraph whose text spans a tool-progress epoch. Exact candidates retain the existing behavior across tool progress.
+- `watch.ts`, `types.ts`, and `index.ts` track a per-generation tool-progress epoch. Tool call start, delta, and end events advance it before text detector dispatch.
+
+### Why
+
+A model can loop through long, otherwise identical prose while changing only multi-digit status values. That loop can consume an unbounded stream, but truncating code, dates, lists, identifiers, or tool-backed progress would discard meaningful output. The deliberately narrow grammar favors false negatives over destructive false positives.
+
+### Why an extension could not handle it
+
+Not applicable: the TTSR extension already owns streamed paragraph evidence, system-abort remediation, truncation, recovery nudges, and the public `message_update` lifecycle. No provider or `AgentSession` changes are required.
+
+### Expected merge conflict zones
+
+- LOW: `detectors/collapse-paragraphs.ts` hash state and candidate selection; preserve the exact hash path and existing remediation offsets.
+- LOW: `watch.ts`, `types.ts`, and `index.ts` stream event wiring; advance progress before dispatching text and keep paragraph collapse disabled for tool streams.
+- Coverage: detector tests pin exact repeats, per-character/random chunking, numeric drift, tool progress, code/math/identifier and punctuation negatives; faux-provider tests pin exactly one system abort/recovery and tool-progress preservation.
+
+
 ## 2026-09-03 - Within-message paragraph repetition
 
 ### What changed and why

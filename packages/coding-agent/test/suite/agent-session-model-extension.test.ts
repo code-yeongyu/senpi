@@ -580,7 +580,7 @@ describe("AgentSession model and extension characterization", () => {
 		},
 		{
 			label: "trigger-turn custom state",
-			beforeAgentStartCalls: 0,
+			beforeAgentStartCalls: 1,
 			admit: async (harness: Harness, oversized: string) =>
 				await harness.session.sendCustomMessage(
 					{ customType: "oversized-trigger-turn", content: oversized, display: false },
