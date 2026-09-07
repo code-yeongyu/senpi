@@ -1267,6 +1267,7 @@ export class SessionManager {
 		details?: T,
 		fromHook?: boolean,
 		usage?: Usage,
+		preserveTranscript = false,
 	): string {
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
@@ -1281,7 +1282,7 @@ export class SessionManager {
 			fromHook,
 		};
 		this._appendEntry(entry);
-		this._trimMirrorAfterCompaction(entry);
+		if (!preserveTranscript) this._trimMirrorAfterCompaction(entry);
 		return entry.id;
 	}
 

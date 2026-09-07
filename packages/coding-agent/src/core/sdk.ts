@@ -10,6 +10,10 @@ import { AuthStorage } from "./auth-storage.ts";
 import { estimateTokens } from "./compaction/compaction.ts";
 import { createSessionCursorExecBridge } from "./cursor-exec-bridge-session.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import {
+	ModelUsabilityBudgetError,
+	projectModelUsabilityBudget,
+} from "./extensions/builtin/compaction/model-usability-budget.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { convertToLlmForTransport, TRANSPORT_IMAGE_BUDGET_BYTES } from "./messages.ts";
@@ -25,7 +29,14 @@ import { ModelRuntime } from "./model-runtime.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
-import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
+import {
+	buildSessionContext,
+	type CompactionEntry,
+	getDefaultSessionDir,
+	type SessionEntry,
+	SessionManager,
+	sessionEntryToContextMessages,
+} from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import { getSupportedThinkingLevels } from "./thinking-levels.ts";
 import { time } from "./timings.ts";
@@ -189,6 +200,77 @@ export function clampThinkingLevelToModel(
 
 function getDefaultAgentDir(): string {
 	return getAgentDir();
+}
+
+const RESUME_ADMISSION_SUMMARY = [
+	"[Resume admission recovery checkpoint]",
+	"The restored transcript exceeded the model admission budget, so older context was reduced without an LLM request.",
+	"Continue from the retained messages. Treat omitted transcript details as unknown.",
+].join("\n");
+
+function isResumeAdmissionCutPoint(entry: SessionEntry): boolean {
+	return sessionEntryToContextMessages(entry).some((message) =>
+		["user", "assistant", "bashExecution", "custom", "branchSummary", "compactionSummary"].includes(message.role),
+	);
+}
+
+function admitResumedSession(
+	session: AgentSession,
+	model: Model<any>,
+	originalProjection: ReturnType<typeof projectModelUsabilityBudget>,
+): { tokensBefore: number; tokensAfter: number; droppedEntries: number } | undefined {
+	const branch = session.sessionManager.getBranch();
+	const cutPoints = branch.flatMap((entry, index) => (isResumeAdmissionCutPoint(entry) ? [index] : []));
+	if (cutPoints.length === 0) return undefined;
+	const previewId = "__senpi_resume_admission_preview__";
+	const parentId = branch.at(-1)?.id ?? null;
+	const settings = session.settingsManager.getCompactionSettings();
+	const tokensBefore = session.agent.state.messages.reduce((total, message) => total + estimateTokens(message), 0);
+	for (const cutIndex of cutPoints) {
+		const firstKeptEntryId = branch[cutIndex]?.id;
+		if (!firstKeptEntryId) continue;
+		const preview: CompactionEntry = {
+			type: "compaction",
+			id: previewId,
+			parentId,
+			timestamp: new Date(0).toISOString(),
+			summary: RESUME_ADMISSION_SUMMARY,
+			firstKeptEntryId,
+			tokensBefore,
+			fromHook: false,
+		};
+		const projectedMessages = buildSessionContext([...branch, preview], previewId).messages;
+		const tokensAfter = projectedMessages.reduce((total, message) => total + estimateTokens(message), 0);
+		const projection = projectModelUsabilityBudget({
+			model,
+			systemPrompt: session.agent.state.systemPrompt,
+			tools: session.agent.state.tools,
+			liveContextTokens: tokensAfter,
+			compaction: settings,
+			includeSpeculationLead: false,
+			admission: "resume",
+		});
+		if (!projection.usable) continue;
+		session.sessionManager.appendCompaction(
+			RESUME_ADMISSION_SUMMARY,
+			firstKeptEntryId,
+			tokensBefore,
+			{ schema: "senpi.compaction.resume-admission.v1", origin: "resume-admission" },
+			false,
+			undefined,
+			true,
+		);
+		session.agent.state.messages = session.sessionManager.buildSessionContext().messages;
+		session.logResumeAdmissionSlice({
+			droppedEntries: cutIndex,
+			tokensBefore: originalProjection.liveContextTokens,
+			tokensAfter,
+			model: originalProjection.model,
+			shortfall: originalProjection.shortfallTokens,
+		});
+		return { tokensBefore, tokensAfter, droppedEntries: cutIndex };
+	}
+	return undefined;
 }
 
 /**
@@ -524,11 +606,24 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const liveContextTokens = hasExistingSession
 		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)
 		: 0;
-	session.assertModelUsable(
-		undefined,
-		liveContextTokens,
-		hasExistingSession ? { includeSpeculationLead: false, admission: "resume" } : { admission: "start" },
-	);
+	let resumeRecoveryPending = false;
+	try {
+		session.assertModelUsable(
+			undefined,
+			liveContextTokens,
+			hasExistingSession ? { includeSpeculationLead: false, admission: "resume" } : { admission: "start" },
+		);
+	} catch (error) {
+		if (!hasExistingSession || !(error instanceof ModelUsabilityBudgetError)) throw error;
+		const admitted = admitResumedSession(session, model as Model<any>, error.projection);
+		if (!admitted) throw error;
+		resumeRecoveryPending = true;
+		session.assertModelUsable(undefined, admitted.tokensAfter, {
+			includeSpeculationLead: false,
+			admission: "resume",
+		});
+	}
+	if (resumeRecoveryPending) session.armResumeRecovery();
 	cursorBridgeSessionRef.current = session;
 	const extensionsResult = resourceLoader.getExtensions();
 
