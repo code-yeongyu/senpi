@@ -1,21 +1,30 @@
-## Resume admission runs before teardown and before the switch event, against the restored model (2026-09-08)
+## Resume admission uses the prepared destination runtime (2026-09-08)
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` now opens the target `SessionManager`, runs `assertSessionCwdExists`, and calls the synchronous `assertSessionAdmissible(sessionManager)` *before* `emitBeforeSwitch("resume", ...)` and `teardownCurrent("resume", ...)`. All three are non-mutating reads, so a rejected resume is a true no-op that never fires the switch lifecycle event (no side-query abort, no widget removal) and never disposes the live session.
-- `assertSessionAdmissible` sums the target's live-context tokens with `estimateTokens` (imported from `./compaction/compaction.ts`) and runs `this.session.assertModelUsable(model, liveContextTokens, { includeSpeculationLead: false, admission: "resume" })`. The `model` is now the model the resume will actually restore, resolved by the new private `resolveResumeModel`: it mirrors `createAgentSession`'s restore path in `sdk.ts` - `resolveStoredModelReference(existingSession.model.provider, existingSession.model.modelId, this.session.modelRuntime)` when the destination carries a stored model whose provider is authorized (`modelRuntime.hasConfiguredAuth`), else the live session's active model. When the target is empty or no model resolves it is a no-op.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` prepares the actual factory result before `session_before_switch` and teardown, then applies that same result after cancellation succeeds. It no longer approximates SDK model selection with the live runtime, settings, prompt or tools. Cancelled prepared sessions are disposed without starting them.
+- `packages/coding-agent/src/core/session-manager.ts`: `prepareOpen` defers newline repair, migration/empty-file rewrites and initialization appends until an admitted switch is accepted. Normal `open` behavior is unchanged; an ordinary accepted resume appends pending entries without rewriting existing transcript bytes.
+- `packages/coding-agent/src/core/sdk.ts`: dispose the newly constructed destination if its authoritative model-budget admission throws, releasing its subscriptions rather than leaking a rejected session.
+- `packages/coding-agent/src/core/agent-session.ts`: unstarted candidates can dispose subscriptions without releasing provider resources by persisted session ID; those resources may still belong to a live runtime of the same session.
 
 ### Why
 
-- Resuming a session whose restored transcript exceeds the *restored* model's context budget threw `ModelUsabilityBudgetError` only from `createAgentSession`, which runs after `teardownCurrent` has already disposed the live session and invalidated its extension runner. The user's still-active session was destroyed by a resume that was always going to be rejected, and the next input crashed with "This extension ctx is stale after session replacement or reload". Checking the *active* model was not enough: if the active model has a bigger window than the restored one, preflight passed, teardown destroyed the live session, and the post-teardown check re-threw - the exact destructive failure. Running the same admission check against the restored model, before the switch event and teardown, makes a rejected resume a clean no-op.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: CLI/launch-profile model choices outrank stored models, and unavailable stored models fall back through destination settings. Admission must also use destination tool schemas, system prompt and compaction settings. Rejection must not emit the switch event, abort side work or invalidate the live session.
+- `packages/coding-agent/src/core/session-manager.ts`: opening a target was not a read-only operation; cancelled resumes could repair or rewrite it. Deferred persistence preserves byte identity on cancellation and rejection.
+- `packages/coding-agent/src/core/sdk.ts`: moving construction before teardown requires cleaning up rejected construction without disposing the outgoing runtime.
+- `packages/coding-agent/src/core/agent-session.ts`: cancelling a resume of the current session must not close the live session's provider connections.
 
 ### Why an extension could not handle it
 
-- The teardown/create ordering lives inside the core `AgentSessionRuntime.switchSession` state machine. No extension hook fires between `teardownCurrent` (which disposes the session and invalidates the runner) and `createRuntime`, so no extension can intercept the rejection before the live session is torn down.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`, `packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/sdk.ts`, and `packages/coding-agent/src/core/agent-session.ts`: destination construction, budget admission, persistence and provider-resource ownership precede extension lifecycle startup and are owned by the core replacement state machine.
 
 ### Expected merge conflict zones
 
-- LOW: the reordered preflight block in `switchSession`, the `assertSessionAdmissible`/`resolveResumeModel` methods placed after `switchSession`, and the `estimateTokens` / `resolveStoredModelReference` / `Model, Api` import lines.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` ordering and removal of the duplicate admission/model resolver.
+- `packages/coding-agent/src/core/session-manager.ts`: constructor, persistence guards and `open`/`prepareOpen`.
+- `packages/coding-agent/src/core/sdk.ts`: authoritative post-construction budget check.
+- `packages/coding-agent/src/core/agent-session.ts`: optional provider-resource release in `dispose`.
+
 ## Same-model recovery for a native tool-search 400 (2026-09-08)
 
 ### What changed

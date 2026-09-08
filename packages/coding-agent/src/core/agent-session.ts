@@ -2910,8 +2910,10 @@ export class AgentSession {
 	/**
 	 * Remove all listeners and disconnect from agent.
 	 * Call this when completely done with the session.
+	 * Unstarted resume candidates do not own provider resources keyed by the
+	 * persisted session ID, which may still belong to a live runtime.
 	 */
-	dispose(): void {
+	dispose(options?: { releaseProviderResources?: boolean }): void {
 		try {
 			this._probeBackScheduler.cancel("dispose");
 			this.abortRetry();
@@ -2933,7 +2935,7 @@ export class AgentSession {
 		this._unsubscribeWakeSources?.();
 		this._unsubscribeWakeSources = undefined;
 		this._eventListeners = [];
-		cleanupSessionResources(this.sessionId);
+		if (options?.releaseProviderResources !== false) cleanupSessionResources(this.sessionId);
 	}
 
 	/** Live in-session activity signals; see `session-activity.ts` for the contract. */

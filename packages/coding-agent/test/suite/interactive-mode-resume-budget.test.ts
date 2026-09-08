@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { ModelUsabilityBudgetError } from "../src/core/extensions/builtin/compaction/model-usability-budget.ts";
-import { MissingSessionCwdError } from "../src/core/session-cwd.ts";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { ModelUsabilityBudgetError } from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
+import { MissingSessionCwdError } from "../../src/core/session-cwd.ts";
+import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
 
 type HandleResumeSession = (
 	this: ResumeContext,

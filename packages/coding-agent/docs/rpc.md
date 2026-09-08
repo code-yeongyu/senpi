@@ -997,6 +997,43 @@ If an extension cancelled the switch:
 {"type": "response", "command": "switch_session", "success": true, "data": {"cancelled": true}}
 ```
 
+A rejected switch answers with `success: false` plus a typed `errorCode` and structured `errorData`:
+
+| `errorCode` | Meaning | `errorData` |
+|---|---|---|
+| `missing_session_cwd` | The session's stored cwd no longer exists. Retry the command with `cwdOverride`. | `{"sessionFile", "sessionCwd", "fallbackCwd"}` |
+| `model_usability_budget` | The stored transcript does not fit the context budget of the model the switch would run on. | The full budget projection |
+
+Both rejections are decided before the switch lifecycle event and live-session teardown, so the current session stays usable. A cancelled or rejected switch does not write to the target session file. Clients can pick a different session or change the destination configuration and retry. Changing the live model with `set_model` does not override a destination's stored model or a model forced by CLI `--model` / the launch profile; change that startup selection when retrying with a larger model.
+
+```json
+{
+  "type": "response",
+  "command": "switch_session",
+  "success": false,
+  "error": "Model anthropic/claude-opus-4-5 cannot host this session ...",
+  "errorCode": "model_usability_budget",
+  "errorData": {
+    "model": "anthropic/claude-opus-4-5",
+    "contextWindow": 200000,
+    "liveContextTokens": 260000,
+    "systemPromptTokens": 3748,
+    "activeToolSchemaTokens": 4538,
+    "outputReserveTokens": 32000,
+    "compactionReserveTokens": 1024,
+    "speculationLeadTokens": 0,
+    "safetyMarginTokens": 16384,
+    "safetyMarginProfile": "anthropic",
+    "requiredTokens": 317694,
+    "shortfallTokens": 117694,
+    "usable": false,
+    "admission": "resume"
+  }
+}
+```
+
+For a non-empty `switch_session` target, `admission` is `resume` and `speculationLeadTokens` is zero. The shared projection also supports `start` (including empty targets) and `switch` (model changes). `requiredTokens` is the sum of `liveContextTokens`, `systemPromptTokens`, `activeToolSchemaTokens`, `outputReserveTokens`, `compactionReserveTokens`, `speculationLeadTokens`, and `safetyMarginTokens`. `shortfallTokens = max(0, requiredTokens - contextWindow)`; `usable` is true exactly when that shortfall is zero. `model` and `safetyMarginProfile` identify the selection and margin policy; they are not token components. Clients should branch on `errorCode`, not parse the human-readable `error` text.
+
 #### fork
 
 Create a new fork from a previous user message on the active branch. Can be cancelled by a `session_before_fork` extension event handler. Returns the text of the message being forked from.

@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
 	ModelUsabilityBudgetError,
 	type ModelUsabilityBudgetProjection,
-} from "../src/core/extensions/builtin/compaction/model-usability-budget.ts";
-import { MissingSessionCwdError } from "../src/core/session-cwd.ts";
-import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
+} from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
+import { MissingSessionCwdError } from "../../src/core/session-cwd.ts";
+import { RpcClient } from "../../src/modes/rpc/rpc-client.ts";
 
 type RpcClientPrivate = {
 	getData: <T>(response: unknown) => T;

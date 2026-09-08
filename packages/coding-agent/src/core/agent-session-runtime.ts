@@ -1,10 +1,8 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
-import { estimateTokens } from "./compaction/compaction.ts";
 import type {
 	ProjectTrustContext,
 	ReplacedSessionContext,
@@ -12,7 +10,6 @@ import type {
 	SessionStartEvent,
 } from "./extensions/index.ts";
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
-import { resolveStoredModelReference } from "./model-resolver.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import { SessionManager } from "./session-manager.ts";
@@ -248,71 +245,31 @@ export class AgentSessionRuntime {
 			projectTrustContextFactory?: (cwd: string) => ProjectTrustContext;
 		},
 	): Promise<{ cancelled: boolean }> {
-		// Run all non-mutating preflight checks before firing session_before_switch:
-		// SessionManager.open, cwd existence, and the model-budget admission check are
-		// pure reads, so a rejected resume stays a true no-op and never lets handlers
-		// (e.g. a side-query abort or widget removal) mutate the live session first.
-		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
-		assertSessionCwdExists(sessionManager, this.cwd);
-		this.assertSessionAdmissible(sessionManager);
-
-		const beforeResult = await this.emitBeforeSwitch("resume", sessionPath);
-		if (beforeResult.cancelled) {
-			return beforeResult;
-		}
-
 		const previousSessionFile = this.session.sessionFile;
-		await this.teardownCurrent("resume", sessionManager.getSessionFile());
-		await this.apply(
-			await this.createRuntime({
-				cwd: sessionManager.getCwd(),
-				agentDir: this.services.agentDir,
-				sessionManager,
-				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
-				projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
-				launchProfile: this._launchProfile,
-			}),
-		);
+		const prepared = SessionManager.prepareOpen(sessionPath, undefined, options?.cwdOverride);
+		const { sessionManager } = prepared;
+		assertSessionCwdExists(sessionManager, this.cwd);
+		// Build and admit the actual destination, including its model selection,
+		// settings, prompt and tools. Persistence and switch lifecycle stay deferred.
+		const result = await this.createRuntime({
+			cwd: sessionManager.getCwd(),
+			agentDir: this.services.agentDir,
+			sessionManager,
+			sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
+			projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
+			launchProfile: this._launchProfile,
+		});
+		try {
+			const beforeResult = await this.emitBeforeSwitch("resume", sessionPath);
+			if (beforeResult.cancelled) return beforeResult;
+			prepared.commit();
+			await this.teardownCurrent("resume", sessionManager.getSessionFile());
+			await this.apply(result);
+		} finally {
+			if (this.session !== result.session) result.session.dispose({ releaseProviderResources: false });
+		}
 		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };
-	}
-
-	/**
-	 * Re-run the resume admission check (model usability budget) against the
-	 * target session's context without replacing the current session. Mirrors
-	 * the check createAgentSession performs after teardown; running it early
-	 * keeps a rejected resume from invalidating the live session.
-	 *
-	 * The check runs against the model the resume will actually restore, not the
-	 * live session's model: createAgentSession restores existingSession.model from
-	 * the destination file, so checking the active model would pass preflight when
-	 * the active window is larger, tear down the live session, then re-throw from
-	 * the post-teardown check - the exact destructive failure this guards against.
-	 */
-	assertSessionAdmissible(sessionManager: SessionManager): void {
-		const existingSession = sessionManager.buildSessionContext();
-		if (existingSession.messages.length === 0) return;
-		const model = this.resolveResumeModel(existingSession.model);
-		if (!model) return;
-		const liveContextTokens = existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0);
-		this.session.assertModelUsable(model, liveContextTokens, { includeSpeculationLead: false, admission: "resume" });
-	}
-
-	/**
-	 * Resolve the model a resume would restore, mirroring createAgentSession's
-	 * restore path in sdk.ts: prefer the destination session's stored model when it
-	 * resolves and its provider is authorized, otherwise fall back to the live
-	 * session's active model (the same fallback createAgentSession lands on).
-	 */
-	private resolveResumeModel(storedModel: { provider: string; modelId: string } | null): Model<Api> | undefined {
-		if (storedModel) {
-			const modelRuntime = this.session.modelRuntime;
-			const restored = resolveStoredModelReference(storedModel.provider, storedModel.modelId, modelRuntime);
-			if (restored && modelRuntime.hasConfiguredAuth(restored.model.provider)) {
-				return restored.model;
-			}
-		}
-		return this.session.model;
 	}
 
 	async newSession(options?: {

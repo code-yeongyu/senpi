@@ -828,6 +828,7 @@ export class SessionManager {
 	private sessionDir: string;
 	private cwd: string;
 	private persist: boolean;
+	private deferredPersistence?: { rewrite: boolean; entries: SessionEntry[] };
 	private flushed: boolean = false;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
@@ -869,11 +870,13 @@ export class SessionManager {
 		persist: boolean,
 		newSessionOptions?: NewSessionOptions,
 		preloadedFileEntries?: FileEntry[],
+		deferredPersistence = false,
 	) {
 		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePath(sessionDir);
 		this.persist = persist;
-		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
+		this.deferredPersistence = deferredPersistence ? { rewrite: false, entries: [] } : undefined;
+		if (persist && !deferredPersistence && this.sessionDir && !existsSync(this.sessionDir)) {
 			mkdirSync(this.sessionDir, { recursive: true });
 		}
 
@@ -1027,6 +1030,10 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
+		if (this.deferredPersistence) {
+			this.deferredPersistence.rewrite = true;
+			return;
+		}
 		const fd = openSync(this.sessionFile, "w");
 		try {
 			for (const entry of this.fileEntries) {
@@ -1067,6 +1074,10 @@ export class SessionManager {
 
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
+		if (this.deferredPersistence) {
+			this.deferredPersistence.entries.push(entry);
+			return;
+		}
 		const persistedEntry = this.residentStore.materialize(entry);
 
 		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
@@ -1843,6 +1854,45 @@ export class SessionManager {
 	 * @param cwdOverride Optional cwd override instead of the session header cwd.
 	 */
 	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
+		return SessionManager._open(path, sessionDir, cwdOverride, false);
+	}
+
+	/** Prepare a resume without repairing, migrating or appending to its file until admitted. */
+	static prepareOpen(
+		path: string,
+		sessionDir?: string,
+		cwdOverride?: string,
+	): {
+		sessionManager: SessionManager;
+		commit: () => void;
+	} {
+		const sessionManager = SessionManager._open(path, sessionDir, cwdOverride, true);
+		const pending = sessionManager.deferredPersistence;
+		return {
+			sessionManager,
+			commit: () => {
+				sessionManager.deferredPersistence = undefined;
+				mkdirSync(sessionManager.sessionDir, { recursive: true });
+				if (pending?.rewrite) {
+					sessionManager._rewriteFile();
+				} else {
+					const file = sessionManager.getSessionFile();
+					if (file && existsSync(file)) {
+						const content = readFileSync(file);
+						if (content.length > 0 && content[content.length - 1] !== 10) appendFileSync(file, "\n");
+					}
+					for (const entry of pending?.entries ?? []) sessionManager._persist(entry);
+				}
+			},
+		};
+	}
+
+	private static _open(
+		path: string,
+		sessionDir: string | undefined,
+		cwdOverride: string | undefined,
+		deferredPersistence: boolean,
+	): SessionManager {
 		const resolvedPath = resolvePath(path);
 		let header: SessionHeader | null = null;
 		let preloadedFileEntries: FileEntry[] | undefined;
@@ -1860,14 +1910,14 @@ export class SessionManager {
 		}
 		// This process opens the session for append; normalize a final unterminated
 		// JSONL entry here, never from read-only loadEntriesFromFile callers.
-		if (existsSync(resolvedPath)) {
+		if (!deferredPersistence && existsSync(resolvedPath)) {
 			const content = readFileSync(resolvedPath);
 			if (content.length > 0 && content[content.length - 1] !== 10) appendFileSync(resolvedPath, "\n");
 		}
 		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory
 		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
-		return new SessionManager(cwd, dir, resolvedPath, true, undefined, preloadedFileEntries);
+		return new SessionManager(cwd, dir, resolvedPath, true, undefined, preloadedFileEntries, deferredPersistence);
 	}
 
 	/**
