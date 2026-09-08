@@ -16,6 +16,82 @@
 ### Expected merge conflict zones
 
 - LOW: the reordered preflight block in `switchSession`, the `assertSessionAdmissible`/`resolveResumeModel` methods placed after `switchSession`, and the `estimateTokens` / `resolveStoredModelReference` / `Model, Api` import lines.
+## Same-model recovery for a native tool-search 400 (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the hard-error fallback branch first consumes the session's pending native tool-search injection failure (`_takeNativeToolSearchInjectionFailure`). When present, it skips `tryFallback()` and runs the shared retry scheduling (zero-delay `auto_retry_start`, failed-message removal, continuation) on the SAME model — the adapter is already disabled for the session, so the next attempt succeeds in place and the user is not demoted to a weaker model. The pending flag is consumed once, so a second rejection takes the ordinary hard-error chain.
+- `packages/coding-agent/test/suite/retry-fallback-hard-error.test.ts`: two cases pin the contract — one same-model retry with no `retry_fallback_applied` events, and a normal fallback switch on the second consecutive 400.
+
+### Why
+
+- A native tool-search 400 hard-errored the model and the hard-error branch always switched to the next fallback candidate (`RetryFallbackController` intentionally excludes the current model), demoting the user mid-task even though the same model succeeds once native injection is off (senpi #1482).
+
+### Why an extension could not handle it
+
+- No hook exists at the fallback-decision point; the retry branch is session-owned. The extension can only record that its own request was rejected (the pending flag on the provider-scoped `ToolSearchService`) — consuming it must happen in the session.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `hardErrorFallback` branch and retry-delay computation in `agent-session.ts` (fork-heavy area); LOW: the suite test additions.
+
+## GPT-6 Astra high-reasoning warning parity (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: include GPT-6 Astra variants in the existing Sol warning policy, retaining the xhigh/max threshold and shared warning content.
+
+### Why
+
+- Astra users need the same excessive-reasoning warning as Sol users at the same effort levels.
+
+### Why an extension could not handle it
+
+- The shared core predicate controls warning events for model and thinking-level changes across CLI surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the model-id matcher in `packages/coding-agent/src/core/high-reasoning-warning.ts`.
+
+## Goal backstop default is 270s (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `getPromptCacheGoalBackstopMaxSeconds()` falls back to 270 instead of 3570.
+- `packages/coding-agent/src/core/settings-shapes.ts`: `PromptCacheSettings.goalBackstopMaxSeconds` documents the 270 default.
+
+### Why
+
+- The goal monitor's backstop is the floor under the event-driven drain fire; a wake source that never delivers (a misconfigured monitor filter, an endless stream) must not park a goal for an hour. See `extensions/builtin/goal/changes.md` (2026-09-08).
+
+### Why an extension could not handle it
+
+- The default lives in core settings resolution and the extension runner's fallback, not in extension code.
+
+### Expected merge conflict zones
+
+- LOW: the two literal defaults above.
+
+## The session request carries its effective service tier without an extension (2026-09-08)
+
+### What changed
+
+- Tracks code-yeongyu/oh-my-openagent#6795.
+
+- `packages/coding-agent/src/core/sdk.ts`: the Agent `streamFn` sets `serviceTier` on the stream options when the caller did not: the session's `effectiveServiceTier` for the active model (catalog `-fast` variant, scoped `:priority` pin, or session fast mode), else the request model's own catalog tier for side requests (title/branch summaries). Only APIs that accept `service_tier` (`supportsServiceTier`) receive it. The late-bound session ref used by the Cursor exec bridge is now the shared `sessionRef`.
+- `packages/coding-agent/src/core/agent-session.ts`: hands `getEffectiveServiceTier` to the extension runner.
+
+### Why
+
+- A `-fast` catalog variant (`openai-codex/gpt-5.6-luna-fast`) declares `serviceTier: "priority"`, and `ModelRuntime.prepareRequest` already honors its sibling field `upstreamModelId`, yet the tier itself reached the wire only through the builtin service-tier extension's payload hook. Sessions created without builtin extensions - SDK embedders, oh-my-openagent's in-process delegated children - silently ran at the standard tier while displaying a fast model. The extension keeps its per-model memory role; its hook only fills a missing field, so both paths agree.
+
+### Why an extension could not handle it
+
+- The affected sessions load no extensions by construction; the request-side default has to live in the session's own stream function.
+
+### Expected merge conflict zones
+
+- LOW: the `streamFn` option literal and the session ref in `sdk.ts`; the runner context-actions literal in `agent-session.ts`.
 
 ## Insufficient accepted compaction keeps its blocked state, #7921 case 6 (2026-09-07)
 

@@ -45,6 +45,29 @@
 
 # Changes
 
+## 2026-09-08 - Recover empty native tool-use responses
+
+### What changed
+
+- `packages/agent/src/empty-assistant-recovery.ts`: retry terminal native `toolUse` responses with no tool-call blocks once, then surface an error and telemetry diagnostic; preserve existing empty-stop gating.
+- `packages/agent/src/assistant-terminal-state.ts`: demote contradictory tool-use terminal messages without tool calls, stamping an `empty_tool_use_terminal_state` diagnostic so the demotion stays identifiable after the stop reason is rewritten.
+- `packages/agent/src/agent-loop.ts`: compose terminal normalization with pending-tool promotion.
+- `packages/agent/src/index.ts`: export `EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC` so the goal builtin can recognize a demoted malformed turn.
+
+### Why
+
+- Providers can lose a streamed tool call while retaining the `toolUse` stop reason, which otherwise silently ends the user's session.
+
+### Why an extension could not handle it
+
+- Provider stream buffering and terminal-state normalization occur inside the core agent loop before extension callbacks observe the message.
+
+### Expected merge conflict zones
+
+- MEDIUM: `empty-assistant-recovery.ts` stream terminal handling and `agent-loop.ts` terminal message normalization.
+- LOW: the `assistant-terminal-state.ts` re-export line in `index.ts`.
+
+
 ## 2026-09-04 - Drop the byte count from write-tool results
 
 ### What changed

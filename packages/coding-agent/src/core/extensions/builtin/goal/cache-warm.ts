@@ -8,24 +8,30 @@ export const GOAL_CACHE_WARMUP_ENTRY_TYPE = "goal-cache-warmup";
 /**
  * Accounting fallback for a monitor continuation whose scheduled delay is no
  * longer known (a held timer restored across a reload). It is deliberately NOT
- * the armed delay: while a wake source is live the monitor arms the stall
- * backstop below, never a cache-safe-wait timer.
+ * the armed delay: while a wake source is live the monitor arms the configured
+ * backstop below, never a timer derived from the cache-safe wait.
  */
 export const GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS = 240_000;
-/** Default `promptCache.goalBackstopMaxSeconds` (settings-manager.ts) expressed in ms. */
-export const GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS = 3_570_000;
+/**
+ * Default `promptCache.goalBackstopMaxSeconds` (settings-manager.ts) expressed in ms:
+ * the 5-minute Anthropic prompt-cache TTL minus the 30s safety buffer, so the
+ * periodic re-check lands inside the cache.
+ */
+export const GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS = 270_000;
 const GOAL_MONITOR_CONTINUATION_MIN_DELAY_MS = 1_000;
 const GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS = 3_600_000;
 
 /**
- * Delay of the goal-monitor stall backstop, in milliseconds.
+ * Delay of the goal-monitor backstop, in milliseconds.
  *
- * The backstop exists to break a stall, not to keep the prompt cache warm, so
- * it deliberately ignores the prompt-cache safe wait: a live wake source means
- * the goal resumes when that source delivers (the drain fire), not on a timer.
- * Configured through `promptCache.goalBackstopMaxSeconds`; a missing,
- * non-finite, or non-positive setting falls back to the 3570s default, and the
- * result is clamped into [1s, 1h].
+ * A live wake source normally resumes the goal when it delivers (the drain
+ * fire), but a wake source can be misconfigured - a filter that never matches,
+ * a stream that never ends - so the backstop is the floor underneath it: the
+ * goal re-checks at least this often instead of trusting the source for an
+ * hour. It is configured, never derived from the prompt-cache safe wait, through
+ * `promptCache.goalBackstopMaxSeconds`; a missing, non-finite, or non-positive
+ * setting falls back to the 270s default, and the result is clamped into
+ * [1s, 1h].
  */
 export function resolveGoalMonitorContinuationDelayMs(goalBackstopMaxSeconds: number | undefined): number {
 	const configuredMs =

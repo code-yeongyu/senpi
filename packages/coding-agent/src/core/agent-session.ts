@@ -7119,6 +7119,7 @@ export class AgentSession {
 			{
 				getModel: () => this.model,
 				getServiceTier: () => this.serviceTier,
+				getEffectiveServiceTier: () => this.effectiveServiceTier,
 				getScopedModels: () => this._scopedModels,
 				isIdle: () => this.isIdle,
 				getAgentDir: () => this._agentDir,
@@ -7689,6 +7690,14 @@ export class AgentSession {
 		);
 	}
 
+	private _takeNativeToolSearchInjectionFailure(): string | null {
+		try {
+			return getToolSearchService().takeNativeInjectionFailure();
+		} catch {
+			return null;
+		}
+	}
+
 	private _getProviderRetryDelayMs(errorMessage: string): number | undefined {
 		const markerMs = parseRetryAfterMsMarker(errorMessage);
 		if (markerMs !== undefined) return markerMs;
@@ -7821,6 +7830,7 @@ export class AgentSession {
 		const hardErrorFallback = options.hardErrorFallback === true;
 		const sameModelRemint = options.sameModelRemint === true;
 		let switchedFallback = false;
+		let sameModelNativeRecovery = false;
 		let is429TierRouted = false;
 		let hintTierDelayMs: number | undefined;
 		const tryFallback = async (
@@ -7854,25 +7864,37 @@ export class AgentSession {
 				return "not-handled";
 			}
 		} else if (hardErrorFallback) {
-			// A non-retryable provider failure must never replay on the same model.
-			// Billing-class failures never recover on this account, so the fallback
-			// switch pins as the session model instead of reverting after the cooldown.
-			const reason = isBillingErrorMessage(errorMessage) ? "billing" : "hard-error";
-			switchedFallback = await tryFallback(reason, { errorMessage });
-			if (!switchedFallback) {
-				const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-				if (exhaustedChainKey) {
-					this._emit({
-						type: "retry_fallback_exhausted",
-						chainKey: exhaustedChainKey,
-						lastError: errorMessage,
-					});
+			// A rejected native tool-search request is recoverable in place: the
+			// adapter is disabled for the session on the 400, so the SAME model can
+			// succeed on the immediate next attempt and the fallback chain must not
+			// demote the user to a weaker model. The pending flag is consumed once,
+			// so a second rejection takes the ordinary hard-error path below.
+			const nativeSearchFailure = this._takeNativeToolSearchInjectionFailure();
+			if (nativeSearchFailure !== null) {
+				sameModelNativeRecovery = true;
+				// The recovery starts fresh, mirroring the fallback branch's attempt bookkeeping.
+				this._retryAttempt = 1;
+			} else {
+				// A non-retryable provider failure must never replay on the same model.
+				// Billing-class failures never recover on this account, so the fallback
+				// switch pins as the session model instead of reverting after the cooldown.
+				const reason = isBillingErrorMessage(errorMessage) ? "billing" : "hard-error";
+				switchedFallback = await tryFallback(reason, { errorMessage });
+				if (!switchedFallback) {
+					const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
+					if (exhaustedChainKey) {
+						this._emit({
+							type: "retry_fallback_exhausted",
+							chainKey: exhaustedChainKey,
+							lastError: errorMessage,
+						});
+					}
+					this._resolveRetry();
+					return "not-handled";
 				}
-				this._resolveRetry();
-				return "not-handled";
+				// The fallback starts fresh; the failed model's transient attempts do not carry over.
+				this._retryAttempt = 1;
 			}
-			// The fallback starts fresh; the failed model's transient attempts do not carry over.
-			this._retryAttempt = 1;
 		} else if (isRefusal) {
 			// Refusals are only retried through a new chain candidate. They never use
 			// same-model retries or the transient over-budget fallback escape hatch.
@@ -8168,11 +8190,12 @@ export class AgentSession {
 			this._retryAttempt,
 			this._retryRandom(),
 		);
-		const delayMs = switchedFallback
-			? 0
-			: is429TierRouted
-				? (hintTierDelayMs ?? providerDelayMs ?? localExponentialMs)
-				: (nonTierProviderDelayMs ?? localExponentialMs);
+		const delayMs =
+			switchedFallback || sameModelNativeRecovery
+				? 0
+				: is429TierRouted
+					? (hintTierDelayMs ?? providerDelayMs ?? localExponentialMs)
+					: (nonTierProviderDelayMs ?? localExponentialMs);
 		// Prepare before auto_retry_start so an immediate Esc can cancel the retry sleep.
 		this._retryAbortController = new AbortController();
 

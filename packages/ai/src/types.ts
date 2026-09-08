@@ -390,7 +390,15 @@ export interface SimpleStreamOptions extends StreamOptions {
 	deferred?: boolean | { window?: "15m" | "1h" | "24h" };
 	/** Custom token budgets for thinking levels (token-based providers only) */
 	thinkingBudgets?: ThinkingBudgets;
+	/**
+	 * Requested processing tier for providers that price and schedule by tier (OpenAI Responses and
+	 * the ChatGPT Codex backend send it as `service_tier`). Adapters without the concept ignore it.
+	 */
+	serviceTier?: ServiceTierPreference;
 }
+
+/** Tier preferences a caller can express; providers map `"auto"` to their default lane. */
+export type ServiceTierPreference = "auto" | "flex" | "priority";
 
 // Generic StreamFunction with typed options.
 //

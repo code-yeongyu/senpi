@@ -6,11 +6,36 @@
 
 ### Added
 
+- Terminal monitor state events now include command, filter, persistence, deadline, fire counts, and last-fired timestamps; monitor endings emit a typed lifecycle event, and coalesced monitor notifications persist the contributing monitor details.
+
 ### Changed
+
+- A goal that is parked on live wake sources (terminal monitor, background bash session, detached `eval` cell, or `senpi-task` child) re-checks at least every 4m30s again: `promptCache.goalBackstopMaxSeconds` now defaults to 270 instead of 3570, so a monitor whose filter never matches or whose stream never ends cannot leave the goal parked for an hour. Resumption stays event-driven (a wake source that delivers starts a turn, and the last source draining queues exactly one continuation); the shorter backstop is the floor underneath it and lands inside the 5-minute prompt-cache TTL. Set `goalBackstopMaxSeconds: 3570` to keep the long, cheaper backstop from 2026.9.7-2 on a wait you trust ([#1476](https://github.com/code-yeongyu/senpi/pull/1476)).
 
 ### Fixed
 
 - Resume preflight now runs the model-budget admission check before session teardown, against the model the resume will actually restore, so a `/resume` that exceeds the target model's context window shows an error and keeps the live session running instead of tearing it down and silently exiting (exit 1). The check runs before the switch lifecycle event so a rejected resume is a true no-op, the cwd-override retry gets the same recoverable handling, and the rejection keeps its typed identity across the shared-host RPC boundary.
+- Anthropic mid-output server fallback now recovers through the configured refusal chain without cooling down the original model. When server fallback is allowed, abandoned tool calls are not executed and fallback markers stay out of subsequent requests.
+
+- An active goal no longer stalls forever when a provider ends the turn with the `tool_use` stop reason but no tool-call block. Nothing executed on such a turn, so it is treated as provider breakage and resumed through the existing provider-recovery lane instead of being read as a deliberate tool-driven stop. A turn that a tool genuinely ended still waits for the user, and every existing admission guard (continuation cap, repetition, single-flight, unattended budget) still bounds the recovery.
+
+- A rejected Anthropic request now reports its HTTP status through the provider response hook: previously the Anthropic SDK's rejection path never reached `onResponse`/`after_provider_response`, so the native tool-search adapter's permanent 400 fallback was dead code on the live error path (senpi #1481). Errors without a numeric status (network failures, aborts) report nothing rather than a fabricated code.
+
+- A native tool-search 400 no longer demotes the session to a weaker model: the turn is retried once in place on the same model with native injection already disabled for the session, and only a second rejection consults the fallback chain (senpi #1482).
+
+- Anthropic requests no longer lose (or, on the shipped 2026.9.7-2 engine, fail on) native tool-search references that a gateway hands back both namespaced and recased, such as `mcp__a4e6__Memory` for the request tool `memory` or `mcp__a4e6__LspSymbols` for `lsp_symbols`: the reference repair now folds case and `_`/`-` separators when matching a reference to the request's own tools, and only when exactly one request tool matches, so the discovered tools stay callable instead of being dropped or hard-erroring the turn into a fallback model.
+
+- `/gpt-account add` now shows the OpenAI Codex login-method chooser as a real selector (`Browser login (default)` / `Device code login (headless)`) instead of an empty text input that failed with `Unknown OpenAI Codex login method:` on Enter. The device-code flow prints the user code next to the verification URL, the browser flow opens the browser in the terminal UI and still prints the URL, and the paste-the-code dialog closes by itself once the local callback completes the login. `/claude-account add` shares the same prompt relay ([#1485](https://github.com/code-yeongyu/senpi/issues/1485)).
+
+- Anthropic requests no longer fail with `Tool reference '<name>' not found in available tools` after a native tool search: references that come back under a gateway namespace (`mcp__<id>__<tool>`) are folded onto the request's own tool names before the request is sent, references that no longer resolve are dropped, and a search result left with no references is demoted to text instead of being replayed verbatim. A history tool call whose only justification was such a dangling reference is demoted like any other unavailable call, so one stale native search result can no longer hard-error the model and force a fallback.
+
+- The GPT-6 Astra prompt preset now does the work itself by default: anything that closes in a handful of calls is the model's own, a follow-up on work it delegated earlier is taken back rather than forwarded to the child, and only a sizeable independent track earns a subagent. The routing line opens a new request instead of every turn, so a steering message gets the work rather than a restatement of what was understood, and a new initiative rule consults stored memory for the user's preferences before asking anything memory may already answer. Observed across the 2026-09-06..08 sessions: Astra spent 15-39% of its tool calls on `task` / `task_send` against 2-4% for the Claude and Kimi presets on the same tools.
+
+- GPT-6 Astra variants now show the same high-reasoning warning as GPT-5.6 Sol at `xhigh` and `max` effort.
+
+- Sessions created without builtin extensions (SDK embedders, oh-my-openagent's in-process delegated children) now send the priority service tier of a `-fast` catalog model, a scoped `:priority` pin, or session fast mode on the wire; previously only the interactive service-tier extension's payload hook wrote `service_tier`, so a delegated task displayed a fast model but ran at the standard tier (code-yeongyu/oh-my-openagent#6795). Extensions can read the session's `effectiveServiceTier` from their context.
+
+- Foreground `bash` commands now run git with `GIT_EDITOR=true` and `GIT_TERMINAL_PROMPT=0`, so a `git commit` without `-m`, an interactive rebase, or a terminal credential prompt on the captured foreground PTY fails fast (`Aborting commit due to empty commit message` / `could not read Username`) instead of blocking the agent until the command timeout kills it. Background PTY sessions keep the user's real git settings.
 
 ### Removed
 

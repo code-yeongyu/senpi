@@ -188,6 +188,7 @@ describe("goal continuation gating", () => {
 			isIdle: true,
 			hasPendingMessages: false,
 			lastStopReason: "stop",
+			lastTurnWasMalformedToolUse: false,
 			consecutiveContinuations: 8,
 			lastContinuationSignature: undefined,
 			currentSignature: undefined,

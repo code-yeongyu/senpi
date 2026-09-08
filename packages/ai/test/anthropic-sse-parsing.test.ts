@@ -121,11 +121,11 @@ describe("Anthropic raw SSE parsing", () => {
 		const result = await streamAnthropic(
 			model,
 			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
-			{ client: createFakeAnthropicClient(response) },
+			{ client: createFakeAnthropicClient(response), abortServerSideFallback: true },
 		).result();
 
 		expect(result.stopReason).toBe("error");
-		expect(result.errorMessage).toContain("unsupported mid-output model fallback");
+		expect(result.errorMessage).toContain("Server-side fallback");
 	});
 
 	it("forces streaming after an onPayload replacement", async () => {

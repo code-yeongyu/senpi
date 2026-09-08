@@ -778,7 +778,7 @@ export class SettingsManager {
 		return (
 			this.projectSettings.promptCache?.goalBackstopMaxSeconds ??
 			this.globalSettings.promptCache?.goalBackstopMaxSeconds ??
-			3570
+			270
 		);
 	}
 

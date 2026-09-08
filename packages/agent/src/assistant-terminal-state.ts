@@ -29,6 +29,26 @@ export class ProviderRetryWatchdogAbortError extends Error {
 	}
 }
 
+/**
+ * Marks a terminal message whose `toolUse` stop reason was demoted because the provider sent no
+ * tool call. Demotion rewrites the stop reason, so this diagnostic is the only surviving evidence
+ * that the turn was malformed rather than a clean stop; downstream recovery keys on it.
+ */
+export const EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC = "empty_tool_use_terminal_state";
+
+export function demoteToolUseWithoutToolCalls(message: AssistantMessage): AssistantMessage {
+	// Count raw blocks: cursor-resolved calls are legitimate completed tool calls and must not be demoted.
+	if (message.stopReason !== "toolUse" || message.content.some((block) => block.type === "toolCall")) return message;
+	return {
+		...message,
+		stopReason: "stop",
+		diagnostics: [
+			...(message.diagnostics ?? []),
+			{ type: EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC, timestamp: Date.now(), details: {} },
+		],
+	};
+}
+
 export function promoteStopWithPendingToolCalls(message: AssistantMessage): AssistantMessage {
 	if (message.stopReason !== "stop") return message;
 	if (!message.content.some((block) => block.type === "toolCall")) return message;

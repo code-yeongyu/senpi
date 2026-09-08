@@ -48,7 +48,7 @@ jobs:
         with:
           # Cross-compilation downloads target executables matching the running Bun
           # release. Canary can advance before those target artifacts are published.
-          bun-version: '1.4.0'
+          bun-version: '1.4.2'
 
       - name: Report Bun compiler version
         run: bun --version

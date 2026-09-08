@@ -1,5 +1,23 @@
 # claude-sdk-oauth
 
+## 2026-09-08 - `/claude-account add` relays login prompts through the shared account-command interaction
+
+### What changed
+
+- `account-command.ts`: `addAccount` builds its `AuthInteraction` with `createExtensionLoginInteraction` from `../oauth-login-interaction.ts` instead of a local relay that sent every prompt to `ctx.ui.input(prompt.message)`. Prompts now honour their type and placeholder and are dismissed when the provider aborts them; `auth_url` opens the browser in the TUI and `device_code` prints the user code. `ClaudeAccountCommandDeps` gains an optional `openBrowser` so tests can observe the launch. The local `authEventMessage` helper is gone.
+
+### Why
+
+- code-yeongyu/senpi#1485 fixed the same relay shape in `/gpt-account add`; the Claude command shared the placeholder, per-prompt-signal and browser gaps, so both commands now use one implementation.
+
+### Why an extension could not handle it
+
+- The command is registered by the builtin provider extension and drives `modelRuntime.login` directly; no user extension can interpose on that relay.
+
+### Expected merge conflict zones
+
+- LOW: `account-command.ts` import block, `ClaudeAccountCommandDeps`, and `addAccount`. Fork-only file.
+
 ## 2026-09-07 - Restart bindings survive ledger entries appended after the committed assistant
 
 ### What changed

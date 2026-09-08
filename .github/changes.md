@@ -1,5 +1,23 @@
 # changes
 
+## Pin Bun CI and release builds to 1.4.2 (2026-09-08)
+
+### What changed
+
+- Updated `.github/workflows/ci.yml`, `.github/workflows/build-binaries.yml`, and `.github/workflows/publish-npm.yml` to pin stable Bun 1.4.2, together with the workflow assertion and current CI guidance.
+
+### Why
+
+- Keep the build and test toolchain on the current stable release with published cross-compilation assets.
+
+### Why an extension could not handle it
+
+- GitHub Actions selects the toolchain before runtime extensions load.
+
+### Expected merge conflict zones
+
+- LOW: Bun setup steps in the three workflows and their version assertion.
+
 ## test-workspaces proves the bun path of the root scripts (2026-09-07)
 
 ### What changed

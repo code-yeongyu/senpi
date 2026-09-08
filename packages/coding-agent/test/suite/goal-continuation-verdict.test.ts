@@ -36,6 +36,7 @@ function makeInput(overrides: Partial<VerdictInput> = {}): VerdictInput {
 		hasPendingMessages: false,
 		path: "immediate",
 		lastStopReason: "stop",
+		lastTurnWasMalformedToolUse: false,
 		consecutiveContinuations: 0,
 		lastContinuationSignature: undefined,
 		currentSignature: "goal-1:1/2:abc123",
@@ -216,6 +217,15 @@ describe("goal continuation verdict", () => {
 				),
 			).toEqual({ kind: "deny", reason: "context-overflow" });
 		}
+	});
+
+	it("admits malformed toolUse only when no tool call was produced", () => {
+		expect(
+			evaluateGoalContinuation(makeInput({ lastStopReason: "toolUse", lastTurnWasMalformedToolUse: true })),
+		).toMatchObject({ kind: "continue" });
+		expect(
+			evaluateGoalContinuation(makeInput({ lastStopReason: "toolUse", lastTurnWasMalformedToolUse: false })),
+		).toEqual({ kind: "deny", reason: "not-eligible" });
 	});
 
 	it("keeps provider recovery eligible while the session is settling", () => {

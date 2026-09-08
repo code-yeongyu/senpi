@@ -45,6 +45,7 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 				return doc?.source === "extension" && !pi.getActiveTools().includes(name);
 			},
 			searchToolName: TOOL_SEARCH_TOOL_NAME,
+			onFallback: (reason) => service.noteNativeInjectionFailure(reason),
 		});
 		pi.on("before_provider_request", (event, ctx) =>
 			nativeAdapter.applyBeforeRequest(event.model ?? ctx.model, event.payload),

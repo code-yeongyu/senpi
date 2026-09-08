@@ -97,6 +97,9 @@ export function createRestartableCommandHandler(deps: RestartableCommandDeps): R
 			id: spawned.id,
 			monitorId: monitor.monitorId,
 			description: monitor.description,
+			command: monitor.command,
+			persistent: true,
+			deadlineMs: null,
 			runtime: spawned.runtime,
 			filter: compileFilter(monitor.filter),
 			// The persisted deadline rides through verbatim; a restore never extends it.

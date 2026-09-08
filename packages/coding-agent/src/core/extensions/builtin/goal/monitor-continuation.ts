@@ -25,6 +25,7 @@ import {
 	type GoalContinuationPath,
 	hasGoalContinuationProgress,
 	hashAssistantText,
+	isMalformedToolUseTurn,
 	normalizeAssistantText,
 } from "./continuation.ts";
 import { lastAssistantMessage } from "./last-assistant-message.ts";
@@ -326,9 +327,10 @@ export class MonitorAwareGoalContinuation {
 
 	#schedule(goal: Goal, kind: DelayedContinuationKind): void {
 		if (this.#scheduledContinuationKind !== undefined) return;
-		// A live wake source arms the stall backstop only: the normal resumption is
-		// the drain fire in #setWakeSourceCount, so the model is not invoked on the
-		// prompt-cache safe-wait interval while the session waits.
+		// A live wake source arms the periodic backstop only: the normal resumption
+		// is the drain fire in #setWakeSourceCount, and the backstop re-checks the
+		// goal every `promptCache.goalBackstopMaxSeconds` in case the source never
+		// delivers.
 		const delayMs =
 			kind === "monitor"
 				? resolveGoalMonitorContinuationDelayMs(this.#ctx?.getPromptCacheGoalBackstopMaxSeconds?.())
@@ -507,6 +509,7 @@ export class MonitorAwareGoalContinuation {
 			hasPendingMessages: ctx.hasPendingMessages(),
 			path,
 			lastStopReason: lastAssistant?.stopReason,
+			lastTurnWasMalformedToolUse: lastAssistant?.role === "assistant" && isMalformedToolUseTurn(lastAssistant),
 			consecutiveContinuations: goal.consecutiveContinuations ?? 0,
 			lastContinuationSignature: goal.lastContinuationSignature,
 			currentSignature: buildCurrentGoalContinuationSignature(ctx, goal, lastAssistantText(messages)),

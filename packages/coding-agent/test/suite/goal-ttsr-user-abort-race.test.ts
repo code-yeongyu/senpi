@@ -1,6 +1,7 @@
 import { fauxAssistantMessage, fauxText, fauxThinking } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
+import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { createGoal, readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.ts";
 import ttsrExtension from "../../src/core/extensions/builtin/ttsr/index.ts";
@@ -115,7 +116,11 @@ describe("user abort racing a TTSR system abort", () => {
 		expect(abortSpy).toHaveBeenCalledTimes(2);
 		expect(await readGoal(ref)).toMatchObject({ status: "active" });
 		expect(scheduledContinuations).toContainEqual(
-			expect.objectContaining({ activeMonitorCount: 1, delayMs: 3_570_000, iteration: 1 }),
+			expect.objectContaining({
+				activeMonitorCount: 1,
+				delayMs: GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+				iteration: 1,
+			}),
 		);
 	});
 });

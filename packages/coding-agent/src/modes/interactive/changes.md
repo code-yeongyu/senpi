@@ -16,6 +16,23 @@
 ### Expected merge conflict zones
 
 - LOW: the new `ModelUsabilityBudgetError` branch in `handleResumeSession` and the added import line.
+## 2026-09-08 - Shortcut context exposes the effective service tier
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the extension shortcut context built by `setupExtensionShortcuts` sets the new optional `effectiveServiceTier` field from `session.effectiveServiceTier`, next to `serviceTier`.
+
+### Why
+
+- `ExtensionContext.effectiveServiceTier` (code-yeongyu/oh-my-openagent#6795) is what delegating hosts read to inherit a parent's fast mode; the hand-built shortcut context must report the same value the runner's contexts do.
+
+### Why an extension could not handle it
+
+- The shortcut context literal is host code; extensions only receive it.
+
+### Expected merge conflict zones
+
+- LOW: the `createContext` literal in `setupExtensionShortcuts`.
 
 ## 2026-09-07 - Add a workflow tip for the report-bug skill
 

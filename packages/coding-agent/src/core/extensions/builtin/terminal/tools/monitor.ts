@@ -135,12 +135,14 @@ async function createMonitor(
 	// Durability needs an absolute directory: a restore runs in a different process whose
 	// process cwd is unrelated, so the spec must carry the resolved path the spawn used.
 	const cwd = resolve(execCtx?.cwd ?? ctx.cwd);
+	const timeoutMs = input.persistent ? undefined : resolveTimeoutMs(input.timeout_ms);
+	const deadlineMs = timeoutMs === undefined ? null : Date.now() + timeoutMs;
 	const { id, runtime } = await spawnCommandSession(ctx, {
 		command: input.command,
 		cols: resolveDimension(undefined, ctx.defaultCols || DEFAULT_COLS),
 		rows: resolveDimension(undefined, ctx.defaultRows || DEFAULT_ROWS),
 		cwd,
-		...(input.persistent ? {} : { timeoutMs: resolveTimeoutMs(input.timeout_ms) }),
+		...(timeoutMs === undefined ? {} : { timeoutMs }),
 	});
 	ctx.onMonitorRearmed?.(id);
 	const monitorId = registry.register({
@@ -148,6 +150,9 @@ async function createMonitor(
 		description: input.description,
 		runtime,
 		filter,
+		command: input.command,
+		persistent: input.persistent === true,
+		deadlineMs,
 		// Only persistent command watches are restartable-command durable: those carry the fire budget.
 		durabilityClass: input.persistent === true ? "restartable-command" : "ephemeral",
 		// Same deadline the manifest writer persists, so the footer warns off the live record too.
@@ -298,6 +303,8 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 						path: input.path,
 						event: input.event ?? "create",
 						timeoutMs: resolveTimeoutMs(input.timeout_ms),
+						persistent: input.persistent === true,
+						deadlineMs: input.persistent === true ? null : Date.now() + resolveTimeoutMs(input.timeout_ms),
 						cwd: execCtx?.cwd ?? ctx.cwd,
 						...(approvedParent !== undefined ? { approvedParent } : {}),
 						...(input.persistent === true ? { expiresAt: Date.now() + DURABLE_MONITOR_EXPIRY_MS } : {}),

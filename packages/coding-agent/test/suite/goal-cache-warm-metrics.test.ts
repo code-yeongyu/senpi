@@ -21,24 +21,30 @@ function anthropicModel(costOverrides: Partial<Model<Api>["cost"]> = {}): Model<
 	} as Model<Api>;
 }
 
-describe("goal monitor stall backstop delay", () => {
+describe("goal monitor backstop delay", () => {
 	it.each([
-		[undefined, 3_570_000],
+		[undefined, 270_000],
 		[3570, 3_570_000],
 		[900, 900_000],
 		[5, 5_000],
 		[7200, 3_600_000],
-		[0, 3_570_000],
-		[-30, 3_570_000],
-		[Number.NaN, 3_570_000],
+		[0, 270_000],
+		[-30, 270_000],
+		[Number.NaN, 270_000],
 	] as const)("resolves backstop ceiling %s to %sms", (backstopMaxSeconds, expected) => {
 		expect(resolveGoalMonitorContinuationDelayMs(backstopMaxSeconds)).toBe(expected);
 	});
 
-	it("ignores the prompt-cache safe wait entirely", () => {
-		// The backstop is a stall guard, not a cache-warm timer: passing a
-		// cache-safe wait as the only argument must not shorten it to 270s.
-		expect(resolveGoalMonitorContinuationDelayMs(undefined)).toBe(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
+	it("defaults to a re-check inside the 5-minute prompt-cache TTL", () => {
+		// A wake source that never delivers must not park the goal for an hour:
+		// the default floor is the 5m Anthropic TTL minus the 30s safety buffer.
+		expect(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS).toBe(270_000);
+		expect(resolveGoalMonitorContinuationDelayMs(undefined)).toBe(270_000);
+	});
+
+	it("is configured, not derived from the prompt-cache safe wait", () => {
+		// The delay takes only the configured ceiling; a longer TTL or a different
+		// safety buffer never changes it.
 		expect(resolveGoalMonitorContinuationDelayMs.length).toBe(1);
 	});
 });

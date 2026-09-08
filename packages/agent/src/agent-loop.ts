@@ -16,6 +16,7 @@ import {
 } from "@earendil-works/pi-ai";
 import {
 	createTerminalFailureAssistantMessage,
+	demoteToolUseWithoutToolCalls,
 	isStreamIdleTimeoutError,
 	normalizeTerminalAssistantMessage,
 	promoteStopWithPendingToolCalls,
@@ -262,7 +263,7 @@ async function runLoop(
 				withEmptyAssistantRecovery(requestConfig.model, streamFunction),
 				isInitialProviderRequest ? config.timeoutMs : requestConfig.timeoutMs,
 			);
-			const message = promoteStopWithPendingToolCalls(streamed.message);
+			const message = demoteToolUseWithoutToolCalls(promoteStopWithPendingToolCalls(streamed.message));
 			const providerToolResults = streamed.providerToolResults;
 			newMessages.push(message);
 			const toolResults: ToolResultMessage[] = [];

@@ -8,7 +8,7 @@ export interface PromptCacheKeepAliveSettings {
 export interface PromptCacheSettings {
 	cacheAwareTimeouts?: boolean; // default: true (size foreground tool waits by the model's prompt-cache TTL)
 	safetyBufferSeconds?: number; // default: 30 (headroom subtracted from the cache TTL)
-	goalBackstopMaxSeconds?: number; // default: 3570 (maximum Goal monitor continuation backstop)
+	goalBackstopMaxSeconds?: number; // default: 270 (Goal monitor re-check backstop while wake sources are live; 5m TTL - 30s buffer)
 	keepAlive?: PromptCacheKeepAliveSettings;
 }
 

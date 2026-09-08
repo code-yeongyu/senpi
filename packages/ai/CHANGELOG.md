@@ -10,6 +10,10 @@
 
 ### Fixed
 
+- Anthropic mid-output server fallback now follows the configured abort/continue policy instead of raising an unsupported-fallback error. Continuing responses retain their serving-model identity and do not execute abandoned pre-fallback tools, including through text-tool recovery middleware.
+
+- `streamSimple` on the OpenAI Responses and Codex Responses adapters forwards the new `SimpleStreamOptions.serviceTier` into the request (`service_tier`) and tier-aware usage pricing; the simple path previously dropped it (code-yeongyu/oh-my-openagent#6795).
+
 ### Removed
 
 ## [2026.9.7-2] - 2026-09-07

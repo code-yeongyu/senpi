@@ -22,8 +22,13 @@ function isRecord(value: unknown): value is ProviderPayload {
 	return typeof value === "object" && value !== null;
 }
 
+/** Whether requests for this API accept the OpenAI `service_tier` field. */
+export function supportsServiceTier(api: Api | undefined): boolean {
+	return api !== undefined && SERVICE_TIER_APIS.has(api);
+}
+
 export function addServiceTierToPayload(api: Api | undefined, payload: unknown, serviceTier?: ServiceTier): unknown {
-	if (!api || !SERVICE_TIER_APIS.has(api) || !serviceTier) {
+	if (!supportsServiceTier(api) || !serviceTier) {
 		return payload;
 	}
 
@@ -284,6 +289,21 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		// "auto" is honored on the wire by `liveMemoryTier` below, not by clearing the flag here.
 		if (sessionFastMode && event.model.api !== OPENAI_CODEX_RESPONSES_API) {
 			sessionFastMode = false;
+			pi.setSessionFastMode(false);
+			return;
+		}
+
+		// The session's own request path now carries `effectiveServiceTier` (sdk streamFn), which the
+		// switch just re-resolved from the incoming model's catalog. A remembered "auto" for a Codex
+		// model whose catalog says priority therefore has to reach SESSION state, not only this
+		// extension's payload hook: `setSessionFastMode(false)` clears exactly a catalog-inherited
+		// Codex priority (never a scoped/favorite `:priority` pin), so both writers agree.
+		if (
+			!sessionFastMode &&
+			liveMemoryTier === "auto" &&
+			event.model.api === OPENAI_CODEX_RESPONSES_API &&
+			ctx.modelRegistry.getServiceTier(event.model) === PRIORITY_TIER
+		) {
 			pi.setSessionFastMode(false);
 		}
 	});

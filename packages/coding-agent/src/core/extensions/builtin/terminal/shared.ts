@@ -63,8 +63,19 @@ export const FIRE_BUDGET_AUTO_MUTE_SUMMARY = `auto-muted: fire budget (${DEFAULT
 /**
  * Non-interactive environment for foreground one-shot commands (codex-style):
  * cooperative tools (`gh`, `git`, pagers, color libs) skip spinners/colors at
- * the source instead of flooding the captured stream with redraw frames.
- * Background sessions keep the user's real TERM for interactive apps.
+ * the source instead of flooding the captured stream with redraw frames, and
+ * `git` never blocks the captured foreground PTY on interactive input.
+ * - `GIT_EDITOR: "true"`: git spawns `/usr/bin/true` as the editor, which exits 0
+ *   immediately (git treats a zero-exit editor as accepted), so a `git commit`
+ *   without `-m` aborts with "Aborting commit due to empty commit message" and a
+ *   `git rebase -i` accepts the todo list instead of parking the tool inside
+ *   nvim on COMMIT_EDITMSG until the timeout kills it.
+ * - `GIT_TERMINAL_PROMPT: "0"`: git fails fast ("could not read Username",
+ *   exit 128) instead of prompting for credentials on the captured PTY where
+ *   nobody can type (same opt-out `package-manager.ts` already uses for its own
+ *   git calls).
+ * Background sessions keep the user's real TERM and git settings for
+ * interactive apps.
  */
 export const FOREGROUND_ENV_OVERRIDES: Readonly<Record<string, string>> = {
 	NO_COLOR: "1",
@@ -73,6 +84,8 @@ export const FOREGROUND_ENV_OVERRIDES: Readonly<Record<string, string>> = {
 	PAGER: "cat",
 	GIT_PAGER: "cat",
 	GH_PAGER: "cat",
+	GIT_EDITOR: "true",
+	GIT_TERMINAL_PROMPT: "0",
 };
 
 /**

@@ -114,7 +114,7 @@ describe("goal monitor continuation lifecycle", () => {
 		const { harness, ctx, status } = await createActiveMonitorHarness("thread-monitor-reload");
 		const countdownStarted = waitForGoalStatus(
 			status,
-			(update) => update.key === GOAL_WAIT_STATUS_KEY && update.text?.includes("goal continues in 59m 30s") === true,
+			(update) => update.key === GOAL_WAIT_STATUS_KEY && update.text?.includes("goal continues in 4m 30s") === true,
 		);
 		await endCleanTurn(harness, ctx);
 		await countdownStarted;

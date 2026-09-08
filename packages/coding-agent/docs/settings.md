@@ -364,6 +364,7 @@ unknown (e.g. Google models) or caching is off, no budget applies and timeout be
 |---------|------|---------|-------------|
 | `promptCache.cacheAwareTimeouts` | boolean | `true` | Cap foreground tool waits at the model's prompt-cache TTL minus the safety buffer; `false` restores the fixed legacy ceilings |
 | `promptCache.safetyBufferSeconds` | number | `30` | Headroom subtracted from the cache TTL (a 5m TTL yields a 270s ceiling). If it consumes the whole TTL, no budget applies |
+| `promptCache.goalBackstopMaxSeconds` | number | `270` | Longest a goal parked on live wake sources (terminal monitors, background sessions, detached `eval` cells, task children) waits before it re-checks with a full turn, clamped to 1..3600. The default lands inside the 5m cache TTL; raise it toward `3570` to trade re-check frequency for cost on a wait you trust |
 
 A foreground `bash` command still running at the budget is handed to a live background session
 instead of being killed; its explicit `timeout` remains the kill deadline. See

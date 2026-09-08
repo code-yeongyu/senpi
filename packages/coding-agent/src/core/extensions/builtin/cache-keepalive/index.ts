@@ -74,8 +74,9 @@ export function createCacheKeepAliveExtension(
 
 		pi.registerEntryRenderer(CACHE_KEEPALIVE_ENTRY_TYPE, renderCacheKeepAliveEntry);
 
-		// No goal-timer coupling: an armed goal continuation timer is now a long
-		// stall backstop that issues no provider request, so it cannot refresh the
+		// No goal-timer coupling: an armed goal continuation timer issues no
+		// provider request until it fires, and `promptCache.goalBackstopMaxSeconds`
+		// may place that past the TTL, so it cannot be relied on to refresh the
 		// prompt cache on this loop's behalf.
 		function append(data: CacheKeepAliveEntryData): void {
 			pi.appendEntry(CACHE_KEEPALIVE_ENTRY_TYPE, data);

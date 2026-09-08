@@ -1,5 +1,28 @@
 # prompt-preset Extension Changes
 
+## GPT-6 Astra: do the work yourself, open a new request once, consult memory before asking (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts`: `delegation` now leads with the keep-it default ("Do the work yourself by default: whatever closes in a handful of calls is yours, and a follow-up on work you delegated is yours to take back, not to forward") and names the only thing that earns a subagent (a sizeable track independent of your own); the brief contents (deliverable, edit scope, stop condition, evidence) are unchanged. `foreground-exception`'s child-task clause reads "when its result would be your next input, either the work was small enough to do yourself or the child runs in the background" instead of "spawn it in the background and let the completion deliver it". The Intent Gate opens "a new request" rather than "every turn ... before anything else", and `steering` says a mid-task message steers rather than opening a new request, so the reply opens with the work under the reading already declared. New `memory-first` rule (concern `initiative`, rendered in `## Initiative` after `approval-last`): consult memory before asking anything it may already answer, and take this user's preferences and working habits from it. The file header records the observed inversion behind the delegation change.
+- `packages/coding-agent/test/suite/prompt-presets-gpt-6-astra.test.ts`: `memory-first` added to the concern and placement tables (captured RED on `aaf14cee8`: 1 failed | 33 passed, the rule-set equality at :254), plus a guard that the rendered `## Intent Gate` still carries the fork's `I read this as` sentinel that other suites and the README consume. Emphasis set unchanged.
+
+### Why
+
+- Category B (misframing) for delegation, per the prompt-engineering skill. The guide says Astra delegates less than a fan-out workflow wants, so the 2026-09-04 rule opened with "whenever running them beside your own work saves time or improves the result" and left "what you can close in a handful of calls, keep" as a trailer, while the 2026-09-05 async rules put "CHILD TASKS ... START IN THE BACKGROUND" in bold and `foreground-exception` ended on "spawn it in the background and let the completion deliver it". Under this fork's tools the observed behavior inverted: across 62 `~/.omo/agent/sessions` files from 2026-09-06..08 on the same tool surface, `task` + `task_send` were 39.4% of all tool calls for `opencodex/gpt-6-astra-fast` (3 sessions), 15.6% for `openai/gpt-6-astra`, 5.5% for `openai/gpt-6-astra-fast`, against 3.8% for claude-opus-4-8, 2.5% for claude-opus-5, 1.8% for claude-fable-5-1, and 1.6% for kimi-k3. The trace that triggered this change (session `01a07f74`, 2026-09-08): two consecutive `task_send` calls forwarding a one-`curl` token check and a one-key config change to a child it had spawned earlier, and when asked why, "bundling the log, KV, and request checks into one child seemed more efficient" - the efficiency trigger the rule itself supplied. The Claude and Kimi presets say "hand sizeable independent tracks to subagents ... keep work you can finish in a few calls yourself"; the Astra rule had dropped "sizeable" and inverted the order.
+- Category A (wrong information) for the routing line. "Open every turn with one short routing line before anything else" contradicted `steering` ("fold in corrections and constraints ... and keep going") for every mid-task message, and Astra follows the literal instruction: in the same session it opened four consecutive replies, including one to a steering message and one to a complaint, with a Korean restatement of the ask and the stop condition, which the user experienced as over-clarifying ("과질문하면서 명료하게 하고자하는 성향"). The routing line itself is the fork-wide contract every preset carries and stays; its scope is now the new request, matching the omo `gpt-5-4` / `kimi-k2-7` sisyphus prompts ("do not restate this on later turns of the same request").
+- Category C (missing context) for memory. `instruction-precedence` named memory only as something user instructions outrank; nothing routed the model to stored memory for this user's preferences before asking, and the user asked for exactly that ("메모리 적극 참조해서 사용자 성향 파악해서").
+- Token cost (o200k, changed segments only): 193 -> 281, +88. `memory-first` is +41 of that; `steering` +25 (the why-clause that supersedes a fresh line), `delegation` +14, `foreground-exception` +10, the gate opener -2. A first draft measured +112 and was tightened once (dropped "worth the hand-off", merged `steering` into one sentence). Nothing outside the five segments and the file header changed.
+- Not run: a live-model A/B. The 2026-09-05 backtest harness under `/tmp` is gone, bare senpi exposes no `task` tool (it comes from the omo-senpi plugin), and the codex backend was returning `server_is_overloaded` on 48-93% of Astra requests on 2026-09-08. The evidence for this change is the session survey above plus the rendered prompt.
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside this builtin's rule data and core template.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `gpt-6-astra.ts` and its test are fork-only.
+
 ## GPT-6 Astra: the subscription rule names `tool.monitor` and the trigger (2026-09-05)
 
 ### What changed

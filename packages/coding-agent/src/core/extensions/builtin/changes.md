@@ -1,5 +1,42 @@
 # Builtin extensions changes
 
+## 2026-09-08 - Shared monitor telemetry contract
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: state entries gain optional command/filter/persistent/deadlineMs/fireCount/lastFiredAtMs fields, and the new `terminal_monitor_ended` event has a shared payload type and boundary guard.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts` is the wire contract for observers rendering monitor details and retaining ended watches. Optional state fields preserve mixed-version consumers.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts` defines the shared seam, while the terminal builtin owns the actual registry and event emissions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts` event constants, entry fields, and ended payload guard.
+
+## Account commands relay OAuth login prompts through the extension UI (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` (new): `createExtensionLoginInteraction(ctx, { providerLabel, openBrowser? })` builds the `AuthInteraction` an account command hands to `modelRuntime.login`. `select` prompts go to `ctx.ui.select` over the option labels and the chosen label is mapped back to the option id; `text`, `secret` and `manual_code` prompts go to `ctx.ui.input` with the provider's placeholder; every dialog carries the command signal combined with the per-prompt `AuthPrompt.signal`, and a dismissed or aborted dialog rejects with `Login cancelled`. `auth_url` events open the browser when `ctx.mode === "tui"` and always print the URL plus the provider's instructions; `device_code` events print the verification URL together with `Enter code: <userCode>`; `info` events print their links.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: `addAccount` uses the shared interaction instead of relaying every prompt to `ctx.ui.input(prompt.message)`; the factory accepts an optional `GptAccountExtensionDeps` (`openBrowser`) so tests can observe the browser launch.
+
+### Why
+
+- code-yeongyu/senpi#1485: `/gpt-account add` rendered `Select OpenAI Codex login method:` as an empty text input because the provider's `select` prompt was relayed as text, so the two login methods were never shown and an empty Enter reached the provider as `Unknown OpenAI Codex login method:`. The device-code flow printed the verification URL without the user code, and the browser flow told the user "A browser window should open" without opening one. `/login` already routes these prompts correctly (`core/auth-storage.ts` `handleLegacyPrompt`, `modes/rpc/login-prompts.ts`); the account commands now share one relay with the same rules.
+
+### Why an extension could not handle it
+
+- The commands live in the builtin registry and the relay sits between `modelRuntime.login` and the provider flow, a seam no user extension can interpose on.
+
+### Expected merge conflict zones
+
+- LOW: `gpt-account.ts` is fork-only; `oauth-login-interaction.ts` is new.
+
 ## Plugin-root containment resolves against the filesystem (2026-09-07)
 
 ### What changed

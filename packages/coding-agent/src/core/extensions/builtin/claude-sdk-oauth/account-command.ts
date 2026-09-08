@@ -1,5 +1,6 @@
 import type { Credential } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
+import { createExtensionLoginInteraction, LOGIN_CANCELLED_MESSAGE } from "../oauth-login-interaction.ts";
 import { emitProviderAccountsChanged } from "./account-events.ts";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID, pinProviderAccount, removeProviderAccount } from "./account-management.ts";
 import { type AccountSlot, type ClaudeSdkOauthCredential, emptyCredential, listAccounts } from "./accounts.ts";
@@ -13,7 +14,11 @@ type CommandEnvironment = (name: string) => string | undefined;
 export interface ClaudeAccountCommandDeps {
 	loadSettings?: (cwd: string) => ClaudeSdkOauthProviderSettings;
 	environment?: CommandEnvironment;
+	/** Browser launcher for the OAuth authorize URL; tests inject a recorder. */
+	openBrowser?: ((url: string) => void) | undefined;
 }
+
+const CLAUDE_SDK_OAUTH_PROVIDER_LABEL = "Claude SDK OAuth";
 
 function asCredential(value: Credential | undefined): ClaudeSdkOauthCredential | undefined {
 	return value?.type === "oauth" ? (value as ClaudeSdkOauthCredential) : undefined;
@@ -47,18 +52,6 @@ function accountError(ctx: ExtensionCommandContext, name: string): void {
 
 function parseArgs(rawArgs: string): string[] {
 	return rawArgs.trim().split(/\s+/).filter(Boolean);
-}
-
-function authEventMessage(event: unknown): string {
-	if (event === null || typeof event !== "object") return "Claude SDK OAuth authentication update.";
-	const value = event as Record<string, unknown>;
-	if (value.type === "auth_url" && typeof value.url === "string") {
-		return `Open this URL to authorize Claude SDK OAuth:\n${value.url}`;
-	}
-	if (value.type === "device_code" && typeof value.verificationUri === "string") {
-		return `Open this URL to authorize Claude SDK OAuth:\n${value.verificationUri}`;
-	}
-	return typeof value.message === "string" ? value.message : "Claude SDK OAuth authentication update.";
 }
 
 export function getSessionClaudeAccountPin(sessionId: string | undefined): string | undefined {
@@ -102,7 +95,7 @@ export function registerClaudeAccountCommand(pi: ExtensionAPI, deps: ClaudeAccou
 				return;
 			}
 			if (action === "add") {
-				await addAccount(ctx);
+				await addAccount(ctx, deps);
 				return;
 			}
 			if (action === "remove") {
@@ -156,26 +149,27 @@ function showAccounts(
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
-async function addAccount(ctx: ExtensionCommandContext): Promise<void> {
+async function addAccount(ctx: ExtensionCommandContext, deps: ClaudeAccountCommandDeps): Promise<void> {
 	if (!ctx.hasUI) {
 		ctx.ui.notify("/claude-account add requires an interactive UI.", "error");
 		return;
 	}
 	try {
-		await ctx.modelRegistry.modelRuntime.login(CLAUDE_SDK_OAUTH_PROVIDER_ID, "oauth", {
-			signal: ctx.signal,
-			prompt: async (prompt) => {
-				const answer = await ctx.ui.input(prompt.message);
-				if (answer === undefined) throw new Error("Login cancelled");
-				return answer;
-			},
-			notify: (event) => ctx.ui.notify(authEventMessage(event), "info"),
-		});
+		await ctx.modelRegistry.modelRuntime.login(
+			CLAUDE_SDK_OAUTH_PROVIDER_ID,
+			"oauth",
+			createExtensionLoginInteraction(ctx, {
+				providerLabel: CLAUDE_SDK_OAUTH_PROVIDER_LABEL,
+				openBrowser: deps.openBrowser,
+			}),
+		);
 		emitProviderAccountsChanged(CLAUDE_SDK_OAUTH_PROVIDER_ID);
 		ctx.ui.notify("Claude SDK OAuth account added.", "info");
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		if (message !== "Login cancelled") ctx.ui.notify(`Failed to add Claude SDK OAuth account: ${message}`, "error");
+		if (message !== LOGIN_CANCELLED_MESSAGE) {
+			ctx.ui.notify(`Failed to add Claude SDK OAuth account: ${message}`, "error");
+		}
 	}
 }
 

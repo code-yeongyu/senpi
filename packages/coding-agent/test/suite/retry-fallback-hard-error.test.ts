@@ -1,5 +1,6 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { getToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
 import type { SelectorCooldowns } from "../../src/core/retry-fallback/cooldown.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
@@ -18,6 +19,12 @@ function cooldownsFor(harness: Harness): SelectorCooldowns {
 	if (!cooldowns) throw new Error("Expected retry fallback cooldowns");
 	return cooldowns;
 }
+
+const testToolSearchRuntime = {
+	getAllTools: () => [],
+	getActiveTools: () => [],
+	setActiveTools: () => {},
+} as const;
 
 describe("retry fallback hard errors", () => {
 	const harnesses: Harness[] = [];
@@ -221,5 +228,64 @@ describe("retry fallback hard errors", () => {
 		expect(harness.faux.state.callCount).toBe(1);
 		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+	});
+	it("retries a native tool-search 400 once on the same model with injection disabled", async () => {
+		// A hard 400 whose request carried native injection must recover in place:
+		// the adapter is already disabled for the session, so the same model can
+		// succeed on the next attempt and the fallback chain is not the recovery.
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: { enabled: true, maxRetries: 3, baseDelayMs: 60_000, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		getToolSearchService(testToolSearchRuntime).noteNativeInjectionFailure("native tool-search 400");
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "invalid_request_error: Tool reference 'mcp__925c__memory' not found in available tools",
+			}),
+			fauxAssistantMessage("recovered in place"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1"]);
+		expect(harness.session.model?.id).toBe("faux-1");
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+		expect(harness.eventsOfType("auto_retry_start")).toHaveLength(1);
+		// No model switch means no fallback lifecycle events; the recovery is a plain same-model retry.
+		expect(harness.eventsOfType("retry_fallback_succeeded")).toEqual([]);
+		expect(harness.session.state.messages.at(-1)).toMatchObject({ role: "assistant" });
+	});
+
+	it("falls back normally when the same model 400s again after the native recovery", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: { enabled: true, maxRetries: 3, baseDelayMs: 60_000, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		getToolSearchService(testToolSearchRuntime).noteNativeInjectionFailure("native tool-search 400");
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "invalid_request_error: Tool reference 'mcp__925c__memory' not found in available tools",
+			}),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid_request_error: still rejected" }),
+			fauxAssistantMessage("fallback answer"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1", "faux-2"]);
+		expect(
+			harness.events
+				.filter((event) => event.type === "retry_fallback_applied")
+				.map((event) => (event.type === "retry_fallback_applied" ? event.reason : "")),
+		).toEqual(["hard-error"]);
+		expect(harness.eventsOfType("auto_retry_start")).toHaveLength(2);
 	});
 });

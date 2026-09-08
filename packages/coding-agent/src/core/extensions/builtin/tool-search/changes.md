@@ -1,5 +1,22 @@
 # Tool Search Builtin Changes
 
+## 2026-09-08 - Wire the native 400 fallback into a session recovery signal (senpi #1481/#1482)
+
+### What changed
+
+- `service.ts`: `ToolSearchService` carries a one-shot pending flag (`noteNativeInjectionFailure` / `takeNativeInjectionFailure`) recording that a native-injected request was rejected.
+- `index.ts`: the adapter's `onFallback` now records that reason on the service, so the session's retry branch can recover in place (senpi #1482) instead of falling back blindly.
+- `test/tool-search/native-anthropic.test.ts`: a wiring case drives `emitBeforeProviderRequest` (with a supported Anthropic model and an MCP feed) and `after_provider_response` 400, asserting the flag is set once, consumed once, and injection stays off afterwards.
+
+### Why
+
+- `AnthropicNativeToolSearchAdapter` already disables itself permanently on a 400, but nothing told the session WHY the current turn failed; the flag is the provider-scope-scoped channel between the extension and the session's retry branch.
+
+### Expected merge conflict zones
+
+- LOW: the adapter construction site in `index.ts` and the service class; both are fork-owned.
+
+
 ## 2026-09-04 - Gate native tool-search on model support and fix the tool_reference field
 
 ### What changed

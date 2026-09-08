@@ -123,6 +123,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 						hasPendingMessages: false,
 						path: "monitorDelayed",
 						lastStopReason: "stop",
+						lastTurnWasMalformedToolUse: false,
 						consecutiveContinuations: 7,
 						lastContinuationSignature: undefined,
 						currentSignature: `${goal.id}:0/0:deadbeef`,

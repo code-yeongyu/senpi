@@ -378,6 +378,7 @@ export class ExtensionRunner {
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
 	private getModel: () => Model<any> | undefined = () => undefined;
 	private getServiceTier: () => ServiceTier | undefined = () => undefined;
+	private getEffectiveServiceTier: () => ServiceTier | undefined = () => this.getServiceTier();
 	private getScopedModels: () => readonly ScopedModel[] = () => [];
 	private isIdleFn: () => boolean = () => true;
 	private isProjectTrustedFn: () => boolean = () => true;
@@ -394,7 +395,7 @@ export class ExtensionRunner {
 		keepRecentTokens: 20000,
 	});
 	private getPromptCacheSafeWaitSecondsFn: () => number | undefined = () => undefined;
-	private getPromptCacheGoalBackstopMaxSecondsFn: () => number = () => 3570;
+	private getPromptCacheGoalBackstopMaxSecondsFn: () => number = () => 270;
 	private getPromptCacheKeepAliveSettingsFn: NonNullable<ExtensionContextActions["getPromptCacheKeepAliveSettings"]> =
 		() => ({ enabled: false, maxRequestsPerSession: 3, maxCostUsdPerSession: 0.05, marginSeconds: 60 });
 	private getLookAtSettingsFn: ExtensionContextActions["getLookAtSettings"] = () => ({
@@ -494,6 +495,7 @@ export class ExtensionRunner {
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
 		this.getServiceTier = contextActions.getServiceTier;
+		this.getEffectiveServiceTier = contextActions.getEffectiveServiceTier ?? contextActions.getServiceTier;
 		this.getScopedModels = contextActions.getScopedModels;
 		this.isIdleFn = contextActions.isIdle;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
@@ -1055,6 +1057,7 @@ export class ExtensionRunner {
 		const runner = this;
 		const getModel = this.getModel;
 		const getServiceTier = this.getServiceTier;
+		const getEffectiveServiceTier = this.getEffectiveServiceTier;
 		const getScopedModels = this.getScopedModels;
 		let compactionSignal: AbortSignal | undefined;
 		return {
@@ -1093,6 +1096,10 @@ export class ExtensionRunner {
 			get serviceTier() {
 				runner.assertActive();
 				return getServiceTier();
+			},
+			get effectiveServiceTier() {
+				runner.assertActive();
+				return getEffectiveServiceTier();
 			},
 			get scopedModels() {
 				runner.assertActive();

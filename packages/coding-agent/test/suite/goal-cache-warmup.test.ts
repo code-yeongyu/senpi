@@ -1,6 +1,9 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GoalCacheWarmupEntryData } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
+import {
+	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+	type GoalCacheWarmupEntryData,
+} from "../../src/core/extensions/builtin/goal/cache-warm.ts";
 import {
 	type AppendedGoalEntry,
 	cleanAssistantStop,
@@ -14,7 +17,7 @@ import {
 } from "./goal-monitor-test-harness.ts";
 
 const ENTRY_TYPE = "goal-cache-warmup";
-const BACKSTOP_DELAY_MS = 3_570_000;
+const BACKSTOP_DELAY_MS = GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS;
 
 function cacheModel(): Model<Api> {
 	return {

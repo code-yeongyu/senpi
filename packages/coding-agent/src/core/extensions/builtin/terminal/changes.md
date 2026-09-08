@@ -1,5 +1,23 @@
 # terminal builtin extension — fork surface
 
+## Foreground git commands stay non-interactive (2026-09-08)
+
+### What changed
+
+- `shared.ts`: `FOREGROUND_ENV_OVERRIDES` gains two keys. `GIT_EDITOR: "true"` makes git spawn `/usr/bin/true` as the editor for foreground one-shot commands — git treats a zero-exit editor as accepted, so a `git commit` without `-m` aborts with `Aborting commit due to empty commit message` and a `git rebase -i` takes the todo list as-is instead of parking the captured PTY inside nvim on COMMIT_EDITMSG. `GIT_TERMINAL_PROMPT: "0"` makes git fail fast on credential prompts (exit 128, `could not read Username`) — the same opt-out `package-manager.ts` uses for its own git calls. Background PTY sessions still spawn with only `sessionEnvOverrides` (`runBackground` in `tools/bash.ts`), so interactive git in a background session keeps the user's real settings.
+
+### Why
+
+- Child agents and foreground one-shot commands run with a captured PTY: when git opens an editor or asks for credentials on that terminal nobody can type, and the tool blocks until the timeout kills the command. The existing foreground overrides already removed color/pager interactivity; the editor and credential prompts were the two remaining terminal-input paths.
+
+### Why an extension could not handle it
+
+- The overrides are injected by this builtin's own `runForeground` spawn path from its shared constants; an outside extension cannot alter the environment of a PTY the terminal manager spawns.
+
+### Expected merge conflict zones
+
+- LOW: the `FOREGROUND_ENV_OVERRIDES` constant and its doc comment in `shared.ts`, plus the foreground/background env assertions in `test/terminal-bash-tool-output.test.ts`.
+
 ## File monitors resolve parent identity without realpath and gate `fs.watch` behind a bounded open (2026-09-07)
 
 ### What changed
@@ -1012,3 +1030,24 @@ lifecycle code, the N-API `startPtySession` callback, and terminal runtime const
 - Regression coverage: `test/terminal-bash-abort.test.ts` (pre-aborted signal spawns nothing, SIGTERM-ignoring
   command, PTY held open across abort and timeout, plain-run pin) and `packages/pty/test/registry.test.ts`
   (bounded stop/teardown on a session that never reports exit).
+
+## Monitor telemetry over extension events (2026-09-08)
+
+### What changed
+
+- `monitor-registry.ts`: live monitor snapshots now carry command/filter/persistence/deadline and fire counters, and each monitor emits one typed ended record with its terminal reason and exit code.
+- `extension.ts` and `session-bundle.ts`: publish enriched state and `terminal_monitor_ended` through the existing extension and RPC event channels; replay endings across a parked reload exactly once. Fire-stat refreshes do not trigger manifest writes or wake-source transitions.
+- `monitor-notify.ts`, `notify.ts`, and `tools/monitor.ts`: retain monitor details in coalesced `senpi-monitor:notification` custom-message entries, including overflow-only monitors, and capture registration metadata without changing the monitor schema or description. `details` is already accepted and persisted by the custom-message API, so no fallback event or content prefix is needed.
+- `durable-command.ts` and `durable-file.ts`: retain command/persistence metadata after restart. `fireCount` counts emitted line and summary events in this registry lifetime, including the final summary; paused/filtered lines are excluded. Existing persistent file-watch lifetime semantics are unchanged.
+
+### Why
+
+- omo-desktop needs complete monitor records, lifecycle history, and monitor ids on each coalesced notification to render runtime details and timeline joins.
+
+### Why an extension could not handle it
+
+- The registry owns monitor lifecycle, fire accounting, and terminal exit classification; the builtin terminal extension is the existing event publisher and notification owner.
+
+### Expected merge conflict zones
+
+- MEDIUM: `monitor-registry.ts` lifecycle and snapshot paths; LOW: `extension.ts`, `session-bundle.ts`, `durable-command.ts`, `durable-file.ts`, `monitor-notify.ts`, `notify.ts`, and `tools/monitor.ts`.

@@ -5,7 +5,11 @@ import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
 import { isEvalOnlyRouting } from "../eval-only-routing.ts";
-import { TERMINAL_MONITOR_STATE_EVENT, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
+import {
+	TERMINAL_MONITOR_ENDED_EVENT,
+	TERMINAL_MONITOR_STATE_EVENT,
+	WAKE_SOURCE_STATE_EVENT,
+} from "../monitor-state-event.ts";
 import { createRestartableCommandHandler } from "./durable-command.ts";
 import { createCheckpointedFileRestoreHandler } from "./durable-file.ts";
 import { acquireTerminalLease, releaseTerminalLease } from "./manifest-lease.ts";
@@ -84,7 +88,11 @@ function createBundle(state: TerminalExtensionState): TerminalSessionBundle {
 function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): TerminalEventSinks {
 	return {
 		onMonitorEvent: (event) => state.monitorNotifier?.notifyEvent(event),
-		onMonitorState: (snapshot) => {
+		onMonitorEnded: (event) => {
+			pi.events?.emit(TERMINAL_MONITOR_ENDED_EVENT, event);
+			pi.rpc?.emit(TERMINAL_MONITOR_ENDED_EVENT, event);
+		},
+		onMonitorState: (snapshot, transition = true) => {
 			state.statusTicker.sync(snapshot);
 			const payload = {
 				activeCount: snapshot.length,
@@ -93,10 +101,17 @@ function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): TerminalE
 					description: entry.description,
 					paused: entry.paused,
 					startedAtMs: entry.startedAtMs,
+					command: entry.command,
+					filter: entry.filter,
+					persistent: entry.persistent,
+					deadlineMs: entry.deadlineMs,
+					fireCount: entry.fireCount,
+					lastFiredAtMs: entry.lastFiredAtMs,
 				})),
 			};
 			pi.events?.emit(TERMINAL_MONITOR_STATE_EVENT, payload);
 			pi.rpc?.emit(TERMINAL_MONITOR_STATE_EVENT, payload);
+			if (!transition) return;
 			pi.events?.emit(WAKE_SOURCE_STATE_EVENT, {
 				source: "terminal-monitors",
 				activeCount: snapshot.length,

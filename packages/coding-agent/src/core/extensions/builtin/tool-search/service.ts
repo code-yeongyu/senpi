@@ -42,6 +42,20 @@ export class ToolSearchService {
 		});
 	}
 
+	#nativeInjectionFailure: string | null = null;
+
+	/** Record that a native-injected request was rejected; the session consumes it once. */
+	noteNativeInjectionFailure(reason: string): void {
+		this.#nativeInjectionFailure = reason;
+	}
+
+	/** Consume the pending native-injection failure, if any (one-shot). */
+	takeNativeInjectionFailure(): string | null {
+		const reason = this.#nativeInjectionFailure;
+		this.#nativeInjectionFailure = null;
+		return reason;
+	}
+
 	bindRuntime(runtime: RuntimeApi): void {
 		this.#runtime = runtime;
 	}

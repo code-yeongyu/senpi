@@ -88,6 +88,8 @@ export function createCheckpointedFileRestoreHandler(deps: CheckpointedFileResto
 				description: monitor.description,
 				path: monitor.path,
 				monitorId: monitor.monitorId,
+				persistent: true,
+				deadlineMs: null,
 				event: monitor.event ?? "create",
 				timeoutMs: remainingMs(monitor, now()),
 				cwd: monitor.cwd,

@@ -1,5 +1,48 @@
 # goal Extension Changes
 
+## 2026-09-08 - Recover malformed empty tool-use turns
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation.ts`: distinguish `toolUse` assistant turns with no tool-call blocks from intentional tool termination and admit only the malformed case on immediate continuation.
+- `packages/coding-agent/src/core/extensions/builtin/goal/agent-end-continuation.ts`: route malformed empty tool-use turns through `providerRecovery`.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts` and `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: populate the malformed-turn fact in every verdict input.
+- `packages/coding-agent/test/suite/goal-continuation-verdict.test.ts`: cover malformed and intentional tool-use verdicts.
+
+### Why
+
+- A provider can emit `toolUse` without any tool-call block. Nothing executed, so treating it as a deliberate terminating tool leaves an active goal permanently stalled.
+
+### Why an extension could not handle this
+
+- The built-in goal extension owns agent-end admission and its recovery routing.
+
+### Expected merge conflict zones
+
+- LOW: continuation eligibility and agent-end verdict-input construction.
+
+## 2026-09-08 - The monitor backstop is a periodic re-check again, default 270s
+
+### What changed
+
+- `cache-warm.ts`: `GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS` is 270_000 (the 5m Anthropic prompt-cache TTL minus the 30s safety buffer) instead of 3_570_000. `resolveGoalMonitorContinuationDelayMs` is otherwise unchanged: it still takes only `goalBackstopMaxSeconds`, never the prompt-cache safe wait, and clamps into [1s, 1h].
+- `monitor-continuation.ts`: no code change; the `#schedule` comment now describes the backstop as the periodic re-check floor under the drain fire.
+- The mirrors of the default moved with it: `core/settings-manager.ts` `getPromptCacheGoalBackstopMaxSeconds()` (270), `core/settings-shapes.ts`, `core/extensions/runner.ts`, and the fake contexts in `test/suite/goal-monitor-test-harness.ts` and `test/suite/goal-ticker-stale-context.test.ts`.
+- `cache-keepalive/index.ts`: comment only; the loop stays decoupled from the goal timer because the configured backstop may still sit past the TTL.
+
+### Why
+
+- A wake source can be misconfigured - a monitor filter that never matches, a stream that never ends, a background job that never exits. With the 3570s default from 2026-09-07 (code-yeongyu/oh-my-openagent#7720) such a goal parked for an hour before it could notice. The owner decided that a full re-check turn every 4m30s is the right price for never stranding a goal on a source that will not deliver. The event-driven drain fire stays the normal path, and a wait you trust can opt back into the cheaper long backstop with `promptCache.goalBackstopMaxSeconds: 3570`.
+
+### Why an extension could not handle it
+
+- The delay is chosen inside the built-in goal continuation coordinator, which owns the wake-source ledger, the single-flight timer, and the admission verdict. No extension hook can observe or replace that timer.
+
+### Expected merge conflict zones
+
+- LOW: the `GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS` constant and its doc comment in `cache-warm.ts`.
+- LOW: the `resolveGoalMonitorContinuationDelayMs` docstring and the `#schedule` comment.
+
 ## 2026-09-07 - The monitor wait is a stall backstop, not a cache-warm cadence (code-yeongyu/oh-my-openagent#7720)
 
 ### What changed

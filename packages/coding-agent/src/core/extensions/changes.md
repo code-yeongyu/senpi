@@ -1,5 +1,43 @@
 # Core Extensions Changes
 
+## 2026-09-08 - Runner fallback for the goal backstop setting follows the 270s default
+
+### What changed
+
+- `runner.ts`: the `getPromptCacheGoalBackstopMaxSecondsFn` placeholder (used until the session wires `SettingsManager.getPromptCacheGoalBackstopMaxSeconds`) returns 270 instead of 3570, matching the new `promptCache.goalBackstopMaxSeconds` default.
+
+### Why
+
+- The goal monitor re-checks a parked goal every backstop interval so a wake source that never delivers cannot strand it for an hour; a host that has not wired the settings getter must arm the same 270s floor. See `builtin/goal/changes.md` (2026-09-08).
+
+### Why an extension could not handle it
+
+- The placeholder is the runner's own default for the extension context action; extensions only read the resolved value.
+
+### Expected merge conflict zones
+
+- LOW: the single `getPromptCacheGoalBackstopMaxSecondsFn` initializer in `runner.ts`.
+
+## 2026-09-08 - Expose the effective service tier and let core carry it (code-yeongyu/oh-my-openagent#6795)
+
+### What changed
+
+- `types.ts`: `ExtensionContext.effectiveServiceTier` (optional) reports the tier the session's requests carry right now - `serviceTier` promoted to `"priority"` while session fast mode is on. `ExtensionContextActions.getEffectiveServiceTier` (optional) feeds it; `runner.ts` falls back to `getServiceTier` when a host omits it.
+- `builtin/service-tier.ts`: exports `supportsServiceTier(api)`. On `model_select`, a remembered `"auto"` for a Codex model whose catalog says priority now also clears the SESSION's cached tier (`setSessionFastMode(false)`, which only touches a catalog-inherited Codex priority), instead of suppressing the tier in the payload hook alone.
+
+### Why
+
+- The session itself now puts `effectiveServiceTier` on the request (`core/sdk.ts`), so the extension's memory decision has to reach session state or the two writers would disagree after a mid-session switch. Hosts that delegate work (oh-my-openagent tasks) need the effective tier, not the catalog tier, to inherit a parent's `/fast`.
+
+### Why an extension could not handle it
+
+- Both are context surface: what the runner exposes to extensions, and how the builtin keeps the session's request-side tier honest.
+
+### Expected merge conflict zones
+
+- LOW: `ExtensionContext`/`ExtensionContextActions` in `types.ts`, the context getters in `runner.ts`, the `model_select` handler in `builtin/service-tier.ts`.
+
+
 ## 2026-09-04 - UI prompt lifecycle events
 
 ### What changed

@@ -108,6 +108,7 @@ export async function queueGoalContinuation(
 			hasPendingMessages: ctx.hasPendingMessages(),
 			path: "sessionStart",
 			lastStopReason: undefined,
+			lastTurnWasMalformedToolUse: false,
 			consecutiveContinuations: goal.consecutiveContinuations ?? 0,
 			lastContinuationSignature: goal.lastContinuationSignature,
 			currentSignature: signature,

@@ -424,6 +424,13 @@ export interface ExtensionContext {
 	model: Model<any> | undefined;
 	/** Current service tier for the active model (from -fast suffix or scoped model config) */
 	serviceTier: ServiceTier | undefined;
+	/**
+	 * The tier the session's requests carry right now: `serviceTier`, promoted to `"priority"`
+	 * while session fast mode is on. Hosts that spawn delegated sessions read this to inherit the
+	 * parent's effective execution tier. Optional so hand-built contexts stay valid; readers fall
+	 * back to `serviceTier`.
+	 */
+	effectiveServiceTier?: ServiceTier | undefined;
 	/** Models scoped to this session. Empty when all available models are usable. */
 	scopedModels: readonly ScopedModel[];
 	/** Current thinking level, when provided by the session runtime. */
@@ -2276,6 +2283,8 @@ export interface ExtensionActions {
 export interface ExtensionContextActions {
 	getModel: () => Model<any> | undefined;
 	getServiceTier: () => ServiceTier | undefined;
+	/** Effective request tier (fast mode included). Defaults to `getServiceTier` when omitted. */
+	getEffectiveServiceTier?: () => ServiceTier | undefined;
 	getScopedModels: () => readonly ScopedModel[];
 	getAgentDir?: () => string;
 	isIdle: () => boolean;

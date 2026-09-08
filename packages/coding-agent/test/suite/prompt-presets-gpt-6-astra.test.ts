@@ -81,6 +81,7 @@ const EXPECTED_CONCERN: Record<Gpt6AstraRuleId, Gpt6AstraConcern> = {
 	"approval-last": "initiative",
 	steering: "initiative",
 	"no-unsolicited-caution": "initiative",
+	"memory-first": "initiative",
 	"instruction-precedence": "instruction-precedence",
 	"pause-transparency": "instruction-precedence",
 	"eval-first-routing": "tool-orchestration",
@@ -113,6 +114,7 @@ const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	"approval-last": "Initiative",
 	steering: "Initiative",
 	"no-unsolicited-caution": "Initiative",
+	"memory-first": "Initiative",
 	"instruction-precedence": "Instructions From Files",
 	"pause-transparency": "Instructions From Files",
 	"eval-first-routing": "Working the Task",
@@ -294,6 +296,15 @@ describe("GPT-6 Astra behavior contract", () => {
 			expect(section, `missing section for ${rule.id}`).toBeDefined();
 			expect(section, `${rule.id} lives in ${EXPECTED_SECTION[rule.id]}`).toContain(rule.directive);
 		}
+	});
+
+	it("keeps the fork routing line in the Intent Gate", () => {
+		// given: other suites and the README consume the "I read this as" sentinel, so
+		// scoping the line to a new request must not drop it from the rendered gate.
+		const sections = sectionsOf(buildPrompt("gpt-6-astra", "gpt-6-astra"));
+
+		// then
+		expect(sections.get("Intent Gate")).toContain("I read this as");
 	});
 
 	it("names the eval-cell form of the monitor subscription in Asynchronous Work", () => {
