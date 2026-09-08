@@ -1,3 +1,23 @@
+## 2026-09-08 - Reject configured resume budgets before tearing down the current session
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` runs an optional read-only factory `prepareResume` hook before abort/shutdown/invalidation, wrapping only preflight errors in `SessionResumePreparationError`. Full factory creation remains after teardown because extension registration can mutate shared services. Success ordering and new/fork/import flows are unchanged.
+- `packages/coding-agent/src/core/sdk.ts`: share initial model selection with a configured-catalog resume preflight. The preflight projects transcript tokens with zero prompt/tool overhead and no speculation lead, rejecting only this lower bound; unresolved extension-dependent model selection is deferred to the unchanged full admission guard. A rejected constructed SDK session is disposed before the error propagates.
+- `packages/coding-agent/src/core/agent-session.ts`: allow disposal of unadmitted SDK candidates without cleaning provider resources keyed by the saved session id, which may still belong to another live runtime.
+
+### Why
+
+- A saved conversation can exceed its model's current catalog window. Previously selecting it disposed the current runtime before discovering that mismatch and exited the TUI. Preparing a complete candidate first was not safe either: registration rebound the tool-search singleton and installed MCP listeners before admission. The preflight does not load extensions or construct a candidate, preserving the live runtime and its provider resources.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts` owns the preflight/teardown boundary, `packages/coding-agent/src/core/sdk.ts` owns initial selection and admission, and `packages/coding-agent/src/core/agent-session.ts` owns resource disposal. These run below extension lifecycle interception.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session-runtime.ts` factory type and `switchSession`; `packages/coding-agent/src/core/agent-session.ts` `dispose`; MEDIUM: extracted initial-selection block and post-construction admission in `packages/coding-agent/src/core/sdk.ts`.
+
 ## Goal backstop default is 270s (2026-09-08)
 
 ### What changed

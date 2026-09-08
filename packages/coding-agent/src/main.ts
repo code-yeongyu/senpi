@@ -6,7 +6,7 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import { setCapabilityOverrides } from "@earendil-works/pi-tui";
@@ -43,7 +43,11 @@ import {
 } from "./cli/startup-loading-indicator.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
 import { APP_NAME, DISPLAY_VERSION, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir } from "./config.ts";
-import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
+import {
+	type AgentSessionRuntimeTarget,
+	type CreateAgentSessionRuntimeFactory,
+	createAgentSessionRuntime,
+} from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
 	createAgentSessionFromServices,
@@ -63,9 +67,10 @@ import {
 	type ScopedModel,
 } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
+import { InMemoryCodingAgentModelsStore } from "./core/models-store.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
-import type { CreateAgentSessionOptions } from "./core/sdk.ts";
+import { assertConfiguredSessionResumeUsable, type CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
 	formatMissingSessionCwdPrompt,
 	getMissingSessionCwdIssue,
@@ -657,6 +662,54 @@ function buildSessionOptions(
 	return { options, cliThinkingFromModel, diagnostics };
 }
 
+/** Read-only configured-catalog lower bound; never loads extension factories. */
+export async function prepareConfiguredSessionResume(
+	parsed: Args,
+	target: AgentSessionRuntimeTarget,
+	projectTrusted: boolean,
+	activeModelRuntime?: ModelRuntime,
+): Promise<void> {
+	const settingsManager = SettingsManager.create(target.cwd, target.agentDir, { projectTrusted });
+	const modelRuntime = await ModelRuntime.create({
+		credentials: new ReadOnlyAuthStorage(join(target.agentDir, "auth.json")),
+		modelsPath: join(target.agentDir, "models.json"),
+		modelsStore: new InMemoryCodingAgentModelsStore(),
+		allowModelNetwork: false,
+		signal: AbortSignal.timeout(15_000),
+	});
+	const patterns = getModelNarrowingPatterns({
+		cliPatterns: parsed.models,
+		legacyEnabledPatterns: settingsManager.getEnabledModels(),
+	});
+	const scopedModels = patterns?.length
+		? await resolveModelScope(patterns, modelRuntime, { signal: AbortSignal.timeout(15_000) })
+		: [];
+	const { options, diagnostics } = buildSessionOptions(
+		parsed,
+		scopedModels,
+		target.sessionManager.hasContextMessages(),
+		modelRuntime,
+		settingsManager,
+	);
+	// Extensions may supply a CLI selector missing from the configured catalog.
+	if (diagnostics.some((diagnostic) => diagnostic.type === "error")) return;
+	if (parsed.apiKey && options.model) await modelRuntime.setRuntimeApiKey(options.model.provider, parsed.apiKey);
+	await assertConfiguredSessionResumeUsable(
+		options,
+		target.sessionManager,
+		modelRuntime,
+		settingsManager,
+		scopedModels,
+		(model) => {
+			if (!activeModelRuntime) return true;
+			// Cached catalog data or an extension can override any configured id.
+			// Only corroborated budget geometry is safe to project without reloading it.
+			const effective = activeModelRuntime.getModel(model.provider, model.id);
+			return effective?.contextWindow === model.contextWindow && effective.maxTokens === model.maxTokens;
+		},
+	);
+}
+
 function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | undefined {
 	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
 }
@@ -936,6 +989,21 @@ export async function main(args: string[], options?: MainOptions) {
 		startupLoadingIndicator.setPhase("extensions & models");
 	}
 
+	const getRuntimeArgs = (launchProfile: AgentSessionRuntimeTarget["launchProfile"]): Args =>
+		launchProfile === undefined
+			? parsed
+			: {
+					...parsed,
+					...(launchProfile.creationModel === undefined
+						? {}
+						: {
+								provider: launchProfile.creationModel.provider,
+								model: launchProfile.creationModel.modelId,
+							}),
+					...(launchProfile.initialThinkingLevel === undefined
+						? {}
+						: { thinking: launchProfile.initialThinkingLevel as Args["thinking"] }),
+				};
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
 		agentDir,
@@ -1023,21 +1091,7 @@ export async function main(args: string[], options?: MainOptions) {
 		// Multi-session opens carry their per-session startup choices here rather
 		// than through process argv. This deliberately feeds the same resolver as
 		// --provider/--model/--thinking, preserving classic flag semantics.
-		const runtimeParsed: Args =
-			launchProfile === undefined
-				? parsed
-				: {
-						...parsed,
-						...(launchProfile.creationModel === undefined
-							? {}
-							: {
-									provider: launchProfile.creationModel.provider,
-									model: launchProfile.creationModel.modelId,
-								}),
-						...(launchProfile.initialThinkingLevel === undefined
-							? {}
-							: { thinking: launchProfile.initialThinkingLevel as Args["thinking"] }),
-					};
+		const runtimeParsed = getRuntimeArgs(launchProfile);
 		const {
 			options: sessionOptions,
 			cliThinkingFromModel,
@@ -1122,6 +1176,23 @@ export async function main(args: string[], options?: MainOptions) {
 		startupLoadingIndicator.stop();
 	});
 	time("createAgentSessionRuntime");
+	createRuntime.prepareResume = async (target) => {
+		// Different cwd can discover different extension model overrides.
+		if (target.cwd !== runtime.cwd) return;
+		const cachedTrust = projectTrustByCwd.get(target.cwd);
+		const hasProjectResources = hasTrustRequiringProjectResources(target.cwd);
+		// A trust prompt can change project settings. Leave that uncertain target
+		// to the existing full creation path rather than project the wrong config.
+		if (parsed.projectTrustOverride === undefined && cachedTrust === undefined && hasProjectResources) return;
+		const trusted =
+			cachedTrust ?? parsed.projectTrustOverride ?? (!hasProjectResources || trustStore.get(target.cwd) === true);
+		await prepareConfiguredSessionResume(
+			getRuntimeArgs(target.launchProfile),
+			target,
+			trusted,
+			runtime.services.modelRuntime,
+		);
+	};
 	let selectedRuntime = runtime;
 	if (isTruthyEnvFlag(envValue("DISABLE_SHARED_HOST"))) {
 		console.error(

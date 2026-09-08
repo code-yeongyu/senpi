@@ -1,3 +1,21 @@
+## 2026-09-08 - Render resume preparation failures without exiting the TUI
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: render read-only preflight `SessionResumePreparationError` as a nonfatal error and leave the current session active. Budget rejection includes the original projection and guidance to open the saved session separately with a larger-context model and compact it. The missing-cwd retry goes through the same error handling, while failures after preparation still use the fatal path.
+
+### Why
+
+- Selecting an oversized saved session previously called `process.exit(1)` before the error could render, even though rejecting the target should not terminate the user's current session.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns the resume selector callback and fatal-error dispatch; extensions cannot replace that host control flow.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` imports and `handleResumeSession`.
+
 
 ## 2026-09-08 - Shortcut context exposes the effective service tier
 

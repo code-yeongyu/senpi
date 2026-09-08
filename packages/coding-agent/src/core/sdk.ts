@@ -10,6 +10,10 @@ import { AuthStorage } from "./auth-storage.ts";
 import { estimateTokens } from "./compaction/compaction.ts";
 import { createSessionCursorExecBridge } from "./cursor-exec-bridge-session.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import {
+	ModelUsabilityBudgetError,
+	projectModelUsabilityBudget,
+} from "./extensions/builtin/compaction/model-usability-budget.ts";
 import { type ServiceTier, supportsServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { convertToLlmForTransport, TRANSPORT_IMAGE_BUDGET_BYTES } from "./messages.ts";
@@ -185,6 +189,139 @@ export function clampThinkingLevelToModel(
 	return available[0] ?? "off";
 }
 
+/** Resolve startup/resume model selection without loading resources or constructing a session. */
+export async function resolveInitialSessionModel(
+	options: Pick<CreateAgentSessionOptions, "model" | "initialModelProvenance" | "thinkingSelection">,
+	existingSession: ReturnType<SessionManager["buildSessionContext"]>,
+	modelRuntime: ModelRuntime,
+	settingsManager: SettingsManager,
+	scopedModels: NonNullable<CreateAgentSessionOptions["scopedModels"]>,
+) {
+	const hasExistingSession = existingSession.messages.length > 0;
+	let model = options.model;
+	let initialModelProvenance = options.initialModelProvenance;
+	let initialResolvedThinkingLevel: ThinkingLevel | undefined;
+	let initialThinkingSelection = options.thinkingSelection;
+	let modelFallbackMessage: string | undefined;
+
+	if (model) {
+		const resolved = resolveStoredModelReference(model.provider, model.id, modelRuntime);
+		if (resolved?.thinkingSelection) {
+			model = resolved.model;
+			initialResolvedThinkingLevel = resolved.thinkingLevel;
+			initialThinkingSelection ??= resolved.thinkingSelection;
+		}
+	}
+
+	// If session has data, try to restore model from it
+	if (!model && hasExistingSession && existingSession.model) {
+		const restored = resolveStoredModelReference(
+			existingSession.model.provider,
+			existingSession.model.modelId,
+			modelRuntime,
+		);
+		if (restored && modelRuntime.hasConfiguredAuth(restored.model.provider)) {
+			model = restored.model;
+			initialResolvedThinkingLevel = restored.thinkingLevel;
+			initialThinkingSelection = restored.thinkingSelection;
+		}
+		if (!model) {
+			modelFallbackMessage = `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;
+		}
+	}
+
+	// If still no model, use findInitialModel (checks settings default, then provider defaults)
+	if (!model) {
+		const result = await findInitialModel({
+			scopedModels,
+			isContinuing: hasExistingSession,
+			defaultProvider: settingsManager.getDefaultProvider(),
+			defaultModelId: settingsManager.getDefaultModel(),
+			defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
+			modelThinkingLevels: settingsManager.getAllModelThinkingLevels(),
+			modelRuntime,
+		});
+		model = result.model;
+		initialModelProvenance = result.provenance;
+		const selectedModel = model;
+		const scopedSelection = selectedModel
+			? scopedModels.find(
+					(entry) => entry.model.provider === selectedModel.provider && entry.model.id === selectedModel.id,
+				)
+			: undefined;
+		initialResolvedThinkingLevel = scopedSelection?.thinkingLevel ?? result.thinkingLevel;
+		initialThinkingSelection = scopedSelection?.thinkingSelection ?? result.thinkingSelection;
+		if (!model) {
+			modelFallbackMessage = formatNoModelsAvailableMessage();
+		} else if (modelFallbackMessage) {
+			modelFallbackMessage += `. Using ${model.provider}/${model.id}`;
+		}
+	}
+
+	return {
+		model,
+		initialModelProvenance,
+		initialResolvedThinkingLevel,
+		initialThinkingSelection,
+		modelFallbackMessage,
+	};
+}
+
+/**
+ * Reject only a configured resume model whose minimum budget already cannot fit.
+ * Unknown/extension-only models are left to final admission after resource loading.
+ * Empty prompt/tools intentionally underestimate the final requirement; this is
+ * not a replacement for the SDK's fully assembled admission guard.
+ */
+export async function assertConfiguredSessionResumeUsable(
+	options: Pick<CreateAgentSessionOptions, "model" | "initialModelProvenance" | "thinkingSelection">,
+	sessionManager: SessionManager,
+	modelRuntime: ModelRuntime,
+	settingsManager: SettingsManager,
+	scopedModels: NonNullable<CreateAgentSessionOptions["scopedModels"]>,
+	isModelReliable: (model: NonNullable<CreateAgentSessionOptions["model"]>) => boolean = () => true,
+): Promise<void> {
+	const existingSession = sessionManager.buildSessionContext();
+	if (existingSession.messages.length === 0) return;
+	if (!options.model && existingSession.model) {
+		const restored = resolveStoredModelReference(
+			existingSession.model.provider,
+			existingSession.model.modelId,
+			modelRuntime,
+		);
+		// An extension may supply a missing model or its auth; do not reject a
+		// speculative fallback that full resource loading could replace.
+		if (!restored || !modelRuntime.hasConfiguredAuth(restored.model.provider)) return;
+	}
+	const { model, initialModelProvenance } = await resolveInitialSessionModel(
+		options,
+		existingSession,
+		modelRuntime,
+		settingsManager,
+		scopedModels,
+	);
+	// Extensions can supply an unresolved default. A speculative provider/first
+	// fallback is not yet evidence of which model full startup will select.
+	if (!options.model && !existingSession.model && initialModelProvenance !== "settings") return;
+	if (
+		!model ||
+		model.contextWindow <= 0 ||
+		!modelRuntime.getModel(model.provider, model.id) ||
+		!isModelReliable(model)
+	)
+		return;
+	const projection = projectModelUsabilityBudget({
+		model,
+		systemPrompt: "",
+		tools: [],
+		liveContextTokens: existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0),
+		compaction: settingsManager.getCompactionSettings(),
+		includeSpeculationLead: false,
+		admission: "resume",
+	});
+	if (!projection.usable) throw new ModelUsabilityBudgetError(projection);
+}
+
 // Helper Functions
 
 function getDefaultAgentDir(): string {
@@ -262,66 +399,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const hasExistingSession = existingSession.messages.length > 0;
 	const hasThinkingEntry = sessionManager.getBranch().some((entry) => entry.type === "thinking_level_change");
 
-	let model = options.model;
-	let initialModelProvenance = options.initialModelProvenance;
-	let initialResolvedThinkingLevel: ThinkingLevel | undefined;
-	let initialThinkingSelection = options.thinkingSelection;
-	let modelFallbackMessage: string | undefined;
-
-	if (model) {
-		const resolved = resolveStoredModelReference(model.provider, model.id, modelRuntime);
-		if (resolved?.thinkingSelection) {
-			model = resolved.model;
-			initialResolvedThinkingLevel = resolved.thinkingLevel;
-			initialThinkingSelection ??= resolved.thinkingSelection;
-		}
-	}
-
-	// If session has data, try to restore model from it
-	if (!model && hasExistingSession && existingSession.model) {
-		const restored = resolveStoredModelReference(
-			existingSession.model.provider,
-			existingSession.model.modelId,
-			modelRuntime,
-		);
-		if (restored && modelRuntime.hasConfiguredAuth(restored.model.provider)) {
-			model = restored.model;
-			initialResolvedThinkingLevel = restored.thinkingLevel;
-			initialThinkingSelection = restored.thinkingSelection;
-		}
-		if (!model) {
-			modelFallbackMessage = `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;
-		}
-	}
-
-	// If still no model, use findInitialModel (checks settings default, then provider defaults)
-	if (!model) {
-		const result = await findInitialModel({
-			scopedModels,
-			isContinuing: hasExistingSession,
-			defaultProvider: settingsManager.getDefaultProvider(),
-			defaultModelId: settingsManager.getDefaultModel(),
-			defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
-			modelThinkingLevels: settingsManager.getAllModelThinkingLevels(),
-			modelRuntime,
-		});
-		model = result.model;
-		initialModelProvenance = result.provenance;
-		const selectedModel = model;
-		const scopedSelection = selectedModel
-			? scopedModels.find(
-					(entry) => entry.model.provider === selectedModel.provider && entry.model.id === selectedModel.id,
-				)
-			: undefined;
-		initialResolvedThinkingLevel = scopedSelection?.thinkingLevel ?? result.thinkingLevel;
-		initialThinkingSelection = scopedSelection?.thinkingSelection ?? result.thinkingSelection;
-		if (!model) {
-			modelFallbackMessage = formatNoModelsAvailableMessage();
-		} else if (modelFallbackMessage) {
-			modelFallbackMessage += `. Using ${model.provider}/${model.id}`;
-		}
-	}
-
+	const {
+		model,
+		initialModelProvenance,
+		initialResolvedThinkingLevel,
+		initialThinkingSelection,
+		modelFallbackMessage,
+	} = await resolveInitialSessionModel(options, existingSession, modelRuntime, settingsManager, scopedModels);
 	let thinkingLevel = options.thinkingLevel ?? initialResolvedThinkingLevel;
 	let thinkingSelection =
 		options.thinkingSelection ??
@@ -541,11 +625,18 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const liveContextTokens = hasExistingSession
 		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)
 		: 0;
-	session.assertModelUsable(
-		undefined,
-		liveContextTokens,
-		hasExistingSession ? { includeSpeculationLead: false, admission: "resume" } : { admission: "start" },
-	);
+	try {
+		session.assertModelUsable(
+			undefined,
+			liveContextTokens,
+			hasExistingSession ? { includeSpeculationLead: false, admission: "resume" } : { admission: "start" },
+		);
+	} catch (error) {
+		// Construction has already subscribed to agent/settings events and built
+		// an extension runner, but this rejected session will never be returned.
+		session.dispose({ skipProviderResourceCleanup: true });
+		throw error;
+	}
 	sessionRef.current = session;
 	const extensionsResult = resourceLoader.getExtensions();
 

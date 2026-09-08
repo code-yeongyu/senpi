@@ -64,7 +64,11 @@ import {
 	VERSION,
 } from "../../config.ts";
 import { type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
-import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
+import {
+	type AgentSessionRuntime,
+	SessionImportFileNotFoundError,
+	SessionResumePreparationError,
+} from "../../core/agent-session-runtime.ts";
 import { isApiKeyLoginProvider } from "../../core/auth-providers.ts";
 import { envValue } from "../../core/brand.ts";
 import {
@@ -74,6 +78,7 @@ import {
 	computeCacheWaste,
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
+import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -7550,32 +7555,40 @@ export class InteractiveMode {
 	): Promise<{ cancelled: boolean }> {
 		this.clearStatusIndicator();
 		try {
-			const result = await this.runtimeHost.switchSession(sessionPath, {
-				withSession: options?.withSession,
-				projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
-			});
-			if (result.cancelled) {
-				return result;
-			}
-			this.showStatus("Resumed session");
-			return result;
-		} catch (error: unknown) {
-			if (error instanceof MissingSessionCwdError) {
-				const selectedCwd = await this.promptForMissingSessionCwd(error);
+			let result: { cancelled: boolean };
+			let selectedCwd: string | undefined;
+			try {
+				result = await this.runtimeHost.switchSession(sessionPath, {
+					withSession: options?.withSession,
+					projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
+				});
+			} catch (error) {
+				if (!(error instanceof MissingSessionCwdError)) throw error;
+				selectedCwd = await this.promptForMissingSessionCwd(error);
 				if (!selectedCwd) {
 					this.showStatus("Resume cancelled");
 					return { cancelled: true };
 				}
-				const result = await this.runtimeHost.switchSession(sessionPath, {
+				result = await this.runtimeHost.switchSession(sessionPath, {
 					cwdOverride: selectedCwd,
 					withSession: options?.withSession,
 					projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
 				});
-				if (result.cancelled) {
-					return result;
-				}
-				this.showStatus("Resumed session in current cwd");
-				return result;
+			}
+			if (!result.cancelled) {
+				this.showStatus(selectedCwd ? "Resumed session in current cwd" : "Resumed session");
+			}
+			return result;
+		} catch (error: unknown) {
+			if (error instanceof SessionResumePreparationError) {
+				const recovery =
+					error.cause instanceof ModelUsabilityBudgetError
+						? " Open the saved session separately with --session <path> --model <larger-context-model>, then compact it before retrying here."
+						: " Fix the target session's setup and retry, or select another session.";
+				this.showError(
+					`Failed to resume session: ${error.message} Your current session is still active.${recovery}`,
+				);
+				return { cancelled: true };
 			}
 			return this.handleFatalRuntimeError("Failed to resume session", error);
 		}

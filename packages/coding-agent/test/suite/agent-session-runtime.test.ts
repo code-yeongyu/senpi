@@ -1,16 +1,23 @@
-import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
+import { registerSessionResourceCleanup } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AgentSession } from "../../src/core/agent-session.ts";
 import {
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionFromServices,
 	createAgentSessionRuntime,
 	createAgentSessionServices,
+	SessionResumePreparationError,
 } from "../../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import { ModelUsabilityBudgetError } from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
+import { getMcpService } from "../../src/core/extensions/builtin/mcp/service.ts";
+import { getToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
+import { assertConfiguredSessionResumeUsable } from "../../src/core/sdk.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type {
 	AgentToolResult,
@@ -32,6 +39,7 @@ describe("AgentSessionRuntime characterization", () => {
 	const cleanups: Array<() => Promise<void> | void> = [];
 
 	afterEach(async () => {
+		vi.restoreAllMocks();
 		while (cleanups.length > 0) {
 			await cleanups.pop()?.();
 		}
@@ -39,7 +47,12 @@ describe("AgentSessionRuntime characterization", () => {
 
 	async function createRuntimeForTest(
 		extensionFactory: ExtensionFactory,
-		options?: { cwd?: string; bootstrapModel?: boolean; bootstrapThinkingLevel?: boolean },
+		options?: {
+			cwd?: string;
+			bootstrapModel?: boolean;
+			bootstrapThinkingLevel?: boolean;
+			beforePrepare?: () => Promise<void>;
+		},
 	) {
 		const tempDir =
 			options?.cwd ?? join(tmpdir(), `pi-runtime-suite-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -109,6 +122,16 @@ describe("AgentSessionRuntime characterization", () => {
 			agentDir: tempDir,
 			sessionManager: SessionManager.create(tempDir),
 		});
+		createRuntime.prepareResume = async ({ sessionManager }) => {
+			await options?.beforePrepare?.();
+			await assertConfiguredSessionResumeUsable(
+				{ model: runtimeOptions.model },
+				sessionManager,
+				runtime.services.modelRuntime,
+				runtime.services.settingsManager,
+				[],
+			);
+		};
 		await runtime.session.bindExtensions({});
 
 		cleanups.push(async () => {
@@ -121,6 +144,216 @@ describe("AgentSessionRuntime characterization", () => {
 
 		return { runtime, faux, tempDir };
 	}
+
+	it("keeps the real builtin runtime usable when read-only resume admission rejects before candidate construction", async () => {
+		const events: RecordedSessionEvent[] = [];
+		const { runtime, faux, tempDir } = await createRuntimeForTest((pi) => {
+			pi.on("session_before_switch", (event) => {
+				events.push(event);
+			});
+			pi.on("session_shutdown", (event) => {
+				events.push(event);
+			});
+			pi.on("session_start", (event) => {
+				events.push(event);
+			});
+		});
+		await runtime.session.prompt("current session");
+		const oldSession = runtime.session;
+		const oldServices = runtime.services;
+		const oldContext = oldSession.extensionRunner.createContext();
+		// The real DefaultResourceLoader includes these builtins; a plain prompt
+		// can otherwise succeed while extension errors are swallowed by the runner.
+		expect(oldSession.extensionRunner.getExtensionIdentities().map((extension) => extension.path)).toEqual(
+			expect.arrayContaining(["<builtin:tool-search>", "<builtin:mcp>"]),
+		);
+		const extensionErrors = vi.fn();
+		oldSession.extensionRunner.onError(extensionErrors);
+		const oldToolSearch = getToolSearchService();
+		const mcpSubscribe = vi.spyOn(getMcpService(), "onWireStatusChanged");
+		const oldMessages = [...oldSession.messages];
+		const oldFile = readFileSync(oldSession.sessionFile!, "utf8");
+		const target = SessionManager.create(tempDir, join(tempDir, "sessions"));
+		target.appendModelChange(faux.getModel().provider, faux.getModel().id);
+		target.appendThinkingLevelChange("off");
+		target.appendMessage({
+			role: "user",
+			content: "x".repeat(faux.getModel().contextWindow * 4),
+			timestamp: Date.now(),
+		});
+		target.appendMessage(fauxAssistantMessage("saved response"));
+		const targetFile = target.getSessionFile()!;
+		const targetContents = readFileSync(targetFile, "utf8");
+		const dispose = vi.spyOn(AgentSession.prototype, "dispose");
+		const abort = vi.spyOn(oldSession, "abort");
+		const invalidate = vi.spyOn(oldSession.extensionRunner, "invalidate");
+		const beforeInvalidate = vi.fn();
+		const rebind = vi.fn(async () => {});
+		runtime.setBeforeSessionInvalidate(beforeInvalidate);
+		runtime.setRebindSession(rebind);
+		events.length = 0;
+
+		const error = await runtime.switchSession(targetFile).catch((reason: unknown) => reason);
+
+		expect(error).toBeInstanceOf(SessionResumePreparationError);
+		if (!(error instanceof SessionResumePreparationError)) throw new Error("expected preparation failure");
+		expect(error.cause).toBeInstanceOf(ModelUsabilityBudgetError);
+		expect(error.cause).toMatchObject({
+			projection: { admission: "resume", usable: false, speculationLeadTokens: 0 },
+		});
+		expect(events).toEqual([{ type: "session_before_switch", reason: "resume", targetSessionFile: targetFile }]);
+		expect(abort).not.toHaveBeenCalled();
+		expect(invalidate).not.toHaveBeenCalled();
+		expect(beforeInvalidate).not.toHaveBeenCalled();
+		expect(rebind).not.toHaveBeenCalled();
+		expect(dispose).not.toHaveBeenCalled();
+		expect(runtime.session).toBe(oldSession);
+		expect(runtime.services).toBe(oldServices);
+		expect(oldContext.cwd).toBe(oldServices.cwd);
+		expect(oldSession.messages).toEqual(oldMessages);
+		expect(readFileSync(oldSession.sessionFile!, "utf8")).toBe(oldFile);
+		expect(readFileSync(targetFile, "utf8")).toBe(targetContents);
+		expect(getToolSearchService()).toBe(oldToolSearch);
+		expect(() => oldToolSearch.getCatalog()).not.toThrow();
+		expect(mcpSubscribe).not.toHaveBeenCalled();
+
+		const observed: string[] = [];
+		oldSession.subscribe((event) => {
+			observed.push(event.type);
+		});
+		await oldSession.prompt("still usable");
+		expect(observed).toContain("message_end");
+		expect(extensionErrors).not.toHaveBeenCalled();
+		expect(oldSession.messages.at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "two" }] });
+		expect(SessionManager.open(oldSession.sessionFile!).buildSessionContext().messages).toEqual(oldSession.messages);
+	});
+
+	it("does not clean up provider resources owned by the same saved session when an unbound candidate is rejected", async () => {
+		const { runtime, faux } = await createRuntimeForTest(() => {});
+		await runtime.session.prompt("saved current session");
+		const oldSession = runtime.session;
+		// Simulate disk history exceeding current admission without changing the
+		// live runtime's already-loaded branch or invoking a real provider.
+		const diskSession = SessionManager.open(oldSession.sessionFile!);
+		diskSession.appendMessage({
+			role: "user",
+			content: "x".repeat(faux.getModel().contextWindow * 4),
+			timestamp: Date.now(),
+		});
+		const cleanupResources = vi.fn();
+		const unregister = registerSessionResourceCleanup(cleanupResources);
+		try {
+			await expect(runtime.switchSession(oldSession.sessionFile!)).rejects.toBeInstanceOf(
+				SessionResumePreparationError,
+			);
+			expect(cleanupResources).not.toHaveBeenCalled();
+			expect(runtime.session).toBe(oldSession);
+			await oldSession.prompt("still active");
+			expect(cleanupResources).not.toHaveBeenCalled();
+		} finally {
+			unregister();
+		}
+	});
+
+	it("keeps the current session alive while asynchronous target preparation fails", async () => {
+		const preparing = Promise.withResolvers<void>();
+		const preparation = Promise.withResolvers<void>();
+		let rejectPreparation = false;
+		const shutdown = vi.fn();
+		const { runtime } = await createRuntimeForTest(
+			(pi) => {
+				pi.on("session_shutdown", shutdown);
+			},
+			{
+				beforePrepare: async () => {
+					if (!rejectPreparation) return;
+					preparing.resolve();
+					await preparation.promise;
+				},
+			},
+		);
+		await runtime.session.prompt("target");
+		const target = runtime.session.sessionFile!;
+		await runtime.newSession();
+		await runtime.session.bindExtensions({});
+		const oldSession = runtime.session;
+		const abort = vi.spyOn(oldSession, "abort");
+		const invalidate = vi.fn();
+		runtime.setBeforeSessionInvalidate(invalidate);
+		shutdown.mockClear();
+		rejectPreparation = true;
+		const error = new Error("target services unavailable");
+		const switchPromise = runtime.switchSession(target);
+		const rejected = expect(switchPromise).rejects.toMatchObject({
+			name: "SessionResumePreparationError",
+			cause: error,
+		});
+		await preparing.promise;
+		expect(runtime.session).toBe(oldSession);
+		expect(oldSession.extensionRunner.isActive).toBe(true);
+		await oldSession.prompt("works during preparation");
+		preparation.reject(error);
+		await rejected;
+		expect(runtime.session).toBe(oldSession);
+		expect(abort).not.toHaveBeenCalled();
+		expect(shutdown).not.toHaveBeenCalled();
+		expect(invalidate).not.toHaveBeenCalled();
+	});
+
+	it("does not construct a candidate if outgoing teardown fails after read-only admission", async () => {
+		const { runtime } = await createRuntimeForTest(() => {});
+		await runtime.session.prompt("target");
+		const target = runtime.session.sessionFile!;
+		await runtime.newSession();
+		const oldSession = runtime.session;
+		const error = new Error("outgoing abort failed");
+		vi.spyOn(oldSession, "abort").mockRejectedValueOnce(error);
+		const dispose = vi.spyOn(AgentSession.prototype, "dispose");
+
+		await expect(runtime.switchSession(target)).rejects.toBe(error);
+
+		expect(dispose).not.toHaveBeenCalled();
+		expect(runtime.session).toBe(oldSession);
+	});
+
+	it("preserves shutdown, invalidation, rebind/start, and withSession ordering on successful resume", async () => {
+		const phases: string[] = [];
+		const { runtime } = await createRuntimeForTest((pi) => {
+			pi.on("session_before_switch", () => {
+				phases.push("before");
+			});
+			pi.on("session_shutdown", () => {
+				phases.push("shutdown");
+			});
+			pi.on("session_start", () => {
+				phases.push("start");
+			});
+		});
+		await runtime.session.prompt("target");
+		const target = runtime.session.sessionFile!;
+		await runtime.newSession();
+		await runtime.session.bindExtensions({});
+		const oldSession = runtime.session;
+		runtime.setBeforeSessionInvalidate(() => {
+			phases.push("invalidate");
+			expect(oldSession.extensionRunner.isActive).toBe(true);
+		});
+		runtime.setRebindSession(async (session) => {
+			phases.push("rebind");
+			expect(oldSession.extensionRunner.isActive).toBe(false);
+			await session.bindExtensions({});
+		});
+		phases.length = 0;
+
+		await runtime.switchSession(target, {
+			withSession: async () => {
+				phases.push("withSession");
+			},
+		});
+
+		expect(phases).toEqual(["before", "shutdown", "invalidate", "rebind", "start", "withSession"]);
+		runtime.setBeforeSessionInvalidate(undefined);
+	});
 
 	it("persists message_end assistant replacements to the session manager", async () => {
 		const { runtime } = await createRuntimeForTest((pi: ExtensionAPI) => {

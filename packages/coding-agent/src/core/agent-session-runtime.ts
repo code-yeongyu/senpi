@@ -11,7 +11,7 @@ import type {
 } from "./extensions/index.ts";
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
-import { assertSessionCwdExists } from "./session-cwd.ts";
+import { assertSessionCwdExists, MissingSessionCwdError } from "./session-cwd.ts";
 import { SessionManager } from "./session-manager.ts";
 
 /**
@@ -40,14 +40,21 @@ export interface AgentSessionLaunchProfile {
  * services for the effective cwd, resolves session options against those
  * services, and finally creates the AgentSession.
  */
-export type CreateAgentSessionRuntimeFactory = (options: {
+export interface AgentSessionRuntimeTarget {
 	cwd: string;
 	agentDir: string;
 	sessionManager: SessionManager;
 	sessionStartEvent?: SessionStartEvent;
 	projectTrustContext?: ProjectTrustContext;
 	launchProfile?: Readonly<AgentSessionLaunchProfile>;
-}) => Promise<CreateAgentSessionRuntimeResult>;
+}
+
+export type CreateAgentSessionRuntimeFactory = ((
+	options: AgentSessionRuntimeTarget,
+) => Promise<CreateAgentSessionRuntimeResult>) & {
+	/** Read-only admission: must not load extensions, construct sessions, or mutate the current runtime. */
+	prepareResume?: (options: AgentSessionRuntimeTarget) => Promise<void>;
+};
 
 /**
  * Thrown when /import references a JSONL file path that does not exist.
@@ -59,6 +66,14 @@ export class SessionImportFileNotFoundError extends Error {
 		super(`File not found: ${filePath}`);
 		this.name = "SessionImportFileNotFoundError";
 		this.filePath = filePath;
+	}
+}
+
+/** A resume target failed to prepare; the current session has not been torn down. */
+export class SessionResumePreparationError extends Error {
+	constructor(cause: unknown) {
+		super(cause instanceof Error ? cause.message : String(cause), { cause });
+		this.name = "SessionResumePreparationError";
 	}
 }
 
@@ -76,9 +91,9 @@ function extractUserMessageText(content: string | Array<{ type: string; text?: s
 /**
  * Owns the current AgentSession plus its cwd-bound services.
  *
- * Session replacement methods tear down the current runtime first, then create
- * and apply the next runtime. If creation fails, the error is propagated to the
- * caller. The caller is responsible for user-facing error handling.
+ * Resume can run a read-only admission preflight before teardown. Full runtime
+ * creation still runs after teardown because extension registration may mutate
+ * process-global services. The caller owns user-facing error handling.
  */
 export class AgentSessionRuntime {
 	private rebindSession?: (session: AgentSession) => Promise<void>;
@@ -251,19 +266,26 @@ export class AgentSessionRuntime {
 		}
 
 		const previousSessionFile = this.session.sessionFile;
-		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
-		assertSessionCwdExists(sessionManager, this.cwd);
-		await this.teardownCurrent("resume", sessionManager.getSessionFile());
-		await this.apply(
-			await this.createRuntime({
+		let target: AgentSessionRuntimeTarget;
+		try {
+			const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
+			assertSessionCwdExists(sessionManager, this.cwd);
+			target = {
 				cwd: sessionManager.getCwd(),
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
 				projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
 				launchProfile: this._launchProfile,
-			}),
-		);
+			};
+			await this.createRuntime.prepareResume?.(target);
+		} catch (error) {
+			if (error instanceof MissingSessionCwdError) throw error;
+			throw new SessionResumePreparationError(error);
+		}
+
+		await this.teardownCurrent("resume", target.sessionManager.getSessionFile());
+		await this.apply(await this.createRuntime(target));
 		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };
 	}

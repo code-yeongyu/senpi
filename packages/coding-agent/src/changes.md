@@ -1,5 +1,28 @@
 # changes
 
+## 2026-09-08 - Preflight same-cwd configured resume models without loading extensions
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: add a read-only resume admission hook using target settings, read-only credentials, an in-memory model catalog store, no model network refresh, and the same CLI/launch-profile plus SDK initial-model selection as normal creation. Preflight is limited to same-cwd targets with resolved trust; the active effective same-id model must corroborate the configured window and output budget for every provider, including cached catalog and extension overrides.
+
+### Why
+
+- The reproduced saved transcript has more estimated tokens than the model's newly reduced catalog window. Rejecting that lower-bound mismatch before loading any target extension preserves the current TUI without mutating history or relaxing full model admission.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts` supplies the runtime factory and controls model selection before resource loading; an extension cannot safely run this preflight before its own registration.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/main.ts` runtime factory setup and launch-profile argument resolution.
+
+### Scope
+
+- This is a conservative configured-catalog check for the classic TUI, not general rollback. Different cwd, unresolved trust, speculative default fallbacks, nonpositive windows, and missing or mismatched active model geometry are deferred to the existing creation path. Extra prompt/tool overhead can still fail full admission after teardown. Arbitrary extensions changing model registration on reload and experimental shared-host typed-error serialization are not covered. No broader target-history immutability guarantee is added: legacy missing-thinking metadata behavior is unchanged.
+
+
 ## 2026-09-07 - Add the memory Aha-moment tip
 
 ### What changed

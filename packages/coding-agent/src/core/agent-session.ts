@@ -2911,7 +2911,7 @@ export class AgentSession {
 	 * Remove all listeners and disconnect from agent.
 	 * Call this when completely done with the session.
 	 */
-	dispose(): void {
+	dispose(options: { skipProviderResourceCleanup?: boolean } = {}): void {
 		try {
 			this._probeBackScheduler.cancel("dispose");
 			this.abortRetry();
@@ -2933,7 +2933,9 @@ export class AgentSession {
 		this._unsubscribeWakeSources?.();
 		this._unsubscribeWakeSources = undefined;
 		this._eventListeners = [];
-		cleanupSessionResources(this.sessionId);
+		// Unadmitted SDK candidates have never made a provider request. A live
+		// runtime may still own transport/cache resources under the same saved id.
+		if (!options.skipProviderResourceCleanup) cleanupSessionResources(this.sessionId);
 	}
 
 	/** Live in-session activity signals; see `session-activity.ts` for the contract. */
