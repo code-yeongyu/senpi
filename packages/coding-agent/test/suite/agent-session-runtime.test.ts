@@ -11,6 +11,7 @@ import {
 	createAgentSessionServices,
 } from "../../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import { estimateTokens } from "../../src/core/compaction/compaction.ts";
 import { ModelUsabilityBudgetError } from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type {
@@ -50,6 +51,9 @@ describe("AgentSessionRuntime characterization", () => {
 			models: [
 				{ id: "faux-1", reasoning: true },
 				{ id: "faux-2", reasoning: false },
+				// A deliberately tiny context window so a transcript that fits the default
+				// 128000-token model is over budget once resumed against this model.
+				{ id: "faux-small", reasoning: false, contextWindow: 8192, maxTokens: 2048 },
 			],
 		});
 		faux.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two"), fauxAssistantMessage("three")]);
@@ -704,6 +708,81 @@ describe("AgentSessionRuntime characterization", () => {
 		// ...and it is still usable: teardown never disposed it, so its extension
 		// runner was never invalidated (pre-fix, teardown ran first and the next
 		// input crashed with the stale-context error).
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+		await expect(runtime.session.prompt("still here")).resolves.toBeUndefined();
+	});
+
+	// Regression: the admission check must run against the model the resume will
+	// actually restore (the destination session's stored model), not the live
+	// session's model. When the active model has a bigger window than the restored
+	// one, checking the active model passes preflight, tears down the live session,
+	// then re-throws from the post-teardown check - the destructive failure.
+	it("rejects a resume over the restored model's budget even when the active model would fit", async () => {
+		const emittedBeforeSwitch: RecordedSessionEvent[] = [];
+		const { runtime, faux } = await createRuntimeForTest((pi: ExtensionAPI) => {
+			pi.on("session_before_switch", (event) => {
+				emittedBeforeSwitch.push(event);
+			});
+		});
+		// Active session runs on the default 128000-token model.
+		await runtime.session.prompt("hello");
+		const originalSession = runtime.session;
+		const originalSessionFile = runtime.session.sessionFile;
+
+		// The destination session stores the tiny 8192-token model. Its transcript is
+		// ~60000 tokens: comfortably inside the active model's window, far past the
+		// restored model's. The user + assistant model entry make faux-small the
+		// restored model on resume.
+		const smallModel = faux.getModel("faux-small")!;
+		const targetDir = join(
+			tmpdir(),
+			`pi-runtime-restored-model-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		);
+		mkdirSync(targetDir, { recursive: true });
+		const targetSession = SessionManager.create(targetDir);
+		targetSession.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "x".repeat(60_000) }],
+			timestamp: Date.now() - 1,
+		});
+		targetSession.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "ok" }],
+			api: smallModel.api,
+			provider: smallModel.provider,
+			model: smallModel.id,
+			stopReason: "stop",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			timestamp: Date.now(),
+		});
+		const targetSessionFile = targetSession.getSessionFile();
+		cleanups.push(() => rmSync(targetDir, { recursive: true, force: true }));
+
+		// Confirm the transcript fits the active model: checking it would pass.
+		const activeTokens = SessionManager.open(targetSessionFile!)
+			.buildSessionContext()
+			.messages.reduce((total, message) => total + estimateTokens(message), 0);
+		expect(() =>
+			originalSession.assertModelUsable(originalSession.model, activeTokens, {
+				includeSpeculationLead: false,
+				admission: "resume",
+			}),
+		).not.toThrow();
+
+		await expect(runtime.switchSession(targetSessionFile!)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
+
+		// Non-mutating preflight ran before the switch lifecycle event, so a rejected
+		// resume is a true no-op: no session_before_switch was ever emitted.
+		expect(emittedBeforeSwitch).toEqual([]);
+		expect(runtime.session).toBe(originalSession);
+		expect(runtime.session.sessionFile).toBe(originalSessionFile);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);
 		await expect(runtime.session.prompt("still here")).resolves.toBeUndefined();
 	});

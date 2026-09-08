@@ -7566,23 +7566,38 @@ export class InteractiveMode {
 					this.showStatus("Resume cancelled");
 					return { cancelled: true };
 				}
-				const result = await this.runtimeHost.switchSession(sessionPath, {
-					cwdOverride: selectedCwd,
-					withSession: options?.withSession,
-					projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
-				});
-				if (result.cancelled) {
+				try {
+					const result = await this.runtimeHost.switchSession(sessionPath, {
+						cwdOverride: selectedCwd,
+						withSession: options?.withSession,
+						projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
+					});
+					if (result.cancelled) {
+						return result;
+					}
+					this.showStatus("Resumed session in current cwd");
 					return result;
+				} catch (overrideError: unknown) {
+					// The cwd-override retry can also be rejected by the model usability
+					// budget; give it the same recoverable treatment as the first attempt
+					// instead of letting it escape as an unhandled rejection.
+					if (overrideError instanceof ModelUsabilityBudgetError) {
+						return this.cancelResumeWithBudgetError(overrideError);
+					}
+					return this.handleFatalRuntimeError("Failed to resume session", overrideError);
 				}
-				this.showStatus("Resumed session in current cwd");
-				return result;
 			}
 			if (error instanceof ModelUsabilityBudgetError) {
-				this.showError(`Failed to resume session: ${error.message}`);
-				return { cancelled: true };
+				return this.cancelResumeWithBudgetError(error);
 			}
 			return this.handleFatalRuntimeError("Failed to resume session", error);
 		}
+	}
+
+	/** Render an over-budget resume rejection and keep the live session running. */
+	private cancelResumeWithBudgetError(error: ModelUsabilityBudgetError): { cancelled: boolean } {
+		this.showError(`Failed to resume session: ${error.message}`);
+		return { cancelled: true };
 	}
 
 	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {

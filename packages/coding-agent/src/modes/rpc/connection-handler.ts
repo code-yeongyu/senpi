@@ -35,6 +35,7 @@ import {
 	subscribeProviderAccountEvents,
 } from "../../core/extensions/builtin/claude-sdk-oauth/account-events.ts";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../../core/extensions/builtin/claude-sdk-oauth/account-management.ts";
+import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
 import {
 	isMcpControlInventoryChanged,
 	MCP_CONTROL_INVENTORY_CHANGED_EVENT,
@@ -1669,13 +1670,24 @@ export function createRpcConnectionHandler(
 		} catch (commandError: unknown) {
 			const missingCwd =
 				commandError instanceof Error && commandError.name === "MissingSessionCwdError" && "issue" in commandError;
+			// Preserve the budget-rejection identity across the RPC boundary: the client
+			// reconstructs ModelUsabilityBudgetError from this typed code + projection so
+			// its instanceof check (and the TUI's recoverable handling) still works,
+			// rather than seeing a plain Error and exiting.
+			const budgetError = commandError instanceof ModelUsabilityBudgetError ? commandError : undefined;
+			const errorCode = missingCwd ? "missing_session_cwd" : budgetError ? "model_usability_budget" : undefined;
+			const errorData = missingCwd
+				? (commandError as { issue: unknown }).issue
+				: budgetError
+					? budgetError.projection
+					: undefined;
 			output(
 				error(
 					command.id,
 					command.type,
 					commandError instanceof Error ? commandError.message : String(commandError),
-					missingCwd ? "missing_session_cwd" : undefined,
-					missingCwd ? commandError.issue : undefined,
+					errorCode,
+					errorData,
 				),
 			);
 			await waitForRpcBackpressure();

@@ -3,7 +3,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleResumeSession`'s catch block now handles `ModelUsabilityBudgetError` (imported from `../../core/extensions/builtin/compaction/model-usability-budget.ts`) before the `handleFatalRuntimeError` fallback. It renders the message through `showError` and returns `{ cancelled: true }` instead of routing to `handleFatalRuntimeError`, which calls `process.exit(1)`.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleResumeSession` now handles `ModelUsabilityBudgetError` (imported from `../../core/extensions/builtin/compaction/model-usability-budget.ts`) on both switch attempts. A new `cancelResumeWithBudgetError` helper renders the message through `showError` and returns `{ cancelled: true }` instead of routing to `handleFatalRuntimeError` (which calls `process.exit(1)`). The `MissingSessionCwdError` cwd-override retry is now wrapped in its own `try/catch` so a budget rejection from the second `switchSession` gets the same recoverable treatment instead of escaping as an unhandled rejection.
 
 ### Why
 

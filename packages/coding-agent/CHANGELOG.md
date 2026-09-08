@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Resume preflight now runs the model-budget admission check before session teardown, against the model the resume will actually restore, so a `/resume` that exceeds the target model's context window shows an error and keeps the live session running instead of tearing it down and silently exiting (exit 1). The check runs before the switch lifecycle event so a rejected resume is a true no-op, the cwd-override retry gets the same recoverable handling, and the rejection keeps its typed identity across the shared-host RPC boundary.
+
 ### Removed
 
 ## [2026.9.7-2] - 2026-09-07

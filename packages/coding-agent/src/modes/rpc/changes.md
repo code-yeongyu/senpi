@@ -1,5 +1,24 @@
 # changes
 
+## Budget rejection keeps its typed identity across the RPC boundary (2026-09-08)
+
+### What changed
+
+- `connection-handler.ts`: the command error path now classifies `ModelUsabilityBudgetError` (imported from `../../core/extensions/builtin/compaction/model-usability-budget.ts`) alongside `MissingSessionCwdError`, emitting `errorCode: "model_usability_budget"` with the error's `projection` as `errorData` on the wire.
+- `rpc-client.ts`: `getData` reconstructs `ModelUsabilityBudgetError` from that typed code + projection before falling back to a plain `Error`, mirroring the existing `missing_session_cwd` reconstruction.
+
+### Why
+
+- With `experimental.sharedHost`, `switchSession` runs on the host and its result crosses the RPC seam. `getData` rebuilt any non-missing-cwd failure as a plain `Error`, so the interactive resume handler's `instanceof ModelUsabilityBudgetError` check failed client-side and the TUI still routed an over-budget `/resume` to `process.exit(1)`. Classifying on a typed error code (never a message substring) preserves the identity so the client shows the error and keeps the live session, matching the in-process path.
+
+### Why an extension could not handle it
+
+- Error serialization/deserialization across the RPC transport is core host/client plumbing with no extension hook; only the connection handler and client can preserve a typed error's identity over the wire.
+
+### Expected merge conflict zones
+
+- LOW: the classification block in `connection-handler.ts`'s command catch, its new import, and the added branch + import in `rpc-client.ts`'s `getData`.
+
 ## Watchdog reads the ownership token before it removes the scratch directory (2026-09-07)
 
 ### What changed

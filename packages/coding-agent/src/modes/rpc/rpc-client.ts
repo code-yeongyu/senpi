@@ -11,6 +11,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
@@ -1107,6 +1108,11 @@ export class RpcClient {
 			if (errorResponse.errorCode === "missing_session_cwd" && errorResponse.errorData) {
 				throw new MissingSessionCwdError(
 					errorResponse.errorData as ConstructorParameters<typeof MissingSessionCwdError>[0],
+				);
+			}
+			if (errorResponse.errorCode === "model_usability_budget" && errorResponse.errorData) {
+				throw new ModelUsabilityBudgetError(
+					errorResponse.errorData as ConstructorParameters<typeof ModelUsabilityBudgetError>[0],
 				);
 			}
 			throw new Error(errorResponse.error);

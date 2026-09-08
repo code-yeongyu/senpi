@@ -1,12 +1,13 @@
-## Resume admission runs before teardown so a rejected resume keeps the live session (2026-09-08)
+## Resume admission runs before teardown and before the switch event, against the restored model (2026-09-08)
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` now calls a new `assertSessionAdmissible(sessionManager)` before `teardownCurrent("resume", ...)`. The method rebuilds the target session context, sums its live-context tokens with `estimateTokens` (imported from `./compaction/compaction.ts`), and runs `this.session.assertModelUsable(model, liveContextTokens, { includeSpeculationLead: false, admission: "resume" })` against the current model - mirroring the post-teardown check `createAgentSession` performs in `sdk.ts`. When the target is empty or the session has no model it is a no-op.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` now opens the target `SessionManager`, runs `assertSessionCwdExists`, and calls the synchronous `assertSessionAdmissible(sessionManager)` *before* `emitBeforeSwitch("resume", ...)` and `teardownCurrent("resume", ...)`. All three are non-mutating reads, so a rejected resume is a true no-op that never fires the switch lifecycle event (no side-query abort, no widget removal) and never disposes the live session.
+- `assertSessionAdmissible` sums the target's live-context tokens with `estimateTokens` (imported from `./compaction/compaction.ts`) and runs `this.session.assertModelUsable(model, liveContextTokens, { includeSpeculationLead: false, admission: "resume" })`. The `model` is now the model the resume will actually restore, resolved by the new private `resolveResumeModel`: it mirrors `createAgentSession`'s restore path in `sdk.ts` - `resolveStoredModelReference(existingSession.model.provider, existingSession.model.modelId, this.session.modelRuntime)` when the destination carries a stored model whose provider is authorized (`modelRuntime.hasConfiguredAuth`), else the live session's active model. When the target is empty or no model resolves it is a no-op.
 
 ### Why
 
-- Resuming a session whose restored transcript exceeds the current model's context budget threw `ModelUsabilityBudgetError` only from `createAgentSession`, which runs after `teardownCurrent` has already disposed the live session and invalidated its extension runner. The user's still-active session was destroyed by a resume that was always going to be rejected, and the next input crashed with "This extension ctx is stale after session replacement or reload". Running the same admission check before teardown makes a rejected resume a clean no-op that leaves the live session intact.
+- Resuming a session whose restored transcript exceeds the *restored* model's context budget threw `ModelUsabilityBudgetError` only from `createAgentSession`, which runs after `teardownCurrent` has already disposed the live session and invalidated its extension runner. The user's still-active session was destroyed by a resume that was always going to be rejected, and the next input crashed with "This extension ctx is stale after session replacement or reload". Checking the *active* model was not enough: if the active model has a bigger window than the restored one, preflight passed, teardown destroyed the live session, and the post-teardown check re-threw - the exact destructive failure. Running the same admission check against the restored model, before the switch event and teardown, makes a rejected resume a clean no-op.
 
 ### Why an extension could not handle it
 
@@ -14,7 +15,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: the added `assertSessionAdmissible` call in `switchSession`, the new method placed after `switchSession`, and the `estimateTokens` import line.
+- LOW: the reordered preflight block in `switchSession`, the `assertSessionAdmissible`/`resolveResumeModel` methods placed after `switchSession`, and the `estimateTokens` / `resolveStoredModelReference` / `Model, Api` import lines.
 
 ## Insufficient accepted compaction keeps its blocked state, #7921 case 6 (2026-09-07)
 
