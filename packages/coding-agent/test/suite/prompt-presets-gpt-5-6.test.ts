@@ -66,9 +66,8 @@ function occurrences(haystack: string, needle: string): number {
 
 const EXPECTED_CONCERN: Record<Gpt56ExecutionRuleId, Gpt56ExecutionConcern> = {
 	"eval-first-routing": "tool-orchestration",
-	"parallel-batching": "tool-orchestration",
-	"over-call-bias": "tool-orchestration",
-	"in-kernel-reduction": "tool-orchestration",
+	"evidence-comparison": "tool-orchestration",
+	"perceived-state-loop": "tool-orchestration",
 	"stay-direct-exceptions": "tool-orchestration",
 	delegation: "delegation",
 	"todo-granularity": "todo-discipline",
@@ -79,9 +78,8 @@ const EXPECTED_CONCERN: Record<Gpt56ExecutionRuleId, Gpt56ExecutionConcern> = {
 
 const EXPECTED_SECTION: Record<Gpt56ExecutionRuleId, string> = {
 	"eval-first-routing": "Working the Task",
-	"parallel-batching": "Working the Task",
-	"over-call-bias": "Working the Task",
-	"in-kernel-reduction": "Working the Task",
+	"evidence-comparison": "Working the Task",
+	"perceived-state-loop": "Working the Task",
 	"stay-direct-exceptions": "Working the Task",
 	delegation: "Working the Task",
 	"todo-granularity": "Working the Task",
@@ -105,7 +103,7 @@ describe("GPT-5.6 execution discipline", () => {
 			expect(rule.directive).not.toMatch(/\p{Extended_Pictographic}/u);
 		}
 		const orchestration = GPT56_EXECUTION_RULES.filter((rule) => rule.concern === "tool-orchestration");
-		expect(orchestration.length).toBeGreaterThanOrEqual(5);
+		expect(orchestration.length).toBe(4);
 	});
 
 	it("renders every directive exactly once, at its point of use in the core", () => {

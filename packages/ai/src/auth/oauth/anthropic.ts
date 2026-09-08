@@ -5,28 +5,23 @@
  * It is only intended for CLI use, not browser environments.
  */
 
-import type { Server } from "node:http";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
-import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
+import {
+	type CallbackListenerApis,
+	PREFERRED_CALLBACK_PORT,
+	startCallbackListener,
+} from "./anthropic-callback-listener.ts";
+import { parseAuthorizationInput } from "./authorization-input.ts";
+import { formatErrorDetails } from "./error-details.ts";
 import { generatePKCE } from "./pkce.ts";
-
-type CallbackServerInfo = {
-	server?: Server;
-	redirectUri: string;
-	callbackUnavailable?: { code: string };
-	cancelWait: () => void;
-	waitForCode: () => Promise<{ code: string; state: string } | null>;
-};
 
 export function __setAnthropicOAuthNodeApisForTests(apis: NodeApis | null): void {
 	nodeApis = apis;
 	nodeApisPromise = null;
 }
 
-type NodeApis = {
-	createServer: typeof import("node:http").createServer;
-};
+type NodeApis = CallbackListenerApis;
 
 let nodeApis: NodeApis | null = null;
 let nodeApisPromise: Promise<NodeApis> | null = null;
@@ -36,9 +31,12 @@ const CLIENT_ID = decode("OWQxYzI1MGEtZTYxYi00NGQ5LTg4ZWQtNTk0NGQxOTYyZjVl");
 const AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
 const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
 const CALLBACK_HOST = getProviderEnvValue("PI_OAUTH_CALLBACK_HOST") || "127.0.0.1";
-const CALLBACK_PORT = 53692;
-const CALLBACK_PATH = "/callback";
-const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}${CALLBACK_PATH}`;
+/**
+ * A login nobody finishes must not keep its listener (and its manual prompt)
+ * alive forever: the stale listener would answer a later login's browser
+ * redirect on this machine with "State mismatch".
+ */
+const LOGIN_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const SCOPES =
 	"org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 async function getNodeApis(): Promise<NodeApis> {
@@ -53,138 +51,6 @@ async function getNodeApis(): Promise<NodeApis> {
 	}
 	nodeApis = await nodeApisPromise;
 	return nodeApis;
-}
-
-function parseAuthorizationInput(input: string): { code?: string; state?: string } {
-	const value = input.trim();
-	if (!value) return {};
-
-	try {
-		const url = new URL(value);
-		return {
-			code: url.searchParams.get("code") ?? undefined,
-			state: url.searchParams.get("state") ?? undefined,
-		};
-	} catch {
-		// not a URL
-	}
-
-	if (value.includes("#")) {
-		const [code, state] = value.split("#", 2);
-		return { code, state };
-	}
-
-	if (value.includes("code=")) {
-		const params = new URLSearchParams(value);
-		return {
-			code: params.get("code") ?? undefined,
-			state: params.get("state") ?? undefined,
-		};
-	}
-
-	return { code: value };
-}
-
-function formatErrorDetails(error: unknown): string {
-	if (error instanceof Error) {
-		const details: string[] = [`${error.name}: ${error.message}`];
-		const errorWithCode = error as Error & { code?: string; errno?: number | string; cause?: unknown };
-		if (errorWithCode.code) details.push(`code=${errorWithCode.code}`);
-		if (typeof errorWithCode.errno !== "undefined") details.push(`errno=${String(errorWithCode.errno)}`);
-		if (typeof error.cause !== "undefined") {
-			details.push(`cause=${formatErrorDetails(error.cause)}`);
-		}
-		if (error.stack) {
-			details.push(`stack=${error.stack}`);
-		}
-		return details.join("; ");
-	}
-	return String(error);
-}
-
-async function startCallbackServer(expectedState: string): Promise<CallbackServerInfo> {
-	const { createServer } = await getNodeApis();
-
-	return new Promise((resolve, reject) => {
-		let settleWait: ((value: { code: string; state: string } | null) => void) | undefined;
-		const waitForCodePromise = new Promise<{ code: string; state: string } | null>((resolveWait) => {
-			let settled = false;
-			settleWait = (value) => {
-				if (settled) return;
-				settled = true;
-				resolveWait(value);
-			};
-		});
-
-		const server = createServer((req, res) => {
-			try {
-				const url = new URL(req.url || "", "http://localhost");
-				if (url.pathname !== CALLBACK_PATH) {
-					res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-					res.end(oauthErrorHtml("Callback route not found."));
-					return;
-				}
-
-				const code = url.searchParams.get("code");
-				const state = url.searchParams.get("state");
-				const error = url.searchParams.get("error");
-
-				if (error) {
-					res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-					res.end(oauthErrorHtml("Anthropic authentication did not complete.", `Error: ${error}`));
-					return;
-				}
-
-				if (!code || !state) {
-					res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-					res.end(oauthErrorHtml("Missing code or state parameter."));
-					return;
-				}
-
-				if (state !== expectedState) {
-					res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-					res.end(oauthErrorHtml("State mismatch."));
-					return;
-				}
-
-				res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-				res.end(oauthSuccessHtml("Anthropic authentication completed. You can close this window."));
-				settleWait?.({ code, state });
-			} catch {
-				res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
-				res.end("Internal error");
-			}
-		});
-
-		server.on("error", (err) => {
-			const code = (err as NodeJS.ErrnoException).code;
-			if (code === "EACCES" || code === "EADDRINUSE" || code === "EPERM") {
-				resolve({
-					redirectUri: REDIRECT_URI,
-					callbackUnavailable: { code },
-					cancelWait: () => {},
-					waitForCode: async () => null,
-				});
-				return;
-			}
-			reject(
-				new Error(
-					`Could not open OAuth callback listener at ${CALLBACK_HOST}:${CALLBACK_PORT}: ${formatErrorDetails(err)}`,
-				),
-			);
-		});
-
-		server.listen(CALLBACK_PORT, CALLBACK_HOST, () => {
-			resolve({
-				server,
-				redirectUri: REDIRECT_URI,
-				cancelWait: () => {
-					settleWait?.(null);
-				},
-				waitForCode: () => waitForCodePromise,
-			});
-		});
-	});
 }
 
 async function postJson(url: string, body: Record<string, string | number>, signal: AbortSignal): Promise<string> {
@@ -253,17 +119,24 @@ async function exchangeAuthorizationCode(
 
 async function loginAnthropic(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
 	const { verifier, challenge } = await generatePKCE();
-	const server = await startCallbackServer(verifier);
+	const listener = await startCallbackListener(await getNodeApis(), verifier, CALLBACK_HOST);
 	const manualAbort = new AbortController();
+	let timedOut = false;
 	// Cancelling the login must release BOTH waits: the callback listener and the
-	// manual prompt. In manual-only mode (callback port unavailable) the prompt is
-	// the only thing keeping the login alive, so leaving it open would hang cleanup.
-	const onAbort = () => {
-		server.cancelWait();
+	// manual prompt. In manual-only mode (no callback port could be bound) the
+	// prompt is the only thing keeping the login alive, so leaving it open would
+	// hang cleanup.
+	const releaseWaits = () => {
+		listener.cancelWait();
 		manualAbort.abort();
 	};
-	interaction.signal.addEventListener("abort", onAbort, { once: true });
-	if (interaction.signal.aborted) onAbort();
+	interaction.signal.addEventListener("abort", releaseWaits, { once: true });
+	if (interaction.signal.aborted) releaseWaits();
+	const idleTimer = setTimeout(() => {
+		timedOut = true;
+		releaseWaits();
+	}, LOGIN_IDLE_TIMEOUT_MS);
+	idleTimer.unref?.();
 	let code: string | undefined;
 	let state: string | undefined;
 	let manualInput: string | undefined;
@@ -274,7 +147,7 @@ async function loginAnthropic(interaction: ProviderAuthInteraction): Promise<OAu
 			code: "true",
 			client_id: CLIENT_ID,
 			response_type: "code",
-			redirect_uri: REDIRECT_URI,
+			redirect_uri: listener.redirectUri,
 			scope: SCOPES,
 			code_challenge: challenge,
 			code_challenge_method: "S256",
@@ -283,8 +156,8 @@ async function loginAnthropic(interaction: ProviderAuthInteraction): Promise<OAu
 		interaction.notify({
 			type: "auth_url",
 			url: `${AUTHORIZE_URL}?${authParams.toString()}`,
-			instructions: server.callbackUnavailable
-				? `The local OAuth callback port ${CALLBACK_PORT} could not be opened (${server.callbackUnavailable.code}). Complete login in your browser, then copy the final redirect URL from the address bar and paste it here.`
+			instructions: listener.callbackUnavailable
+				? `No local OAuth callback port could be opened (port ${PREFERRED_CALLBACK_PORT} and an ephemeral port both failed: ${listener.callbackUnavailable.code}). Complete login in your browser, then copy the final redirect URL from the address bar and paste it here.`
 				: "Complete login in your browser. If the browser is on another machine, paste the final redirect URL here.",
 		});
 
@@ -292,19 +165,20 @@ async function loginAnthropic(interaction: ProviderAuthInteraction): Promise<OAu
 			.prompt({
 				type: "manual_code",
 				message: "Complete login in your browser, or paste the authorization code / redirect URL here:",
-				placeholder: REDIRECT_URI,
+				placeholder: listener.redirectUri,
 				signal: manualAbort.signal,
 			})
 			.then((input) => {
 				manualInput = input;
-				server.cancelWait();
+				listener.cancelWait();
 			})
 			.catch((error) => {
 				manualError = error instanceof Error ? error : new Error(String(error));
-				server.cancelWait();
+				listener.cancelWait();
 			});
 
-		const result = await server.waitForCode();
+		const result = await listener.waitForCode();
+		if (timedOut) throw new Error(loginTimedOutMessage());
 		if (manualError) throw manualError;
 		if (result?.code) {
 			code = result.code;
@@ -318,6 +192,7 @@ async function loginAnthropic(interaction: ProviderAuthInteraction): Promise<OAu
 
 		if (!code) {
 			await manualPromise;
+			if (timedOut) throw new Error(loginTimedOutMessage());
 			if (manualError) throw manualError;
 			if (manualInput) {
 				const parsed = parseAuthorizationInput(manualInput);
@@ -330,12 +205,18 @@ async function loginAnthropic(interaction: ProviderAuthInteraction): Promise<OAu
 		if (!code) throw new Error("Missing authorization code");
 		if (!state) throw new Error("Missing OAuth state");
 		interaction.notify({ type: "progress", message: "Exchanging authorization code for tokens..." });
-		return exchangeAuthorizationCode(code, state, verifier, REDIRECT_URI, interaction.signal);
+		return await exchangeAuthorizationCode(code, state, verifier, listener.redirectUri, interaction.signal);
 	} finally {
-		interaction.signal.removeEventListener("abort", onAbort);
+		clearTimeout(idleTimer);
+		interaction.signal.removeEventListener("abort", releaseWaits);
 		manualAbort.abort();
-		server.server?.close();
+		await listener.close();
 	}
+}
+
+function loginTimedOutMessage(): string {
+	const minutes = Math.round(LOGIN_IDLE_TIMEOUT_MS / 60_000);
+	return `Anthropic login timed out after ${minutes} minutes without a browser callback or a pasted redirect URL. Run the login again.`;
 }
 
 /**

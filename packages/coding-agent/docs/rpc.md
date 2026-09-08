@@ -177,8 +177,8 @@ hosts) sees neither variable and is unaffected. A host whose supervisor is alive
 
 ### Shared host occupancy (idle eviction, session cap, empty-host exit)
 
-Every open session owns a complete runtime (a lone idle session measures 340-510 MB RSS), so the host enforces three
-occupancy bounds itself, independent of the supervisor and of client cooperation:
+Every CLI shared-host session owns a worker isolate and a complete runtime. Memory depends on its extensions and
+session contents; isolates do not provide process-fatal OOM containment. The host enforces these occupancy bounds:
 
 - **Idle eviction**: a session with no routed command and no session-owned work for
   `SENPI_RPC_SESSION_IDLE_EVICTION_MS` (default 30 minutes) is closed through the exact `close_session` sequence
@@ -188,9 +188,13 @@ occupancy bounds itself, independent of the supervisor and of client cooperation
   background terminal jobs and any other published wake source (terminal monitors, loop-guard holds), compaction,
   and barrier-held session work all defer eviction, and the idle clock restarts when that work settles. An evicted
   session resumes like any other: the next `open_session` with the same `sessionPath` reopens it.
-- **Logical sessions**: `open_session` has no session-count admission limit. Every logical session remains isolated
-  by its routing handle and provider scope inside this one shared daemon; idle eviction and empty-host shutdown
-  reclaim resident resources without rejecting a new session.
+- **Worker capacity**: at most 20 workers may be preparing, open, closing, or quarantined together. Admission beyond
+  this bound fails explicitly with `open_failed: too_many_sessions`; it never evicts another session or starts an OS
+  process as a fallback. This is a new externally visible bound for CLI shared mode, which previously admitted
+  unlimited logical sessions. It applies to new worker allocation, not attachments: a known canonical path or
+  original opening spelling joins its already-bound owner without allocating a worker, even at capacity. An
+  unknown path/alias still needs a preparation worker slot. In-process SDK registries using an injected runtime
+  factory retain their existing behavior.
 - **Empty-host exit**: when the registry holds zero sessions AND no client is connected, continuously for
   `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
   removal), for stdio and `--listen` hosts alike. A connected client counts as occupancy even with no session open,
@@ -200,14 +204,71 @@ occupancy bounds itself, independent of the supervisor and of client cooperation
 Values are positive integers; invalid values fall through to the defaults. These lifecycle windows run inside the host process,
 so they hold even for embedders and hand-started hosts that have no supervisor.
 
+### Worker ownership and flow control
+
+The main host owns transport, attachments and canonical reservations. Workers canonicalize caller-supplied paths;
+main does not synchronously traverse those paths. An open prepares a path, obtains the main host's exclusive grant,
+and only then constructs its session writer and runtime. A conflicting alias attaches to an open owner or fails
+explicitly before opening another writer.
+
+SessionManager writes, switches, forks, new sessions and imports obtain the same grant before writer creation or
+append-side normalization. Acquired paths are conservatively retained for that worker's entire lifetime, including
+superseded paths after a switch. Each worker may reserve at most 64 paths; an exhausted reservation budget fails
+explicitly. Close or an opening deadline requests worker termination, but does not release reservations or worker
+capacity until the actual exit event. A syscall that cannot yet be interrupted can therefore keep an entry
+internally quarantined after the routing handle has closed. `list_sessions` continues to publish `closing`, not a
+new status: existing clients must not mistake a quarantined worker for a live reattach target. Retry the path only
+after that entry disappears.
+
+Each worker accepts at most 64 ordinary pending requests totaling 16 MiB, plus four reserved interrupt/UI-response
+slots totaling 1 MiB. Prepare, commit and bind share one 30-second opening budget starting with worker allocation;
+they do not each reset that budget. Interrupt requests have a five-second deadline. Ordinary commands remain bounded
+by count and bytes without imposing a new timeout on long-running commands. The desktop's 60-second open/readmission
+window is a separate client-side wait: the host normally reports its earlier 30-second failure within that window,
+but a slow transport can delay delivery. Neither timeout proves worker exit or permits concurrent reopening.
+Display updates coalesce to one pending update and one latest value; UI cancellation and close have separate control
+messages. IPC output and snapshots are limited to 16 MiB per record, with one acknowledged record at a time. Credit
+returns after the session's destinations consume their output, not merely on IPC receipt. A five-second credit
+failure closes that session visibly (`session_error` followed by `session_closed`), rather than retaining an
+unbounded queue. Socket queues retain their existing independent overflow/disconnect behavior. The default stdio
+queue is bounded at 64 MiB or 4096 records, with reserved terminal-failure records and one control-overflow notice.
+Close admission counts both queued output and pending close replies (including their serialized bytes) before
+releasing an attachment or waiting for teardown. An admitted first closer reserves its lifecycle and terminal reply;
+admitted joiners follow those records in FIFO order. Excess closes are not admitted and do not release ownership.
+One bounded `overflow` record with `command: "close_session"` and
+`error: "rpc_close_output_overflow, resync required"` reports the saturation episode instead of retaining a reply
+or promise for each rejected request. Over sockets, this notice goes only to the requester whose close was rejected;
+each connection may have at most one outstanding notice, released when its sink consumes it. After socket-only drain,
+a subsequent saturation episode on the same connection can report a new notice without reconnecting. A healthy peer is not
+told to resynchronize, and a newly affected or reconnected peer receives its own notice. Stdio retains one notice per
+episode. Clients receiving a notice must stop issuing closes, drain output, and resynchronize unacknowledged requests; the notice is not a successful close acknowledgment. Admission resumes as capacity becomes available.
+Canonical reservations and worker capacity remain held until native exit, including after close-output overflow.
+
+The classic handler, extension UI bridge, renderer callbacks and provider scope run inside the owning worker; only
+plain data crosses IPC. Inline `main()` extension factories cannot be cloned and are rejected in shared mode: use
+file-backed extensions. Classic single-session RPC remains in-process. Standalone Bun builds must embed
+`src/modes/rpc/session-worker.ts` as an explicit entrypoint; Node bundles must ship `session-worker.js` beside the
+chunk containing its worker client. Third-party/rebranded Bun wrappers must pass the published
+`dist/modes/rpc/session-worker.js` as an additional compile entry, set an explicit `--root`, and set
+`--define=SENPI_RPC_SESSION_WORKER_ENTRY='"./<worker-path-relative-to-root>"'`. The define is a build-time
+contract, not an environment variable. Its path must match Bun's embedded entry name, not the source machine's
+absolute path or the runtime working directory. The client resolves it against its compiled `import.meta.url`
+before constructing the Worker: Bun 1.4.0 resolves a bare relative Worker string against the real cwd instead
+of the embedded filesystem. Verify the relocated wrapper on the wrapper's supported Bun version and platform
+by opening two shared sessions;
+a standalone Senpi smoke does not verify a wrapper's different compile graph.
+
+Workers isolate JavaScript event loops, not OS processes: they do not promise syscall cancellation, process-fatal OOM
+containment, or containment of arbitrary native code. They are not an extension sandbox.
+
 ### D1 normative table (multi-session mode)
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi" }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session` plus the negotiated launch capabilities. |
 | `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. |
-| `close_session` | `sessionId` | `{}` | Aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then force-releases the session; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). A concurrent close joins the same teardown and receives its own successful response. |
-| `list_sessions` | - | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status }] }` | Includes `opening`/`closing` entries with their status. |
+| `close_session` | `sessionId` | `{}` | Aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
+| `list_sessions` | - | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
 
 ### Identities (D6)
@@ -220,7 +281,7 @@ In the response `error` field, machine-matchable:
 
 - `unknown_session`
 - `session_closing`
-- `session_path_in_use` (path held by a session still `opening` or already `closing`; a fully-open session is attached instead)
+- `session_path_in_use` (path held by an opening, closing, quarantined, or superseded owner; a fully-open current owner is attached instead)
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
 - `invalid_path` (relative `sessionPath`/`cwd`)
@@ -237,7 +298,7 @@ Strict FIFO per session; one total stdout order; cross-session order unspecified
 
 ### Duplicate/idempotency
 
-Duplicate `open_session` while a path reservation is held by a fully-open session → ATTACH (`attached: true`, same handle); while held by an `opening`/`closing` entry → `session_path_in_use`. `close_session` releases one attachment; the runtime is disposed only when the last attachment closes. A close for an entry already `closing` joins its in-flight teardown. `close_session` on unknown/already-closed → `unknown_session` error. The grace window is configurable by the host through `SENPI_RPC_CLOSE_GRACE_MS`. Request `id`s are client-owned; the server echoes them without dedup.
+Duplicate `open_session` while a path reservation is held by a fully-open session → ATTACH (`attached: true`, same handle); while held by an `opening`/`closing` entry (including internal quarantine) → `session_path_in_use`. `close_session` releases one attachment; the runtime is disposed only when the last attachment closes. A close for an entry already `closing` joins its in-flight teardown. `close_session` on unknown/already-closed → `unknown_session` error. The grace window is configurable by the host through `SENPI_RPC_CLOSE_GRACE_MS`. Request `id`s are client-owned; the server echoes them without dedup.
 
 ## Protocol Overview
 

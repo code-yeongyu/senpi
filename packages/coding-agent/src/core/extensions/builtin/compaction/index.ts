@@ -15,6 +15,9 @@ import {
 import {
 	classifyRequiredCompactionFallbackFailure,
 	createRequiredCompactionFallback,
+	type DeterministicFallbackDiagnostic,
+	formatRequiredCompactionFallbackRejection,
+	type RequiredCompactionFallbackFailure,
 } from "./deterministic-fallback.ts";
 import * as idle from "./idle.ts";
 import * as idleRetry from "./idle-retry.ts";
@@ -368,6 +371,22 @@ export default function compactionExtension(
 		todoBridge.persistTodoSnapshot(pi, metadata.todoSnapshot);
 	}
 
+	function recoverRequiredCompaction(
+		snapshot: SpeculativeCompactionSnapshot,
+		failureKind: RequiredCompactionFallbackFailure,
+	): { compaction?: CompactionResult; rejectionReason?: string } {
+		const diagnostics: DeterministicFallbackDiagnostic = {};
+		const compaction = createRequiredCompactionFallback(
+			snapshot.preparation,
+			snapshot.contextWindow,
+			failureKind,
+			{ taskIntent: resolveInheritedTaskIntent(snapshot.branchEntries ?? []) },
+			snapshot.branchEntries,
+			diagnostics,
+		);
+		return compaction ? { compaction } : { rejectionReason: formatRequiredCompactionFallbackRejection(diagnostics) };
+	}
+
 	async function applyBlockingCompaction(
 		ctx: ExtensionContext,
 		customInstructions: string,
@@ -448,7 +467,24 @@ export default function compactionExtension(
 				}
 				if (inheritedFailure !== undefined) {
 					speculativeJob = undefined;
-					if (isTransientSummarizationFailure(inheritedFailure, inheritedFailure.message)) {
+					const failureKind = classifyRequiredCompactionFallbackFailure(inheritedFailure);
+					if (
+						failureKind !== undefined &&
+						!feedbackSignal?.aborted &&
+						pendingJob.snapshot.generation === speculativeGeneration &&
+						pendingJob.snapshot.expectedRevision === ctx.getMessageRevision()
+					) {
+						const recovery = recoverRequiredCompaction(pendingJob.snapshot, failureKind);
+						compaction = recovery.compaction;
+						if (!compaction) {
+							const result = { applied: false, reason: "failed" } as const;
+							endCompactionFeedback(ctx, feedbackSignal, result, recovery.rejectionReason);
+							return result;
+						}
+					} else if (
+						failureKind === undefined &&
+						isTransientSummarizationFailure(inheritedFailure, inheritedFailure.message)
+					) {
 						ctx.endCompaction?.({
 							reason: "extension",
 							signal: feedbackSignal,
@@ -506,8 +542,19 @@ export default function compactionExtension(
 					}),
 				);
 			} catch (error) {
-				if (!(error instanceof SummaryGenerationError)) throw error;
-				getLogger(ctx).debug("summary_failed", { reason: error.kind });
+				const failureKind = classifyRequiredCompactionFallbackFailure(error);
+				if (failureKind !== undefined && !feedbackSignal?.aborted) {
+					const recovery = recoverRequiredCompaction(snapshot, failureKind);
+					compaction = recovery.compaction;
+					if (!compaction) {
+						const result = { applied: false, reason: "failed" } as const;
+						endCompactionFeedback(ctx, feedbackSignal, result, recovery.rejectionReason);
+						return result;
+					}
+				} else {
+					if (!(error instanceof SummaryGenerationError)) throw error;
+					getLogger(ctx).debug("summary_failed", { reason: error.kind });
+				}
 			}
 			const result = await applyGeneratedCompaction(
 				ctx,
@@ -555,6 +602,7 @@ export default function compactionExtension(
 		// keeps streaming for a result nobody will read.
 		let warmJobConsumed = false;
 		invalidateSpeculativeCompaction(ctx);
+		const claimedGeneration = speculativeGeneration;
 		try {
 			if (!lanePolicy.ownsCompaction(ctx, event.reason)) {
 				return {
@@ -609,6 +657,7 @@ export default function compactionExtension(
 				return { compaction: remoteCompaction };
 			}
 
+			let inheritedWarmFailure: Error | undefined;
 			if (claimedWarmJob) {
 				const unlinkAbort = linkAbortSignal(event.signal, claimedWarmJob.controller);
 				let warmCompaction: CompactionResult | undefined;
@@ -623,6 +672,16 @@ export default function compactionExtension(
 					getLogger(ctx).debug("warm_consumed", { generation: claimedWarmJob.generation, route: "core-route" });
 					warmJobConsumed = true;
 					return { compaction: warmCompaction };
+				}
+				if (
+					warmFailure !== undefined &&
+					isRequiredCompactionFallbackReason(event.reason) &&
+					classifyRequiredCompactionFallbackFailure(warmFailure) !== undefined &&
+					!event.signal.aborted &&
+					speculativeGeneration === claimedGeneration &&
+					claimedWarmJob.snapshot.expectedRevision === ctx.getMessageRevision()
+				) {
+					inheritedWarmFailure = warmFailure;
 				}
 			}
 
@@ -641,6 +700,7 @@ export default function compactionExtension(
 			};
 			let compaction: CompactionResult | undefined;
 			try {
+				if (inheritedWarmFailure) throw inheritedWarmFailure;
 				compaction = await runExtensionCompaction(ctx, snapshot, event.signal, (delta) =>
 					ctx.updateCompaction?.({ reason: event.reason, signal: event.signal, delta }),
 				);
@@ -652,18 +712,12 @@ export default function compactionExtension(
 					failureKind !== undefined &&
 					!event.signal.aborted
 				) {
-					const fallback = createRequiredCompactionFallback(
-						snapshot.preparation,
-						snapshot.contextWindow,
-						failureKind,
-						{ taskIntent: resolveInheritedTaskIntent(event.branchEntries) },
-						event.branchEntries,
-					);
-					if (fallback) return { compaction: fallback };
+					const recovery = recoverRequiredCompaction(snapshot, failureKind);
+					if (recovery.compaction) return { compaction: recovery.compaction };
 					pendingMetadata.delete(event.requestId);
 					return {
 						cancel: true,
-						reason: "deterministic compaction fallback cannot retain the prepared suffix",
+						reason: recovery.rejectionReason,
 					};
 				}
 				pendingMetadata.delete(event.requestId);

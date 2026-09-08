@@ -46,9 +46,54 @@ export interface DeterministicFallbackDiagnostic {
 	candidateRejections?: Array<{
 		firstKeptEntryId: string;
 		rejectionReason: DeterministicFallbackRejectionReason;
+		estimatedTokens?: number;
+		unsafeMessageIndex?: number;
+		unsafeEntryId?: string;
+		unsafeMessageRole?: string;
 	}>;
 	candidatesChecked?: number;
 	budgetExceeded?: boolean;
+	contextWindow?: number;
+	reserveTokens?: number;
+	budgetTokens?: number;
+}
+
+export function formatRequiredCompactionFallbackRejection(diagnostics: DeterministicFallbackDiagnostic): string {
+	const candidate = diagnostics.candidateRejections?.at(-1);
+	const reason = diagnostics.rejectionReason ?? "context-reconstruction-failed";
+	const recovery: Record<DeterministicFallbackRejectionReason, string> = {
+		"retained-token-budget-exceeded":
+			"The retained turn exceeds the usable context. Select a model with a larger context and run /compact, or start a new session with an explicit checkpoint.",
+		"atomic-tool-chain-cut":
+			"The retained tool calls and results do not form complete pairs. Finish the pending tool operation before /compact; if the transcript is damaged, start a new session with an explicit checkpoint.",
+		"unsafe-retained-content":
+			"The retained message cannot be replayed safely. Inspect the identified entry; start a new session with an explicit checkpoint if it cannot be repaired.",
+		"missing-preparation-boundary":
+			"The prepared boundary is absent from the branch. Reload the session and run /compact.",
+		"context-reconstruction-failed":
+			"The retained context could not be reconstructed. Reload the session and run /compact.",
+	};
+	const diagnostic = {
+		rejectionReason: reason,
+		contextWindow: diagnostics.contextWindow,
+		reserveTokens: diagnostics.reserveTokens,
+		budgetTokens: diagnostics.budgetTokens,
+		budgetExceeded: diagnostics.budgetExceeded ?? false,
+		candidatesChecked: diagnostics.candidatesChecked ?? 0,
+		...(candidate
+			? {
+					candidate: {
+						...candidate,
+						firstKeptEntryId: capUtf8Bytes(candidate.firstKeptEntryId, 128),
+						...(candidate.unsafeEntryId ? { unsafeEntryId: capUtf8Bytes(candidate.unsafeEntryId, 128) } : {}),
+						...(candidate.unsafeMessageRole
+							? { unsafeMessageRole: capUtf8Bytes(candidate.unsafeMessageRole, 32) }
+							: {}),
+					},
+				}
+			: {}),
+	};
+	return `deterministic compaction fallback could not retain a safe suffix\n${JSON.stringify(diagnostic)}\n${recovery[reason]} The original transcript has not been changed.`;
 }
 
 const NON_VISIBLE_USER_TEXT = /[\p{White_Space}\p{Default_Ignorable_Code_Point}]/gu;
@@ -121,9 +166,18 @@ export function createRequiredCompactionFallback(
 	branchEntries: SessionEntry[] = [],
 	diagnostics?: DeterministicFallbackDiagnostic,
 ): CompactionResult<DeterministicFallbackDetails> | undefined {
+	const reserveTokens = resolveEffectiveReserveTokens(contextWindow, preparation.settings);
+	const budget = contextWindow - reserveTokens;
 	const preparedBoundaryIndex = branchEntries.findIndex((entry) => entry.id === preparation.firstKeptEntryId);
 	if (!preparation.firstKeptEntryId || preparedBoundaryIndex === -1) {
-		if (diagnostics) diagnostics.rejectionReason = "missing-preparation-boundary";
+		if (diagnostics) {
+			Object.assign(diagnostics, {
+				rejectionReason: "missing-preparation-boundary",
+				contextWindow,
+				reserveTokens,
+				budgetTokens: budget,
+			});
+		}
 		return undefined;
 	}
 
@@ -173,7 +227,14 @@ export function createRequiredCompactionFallback(
 			buildSessionContext([...branchEntries, syntheticCompaction]).messages,
 		);
 	} catch {
-		if (diagnostics) diagnostics.rejectionReason = "context-reconstruction-failed";
+		if (diagnostics) {
+			Object.assign(diagnostics, {
+				rejectionReason: "context-reconstruction-failed",
+				contextWindow,
+				reserveTokens,
+				budgetTokens: budget,
+			});
+		}
 		return undefined;
 	}
 
@@ -191,12 +252,14 @@ export function createRequiredCompactionFallback(
 	}
 	const summaryIndex = messageIndexesByEntryId.get(syntheticCompaction.id);
 	const unsafeSuffix = new Array(projectedMessages.length + 1).fill(false);
+	const unsafeIndexSuffix = new Int32Array(projectedMessages.length + 1).fill(-1);
 	const tokenSuffix = new Array(projectedMessages.length + 1).fill(0);
-	const toolCalls = new Map<string, { indexes: number[]; incomplete: boolean }>();
+	const toolCalls = new Map<string, { indexes: number[]; newestIncomplete: boolean }>();
 	const toolResults = new Map<string, number[]>();
 	for (let index = projectedMessages.length - 1; index >= 0; index--) {
 		const message = projectedMessages[index];
 		tokenSuffix[index] = tokenSuffix[index + 1];
+		unsafeIndexSuffix[index] = unsafeIndexSuffix[index + 1];
 		if (droppedByFailedTurnNormalization[index]) {
 			unsafeSuffix[index] = unsafeSuffix[index + 1];
 			continue;
@@ -205,27 +268,34 @@ export function createRequiredCompactionFallback(
 		let serialized: string | undefined;
 		try {
 			messageUnsafe = hasUnsafeRetainedContent([message]);
-			serialized = isSafeBoundedValue(message) ? JSON.stringify(message) : undefined;
-			let imagePayloadBytes = 0;
+			const bounded = isSafeBoundedValue(message);
+			messageUnsafe ||= !bounded;
 			let imageTokens = 0;
-			if (!messageUnsafe && serialized !== undefined && message.role === "toolResult") {
-				for (const block of message.content) {
-					if (block.type !== "image") continue;
-					// Keep the JSON delimiters and metadata charged, but replace only
-					// this validated image's escaped payload bytes with its token cost.
-					imagePayloadBytes += Buffer.byteLength(JSON.stringify(block.data)) - 2;
+			if (!messageUnsafe && message.role === "toolResult") {
+				const content = message.content.map((block) => {
+					if (block.type !== "image") return block;
 					imageTokens += estimateTokens({ ...message, content: [block] });
-				}
+					return { ...block, data: "" };
+				});
+				serialized = JSON.stringify({ ...message, content });
+			} else {
+				serialized = bounded ? JSON.stringify(message) : undefined;
 			}
+			// Apply the shared weighted chars/4 estimator to the envelope too.
+			// Storage bytes are not tokens; opaque text and image costs still count.
 			tokenSuffix[index] +=
 				serialized === undefined
 					? Number.POSITIVE_INFINITY
-					: Math.max(estimateTokens(message), Buffer.byteLength(serialized) - imagePayloadBytes + imageTokens);
+					: Math.max(
+							estimateTokens(message),
+							estimateTokens({ role: "user", content: serialized, timestamp: 0 }) + imageTokens,
+						);
 		} catch {
 			messageUnsafe = true;
 			tokenSuffix[index] = Number.POSITIVE_INFINITY;
 		}
 		unsafeSuffix[index] = unsafeSuffix[index + 1] || messageUnsafe;
+		if (messageUnsafe) unsafeIndexSuffix[index] = index;
 		if (!isRecord(message)) continue;
 		if (message.role === "toolResult" && typeof message.toolCallId === "string") {
 			const indexes = toolResults.get(message.toolCallId) ?? [];
@@ -234,9 +304,8 @@ export function createRequiredCompactionFallback(
 		} else if (message.role === "assistant" && Array.isArray(message.content)) {
 			for (const block of message.content) {
 				if (!isRecord(block) || block.type !== "toolCall" || typeof block.id !== "string") continue;
-				const call = toolCalls.get(block.id) ?? { indexes: [], incomplete: false };
+				const call = toolCalls.get(block.id) ?? { indexes: [], newestIncomplete: block.incomplete === true };
 				call.indexes.push(index);
-				call.incomplete ||= block.incomplete === true;
 				toolCalls.set(block.id, call);
 			}
 		}
@@ -251,15 +320,20 @@ export function createRequiredCompactionFallback(
 	};
 	for (const [id, call] of toolCalls) {
 		const results = toolResults.get(id) ?? [];
-		if (call.indexes.length !== 1 || results.length !== 1) {
+		if (results.length === 0) {
 			markInvalidRange(0, Math.max(call.indexes[0] ?? -1, results[0] ?? -1) + 1);
 			continue;
 		}
 		const callIndex = call.indexes[0];
 		const resultIndex = results[0];
-		if (call.incomplete) markInvalidRange(0, Math.max(callIndex, resultIndex) + 1);
-		else if (callIndex < resultIndex) markInvalidRange(callIndex + 1, resultIndex + 1);
-		else markInvalidRange(0, Math.max(callIndex, resultIndex) + 1);
+		// Indexes are newest-first. Older duplicate IDs matter only while retained;
+		// dropping an entire historical pair leaves the newest pair valid.
+		markInvalidRange(0, Math.max(call.indexes[1] ?? -1, results[1] ?? -1) + 1);
+		if (call.newestIncomplete || callIndex >= resultIndex) {
+			markInvalidRange(0, Math.max(callIndex, resultIndex) + 1);
+		} else {
+			markInvalidRange(callIndex + 1, resultIndex + 1);
+		}
 	}
 	for (const [id, results] of toolResults) {
 		if (toolCalls.has(id)) continue;
@@ -278,11 +352,20 @@ export function createRequiredCompactionFallback(
 	): CompactionResult<DeterministicFallbackDetails> | undefined => {
 		candidateCount++;
 		const details = { ...baseDetails, retainedSuffix };
-		const reject = (rejectionReason: DeterministicFallbackRejectionReason): undefined => {
+		const reject = (
+			rejectionReason: DeterministicFallbackRejectionReason,
+			detail: Omit<
+				NonNullable<DeterministicFallbackDiagnostic["candidateRejections"]>[number],
+				"firstKeptEntryId" | "rejectionReason"
+			> = {},
+		): undefined => {
 			if (diagnostics) {
 				diagnostics.rejectionReason = rejectionReason;
+				diagnostics.contextWindow = contextWindow;
+				diagnostics.reserveTokens = reserveTokens;
+				diagnostics.budgetTokens = budget;
 				diagnostics.candidateRejections ??= [];
-				diagnostics.candidateRejections.push({ firstKeptEntryId, rejectionReason });
+				diagnostics.candidateRejections.push({ firstKeptEntryId, rejectionReason, ...detail });
 			}
 			return undefined;
 		};
@@ -295,22 +378,33 @@ export function createRequiredCompactionFallback(
 		const startIndex = messageIndexesByEntryId.get(firstKeptEntryId);
 		if (startIndex === undefined) return reject("context-reconstruction-failed");
 		const retainedStart = Math.min(startIndex, projectedMessages.length);
-		if (unsafeSuffix[retainedStart]) return reject("unsafe-retained-content");
+		if (unsafeSuffix[retainedStart]) {
+			const unsafeMessageIndex = unsafeIndexSuffix[retainedStart];
+			const unsafeMessage = projectedMessages[unsafeMessageIndex];
+			return reject("unsafe-retained-content", {
+				unsafeMessageIndex,
+				unsafeEntryId: getSessionContextEntryId(unsafeMessage),
+				unsafeMessageRole: unsafeMessage.role,
+			});
+		}
 		if (!toolChainValidAt[retainedStart]) return reject("atomic-tool-chain-cut");
 		// The hard-limit valve reserves the scaled budget, so accepting against the raw
 		// configured reserve would admit a context that valve immediately compacts again.
-		const budget = contextWindow - resolveEffectiveReserveTokens(contextWindow, preparation.settings);
 		const summaryTokens =
 			summaryIndex === undefined
 				? Number.POSITIVE_INFINITY
 				: Math.max(
 						estimateTokens(projectedMessages[summaryIndex]),
-						Buffer.byteLength(JSON.stringify(projectedMessages[summaryIndex])),
+						estimateTokens({
+							role: "user",
+							content: JSON.stringify(projectedMessages[summaryIndex]),
+							timestamp: 0,
+						}),
 					);
 		const retainedTokens = (tokenSuffix[retainedStart] ?? Number.POSITIVE_INFINITY) + summaryTokens;
 		if (retainedTokens > budget) {
 			if (diagnostics) diagnostics.budgetExceeded = true;
-			return reject("retained-token-budget-exceeded");
+			return reject("retained-token-budget-exceeded", { estimatedTokens: retainedTokens });
 		}
 		return { ...result, estimatedTokensAfter: retainedTokens };
 	};
@@ -343,6 +437,17 @@ export function createRequiredCompactionFallback(
 		if (latestUser) {
 			if (diagnostics) diagnostics.candidatesChecked = candidateCount;
 			return latestUser;
+		}
+		// A steering user message can occur inside a tool chain. Keep that request
+		// and walk back to its declaring assistant instead of orphaning the result.
+		for (let earlierIndex = index - 1; earlierIndex > preparedBoundaryIndex; earlierIndex--) {
+			const earlierEntry = branchEntries[earlierIndex];
+			if (earlierEntry.type === "compaction") break;
+			const earlier = projectCandidate(earlierEntry.id, "earlier-safe-boundary");
+			if (earlier) {
+				if (diagnostics) diagnostics.candidatesChecked = candidateCount;
+				return earlier;
+			}
 		}
 		break;
 	}

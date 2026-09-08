@@ -208,9 +208,9 @@ for platform in "${PLATFORMS[@]}"; do
     # Disable cwd bunfig.toml autoload so project preload scripts cannot crash the
     # standalone binary before pi starts (see #7684).
     if [[ "$platform" == windows-* ]]; then
-        bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --target="$bun_target" ./dist/bun/cli.js ./src/utils/image-resize-worker.ts ../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js --outfile "$OUTPUT_DIR/$platform/pi.exe"
+        bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --target="$bun_target" ./dist/bun/cli.js ./src/modes/rpc/session-worker.ts ./src/utils/image-resize-worker.ts ../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js --outfile "$OUTPUT_DIR/$platform/pi.exe"
     else
-        bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --target="$bun_target" ./dist/bun/cli.js ./src/utils/image-resize-worker.ts ../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js --outfile "$OUTPUT_DIR/$platform/pi"
+        bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --target="$bun_target" ./dist/bun/cli.js ./src/modes/rpc/session-worker.ts ./src/utils/image-resize-worker.ts ../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js --outfile "$OUTPUT_DIR/$platform/pi"
         if [[ "$platform" == darwin-* ]] && command -v codesign >/dev/null 2>&1; then
             codesign --remove-signature "$OUTPUT_DIR/$platform/pi" 2>/dev/null || true
             codesign --force --sign - "$OUTPUT_DIR/$platform/pi"

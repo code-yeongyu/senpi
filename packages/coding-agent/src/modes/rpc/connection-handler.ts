@@ -98,6 +98,8 @@ export interface RpcConnectionOptions {
 	shutdownHandler?: () => void;
 	/** Session registries own runtime disposal themselves. */
 	disposeRuntime?: boolean;
+	/** Shared workers flush synchronously into their bounded IPC credit channel. */
+	eventFlushScheduler?: (flush: () => void) => void;
 	/** Multi-session routing handle. Absent preserves classic wire output exactly. */
 	sessionId?: string;
 	footerDataProviderFactory?: (session: AgentSession) => FooterDataProvider;
@@ -348,7 +350,7 @@ export function createRpcConnectionHandler(
 	let loadedSurfacesDigest: string | undefined;
 	let rpcCommandsDigest: string | undefined;
 	let suppressLoadedSurfaceEvents = false;
-	const eventOutput = createRpcEventOutputBuffer(sink.writeRaw);
+	const eventOutput = createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
 
 	const tagSessionRecord = <T extends object>(value: T): T | (T & { sessionId: string }) =>
 		routingSessionId === undefined ? value : { ...value, sessionId: routingSessionId };

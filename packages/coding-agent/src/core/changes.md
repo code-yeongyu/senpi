@@ -256,6 +256,26 @@
 
 # changes
 
+## 2026-09-08 - Reserve session writers before opening or replacing them
+
+### What changed
+
+- `packages/coding-agent/src/core/session-write-reservation.ts` provides an isolate-local synchronous ownership-grant seam, installed only by shared-host workers.
+- `packages/coding-agent/src/core/session-manager.ts` obtains that grant before opening, normalizing, rewriting, appending, creating, or branching a durable session file.
+- `packages/coding-agent/src/core/agent-session-runtime.ts` reserves an import destination before copying into it.
+
+### Why
+
+- Alias collisions and session replacements must not open competing writers and resolve ownership afterward. A timed-out worker can still return from a syscall, so ownership remains reserved until its actual exit.
+
+### Why an extension could not handle it
+
+- Writer creation and append-side repair in `packages/coding-agent/src/core/session-manager.ts`, and copying in `packages/coding-agent/src/core/agent-session-runtime.ts`, occur below extension lifecycle hooks.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/session-manager.ts` constructor/set-file, persistence, new/fork, and static open seams; LOW: `packages/coding-agent/src/core/agent-session-runtime.ts` import-copy ordering and the additive reservation module.
+
 ## 2026-09-06 - Preserve fallback decision logs across atomic admission
 
 ### What changed

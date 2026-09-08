@@ -53,7 +53,10 @@ export class SessionCommandRouter {
 	private readonly opensByConnection = new Map<string, Set<Promise<void>>>();
 	/** Connections whose socket has already been detached. */
 	private readonly releasedConnections = new Set<string>();
-	private readonly registry: RpcSessionRegistry;
+	private readonly registry: Pick<
+		RpcSessionRegistry,
+		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size"
+	>;
 	private readonly writer: SessionEventWriter;
 	private readonly defaults: Pick<
 		RpcSessionLaunchProfile,
@@ -73,7 +76,10 @@ export class SessionCommandRouter {
 	private emptySince: number | undefined;
 
 	constructor(
-		registry: RpcSessionRegistry,
+		registry: Pick<
+			RpcSessionRegistry,
+			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size"
+		>,
 		writer: SessionEventWriter,
 		defaults: Pick<RpcSessionLaunchProfile, "cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel">,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,
@@ -180,7 +186,7 @@ export class SessionCommandRouter {
 				if (status !== "open") continue;
 				const entry = this.registry.peek(sessionId);
 				if (!entry) continue;
-				if (entry.runtime?.session.isSessionBusy) {
+				if (entry.worker?.busy || entry.runtime?.session.isSessionBusy) {
 					// Session-owned work defers eviction; the window restarts when it settles.
 					entry.lastCommandAt = now;
 					continue;
@@ -345,11 +351,22 @@ export class SessionCommandRouter {
 						},
 					),
 				);
+				if (entry.worker) entry.worker.bindingReady = true;
+				if (entry.worker)
+					void entry.worker.exited.then(async () => {
+						await this.finalizations.get(openedSession.sessionId)?.promise;
+						this.bindings.delete(openedSession.sessionId);
+						this.forgetSessionOwnership(openedSession.sessionId);
+						this.writer.forgetSession(openedSession.sessionId);
+					});
 			}
 			if (owner !== undefined && this.releasedConnections.has(owner)) {
+				this.releaseOwnerAttachment(owner, openedSession.sessionId);
 				await this.releaseOwnedSession(openedSession.sessionId);
 			}
-			const state = entry.runtime!.session;
+			const state =
+				entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
+			if (!state) throw new Error("Session state was not created");
 			this.writer.enqueue(opened.sessionId, {
 				id: command.id,
 				type: "response",
@@ -357,7 +374,7 @@ export class SessionCommandRouter {
 				success: true,
 				data: {
 					sessionId: opened.sessionId,
-					state: buildRpcSessionState(state),
+					state,
 					...(opened.attached ? { attached: true } : {}),
 				},
 			});
@@ -387,43 +404,57 @@ export class SessionCommandRouter {
 		for (const widths of this.widths.values()) widths.delete(connectionId);
 		for (const binding of this.bindings.values()) binding.rerenderComponents?.();
 		const opens = this.opensByConnection.get(connectionId);
-		if (opens) await Promise.all([...opens]);
 		const owned = this.sessionsByConnection.get(connectionId);
 		this.sessionsByConnection.delete(connectionId);
 		if (owned === undefined) {
+			if (opens) await Promise.all([...opens]);
 			this.releasedConnections.delete(connectionId);
 			return;
 		}
-		for (const [sessionId, count] of owned) {
-			this.bindings.get(sessionId)?.cancelPendingExtensionUiRequests?.();
-			for (let attachment = 0; attachment < count; attachment++) {
-				// Headless completion contract: a turn survives its client's death and
-				// runs to settlement (the host lifecycle keeps the process alive on
-				// active turns even with zero connections). Releasing mid-turn aborts
-				// the run and seals the session before agent_settled reaches the
-				// lifecycle observer, leaking the busy counter so the host never
-				// idle-exits. Defer - never skip - the release until the turn settles,
-				// so the dropped owner's reservation still frees afterwards.
-				const live = this.registry.peek(sessionId);
-				const session = live?.state === "open" ? live.runtime?.session : undefined;
-				if (session?.isStreaming) {
-					let released = false;
-					const unsubscribe = session.subscribe((event) => {
-						if (event.type !== "agent_settled" && event.type !== "agent_idle") return;
-						if (released) return;
-						released = true;
-						unsubscribe();
-						void this.releaseOwnedSession(sessionId).catch((cause) => {
-							process.stderr.write(
-								`senpi rpc deferred release for session ${sessionId} failed: ${String(cause)}\n`,
-							);
+		await Promise.all(
+			[...owned].map(async ([sessionId, count]) => {
+				this.bindings.get(sessionId)?.cancelPendingExtensionUiRequests?.();
+				for (let attachment = 0; attachment < count; attachment++) {
+					// Headless completion contract: a turn survives its client's death and
+					// runs to settlement (the host lifecycle keeps the process alive on
+					// active turns even with zero connections). Releasing mid-turn aborts
+					// the run and seals the session before agent_settled reaches the
+					// lifecycle observer, leaking the busy counter so the host never
+					// idle-exits. Defer - never skip - the release until the turn settles,
+					// so the dropped owner's reservation still frees afterwards.
+					const live = this.registry.peek(sessionId);
+					const session = live?.state === "open" ? live.runtime?.session : undefined;
+					if (live?.state === "open" && live.worker?.snapshot?.streaming) {
+						const unsubscribe = live.worker.subscribeSettled(() => {
+							unsubscribe();
+							void this.releaseOwnedSession(sessionId).catch((cause: unknown) => {
+								process.stderr.write(
+									`senpi rpc deferred worker release ${sessionId} failed: ${String(cause)}\n`,
+								);
+							});
 						});
-					});
-					continue;
+						continue;
+					}
+					if (session?.isStreaming) {
+						let released = false;
+						const unsubscribe = session.subscribe((event) => {
+							if (event.type !== "agent_settled" && event.type !== "agent_idle") return;
+							if (released) return;
+							released = true;
+							unsubscribe();
+							void this.releaseOwnedSession(sessionId).catch((cause) => {
+								process.stderr.write(
+									`senpi rpc deferred release for session ${sessionId} failed: ${String(cause)}\n`,
+								);
+							});
+						});
+						continue;
+					}
+					await this.releaseOwnedSession(sessionId);
 				}
-				await this.releaseOwnedSession(sessionId);
-			}
-		}
+			}),
+		);
+		if (opens) await Promise.all([...opens]);
 		this.releasedConnections.delete(connectionId);
 	}
 
@@ -475,14 +506,6 @@ export class SessionCommandRouter {
 	}
 
 	private async close(command: Extract<RpcCommand, { type: "close_session" }>): Promise<RpcResponse | undefined> {
-		// This must be the first operation: binding.dispose() awaits teardown and
-		// otherwise leaves a window where commands can enter the old handler.
-		let claim: { finalizer: boolean };
-		try {
-			claim = this.claimClose(command.sessionId, { drainAttachments: false });
-		} catch (cause) {
-			return error(command.id, "close_session", this.code(cause));
-		}
 		const response = {
 			id: command.id,
 			type: "response" as const,
@@ -490,17 +513,32 @@ export class SessionCommandRouter {
 			success: true as const,
 			data: {},
 		};
-		const owner = this.writer.currentConnection();
-		if (owner !== undefined) this.releaseOwnerAttachment(owner, command.sessionId);
-		if (claim.finalizer) {
-			await this.finalizeClose(command.sessionId, this.bindings.get(command.sessionId), () =>
-				this.writer.closeSession(command.sessionId, response),
-			);
-		} else {
-			await this.finalizations.get(command.sessionId)?.promise;
-			this.writer.enqueueClosedResponse(command.sessionId, response);
+		const reply = this.writer.reserveCloseResponse(command.sessionId, response);
+		if (!reply) return undefined;
+		// Admission and claiming are synchronous, before any teardown await. A
+		// saturated requester neither releases an attachment nor joins a promise.
+		let claim: { finalizer: boolean };
+		try {
+			claim = this.claimClose(command.sessionId, { drainAttachments: false });
+		} catch (cause) {
+			reply.release();
+			return error(command.id, "close_session", this.code(cause));
 		}
-		return undefined;
+		try {
+			const owner = this.writer.currentConnection();
+			if (owner !== undefined) this.releaseOwnerAttachment(owner, command.sessionId);
+			if (claim.finalizer) {
+				await this.finalizeClose(command.sessionId, this.bindings.get(command.sessionId), () =>
+					reply.complete(true),
+				);
+			} else {
+				await this.finalizations.get(command.sessionId)?.promise;
+				reply.complete(false);
+			}
+			return undefined;
+		} finally {
+			reply.release();
+		}
 	}
 
 	/** Detaches the closing connection's UI/width state; a rerender failure must not abort the close. */

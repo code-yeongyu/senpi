@@ -36,6 +36,10 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.senpi/agent/auth.js
 
 Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party harness usage draws from [extra usage](https://claude.ai/settings/usage) and is billed per token, not against Claude plan limits.
 
+- Run `/login anthropic` to open the browser flow. The login listens on loopback port 53692 when it is free and on an ephemeral port otherwise, so a second session on the same machine (another TUI, an RPC host, an abandoned login) can log in at the same time; the auth URL always names the port that is actually listening.
+- If the browser lands on a page saying the login belongs to a different session or an earlier attempt, that page's address was sent to another login's listener: paste the full address from the address bar into the session whose prompt is still waiting, or run the login again from that session.
+- A login that receives neither the browser callback nor a pasted redirect URL for 10 minutes fails with a timeout and releases its port; run `/login anthropic` again.
+
 ### Claude SDK OAuth
 
 The `claude-sdk-oauth` provider routes LLM calls through the official [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) - it spawns the real Claude Code engine - while senpi executes every tool itself. Subscription usage flows through Anthropic's official Claude Code surface.

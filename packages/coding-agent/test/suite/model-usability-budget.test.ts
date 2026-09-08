@@ -122,8 +122,8 @@ describe("model usability budget", () => {
 			safetyMarginTokens: 8_192,
 			usable: false,
 		});
-		expect(error.projection.liveContextTokens).toBeGreaterThanOrEqual(318_240);
-		expect(error.projection.liveContextTokens).toBeLessThanOrEqual(318_330);
+		expect(error.projection.liveContextTokens).toBeGreaterThanOrEqual(318_180);
+		expect(error.projection.liveContextTokens).toBeLessThanOrEqual(318_280);
 		expect(error.projection.speculationLeadTokens).toBeGreaterThan(0);
 		expect(error.projection.requiredTokens).toBe(
 			error.projection.liveContextTokens +

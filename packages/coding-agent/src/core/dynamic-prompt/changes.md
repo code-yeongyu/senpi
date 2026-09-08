@@ -1,5 +1,15 @@
 # changes.md — dynamic-prompt
 
+## Observe edits and perceived results in the shared core (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/working-task.ts`: the parallel-wave paragraph adds "Edits and result-dependent calls go one at a time, each compared with the state you meant to produce; when the result must be seen rather than read, render after each change and look before the next." Rendered fallback core: 1600 -> 1632 o200k tokens.
+
+### Why
+
+- The wave rule covered reads only; nothing in the fallback core said that edits are sequential and observed, or that visual results are looked at after each change. Same 2026-09-09 census as the prompt-preset entry (batch-hidden evidence, 24% screenshot rate after frontend edits). Kept to one sentence because the eval-selected presets carry the full rule set.
+
 ## Conditional delegation rule + compaction mechanism in the shared core (2026-09-03)
 
 ### What changed

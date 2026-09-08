@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-08 - Construct shared RPC runtimes inside session workers
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` extracts `createCliRuntimeFactory` with cloneable CLI configuration and isolate-local extension/UI construction. Shared mode dispatches before creating any default SessionManager and passes worker configuration to the host. Inline extension factories are rejected in shared mode rather than crossing IPC.
+
+### Why
+
+- The shared host must remain responsive while a session's filesystem access or JavaScript execution blocks its worker; eagerly constructing a default session or closing over main-thread runtime objects defeats that boundary.
+
+### Why an extension could not handle it
+
+- CLI dispatch and runtime construction in `packages/coding-agent/src/main.ts` precede extension execution and own the shared-host boundary.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/main.ts` runtime resolver and mode dispatch. Classic runtime selection uses the extracted resolver unchanged.
+
 ## 2026-09-07 - Add the memory Aha-moment tip
 
 ### What changed

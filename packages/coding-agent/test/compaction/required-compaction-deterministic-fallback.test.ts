@@ -400,6 +400,9 @@ describe("required compaction deterministic fallback", () => {
 			expect(diagnostics.candidateRejections).toContainEqual({
 				firstKeptEntryId: preparedBoundaryId,
 				rejectionReason: "unsafe-retained-content",
+				unsafeEntryId: branchEntries.at(-1)?.id,
+				unsafeMessageIndex: 6,
+				unsafeMessageRole: "toolResult",
 			});
 		}
 	});
@@ -522,7 +525,7 @@ describe("required compaction deterministic fallback", () => {
 		const harness = createBlockingContext({ usageTokens: 9_900 });
 		harness.sessionManager.appendMessage({
 			role: "user",
-			content: `bulk retained context ${"filler ".repeat(139_000)}`,
+			content: `bulk retained context ${"filler ".repeat(556_000)}`,
 			timestamp: 4,
 		});
 		const branchEntries = harness.sessionManager.getBranch();
@@ -1407,6 +1410,9 @@ describe("deterministic fallback failed-turn normalization", () => {
 		expect(diagnostics.candidateRejections).toContainEqual({
 			firstKeptEntryId: imageBoundaryId,
 			rejectionReason: "unsafe-retained-content",
+			unsafeEntryId: branchEntries.at(-1)?.id,
+			unsafeMessageIndex: 8,
+			unsafeMessageRole: "toolResult",
 		});
 	});
 });

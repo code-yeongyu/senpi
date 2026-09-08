@@ -70,29 +70,22 @@ const EVAL_PROMPT_TEMPLATE = `Run one step of code in a persistent kernel.
 **One eval call = one cell = one logical step.** Top-level names persist per language across eval calls{{#if spawns}}, tool calls and \`task\` subagents{{else}} and tool calls{{/if}}: define helpers and clients once and reuse them instead of re-importing or re-reading. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
 
 {{#if styleClaude}}<eval_first_batching>
-\`eval\` is your default execution surface: if a step needs more than one tool call, write ONE cell that performs the whole step — never issue the calls one at a time.
-- Enumerate every lookup the step needs, then run all independent ones simultaneously with \`parallel(thunks)\` inside the cell; keep calls sequential only when one result feeds the next.
-- Write real code around the calls: loop or comprehend over file sets with \`read()\`/stdlib, branch per case, and wrap risky calls in try/except so one failure degrades only its item — recover or retry inside the cell, keep the batch alive.
-- Post-process \`tool.<name>()\` results programmatically — filter, join, aggregate — and return distilled facts, not raw dumps.
+Batch a step's independent calls in one cell with \`parallel(thunks)\`; write real code around them - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.
 {{#if monitor}}- Start long-running work (build, test run, deploy, or watch) through \`tool.monitor({ command, filter })\`, putting the decisive-line filter inside the same cell, then keep working until its event wakes the turn.{{/if}}
 </eval_first_batching>{{/if}}{{#if styleGpt}}<gpt_eval_dialect>
-GPT eval: compose multi-tool work inside one cell with \`tool.<name>(args)\` and \`parallel(thunks)\`; do not split a planned step into serial tool calls.
+GPT eval: batch a step's independent tool calls in one cell with \`tool.<name>(args)\` and \`parallel(thunks)\` and inspect every result.
 {{#if monitor}}- A wait or a long run (build, test run, deploy, watch) starts through \`tool.monitor({ command, filter })\` in that same cell with the decisive-line filter; its event wakes the turn, so no cell sits on the wait and no child is spawned for it.
 {{/if}}- Long cells detach on timeout and notify on completion; do not poll or re-run them.
-- Filter, join, and aggregate tool results in the cell; return only decision-relevant facts.
-</gpt_eval_dialect>{{/if}}{{#if styleCodex}}Route multi-call steps through eval: one cell per step, independent lookups dispatched together via \`parallel(thunks)\`; keep work sequential only when one result determines the next action.
-- Loop or comprehend over file sets with \`read()\`/stdlib instead of reading files one call at a time; post-process \`tool.<name>()\` results programmatically — filter, join, aggregate.
-- Wrap failable calls in try/except inside the cell; a failed item degrades only itself. After two distinct failed strategies for the same fact, fall back to direct tool calls.
-- Reduce large results in-kernel to the facts the task needs before returning.
-{{#if monitor}}- Long-running build/test/deploy/watch work: start \`tool.monitor({ command, filter })\` with the decisive-line filter inside the same cell, then continue working until its event wakes the turn.{{/if}}{{/if}}{{#if styleKimi}}**EVAL IS YOUR SUPERPOWER — MAKE IT YOUR DEFAULT WAY TO ACT.** Before any step, think: "how do I execute this WHOLE step in ONE parallelized cell?" — then write that ONE cell.
-- **BATCH EVERYTHING AT ONCE:** enumerate EVERY independent lookup the step needs and dispatch them ALL simultaneously with \`parallel(thunks)\` in that cell; keep calls sequential only when one result feeds the next.
-- **WRITE REAL CODE, NOT CALL CHAINS:** loop or comprehend over file sets with \`read()\`/stdlib, post-process \`tool.<name>()\` results programmatically, and put try/except around each risky call so the rest of the batch completes.
-- **DISTILL IN-KERNEL:** filter, join, and aggregate \`tool.<name>()\` results in code, then return ONLY the distilled facts.
-{{#if monitor}}- **DO start long-running build, test run, deploy, or watch work with \`tool.monitor({ command, filter })\`, put the decisive-line filter INSIDE THE SAME CELL, and KEEP WORKING until its event wakes the turn.**{{/if}}{{/if}}{{#if styleDefault}}**EVAL IS YOUR PRIMARY EXECUTION SURFACE.** Any step that needs MORE THAN ONE tool call MUST be written as ONE cell — NEVER as a chain of single tool calls.
-- **PLAN THE WHOLE STEP, THEN BATCH IT.** Enumerate every read/search/lookup the step needs and dispatch ALL independent ones through \`parallel(thunks)\` in one cell.
-- **WRITE REAL CODE, NOT CALL LISTS.** Loop or comprehend over file sets with \`read()\`/stdlib, branch \`if\`/\`else\` per case, post-process \`tool.<name>()\` results programmatically, and wrap EVERY risky call in try/except so ONE failure NEVER kills the batch.
-- **DISTILL IN-KERNEL.** Filter, join, diff, and aggregate in code before returning; return facts, NOT dumps.
-{{#if monitor}}- **LONG-RUNNING build, test run, deploy, or watch work MUST start with \`tool.monitor({ command, filter })\`, with the decisive-line filter INSIDE THE SAME CELL; KEEP WORKING until its event wakes the turn.**{{/if}}{{/if}}
+- Keep every failed or missing item in the result verbatim and re-read truncated output before deciding.
+</gpt_eval_dialect>{{/if}}{{#if styleCodex}}Route a step's independent lookups through one eval cell via \`parallel(thunks)\` and inspect every result.
+- Loop or comprehend over file sets with \`read()\`/stdlib instead of reading files one call at a time; post-process \`tool.<name>()\` results programmatically.
+- Wrap failable calls in try/except inside the cell and keep every failed item in the result verbatim; after two distinct failed strategies for the same fact, fall back to direct tool calls.
+- Re-read truncated output before deciding on it.
+{{#if monitor}}- Long-running build/test/deploy/watch work: start \`tool.monitor({ command, filter })\` with the decisive-line filter inside the same cell, then continue working until its event wakes the turn.{{/if}}{{/if}}{{#if styleKimi}}Put a step's independent calls into one cell with \`parallel(thunks)\`.
+- Write real code around the calls - loops, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.
+{{#if monitor}}- Start long-running build, test run, deploy, or watch work with \`tool.monitor({ command, filter })\`, put the decisive-line filter inside the same cell, and keep working until its event wakes the turn.{{/if}}{{/if}}{{#if styleDefault}}Batch a step's independent calls in one cell with \`parallel(thunks)\`.
+- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.
+{{#if monitor}}- Long-running build, test run, deploy, or watch work starts with \`tool.monitor({ command, filter })\`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.{{/if}}{{/if}}
 {{#if hostLine}}
 Host: {{hostLine}} — cells execute here. Size \`parallel(thunks)\` pools to its cores; \`tool.<name>()\` shell commands must fit this platform, even when the code you are writing targets another machine.
 {{/if}}
@@ -200,12 +193,12 @@ const GPT_MONITOR_BATCHING_GUIDELINE =
 
 const BATCHING_GUIDELINES: Record<EvalEmphasisStyle, string> = {
 	default:
-		"**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",
+		"Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
 	claude:
-		"Prefer eval for any step needing more than one tool call: one cell that runs independent calls in parallel, handles per-call failures in code, and returns distilled facts.",
-	codex: "Route multi-call steps through eval: one cell per step, independent calls dispatched in parallel; fall back to direct tool calls when one call is sufficient or each result changes the next decision.",
-	gpt: "Use eval to compose tool work in one cell; long cells detach on timeout and notify on completion, so do not poll.",
-	kimi: "**EVAL IS YOUR SUPERPOWER — DEFAULT TO IT.** Execute EVERY multi-call step as ONE eval cell: run ALL independent calls simultaneously via parallel(thunks), handle failures per item in code, and return ONLY distilled facts.",
+		"Prefer eval for a step's independent calls: one cell runs them together and keeps every failure in its result.",
+	codex: "Route a step's independent calls through one eval cell and inspect every result; a direct tool call is right when one call is sufficient.",
+	gpt: "Use eval to batch a step's independent tool calls in one cell and inspect every result; long cells detach on timeout and notify on completion, so do not poll.",
+	kimi: "Put a step's independent calls into one eval cell with parallel(thunks) and keep every failed item in the result.",
 };
 
 function renderTemplate(template: string, context: Context): string {

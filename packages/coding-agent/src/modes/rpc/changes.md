@@ -19,6 +19,51 @@
 
 - LOW: the classification block in `connection-handler.ts`'s command catch, its new import, and the added branch + import in `rpc-client.ts`'s `getData`.
 
+## Bound quarantined and joined close reply admission (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` counts admitted close reply records and serialized bytes against the existing stdio queue budgets before they are queued. The first closer reserves both terminal records; direct duplicate replies use the same admission gate. Saturation emits a bounded `rpc_close_output_overflow, resync required` notice, not one buffered reply or stderr line per rejected command. Stdio keeps one notice per episode. Socket notices target only the rejected requester, with at most one outstanding notice per sink until consumption; actor identity isolates reconnects without retaining dead connections.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts` admits reply debt before claiming an attachment or awaiting finalization. Rejected commands do neither; admitted replies transfer their reservation to FIFO output, with release on every completion/error path. Native-exit canonical ownership is unchanged.
+- `packages/coding-agent/docs/rpc.md` documents close admission, overflow recovery, and the distinction between an overflow notice and a successful acknowledgment.
+
+### Why
+
+- Broadcasting one global socket notice incorrectly told healthy peers to resynchronize and suppressed notification for later affected requesters. Deterministic two-connection tests reproduce both failures and preserve independent peer progress. They also drain socket actors without a stdio lane, then saturate the same actors again: first-closer terminal records survive, reply debt is reclaimed, and later episodes receive fresh requester-only notices without reconnecting.
+- A native-FIFO-blocked quarantined worker can remain resident indefinitely. Previously, 4,196 duplicate closes queued 4,196 noncompactable replies beyond the 4,096-record bound; checking only at enqueue also leaves unbounded reply debt in joined finalization promises.
+
+### Why an extension could not handle it
+
+- Output budgets, reply admission and attachment claims are transport/router infrastructure below extension hooks.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/session-event-writer.ts` close/output admission and `packages/coding-agent/src/modes/rpc/session-command-router.ts` close routing. Tests cover count and byte saturation with real quarantined workers and held finalization; existing terminal/FIFO and native-pressure proofs remain intact.
+
+## Shared RPC session workers retain ownership until exit (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts` accepts the build-time `SENPI_RPC_SESSION_WORKER_ENTRY` define so external Bun wrappers can embed the published dist worker under their own explicit compile root. Compiled entries are resolved against `import.meta.url`, converted with `fileURLToPath`, and normalized to forward slashes before Worker construction. On Windows Bun 1.4.0, passing a URL lets `node:worker_threads` convert it to a backslash path: the embedded file exists but worker startup reports ENOENT. Passing the same absolute path with forward slashes starts the embedded worker; POSIX paths remain unchanged. Source/Node resolution and the standalone source-entry default are unchanged.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`, `session-worker-protocol.ts`, `session-worker-client.ts`, `session-worker-requests.ts`, and `worker-session-registry.ts` introduce per-session workers, prepare/grant/commit opening, bounded requests and IPC credit, and main-owned reservations retained through quarantine until actual worker exit.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts` selects the worker registry for CLI shared hosts and reports stdio capacity failures without terminating sibling sessions.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts` carries worker ownership and internal quarantine while retaining the injected in-process registry seam. `worker-session-registry.ts` publishes quarantined workers as the existing `closing` wire status, preserving desktop eager-reattach semantics without releasing ownership.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts` and `connection-handler.ts` keep classic semantics inside each worker and flush shared-session events into the bounded transport synchronously.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts` routes snapshots and requester identity across IPC, releases unrelated connections' sessions independently, preserves exact settlement events, and removes exited-worker attachment bookkeeping.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` returns worker credit only after the session's own destinations drain and bounds stdio queues with visible overflow and terminal-failure records.
+
+### Why
+
+- A session's synchronous filesystem operation or JavaScript loop must not freeze the shared transport or other sessions. Neither timeout nor routing closure proves worker termination, and a second writer must not be admitted while the old worker can resume.
+
+### Why an extension could not handle it
+
+- Canonical admission, transport credit, routing ownership and worker lifetime are host infrastructure below the extension boundary. The classic handler still owns command semantics inside the worker.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/modes/rpc/session-command-router.ts` attachment/close paths, `session-event-writer.ts` output scheduling, `session-binding.ts` and `connection-handler.ts` binding options. LOW: `multi-session-host.ts`, `session-registry.ts`, `rpc-types.ts`, and the new worker modules.
+
 ## Watchdog reads the ownership token before it removes the scratch directory (2026-09-07)
 
 ### What changed

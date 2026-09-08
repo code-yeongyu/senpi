@@ -1,5 +1,16 @@
 # senpi-codemode fork changes
 
+## 2026-09-09 - Eval description teaches cell mechanics; routing moved to the presets
+
+### What changed
+
+- `src/prompt/eval-prompt.ts`: every dialect block (`<eval_first_batching>`, `<gpt_eval_dialect>`, codex, kimi, default) drops the "default execution surface / one cell per multi-call step / never a chain / return ONLY distilled facts" wording and keeps mechanics: batch a step's independent calls in one cell with `parallel(thunks)`, write real code around them, keep every failed or missing item in the result verbatim, re-read truncated output before deciding, and (with monitor) start long-running work through `tool.monitor`. `BATCHING_GUIDELINES` are one-line pointers without capitals. The routing decision (what is batched, what runs one at a time and is observed) now lives once, in the model's preset.
+- `test/prompt.test.ts`: the guideline equality uses the new default line; dialect markers are checked by tag and by shape (no all-caps words of five or more letters in the Kimi instruction, no `NEVER` in the default instruction) instead of pinned slogans.
+
+### Why
+
+- The same instruction rendered in three homes per session (tool description, preset rule, system guideline). Prompt-engineering skill: one home per rule; the description is the right home for mechanics because it renders for every model, the preset for routing because that wording is per model. Distilled-only returns hid the detail the next step needed in 14% of sampled cells (2026-09-09 census), so the description now names the failure-verbatim rule instead of "return ONLY distilled facts". o200k: default 1396 -> 1278, claude 1390 -> 1291, kimi 1397 -> 1277, codex/gpt 1325 -> 1321.
+
 ## 2026-09-07 - Bun.spawnSync inherits the pinned session environment
 
 ### What changed

@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-08 - Package the shared RPC session worker
+
+### What changed
+
+- `scripts/build-binaries.sh` includes the session worker as an explicit Bun compile entrypoint.
+- `scripts/build-coding-agent-bundle.mjs` emits the Node session worker beside the lazy runtime chunks.
+
+### Why
+
+- Worker URLs alone are not followed by standalone bundlers. A host that can launch but cannot start its session worker is not a usable shared RPC binary.
+
+### Why an extension could not handle it
+
+- Binary entrypoint discovery and Node bundle layout in `scripts/build-binaries.sh` and `scripts/build-coding-agent-bundle.mjs` are packaging responsibilities before extensions run.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/build-binaries.sh` compile argument lists and `scripts/build-coding-agent-bundle.mjs` lazy worker entrypoints.
+
 ## Root workspace fan-out moves into a package-manager-agnostic runner (2026-09-07)
 
 ### What changed

@@ -503,6 +503,29 @@
 
 - LOW: `utils/retry.ts` provider timeout pattern.
 
+## 2026-09-09 - Anthropic OAuth callback listener: ephemeral port fallback and idle timeout
+
+### What changed
+
+- `auth/oauth/anthropic.ts`: the login now binds its callback listener through `auth/oauth/anthropic-callback-listener.ts` (new, fork-only). The listener still prefers `127.0.0.1:53692`, but when that port is already held (EADDRINUSE, EACCES, EPERM) it binds an ephemeral loopback port instead of dropping into manual mode; the auth URL `redirect_uri`, the manual-prompt placeholder, and the token-exchange `redirect_uri` all carry the port that was actually bound. Manual-only mode (registered `http://localhost:53692/callback` redirect, paste the redirect URL) is now reached only when neither the preferred nor an ephemeral port can be bound.
+- `auth/oauth/anthropic.ts`: a login that receives neither a browser callback nor a pasted redirect URL for 10 minutes rejects with a timeout error and closes its listener, instead of holding the port and the manual prompt open indefinitely.
+- `auth/oauth/anthropic-callback-listener.ts`: a callback whose `state` belongs to another login answers HTTP 400 with a page that says the login belongs to a different session or an earlier attempt and tells the user to paste the address-bar URL into the session that is waiting (or to restart the login), instead of the bare "State mismatch." page.
+- `auth/oauth/authorization-input.ts` and `auth/oauth/error-details.ts` (new, fork-only): `parseAuthorizationInput` and `formatErrorDetails` moved out of `anthropic.ts` unchanged.
+
+### Why
+
+- Two senpi/omo processes on one machine (a second TUI session, an RPC host whose login prompt was never answered, an abandoned `/login`) could not both log in: the second login hit EADDRINUSE, fell back to manual mode while still advertising `localhost:53692`, and the browser redirect landed on the first process's stale listener, which rendered "State mismatch." on every retry (omo Discord report, 2026-09-09). The OAuth client is registered for any localhost port on `/callback` - the Claude Code CLI itself binds a random port - so a fixed port was never required.
+- A pending login had no deadline, so one abandoned attempt kept the port for the life of the process.
+
+### Why an extension could not handle it
+
+- The callback listener, the redirect URI it advertises, and the token exchange are created and owned inside the provider OAuth implementation before any auth interaction event reaches an extension; an extension can neither pick the port nor change the redirect URI the exchange must match.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/auth/oauth/anthropic.ts` callback listener startup, auth URL construction, manual prompt, cleanup (listener code moved out of the file).
+- LOW: `test/anthropic-oauth.test.ts` callback listener coverage.
+
 ## 2026-09-02 - Anthropic OAuth callback bind fallback
 
 ### What changed

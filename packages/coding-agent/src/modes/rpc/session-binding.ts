@@ -34,6 +34,7 @@ export async function createRpcSessionBinding(
 	requestClose: () => void,
 	options: Pick<RpcConnectionOptions, "capabilities" | "sharedWidth"> = {},
 ): Promise<RpcSessionBinding> {
+	if (entry.worker) return entry.worker.bind(sessionId, writer, requestClose, options);
 	if (!entry.runtime) throw new Error("Session runtime was not created");
 	// Attachments share one entry, so resolve the host from the live runtime. In
 	// particular, switch_session must use the entry's replacement-aware method
@@ -61,6 +62,7 @@ export async function createRpcSessionBinding(
 			sessionId,
 			shutdownHandler: bindToProviderScope(requestClose),
 			disposeRuntime: false,
+			eventFlushScheduler: (flush) => flush(),
 			...options,
 		});
 	});

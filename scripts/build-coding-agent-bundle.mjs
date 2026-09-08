@@ -184,6 +184,7 @@ const lazyResult = await build({
 		"bedrock-converse-stream": join(aiDistDir, "api", "bedrock-converse-stream.js"),
 		"github-copilot": join(aiDistDir, "auth", "oauth", "github-copilot.js"),
 		"image-resize-worker": join(codingAgentDistDir, "utils", "image-resize-worker.js"),
+		"session-worker": join(codingAgentDistDir, "modes", "rpc", "session-worker.js"),
 		"kimi-coding": join(aiDistDir, "auth", "oauth", "kimi-coding.js"),
 		"openai-codex": join(aiDistDir, "auth", "oauth", "openai-codex.js"),
 		openrouter: join(aiDistDir, "auth", "oauth", "openrouter.js"),

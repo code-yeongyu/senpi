@@ -1,5 +1,30 @@
 # prompt-preset Extension Changes
 
+## Eval rules: batch what is independent, observe what is not (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts`: the shared Claude/Kimi rule set is now `eval-routing-decision` (independent reads, searches, symbol lookups, and probes go into one `eval` cell; edits, side-effecting commands, deploys, approvals, and result-dependent calls run one at a time, each observed before the next), `eval-evidence-return` (name the state a cell should produce, compare the returned evidence with it, check a mutating cell for changes beyond it; a result that hides a failed item or a truncated tail is not evidence), the new `perceived-state-loop` (a page, component, image, 3D scene, or layout gets one change, a render or screenshot, a look, then the next change; several angles for 3D, desktop and mobile widths for a page; compare with the reference or stated intent and ask only where two readings diverge), and the unchanged `eval-stay-direct`. `eval-default-surface` and `eval-real-code` are gone; cell mechanics (real code, per-item try/catch that keeps failures verbatim, truncation re-read) now live only in the eval tool description.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts` and `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-5.6.ts`: `eval-first-routing` is the same dependency decision in the Codex register (batch independent reads and inspect every result; keep edits, approvals, waits, and adaptive follow-ups sequential); `parallel-batching`, `over-call-bias`, and `in-kernel-reduction` are folded into it or replaced by `evidence-comparison` and `perceived-state-loop`. The two Astra eval rules lost their capitals and bold; only the three asynchronous-execution rules keep emphasis.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/kimi-k3.ts`: the Working the Task paragraph carries a worked loop ("open the definition, file, or command you are about to rely on; make the change; run or render it; compare the result with the state you named; stop when they match") and "a definition, command, or file you have not opened is not a fact" in place of the bare read-before-claim sentence.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-1.ts` and `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5.ts`: the "extra read is cheap, a stale assumption costs the turn" clause is deleted from the core because the routing rule now carries it.
+- Tests: `packages/coding-agent/test/suite/prompt-presets-execution-tooling.test.ts` (rule table, plus a no-shouting check on the Kimi dialect), `packages/coding-agent/test/suite/prompt-presets-gpt-6-astra.test.ts` (rule and placement tables; emphasis set is the three async rules), `packages/coding-agent/test/suite/prompt-presets-gpt-5-6.test.ts` (rule and placement tables). Captured RED on the test-only commit (rule-set equality), GREEN after the rule change.
+
+### Why
+
+- Category B (misframing) per the prompt-engineering skill. "One cell per multi-call step, never a chain" is a call-count law; the information law is that batching is safe for calls whose results text can verify and wrong for calls whose next step depends on inspecting a result. A census of 5,187 pi-family sessions (2026-09-09) found ~580 "assumed instead of observed" moments; the code-mode share matched its base rate, but the mechanism shifted to batches hiding their own evidence: cells with two or more mutating operations returning under 800 characters rose from 16.7% to 22.6% after the 2026-09-04 directive (fable-5.1 17 -> 24%, opus-5 23 -> 30%), 24% of blank or failed cells were followed by proceeding as if they had succeeded, 14% of aggregate-only cells hid a detail the next step needed, and a frontend edit was followed by a screenshot 24% of the time. The user's own Blender report (2026-09-09) is the same failure: a script built the whole model at once and nothing looked at it.
+- Category C (missing context) for the visual loop: nothing told the model that a perceived result must be looked at after each change. Codex's Sol frontend guidance verifies with screenshots across viewports before finishing; Codex's Astra template batches independent reads, inspects every result, and keeps edits and adaptive follow-ups sequential - the same line this change draws.
+- Per-model: Claude keeps a tagged block with a few key verbs; Kimi gets positive prose, a worked loop, and no capitals (Moonshot's remedy for K3's excessive proactiveness is concrete constraints, not emphasis); GPT drops the capitals the GPT-5.6 guide warns compound with generic instructions and gains the truncated-output re-read that dominated its true cases (9 of 18).
+- Token cost (o200k, eval selected, 10 tools): fable-5-1 1735 -> 1754, fable-5 1771 -> 1790, opus-5 1898 -> 1937, opus-4-8 1984 -> 2055, gpt-6-astra 3509 -> 3557, gpt-5.6 2935 -> 2944, kimi-k3 1871 -> 2001, glm-5.3 1880 -> 1951; the eval tool description shrank 99-120 tokens for the Claude, Kimi, and default dialects, so a session nets negative for every family except Astra (+44, the new visual rule) and Kimi (+10, the worked loop).
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside builtin rule data and core templates.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: all files are fork-only.
+
 ## GPT-6 Astra: do the work yourself, open a new request once, consult memory before asking (2026-09-08)
 
 ### What changed

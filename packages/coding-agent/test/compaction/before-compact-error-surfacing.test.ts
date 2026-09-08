@@ -178,7 +178,7 @@ describe("session_before_compact error surfacing", () => {
 		expect(call?.context.systemPrompt).toBe("TEST AGENT SYSTEM PROMPT");
 	});
 
-	it("cancels with a stop-reason diagnosis when the summarization response has no text", async () => {
+	it("cancels with a boundary diagnosis when empty-summary recovery has no retained branch", async () => {
 		// Given: the model spends the whole output budget on thinking (adaptive
 		// reasoning models do this without being asked) and the stream ends at
 		// the token cap with zero text content.
@@ -193,7 +193,14 @@ describe("session_before_compact error surfacing", () => {
 		// Then: this classified failure enters deterministic recovery, but the
 		// deliberately boundary-less fixture cannot retain a safe suffix.
 		expect(result?.cancel).toBe(true);
-		expect(result?.reason).toBe("deterministic compaction fallback cannot retain the prepared suffix");
+		expect(JSON.parse(result?.reason?.split("\n")[1] ?? "{}")).toEqual({
+			rejectionReason: "missing-preparation-boundary",
+			contextWindow: 128_000,
+			reserveTokens: 16_384,
+			budgetTokens: 111_616,
+			budgetExceeded: false,
+			candidatesChecked: 0,
+		});
 	});
 
 	it("cancels with the credential error when summarization auth is unavailable", async () => {

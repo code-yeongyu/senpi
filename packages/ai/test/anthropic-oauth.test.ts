@@ -1,8 +1,10 @@
+import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { __setAnthropicOAuthNodeApisForTests, anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
 import type { AuthEvent, AuthPrompt } from "../src/auth/types.ts";
 
 const neverAbortedSignal = new AbortController().signal;
+const PREFERRED_CALLBACK_PORT = 53692;
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -239,5 +241,158 @@ describe.sequential("Anthropic OAuth", () => {
 		expect(prompts.some((p) => p.type === "manual_code")).toBe(true);
 		// the prompt's signal is aborted once login settles, so UIs can dismiss it
 		expect(manualSignal?.aborted).toBe(true);
+	});
+});
+
+type PortHold = { bound: boolean; close: () => Promise<void> };
+
+/** Holds a loopback port with a real listener; `bound` is false when something else already owns it. */
+function occupyPort(port: number): Promise<PortHold> {
+	return new Promise((resolve) => {
+		const server: Server = createServer((_req, res) => {
+			res.writeHead(503);
+			res.end("occupied");
+		});
+		server.once("error", () => resolve({ bound: false, close: async () => {} }));
+		server.listen(port, "127.0.0.1", () =>
+			resolve({
+				bound: true,
+				close: () => new Promise<void>((done) => server.close(() => done())),
+			}),
+		);
+	});
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((r) => {
+		resolve = r;
+	});
+	return { promise, resolve };
+}
+
+/** A manual-code prompt that stays open until the login aborts it. */
+function pendingPrompt(prompt: AuthPrompt): Promise<string> {
+	return new Promise<string>((_resolve, reject) => {
+		prompt.signal?.addEventListener("abort", () => reject(new Error("prompt aborted")), { once: true });
+	});
+}
+
+type StartedLogin = { login: Promise<{ access: string }>; authUrl: Promise<URL> };
+
+function startLogin(signal: AbortSignal = neverAbortedSignal): StartedLogin {
+	const authUrl = deferred<URL>();
+	const login = anthropicOAuth.login({
+		signal,
+		notify: (event) => {
+			if (event.type === "auth_url") authUrl.resolve(new URL(event.url));
+		},
+		prompt: pendingPrompt,
+	});
+	return { login, authUrl: authUrl.promise };
+}
+
+function redirectOf(authUrl: URL): URL {
+	const redirect = authUrl.searchParams.get("redirect_uri");
+	if (!redirect) throw new Error("auth URL carries no redirect_uri");
+	return new URL(redirect);
+}
+
+/** Token-exchange fake that lets loopback callback requests through to the real listener. */
+function stubTokenExchange(): { exchanges: Record<string, string>[]; loopbackFetch: typeof fetch } {
+	const realFetch = globalThis.fetch;
+	const exchanges: Record<string, string>[] = [];
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+			const url = getUrl(input);
+			if (url.startsWith("http://127.0.0.1:")) return realFetch(url, init);
+			exchanges.push(getJsonBody(init));
+			return jsonResponse({
+				access_token: `access-${exchanges.length}`,
+				refresh_token: "refresh",
+				expires_in: 3600,
+			});
+		}),
+	);
+	return { exchanges, loopbackFetch: realFetch };
+}
+
+describe.sequential("Anthropic OAuth callback listener", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it("binds an ephemeral loopback port when 53692 is already taken", async () => {
+		const occupied = await occupyPort(PREFERRED_CALLBACK_PORT);
+		const { exchanges, loopbackFetch } = stubTokenExchange();
+		try {
+			const started = startLogin();
+			const authUrl = await started.authUrl;
+			const redirect = redirectOf(authUrl);
+			expect(redirect.port).not.toBe(String(PREFERRED_CALLBACK_PORT));
+			const callback = await loopbackFetch(
+				`http://127.0.0.1:${redirect.port}/callback?code=browser-code&state=${authUrl.searchParams.get("state")}`,
+			);
+			expect(callback.status).toBe(200);
+			const credential = await started.login;
+			expect(credential.access).toBe("access-1");
+			expect(exchanges).toHaveLength(1);
+			expect(exchanges[0]?.code).toBe("browser-code");
+			expect(exchanges[0]?.redirect_uri).toBe(`http://localhost:${redirect.port}/callback`);
+		} finally {
+			await occupied.close();
+		}
+	});
+
+	it("keeps two concurrent logins in one process independent", async () => {
+		const { exchanges, loopbackFetch } = stubTokenExchange();
+		const first = startLogin();
+		const second = startLogin();
+		const [firstUrl, secondUrl] = await Promise.all([first.authUrl, second.authUrl]);
+		const firstPort = redirectOf(firstUrl).port;
+		const secondPort = redirectOf(secondUrl).port;
+		expect(secondPort).not.toBe(firstPort);
+		const secondCallback = await loopbackFetch(
+			`http://127.0.0.1:${secondPort}/callback?code=code-second&state=${secondUrl.searchParams.get("state")}`,
+		);
+		expect(secondCallback.status).toBe(200);
+		const firstCallback = await loopbackFetch(
+			`http://127.0.0.1:${firstPort}/callback?code=code-first&state=${firstUrl.searchParams.get("state")}`,
+		);
+		expect(firstCallback.status).toBe(200);
+		const [firstCredential, secondCredential] = await Promise.all([first.login, second.login]);
+		expect(secondCredential.access).toBe("access-1");
+		expect(firstCredential.access).toBe("access-2");
+		expect(exchanges.map((exchange) => [exchange.code, exchange.redirect_uri])).toEqual([
+			["code-second", `http://localhost:${secondPort}/callback`],
+			["code-first", `http://localhost:${firstPort}/callback`],
+		]);
+	});
+
+	it("times out an idle login after 10 minutes and releases its listener", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const controller = new AbortController();
+		const started = startLogin(controller.signal);
+		let outcome: string | undefined;
+		void started.login.then(
+			() => {
+				outcome = "resolved";
+			},
+			(error: unknown) => {
+				outcome = error instanceof Error ? error.message : String(error);
+			},
+		);
+		try {
+			const port = Number(redirectOf(await started.authUrl).port);
+			await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+			await vi.waitFor(() => expect(outcome).toMatch(/timed out/i), { timeout: 5000 });
+			const released = await occupyPort(port);
+			expect(released.bound).toBe(true);
+			await released.close();
+		} finally {
+			controller.abort();
+		}
 	});
 });

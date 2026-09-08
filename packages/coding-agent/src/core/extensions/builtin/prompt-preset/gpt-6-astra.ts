@@ -41,11 +41,23 @@
 //   fork's test-first rule scoped to one failing test at the seam, alongside
 //   the guide's run-once-then-move-on calibration.
 //
-// Emphasis is deliberate and rationed: only the owner's two hard operating
-// rules render in capitals and bold - one js cell per multi-call step on the
-// Bun eval kernel, and asynchronous execution as the default form of every
-// call, with `monitor` subscriptions in place of waiting. Everything else
-// stays plain so those two keep their weight.
+// Emphasis is deliberate and rationed: only the asynchronous-execution rules
+// render in capitals and bold - the asynchronous form as the default of every
+// call, the turn end as the wait, and `monitor` subscriptions for every
+// observable condition. Everything else stays plain so those keep their weight.
+//
+// 2026-09-09: the eval rules moved from "one js cell per multi-call step" to a
+// dependency decision plus state-oriented verification, and dropped their
+// emphasis. A census of 5,187 sessions found the "assumed instead of
+// observed" failures clustered where a batch hid its own evidence: edits fired
+// in one cell behind a short aggregate, failures folded into missing rows,
+// truncated output acted on (the dominant GPT mechanism), and visual work
+// changed without being looked at. Codex's own Astra template already draws
+// the line this preset now draws - batch independent searches and reads and
+// inspect every result; keep dependencies, edits, approvals, waits, and
+// adaptive follow-ups sequential - and its Sol frontend guidance verifies with
+// screenshots across viewports before finishing, so `eval-first-routing`,
+// `evidence-comparison`, and `perceived-state-loop` follow that prior.
 //
 // Two harness facts Astra cannot derive get their own sections. Astra is
 // trained on async tool calling (an `async: true` call returns later on its
@@ -98,10 +110,9 @@ export type Gpt6AstraRuleId =
 	| "instruction-precedence"
 	| "pause-transparency"
 	| "eval-first-routing"
-	| "parallel-batching"
+	| "evidence-comparison"
+	| "perceived-state-loop"
 	| "bun-runtime"
-	| "over-call-bias"
-	| "in-kernel-reduction"
 	| "stay-direct-exceptions"
 	| "lsp-symbol-routing"
 	| "delegation"
@@ -165,19 +176,16 @@ const PAUSE_TRANSPARENCY =
 	"When an instruction in a skill or project file makes you pause, ask for confirmation, or diverge from the user's intent, name the file, quote the line, and say whether it is an explicit requirement or your interpretation; an inferred requirement leaves you free to proceed within the authorized scope.";
 
 const EVAL_FIRST_ROUTING =
-	"**WHEN `eval` IS AVAILABLE IT IS YOUR DEFAULT EXECUTION SURFACE: A STEP THAT NEEDS MORE THAN ONE TOOL CALL IS ONE JS CELL THAT PERFORMS THE WHOLE STEP** - conditionals, loops, filtering, aggregation, and functional chaining included - **NEVER A CHAIN OF SINGLE CALLS.**";
+	"When `eval` is available, batch the independent reads, searches, symbol lookups, and probes of a step in one js cell and inspect every result; an extra read-only call in that wave is nearly free, while a stale assumption costs the turn. Edits, side-effecting commands, approvals, waits, and any call whose input you have not seen yet stay sequential, one action observed before the next.";
 
-const PARALLEL_BATCHING =
-	"**FAN OUT EVERY INDEPENDENT READ, SEARCH, SYMBOL LOOKUP, AND COMMAND IN PARALLEL INSIDE THAT CELL**, as wide as the step allows; sequence only a call whose input is another call's result.";
+const EVIDENCE_COMPARISON =
+	"Name the state a cell should produce before running it and compare the returned evidence with that state when it comes back; a cell that changed something is also checked for changes beyond that state. A result that hides a failed item or a truncated tail is not evidence.";
+
+const PERCEIVED_STATE_LOOP =
+	"When the result must be seen rather than read - a page, a component, an image, a 3D scene, a layout - make one change, render or screenshot it, look, then make the next; check a 3D scene from several angles and a page at desktop and mobile widths for blank, misframed, or overlapping output. Compare what you see with the reference or the stated intent, and ask only where two readings of that intent diverge.";
 
 const BUN_RUNTIME =
 	"Default to js on Bun: when the eval tool names the bun-1-4 skill, read it before your first js cell and reach for Bun builtins before adding a dependency.";
-
-const OVER_CALL_BIAS =
-	"Over-call read-only work inside that wave: when unsure whether a read is worth making, make it; a stale assumption costs the turn. Side-effecting or approval-gated calls stay out of the wave.";
-
-const IN_KERNEL_REDUCTION =
-	"Reduce in the kernel - filter, join, rank, dedup, aggregate, guard each risky call - and return distilled facts instead of raw dumps.";
 
 const STAY_DIRECT_EXCEPTIONS =
 	"Skip the cell when it buys nothing: a lone call, an already-small result, a result you must read before choosing the next call, a judgment call between steps, or an action that needs approval. If two cell attempts miss the same fact, or the wave comes back empty or oddly thin, probe a direct alternative or two before you trust the absence.";
@@ -242,10 +250,9 @@ export const GPT6_ASTRA_RULES = [
 	{ id: "instruction-precedence", concern: "instruction-precedence", directive: INSTRUCTION_PRECEDENCE },
 	{ id: "pause-transparency", concern: "instruction-precedence", directive: PAUSE_TRANSPARENCY },
 	{ id: "eval-first-routing", concern: "tool-orchestration", directive: EVAL_FIRST_ROUTING },
-	{ id: "parallel-batching", concern: "tool-orchestration", directive: PARALLEL_BATCHING },
+	{ id: "evidence-comparison", concern: "tool-orchestration", directive: EVIDENCE_COMPARISON },
+	{ id: "perceived-state-loop", concern: "tool-orchestration", directive: PERCEIVED_STATE_LOOP },
 	{ id: "bun-runtime", concern: "tool-orchestration", directive: BUN_RUNTIME },
-	{ id: "over-call-bias", concern: "tool-orchestration", directive: OVER_CALL_BIAS },
-	{ id: "in-kernel-reduction", concern: "tool-orchestration", directive: IN_KERNEL_REDUCTION },
 	{ id: "stay-direct-exceptions", concern: "tool-orchestration", directive: STAY_DIRECT_EXCEPTIONS },
 	{ id: "lsp-symbol-routing", concern: "symbol-routing", directive: LSP_SYMBOL_ROUTING },
 	{ id: "delegation", concern: "delegation", directive: DELEGATION },
@@ -289,7 +296,7 @@ ${INSTRUCTION_PRECEDENCE} ${PAUSE_TRANSPARENCY}
 
 ## Working the Task
 
-${EVAL_FIRST_ROUTING} ${PARALLEL_BATCHING} ${IN_KERNEL_REDUCTION} ${OVER_CALL_BIAS} ${BUN_RUNTIME} ${STAY_DIRECT_EXCEPTIONS} ${buildGptEvalRoutingTuning()} Without a code-execution tool, send the independent calls in one message, one command per call. Never fill a missing parameter with a placeholder.
+${EVAL_FIRST_ROUTING} ${EVIDENCE_COMPARISON} ${PERCEIVED_STATE_LOOP} ${BUN_RUNTIME} ${STAY_DIRECT_EXCEPTIONS} ${buildGptEvalRoutingTuning()} Without a code-execution tool, send the independent calls in one message, one command per call. Never fill a missing parameter with a placeholder.
 
 Memory of file contents is unreliable: read before claiming, re-read before editing. ${LSP_SYMBOL_ROUTING} Stop searching once a wave answers the question or two waves add nothing new; a finding that looks too simple deserves one more layer of callers or dependencies, and the root fix beats the symptom fix.
 

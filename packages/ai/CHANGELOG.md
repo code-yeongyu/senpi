@@ -10,6 +10,20 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.9.8] - 2026-09-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Anthropic OAuth login no longer dead-ends on a browser page reading "State mismatch." when another senpi/omo process on the same machine still holds the callback port 53692: the login binds an ephemeral loopback port instead and carries that port through the auth URL and the token exchange. A callback that belongs to another login now explains that the login belongs to a different session and how to continue, and a login that gets neither a browser callback nor a pasted redirect URL for 10 minutes times out and releases its port instead of holding it indefinitely.
+
 - Anthropic mid-output server fallback now follows the configured abort/continue policy instead of raising an unsupported-fallback error. Continuing responses retain their serving-model identity and do not execute abandoned pre-fallback tools, including through text-tool recovery middleware.
 
 - `streamSimple` on the OpenAI Responses and Codex Responses adapters forwards the new `SimpleStreamOptions.serviceTier` into the request (`service_tier`) and tier-aware usage pricing; the simple path previously dropped it (code-yeongyu/oh-my-openagent#6795).

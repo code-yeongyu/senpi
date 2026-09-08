@@ -7,10 +7,8 @@ exports[`buildEvalPrompt > renders the all with spawns prompt 1`] = `
 <instruction>
 **One eval call = one cell = one logical step.** Top-level names persist per language across eval calls, tool calls and \`task\` subagents: define helpers and clients once and reuse them instead of re-importing or re-reading. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
 
-**EVAL IS YOUR PRIMARY EXECUTION SURFACE.** Any step that needs MORE THAN ONE tool call MUST be written as ONE cell — NEVER as a chain of single tool calls.
-- **PLAN THE WHOLE STEP, THEN BATCH IT.** Enumerate every read/search/lookup the step needs and dispatch ALL independent ones through \`parallel(thunks)\` in one cell.
-- **WRITE REAL CODE, NOT CALL LISTS.** Loop or comprehend over file sets with \`read()\`/stdlib, branch \`if\`/\`else\` per case, post-process \`tool.<name>()\` results programmatically, and wrap EVERY risky call in try/except so ONE failure NEVER kills the batch.
-- **DISTILL IN-KERNEL.** Filter, join, diff, and aggregate in code before returning; return facts, NOT dumps.
+Batch a step's independent calls in one cell with \`parallel(thunks)\`.
+- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.
 
 \`language\`: \`"py"\` IPython kernel, \`"js"\` persistent JavaScript VM, \`"rb"\` persistent Ruby kernel, \`"jl"\` persistent Julia kernel.
 
@@ -61,7 +59,7 @@ phase(title) → None
 Multi-agent work is an acyclic graph in code: one \`agent(…)\` node per step with its handle option (\`handle=True\` / \`{ handle: true }\` / \`handle=true\`), \`parallel(thunks)\` for independent nodes, \`pipeline(items, *stages)\` for staged waves. Pass an upstream node's \`handle\` or \`output\` (or a \`write("local://…")\` URI for bulk text) into dependents instead of re-inlining transcripts, and wrap risky nodes in try/except so a failure aborts only its subtree.
 </workflow>",
   "promptGuidelines": [
-    "**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",
+    "Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
     "Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
   ],
   "promptSnippet": "Run one incremental code cell in a persistent language kernel.",
@@ -75,10 +73,8 @@ exports[`buildEvalPrompt > renders the js without spawns prompt 1`] = `
 <instruction>
 **One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
 
-**EVAL IS YOUR PRIMARY EXECUTION SURFACE.** Any step that needs MORE THAN ONE tool call MUST be written as ONE cell — NEVER as a chain of single tool calls.
-- **PLAN THE WHOLE STEP, THEN BATCH IT.** Enumerate every read/search/lookup the step needs and dispatch ALL independent ones through \`parallel(thunks)\` in one cell.
-- **WRITE REAL CODE, NOT CALL LISTS.** Loop or comprehend over file sets with \`read()\`/stdlib, branch \`if\`/\`else\` per case, post-process \`tool.<name>()\` results programmatically, and wrap EVERY risky call in try/except so ONE failure NEVER kills the batch.
-- **DISTILL IN-KERNEL.** Filter, join, diff, and aggregate in code before returning; return facts, NOT dumps.
+Batch a step's independent calls in one cell with \`parallel(thunks)\`.
+- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.
 
 \`language\`: \`"js"\` persistent JavaScript VM.
 
@@ -119,7 +115,7 @@ phase(title) → None
 \`\`\`
 </prelude>",
   "promptGuidelines": [
-    "**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",
+    "Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
     "Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
   ],
   "promptSnippet": "Run one incremental code cell in a persistent language kernel.",
@@ -133,10 +129,8 @@ exports[`buildEvalPrompt > renders the js-py without spawns prompt 1`] = `
 <instruction>
 **One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
 
-**EVAL IS YOUR PRIMARY EXECUTION SURFACE.** Any step that needs MORE THAN ONE tool call MUST be written as ONE cell — NEVER as a chain of single tool calls.
-- **PLAN THE WHOLE STEP, THEN BATCH IT.** Enumerate every read/search/lookup the step needs and dispatch ALL independent ones through \`parallel(thunks)\` in one cell.
-- **WRITE REAL CODE, NOT CALL LISTS.** Loop or comprehend over file sets with \`read()\`/stdlib, branch \`if\`/\`else\` per case, post-process \`tool.<name>()\` results programmatically, and wrap EVERY risky call in try/except so ONE failure NEVER kills the batch.
-- **DISTILL IN-KERNEL.** Filter, join, diff, and aggregate in code before returning; return facts, NOT dumps.
+Batch a step's independent calls in one cell with \`parallel(thunks)\`.
+- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.
 
 \`language\`: \`"py"\` IPython kernel, \`"js"\` persistent JavaScript VM.
 
@@ -178,7 +172,7 @@ phase(title) → None
 \`\`\`
 </prelude>",
   "promptGuidelines": [
-    "**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",
+    "Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
     "Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
   ],
   "promptSnippet": "Run one incremental code cell in a persistent language kernel.",

@@ -9,6 +9,7 @@ import {
 	waitForRawStdoutBackpressure,
 	writeRawStdout,
 } from "../../core/output-guard.ts";
+import type { CliRuntimeConfiguration } from "../../main.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
@@ -36,10 +37,12 @@ import {
 	SOCKET_SECRET_FILE_ENV,
 	socketSecretPath,
 } from "./socket-transport.ts";
+import { WorkerSessionRegistry } from "./worker-session-registry.ts";
 
 export interface MultiSessionHostOptions {
 	agentDir: string;
 	createRuntime: CreateAgentSessionRuntimeFactory;
+	workerConfiguration?: CliRuntimeConfiguration;
 	cwd: string;
 	permissionPreset?: string;
 	creationModel?: { provider: string; modelId: string };
@@ -118,12 +121,18 @@ export function createHostCore(
 ) {
 	const policy = resolveHostIdlePolicy(process.env, idle);
 	const router = new SessionCommandRouter(
-		new RpcSessionRegistry({
-			agentDir: options.agentDir,
-			createRuntime: options.createRuntime,
-			now: policy.now,
-			closeGraceMs: idle.closeGraceMs ?? parseIdleExitMs(process.env[RPC_CLOSE_GRACE_MS_ENV]) ?? 10_000,
-		}),
+		options.workerConfiguration
+			? new WorkerSessionRegistry({
+					configuration: options.workerConfiguration,
+					now: policy.now,
+					closeGraceMs: idle.closeGraceMs ?? parseIdleExitMs(process.env[RPC_CLOSE_GRACE_MS_ENV]) ?? 10_000,
+				})
+			: new RpcSessionRegistry({
+					agentDir: options.agentDir,
+					createRuntime: options.createRuntime,
+					now: policy.now,
+					closeGraceMs: idle.closeGraceMs ?? parseIdleExitMs(process.env[RPC_CLOSE_GRACE_MS_ENV]) ?? 10_000,
+				}),
 		writer,
 		options,
 		options.createBinding,
@@ -177,9 +186,12 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 	};
 	const onEnd = () => void shutdown();
 	process.stdin.on("end", onEnd);
-	const detachReader = attachJsonlLineReader(process.stdin, (line) => void handle(line), {
+	const reportInputFailure = (cause: unknown): void => {
+		process.stderr.write(`senpi rpc stdio request failed: ${errorMessage(cause)}\n`);
+	};
+	const detachReader = attachJsonlLineReader(process.stdin, (line) => void handle(line).catch(reportInputFailure), {
 		maxLineLength: MAX_RPC_LINE_CHARACTERS,
-		onOversizedLine: () => void writer.enqueueControl(parseError(oversizedLineError())),
+		onOversizedLine: () => void writer.enqueueControl(parseError(oversizedLineError())).catch(reportInputFailure),
 	});
 	const detach = () => {
 		detachReader();

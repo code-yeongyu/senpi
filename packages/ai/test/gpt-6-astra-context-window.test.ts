@@ -58,6 +58,7 @@ describe("GPT-6 Astra series catalog context window", () => {
 			"openai-codex.json",
 			"openai.json",
 			"opencode.json",
+			"opengateway.json",
 			"openrouter.json",
 			"vercel-ai-gateway.json",
 		]);

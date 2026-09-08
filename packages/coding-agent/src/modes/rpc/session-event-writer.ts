@@ -7,6 +7,7 @@ import {
 	SessionEventFanout,
 	type SessionEventWriterConnection,
 } from "./session-event-fanout.ts";
+import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 
 export { RENDERED_COMPONENT_RECORD, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 
@@ -33,6 +34,9 @@ type RecordQueue = {
 	latestByKey: Map<string, QueueNode>;
 	ready: boolean;
 };
+
+export const MAX_SHARED_STDIO_QUEUE_BYTES = 64 * 1024 * 1024;
+export const MAX_SHARED_STDIO_QUEUE_RECORDS = 4096;
 
 const MESSAGE_KEY = "message";
 const COMPACT_DELTA_TYPES = new Set<CompactDeltaType>(["text_delta", "thinking_delta", "toolcall_delta"]);
@@ -92,6 +96,19 @@ export class SessionEventWriter {
 	private drainPromise?: Promise<void>;
 	private inFlight?: { queue: RecordQueue; node: QueueNode };
 	private failure?: unknown;
+	private controlOverflowReported = false;
+	private closeOverflowReported = false;
+	private readonly closeOverflowActors = new WeakSet<SocketEventSinkActor>();
+	private reservedCloseRecords = 0;
+	private reservedCloseBytes = 0;
+
+	get pendingCloseRecordCount(): number {
+		return this.reservedCloseRecords;
+	}
+
+	get pendingCloseByteLength(): number {
+		return this.reservedCloseBytes;
+	}
 
 	constructor(writeRaw: RawWriter, scheduleFlush?: FlushScheduler);
 	constructor(writeRaw: RawWriter, waitForBackpressure: BackpressureWaiter, scheduleFlush?: FlushScheduler);
@@ -190,6 +207,15 @@ export class SessionEventWriter {
 		const tagged = { ...value, sessionId } as RpcRecord;
 		const { [RENDERED_COMPONENT_RECORD]: _rendered, ...wireTagged } = tagged;
 		const line = serializeJsonLine(wireTagged);
+		if (this.fanout.isEmpty() && this.exceedsStdioCapacity(line)) {
+			this.closeSession(sessionId, {
+				type: "response",
+				command: "close_session",
+				success: false,
+				error: "session_output_overflow, resync required",
+			});
+			return false;
+		}
 		const targets = this.fanout.targets(
 			sessionId,
 			targetId,
@@ -224,6 +250,18 @@ export class SessionEventWriter {
 		return true;
 	}
 
+	/** Return worker credit only after this session's destinations consumed their queues. */
+	waitForSessionBackpressure(sessionId: string): Promise<void> {
+		if (this.fanout.isEmpty()) return this.flush();
+		const targets = new Set([
+			...this.fanout.targets(sessionId, this.currentConnection(), false, false, undefined),
+			this.currentConnection(),
+		]);
+		return Promise.all(
+			[...targets].map((target) => (target === undefined ? undefined : this.fanout.get(target)?.actor.flush())),
+		).then(() => undefined);
+	}
+
 	/** Queue one untagged host-control response for the current connection. */
 	enqueueControl(value: object): Promise<void> {
 		if (this.failure !== undefined) return Promise.reject(this.failure);
@@ -232,6 +270,15 @@ export class SessionEventWriter {
 		if (registered) {
 			registered.actor.enqueue(serializeJsonLine(value));
 			return Promise.resolve();
+		}
+		if (this.exceedsStdioCapacity(serializeJsonLine(value))) {
+			if (!this.controlOverflowReported) {
+				this.controlOverflowReported = true;
+				this.append(this.controlQueue, { type: "overflow", error: "rpc_control_output_overflow, resync required" });
+				this.markReady(this.controlQueue);
+				this.requestFlush();
+			}
+			return Promise.reject(new Error("rpc_control_output_overflow, resync required"));
 		}
 		const queue = targetId === undefined ? this.controlQueue : this.connectionQueue(targetId);
 		const completion = new Promise<void>((resolve, reject) => {
@@ -261,8 +308,71 @@ export class SessionEventWriter {
 		this.requestFlush();
 	}
 
-	/** Queue a successful response for a joined close after the terminal lifecycle record. */
+	/**
+	 * Admit reply debt before routing can mutate attachments or await finalization.
+	 * Reserve the lifecycle as well: the claimant's role is not known yet. Rejected
+	 * closes do not wait, retain their ids, or create per-request stderr output.
+	 */
+	reserveCloseResponse(
+		sessionId: string,
+		response: object,
+		records = 2,
+	): { release: () => void; complete: (terminal: boolean) => void } | undefined {
+		const bytes =
+			Buffer.byteLength(serializeJsonLine({ ...response, sessionId })) +
+			(records === 2 ? Buffer.byteLength(serializeJsonLine({ type: "session_closed", sessionId })) : 0);
+		if (
+			this.bufferedRecordCount + this.reservedCloseRecords + records > MAX_SHARED_STDIO_QUEUE_RECORDS ||
+			this.bufferedByteLength + this.reservedCloseBytes + bytes > MAX_SHARED_STDIO_QUEUE_BYTES
+		) {
+			const overflow = {
+				type: "overflow",
+				command: "close_session",
+				error: "rpc_close_output_overflow, resync required",
+			};
+			const targetId = this.currentConnection();
+			if (targetId !== undefined) {
+				const actor = this.fanout.get(targetId)?.actor;
+				if (actor && !this.closeOverflowActors.has(actor)) {
+					this.closeOverflowActors.add(actor);
+					// One outstanding notice per sink, released only on consumption.
+					// Actor identity isolates reconnects and does not retain dead sinks.
+					actor.enqueue(serializeJsonLine(overflow), undefined, () => this.closeOverflowActors.delete(actor));
+				}
+			} else if (!this.closeOverflowReported) {
+				this.closeOverflowReported = true;
+				this.append(this.controlQueue, overflow);
+				this.markReady(this.controlQueue);
+				this.requestFlush();
+			}
+			return undefined;
+		}
+		this.reservedCloseRecords += records;
+		this.reservedCloseBytes += bytes;
+		let active = true;
+		const release = () => {
+			if (!active) return;
+			active = false;
+			this.reservedCloseRecords -= records;
+			this.reservedCloseBytes -= bytes;
+		};
+		return {
+			release,
+			complete: (terminal) => {
+				if (!active) return;
+				release();
+				if (terminal) this.closeSession(sessionId, response);
+				else this.appendClosedResponse(sessionId, response);
+			},
+		};
+	}
+
+	/** Queue a joined close only after admitting its noncompactable reply. */
 	enqueueClosedResponse(sessionId: string, response: object): void {
+		this.reserveCloseResponse(sessionId, response, 1)?.complete(false);
+	}
+
+	private appendClosedResponse(sessionId: string, response: object): void {
 		const targetId = this.connectionContext.getStore();
 		const taggedResponse = { ...response, sessionId };
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
@@ -315,6 +425,8 @@ export class SessionEventWriter {
 			await this.drainReadyQueues();
 		} while (this.readyQueues.length > 0);
 		await Promise.all([...this.fanout.values()].map(({ actor }) => actor.flush()));
+		this.controlOverflowReported = false;
+		if (this.reservedCloseRecords === 0) this.closeOverflowReported = false;
 	}
 
 	private async drainReadyQueues(): Promise<void> {
@@ -354,6 +466,13 @@ export class SessionEventWriter {
 				}
 			}
 		}
+	}
+
+	private exceedsStdioCapacity(line: string): boolean {
+		return (
+			this.bufferedRecordCount + this.reservedCloseRecords >= MAX_SHARED_STDIO_QUEUE_RECORDS ||
+			this.bufferedByteLength + this.reservedCloseBytes + Buffer.byteLength(line) > MAX_SHARED_STDIO_QUEUE_BYTES
+		);
 	}
 
 	private connectionQueue(targetId: string): RecordQueue {

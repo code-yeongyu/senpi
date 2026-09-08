@@ -85,10 +85,9 @@ const EXPECTED_CONCERN: Record<Gpt6AstraRuleId, Gpt6AstraConcern> = {
 	"instruction-precedence": "instruction-precedence",
 	"pause-transparency": "instruction-precedence",
 	"eval-first-routing": "tool-orchestration",
-	"parallel-batching": "tool-orchestration",
+	"evidence-comparison": "tool-orchestration",
+	"perceived-state-loop": "tool-orchestration",
 	"bun-runtime": "tool-orchestration",
-	"over-call-bias": "tool-orchestration",
-	"in-kernel-reduction": "tool-orchestration",
 	"stay-direct-exceptions": "tool-orchestration",
 	"lsp-symbol-routing": "symbol-routing",
 	delegation: "delegation",
@@ -118,10 +117,9 @@ const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	"instruction-precedence": "Instructions From Files",
 	"pause-transparency": "Instructions From Files",
 	"eval-first-routing": "Working the Task",
-	"parallel-batching": "Working the Task",
+	"evidence-comparison": "Working the Task",
+	"perceived-state-loop": "Working the Task",
 	"bun-runtime": "Working the Task",
-	"over-call-bias": "Working the Task",
-	"in-kernel-reduction": "Working the Task",
 	"stay-direct-exceptions": "Working the Task",
 	"lsp-symbol-routing": "Working the Task",
 	delegation: "Working the Task",
@@ -268,15 +266,9 @@ describe("GPT-6 Astra behavior contract", () => {
 		]);
 	});
 
-	it("renders the eval-cell and asynchronous-execution rules with bold emphasis and no other rule in bold", () => {
+	it("renders only the asynchronous-execution rules with bold emphasis", () => {
 		// given
-		const emphasized = new Set<Gpt6AstraRuleId>([
-			"eval-first-routing",
-			"parallel-batching",
-			"async-default",
-			"turn-end-is-wait",
-			"monitor-conditions",
-		]);
+		const emphasized = new Set<Gpt6AstraRuleId>(["async-default", "turn-end-is-wait", "monitor-conditions"]);
 
 		// then
 		for (const rule of GPT6_ASTRA_RULES) {

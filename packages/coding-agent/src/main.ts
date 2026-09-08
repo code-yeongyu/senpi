@@ -693,6 +693,194 @@ export function applyGrokNeoThemeFallback(settingsManager: SettingsManager): voi
 	};
 }
 
+export interface CliRuntimeConfiguration {
+	parsed: Args;
+	cwd: string;
+	agentDir: string;
+	appMode: AppMode;
+}
+
+/** Fixed launch data is cloneable; UI callbacks and extension factories stay in their isolate. */
+export function createCliRuntimeFactory(
+	configuration: CliRuntimeConfiguration,
+	local: {
+		extensionFactories?: InlineExtension[];
+		startupSettingsManager?: SettingsManager;
+		startupLoadingIndicator?: ReturnType<typeof createStartupLoadingIndicator>;
+	} = {},
+): CreateAgentSessionRuntimeFactory {
+	const { parsed, cwd, agentDir, appMode } = configuration;
+	const extensionFactories = local.extensionFactories ?? builtInExtensions;
+	const startupSettingsManager = local.startupSettingsManager ?? SettingsManager.create(cwd, agentDir);
+	const startupLoadingIndicator =
+		local.startupLoadingIndicator ??
+		createStartupLoadingIndicator({
+			writer: () => {},
+			isTTY: false,
+			label: `Loading ${APP_NAME}`,
+		});
+	const trustStore = new ProjectTrustStore(agentDir);
+	const projectTrustByCwd = new Map<string, boolean>();
+	const trustPromptMode: AppMode =
+		parsed.help || parsed.listModels !== undefined || parsed.listTips ? "print" : toProjectTrustMode(appMode);
+	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
+	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
+	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
+	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
+	return async ({ cwd, agentDir, sessionManager, sessionStartEvent, projectTrustContext, launchProfile }) => {
+		const isInitialRuntime = sessionStartEvent === undefined;
+		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
+		const cachedProjectTrust = projectTrustByCwd.get(cwd);
+		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
+		const shouldResolveProjectTrust =
+			parsed.projectTrustOverride === undefined && cachedProjectTrust === undefined && hasTrustRequiringResources;
+		const projectTrusted = shouldResolveProjectTrust
+			? false
+			: (cachedProjectTrust ??
+				parsed.projectTrustOverride ??
+				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
+		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+		const services = await createAgentSessionServices({
+			cwd,
+			agentDir,
+			settingsManager: runtimeSettingsManager,
+			modelRuntimeSignal: AbortSignal.timeout(15_000),
+			extensionFlagValues: parsed.unknownFlags,
+			resourceLoaderReloadOptions: shouldResolveProjectTrust
+				? {
+						resolveProjectTrust: async ({ extensionsResult }) => {
+							const trusted = await resolveProjectTrusted({
+								cwd,
+								trustStore,
+								trustOverride: parsed.projectTrustOverride,
+								defaultProjectTrust: startupSettingsManager.getDefaultProjectTrust(),
+								extensionsResult,
+								projectTrustContext:
+									projectTrustContext ??
+									pauseIndicatorDuringPrompts(
+										createProjectTrustContext({
+											cwd,
+											mode: isInitialRuntime ? trustPromptMode : toProjectTrustMode(appMode),
+											settingsManager: startupSettingsManager,
+											hasUI: isInitialRuntime && trustPromptMode === "interactive",
+										}),
+										startupLoadingIndicator,
+									),
+								onExtensionError: (message) => projectTrustDiagnostics.push({ type: "warning", message }),
+							});
+							projectTrustByCwd.set(cwd, trusted);
+							return trusted;
+						},
+					}
+				: undefined,
+			resourceLoaderOptions: {
+				additionalExtensionPaths: resolvedExtensionPaths,
+				additionalSkillPaths: resolvedSkillPaths,
+				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,
+				additionalThemePaths: resolvedThemePaths,
+				noExtensions: parsed.noExtensions,
+				noSkills: parsed.noSkills,
+				noPromptTemplates: parsed.noPromptTemplates,
+				noThemes: parsed.noThemes,
+				noContextFiles: parsed.noContextFiles,
+				systemPrompt: parsed.systemPrompt,
+				appendSystemPrompt: parsed.appendSystemPrompt,
+				extensionFactories,
+			},
+		});
+		const { settingsManager, modelRuntime, resourceLoader } = services;
+		const diagnostics: AgentSessionRuntimeDiagnostic[] = [
+			...projectTrustDiagnostics,
+			...services.diagnostics,
+			...collectSettingsDiagnostics(settingsManager, "runtime creation"),
+			...collectExtensionLoadDiagnostics(resourceLoader.getExtensions().errors),
+		];
+
+		const modelPatterns = getModelNarrowingPatterns({
+			cliPatterns: parsed.models,
+			legacyEnabledPatterns: settingsManager.getEnabledModels(),
+		});
+		const scopedModels =
+			modelPatterns && modelPatterns.length > 0
+				? await resolveModelScope(modelPatterns, modelRuntime, { signal: AbortSignal.timeout(15_000) })
+				: [];
+		// Multi-session opens carry their per-session startup choices here rather
+		// than through process argv. This deliberately feeds the same resolver as
+		// --provider/--model/--thinking, preserving classic flag semantics.
+		const runtimeParsed: Args =
+			launchProfile === undefined
+				? parsed
+				: {
+						...parsed,
+						...(launchProfile.creationModel === undefined
+							? {}
+							: {
+									provider: launchProfile.creationModel.provider,
+									model: launchProfile.creationModel.modelId,
+								}),
+						...(launchProfile.initialThinkingLevel === undefined
+							? {}
+							: { thinking: launchProfile.initialThinkingLevel as Args["thinking"] }),
+					};
+		const {
+			options: sessionOptions,
+			cliThinkingFromModel,
+			diagnostics: sessionOptionDiagnostics,
+		} = buildSessionOptions(
+			runtimeParsed,
+			scopedModels,
+			sessionManager.hasContextMessages(),
+			modelRuntime,
+			settingsManager,
+		);
+		diagnostics.push(...sessionOptionDiagnostics);
+
+		if (parsed.apiKey) {
+			if (!sessionOptions.model) {
+				diagnostics.push({
+					type: "error",
+					message: "--api-key requires a model to be specified via --model, --provider/--model, or --models",
+				});
+			} else {
+				await modelRuntime.setRuntimeApiKey(sessionOptions.model.provider, parsed.apiKey);
+			}
+		}
+
+		if (isInitialRuntime) {
+			startupLoadingIndicator.setPhase("opening session");
+		}
+		const created = await createAgentSessionFromServices({
+			services,
+			sessionManager,
+			sessionStartEvent,
+			model: sessionOptions.model,
+			thinkingLevel: sessionOptions.thinkingLevel,
+			thinkingSelection: sessionOptions.thinkingSelection,
+			scopedModels: sessionOptions.scopedModels,
+			tools: sessionOptions.tools,
+			excludeTools: sessionOptions.excludeTools,
+			noTools: sessionOptions.noTools,
+			customTools: sessionOptions.customTools,
+			autoTitleSessions: resolveAutoTitleSessions(
+				appMode,
+				parsed,
+				sessionManager.hasContextMessages(),
+				parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
+			),
+		});
+		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
+		if (created.session.model && cliThinkingOverride) {
+			created.session.setThinkingLevel(created.session.thinkingLevel);
+		}
+
+		return {
+			...created,
+			services,
+			diagnostics,
+		};
+	};
+}
+
 export async function main(args: string[], options?: MainOptions) {
 	resetTimings();
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
@@ -873,6 +1061,23 @@ export async function main(args: string[], options?: MainOptions) {
 		startupSettingsManager.applyOverrides({ theme: parsed.useTheme });
 	}
 
+	if (appMode === "rpc" && parsed.multiSession) {
+		if (options?.extensionFactories?.length)
+			throw new Error("Shared RPC workers require file-backed extensions; inline factories cannot cross isolates");
+		const workerConfiguration = { parsed, cwd, agentDir, appMode };
+		printTimings();
+		await runMultiSessionHost({
+			agentDir,
+			createRuntime: createCliRuntimeFactory(workerConfiguration),
+			workerConfiguration,
+			cwd,
+			creationModel:
+				parsed.provider && parsed.model ? { provider: parsed.provider, modelId: parsed.model } : undefined,
+			initialThinkingLevel: parsed.thinking,
+			listen: parsed.listen,
+		});
+	}
+
 	// Decide the final runtime cwd before creating cwd-bound runtime services.
 	// --session and --resume may select a session from another project, so project-local
 	// settings, resources, provider registrations, and models must be resolved only after
@@ -907,15 +1112,11 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	time("createSessionManager");
 
-	const trustStore = new ProjectTrustStore(agentDir);
 	const sessionCwd = sessionManager.getCwd();
 	const autoTrustOnReloadCwd =
 		parsed.projectTrustOverride === undefined && !hasTrustRequiringProjectResources(sessionCwd)
 			? sessionCwd
 			: undefined;
-	const trustPromptMode: AppMode =
-		parsed.help || parsed.listModels !== undefined || parsed.listTips ? "print" : toProjectTrustMode(appMode);
-	const projectTrustByCwd = new Map<string, boolean>();
 
 	// Immediate feedback while the heavy runtime (extensions, models, trust) is
 	// created; without it the terminal stays blank and looks stuck (codex-style
@@ -936,184 +1137,11 @@ export async function main(args: string[], options?: MainOptions) {
 		startupLoadingIndicator.setPhase("extensions & models");
 	}
 
-	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
-		cwd,
-		agentDir,
-		sessionManager,
-		sessionStartEvent,
-		projectTrustContext,
-		launchProfile,
-	}) => {
-		const isInitialRuntime = sessionStartEvent === undefined;
-		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
-		const cachedProjectTrust = projectTrustByCwd.get(cwd);
-		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
-		const shouldResolveProjectTrust =
-			parsed.projectTrustOverride === undefined && cachedProjectTrust === undefined && hasTrustRequiringResources;
-		const projectTrusted = shouldResolveProjectTrust
-			? false
-			: (cachedProjectTrust ??
-				parsed.projectTrustOverride ??
-				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
-		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
-		const services = await createAgentSessionServices({
-			cwd,
-			agentDir,
-			settingsManager: runtimeSettingsManager,
-			modelRuntimeSignal: AbortSignal.timeout(15_000),
-			extensionFlagValues: parsed.unknownFlags,
-			resourceLoaderReloadOptions: shouldResolveProjectTrust
-				? {
-						resolveProjectTrust: async ({ extensionsResult }) => {
-							const trusted = await resolveProjectTrusted({
-								cwd,
-								trustStore,
-								trustOverride: parsed.projectTrustOverride,
-								defaultProjectTrust: startupSettingsManager.getDefaultProjectTrust(),
-								extensionsResult,
-								projectTrustContext:
-									projectTrustContext ??
-									pauseIndicatorDuringPrompts(
-										createProjectTrustContext({
-											cwd,
-											mode: isInitialRuntime ? trustPromptMode : toProjectTrustMode(appMode),
-											settingsManager: startupSettingsManager,
-											hasUI: isInitialRuntime && trustPromptMode === "interactive",
-										}),
-										startupLoadingIndicator,
-									),
-								onExtensionError: (message) => projectTrustDiagnostics.push({ type: "warning", message }),
-							});
-							projectTrustByCwd.set(cwd, trusted);
-							return trusted;
-						},
-					}
-				: undefined,
-			resourceLoaderOptions: {
-				additionalExtensionPaths: resolvedExtensionPaths,
-				additionalSkillPaths: resolvedSkillPaths,
-				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,
-				additionalThemePaths: resolvedThemePaths,
-				noExtensions: parsed.noExtensions,
-				noSkills: parsed.noSkills,
-				noPromptTemplates: parsed.noPromptTemplates,
-				noThemes: parsed.noThemes,
-				noContextFiles: parsed.noContextFiles,
-				systemPrompt: parsed.systemPrompt,
-				appendSystemPrompt: parsed.appendSystemPrompt,
-				extensionFactories,
-			},
-		});
-		const { settingsManager, modelRuntime, resourceLoader } = services;
-		const diagnostics: AgentSessionRuntimeDiagnostic[] = [
-			...projectTrustDiagnostics,
-			...services.diagnostics,
-			...collectSettingsDiagnostics(settingsManager, "runtime creation"),
-			...collectExtensionLoadDiagnostics(resourceLoader.getExtensions().errors),
-		];
-
-		const modelPatterns = getModelNarrowingPatterns({
-			cliPatterns: parsed.models,
-			legacyEnabledPatterns: settingsManager.getEnabledModels(),
-		});
-		const scopedModels =
-			modelPatterns && modelPatterns.length > 0
-				? await resolveModelScope(modelPatterns, modelRuntime, { signal: AbortSignal.timeout(15_000) })
-				: [];
-		// Multi-session opens carry their per-session startup choices here rather
-		// than through process argv. This deliberately feeds the same resolver as
-		// --provider/--model/--thinking, preserving classic flag semantics.
-		const runtimeParsed: Args =
-			launchProfile === undefined
-				? parsed
-				: {
-						...parsed,
-						...(launchProfile.creationModel === undefined
-							? {}
-							: {
-									provider: launchProfile.creationModel.provider,
-									model: launchProfile.creationModel.modelId,
-								}),
-						...(launchProfile.initialThinkingLevel === undefined
-							? {}
-							: { thinking: launchProfile.initialThinkingLevel as Args["thinking"] }),
-					};
-		const {
-			options: sessionOptions,
-			cliThinkingFromModel,
-			diagnostics: sessionOptionDiagnostics,
-		} = buildSessionOptions(
-			runtimeParsed,
-			scopedModels,
-			sessionManager.hasContextMessages(),
-			modelRuntime,
-			settingsManager,
-		);
-		diagnostics.push(...sessionOptionDiagnostics);
-
-		if (parsed.apiKey) {
-			if (!sessionOptions.model) {
-				diagnostics.push({
-					type: "error",
-					message: "--api-key requires a model to be specified via --model, --provider/--model, or --models",
-				});
-			} else {
-				await modelRuntime.setRuntimeApiKey(sessionOptions.model.provider, parsed.apiKey);
-			}
-		}
-
-		if (isInitialRuntime) {
-			startupLoadingIndicator.setPhase("opening session");
-		}
-		const created = await createAgentSessionFromServices({
-			services,
-			sessionManager,
-			sessionStartEvent,
-			model: sessionOptions.model,
-			thinkingLevel: sessionOptions.thinkingLevel,
-			thinkingSelection: sessionOptions.thinkingSelection,
-			scopedModels: sessionOptions.scopedModels,
-			tools: sessionOptions.tools,
-			excludeTools: sessionOptions.excludeTools,
-			noTools: sessionOptions.noTools,
-			customTools: sessionOptions.customTools,
-			autoTitleSessions: resolveAutoTitleSessions(
-				appMode,
-				parsed,
-				sessionManager.hasContextMessages(),
-				parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
-			),
-		});
-		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
-		if (created.session.model && cliThinkingOverride) {
-			created.session.setThinkingLevel(created.session.thinkingLevel);
-		}
-
-		return {
-			...created,
-			services,
-			diagnostics,
-		};
-	};
+	const createRuntime = createCliRuntimeFactory(
+		{ parsed, cwd, agentDir, appMode },
+		{ extensionFactories, startupSettingsManager, startupLoadingIndicator },
+	);
 	time("createRuntime");
-	if (appMode === "rpc" && parsed.multiSession) {
-		// The multi-session host never returns, so the initTheme() call further down
-		// is unreachable on this path. Extensions loaded per open_session (and any
-		// tool render helper) read the theme proxy and would otherwise crash with
-		// "Theme not initialized. Call initTheme() first." (surfaced in embedders
-		// like T3 Code as transcript errors).
-		initTheme(startupSettingsManager.getTheme(), false);
-		printTimings();
-		await runMultiSessionHost({
-			agentDir,
-			createRuntime,
-			cwd,
-			creationModel:
-				parsed.provider && parsed.model ? { provider: parsed.provider, modelId: parsed.model } : undefined,
-			initialThinkingLevel: parsed.thinking,
-			listen: parsed.listen,
-		});
-	}
 	const runtime = await createAgentSessionRuntime(createRuntime, {
 		cwd: sessionManager.getCwd(),
 		agentDir,
