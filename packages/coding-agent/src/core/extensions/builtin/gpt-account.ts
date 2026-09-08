@@ -48,6 +48,16 @@ async function addAccount(ctx: ExtensionCommandContext): Promise<void> {
 		await ctx.modelRegistry.modelRuntime.login(OPENAI_CODEX_PROVIDER_ID, "oauth", {
 			signal: ctx.signal,
 			prompt: async (prompt) => {
+				if (prompt.type === "select") {
+					const label = await ctx.ui.select(
+						prompt.message,
+						prompt.options.map((option) => option.label),
+					);
+					if (label === undefined) throw new Error("Login cancelled");
+					const option = prompt.options.find((candidate) => candidate.label === label);
+					if (!option) throw new Error("Login cancelled");
+					return option.id;
+				}
 				const answer = await ctx.ui.input(prompt.message);
 				if (answer === undefined) throw new Error("Login cancelled");
 				return answer;

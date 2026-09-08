@@ -1,5 +1,23 @@
 # Builtin extensions changes
 
+## OpenAI Codex OAuth account method selector (2026-09-08)
+
+### What changed
+
+- `/gpt-account add` now renders OAuth `select` prompts with the extension UI selector and maps the chosen label back to its OAuth option id.
+
+### Why
+
+- Sending a select prompt through the text-input adapter displayed an empty field and returned an invalid empty method instead of `browser` or `device_code`.
+
+### Why an extension could not handle it
+
+- The `/gpt-account` builtin owns the adapter between the shared OAuth prompt contract and the extension UI.
+
+### Expected merge conflict zones
+
+- LOW: `gpt-account.ts` prompt adapter and its neighboring regression coverage.
+
 ## OpenAI Codex OAuth account command (2026-09-03)
 
 ### What changed

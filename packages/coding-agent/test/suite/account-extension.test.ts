@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import accountExtension from "../../src/core/extensions/builtin/account/index.ts";
 import gptAccountExtension from "../../src/core/extensions/builtin/gpt-account.ts";
@@ -177,5 +177,39 @@ describe("/gpt-account command", () => {
 
 		await command.handler("unpin", ctx);
 		expect(storage.get("openai-codex")).not.toHaveProperty("pinned");
+	});
+
+	it.each([
+		["Browser login (default)", "browser"],
+		["Device code login (headless)", "device_code"],
+	])("maps the selected %s label to the %s OAuth method id", async (label, expectedMethod) => {
+		const { ctx } = createContext();
+		let selectedMethod: string | undefined;
+		const login = vi.fn(
+			async (
+				_providerId: string,
+				_method: string,
+				interaction: { prompt: (prompt: unknown) => Promise<string> },
+			) => {
+				selectedMethod = await interaction.prompt({
+					type: "select",
+					message: "Select OpenAI Codex login method:",
+					options: [
+						{ id: "browser", label: "Browser login (default)" },
+						{ id: "device_code", label: "Device code login (headless)" },
+					],
+				});
+			},
+		);
+		ctx.modelRegistry = { ...ctx.modelRegistry, modelRuntime: { login } } as unknown as typeof ctx.modelRegistry;
+		ctx.ui.select = vi.fn(async () => label);
+
+		await registeredGptCommand().handler("add", ctx);
+
+		expect(ctx.ui.select).toHaveBeenCalledWith("Select OpenAI Codex login method:", [
+			"Browser login (default)",
+			"Device code login (headless)",
+		]);
+		expect(selectedMethod).toBe(expectedMethod);
 	});
 });
