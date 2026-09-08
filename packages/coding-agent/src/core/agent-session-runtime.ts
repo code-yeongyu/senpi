@@ -3,6 +3,7 @@ import { basename, join, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
+import { estimateTokens } from "./compaction/compaction.ts";
 import type {
 	ProjectTrustContext,
 	ReplacedSessionContext,
@@ -253,6 +254,7 @@ export class AgentSessionRuntime {
 		const previousSessionFile = this.session.sessionFile;
 		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
 		assertSessionCwdExists(sessionManager, this.cwd);
+		await this.assertSessionAdmissible(sessionManager);
 		await this.teardownCurrent("resume", sessionManager.getSessionFile());
 		await this.apply(
 			await this.createRuntime({
@@ -266,6 +268,21 @@ export class AgentSessionRuntime {
 		);
 		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };
+	}
+
+	/**
+	 * Re-run the resume admission check (model usability budget) against the
+	 * target session's context without replacing the current session. Mirrors
+	 * the check createAgentSession performs after teardown; running it early
+	 * keeps a rejected resume from invalidating the live session.
+	 */
+	async assertSessionAdmissible(sessionManager: SessionManager): Promise<void> {
+		const existingSession = sessionManager.buildSessionContext();
+		if (existingSession.messages.length === 0) return;
+		const model = this.session.model;
+		if (!model) return;
+		const liveContextTokens = existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0);
+		this.session.assertModelUsable(model, liveContextTokens, { includeSpeculationLead: false, admission: "resume" });
 	}
 
 	async newSession(options?: {

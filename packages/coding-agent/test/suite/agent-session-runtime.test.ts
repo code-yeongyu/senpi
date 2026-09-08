@@ -11,6 +11,7 @@ import {
 	createAgentSessionServices,
 } from "../../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import { ModelUsabilityBudgetError } from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type {
 	AgentToolResult,
@@ -651,5 +652,59 @@ describe("AgentSessionRuntime characterization", () => {
 
 		expect(runtime.session.model?.id).toBe("faux-2");
 		expect(runtime.session.thinkingLevel).toBe("off");
+	});
+
+	// Regression: a resume rejected by the model usability budget must run its
+	// admission check BEFORE teardown, so the live session the user is still in is
+	// never disposed/invalidated by a resume that will fail anyway.
+	it("rejects an over-budget resume without invalidating the live session", async () => {
+		const { runtime } = await createRuntimeForTest(() => {});
+		await runtime.session.prompt("hello");
+		const originalSession = runtime.session;
+		const originalSessionFile = runtime.session.sessionFile;
+
+		// Seed a target session whose restored transcript far exceeds the current
+		// model's context window (faux default contextWindow is 128000 tokens).
+		const targetDir = join(tmpdir(), `pi-runtime-overbudget-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(targetDir, { recursive: true });
+		const targetSession = SessionManager.create(targetDir);
+		const targetModel = runtime.session.model!;
+		targetSession.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "x".repeat(4_000_000) }],
+			timestamp: Date.now() - 1,
+		});
+		// A trailing assistant message flushes the buffered transcript to disk so the
+		// re-opened session manager actually reports the over-budget live context.
+		targetSession.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "ok" }],
+			api: targetModel.api,
+			provider: targetModel.provider,
+			model: targetModel.id,
+			stopReason: "stop",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			timestamp: Date.now(),
+		});
+		const targetSessionFile = targetSession.getSessionFile();
+		cleanups.push(() => rmSync(targetDir, { recursive: true, force: true }));
+
+		await expect(runtime.switchSession(targetSessionFile!)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
+
+		// The live session object and its file are unchanged...
+		expect(runtime.session).toBe(originalSession);
+		expect(runtime.session.sessionFile).toBe(originalSessionFile);
+		// ...and it is still usable: teardown never disposed it, so its extension
+		// runner was never invalidated (pre-fix, teardown ran first and the next
+		// input crashed with the stale-context error).
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+		await expect(runtime.session.prompt("still here")).resolves.toBeUndefined();
 	});
 });

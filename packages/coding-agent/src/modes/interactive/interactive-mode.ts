@@ -74,6 +74,7 @@ import {
 	computeCacheWaste,
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
+import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -7575,6 +7576,10 @@ export class InteractiveMode {
 				}
 				this.showStatus("Resumed session in current cwd");
 				return result;
+			}
+			if (error instanceof ModelUsabilityBudgetError) {
+				this.showError(`Failed to resume session: ${error.message}`);
+				return { cancelled: true };
 			}
 			return this.handleFatalRuntimeError("Failed to resume session", error);
 		}

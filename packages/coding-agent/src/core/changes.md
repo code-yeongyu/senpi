@@ -1,3 +1,21 @@
+## Resume admission runs before teardown so a rejected resume keeps the live session (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` now calls a new `assertSessionAdmissible(sessionManager)` before `teardownCurrent("resume", ...)`. The method rebuilds the target session context, sums its live-context tokens with `estimateTokens` (imported from `./compaction/compaction.ts`), and runs `this.session.assertModelUsable(model, liveContextTokens, { includeSpeculationLead: false, admission: "resume" })` against the current model - mirroring the post-teardown check `createAgentSession` performs in `sdk.ts`. When the target is empty or the session has no model it is a no-op.
+
+### Why
+
+- Resuming a session whose restored transcript exceeds the current model's context budget threw `ModelUsabilityBudgetError` only from `createAgentSession`, which runs after `teardownCurrent` has already disposed the live session and invalidated its extension runner. The user's still-active session was destroyed by a resume that was always going to be rejected, and the next input crashed with "This extension ctx is stale after session replacement or reload". Running the same admission check before teardown makes a rejected resume a clean no-op that leaves the live session intact.
+
+### Why an extension could not handle it
+
+- The teardown/create ordering lives inside the core `AgentSessionRuntime.switchSession` state machine. No extension hook fires between `teardownCurrent` (which disposes the session and invalidates the runner) and `createRuntime`, so no extension can intercept the rejection before the live session is torn down.
+
+### Expected merge conflict zones
+
+- LOW: the added `assertSessionAdmissible` call in `switchSession`, the new method placed after `switchSession`, and the `estimateTokens` import line.
+
 ## Insufficient accepted compaction keeps its blocked state, #7921 case 6 (2026-09-07)
 
 ### What changed

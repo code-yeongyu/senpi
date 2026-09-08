@@ -1,4 +1,22 @@
 
+## 2026-09-08 - Over-budget resume shows an error instead of exiting the process
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleResumeSession`'s catch block now handles `ModelUsabilityBudgetError` (imported from `../../core/extensions/builtin/compaction/model-usability-budget.ts`) before the `handleFatalRuntimeError` fallback. It renders the message through `showError` and returns `{ cancelled: true }` instead of routing to `handleFatalRuntimeError`, which calls `process.exit(1)`.
+
+### Why
+
+- A `/resume` rejected by the model usability budget is an expected, recoverable outcome, not a fatal runtime fault. Routing it to `handleFatalRuntimeError` tore the TUI down and called `process.exit(1)` before the error text could repaint, so the user was silently dropped to the shell. Showing the error and cancelling keeps the interactive session running with a visible explanation.
+
+### Why an extension could not handle it
+
+- The resume error is caught inside the interactive mode's own `handleResumeSession` control flow; the process-exit decision is core interactive-mode code with no extension hook between the caught error and `handleFatalRuntimeError`.
+
+### Expected merge conflict zones
+
+- LOW: the new `ModelUsabilityBudgetError` branch in `handleResumeSession` and the added import line.
+
 ## 2026-09-07 - Add a workflow tip for the report-bug skill
 
 ### What changed
