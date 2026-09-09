@@ -35,15 +35,12 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				data.respond(service.refreshWireStatusSnapshot(data.sessionId));
 			},
 		);
-		const unsubscribeWireStatus = service.onWireStatusChanged((sessionId, snapshot) => {
-			if (sessionId === undefined || sessionId !== attachedSessionId) return;
-			pi.events.emit(MCP_CONTROL_INVENTORY_CHANGED_EVENT, { sessionId, snapshot });
-		});
+		let unsubscribeWireStatus: (() => void) | undefined;
 		const disposeControlInventory = (): void => {
 			if (controlInventoryDisposed) return;
 			controlInventoryDisposed = true;
 			unsubscribeControlInventoryRequest();
-			unsubscribeWireStatus();
+			unsubscribeWireStatus?.();
 		};
 		const sink = {
 			logger: {
@@ -112,6 +109,12 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 		// session_start always starts a fresh attach (reloads must re-sync config).
 		const attach = (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
 			attachedSessionId = ctx.sessionManager?.getSessionId?.();
+			// Unstarted candidates must not retain APIs on the live singleton. Unlike
+			// pi.events subscriptions, this direct listener is not tracked by runner invalidation.
+			unsubscribeWireStatus ??= service.onWireStatusChanged((sessionId, snapshot) => {
+				if (sessionId === undefined || sessionId !== attachedSessionId) return;
+				pi.events.emit(MCP_CONTROL_INVENTORY_CHANGED_EVENT, { sessionId, snapshot });
+			});
 			attachPromise = (async () => {
 				await service.attachSession(event, ctx, pi);
 				refreshMcpInstructionsForSession(service);

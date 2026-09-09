@@ -4,7 +4,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: shutdown of an unattached candidate removes its factory-time inventory request and wire-status subscriptions without invoking shutdown on the service attached to the live runtime. Attached-session switch, reload and quit behavior is unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: direct wire-status subscription is deferred until attachment, before inventory can be emitted, so an unstarted candidate never retains an API on the live service. Its factory-time `pi.events` inventory-request subscription is removed by existing runner invalidation, without normal shutdown dispatch. Attached-session switch, reload and quit behavior is unchanged.
 
 ### Why
 
@@ -12,11 +12,11 @@
 
 ### Why an extension could not handle it
 
-- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: this builtin owns the subscriptions and knows whether its instance attached the shared service. Core must emit candidate shutdown before invalidating its runner.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the fix is implemented in this builtin: only attachment needs the direct service listener. Existing runner invalidation cleans up candidate-owned event-bus registrations; core must not emit normal shutdown for unstarted candidates because other builtins mutate live process-global state.
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: session shutdown ownership and inventory bridge cleanup.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: attachment-time wire subscription, session shutdown ownership and inventory bridge cleanup.
 
 ## Explicit pgrep match-all pattern for process-tree collection (2026-08-12)
 

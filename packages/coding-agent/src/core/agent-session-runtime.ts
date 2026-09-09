@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { resolvePath } from "../utils/paths.ts";
+import { canonicalizePath, resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
 import type {
@@ -247,6 +247,11 @@ export class AgentSessionRuntime {
 		},
 	): Promise<{ cancelled: boolean }> {
 		const previousSessionFile = this.session.sessionFile;
+		const isSelfResume =
+			previousSessionFile !== undefined &&
+			canonicalizePath(resolve(sessionPath)) === canonicalizePath(resolve(previousSessionFile));
+		// Settling active work would append to this same file after taking the candidate snapshot.
+		if (isSelfResume && this.session.isSessionBusy) return { cancelled: true };
 		const prepared = SessionManager.prepareOpen(sessionPath, undefined, options?.cwdOverride);
 		const { sessionManager } = prepared;
 		assertSessionCwdExists(sessionManager, this.cwd);
@@ -267,6 +272,8 @@ export class AgentSessionRuntime {
 			acceptance = prepared.beginCommit();
 			const beforeResult = await this.emitBeforeSwitch("resume", sessionPath);
 			if (beforeResult.cancelled) return beforeResult;
+			// Preparation and veto handlers can yield while a new turn starts on the live session.
+			if (isSelfResume && this.session.isSessionBusy) return { cancelled: true };
 			acceptance.commit();
 			await this.teardownCurrent("resume", sessionManager.getSessionFile());
 			await this.apply(result);

@@ -18,6 +18,8 @@ import {
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { estimateTokens } from "../../src/core/compaction/compaction.ts";
 import { ModelUsabilityBudgetError } from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
+import { cursorCliChildRegistry } from "../../src/core/extensions/builtin/cursor-cli-oauth/diagnostics.ts";
+import { isNativeBypass, setNativeBypass } from "../../src/core/extensions/builtin/imagegen/state.ts";
 import { getMcpService } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type {
@@ -253,6 +255,61 @@ describe("AgentSessionRuntime characterization", () => {
 			.filter((entry) => entry.type === "message");
 		expect(outgoingEntries.map((entry) => entry.message.role)).toEqual(["user", "assistant", "toolResult"]);
 	});
+
+	// PR #1473: a busy self-resume must not replace the live context with a pre-tool snapshot.
+	it("cancels a busy self-resume and retains the completing tool result", async () => {
+		const started = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const aborted = vi.fn();
+		let factories = 0;
+		const { runtime, faux } = await createRuntimeForTest((pi) => {
+			factories++;
+			pi.registerTool({
+				name: "block",
+				label: "Block",
+				description: "Waits for explicit release",
+				parameters: Type.Object({}),
+				execute: async (_id, _params, signal) => {
+					const onAbort = () => {
+						aborted();
+						release.resolve();
+					};
+					signal?.addEventListener("abort", onAbort, { once: true });
+					started.resolve();
+					try {
+						await release.promise;
+						return { content: [{ type: "text" as const, text: "released" }], details: {} };
+					} finally {
+						signal?.removeEventListener("abort", onAbort);
+					}
+				},
+			});
+		});
+		await runtime.session.prompt("persist source");
+		const live = runtime.session;
+		const path = live.sessionFile;
+		if (!path) throw new Error("missing session file");
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall("block", {}, { id: "self-resume-tool" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("complete"),
+		]);
+		const prompt = live.prompt("start blocked tool");
+		try {
+			await started.promise;
+			expect(live.isSessionBusy).toBe(true);
+			expect(await runtime.switchSession(path)).toEqual({ cancelled: true });
+			expect(runtime.session).toBe(live);
+			expect(factories).toBe(1);
+			expect(aborted).not.toHaveBeenCalled();
+		} finally {
+			release.resolve();
+			await prompt;
+		}
+		expect(runtime.session.messages).toEqual(SessionManager.open(path).buildSessionContext().messages);
+		expect(runtime.session.messages.filter((message) => message.role === "toolResult")).toMatchObject([
+			{ toolCallId: "self-resume-tool", isError: false },
+		]);
+	}, 15_000);
 
 	it("emits session_before_switch and session_start for new and resume flows", async () => {
 		const events: RecordedSessionEvent[] = [];
@@ -731,8 +788,8 @@ describe("AgentSessionRuntime characterization", () => {
 			await expect(runtime.switchSession(path)).rejects.toMatchObject({
 				projection: { model: `${faux.getModel().provider}/${forced}`, admission: "resume" },
 			});
-			expect(events).toEqual([{ type: "session_shutdown", reason: "resume" }]);
-			expect(shutdownSessions).toEqual([target.getSessionId()]);
+			expect(events).toEqual([]);
+			expect(shutdownSessions).toEqual([]);
 			expect(shutdownSessions).not.toContain(original.sessionId);
 			expect(readFileSync(path)).toEqual(bytes);
 			expect(runtime.session).toBe(original);
@@ -774,9 +831,9 @@ describe("AgentSessionRuntime characterization", () => {
 		await expect(original.prompt("still usable")).resolves.toBeUndefined();
 	});
 
-	// PR #1473: factory-time MCP subscriptions belong to each candidate, not the singleton owner.
+	// PR #1473: candidate cleanup must not invoke process-global shutdown hooks.
 	it.each(["cancelled", "rejected"])(
-		"shuts down %s candidates without retaining listeners or disposing live MCP",
+		"discards %s candidates without retaining listeners or disturbing live globals",
 		async (outcome) => {
 			const service = getMcpService();
 			const listeners = new Set<Parameters<typeof service.onWireStatusChanged>[0]>();
@@ -789,6 +846,7 @@ describe("AgentSessionRuntime characterization", () => {
 					unsubscribe();
 				};
 			});
+			const killAll = vi.spyOn(cursorCliChildRegistry, "killAll");
 			const shutdowns: number[] = [];
 			let factories = 0;
 			try {
@@ -803,6 +861,11 @@ describe("AgentSessionRuntime characterization", () => {
 					outcome === "rejected" ? { destinationSystemPrompt: "p".repeat(400_000) } : undefined,
 				);
 				const live = runtime.session;
+				expect(live.extensionRunner.getExtensionIdentities().map((extension) => extension.path)).toEqual(
+					expect.arrayContaining(["<builtin:cursor-cli-oauth>", "<builtin:openai-image-gen>", "<builtin:mcp>"]),
+				);
+				// Model the still-live native image lane without replacing its real shutdown handler.
+				setNativeBypass(true);
 				const baseline = new Set(listeners);
 				expect(baseline.size).toBe(1);
 				const target = join(tempDir, "mcp-cancelled.jsonl");
@@ -823,7 +886,10 @@ describe("AgentSessionRuntime characterization", () => {
 					} else {
 						expect(await runtime.switchSession(target)).toEqual({ cancelled: true });
 					}
-					expect(shutdowns).toEqual(Array.from({ length: attempt }, (_, index) => index + 1));
+					expect(killAll).not.toHaveBeenCalled();
+					expect(isNativeBypass()).toBe(true);
+					expect(shutdowns).toEqual([]);
+					expect(factories).toBe(attempt + 1);
 					expect(listeners).toEqual(baseline);
 					expect(service.getSnapshot()).toMatchObject({
 						disposed: false,
@@ -843,6 +909,8 @@ describe("AgentSessionRuntime characterization", () => {
 				expect(listeners).toEqual(baseline);
 			} finally {
 				observation.mockRestore();
+				killAll.mockRestore();
+				setNativeBypass(false);
 			}
 		},
 	);

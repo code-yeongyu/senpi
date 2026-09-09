@@ -1,3 +1,26 @@
+## Contained resume lifecycle corrections (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: discarded unstarted candidates invalidate only their own tracked registrations, without broadcasting `session_shutdown` or releasing live provider resources. MCP defers its direct service listener until attachment.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: busy self-resumes return cancellation before preparation; canonical path comparison covers aliases, and activity is rechecked after asynchronous preparation/veto handling before acceptance.
+- Regression filenames now use `issue-1473-` rather than a bare PR-number prefix. Deterministic runtime coverage asserts untouched Cursor/image globals, MCP listener baseline, and complete tool-result context after a cancelled busy self-resume.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: broadcasting shutdown from a candidate called process-global Cursor `killAll` and reset native-image bypass owned by the still-live session.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: aborting busy self-resumes persisted final entries after the candidate snapshot, leaving the replacement context stale.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: candidate invalidation is a core ownership boundary; it must not dispatch destructive live-session lifecycle handlers.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: only the runtime can reject before snapshot construction and before teardown persists to the same file. The separate trust/admission lifecycle-contract question is unchanged.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `disposeCandidate`.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` admission and acceptance guards.
+
 ## Cancellation-safe candidate ownership (2026-09-09)
 
 ### What changed
@@ -5,12 +28,12 @@
 - `packages/coding-agent/src/core/session-manager.ts`: all prepared-manager writer entry points defer reservations, including open, set/reload, new, branch and write paths. Acceptance acquires the actual destination grant and revalidates its bytes before switch handlers; persistence remains deferred until the veto passes.
 - `packages/coding-agent/src/core/session-write-reservation.ts`: a newly acquired grant returns a rollback callback; an already-owned live grant does not.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: cancelled or failed acceptance rolls back new ownership after candidate cleanup; reservation denial precedes destructive switch handlers and live teardown.
-- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: discarded candidates run their own `session_shutdown` handlers with the resume reason before invalidation, including budget-admission failure, without releasing provider resources belonging to the live session.
+- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: discarded candidates use candidate-only invalidation, including budget-admission failure, without normal shutdown dispatch or releasing provider resources belonging to the live session.
 
 ### Why
 
 - `packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/session-write-reservation.ts` and `packages/coding-agent/src/core/agent-session-runtime.ts`: a cancelled shared-host resume retained a destination reservation until worker exit, preventing another client from opening the target. Snapshot revalidation prevents committing admission based on changed destination bytes.
-- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: ordinary disposal skipped extension shutdown, retaining candidate MCP subscriptions on the live singleton.
+- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: candidate cleanup must release tracked registrations without destructive global shutdown; the MCP builtin now defers its untracked singleton listener until attachment.
 
 ### Why an extension could not handle it
 
@@ -21,7 +44,7 @@
 - `packages/coding-agent/src/core/session-manager.ts`: deferred persistence, reservation entry points and `prepareOpen` acceptance.
 - `packages/coding-agent/src/core/session-write-reservation.ts`: host grant callback.
 - `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` acceptance and discard finally block.
-- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: candidate shutdown and failed model admission.
+- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: candidate-only invalidation and failed model admission.
 
 ## Resume admission uses the prepared destination runtime (2026-09-08)
 

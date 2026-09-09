@@ -2938,14 +2938,11 @@ export class AgentSession {
 		if (options?.releaseProviderResources !== false) cleanupSessionResources(this.sessionId);
 	}
 
-	/** Shut down an unstarted destination without releasing the live session's provider resources. */
+	/** Invalidate only an unstarted destination's registrations, not live-session resources. */
 	async disposeCandidate(): Promise<void> {
-		try {
-			// This is discarded resume preparation, not a process quit or resource reload.
-			await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "resume" });
-		} finally {
-			this.dispose({ releaseProviderResources: false });
-		}
+		// Normal shutdown handlers may mutate process-global state owned by the live session.
+		// Runner invalidation removes this candidate's tracked subscriptions without dispatching them.
+		this.dispose({ releaseProviderResources: false });
 	}
 
 	/** Live in-session activity signals; see `session-activity.ts` for the contract. */
