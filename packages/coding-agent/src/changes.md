@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-10 - Copy official `~/.pi` state once instead of moving it on every start
+
+### What changed
+
+- `packages/coding-agent/src/legacy-senpi-dir-migration.ts`: the official upstream pi directories (`~/.pi/agent`, `~/.pi/mom`, `<cwd>/.pi`) are now copied into the branded layout once, gated by a `.migrated-from-pi` marker in the destination. Entries already present are never overwritten. Pre-rename leftovers nested inside the fork's own config directory (`<config>/.pi/agent`, `<config>/.pi/mom`, `<cwd>/<config>/.pi`) keep the existing move behaviour.
+- `packages/coding-agent/test/senpi-migration.test.ts`: covers the copy-once contract and the marker short-circuit on re-run.
+
+### Why
+
+- `renameSync` drained a real upstream pi install: every branded start (`senpi`, `omo`) emptied `~/.pi/agent` into `~/.omo/agent`, so pi and a branded fork could not coexist on one machine. `brand-dir-migration.ts` already documents the opposite rule for `~/.senpi` ("COPIED once - never moved - because the same machine may keep running the engine standalone"); this aligns the `.pi` path with it.
+
+### Why an extension could not handle it
+
+- Startup migrations run in `runMigrations` before any extension is loaded.
+
+### Expected merge conflict zones
+
+- LOW: `legacy-senpi-dir-migration.ts` is fork-only; `migrations.ts` orchestration is unchanged.
+
 ## 2026-09-09 - Forward shared-host policy to extension loading
 
 ### What changed
