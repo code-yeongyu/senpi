@@ -6,7 +6,7 @@ const MAX_STRING_LENGTH = 200;
 const BLOCKED_KEY =
 	/^(?:__proto__|constructor|prototype|headers?|env(?:ironment)?|authorization|credential(?:s)?|password|secret|token|api_?key|client_?secret)$/i;
 const ALLOWED_DATA_KEY =
-	/^(?:selector|candidate|currentSelector|originalSelector|from|to|model|chainKey|reason|skipReason|classification|thinkingLevel|durationMs|retryAfterMs|error|errorMessage|warning)$/;
+	/^(?:selector|candidate|currentSelector|originalSelector|from|to|model|chainKey|reason|skipReason|classification|thinkingLevel|durationMs|retryAfterMs|error|errorMessage|warning|trigger)$/;
 const SENSITIVE_TEXT =
 	/((?:authorization\s*[:=]\s*(?:bearer|basic)\s+)|(?:bearer\s+)|(?:[?&](?:api[_-]?key|token|secret|password|auth(?:orization)?)=))[^\s&,"'}\]]+/gi;
 

@@ -1,4 +1,14 @@
-import { chmodSync, copyFileSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	copyFileSync,
+	existsSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	watch,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,19 +62,45 @@ function liveContext(): ExtensionContext {
 	return { isIdle: () => true } as unknown as ExtensionContext;
 }
 
-async function waitForPidFile(pidFile: string): Promise<number> {
+/**
+ * Wait for the fixture's atomically-renamed pid file. Call BEFORE spawning
+ * the process tree that writes it. Presence on disk - checked on a short
+ * bounded poll - is the signal of record: fs.watch is only a best-effort
+ * wake-up here because macOS event delivery inside a vitest worker has been
+ * observed to drop every event for a freshly created temp directory (the
+ * file sat on disk while the old event-only wait burned its whole deadline).
+ */
+function waitForPidFile(pidFile: string): Promise<number> {
 	return new Promise<number>((resolvePid, rejectPid) => {
 		const watcher = watch(dirname(pidFile));
-		const deadline = setTimeout(() => {
-			watcher.close();
-			rejectPid(new Error("fixture did not report its grandchild"));
-		}, 5_000);
-		watcher.on("change", (_eventType, filename) => {
-			if (filename !== "grandchild.pid") return;
+		let settled = false;
+		const finish = (outcome: () => void) => {
+			if (settled) return;
+			settled = true;
 			clearTimeout(deadline);
+			clearInterval(poll);
 			watcher.close();
-			resolvePid(Number(readFileSync(pidFile, "utf8").trim()));
-		});
+			outcome();
+		};
+		const tryRead = () => {
+			if (settled || !existsSync(pidFile)) return;
+			const contents = readFileSync(pidFile, "utf8").trim();
+			if (contents === "") return;
+			finish(() => resolvePid(Number(contents)));
+		};
+		const poll = setInterval(tryRead, 50);
+		const deadline = setTimeout(() => {
+			finish(() =>
+				rejectPid(
+					new Error(
+						`fixture did not report its grandchild (directory: [${readdirSync(dirname(pidFile)).join(", ")}])`,
+					),
+				),
+			);
+		}, 10_000);
+		watcher.on("change", tryRead);
+		watcher.on("error", tryRead);
+		tryRead();
 	});
 }
 
@@ -103,6 +139,7 @@ describe("cursor CLI shutdown safety", () => {
 		expect(handlers.has("session_extensions_removed")).toBe(true);
 
 		process.env.SENPI_CURSOR_CLI_OAUTH_EXECUTABLE = fixture.executable;
+		const pendingGrandchildPid = waitForPidFile(fixture.pidFile);
 		const handle = spawnCursorCliTracked(
 			{
 				prompt: "grandchild scenario",
@@ -112,7 +149,7 @@ describe("cursor CLI shutdown safety", () => {
 			},
 			registry,
 		);
-		const grandchildPid = await waitForPidFile(fixture.pidFile);
+		const grandchildPid = await pendingGrandchildPid;
 		expect(registry.livePids()).toContain(handle.pid);
 
 		await shutdown({ type: "session_shutdown", reason: "reload" }, liveContext());
@@ -137,6 +174,7 @@ describe("cursor CLI shutdown safety", () => {
 		if (!shutdown) throw new Error("session_shutdown handler was not registered");
 
 		process.env.SENPI_CURSOR_CLI_OAUTH_EXECUTABLE = fixture.executable;
+		const pendingGrandchildPid = waitForPidFile(fixture.pidFile);
 		const handle = spawnCursorCliTracked(
 			{
 				prompt: "grandchild scenario",
@@ -146,7 +184,7 @@ describe("cursor CLI shutdown safety", () => {
 			},
 			registry,
 		);
-		const grandchildPid = await waitForPidFile(fixture.pidFile);
+		const grandchildPid = await pendingGrandchildPid;
 
 		await shutdown({ type: "session_shutdown", reason: "quit" }, liveContext());
 		await handle.completed;

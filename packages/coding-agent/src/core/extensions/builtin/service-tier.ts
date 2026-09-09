@@ -22,8 +22,13 @@ function isRecord(value: unknown): value is ProviderPayload {
 	return typeof value === "object" && value !== null;
 }
 
+/** Whether requests for this API accept the OpenAI `service_tier` field. */
+export function supportsServiceTier(api: Api | undefined): boolean {
+	return api !== undefined && SERVICE_TIER_APIS.has(api);
+}
+
 export function addServiceTierToPayload(api: Api | undefined, payload: unknown, serviceTier?: ServiceTier): unknown {
-	if (!api || !SERVICE_TIER_APIS.has(api) || !serviceTier) {
+	if (!supportsServiceTier(api) || !serviceTier) {
 		return payload;
 	}
 
@@ -237,17 +242,25 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		// fast-active when nothing is remembered; an explicit remembered `"auto"` (`/fast off`)
 		// wins over that inheritance. Malformed values read back as undefined.
 		//
-		// The flag is derived from the POST-swap model: a `-fast` catalog variant swaps down to
-		// its base before this reads `ctx.serviceTier`, so inheritance is judged on the model the
-		// user actually ends up on.
+		// The flag is derived from the POST-swap model for ordinary starts, but an explicit `-fast`
+		// selection is an explicit fast-mode request even though its catalog tier disappears with the
+		// swap to the base model. Preserve the requested level across that swap as well; the session
+		// setter clamps it against the base model's thinkingLevelMap without changing global defaults.
 		const remembered = getRememberedServiceTier(settingsManager, ctx.modelRegistry, model);
+		const requestedThinkingLevel = pi.getThinkingLevel();
 
 		const baseModel = findBaseModel(ctx.modelRegistry, model);
 		if (baseModel) {
 			await pi.setSessionModel(baseModel);
+			if (requestedThinkingLevel !== undefined) {
+				pi.setSessionThinkingLevel(requestedThinkingLevel);
+			}
 		}
 
-		sessionFastMode = remembered === PRIORITY_TIER || (remembered === undefined && ctx.serviceTier === PRIORITY_TIER);
+		sessionFastMode =
+			baseModel !== undefined ||
+			remembered === PRIORITY_TIER ||
+			(remembered === undefined && ctx.serviceTier === PRIORITY_TIER);
 		pi.setSessionFastMode(sessionFastMode);
 		const memoryModel = resolveServiceTierMemoryModel(ctx.modelRegistry, model);
 		liveMemoryKey = `${memoryModel.provider}/${memoryModel.id}`;
@@ -264,6 +277,35 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		const memoryModel = resolveServiceTierMemoryModel(ctx.modelRegistry, event.model);
 		liveMemoryKey = `${memoryModel.provider}/${memoryModel.id}`;
 		liveMemoryTier = getRememberedServiceTier(settingsManager, ctx.modelRegistry, event.model);
+
+		// `service_tier` is an OpenAI-family request field, so hopping to a non-Codex model leaves the
+		// intent with nothing to act on: `before_provider_request` already refuses to emit the tier
+		// there, but the session flag kept `isFastModeActive()` (and with it the RPC `fastMode` and the
+		// lightning indicator) claiming fast for a model that can never be served at that tier.
+		//
+		// Codex -> Codex is deliberately untouched: fast mode is a SESSION intent that survives a
+		// mid-session Codex switch (see service-tier-extension.test.ts "keeps session fast mode on
+		// across a mid-session switch to another Codex model"), and an incoming model's remembered
+		// "auto" is honored on the wire by `liveMemoryTier` below, not by clearing the flag here.
+		if (sessionFastMode && event.model.api !== OPENAI_CODEX_RESPONSES_API) {
+			sessionFastMode = false;
+			pi.setSessionFastMode(false);
+			return;
+		}
+
+		// The session's own request path now carries `effectiveServiceTier` (sdk streamFn), which the
+		// switch just re-resolved from the incoming model's catalog. A remembered "auto" for a Codex
+		// model whose catalog says priority therefore has to reach SESSION state, not only this
+		// extension's payload hook: `setSessionFastMode(false)` clears exactly a catalog-inherited
+		// Codex priority (never a scoped/favorite `:priority` pin), so both writers agree.
+		if (
+			!sessionFastMode &&
+			liveMemoryTier === "auto" &&
+			event.model.api === OPENAI_CODEX_RESPONSES_API &&
+			ctx.modelRegistry.getServiceTier(event.model) === PRIORITY_TIER
+		) {
+			pi.setSessionFastMode(false);
+		}
 	});
 
 	pi.registerCommand("fast", {

@@ -17,14 +17,20 @@ import { selectAccount } from "./affinity.ts";
 import { type AuthenticatedAttemptInput, createAttemptMessages, type RetainableAttempt } from "./auth-attempt.ts";
 import { hasRequestOauthToken, mergeRequestAuthEnvironment, stripManagedAuthEnvironment } from "./auth-environment.ts";
 import { writeConfigDirCredential } from "./config-dir-credentials.ts";
-import { classifySdkError } from "./errors.ts";
+import { classifySdkError, sdkAssistantFailure, sdkResultFailure } from "./errors.ts";
 import { runFailover } from "./failover.ts";
+import { refusalError } from "./refusal.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 import type { ClaudeSdkOauthProviderSettings, ClaudeSdkOauthTokenInjection } from "./settings.ts";
 
 export { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
 
 export const EXPIRING_WITHIN_MS = 5 * 60_000;
+
+/** A managed lane with an empty pool must refuse rather than spawn the SDK against ambient host credentials. */
+const NO_MANAGED_ACCOUNTS_ERROR =
+	"authentication_failed: No Claude SDK OAuth accounts configured for the managed lane; " +
+	"run /login claude-sdk-oauth or set CLAUDE_CODE_OAUTH_TOKEN";
 
 type AuthLaneBoundary = {
 	createStore: () => CredentialStore;
@@ -112,7 +118,8 @@ async function managedPool(
 	const configuredLane = resolveEffectiveLane(settings, accounts);
 	const lane =
 		configuredLane === "config-dir" && hasRequestOauthToken(requestEnvironment) ? "oauth-slots" : configuredLane;
-	if (lane === "ambient" || accounts.length === 0) return undefined;
+	if (lane === "ambient") return undefined;
+	if (accounts.length === 0) throw new Error(NO_MANAGED_ACCOUNTS_ERROR);
 	const stored = credential?.type === "oauth" ? (credential as ClaudeSdkOauthCredential) : undefined;
 	return { accounts, environment, lane, pinnedAccount: settings.pinnedAccount ?? stored?.pinned, store };
 }
@@ -142,7 +149,12 @@ async function prepareSlot(
 			Object.assign(slot, updated);
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
-			throw new Error(`authentication_failed: ${detail}`);
+			const classification = classifySdkError(detail);
+			throw new Error(
+				classification.kind === "other" && classification.retryable
+					? `server_error: ${detail}`
+					: `authentication_failed: ${detail}`,
+			);
 		}
 	}
 	const access = slot.source === "env" ? envSlotToken((name) => environment[name], slot.name) : slot.access;
@@ -154,20 +166,10 @@ async function prepareSlot(
 }
 
 function sdkFailure(message: SDKMessage): unknown | undefined {
-	if (message.type === "assistant" && message.error) return message.error;
-	if (message.type === "result" && message.subtype !== "success") {
-		const errors = "errors" in message && Array.isArray(message.errors) ? (message.errors as unknown[]) : [];
-		if (errors.length > 0) return new Error(String(errors[0]));
-		// `subtype` alone is too coarse to classify: a subscription limit and an
-		// ordinary tool failure both arrive as "error_during_execution". The SDK
-		// carries the real cause in `terminal_reason` (e.g. "blocking_limit"), so
-		// append it — otherwise classifySdkError() scores every result error as
-		// non-retryable "other", the exhausted account is never blocked, and a
-		// multi-account pool never rotates past it.
-		const reason =
-			"terminal_reason" in message && typeof message.terminal_reason === "string" ? message.terminal_reason : "";
-		return new Error(reason ? `Claude Code ${message.subtype}: ${reason}` : `Claude Code ${message.subtype}`);
-	}
+	const refusal = refusalError(message);
+	if (refusal) return refusal;
+	if (message.type === "assistant") return sdkAssistantFailure(message);
+	if (message.type === "result") return sdkResultFailure(message);
 	return undefined;
 }
 

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { GOAL_WAIT_STATUS_KEY } from "../../src/core/extensions/builtin/goal/wait-ticker.ts";
 import type { ExtensionContext } from "../../src/core/extensions/types.ts";
 import {
@@ -59,7 +60,7 @@ describe("goal monitor continuation lifecycle", () => {
 		expect(harness.sent).toHaveLength(0);
 		expect(notices).toHaveLength(0);
 		const delayedDeliveryRecorded = waitForSentCount(harness, 1);
-		await vi.advanceTimersByTimeAsync(270_000);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		await delayedDeliveryRecorded;
 		expect(harness.sent).toHaveLength(1);
 	});
@@ -87,13 +88,13 @@ describe("goal monitor continuation lifecycle", () => {
 		await completed.harness.tools
 			.get("update_goal")
 			?.execute("complete", { status: "complete" }, undefined, undefined, completed.ctx);
-		await vi.advanceTimersByTimeAsync(270_000);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		expect(completed.harness.sent).toHaveLength(0);
 
 		const pending = await createActiveMonitorHarness("thread-pending-message");
 		await endCleanTurn(pending.harness, pending.ctx);
 		pending.state.pendingMessages = true;
-		await vi.advanceTimersByTimeAsync(270_000);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		expect(pending.harness.sent).toHaveLength(0);
 	});
 
@@ -103,7 +104,7 @@ describe("goal monitor continuation lifecycle", () => {
 		await endCleanTurn(harness, ctx);
 
 		await runGoalHandlers(harness.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
-		await vi.advanceTimersByTimeAsync(270_000);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 
 		expect(harness.sent).toHaveLength(0);
 	});
@@ -128,7 +129,7 @@ describe("goal monitor continuation lifecycle", () => {
 		expect(harness.sent).toHaveLength(1);
 
 		// The retired generation's delayed timer stays disposed: no second delivery.
-		await vi.advanceTimersByTimeAsync(270_000);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		expect(harness.sent).toHaveLength(1);
 
 		harness.events.emit("terminal_monitor_state", { activeCount: 1 });

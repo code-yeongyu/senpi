@@ -208,6 +208,19 @@ function decodeEntry(row: EntryRow): Entry {
 			case "thinking_level_change":
 				if (typeof payload.thinkingLevel !== "string") throw new Error("Invalid thinking_level_change payload");
 				return { ...base, type: "thinking_level_change", thinkingLevel: payload.thinkingLevel };
+			case "configuration_update":
+				if (
+					typeof payload.reasoning !== "object" ||
+					payload.reasoning === null ||
+					typeof (payload.reasoning as Record<string, unknown>).effort !== "string"
+				) {
+					throw new Error("Invalid configuration_update payload");
+				}
+				return {
+					...base,
+					type: "configuration_update",
+					reasoning: { effort: (payload.reasoning as Record<string, string>).effort },
+				};
 			case "active_tools_change":
 				if (!Array.isArray(payload.activeToolNames)) throw new Error("Invalid active_tools_change payload");
 				if (payload.activeToolNames.some((value) => typeof value !== "string")) {

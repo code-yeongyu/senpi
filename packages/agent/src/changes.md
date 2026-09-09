@@ -1,4 +1,478 @@
+
+## 2026-09-05 - Preserve Astra reasoning effort across session changes
+
+### What changed
+
+- packages/agent/src/agent.ts: preserve the branch reasoning baseline for GPT-6 Astra requests.
+- packages/agent/src/harness/agent-harness.ts: persist trusted configuration-update entries.
+- packages/agent/src/harness/compaction/branch-summarization.ts: preserve configuration-update entries through branch summaries.
+- packages/agent/src/harness/compaction/compaction.ts: keep configuration-update entries at compaction boundaries.
+- packages/agent/src/harness/reducer.ts: restore effective configuration-update state.
+- packages/agent/src/harness/session/context.ts: replay the latest configuration update.
+- packages/agent/src/harness/session/jsonl/codec.ts: decode configuration-update entries.
+- packages/agent/src/harness/session/types.ts: define the durable configuration-update entry.
+- packages/agent/src/types.ts: carry the configuration-update message role.
+
+### Why
+
+- GPT-6 Astra changes reasoning through a positional configuration-update item so request-level effort remains stable for prompt caching.
+
+### Why this lives in the fork
+
+- The agent loop and durable session contracts own baseline and replay state before provider adapters run.
+
+### Expected merge conflict zones
+
+- Agent loop configuration and session entry unions.
+
+## 2026-09-05 - Preserve Astra reasoning effort across session changes
+
+### What changed
+
+- `packages/agent/src/agent.ts`, `packages/agent/src/agent-loop.ts`, `packages/agent/src/types.ts`, and `packages/agent/src/harness/**` preserve the branch reasoning baseline and durable configuration-update state while keeping non-Astra thinking changes unchanged.
+
+### Why
+
+- GPT-6 Astra changes reasoning through a positional configuration-update item so request-level effort remains stable for prompt caching.
+
+### Why this lives in the fork
+
+- The agent loop and durable session contracts own baseline and replay state before provider adapters run.
+
+### Expected merge conflict zones
+
+- Agent loop configuration and session entry unions.
+
 # Changes
+
+## 2026-09-08 - Recover empty native tool-use responses
+
+### What changed
+
+- `packages/agent/src/empty-assistant-recovery.ts`: retry terminal native `toolUse` responses with no tool-call blocks once, then surface an error and telemetry diagnostic; preserve existing empty-stop gating.
+- `packages/agent/src/assistant-terminal-state.ts`: demote contradictory tool-use terminal messages without tool calls, stamping an `empty_tool_use_terminal_state` diagnostic so the demotion stays identifiable after the stop reason is rewritten.
+- `packages/agent/src/agent-loop.ts`: compose terminal normalization with pending-tool promotion.
+- `packages/agent/src/index.ts`: export `EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC` so the goal builtin can recognize a demoted malformed turn.
+
+### Why
+
+- Providers can lose a streamed tool call while retaining the `toolUse` stop reason, which otherwise silently ends the user's session.
+
+### Why an extension could not handle it
+
+- Provider stream buffering and terminal-state normalization occur inside the core agent loop before extension callbacks observe the message.
+
+### Expected merge conflict zones
+
+- MEDIUM: `empty-assistant-recovery.ts` stream terminal handling and `agent-loop.ts` terminal message normalization.
+- LOW: the `assistant-terminal-state.ts` re-export line in `index.ts`.
+
+
+## 2026-09-04 - Drop the byte count from write-tool results
+
+### What changed
+
+- `packages/agent/src/harness/tools/write.ts`: the write tool's success text reports `Successfully wrote to <path>` without the byte count, adopting upstream e583b290a; the fork's tool tests were aligned to the wording in 9e64e52d1.
+
+### Why
+
+- The count reported UTF-16 code units as bytes, which is wrong for any non-ASCII payload; upstream removed the count instead of rescanning the content.
+
+### Why an extension could not handle it
+
+- The result text is produced inside the built-in write tool before any extension hook can rewrite it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/harness/tools/write.ts` success-note wording during upstream syncs.
+
+## 2026-09-04 - Harden the proxy stream boundary and pass through provider thinking levels
+
+### What changed
+
+- `packages/agent/src/proxy.ts`: `streamProxy` flushes the decoder and processes a final SSE line that is not newline-terminated, and a clean EOF that never produced a done or error event pushes a synthesized error (`Connection closed by proxy server before the response completed`) instead of ending the stream with no result (upstream ebc374490, #8997).
+- `packages/agent/src/proxy.ts`: terminal done and error proxy events carry an optional `providerThinkingLevel` that is copied onto the partial assistant message, part of the sync's per-turn thinking-effort preservation (upstream 4e69b0c28).
+
+### Why
+
+- A proxy that dropped the connection mid-response left `EventStream.result()` pending forever because no terminal event ever arrived; consumers awaiting the result hung indefinitely. Surfacing the provider's actual thinking level lets the session observe what the provider admitted for the turn instead of inferring it from the request.
+
+### Why an extension could not handle it
+
+- The proxy SSE transport is the runtime streaming boundary beneath every extension hook; extensions cannot synthesize terminal events or repair a dropped stream.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/proxy.ts` read loop, residual-buffer flush, and terminal-event synthesis.
+
+## 2026-09-04 - Run next-turn preparation after every completed turn
+
+### What changed
+
+- Invoke `prepareNextTurn` after every completed assistant turn that can reach the preparation boundary, including a normal stop response with no tool calls, while preserving the terminating queue boundary and ownership refresh before a continuation provider request.
+
+### Why
+
+- The upstream loop only prepared at the top of a re-entered inner loop, so a completed no-tool turn could emit `agent_end` without running the session's next-turn admission hook.
+
+### Why an extension could not handle it
+
+- Turn completion, queue draining, and provider admission ordering are owned by the core agent loop before extension callbacks can observe or alter them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` completed-turn preparation and terminating queue boundary; `types.ts` preparation callback contract.
+
+## 2026-09-04 - Honor queue clears on terminating continuations
+
+### What changed
+
+- Emit the terminating continuation boundary before refreshing drained queue messages, so a queue clear or replacement at `turn_start` wins before pending input is injected.
+
+### Why
+
+- A terminating tool previously moved queued input into loop-local state before the continuation boundary, allowing cleared steering or follow-up messages to reach the provider.
+
+### Why an extension could not handle it
+
+- Terminating queue ownership and continuation-boundary ordering are enforced inside the core agent loop before extension hooks can change the provider request.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` terminating queue refresh and continuation turn admission; `types.ts` loop configuration contract.
+
+## 2026-09-03 - Restore queue ownership and preflight abort barriers
+
+### What changed
+
+- Restored classifier refusals as terminal assistant turns, preserved terminating queue re-poll/restore ownership across next-turn preparation, and completed all parallel tool preflight checks before releasing execution.
+
+### Why
+
+- The upstream loop merge allowed refused calls, cleared queue snapshots, and already-prepared tools to cross the next provider/execution boundary.
+
+### Why an extension could not handle it
+
+- Queue drain ownership and tool execution scheduling are core agent-loop responsibilities before extension hooks can observe or veto execution.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` turn admission, queue restoration, and parallel tool scheduling.
+
+## 2026-09-04 - Failed provider turns leave the LLM context on every lane
+
+### What changed
+
+- `packages/agent/src/harness/messages.ts`: the harness `convertToLlm` runs the shared `dropFailedAssistantTurns` from `@earendil-works/pi-ai` as its final step, removing assistant turns with `stopReason` `error`/`aborted` and the tool results orphaned by that drop from the returned `Message[]`; an id re-declared by a kept assistant keeps its result, and `stop`/`length`/`toolUse` turns pass through untouched.
+- `packages/agent/src/harness/compaction/compaction.ts`: `estimateContextTokens` applies the same `dropFailedAssistantTurns` before anchoring on usage and summing trailing tokens, so the estimate counts exactly the set the next request carries; failed turns and their orphaned results no longer inflate the compaction trigger.
+- `packages/agent/test/harness/convert-to-llm.test.ts` (new) and `packages/agent/test/harness/compaction.test.ts`: pin the harness `convertToLlm` drop (error, aborted, re-declared-id keep) and the estimator exclusion for both failure kinds.
+
+### Why
+
+- Compaction, branch summarization, and any consumer building an LLM request from the converted list had no `stopReason` filter, so after a provider error or abort every subsequent request replayed the failed turn's partial text and unexecuted tool calls; the provider transform layer dropped them for pi-ai API requests only.
+
+### Why an extension could not handle it
+
+- The drop must happen inside `convertToLlm`, which consumers call before any extension seam runs; extensions observe the already-built context and cannot remove a failed assistant turn from every downstream request shape deterministically.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `convertToLlm` in `packages/agent/src/harness/messages.ts` (the new `dropFailedAssistantTurns` return).
+- LOW: the head of `estimateContextTokens` and the `counted` parameter of `getLastAssistantUsageInfo` in `packages/agent/src/harness/compaction/compaction.ts`.
+
+## 2026-09-02 - Name the stream-start timeout setting
+
+### What changed
+
+- `StreamStartTimeoutError` now names `retry.provider.streamStartTimeoutMs` and explains that `0` disables the guard.
+
+### Why
+
+- A provider stream-start timeout must tell users which setting to raise when the configured bound is too aggressive.
+
+### Why an extension could not handle it
+
+- The error is constructed inside the core provider stream loop before extension code can alter its user-visible message.
+
+### Expected merge conflict zones
+
+- LOW: `agent-loop.ts` stream-start timeout error wording.
+
+## 2026-08-29 - Propagate asynchronous shell capture callbacks
+
+### What changed
+
+- `packages/agent/src/harness/types.ts`, `packages/agent/src/harness/env/nodejs.ts`, and `packages/agent/src/harness/utils/shell-output.ts` now observe asynchronous stdout, stderr, and capture callbacks, terminate execution on rejection, and preserve the original rejection as the execution error cause.
+
+### Why
+
+- Exported shell capture callbacks could reject while large-output commands still resolved successfully, leaving spill files and an unhandled rejection.
+
+### Why an extension could not handle it
+
+- Stream callback dispatch and process cleanup occur inside the harness execution environment before tool or agent extension hooks run.
+
+### Expected merge conflict zones
+
+- LOW: shell stream callback types and dispatch in the Node execution environment and shell capture adapter.
+
+## 2026-08-27 - Optional postMutate seam inside the file mutation queue
+
+### What changed
+
+- `packages/agent/src/harness/tools/tool-context.ts` adds an optional `postMutate` hook to
+  `ExecutionToolContext` plus the `PostMutateContext`, `PostMutateResult`, and `PostMutateHook`
+  contracts describing it.
+- `packages/agent/src/harness/tools/post-mutate.ts` (fork-only) runs the hook and degrades a
+  rejecting hook into an appended warning note, so a landed write is never discarded.
+- `packages/agent/src/harness/tools/write.ts` invokes the hook inside the `withFileMutationQueue`
+  callback right after `env.writeFile` succeeds and appends the returned note to the success text.
+- `packages/agent/src/harness/tools/edit.ts` invokes the hook in the same position and re-reads the
+  file whenever the hook may have touched it (`changed: true`, or the hook rejected after a partial
+  rewrite) so the returned diff, unified patch, and first-changed-line describe the bytes actually
+  on disk. A hook that leaves the file unreadable is reported as a note on the successful edit
+  rather than as an edit failure, because the edit itself already landed.
+- `packages/agent/src/harness/tools/index.ts` exports the new post-mutate types.
+
+### Why
+
+Fork tooling (formatters, codegen, normalizers) must observe and adjust a file as an atomic part of
+the mutation that produced it. A `tool_result` extension hook runs outside the mutation queue, so a
+concurrent same-path mutation can interleave and the edit tool's diff metadata can describe bytes
+that are no longer on disk. Placing the seam inside the queue slot makes the post-write step
+unobservable to other mutations and lets edit report the committed content.
+
+### Why an extension could not handle it
+
+`withFileMutationQueue` is internal to the harness tool implementations; no extension hook executes
+inside a queue slot, and the edit tool computes its diff metadata before any extension sees the
+result.
+
+### Expected merge conflict zones
+
+- LOW: the `execute` bodies of `write.ts` and `edit.ts` (post-`writeFile` lines), the
+  `ExecutionToolContext` declaration in `tool-context.ts`, and the `tool-context.ts` export block in
+  `index.ts`.
+
+## Agent loop config surface re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/agent/src/agent.ts` keeps the fork run-loop surface on top of upstream: the
+  `buildProviderContext` re-export from `agent-loop.ts`, and the config passthroughs `timeoutMs`,
+  `streamStartTimeoutMs`, `removedToolHints`, `resolveUnknownToolCall`, `abortServerSideFallback`,
+  and `cursorExecHandlers`.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The `AgentConfig`/loop-config type blocks and the `agent-loop.ts` import list in
+  `packages/agent/src/agent.ts`.
+
+## 2026-08-25 - Preserve provider retry watchdog abort provenance
+
+### What changed
+
+- `packages/agent/src/agent.ts` accepts an abort reason and emits a provider-owned assistant abort for retry-watchdog cancellation.
+- `packages/agent/src/agent-loop.ts` preserves an explicit abort Error instead of replacing it with generic `Request was aborted` text.
+- `packages/agent/src/assistant-terminal-state.ts` stamps provider provenance where terminal stream failures are constructed.
+- `packages/agent/src/index.ts` exports the typed watchdog abort reason for session hosts.
+
+### Why
+
+- The session watchdog must carry the real provider stall cause through low-level Agent cancellation so retry classification and terminal reporting do not lose the provider failure.
+
+### Why an extension could not handle it
+
+- Abort reason propagation and assistant failure-message construction occur inside the browser-safe agent lifecycle.
+
+### Expected merge conflict zones
+
+- LOW: `agent.ts` abort API and `agent-loop.ts` event-reader cancellation path.
+
+## 2026-08-20 - End the turn when idle after completed Cursor tools
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` catch now treats `StreamIdleTimeoutError` after Cursor-resolved tools or buffered exec results as a finished turn (`stopReason: "stop"`) instead of a terminal error.
+- `packages/agent/src/assistant-terminal-state.ts`: `isStreamIdleTimeoutError` and `shouldFinalizeIdleAsStop` decide when that idle is a completed turn versus a real hang.
+
+### Why
+
+- After Cursor-resolved tools (or buffered exec results) the parent stream can sit silent until the 300s idle timeout and die as `StreamIdleTimeoutError` even though the child work already finished (issue #997).
+
+### Why an extension could not handle it
+
+- The idle reader and `streamAssistantResponse` catch live inside the agent loop; no extension hook sits between the idle timeout and the terminal assistant message it currently emits.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/agent-loop.ts` `streamAssistantResponse` catch
+- `packages/agent/src/assistant-terminal-state.ts` idle helpers appended after `shouldTerminateAssistantTurn`
+
+## 2026-08-20 - Continue when stop still has pending toolCalls
+
+### What changed
+
+- `packages/agent/src/assistant-terminal-state.ts`: `promoteStopWithPendingToolCalls` rewrites assistant `stopReason` from `stop` to `toolUse` when the message still contains `toolCall` blocks; text-only stop stays terminal.
+- `packages/agent/src/agent-loop.ts`: apply that promotion after streaming so pending (non-exec-channel) tool calls execute in the same turn and their results go back to the model. Cursor exec-resolved blocks stay filtered out of the local batch and do not re-enter the loop.
+
+### Why
+
+- Cursor often ends a turn as `stop` while toolCall blocks are still present. The loop treated that as a finished turn and dropped the pending tools (issue #1010).
+
+### Why an extension could not handle it
+
+- Stop-reason classification lives inside the agent loop after the stream returns; no extension hook sits between stream completion and tool-batch execution.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/assistant-terminal-state.ts` promotion helper
+- `packages/agent/src/agent-loop.ts` success path after `streamAssistantResponse`
+
+## 2026-08-20 - Cursor exec handlers bind to the owning run signal
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: when `config.cursorExecHandlers` is a factory, the loop now
+  resolves it with the outer owning-run signal (`signal ?? requestAbortController.signal`) instead of
+  the per-request idle-timeout controller, and normal request completion aborts the request-scoped
+  fallback so signal-less direct loop callers cannot leave stale handlers live.
+
+### Why
+
+- The bridge session (`cursor-exec-bridge-session.ts`) verifies ownership by identity against the
+  agent's live run signal. The per-request controller is a different object by construction, so every
+  native Cursor exec frame failed the check and returned `Tool execution has no active run`
+  (issues #979/#1000/#1003, regression from 31a71f0c5).
+
+### Why an extension could not handle it
+
+- The factory resolution happens inside the loop's provider-request assembly; no extension hook sits
+  between `streamAssistantResponse` and the provider options it constructs.
+
+### Expected merge conflict zones
+
+- `agent-loop.ts` provider-request assembly and the request `finally` teardown (fork-only Cursor exec
+  channel; upstream has no cursor provider).
+
+## Finalize idle-after-completed-tools as stop (2026-08-19)
+
+If the provider stream goes idle after Cursor-resolved tool calls (or buffered exec results) and there is no pending local work, the turn ends as `stop` instead of `StreamIdleTimeoutError`. A hang with no tools is still an idle error.
+
+Conflict zone: `agent-loop.ts` `streamAssistantResponse` catch.
+
+## Loop and agent divergence re-established against upstream 59a71b23 (2026-08-19)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts` stays divergent from the new pin on the fork's own turn machinery:
+  per-request stream bounds (`StreamStartTimeoutError` / `StreamIdleTimeoutError`, the
+  `initialRequestTimeoutMs` / `initialRequestStreamStartTimeoutMs` overrides that apply to the first
+  provider request only, after which the configured idle timeout resumes so a healthy reasoning gap is
+  not bound by the short liveness probe);
+  queued-input recovery (`drainedTerminatingQueue` plus `refreshTerminatingQueueDrain`, which hands
+  steering/follow-up messages back to `config.restorePendingMessages` on every terminating path instead
+  of dropping them); `streamKind: "main"` stamped on the loop's own provider request so auxiliary calls
+  stay distinguishable downstream; thinking-block `startedAt` / `endedAt` stamping from the
+  `thinkingTiming` map at stream-event receipt; the Cursor exec-channel bridge (handler factory resolved
+  with the outer owning-run signal rather than the provider request's idle-timeout signal, mid-stream
+  tool results buffered and appended, `kCursorExecResolved`
+  blocks excluded from the executable tool batch); `withEmptyAssistantRecovery` around the stream fn; and
+  the `prepareNextTurn` merge of `thinkingSelection` and `abortServerSideFallback`.
+- `packages/agent/src/agent.ts` stays divergent on the run-ownership surface those loop features require:
+  `AgentContinuationOptions` (`deferQueuedMessages`, `timeoutMs`, `streamStartTimeoutMs`),
+  `continueWithQueuedMessages()` — queue-first continuation that re-delivers drained steering input when a
+  compaction leaves custom context at the tail — the `clearGeneration` counter and `prepend()` on the
+  message queue, `suppressQueuedMessageDrain()` for one active run, the `restorePendingMessages` wiring
+  back into the queues, and the runtime options carried onto the loop config (`timeoutMs`,
+  `streamStartTimeoutMs`, `removedToolHints`, `resolveUnknownToolCall`, `abortServerSideFallback`,
+  `cursorExecHandlers`).
+
+### Why
+
+- Upstream `59a71b235d` has no per-request stream bounds, no queued-input ownership contract, and no
+  provider-executed-tool channel, so every one of these behaviors re-diverges on merge rather than being
+  reconciled away. The behavioral rationale for each lives in the dated entries below (stream-start and
+  continuation-scoped timeouts 2026-07-29, empty-assistant recovery 2026-07-30, Cursor exec-channel
+  contract 2026-08-16 and 2026-08-18, thinking-selection provenance 2026-08-18); this entry records that
+  the sync to the new pin leaves both files divergent for exactly those reasons.
+
+### Why an extension could not handle it
+
+- Stream-request construction, abort-signal ownership, the pending-message queues, and the tool-batch
+  filter are the loop's own control flow. An extension observes turn events after the fact and cannot
+  bound a stream that never emits, re-park input the loop already drained, or exclude a block from the
+  batch the loop is about to execute.
+
+### Expected merge conflict zones
+
+- HIGH: `agent-loop.ts` `streamAssistantResponse` request construction and the timeout/idle wrappers;
+  the tool-call collection and execution block; the `prepareNextTurn` config merge.
+- MEDIUM: `agent.ts` `runPromptMessages` / `continue` entry points and the loop-config assembly that
+  forwards the fork's runtime options.
+
+## Cursor exec handlers bind to their owning run (2026-08-18)
+
+### What changed
+
+- `packages/agent/src/types.ts`: `AgentLoopConfig.cursorExecHandlers` also
+  accepts a `(runSignal: AbortSignal) => CursorExecHandlers` factory.
+- `packages/agent/src/agent-loop.ts`: when a factory is supplied, the loop
+  resolves it with the outer owning-run signal. Direct loop callers without an
+  outer signal retain the request controller as a scoped fallback, and normal
+  request completion aborts that fallback so stale handlers cannot remain live.
+
+### Why
+
+- A host bridge built once per session cannot tell which run an exec frame
+  belongs to. Handing it the owning run's signal at stream creation lets the
+  host refuse a straggler frame from a stream whose run already ended, instead
+  of executing it inside the replacement run.
+- The plain-object form is unchanged, so existing hosts keep working.
+
+### Why an extension could not handle it
+
+- Only the loop knows which run owns the stream it is opening. The owning
+  signal exists solely inside `streamAssistantResponse` at stream creation, so
+  no extension hook can supply it to the host bridge after the fact.
+
+### Expected merge conflict zones
+
+- `agent-loop.ts` `execHandlers` injection block, `types.ts`
+  `cursorExecHandlers` declaration.
+
+## 2026-08-18 - Thinking-selection provenance through the agent loop
+
+### What changed
+
+- `packages/agent/src/types.ts`: `AgentState` gains `thinkingSelection`; `AgentLoopTurnUpdate` gains a
+  tri-state `thinkingSelection` (undefined leaves unchanged, null clears).
+- `packages/agent/src/agent.ts`: `createLoopConfig` forwards the state selection alongside `reasoning`.
+- `packages/agent/src/agent-loop.ts`: mid-run `prepareNextTurn` updates re-propagate the selection.
+- `packages/agent/src/proxy.ts`: the selection joins the serializable proxy request options.
+
+### Why
+
+- Providers that encode reasoning on the wire (Cursor) must distinguish an explicit user choice from the
+  always-materialized effective level, which startup defaults to `medium`.
+
+### Why an extension could not handle it
+
+- Loop config assembly, turn-update merging, and proxy request serialization are core agent-loop seams with
+  no extension hook.
+
+### Expected merge conflict zones
+
+- `agent-loop.ts` prepareNextTurn config merge, `proxy.ts` serializable option list, `types.ts` state and
+  turn-update interfaces.
 
 ## Late Cursor bridge lifecycle events after run teardown (2026-08-18)
 
@@ -488,7 +962,7 @@
   session for 300s with zero events, zero usage, and nothing persisted. Observed in a donated
   5h session log where the same session hung deterministically on reopen while new sessions
   worked. After the first event arrives the idle bound governs as before.
-- The failure message `Provider stream start timed out after <ms>ms` deliberately contains
+- The failure message `Provider stream start timed out after <ms>ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)` deliberately contains
   "timed out" so the existing retryable-error classifier (`isRetryableErrorMessage`) retries
   it instead of dead-ending the session; the request-local abort controller tears the dead
   request down exactly like an idle timeout.

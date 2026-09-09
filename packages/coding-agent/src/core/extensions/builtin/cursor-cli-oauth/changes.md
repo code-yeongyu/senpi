@@ -1,5 +1,161 @@
 # cursor-cli-oauth extension changes
 
+## 2026-08-24 - Keep provider tool protocol out of assistant text
+
+### What changed
+
+- `stream.ts`: Cursor `tool_call` events are no longer serialized into `<cursor-cli-tool>` assistant text. They also remain intentionally unmapped to host `toolCall` blocks because Cursor already executed them in its subprocess. The suppressed events still close the preceding text segment and reset cumulative-snapshot tracking without creating an empty stored block, so post-tool prose is preserved.
+- `stream.test.ts`: the tool-turn regression now proves that text deltas and stored assistant content contain only the model's prose before and after both started/completed tool frames, including a post-tool cumulative fragment sharing the pre-tool prefix.
+
+### Why
+
+- Rendering provider protocol as text mixed long JSON blobs into the TUI and persisted untrusted tool arguments/results in conversation context.
+
+### Why an extension could not handle it
+
+- The pollution happened inside the builtin provider before OmO or another extension received the assistant message, so the provider boundary is the only layer that can remove it without post-processing legitimate model prose.
+
+## 2026-08-21 - Cache provider settings loads by mtime+size to cut lock convoy
+
+### What changed
+
+- `settings.ts`: `loadCursorCliOauthProviderSettingsFromDisk` caches the `SettingsManager` instance keyed on (cwd, mtimeMs:size of the global and project settings.json). A cache hit skips `SettingsManager.create` and its two locked disk reads; environment overrides are re-parsed on every call so live env changes take effect immediately.
+
+### Why
+
+- `fallbackEligible()` calls this loader on every retry-fallback candidate probe. A fresh `SettingsManager` per call took the cross-process settings lock twice and read+parsed both files; under error storms this multiplied into hundreds of locked disk reads per session per error, driving the lock-retry busy-wait (fixed in core) that froze the TUI.
+
+### Why an extension could not handle it
+
+- This IS the extension side: the cache is local to the provider settings loader.
+
+### Expected merge conflict zones
+
+- `settings.ts` around `loadCursorCliOauthProviderSettingsFromDisk`.
+
+
+## 2026-08-19 - Guaranteed-refusal lane leaves implicit fallback expansion
+
+### What changed
+
+- `guardrails.ts`: new exported `cursorCliForceRefusalPending(settings)` names the exact condition under
+  which unattended agent-mode execution is refused (force requested outside plan mode without
+  `noApprovalAcknowledgedAt`); `resolveCursorCliExecutionPolicy` now delegates to it so the policy and
+  the eligibility hook can never disagree.
+- `index.ts`: the provider registration passes `fallbackEligible`, returning false while the lane is
+  kill-switched (`explicitlyDisabled`) or the refusal is pending. Bare-family fallback expansion skips
+  the lane in those states; explicit selection, `/login`, and `/cursor-account` are unaffected. A merely
+  flagless lane stays eligible because an explicit senpi-side login is the opt-in.
+
+### Why
+
+- With a managed account present the lane held an OAuth credential and ranked tier 0 in bare expansion,
+  so shipped default chains routed fallback hops into it; each hop then hard-errored with the
+  acknowledgement message instead of serving. Tests: `test/cursor-cli-oauth/fallback-eligibility.test.ts`.
+
+### Why an extension could not handle it
+
+- This IS the extension side: the deterministic signal rides the new `ProviderConfig.fallbackEligible`
+  registration field (see `core/extensions/changes.md` 2026-08-19).
+
+### Expected merge conflict zones
+
+- `index.ts` provider registration object; `guardrails.ts` around `resolveCursorCliExecutionPolicy`.
+
+## 2026-08-19 - Ambient cursor-agent auth becomes explicit opt-in
+
+### What changed
+
+- `settings.ts`: `cursorCliOauthProvider.enabled` now defaults to **false**
+  (it defaulted to true since the 2026-08-18 bootstrap change). The resolved
+  settings gained `explicitlyDisabled`, which is true only when the last layer
+  that names `enabled` set it to `false` verbatim - a settings file, a project
+  settings file, or `SENPI_CURSOR_CLI_OAUTH_ENABLED=0`. Env precedence over
+  project over global over default is unchanged; `explicitlyDisabled` is derived
+  from the same layer order as the value itself.
+- `oauth-login.ts`: new exported `isCursorCliOauthLaneEnabled(settings,
+  storedAccountCount)` holds the whole rule, and `assessConfiguration` now reads
+  the stored account slots before applying the flag. A verbatim `enabled: false`
+  still short-circuits to `disabled` before any credential or executable work.
+- `stream.ts`: the turn-time gate uses the same predicate - the kill switch
+  throws `disabled by settings` up front, and the flagless, account-less lane
+  throws the same message once the stored slots are known, so `check` and the
+  turn path cannot disagree.
+- `index.ts`: the native-credential bootstrap gate (`canBootstrap`) keeps
+  requiring the flag and additionally refuses when the kill switch is set. With
+  the new default this means an installed, logged-in host `cursor-agent` no
+  longer causes senpi to copy that credential into a managed slot.
+- `AGENTS.md`: the "Default-on remains opt-out" invariant is replaced by the
+  explicit opt-in invariant and the `check` outcome list is clarified.
+
+### The stored-account rule and why
+
+With the flag absent, **stored usable accounts keep the lane available**. Those
+slots only exist because the user ran `/login cursor-cli-oauth` or
+`/cursor-account import` (both persist `enabled: true` through
+`persistCursorCliOauthEnabled`, so this is a belt-and-braces path for stores
+written before that persistence existed, or edited by hand). An explicit
+senpi-side login IS the opt-in; forcing a second settings edit after it would
+hide credentials the user deliberately gave senpi. Only the ambient lane - the
+host-CLI-derived native credential bootstrap - requires the flag. This matches
+the claude-sdk-oauth semantic (`enabled` defaults false, stored OAuth accounts
+and `CLAUDE_CODE_OAUTH_TOKEN*` env accounts stay available without it), so the
+two ambient-auth lanes behave identically.
+
+One deliberate difference from a pure "flag gates ambient only" reading: a
+verbatim `enabled: false` remains a hard kill switch that also hides stored
+accounts. That preserves the existing documented opt-out (`enabled: false` /
+`SENPI_CURSOR_CLI_OAUTH_ENABLED=0` disables the lane) and its tests; without
+the `explicitlyDisabled` distinction, flipping the default to false would
+silently turn that kill switch into a no-op for anyone with stored accounts.
+
+### Why
+
+- The lane reported itself AVAILABLE merely because a vendor CLI happened to be
+  logged in on the host: `cursor-agent` installed plus a native `cursor`
+  credential was enough for the bootstrap reader to mint a managed account and
+  for `check` to report `configured`. Spending a user's Cursor subscription
+  needs senpi-side consent, not host state.
+
+### Why an extension could not handle it
+
+- This IS the builtin extension that owns the provider's settings contract,
+  credential reader, availability predicate, and turn path. No external hook can
+  change a builtin provider's default settings or its `oauth.check` verdict.
+
+### Expected merge conflict zones
+
+- LOW: fork-only `settings.ts` (`DEFAULT_SETTINGS`, `resolveSettings`),
+  `oauth-login.ts` (`assessConfiguration` head), `stream.ts` (the settings gate
+  at the top of the turn body), `index.ts` (`canBootstrap`). Conflicts are
+  expected only against concurrent hardening of this same lane - notably the
+  parallel claude-sdk-oauth opt-in change, which touches its own directory.
+
+## 2026-08-18 - Cursor CLI lane reasoning + catalog normalization
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/spawn-model.ts` (new): resolves one
+  `--model` argv element per turn from the shared cursor selection resolver.
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/stream.ts`: resolves the spawn model
+  once and uses it for both session routing and every failover spawn.
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models.ts`: the CLI listing, the cached
+  catalog, and the offline static fallback all normalize through the shared grouping, replacing the
+  label-derived context-window heuristic with the live capability table.
+
+### Why
+
+- The CLI lane is the second Cursor surface: senpi reasoning levels must drive it through the same
+  abstraction, and its label heuristic reported stale windows (e.g. Grok 4.6 as 200K).
+
+### Why an extension could not handle it
+
+- This is itself the builtin extension that owns the lane's catalog and subprocess spawn arguments.
+
+### Expected merge conflict zones
+
+- `models.ts` entry construction, `stream.ts` spawn/turn-input sites.
+
 ## 2026-08-18 - Default-on native credential bootstrap
 
 ### What changed

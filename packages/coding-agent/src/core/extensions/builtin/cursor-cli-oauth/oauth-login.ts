@@ -42,7 +42,23 @@ const DISABLED_MESSAGE = "disabled by settings";
 const FILE_STORE_LANE = "file-store" as const;
 const DEFAULT_IMPORTED_EXPIRY_MS = 60 * 60 * 1000;
 
-type CursorCliOauthSettings = Pick<CursorCliOauthProviderSettings, "enabled" | "executablePath">;
+type CursorCliOauthSettings = Pick<CursorCliOauthProviderSettings, "enabled" | "executablePath"> &
+	Partial<Pick<CursorCliOauthProviderSettings, "explicitlyDisabled">>;
+
+/**
+ * The opt-in rule, in one place so availability, turn-time resolution, and the
+ * host-derived bootstrap gate cannot disagree.
+ *
+ * - `enabled: false` written verbatim in settings or the environment is a kill
+ *   switch: the lane is off regardless of what is stored.
+ * - Otherwise the flag gates only the host-CLI-derived opt-in. Stored senpi account slots
+ *   exist only because the user ran `/login cursor-cli-oauth` or
+ *   `/cursor-account import`, and that explicit action IS the opt-in.
+ */
+export function isCursorCliOauthLaneEnabled(settings: CursorCliOauthSettings, storedAccountCount: number): boolean {
+	if (settings.explicitlyDisabled === true) return false;
+	return settings.enabled || storedAccountCount > 0;
+}
 
 type ImportedCursorCredential = {
 	access: string;
@@ -110,14 +126,17 @@ type ConfigurationOutcome =
  */
 async function assessConfiguration(deps: CursorCliOauthConfigDeps): Promise<ConfigurationOutcome> {
 	const settings = deps.readSettings();
-	if (!settings.enabled) return { status: "disabled" };
+	if (settings.explicitlyDisabled === true) return { status: "disabled" };
 	try {
 		deps.resolveExecutable(settings);
 	} catch (error) {
 		return { status: "not-installed", error };
 	}
 
+	// Read the stored slots before applying the flag: an explicit senpi-side login
+	// is itself the opt-in, so only the flagless host-derived shape reports disabled.
 	const accounts = usableAccounts(await deps.readCurrent());
+	if (!isCursorCliOauthLaneEnabled(settings, accounts.length)) return { status: "disabled" };
 	if (accounts.length === 0) return { status: "no-accounts" };
 	return {
 		status: "configured",

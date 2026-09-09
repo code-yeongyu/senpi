@@ -6,7 +6,13 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { copyContextProvenance, type ImageContent, type Message, type TextContent } from "@earendil-works/pi-ai";
+import {
+	copyContextProvenance,
+	dropFailedAssistantTurns,
+	type ImageContent,
+	type Message,
+	type TextContent,
+} from "@earendil-works/pi-ai";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -28,35 +34,22 @@ export const GOAL_CONTINUATION_MESSAGE_TYPE = "goal-continuation";
 /**
  * Per-type exclusion must remain false: compaction and branch summarization
  * inspect entries independently, where excluding this type would hide the live
- * goal-continuation message. Whole-context filtering below removes only stale
- * goal-continuation entries while retaining the last triggering message.
+ * goal-continuation message.
  */
 export function isContextExcludedCustomMessage(_customType: string): boolean {
 	return false;
 }
 
-function keepLatestGoalContinuationMessage(messages: AgentMessage[]): AgentMessage[] {
-	let lastGoalContinuationIndex = -1;
-
-	for (let index = 0; index < messages.length; index++) {
-		const message = messages[index];
-		if (message.role === "custom" && message.customType === GOAL_CONTINUATION_MESSAGE_TYPE) {
-			lastGoalContinuationIndex = index;
-		}
-	}
-
-	if (lastGoalContinuationIndex === -1) return messages;
-
-	return messages.filter(
-		(message, index) =>
-			index === lastGoalContinuationIndex ||
-			message.role !== "custom" ||
-			message.customType !== GOAL_CONTINUATION_MESSAGE_TYPE,
-	);
-}
-
+/**
+ * Whole-context filtering is deliberately a no-op. Goal continuations are
+ * append-only: dropping an already-sent continuation would rewrite a
+ * provider-visible turn, so request N would stop being a prefix of request N+1
+ * and every cached token ahead of the edit would be invalidated (full re-read,
+ * cost spike, 429 storms in team mode). Continuation history is bounded by
+ * normal compaction instead of by per-request deletion.
+ */
 export function filterContextExcludedMessages(messages: AgentMessage[]): AgentMessage[] {
-	return keepLatestGoalContinuationMessage(messages);
+	return messages;
 }
 
 /**
@@ -103,12 +96,20 @@ export interface CompactionSummaryMessage {
 	timestamp: number;
 }
 
+export interface ConfigurationUpdateMessage {
+	role: "configurationUpdate";
+	content: (TextContent | ImageContent)[];
+	effort: string;
+	timestamp: number;
+}
+
 // Extend CustomAgentMessages via declaration merging
 declare module "@earendil-works/pi-agent-core" {
 	interface CustomAgentMessages {
 		bashExecution: BashExecutionMessage;
 		custom: CustomMessage;
 		branchSummary: BranchSummaryMessage;
+		configurationUpdate: ConfigurationUpdateMessage;
 	}
 }
 
@@ -186,7 +187,9 @@ export function createCustomMessage(
 export function convertToLlm(messages: AgentMessage[]): Message[] {
 	const withContextProvenance = <T extends Message>(source: AgentMessage, target: T): T =>
 		copyContextProvenance(source, target);
-	return keepLatestGoalContinuationMessage(messages)
+	// Continuations are append-only here too: the transport array must extend the
+	// previous request verbatim to keep the provider's cache prefix valid.
+	const converted = messages
 		.map((m): Message | undefined => {
 			switch (m.role) {
 				case "bashExecution":
@@ -225,6 +228,8 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						],
 						timestamp: m.timestamp,
 					});
+				case "configurationUpdate":
+					return m;
 				case "user":
 				case "assistant":
 				case "toolResult":
@@ -236,6 +241,12 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 			}
 		})
 		.filter((m) => m !== undefined);
+	// Failed provider turns (stopReason error/aborted) must never reach an LLM
+	// request: lanes that build requests straight from this output (claude-sdk
+	// prompt bridge, cursor turns) would otherwise replay their partial text and
+	// unexecuted tool calls, and token estimation would count them. Dropping is
+	// deterministic per session state, so the cache-prefix guarantee above holds.
+	return dropFailedAssistantTurns(converted);
 }
 
 // ============================================================================

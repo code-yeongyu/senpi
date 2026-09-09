@@ -4,10 +4,12 @@ import { join } from "node:path";
 import {
 	type Api,
 	type AssistantMessage,
+	type AssistantMessageEvent,
 	createAssistantMessageEventStream,
 	type Model,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import { KIMI_CODE_RETRY_PROFILE } from "@earendil-works/pi-ai/utils/retry-profile/profiles";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
@@ -18,6 +20,75 @@ import { type Settings, SettingsManager } from "../src/core/settings-manager.ts"
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
 describe("createAgentSession stream options", () => {
+	it("ordinary AgentSession streamSimple turns fail over pooled credentials", async () => {
+		const model = createModel("openai-completions");
+		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+		await authStorage.modify(model.provider, async () => ({
+			type: "api_key",
+			key: "one",
+			accounts: [
+				{ name: "one", key: "one" },
+				{ name: "two", key: "two" },
+			],
+		}));
+		const modelRegistry = await createModelRegistry(authStorage, join(agentDir, "models.json"));
+		const attempts: string[] = [];
+		modelRegistry.registerProvider(model.provider, {
+			api: model.api,
+			streamSimple: (_model, _context, options) => {
+				attempts.push(options?.apiKey ?? "missing");
+				const stream = createAssistantMessageEventStream();
+				const startEvent = {
+					type: "start",
+					partial: {
+						role: "assistant",
+						content: [],
+						api: model.api,
+						provider: model.provider,
+						model: model.id,
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+						stopReason: "stop",
+						timestamp: Date.now(),
+					},
+				} satisfies AssistantMessageEvent;
+				if (attempts.length === 1) {
+					stream.push(structuredClone(startEvent));
+					throw Object.assign(new Error("401 unauthorized"), { status: 401 });
+				}
+				// Real providers emit events after the stream is returned and finish
+				// with a terminal "done" event; the runtime derives the final message
+				// from that event, never from a bare end() call.
+				const { message } = createDoneStream(model.api);
+				queueMicrotask(() => {
+					stream.push(structuredClone(startEvent));
+					stream.push({ type: "done", reason: "stop", message });
+				});
+				return stream;
+			},
+		});
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			model,
+			modelRuntime: getModelRuntime(modelRegistry),
+			settingsManager: SettingsManager.inMemory({}),
+			sessionManager: SessionManager.inMemory(cwd),
+		});
+		try {
+			await session.prompt("hello");
+		} finally {
+			session.dispose();
+		}
+		expect(attempts).toHaveLength(2);
+		expect(new Set(attempts).size).toBe(2);
+	});
 	let tempDir: string;
 	let cwd: string;
 	let agentDir: string;
@@ -72,7 +143,7 @@ describe("createAgentSession stream options", () => {
 			timestamp: Date.now(),
 		};
 		stream.end(message);
-		return stream;
+		return { stream, message };
 	}
 
 	async function captureStreamOptions(
@@ -80,6 +151,7 @@ describe("createAgentSession stream options", () => {
 		settings: Partial<Settings>,
 		requestOptions: SimpleStreamOptions = {},
 		extensionSource?: string,
+		retryPolicy?: typeof KIMI_CODE_RETRY_PROFILE,
 	): Promise<SimpleStreamOptions | undefined> {
 		const model = createModel(api);
 		const settingsManager = SettingsManager.inMemory(settings);
@@ -97,9 +169,10 @@ describe("createAgentSession stream options", () => {
 		modelRegistry.registerProvider(model.provider, {
 			api,
 			headers: { "x-provider": "provider" },
+			...(retryPolicy !== undefined ? { retryPolicy } : {}),
 			streamSimple: (_model, _context, providerOptions) => {
 				capturedOptions = providerOptions;
-				return createDoneStream(api);
+				return createDoneStream(api).stream;
 			},
 		});
 
@@ -214,6 +287,22 @@ describe("createAgentSession stream options", () => {
 		});
 
 		expect(options?.maxRetries).toBe(2);
+		expect(options?.maxRetryDelayMs).toBe(3000);
+	});
+
+	it("a declared profile with a disabled providerRequest stage sends zero transport retries", async () => {
+		// The kimi-code profile disables the transport stage so user
+		// retry.provider.maxRetries cannot hand it a hidden second budget on top
+		// of the turn stage's own 9.
+		const options = await captureStreamOptions(
+			"anthropic-messages",
+			{ retry: { provider: { maxRetries: 2, maxRetryDelayMs: 3000 } } },
+			{},
+			undefined,
+			KIMI_CODE_RETRY_PROFILE,
+		);
+
+		expect(options?.maxRetries).toBe(0);
 		expect(options?.maxRetryDelayMs).toBe(3000);
 	});
 

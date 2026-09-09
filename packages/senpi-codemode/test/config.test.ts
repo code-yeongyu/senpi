@@ -6,6 +6,7 @@ import {
 	defaultCodemodeSettings,
 	loadCodemodeSettings,
 	resolveEnabledLanguages,
+	resolveForegroundWindowSeconds,
 	resolveHardLimitSeconds,
 } from "../src/config/settings.ts";
 
@@ -34,6 +35,7 @@ describe("codemode settings", () => {
 			expect(loaded.settings).toEqual({
 				languages: { py: false, js: true, rb: true, jl: false },
 				cellTimeoutSeconds: 30,
+				foregroundWindowSeconds: 60,
 				hardLimitSeconds: 1800,
 				parallelPoolWidth: 9,
 				taskTools: { task: "task", output: "task_output" },
@@ -63,6 +65,7 @@ describe("codemode settings", () => {
 			expect(loaded.settings).toEqual({
 				languages: { py: true, js: false, rb: false, jl: true },
 				cellTimeoutSeconds: 12,
+				foregroundWindowSeconds: 60,
 				hardLimitSeconds: 1800,
 				parallelPoolWidth: 4,
 				taskTools: { task: "task", output: "task_output" },
@@ -230,6 +233,49 @@ describe("codemode settings", () => {
 
 		for (const value of ["0", "-5", "abc", ""]) {
 			expect(resolveHardLimitSeconds(settings, { SENPI_CODEMODE_HARD_LIMIT_SECONDS: value })).toBe(90);
+		}
+	});
+
+	it("defaults foregroundWindowSeconds to the bash-parity 60s window", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-config-"));
+		try {
+			const loaded = await loadCodemodeSettings({ cwd: join(root, "project"), homeDir: join(root, "home") });
+
+			expect(loaded.settings.foregroundWindowSeconds).toBe(60);
+			expect(defaultCodemodeSettings.foregroundWindowSeconds).toBe(60);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reads foregroundWindowSeconds from the settings file", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-config-"));
+		try {
+			const projectDir = join(root, "project");
+			await mkdir(join(projectDir, ".senpi"), { recursive: true });
+			await writeFile(join(projectDir, ".senpi", "codemode.json"), JSON.stringify({ foregroundWindowSeconds: 15 }));
+
+			const loaded = await loadCodemodeSettings({ cwd: projectDir, homeDir: join(root, "home") });
+
+			expect(loaded.warnings).toEqual([]);
+			expect(loaded.settings.foregroundWindowSeconds).toBe(15);
+			expect(resolveForegroundWindowSeconds(loaded.settings, {})).toBe(15);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("lets the environment override beat the settings file foreground window", () => {
+		const settings = { ...defaultCodemodeSettings, foregroundWindowSeconds: 15 };
+
+		expect(resolveForegroundWindowSeconds(settings, { SENPI_CODEMODE_FOREGROUND_SECONDS: "7" })).toBe(7);
+	});
+
+	it("ignores a non-positive or malformed foreground window environment value", () => {
+		const settings = { ...defaultCodemodeSettings, foregroundWindowSeconds: 15 };
+
+		for (const value of ["0", "-5", "abc", ""]) {
+			expect(resolveForegroundWindowSeconds(settings, { SENPI_CODEMODE_FOREGROUND_SECONDS: value })).toBe(15);
 		}
 	});
 });

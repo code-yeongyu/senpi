@@ -3,6 +3,13 @@ import "./providers/images/register-builtins.ts";
 import { getImagesApiProvider } from "./images-api-registry.ts";
 import type { AssistantImages, ImagesApi, ImagesContext, ImagesModel, ProviderImagesOptions } from "./types.ts";
 
+export {
+	type OpenAIImageQuality,
+	type OpenAIImageSize,
+	type OpenAIImagesOptions,
+	parseOpenAIImageSize,
+} from "./api/openai-images-params.ts";
+
 function resolveImagesApiProvider(api: ImagesApi) {
 	const provider = getImagesApiProvider(api);
 	if (!provider) {

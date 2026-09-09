@@ -16,12 +16,12 @@ describe("status indicators", () => {
 		vi.useRealTimers();
 	});
 
-	it("keeps idle status at the same height as status indicators", () => {
-		const idleStatus = new IdleStatus();
+	it("renders the configured reserved height and defaults to two rows", () => {
+		const defaultLines = new IdleStatus().render(20);
+		const measuredLines = new IdleStatus(4).render(20);
 
-		const lines = idleStatus.render(20);
-		expect(lines).toHaveLength(2);
-		expect(lines).toEqual([" ".repeat(20), " ".repeat(20)]);
+		expect(defaultLines).toEqual([" ".repeat(20), " ".repeat(20)]);
+		expect(measuredLines).toEqual(Array.from({ length: 4 }, () => " ".repeat(20)));
 	});
 
 	it("keeps the cancellation hint visible on narrow terminals before progress arrives", () => {

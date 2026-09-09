@@ -55,6 +55,11 @@ describe("validateFallbackChains", () => {
 			],
 		},
 		{
+			name: "wildcard control key",
+			chains: { "*": [] },
+			warnings: [],
+		},
+		{
 			name: "invalid and unknown selectors",
 			chains: {
 				"openai/missing": ["anthropic/missing", "not a selector"],

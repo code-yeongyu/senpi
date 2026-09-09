@@ -3,10 +3,17 @@ import type { EvalDetachedCellNotification, EvalDetachedCellNotifier } from "../
 
 const NON_INTERACTIVE_MODES = new Set(["print", "json"]);
 
+/** Provenance marker for agent-internal detached-cell notices. */
+export const EVAL_NOTIFICATION_CUSTOM_TYPE = "senpi-codemode:notification";
+
 export type EvalNotifyMode = "wake" | "next-turn" | "off";
 
 export interface EvalNotifierDeps {
-	readonly sendUserMessage: (content: string, options?: { deliverAs?: "steer" | "followUp" }) => void;
+	/** Deliver a model-visible notification without rendering synthetic user input. */
+	readonly sendMessage: (
+		message: { customType: string; content: string; display: boolean },
+		options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" },
+	) => void;
 	readonly getContext: () => ExtensionContext | undefined;
 	readonly getMode: () => EvalNotifyMode;
 }
@@ -33,8 +40,13 @@ export class EvalNotifier implements EvalDetachedCellNotifier {
 		const pending = cells.filter((cell) => !this.#notified.has(cell.cellId));
 		if (pending.length === 0) return;
 		for (const cell of pending) this.#notified.add(cell.cellId);
-		this.#deps.sendUserMessage(pending.map((cell) => cell.content).join("\n\n"), {
-			deliverAs: mode === "wake" ? "steer" : "followUp",
-		});
+		this.#deps.sendMessage(
+			{
+				customType: EVAL_NOTIFICATION_CUSTOM_TYPE,
+				content: pending.map((cell) => cell.content).join("\n\n"),
+				display: false,
+			},
+			{ triggerTurn: true, deliverAs: mode === "wake" ? "steer" : "followUp" },
+		);
 	}
 }

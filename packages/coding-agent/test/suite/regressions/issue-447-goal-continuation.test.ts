@@ -119,7 +119,12 @@ describe("issue #447: goal continuation guardrails", () => {
 		expect(notices).not.toContainEqual(expect.stringContaining("continuation cap reached"));
 	});
 
-	it("does not send consumed goal-continuation prompts in the next faux-provider request", async () => {
+	it("sends historical goal-continuation prompts to the provider in stable chronological order", async () => {
+		// #447 bounds how many *new* continuations the goal extension queues (covered by
+		// the queueing tests above). Once a continuation has been sent, it stays in
+		// provider-visible history: deleting it per request would rewrite the cached
+		// prefix and force a full re-read every turn (#1005). Growth is bounded by
+		// normal compaction, not by per-request deletion.
 		const harness = await createHarness();
 		harnesses.push(harness);
 		harness.sessionManager.appendMessage({ role: "user", content: "begin the goal", timestamp: 1 });
@@ -140,8 +145,12 @@ describe("issue #447: goal continuation guardrails", () => {
 		const continuationPrompts = request.context.messages.filter(
 			(message) => message.role === "user" && getMessageText(message).startsWith("consumed continuation"),
 		);
-		expect(continuationPrompts).toHaveLength(1);
-		expect(getMessageText(continuationPrompts[0]!)).toBe("consumed continuation 299");
+		expect(continuationPrompts).toHaveLength(300);
+		expect(getMessageText(continuationPrompts[0]!)).toBe("consumed continuation 0");
+		expect(getMessageText(continuationPrompts[299]!)).toBe("consumed continuation 299");
+		// the freshly typed prompt is still the final turn the provider sees
+		const lastMessage = request.context.messages[request.context.messages.length - 1];
+		expect(getMessageText(lastMessage)).toBe("make the next provider request");
 	});
 
 	it("allows one truncation recovery, then blocks rather than looping on length stops", async () => {
@@ -200,7 +209,7 @@ describe("issue #447: goal continuation guardrails", () => {
 		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({ status: "active", consecutiveContinuations: 1 });
 	});
 
-	it("blocks the goal when a terminal provider error has no retry remaining", async () => {
+	it("keeps the goal active and queues one provider recovery when a terminal provider error has no retry remaining", async () => {
 		const notices: string[] = [];
 		const harness = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "issue-447-terminal-error");
@@ -210,11 +219,11 @@ describe("issue #447: goal continuation guardrails", () => {
 		await runContinuationTurn(harness, ctx, assistantStopWithReason("error", "provider exhausted retries"), false);
 
 		expect(harness.sent).toHaveLength(0);
-		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({
-			status: "blocked",
-			blockedReason: "provider error ended the turn (retries exhausted)",
-		});
-		expect(notices).toContainEqual(expect.stringContaining("provider error ended the turn"));
+		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({ status: "active" });
+		expect(notices).toEqual([]);
+		await runGoalHandlers(harness.handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		await waitForSentCount(harness, 1);
+		expect(harness.sent[0]?.message.customType).toBe(GOAL_CONTINUATION_MESSAGE_TYPE);
 	});
 
 	it("does not replay hundreds of trailing continuations when the flooded session loads", async () => {

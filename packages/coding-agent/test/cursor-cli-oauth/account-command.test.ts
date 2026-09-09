@@ -51,6 +51,7 @@ function asCredential(value: Credential | undefined): CursorCliOauthCredential {
 function defaultSettings(overrides: Partial<CursorCliOauthProviderSettings> = {}): CursorCliOauthProviderSettings {
 	return {
 		enabled: true,
+		explicitlyDisabled: false,
 		executablePath: undefined,
 		forceExecution: true,
 		noApprovalAcknowledgedAt: undefined,

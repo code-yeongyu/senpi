@@ -23,6 +23,7 @@ import {
 	transformContext,
 	wrapStreamWithToolCallMiddleware,
 } from "@earendil-works/pi-ai";
+import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
 import { composeApiKeyAuth, configuredApiKey, configuredHeaders, withConfiguredAuth } from "./provider-api-key-auth.ts";
 import { configuredHeaderAuthStatus, type HeaderAuthStatusSource } from "./provider-header-auth.ts";
@@ -66,6 +67,7 @@ export interface ProviderConfigInput {
 	extraBody?: Record<string, unknown>;
 	authHeader?: boolean;
 	oauth?: ExtensionOAuthConfig;
+	retryPolicy?: RetryPolicyProfile;
 	models?: Array<{
 		id: string;
 		name: string;
@@ -88,6 +90,14 @@ export interface ProviderConfigInput {
 		compat?: Model<Api>["compat"];
 	}>;
 	refreshModels?(context: RefreshModelsContext): Promise<NonNullable<ProviderConfigInput["models"]>>;
+	/**
+	 * Deterministic usability gate for implicit fallback expansion. Return `false`
+	 * while this lane is guaranteed to refuse unattended execution (for example an
+	 * unacknowledged approval gate); the provider stays registered and explicitly
+	 * selectable, but bare-family fallback expansion skips it. Re-evaluated on
+	 * every expansion, so a settings change takes effect without re-registration.
+	 */
+	fallbackEligible?(): boolean;
 }
 
 export type AuthStatus = {
@@ -167,7 +177,7 @@ function modelFromJson(
 	providerId: string,
 	definition: ModelsJsonModel,
 	providerConfig: ModelsJsonProvider,
-	defaults: Model<Api> | undefined,
+	defaults: { api?: Api; baseUrl?: string } | undefined,
 ): ModelWithConfigMetadata {
 	const api = definition.api ?? providerConfig.api ?? defaults?.api;
 	if (!api) {
@@ -204,15 +214,22 @@ function modelFromJson(
 	};
 }
 
+function findModelDefaults(models: readonly Model<Api>[], modelId: string, api?: Api): Model<Api> | undefined {
+	return (
+		models.find((model) => model.id === modelId) ??
+		(api ? models.find((model) => model.api === api) : undefined) ??
+		models.find((model) => model.api === "openai-completions") ??
+		models[0]
+	);
+}
+
 function applyModelsJson(
 	providerId: string,
 	baseModels: readonly Model<Api>[],
 	config: ModelsJsonProvider | undefined,
+	extension: ProviderConfigInput | undefined,
 ): Model<Api>[] {
 	if (!config) return [...baseModels];
-	if (config.oauth && !config.baseUrl) {
-		throw new Error(`Provider ${providerId}: "baseUrl" is required when "oauth" is set.`);
-	}
 	const hasOverrides = config.modelOverrides && Object.keys(config.modelOverrides).length > 0;
 	if (
 		!config.models?.length &&
@@ -224,7 +241,6 @@ function applyModelsJson(
 		!config.whitelist &&
 		!config.blacklist &&
 		!config.apiKey &&
-		!config.oauth &&
 		config.authHeader === undefined
 	) {
 		throw new Error(
@@ -236,13 +252,23 @@ function applyModelsJson(
 	const configuredBaseModels = providerId === "ollama" && config.models?.length ? [] : baseModels;
 	const models: Model<Api>[] = configuredBaseModels.map((model) => ({
 		...model,
-		baseUrl: config.oauth === "radius" ? model.baseUrl : (config.baseUrl ?? model.baseUrl),
+		baseUrl: config.baseUrl ?? model.baseUrl,
 		compat: mergeCompat(model.compat, config.compat),
 	}));
 	for (const definition of config.models ?? []) {
 		const existingIndex = models.findIndex((model) => model.id === definition.id);
-		const defaults = existingIndex >= 0 ? models[existingIndex] : models[0];
-		const model = modelFromJson(providerId, definition, config, defaults);
+		const defaults =
+			existingIndex >= 0
+				? models[existingIndex]
+				: findModelDefaults(models, definition.id, definition.api ?? extension?.api ?? config.api);
+		// Extension-provided api/baseUrl still win over the resolved defaults so a
+		// models.json extension can retarget an inherited built-in entry, and remain
+		// the fallback when no built-in default exists (empty catalog).
+		const model = modelFromJson(providerId, definition, config, {
+			...defaults,
+			api: extension?.api ?? defaults?.api,
+			baseUrl: extension?.baseUrl ?? defaults?.baseUrl,
+		});
 		if (existingIndex >= 0) models[existingIndex] = model;
 		else models.push(model);
 	}
@@ -258,13 +284,15 @@ function applyExtension(
 	providerId: string,
 	models: readonly Model<Api>[],
 	config: ProviderConfigInput | undefined,
+	customModelIds: ReadonlySet<string>,
 ): Model<Api>[] {
 	if (!config) return [...models];
 	if (!config.models) {
 		return config.baseUrl ? models.map((model) => ({ ...model, baseUrl: config.baseUrl! })) : [...models];
 	}
-	return config.models.map((definition) => {
-		const defaults = models.find((model) => model.id === definition.id) ?? models[0];
+	const declaredModels = config.models;
+	const extensionModels = declaredModels.map((definition) => {
+		const defaults = findModelDefaults(models, definition.id, definition.api ?? config.api);
 		const api = definition.api ?? config.api ?? defaults?.api;
 		if (!api) {
 			throw new Error(
@@ -281,6 +309,12 @@ function applyExtension(
 			headers: undefined,
 		};
 	});
+	return [
+		...extensionModels,
+		...models.filter(
+			(model) => customModelIds.has(model.id) && !declaredModels.some((definition) => definition.id === model.id),
+		),
+	];
 }
 
 function adaptOAuth(config: ExtensionOAuthConfig): OAuthAuth {
@@ -369,7 +403,12 @@ export function validateExtensionProvider(
 	if (extension.streamSimple && !extension.api) {
 		throw new Error(`Provider ${providerId}: "api" is required when registering streamSimple.`);
 	}
-	applyExtension(providerId, applyModelsJson(providerId, base?.getModels() ?? [], modelsConfig), extension);
+	applyExtension(
+		providerId,
+		applyModelsJson(providerId, base?.getModels() ?? [], modelsConfig, extension),
+		extension,
+		new Set((modelsConfig?.models ?? []).map((definition) => definition.id)),
+	);
 }
 
 /** Compose built-in, models.json, and extension layers without reading credentials. */
@@ -389,8 +428,9 @@ export function composeModelProvider(
 	const getModels = () => {
 		let models = applyExtension(
 			providerId,
-			applyModelsJson(providerId, base?.getModels() ?? [], config),
+			applyModelsJson(providerId, base?.getModels() ?? [], config, currentExtension()),
 			currentExtension(),
+			new Set((config?.models ?? []).map((definition) => definition.id)),
 		);
 		if (extensionOAuthCredential && extension?.oauth?.modifyModels) {
 			models = extension.oauth.modifyModels(models, extensionOAuthCredential);
@@ -406,7 +446,6 @@ export function composeModelProvider(
 	const oauth = composeOAuthAuth(providerId, base, config, extension);
 	if (!apiKey && !oauth) throw new Error(`Provider ${providerId}: no authentication method configured.`);
 	// The documented local `ollama` models.json catalog must not invoke the Cloud builtin's refresh with its
-	// placeholder key. Other dynamic providers (notably custom Radius gateways) keep their provider-owned refresh.
 	const refreshBase = providerId === "ollama" && config?.models?.length ? undefined : base?.refreshModels?.bind(base);
 
 	const supportsBaseApi = (model: Model<Api>) => base?.getModels().some((entry) => entry.api === model.api) ?? false;
@@ -449,6 +488,8 @@ export function composeModelProvider(
 		name: extension?.name ?? config?.name ?? base?.name ?? extension?.oauth?.name ?? providerId,
 		baseUrl: extension?.baseUrl ?? config?.baseUrl ?? base?.baseUrl,
 		headers: base?.headers,
+		// Composed providers must not silently drop provider-declared retry profiles.
+		retryPolicy: extension?.retryPolicy ?? base?.retryPolicy,
 		auth: { ...(apiKey ? { apiKey } : {}), ...(oauth ? { oauth } : {}) },
 		getModels,
 		refreshModels:
@@ -463,10 +504,15 @@ export function composeModelProvider(
 							update: () => {
 								if (refreshed) {
 									// Validate before publishing the new synchronous list.
-									applyExtension(providerId, applyModelsJson(providerId, base?.getModels() ?? [], config), {
-										...extension,
-										models: refreshed,
-									});
+									applyExtension(
+										providerId,
+										applyModelsJson(providerId, base?.getModels() ?? [], config, extension),
+										{
+											...extension,
+											models: refreshed,
+										},
+										new Set((config?.models ?? []).map((definition) => definition.id)),
+									);
 									refreshedExtensionModels = refreshed;
 								}
 								extensionOAuthCredential = oauthCredential;

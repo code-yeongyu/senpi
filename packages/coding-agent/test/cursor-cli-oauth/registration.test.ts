@@ -50,6 +50,7 @@ function missingExecutableDeps(store: InMemoryCredentialStore): CursorCliOauthEx
 function enabledSettings(): CursorCliOauthProviderSettings {
 	return {
 		enabled: true,
+		explicitlyDisabled: false,
 		executablePath: undefined,
 		forceExecution: true,
 		noApprovalAcknowledgedAt: undefined,
@@ -220,7 +221,7 @@ describe("cursor-cli-oauth automatic native bootstrap", () => {
 		const registration = await captureRegistrationWithDeps(
 			(pi, deps) => registerCursorCliOauthExtension(pi, deps),
 			bootstrapDeps(store, {
-				loadSettings: () => ({ ...enabledSettings(), enabled: false }),
+				loadSettings: () => ({ ...enabledSettings(), enabled: false, explicitlyDisabled: true }),
 				readNativeCredential,
 			}),
 		);

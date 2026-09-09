@@ -29,7 +29,9 @@ afterEach(() => {
 describe("Cursor CLI OAuth provider settings", () => {
 	it("pins every contract default", () => {
 		expect(parseCursorCliOauthProviderSettings(undefined, {})).toEqual({
-			enabled: true,
+			// Opt-in by contract: a logged-in host cursor-agent is not senpi-side consent.
+			enabled: false,
+			explicitlyDisabled: false,
 			executablePath: undefined,
 			forceExecution: true,
 			noApprovalAcknowledgedAt: undefined,
@@ -64,6 +66,7 @@ describe("Cursor CLI OAuth provider settings", () => {
 			),
 		).toEqual({
 			enabled: true,
+			explicitlyDisabled: false,
 			executablePath: "/settings/cursor-agent",
 			forceExecution: false,
 			noApprovalAcknowledgedAt: "2026-08-17T10:30:00.000Z",
@@ -162,7 +165,9 @@ describe("Cursor CLI OAuth provider settings", () => {
 		(value) => {
 			expect(() => parseCursorCliOauthProviderSettings(value, {})).not.toThrow();
 			expect(parseCursorCliOauthProviderSettings(value, {})).toMatchObject({
-				enabled: true,
+				// A malformed block never opts the lane in and is never a kill switch.
+				enabled: false,
+				explicitlyDisabled: false,
 				forceExecution: true,
 				executionMode: "agent",
 				resumeMode: "auto",

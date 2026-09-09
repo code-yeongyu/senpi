@@ -56,16 +56,66 @@ export class StdioClient {
 
 	async close(): Promise<void> {
 		this.child.stdin.end();
-		if (this.child.exitCode !== null || this.child.signalCode !== null) return;
-		await new Promise<void>((resolveClose) => {
-			const timer = setTimeout(() => {
-				this.killProcessGroup();
-			}, 5_000);
-			this.child.once("close", () => {
-				clearTimeout(timer);
-				resolveClose();
+		const pid = this.child.pid;
+		if (this.child.exitCode === null && this.child.signalCode === null) {
+			await new Promise<void>((resolveClose) => {
+				const timer = setTimeout(() => {
+					this.killProcessGroup();
+				}, 5_000);
+				this.child.once("close", () => {
+					clearTimeout(timer);
+					resolveClose();
+				});
 			});
-		});
+		}
+		// The leader's `close` event says nothing about the rest of its process
+		// group: SIGKILL delivery and reaping of background members (e.g. a shell's
+		// `sleep &`) complete asynchronously after the leader is gone. Callers rely
+		// on close() meaning "the group is gone" so a spawned app-server leaves no
+		// stragglers holding the vitest fork pool open, so wait for that exact
+		// condition rather than assuming it.
+		await this.waitForProcessGroupExit(pid);
+	}
+
+	/**
+	 * Resolves once no process remains in `pid`'s group, observed through
+	 * `kill(-pid, 0)` (the only signal available: background group members are
+	 * not children of this process, so they emit no event here). Escalates once
+	 * for the case where the leader exited on stdin EOF while background members
+	 * survived, then only observes - re-signalling a group mid-teardown races the
+	 * reaper and reports the transient EPERM of a zombie we may no longer signal.
+	 * Bounded, and yields to the event loop between probes rather than sleeping a
+	 * fixed span.
+	 */
+	private async waitForProcessGroupExit(pid: number | undefined): Promise<void> {
+		if (pid === undefined || process.platform === "win32") return;
+		if (this.processGroupIsGone(pid)) return;
+		try {
+			this.killProcessGroup();
+		} catch (error) {
+			// EPERM: a member survives that we may not signal; the probe below is the
+			// authority on whether it goes away.
+			if ((error as NodeJS.ErrnoException | undefined)?.code !== "EPERM") throw error;
+		}
+		const deadline = Date.now() + 5_000;
+		while (!this.processGroupIsGone(pid)) {
+			if (Date.now() >= deadline) return;
+			await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+		}
+	}
+
+	/**
+	 * True when the group has no members left (`ESRCH`). `EPERM` means a member
+	 * still exists that this process may not signal (typically a zombie awaiting
+	 * reaping), so the group is NOT yet gone.
+	 */
+	private processGroupIsGone(pid: number): boolean {
+		try {
+			process.kill(-pid, 0);
+			return false;
+		} catch (error) {
+			return (error as NodeJS.ErrnoException | undefined)?.code === "ESRCH";
+		}
 	}
 
 	private killProcessGroup(): void {

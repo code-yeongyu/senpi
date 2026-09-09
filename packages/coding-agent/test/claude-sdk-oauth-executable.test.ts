@@ -30,15 +30,15 @@ describe("claudeCodeExecutableCandidates", () => {
 		]);
 	});
 
-	it("tries musl first, then glibc on linux-x64", () => {
+	it("tries glibc first, then musl on linux-x64 by default", () => {
 		expect(claudeCodeExecutableCandidates("linux", "x64")).toEqual([
-			"@anthropic-ai/claude-agent-sdk-linux-x64-musl/claude",
 			"@anthropic-ai/claude-agent-sdk-linux-x64/claude",
+			"@anthropic-ai/claude-agent-sdk-linux-x64-musl/claude",
 		]);
 	});
 
-	it("tries musl first, then glibc on linux-arm64", () => {
-		expect(claudeCodeExecutableCandidates("linux", "arm64")).toEqual([
+	it("tries musl first, then glibc on a musl linux-arm64 host", () => {
+		expect(claudeCodeExecutableCandidates("linux", "arm64", true)).toEqual([
 			"@anthropic-ai/claude-agent-sdk-linux-arm64-musl/claude",
 			"@anthropic-ai/claude-agent-sdk-linux-arm64/claude",
 		]);
@@ -55,15 +55,74 @@ describe("resolveClaudeCodeExecutable", () => {
 	it("honors CLAUDE_CODE_EXECUTABLE before anything else", () => {
 		const deps = makeDeps({
 			env: (name) => (name === "CLAUDE_CODE_EXECUTABLE" ? "/custom/claude" : undefined),
+			isMusl: () => {
+				throw new Error("must not detect libc when overridden");
+			},
 		});
 		expect(resolveClaudeCodeExecutable(deps)).toBe("/custom/claude");
 	});
 
-	it("resolves the first candidate that exists", () => {
+	it("prefers glibc on a glibc Linux host", () => {
 		const seen: string[] = [];
 		const deps = makeDeps({
 			platform: "linux",
 			arch: "x64",
+			isMusl: () => false,
+			resolve: (spec) => {
+				seen.push(spec);
+				return `/resolved/${spec}`;
+			},
+		});
+		expect(resolveClaudeCodeExecutable(deps)).toBe("/resolved/@anthropic-ai/claude-agent-sdk-linux-x64/claude");
+		expect(seen).toEqual(["@anthropic-ai/claude-agent-sdk-linux-x64/claude"]);
+	});
+
+	it("prefers musl on a musl Linux host", () => {
+		const deps = makeDeps({
+			platform: "linux",
+			arch: "arm64",
+			isMusl: () => true,
+			resolve: (spec) => `/resolved/${spec}`,
+		});
+		expect(resolveClaudeCodeExecutable(deps)).toBe(
+			"/resolved/@anthropic-ai/claude-agent-sdk-linux-arm64-musl/claude",
+		);
+	});
+
+	it("defaults to glibc when libc detection is inconclusive", () => {
+		const deps = makeDeps({
+			platform: "linux",
+			arch: "x64",
+			resolve: (spec) => `/resolved/${spec}`,
+		});
+		expect(resolveClaudeCodeExecutable(deps)).toBe("/resolved/@anthropic-ai/claude-agent-sdk-linux-x64/claude");
+	});
+
+	it("falls back to musl when only that Linux package is installed", () => {
+		const seen: string[] = [];
+		const deps = makeDeps({
+			platform: "linux",
+			arch: "x64",
+			isMusl: () => false,
+			resolve: (spec) => {
+				seen.push(spec);
+				if (!spec.includes("musl")) throw new Error("not found");
+				return `/resolved/${spec}`;
+			},
+		});
+		expect(resolveClaudeCodeExecutable(deps)).toBe("/resolved/@anthropic-ai/claude-agent-sdk-linux-x64-musl/claude");
+		expect(seen).toEqual([
+			"@anthropic-ai/claude-agent-sdk-linux-x64/claude",
+			"@anthropic-ai/claude-agent-sdk-linux-x64-musl/claude",
+		]);
+	});
+
+	it("falls back to glibc when only that Linux package is installed", () => {
+		const seen: string[] = [];
+		const deps = makeDeps({
+			platform: "linux",
+			arch: "x64",
+			isMusl: () => true,
 			resolve: (spec) => {
 				seen.push(spec);
 				if (spec.includes("musl")) throw new Error("not found");

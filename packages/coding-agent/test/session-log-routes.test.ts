@@ -487,7 +487,15 @@ describe("session.log stuck-route instrumentation", () => {
 		if (typeof queueCompactionMessage !== "function") throw new Error("Expected queueCompactionMessage");
 		const sessionLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
 		const context = {
-			compactionQueuedMessages: [] as Array<{ text: string; mode: string; enqueueOrder: number }>,
+			optimisticUserEchoes: {
+				begin: vi.fn(() => "pending-test"),
+			},
+			compactionQueuedMessages: [] as Array<{
+				text: string;
+				mode: string;
+				enqueueOrder: number;
+				pendingEchoId?: string;
+			}>,
 			session: { reserveQueuedInputOrder: () => 1 },
 			editor: { addToHistory: vi.fn(), setText: vi.fn() },
 			updatePendingMessagesDisplay: vi.fn(),

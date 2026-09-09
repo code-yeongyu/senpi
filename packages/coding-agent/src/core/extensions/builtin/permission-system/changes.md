@@ -22,6 +22,58 @@ Full port of opencode's permission system to senpi-mono as a builtin extension.
 ## Why Builtin Extension?
 Following pi-mono's extension-first philosophy. All permission logic is in the extension, zero core tool modifications.
 
+## 2026-09-07 - monitor path parser derives the approved parent without realpath
+
+### What changed
+
+- `parsers.ts` monitor parser: the approved-parent identity for a `monitor` `path` is now `realpathWithoutOpen(dirname(resolve(cwd, path)))` (shared walker in `src/utils/paths.ts`) instead of `fs.realpathSync(...)`, and the surrounding try/catch is gone because the walker never throws (a missing parent is kept verbatim; registration still performs the authoritative `access` check).
+- `external-dir.ts` imports the same shared walker; its private `normalizePath` copy moved to `src/utils/paths.ts` unchanged so every main-thread path resolution uses one implementation.
+
+### Why
+
+- The `tool_call` hook runs on the host main thread, and the 2026-09-06 fix only covered the command tokenizer. `monitor({ path })` still hit `fs.realpathSync` on the parent directory; Bun's realpath `open(2)`s every directory it resolves, so a path under a wedged autofs trigger (`/home/x.log` on a macOS host whose automounter never answers) froze the whole TUI exactly like #1416.
+- The registry (`terminal/monitor-registry.ts`) compares this approved parent byte-for-byte with its own resolution, and Bun's realpath canonicalises case (`/users/X` -> `/Users/X`), so both sides had to switch to the same walker in one change; see `terminal/changes.md` (2026-09-07).
+
+### Expected merge conflict zones
+
+- `parsers.ts` monitor parser registration block (`registry.register("monitor", ...)`) and its `node:fs` import.
+- `external-dir.ts` import block (the walker body left this file).
+- `test/permission/monitor-parser-parent.test.ts` (new: approved parent with realpath denied, relative path, symlinked parent, execute-only parent).
+
+## 2026-09-06 - external-dir path normalization never opens path components
+
+### What changed
+
+- `external-dir.ts` `normalizePath()` resolves symlinks with a component walker built on `fs.lstatSync` + `fs.readlinkSync` (bounded by `MAX_SYMLINK_HOPS`), keeping components from the first missing one onward verbatim. It replaces the `fs.realpathSync` walk-up that climbed a non-existent path to its nearest existing ancestor.
+
+### Why
+
+- `extractExternalPaths()` runs inside the `tool_call` hook on the host main thread for every `bash`/`monitor` command. Bun implements `fs.realpathSync`, `realpathSync.native`, and `fs.promises.realpath` by `open(2)`-ing the path, so a command that merely mentioned `/home/user/work/x` (a path on a remote Linux box) climbed to `realpathSync("/home")`, an autofs trigger on macOS; the wedged automount never returned and the whole TUI froze (senpi #1416). The same open-based resolution fails with EACCES on execute-only directories, so files under them inside the project were reported as external.
+- `lstat` needs only search permission and never triggers a mount; this is what realpath(3) itself does.
+
+### Expected merge conflict zones
+
+- `external-dir.ts` `normalizePath` body.
+- `test/permission/external-dir-resolution.test.ts` (new file: filesystem-backed `isExternalPath` cases — symlinked cwd, execute-only directory, symlink escape, symlink loop; the symlinked-cwd case moved here from `external-dir.test.ts`).
+
+## 2026-08-21 - Fix unhandled rejection on session shutdown with pending permissions
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: attached immediate rejection catch handler to `service.ask(request)` promise during `tool_call` so that when `session_shutdown` rejects pending permission requests (or cascade rejection occurs), no unhandled promise rejection or `uncaughtException` is triggered while the prompt is pending.
+
+### Why
+
+- When a session is cleared (`/clear`), reloaded, or terminated while a tool permission prompt is pending, `session_shutdown` rejects all pending permission requests with `RejectedError`. Previously, `askPromise` was floating without an attached `.catch()` handler until after the UI prompt resolved, causing Node.js to fire an `unhandledRejection` event that crashed interactive mode via `uncaughtException`.
+
+### Why this belongs in the builtin extension
+
+- External extensions cannot observe or attach a rejection handler to `PermissionService`'s private request promise. The permission-system builtin owns that promise and the `tool_call` / `session_shutdown` lifecycle, so it must attach the handler immediately when creating the request.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts` `tool_call` event handler.
+
 ## 2026-06-23 - permission presets
 
 ### What changed and why

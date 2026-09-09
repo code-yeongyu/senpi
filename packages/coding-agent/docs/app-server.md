@@ -537,8 +537,8 @@ timestamps, paths, and tokens, and preserves frame order, array order, and notif
 From `packages/coding-agent`, build the pinned Codex oracle once, then run the available handshake scenario:
 
 ```bash
-node scripts/qa-app-server/differential/build-oracle.mjs
-node scripts/qa-app-server/differential/run.mjs --scenario handshake
+bun scripts/qa-app-server/differential/build-oracle.mjs
+bun scripts/qa-app-server/differential/run.mjs --scenario handshake
 ```
 
 The build uses `/Users/yeongyu/local-workspaces/codex/codex-rs/Cargo.toml` and writes the binary under that checkout's

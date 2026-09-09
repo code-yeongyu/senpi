@@ -3,7 +3,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME } from "../config.ts";
-import { canonicalizePath, resolvePath } from "../utils/paths.ts";
+import { canonicalizePath, canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
+import { stripBom } from "../utils/text.ts";
 
 export type ProjectTrustDecision = boolean | null;
 
@@ -37,7 +38,17 @@ const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
 ] as const;
 
 function normalizeCwd(cwd: string): string {
-	return canonicalizePath(resolvePath(cwd));
+	const resolved = resolvePath(cwd);
+	try {
+		return canonicalizePathStrict(resolved);
+	} catch {
+		// A workspace path the filesystem will not confirm must not be keyed by its raw
+		// spelling: that is how a decision recorded for one directory leaks to another
+		// that merely writes the same way. Returning the resolved-but-unconfirmed path
+		// keeps the lookup total, and because no stored key can match a location the
+		// kernel does not agree on, the effect is "ask again" rather than "inherit".
+		return resolved;
+	}
 }
 
 function findNearestTrustEntry(data: TrustFile, cwd: string): ProjectTrustStoreEntry | null {
@@ -101,7 +112,7 @@ function readTrustFile(path: string): TrustFile {
 
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(readFileSync(path, "utf-8"));
+		parsed = JSON.parse(stripBom(readFileSync(path, "utf-8")));
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(`Failed to read trust store ${path}: ${message}`);

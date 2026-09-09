@@ -4,6 +4,7 @@ import { AuthStorage } from "../../../auth-storage.ts";
 import type { ExtensionAPI, ProviderModelConfig } from "../../types.ts";
 import { registerCursorCliAccountCommand } from "./account-command.ts";
 import { defaultCursorAgentExecutableDeps, resolveCursorAgentExecutable } from "./executable.ts";
+import { cursorCliForceRefusalPending } from "./guardrails.ts";
 import { resolveCursorCliModelCatalog, STATIC_CURSOR_CLI_MODELS } from "./models.ts";
 import { createCursorCliOauthCredentialReader } from "./native-bootstrap.ts";
 import { CURSOR_CLI_OAUTH_PROVIDER_ID, createCursorCliOauthConfig } from "./oauth-login.ts";
@@ -47,9 +48,11 @@ export function registerCursorCliOauthExtension(pi: ExtensionAPI, deps: CursorCl
 		createCursorCliOauthCredentialReader({
 			store,
 			readNativeCredential: deps.readNativeCredential ?? (() => store.read("cursor")),
+			// Copying the host's native Cursor credential IS the ambient lane, so it
+			// requires the explicit flag - never merely a logged-in cursor-agent.
 			canBootstrap: () => {
 				const settings = loadSettings(cwd);
-				if (!settings.enabled) return false;
+				if (!settings.enabled || settings.explicitlyDisabled) return false;
 				try {
 					resolveExecutable(settings);
 					return true;
@@ -74,6 +77,14 @@ export function registerCursorCliOauthExtension(pi: ExtensionAPI, deps: CursorCl
 			// turn; nothing captured here outlives a settings or credential change.
 			streamSimple: (model, context, options) =>
 				streamCursorCliOauth(model, context, options, { cwd, agentDir, store }),
+			// A kill-switched lane, or one whose unacknowledged --force gate
+			// guarantees a refusal, must not consume an implicit fallback-expansion
+			// slot it can never serve. Only deterministic settings-level states
+			// exclude; explicit selection and /login stay available either way.
+			fallbackEligible: () => {
+				const current = loadSettings(cwd);
+				return !current.explicitlyDisabled && !cursorCliForceRefusalPending(current);
+			},
 			oauth: createCursorCliOauthConfig({
 				readCurrent,
 				readSettings: () => loadSettings(cwd),

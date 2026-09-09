@@ -1,5 +1,111 @@
 # changes
 
+## 2026-09-04 - Apply terminal capability overrides to the startup TUI
+
+### What changed
+
+- `packages/coding-agent/src/cli/startup-ui.ts`: `createStartupTui` calls `setCapabilityOverrides` with the settings manager's resolved terminal capability overrides before registering themes, so the first painted frames honor explicit settings (and the fork's `SENPI_*` env bridge with `PI_*` fallback) instead of raw auto-detection.
+
+### Why
+
+- Capability auto-detection defaults conservatively (hyperlinks stay off on unknown terminals); the startup banner and theme rendering would otherwise flash the wrong link and image behavior before interactive mode applies overrides.
+
+### Why an extension could not handle it
+
+- The startup TUI is constructed before extensions load; capability detection and theme registration are host-owned boot steps.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/cli/startup-ui.ts` ordering inside `createStartupTui` during upstream syncs.
+
+## Opt-in session auto-titling flag (2026-08-28)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts` adds `--auto-title-sessions` (`Args.autoTitleSessions`) and a help row for it, so non-interactive launches can request engine-side session titles.
+
+### Why
+
+- RPC hosts (the desktop app spawns `--mode rpc --multi-session`) had no way to enable session auto-titling, which was hardcoded to interactive mode only.
+
+### Why an extension could not handle it
+
+- Flag parsing happens in the entrypoint before extension flags are registered, and the value is consumed while the first session is constructed.
+
+### Expected merge conflict zones
+
+- LOW: the `Args` fields, the parse branch beside `--multi-session`, and the help rows in `args.ts`.
+
+## CLI argument surface re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts` keeps the fork flags on top of upstream's parser:
+  `--list-tips`, the gated `--grok-neo` chrome switch (via `grok-neo-gate.ts`), and
+  `--multi-session` for independently routed plain-RPC sessions over one stdio process.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The `Args` interface and the `parseArgs` flag chain in `packages/coding-agent/src/cli/args.ts`.
+
+## RPC Unix-socket listener flag (2026-08-23)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts` recognizes `--listen` when `--mode rpc` is active, records the listener address, and enables the multi-session host; the help surface documents stdio, Unix URL, and direct path forms.
+
+### Why
+
+- The multi-connection RPC host needs a first-class CLI listener address without stealing `--listen` from unrelated root/experimental command parsing.
+
+### Why an extension could not handle it
+
+- RPC mode selection and listener startup occur before extension flags are loaded.
+
+### Expected merge conflict zones
+
+- LOW: the `Args` fields, parse branch, and help rows in `args.ts`.
+
+
+## Fork CLI flags and branded help retained over upstream 59a71b23 (2026-08-19)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts` stays divergent from upstream
+  `59a71b235dadb4ad0d67557a8abb0aaa093e68b4` after the pin advance: `parseArgs()` keeps the fork flags
+  `--list-tips`, `--multi-session`, and the gated `--grok-neo` (accepted only when `isGrokNeoEnabled()` from
+  `grok-neo-gate.ts` allows it, with the matching help row emitted conditionally), and `printHelp()` takes the
+  `grokNeoEnabled` parameter that drives that row.
+- `args.ts` help text remains branded and fork-scoped: commands render through `APP_NAME` (including
+  `senpi update [source|self|senpi]`), the `list`/`config` rows carry the fork's `--approve`/`--no-approve`
+  arguments, the `app-server` command and daemon rows plus their usage examples are listed, `--theme` documents
+  register-not-select semantics, and the environment block keeps `OLLAMA_API_KEY`, `OPENGATEWAY_API_KEY`,
+  `ALIBABA_TOKEN_PLAN_API_KEY`, and the `PI_RULES_*` caps.
+
+### Why
+
+- The flags and help rows describe fork-only runtime surfaces (tips catalog, grok chrome, multi-session RPC host,
+  app-server transport, fork-only providers, rules limits) that the new upstream tree has no equivalent for, so
+  taking upstream's parser and help template verbatim would silently drop working CLI entry points.
+
+### Why an extension could not handle it
+
+- Argument parsing and the top-level help surface run before extension flags are registered; extension-provided
+  flags are appended to this template, not able to replace it.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `printHelp()` template literal (upstream edits command/option/environment rows frequently);
+  LOW: the `Args` interface fields and the flag branches in the `parseArgs()` scan loop.
+
 ## Repository audit baseline for the CLI tracker (2026-08-17)
 
 ### What changed

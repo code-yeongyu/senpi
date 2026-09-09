@@ -4,6 +4,7 @@ import {
 	baseSelector,
 	candidatesAfter,
 	canonicalizeFallbackChains,
+	type FallbackChains,
 	type FallbackSelector,
 	formatSelector,
 	parseFallbackSelector,
@@ -17,6 +18,10 @@ export interface ActiveFallbackState {
 	originalSelector: string;
 	originalThinkingLevel?: ThinkingLevel;
 	lastAppliedThinkingLevel?: ThinkingLevel;
+	/** Pin provenance: refusal contributions release on compaction, billing never. */
+	pinnedByRefusal: boolean;
+	pinnedByBilling: boolean;
+	/** Derived OR of the two provenance flags - the only field consumers read. */
 	pinned: boolean;
 }
 
@@ -34,6 +39,8 @@ export interface RetryFallbackControllerDeps {
 		getAll(): Model<Api>[];
 		/** Ranks bare-selector expansion: OAuth-credential providers come first. */
 		isUsingOAuth?(model: Model<Api>): boolean;
+		/** Filters bare-selector expansion: a definitive `false` keeps a lane that can never serve out of the chain. */
+		isFallbackEligible?(model: Model<Api>): boolean;
 	};
 	cooldowns: SelectorCooldowns;
 	logger: FallbackLogger;
@@ -58,6 +65,14 @@ export class RetryFallbackController {
 	private readonly triedSelectors = new Set<string>();
 	private state: ActiveFallbackState | undefined;
 	private lastExhaustedChainKey: string | undefined;
+	// Content-keyed memo of canonicalizeFallbackChains. Provider-error handling calls
+	// canTryFallback/nextCandidate several times per error; without this each call
+	// re-expands bare selectors and re-probes registry eligibility over the full
+	// model set. Keying on the serialized chains content means an unchanged config
+	// reuses the canonical result, while a chains edit invalidates immediately.
+	// Registry mutations without a chains change are not tracked here; they are rare
+	// and in practice coincide with a settings reload that replaces the chains object.
+	private canonicalCache: { key: string; chains: FallbackChains } | undefined;
 
 	constructor(deps: RetryFallbackControllerDeps) {
 		this.deps = deps;
@@ -78,7 +93,17 @@ export class RetryFallbackController {
 
 	clear(): void {
 		this.state = undefined;
+		this.canonicalCache = undefined;
 		this.resetTurn();
+	}
+
+	private canonicalChains(): FallbackChains {
+		const chains = this.deps.getSettings().chains;
+		const key = JSON.stringify(chains);
+		if (this.canonicalCache?.key === key) return this.canonicalCache.chains;
+		const canonical = canonicalizeFallbackChains(chains, this.deps.registry);
+		this.canonicalCache = { key, chains: canonical };
+		return canonical;
 	}
 
 	canTryFallback(): boolean {
@@ -94,7 +119,7 @@ export class RetryFallbackController {
 	hasConfiguredChain(): boolean {
 		const current = this.deps.getCurrentSelector();
 		if (!current) return false;
-		const chains = canonicalizeFallbackChains(this.deps.getSettings().chains, this.deps.registry);
+		const chains = this.canonicalChains();
 		return resolveChainKey(current.model, current.thinkingLevel, chains) !== undefined;
 	}
 
@@ -136,6 +161,30 @@ export class RetryFallbackController {
 		if (this.state) this.state.lastAppliedThinkingLevel = undefined;
 	}
 
+	/**
+	 * A senpi-owned compaction successfully rewrote the conversation context, the
+	 * one safe moment to re-attempt a refusal-pinned fallback's original model:
+	 * the refusal assumption ("the same context refuses again") no longer holds.
+	 * Refusal contributions clear; billing contributions never release - retrying
+	 * the same account never recovers it. Returns true only when the overall pin
+	 * transitioned true -> false, i.e. the caller may now restore the primary via
+	 * the existing maybeRestorePrimary gate.
+	 */
+	notifyCompactionApplied(): boolean {
+		const state = this.state;
+		if (!state) return false;
+		state.pinnedByRefusal = false;
+		const wasPinned = state.pinned;
+		state.pinned = state.pinnedByBilling;
+		if (!wasPinned || state.pinned) return false;
+		this.deps.logger.info("refusal_pin_released", {
+			chainKey: state.chainKey,
+			originalSelector: state.originalSelector,
+			trigger: "compaction",
+		});
+		return true;
+	}
+
 	/** A user-driven model change abandons the fallback window entirely. */
 	clearForManualModelChange(model: Model<Api>): void {
 		if (this.state) {
@@ -150,7 +199,7 @@ export class RetryFallbackController {
 		failure: { errorMessage?: string; retryAfterMs?: number },
 	): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();
-		const candidate = this.nextCandidate();
+		const candidate = this.nextCandidate(false, true);
 		if (!current || !candidate) return false;
 		const currentBase = formatSelector(current.model);
 		if (reason === "transient" || reason === "hard-error" || reason === "billing") {
@@ -160,14 +209,20 @@ export class RetryFallbackController {
 
 		const thinking = this.selectThinking(candidate.selector, candidate.model, current.thinkingLevel);
 		await this.deps.switchModel(candidate.model, thinking, "fallback");
+		this.triedSelectors.add(baseSelector(candidate.selector));
 		const from = formatSelector(current.model);
 		const to = formatSelector(candidate.model);
+		const prior = this.state;
+		const pinnedByRefusal = prior?.pinnedByRefusal === true || reason === "refusal";
+		const pinnedByBilling = prior?.pinnedByBilling === true || reason === "billing";
 		this.state = {
 			chainKey: candidate.chainKey,
-			originalSelector: this.state?.originalSelector ?? from,
-			originalThinkingLevel: this.state?.originalThinkingLevel ?? current.thinkingLevel,
+			originalSelector: prior?.originalSelector ?? from,
+			originalThinkingLevel: prior?.originalThinkingLevel ?? current.thinkingLevel,
 			lastAppliedThinkingLevel: thinking,
-			pinned: this.state?.pinned === true || reason === "refusal" || reason === "billing",
+			pinnedByRefusal,
+			pinnedByBilling,
+			pinned: pinnedByRefusal || pinnedByBilling,
 		};
 		this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason });
 		this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason });
@@ -176,15 +231,18 @@ export class RetryFallbackController {
 
 	private nextCandidate(
 		reserve = true,
+		logDecision = reserve,
 	): { chainKey: string; selector: FallbackSelector; model: Model<Api> } | undefined {
 		const settings = this.deps.getSettings();
 		const current = this.deps.getCurrentSelector();
 		if (!settings.modelFallback || !current) return undefined;
-		const chains = canonicalizeFallbackChains(settings.chains, this.deps.registry);
+		const chains = this.canonicalChains();
+		// A model's own chain wins; models without an explicitly configured chain
+		// do not enter an implicit fallback lane.
 		const chainKey = resolveChainKey(current.model, current.thinkingLevel, chains) ?? this.state?.chainKey;
 		const entries = chainKey ? chains[chainKey] : undefined;
 		if (!chainKey || !entries) {
-			if (reserve) this.deps.logger.debug("no_chain", { selector: formatSelector(current.model) });
+			if (logDecision) this.deps.logger.debug("no_chain", { selector: formatSelector(current.model) });
 			return undefined;
 		}
 		for (const raw of candidatesAfter(entries, formatSelector(current.model, current.thinkingLevel))) {
@@ -219,7 +277,7 @@ export class RetryFallbackController {
 			return { chainKey, selector, model };
 		}
 		this.lastExhaustedChainKey = chainKey;
-		if (reserve) this.deps.logger.info("candidates_exhausted", { chainKey });
+		if (logDecision) this.deps.logger.info("candidates_exhausted", { chainKey });
 		return undefined;
 	}
 

@@ -35,9 +35,10 @@ Senpi loads skills from:
 - CLI: `--skill <path>` (repeatable, additive even with `--no-skills`)
 
 Discovery rules:
-- In `~/.senpi/agent/skills/` and `.senpi/skills/`, direct root `.md` files are discovered as individual skills
+- In `~/.senpi/agent/skills/` and `.senpi/skills/`, direct root `.md` files are discovered as individual skills when they have valid skill frontmatter with a non-empty `description`
 - In all skill locations, directories containing `SKILL.md` are discovered recursively
-- In `~/.agents/skills/` and project `.agents/skills/`, root `.md` files are ignored
+- In `~/.agents/skills/` and project `.agents/skills/`, root `.md` files are ignored, but nested `.md` files in grouping folders are discovered when they declare skill frontmatter
+- Root Markdown files other than `SKILL.md` that do not look like skills are ignored silently
 
 Disable discovery with `--no-skills` (explicit `--skill` paths still load).
 
@@ -131,7 +132,7 @@ description: What this skill does and when to use it. Be specific.
 
 Run once before first use:
 ```bash
-cd /path/to/skill && npm install
+cd /path/to/skill && bun install
 ```
 
 ## Usage
@@ -223,7 +224,7 @@ Senpi validates skills against the Agent Skills standard. Most issues produce wa
 
 Unknown frontmatter fields are ignored.
 
-**Exception:** Skills with missing description are not loaded.
+Declared skills with missing descriptions are not loaded. Malformed `SKILL.md` files and `SKILL.md` files without a description produce warnings and are not loaded. Other Markdown files without valid skill frontmatter are ignored.
 
 Name collisions (same name from different locations) warn and keep the first skill found.
 
@@ -248,7 +249,7 @@ description: Web search and content extraction via Brave Search API. Use for sea
 ## Setup
 
 ```bash
-cd /path/to/brave-search && npm install
+cd /path/to/brave-search && bun install
 ```
 
 ## Search
@@ -269,7 +270,7 @@ cd /path/to/brave-search && npm install
 
 Senpi contributes built-in skills conditionally based on available credentials and capabilities.
 
-**gpt-image-gen** is contributed by the `imagegen` builtin extension when image-generation credentials exist (a stored OpenAI key, `OPENAI_API_KEY`, or a configured OpenAI-compatible gateway). It provides a prompt-crafting guide for `gpt-image-2`, covering detail-maxxing techniques, verbatim quoted render text, revised-prompt feedback loops, and routing guidance for the native server tool vs. the client `generate_image` tool. The skill is absent from `<available_skills>` when no credentials are configured.
+**gpt-image-gen** is contributed by the `imagegen` builtin extension when image-generation credentials exist (a stored OpenAI key, `OPENAI_API_KEY`, or a configured OpenAI-compatible gateway). It provides a prompt-crafting guide for GPT Image 2.5, covering detail-maxxing techniques, verbatim quoted render text, revised-prompt feedback loops, and routing guidance for the native server tool vs. the client `generate_image` tool. For `generate_image`, `model` selects `gpt-image-2.5-sunburst` (default, precise edits), `gpt-image-2.5-flare` (speed), or legacy `gpt-image-2`; `quality` accepts `auto`, `low`, `medium`, `high`, `xhigh`, or `max` (the last two require 2.5); `size` accepts `auto`, presets, or validated custom dimensions. `reference_image_paths` supplies 1-5 local PNG/JPEG/WEBP files for editing or references. The skill is absent from `<available_skills>` when no credentials are configured.
 
 Skill visibility refreshes at startup and on `/reload`. Mid-session credential changes (login, environment variable updates) take effect on the tool and injector immediately but are reflected in the skill list only after the next reload.
 

@@ -37,7 +37,7 @@ function defaultSupportsToolReferences(model: Model<"anthropic-messages">): bool
 
 export function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
-): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking">> {
+): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking" | "supportsMidConvoEffort">> {
 	// Auto-detect session affinity and cache control support from provider
 	const isFireworks = model.provider === "fireworks";
 	const isCloudflareAiGatewayAnthropic =
@@ -57,6 +57,7 @@ export function getAnthropicCompat(
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 		unsignedThinkingReplay:
 			model.compat?.unsignedThinkingReplay ?? (model.compat?.allowEmptySignature ? "empty-signature" : "text"),
+		allowedFallbackModels: model.compat?.allowedFallbackModels ?? [],
 		supportsStrictTools: model.compat?.supportsStrictTools ?? false,
 		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
 		// Default: first-party Anthropic only. Anthropic-compatible providers
@@ -70,6 +71,7 @@ export function getAnthropicCompat(
 
 export type ResolvedOpenAICompletionsCompat = Omit<
 	Required<OpenAICompletionsCompat>,
+	| "vllmPriority"
 	| "cacheControlFormat"
 	| "toolCallFormat"
 	| "deferredToolsMode"
@@ -77,6 +79,7 @@ export type ResolvedOpenAICompletionsCompat = Omit<
 	| "supportsPromptCacheKey"
 	| "chatTemplateArgs"
 	| "supportsThinkingTokenBudget"
+	| "thinkingTokenBudgetField"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	supportsPromptCacheKey?: OpenAICompletionsCompat["supportsPromptCacheKey"];
@@ -85,6 +88,9 @@ export type ResolvedOpenAICompletionsCompat = Omit<
 	toolSchemaFlavor?: OpenAICompletionsCompat["toolSchemaFlavor"];
 	chatTemplateArgs?: OpenAICompletionsCompat["chatTemplateArgs"];
 	supportsThinkingTokenBudget?: OpenAICompletionsCompat["supportsThinkingTokenBudget"];
+	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
+	/** vLLM `priority`; off by default and never set on the generated catalog. */
+	vllmPriority?: OpenAICompletionsCompat["vllmPriority"];
 };
 
 /**
@@ -185,6 +191,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Reso
 		deferredToolsMode: undefined,
 		sessionAffinityFormat: isOpenRouter ? "openrouter" : "openai",
 		supportsPromptCacheKey: isMoonshot || baseUrl.includes("api.openai.com"),
+		supportsMaxOutputTokens: true,
 		supportsLongCacheRetention: !(
 			isTogether ||
 			isCloudflareWorkersAI ||
@@ -225,6 +232,7 @@ export function getOpenAICompletionsCompat(model: Model<"openai-completions">): 
 		chatTemplateArgs: model.compat.chatTemplateArgs ?? detected.chatTemplateArgs,
 		zaiToolStream: model.compat.zaiToolStream ?? detected.zaiToolStream,
 		supportsThinkingTokenBudget: model.compat.supportsThinkingTokenBudget ?? detected.supportsThinkingTokenBudget,
+		thinkingTokenBudgetField: model.compat.thinkingTokenBudgetField ?? detected.thinkingTokenBudgetField,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
 		toolSchemaFlavor: model.compat.toolSchemaFlavor ?? detected.toolSchemaFlavor,
 		toolCallFormat: model.compat.toolCallFormat ?? detected.toolCallFormat,
@@ -234,6 +242,8 @@ export function getOpenAICompletionsCompat(model: Model<"openai-completions">): 
 		deferredToolsMode: model.compat.deferredToolsMode ?? detected.deferredToolsMode,
 		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,
 		supportsPromptCacheKey: model.compat.supportsPromptCacheKey ?? detected.supportsPromptCacheKey,
+		supportsMaxOutputTokens: model.compat.supportsMaxOutputTokens ?? detected.supportsMaxOutputTokens,
+		vllmPriority: model.compat.vllmPriority ?? detected.vllmPriority,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
 	};
 }

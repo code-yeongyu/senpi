@@ -58,6 +58,22 @@ describe("bridge protocol JSONL framing", () => {
 		expect(decodeBridgeFrame(encodeBridgeFrame(message))).toEqual({ ok: true, message });
 	});
 
+	it("round-trips init session environment overrides", () => {
+		const withSessionEnv: HostToKernelMessage = {
+			type: "init",
+			sessionId: "session-env",
+			connection: { port: 4317, token: "secret-token" },
+			sessionEnv: {
+				PI_SESSION_ID: "session-env",
+				PI_SESSION_FILE: "/tmp/sessions/session-env.jsonl",
+				PI_PROVIDER: "fake",
+				PI_MODEL: "fake-model",
+				PI_REASONING_LEVEL: "high",
+			},
+		};
+		expect(decodeBridgeFrame(encodeBridgeFrame(withSessionEnv))).toEqual({ ok: true, message: withSessionEnv });
+	});
+
 	it("accepts init connection roots while preserving the legacy shape", () => {
 		const withRoots: HostToKernelMessage = {
 			type: "init",

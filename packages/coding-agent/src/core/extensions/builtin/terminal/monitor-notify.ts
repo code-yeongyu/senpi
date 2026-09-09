@@ -2,6 +2,7 @@ import type { MonitorEvent } from "./monitor-registry.ts";
 import { getTerminalNotificationDelivery, type TerminalNotifierDeps } from "./notify.ts";
 import { sanitizeTerminalOutput } from "./output-format.ts";
 import type { MonitorDeliverySettings } from "./settings.ts";
+import { FIRE_BUDGET_AUTO_MUTE_SUMMARY } from "./shared.ts";
 
 const SYSTEM_REMINDER_OPEN = "<system-reminder>";
 const SYSTEM_REMINDER_CLOSE = "</system-reminder>";
@@ -23,14 +24,16 @@ const systemScheduler: MonitorNotificationScheduler = {
 
 export interface MonitorNotifierDeps extends TerminalNotifierDeps {
 	readonly getSettings: () => MonitorDeliverySettings;
-	/** Pause live monitors when their shared wake budget is exhausted. */
-	readonly pauseMonitors: () => readonly string[];
+	/** Pause the monitors contributing to a shared wake-budget exhaustion. */
+	readonly pauseMonitors: (ids: readonly string[]) => readonly string[];
 	readonly scheduler?: MonitorNotificationScheduler;
 }
 
 interface Overflow {
 	readonly id: string;
+	readonly description: string;
 	count: number;
+	kinds: Set<MonitorEvent["type"]>;
 }
 
 function boundedPositiveInt(value: number, fallback: number, minimum: number, maximum: number): number {
@@ -89,7 +92,6 @@ export class MonitorNotifier {
 	#scheduledAt: number | undefined;
 	#consecutiveWakes = 0;
 	#lastWakeAt: number | undefined;
-	#wakeBudgetPaused = false;
 
 	constructor(deps: MonitorNotifierDeps) {
 		this.#deps = deps;
@@ -97,18 +99,19 @@ export class MonitorNotifier {
 	}
 
 	notifyEvent(event: MonitorEvent): void {
-		if (this.#wakeBudgetPaused) {
-			if (event.type === "line") return;
-			this.#wakeBudgetPaused = false;
-			this.#consecutiveWakes = 0;
+		if (event.type === "summary") {
 			this.#lastInjectionAt.delete(event.id);
+			this.#lastInjectedBatch.delete(event.id);
 		}
 		if (!getTerminalNotificationDelivery(this.#deps, MONITOR_NOTIFICATION_CUSTOM_TYPE)) return;
 		const settings = resolveSettings(this.#deps.getSettings());
 		const rendered = `Monitor event(${event.description}): ${eventBody(event)}`;
 		const queueLimit = Math.max(1, settings.maxCharsPerInjection - QUEUE_OVERHEAD_CHARS);
-		if (this.#events.length >= settings.maxLinesPerInjection || this.#eventChars + rendered.length > queueLimit) {
-			this.#recordOverflow(event.id);
+		if (
+			event.type !== "summary" &&
+			(this.#events.length >= settings.maxLinesPerInjection || this.#eventChars + rendered.length > queueLimit)
+		) {
+			this.#recordOverflow(event);
 		} else {
 			this.#events.push(event);
 			this.#eventChars += rendered.length;
@@ -121,12 +124,17 @@ export class MonitorNotifier {
 		this.#consecutiveWakes = 0;
 	}
 
-	/** Explicit rearm resumes intermediate line delivery after the session-global wake pause. */
-	rearm(id: string): void {
-		this.#wakeBudgetPaused = false;
+	/** Clear delivery bookkeeping for monitors explicitly resumed by the registry. */
+	resume(ids: readonly string[]): void {
+		for (const id of ids) {
+			this.#lastInjectionAt.delete(id);
+			this.#lastInjectedBatch.delete(id);
+		}
 		this.#consecutiveWakes = 0;
-		this.#lastInjectionAt.delete(id);
-		this.#lastInjectedBatch.delete(id);
+	}
+
+	rearm(id: string): void {
+		this.resume([id]);
 	}
 
 	dispose(): void {
@@ -139,10 +147,16 @@ export class MonitorNotifier {
 		this.#lastInjectedBatch.clear();
 	}
 
-	#recordOverflow(id: string): void {
-		const overflow = this.#overflow.get(id) ?? { id, count: 0 };
+	#recordOverflow(event: MonitorEvent): void {
+		const overflow = this.#overflow.get(event.id) ?? {
+			id: event.id,
+			description: event.description,
+			count: 0,
+			kinds: new Set<MonitorEvent["type"]>(),
+		};
 		overflow.count++;
-		this.#overflow.set(id, overflow);
+		overflow.kinds.add(event.type);
+		this.#overflow.set(event.id, overflow);
 	}
 
 	#schedule(delayMs: number): void {
@@ -156,10 +170,6 @@ export class MonitorNotifier {
 	#flush(): void {
 		this.#timer = undefined;
 		this.#scheduledAt = undefined;
-		if (this.#wakeBudgetPaused) {
-			this.dispose();
-			return;
-		}
 		const delivery = getTerminalNotificationDelivery(this.#deps, MONITOR_NOTIFICATION_CUSTOM_TYPE);
 		if (!delivery) {
 			this.dispose();
@@ -170,8 +180,10 @@ export class MonitorNotifier {
 		const now = this.#scheduler.now();
 		const pendingIds = new Set([...this.#events.map((event) => event.id), ...this.#overflow.keys()]);
 		if (pendingIds.size === 0) return;
+		const summaryIds = new Set(this.#events.filter((event) => event.type === "summary").map((event) => event.id));
 		const ready = new Set(
 			[...pendingIds].filter((id) => {
+				if (summaryIds.has(id)) return true;
 				const last = this.#lastInjectionAt.get(id);
 				return last === undefined || now - last >= settings.rateLimitMs;
 			}),
@@ -203,14 +215,19 @@ export class MonitorNotifier {
 		) {
 			this.#consecutiveWakes = 0;
 		}
-		const deliversSummary = selected.some((event) => event.type === "summary");
+		const deliversSummary = selected.some(
+			// A fire-budget auto-mute summary is a mute, not a completion: exempting it keeps the
+			// session-global wake streak — the notifier's own pause state — from being cleared.
+			(event) => event.type === "summary" && event.summary !== FIRE_BUDGET_AUTO_MUTE_SUMMARY,
+		);
 		const reachesBudget = !deliversSummary && this.#consecutiveWakes + 1 >= settings.wakeBudget;
 		const pauseNotice = reachesBudget
 			? "Monitor paused after repeated updates. Completion still wakes this session; peek bash_output or re-arm only for intermediate events."
 			: "";
 		const content = this.#buildMessage(selected, overflowCount, pauseNotice, settings.maxCharsPerInjection);
 
-		delivery.send(content, reachesBudget ? { forceWake: true } : undefined);
+		const details = { monitors: this.#monitorDetails(selected, injectedIds) };
+		delivery.send(content, reachesBudget ? { forceWake: true, details } : { details });
 		this.#lastWakeAt = now;
 		for (const id of injectedIds) {
 			this.#lastInjectionAt.set(id, now);
@@ -227,11 +244,11 @@ export class MonitorNotifier {
 		this.#consecutiveWakes = deliversSummary ? 0 : this.#consecutiveWakes + 1;
 
 		if (reachesBudget) {
-			this.#wakeBudgetPaused = true;
-			this.#deps.pauseMonitors();
+			this.#deps.pauseMonitors([...injectedIds]);
 			this.#events = [];
 			this.#eventChars = 0;
 			this.#overflow.clear();
+			this.#consecutiveWakes = 0;
 			return;
 		}
 		const remainingIds = new Set([...this.#events.map((event) => event.id), ...this.#overflow.keys()]);
@@ -263,6 +280,24 @@ export class MonitorNotifier {
 		);
 		const remainingIds = new Set([...deferred.map((event) => event.id), ...this.#overflow.keys()]);
 		if (remainingIds.size > 0) this.#scheduleNextRateLimit(remainingIds, now, settings);
+	}
+
+	#monitorDetails(
+		events: readonly MonitorEvent[],
+		ids: ReadonlySet<string>,
+	): Array<{ id: string; description: string; eventCount: number; kinds: string[] }> {
+		return [...ids].map((id) => {
+			const own = events.filter((event) => event.id === id);
+			const overflow = this.#overflow.get(id);
+			const kinds = new Set<MonitorEvent["type"]>(own.map((event) => event.type));
+			for (const kind of overflow?.kinds ?? []) kinds.add(kind);
+			return {
+				id,
+				description: own[0]?.description ?? overflow?.description ?? id,
+				eventCount: own.length + (overflow?.count ?? 0),
+				kinds: [...kinds],
+			};
+		});
 	}
 
 	#buildMessage(

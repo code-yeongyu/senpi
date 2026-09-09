@@ -107,6 +107,7 @@ async function makeStore(accounts: readonly CursorCliAccountSlot[]): Promise<InM
 function enabledSettings(): CursorCliOauthProviderSettings {
 	return {
 		enabled: true,
+		explicitlyDisabled: false,
 		executablePath: undefined,
 		forceExecution: true,
 		noApprovalAcknowledgedAt: "2026-08-17T00:00:00.000Z",

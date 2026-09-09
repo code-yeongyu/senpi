@@ -3,11 +3,15 @@ import {
 	CLAUDE_SDK_OAUTH_PROVIDER_ID,
 	registerClaudeSdkOauthExtension,
 } from "../../src/core/extensions/builtin/claude-sdk-oauth/index.ts";
+import type { ClaudeSdkOauthProviderSettings } from "../../src/core/extensions/builtin/claude-sdk-oauth/settings.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import type { ModelConfig } from "../../src/core/model-config.ts";
 import { composeModelProvider, type ProviderConfigInput } from "../../src/core/provider-composer.ts";
 
-function registeredProviderConfig(readAmbientAuthStatus: () => Promise<boolean>): ProviderConfigInput {
+function registeredProviderConfig(
+	readAmbientAuthStatus: () => Promise<boolean>,
+	settings: ClaudeSdkOauthProviderSettings,
+): ProviderConfigInput {
 	let captured: ProviderConfigInput | undefined;
 	const pi = new Proxy(
 		{},
@@ -19,18 +23,24 @@ function registeredProviderConfig(readAmbientAuthStatus: () => Promise<boolean>)
 				},
 		},
 	) as unknown as ExtensionAPI;
-	registerClaudeSdkOauthExtension(pi, { readAmbientAuthStatus });
+	registerClaudeSdkOauthExtension(pi, { readAmbientAuthStatus, readSettings: () => settings });
 	if (!captured) throw new Error("extension did not register a provider");
 	return captured;
 }
 
+/**
+ * `settings` is the provider settings block the auth predicate sees; the ambient
+ * lane needs `{ enabled: true }` to be available, so tests that exercise a
+ * logged-in host CLI must opt in explicitly instead of inheriting the host.
+ */
 export function composedProvider(
 	readAmbientAuthStatus: () => Promise<boolean>,
 	overrides: Partial<ProviderConfigInput> = {},
+	settings: ClaudeSdkOauthProviderSettings = {},
 ) {
 	const modelConfig = { getProvider: () => undefined } as unknown as ModelConfig;
 	return composeModelProvider(CLAUDE_SDK_OAUTH_PROVIDER_ID, undefined, modelConfig, {
-		...registeredProviderConfig(readAmbientAuthStatus),
+		...registeredProviderConfig(readAmbientAuthStatus, settings),
 		...overrides,
 	});
 }

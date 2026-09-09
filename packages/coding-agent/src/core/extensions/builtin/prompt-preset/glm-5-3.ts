@@ -1,15 +1,6 @@
-import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
-
-function buildGlm53Tuning(): string {
-	return `You are running on GLM 5.3: Opus 4.6-class agent behavior tuned toward Fable 5 decisiveness and GPT 5.5 outcome-first coding. Apply literal scopes literally - "every", "all", and "for each" mean the full set. Prefer sufficient context over exhaustive context, pick minor decisions and note them, and use matching tools or skills immediately instead of under-reaching.
-
-Calibrate deliberation. Use extended reasoning only for genuine multi-step uncertainty; routine classification, file edits, and lookups should be decided directly. A cheap tool call beats long internal debate: act, inspect evidence, and verify.
-
-Code toward the destination: define the outcome, constraints, and stopping condition, then work without mechanical step-by-step recitation. In ultrawork mode, maintain absolute certainty discipline: preserve the goal, prove completion with evidence, and do not deliver partial work.
-
-The intent gate routing line is non-optional every turn. For non-trivial tasks, call todo with atomic items before starting, keep exactly one item in progress, and complete each item immediately when done.`;
-}
+import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.ts";
+import { buildGlm5Prompt } from "./glm-5.ts";
 
 export function buildGlm53Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, tuningSection: buildGlm53Tuning(), workstationDialect: "claude" });
+	return buildGlm5Prompt(options);
 }

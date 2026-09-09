@@ -1,4 +1,5 @@
 import type { ExtensionFactory } from "../types.ts";
+import accountExtension from "./account/index.ts";
 import anthropicBashExtension from "./anthropic-bash/index.ts";
 import anthropicWebSearchExtension from "./anthropic-web-search/index.ts";
 import bashTimeoutExtension from "./bash-timeout/index.ts";
@@ -11,6 +12,7 @@ import cursorCliOauthExtension from "./cursor-cli-oauth/index.ts";
 import diffExtension from "./diff.ts";
 import filesExtension from "./files.ts";
 import goalExtension from "./goal/index.ts";
+import gptAccountExtension from "./gpt-account.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
 import helpExtension from "./help/index.ts";
 import historySearchExtension from "./history-search/index.ts";
@@ -18,6 +20,7 @@ import hooksExtension from "./hooks/index.ts";
 import imageGenExtension from "./imagegen/index.ts";
 import importReproExtension from "./import-repro.ts";
 import lookAtExtension from "./look-at/index.ts";
+import loopExtension from "./loop/index.ts";
 import loopGuardExtension from "./loop-guard/index.ts";
 import mcpExtension from "./mcp/index.ts";
 import modelFallbackExtension from "./model-fallback/index.ts";
@@ -93,9 +96,14 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "nested-agents-md", factory: nestedAgentsMdExtension },
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },
+	{ id: "loop", factory: loopExtension },
 	{ id: "cache-keepalive", factory: cacheKeepAliveExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
+	// Provider-neutral account listing; sits before the provider lanes so their
+	// dedicated commands (claude-account, cursor accounts) keep their own names.
+	{ id: "account", factory: accountExtension },
+	{ id: "gpt-account", factory: gptAccountExtension },
 	{ id: "claude-sdk-oauth", factory: claudeSdkOauthExtension },
 	// Registers unconditionally and reports executable/auth state through its oauth check, so it stays beside the other provider lane.
 	{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension },

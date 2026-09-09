@@ -1,6 +1,6 @@
 # builtin/gpt-apply-patch
 
-Builtin extension #2. For `gpt-*` models on Responses-family APIs, swaps `write` / `edit` for a freeform Codex-style `apply_patch` tool with a Lark-style grammar; for `gpt-*` models on `openai-completions`, exposes `apply_patch` as a plain JSON function tool instead. Applies multi-file patches (add / update / delete / move). Keeps standard edit tools for all other models and APIs. Largest single builtin (18 files).
+Builtin extension #4. For `gpt-*` models on Responses-family APIs, swaps `write` / `edit` for a freeform Codex-style `apply_patch` tool with a Lark-style grammar; for `gpt-*` models on `openai-completions`, exposes `apply_patch` as a plain JSON function tool instead. Applies multi-file patches (add / update / delete / move). Keeps standard edit tools for all other models and APIs. Largest single builtin (18 files).
 
 ## FILES
 
@@ -55,5 +55,5 @@ gpt-apply-patch/
 ## NOTES
 
 - The `apply_patch` tool exposes `promptSnippet` + `promptGuidelines` that the dynamic prompt picks up; prompt-preset's `file-operations.ts` reinforces "use apply_patch, not python heredoc" for GPT presets.
-- The schema golden lives at `packages/coding-agent/test/goldens/codex-apply-patch-schema.json` (consumed by `test/suite/regressions/codex-apply-patch-schema-parity.test.ts`). Re-extract from upstream with `node scripts/extract-codex-apply-patch-golden.mjs` at the repo root (requires a local `openai/codex` checkout).
+- The schema golden lives at `packages/coding-agent/test/goldens/codex-apply-patch-schema.json` (consumed by `test/suite/regressions/codex-apply-patch-schema-parity.test.ts`). Re-extract from upstream with `bun scripts/extract-codex-apply-patch-golden.mjs` at the repo root (requires a local `openai/codex` checkout).
 - `streaming-parser.ts` powers partial render during model streaming — keep it tolerant of incomplete blocks.

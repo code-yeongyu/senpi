@@ -176,6 +176,11 @@ export class ModelRegistry {
 		return this.authStorage.get(model.provider)?.type === "oauth" || this.runtime.isUsingOAuth(model.provider);
 	}
 
+	/** Fallback-expansion gate: `false` only when the provider's registration declares the lane unusable. */
+	isFallbackEligible(model: Model<Api>): boolean {
+		return this.runtime.isFallbackEligible(model.provider);
+	}
+
 	registerProvider(provider: Provider): void;
 	registerProvider(providerName: string, config: ProviderConfigInput): void;
 	registerProvider(providerOrName: Provider | string, config?: ProviderConfigInput): void {

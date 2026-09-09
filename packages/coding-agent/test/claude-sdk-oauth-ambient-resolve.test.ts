@@ -10,7 +10,7 @@ import { authContext, composedProvider, credentialStore } from "./support/claude
 
 describe("claude-sdk-oauth ambient auth resolution", () => {
 	it("resolves request auth from an authenticated ambient Claude CLI with nothing stored", async () => {
-		const provider = composedProvider(async () => true);
+		const provider = composedProvider(async () => true, {}, { enabled: true });
 
 		const resolved = await resolveProviderAuth(provider, credentialStore(), authContext());
 
@@ -56,10 +56,11 @@ describe("claude-sdk-oauth ambient auth resolution", () => {
 	});
 
 	it("composes configured headers and authHeader identically for ambient and stored OAuth", async () => {
-		const provider = composedProvider(async () => true, {
-			headers: { "User-Agent": "must-survive" },
-			authHeader: true,
-		});
+		const provider = composedProvider(
+			async () => true,
+			{ headers: { "User-Agent": "must-survive" }, authHeader: true },
+			{ enabled: true },
+		);
 		const stored = addAccount(emptyCredential(), {
 			name: "stored",
 			access: "stored-token",
@@ -79,7 +80,7 @@ describe("claude-sdk-oauth ambient auth resolution", () => {
 	});
 
 	it("rejects an unrelated explicit key for an ambient-only OAuth provider", async () => {
-		const provider = composedProvider(async () => true);
+		const provider = composedProvider(async () => true, {}, { enabled: true });
 
 		expect(
 			await resolveProviderAuth(provider, credentialStore(), authContext(), {
@@ -108,9 +109,11 @@ describe("claude-sdk-oauth ambient auth resolution", () => {
 	});
 
 	it("preserves replay-only credential env for configured headers", async () => {
-		const provider = composedProvider(async () => true, {
-			headers: { "X-Extra": "$EXTRA_HEADER_TOKEN" },
-		});
+		const provider = composedProvider(
+			async () => true,
+			{ headers: { "X-Extra": "$EXTRA_HEADER_TOKEN" } },
+			{ enabled: true },
+		);
 		if (!provider.auth.apiKey) throw new Error("expected ambient adapter");
 		const replay = await provider.auth.apiKey.resolve({
 			ctx: authContext({ CLAUDE_CODE_OAUTH_TOKEN: "request-token" }),
@@ -145,7 +148,7 @@ describe("claude-sdk-oauth ambient auth resolution", () => {
 	});
 
 	it("preserves an explicit empty token mask through ambient replay", async () => {
-		const provider = composedProvider(async () => true);
+		const provider = composedProvider(async () => true, {}, { enabled: true });
 		const hostEnvironment = { CLAUDE_CODE_OAUTH_TOKEN: "host-token" };
 		const requestEnvironment = { CLAUDE_CODE_OAUTH_TOKEN: "" };
 		const first = await resolveProviderAuth(provider, credentialStore(), authContext(hostEnvironment), {

@@ -1,0 +1,22 @@
+all marker occurrences (row, marker):
+   2193  STEP-ONE-NARRATION
+   2194  echo CARD-A
+   2194  STEP-TWO-NARRATION
+   2194  echo CARD-B
+   2195  STEP-THREE-NARRATION
+   2195  echo CARD-C
+   2195  FINAL-NARRATION
+   2200  FINAL-NARRATION
+   2203  STEP-ONE-NARRATION
+   2206  echo CARD-A
+   2213  STEP-TWO-NARRATION
+   2216  echo CARD-B
+   2223  STEP-THREE-NARRATION
+   2226  echo CARD-C
+   2233  FINAL-NARRATION
+   2235  echo CARD-A
+   2235  echo CARD-B
+   2235  echo CARD-C
+
+first-occurrence order: STEP-ONE-NARRATION < echo CARD-A < STEP-TWO-NARRATION < echo CARD-B < STEP-THREE-NARRATION < echo CARD-C < FINAL-NARRATION
+matches chronological: true

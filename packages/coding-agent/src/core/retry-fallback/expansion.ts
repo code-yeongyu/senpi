@@ -7,7 +7,7 @@ import { isValidThinkingLevel } from "../../cli/args.ts";
  * route a shipped default through a third-party reseller the user never chose.
  * An explicit `openrouter/...` selector the user wrote is unaffected.
  */
-const BARE_EXPANSION_DENYLIST: ReadonlySet<string> = new Set(["openrouter", "openrouter-images"]);
+const BARE_EXPANSION_DENYLIST: ReadonlySet<string> = new Set(["cursor", "openrouter", "openrouter-images"]);
 
 /**
  * Deterministic tie-break inside one auth tier. Earlier wins. Providers absent
@@ -34,6 +34,14 @@ export type FallbackAuthLookup = (model: Model<Api>) => boolean;
 export interface FallbackAuthTiers {
 	isUsingOAuth: FallbackAuthLookup;
 	hasConfiguredAuth?: FallbackAuthLookup;
+	/**
+	 * Deterministic usability gate, distinct from the auth tiers above. Auth
+	 * tiers rank; this filters, and only on a definitive `false`: a provider
+	 * whose own registration declares every unattended call refused (e.g. an
+	 * unacknowledged execution gate) must not consume a bare-expansion slot it
+	 * can never serve. Unknown eligibility stays included.
+	 */
+	isFallbackEligible?: FallbackAuthLookup;
 }
 
 function authTier(model: Model<Api>, tiers: FallbackAuthTiers): number {
@@ -117,6 +125,7 @@ export function rankFamilyModels(
 	const byProvider = new Map<string, Model<Api>[]>();
 	for (const model of models) {
 		if (BARE_EXPANSION_DENYLIST.has(model.provider.toLowerCase())) continue;
+		if (tiers.isFallbackEligible?.(model) === false) continue;
 		if (!matchesFamily(model, family)) continue;
 		const bucket = byProvider.get(model.provider);
 		if (bucket) bucket.push(model);

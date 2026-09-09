@@ -202,13 +202,35 @@ describe("#308 skill composition", () => {
 		const actual = await promptAndCapture(harness, "Use $skill:debugging to inspect $HOME safely");
 		invocationEvents.unsubscribe();
 
-		expect(actual).toBe(`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("Use to inspect $HOME safely")}`);
+		expect(actual).toBe(
+			`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("Use [skill: debugging] to inspect $HOME safely")}`,
+		);
 		expect(invocationEvents.events).toEqual([
 			{
 				type: "skill_invocation",
 				skills: [{ name: "debugging", path: skills[0]!.filePath, syntax: "dollar" }],
 			},
 		]);
+	});
+
+	it("preserves Korean inline references and duplicate mixed invocations", async () => {
+		const { resourceLoader, skills, tempDir } = createFixtures([
+			{ name: "debugging", body: "# Debugging Skill\n\nTrace the defect." },
+			{ name: "review", body: "# Review Skill\n\nReview the result." },
+		]);
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+
+		expect(
+			await promptAndCapture(
+				harness,
+				"한국어로 $skill:debugging 와 $skill:debugging 를 $skill:review 함께 확인해 주세요",
+			),
+		).toBe(
+			`${skillBlock(skills[0]!, tempDir)}\n\n${skillBlock(skills[1]!, tempDir)}\n\n${userRequest(
+				"한국어로 [skill: debugging] 와 [skill: debugging] 를 [skill: review] 함께 확인해 주세요",
+			)}`,
+		);
 	});
 
 	it("preserves indentation and blank-line structure outside removed tokens", async () => {

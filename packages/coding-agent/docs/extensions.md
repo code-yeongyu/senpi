@@ -116,7 +116,7 @@ The bundled `model-fallback` extension registers `/fallback` to manage global pe
 Use the quick-set form in scripts or any non-TUI mode:
 
 ```text
-/fallback anthropic/claude-fable-5 ccapi/kimi-k3:max
+/fallback anthropic/claude-fable-5-1 ccapi/kimi-k3:max
 ```
 
 The first argument is the exact primary model selector; each later argument is an ordered fallback selector. Quick-set validates selectors before saving. At least one fallback is required:
@@ -184,9 +184,9 @@ To share extensions via npm or git as senpi packages, see [packages.md](packages
 | `@earendil-works/pi-ai` | AI utilities (`StringEnum` for Google-compatible enums) |
 | `@earendil-works/pi-tui` | TUI components for custom rendering |
 
-npm dependencies work too. Add a `package.json` next to your extension (or in a parent directory), run `npm install`, and imports from `node_modules/` are resolved automatically.
+npm dependencies work too. Add a `package.json` next to your extension (or in a parent directory), run `bun install`, and imports from `node_modules/` are resolved automatically.
 
-For distributed senpi packages installed with `senpi install` (npm or git), runtime deps must be in `dependencies`. Package installation uses production installs (`npm install --omit=dev`) by default, so `devDependencies` are not available at runtime; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers.
+For distributed senpi packages installed with `senpi install` (npm or git), runtime deps must be in `dependencies`. Package installation uses production installs (`bun add --omit=dev`) by default, so `devDependencies` are not available at runtime; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers.
 
 Node.js built-ins (`node:fs`, `node:path`, etc.) are also available.
 
@@ -288,7 +288,7 @@ Defer background resource startup until `session_start` or the command/tool/even
 └── my-extension/
     ├── package.json    # Declares dependencies and entry points
     ├── package-lock.json
-    ├── node_modules/   # After npm install
+    ├── node_modules/   # After bun install
     └── src/
         └── index.ts
 ```
@@ -307,7 +307,7 @@ Defer background resource startup until `session_start` or the command/tool/even
 }
 ```
 
-Run `npm install` in the extension directory, then imports from `node_modules/` work automatically.
+Run `bun install` in the extension directory, then imports from `node_modules/` work automatically.
 
 ## Events
 
@@ -375,7 +375,8 @@ user sends another prompt ◄─────────────────
 
 /compact or auto-compaction
   ├─► session_before_compact (can cancel or customize)
-  └─► session_compact
+  ├─► session_compact (success)
+  └─► session_compact_failed (failure or abort)
 
 /tree navigation
   ├─► session_before_tree (can cancel or customize)
@@ -510,7 +511,7 @@ pi.on("session_before_reload", () => {
 
 Use this to protect state a reload would destroy — for example running background children owned by the extension runtime. Keep handlers fast and side-effect free; hosts may consult the veto more than once per reload attempt.
 
-#### session_before_compact / session_compact
+#### session_before_compact / session_compact / session_compact_failed
 
 Fired on compaction. See [compaction.md](compaction.md) for details.
 
@@ -546,6 +547,14 @@ pi.on("session_compact", async (event, ctx) => {
   // event.fromExtension - whether extension provided it
   // event.reason - "manual" (/compact), "threshold", or "overflow"
   // event.willRetry - whether the aborted turn is retried after compaction (overflow recovery)
+});
+
+pi.on("session_compact_failed", async (event, ctx) => {
+  // event.reason - "manual" (/compact), "threshold", or "overflow"
+  // event.errorMessage - present for non-abort failures
+  // event.aborted - true for cancelled/aborted compactions
+  // event.willRetry - whether the aborted turn would have retried after compaction
+  // event.fromExtension - whether extension-provided compaction content was being used
 });
 ```
 
@@ -638,6 +647,24 @@ pi.on("agent_end", async (event, ctx) => {
 
 pi.on("agent_settled", async (_event, ctx) => {
   // ctx.isIdle() is true here unless another extension started a new run.
+});
+```
+
+#### ui_prompt_start / ui_prompt_end
+
+Notification-only lifecycle events for blocking user-facing extension UI prompts. They fire around `ctx.ui.select()`, `ctx.ui.confirm()`, `ctx.ui.input()`, `ctx.ui.editor()`, and `ctx.ui.custom()` so host/status integrations can report "waiting for user" instead of just "running".
+
+Nested or overlapping prompts are coalesced into one outer waiting span. Handlers are invoked best-effort and are not awaited before showing or closing the prompt.
+
+```typescript
+pi.on("ui_prompt_start", async (event, ctx) => {
+  // event.reason === "ui_prompt"
+  // event.kind: "select" | "confirm" | "input" | "editor" | "custom"
+  // event.title: prompt title when available
+});
+
+pi.on("ui_prompt_end", async (event, ctx) => {
+  // Pi is no longer waiting on that UI prompt span.
 });
 ```
 
@@ -1911,7 +1938,7 @@ Typical `sourceInfo.source` values:
 
 ### pi.setModel(model)
 
-Set the current model. Returns `false` if no API key is available for the model. See [models.md](models.md) for configuring custom models.
+Set the model for the current session. The change is recorded in session history and restored when that session is resumed, but it does not change the configured `defaultProvider` or `defaultModel` used by new sessions. Returns `false` if authentication is not configured for the model's provider. See [models.md](models.md) for configuring custom models.
 
 ```typescript
 const model = ctx.modelRegistry.find("anthropic", "claude-sonnet-4-5");
@@ -1925,7 +1952,9 @@ if (model) {
 
 ### pi.getThinkingLevel() / pi.setThinkingLevel(level)
 
-Get or set the thinking level. Level is clamped to model capabilities (non-reasoning models always use "off"). Changes emit `thinking_level_select`.
+Get the current thinking level. Level is clamped to model capabilities (non-reasoning models always use "off"). Changes emit `thinking_level_select`.
+
+`pi.setThinkingLevel()` changes the thinking level for the current session. The change is recorded in session history and restored when that session is resumed, but it does not change the configured default used by new sessions.
 
 ```typescript
 const current = pi.getThinkingLevel();  // "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
@@ -2349,7 +2378,7 @@ pi.registerTool({
 
 ### Overriding Built-in Tools
 
-Extensions can override built-in tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`) by registering a tool with the same name. Interactive mode displays a warning when this happens.
+Extensions can override built-in tools (`read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, `ls`) by registering a tool with the same name. Interactive mode displays a warning when this happens.
 
 ```bash
 # Extension's read tool replaces built-in read
@@ -2373,6 +2402,7 @@ See [examples/extensions/tool-override.ts](../examples/extensions/tool-override.
 Built-in tool implementations:
 - [read.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/read.ts) - `ReadToolDetails`
 - [bash.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/bash.ts) - `BashToolDetails`
+- [powershell.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/powershell.ts) - `PowerShellToolDetails`
 - [edit.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/edit.ts)
 - [write.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/write.ts)
 - [grep.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/grep.ts) - `GrepToolDetails`
@@ -2408,11 +2438,11 @@ pi.registerTool({
 });
 ```
 
-**Operations interfaces:** `ReadOperations`, `WriteOperations`, `EditOperations`, `BashOperations`, `LsOperations`, `GrepOperations`, `FindOperations`
+**Operations interfaces:** `ReadOperations`, `WriteOperations`, `EditOperations`, `BashOperations`, `PowerShellOperations`, `LsOperations`, `GrepOperations`, `FindOperations`
 
 For `user_bash`, extensions can reuse pi's local shell backend via `createLocalBashOperations()` instead of reimplementing local process spawning, shell resolution, and process-tree termination.
 
-The bash tool also supports a spawn hook to adjust the command, cwd, or env before execution:
+The `bash` and `powershell` tools also support a spawn hook to adjust the command, cwd, or env before execution:
 
 ```typescript
 import { createBashTool } from "@earendil-works/pi-coding-agent";
@@ -2426,7 +2456,7 @@ const bashTool = createBashTool(cwd, {
 });
 ```
 
-`createBashTool()` exposes the current session to commands through `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL`. Injection happens before `spawnHook`, so hooks receive these values in `env` and preserve them when they spread the existing environment as above. Set `exposeSessionEnvironment: false` to disable them:
+`createBashTool()` and `createPowerShellTool()` expose the current session to commands through `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL`. Injection happens before `spawnHook`, so hooks receive these values in `env` and preserve them when they spread the existing environment as above. Set `exposeSessionEnvironment: false` to disable them:
 
 ```typescript
 const bashTool = createBashTool(cwd, {
@@ -2434,7 +2464,7 @@ const bashTool = createBashTool(cwd, {
 });
 ```
 
-See [Bash tool session environment](environment-variables.md#bash-tool-session-environment) for variable semantics. See [examples/extensions/ssh.ts](../examples/extensions/ssh.ts) for a complete SSH example with `--ssh` flag.
+See [Shell tool session environment](environment-variables.md#shell-tool-session-environment) for variable semantics. See [examples/extensions/ssh.ts](../examples/extensions/ssh.ts) for a complete SSH example with `--ssh` flag.
 
 ### Output Truncation
 

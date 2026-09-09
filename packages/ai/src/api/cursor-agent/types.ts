@@ -13,7 +13,7 @@
  * safe to import from browser-reachable modules.
  */
 
-import type { StreamOptions, ToolResultMessage } from "../../types.ts";
+import type { StreamOptions, ThinkingSelection, ToolResultMessage } from "../../types.ts";
 import type {
 	DeleteArgs,
 	DeleteResult,
@@ -153,4 +153,20 @@ export interface CursorAgentOptions extends StreamOptions {
 	execHandlers?: CursorExecHandlers;
 	/** Receives every exec-channel tool result for transcript pairing. */
 	onToolResult?: CursorToolResultHandler;
+	/**
+	 * Provenance-bearing thinking selection rendered into
+	 * `RequestedModel.parameters`; absent selections keep the representative
+	 * variant request shape.
+	 */
+	thinkingSelection?: ThinkingSelection;
+	/** Override stream health bounds for deterministic provider integration tests. */
+	streamHealthFailThresholdMs?: number;
+	/** @deprecated Accepted for compatibility; heartbeat/checkpoint frames are always liveness. */
+	streamHealthHeartbeatOnlyThresholdMs?: number;
+	/** Maximum pre-completion stall/transport retries (default 10). */
+	streamStallMaxRetries?: number;
+	/** Fixed retry delay for tests; production uses exponential backoff plus jitter. */
+	streamStallRetryDelayMs?: number;
+	/** Override the post-turn exec drain bound for deterministic tests. */
+	turnEndDrainTimeoutMs?: number;
 }

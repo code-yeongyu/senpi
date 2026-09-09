@@ -60,6 +60,7 @@ async function makeStore(accounts: readonly CursorCliAccountSlot[]): Promise<InM
 function enabledSettings(overrides: Partial<CursorCliOauthProviderSettings> = {}): CursorCliOauthProviderSettings {
 	return {
 		enabled: true,
+		explicitlyDisabled: false,
 		executablePath: undefined,
 		forceExecution: true,
 		noApprovalAcknowledgedAt: "2026-08-17T00:00:00.000Z",
@@ -170,10 +171,11 @@ function toolsTurnFixture(directory: string): string {
 			`const CALL_ID = "tool_fake-shell-001";`,
 			`function writeEvent(event) { process.stdout.write(JSON.stringify(event) + "\\n"); }`,
 			`writeEvent({ type: "system", subtype: "init", apiKeySource: "login", cwd: "/tmp", session_id: SESSION_ID, model: "Composer 2.5 Fast", permissionMode: "default" });`,
+			`writeEvent({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "BEFORE TOOL" }] } });`,
 			`writeEvent({ type: "tool_call", subtype: "started", call_id: CALL_ID, tool_call: { shellToolCall: { args: { command: "echo tooltest-force-77" } } } });`,
 			`writeEvent({ type: "tool_call", subtype: "completed", call_id: CALL_ID, tool_call: { shellToolCall: { args: { command: "echo tooltest-force-77" }, result: { success: { exitCode: 0, stdout: "tooltest-force-77\\n", stderr: "", executionTime: 25 } } } } });`,
-			`writeEvent({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "TOOLS OK" }] } });`,
-			`writeEvent({ type: "result", subtype: "success", duration_ms: 80, is_error: false, result: "TOOLS OK", session_id: SESSION_ID, request_id: "req-tools", usage: { inputTokens: 30, outputTokens: 5, cacheReadTokens: 2, cacheWriteTokens: 0 } });`,
+			`writeEvent({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "BEFORE TOOL AFTER" }] } });`,
+			`writeEvent({ type: "result", subtype: "success", duration_ms: 80, is_error: false, result: "BEFORE TOOL AFTER", session_id: SESSION_ID, request_id: "req-tools", usage: { inputTokens: 30, outputTokens: 5, cacheReadTokens: 2, cacheWriteTokens: 0 } });`,
 		].join("\n"),
 		{ mode: 0o600 },
 	);
@@ -320,7 +322,7 @@ describe("cursor-cli-oauth stream mapping", () => {
 		});
 	});
 
-	it("renders tool frames as display-only blocks labelled as executed by the Cursor CLI", async () => {
+	it("keeps Cursor CLI tool protocol frames out of assistant text", async () => {
 		const directory = temporaryDirectory();
 		const deps: CursorCliStreamDeps = {
 			cwd: directory,
@@ -335,12 +337,12 @@ describe("cursor-cli-oauth stream mapping", () => {
 		const message = doneMessage(events);
 
 		expect(message.content.some((block) => block.type === "toolCall")).toBe(false);
-		const rendered = textBlocks(message).join("\n");
-		expect(rendered).toContain("executed by the Cursor CLI");
-		// Untrusted tool output stays inside the delimited display region.
-		const withoutDisplayRegions = rendered.replace(/<cursor-cli-tool>[\s\S]*?<\/cursor-cli-tool>/g, "");
-		expect(withoutDisplayRegions).not.toContain("tooltest-force-77");
-		expect(rendered).toContain("tooltest-force-77");
+		expect(textDeltas(events)).toEqual(["BEFORE TOOL", "BEFORE TOOL AFTER"]);
+		expect(textBlocks(message)).toEqual(["BEFORE TOOL", "BEFORE TOOL AFTER"]);
+		const rendered = textBlocks(message).join("");
+		expect(rendered).not.toContain("<cursor-cli-tool>");
+		expect(rendered).not.toContain("shellToolCall");
+		expect(rendered).not.toContain("tooltest-force-77");
 	});
 
 	it("surfaces a zero-exit turn with no assistant events as an error, never an empty success", async () => {
@@ -465,7 +467,7 @@ describe("cursor-cli-oauth stream mapping", () => {
 			cwd: directory,
 			agentDir: join(directory, "agent"),
 			store: await makeStore([account("alpha")]),
-			settings: enabledSettings({ enabled: false }),
+			settings: enabledSettings({ enabled: false, explicitlyDisabled: true }),
 			now: () => NOW,
 		};
 		process.env.SENPI_CURSOR_CLI_OAUTH_EXECUTABLE = fixture.executable;

@@ -12,7 +12,10 @@ import {
 } from "./cache-warm.ts";
 import { subscribeGoalChannelState } from "./channel-state-subscriptions.ts";
 
-export { GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS } from "./cache-warm.ts";
+export {
+	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+	GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS,
+} from "./cache-warm.ts";
 
 import {
 	continuationTurnUsedTools,
@@ -22,12 +25,14 @@ import {
 	type GoalContinuationPath,
 	hasGoalContinuationProgress,
 	hashAssistantText,
+	isMalformedToolUseTurn,
 	normalizeAssistantText,
 } from "./continuation.ts";
 import { lastAssistantMessage } from "./last-assistant-message.ts";
 import {
 	admitAndQueueGoalContinuation,
 	buildCurrentGoalContinuationSignature,
+	isLastTurnStuckOnContextOverflow,
 	lastAssistantText,
 } from "./lifecycle-helpers.ts";
 import type {
@@ -35,10 +40,12 @@ import type {
 	ContinuingGoalContinuationVerdict,
 	DelayedContinuationKind,
 	GoalContinuationAdmission,
+	ProviderRecoveryOptions,
 	ResumptionChannelCounts,
 	SystemAbortOptions,
 } from "./monitor-continuation-types.ts";
 import { buildContinuationPrompt, buildGoalStallNotice, buildTruncationRecoveryPrompt } from "./prompt.ts";
+import { isStaleExtensionContextError } from "./stale-context.ts";
 import { resetContinuationStreak } from "./store.ts";
 import { goalStoreRef } from "./store-ref.ts";
 import { collectAssistantUsage } from "./turn-usage.ts";
@@ -80,6 +87,7 @@ export class MonitorAwareGoalContinuation {
 		| undefined;
 	#directInputHolds = new Set<string>();
 	#pendingSystemRecovery: SystemAbortOptions | undefined;
+	#pendingProviderRecovery: ProviderRecoveryOptions | undefined;
 
 	constructor(
 		pi: ExtensionAPI,
@@ -145,7 +153,8 @@ export class MonitorAwareGoalContinuation {
 					return goal;
 				case "cap":
 				case "repetition":
-				case "length-exhausted": {
+				case "length-exhausted":
+				case "unattended": {
 					const admission = await this.#admitAndQueue(options.ctx, goal, "immediate", options.messages);
 					return admission.goal;
 				}
@@ -182,11 +191,47 @@ export class MonitorAwareGoalContinuation {
 		return options.goal;
 	}
 
+	async afterProviderFailure(options: ProviderRecoveryOptions): Promise<Goal | null> {
+		this.noteContinuationStarted();
+		if (options.goal?.id !== this.#goal?.id) this.#resetContinuationState();
+		this.#pendingProviderRecovery = undefined;
+		this.#ctx = options.ctx;
+		this.#goal = options.goal;
+		this.#lastAgentEndMessages = options.messages;
+		this.#lastTurnUsage = collectAssistantUsage([...options.messages]);
+		if (options.goal?.status !== "active") {
+			this.#resetContinuationState();
+			return options.goal;
+		}
+		if (!options.willRetry) this.#pendingProviderRecovery = options;
+		return options.goal;
+	}
+
 	async afterAgentSettled(): Promise<Goal | null | undefined> {
-		const pending = this.#pendingSystemRecovery;
+		const pendingSystem = this.#pendingSystemRecovery;
+		const pendingProvider = this.#pendingProviderRecovery;
 		this.#pendingSystemRecovery = undefined;
-		if (pending === undefined || pending.goal === null || pending.event.abortSource === "user") return undefined;
-		return (await this.#admitAndQueue(pending.ctx, pending.goal, "systemRecovery", pending.messages)).goal;
+		this.#pendingProviderRecovery = undefined;
+		if (pendingSystem !== undefined && pendingSystem.goal !== null && pendingSystem.event.abortSource !== "user") {
+			return (
+				await this.#admitAndQueue(pendingSystem.ctx, pendingSystem.goal, "systemRecovery", pendingSystem.messages)
+			).goal;
+		}
+		if (
+			pendingProvider === undefined ||
+			pendingProvider.goal === null ||
+			pendingProvider.event.abortSource === "user"
+		) {
+			return undefined;
+		}
+		return (
+			await this.#admitAndQueue(
+				pendingProvider.ctx,
+				pendingProvider.goal,
+				"providerRecovery",
+				pendingProvider.messages,
+			)
+		).goal;
 	}
 
 	syncGoal(goal: Goal | null): void {
@@ -258,6 +303,7 @@ export class MonitorAwareGoalContinuation {
 	/** An accepted real user prompt starts a grace-governed user turn. */
 	noteUserPrompt(): void {
 		this.#cancelTimer();
+		this.#pendingProviderRecovery = undefined;
 		this.#endedTurnWasUserInitiated = true;
 		this.#resetContinuationState();
 	}
@@ -281,12 +327,13 @@ export class MonitorAwareGoalContinuation {
 
 	#schedule(goal: Goal, kind: DelayedContinuationKind): void {
 		if (this.#scheduledContinuationKind !== undefined) return;
+		// A live wake source arms the periodic backstop only: the normal resumption
+		// is the drain fire in #setWakeSourceCount, and the backstop re-checks the
+		// goal every `promptCache.goalBackstopMaxSeconds` in case the source never
+		// delivers.
 		const delayMs =
 			kind === "monitor"
-				? resolveGoalMonitorContinuationDelayMs(
-						this.#ctx?.getPromptCacheSafeWaitSeconds?.(),
-						this.#ctx?.getPromptCacheGoalBackstopMaxSeconds?.(),
-					)
+				? resolveGoalMonitorContinuationDelayMs(this.#ctx?.getPromptCacheGoalBackstopMaxSeconds?.())
 				: GOAL_USER_GRACE_DELAY_MS;
 		this.#scheduledDelayMs = delayMs;
 		if (kind === "monitor") {
@@ -325,10 +372,27 @@ export class MonitorAwareGoalContinuation {
 		this.#armTimer(kind, delayMs, delayMs);
 	}
 
+	/**
+	 * `hasUI` is an `assertActive()`-guarded getter, so a ctx retired by session
+	 * replacement or reload THROWS instead of reporting false. Optional chaining
+	 * only guards an undefined ctx (what `dispose()` leaves behind), never a stale
+	 * object left by a replacement that never disposed this monitor. Callers reach
+	 * this from timer and event callbacks where a throw is fatal, so a retired ctx
+	 * reports "no UI" and any other failure keeps its current behavior.
+	 */
+	#ctxHasUI(ctx: ExtensionContext | undefined = this.#ctx): boolean {
+		try {
+			return ctx?.hasUI === true;
+		} catch (error) {
+			if (isStaleExtensionContextError(error)) return false;
+			throw error;
+		}
+	}
+
 	#armTimer(kind: DelayedContinuationKind, delayMs: number, totalMs: number, drainFire = false): void {
 		this.#scheduledDueAtMs = Date.now() + delayMs;
 		const ctx = this.#ctx;
-		if (ctx?.hasUI) {
+		if (ctx !== undefined && this.#ctxHasUI(ctx)) {
 			this.#waitTicker?.sync(ctx, {
 				kind,
 				remainingMs: delayMs,
@@ -338,10 +402,13 @@ export class MonitorAwareGoalContinuation {
 		}
 		this.#timer = setTimeout(() => {
 			void this.#continueIfEligible(kind, drainFire).catch((error: unknown) => {
-				if (this.#ctx?.hasUI) {
-					const message = error instanceof Error ? error.message : String(error);
-					this.#ctx.ui.notify(`Goal continuation delivery failed: ${message}`, "error");
-				}
+				// Runs from a bare setTimeout: anything thrown here escapes as an
+				// uncaughtException and kills the session. A retired ctx cannot be
+				// notified, and its own staleness is the expected cause of this
+				// rejection after a session replacement, so drop it quietly.
+				if (isStaleExtensionContextError(error) || !this.#ctxHasUI()) return;
+				const message = error instanceof Error ? error.message : String(error);
+				this.#ctx?.ui.notify(`Goal continuation delivery failed: ${message}`, "error");
 			});
 		}, delayMs);
 	}
@@ -442,6 +509,7 @@ export class MonitorAwareGoalContinuation {
 			hasPendingMessages: ctx.hasPendingMessages(),
 			path,
 			lastStopReason: lastAssistant?.stopReason,
+			lastTurnWasMalformedToolUse: lastAssistant?.role === "assistant" && isMalformedToolUseTurn(lastAssistant),
 			consecutiveContinuations: goal.consecutiveContinuations ?? 0,
 			lastContinuationSignature: goal.lastContinuationSignature,
 			currentSignature: buildCurrentGoalContinuationSignature(ctx, goal, lastAssistantText(messages)),
@@ -449,6 +517,7 @@ export class MonitorAwareGoalContinuation {
 			recentNormalizedOutputHashes: this.#recentNormalizedOutputHashes,
 			toollessContinuationStreak: this.#toollessContinuationStreak,
 			continuationPending: this.#isContinuationPending(),
+			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(ctx, lastAssistant),
 		};
 	}
 
@@ -462,7 +531,7 @@ export class MonitorAwareGoalContinuation {
 			consecutiveContinuations: this.#toollessContinuationStreak,
 			toolless: true,
 		});
-		if (ctx.hasUI) {
+		if (this.#ctxHasUI(ctx)) {
 			const context =
 				liveSources.length > 0 ? `while ${liveSources.join(", ")} channels stayed active` : "without tool use";
 			ctx.ui.notify(
@@ -570,6 +639,7 @@ export class MonitorAwareGoalContinuation {
 
 	#resetContinuationState(): void {
 		this.#pendingSystemRecovery = undefined;
+		this.#pendingProviderRecovery = undefined;
 		this.#consecutiveLengthRecoveries.clear();
 		this.#recentNormalizedOutputHashes = [];
 		this.#resetToollessContinuationStreak();

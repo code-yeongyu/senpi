@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	GOAL_CONTINUATION_RESUMED_EVENT,
 	GOAL_CONTINUATION_SCHEDULED_EVENT,
-	GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS,
+	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
 	MonitorAwareGoalContinuation,
 } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { writeGoal } from "../../src/core/extensions/builtin/goal/store.ts";
@@ -205,7 +205,7 @@ describe("goal wake sources", () => {
 		await harness.events.flush();
 		const delivered = waitForSentCount(harness, 1);
 		const resumed = waitForEventCount(harness.events, GOAL_CONTINUATION_RESUMED_EVENT, 1);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		await Promise.all([delivered, resumed]);
 		expect(emitted(harness.events, GOAL_CONTINUATION_RESUMED_EVENT)[0]).toMatchObject({
 			activeMonitorCount: 1,

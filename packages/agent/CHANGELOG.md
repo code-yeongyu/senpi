@@ -10,7 +10,535 @@
 
 ### Fixed
 
-- Late Cursor exec-bridge lifecycle events that settle after an abort or timeout are tied to their originating run, so they neither raise an unhandled `Agent listener invoked outside active run` error nor leak into a replacement run.
+### Removed
+
+## [2026.9.9] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.8] - 2026-09-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Recover a provider response that reports the `tool_use` stop reason while carrying no tool-call block. The turn is retried once on models that already use stream recovery, and the contradictory terminal state is demoted to a coherent stop for every model, so a lost tool call no longer ends the turn silently.
+
+### Removed
+
+## [2026.9.7-2] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.7] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.6] - 2026-09-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.5-3] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.5-2] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.5] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.4-3] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.4-2] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed proxied assistant responses dropping persisted provider-native thinking levels.
+- Fixed the write tool reporting UTF-16 code-unit counts as byte counts by removing the misleading count ([#8979](https://github.com/earendil-works/pi/issues/8979)).
+- Fixed Windows `NodeExecutionEnv` aborts crashing when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).
+
+- Fixed queued steering and follow-up messages still reaching the provider after a queue clear on a terminating continuation: the terminating continuation boundary now runs before the drained queue is refreshed, so a clear or replacement at `turn_start` wins over pending input.
+- Fixed `prepareNextTurn` and `prepareNextTurnWithContext` being skipped on completed turns without tool calls: the next-turn preparation now runs after every completed assistant turn that can reach the preparation boundary, including a normal stop response, while the terminating queue boundary and ownership refresh are preserved before a continuation provider request.
+- Fixed next-turn compaction firing on completed turns that will not reach the provider: compaction is now gated on real provider admission (a tool continuation or queued message actually being admitted), while the next-turn callback keeps running on every completed turn and the late queue re-sample and one bounded callback replay after compaction are retained.
+
+- The harness `convertToLlm` (`packages/agent/src/harness/messages.ts`) now drops assistant turns with `stopReason` `error` or `aborted`, and the tool results orphaned by that drop, from its output via the shared `dropFailedAssistantTurns` from `@earendil-works/pi-ai`, so compaction, branch summarization, and any consumer building an LLM request from the converted list never replay a failed provider turn's partial text or unexecuted tool calls. A call id re-declared by a kept assistant keeps its result.
+
+### Removed
+
+## [2026.9.4] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.3-3] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.3-2] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.3] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-4] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-3] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Provider stream-start timeout errors now name `retry.provider.streamStartTimeoutMs` and explain that `0` disables the guard.
+
+### Removed
+
+## [2026.9.2-2] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.31] - 2026-08-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30-3] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30-2] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.29] - 2026-08-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.28-2] - 2026-08-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.28] - 2026-08-28
+
+### Breaking Changes
+
+### Added
+
+- Harness tool contexts accept an optional `postMutate` hook. It runs inside the file mutation queue immediately after `write` or `edit` commits its bytes, so a formatter or normalizer can adjust the file as an atomic part of the same mutation. `edit` recomputes its diff and unified patch against the post-hook file contents whenever the hook may have touched the file, and a rejecting hook is reported as an appended warning note rather than discarding the landed write. Tool behavior is unchanged when no hook is supplied.
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.27] - 2026-08-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.26-2] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.26] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.25] - 2026-08-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed single-object `edit` tool inputs failing validation by accepting them as one-edit arrays ([#7835](https://github.com/earendil-works/pi/issues/7835)).
+- Fixed root Markdown files such as `README.md` and `AGENTS.md` in skill directories being reported as broken skills unless they declare valid skill frontmatter ([#7805](https://github.com/earendil-works/pi/issues/7805)).
+### Removed
+
+## [2026.8.24] - 2026-08-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Updated the shared TypeBox runtime to 1.3.18, keeping agent schemas aligned with the protocol, AI, coding-agent, and codemode packages.
+
+### Fixed
+
+### Removed
+
+## [2026.8.23] - 2026-08-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.22-2] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.22] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21-3] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21-2] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.20-2] - 2026-08-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.20] - 2026-08-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Provider idle after completed Cursor tools (or buffered exec results) now ends the turn as `stop` instead of hanging until `StreamIdleTimeoutError` ([#999](https://github.com/code-yeongyu/senpi/pull/999) by [@leeseunguk](https://github.com/leeseunguk)).
+- Cursor often ends a turn as `stop` while the assistant message still contains toolCall blocks. Those turns now continue as `toolUse` so pending tools run instead of being dropped ([#1016](https://github.com/code-yeongyu/senpi/pull/1016) by [@leeseunguk](https://github.com/leeseunguk)).
+- Cursor exec handler factories now receive the owning run's abort signal instead of the per-request
+  idle-timeout controller, so native Cursor exec tool calls pass the run-ownership check again instead
+  of failing every call with `Tool execution has no active run` ([#1002](https://github.com/code-yeongyu/senpi/pull/1002) by [@HeiTuz](https://github.com/HeiTuz)).
+
+### Removed
+
+## [2026.8.19] - 2026-08-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Aborting a run now releases a tool call that ignores its abort signal and never settles. Tool execution races the run's abort signal instead of awaiting the tool alone, so the run reaches `agent_end` and the session goes idle instead of hanging with an unresponsive ESC while the TUI shows `Running <tool>` ([#970](https://github.com/code-yeongyu/senpi/pull/970)).
+
+### Removed
+
+## [2026.8.18-3] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+- `ThinkingSelection` provenance now travels from agent state through `createLoopConfig`, mid-run
+  `prepareNextTurn` updates (undefined leaves unchanged, null clears), and the remote proxy's
+  serializable options, letting providers distinguish an explicit user choice from the
+  always-materialized effective reasoning level.
+
+### Changed
+
+- `AgentLoopConfig.cursorExecHandlers` additionally accepts a factory taking the owning run's abort signal, so
+  a host bridge can bind each Cursor exec stream to the run that opened it. The plain-object form is unchanged.
+
+### Fixed
+
+### Removed
+
+## [2026.8.18-2] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Late Cursor exec-bridge lifecycle events that settle after an abort or timeout are tied to their originating run, so they neither raise an unhandled `Agent listener invoked outside active run` error nor leak into a replacement run ([#935](https://github.com/code-yeongyu/senpi/pull/935)).
 
 ### Removed
 

@@ -32,6 +32,7 @@ it("accepts consumer-resolved platform optionals outside the packed bundle", () 
 			{ path: "package/node_modules/@code-yeongyu/senpi-codemode/package.json" },
 			{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/index.ts" },
 			{ path: "package/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py/prelude.py" },
+			{ path: "package/node_modules/@code-yeongyu/senpi-codemode/node_modules/@babel/parser/package.json" },
 			{ path: "package/node_modules/@anthropic-ai/claude-agent-sdk/package.json" },
 		],
 	};

@@ -25,6 +25,17 @@ interface InjectionRecord {
 }
 
 const PICOMATCH_OPTIONS = { dot: true };
+/**
+ * Floor for the per-stream tail window. Long enough that even untracked
+ * short patterns survive window slides with margin to spare.
+ */
+const MIN_STREAM_BUFFER_TAIL_CHARS = 1024;
+/**
+ * A regex can match text longer than its source (quantifiers like `\d{20}`),
+ * so the tail window scales past the longest pattern text rather than
+ * equaling it.
+ */
+const STREAM_BUFFER_TAIL_SAFETY_FACTOR = 4;
 
 export class TtsrManager {
 	readonly #settings: TtsrSettings;
@@ -32,6 +43,7 @@ export class TtsrManager {
 	readonly #rules = new Map<string, TtsrEntry>();
 	readonly #injectionRecords = new Map<string, InjectionRecord>();
 	readonly #buffers = new Map<string, string>();
+	#maxConditionLength = 0;
 	#messageCount = 0;
 	#canMatchText = false;
 	#canMatchThinking = false;
@@ -146,6 +158,7 @@ export class TtsrManager {
 				continue;
 			}
 			conditions.push(compiled);
+			if (pattern.length > this.#maxConditionLength) this.#maxConditionLength = pattern.length;
 		}
 		if (conditions.length === 0) {
 			console.warn("TTSR rule has no valid condition, skipping rule", { ruleName: rule.name });
@@ -191,9 +204,23 @@ export class TtsrManager {
 			return [];
 		}
 		const bufferKey = `${context.source}:${context.streamKey}`;
-		const nextBuffer = `${this.#buffers.get(bufferKey) ?? ""}${delta}`;
+		let nextBuffer = `${this.#buffers.get(bufferKey) ?? ""}${delta}`;
+		// Keep only a tail window: rules match against recent output, and an
+		// unbounded buffer would retain the whole turn's stream (and pay O(n^2)
+		// concat garbage per delta) until the next turn reset.
+		const cap = this.#streamBufferCapChars();
+		if (nextBuffer.length > cap) nextBuffer = nextBuffer.slice(-cap);
 		this.#buffers.set(bufferKey, nextBuffer);
 		return this.#matchBuffer(nextBuffer, context);
+	}
+
+	#streamBufferCapChars(): number {
+		return Math.max(MIN_STREAM_BUFFER_TAIL_CHARS, this.#maxConditionLength * STREAM_BUFFER_TAIL_SAFETY_FACTOR);
+	}
+
+	/** Buffered chars per stream key (diagnostics; buffer-bound verification). */
+	getStreamBufferLengths(): Map<string, number> {
+		return new Map(Array.from(this.#buffers, ([key, buffer]) => [key, buffer.length]));
 	}
 
 	#matchBuffer(buffer: string, context: TtsrMatchContext): TtsrRule[] {

@@ -1,66 +1,195 @@
-import type { ContinuityDecision } from "./session-continuity.ts";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
+import type { StoredBinding } from "./session-binding-store.ts";
+import { assistantContentHash } from "./session-commit-boundary.ts";
+import type { ContinuityBinding } from "./session-reattach.ts";
+import { sentHashPrefixDigest } from "./session-sync.ts";
 
 export const BINDING_ENTRY_TYPE = "claude-sdk-oauth-binding";
+export const BINDING_MARKER = { schemaVersion: 2, marker: true } as const;
 
-export type BindingCheckpoint = {
-	schemaVersion: 1;
-	sdkSessionId: string;
-	sentCount: number;
-	sentPrefixHash: string;
-	lastAssistantUuid: string | null;
-	accountName: string;
-	claudeConfigDir: string;
-	modelId: string;
+export type BindingInvalidation = {
+	readonly schemaVersion: 1;
+	readonly invalidated: true;
+	readonly reason: string;
 };
 
-export type BindingInvalidation = { schemaVersion: 1; invalidated: true; reason: string };
-
-type BranchEntry = { type: string; customType?: string; data?: unknown };
-
-export type BindingVerificationInput = {
-	binding: BindingCheckpoint;
-	transcriptExists: boolean;
-	transcriptHasBoundaryUuid: boolean;
-	currentSentPrefixHash: string;
+type BranchEntry = {
+	readonly id?: string;
+	readonly type: string;
+	readonly customType?: string;
+	readonly data?: unknown;
+	readonly message?: unknown;
 };
 
-function isInvalidation(data: unknown): data is BindingInvalidation {
-	return typeof data === "object" && data !== null && (data as BindingInvalidation).invalidated === true;
+export type StoredBindingAnchor = {
+	readonly sessionPath: string;
+	readonly sessionId: string;
+	readonly markerEntryId: string;
+	readonly assistantContentHash: string;
+};
+
+export type BindingEntryState = {
+	readonly sdkSessionId: string;
+	readonly accountName: string;
+	readonly modelId: string;
+	readonly systemPromptHash: string;
+	readonly toolsetHash: string;
+	readonly assistantUuidByIndex: ReadonlyMap<number, string>;
+};
+
+/**
+ * The record is derived from the registry entry plus the hashes the branch
+ * actually carries, never from the process binding map: that map holds the
+ * previous turn's state while `message_end` runs (and only a prefix digest right
+ * after a restart), so reading it would anchor this turn's marker to a stale or
+ * absent sent-stream.
+ */
+export function storedBindingFromEntry(
+	entry: BindingEntryState,
+	hashes: readonly string[],
+	anchor: StoredBindingAnchor,
+): StoredBinding {
+	return {
+		schemaVersion: 1,
+		sessionPath: anchor.sessionPath,
+		sessionId: anchor.sessionId,
+		markerEntryId: anchor.markerEntryId,
+		sdkSessionId: entry.sdkSessionId,
+		sentCount: hashes.length,
+		sentPrefixHash: sentHashPrefixDigest(hashes),
+		assistantContentHash: anchor.assistantContentHash,
+		lastAssistantUuid: entry.assistantUuidByIndex.get(hashes.length) ?? null,
+		accountName: entry.accountName,
+		modelId: entry.modelId,
+		systemPromptHash: entry.systemPromptHash,
+		toolsetHash: entry.toolsetHash,
+	};
 }
 
-function isCheckpoint(data: unknown): data is BindingCheckpoint {
-	return typeof data === "object" && data !== null && typeof (data as BindingCheckpoint).sdkSessionId === "string";
+/** Persist a completed turn whose resident registry entry closed before `message_end`. */
+export function storedBindingFromBinding(
+	binding: ContinuityBinding,
+	hashes: readonly string[],
+	anchor: StoredBindingAnchor,
+): StoredBinding | undefined {
+	if (binding.sdkSessionIdConfirmed === false) return undefined;
+	if (binding.sentCount !== hashes.length) return undefined;
+	const expectedDigest = sentHashPrefixDigest(hashes);
+	const bindingDigest =
+		binding.sentPrefixHash ?? (binding.sentHashes.length > 0 ? sentHashPrefixDigest(binding.sentHashes) : undefined);
+	if (bindingDigest === undefined || bindingDigest !== expectedDigest) return undefined;
+	return {
+		schemaVersion: 1,
+		sessionPath: anchor.sessionPath,
+		sessionId: anchor.sessionId,
+		markerEntryId: anchor.markerEntryId,
+		sdkSessionId: binding.sdkSessionId,
+		sentCount: hashes.length,
+		sentPrefixHash: sentHashPrefixDigest(hashes),
+		assistantContentHash: anchor.assistantContentHash,
+		lastAssistantUuid: binding.lastAssistantUuid,
+		accountName: binding.accountName,
+		modelId: binding.modelId,
+		systemPromptHash: binding.systemPromptHash,
+		toolsetHash: binding.toolsetHash,
+	};
 }
 
-export function latestBindingOnBranch(branch: readonly BranchEntry[]): BindingCheckpoint | undefined {
+export function bindingFromStoredBranch(
+	branch: readonly BranchEntry[],
+	stored: StoredBinding,
+): ContinuityBinding | undefined {
+	const markerIndex = newestBindingEntryIndex(branch);
+	if (markerIndex < 0) return undefined;
+	const marker = branch[markerIndex];
+	if (marker?.id !== stored.markerEntryId || !isBindingMarker(marker.data)) return undefined;
+	const assistantIndex = committedAssistantIndex(branch, markerIndex + 1);
+	if (assistantIndex < 0 || !branch.slice(assistantIndex + 1).every(isLedgerOnlyEntry)) return undefined;
+	const committedAssistant = branch[assistantIndex]?.message;
+	if (!isAssistantMessage(committedAssistant)) return undefined;
+	if (assistantContentHash(committedAssistant) !== stored.assistantContentHash) return undefined;
+	return bindingFromStored(stored);
+}
+
+/**
+ * The marker is appended inside `message_end`, so handlers that run after this
+ * builtin (and extensions loaded later) can append ledger entries before the
+ * assistant itself persists. The committed assistant is the first message after
+ * the marker; anything that reaches the model in between fails closed.
+ */
+function committedAssistantIndex(branch: readonly BranchEntry[], from: number): number {
+	for (let index = from; index < branch.length; index += 1) {
+		const entry = branch[index];
+		if (entry?.type === "message") return index;
+		if (!entry || !isLedgerOnlyEntry(entry)) return -1;
+	}
+	return -1;
+}
+
+/**
+ * Entry types the session-manager never projects into the LLM context. They
+ * cannot shift the sent-stream digest the binding is verified against, so any
+ * `custom` ledger record (hook state, rule scans, memory bookkeeping, ...) is
+ * admitted regardless of who wrote it. Everything the model can see - messages,
+ * custom messages other than the goal continuation, compaction and branch
+ * summaries - keeps failing closed (oh-my-openagent#7925).
+ */
+const LEDGER_ONLY_ENTRY_TYPES: ReadonlySet<string> = new Set([
+	"custom",
+	"label",
+	"session_info",
+	"thinking_level_change",
+	"model_change",
+	"configuration_update",
+]);
+
+function isLedgerOnlyEntry(entry: BranchEntry): boolean {
+	if (entry.type === "custom_message") return entry.customType === GOAL_CONTINUATION_MESSAGE_TYPE;
+	return LEDGER_ONLY_ENTRY_TYPES.has(entry.type);
+}
+
+function newestBindingEntryIndex(branch: readonly BranchEntry[]): number {
 	for (let index = branch.length - 1; index >= 0; index -= 1) {
 		const entry = branch[index];
-		if (entry?.type !== "custom" || entry.customType !== BINDING_ENTRY_TYPE) continue;
-		if (isInvalidation(entry.data)) return undefined;
-		if (isCheckpoint(entry.data)) return entry.data;
+		if (entry?.type === "custom" && entry.customType === BINDING_ENTRY_TYPE) return index;
 	}
-	return undefined;
+	return -1;
 }
 
-export function verifyBindingAgainstTranscript(input: BindingVerificationInput): ContinuityDecision {
-	const { binding } = input;
-	if (!input.transcriptExists) return { kind: "flatten", reason: "transcript_missing" };
-	if (!binding.lastAssistantUuid || !input.transcriptHasBoundaryUuid) {
-		return { kind: "flatten", reason: "branch_boundary_unavailable" };
-	}
-	if (input.currentSentPrefixHash === binding.sentPrefixHash) {
-		return {
-			kind: "reattach",
-			sdkSessionId: binding.sdkSessionId,
-			from: binding.sentCount,
-			reason: "registry_miss",
-		};
-	}
+function isBindingMarker(value: unknown): boolean {
+	if (typeof value !== "object" || value === null) return false;
+	return "schemaVersion" in value && value.schemaVersion === 2 && "marker" in value && value.marker === true;
+}
+
+function isAssistantMessage(value: unknown): value is AssistantMessage {
+	if (typeof value !== "object" || value === null) return false;
+	return (
+		"role" in value &&
+		value.role === "assistant" &&
+		"api" in value &&
+		typeof value.api === "string" &&
+		"provider" in value &&
+		typeof value.provider === "string" &&
+		"model" in value &&
+		typeof value.model === "string" &&
+		"content" in value &&
+		Array.isArray(value.content)
+	);
+}
+
+function bindingFromStored(stored: StoredBinding): ContinuityBinding {
 	return {
-		kind: "fork",
-		sdkSessionId: binding.sdkSessionId,
-		atUuid: binding.lastAssistantUuid,
-		from: binding.sentCount,
-		reason: "sent_stream_diverged",
+		senpiSessionId: stored.sessionId,
+		sdkSessionId: stored.sdkSessionId,
+		sentCount: stored.sentCount,
+		sentHashes: [],
+		sentPrefixHash: stored.sentPrefixHash,
+		lastAssistantUuid: stored.lastAssistantUuid,
+		assistantUuidByIndex: stored.lastAssistantUuid === null ? [] : [[stored.sentCount, stored.lastAssistantUuid]],
+		accountName: stored.accountName,
+		modelId: stored.modelId,
+		systemPromptHash: stored.systemPromptHash,
+		toolsetHash: stored.toolsetHash,
 	};
 }

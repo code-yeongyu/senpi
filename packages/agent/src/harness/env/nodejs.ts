@@ -410,6 +410,8 @@ function waitForChildProcess(child: ChildProcess): Promise<number | null> {
 	});
 }
 
+const NORMAL_CALLBACK_SETTLEMENT_TIMEOUT_MS = 5_000;
+
 export class NodeExecutionEnv implements ExecutionEnv {
 	cwd: string;
 	private shellPath?: string;
@@ -461,6 +463,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			let settled = false;
 			let timedOut = false;
 			let callbackError: ExecutionError | undefined;
+			const callbackPromises = new Set<Promise<void>>();
 			let child: ReturnType<typeof spawn> | undefined;
 			let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -523,29 +526,57 @@ export class NodeExecutionEnv implements ExecutionEnv {
 
 			child.stdout?.setEncoding("utf8");
 			child.stderr?.setEncoding("utf8");
-			child.stdout?.on("data", (chunk: string) => {
-				stdout += chunk;
-				try {
-					options?.onStdout?.(chunk);
-				} catch (error) {
-					const cause = toError(error);
-					callbackError = new ExecutionError("callback_error", cause.message, cause);
-					onAbort();
-				}
-			});
-			child.stderr?.on("data", (chunk: string) => {
-				stderr += chunk;
-				try {
-					options?.onStderr?.(chunk);
-				} catch (error) {
-					const cause = toError(error);
-					callbackError = new ExecutionError("callback_error", cause.message, cause);
-					onAbort();
-				}
-			});
+			const handleChunk = (
+				chunk: string,
+				callback: ((chunk: string) => void | PromiseLike<void>) | undefined,
+				append: (chunk: string) => void,
+			) => {
+				append(chunk);
+				if (callback === undefined) return;
+				const callbackPromise = Promise.resolve()
+					.then(() => callback(chunk))
+					.catch((error) => {
+						if (!callbackError) {
+							const cause = toError(error);
+							callbackError = new ExecutionError("callback_error", cause.message, error);
+							onAbort();
+						}
+						throw error;
+					});
+				callbackPromises.add(callbackPromise);
+				void callbackPromise.then(
+					() => callbackPromises.delete(callbackPromise),
+					() => callbackPromises.delete(callbackPromise),
+				);
+			};
+			child.stdout?.on("data", (chunk: string) =>
+				handleChunk(chunk, options?.onStdout, (value) => (stdout += value)),
+			);
+			child.stderr?.on("data", (chunk: string) =>
+				handleChunk(chunk, options?.onStderr, (value) => (stderr += value)),
+			);
 
 			void waitForChildProcess(child).then(
-				(code) => {
+				async (code) => {
+					// Normal command completion must not be held hostage by an observer that
+					// never settles. Abort completion uses the shorter cancellation path above;
+					// this generous bound preserves slow, legitimate callbacks without hanging
+					// the execution forever.
+					const callbacksSettled = Promise.allSettled([...callbackPromises]);
+					let callbackTimeout: ReturnType<typeof setTimeout> | undefined;
+					const callbackBound = new Promise<boolean>((resolve) => {
+						callbackTimeout = setTimeout(() => resolve(false), NORMAL_CALLBACK_SETTLEMENT_TIMEOUT_MS);
+						callbackTimeout.unref?.();
+					});
+					try {
+						const settled = await Promise.race([callbacksSettled.then(() => true), callbackBound]);
+						if (!settled && !callbackError) {
+							settle(err(new ExecutionError("callback_error", "Output callback did not settle within 5000ms")));
+							return;
+						}
+					} finally {
+						if (callbackTimeout) clearTimeout(callbackTimeout);
+					}
 					if (callbackError) {
 						settle(err(callbackError));
 						return;

@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { resetContinuationStreak } from "../../src/core/extensions/builtin/goal/store.ts";
 import type { ExtensionContext } from "../../src/core/extensions/types.ts";
 import {
@@ -76,7 +77,7 @@ async function runContinuationCycle(
 async function runMonitorContinuationCycle(harness: GoalHarness, ctx: ExtensionContext): Promise<void> {
 	await runContinuationCycle(harness, ctx);
 	const delayedDeliveryRecorded = waitForSentCount(harness, harness.sent.length + 1);
-	await vi.advanceTimersByTimeAsync(240_000);
+	await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 	await delayedDeliveryRecorded;
 }
 

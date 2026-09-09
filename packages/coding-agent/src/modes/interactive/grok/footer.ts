@@ -1,17 +1,17 @@
 import { type Component, truncateToWidth } from "@earendil-works/pi-tui";
-import type { AgentSession } from "../../../core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
+import type { InteractiveSession } from "../interactive-host-runtime.ts";
 import { getGrokChromeTokens } from "./chrome-tokens.ts";
 
 /** Compact status footer for grok chrome. */
 export class GrokFooter implements Component {
-	private session: AgentSession;
+	private session: InteractiveSession;
 
-	constructor(session: AgentSession, _footerData: ReadonlyFooterDataProvider) {
+	constructor(session: InteractiveSession, _footerData: ReadonlyFooterDataProvider) {
 		this.session = session;
 	}
 
-	setSession(session: AgentSession): void {
+	setSession(session: InteractiveSession): void {
 		this.session = session;
 	}
 

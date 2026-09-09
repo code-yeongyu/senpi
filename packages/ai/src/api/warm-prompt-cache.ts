@@ -56,7 +56,7 @@ export async function warmPromptCache(
 	delete sanitized.tool_choice;
 	sanitized.max_tokens = 0;
 
-	const response = await client.messages.create(sanitized as unknown as typeof params, {
+	const response = await client.beta.messages.create(sanitized as unknown as typeof params, {
 		maxRetries: 0,
 		...(options.signal ? { signal: options.signal } : {}),
 		...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),

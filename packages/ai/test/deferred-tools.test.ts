@@ -225,6 +225,7 @@ describe("deferred tools", () => {
 				type: "image",
 				source: { type: "base64", media_type: "image/png", data: "aW1hZ2U=" },
 			},
+			{ type: "text", text: "Hello", cache_control: { type: "ephemeral" } },
 		]);
 	});
 
@@ -439,6 +440,7 @@ describe("deferred tools", () => {
 			sendSessionAffinityHeaders: false,
 			deferredToolsMode: "kimi",
 			sessionAffinityFormat: "openai",
+			supportsMaxOutputTokens: true,
 			supportsLongCacheRetention: false,
 		});
 

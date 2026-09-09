@@ -11,10 +11,15 @@ export interface LoopGuardEscalationDetails {
 	readonly blockedCallCount: number;
 }
 
+const POLLING_TOOL_NAMES = new Set(["bash_output", "task_output"]);
+
 export function buildLoopGuardBlockReason(toolName: string, blockedCallCount: number): string {
+	const recovery = POLLING_TOOL_NAMES.has(toolName)
+		? "Stop polling this target. If you need to wait for a change, arm a monitor or rely on a completion notification when this mode supports it; otherwise re-plan or choose a different tool."
+		: "Reuse the existing result, stop repeating this call, and re-plan from the current goal or choose a different tool.";
 	return [
 		`Loop guard blocked repeated call ${blockedCallCount} to \`${toolName}\` with arguments that already triggered two identical-call warnings.`,
-		"Reuse the existing result, change an argument deliberately, or choose a different tool.",
+		recovery,
 	].join(" ");
 }
 

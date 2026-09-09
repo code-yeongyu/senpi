@@ -82,11 +82,14 @@ export interface HarnessOptions {
 	persistSession?: boolean;
 	autoTitleSessions?: boolean;
 	fallbackNow?: () => number;
+	retryRandom?: () => number;
 	transportImageBudget?: { budgetBytes: number; alwaysKeepNewest: number };
 	modelsJson?: Record<string, unknown>;
 	fileSettings?: boolean;
 	settingsFileName?: "settings.json" | "settings.jsonc";
 	settingsContent?: string;
+	retryProfile?: import("@earendil-works/pi-ai/utils/retry-profile/types").RetryPolicyProfile;
+	evalOnlyToolNames?: string[];
 }
 
 export interface Harness {
@@ -158,6 +161,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			baseUrl: model.baseUrl,
 			apiKey: "faux-key",
 			api: fauxProvider.api,
+			...(options.retryProfile !== undefined ? { retryPolicy: options.retryProfile } : {}),
 			models: fauxProvider.models.map((registeredModel) => ({
 				id: registeredModel.id,
 				name: registeredModel.name,
@@ -240,9 +244,11 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		initialActiveToolNames: options.initialActiveToolNames,
 		allowedToolNames: options.allowedToolNames,
 		excludedToolNames: options.excludedToolNames,
+		evalOnlyToolNames: options.evalOnlyToolNames,
 		extensionRunnerRef,
 		autoTitleSessions: options.autoTitleSessions,
 		fallbackNow: options.fallbackNow,
+		retryRandom: options.retryRandom ?? (() => 0.5),
 	});
 
 	const events: AgentSessionEvent[] = [];

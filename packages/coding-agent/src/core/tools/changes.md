@@ -1,5 +1,237 @@
 # core/tools changes
 
+## Compact memory read classifications with stable headlines (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: consults registered classifiers after the SKILL.md check and before pi docs and AGENTS/CLAUDE resource classification. Memory reads render an accent headline and label with the existing line range and expand hint; docs/resource/skill formatting is unchanged.
+- `packages/coding-agent/src/core/tools/read.ts`: caches classifications, including unclaimed paths, by raw path in each tool call's renderer state so redraws and expand/collapse do not choose another headline.
+- `packages/coding-agent/src/core/tools/read-classifiers.ts` (new, fork-only): defines the shared classification types and a first-claim registry with idempotent unregister functions. Throwing classifiers are reported and skipped.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/read.ts` needs to recognize extension-owned memory paths without hardcoding memory storage layouts, while keeping SKILL.md precedence and stable transcript headlines.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/read.ts` owns built-in compact classification and per-call rendering state. An extension could replace the whole read renderer, but could not previously contribute a classification while retaining the host's existing formats and expansion behavior.
+
+### Expected merge conflict zones
+
+- MEDIUM: imports, `ReadRenderState`, `getCompactReadClassification`, `formatCompactReadCall`, and `createReadToolDefinition` in `packages/coding-agent/src/core/tools/read.ts`. Preserve classifier priority and per-call memoization when taking upstream renderer changes.
+- LOW: `packages/coding-agent/src/core/tools/read-classifiers.ts` is a new fork-only module.
+
+## Canonical identity is resolved, not guessed (2026-09-07)
+
+### What changed
+
+- `bounded-realpath.ts` (new) holds the shared pieces: `withResolutionDeadline` races a resolution against `RESOLUTION_DEADLINE_MS` (2s) and attaches a handler to the abandoned promise, `isMissingPathError`, and `foldPathForCaseInsensitiveFilesystem`.
+- `filesystem-policy.ts` `canonicalizeFilesystemPath` goes back to the `realpath` walk-up it used before the same-day open-free change, now raced against that deadline; past the deadline `realpathWithoutOpenStrict` answers instead.
+- `file-mutation-queue.ts` `getMutationQueueKey` likewise resolves with `realpath` under the deadline, keeps the ENOENT tolerance, falls back to the strict walker, and folds the key on filesystems that ignore case.
+
+### Why
+
+- The open-free walker cannot supply what these two callers need. It preserves the caller's spelling, so on a case-insensitive volume `Notes.txt` and `notes.txt` became two mutation-queue keys for one file and concurrent edits stopped being serialized. It also tolerated every error, so EACCES/EIO/ELOOP produced an unresolved path presented as canonical where `realpath` had failed closed. Only the kernel knows the on-disk spelling, so correctness has to come from `realpath` and boundedness from the deadline, not the reverse.
+- The deadline keeps the wedged-mount fix: `realpath` never returns on a macOS autofs trigger, and these run before every read/ls/grep/find/edit/write, so the caller still gets an answer while the doomed I/O is what fails.
+
+### Why an extension could not handle it
+
+- Both functions are core tool infrastructure that the built-in file tools call before any extension hook runs; the canonical path they produce is the input to extension containment policies.
+
+### Expected merge conflict zones
+
+- `filesystem-policy.ts` import block and `canonicalizeFilesystemPath` (upstream keeps a plain realpath walk-up); `file-mutation-queue.ts` `getMutationQueueKey`; `bounded-realpath.ts` is fork-only.
+- `test/canonical-path-identity.test.ts`, `test/bounded-realpath.test.ts` (new).
+
+## Filesystem canonicalization never opens a path component (2026-09-07)
+
+### What changed
+
+- `filesystem-policy.ts` `canonicalizeFilesystemPath` is now `realpathWithoutOpen(resolve(filePath))` (shared walker in `src/utils/paths.ts`) instead of an `fs.promises.realpath` walk-up that climbed to the nearest existing ancestor, retrying `lstat`/`readlink` per level. The walker keeps the same contract — symlinks resolved, missing descendants appended verbatim — so the local `isMissingPathError` helper is gone.
+- `file-mutation-queue.ts` `getMutationQueueKey` uses the same walker, so the queue key for a path that does not exist yet is still its resolved form.
+
+### Why
+
+- `canonicalizeFilesystemPath` runs before every `read`/`ls`/`grep`/`find`/`edit`/`write` and has no deadline of its own. Bun implements `fs.realpath*` by `open(2)`-ing every directory it resolves, so a path under a wedged mount (a macOS autofs trigger whose automounter never answers) stalled the tool call forever — measured on such a host: `canonicalizeFilesystemPath(<trigger>/probe.log)` was still pending after 4s with no error, while the `lstat` walker returns immediately. The same open-based resolution also fails with EACCES under an execute-only directory, which #1419 already fixed for the permission classifier.
+- The mutation-queue key must be stable for the same file, so it needs the same resolver the policy layer uses.
+
+### Why an extension could not handle it
+
+- Both functions are core tool infrastructure invoked by the built-in file tools before any extension hook runs.
+
+### Expected merge conflict zones
+
+- `filesystem-policy.ts` import block and the `canonicalizeFilesystemPath` body (upstream keeps the realpath walk-up).
+- `file-mutation-queue.ts` import block and `getMutationQueueKey`.
+- `test/filesystem-policy-canonicalize.test.ts` (new: symlinked parent, missing descendants, no-realpath proof, execute-only directory).
+
+## Adopt upstream ctx.cwd tool resolution without dropping fork tool surfaces (2026-09-03)
+
+### What changed
+
+- `read.ts`, `write.ts`, `edit.ts`, `grep.ts`, `find.ts`, `ls.ts`, and `bash.ts` resolve
+  filesystem/spawn cwd as `ctx?.cwd || cwd` (upstream 62835ea81) while keeping fork additions:
+  the read-tool `local://` URI guard, `FilesystemPolicyChecker` / permission hooks on
+  read/write/edit/grep/find/ls, snake_case tool naming, eval-only routing hooks, and bash spawn
+  context.
+- `write.ts` success text is now `Successfully wrote to <path>` (upstream e583b290a) but still
+  returns `details: createWriteDetails(path, content, baseline)` so TUI write-diff rendering
+  survives.
+
+### Why
+
+- Upstream tests assert per-call `ExtensionContext.cwd` overrides. Taking only ours would fail
+  those tests; taking only theirs would drop the local:// guard, filesystem policy, and write
+  details that the fork's TUI and eval kernel depend on.
+
+### Why an extension could not handle it
+
+- Builtin tool execute paths and their result `details` shape are core wiring. Extensions cannot
+  rewrite cwd resolution or restore write-diff details after the tool has already returned.
+
+### Expected merge conflict zones
+
+- Import blocks that add `ExtensionContext` next to `FilesystemPolicyChecker`.
+- `write.ts` execute return (`content` text vs `details`).
+- `grep.ts` `searchPath` (fork computes it before the policy check; upstream added a second
+  assignment after `ensureTool`).
+
+## grep is temporarily withheld from the model-facing tool surface (2026-08-29)
+
+### What changed
+
+- `index.ts`: added `temporarilyDisabledToolNames`, currently holding `grep`. Tools named here are
+  still constructed by `createAllToolDefinitions` and stay resolvable through
+  `AgentSession.getRegisteredTool`, but are dropped from the prompt-bearing tool definitions and
+  from the active tool names, so the model can neither see nor call them.
+
+### Why
+
+- Search routing is being re-evaluated and the model should not reach for `grep` in the meantime.
+  This is a withholding, not a removal: every grep code path stays intact, and restoring the tool
+  is deleting its entry from the set.
+
+### Why an extension could not handle it
+
+- The withheld set has to be applied where the session materializes its tool surface; an extension
+  cannot remove a builtin from the prompt-bearing definitions or the active tool names.
+
+### Expected merge conflict zones
+
+- `index.ts`: the `temporarilyDisabledToolNames` export sits directly below `allToolNames`, so an
+  upstream change that adds or removes a builtin tool name will conflict there. Resolve by keeping
+  both the upstream tool-name edit and this set; the set is intended to be emptied, not carried.
+
+## Output spill streams capture early storage failures (2026-08-26)
+
+### What changed
+
+- `output-accumulator.ts`: attaches an `error` listener when its full-output `WriteStream` is
+  created, records the first failure, and rejects `closeTempFile()` even when the failure happened
+  before close began.
+- `output-accumulator.ts`: waits for terminal `close` rather than `finish`, rejects premature close,
+  and removes failed unreturnable spills while preserving successful paths.
+- `bash.ts`: captures streaming/final update callback failures, always closes the active
+  `OutputAccumulator`, and aggregates cleanup failures without masking the callback error.
+
+### Why
+
+- Bash output can cross the in-memory limit while `/tmp` is quota-exhausted. The stream previously
+  had no listener until `closeTempFile()`, so an early `EDQUOT`/`ENOSPC` event reached
+  `uncaughtException` and killed the TUI. The normal tool promise now owns that failure.
+
+### Why an extension could not handle it
+
+- The built-in shell tool writes the spill stream before extension result hooks run.
+
+### Expected merge conflict zones
+
+- LOW: `output-accumulator.ts` stream creation and close lifecycle.
+- MEDIUM: `output-accumulator.ts` close/removal policy and `bash.ts` final update settlement.
+
+## Tooling layer re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts` keeps syntax-highlighted output, display-text
+  normalization, and the process-tree kill abort controller that stops preserved output tails.
+- `packages/coding-agent/src/core/tools/edit-diff.ts` keeps the extracted `unified-diff.ts` patch
+  builder in place of upstream's direct `diff` usage.
+- `packages/coding-agent/src/core/tools/edit.ts` keeps filesystem-policy checks and themed
+  `renderToolDiff` rendering.
+- `packages/coding-agent/src/core/tools/index.ts` keeps the single tool-factory path (upstream
+  re-adds a parallel `createToolDefinition` switch).
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- Tool render/import blocks in `packages/coding-agent/src/core/tools/bash.ts` and
+  `packages/coding-agent/src/core/tools/edit.ts`.
+
+## Read tool rejects local:// URIs with actionable guidance (2026-08-24)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: the execute path now guards the `local://` URI scheme
+  (`/^local:\/\//i`) before any path resolution and throws guidance naming the eval kernel `read()`/`write()`
+  helpers and the plain-absolute-path alternative, instead of resolving the URI as a relative path and failing
+  with `ENOENT <cwd>/local:/...`. Single-slash `local:/x` stays an ordinary relative path because a colon is legal
+  in macOS filenames.
+
+### Why
+
+- A 2026-08-24 session replayed a detached-eval spill notice pointing at `local://detached-eval-eval_5.log`
+  through the read tool; the scheme collapsed to a relative path and the tool returned a bare ENOENT with no
+  recovery hint. Deployed bundles still emit `local://` spill URIs and the eval prompt documents the scheme for
+  kernel helpers, so the read tool is a repeatable trap; the error itself now teaches the two working paths.
+
+### Why an extension could not handle it
+
+- The guard must run inside the built-in read tool's own execute path before `resolveReadPathAsync`; extension
+  filesystem-policy hooks only see already-canonicalized paths, so the raw scheme string never reaches them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/read.ts` execute prologue and the module constants block.
+
+## Edit tool keeps filesystem policy and themed diff rendering after the 59a71b23 pin (2026-08-19)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/edit.ts` stays divergent from upstream pin
+  `59a71b235dadb4ad0d67557a8abb0aaa093e68b4`: `EditToolOptions` keeps `filesystemPolicy`, and the executor still
+  consults the extension-registered checker (`operation: "write"`, canonical target from
+  `canonicalizeFilesystemPath()`, `toolName: "edit"`) after path resolution and before any file access, throwing
+  the policy reason as the tool error and re-checking abort afterwards.
+- `edit.ts` keeps rendering through the fork's `renderToolDiff()` from `./diff-render.ts` (theme-aware, and passed
+  the edited `file_path` in both the preview and result paths) instead of upstream's direct
+  `renderDiff()` import from the interactive diff component, and keeps `component.detachAll()` in place of
+  `component.clear()` for the call and result containers.
+
+### Why
+
+- Filesystem policy is a fork capability enforced inside each built-in executor so it cannot be bypassed by
+  Unicode/symlink path variants or by permission approval, and the fork's tool diff renderer is theme-driven and
+  lives in `core/tools` to keep the tool layer independent of interactive-mode components.
+
+### Why an extension could not handle it
+
+- `tool_call` observes user arguments before this executor canonicalizes the target, and it runs inside permission
+  handling where unrestricted approval can allow the call; the enforcement point must stay in the executor. The
+  render path is the built-in tool's own component construction.
+
+### Expected merge conflict zones
+
+- LOW-MEDIUM: the imports at the top of `edit.ts` (upstream pulls `renderDiff` from the interactive component) and
+  the policy check block at the start of the execute function.
+
 ## Repository audit baseline for the core/tools tracker (2026-08-17)
 
 ### What changed

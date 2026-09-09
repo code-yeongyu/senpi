@@ -1,10 +1,5 @@
 import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
-import {
-	type CursorCliOauthCredential,
-	emptyCredential,
-	listAccounts,
-	SENTINEL_OAUTH_FIELDS,
-} from "./accounts.ts";
+import { type CursorCliOauthCredential, emptyCredential, listAccounts, SENTINEL_OAUTH_FIELDS } from "./accounts.ts";
 import { CURSOR_CLI_OAUTH_PROVIDER_ID, importNativeCursorCredential } from "./oauth-login.ts";
 
 export type CursorCliNativeBootstrapDeps = {

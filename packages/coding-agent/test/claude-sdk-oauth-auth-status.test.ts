@@ -16,10 +16,11 @@ function authContext(environment: Record<string, string> = {}): AuthContext {
 }
 
 type TokenInjectionLane = "oauth-slots" | "config-dir" | "ambient";
+type ProviderSettings = { tokenInjection?: TokenInjectionLane; enabled?: boolean };
 
 function availabilityCheck(
 	readAmbientAuthStatus: () => Promise<boolean>,
-	readSettings?: () => { tokenInjection?: TokenInjectionLane } | undefined,
+	readSettings?: () => ProviderSettings | undefined,
 ): OAuthAvailabilityCheck {
 	const config = createOAuthConfig({
 		readCurrent: async () => undefined,
@@ -27,7 +28,7 @@ function availabilityCheck(
 		readSettings,
 	} as Parameters<typeof createOAuthConfig>[0] & {
 		readAmbientAuthStatus: () => Promise<boolean>;
-		readSettings?: () => { tokenInjection?: TokenInjectionLane } | undefined;
+		readSettings?: () => ProviderSettings | undefined;
 	}) as ReturnType<typeof createOAuthConfig> & { check?: OAuthAvailabilityCheck };
 	expect(config.check).toBeTypeOf("function");
 	return config.check as OAuthAvailabilityCheck;
@@ -62,7 +63,10 @@ describe("claude-sdk-oauth availability", () => {
 	});
 
 	it("rejects a persisted empty managed credential when ambient auth is logged out", async () => {
-		const check = availabilityCheck(async () => false);
+		const check = availabilityCheck(
+			async () => false,
+			() => ({ enabled: true }),
+		);
 		expect(await check({ ctx: authContext(), credential: emptyCredential() })).toBeUndefined();
 	});
 
@@ -76,8 +80,11 @@ describe("claude-sdk-oauth availability", () => {
 		expect(readAmbientAuthStatus).not.toHaveBeenCalled();
 	});
 
-	it("accepts an authenticated ambient Claude CLI", async () => {
-		const check = availabilityCheck(async () => true);
+	it("accepts an authenticated ambient Claude CLI once the ambient lane is opted in", async () => {
+		const check = availabilityCheck(
+			async () => true,
+			() => ({ enabled: true }),
+		);
 		expect(await check({ ctx: authContext() })).toEqual({
 			type: "oauth",
 			source: "Claude SDK OAuth",
@@ -85,13 +92,16 @@ describe("claude-sdk-oauth availability", () => {
 	});
 
 	it("rejects a logged-out ambient Claude CLI", async () => {
-		const check = availabilityCheck(async () => false);
+		const check = availabilityCheck(
+			async () => false,
+			() => ({ enabled: true }),
+		);
 		expect(await check({ ctx: authContext() })).toBeUndefined();
 	});
 
 	it("reports unconfigured when explicit ambient setting, stored accounts, and ambient CLI logged out", async () => {
 		const readAmbientAuthStatus = vi.fn(async () => false);
-		const check = availabilityCheck(readAmbientAuthStatus, () => ({ tokenInjection: "ambient" }));
+		const check = availabilityCheck(readAmbientAuthStatus, () => ({ tokenInjection: "ambient", enabled: true }));
 		const credential = { ...emptyCredential(), accounts: [account()] };
 
 		expect(await check({ ctx: authContext(), credential })).toBeUndefined();
@@ -101,7 +111,7 @@ describe("claude-sdk-oauth availability", () => {
 	it("reports configured when explicit ambient setting, stored accounts, and ambient CLI logged in", async () => {
 		const check = availabilityCheck(
 			async () => true,
-			() => ({ tokenInjection: "ambient" }),
+			() => ({ tokenInjection: "ambient", enabled: true }),
 		);
 		const credential = { ...emptyCredential(), accounts: [account()] };
 

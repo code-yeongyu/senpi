@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { EvalDetachedCellNotification, EvalDetachedCellSnapshot } from "./detached-cell-manager.ts";
+import { interruptionStateNote, unknownInterruptionStateNote } from "./interrupt-note.ts";
 
 const NOTIFICATION_TAIL_BYTES = 512;
 
@@ -12,7 +13,6 @@ export function detachedNotificationSpillPath(artifactsDir: string | undefined, 
 export async function buildDetachedCellNotification(
 	snapshot: EvalDetachedCellSnapshot,
 	spillPath: string | undefined,
-	artifactsDir: string | undefined,
 ): Promise<EvalDetachedCellNotification> {
 	const body = notificationBody(snapshot);
 	const overflow = Buffer.byteLength(body, "utf8") > NOTIFICATION_TAIL_BYTES;
@@ -21,7 +21,9 @@ export async function buildDetachedCellNotification(
 		try {
 			await mkdir(dirname(spillPath), { recursive: true });
 			await writeFile(spillPath, body, "utf8");
-			spillNotice = `\nBuffered output overflowed; full output: ${localUri(spillPath, artifactsDir)}`;
+			// The agent read tool resolves plain paths only, so the notice must carry
+			// the absolute spill path, never the kernel-helper local:// scheme.
+			spillNotice = `\nBuffered output overflowed; full output: ${spillPath}`;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			spillNotice = `\nBuffered output overflow could not be spilled: ${message}`;
@@ -73,21 +75,13 @@ function outcomeOf(cell: EvalDetachedCellSnapshot): string {
 }
 
 function stateNoteOf(cell: EvalDetachedCellSnapshot): string {
-	if (cell.state === "cancelled" && cell.language === "js")
-		return "JavaScript worker was restarted; VM state was lost.";
-	if (cell.state === "cancelled" && cell.language === "py")
-		return "Python kernel was interrupted; its existing variables are preserved.";
-	return "Kernel state updated - variables are available to the next eval cell.";
+	if (cell.state !== "cancelled") return "Kernel state updated - variables are available to the next eval cell.";
+	const note = interruptionStateNote(cell.language, cell.stateRetained) ?? unknownInterruptionStateNote(cell.language);
+	return cell.interruptNote === undefined ? note : `${note} ${cell.interruptNote.trim()}`;
 }
 
 function safeCellId(cellId: string): string {
 	return cellId.replace(/[^a-zA-Z0-9_-]/gu, "_");
-}
-
-function localUri(path: string, artifactsDir: string | undefined): string {
-	if (artifactsDir === undefined) return `local://${path}`;
-	const root = join(artifactsDir, "local");
-	return path.startsWith(`${root}/`) ? `local://${path.slice(root.length + 1)}` : `local://${path}`;
 }
 
 function truncateTailUtf8(text: string, maxBytes: number): string {

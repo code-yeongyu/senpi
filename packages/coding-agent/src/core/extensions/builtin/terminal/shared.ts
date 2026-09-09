@@ -35,10 +35,47 @@ export const BACKGROUND_START_GRACE_MS = 250;
 export const KILLED_SESSION_EXIT_GRACE_MS = 5000;
 
 /**
+ * Admission cap on durable (restart-surviving) monitors per session. Ephemeral monitors
+ * never count against it: only entries the manifest keeps across a restart do.
+ */
+export const MAX_DURABLE_MONITORS = 5;
+/**
+ * Absolute lifetime of a durable monitor, measured from its registration. It is a deadline,
+ * never a sliding window: neither a restore nor a rearm extends it.
+ */
+export const DURABLE_MONITOR_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Per-monitor rolling fire budget: one durable command watch may deliver at most this many
+ * matched line events inside any FIRE_BUDGET_WINDOW_MS window before the registry auto-mutes
+ * it. The session-global wake budget only counts consecutive line-only wakes on an idle
+ * session, so a busy session needs this per-monitor backstop against a runaway watch.
+ */
+export const DEFAULT_DURABLE_MONITOR_FIRE_BUDGET = 200;
+/** Width of the rolling fire-budget window: the budget replenishes after this span elapses. */
+export const FIRE_BUDGET_WINDOW_MS = 24 * 60 * 60 * 1000;
+/**
+ * The ONE summary emitted when the fire budget mutes a watch. Machine-consumed: the monitor
+ * notifier exempts exactly this summary from its completion handling, so the mute must not
+ * clear the session-global wake streak.
+ */
+export const FIRE_BUDGET_AUTO_MUTE_SUMMARY = `auto-muted: fire budget (${DEFAULT_DURABLE_MONITOR_FIRE_BUDGET}/24h) reached; rearm to resume`;
+
+/**
  * Non-interactive environment for foreground one-shot commands (codex-style):
  * cooperative tools (`gh`, `git`, pagers, color libs) skip spinners/colors at
- * the source instead of flooding the captured stream with redraw frames.
- * Background sessions keep the user's real TERM for interactive apps.
+ * the source instead of flooding the captured stream with redraw frames, and
+ * `git` never blocks the captured foreground PTY on interactive input.
+ * - `GIT_EDITOR: "true"`: git spawns `/usr/bin/true` as the editor, which exits 0
+ *   immediately (git treats a zero-exit editor as accepted), so a `git commit`
+ *   without `-m` aborts with "Aborting commit due to empty commit message" and a
+ *   `git rebase -i` accepts the todo list instead of parking the tool inside
+ *   nvim on COMMIT_EDITMSG until the timeout kills it.
+ * - `GIT_TERMINAL_PROMPT: "0"`: git fails fast ("could not read Username",
+ *   exit 128) instead of prompting for credentials on the captured PTY where
+ *   nobody can type (same opt-out `package-manager.ts` already uses for its own
+ *   git calls).
+ * Background sessions keep the user's real TERM and git settings for
+ * interactive apps.
  */
 export const FOREGROUND_ENV_OVERRIDES: Readonly<Record<string, string>> = {
 	NO_COLOR: "1",
@@ -47,6 +84,8 @@ export const FOREGROUND_ENV_OVERRIDES: Readonly<Record<string, string>> = {
 	PAGER: "cat",
 	GIT_PAGER: "cat",
 	GH_PAGER: "cat",
+	GIT_EDITOR: "true",
+	GIT_TERMINAL_PROMPT: "0",
 };
 
 /**

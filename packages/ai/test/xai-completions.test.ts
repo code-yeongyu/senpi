@@ -48,12 +48,18 @@ vi.mock("openai", () => {
 	return { default: FakeOpenAI };
 });
 
-function getCompletionModel(id: string): Model<"openai-completions"> {
+function getCustomCompletionModel(id: string): Model<"openai-completions"> {
 	const model = getModels("xai").find((candidate) => candidate.id === id);
-	if (model?.api !== "openai-completions") {
-		throw new Error(`Expected xAI OpenAI Completions model: ${id}`);
+	if (!model) {
+		throw new Error(`Expected built-in xAI model metadata: ${id}`);
 	}
-	return model as Model<"openai-completions">;
+	return {
+		...model,
+		api: "openai-completions",
+		compat: {
+			supportsReasoningEffort: id === "grok-4.6",
+		},
+	};
 }
 
 async function captureParams(
@@ -78,23 +84,23 @@ async function captureParams(
 	return (payload ?? mockState.lastParams) as Record<string, unknown>;
 }
 
-describe("xAI Chat Completions reasoning effort", () => {
+describe("custom xAI Chat Completions reasoning effort", () => {
 	beforeEach(() => {
 		mockState.lastParams = undefined;
 	});
 
 	it("sends xhigh reasoning effort for Grok 4.6", async () => {
-		const params = await captureParams(getCompletionModel("grok-4.6"), "xhigh");
+		const params = await captureParams(getCustomCompletionModel("grok-4.6"), "xhigh");
 		expect(params.reasoning_effort).toBe("xhigh");
 	});
 
 	it("omits reasoning effort for fixed-reasoning Grok 4.20", async () => {
-		const params = await captureParams(getCompletionModel("grok-4.20-0309-reasoning"), "high");
+		const params = await captureParams(getCustomCompletionModel("grok-4.20-0309-reasoning"), "high");
 		expect(params).not.toHaveProperty("reasoning_effort");
 	});
 
 	it("omits reasoning effort for non-reasoning Grok 4.20", async () => {
-		const params = await captureParams(getCompletionModel("grok-4.20-0309-non-reasoning"));
+		const params = await captureParams(getCustomCompletionModel("grok-4.20-0309-non-reasoning"));
 		expect(params).not.toHaveProperty("reasoning_effort");
 	});
 });

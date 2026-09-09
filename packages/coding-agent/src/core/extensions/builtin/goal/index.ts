@@ -6,7 +6,6 @@ import { GOAL_CACHE_WARMUP_ENTRY_TYPE } from "./cache-warm.ts";
 import { renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
 import { registerGoalCommand } from "./command-registration.ts";
 import { GOAL_CONTINUATION_CAP } from "./continuation.ts";
-import { continuationCapRecoveryHint, PROVIDER_ERROR_BLOCKED_REASON } from "./continuation-recovery.ts";
 import { GoalDirectInputLifecycle } from "./direct-input-lifecycle.ts";
 import { GoalElapsedTicker } from "./elapsed-ticker.ts";
 import { formatGoalForTool, goalStatusLabel } from "./format.ts";
@@ -14,10 +13,10 @@ import { isResumeOfStoppedGoal, queueGoalContinuation } from "./lifecycle-helper
 import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { migrateLegacyGoalFile } from "./persistence.ts";
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
+import { isStaleExtensionContextError } from "./stale-context.ts";
 import { accountGoalUsage, readGoal, updateGoal } from "./store.ts";
 import { GOAL_STORE_CHANGED_EVENT, isGoalStoreChangedEvent } from "./store-changed-event.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
-import { didTerminalProviderErrorEndTurn } from "./terminal-provider-error.ts";
 import { staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
 import { registerGoalTools } from "./tool-registration.ts";
 import { TurnUsageTracker } from "./turn-usage.ts";
@@ -27,7 +26,6 @@ import { GOAL_WAIT_STATUS_KEY, GoalWaitTicker } from "./wait-ticker.ts";
 
 const RESUME_GOAL_CHOICE = "Resume goal";
 const LEAVE_GOAL_STOPPED_CHOICE = "Leave stopped";
-const STALE_EXTENSION_CONTEXT_ERROR_PREFIX = "This extension ctx is stale after session replacement or reload.";
 
 type AgentGoalAccounting = {
 	goalId: string;
@@ -43,15 +41,11 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	let continuationPending = false;
 	let activeContext: ExtensionContext | undefined;
 	const turnUsage = new TurnUsageTracker();
+	// No stale-ctx swallow here: GoalWaitTicker retires itself on a stale render
+	// (a ticker that keeps ticking against a retired ctx freezes the footer
+	// countdown forever); non-stale render errors still propagate.
 	const goalWaitTicker = new GoalWaitTicker({
-		render: (renderCtx, status) => {
-			try {
-				renderCtx.ui.setStatus(GOAL_WAIT_STATUS_KEY, status);
-			} catch (error) {
-				if (error instanceof Error && error.message.startsWith(STALE_EXTENSION_CONTEXT_ERROR_PREFIX)) return;
-				throw error;
-			}
-		},
+		render: (renderCtx, status) => renderCtx.ui.setStatus(GOAL_WAIT_STATUS_KEY, status),
 	});
 	const monitorContinuation = new MonitorAwareGoalContinuation(
 		pi,
@@ -66,17 +60,11 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		goalStoreRef,
 		beginAgentGoalAccounting,
 		refreshGoalUi: refreshGoalUiBestEffort,
+		resumeAfterSuppressedLoad: (resumeCtx, goal) => queueGoalContinuationForCurrentSession(pi, resumeCtx, goal),
 	});
 
 	const goalTicker = new GoalElapsedTicker({
-		render: (renderCtx, renderGoal, live) => {
-			try {
-				updateGoalUi(renderCtx, renderGoal, live);
-			} catch (error) {
-				if (error instanceof Error && error.message.startsWith(STALE_EXTENSION_CONTEXT_ERROR_PREFIX)) return;
-				throw error;
-			}
-		},
+		render: (renderCtx, renderGoal, live) => updateGoalUi(renderCtx, renderGoal, live),
 	});
 
 	pi.registerEntryRenderer(GOAL_CACHE_WARMUP_ENTRY_TYPE, renderGoalCacheWarmupEntry);
@@ -163,6 +151,12 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			// leave the goal active (no status rewrite), and tell the user how to resume.
 			const trailingContinuations = countTrailingGoalContinuationEntries(ctx.sessionManager.getBranch());
 			if (trailingContinuations >= GOAL_CONTINUATION_CAP) {
+				// The load-time flood suppression parks the goal without rewriting its
+				// status, so the only resume signal left is the user's next message.
+				// Arm the one-shot latch the direct-input lifecycle fires when that
+				// message is accepted; without it the promise in the notice is a lie
+				// and the resumed session sits idle until the goal is recreated.
+				directInputLifecycle.armSuppressedLoadResume();
 				ctx.ui.notify(
 					`Goal auto-continuation suppressed for this resumed session (${trailingContinuations} historical continuations). Send a message to resume.`,
 					"info",
@@ -234,18 +228,6 @@ export default function goalExtension(pi: ExtensionAPI): void {
 				{ status: "blocked", reason: "user interrupted the turn" },
 				"model",
 			);
-		} else if (didTerminalProviderErrorEndTurn(event) && goal?.status === "active") {
-			goal = await updateGoal(
-				goalStoreRef(ctx),
-				{ status: "blocked", reason: PROVIDER_ERROR_BLOCKED_REASON },
-				"model",
-			);
-			if (ctx.hasUI) {
-				ctx.ui.notify(
-					`Goal ${goalStatusLabel(goal.status)}\n${formatGoalForTool(goal)}\n${continuationCapRecoveryHint(PROVIDER_ERROR_BLOCKED_REASON)}`,
-					"warning",
-				);
-			}
 		}
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);
@@ -300,6 +282,16 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	): Promise<boolean> {
 		if (!isResumeOfStoppedGoal(ctx, sessionStartReason, goal)) {
 			return false;
+		}
+		// RPC switch_session cannot service a nested interactive UI request until the
+		// switch response completes. Keep the goal stopped and let the user resume it
+		// explicitly after the new session finishes binding.
+		if (ctx.mode === "rpc") {
+			ctx.ui.notify(
+				`Goal remains ${goal.status} after session resume. Resume it explicitly after the session finishes loading.`,
+				"info",
+			);
+			return true;
 		}
 
 		const choice = await ctx.ui.select(`Resume ${goal.status} goal?\nGoal: ${goal.objective}`, [
@@ -394,7 +386,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		try {
 			refreshGoalUi(ctx, goal);
 		} catch (error) {
-			if (error instanceof Error && error.message.startsWith(STALE_EXTENSION_CONTEXT_ERROR_PREFIX)) {
+			if (isStaleExtensionContextError(error)) {
 				return;
 			}
 			throw error;

@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { isTurnStuckOnContextOverflow } from "../../../compaction/stuck-overflow.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
@@ -11,10 +12,12 @@ import {
 	hashAssistantText,
 } from "./continuation.ts";
 import {
+	CONTEXT_OVERFLOW_BLOCKED_REASON,
 	CONTINUATION_CAP_BLOCKED_REASON,
 	continuationCapRecoveryHint,
 	LENGTH_EXHAUSTED_BLOCKED_REASON,
 	REPETITION_BLOCKED_REASON,
+	UNATTENDED_CONTINUATION_BLOCKED_REASON,
 } from "./continuation-recovery.ts";
 import { buildContinuationPrompt } from "./prompt.ts";
 import { recordContinuationDelivered, updateGoal } from "./store.ts";
@@ -79,6 +82,7 @@ export async function admitAndQueueGoalContinuation(
 		goalStoreRef(ctx.sessionManager, ctx.cwd),
 		options.input.currentSignature,
 		goal.id,
+		{ countUnattended: options.input.path !== "monitorDelayed" },
 	);
 	if (recordedGoal === null) return null;
 	options.markContinuationPending();
@@ -104,6 +108,7 @@ export async function queueGoalContinuation(
 			hasPendingMessages: ctx.hasPendingMessages(),
 			path: "sessionStart",
 			lastStopReason: undefined,
+			lastTurnWasMalformedToolUse: false,
 			consecutiveContinuations: goal.consecutiveContinuations ?? 0,
 			lastContinuationSignature: goal.lastContinuationSignature,
 			currentSignature: signature,
@@ -111,6 +116,10 @@ export async function queueGoalContinuation(
 			recentNormalizedOutputHashes: [],
 			toollessContinuationStreak: 0,
 			continuationPending: options.continuationPending,
+			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(
+				ctx,
+				lastAssistantFromEntries(ctx.sessionManager.getBranch()),
+			),
 		},
 		content: () => buildContinuationPrompt(goal),
 		markContinuationPending: options.markContinuationPending,
@@ -137,11 +146,25 @@ export function lastAssistantText(messages: readonly AgentMessage[]): string {
 }
 
 function lastAssistantTextFromEntries(entries: readonly SessionEntry[]): string {
+	const assistant = lastAssistantFromEntries(entries);
+	return assistant === undefined ? "" : textContent(assistant);
+}
+
+function lastAssistantFromEntries(
+	entries: readonly SessionEntry[],
+): Extract<AgentMessage, { role: "assistant" }> | undefined {
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index];
-		if (entry?.type === "message" && entry.message.role === "assistant") return textContent(entry.message);
+		if (entry?.type === "message" && entry.message.role === "assistant") return entry.message;
 	}
-	return "";
+	return undefined;
+}
+
+export function isLastTurnStuckOnContextOverflow(
+	ctx: ExtensionContext,
+	lastAssistant: Extract<AgentMessage, { role: "assistant" }> | undefined,
+): boolean {
+	return lastAssistant !== undefined && isTurnStuckOnContextOverflow(lastAssistant, ctx.model?.contextWindow ?? 0);
 }
 
 function textContent(message: Extract<AgentMessage, { role: "assistant" }>): string {
@@ -171,6 +194,7 @@ async function handleDeniedContinuation(
 		goalId: goal.id,
 		reason,
 		count: input.consecutiveContinuations,
+		unattendedContinuations: goal.unattendedContinuations ?? 0,
 	});
 	return blocked;
 }
@@ -181,10 +205,14 @@ function blockedReasonForContinuationGuard(
 	switch (reason) {
 		case "cap":
 			return CONTINUATION_CAP_BLOCKED_REASON;
+		case "unattended":
+			return UNATTENDED_CONTINUATION_BLOCKED_REASON;
 		case "repetition":
 			return REPETITION_BLOCKED_REASON;
 		case "length-exhausted":
 			return LENGTH_EXHAUSTED_BLOCKED_REASON;
+		case "context-overflow":
+			return CONTEXT_OVERFLOW_BLOCKED_REASON;
 		case "not-eligible":
 		case "single-flight":
 		case "stale":

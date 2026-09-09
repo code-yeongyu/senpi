@@ -25,23 +25,16 @@ describe("buildDynamicSystemPrompt", () => {
 	test("includes intent gate section with mandatory verbalization", () => {
 		const prompt = buildDynamicSystemPrompt(baseOptions);
 
-		expect(prompt).toContain("Intent");
-		expect(prompt).toContain("Surface Form");
+		expect(prompt).toContain("## Intent Gate");
 		expect(prompt).toContain("I read this as");
 		expect(prompt).not.toContain("Keep the routing decision internal");
 	});
 
-	test("includes parallel tool calls section", () => {
+	test("includes working-the-task section with parallel and exploration discipline", () => {
 		const prompt = buildDynamicSystemPrompt(baseOptions);
 
-		expect(prompt).toContain("## Parallel Tool Calls");
+		expect(prompt).toContain("## Working the Task");
 		expect(prompt).toContain("loosely relevant");
-	});
-
-	test("includes exploration section with stop conditions", () => {
-		const prompt = buildDynamicSystemPrompt(baseOptions);
-
-		expect(prompt).toContain("## Exploration");
 		expect(prompt).toContain("Stop searching when");
 	});
 
@@ -66,7 +59,6 @@ describe("buildDynamicSystemPrompt", () => {
 
 		expect(prompt).toContain("## Policies");
 		expect(prompt).toContain("Hard Blocks");
-		expect(prompt).toContain("Anti-Patterns");
 	});
 
 	test("policies section is language-agnostic", () => {
@@ -164,8 +156,8 @@ describe("buildDynamicSystemPrompt", () => {
 	test("does NOT accept customPrompt (SYSTEM.md removed)", () => {
 		const prompt = buildDynamicSystemPrompt(baseOptions);
 
-		expect(prompt).toContain("Intent");
-		expect(prompt).toContain("Context-Completion Gate");
+		expect(prompt).toContain("## Intent Gate");
+		expect(prompt).toContain("once context is sufficient, act");
 	});
 
 	test("does NOT accept appendSystemPrompt (APPEND_SYSTEM.md removed)", () => {

@@ -252,6 +252,32 @@ export function directNodeModulesPackageName(lockPath) {
 	return parts.length === 1 ? parts[0] : undefined;
 }
 
+function nestedWorkspacePackageName(lockPath, workspacePackageName) {
+	const prefix = `node_modules/${workspacePackageName}/node_modules/`;
+	if (!lockPath.startsWith(prefix)) return undefined;
+	const packageName = directNodeModulesPackageName(`node_modules/${lockPath.slice(prefix.length)}`);
+	return packageName?.startsWith(".") ? undefined : packageName;
+}
+
+function copyNestedWorkspaceDependencies(repoRoot, manifest, workspace, targetRoot) {
+	const sourceNodeModules = join(repoRoot, workspace.source, "node_modules");
+	const targetNodeModules = join(targetRoot, "node_modules");
+	for (const [lockPath, entry] of Object.entries(manifest.packages ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+		const packageName = nestedWorkspacePackageName(lockPath, workspace.packageName);
+		if (!packageName) continue;
+
+		const sourcePath = join(sourceNodeModules, packageName);
+		if (!existsSync(sourcePath)) {
+			if (entry && typeof entry === "object" && entry.optional === true) continue;
+			throw new Error(`Missing ${sourcePath}. Run npm install before publishing.`);
+		}
+
+		const targetPath = join(targetNodeModules, packageName);
+		mkdirSync(dirname(targetPath), { recursive: true });
+		cpSync(sourcePath, targetPath, { recursive: true });
+	}
+}
+
 export function copyPublishDependencies(repoRoot) {
 	// Staging manifest for the bundled publish tree. NOT npm-shrinkwrap.json: shipping a
 	// file named npm-shrinkwrap.json breaks bundleDependencies installs (see the guard in
@@ -280,6 +306,7 @@ export function copyPublishDependencies(repoRoot) {
 		mkdirSync(dirname(targetPath), { recursive: true });
 		cpSync(sourcePath, targetPath, { recursive: true });
 	}
+	return manifest;
 }
 
 export function assertSenpiPackedWorkspaceFiles(packed, options = {}) {
@@ -342,6 +369,10 @@ export function assertSenpiPackedWorkspaceFiles(packed, options = {}) {
 			missing.push(`${path} or ${dryRunPath}`);
 		}
 	}
+	const codemodeParserPackageJson = "node_modules/@code-yeongyu/senpi-codemode/node_modules/@babel/parser/package.json";
+	if (!filePaths.has(`package/${codemodeParserPackageJson}`) && !filePaths.has(codemodeParserPackageJson)) {
+		missing.push(`package/${codemodeParserPackageJson} or ${codemodeParserPackageJson}`);
+	}
 	for (const { target, requiredFiles } of vendoredWorkspacePackageChecks()) {
 		const packageRoot = `package/vendor/${target}`;
 		const dryRunPackageRoot = `vendor/${target}`;
@@ -360,7 +391,7 @@ export function assertSenpiPackedWorkspaceFiles(packed, options = {}) {
 }
 
 export function prepareSenpiBundledWorkspaces(repoRoot = root) {
-	copyPublishDependencies(repoRoot);
+	const publishDependencies = copyPublishDependencies(repoRoot);
 	const codingAgentNodeModules = join(repoRoot, "packages/coding-agent/node_modules");
 
 	for (const workspace of bundledWorkspaces) {
@@ -399,6 +430,9 @@ export function prepareSenpiBundledWorkspaces(repoRoot = root) {
 			recursive: true,
 			filter: (sourcePath) => shouldCopyWorkspaceFile(sourceRoot, sourcePath, workspace.sourceOnly),
 		});
+		if (workspace.sourceOnly) {
+			copyNestedWorkspaceDependencies(repoRoot, publishDependencies, workspace, targetRoot);
+		}
 		rewriteBundledWorkspaceManifest(targetRoot);
 	}
 

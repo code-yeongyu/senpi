@@ -3,7 +3,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { admitAndQueueGoalContinuation } from "../../../src/core/extensions/builtin/goal/lifecycle-helpers.ts";
 import {
-	GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS,
+	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
 	MonitorAwareGoalContinuation,
 } from "../../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { readGoal, writeGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
@@ -75,7 +75,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 			messages: [assistantStopWithText("still waiting")],
 		});
 		const delayedDeliveryRecorded = waitForSentCount(harness, 1);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		await delayedDeliveryRecorded;
 
 		expect(harness.sent).toHaveLength(1);
@@ -92,7 +92,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 			messages: [assistantStopWithText("still waiting")],
 		});
 		const guardTripped = waitForEventCount(events, "goal_continuation_guard_tripped", 1);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		await guardTripped;
 
 		expect(harness.sent).toHaveLength(1);
@@ -123,10 +123,12 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 						hasPendingMessages: false,
 						path: "monitorDelayed",
 						lastStopReason: "stop",
+						lastTurnWasMalformedToolUse: false,
 						consecutiveContinuations: 7,
 						lastContinuationSignature: undefined,
 						currentSignature: `${goal.id}:0/0:deadbeef`,
 						consecutiveLengthRecoveries: 0,
+						lastTurnStuckOnContextOverflow: false,
 						recentNormalizedOutputHashes: [],
 						toollessContinuationStreak: 0,
 						continuationPending: false,

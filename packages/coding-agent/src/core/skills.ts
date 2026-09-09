@@ -114,10 +114,10 @@ function validateName(name: string): string[] {
 /**
  * Validate description per Agent Skills spec.
  */
-function validateDescription(description: string | undefined): string[] {
+function validateDescription(description: unknown): string[] {
 	const errors: string[] = [];
 
-	if (!description || description.trim() === "") {
+	if (typeof description !== "string" || description.trim() === "") {
 		errors.push("description is required");
 	} else if (description.length > MAX_DESCRIPTION_LENGTH) {
 		errors.push(`description exceeds ${MAX_DESCRIPTION_LENGTH} characters (${description.length})`);
@@ -279,49 +279,69 @@ function loadSkillFromFile(
 	source: string,
 ): { skill: Skill | null; diagnostics: ResourceDiagnostic[] } {
 	const diagnostics: ResourceDiagnostic[] = [];
+	const isDeclaredSkill = basename(filePath) === "SKILL.md";
 
+	let rawContent: string;
 	try {
-		const rawContent = readFileSync(filePath, "utf-8");
-		const { frontmatter } = parseFrontmatter<SkillFrontmatter>(rawContent);
-		const skillDir = dirname(filePath);
-		const parentDirName = basename(skillDir);
-
-		// Validate description
-		const descErrors = validateDescription(frontmatter.description);
-		for (const error of descErrors) {
-			diagnostics.push({ type: "warning", message: error, path: filePath });
-		}
-
-		// Use name from frontmatter, or fall back to parent directory name
-		const name = frontmatter.name || parentDirName;
-
-		// Validate name
-		const nameErrors = validateName(name);
-		for (const error of nameErrors) {
-			diagnostics.push({ type: "warning", message: error, path: filePath });
-		}
-
-		// Still load the skill even with warnings (unless description is completely missing)
-		if (!frontmatter.description || frontmatter.description.trim() === "") {
-			return { skill: null, diagnostics };
-		}
-
-		return {
-			skill: {
-				name,
-				description: frontmatter.description,
-				filePath,
-				baseDir: skillDir,
-				sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
-				disableModelInvocation: frontmatter["disable-model-invocation"] === true,
-			},
-			diagnostics,
-		};
+		rawContent = readFileSync(filePath, "utf-8");
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "failed to parse skill file";
+		const message = error instanceof Error ? error.message : "failed to read skill file";
 		diagnostics.push({ type: "warning", message, path: filePath });
 		return { skill: null, diagnostics };
 	}
+
+	let frontmatter: SkillFrontmatter;
+	try {
+		({ frontmatter } = parseFrontmatter<SkillFrontmatter>(rawContent));
+	} catch (error) {
+		if (isDeclaredSkill) {
+			const message = error instanceof Error ? error.message : "failed to parse skill file";
+			diagnostics.push({ type: "warning", message, path: filePath });
+		}
+		return { skill: null, diagnostics };
+	}
+
+	const description = frontmatter.description;
+	const hasDescription = typeof description === "string" && description.trim() !== "";
+	if (!isDeclaredSkill && !hasDescription) {
+		return { skill: null, diagnostics };
+	}
+
+	const skillDir = dirname(filePath);
+	const parentDirName = basename(skillDir);
+
+	// Validate description
+	const descErrors = validateDescription(description);
+	for (const error of descErrors) {
+		diagnostics.push({ type: "warning", message: error, path: filePath });
+	}
+
+	// Use name from frontmatter, or fall back to parent directory name
+	const frontmatterName = typeof frontmatter.name === "string" ? frontmatter.name : undefined;
+	const name = frontmatterName || parentDirName;
+
+	// Validate name
+	const nameErrors = validateName(name);
+	for (const error of nameErrors) {
+		diagnostics.push({ type: "warning", message: error, path: filePath });
+	}
+
+	// Still load the skill even with warnings, unless description is missing or empty.
+	if (!hasDescription) {
+		return { skill: null, diagnostics };
+	}
+
+	return {
+		skill: {
+			name,
+			description,
+			filePath,
+			baseDir: skillDir,
+			sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
+			disableModelInvocation: frontmatter["disable-model-invocation"] === true,
+		},
+		diagnostics,
+	};
 }
 
 /**
@@ -332,6 +352,10 @@ function loadSkillFromFile(
  * Skills with disableModelInvocation=true are excluded from the prompt
  * (they can only be invoked explicitly via /skill:name commands).
  */
+// Skill roots share long absolute prefixes across every skill under them; rendering
+// that prefix per skill bills it once per skill. The roots table pays it once per
+// distinct root and each location becomes a short alias/relative path. A one-line
+// rule tells the model to expand aliases by joining them back to the root.
 export function formatSkillsForPrompt(skills: Skill[]): string {
 	const visibleSkills = skills.filter((s) => !s.disableModelInvocation);
 
@@ -339,19 +363,37 @@ export function formatSkillsForPrompt(skills: Skill[]): string {
 		return "";
 	}
 
+	const rootByPath = new Map<string, string>();
+	for (const skill of visibleSkills) {
+		const dir = skill.filePath.split("/").slice(0, -2).join("/"); // parent of <name>/SKILL.md
+		if (!rootByPath.has(dir)) rootByPath.set(dir, `r${rootByPath.size}`);
+	}
+
 	const lines = [
 		"\n\nThe following skills provide specialized instructions for specific tasks.",
 		"Use the read tool to load a skill's file whenever its description even loosely matches the task - loading an irrelevant skill costs little; missing a relevant one degrades the work.",
 		"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
 		"",
-		"<available_skills>",
+		"<skill_roots>",
 	];
+	for (const [dir, alias] of rootByPath) {
+		lines.push(`  <${alias}>${escapeXml(dir)}</${alias}>`);
+	}
+	lines.push(
+		"</skill_roots>",
+		"A location's `rN/` prefix expands to the matching root above.",
+		"",
+		"<available_skills>",
+	);
 
 	for (const skill of visibleSkills) {
+		const dir = skill.filePath.split("/").slice(0, -2).join("/");
+		const alias = rootByPath.get(dir);
+		const relative = skill.filePath.startsWith(`${dir}/`) ? skill.filePath.slice(dir.length + 1) : skill.filePath;
 		lines.push("  <skill>");
 		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
 		lines.push(`    <description>${escapeXml(skill.description)}</description>`);
-		lines.push(`    <location>${escapeXml(skill.filePath)}</location>`);
+		lines.push(`    <location>${escapeXml(`${alias}/${relative}`)}</location>`);
 		lines.push("  </skill>");
 	}
 

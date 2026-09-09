@@ -32,7 +32,7 @@ describe("senpi branding", () => {
 
 			// then
 			expect(output).toContain("senpi - AI coding assistant");
-			expect(output).toContain("senpi [options] [@files...] [messages...]");
+			expect(output).toContain("senpi [options] [--] [@files...] [messages...]");
 			expect(output).toContain("senpi install <source> [-l]");
 			expect(output).toContain("~/.senpi/agent");
 		} finally {

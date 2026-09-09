@@ -101,7 +101,7 @@ describe("cursor-cli-oauth login and availability", () => {
 	it("check tolerates disabled by settings instead of throwing", async () => {
 		const deps = {
 			...dependencies(async () => credential()),
-			readSettings: () => ({ enabled: false, executablePath: undefined }),
+			readSettings: () => ({ enabled: false, explicitlyDisabled: true, executablePath: undefined }),
 		};
 		const config = createCursorCliOauthConfig(deps);
 		await expect(config.check({ ctx: authContext() })).resolves.toBeUndefined();

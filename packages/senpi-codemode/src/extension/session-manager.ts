@@ -11,6 +11,7 @@ import { JuliaKernel } from "../kernels/jl/kernel.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
 import { PythonKernel } from "../kernels/py/kernel.ts";
 import { RubyKernel } from "../kernels/rb/kernel.ts";
+import type { SessionEnvironment } from "../kernels/session-env.ts";
 import { marshalToolResult } from "../tool/image.ts";
 import type { EvalKernel, EvalKernelManager, EvalLanguage, ExecuteTool } from "../tool/types.ts";
 
@@ -40,6 +41,8 @@ export interface CreateCodemodeSessionManagerOptions {
 	readonly localRoots?: Readonly<Record<string, string>>;
 	/** Session-adjacent directory used for persisted eval artifacts. */
 	readonly artifactsDir?: string;
+	/** Per-session PI_* values exposed to every kernel and the children it spawns. */
+	readonly sessionEnv?: SessionEnvironment;
 	readonly executeTool: ExecuteTool;
 	readonly listTools?: () => readonly EvalSchemaToolInfo[];
 	readonly complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
@@ -92,12 +95,16 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		});
 	}
 
-	// Subprocess kernels (py/rb/jl) reach the host only through this route, so reserved
-	// helper names must dispatch exactly as the in-process JS path does in tool/cell-handler.ts.
-	// Forwarding them to executeTool made agent() fail with "Unknown tool __agent__".
+	// Subprocess kernels (py/rb/jl) reach the host only through this route, so every reply
+	// must match the in-process JS path in tool/cell-handler.ts: reserved helper names dispatch
+	// through runReservedTool (forwarding them made agent() fail with "Unknown tool __agent__"),
+	// and ordinary tool results are marshalled to { text, images, details, hasError } — the raw
+	// { content } shape left python cells unable to reach tool.read image blocks.
 	async #call(request: { toolName: string; args: unknown; callId: string; signal: AbortSignal }): Promise<unknown> {
 		if (!isReservedToolName(request.toolName)) {
-			return await this.#options.executeTool(request.toolName, request.args, { signal: request.signal });
+			return marshalToolResult(
+				await this.#options.executeTool(request.toolName, request.args, { signal: request.signal }),
+			);
 		}
 		const taskTools = this.#options.settings.taskTools ?? defaultCodemodeSettings.taskTools;
 		return await runReservedTool(request.toolName, {
@@ -196,19 +203,25 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		if (!bridge) throw new Error("codemode bridge server is not running");
 		const configuredPoolWidth = this.#options.settings.parallelPoolWidth;
 		const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
+		// localRoots must be computed BEFORE the js branch: the JS kernel resolves local://
+		// from its worker init connection exactly like the subprocess kernels resolve it from
+		// theirs. Computing it after the early return left js cells with no local root at all.
+		const localRoots =
+			this.#options.localRoots ??
+			(this.#options.artifactsDir ? { local: join(this.#options.artifactsDir, "local") } : undefined);
 		if (language === "js") {
 			return new JavaScriptKernel({
 				sessionId: this.#options.sessionId,
 				cwd: this.#options.cwd,
 				parallelPoolWidth,
 				onMessage,
+				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
+				...(localRoots ? { localRoots: { ...localRoots } } : {}),
+				...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
 			});
 		}
 		const detected = this.#options.availability[language].detected;
 		if (!detected.ok) throw new Error(`No ${language} interpreter is available`);
-		const localRoots =
-			this.#options.localRoots ??
-			(this.#options.artifactsDir ? { local: join(this.#options.artifactsDir, "local") } : undefined);
 		const connection = {
 			port: bridge.port,
 			token: bridge.token,
@@ -221,6 +234,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 				interpreterPath: detected.path,
 				sessionId: this.#options.sessionId,
 				cwd: this.#options.cwd,
+				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 				connection,
 				onMessage,
 			});
@@ -230,6 +244,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 				command: detected.path,
 				sessionId: this.#options.sessionId,
 				cwd: this.#options.cwd,
+				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 				connection,
 				onMessage,
 			});
@@ -238,6 +253,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			command: detected.path,
 			sessionId: this.#options.sessionId,
 			cwd: this.#options.cwd,
+			...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 			connection,
 			onMessage,
 		});

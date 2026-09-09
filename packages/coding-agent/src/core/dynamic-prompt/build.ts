@@ -1,15 +1,14 @@
 import type { Skill } from "../skills.ts";
 import { formatSkillsForPrompt } from "../skills.ts";
-import { buildExplorationSection } from "./exploration.ts";
 import { buildIdentitySection } from "./identity.ts";
 import { buildIntentGate } from "./intent-gate.ts";
-import { buildParallelToolsSection } from "./parallel-tools.ts";
 import { buildPoliciesSection } from "./policies.ts";
 import { buildStyleSection } from "./style.ts";
 import { categorizeTools } from "./tool-categorization.ts";
 import { buildToolSection } from "./tool-section.ts";
 import type { AvailableTool } from "./types.ts";
 import { buildVerificationSection } from "./verification.ts";
+import { buildWorkingTaskSection } from "./working-task.ts";
 import { buildWorkstationSection, type WorkstationDialect } from "./workstation.ts";
 
 /** Context handed to a `corePrompt` override so it can reuse the dynamic pieces. */
@@ -76,9 +75,7 @@ export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOption
 				"",
 				buildIntentGate({ tools }),
 				"",
-				buildParallelToolsSection(),
-				"",
-				buildExplorationSection(),
+				buildWorkingTaskSection(),
 				"",
 				buildVerificationSection(),
 				"",

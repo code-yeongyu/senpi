@@ -128,7 +128,7 @@ describe("Grok 4.6 prompt preset", () => {
 				"xai/grok-4.6",
 				"opencode/grok-4.6",
 				"openrouter/x-ai/grok-4.6",
-				"vercel-ai-gateway/xai/grok-4.6",
+				"vercel-ai-gateway/spacexai/grok-4.6",
 			]),
 		);
 		expect(misses).toEqual([]);

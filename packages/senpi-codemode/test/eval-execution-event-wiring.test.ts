@@ -50,7 +50,7 @@ class WiringPi {
 			details: {},
 		};
 	}
-	sendUserMessage(): void {}
+	sendMessage(): void {}
 	async emit(event: string, payload: unknown, ctx: ExtensionContext): Promise<void> {
 		for (const entry of this.handlers.filter((handler) => handler.event === event)) await entry.handler(payload, ctx);
 	}
@@ -88,6 +88,7 @@ async function sessionCwd(): Promise<string> {
 function wiringContext(cwd: string): ExtensionContext {
 	const base = fakeExtensionContext();
 	const sessionManager = Object.create(null);
+	sessionManager.getSessionId = (): string => "wiring-test-session";
 	sessionManager.getSessionFile = (): string => join(artifactsRoot, `${crypto.randomUUID()}.jsonl`);
 	return { ...base, cwd, sessionManager };
 }

@@ -142,6 +142,18 @@ export function sanitizeCursorCliDenyCommands(
  * - Force disabled in agent mode is allowed but warns once per session.
  * - Unproven sandbox modes are ignored with one warning per distinct value.
  */
+/**
+ * True while the settings guarantee an unattended agent-mode refusal: force is
+ * requested outside plan mode but `noApprovalAcknowledgedAt` was never set.
+ * Shared by the execution policy and the fallback-eligibility hook so the two
+ * can never disagree about when the lane refuses.
+ */
+export function cursorCliForceRefusalPending(
+	input: Pick<CursorCliExecutionPolicyInput, "forceExecution" | "noApprovalAcknowledgedAt" | "executionMode">,
+): boolean {
+	return input.executionMode !== "plan" && input.forceExecution && input.noApprovalAcknowledgedAt === undefined;
+}
+
 export function resolveCursorCliExecutionPolicy(
 	input: CursorCliExecutionPolicyInput,
 	session: CursorCliGuardrailSession,
@@ -149,7 +161,7 @@ export function resolveCursorCliExecutionPolicy(
 ): CursorCliExecutionDecision {
 	const planMode = input.executionMode === "plan";
 	const wantsForce = !planMode && input.forceExecution;
-	if (wantsForce && input.noApprovalAcknowledgedAt === undefined) {
+	if (cursorCliForceRefusalPending(input)) {
 		const refusal: CursorCliExecutionRefusal = {
 			kind: "refusal",
 			code: "no_approval_acknowledgement_required",

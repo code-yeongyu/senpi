@@ -25,6 +25,18 @@ interface IdleHarness {
 	ctx: ExtensionContext;
 	applyCompaction: ReturnType<typeof vi.fn>;
 	beginCompaction: ReturnType<typeof vi.fn>;
+	getApiKeyAndHeaders: ReturnType<typeof vi.spyOn>;
+}
+
+/**
+ * Drain the idle-apply continuation chain (generation settles -> guards ->
+ * applyCompaction). Without this the assertions run before the continuation
+ * scheduled on the warm job's promise has executed.
+ */
+async function flushIdleApply(): Promise<void> {
+	for (let tick = 0; tick < 12; tick++) {
+		await new Promise((resolve) => setImmediate(resolve));
+	}
 }
 
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {
@@ -41,8 +53,17 @@ function createIdleHarness(options: {
 	usageTokens?: number;
 	contextWindow?: number;
 	idleCompactionEnabled?: boolean;
+	openAiRemoteCapable?: boolean;
 }): IdleHarness {
-	const registration = registerFauxProvider();
+	const registration = registerFauxProvider(
+		options.openAiRemoteCapable
+			? {
+					api: "openai-responses",
+					provider: "openai",
+					models: [{ id: "gpt-remote-idle", contextWindow: options.contextWindow ?? 100_000 }],
+				}
+			: {},
+	);
 	registrations.push(registration);
 	const model = registration.getModel();
 	const authStorage = AuthStorage.inMemory();
@@ -64,6 +85,7 @@ function createIdleHarness(options: {
 			baseUrl: registeredModel.baseUrl,
 		})),
 	});
+	const getApiKeyAndHeaders = vi.spyOn(modelRegistry, "getApiKeyAndHeaders");
 
 	const sessionManager = SessionManager.inMemory();
 	const now = Date.now();
@@ -128,7 +150,7 @@ function createIdleHarness(options: {
 		getSystemPrompt: () => "TEST AGENT SYSTEM PROMPT",
 	} as unknown as ExtensionContext;
 
-	return { agentEnd, beforeAgentStart, registration, ctx, applyCompaction, beginCompaction };
+	return { agentEnd, beforeAgentStart, registration, ctx, applyCompaction, beginCompaction, getApiKeyAndHeaders };
 }
 
 function createAgentEndEvent(overrides?: Partial<AgentEndEvent>): AgentEndEvent {
@@ -136,7 +158,11 @@ function createAgentEndEvent(overrides?: Partial<AgentEndEvent>): AgentEndEvent 
 }
 
 describe("proactive idle compaction (agent_end wiring)", () => {
-	it("warms compaction at idle without committing a durable boundary", async () => {
+	// Contract update (idle-apply): the idle warm-up no longer parks its summary
+	// until the next prompt. Once generation completes while the session is still
+	// idle, the extension applies it immediately, so the [compaction] block
+	// renders during the idle gap instead of ahead of the user's next message.
+	it("applies the warm compaction at idle once generation completes", async () => {
 		const harness = createIdleHarness({});
 		const summaryRequested = createDeferred();
 		harness.registration.setResponses([
@@ -144,14 +170,28 @@ describe("proactive idle compaction (agent_end wiring)", () => {
 				summaryRequested.resolve();
 				return fauxAssistantMessage("idle compaction summary");
 			},
+			// The stub context never drops below the threshold after an apply, so the
+			// next prompt still compacts; it must pay for this fresh summary rather
+			// than replaying the already-applied idle one.
+			() => fauxAssistantMessage("summary generated for the next prompt"),
 		]);
 
 		await harness.agentEnd(createAgentEndEvent(), harness.ctx);
 		await summaryRequested.promise;
+		await flushIdleApply();
 
 		expect(harness.registration.state.callCount).toBe(1);
+		// The idle apply owns no user-visible feedback operation: it applies a
+		// summary it already paid for, exactly like every other extension apply
+		// that arrives with a precomputed result.
 		expect(harness.beginCompaction).not.toHaveBeenCalled();
-		expect(harness.applyCompaction).not.toHaveBeenCalled();
+		expect(harness.applyCompaction).toHaveBeenCalledTimes(1);
+		const [precomputed, applyOptions] = harness.applyCompaction.mock.calls[0] as [
+			{ summary: string },
+			{ reason: string; expectedRevision?: number },
+		];
+		expect(precomputed.summary).toContain("idle compaction summary");
+		expect(applyOptions).toMatchObject({ reason: "extension", expectedRevision: 1 });
 
 		await harness.beforeAgentStart(
 			{
@@ -163,8 +203,10 @@ describe("proactive idle compaction (agent_end wiring)", () => {
 			harness.ctx,
 		);
 
-		expect(harness.beginCompaction).toHaveBeenCalledTimes(1);
-		expect(harness.applyCompaction).toHaveBeenCalledTimes(1);
+		// The warm job was consumed by the idle apply, so the idle summary is never
+		// applied twice: anything the prompt applies is freshly generated.
+		const summaries = harness.applyCompaction.mock.calls.map(([applied]) => (applied as { summary: string }).summary);
+		expect(summaries.filter((summary) => summary.includes("idle compaction summary"))).toHaveLength(1);
 	});
 
 	it("does not compact at idle when the run will auto-continue", async () => {
@@ -221,6 +263,20 @@ describe("proactive idle compaction (agent_end wiring)", () => {
 
 		expect(harness.beginCompaction).not.toHaveBeenCalled();
 	});
+
+	it("skips sub-threshold local warming when the OpenAI remote lane will own threshold compaction", async () => {
+		const harness = createIdleHarness({
+			usageTokens: 50_000,
+			contextWindow: 100_000,
+			openAiRemoteCapable: true,
+		});
+		harness.registration.setResponses([fauxAssistantMessage("local summary should not be requested")]);
+
+		await harness.agentEnd(createAgentEndEvent(), harness.ctx);
+
+		expect(harness.getApiKeyAndHeaders).not.toHaveBeenCalled();
+		expect(harness.applyCompaction).not.toHaveBeenCalled();
+	});
 });
 
 // Upper bound covering IDLE_WARMUP_RETRY_DELAY_MS; the retry must fire within this window.
@@ -240,7 +296,32 @@ describe("idle warm-up retry", () => {
 		vi.useRealTimers();
 	});
 
-	it("retries a transient idle warm-up failure while the session stays idle", async () => {
+	it("retries a transient sub-threshold warm-up before later threshold admission", async () => {
+		vi.useFakeTimers();
+		const harness = createIdleHarness({ usageTokens: 50_000, contextWindow: 100_000 });
+		const firstRequested = createDeferred();
+		harness.registration.setResponses([
+			() => {
+				firstRequested.resolve();
+				return fauxAssistantMessage("summary failure", {
+					stopReason: "error",
+					errorMessage: "provider overloaded",
+				});
+			},
+			() => fauxAssistantMessage("sub-threshold warm summary after retry"),
+		]);
+
+		await harness.agentEnd(createAgentEndEvent(), harness.ctx);
+		await firstRequested.promise;
+		await vi.advanceTimersByTimeAsync(0);
+		expect(harness.registration.state.callCount).toBe(1);
+		await vi.advanceTimersByTimeAsync(RETRY_ADVANCE_MS);
+
+		expect(harness.registration.state.callCount).toBe(2);
+		expect(harness.applyCompaction).not.toHaveBeenCalled();
+	});
+
+	it("retries a transient idle warm-up failure and applies the retried summary at idle", async () => {
 		vi.useFakeTimers();
 		const harness = createIdleHarness({});
 		const firstRequested = createDeferred();
@@ -257,6 +338,9 @@ describe("idle warm-up retry", () => {
 				secondRequested.resolve();
 				return fauxAssistantMessage("warm summary after retry");
 			},
+			// The stub context stays over the threshold after an apply, so the next
+			// prompt compacts again with its own freshly generated summary.
+			() => fauxAssistantMessage("summary generated for the next prompt"),
 		]);
 
 		await harness.agentEnd(createAgentEndEvent(), harness.ctx);
@@ -264,14 +348,24 @@ describe("idle warm-up retry", () => {
 		await vi.advanceTimersByTimeAsync(0);
 		await vi.advanceTimersByTimeAsync(RETRY_ADVANCE_MS);
 		await secondRequested.promise;
+		await vi.advanceTimersByTimeAsync(0);
 
+		// The retried warm-up succeeds while the session is still idle, so it is
+		// applied right there instead of waiting for the next prompt.
 		expect(harness.registration.state.callCount).toBe(2);
-		expect(harness.applyCompaction).not.toHaveBeenCalled();
+		expect(harness.applyCompaction).toHaveBeenCalledTimes(1);
+		const [precomputed, applyOptions] = harness.applyCompaction.mock.calls[0] as [
+			{ summary: string },
+			{ reason: string; expectedRevision?: number },
+		];
+		expect(precomputed.summary).toContain("warm summary after retry");
+		expect(applyOptions).toMatchObject({ reason: "extension", expectedRevision: 1 });
 
 		await harness.beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx);
 
-		expect(harness.applyCompaction).toHaveBeenCalledTimes(1);
-		expect(harness.registration.state.callCount).toBe(2);
+		// Consumed by the idle apply: the retried summary is never applied twice.
+		const summaries = harness.applyCompaction.mock.calls.map(([applied]) => (applied as { summary: string }).summary);
+		expect(summaries.filter((summary) => summary.includes("warm summary after retry"))).toHaveLength(1);
 	});
 
 	it("cancels the pending idle retry when a prompt arrives first", async () => {

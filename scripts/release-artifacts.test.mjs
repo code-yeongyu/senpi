@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { runPackageLockRefresh } from "./release-artifacts.mjs";
 
 describe("release package-lock refresh", () => {
-	it("reconciles native optional packages after the host-specific lock refresh", () => {
+	it("refreshes package-lock.json, reconciles native optionals, then refreshes bun.lock", () => {
 		const commands = [];
 		runPackageLockRefresh(
 			false,
@@ -15,10 +15,11 @@ describe("release package-lock refresh", () => {
 		assert.deepEqual(commands, [
 			["npm", ["install", "--package-lock-only", "--ignore-scripts"]],
 			["npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"]],
+			["bun", ["install", "--lockfile-only"]],
 		]);
 	});
 
-	it("previews both lock refresh and native optional reconciliation", () => {
+	it("previews the npm lock refresh, the native optional reconciliation, and the bun.lock refresh", () => {
 		const previews = [];
 		runPackageLockRefresh(
 			true,
@@ -30,6 +31,7 @@ describe("release package-lock refresh", () => {
 		assert.deepEqual(previews, [
 			"npm install --package-lock-only --ignore-scripts",
 			"npm install --ignore-scripts --no-audit --no-fund",
+			"bun install --lockfile-only",
 		]);
 	});
 });

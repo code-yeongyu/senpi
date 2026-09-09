@@ -15,7 +15,7 @@
  * shows one operation, so a different one must not run.
  */
 
-import type { AgentEvent, AgentTool, AgentToolCall } from "@earendil-works/pi-agent-core";
+import type { AgentEvent, AgentTool, AgentToolCall, AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
 	type CursorExecHandlers,
 	composeCursorShellCommand,
@@ -43,6 +43,14 @@ export interface CursorExecBridgeOptions {
 	 * synthesized call never resolves.
 	 */
 	emitEvent: (event: AgentEvent, runSignal: AbortSignal) => Promise<void>;
+	/** Same tool_result hook the local tool loop emits; plan-touch trackers listen here. */
+	emitToolResult?: (event: {
+		toolName: string;
+		toolCallId: string;
+		args: unknown;
+		result: AgentToolResult<unknown>;
+		isError: boolean;
+	}) => Promise<void>;
 	/** Run the session's vetoable extension preflight before tool execution. */
 	preflightToolCall?: (event: ToolCallEvent) => Promise<ToolCallEventResult | undefined>;
 	/** Abort signal for in-flight bridge executions (the active run's signal). */
@@ -82,7 +90,7 @@ async function executeTool(
 	args: Record<string, unknown>,
 ): Promise<ToolResultMessage> {
 	const runSignal = options.getAbortSignal();
-	if (!runSignal) {
+	if (!runSignal || runSignal.aborted) {
 		return errorResult(toolCallId, toolName, "Tool execution has no active run");
 	}
 
@@ -125,7 +133,17 @@ async function executeTool(
 			toolName,
 			input: params,
 		});
-		if (preflight?.block) {
+		if (runSignal.aborted || options.getAbortSignal() !== runSignal) {
+			const message = "Tool execution has no active run";
+			toolResult = errorResult(toolCallId, toolName, message);
+			endEvent = {
+				type: "tool_execution_end",
+				toolCallId,
+				toolName,
+				result: { content: [{ type: "text", text: message }], details: undefined },
+				isError: true,
+			};
+		} else if (preflight?.block) {
 			const message = preflight.reason || "Tool execution was blocked";
 			toolResult = errorResult(toolCallId, toolName, message);
 			endEvent = {
@@ -161,6 +179,19 @@ async function executeTool(
 		};
 	}
 	await options.emitEvent(endEvent, runSignal);
+	if (options.emitToolResult) {
+		await options.emitToolResult({
+			toolName,
+			toolCallId,
+			args: params ?? cleanArgs,
+			result: {
+				content: toolResult.content,
+				details: toolResult.details,
+				usage: toolResult.usage,
+			},
+			isError: toolResult.isError === true,
+		});
+	}
 	return toolResult;
 }
 

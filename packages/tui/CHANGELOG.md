@@ -12,6 +12,522 @@
 
 ### Removed
 
+## [2026.9.9] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.8] - 2026-09-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.7-2] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.7] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.6] - 2026-09-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.5-3] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.5-2] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.5] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.4-3] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.4-2] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+- Added environment and programmatic overrides for OSC 8 hyperlinks, inline image protocols, and truecolor terminal capabilities ([#8665](https://github.com/earendil-works/pi/issues/8665)).
+- Added a `TuiAltScreen` `copyOnSelect` option plus helpers to detect and copy the active fullscreen text selection programmatically ([#7720](https://github.com/earendil-works/pi/issues/7720)).
+
+### Changed
+
+### Fixed
+
+- Fixed main-screen rendering crashing when image-heavy output exceeded V8's string length limit ([#8028](https://github.com/earendil-works/pi/issues/8028)).
+- Fixed autocomplete ordering for nested results ([#8669](https://github.com/earendil-works/pi/pull/8669)).
+- Fixed fullscreen double-click word selection splitting paths and kebab-case tokens on `/` and `-` ([#7746](https://github.com/earendil-works/pi/issues/7746)).
+
+### Removed
+
+## [2026.9.4] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.3-3] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.3-2] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.3] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-4] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-3] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-2] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.31] - 2026-08-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30-3] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30-2] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed Shift+Enter submitting instead of inserting a newline in direct Warp-on-WSL sessions ([#1109](https://github.com/code-yeongyu/senpi/pull/1109) by [@deopa0402](https://github.com/deopa0402)).
+
+### Removed
+
+## [2026.8.29] - 2026-08-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.28-2] - 2026-08-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.28] - 2026-08-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.27] - 2026-08-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed Windows Terminal/ConPTY resize redraws erasing terminal scrollback with `ESC[3J` ([#1145](https://github.com/code-yeongyu/senpi/issues/1145)).
+
+### Removed
+
+## [2026.8.26-2] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed terminal shutdown still crashing with `setRawMode failed with errno: 5` under Bun, whose tty shim throws
+  the errno only inside the message text with no `code` or `errno` property. Dead-terminal detection now also
+  reads that message form for `EIO` and `EPIPE` while unrelated raw-mode failures keep propagating.
+- A vanished or re-backgrounded controlling terminal no longer kills the agent process: the next stdin read fails with EIO, and `process.stdin` had no `"error"` listener, so the EventEmitter rethrew it as an uncaught exception. `ProcessTerminal` now arms a stdin error guard from `start()` until a 250ms grace window after `stop()`, swallowing EIO (Node's `code: "EIO"` and Bun's raw `errno: 5`/`-5`) while every other stdin error keeps its default EventEmitter propagation.
+### Removed
+
+## [2026.8.26] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.25] - 2026-08-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed duplicate fullscreen right-click paste in VS Code-based terminals on Windows ([#8186](https://github.com/earendil-works/pi/issues/8186)).
+- Fixed padded text exceeding narrow terminal widths ([#8252](https://github.com/earendil-works/pi/issues/8252)).
+- Fixed wrapped Markdown table links leaking color into borders and neighboring cells, including tables inside blockquotes ([#8335](https://github.com/earendil-works/pi/issues/8335)).
+### Removed
+
+## [2026.8.24] - 2026-08-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.23] - 2026-08-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.22-2] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.22] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21-3] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21-2] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.20-2] - 2026-08-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.20] - 2026-08-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.19] - 2026-08-19
+
+### Breaking Changes
+
+### Added
+
+- Atomic `[Image #N]` editor markers for pasted images: a new `ImageMarkerRegistry` (ids only, never bytes) with contiguous renumbering, whole-marker deletion, registry snapshots for editor-to-editor transfer, and a paired optional image-marker API on `EditorComponent`, exported from the package index.
+
+- Optional paired `snapshotAttachmentState`/`restoreAttachmentState` owner hooks on `Editor` and `EditorComponent`: the editor's undo stack captures the caller's marker-keyed attachment payloads opaquely and restores them before the marker-order notification, so undoing a marker delete revives its image along with its text.
+
+### Changed
+
+### Fixed
+
+- `insertImageMarker()` now renumbers the visible markers to canonical `1..k` in reading order and returns the marker's final canonical id (previously the insertion counter), so a paste in front of an existing marker displays `[Image #1][Image #2]` instead of `[Image #2][Image #1]`, and the id the caller keys its payload under matches the number the user sees; `setText()` applies the same canonicalization after pruning so a surviving high id displays as `[Image #1]`.
+
+### Removed
+
+## [2026.8.18-3] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.18-2] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.8.18] - 2026-08-18
 
 ### Breaking Changes

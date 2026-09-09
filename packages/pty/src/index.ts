@@ -45,6 +45,14 @@ export {
 	type TerminalSessionOperationResult,
 	type TerminalSessionOptions,
 } from "./session.ts";
+export {
+	type BunRuntime,
+	type BunRuntimeVersions,
+	type BunTerminal,
+	createBunTerminalSession,
+	ENV_BUN_TERMINAL,
+	isBunTerminalEnabled,
+} from "./session-bun.ts";
 
 export type PtySessionOptions = TerminalSessionOptions;
 

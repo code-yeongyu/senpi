@@ -21,6 +21,7 @@ export type Goal = {
 	tokensUsed: number;
 	timeUsedSeconds: number;
 	consecutiveContinuations?: number;
+	unattendedContinuations?: number;
 	lastContinuationSignature?: string;
 	createdAt: number;
 	updatedAt: number;

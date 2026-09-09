@@ -81,6 +81,59 @@ describe("loadEntriesFromFile", () => {
 		expect(entries).toHaveLength(2);
 	});
 
+	it("leaves an unterminated valid record byte-identical (reader path never writes)", () => {
+		const file = join(tempDir, "unterminated.jsonl");
+		const content =
+			'{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n' +
+			'{"type":"message","id":"1","parentId":null,"timestamp":"2025-01-01T00:00:01Z","message":{"role":"user","content":"hi","timestamp":1}}';
+		writeFileSync(file, content);
+
+		expect(loadEntriesFromFile(file)).toHaveLength(2);
+		// D5: the trailing-newline repair moved to SessionManager.open (owner side);
+		// loadEntriesFromFile is a reader and leaves the file untouched.
+		expect(readFileSync(file, "utf8")).toBe(content);
+	});
+
+	it("leaves an unterminated malformed final fragment byte-identical (reader path never writes)", () => {
+		const file = join(tempDir, "malformed-tail.jsonl");
+		const content =
+			'{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n' + '{"type":"message"';
+		writeFileSync(file, content);
+
+		expect(loadEntriesFromFile(file)).toHaveLength(1);
+		// D5: the trailing-newline repair moved to SessionManager.open (owner side);
+		// loadEntriesFromFile is a reader and leaves the file untouched.
+		expect(readFileSync(file, "utf8")).toBe(content);
+	});
+
+	it("repairs a missing trailing newline on open before the first append (owner path)", () => {
+		const file = join(tempDir, "repair-on-open.jsonl");
+		// Already at the current session version, so open performs only the newline repair.
+		const content =
+			'{"type":"session","version":3,"id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n' +
+			'{"type":"message","id":"1","parentId":null,"timestamp":"2025-01-01T00:00:01Z","message":{"role":"user","content":"hi","timestamp":1}}';
+		writeFileSync(file, content);
+
+		// D5: SessionManager.open owns the repair so the first append lands on its own line.
+		const session = SessionManager.open(file, tempDir);
+		expect(readFileSync(file, "utf8")).toBe(`${content}\n`);
+
+		session.appendMessage({ role: "user", content: "after repair", timestamp: 1735689602000 });
+		const after = readFileSync(file, "utf8");
+		expect(after.startsWith(`${content}\n`)).toBe(true);
+		const appendedLine = after.slice(content.length + 1).trim();
+		expect(JSON.parse(appendedLine).message.content).toBe("after repair");
+	});
+
+	it("does not modify an unterminated non-session file", () => {
+		const file = join(tempDir, "invalid.jsonl");
+		const content = '{"type":"message","id":"1"}';
+		writeFileSync(file, content);
+
+		expect(loadEntriesFromFile(file)).toEqual([]);
+		expect(readFileSync(file, "utf8")).toBe(content);
+	});
+
 	it.each([
 		["leading blank lines", "\n  \n", "leading-blank"],
 		["leading malformed lines", "not json\n{broken json\n", "leading-malformed"],

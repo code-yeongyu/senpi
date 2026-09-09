@@ -1,0 +1,10 @@
+
+ RUN  v4.1.11 /Volumes/mengmotaStorage/local-workspaces/senpi-wt/tui-vertical-jitter/packages/coding-agent
+
+····
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  20:27:02
+   Duration  2.61s (transform 1.85s, setup 13ms, import 2.52s, tests 13ms, environment 0ms)
+

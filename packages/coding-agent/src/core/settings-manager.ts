@@ -1,17 +1,40 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Transport } from "@earendil-works/pi-ai";
-import type { TuiMode as RendererTuiMode, ScrollViewScrollbar } from "@earendil-works/pi-tui";
+import { SENPI_DEFAULT_RETRY_PROFILE } from "@earendil-works/pi-ai/utils/retry-profile/profiles";
+import type {
+	RetryPolicyProfile,
+	RetryStagePolicy,
+	RetryTieredHintStrategy,
+} from "@earendil-works/pi-ai/utils/retry-profile/types";
+import type { TuiMode as RendererTuiMode, ScrollViewScrollbar, TerminalCapabilities } from "@earendil-works/pi-tui";
 import { createHash, randomUUID } from "crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { stripBom } from "../utils/text.ts";
 import { envValue } from "./brand.ts";
+import type { CompactionSettings } from "./compaction-settings-access.ts";
+import {
+	compactionEnabled,
+	compactionKeepRecentTokens,
+	compactionReserveTokens,
+} from "./compaction-settings-access.ts";
+import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
-import { FILE_STORAGE_LOCK_OPTIONS } from "./lockfile-policy.ts";
+import {
+	CredentialStoreBusyError,
+	FILE_STORAGE_LOCK_OPTIONS,
+	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
+	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
+	isLockError,
+} from "./lockfile-policy.ts";
+import type { RetryPolicyOverride } from "./retry-fallback/profile-override.ts";
+import { validateRetryProviderOverrides } from "./retry-fallback/profile-override.ts";
 import {
 	type ResolvedHintPolicySettings,
 	type ResolvedRetryFallbackSettings,
@@ -20,96 +43,25 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
+import type {
+	ImageSettings,
+	LookAtSettings,
+	MarkdownSettings,
+	MermaidRenderingMode,
+	OpenAISettings,
+	PromptCacheKeepAliveSettings,
+	PromptCacheSettings,
+	ThinkingBudgetsSettings,
+} from "./settings-shapes.ts";
+import type { BranchSummarySettings, TerminalSettings } from "./terminal-settings.ts";
 
-export type { ProviderRetrySettings, RetrySettings } from "./retry-fallback/settings.ts";
+export type * from "./settings-public-types.ts";
 
-export const DEFAULT_STREAM_START_TIMEOUT_MS = 90_000;
+export const DEFAULT_STREAM_START_TIMEOUT_MS = 300_000;
 export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
-
-export interface CompactionSettings {
-	enabled?: boolean; // default: true
-	reserveTokens?: number; // default: 16384
-	keepRecentTokens?: number; // default: 20000
-	speculativeEnabled?: boolean; // default: true
-	speculativeFraction?: number; // default: 0.75
-	speculativeCooldownMs?: number; // default: 30000
-	restorationEnabled?: boolean; // default: true
-	restorationMaxItems?: number; // default: 10
-	restorationMaxTokensPerItem?: number; // default: 5000
-	restorationMaxTotalTokens?: number; // default: 50000
-	restorationContextRatio?: number; // default: 0.15
-	idleCompactionEnabled?: boolean; // default: true
-}
-
-export interface BranchSummarySettings {
-	reserveTokens?: number; // default: 16384 (tokens reserved for prompt + LLM response)
-	skipPrompt?: boolean; // default: false - when true, skips "Summarize branch?" prompt and defaults to no summary
-}
 
 export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
-
-export interface TerminalSettings {
-	showImages?: boolean; // default: true (only relevant if terminal supports images)
-	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
-	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
-	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
-	// Persistent-terminal tool suite (builtin `terminal` extension) config.
-	defaultCols?: number; // default: 120 (PTY width for new sessions)
-	defaultRows?: number; // default: 40 (PTY height for new sessions)
-	scrollback?: number; // default: 10000 (xterm scrollback lines per session)
-	maxSessions?: number; // default: 32 (concurrent background sessions before LRU-exited pruning)
-	timeoutAction?: "background" | "kill"; // default: "background" (fate of a foreground timeout)
-	notify?: "wake" | "next-turn" | "off"; // default: "wake" (async completion wake behavior)
-	monitorCoalesceWindowMs?: number; // default: 2000 (event batching window)
-	monitorRateLimitMs?: number; // default: 5000 (minimum interval per monitor injection)
-	monitorMaxLinesPerInjection?: number; // default: 50 (bounded monitor event batch)
-	monitorMaxCharsPerInjection?: number; // default: 4096 (bounded monitor event batch)
-	monitorWakeBudget?: number; // default: 5 (consecutive monitor-only wake limit)
-}
-
-export interface PromptCacheKeepAliveSettings {
-	enabled?: boolean; // default: false
-	maxRequestsPerSession?: number; // default: 3
-	maxCostUsdPerSession?: number; // default: 0.05
-	marginSeconds?: number; // default: 60
-}
-
-export interface PromptCacheSettings {
-	cacheAwareTimeouts?: boolean; // default: true (size foreground tool waits by the model's prompt-cache TTL)
-	safetyBufferSeconds?: number; // default: 30 (headroom subtracted from the cache TTL)
-	goalBackstopMaxSeconds?: number; // default: 3570 (maximum Goal monitor continuation backstop)
-	keepAlive?: PromptCacheKeepAliveSettings;
-}
-
-export interface ImageSettings {
-	autoResize?: boolean; // default: true (resize images to 2000x2000 max for better model compatibility)
-	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers
-	maxHistoricalImages?: number; // default: undefined (preserve existing transport behavior)
-}
-
-export interface LookAtSettings {
-	enabled?: boolean; // default: true
-	models?: string[]; // default: undefined (use the default look-at chain)
-}
-
-export interface ThinkingBudgetsSettings {
-	minimal?: number;
-	low?: number;
-	medium?: number;
-	high?: number;
-}
-
-export type MermaidRenderingMode = "off" | "final" | "streaming";
-
-export interface MarkdownSettings {
-	codeBlockIndent?: string; // default: "  "
-	mermaid?: MermaidRenderingMode; // default: "streaming"
-}
-
-export interface OpenAISettings {
-	serviceTier?: "auto" | "flex" | "priority";
-}
 
 /** Service tier remembered per model; "auto" is an explicit opt-out of an inherited priority tier. */
 export type ModelServiceTier = "auto" | "flex" | "priority";
@@ -164,6 +116,10 @@ export type PackageSource =
 			hooks?: string[];
 	  };
 
+export interface ExperimentalSettings {
+	sharedHost?: boolean;
+}
+
 export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
@@ -176,13 +132,13 @@ export interface Settings {
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
-	compaction?: CompactionSettings;
+	compaction?: CompactionSettings & { model?: string };
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
 	hideThinkingBlock?: boolean;
 	smoothStreaming?: boolean; // default: true
 	smoothStreamingFps?: number; // default: 60, clamped to 30-120 when read
-	showCacheMissNotices?: boolean; // default: false - show transcript notices for significant prompt-cache misses
+	showCacheMissNotices?: boolean; // default: false - show prompt-cache miss and compaction cost notices
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: boolean;
@@ -229,6 +185,8 @@ export interface Settings {
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
+	experimental?: ExperimentalSettings;
+	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -292,6 +250,7 @@ export type SettingsSourceListener = (source: SettingsSourceSelection) => void;
 
 /** Parse JSON or JSONC without changing comment-like text inside strings. */
 export function parseSettingsJson(content: string): Record<string, unknown> {
+	content = stripBom(content);
 	const withoutComments: string[] = [];
 	let inString = false;
 	let escaped = false;
@@ -451,7 +410,12 @@ export function resolveSettingsSource(
 	const directory = getSettingsDirectory(cwd, agentDir, scope, homeDir);
 	const jsoncPath = join(directory, "settings.jsonc");
 	if (existsSync(jsoncPath)) {
-		return { path: jsoncPath, format: "jsonc", reason: "explicit-jsonc", scope };
+		return {
+			path: jsoncPath,
+			format: "jsonc",
+			reason: "explicit-jsonc",
+			scope,
+		};
 	}
 	const jsonPath = join(directory, "settings.json");
 	if (existsSync(jsonPath)) {
@@ -489,7 +453,18 @@ export interface SettingsStorage {
 
 export interface SettingsError {
 	scope: SettingsScope;
+	path?: string;
 	error: Error;
+}
+
+type SettingsPaths = Partial<Record<SettingsScope, string>>;
+
+function toSettingsError(scope: SettingsScope, error: unknown, path?: string): SettingsError {
+	return {
+		scope,
+		...(path ? { path } : {}),
+		error: error instanceof Error ? error : new Error(String(error)),
+	};
 }
 
 export class FileSettingsStorage implements SettingsStorage {
@@ -517,66 +492,67 @@ export class FileSettingsStorage implements SettingsStorage {
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
-		const maxAttempts = 10;
-		const delayMs = 20;
-		let lastError: unknown;
-
-		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		const startedAt = Date.now();
+		let attempt = 0;
+		while (true) {
 			try {
-				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS });
+				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 			} catch (error) {
-				const code =
-					typeof error === "object" && error !== null && "code" in error
-						? String((error as { code?: unknown }).code)
-						: undefined;
-				if (code !== "ELOCKED" || attempt === maxAttempts) {
-					throw error;
+				if (!isLockError(error)) throw error;
+				const waitedMs = Date.now() - startedAt;
+				if (waitedMs >= FILE_STORAGE_SYNC_LOCK_BUDGET_MS) {
+					throw new CredentialStoreBusyError(path, waitedMs, error);
 				}
-				lastError = error;
-				const start = Date.now();
-				while (Date.now() - start < delayMs) {
-					// Sleep synchronously to avoid changing callers to async.
-				}
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_SYNC_LOCK_BUDGET_MS - waitedMs,
+				);
+				attempt++;
+				const sleeper = new Int32Array(new SharedArrayBuffer(4));
+				Atomics.wait(sleeper, 0, 0, delayMs);
 			}
 		}
-
-		throw (lastError as Error) ?? new Error("Failed to acquire settings lock");
 	}
 
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void {
 		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
 		const dir = dirname(path);
 
-		let release: (() => void) | undefined;
+		// Read without the lock: writers publish atomically via temp+rename below, so
+		// a reader can never observe partial content. Read-only callers therefore skip
+		// lock acquisition entirely (no lock churn, no lock-dir filesystem events).
+		const current = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+		let next = fn(current);
+		if (next === undefined) {
+			return;
+		}
+		// Only create directory when we actually need to write
+		if (!existsSync(dir)) {
+			mkdirSync(dir, { recursive: true });
+		}
+		const release = this.acquireLockSyncWithRetry(path);
 		try {
-			// Only create directory and lock if file exists or we need to write
-			let current: string | undefined;
-			if (existsSync(path)) {
-				release = this.acquireLockSyncWithRetry(path);
-				current = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+			const underLock = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+			if (underLock !== current) {
+				// Lost a write race: re-merge against the winner's content under the lock.
+				next = fn(underLock);
 			}
-			let next = fn(current);
 			if (next !== undefined) {
-				// Only create directory when we actually need to write
-				if (!existsSync(dir)) {
-					mkdirSync(dir, { recursive: true });
-				}
-				if (!release) {
-					release = this.acquireLockSyncWithRetry(path);
-					if (existsSync(path)) {
-						// Lost the first-write race: re-merge against the winner's content under the lock.
-						next = fn(readFileSync(path, "utf-8"));
-					}
-				}
-				if (next !== undefined) {
-					writeFileSync(path, next, "utf-8");
+				// Publish atomically: write a same-directory temp file, then rename over
+				// the settings path so lock-free readers never see a torn write.
+				const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+				try {
+					writeFileSync(tempPath, next, "utf-8");
 					recordSelfWrite(path, next);
+					renameSync(tempPath, path);
+				} catch (error) {
+					rmSync(tempPath, { force: true });
+					throw error;
 				}
 			}
 		} finally {
-			if (release) {
-				release();
-			}
+			release();
 		}
 	}
 }
@@ -613,6 +589,7 @@ export class SettingsManager {
 	private projectSettingsLoadError: Error | null = null; // Track if project settings file had parse errors
 	private writeQueue: Promise<void> = Promise.resolve();
 	private errors: SettingsError[];
+	private settingsPaths: SettingsPaths;
 	private selectedSources = new Map<SettingsScope, SettingsSourceSelection>();
 	private sourceListeners: SettingsSourceListener[] = [];
 
@@ -625,6 +602,7 @@ export class SettingsManager {
 		initialErrors: SettingsError[] = [],
 		projectTrusted = true,
 		initialSources: readonly SettingsSourceSelection[] = [],
+		settingsPaths: SettingsPaths = {},
 	) {
 		this.storage = storage;
 		this.globalSettings = initialGlobal;
@@ -633,6 +611,7 @@ export class SettingsManager {
 		this.globalSettingsLoadError = globalLoadError;
 		this.projectSettingsLoadError = projectLoadError;
 		this.errors = [...initialErrors];
+		this.settingsPaths = settingsPaths;
 		for (const source of initialSources) this.selectedSources.set(source.scope, source);
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
 	}
@@ -651,18 +630,25 @@ export class SettingsManager {
 	static fromStorage(storage: SettingsStorage, options: SettingsManagerCreateOptions = {}): SettingsManager {
 		const projectTrusted = options.projectTrusted ?? true;
 		const initialSources: SettingsSourceSelection[] = [];
+		const settingsPaths: SettingsPaths = {};
 		const globalSource = storage.selectSource?.("global");
-		if (globalSource) initialSources.push(globalSource);
+		if (globalSource) {
+			initialSources.push(globalSource);
+			settingsPaths.global = globalSource.path;
+		}
 		const globalLoad = SettingsManager.tryLoadFromStorage(storage, "global");
 		const projectSource = projectTrusted ? storage.selectSource?.("project") : undefined;
-		if (projectSource) initialSources.push(projectSource);
+		if (projectSource) {
+			initialSources.push(projectSource);
+			settingsPaths.project = projectSource.path;
+		}
 		const projectLoad = SettingsManager.tryLoadFromStorage(storage, "project", projectTrusted);
 		const initialErrors: SettingsError[] = [];
 		if (globalLoad.error) {
-			initialErrors.push({ scope: "global", error: globalLoad.error });
+			initialErrors.push(toSettingsError("global", globalLoad.error, settingsPaths.global));
 		}
 		if (projectLoad.error) {
-			initialErrors.push({ scope: "project", error: projectLoad.error });
+			initialErrors.push(toSettingsError("project", projectLoad.error, settingsPaths.project));
 		}
 
 		return new SettingsManager(
@@ -674,6 +660,7 @@ export class SettingsManager {
 			initialErrors,
 			projectTrusted,
 			initialSources,
+			settingsPaths,
 		);
 	}
 
@@ -708,7 +695,10 @@ export class SettingsManager {
 		projectTrusted = true,
 	): { settings: Settings; error: Error | null } {
 		try {
-			return { settings: SettingsManager.loadFromStorage(storage, scope, projectTrusted), error: null };
+			return {
+				settings: SettingsManager.loadFromStorage(storage, scope, projectTrusted),
+				error: null,
+			};
 		} catch (error) {
 			return { settings: {}, error: error as Error };
 		}
@@ -788,7 +778,7 @@ export class SettingsManager {
 		return (
 			this.projectSettings.promptCache?.goalBackstopMaxSeconds ??
 			this.globalSettings.promptCache?.goalBackstopMaxSeconds ??
-			3570
+			270
 		);
 	}
 
@@ -919,7 +909,7 @@ export class SettingsManager {
 
 	private recordError(scope: SettingsScope, error: unknown): void {
 		const normalizedError = error instanceof Error ? error : new Error(String(error));
-		this.errors.push({ scope, error: normalizedError });
+		this.errors.push(toSettingsError(scope, normalizedError, this.settingsPaths[scope]));
 	}
 
 	private clearModifiedScope(scope: SettingsScope): void {
@@ -1125,6 +1115,10 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getAllModelThinkingLevels(): Record<string, ThinkingLevel> {
+		return { ...(this.settings.modelThinkingLevels ?? {}) };
+	}
+
 	/** Thinking level last set for this exact model, or undefined when unknown/invalid on disk. */
 	getModelThinkingLevel(provider: string, modelId: string): ThinkingLevel | undefined {
 		return readModelMemoryEntry(
@@ -1230,7 +1224,7 @@ export class SettingsManager {
 	}
 
 	getCompactionEnabled(): boolean {
-		return this.settings.compaction?.enabled ?? true;
+		return compactionEnabled(this.settings.compaction);
 	}
 
 	setCompactionEnabled(enabled: boolean): void {
@@ -1243,40 +1237,17 @@ export class SettingsManager {
 	}
 
 	getCompactionReserveTokens(): number {
-		return this.settings.compaction?.reserveTokens ?? 16384;
+		return compactionReserveTokens(this.settings.compaction);
 	}
 
 	getCompactionKeepRecentTokens(): number {
-		return this.settings.compaction?.keepRecentTokens ?? 20000;
+		return compactionKeepRecentTokens(this.settings.compaction);
 	}
 
-	getCompactionSettings(): {
-		enabled: boolean;
-		reserveTokens: number;
-		keepRecentTokens: number;
-		speculativeEnabled: boolean;
-		speculativeFraction: number;
-		speculativeCooldownMs: number;
-		restorationEnabled: boolean;
-		restorationMaxItems: number;
-		restorationMaxTokensPerItem: number;
-		restorationMaxTotalTokens: number;
-		restorationContextRatio: number;
-		idleCompactionEnabled: boolean;
-	} {
+	getCompactionSettings(): ResolvedCompactionSettings & { model?: string } {
 		return {
-			enabled: this.getCompactionEnabled(),
-			reserveTokens: this.getCompactionReserveTokens(),
-			keepRecentTokens: this.getCompactionKeepRecentTokens(),
-			speculativeEnabled: this.settings.compaction?.speculativeEnabled ?? true,
-			speculativeFraction: this.settings.compaction?.speculativeFraction ?? 0.75,
-			speculativeCooldownMs: this.settings.compaction?.speculativeCooldownMs ?? 30000,
-			restorationEnabled: this.settings.compaction?.restorationEnabled ?? true,
-			restorationMaxItems: this.settings.compaction?.restorationMaxItems ?? 10,
-			restorationMaxTokensPerItem: this.settings.compaction?.restorationMaxTokensPerItem ?? 5000,
-			restorationMaxTotalTokens: this.settings.compaction?.restorationMaxTotalTokens ?? 50_000,
-			restorationContextRatio: this.settings.compaction?.restorationContextRatio ?? 0.15,
-			idleCompactionEnabled: this.settings.compaction?.idleCompactionEnabled ?? true,
+			...resolveCompactionSettings(this.settings.compaction),
+			model: this.settings.compaction?.model,
 		};
 	}
 
@@ -1304,10 +1275,16 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getRetrySettings(): { enabled: boolean; maxRetries: number; baseDelayMs: number } {
+	getRetrySettings(): {
+		enabled: boolean;
+		maxRetries: number;
+		baseDelayMs: number;
+	} {
 		return {
 			enabled: this.getRetryEnabled(),
-			maxRetries: this.settings.retry?.maxRetries ?? 3,
+			// Derived, not duplicated: the one `retry.maxRetries` key must mean the
+			// same budget on every consumer, so the default tracks the shipped profile.
+			maxRetries: this.settings.retry?.maxRetries ?? SENPI_DEFAULT_RETRY_PROFILE.turn.maxRetries,
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? 2000,
 		};
 	}
@@ -1351,7 +1328,10 @@ export class SettingsManager {
 			this.globalSettings.retry = {};
 		}
 		const chains = this.getGlobalFallbackChains();
-		this.globalSettings.retry.fallbackChains = { ...chains, [key]: [...entries] };
+		this.globalSettings.retry.fallbackChains = {
+			...chains,
+			[key]: [...entries],
+		};
 		this.markModified("retry", "fallbackChains");
 		this.save();
 	}
@@ -1415,12 +1395,82 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getProviderRetrySettings(): { timeoutMs?: number; maxRetries?: number; maxRetryDelayMs: number } {
+	getProviderRetrySettings(): {
+		timeoutMs?: number;
+		maxRetries?: number;
+		maxRetryDelayMs: number;
+	} {
 		return {
 			timeoutMs: this.settings.retry?.provider?.timeoutMs,
 			maxRetries: this.settings.retry?.provider?.maxRetries,
 			maxRetryDelayMs: this.settings.retry?.provider?.maxRetryDelayMs ?? 60000,
 		};
+	}
+
+	/**
+	 * Resolve the effective retry profile for a provider. Precedence:
+	 * 1) SENPI_DEFAULT_RETRY_PROFILE is the base.
+	 * 2) A provider-declared retryPolicy replaces the base entirely.
+	 * 3) User global retry.maxRetries / retry.baseDelayMs apply ONLY when the
+	 *    provider declared NO profile (they must not silently re-tune one).
+	 * 4) Validated retry.providers.<id> patches scheduling knobs last.
+	 * 5) retry.enabled === false is a hard gate: resolved turn.enabled is false.
+	 */
+	resolveRetryProfile(provider: { id: string; retryPolicy?: RetryPolicyProfile } | undefined): RetryPolicyProfile {
+		const base = provider?.retryPolicy ?? SENPI_DEFAULT_RETRY_PROFILE;
+		const declared = provider?.retryPolicy !== undefined;
+
+		const turnBackoff = { ...base.turn.backoff };
+		if (!declared) {
+			if (this.settings.retry?.maxRetries !== undefined) {
+				turnBackoff.baseDelayMs = this.settings.retry.baseDelayMs ?? turnBackoff.baseDelayMs;
+			}
+		}
+
+		let turnMaxRetries = base.turn.maxRetries;
+		let turnBaseDelayMs = turnBackoff.baseDelayMs;
+		if (!declared) {
+			if (this.settings.retry?.maxRetries !== undefined) turnMaxRetries = this.settings.retry.maxRetries;
+			if (this.settings.retry?.baseDelayMs !== undefined) turnBaseDelayMs = this.settings.retry.baseDelayMs;
+		}
+
+		const providerOverride = this._resolveRetryProviderOverride(provider?.id);
+		if (providerOverride?.turn?.maxRetries !== undefined) turnMaxRetries = providerOverride.turn.maxRetries;
+		if (providerOverride?.turn?.baseDelayMs !== undefined) turnBaseDelayMs = providerOverride.turn.baseDelayMs;
+
+		const turnEnabled = this.getRetryEnabled() ? (providerOverride?.turn?.enabled ?? base.turn.enabled) : false;
+
+		const tierStrategy: RetryTieredHintStrategy =
+			base.turn.serverHint.mode === "tiered"
+				? base.turn.serverHint.strategy
+				: () => {
+						throw new Error("not tiered");
+					};
+
+		const turn: RetryStagePolicy = {
+			enabled: turnEnabled,
+			maxRetries: turnMaxRetries,
+			backoff: { ...base.turn.backoff, baseDelayMs: turnBaseDelayMs },
+			extractServerHint: base.turn.extractServerHint,
+			serverHint:
+				base.turn.serverHint.mode === "tiered" ? { mode: "tiered", strategy: tierStrategy } : base.turn.serverHint,
+			classify: base.turn.classify,
+		};
+
+		return {
+			id: base.id,
+			providerRequest: base.providerRequest,
+			turn,
+			fallback: base.fallback,
+		};
+	}
+
+	private _resolveRetryProviderOverride(providerId: string | undefined): RetryPolicyOverride | undefined {
+		if (providerId === undefined) return undefined;
+		const raw = this.settings.retry?.providers;
+		if (raw === undefined) return undefined;
+		const { overrides } = validateRetryProviderOverrides(raw, new Set([providerId]));
+		return overrides[providerId];
 	}
 
 	/**
@@ -1460,7 +1510,7 @@ export class SettingsManager {
 	 * accepts the request but never answers is otherwise bounded only by the
 	 * idle timeout (default 5 minutes) — long enough to make a session feel
 	 * permanently stuck. `retry.provider.streamStartTimeoutMs` overrides the
-	 * 90s default (0 disables). The default never exceeds the idle timeout and
+	 * 300s default (0 disables). The default never exceeds the idle timeout and
 	 * is disabled together with a disabled idle guard.
 	 */
 	getAgentStreamStartTimeoutMs(): number | undefined {
@@ -1754,6 +1804,33 @@ export class SettingsManager {
 		return this.settings.thinkingBudgets;
 	}
 
+	getTerminalCapabilityOverrides(): Partial<TerminalCapabilities> {
+		const terminal = this.settings.terminal;
+		const imageSetting = terminal?.images;
+		const imageOverride = imageSetting !== undefined ? imageSetting : envValue("IMAGE_PROTOCOL")?.toLowerCase();
+		const trueColorSetting = terminal?.trueColor;
+		const trueColorOverride = trueColorSetting !== undefined ? trueColorSetting : envValue("TRUE_COLOR");
+		const hyperlinksSetting = terminal?.hyperlinks;
+		const hyperlinksOverride = hyperlinksSetting !== undefined ? hyperlinksSetting : envValue("HYPERLINKS");
+		return {
+			...(imageOverride === "kitty" || imageOverride === "iterm2"
+				? { images: imageOverride }
+				: imageOverride === false || imageOverride === "none" || imageOverride === "0"
+					? { images: null }
+					: {}),
+			...(typeof trueColorOverride === "boolean"
+				? { trueColor: trueColorOverride }
+				: trueColorOverride === "1" || trueColorOverride === "0"
+					? { trueColor: trueColorOverride === "1" }
+					: {}),
+			...(typeof hyperlinksOverride === "boolean"
+				? { hyperlinks: hyperlinksOverride }
+				: hyperlinksOverride === "1" || hyperlinksOverride === "0"
+					? { hyperlinks: hyperlinksOverride === "1" }
+					: {}),
+		};
+	}
+
 	getShowImages(): boolean {
 		return this.settings.terminal?.showImages ?? true;
 	}
@@ -1845,6 +1922,16 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getFullscreenCopyOnSelect(): boolean {
+		return this.settings.fullscreenCopyOnSelect ?? true;
+	}
+
+	setFullscreenCopyOnSelect(enabled: boolean): void {
+		this.globalSettings.fullscreenCopyOnSelect = enabled;
+		this.markModified("fullscreenCopyOnSelect");
+		this.save();
+	}
+
 	getImageAutoResize(): boolean {
 		return this.settings.images?.autoResize ?? true;
 	}
@@ -1897,6 +1984,10 @@ export class SettingsManager {
 	getDefaultTools(): string[] | undefined {
 		const tools = this.settings.defaultTools;
 		return tools ? [...tools] : undefined;
+	}
+
+	getExperimentalSharedHost(): boolean {
+		return this.settings.experimental?.sharedHost === true;
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

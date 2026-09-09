@@ -50,8 +50,6 @@ describe("eval result throughput rendering", () => {
 		{ calls: 2, wallDurationMs: 2_000, expected: "2 calls · 1.00 calls/s" },
 		{ calls: 3, wallDurationMs: 1_500, expected: "3 calls · 2.00 calls/s" },
 		{ calls: 1, wallDurationMs: 400, expected: "1 call · 2.50 calls/s" },
-		{ calls: 0, wallDurationMs: 0, expected: "0 calls · 0.00 calls/s" },
-		{ calls: 0, wallDurationMs: 900, expected: "0 calls · 0.00 calls/s" },
 		{ calls: 5, wallDurationMs: 0, expected: "5 calls · n/a calls/s" },
 		{ calls: 7, wallDurationMs: undefined, expected: "7 calls · n/a calls/s" },
 	])("renders $calls calls over $wallDurationMs wall ms as $expected", ({ calls, wallDurationMs, expected }) => {
@@ -76,6 +74,38 @@ describe("eval result throughput rendering", () => {
 		// Then
 		expect(rendered.join("\n")).toContain(expected);
 	});
+
+	it.each([
+		{ wallDurationMs: 0, expectedElapsed: "took <1s" },
+		{ wallDurationMs: 900, expectedElapsed: "took <1s" },
+	])(
+		"omits both throughput segments when no tool calls ran over $wallDurationMs wall ms",
+		({ wallDurationMs, expectedElapsed }) => {
+			// Given
+			const result = evalResult(
+				{
+					language: "js",
+					durationMs: 2_000,
+					toolCallCount: 0,
+					wallDurationMs,
+					toolCalls: [],
+					truncated: false,
+				},
+				"complete",
+			);
+
+			// When
+			const rendered = renderLines(
+				renderEvalResult(result, { expanded: false, isPartial: false }, undefined, resultContext(undefined, false)),
+			);
+
+			// Then
+			const text = rendered.join("\n");
+			expect(text).not.toContain("calls/s");
+			expect(text).not.toContain("0 calls");
+			expect(text).toContain(expectedElapsed);
+		},
+	);
 
 	it("uses wall-clock elapsed time for final metadata while preserving kernel duration in details", () => {
 		// Given

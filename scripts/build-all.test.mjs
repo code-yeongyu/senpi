@@ -5,7 +5,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BUILD_PHASES, cleanEnv, detectPackageManager, parseArgs } from "./build-all.mjs";
+import { BUILD_PHASES, parseArgs } from "./build-all.mjs";
+import { cleanEnv, detectPackageManager } from "./package-manager.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -49,6 +50,18 @@ describe("build-all", () => {
 		assert.ok(index("packages/coding-agent") > index("packages/agent"));
 		assert.ok(index("packages/coding-agent") > index("packages/session-backends/sqlite-node"));
 		assert.ok(index("packages/server") > index("packages/coding-agent"));
+	});
+
+	it("keeps every explicitly built package inside the pnpm workspace", () => {
+		// Given
+		const pnpmWorkspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
+
+		// When
+		const nestedBuildPackages = BUILD_PHASES.flat().filter((path) => path.split("/").length > 2);
+
+		// Then
+		assert.deepEqual(nestedBuildPackages, ["packages/session-backends/sqlite-node"]);
+		assert.match(pnpmWorkspace, /^  - "packages\/session-backends\/\*"$|^  - packages\/session-backends\/\*$/m);
 	});
 
 	it("builds pty beside tui in the first native-adjacent phase", () => {

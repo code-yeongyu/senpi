@@ -74,7 +74,7 @@ export class TerminalRuntimeSession {
 	private ingest(chunk: Uint8Array): string {
 		const text = this.decoder.decode(chunk, { stream: true });
 		if (text.length === 0) return text;
-		void this.screen.feed(text);
+		this.ownScreenWrite(this.screen.feed(text));
 		this.buffer += text;
 		if (this.buffer.length > MAX_SESSION_OUTPUT_CHARS) {
 			const overflow = this.buffer.length - MAX_SESSION_OUTPUT_CHARS;
@@ -109,7 +109,24 @@ export class TerminalRuntimeSession {
 	}
 
 	resizeScreen(cols: number, rows: number): void {
-		void this.screen.resize(cols, rows);
+		this.ownScreenWrite(this.screen.resize(cols, rows));
+	}
+
+	/**
+	 * The screen is a best-effort projection; a rejected feed/resize must never
+	 * become an unhandled rejection that kills the host process (#837), and
+	 * `buffer` remains the source of truth for reads. The screen hands every
+	 * caller coalesced into one queued operation the same memoized promise, so
+	 * attach the rejection handler once per distinct promise - re-attaching per
+	 * PTY chunk would grow promise reactions without bound while a replay is
+	 * stalled behind a slow parser.
+	 */
+	private lastScreenWrite: Promise<void> | null = null;
+
+	private ownScreenWrite(written: Promise<void>): void {
+		if (written === this.lastScreenWrite) return;
+		this.lastScreenWrite = written;
+		written.catch(() => {});
 	}
 
 	dispose(): void {

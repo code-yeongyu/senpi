@@ -308,8 +308,10 @@ describe("/fast per-model service-tier persistence", () => {
 		await harness.session.setSessionModel(other!);
 		await harness.session.setSessionModel(harness.getModel());
 
-		// then: the model's own memory is back in force, so nothing reaches the wire
-		expect(harness.session.serviceTier).toBe("priority");
+		// then: the model's own memory is back in force, so nothing reaches the wire - and the
+		// session's own request-side tier agrees with it instead of caching the catalog priority
+		expect(harness.session.serviceTier).toBeUndefined();
+		expect(harness.session.effectiveServiceTier).toBeUndefined();
 		const afterSwitch = { model: BASE_MODEL_ID };
 		expect(await runner.emitBeforeProviderRequest(afterSwitch)).toBe(afterSwitch);
 	});

@@ -1,5 +1,298 @@
 # TUI delta rendering fork changes
 
+## 2026-09-04 - Port upstream terminal capability overrides
+
+### What changed
+
+- `packages/tui/src/terminal-image.ts`: adds an environment-based capability detection path (`detectCapabilitiesFromEnvironment` with a tmux client-termfeatures hyperlink probe, per-terminal classification including Zed, and conservative defaults for unknown terminals) used when the tmux probes are unavailable, honors the `PI_HYPERLINKS`, `PI_IMAGE_PROTOCOL`, and `PI_TRUE_COLOR` overrides, and merges stored overrides in `getCapabilities`; `setCapabilityOverrides` replaces the overrides and resets the cache (upstream e86823096 #8665 and 649214477 #8828).
+- `packages/tui/src/index.ts`: exports `setCapabilityOverrides`.
+
+### Why
+
+- Auto-detection misfires on unknown, multiplexed, or non-queried terminals; explicit overrides give users and branded distributions (the fork bridges the `SENPI_*` names through settings) a deterministic way to force hyperlink, image-protocol, and truecolor behavior.
+
+### Why an extension could not handle it
+
+- Capability detection and caching run inside the TUI package before components render; no extension seam sits between environment detection and the cached capabilities.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/tui/src/terminal-image.ts` detection, environment fallback, and override merging; LOW: `packages/tui/src/index.ts` export list.
+
+## 2026-09-04 - Wrap the SIGWINCH self-signal
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: `refreshTerminalDimensions` wraps the self-directed SIGWINCH in a try/catch that skips the refresh on failure, and `ProcessTerminal.start` uses it, so environments whose seccomp or LSM policies deny `kill` for the process no longer crash startup (upstream 605a1b038, #8898).
+
+### Why
+
+- The dimensions refresh after suspend/resume is best-effort; a policy-restricted signal threw during terminal start and aborted the whole TUI for a purely cosmetic refresh.
+
+### Why an extension could not handle it
+
+- The signal is sent from `ProcessTerminal` construction, below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/terminal.ts` `refreshTerminalDimensions` and its call site in `ProcessTerminal.start`.
+
+## 2026-09-04 - Order nested autocomplete results deterministically
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: fuzzy file completion merges a depth-1 listing of the base directory ahead of the recursive fd results (deduplicated), `walkDirectoryWithFd` accepts a `maxDepth`, and equal-score results tie-break by shallower depth, then shorter path, then locale order (upstream b37ebb7f2, #8669).
+
+### Why
+
+- Nested results previously interleaved unpredictably when scores tied; shallow matches first mirrors shell completion expectations and makes the ordering deterministic.
+
+### Why an extension could not handle it
+
+- The fd-backed provider internals score and order suggestions inside the TUI package.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/autocomplete.ts` suggestion merge and sort comparators.
+
+## 2026-09-04 - Fullscreen selection word joining and copy-on-select control
+
+### What changed
+
+- `packages/tui/src/tui-alt-screen.ts`: adds a `copyOnSelect` option (default true) with getter and setter, gates mouse-release auto-copy on it, joins slash and hyphen word segments during selection so paths and kebab-case tokens stay whole, and factors out `getActiveSelectionText`, `copyActiveSelectionToClipboard`, and `hasActiveSelection` for keyboard-driven copy (upstream 4e4949299 #8731 and 1ac6128e6 #8676).
+
+### Why
+
+- Fullscreen mode owns mouse selection, so it must mirror terminal word-selection behavior itself, and hosting modes need a seam to disable auto-copy and drive copying from a keybinding instead.
+
+### Why an extension could not handle it
+
+- Alt-screen viewport mouse handling and clipboard writes are TUI-internal.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/tui/src/tui-alt-screen.ts` word-selection joining and the mouse-release copy path.
+
+## 2026-08-29 - Preserve upstream terminal input fixes
+
+### What changed
+
+- `packages/tui/src/components/editor.ts` and `packages/tui/src/terminal.ts` retain the current upstream terminal input behavior after synchronizing main.
+
+### Why
+
+- The PR merge must preserve both the upstream terminal changes and the callback lifecycle repair.
+
+### Why an extension could not handle it
+
+- Terminal input normalization and editor dispatch are owned by the TUI runtime.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts` and `packages/tui/src/terminal.ts`.
+
+## Warp on WSL LF is normalized to Shift+Enter (2026-08-24)
+
+### What changed
+
+- `packages/tui/src/components/editor.ts` applies the existing CSI-u Shift+Enter sequence to a
+  standalone LF only while the multiline editor handles it. `ProcessTerminal` forwards raw input,
+  so single-line inputs and selectors keep their existing Enter behavior. The conversion is limited
+  to Linux sessions where both Warp and non-empty WSL markers are present; plain CR Enter,
+  non-Warp terminals, non-WSL sessions, SSH/multiplexer sessions, and bracketed paste payloads keep
+  their existing input bytes.
+- `packages/tui/src/mux.ts`: `isMultiplexerSession()` accepts an optional environment so terminal
+  normalization reuses the shared tmux, GNU Screen, and Zellij detection without process-global test setup.
+- `packages/tui/test/terminal.test.ts`: focused coverage proves both supported Warp/WSL environment
+  markers, hardened platform/marker boundaries, and raw forwarding for non-editor consumers.
+
+### Why
+
+- Warp documents that its terminal sends Shift+Enter as LF (`0x0a`). In Senpi's legacy keyboard path,
+  that byte must also remain recognizable as Enter for terminals that send LF for plain Enter, so the
+  editor's submit binding wins before the Ctrl+J/newline binding. Normalizing only direct local
+  Warp-on-WSL sessions restores an unambiguous Shift+Enter identity while Warp's plain CR Enter
+  continues to submit. SSH and multiplexer sessions are excluded because their active client terminal
+  can differ from the inherited process environment. The editor-only boundary prevents this
+  compatibility workaround from changing submission semantics for other focused TUI components.
+- See [Warp #13782](https://github.com/warpdotdev/Warp/issues/13782) for the terminal byte behavior.
+
+### Why an extension could not handle it
+
+- Coding-agent extensions can transform raw input through `onTerminalInput`, but that hook cannot
+  correct the shared `ProcessTerminal` semantics for other TUI consumers or guarantee the default
+  behavior without optional extension loading. The terminal layer is the single cross-consumer seam.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/terminal.ts` at `forwardInputSequence()` and its normalization helpers,
+  `packages/tui/src/mux.ts` at shared multiplexer detection, and `packages/tui/test/terminal.test.ts`
+  beside the existing native Shift+Enter normalization coverage.
+## 2026-08-27 - Preserve Windows Terminal scrollback during resize redraws
+
+### What changed
+
+- `packages/tui/src/tui.ts`: Windows full redraws continue to clear and repaint the visible screen, but no longer emit `ESC[3J`, which deletes the user's terminal scrollback buffer on ConPTY. Non-Windows non-multiplexer redraws retain their existing scrollback-clearing behavior.
+
+### Why
+
+- Windows Terminal's ConPTY resize and focus transitions can trigger a full redraw outside a multiplexer. Clearing scrollback is destructive and makes prior session output unrecoverable when the user returns to the terminal window.
+
+### Why this lives in the fork
+
+- The platform-specific redraw guard belongs in the TUI renderer's `fullRender()` path, where screen clearing and scrollback deletion are emitted together.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/tui.ts` around `TuiBase.doRender()` and the `fullRender()` scrollback-clear guard.
+- LOW: `packages/tui/test/mux-scrollback.test.ts` around resize scrollback emission assertions.
+
+## Dead-terminal detection reads Bun's errno-in-message shape (2026-08-26)
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: `isDeadTerminalError()` gains a third, last-resort branch that parses a
+  trailing `errno: <n>` out of the error message. It fires only when that number is a dead-terminal errno
+  that is stable across darwin and linux — `EIO` (5) and `EPIPE` (32). `ENOTCONN` is deliberately left out of
+  the numeric set because its value differs per platform (57 on darwin, 107 on linux). The existing string
+  `code` and numeric `errno` branches are unchanged and still win first, and any error that matches none of
+  the three branches still propagates out of `ProcessTerminal.stop()`.
+- `test/terminal.test.ts` pins the real Bun shape (a bare `new Error("setRawMode failed with errno: 5")`
+  with neither `code` nor `errno`), the `errno: 32` message form, and two rethrow fences: an unrelated
+  `new Error("boom")` and a live-but-unrelated `errno: 22` message.
+
+### Why
+
+- Bun 1.4.0's tty shim throws a plain `Error` for a failed `setRawMode()` ioctl: `code` and `errno` are both
+  absent and the number survives only in the message text (verified locally:
+  `{"isError":true,"hasCode":false,"hasErrno":false,"msg":"setRawMode failed with errno: 5"}`). The previous
+  classifier recognized only the two property shapes, so on a dead SSH/PTY peer the exception escaped
+  `ProcessTerminal.stop()` into `Tui.stop()` and `stopInteractiveTui()`, aborting shutdown and hanging the
+  session with `error: setRawMode failed with errno: 5`.
+
+### Why this lives in the fork
+
+- Raw-mode ownership and teardown are private `ProcessTerminal` lifecycle responsibilities running inside the
+  shutdown path. No extension surface sits between the saved raw-mode state and the stdin ioctl, so the
+  classification has to happen where the throw occurs.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/terminal.ts` around the dead-terminal errno constants and the `isDeadTerminalError()`
+  body.
+- LOW: `packages/tui/test/terminal.test.ts` around the `ProcessTerminal stop` suite.
+
+## 2026-08-26 - Guard stdin EIO when the controlling terminal detaches
+
+### What changed
+
+- `packages/tui/src/terminal.ts` arms a `process.stdin` "error" guard from `ProcessTerminal.start()` until a 250ms grace window after `stop()`: a vanished or re-backgrounded controlling terminal fails the next stdin read with EIO, and without a listener the EventEmitter rethrew it as an uncaught exception that killed the agent process. The classifier owns EIO only — Node's `code: "EIO"` and Bun's raw `errno: 5`/`-5` shapes — and every other stdin error keeps its default EventEmitter propagation. EIO is swallowed without pausing the stream, so a pgrp that regains the tty foreground keeps accepting input.
+
+### Why
+
+- When omo's launcher chain dies (e.g. external SIGTERM), the orphaned engine's pending stdin read on the now-background tty fails with EIO and crashed the process through `uncaughtException` ("exiting due to uncaughtException: EIO read"). The same hazard was fixed upstream-style in gajae #3758; this port adapts it to the fork's `ProcessTerminal` and adds the numeric-errno shape from the shutdown-time classifier.
+
+### Why this lives in the fork
+
+- The crash topology (launcher chain + orphaned engine) and the Bun runtime shim are fork-owned; the fork's terminal lifecycle differs from upstream's.
+
+### Expected merge conflict zones
+
+- `ProcessTerminal.start()`/`stop()` in `packages/tui/src/terminal.ts` during upstream syncs.
+
+## TUI runtime re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/tui/src/components/markdown.ts` keeps the fork LaTeX pipeline (`latex_block` /
+  `latex_inline` / `latex_literal` token kinds, `latexToUnicode`, formula length caps, and
+  word-boundary guards) on top of upstream's renderer.
+- `packages/tui/src/terminal.ts` keeps dead-terminal detection (EIO/EPIPE/ENOTCONN plus Bun's raw
+  errno-5 macOS tty shim) and the `PI_TUI_KEYBOARD_PROTOCOL` enhancement gate.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The token-scanner section of `packages/tui/src/components/markdown.ts` and the raw-mode setup in
+  `packages/tui/src/terminal.ts`.
+
+## Alt-screen Kitty teardown keeps its disambiguated helper name after the 59a71b23 sync (2026-08-19)
+
+### What changed
+
+- `packages/tui/src/tui-alt-screen.ts`: re-diverges from upstream `59a71b235d` by exactly one
+  identifier. The private teardown helper stays `deleteAltScreenKittyImages()` (upstream calls it
+  `deleteKittyImages()`), and both call sites keep the fork name: the `stop()` synchronized-output
+  teardown sequence and the full-clear branch that falls back to it when no Kitty placements were
+  uploaded. The emitted escape bytes are byte-identical to upstream in every branch.
+
+### Why
+
+- The fork's alt-screen class shares a file-scope namespace with the module-level Kitty helpers
+  imported from `terminal-image.ts` (`deleteAllKittyImages`, `deleteAllKittyPlacements`). The
+  alt-screen-scoped name states which of the two deletion semantics the method wraps, so a reader
+  resolving the full-clear branch does not have to check whether `deleteKittyImages` is the imported
+  protocol helper or the class method that gates it on `imageProtocol === "kitty"`.
+
+### Why an extension could not handle it
+
+- `TuiAltScreen` teardown and its full-clear frame construction are private renderer internals that
+  emit terminal bytes directly; no extension surface exists between the class and the terminal.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/tui-alt-screen.ts` — the `stop()` teardown write, the private helper
+  declaration, and the `clearImages` ternary in the full-clear path. Upstream edits to the same three
+  hunks resolve by keeping the fork identifier and taking upstream's byte content.
+
+## Image markers canonicalize on insert/prune and carry owner payloads across undo (2026-08-18)
+
+### What changed
+
+- `packages/tui/src/components/editor.ts`: `insertImageMarker()` renumbers the
+  visible markers to canonical 1..k in reading order (via
+  `ImageMarkerRegistry.canonicalize`, previously dead code) and returns the
+  marker's FINAL canonical id instead of the insertion counter; `setText()`
+  canonicalizes after pruning so a surviving high id displays as `[Image #1]`;
+  `EditorSnapshot` carries an opaque `attachmentState` captured through the new
+  owner hooks and `undo()` restores it BEFORE firing the marker-order
+  notification; cursor position is preserved across the renumbering rewrite.
+- `packages/tui/src/editor-component.ts`: new optional paired
+  `snapshotAttachmentState`/`restoreAttachmentState` contract next to
+  `onImageMarkersChanged`, documented together with the tightened
+  `insertImageMarker` id semantics.
+- Regression coverage: `test/editor-image-marker.test.ts` pins out-of-order
+  insert canonicalization, post-prune renumbering, and multi-marker
+  delete+undo payload restoration.
+
+### Why
+
+- The insertion counter only produces reading-order numbers when the cursor
+  sits after every existing marker, so pasting in front of one displayed
+  `[Image #2][Image #1]`; the owner's reconcile-by-position then mispaired or
+  destroyed payloads. Undo restored marker text and registry ids but the
+  payloads live with the owner, so a delete+undo permanently lost the deleted
+  marker's image.
+
+### Why an extension could not handle it
+
+- The marker registry, undo stack, and the id semantics of
+  `insertImageMarker` are `Editor` internals below the component contract;
+  extensions cannot renumber marker text or hook the undo pop.
+
+### Expected merge conflict zones
+
+- MEDIUM: `insertImageMarker()` and the undo snapshot/restore block in
+  `packages/tui/src/components/editor.ts`.
+- LOW: the image-marker section of `packages/tui/src/editor-component.ts`.
+
 ## Repository-wide changes.md audit backfill for renderer, terminal, and component surfaces (2026-08-17)
 
 ### What changed
@@ -217,8 +510,12 @@ Landed 2026-08-16 (commit 03f46f57e, shipped in PR #892).
 
 ### What changed
 
-- `ProcessTerminal.stop()` still restores the raw-mode state captured by `start()`, but now treats `EIO`, `EPIPE`,
+- `packages/tui/src/terminal.ts`: `ProcessTerminal.stop()` still restores the raw-mode state captured by `start()`, but now treats `EIO`, `EPIPE`,
   and `ENOTCONN` from the teardown-time `setRawMode()` call as a dead terminal instead of crashing the exiting CLI.
+- The EIO classifier accepts both Node's string `code: "EIO"` shape and Bun's macOS raw positive `errno: 5`
+  shape, using numeric errno only when no string code is available.
+- The separate coding-agent classifier handles asynchronous stdout/stderr stream `error` events; this numeric fallback
+  stays scoped to the synchronous stdin `setRawMode()` ioctl that produced the observed Bun error shape.
 - Unexpected raw-mode restoration errors still propagate so shutdown does not hide unrelated defects.
 - `test/terminal.test.ts` covers successful restoration, the dead-terminal `EIO` regression, and unexpected-error
   propagation.
@@ -664,3 +961,44 @@ Component-level caching is added in coding-agent components because high-frequen
   - ANSI escape bytes remain below the content-byte budget,
   - every `DECSET 2026` begin has a matching end,
   - no `fullRender(true)` equivalent clear occurs after the init phase.
+
+## Atomic image markers for clipboard-pasted images (2026-08-18)
+
+### What changed
+
+- `packages/tui/src/image-markers.ts` (new): `ImageMarkerRegistry` tracks the ids of atomic `[Image #N]` markers living in editor text, storing ids only and never image bytes. It guarantees the visible numbers stay a contiguous `1..k` sequence (via `canonicalize()`), exposes `authorizedMarkers()` for markers occurring exactly once (the only ones safe to treat as atomic), and supports single-occurrence removal plus `EditorImageState` snapshots for transfer between editor instances.
+- `packages/tui/src/paste-markers.ts`: marker segmentation generalized so paste markers and image markers share the same atomic-segment machinery instead of the paste path owning a private tokenizer.
+- `packages/tui/src/components/editor.ts`: image markers are treated as atomic editor segments. `insertImageMarker()` inserts the next `[Image #N]` marker at the cursor and returns its id, backspace/delete removes a marker whole, `getImageMarkerState()`/`setImageMarkerState()` export and install registry snapshots, and `onImageMarkersChanged` reports the ids in text reading order whenever markers are added, removed, pruned, or renumbered.
+- `packages/tui/src/editor-component.ts`: the `EditorComponent` interface gains the optional image-marker API (`insertImageMarker`, `getImageMarkerState`, `setImageMarkerState`, `onImageMarkersChanged`) with paired-contract docs: an editor exposing insertion without the change callback is treated as image-unaware and receives the plain text path instead.
+- `packages/tui/src/index.ts`: exports the image-marker surface (`ImageMarkerRegistry`, `EditorImageState`, `ImageMarkerCanonicalization`, `ImageMarkerRemoval`, `IMAGE_MARKER_REGEX`, `IMAGE_MARKER_SINGLE`, `formatImageMarker`, `isImageMarker`, `imageMarkerId`).
+
+### Why
+
+- Pasting a clipboard image used to insert the raw temp file path into the composer, leaking local filesystem paths into prompts and transcripts. Atomic markers let the editor display `[Image #1]` while the payload lives outside the text, and contiguous renumbering keeps the Nth marker mapped to the Nth submitted image.
+
+### Why an extension could not handle it
+
+- Cursor discipline, segment atomics, and the editor's text model are TUI internals; an extension can compose components but cannot make backspace delete a marker whole or keep registry ids synchronized with visible numbers across editor instances.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/tui/src/components/editor.ts` (segment handling around cursor movement and deletion) and `packages/tui/src/paste-markers.ts` (the generalized segmentation shared with paste markers).
+- LOW: `packages/tui/src/image-markers.ts` (new fork-owned file, no upstream counterpart), `packages/tui/src/editor-component.ts` (additive optional interface members), and the `packages/tui/src/index.ts` export lists.
+
+## 2026-09-03 - Port upstream #8028 bounded main-screen rendering
+
+### What changed
+
+- `packages/tui/src/tui.ts`: main-screen render writes are emitted in bounded 1 MiB chunks, including full redraws and differential updates, so large image-heavy frames cannot exceed V8 string limits while preserving the fork's synchronized frames and viewport renderer.
+
+### Why
+
+- Upstream #8028 prevents V8 string-length crashes when a main-screen render contains very large terminal-image payloads. The fork renderer lives in `TuiBase`, so the bounded write behavior is ported there rather than replacing the fork's thin `TuiMainScreen` subclass.
+
+### Why this lives in the fork
+
+- `TuiBase` owns the fork's main-screen differential renderer, insert-scroll path, scrollback handling, and lifecycle state; no extension boundary can safely split its terminal frame writes.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts` around full-render and differential-render terminal writes; `packages/tui/src/tui-main-screen.ts` remains a thin state-capture subclass.

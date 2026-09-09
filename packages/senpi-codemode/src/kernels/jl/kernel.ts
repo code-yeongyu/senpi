@@ -1,12 +1,15 @@
 import { join } from "node:path";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
-import { type CodemodeRuntimeAssetEnvironment, resolveCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
+import type { SessionEnvironment } from "../session-env.ts";
+import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import { SubprocessKernel, type SubprocessSpawn } from "../shared/subprocess-kernel.ts";
 
 export interface JuliaKernelStartOptions {
 	readonly cwd: string;
 	readonly sessionId: string;
 	readonly connection: BridgeConnectionConfig;
+	/** Per-session PI_* values merged into the interpreter environment at spawn. */
+	readonly sessionEnv?: SessionEnvironment;
 	readonly command?: string;
 	readonly spawn?: SubprocessSpawn;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
@@ -17,7 +20,7 @@ export interface JuliaRunnerPathOptions extends CodemodeRuntimeAssetEnvironment 
 }
 
 export function resolveJuliaRunnerPath(options: JuliaRunnerPathOptions = {}): string {
-	return resolveCodemodeRuntimeAsset(
+	return requireCodemodeRuntimeAsset(
 		options.localPath ?? join(import.meta.dirname, "runner.jl"),
 		join("kernels", "jl", "runner.jl"),
 		options,
@@ -42,6 +45,7 @@ export class JuliaKernel extends SubprocessKernel {
 			],
 			cwd: options.cwd,
 			sessionId: options.sessionId,
+			sessionEnv: options.sessionEnv,
 			connection: options.connection,
 			spawn: options.spawn,
 			onMessage: options.onMessage,

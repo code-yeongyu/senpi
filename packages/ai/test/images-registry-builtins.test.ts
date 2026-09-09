@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { IMAGE_MODELS } from "../src/image-models.generated.ts";
 import { generateImages } from "../src/images.ts";
 import { getImagesApiProvider } from "../src/images-api-registry.ts";
 import type { ImagesContext, ImagesModel } from "../src/types.ts";
@@ -19,6 +20,20 @@ describe("openai-images builtin registry", () => {
 	beforeEach(() => {
 		vi.resetModules();
 	});
+
+	it.each(["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"] as const)(
+		"registers %s with editing and pricing",
+		(id) => {
+			expect(IMAGE_MODELS.openai).toHaveProperty([id]);
+			expect(IMAGE_MODELS.openai[id]).toMatchObject({
+				id,
+				api: "openai-images",
+				input: ["text", "image"],
+				output: ["image"],
+				cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0 },
+			});
+		},
+	);
 
 	it("registers a lazy generateImages for openai-images", () => {
 		const provider = getImagesApiProvider("openai-images");

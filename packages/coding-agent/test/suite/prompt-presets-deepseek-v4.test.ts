@@ -214,7 +214,7 @@ describe("DeepSeek V4 prompt presets", () => {
 				"openrouter/deepseek/deepseek-v4-flash-0731",
 				"openrouter/deepseek/deepseek-v4-flash",
 				"openrouter/deepseek/deepseek-v4-pro",
-				"opencode/deepseek-v4-flash-free",
+				"opencode/deepseek-v4-flash",
 				"huggingface/deepseek-ai/DeepSeek-V4-Flash",
 				"together/deepseek-ai/DeepSeek-V4-Pro",
 			]),

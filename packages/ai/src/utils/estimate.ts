@@ -47,6 +47,7 @@ export function estimateMessageTokens(message: Message): number {
 
 	if (message.role === "user") return estimateTextAndImageContentTokens(message.content);
 	if (message.role === "toolResult") return estimateTextAndImageContentTokens(message.content);
+	if (message.role === "configurationUpdate") return 0;
 
 	for (const block of message.content) {
 		if (block.type === "text") {

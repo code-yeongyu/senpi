@@ -33,7 +33,7 @@ describe("claude-sdk-oauth cross-slot empty masking", () => {
 			CLAUDE_CODE_OAUTH_TOKEN_2: "host-secondary",
 		};
 		const requestEnvironment = { CLAUDE_CODE_OAUTH_TOKEN: "" };
-		const provider = composedProvider(async () => true);
+		const provider = composedProvider(async () => true, {}, { enabled: true });
 		const first = await resolveProviderAuth(provider, credentialStore(), authContext(hostEnvironment), {
 			env: requestEnvironment,
 		});

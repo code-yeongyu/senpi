@@ -6,6 +6,7 @@ import {
 	isRetryableAssistantError,
 	type RetryPolicy,
 	retryAssistantCall,
+	retryDelayMs,
 } from "../src/utils/retry.ts";
 
 const openAIExplicitRetryMessage =
@@ -38,6 +39,20 @@ const nonCanonicalModelRequestRejectionMessages = [
 ] as const;
 
 describe("provider retry classification", () => {
+	it("applies bounded injectable Codex-style jitter", () => {
+		expect(retryDelayMs(1_000, 1, () => 0)).toBe(900);
+		expect(retryDelayMs(1_000, 1, () => 1)).toBe(1_100);
+	});
+
+	it("keeps provider retry hints above the jittered schedule", () => {
+		const hinted = 1_050;
+		expect(
+			Math.max(
+				hinted,
+				retryDelayMs(1_000, 1, () => 0),
+			),
+		).toBe(hinted);
+	});
 	it("matches explicit provider retry guidance", () => {
 		expect(
 			isRetryableAssistantError(
@@ -54,6 +69,35 @@ describe("provider retry classification", () => {
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: nvidiaNIMResourceExhaustedMessage }),
 			),
 		).toBe(true);
+	});
+
+	it("classifies credential-store lock exhaustion as retryable infrastructure", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage:
+						"Credential store is busy: lock /tmp/auth.json was held for 1234ms. Another process may be refreshing credentials",
+				}),
+			),
+		).toBe(true);
+	});
+
+	it("classifies only explicitly provider-owned aborts as provider timeouts", () => {
+		expect(
+			isProviderTimeoutError(
+				fauxAssistantMessage("", {
+					stopReason: "aborted",
+					errorMessage: "Request was aborted",
+					abortSource: "provider",
+				}),
+			),
+		).toBe(true);
+		expect(
+			isProviderTimeoutError(
+				fauxAssistantMessage("", { stopReason: "aborted", errorMessage: "Request was aborted" }),
+			),
+		).toBe(false);
 	});
 
 	it("classifies agent-loop stream timeout errors as retryable", () => {
@@ -86,6 +130,12 @@ describe("provider retry classification", () => {
 	it.each([
 		["Idle timeout waiting for provider stream after 300000ms", true, true],
 		["Provider stream start timed out after 90000ms", true, true],
+		[
+			"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
+			true,
+			true,
+		],
+		["Idle timeout waiting for provider stream after 5ms (x)", false, false],
 		["Request timed out.", false, true],
 		["Request timed out", false, true],
 		["Command timed out after 30000ms", false, false],
@@ -177,7 +227,8 @@ describe("provider retry classification", () => {
 			isProviderStreamStallError(
 				fauxAssistantMessage("", {
 					stopReason: "error",
-					errorMessage: "Provider stream start timed out after 90000ms",
+					errorMessage:
+						"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
 				}),
 			),
 		).toBe(true);

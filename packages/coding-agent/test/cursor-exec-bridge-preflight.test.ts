@@ -28,6 +28,7 @@ describe("cursor exec bridge tool_call preflight", () => {
 		let eventQueue = Promise.resolve();
 		const session: CursorExecBridgeSession = {
 			getRegisteredTool: (name) => (name === "write" ? tool : undefined),
+			emitExecBridgeToolResult: async () => undefined,
 			preflightToolCall: async (toolCall, args) => {
 				await eventQueue;
 				if (isRecord(args) && "content" in args) args.content = "mutated by tool_call";
@@ -55,7 +56,7 @@ describe("cursor exec bridge tool_call preflight", () => {
 				});
 			},
 		};
-		const bridge = createSessionCursorExecBridge({ current: session }, () => agent);
+		const bridge = createSessionCursorExecBridge({ current: session }, () => agent, runSignal);
 
 		const results: ToolResultMessage[] = [];
 		for (let attempt = 1; attempt <= 9; attempt++) {

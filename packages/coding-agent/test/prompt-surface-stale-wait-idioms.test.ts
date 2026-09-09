@@ -6,7 +6,7 @@ import {
 	buildBashTimeoutPrompt,
 	resolveBashTimeoutDefaults,
 } from "../src/core/extensions/builtin/bash-timeout/timeout.ts";
-import { TERMINAL_PROMPT_SECTION } from "../src/core/extensions/builtin/terminal/prompt.ts";
+import { buildTerminalPromptSection } from "../src/core/extensions/builtin/terminal/prompt.ts";
 import { createPtyBashTool } from "../src/core/extensions/builtin/terminal/tools/bash.ts";
 import { createBashInputTool } from "../src/core/extensions/builtin/terminal/tools/bash-input.ts";
 import { createBashOutputTool } from "../src/core/extensions/builtin/terminal/tools/bash-output.ts";
@@ -71,13 +71,20 @@ function terminalToolSurfaces(): Array<{ name: string; line: number; text: strin
 	]);
 }
 
-/** The prompt surfaces the model actually sees (system-prompt sections + tool schemas). */
+/**
+ * The prompt surfaces the model actually sees (system-prompt sections + tool schemas).
+ * Both eval-only branches are swept: a stale wait idiom must not hide in either
+ * rendering of the two call-form-aware sections.
+ */
 function agentFacingSurfaces(): Array<{ name: string; line: number; text: string }> {
-	return [
-		...surfaceLines("terminal/prompt.ts TERMINAL_PROMPT_SECTION", TERMINAL_PROMPT_SECTION),
+	return [true, false].flatMap((evalOnly) => [
+		...surfaceLines(
+			`terminal/prompt.ts buildTerminalPromptSection(evalOnly=${evalOnly})`,
+			buildTerminalPromptSection({ evalOnly }),
+		),
 		...surfaceLines("bash-timeout prompt section", buildBashTimeoutPrompt(resolveBashTimeoutDefaults({}))),
 		...terminalToolSurfaces(),
-	];
+	]);
 }
 
 function loadSurfaces(): Array<{ name: string; line: number; text: string }> {
@@ -106,9 +113,13 @@ describe("stale wait-idiom consistency gate", () => {
 	});
 
 	it("the terminal prompt teaches the monitor/notification model instead", () => {
-		expect(TERMINAL_PROMPT_SECTION).toContain("monitor(");
-		expect(TERMINAL_PROMPT_SECTION.toLowerCase()).toContain("notification");
-		expect(TERMINAL_PROMPT_SECTION).not.toContain("wait_for");
+		for (const evalOnly of [true, false]) {
+			const section = buildTerminalPromptSection({ evalOnly });
+
+			expect(section, `evalOnly=${evalOnly}`).toContain("monitor(");
+			expect(section.toLowerCase(), `evalOnly=${evalOnly}`).toContain("notification");
+			expect(section, `evalOnly=${evalOnly}`).not.toContain("wait_for");
+		}
 	});
 
 	it("the bash tool surface routes waits to the monitor tool", () => {

@@ -34,6 +34,8 @@ contextTokens > contextWindow - reserveTokens
 
 By default, `reserveTokens` is 16384 tokens (configurable in `~/.senpi/agent/settings.json` or `<project-dir>/.senpi/settings.json`). This leaves room for the LLM's response.
 
+During a multi-turn agent run, Pi checks this threshold after tools finish and their results are appended, before starting the next assistant response. If the threshold is crossed, Pi compacts inside the same agent run and resumes with the summary and retained messages. It skips this between-turn check when the completed tool batch terminates the run and no queued message requires another response. Pi also checks the threshold before a new user prompt and after a low-level agent run ends.
+
 You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary.
 
 ### How It Works
@@ -346,6 +348,21 @@ pi.on("session_before_compact", async (event, ctx) => {
 
 See [custom-compaction.ts](../examples/extensions/custom-compaction.ts) for a complete example using a different model.
 
+### session_compact_failed
+
+Fired when manual or automatic compaction fails or is aborted. This is useful for telemetry extensions that need to pair `session_before_compact` attempts with terminal outcomes.
+
+```typescript
+pi.on("session_compact_failed", async (event, ctx) => {
+  const { reason, errorMessage, aborted, willRetry, fromExtension } = event;
+  // reason - "manual" (/compact), "threshold", or "overflow"
+  // errorMessage - present for non-abort failures
+  // aborted - true for cancelled/aborted compactions
+  // willRetry - whether the aborted turn would have retried after compaction
+  // fromExtension - whether extension-provided compaction content was being used
+});
+```
+
 ### session_before_tree
 
 Fired before `/tree` navigation. Always fires regardless of whether user chose to summarize. Can cancel navigation or provide custom summary.
@@ -394,8 +411,8 @@ Configure compaction in `~/.senpi/agent/settings.json` or `<project-dir>/.senpi/
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `enabled` | `true` | Enable auto-compaction |
+| `enabled` | `true` | Enable proactive (threshold) auto-compaction; provider-overflow recovery stays armed |
 | `reserveTokens` | `16384` | Tokens to reserve for LLM response |
 | `keepRecentTokens` | `20000` | Recent tokens to keep (not summarized) |
 
-Disable auto-compaction with `"enabled": false`. You can still compact manually with `/compact`.
+Disable proactive auto-compaction with `"enabled": false`. You can still compact manually with `/compact`, and a context the provider rejects as too large is still compacted once and retried automatically.

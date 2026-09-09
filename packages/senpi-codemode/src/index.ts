@@ -3,7 +3,7 @@ import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "./bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "./bridges/schema-bridge.ts";
 import { type CompletionRequest, type CompletionResult, createCompletionHandler } from "./completion/handler.ts";
-import { defaultCodemodeSettings, resolveHardLimitSeconds } from "./config/settings.ts";
+import { defaultCodemodeSettings, resolveForegroundWindowSeconds, resolveHardLimitSeconds } from "./config/settings.ts";
 import { EvalNotifier } from "./extension/eval-notifier.ts";
 import { EVAL_CELLS_STATUS_KEY } from "./extension/eval-status.ts";
 import { EvalStatusTicker } from "./extension/eval-status-ticker.ts";
@@ -13,8 +13,10 @@ import {
 	enabledLanguagesFrom,
 	type SessionRuntime,
 } from "./extension/runtime-factory.ts";
+import { jsRuntimeInfo, jsRuntimeLabel } from "./extension/runtime-info.ts";
 import type { CodemodeSessionManager, CreateCodemodeSessionManagerOptions } from "./extension/session-manager.ts";
 import { SessionManagerProxy } from "./extension/session-manager-proxy.ts";
+import { activeBunSkillPath, registerBunSkillContribution } from "./extension/skill-contribution.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceState } from "./extension/wake-source-state.ts";
 import { EvalDetachedCellManager, type EvalDetachedCellStatusEntry } from "./tool/detached-cell-manager.ts";
 import {
@@ -39,11 +41,14 @@ type CodemodeEvent = SessionLifecycleEvent | "model_select";
 export interface CodemodeExtensionAPI {
 	registerTool(tool: ReturnType<typeof createEvalTool>): void;
 	registerRemovedToolHint(name: string, hint: string): void;
-	on(event: CodemodeEvent, handler: (event: unknown, ctx: ExtensionContext) => Promise<void> | void): void;
+	on(event: CodemodeEvent | "resources_discover", handler: (event: unknown, ctx: ExtensionContext) => unknown): void;
 	executeTool: AgentExecuteTool;
 	getActiveTools(): string[];
 	getAllTools(): readonly EvalSchemaToolInfo[];
-	sendUserMessage(content: string, options?: { deliverAs?: "steer" | "followUp" }): void;
+	sendMessage(
+		message: { customType: string; content: string; display: boolean },
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+	): void;
 	/** Optional host event bus; a host without one turns extension event emission into a harmless no-op. */
 	events?: { emit(name: string, data: unknown): void };
 	/** Optional host RPC surface for forwarding extension-owned events to connected clients. */
@@ -59,16 +64,26 @@ export interface SenpiCodemodeOptions {
 	readonly now?: () => number;
 }
 
+/** Whether the session registry holds `monitor`; false when the runtime cannot be read yet. */
+function monitorIsRegistered(pi: CodemodeExtensionAPI): boolean {
+	try {
+		return pi.getAllTools().some((tool) => tool.name === "monitor");
+	} catch {
+		return false;
+	}
+}
+
 export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCodemodeOptions = {}): void {
 	const manager = new SessionManagerProxy();
 	const complete = options.complete ?? ((request, ctx) => createCompletionHandler()(ctx)(request));
 	const renderers = { renderCall: renderEvalCall, renderResult: renderEvalResult };
+	const bunSkillPath = activeBunSkillPath();
 	let activeRuntime: SessionRuntime | undefined;
 	let activeModelId: string | undefined;
 	let activeContext: ExtensionContext | undefined;
 	let activeCells: EvalDetachedCellManager | undefined;
 	const notifier = new EvalNotifier({
-		sendUserMessage: (content, notifyOptions) => pi.sendUserMessage(content, notifyOptions),
+		sendMessage: (message, notifyOptions) => pi.sendMessage(message, notifyOptions),
 		getContext: () => activeContext,
 		getMode: () => "wake",
 	});
@@ -102,11 +117,17 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			pi.rpc?.emit(EVAL_EXECUTION_EVENT, toEvalExecutionRpcPayload(payload));
 			pi.events?.emit(EVAL_EXECUTION_EVENT, payload);
 		};
+		// `listTools` below survives because it is lazy; this read is eager, and the loader's
+		// action methods throw while extensions are still loading (the bundled codemode path
+		// reaches this before the runtime is bound). An unreadable registry means "do not teach
+		// a tool we cannot confirm"; session_start / model_select re-register once it is live.
+		const monitor = monitorIsRegistered(pi);
 		pi.registerTool(
 			createEvalTool({
 				enabledLanguages: runtime.enabledLanguages,
 				kernelManager: manager,
 				cellTimeoutSeconds: runtime.settings.cellTimeoutSeconds,
+				foregroundWindowSeconds: resolveForegroundWindowSeconds(runtime.settings),
 				executeTool: runtime.executeTool,
 				listTools: () => pi.getAllTools(),
 				complete,
@@ -116,9 +137,12 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 				executionTracker: manager,
 				onCellSettled,
 				renderers,
+				monitor,
 				spawns: runtime.spawns,
 				spawnDefaultAgent: runtime.settings.taskTools.task,
 				hostLine: hostLine(),
+				runtimes: runtime.runtimes,
+				...(bunSkillPath === undefined ? {} : { bunSkillPath }),
 				...(modelId === undefined ? {} : { modelId }),
 			}),
 		);
@@ -138,6 +162,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			enabledLanguages: { py: true, js: true, rb: true, jl: true },
 			kernelManager: manager,
 			cellTimeoutSeconds: defaultCodemodeSettings.cellTimeoutSeconds,
+			foregroundWindowSeconds: resolveForegroundWindowSeconds(defaultCodemodeSettings),
 			executeTool: createExecuteTool(pi),
 			listTools: () => pi.getAllTools(),
 			complete,
@@ -151,7 +176,11 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			}),
 			executionTracker: manager,
 			renderers,
+			// The baseline tool is registered before extensions such as monitor load.
+			monitor: false,
 			hostLine: hostLine(),
+			runtimes: { js: jsRuntimeInfo() },
+			...(bunSkillPath === undefined ? {} : { bunSkillPath }),
 		}),
 	);
 	pi.registerRemovedToolHint(
@@ -162,6 +191,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		"wait",
 		'wait was removed; detached eval cells notify when complete. Use eval({ action: "peek"|"stop", cell_id }) to inspect or stop one.',
 	);
+	registerBunSkillContribution(pi);
 
 	pi.on("session_start", async (event, ctx) => {
 		const previousCells = activeCells;
@@ -206,7 +236,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 
 function hostLine(): string {
 	const cpu = os.cpus()[0]?.model?.trim();
-	return [`${os.platform()} ${os.arch()}`, cpu, `${os.availableParallelism()} cores`]
+	return [`${os.platform()} ${os.arch()}`, cpu, `${os.availableParallelism()} cores`, jsRuntimeLabel()]
 		.filter((part): part is string => !!part)
 		.join(" \u00b7 ");
 }

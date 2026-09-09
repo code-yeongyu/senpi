@@ -1,5 +1,5 @@
-export function isMultiplexerSession(): boolean {
-	return Boolean(process.env.TMUX || process.env.TMUX_PANE || process.env.STY || process.env.ZELLIJ);
+export function isMultiplexerSession(env: NodeJS.ProcessEnv = process.env): boolean {
+	return Boolean(env.TMUX || env.TMUX_PANE || env.STY || env.ZELLIJ);
 }
 
 export function useLegacyMuxRender(): boolean {

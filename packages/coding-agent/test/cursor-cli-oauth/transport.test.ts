@@ -1,4 +1,4 @@
-import { chmodSync, copyFileSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,8 +55,37 @@ function start(
 	});
 }
 
-function assertDead(pid: number): void {
-	expect(() => process.kill(pid, 0)).toThrow();
+/**
+ * A non-positive pid is never a real process: POSIX `kill(0, sig)` targets the CALLER'S OWN
+ * process group, so probing pid 0 reports "alive" forever and times out 2s later blaming the
+ * fixture. Fail loudly on an unusable pid instead of letting it masquerade as a live process.
+ */
+function readGrandchildPid(pidFile: string): number {
+	const raw = readFileSync(pidFile, "utf8").trim();
+	const pid = Number(raw);
+	if (!Number.isInteger(pid) || pid <= 0) {
+		throw new Error(`fixture published an unusable grandchild pid: ${JSON.stringify(raw)}`);
+	}
+	return pid;
+}
+
+// Group SIGTERM reaches the grandchild asynchronously after the leader exits, so an
+// instant liveness probe races on loaded CI runners. Poll under a bounded deadline,
+// matching assertProcessDead in test/mcp/fixtures/spawn-fixture.ts.
+async function assertDead(pid: number): Promise<void> {
+	if (!Number.isInteger(pid) || pid <= 0) {
+		throw new Error(`refusing to probe pid ${pid}: kill(0) would target this test's own process group`);
+	}
+	const deadline = Date.now() + 2000;
+	while (Date.now() < deadline) {
+		try {
+			process.kill(pid, 0);
+		} catch {
+			return;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+	throw new Error(`process still alive after abort: ${pid}`);
 }
 
 async function collect(handle: CursorCliTransportHandle): Promise<unknown[]> {
@@ -85,37 +114,33 @@ describe("cursor CLI transport", () => {
 			),
 		).toBe(true);
 		expect(outcome).toMatchObject({ type: "completed", exitCode: 0 });
-		assertDead(handle.pid);
+		await assertDead(handle.pid);
 	});
 
 	it("aborts the exact process group and reaps both leader and descendant", async () => {
 		const directory = temporaryDirectory();
 		const fixture = fixtureExecutable(directory, "grandchild");
 		const controller = new AbortController();
-		const pidFileReady = new Promise<void>((resolveReady, rejectReady) => {
-			const watcher = watch(directory);
-			const deadline = setTimeout(() => {
-				watcher.close();
-				rejectReady(new Error("fixture did not report its grandchild"));
-			}, 2_000);
-			watcher.on("change", (_eventType, filename) => {
-				if (filename !== "grandchild.pid") return;
-				clearTimeout(deadline);
-				watcher.close();
-				resolveReady();
-			});
-		});
 		const handle = start(directory, fixture.executable, "slow", controller.signal);
-		await pidFileReady;
-		const grandchildPid = Number(readFileSync(fixture.pidFile, "utf8").trim());
+
+		// The fixture publishes the pid file BEFORE it writes its first stdout event, so
+		// observing any event already orders the pid file as complete. That happens-before
+		// edge replaces watching the directory, which fired on file CREATION and raced the
+		// content write - yielding an empty read, Number("") === 0, and a bogus pid probe.
+		const iterator = handle.events[Symbol.asyncIterator]();
+		const firstEvent = await iterator.next();
+		const grandchildPid = readGrandchildPid(fixture.pidFile);
 		controller.abort();
-		const events = await collect(handle);
+
+		const events: unknown[] = [];
+		if (!firstEvent.done) events.push(firstEvent.value);
+		for (let next = await iterator.next(); !next.done; next = await iterator.next()) events.push(next.value);
 		const outcome = await handle.completed;
 
 		expect(events.at(-1)).toBeInstanceOf(CursorCliAbortError);
 		expect(outcome.type).toBe("aborted");
-		assertDead(handle.pid);
-		assertDead(grandchildPid);
+		await assertDead(handle.pid);
+		await assertDead(grandchildPid);
 	});
 
 	it("escalates to SIGKILL when the process ignores SIGTERM", async () => {
@@ -135,7 +160,7 @@ describe("cursor CLI transport", () => {
 		const outcome = await handle.completed;
 
 		expect(outcome.type).toBe("aborted");
-		assertDead(handle.pid);
+		await assertDead(handle.pid);
 	}, 8_000);
 
 	it("passes only the explicit environment allowlist", async () => {

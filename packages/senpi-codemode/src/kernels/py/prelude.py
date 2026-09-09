@@ -91,6 +91,68 @@ def b64_text(value: str) -> str:
     return base64.b64encode(value.encode("utf-8")).decode("ascii")
 
 
+_IMAGE_SIGNATURES: tuple[tuple[str, int, bytes], ...] = (
+    ("image/png", 0, b"\x89PNG\r\n\x1a\n"),
+    ("image/jpeg", 0, b"\xff\xd8\xff"),
+    ("image/gif", 0, b"GIF8"),
+    ("image/webp", 8, b"WEBP"),
+    ("image/bmp", 0, b"BM"),
+)
+_DATA_URL_RE = re.compile(r"^data:([^;,]+)(?:;[^,]*)?;base64,(.*)$", re.DOTALL)
+
+
+def _sniff_image_mime_type(data: bytes) -> str | None:
+    for mime_type, offset, magic in _IMAGE_SIGNATURES:
+        if data[offset : offset + len(magic)] == magic:
+            return mime_type
+    return None
+
+
+def _image_base64(data: Any) -> tuple[str, str | None] | None:
+    if isinstance(data, (bytes, bytearray)):
+        raw = bytes(data)
+        return base64.b64encode(raw).decode("ascii"), _sniff_image_mime_type(raw)
+    if not isinstance(data, str):
+        return None
+    declared: str | None = None
+    match = _DATA_URL_RE.match(data)
+    if match:
+        declared, data = match.group(1), match.group(2)
+    compact = re.sub(r"\s+", "", data).replace("-", "+").replace("_", "/")
+    compact += "=" * (-len(compact) % 4)
+    try:
+        base64.b64decode(compact, validate=True)
+    except (ValueError, TypeError):
+        return None
+    return (compact, declared) if compact else None
+
+
+def _display_image_dict(value: dict[str, Any]) -> bool:
+    mime_type = value.get("mimeType")
+    payload = value.get("dataBase64") if "dataBase64" in value else value.get("data")
+    if not isinstance(mime_type, str) or not mime_type.startswith("image/") or payload is None:
+        return False
+    encoded = _image_base64(payload)
+    if encoded is None:
+        print(f"[display: image dropped \u2014 `data` must be base64, a data: URL, or bytes; got {type(payload).__name__}]")
+        return True
+    emit({"type": "display", "mimeType": mime_type, "dataBase64": encoded[0]})
+    return True
+
+
+def _display_tool_result(value: dict[str, Any]) -> bool:
+    text, images = value.get("text"), value.get("images")
+    if not isinstance(text, str) or not isinstance(images, list):
+        return False
+    if not all(isinstance(image, dict) and isinstance(image.get("mimeType"), str) and isinstance(image.get("dataBase64"), str) for image in images):
+        return False
+    if text:
+        print(text)
+    for image in images:
+        emit({"type": "display", "mimeType": image["mimeType"], "dataBase64": image["dataBase64"]})
+    return True
+
+
 def _emit_display(mime_type: str, data: Any) -> None:
     if isinstance(data, (bytes, bytearray)):
         encoded = base64.b64encode(bytes(data)).decode("ascii")
@@ -188,11 +250,14 @@ def _rich_bundle(value: Any) -> dict[str, Any]:
 
 
 def display(value: Any) -> None:
+    if isinstance(value, dict) and (_display_tool_result(value) or _display_image_dict(value)):
+        return
     if isinstance(value, (dict, list, tuple)):
         _emit_display("application/json", value)
         return
     if isinstance(value, (bytes, bytearray)):
-        _emit_display("application/octet-stream", bytes(value))
+        raw = bytes(value)
+        _emit_display(_sniff_image_mime_type(raw) or "application/octet-stream", raw)
         return
     bundle = _rich_bundle(value)
     if bundle and _display_bundle(bundle):

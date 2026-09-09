@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AssistantMessage } from "../src/types.ts";
-import { isContextOverflow, isRecoverableLength } from "../src/utils/overflow.ts";
+import { isContextOverflow, isCursorQuotaResourceExhausted, isRecoverableLength } from "../src/utils/overflow.ts";
 
 function createErrorMessage(errorMessage: string): AssistantMessage {
 	return {
@@ -30,6 +30,13 @@ function createErrorMessage(errorMessage: string): AssistantMessage {
 }
 
 describe("isContextOverflow", () => {
+	it("detects the local context exhaustion guard before any provider call", () => {
+		const message = createErrorMessage(
+			"Context window exhausted: the conversation is estimated at 995154 of 1000000 tokens, leaving fewer than 1024 tokens for a response. Compact the conversation, enable auto-compaction, or start a new session before retrying.",
+		);
+		expect(isContextOverflow(message, 1000000)).toBe(true);
+	});
+
 	it("detects explicit Ollama prompt-too-long errors", () => {
 		const message = createErrorMessage("400 `prompt too long; exceeded max context length by 100918 tokens`");
 		expect(isContextOverflow(message, 32768)).toBe(true);
@@ -54,6 +61,21 @@ describe("isContextOverflow", () => {
 			"Error: 400 Input length (265330) exceeds model's maximum context length (262144).",
 		);
 		expect(isContextOverflow(message, 262144)).toBe(true);
+	});
+
+	it("detects OpenAI exceeds the model's context window wording", () => {
+		const message = createErrorMessage("Your input exceeds the model's context window");
+		expect(isContextOverflow(message)).toBe(true);
+	});
+
+	it("detects OpenAI exceeds this model's context window wording", () => {
+		const message = createErrorMessage("Your input exceeds this model's context window");
+		expect(isContextOverflow(message)).toBe(true);
+	});
+
+	it("detects OpenAI exceeds the context window wording", () => {
+		const message = createErrorMessage("Your input exceeds the context window of this model");
+		expect(isContextOverflow(message)).toBe(true);
 	});
 
 	it("detects OpenRouter Poolside maximum allowed input length errors", () => {
@@ -94,6 +116,87 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(rfcStyle, 200000)).toBe(true);
 	});
 
+	it("detects kiro-lb local payload guards across both route wrappers and units", () => {
+		const anthropicBytes = createErrorMessage(
+			'400 {"type":"error","error":{"type":"invalid_request_error","message":"Request payload is 1095225 bytes, over the 1085435 byte limit Kiro accepts. Shorten the conversation or send fewer tools."}}',
+		);
+		const openAiTokens = createErrorMessage(
+			'400 {"detail":"Request payload is 800001 tokens, over the 800000 token limit Kiro accepts."}',
+		);
+		expect(isContextOverflow(anthropicBytes, 666667)).toBe(true);
+		expect(isContextOverflow(openAiTokens, 666667)).toBe(true);
+	});
+
+	it("detects Kiro upstream context overflow enhanced by kiro-lb", () => {
+		const upstream = createErrorMessage(
+			'400 {"error":{"type":"kiro_api_error","message":"Model context limit reached. Conversation size exceeds model capacity."}}',
+		);
+		expect(isContextOverflow(upstream, 666667)).toBe(true);
+	});
+
+	it("rejects malformed or unrelated Kiro-like payload-size prose", () => {
+		expect(
+			isContextOverflow(
+				createErrorMessage("Request payload is 1,,225 bytes, over the 1,085 byte limit Kiro accepts."),
+			),
+		).toBe(false);
+		expect(
+			isContextOverflow(
+				createErrorMessage("Request payload is 1,225 bytes, over the 1,085 byte limit Kiro accepts."),
+			),
+		).toBe(false);
+		expect(
+			isContextOverflow(
+				createErrorMessage("Payload 1095225 bytes exceeds the 1085435 byte limit; AUTO_TRIM_PAYLOAD is disabled"),
+			),
+		).toBe(false);
+		expect(isContextOverflow(createErrorMessage("Another provider reports payload size exceeded."))).toBe(false);
+	});
+
+	it("does not treat tiny token-bearing resource_exhausted usage as context overflow", () => {
+		const message = createErrorMessage("Connect error resource_exhausted");
+		message.usage.output = 12;
+		message.usage.totalTokens = 12;
+		expect(isContextOverflow(message, 200_000)).toBe(false);
+	});
+
+	it("treats token-bearing resource_exhausted usage near the context window as overflow", () => {
+		const message = createErrorMessage("gRPC error 8: resource_exhausted");
+		message.usage.totalTokens = 600_000;
+		expect(isContextOverflow(message, 1_048_576)).toBe(true);
+	});
+
+	it("preserves legacy token-bearing resource_exhausted overflow detection without a context window", () => {
+		const message = createErrorMessage("Connect error resource_exhausted");
+		message.usage.totalTokens = 12;
+		expect(isContextOverflow(message)).toBe(true);
+	});
+
+	it("identifies Cursor usage-pool exhaustion below half the context window", () => {
+		const message = createErrorMessage("Connect error resource_exhausted: Error");
+		message.usage.totalTokens = 178_626;
+		expect(isContextOverflow(message, 1_048_576)).toBe(false);
+		expect(isCursorQuotaResourceExhausted(message, 1_048_576)).toBe(true);
+	});
+
+	it("does not identify Cursor context overflow as usage-pool exhaustion", () => {
+		const message = createErrorMessage("Connect error resource_exhausted: Error");
+		message.usage.totalTokens = 600_000;
+		expect(isCursorQuotaResourceExhausted(message, 1_048_576)).toBe(false);
+	});
+
+	it("does not identify zero-token or non-resource-exhausted errors as usage-pool exhaustion", () => {
+		const zeroToken = createErrorMessage("Connect error resource_exhausted: Error");
+		const nonResourceExhausted = createErrorMessage("Connect error unavailable");
+		expect(isCursorQuotaResourceExhausted(zeroToken, 1_048_576)).toBe(false);
+		expect(isCursorQuotaResourceExhausted(nonResourceExhausted, 1_048_576)).toBe(false);
+	});
+
+	it("keeps zero-token resource_exhausted errors out of overflow detection", () => {
+		const message = createErrorMessage("Connect error resource_exhausted: quota exceeded");
+		expect(isContextOverflow(message, 200_000)).toBe(false);
+	});
+
 	it("does not treat generic non-overflow Ollama errors as overflow", () => {
 		const message = createErrorMessage("500 `model runner crashed unexpectedly`");
 		expect(isContextOverflow(message, 32768)).toBe(false);
@@ -118,6 +221,51 @@ describe("isContextOverflow", () => {
 
 	it("does not treat HTTP 429 style errors as overflow", () => {
 		const message = createErrorMessage("Too many requests. Please slow down.");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat tokens-per-minute rate limits as overflow", () => {
+		const message = createErrorMessage("Too many tokens per minute for this model. Retry in 20s");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat exceeds-the-limit tokens-per-minute messages as overflow", () => {
+		const message = createErrorMessage("This request exceeds the limit of 30000 tokens per minute");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat TPM quota wording as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("TPM limit exceeded: too many tokens");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat RPM quota wording as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("RPM limit exceeded: too many tokens");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat quota exceeded as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("Quota exceeded: too many tokens in the last minute");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat retry-after token quota wording as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("Too many tokens. Retry after 10 seconds");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat HTTP 429 prefixes as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("429 Too many tokens");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat status code 429 as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("Request failed with status code 429: too many tokens");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat overloaded errors as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("The model is overloaded. Too many tokens.");
 		expect(isContextOverflow(message, 200000)).toBe(false);
 	});
 

@@ -1,4 +1,5 @@
 import type {
+	Context,
 	ImageContent,
 	Message,
 	Model,
@@ -7,7 +8,12 @@ import type {
 	ThinkingBudgets,
 	Transport,
 } from "@earendil-works/pi-ai";
-import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
+import {
+	buildProviderContext as buildProviderContextFromAgentContext,
+	runAgentLoop,
+	runAgentLoopContinue,
+} from "./agent-loop.ts";
+import { ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AfterToolCallContext,
@@ -25,6 +31,7 @@ import type {
 	QueueMode,
 	ShouldStopAfterTurnContext,
 	StreamFn,
+	ThinkingLevel,
 	ToolExecutionMode,
 } from "./types.ts";
 
@@ -75,6 +82,7 @@ function createMutableAgentState(
 		systemPrompt: initialState?.systemPrompt ?? "",
 		model: initialState?.model ?? DEFAULT_MODEL,
 		thinkingLevel: initialState?.thinkingLevel ?? "off",
+		reasoningBaseline: initialState?.reasoningBaseline,
 		get tools() {
 			return tools;
 		},
@@ -251,6 +259,14 @@ export class Agent {
 	/** Cursor exec-channel tool handlers; see {@link AgentLoopConfig.cursorExecHandlers}. */
 	public cursorExecHandlers?: AgentLoopConfig["cursorExecHandlers"];
 
+	async buildProviderContext(context: AgentContext, signal?: AbortSignal): Promise<Context> {
+		return buildProviderContextFromAgentContext(
+			context,
+			{ convertToLlm: this.convertToLlm, transformContext: this.transformContext },
+			signal,
+		);
+	}
+
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
 		const runtimeOptions: Partial<AgentOptions> = options ?? {};
@@ -360,8 +376,8 @@ export class Agent {
 	}
 
 	/** Abort the current run, if one is active. */
-	abort(): void {
-		this.activeRun?.abortController.abort();
+	abort(reason?: unknown): void {
+		this.activeRun?.abortController.abort(reason);
 	}
 
 	/**
@@ -565,9 +581,11 @@ export class Agent {
 		let steeringQueueGeneration = this.steeringQueue.getClearGeneration();
 		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
 		const shouldStopAfterTurn = this.shouldStopAfterTurn;
+		const reasoning = (this._state.reasoningBaseline as ThinkingLevel | undefined) ?? this._state.thinkingLevel;
 		return {
 			model: this._state.model,
-			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
+			reasoning: reasoning === "off" ? undefined : reasoning,
+			thinkingSelection: this._state.thinkingSelection,
 			sessionId: this.sessionId,
 			onPayload: this.onPayload,
 			onResponse: this.onResponse,
@@ -707,6 +725,7 @@ export class Agent {
 			usage: EMPTY_USAGE,
 			stopReason: aborted ? "aborted" : "error",
 			errorMessage: error instanceof Error ? error.message : String(error),
+			...(error instanceof ProviderRetryWatchdogAbortError ? { abortSource: "provider" as const } : {}),
 			timestamp: Date.now(),
 		} satisfies AgentMessage;
 		await this.processEvents({ type: "message_start", message: failureMessage });

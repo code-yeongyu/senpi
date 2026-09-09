@@ -66,7 +66,11 @@ function configuredCheck(deps: CursorCliOauthConfigDeps, credential?: OAuthCrede
 describe("cursor-cli-oauth check stays non-throwing", () => {
 	it("resolves undefined when disabled by settings, even with a stored account", async () => {
 		await expect(
-			configuredCheck(dependencies({ readSettings: () => ({ enabled: false, executablePath: undefined }) })),
+			configuredCheck(
+				dependencies({
+					readSettings: () => ({ enabled: false, explicitlyDisabled: true, executablePath: undefined }),
+				}),
+			),
 		).resolves.toBeUndefined();
 	});
 
@@ -124,7 +128,9 @@ describe("cursor-cli-oauth check stays non-throwing", () => {
 	it("keeps turn-time lane resolution throwing for a disabled lane", async () => {
 		await expect(
 			resolveCursorCliOauthLane(
-				dependencies({ readSettings: () => ({ enabled: false, executablePath: undefined }) }),
+				dependencies({
+					readSettings: () => ({ enabled: false, explicitlyDisabled: true, executablePath: undefined }),
+				}),
 			),
 		).rejects.toThrow("disabled by settings");
 
@@ -212,7 +218,9 @@ describe("ModelsImpl.getAvailable integration", () => {
 		disabled.setProvider(
 			oauthProvider(
 				createCursorCliOauthConfig(
-					dependencies({ readSettings: () => ({ enabled: false, executablePath: undefined }) }),
+					dependencies({
+						readSettings: () => ({ enabled: false, explicitlyDisabled: true, executablePath: undefined }),
+					}),
 				),
 			),
 		);

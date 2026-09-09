@@ -3,7 +3,6 @@
  * Provider auth orchestration belongs to ModelRuntime and pi-ai Models.
  */
 
-import { setTimeout as sleep } from "node:timers/promises";
 import type {
 	ApiKeyCredential,
 	AuthEvent,
@@ -18,14 +17,31 @@ import type {
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai";
 import { findEnvKeys, getEnvApiKey } from "@earendil-works/pi-ai";
+import {
+	appendLoginSlot,
+	type CredentialSlot,
+	listSlots,
+	type PooledCredential,
+	removeSlot,
+	upsertSlot,
+} from "@earendil-works/pi-ai/auth/pool/slots";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileRevision, normalizePath } from "../utils/paths.ts";
-import { FILE_STORAGE_LOCK_OPTIONS } from "./lockfile-policy.ts";
+import { stripBom } from "../utils/text.ts";
+import {
+	CredentialStoreBusyError,
+	FILE_STORAGE_LOCK_OPTIONS,
+	FILE_STORAGE_LOCK_RETRY_BUDGET_MS,
+	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
+	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
+	isLockError,
+} from "./lockfile-policy.ts";
 import { isCommandConfigValue, resolveConfigValue } from "./resolve-config-value.ts";
 
 type AuthStorageData = Record<string, Credential>;
@@ -47,6 +63,7 @@ type LockResult<T> = {
 	next?: string;
 };
 
+// The mode applies only on creation so administrator-managed modes and ACLs remain intact.
 const AUTH_FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
 
 type AuthFileReload = {
@@ -88,35 +105,31 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 	private ensureFileExists(): void {
 		if (!existsSync(this.authPath)) {
 			writeFileSync(this.authPath, "{}", AUTH_FILE_WRITE_OPTIONS);
-			chmodSync(this.authPath, 0o600);
 		}
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
-		const maxAttempts = 10;
-		const delayMs = 20;
-		let lastError: unknown;
-
-		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		const startedAt = Date.now();
+		let attempt = 0;
+		while (true) {
 			try {
-				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS });
+				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 			} catch (error) {
-				const code =
-					typeof error === "object" && error !== null && "code" in error
-						? String((error as { code?: unknown }).code)
-						: undefined;
-				if (code !== "ELOCKED" || attempt === maxAttempts) {
-					throw error;
+				if (!isLockError(error)) throw error;
+				const waitedMs = Date.now() - startedAt;
+				if (waitedMs >= FILE_STORAGE_SYNC_LOCK_BUDGET_MS) {
+					throw new CredentialStoreBusyError(path, waitedMs, error);
 				}
-				lastError = error;
-				const start = Date.now();
-				while (Date.now() - start < delayMs) {
-					// Sleep synchronously to avoid changing callers to async.
-				}
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_SYNC_LOCK_BUDGET_MS - waitedMs,
+				);
+				attempt++;
+				const sleeper = new Int32Array(new SharedArrayBuffer(4));
+				Atomics.wait(sleeper, 0, 0, delayMs);
 			}
 		}
-
-		throw (lastError as Error) ?? new Error("Failed to acquire auth storage lock");
 	}
 
 	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T {
@@ -130,7 +143,6 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			const { result, next } = fn(current);
 			if (next !== undefined) {
 				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
-				chmodSync(this.authPath, 0o600);
 			}
 			return result;
 		} finally {
@@ -144,39 +156,39 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		signal: AbortSignal | undefined,
 		onCompromised: (error: Error) => void,
 	): Promise<() => Promise<void>> {
-		const staleMs = FILE_STORAGE_LOCK_OPTIONS.stale;
-		const maxDelayMs = 2_000;
-		const deadline = Date.now() + staleMs;
-		let retry = 0;
+		signal?.throwIfAborted();
+		const startedAt = Date.now();
+		let attempt = 0;
+		// The retry loop stays here rather than delegating to proper-lockfile's own
+		// `retries`, so an abort is observed between attempts instead of after the
+		// whole budget, and `onCompromised` is rebound per attempt.
 		while (true) {
-			signal?.throwIfAborted();
-			let release: (() => Promise<void>) | undefined;
 			try {
-				release = await lockfile.lock(this.authPath, {
+				const release = await lockfile.lock(this.authPath, {
 					...FILE_STORAGE_LOCK_OPTIONS,
 					retries: 0,
 					onCompromised,
 				});
+				if (signal?.aborted) {
+					await release();
+					signal.throwIfAborted();
+				}
+				return release;
 			} catch (error) {
 				signal?.throwIfAborted();
-				const code =
-					typeof error === "object" && error !== null && "code" in error
-						? String((error as { code?: unknown }).code)
-						: undefined;
-				const remainingMs = deadline - Date.now();
-				if (code !== "ELOCKED" || remainingMs <= 0) throw error;
-				const baseDelayMs = Math.min(10 * 2 ** retry, maxDelayMs / 2);
-				retry++;
-				const delayMs = Math.min(Math.round(baseDelayMs * (1 + Math.random())), remainingMs);
-				if (signal) await sleep(delayMs, undefined, { signal });
-				else await sleep(delayMs);
-				continue;
+				if (!isLockError(error)) throw error;
+				const waitedMs = Date.now() - startedAt;
+				if (waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) {
+					throw new CredentialStoreBusyError(this.authPath, waitedMs, error);
+				}
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs,
+				);
+				attempt++;
+				await raceWithAbortSignal(new Promise<void>((resolve) => setTimeout(resolve, delayMs)), signal);
 			}
-			if (signal?.aborted) {
-				await release();
-				signal.throwIfAborted();
-			}
-			return release;
 		}
 	}
 
@@ -211,7 +223,6 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			options?.signal?.throwIfAborted();
 			if (next !== undefined) {
 				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
-				chmodSync(this.authPath, 0o600);
 			}
 			throwIfCompromised();
 			return result;
@@ -240,7 +251,7 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 
 		let parsed: unknown;
 		try {
-			parsed = JSON.parse(readFileSync(this.authPath, "utf-8"));
+			parsed = JSON.parse(stripBom(readFileSync(this.authPath, "utf-8")));
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
 				this.data = {};
@@ -380,6 +391,10 @@ export class AuthStorage implements CredentialStore {
 		return new AuthStorage(new FileAuthStorageBackend(normalizedAuthPath), normalizedAuthPath);
 	}
 
+	getStoragePath(): string | undefined {
+		return this.authPath;
+	}
+
 	static fromStorage(storage: AuthStorageBackend): AuthStorage {
 		return new AuthStorage(storage);
 	}
@@ -394,7 +409,7 @@ export class AuthStorage implements CredentialStore {
 		if (!content) {
 			return {};
 		}
-		return JSON.parse(content) as AuthStorageData;
+		return JSON.parse(stripBom(content)) as AuthStorageData;
 	}
 
 	private recordError(error: unknown): void {
@@ -446,7 +461,9 @@ export class AuthStorage implements CredentialStore {
 
 	set(provider: string, credential: Credential): void {
 		this.storage.withLock((content) => {
-			const nextData = { ...this.parseStorageData(content), [provider]: credential };
+			const currentData = this.parseStorageData(content);
+			const next = appendLoginSlot(currentData[provider], credential);
+			const nextData = { ...currentData, [provider]: next };
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
@@ -456,6 +473,32 @@ export class AuthStorage implements CredentialStore {
 		this.storage.withLock((content) => {
 			const nextData = { ...this.parseStorageData(content) };
 			delete nextData[provider];
+			this.data = nextData;
+			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
+		});
+	}
+
+	listSlots(provider: string): CredentialSlot[] {
+		return listSlots(this.data[provider] as PooledCredential | undefined);
+	}
+
+	setSlot(provider: string, slot: CredentialSlot): void {
+		this.storage.withLock((content) => {
+			const currentData = this.parseStorageData(content);
+			const next = upsertSlot(currentData[provider] as PooledCredential | undefined, slot);
+			const nextData = { ...currentData, [provider]: next };
+			this.data = nextData;
+			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
+		});
+	}
+
+	removeSlot(provider: string, name: string): void {
+		this.storage.withLock((content) => {
+			const currentData = this.parseStorageData(content);
+			const next = removeSlot(currentData[provider] as PooledCredential | undefined, name);
+			const nextData = { ...currentData };
+			if (next === undefined) delete nextData[provider];
+			else nextData[provider] = next;
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
@@ -715,7 +758,7 @@ export function readStoredCredential(
 	authPath: string = join(getAgentDir(), "auth.json"),
 ): Credential | undefined {
 	try {
-		const data = JSON.parse(readFileSync(normalizePath(authPath), "utf-8")) as AuthStorageData;
+		const data = JSON.parse(stripBom(readFileSync(normalizePath(authPath), "utf-8"))) as AuthStorageData;
 		return data[providerId];
 	} catch {
 		return undefined;

@@ -5,40 +5,27 @@ exports[`buildEvalPrompt > renders the all with spawns prompt 1`] = `
   "description": "Run one step of code in a persistent kernel.
 
 <instruction>
-**One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls, and \`task\` subagents — define helpers, datasets, and clients in one call, then later calls reuse them directly.
+**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls, tool calls and \`task\` subagents: define helpers and clients once and reuse them instead of re-importing or re-reading. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
 
-Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone.
+Batch a step's independent calls in one cell with \`parallel(thunks)\`.
+- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.
 
-**EVAL IS YOUR PRIMARY EXECUTION SURFACE.** Any step that needs MORE THAN ONE tool call MUST be written as ONE cell — NEVER as a chain of single tool calls.
-- **PLAN THE WHOLE STEP, THEN BATCH IT.** Enumerate every read/search/lookup the step needs and dispatch ALL independent ones through \`parallel(thunks)\` in one cell.
-- **WRITE REAL CODE, NOT CALL LISTS.** Loop or comprehend over file sets with \`read()\`/stdlib, branch \`if\`/\`else\` per case, post-process \`tool.<name>()\` results programmatically, and wrap EVERY risky call in try/except so ONE failure NEVER kills the batch.
-- **DISTILL IN-KERNEL.** Filter, diff, and aggregate in code before returning; return facts, NOT dumps.
+\`language\`: \`"py"\` IPython kernel, \`"js"\` persistent JavaScript VM, \`"rb"\` persistent Ruby kernel, \`"jl"\` persistent Julia kernel.
 
-Fields:
+A cell that outlives the foreground window detaches: it keeps its language kernel busy (another language can continue) and completes as one notification with its value or error and buffered output. Do not re-run a detached cell; read or cancel it with \`eval({ action: "peek", cell_id })\` / \`eval({ action: "stop", cell_id })\`.
 
-- \`language\` — \`"py"\` IPython kernel, \`"js"\` persistent JavaScript VM, \`"rb"\` persistent Ruby kernel, \`"jl"\` persistent Julia kernel.
-- \`code\` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
-- \`summary\` (REQUIRED for run) — ONE line in the USER'S conversational language stating WHAT this cell does and FOR WHAT PURPOSE (e.g. Korean conversation -> "src 전체에서 legacyClient 사용처 집계"); shown in the TUI while the cell runs; >80 chars is force-truncated.
-- \`timeout\` (optional) — seconds. Raise only for heavy compute or long non-agent tool calls.
-- \`on_timeout\` (optional) — \`"detach"\` keeps pure computation running in interactive sessions (the default); \`"error"\` interrupts for deadline-sensitive work and is the print/json default.
-- Every cell is killed at a wall-clock hard limit (default 1800s) that survives detach and is never paused by tool calls; a larger explicit \`timeout\` raises it, and a killed cell notifies you that it hit the limit.
-- \`reset\` (optional) — wipe this language's kernel first. Per-language: a \`py\` reset never touches the JS VM.
-- \`action\` (optional) — defaults to \`"run"\`. A detached cell returns its id: use \`eval({ action: "peek", cell_id })\` for buffered output/state or \`eval({ action: "stop", cell_id })\` to cancel it.
-
-A detached cell keeps its language kernel busy while it finishes. Do not re-run a detached cell: the same-language busy error names its cell id and output tail; another language can continue. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
-
-Live event loop: use top-level \`await\` directly; \`asyncio.run(…)\` raises "cannot be called from a running event loop".
+Python runs on a live event loop: use top-level \`await\`; \`asyncio.run(…)\` raises.
 JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.
 Ruby: synchronous; helper options are keyword args (e.g. \`output("id", limit: 2)\`); the last expression auto-displays unless it is \`nil\`, an assignment, or a definition (like IRB).
 Julia: synchronous; helper options are standard keyword args (e.g. \`output("id", limit=2)\`); the last expression auto-displays unless it is an assignment or a definition (like the Julia REPL).
-On error, fix and re-run only the failing step. State usually survives a normal error, but a timeout or stop may have restarted the kernel — its message says which. Before rebuilding state, check a sentinel (a variable you defined earlier); only re-establish what is actually gone, since blind re-runs duplicate side effects.
+On error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.
 </instruction>
 
 <prelude>
 Same helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/\`await\`able, options = ONE trailing object literal, never positional (extras throw). Ruby: sync, options = trailing keyword args. Julia: sync, options = trailing keyword args.
 \`\`\`
 display(value) → None
-    Cell output; figures/images/dataframes shown natively.
+    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its \`images[i]\`.
 print(value, ...) → None
     Text output.
 read(path, offset?=1, limit?=None) → str
@@ -46,25 +33,21 @@ read(path, offset?=1, limit?=None) → str
 write(path, content) → str
     Write file (creates parents) → resolved path. \`local://…\` persists across turns/subagents.
 env(key?=None, value?=None) → str | None | dict
-    No args → full env dict; one → value of \`key\`; two → set \`key=value\`, return value.
+    No args → full env dict; one → value; two → set \`key=value\`.
 output(*ids, format?="raw", offset?=None, limit?=None) → str | dict | list[dict]
-    Task/agent output by id. Reads immediately: running tasks return their status; \`format\` selects full (\`"raw"\`) or trailing (\`"tail"\`) output.
-tool.<name>(args) → unknown
-    Invoke any session tool; \`args\` = its parameter object.
+    Task/agent output by id. Reads immediately: running tasks return their status; \`format\` \`"raw"\` = full, \`"tail"\` = trailing.
+tool.<name>(args) → { text, images?, details?, hasError? }
+    Invoke any session tool; image results (e.g. \`tool.read\` on a png) arrive in \`images[i]\` as { mimeType, dataBase64 }.
 tool_schema(name?) → dict
-    Parameter schema of a tool without calling it; omit \`name\` to list tool names.
-    Use it before calling a tool you have not called before — a failed call also
-    returns the expected parameters, so fix the args and retry in the next cell
-    instead of abandoning eval.
+    Parameter schema of a tool (omit \`name\` to list tool names); a failed \`tool.<name>()\` call also returns the expected parameters.
 completion(prompt, model?="default", system?=None, schema?=None) → str | dict
-    Oneshot, stateless (no history/tools). \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → structured output, parsed object.
+    Oneshot, stateless. \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → parsed structured output.
 agent(prompt, agent?="task", model?=None, label?=None, schema?=None, handle?=False) → str | dict
-    Run a subagent → final output. \`agent\` picks another discovered agent; omit it to use \`task\`. \`schema\` as in completion(). Background via \`local://\` files named in the prompt. \`handle\` → DAG node dict { text, output, handle: \`agent://<id>\`, id, agent } (parsed under \`data\` when \`schema\` set).
-    JS: options are ONE trailing object — agent(prompt, { agent, schema, handle }).
+    Run a subagent → final output. \`agent\` picks a discovered agent. \`schema\` as in completion(). \`handle\` → workflow node { text, output, handle: \`agent://<id>\`, id, agent } (parsed under \`data\` with \`schema\`).
 parallel(thunks) → list
-    Thunks through a bounded pool (wide as a \`task\` batch — don't pre-shrink), input order kept; returns when all finish, a throwing thunk propagates.
+    Thunks through a bounded pool (as wide as a \`task\` batch), input order kept; a throwing thunk propagates.
 pipeline(items, ...stages) → list
-    Map items through one-arg stages left-to-right, barrier between stages; stage 1 gets the item, later stages the previous result.
+    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.
 log(message) → None
     Progress line above the status tree.
 phase(title) → None
@@ -72,49 +55,11 @@ phase(title) → None
 \`\`\`
 </prelude>
 
-<dag>
-Pipe handles through stage helpers to build a dependency graph — acyclic waves:
-- **Name nodes.** Capture each \`agent(…, handle=True{ handle: true }handle=true)\` result; carries \`handle\` (\`agent://<id>\`) + \`output\`.
-- **Wire edges by reference.** Put an upstream node's \`handle\`/\`output\` in the dependent stage's prompt — large transcript never re-inlined. Bulk: \`write("local://<name>.md", …)\`, pass the URI.
-- **\`pipeline(items, *stages)\` = staged waves**, barrier between stages (every item clears stage N before any enters N+1). **\`parallel(thunks)\` = one wave** of independent nodes.
-- **Isolate failure.** A raising node re-raises the lowest-index error, aborts its wave; wrap risky nodes in try/except so a failure degrades only its dependent subtree, independent branches finish.
-- **Acyclic only.** A node never waits on its own descendant.
-</dag>
-
-<critical>
-Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read.
-</critical>
-
-<examples>
-### First call — set up once
-\`\`\`json
-{
-  "language": "py",
-  "summary": "Count all TypeScript source files under src/ excluding tests",
-  "code": "from pathlib import Path\\nfrom collections import Counter\\nfiles = [p for p in Path('src').rglob('*.ts') if 'test' not in p.parts]\\nprint(len(files))"
-}
-\`\`\`
-
-### Second call — reuse \`files\`, batch-read in one cell
-\`\`\`json
-{
-  "language": "py",
-  "summary": "Find which files reference legacyClient so we know what to migrate",
-  "code": "hits = Counter()\\nfor p in files:\\n    hits[p.name] = read(p).count('legacyClient')\\ndisplay({k: v for k, v in hits.items() if v})"
-}
-\`\`\`
-
-### Third call — reuse results, fan out session tools in parallel
-\`\`\`json
-{
-  "language": "py",
-  "summary": "Confirm exact callsite lines in each directory to plan the refactor",
-  "code": "dirs = ['src/core', 'src/tools']\\ndisplay(parallel([lambda d=d: tool.grep({'pattern': 'legacyClient', 'path': d}) for d in dirs]))"
-}
-\`\`\`
-</examples>",
+<workflow>
+Multi-agent work is an acyclic graph in code: one \`agent(…)\` node per step with its handle option (\`handle=True\` / \`{ handle: true }\` / \`handle=true\`), \`parallel(thunks)\` for independent nodes, \`pipeline(items, *stages)\` for staged waves. Pass an upstream node's \`handle\` or \`output\` (or a \`write("local://…")\` URI for bulk text) into dependents instead of re-inlining transcripts, and wrap risky nodes in try/except so a failure aborts only its subtree.
+</workflow>",
   "promptGuidelines": [
-    "**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",
+    "Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
     "Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
   ],
   "promptSnippet": "Run one incremental code cell in a persistent language kernel.",
@@ -126,38 +71,25 @@ exports[`buildEvalPrompt > renders the js without spawns prompt 1`] = `
   "description": "Run one step of code in a persistent kernel.
 
 <instruction>
-**One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls — define helpers, datasets, and clients in one call, then later calls reuse them directly.
+**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
 
-Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone.
+Batch a step's independent calls in one cell with \`parallel(thunks)\`.
+- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.
 
-**EVAL IS YOUR PRIMARY EXECUTION SURFACE.** Any step that needs MORE THAN ONE tool call MUST be written as ONE cell — NEVER as a chain of single tool calls.
-- **PLAN THE WHOLE STEP, THEN BATCH IT.** Enumerate every read/search/lookup the step needs and dispatch ALL independent ones through \`parallel(thunks)\` in one cell.
-- **WRITE REAL CODE, NOT CALL LISTS.** Loop or comprehend over file sets with \`read()\`/stdlib, branch \`if\`/\`else\` per case, post-process \`tool.<name>()\` results programmatically, and wrap EVERY risky call in try/except so ONE failure NEVER kills the batch.
-- **DISTILL IN-KERNEL.** Filter, diff, and aggregate in code before returning; return facts, NOT dumps.
+\`language\`: \`"js"\` persistent JavaScript VM.
 
-Fields:
-
-- \`language\` — \`"js"\` persistent JavaScript VM.
-- \`code\` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
-- \`summary\` (REQUIRED for run) — ONE line in the USER'S conversational language stating WHAT this cell does and FOR WHAT PURPOSE (e.g. Korean conversation -> "src 전체에서 legacyClient 사용처 집계"); shown in the TUI while the cell runs; >80 chars is force-truncated.
-- \`timeout\` (optional) — seconds. Raise only for heavy compute or long tool calls.
-- \`on_timeout\` (optional) — \`"detach"\` keeps pure computation running in interactive sessions (the default); \`"error"\` interrupts for deadline-sensitive work and is the print/json default.
-- Every cell is killed at a wall-clock hard limit (default 1800s) that survives detach and is never paused by tool calls; a larger explicit \`timeout\` raises it, and a killed cell notifies you that it hit the limit.
-- \`reset\` (optional) — wipe this language's kernel first.
-- \`action\` (optional) — defaults to \`"run"\`. A detached cell returns its id: use \`eval({ action: "peek", cell_id })\` for buffered output/state or \`eval({ action: "stop", cell_id })\` to cancel it.
-
-A detached cell keeps its language kernel busy while it finishes. Do not re-run a detached cell: the same-language busy error names its cell id and output tail; another language can continue. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
+A cell that outlives the foreground window detaches: it keeps its language kernel busy (another language can continue) and completes as one notification with its value or error and buffered output. Do not re-run a detached cell; read or cancel it with \`eval({ action: "peek", cell_id })\` / \`eval({ action: "stop", cell_id })\`.
 
 JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.
 
-On error, fix and re-run only the failing step. State usually survives a normal error, but a timeout or stop may have restarted the kernel — its message says which. Before rebuilding state, check a sentinel (a variable you defined earlier); only re-establish what is actually gone, since blind re-runs duplicate side effects.
+On error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.
 </instruction>
 
 <prelude>
 Async/\`await\`able; options = ONE trailing object literal, never positional (extras throw).
 \`\`\`
 display(value) → None
-    Cell output; figures/images/dataframes shown natively.
+    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its \`images[i]\`.
 print(value, ...) → None
     Text output.
 read(path, offset?=1, limit?=None) → str
@@ -165,32 +97,25 @@ read(path, offset?=1, limit?=None) → str
 write(path, content) → str
     Write file (creates parents) → resolved path. \`local://…\` persists across turns/subagents.
 env(key?=None, value?=None) → str | None | dict
-    No args → full env dict; one → value of \`key\`; two → set \`key=value\`, return value.
-tool.<name>(args) → unknown
-    Invoke any session tool; \`args\` = its parameter object.
+    No args → full env dict; one → value; two → set \`key=value\`.
+tool.<name>(args) → { text, images?, details?, hasError? }
+    Invoke any session tool; image results (e.g. \`tool.read\` on a png) arrive in \`images[i]\` as { mimeType, dataBase64 }.
 tool_schema(name?) → dict
-    Parameter schema of a tool without calling it; omit \`name\` to list tool names.
-    Use it before calling a tool you have not called before — a failed call also
-    returns the expected parameters, so fix the args and retry in the next cell
-    instead of abandoning eval.
+    Parameter schema of a tool (omit \`name\` to list tool names); a failed \`tool.<name>()\` call also returns the expected parameters.
 completion(prompt, model?="default", system?=None, schema?=None) → str | dict
-    Oneshot, stateless (no history/tools). \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → structured output, parsed object.
+    Oneshot, stateless. \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → parsed structured output.
 parallel(thunks) → list
-    Thunks through a bounded pool (wide as a \`task\` batch — don't pre-shrink), input order kept; returns when all finish, a throwing thunk propagates.
+    Thunks through a bounded pool (as wide as a \`task\` batch), input order kept; a throwing thunk propagates.
 pipeline(items, ...stages) → list
-    Map items through one-arg stages left-to-right, barrier between stages; stage 1 gets the item, later stages the previous result.
+    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.
 log(message) → None
     Progress line above the status tree.
 phase(title) → None
     Phase grouping subsequent status lines.
 \`\`\`
-</prelude>
-
-<critical>
-Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read.
-</critical>",
+</prelude>",
   "promptGuidelines": [
-    "**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",
+    "Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
     "Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
   ],
   "promptSnippet": "Run one incremental code cell in a persistent language kernel.",
@@ -202,39 +127,26 @@ exports[`buildEvalPrompt > renders the js-py without spawns prompt 1`] = `
   "description": "Run one step of code in a persistent kernel.
 
 <instruction>
-**One eval call = one cell = one logical step.** State persists per language across separate eval calls and tool calls — define helpers, datasets, and clients in one call, then later calls reuse them directly.
+**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
 
-Work incrementally: imports in one call, define in the next, test, then use — each its own eval call. Re-run setup ONLY after \`reset\`, a kernel crash, or a \`NameError\`/\`ReferenceError\` proving the state is gone.
+Batch a step's independent calls in one cell with \`parallel(thunks)\`.
+- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.
 
-**EVAL IS YOUR PRIMARY EXECUTION SURFACE.** Any step that needs MORE THAN ONE tool call MUST be written as ONE cell — NEVER as a chain of single tool calls.
-- **PLAN THE WHOLE STEP, THEN BATCH IT.** Enumerate every read/search/lookup the step needs and dispatch ALL independent ones through \`parallel(thunks)\` in one cell.
-- **WRITE REAL CODE, NOT CALL LISTS.** Loop or comprehend over file sets with \`read()\`/stdlib, branch \`if\`/\`else\` per case, post-process \`tool.<name>()\` results programmatically, and wrap EVERY risky call in try/except so ONE failure NEVER kills the batch.
-- **DISTILL IN-KERNEL.** Filter, diff, and aggregate in code before returning; return facts, NOT dumps.
+\`language\`: \`"py"\` IPython kernel, \`"js"\` persistent JavaScript VM.
 
-Fields:
+A cell that outlives the foreground window detaches: it keeps its language kernel busy (another language can continue) and completes as one notification with its value or error and buffered output. Do not re-run a detached cell; read or cancel it with \`eval({ action: "peek", cell_id })\` / \`eval({ action: "stop", cell_id })\`.
 
-- \`language\` — \`"py"\` IPython kernel, \`"js"\` persistent JavaScript VM.
-- \`code\` — cell body, verbatim. Newlines/quotes JSON-encoded; no fences, no headers.
-- \`summary\` (REQUIRED for run) — ONE line in the USER'S conversational language stating WHAT this cell does and FOR WHAT PURPOSE (e.g. Korean conversation -> "src 전체에서 legacyClient 사용처 집계"); shown in the TUI while the cell runs; >80 chars is force-truncated.
-- \`timeout\` (optional) — seconds. Raise only for heavy compute or long tool calls.
-- \`on_timeout\` (optional) — \`"detach"\` keeps pure computation running in interactive sessions (the default); \`"error"\` interrupts for deadline-sensitive work and is the print/json default.
-- Every cell is killed at a wall-clock hard limit (default 1800s) that survives detach and is never paused by tool calls; a larger explicit \`timeout\` raises it, and a killed cell notifies you that it hit the limit.
-- \`reset\` (optional) — wipe this language's kernel first. Per-language: a \`py\` reset never touches the JS VM.
-- \`action\` (optional) — defaults to \`"run"\`. A detached cell returns its id: use \`eval({ action: "peek", cell_id })\` for buffered output/state or \`eval({ action: "stop", cell_id })\` to cancel it.
-
-A detached cell keeps its language kernel busy while it finishes. Do not re-run a detached cell: the same-language busy error names its cell id and output tail; another language can continue. Completion arrives as one notification with the final value/error and buffered output. Stopping a cell interrupts its kernel; the stop result states whether kernel state survived or the kernel was restarted and its variables lost.
-
-Live event loop: use top-level \`await\` directly; \`asyncio.run(…)\` raises "cannot be called from a running event loop".
+Python runs on a live event loop: use top-level \`await\`; \`asyncio.run(…)\` raises.
 JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.
 
-On error, fix and re-run only the failing step. State usually survives a normal error, but a timeout or stop may have restarted the kernel — its message says which. Before rebuilding state, check a sentinel (a variable you defined earlier); only re-establish what is actually gone, since blind re-runs duplicate side effects.
+On error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.
 </instruction>
 
 <prelude>
 Same helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/\`await\`able, options = ONE trailing object literal, never positional (extras throw).
 \`\`\`
 display(value) → None
-    Cell output; figures/images/dataframes shown natively.
+    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its \`images[i]\`.
 print(value, ...) → None
     Text output.
 read(path, offset?=1, limit?=None) → str
@@ -242,61 +154,25 @@ read(path, offset?=1, limit?=None) → str
 write(path, content) → str
     Write file (creates parents) → resolved path. \`local://…\` persists across turns/subagents.
 env(key?=None, value?=None) → str | None | dict
-    No args → full env dict; one → value of \`key\`; two → set \`key=value\`, return value.
-tool.<name>(args) → unknown
-    Invoke any session tool; \`args\` = its parameter object.
+    No args → full env dict; one → value; two → set \`key=value\`.
+tool.<name>(args) → { text, images?, details?, hasError? }
+    Invoke any session tool; image results (e.g. \`tool.read\` on a png) arrive in \`images[i]\` as { mimeType, dataBase64 }.
 tool_schema(name?) → dict
-    Parameter schema of a tool without calling it; omit \`name\` to list tool names.
-    Use it before calling a tool you have not called before — a failed call also
-    returns the expected parameters, so fix the args and retry in the next cell
-    instead of abandoning eval.
+    Parameter schema of a tool (omit \`name\` to list tool names); a failed \`tool.<name>()\` call also returns the expected parameters.
 completion(prompt, model?="default", system?=None, schema?=None) → str | dict
-    Oneshot, stateless (no history/tools). \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → structured output, parsed object.
+    Oneshot, stateless. \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → parsed structured output.
 parallel(thunks) → list
-    Thunks through a bounded pool (wide as a \`task\` batch — don't pre-shrink), input order kept; returns when all finish, a throwing thunk propagates.
+    Thunks through a bounded pool (as wide as a \`task\` batch), input order kept; a throwing thunk propagates.
 pipeline(items, ...stages) → list
-    Map items through one-arg stages left-to-right, barrier between stages; stage 1 gets the item, later stages the previous result.
+    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.
 log(message) → None
     Progress line above the status tree.
 phase(title) → None
     Phase grouping subsequent status lines.
 \`\`\`
-</prelude>
-
-<critical>
-Prior top-level names (\`data\`, \`sessions\`, helpers, imports) survive into the next eval call — reuse them; NEVER re-import, re-require, or re-declare a helper. Re-read a file only if it may have changed since the last read.
-</critical>
-
-<examples>
-### First call — set up once
-\`\`\`json
-{
-  "language": "py",
-  "summary": "Count all TypeScript source files under src/ excluding tests",
-  "code": "from pathlib import Path\\nfrom collections import Counter\\nfiles = [p for p in Path('src').rglob('*.ts') if 'test' not in p.parts]\\nprint(len(files))"
-}
-\`\`\`
-
-### Second call — reuse \`files\`, batch-read in one cell
-\`\`\`json
-{
-  "language": "py",
-  "summary": "Find which files reference legacyClient so we know what to migrate",
-  "code": "hits = Counter()\\nfor p in files:\\n    hits[p.name] = read(p).count('legacyClient')\\ndisplay({k: v for k, v in hits.items() if v})"
-}
-\`\`\`
-
-### Third call — reuse results, fan out session tools in parallel
-\`\`\`json
-{
-  "language": "py",
-  "summary": "Confirm exact callsite lines in each directory to plan the refactor",
-  "code": "dirs = ['src/core', 'src/tools']\\ndisplay(parallel([lambda d=d: tool.grep({'pattern': 'legacyClient', 'path': d}) for d in dirs]))"
-}
-\`\`\`
-</examples>",
+</prelude>",
   "promptGuidelines": [
-    "**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",
+    "Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
     "Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
   ],
   "promptSnippet": "Run one incremental code cell in a persistent language kernel.",

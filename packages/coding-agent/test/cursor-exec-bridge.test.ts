@@ -249,6 +249,43 @@ describe("cursor exec bridge", () => {
 		expect(emitEvent).not.toHaveBeenCalled();
 	});
 
+	it("rechecks run ownership after preflight before executing the tool", async () => {
+		const owner = new AbortController();
+		const replacement = new AbortController();
+		let activeSignal: AbortSignal | undefined = owner.signal;
+		let releasePreflight!: () => void;
+		let markPreflightStarted!: () => void;
+		const preflightStarted = new Promise<void>((resolve) => {
+			markPreflightStarted = resolve;
+		});
+		const preflightGate = new Promise<void>((resolve) => {
+			releasePreflight = resolve;
+		});
+		const execute = vi.fn();
+		const emitEvent = vi.fn();
+		const tool = stubTool("read", Type.Object({ path: Type.String() }), execute);
+		const bridge = createCursorExecBridge({
+			getTool: (name) => (name === "read" ? tool : undefined),
+			getAbortSignal: () => activeSignal,
+			preflightToolCall: async () => {
+				markPreflightStarted();
+				await preflightGate;
+				return undefined;
+			},
+			emitEvent,
+		});
+
+		const resultPromise = bridge.read?.({ path: "a.ts", toolCallId: "call-owner-ended" } as never);
+		await preflightStarted;
+		owner.abort();
+		activeSignal = replacement.signal;
+		releasePreflight();
+		const result = asToolResult(await resultPromise);
+
+		expect(result.isError).toBe(true);
+		expect(execute).not.toHaveBeenCalled();
+	});
+
 	it("propagates lifecycle listener failures through the bridge dispatch", async () => {
 		const runSignal = new AbortController().signal;
 		const execute = vi.fn();
@@ -272,5 +309,30 @@ describe("cursor exec bridge", () => {
 		const result = asToolResult(await bridge.read?.({ path: "a.ts", toolCallId: "call-11" } as never));
 		expect(result.isError).toBe(true);
 		expect(result.content[0]).toMatchObject({ text: expect.stringContaining("not available") });
+	});
+
+	it("emits tool_result after a successful write so plan-touch trackers see .omo/plans paths", async () => {
+		const results: Array<{ toolName: string; toolCallId: string; args: unknown }> = [];
+		const runSignal = new AbortController().signal;
+		const tool = stubTool("write", Type.Object({ path: Type.String(), content: Type.String() }), () => undefined);
+		const bridge = createCursorExecBridge({
+			getTool: (name) => (name === "write" ? tool : undefined),
+			getAbortSignal: () => runSignal,
+			emitEvent: async () => undefined,
+			emitToolResult: async (event) => {
+				results.push(event);
+			},
+		});
+		await bridge.write?.({
+			path: ".omo/plans/mgitm-opt2-smem-fix.md",
+			contents: "# plan",
+			toolCallId: "call-plan",
+		} as never);
+		expect(results).toHaveLength(1);
+		expect(results[0]).toMatchObject({
+			toolName: "write",
+			toolCallId: "call-plan",
+			args: { path: ".omo/plans/mgitm-opt2-smem-fix.md" },
+		});
 	});
 });

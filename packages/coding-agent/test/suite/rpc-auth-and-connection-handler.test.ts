@@ -1,160 +1,10 @@
 import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Agent } from "@earendil-works/pi-agent-core";
-import { type AssistantMessage, type AssistantMessageEvent, EventStream, getModel } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentSession } from "../../src/core/agent-session.ts";
-import type { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
-import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../../src/core/extensions/builtin/claude-sdk-oauth/index.ts";
-import { ModelRegistry } from "../../src/core/model-registry.ts";
-import { SessionManager } from "../../src/core/session-manager.ts";
-import { SettingsManager } from "../../src/core/settings-manager.ts";
-import { createRpcConnectionHandler, type RpcConnectionSink } from "../../src/modes/rpc/connection-handler.ts";
-import { createTestResourceLoader } from "../utilities.ts";
-
-class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
-	constructor() {
-		super(
-			(event) => event.type === "done" || event.type === "error",
-			(event) => {
-				if (event.type === "done") return event.message;
-				if (event.type === "error") return event.error;
-				throw new Error("Unexpected event type");
-			},
-		);
-	}
-}
-
-function assistantMessage(text: string): AssistantMessage {
-	return {
-		role: "assistant",
-		content: [{ type: "text", text }],
-		api: "anthropic-messages",
-		provider: "anthropic",
-		model: "claude-sonnet-4-5",
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
-		stopReason: "stop",
-		timestamp: Date.now(),
-	};
-}
-
-interface Harness {
-	runtimeHost: AgentSessionRuntime;
-	authStorage: AuthStorage;
-	authPath: string;
-	cleanup: () => void;
-}
-
-function makeHarness(tempDir: string): Harness {
-	const model = getModel("anthropic", "claude-sonnet-4-5");
-	if (!model) throw new Error("model not found");
-	const agent = new Agent({
-		getApiKey: () => "test-key",
-		initialState: { model, systemPrompt: "Test", tools: [] },
-		streamFn: () => {
-			const stream = new MockAssistantStream();
-			queueMicrotask(() => {
-				stream.push({ type: "start", partial: assistantMessage("") });
-				stream.push({ type: "done", reason: "stop", message: assistantMessage("done") });
-			});
-			return stream;
-		},
-	});
-	const sessionManager = SessionManager.inMemory();
-	const settingsManager = SettingsManager.create(tempDir, tempDir);
-	const authPath = join(tempDir, "auth.json");
-	const authStorage = AuthStorage.create(authPath);
-	authStorage.setRuntimeApiKey("anthropic", "test-key");
-	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
-	const session = new AgentSession({
-		agent,
-		sessionManager,
-		settingsManager,
-		cwd: tempDir,
-		modelRegistry,
-		resourceLoader: createTestResourceLoader(),
-	});
-	const runtimeHost = {
-		session,
-		newSession: vi.fn(async () => ({ cancelled: true })),
-		switchSession: vi.fn(async () => ({ cancelled: true })),
-		fork: vi.fn(async () => ({ cancelled: true, selectedText: "" })),
-		dispose: vi.fn(async () => {}),
-		setRebindSession: vi.fn(),
-	} as unknown as AgentSessionRuntime;
-	return { runtimeHost, authStorage, authPath, cleanup: () => session.dispose() };
-}
-
-type RpcRecord = Record<string, unknown>;
-
-interface CollectedSink {
-	sink: RpcConnectionSink;
-	messages: () => readonly RpcRecord[];
-	waitFor: (predicate: (message: RpcRecord) => boolean, timeoutMs?: number) => Promise<RpcRecord>;
-}
-
-/** Collect complete JSONL records and await the exact record under test. */
-function makeSink(): CollectedSink {
-	const records: RpcRecord[] = [];
-	const waiters: Array<{ predicate: (message: RpcRecord) => boolean; resolve: (message: RpcRecord) => void }> = [];
-	let buffer = "";
-
-	const dispatch = (record: RpcRecord) => {
-		records.push(record);
-		for (let index = 0; index < waiters.length; index++) {
-			const waiter = waiters[index];
-			if (waiter.predicate(record)) {
-				waiters.splice(index, 1);
-				waiter.resolve(record);
-				break;
-			}
-		}
-	};
-
-	return {
-		sink: {
-			writeRaw(chunk) {
-				buffer += chunk;
-				let newline = buffer.indexOf("\n");
-				while (newline !== -1) {
-					const line = buffer.slice(0, newline);
-					buffer = buffer.slice(newline + 1);
-					if (line) dispatch(JSON.parse(line) as RpcRecord);
-					newline = buffer.indexOf("\n");
-				}
-			},
-			waitForBackpressure: async () => {},
-		},
-		messages: () => records,
-		waitFor(predicate, timeoutMs = 1_000) {
-			const existing = records.find(predicate);
-			if (existing) return Promise.resolve(existing);
-			return new Promise((resolve, reject) => {
-				const timeout = setTimeout(() => {
-					const index = waiters.findIndex((waiter) => waiter.resolve === resolve);
-					if (index !== -1) waiters.splice(index, 1);
-					reject(new Error("Timed out waiting for the expected RPC record"));
-				}, timeoutMs);
-				waiters.push({
-					predicate,
-					resolve: (message) => {
-						clearTimeout(timeout);
-						resolve(message);
-					},
-				});
-			});
-		},
-	};
-}
+import { createRpcConnectionHandler } from "../../src/modes/rpc/connection-handler.ts";
+import { makeHarness, makeSink } from "./rpc-connection-harness.ts";
 
 describe("RPC auth and connection handler contracts", () => {
 	let tempDir: string;
@@ -225,12 +75,16 @@ describe("RPC auth and connection handler contracts", () => {
 		await collected.waitFor((message) => message.type === "auth_login_end" && message.success === true);
 		expect(await changed).toEqual({ type: "auth_accounts_changed", provider: CLAUDE_SDK_OAUTH_PROVIDER_ID });
 
+		// Account management is provider-neutral: a provider with no stored
+		// credential and no numbered env slots simply has no accounts. It is no
+		// longer refused outright, which is what confined pools to one lane.
 		await handler.handleInputLine(
 			JSON.stringify({ id: "unknown-provider", type: "get_provider_accounts", provider: "unknown-provider" }),
 		);
 		expect(await collected.waitFor((message) => message.id === "unknown-provider")).toMatchObject({
-			success: false,
-			error: "Provider account management is unavailable for: unknown-provider",
+			success: true,
+			command: "get_provider_accounts",
+			data: { accounts: [] },
 		});
 
 		await handler.handleInputLine(
@@ -378,6 +232,30 @@ describe("RPC auth and connection handler contracts", () => {
 			error: expect.stringContaining("Unknown command"),
 		});
 		await handler.dispose();
+	});
+
+	it("disposes footer data providers on replacement and handler disposal", async () => {
+		const collected = makeSink();
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		const providers: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink, {
+			capabilities: ["rendered_components"],
+			footerDataProviderFactory: () => {
+				const provider = { dispose: vi.fn(), getGitBranch: () => null };
+				providers.push(provider);
+				return provider as never;
+			},
+		});
+		await handler.ready;
+		const ui = harness.runtimeHost.session.extensionRunner.getUIContext();
+		ui.setFooter((() => ({ render: () => ["footer"], invalidate: () => {} })) as never);
+		await Promise.resolve();
+		ui.setFooter((() => ({ render: () => ["replacement"], invalidate: () => {} })) as never);
+		await Promise.resolve();
+		expect(providers[0]?.dispose).toHaveBeenCalledTimes(1);
+		await handler.dispose();
+		expect(providers[1]?.dispose).toHaveBeenCalledTimes(1);
 	});
 
 	it("emits an optional custom-UI capability notice without changing default clients", async () => {

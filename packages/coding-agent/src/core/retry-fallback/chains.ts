@@ -19,6 +19,7 @@ export type FallbackModelLookup =
 			getAll(): Model<Api>[];
 			isUsingOAuth?(model: Model<Api>): boolean;
 			hasConfiguredAuth?(model: Model<Api>): boolean;
+			isFallbackEligible?(model: Model<Api>): boolean;
 	  };
 
 function availableModels(lookup: FallbackModelLookup): Model<Api>[] {
@@ -34,12 +35,17 @@ function authTiers(lookup: FallbackModelLookup): FallbackAuthTiers {
 	const registry = lookup as {
 		isUsingOAuth?(model: Model<Api>): boolean;
 		hasConfiguredAuth?(model: Model<Api>): boolean;
+		isFallbackEligible?(model: Model<Api>): boolean;
 	};
 	return {
 		isUsingOAuth: (model) => registry.isUsingOAuth?.(model) === true,
 		hasConfiguredAuth:
 			typeof registry.hasConfiguredAuth === "function"
 				? (model) => registry.hasConfiguredAuth?.(model) === true
+				: undefined,
+		isFallbackEligible:
+			typeof registry.isFallbackEligible === "function"
+				? (model) => registry.isFallbackEligible?.(model) !== false
 				: undefined,
 	};
 }
@@ -121,6 +127,14 @@ export function baseSelector(selector: Pick<FallbackSelector, "provider" | "id">
  * Provider-qualified keys and entries keep exact semantics, and an explicit key
  * always overrides the expansion it collides with.
  */
+/**
+ * Chain key matched when no exact or base key resolves for the current model.
+ * Exists so a model without its own configured chain still has an escape lane:
+ * without it, a hard-failing upstream wedges the session terminal even though
+ * healthy fallback targets exist (desktop thread 487d7c29, 2026-08-28: nine
+ * consecutive upstream 500s, zero fallback attempts, terminal error).
+ * Users disable it with the `"*": []` tombstone.
+ */
 export function canonicalizeFallbackChains(chains: FallbackChains, lookup: FallbackModelLookup): FallbackChains {
 	const models = availableModels(lookup);
 	const tiers = authTiers(lookup);
@@ -187,11 +201,13 @@ export function resolveChainKey(
 	currentModel: Model<Api>,
 	currentThinking: ThinkingLevel | undefined,
 	chains: FallbackChains,
+	_options?: { allowWildcard?: boolean },
 ): string | undefined {
 	const base = formatSelector(currentModel);
 	const exact = currentThinking ? `${base}:${currentThinking}` : base;
 	if (Object.hasOwn(chains, exact)) return exact;
-	return Object.hasOwn(chains, base) ? base : undefined;
+	if (Object.hasOwn(chains, base)) return base;
+	return undefined;
 }
 
 function formatParsedSelector(selector: FallbackSelector): string {

@@ -50,6 +50,7 @@ export function shouldRecoverTextToolCalls<TApi extends Api>(model: Model<TApi>)
 	if (model.recoverTextToolCalls !== undefined) {
 		return typeof model.recoverTextToolCalls === "boolean" ? model.recoverTextToolCalls : false;
 	}
+	if (model.api === "cursor-agent") return false;
 	return CLAUDE_MODEL_ID_PATTERN.test(model.id) || KIMI_MODEL_ID_PATTERN.test(model.id);
 }
 

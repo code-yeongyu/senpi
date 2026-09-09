@@ -1,5 +1,49 @@
 # TTSR Fork Tracker
 
+## 2026-09-03 - Within-message paragraph repetition
+
+### What changed and why
+
+- Added `detectors/collapse-paragraphs.ts` (`paragraph-repeat`) for byte-exact paragraph repetition within one streamed message. The existing four mechanisms could not see a 7-paragraph, ~2,100-character, 14-line cycle: scalar and short-period bounds are too small, line cycles are bounded and reset at blank lines, repetitive turns compare across turns, and loop-guard requires tool calls.
+- Tool-argument streams are excluded on purpose because fixtures can legitimately repeat blocks.
+- Thresholds are 64 characters, 24 word characters, 3 occurrences, and a 64-entry recent-paragraph ring.
+- Remediation reuses the existing collapse path: abort, truncate from the second occurrence, and send the collapse nudge.
+- Known limit: a paragraph ends only at a blank (whitespace-only) line, so narration that separates steps with single newlines is one paragraph to this mechanism; line cycles up to period 4 remain the line-cycle detector's job.
+
+### Why an extension-local change is required
+
+- The stream watcher already owns per-message detector state and collapse remediation, so paragraph tracking belongs in the extension-local collapse chain without changing provider or core stream contracts.
+
+### Coverage and expected conflict zones
+
+- `test/ttsr/detector-collapse-paragraphs.test.ts` covers chunking, eligibility, byte equality, multiline paragraphs, separators, and tool exclusion.
+- `test/ttsr/extension-wiring.test.ts` covers abort, truncation, activation, nudge, retry, and recovery.
+- Real-CLI QA ships as `senpi-qa` mock-loop scenario `ttsr-paragraph-loop` (text stream from the local fake model server; asserts the recovery request keeps one copy of the first paragraph and carries the `collapse-repetition` interrupt).
+- LOW: `detectors/collapse.ts` and the wiring test; no existing detector thresholds or unrelated routing are changed.
+
+## 2026-08-25 - Cover streamed tool-call arguments
+
+### What changed and why
+
+- TTSR now feeds `toolcall_delta` events into the same collapse, control-leak, and manager-rule watcher used by text and thinking streams, keyed by `tool:<contentIndex>`.
+- Tool-scoped rules resolve the tool name from the partial assistant content block, while text-only rules remain excluded from tool streams.
+- A mid-tool-call collapse aborts system-owned remediation, removes all tool-call blocks from the aborted generation before persistence because the generation's remaining calls are suspect, keeps the assistant message coherent, and sends the shared activation record plus hidden corrective nudge.
+- Control-token-leak detection intentionally runs on tool arguments as part of detector parity; the existing kill switches therefore cover the tool lane without special cases.
+
+### Why an extension-local change is required
+
+- `agent-session.ts` already forwards `toolcall_delta` through the public `message_update` event and already applies `message_end` replacements before persistence. The fix belongs in the TTSR extension watcher and remediation policy; no core or provider change is required.
+
+### Coverage and expected conflict zones
+
+- `test/ttsr/extension-wiring.test.ts` replays the incident payload through the faux provider, proves bounded abort and clean persistence, and preserves nudge/activation ownership.
+- `test/ttsr/detector-collapse.test.ts` covers tool-stream false-positive exemptions; `test/ttsr/manager.test.ts` covers tool-name matching and text-only exclusion.
+- LOW: `index.ts` message-update routing; LOW: `message-update.ts` stream projection; LOW: `watch.ts`, `types.ts`, and tool-call remediation in `remediation.ts`.
+
+### Deviation ledger correction
+
+| Tool-arg snapshot matching (`matcherDigest`) | Raw `toolcall_delta` JSON only | **Resolved for stream detection:** tool-call argument deltas now receive collapse/control-leak detection and `toolScopes` matching. Structured matcher digests and AST-adjacent path-aware argument snapshots remain deferred. |
+
 ## 2026-08-05 - One activation, one visible record
 
 ### What changed and why

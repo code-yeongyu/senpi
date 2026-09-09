@@ -1,5 +1,167 @@
 # changes
 
+## Pin Bun CI and release builds to 1.4.2 (2026-09-08)
+
+### What changed
+
+- Updated `.github/workflows/ci.yml`, `.github/workflows/build-binaries.yml`, and `.github/workflows/publish-npm.yml` to pin stable Bun 1.4.2, together with the workflow assertion and current CI guidance.
+
+### Why
+
+- Keep the build and test toolchain on the current stable release with published cross-compilation assets.
+
+### Why an extension could not handle it
+
+- GitHub Actions selects the toolchain before runtime extensions load.
+
+### Expected merge conflict zones
+
+- LOW: Bun setup steps in the three workflows and their version assertion.
+
+## test-workspaces proves the bun path of the root scripts (2026-09-07)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `test-workspaces` job installs bun 1.4.0 through the same pinned `oven-sh/setup-bun` action as `rpc-windows`, runs `bun run test:scripts` next to `npm run test:scripts`, and runs the "all but coding-agent" workspace suites through `node scripts/run-workspaces.mjs --if-present --workspace ... test` instead of npm's own `--workspace` flags.
+
+### Why
+
+- `scripts/run-workspaces.test.mjs` drives the workspace runner with whichever package manager launched the test process, so the bun step is the CI proof that root `bun run <script>` fans out through bun while the npm step keeps proving npm. Routing the real workspace suites through the runner exercises the code path root `npm run test` and `bun run test` take.
+
+### Why an extension could not handle it
+
+- CI workflow wiring is repository build plumbing evaluated on GitHub's runners; no runtime extension surface can add a step to a GitHub Actions workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `test-workspaces` step list in `.github/workflows/ci.yml` whenever upstream reshapes its test job.
+
+## Windows RPC named-pipe suites gain a real Windows CI job (2026-09-01)
+
+### What changed
+
+- `.github/workflows/ci.yml` adds an `rpc-windows` job (`RPC named pipes (Windows)`, windows-latest, 20-minute timeout) that builds the workspace packages and runs `test/rpc-host-ensure.test.ts`, `test/rpc-host-lifecycle.test.ts`, `test/rpc-socket-transport.test.ts`, and `test/suite/app-server-daemon.test.ts` from `packages/coding-agent` on a real Windows runner.
+
+### Why
+
+- PR #1244 makes the shared RPC host work on Windows through named pipes with authenticated handshakes; the main coding-agent shards run on ubuntu only, so the win32-specific transport, lifecycle, and handshake behavior was untested in CI until this job.
+
+### Why an extension could not handle it
+
+- CI workflow wiring is repository build plumbing evaluated on GitHub's runners; no runtime extension surface can add a job to a GitHub Actions workflow.
+
+### Expected merge conflict zones
+
+- LOW: the job list at the end of `.github/workflows/ci.yml` and the `needs`/gate lists of `Check and test` whenever upstream adds or reorders CI jobs.
+
+## Workflow summary step for the model catalog publisher (2026-09-01)
+
+### What changed
+
+- `.github/workflows/publish-model-catalog.yml` gains the mandatory `$GITHUB_STEP_SUMMARY` step reporting job status, ref, and commit at the end of its final job.
+
+### Why
+
+- Every workflow must render an at-a-glance result on the run page; this workflow was modernized earlier today but still lacked the summary step the repository standard requires.
+
+### Why an extension could not handle it
+
+- GitHub workflow files execute on GitHub's runners; no senpi extension surface can inject a job summary step into a workflow definition.
+
+### Expected merge conflict zones
+
+- `.github/workflows/publish-model-catalog.yml` tail of the final job (upstream has no such workflow; conflict risk is fork-local only).
+
+## Shared GitHub Action pins move to current majors (2026-09-01)
+
+### What changed
+
+- `.github/workflows/ci.yml` and `.github/workflows/build-binaries.yml` and `.github/workflows/npm-audit.yml` and `.github/workflows/publish-model-catalog.yml` unify their shared action pins on the current releases.
+- `actions/checkout` moves to `3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1) and `actions/setup-node` to `820762786026740c76f36085b0efc47a31fe5020` (v7.0.0), collapsing the two competing pins each carried.
+- `actions/upload-artifact` moves to `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a` (v7.0.1) and `actions/download-artifact` to `3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c` (v8.0.1), off the retiring v4 line.
+- Only `uses:` lines change. Every pin keeps the repository's full-commit-SHA style with a trailing version
+  comment, and the two previously comment-less checkout and setup-node pins gain one.
+
+### Why
+
+- The tree carried two different `actions/checkout` pins and two different `actions/setup-node` pins across
+  workflows, so the same step ran on different action majors depending on the file. The artifact actions were
+  still on v4, which GitHub is retiring. Unifying on one verified SHA per action removes the drift and keeps
+  the supply chain pinned to a reviewed commit rather than a mutable tag.
+
+### Why an extension could not handle it
+
+- Action resolution is GitHub Actions runner plumbing evaluated before any repository code, let alone the
+  coding-agent extension loader, is fetched or executed.
+
+### Expected merge conflict zones
+
+- LOW: the `uses:` lines of the shared checkout, setup-node, upload-artifact, and download-artifact steps in `.github/workflows/ci.yml`, `.github/workflows/build-binaries.yml`, `.github/workflows/npm-audit.yml`, and `.github/workflows/publish-model-catalog.yml` whenever upstream bumps the same actions.
+
+## Windows fs.watch regression joins the terminal cross-OS CI job (2026-08-31)
+
+### What changed
+
+- `.github/workflows/ci.yml` appends `test/suite/regressions/issue-1229-win-fswatch-noncanonical-abort.test.ts` to the `terminal-cross-os` job's Vitest invocation so the win32-only regression actually executes on the windows-latest runner.
+
+### Why
+
+- The main coding-agent test shards run on ubuntu only, where the win32-gated regression for the `/resume` fs.watch abort ([#1229](https://github.com/code-yeongyu/senpi/issues/1229)) always skips; the 3-OS terminal job is the only lane with a real Windows runner.
+
+### Why an extension could not handle it
+
+- CI workflow wiring is repository build plumbing; no runtime extension hook can add a test to a GitHub Actions job.
+
+### Expected merge conflict zones
+
+- The `Terminal extension + shell resolution tests` step's file list in `.github/workflows/ci.yml`.
+
+## Hooks trust storage gains focused Windows CI coverage (2026-08-31)
+
+### What changed
+
+- `.github/workflows/ci.yml` adds a `windows-latest` job that installs dependencies and runs only
+  `hooks-trust.test.ts`, `hooks-trust-storage-errors.test.ts`, `hooks-trust-storage-release-errors.test.ts`, and
+  `hooks-trust-storage-aba.test.ts`; the required `Check and test` fan-in includes this job. The existing Ubuntu
+  coding-agent shards continue to run the same tests on POSIX.
+
+### Why
+
+- Same-directory replacement for ordinary same-account application state has Windows-specific behavior, and the
+  writer-excluding malformed-read recovery relies on the same exact lock semantics across platforms, but the general
+  coding-agent shards run only on Ubuntu. A focused Windows job exercises those contracts without claiming custom DACL
+  preservation or duplicating the unrelated coding-agent suite.
+
+### Why an extension could not handle it
+
+- Runner selection and test execution are repository CI policy evaluated before the coding-agent runtime or extension
+  loader starts.
+
+### Expected merge conflict zones
+
+- LOW: `.github/workflows/ci.yml` around focused cross-platform regression jobs and the `Check and test` fan-in needs.
+
+## Release workflow re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml` keeps the fork release pipeline on top of upstream's: the
+  `dry_run` input (build/validate without release upload or npm publish dispatch), the fork's
+  pinned `actions/checkout` revision, the Bun `1.4.0` compiler pin with the canary-vs-target-artifact
+  rationale, and the `Report Bun compiler version` diagnostic step.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- Any upstream edit to `.github/workflows/build-binaries.yml` job steps or the Bun version pin.
+
 ## Changelog-gate labels and base SHA move to env (2026-08-17)
 
 ### What changed

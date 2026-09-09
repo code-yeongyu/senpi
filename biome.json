@@ -1,5 +1,5 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.5.5/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.5.10/schema.json",
 	"linter": {
 		"enabled": true,
 		"rules": {
@@ -36,8 +36,7 @@
 			"!**/api/cursor-agent/gen",
 			"!**/*.models.ts",
 			"!packages/mom/data/**/*",
-			"!!**/node_modules",
-			"!!**/.codegraph"
+			"!!**/node_modules"
 		]
 	}
 }

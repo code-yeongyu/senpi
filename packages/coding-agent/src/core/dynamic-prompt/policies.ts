@@ -3,11 +3,7 @@ export function buildPoliciesSection(): string {
 
 ### Hard Blocks
 - Never create a git commit unless the user explicitly requested it.
-- Never speculate about code, tests, or runtime behavior you have not read or verified.
-- Never suppress type errors, lint warnings, or test failures to bypass them.
-
-### Anti-Patterns
-- Do not delete or skip failing tests to make the suite pass.
-- Do not silently swallow errors without a deliberate reason.
-- Do not do shotgun debugging with unrelated edits or blind retries.`;
+- Never present unread code or unrun commands as verified fact.
+- Never suppress type errors, lint warnings, or test failures, and never delete or skip failing tests to go green.
+- Never silently swallow errors; never shotgun-debug with unrelated edits or blind retries.`;
 }

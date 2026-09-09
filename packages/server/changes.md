@@ -1,5 +1,60 @@
 # changes
 
+## 2026-09-04 - Account for providerThinkingLevel in the protocol types
+
+### What changed
+
+- `packages/server/src/protocol.ts`: the AssistantMessage field-accounting assertion gains `providerThinkingLevel`, mirroring the field the v0.84.4 sync added to the shared AI message type (upstream 4e69b0c28).
+
+### Why
+
+- The server protocol type must stay in lockstep with the shared AssistantMessage shape; the exhaustiveness assertion fails compilation when a field is added upstream but not accounted for here.
+
+### Why an extension could not handle it
+
+- The protocol type is the compiled wire contract shared by server and clients; extensions operate above it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/server/src/protocol.ts` field-accounting list whenever upstream extends the AssistantMessage shape.
+
+## Server manifest re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/server/package.json` keeps `@code-yeongyu/senpi-server`, calver, senpi description and
+  keywords, and `tsc` builds (upstream uses `tsgo`).
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The name/version/scripts blocks on every upstream release bump.
+
+## 2026-08-25 - Account for provider abort provenance in transcript typing
+
+### What changed
+
+- `packages/server/src/protocol.ts`: includes the optional assistant `abortSource` field in the exhaustive pi-ai transcript shape check.
+
+### Why
+
+- Provider retry watchdog ownership is part of the assistant message contract and must remain explicit across server protocol boundaries rather than being dropped or rejected by compile-time drift checks.
+
+### Why an extension could not handle it
+
+- The server protocol bridge owns the exhaustive transport type contract before extension consumers run.
+
+### Expected merge conflict zones
+
+- LOW: `AssistantMessage` exact-key assertions in `src/protocol.ts`.
+
 ## Repository-wide changes.md audit backfill for package manifest and transport typing (2026-08-17)
 
 ### What changed

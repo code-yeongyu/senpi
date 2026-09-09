@@ -10,6 +10,7 @@ import type {
 	Model,
 	SimpleStreamOptions,
 	TextContent,
+	ThinkingSelection,
 	Tool,
 	ToolResultMessage,
 	Usage,
@@ -145,6 +146,8 @@ export interface AgentLoopTurnUpdate {
 	model?: Model<any>;
 	/** Thinking level for the next provider request. */
 	thinkingLevel?: ThinkingLevel;
+	/** Thinking selection for the next provider request: undefined leaves it unchanged, null clears it. */
+	thinkingSelection?: ThinkingSelection | null;
 	/** Whether the next provider request should abort a server-selected fallback. */
 	abortServerSideFallback?: boolean;
 }
@@ -164,7 +167,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * paired `ToolResultMessage` for emission right after the assistant
 	 * message. Other providers ignore this field.
 	 */
-	cursorExecHandlers?: CursorExecHandlers;
+	cursorExecHandlers?: CursorExecHandlers | ((runSignal: AbortSignal) => CursorExecHandlers);
 
 	/**
 	 * Maximum time in milliseconds to wait for the FIRST provider stream event.
@@ -247,6 +250,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 *
 	 * If it returns true, the loop emits `agent_end` and exits before polling steering or follow-up queues,
 	 * without starting another LLM call. The current assistant response and any tool executions finish normally.
+	 * This callback sees the completed-turn context and runs before `prepareNextTurn`.
 	 *
 	 * Use this to request a graceful stop after the current turn, e.g. before context gets too full.
 	 *
@@ -255,8 +259,11 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext) => boolean | Promise<boolean>;
 
 	/**
-	 * Called after `turn_end` and before the loop decides whether another provider request should start.
-	 * Return replacement context/model/thinking state to affect the next turn in this run.
+	 * Called after each completed assistant turn, including a normal stop response, before the loop decides whether another provider request starts.
+	 * A terminating-tool continuation emits its `turn_start` boundary first so queue owners can clear
+	 * or replace pending input before preparation finishes and the continuation is admitted.
+	 * `shouldStopAfterTurn` and an empty terminating tool batch can end the run before preparation.
+	 * Return replacement context/model/thinking state to affect the next turn.
 	 * Return undefined to keep using the current context/config.
 	 */
 	prepareNextTurn?: (
@@ -394,6 +401,13 @@ export interface AgentState {
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
 	thinkingLevel: ThinkingLevel;
+	/**
+	 * Provenance-bearing thinking selection, when the user or a legacy variant
+	 * alias explicitly chose a level. Absent for defaulted effective levels.
+	 */
+	thinkingSelection?: ThinkingSelection;
+	/** First reasoning effort on the branch, used to preserve Responses cache prefixes. */
+	reasoningBaseline?: string;
 	/** Available tools. Assigning a new array copies the top-level array. */
 	set tools(tools: AgentTool<any>[]);
 	get tools(): AgentTool<any>[];

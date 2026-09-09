@@ -4,43 +4,18 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 
-const openAIState = vi.hoisted(() => ({ clientOptions: undefined as unknown }));
+const requestState = vi.hoisted(() => ({ url: "", headers: new Headers() }));
 
-vi.mock("openai", () => {
-	class FakeOpenAI {
-		constructor(options: unknown) {
-			openAIState.clientOptions = options;
-		}
-
-		chat = {
-			completions: {
-				create: () => {
-					const stream = {
-						async *[Symbol.asyncIterator]() {
-							yield {
-								choices: [{ delta: {}, finish_reason: "stop" }],
-								usage: { prompt_tokens: 1, completion_tokens: 1 },
-							};
-						},
-					};
-					const promise = Promise.resolve(stream) as Promise<typeof stream> & {
-						withResponse(): Promise<{
-							data: typeof stream;
-							response: { status: number; headers: Headers };
-						}>;
-					};
-					promise.withResponse = async () => ({
-						data: stream,
-						response: { status: 200, headers: new Headers() },
-					});
-					return promise;
-				},
-			},
-		};
-	}
-
-	return { default: FakeOpenAI };
-});
+function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+	requestState.url = String(input);
+	requestState.headers = new Headers(init?.headers);
+	return Promise.resolve(
+		new Response('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		}),
+	);
+}
 
 async function createCloudflareRuntime(): Promise<{ modelRuntime: ModelRuntime; modelRegistry: ModelRegistry }> {
 	const authStorage = AuthStorage.inMemory();
@@ -63,14 +38,12 @@ describe("ModelRegistry Cloudflare compat streaming", () => {
 		expect(model).toBeDefined();
 
 		resetApiProviders();
-		await modelRuntime.completeSimple(model!, { messages: [] });
+		await modelRuntime.completeSimple(model!, { messages: [] }, { fetch: mockFetch });
 
-		const clientOptions = openAIState.clientOptions as {
-			baseURL?: string;
-			defaultHeaders?: Record<string, unknown>;
-		};
-		expect(clientOptions.baseURL).toBe("https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/compat");
-		expect(clientOptions.defaultHeaders?.["cf-aig-authorization"]).toBe("Bearer test-token");
+		expect(requestState.url).toBe(
+			"https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/compat/chat/completions",
+		);
+		expect(requestState.headers.get("cf-aig-authorization")).toBe("Bearer test-token");
 	});
 
 	it("materializes the Cloudflare endpoint after extension-style auth resolution", async () => {
@@ -88,15 +61,13 @@ describe("ModelRegistry Cloudflare compat streaming", () => {
 			"x-api-key": null,
 		});
 
-		await complete(model!, { messages: [] }, auth);
+		await complete(model!, { messages: [] }, { ...auth, fetch: mockFetch });
 
-		const clientOptions = openAIState.clientOptions as {
-			baseURL?: string;
-			defaultHeaders?: Record<string, unknown>;
-		};
-		expect(clientOptions.baseURL).toBe("https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/compat");
-		expect(clientOptions.defaultHeaders?.["cf-aig-authorization"]).toBe("Bearer test-token");
-		expect(clientOptions.defaultHeaders?.Authorization).toBeNull();
-		expect(clientOptions.defaultHeaders?.["x-api-key"]).toBeNull();
+		expect(requestState.url).toBe(
+			"https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/compat/chat/completions",
+		);
+		expect(requestState.headers.get("cf-aig-authorization")).toBe("Bearer test-token");
+		expect(requestState.headers.get("Authorization")).toBeNull();
+		expect(requestState.headers.get("x-api-key")).toBeNull();
 	});
 });

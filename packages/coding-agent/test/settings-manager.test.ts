@@ -8,6 +8,7 @@ import {
 	excludeRoutineOnlySettingsChanges,
 	refreshSettingsContentSnapshots,
 } from "../src/core/extensions/builtin/config-reload/routine-settings.ts";
+import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
 import {
 	__resetSelfWriteTrackerForTests,
 	__setSelfWriteTrackerClockForTests,
@@ -19,6 +20,27 @@ import {
 } from "../src/core/settings-manager.ts";
 
 describe("SettingsManager", () => {
+	it("bridges SENPI terminal capability overrides, with PI fallback", () => {
+		const previous = {
+			SENPI_HYPERLINKS: process.env.SENPI_HYPERLINKS,
+			PI_HYPERLINKS: process.env.PI_HYPERLINKS,
+		};
+		try {
+			process.env.SENPI_HYPERLINKS = "0";
+			process.env.PI_HYPERLINKS = "1";
+			const manager = SettingsManager.inMemory();
+			expect(manager.getTerminalCapabilityOverrides().hyperlinks).toBe(false);
+
+			delete process.env.SENPI_HYPERLINKS;
+			expect(manager.getTerminalCapabilityOverrides().hyperlinks).toBe(true);
+		} finally {
+			if (previous.SENPI_HYPERLINKS === undefined) delete process.env.SENPI_HYPERLINKS;
+			else process.env.SENPI_HYPERLINKS = previous.SENPI_HYPERLINKS;
+			if (previous.PI_HYPERLINKS === undefined) delete process.env.PI_HYPERLINKS;
+			else process.env.PI_HYPERLINKS = previous.PI_HYPERLINKS;
+		}
+	});
+
 	const testDir = join(tmpdir(), `senpi-settings-${process.pid}`);
 	const agentDir = join(testDir, "agent");
 	const projectDir = join(testDir, "project");
@@ -290,7 +312,7 @@ describe("SettingsManager", () => {
 			expect(manager.getDefaultModel()).toBe("claude-sonnet");
 		});
 
-		it("should keep previous settings when file is invalid", async () => {
+		it("should keep previous settings and report the file path when the file is invalid", async () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
 
@@ -300,6 +322,7 @@ describe("SettingsManager", () => {
 			await manager.reload();
 
 			expect(manager.getTheme()).toBe("dark");
+			expect(manager.drainErrors()).toMatchObject([{ scope: "global", path: settingsPath }]);
 		});
 	});
 
@@ -332,7 +355,10 @@ describe("SettingsManager", () => {
 			const errors = manager.drainErrors();
 
 			expect(errors).toHaveLength(2);
-			expect(errors.map((e) => e.scope).sort()).toEqual(["global", "project"]);
+			expect(errors).toMatchObject([
+				{ scope: "global", path: globalSettingsPath },
+				{ scope: "project", path: projectSettingsPath },
+			]);
 			expect(manager.drainErrors()).toEqual([]);
 		});
 	});
@@ -424,13 +450,31 @@ describe("SettingsManager", () => {
 			expect(whenManager.getAgentStreamIdleTimeoutMs()).toBe(5_000);
 		});
 
-		it("should default the agent stream start timeout to 90s", () => {
+		it("should default retry.maxRetries to the shipped turn budget", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ theme: "dark" }));
 
 			const whenManager = SettingsManager.create(projectDir, agentDir);
 
-			expect(whenManager.getAgentStreamStartTimeoutMs()).toBe(90_000);
+			expect(whenManager.getRetrySettings().maxRetries).toBe(5);
+		});
+
+		it("should prefer an explicit retry.maxRetries over the default", () => {
+			const givenSettingsPath = join(agentDir, "settings.json");
+			writeFileSync(givenSettingsPath, JSON.stringify({ retry: { maxRetries: 2 } }));
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getRetrySettings().maxRetries).toBe(2);
+		});
+
+		it("should default the agent stream start timeout to 300s", () => {
+			const givenSettingsPath = join(agentDir, "settings.json");
+			writeFileSync(givenSettingsPath, JSON.stringify({ theme: "dark" }));
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getAgentStreamStartTimeoutMs()).toBe(300_000);
 		});
 
 		it("should prefer retry.provider.streamStartTimeoutMs for the agent stream start timeout", () => {
@@ -602,6 +646,29 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("httpIdleTimeoutMs", () => {
+		it("should default to 5 minutes", () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getHttpIdleTimeoutMs()).toBe(DEFAULT_HTTP_IDLE_TIMEOUT_MS);
+		});
+
+		it("should use merged global and project settings", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 300000 }));
+			writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 0 }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getHttpIdleTimeoutMs()).toBe(0);
+		});
+
+		it("should reject invalid timeout values", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: -1 }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(() => manager.getHttpIdleTimeoutMs()).toThrow("Invalid httpIdleTimeoutMs setting");
+		});
+	});
+
 	describe("externalEditor", () => {
 		const originalVisual = process.env.VISUAL;
 		const originalEditor = process.env.EDITOR;
@@ -680,13 +747,16 @@ describe("SettingsManager", () => {
 		const manager = SettingsManager.create(projectDir, agentDir);
 		expect(manager.getFullscreenExitOutput()).toBe("transcript");
 		expect(manager.getFullscreenScrollbar()).toBe("auto");
+		expect(manager.getFullscreenCopyOnSelect()).toBe(true);
 
 		manager.setFullscreenExitOutput("resume-hint");
 		manager.setFullscreenScrollbar("hidden");
+		manager.setFullscreenCopyOnSelect(false);
 		await manager.flush();
 		const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
 		expect(savedSettings.fullscreenExitOutput).toBe("resume-hint");
 		expect(savedSettings.fullscreenScrollbar).toBe("hidden");
+		expect(savedSettings.fullscreenCopyOnSelect).toBe(false);
 
 		writeFileSync(
 			join(agentDir, "settings.json"),
@@ -695,6 +765,7 @@ describe("SettingsManager", () => {
 		const reloadedManager = SettingsManager.create(projectDir, agentDir);
 		expect(reloadedManager.getFullscreenExitOutput()).toBe("transcript");
 		expect(reloadedManager.getFullscreenScrollbar()).toBe("auto");
+		expect(reloadedManager.getFullscreenCopyOnSelect()).toBe(true);
 	});
 
 	describe("outputPad", () => {

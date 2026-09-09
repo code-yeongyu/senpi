@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+import { cleanupSessionResources } from "../src/session-resources.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
 
 interface RequestBody {
@@ -192,5 +193,47 @@ describe("Anthropic unsigned thinking replay fallback", () => {
 		}
 
 		expect(requestCount).toBe(1);
+	});
+
+	it("forgets the learned fallback when the session's resources are cleaned up", async () => {
+		const requests: RequestBody[] = [];
+		const server = createServer(async (request, response) => {
+			requests.push(await readBody(request));
+			if (requests.length === 1) {
+				writeInvalidSignature(response);
+			} else {
+				writeEmptySse(response);
+			}
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address() as AddressInfo;
+		const model = createModel(`http://127.0.0.1:${address.port}`);
+
+		try {
+			// First run learns the text-replay fallback (request 1 rejected, retry replayed as text).
+			await run(model, "session-cleanup");
+			// Second run consults the learned fallback and sends text up front.
+			await run(model, "session-cleanup");
+			expect(requests[2].messages?.[1]?.content[0]).toEqual({
+				type: "text",
+				text: "unsigned replayed thought",
+			});
+
+			cleanupSessionResources("session-cleanup");
+
+			// After teardown the capability is forgotten: the next request carries the
+			// empty signature again instead of the cached text replay.
+			await run(model, "session-cleanup");
+		} finally {
+			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+			cleanupSessionResources("session-cleanup");
+		}
+
+		expect(requests).toHaveLength(4);
+		expect(requests[3].messages?.[1]?.content[0]).toEqual({
+			type: "thinking",
+			thinking: "unsigned replayed thought",
+			signature: "",
+		});
 	});
 });

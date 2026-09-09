@@ -1,6 +1,6 @@
 import type { CustomEntry, SessionEntry } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import type { TodoPhase } from "../todotools/state.ts";
+import { getLatestPhasesFromBranchEntries, type TodoPhase } from "../todotools/state.ts";
 
 const TODO_SNAPSHOT_CUSTOM_TYPE = "compaction.todo-snapshot";
 const TODO_SNAPSHOT_SCHEMA = "senpi.compaction.todo-snapshot.v1";
@@ -17,7 +17,7 @@ export type TodoSnapshotItems = TodoEntry[] | TodoPhase[];
 
 export interface TodoSnapshotPayload {
 	schema: typeof TODO_SNAPSHOT_SCHEMA;
-	todos: TodoSnapshotItems | SessionEntry[];
+	todos: TodoSnapshotItems;
 	capturedAt: number;
 }
 
@@ -81,39 +81,70 @@ function readTodosFromEntry(entry: CustomEntry): TodoEntry[] {
 	return [];
 }
 
+function isCustomEntryEnvelope(value: unknown): value is CustomEntry {
+	return (
+		isRecord(value) &&
+		value.type === "custom" &&
+		typeof value.id === "string" &&
+		(value.parentId === null || typeof value.parentId === "string") &&
+		typeof value.timestamp === "string" &&
+		typeof value.customType === "string"
+	);
+}
+
+function normalizeLegacySnapshotEntries(entries: CustomEntry[]): TodoSnapshotItems {
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		const entry = entries[index];
+		if (!isLegacyTodoListEntry(entry) && !isCustomTodoEntry(entry)) continue;
+		if (entry.customType === TODO_STATE_ENTRY_TYPE) {
+			return getLatestPhasesFromBranchEntries(entries.slice(0, index + 1));
+		}
+		return readTodosFromEntry(entry);
+	}
+	return [];
+}
+
+function normalizeSnapshotItems(value: unknown): TodoSnapshotItems | null {
+	if (!Array.isArray(value)) return null;
+	if (value.every(isTodoPhase)) return value;
+	if (value.every(isCustomEntryEnvelope)) return normalizeLegacySnapshotEntries(value);
+	if (value.every(isTodoEntry)) return value;
+	return null;
+}
+
+function getCurrentTodoPhases(ctx: ExtensionContext): TodoPhase[] {
+	return getLatestPhasesFromBranchEntries(ctx.sessionManager.getBranch());
+}
+
 function findLatestTodoSnapshot(ctx: ExtensionContext): TodoSnapshotPayload | null {
-	const entries = ctx.sessionManager.getEntries();
+	const entries = ctx.sessionManager.getBranch();
 	for (let index = entries.length - 1; index >= 0; index -= 1) {
 		const entry = entries[index];
 		if (entry.type !== "custom" || entry.customType !== TODO_SNAPSHOT_CUSTOM_TYPE) continue;
 		const data = entry.data;
-		if (isRecord(data) && data.schema === TODO_SNAPSHOT_SCHEMA && Array.isArray(data.todos)) {
-			return data as unknown as TodoSnapshotPayload;
-		}
+		if (!isRecord(data) || data.schema !== TODO_SNAPSHOT_SCHEMA) continue;
+		const todos = normalizeSnapshotItems(data.todos);
+		if (!todos) continue;
+		return {
+			schema: TODO_SNAPSHOT_SCHEMA,
+			todos,
+			capturedAt: typeof data.capturedAt === "number" ? data.capturedAt : 0,
+		};
 	}
 	return null;
 }
 
-export function findTodoEntries(ctx: ExtensionContext): SessionEntry[];
-export function findTodoEntries(entries: SessionEntry[], options?: { branchId?: string }): TodoEntry[];
-export function findTodoEntries(
-	ctxOrEntries: ExtensionContext | SessionEntry[],
-	options?: { branchId?: string },
-): SessionEntry[] | TodoEntry[] {
-	if (Array.isArray(ctxOrEntries)) {
-		return ctxOrEntries
-			.filter((entry) => isLegacyTodoListEntry(entry) || isCustomTodoEntry(entry))
-			.filter((entry) => options?.branchId === undefined || entry.parentId === options.branchId)
-			.flatMap(readTodosFromEntry);
-	}
-
-	return ctxOrEntries.sessionManager.getEntries().filter(isCustomTodoEntry);
+export function findTodoEntries(entries: SessionEntry[], options?: { branchId?: string }): TodoEntry[] {
+	return entries
+		.filter((entry) => isLegacyTodoListEntry(entry) || isCustomTodoEntry(entry))
+		.filter((entry) => options?.branchId === undefined || entry.parentId === options.branchId)
+		.flatMap(readTodosFromEntry);
 }
 
 export function createTodoSnapshot(ctx: ExtensionContext): TodoSnapshotPayload {
 	return {
 		schema: TODO_SNAPSHOT_SCHEMA,
-		todos: findTodoEntries(ctx),
+		todos: getCurrentTodoPhases(ctx),
 		capturedAt: Date.now(),
 	};
 }
@@ -162,7 +193,7 @@ export function restoreTodosIfMissing(
 
 	const pi = piOrSnapshot as SendMessageTarget;
 	const ctx = ctxOrCurrentTodos as ExtensionContext;
-	if (findTodoEntries(ctx).length > 0) return;
+	if (getCurrentTodoPhases(ctx).length > 0) return;
 
 	const snapshot = findLatestTodoSnapshot(ctx);
 	if (!snapshot || snapshot.todos.length === 0) return;

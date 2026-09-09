@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { parseArgs, printHelp } from "../src/cli/args.ts";
+import { normalizeSessionName, parseArgs, printHelp } from "../src/cli/args.ts";
 
 describe("parseArgs", () => {
 	describe("removed flags", () => {
@@ -198,6 +198,11 @@ describe("parseArgs", () => {
 			expect(result.name).toBe("");
 		});
 
+		test("normalizes display names and rejects whitespace-only values", () => {
+			expect(normalizeSessionName("  named session  ")).toBe("named session");
+			expect(normalizeSessionName("   ")).toBeUndefined();
+		});
+
 		test("reports missing value", () => {
 			const result = parseArgs(["--name"]);
 			expect(result.diagnostics).toEqual([{ type: "error", message: "--name requires a value" }]);
@@ -216,6 +221,21 @@ describe("parseArgs", () => {
 		test("parses --no-session flag", () => {
 			const result = parseArgs(["--no-session"]);
 			expect(result.noSession).toBe(true);
+		});
+
+		test("preserves custom session IDs for non-persisting commands", () => {
+			expect(parseArgs(["--session-id", "ephemeral-id", "--help"])).toMatchObject({
+				sessionId: "ephemeral-id",
+				help: true,
+			});
+			expect(parseArgs(["--session-id", "ephemeral-id", "--list-models"])).toMatchObject({
+				sessionId: "ephemeral-id",
+				listModels: true,
+			});
+			expect(parseArgs(["--session-id", "ephemeral-id", "--no-session"])).toMatchObject({
+				sessionId: "ephemeral-id",
+				noSession: true,
+			});
 		});
 	});
 
@@ -444,6 +464,27 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--no-builtin-tools", "--tools", "read,bash"]);
 			expect(result.noBuiltinTools).toBe(true);
 			expect(result.tools).toEqual(["read", "bash"]);
+		});
+	});
+
+	describe("--auto-title-sessions flag", () => {
+		test("parses --auto-title-sessions", () => {
+			const result = parseArgs(["--auto-title-sessions"]);
+			expect(result.autoTitleSessions).toBe(true);
+			expect(result.unknownFlags.has("auto-title-sessions")).toBe(false);
+		});
+
+		test("is undefined when the flag is absent", () => {
+			const result = parseArgs(["--mode", "rpc", "--multi-session"]);
+			expect(result.autoTitleSessions).toBeUndefined();
+			expect(result.multiSession).toBe(true);
+		});
+
+		test("combines with rpc multi-session flags", () => {
+			const result = parseArgs(["--mode", "rpc", "--multi-session", "--auto-title-sessions"]);
+			expect(result.mode).toBe("rpc");
+			expect(result.multiSession).toBe(true);
+			expect(result.autoTitleSessions).toBe(true);
 		});
 	});
 

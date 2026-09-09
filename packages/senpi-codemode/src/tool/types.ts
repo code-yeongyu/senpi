@@ -3,7 +3,7 @@ import { type TUnsafe, Type } from "typebox";
 import type { HostToKernelMessage, KernelToHostMessage } from "../bridge/protocol.ts";
 import type { TruncationMeta } from "../output/output-meta.ts";
 
-export const evalLanguageOrder = ["py", "js", "rb", "jl"] as const;
+export const evalLanguageOrder = ["js", "py", "rb", "jl"] as const;
 export type EvalLanguage = (typeof evalLanguageOrder)[number];
 export type EnabledEvalLanguages = Readonly<Record<EvalLanguage, boolean>>;
 
@@ -12,6 +12,12 @@ export function enabledLanguageList(enabled: EnabledEvalLanguages): EvalLanguage
 }
 
 export const EVAL_SUMMARY_MAX_LENGTH = 80;
+
+const TIMEOUT_FIELD_DESCRIPTION =
+	"Seconds the cell may block the turn before it detaches, and the amount by which it raises the wall-clock hard limit. In interactive sessions the detach point is capped at the foreground window (default 60s), so a large value frees the turn at the window while the cell keeps running; on_timeout:'error' (and print/json) keep the full value as the uncapped deadline.";
+
+const ON_TIMEOUT_FIELD_DESCRIPTION =
+	"Timeout behavior. Interactive sessions detach by default (at the foreground window); print/json sessions error by default. 'error' uses the full timeout as an uncapped deadline.";
 
 export interface EvalToolInput {
 	readonly language: EvalLanguage;
@@ -37,7 +43,7 @@ const fullEvalInputSchema = Type.Object({
 		}),
 	),
 	language: Type.Optional(
-		Type.Union([Type.Literal("py"), Type.Literal("js"), Type.Literal("rb"), Type.Literal("jl")]),
+		Type.Union([Type.Literal("js"), Type.Literal("py"), Type.Literal("rb"), Type.Literal("jl")]),
 	),
 	code: Type.Optional(Type.String({ description: "Cell body, verbatim." })),
 	summary: Type.Optional(
@@ -47,10 +53,10 @@ const fullEvalInputSchema = Type.Object({
 				"REQUIRED for run. ONE line in the USER'S conversational language (Korean conversation -> Korean summary) stating WHAT this cell does and FOR WHAT PURPOSE; shown in the TUI while the cell runs. Longer values are force-truncated to 80 chars.",
 		}),
 	),
-	timeout: Type.Optional(Type.Number({ minimum: 1, description: "Timeout in seconds." })),
+	timeout: Type.Optional(Type.Number({ minimum: 1, description: TIMEOUT_FIELD_DESCRIPTION })),
 	on_timeout: Type.Optional(
 		Type.Union([Type.Literal("detach"), Type.Literal("error")], {
-			description: "Timeout behavior. Interactive sessions detach by default; print/json sessions error by default.",
+			description: ON_TIMEOUT_FIELD_DESCRIPTION,
 		}),
 	),
 	reset: Type.Optional(Type.Boolean({ description: "Reset this language kernel before running." })),
@@ -83,11 +89,10 @@ export function createEvalInputSchema(enabled: EnabledEvalLanguages): EvalInputS
 						"REQUIRED for run. ONE line in the USER'S conversational language (Korean conversation -> Korean summary) stating WHAT this cell does and FOR WHAT PURPOSE; shown in the TUI while the cell runs. Longer values are force-truncated to 80 chars.",
 				}),
 			),
-			timeout: Type.Optional(Type.Number({ minimum: 1, description: "Timeout in seconds." })),
+			timeout: Type.Optional(Type.Number({ minimum: 1, description: TIMEOUT_FIELD_DESCRIPTION })),
 			on_timeout: Type.Optional(
 				Type.Union([Type.Literal("detach"), Type.Literal("error")], {
-					description:
-						"Timeout behavior. Interactive sessions detach by default; print/json sessions error by default.",
+					description: ON_TIMEOUT_FIELD_DESCRIPTION,
 				}),
 			),
 			reset: Type.Optional(Type.Boolean({ description: "Reset this language kernel before running." })),
@@ -107,6 +112,8 @@ export interface EvalKernelRunInput {
 export interface KernelInterruptHandle {
 	/** Resolves once the kernel knows whether user state survived the interrupt. */
 	readonly stateRetained: Promise<boolean>;
+	/** Extra outcome detail worth showing the model, e.g. that a blocked worker was abandoned. */
+	readonly note?: string;
 }
 
 export interface EvalKernel {
@@ -140,6 +147,15 @@ export interface EvalToolCallSummary {
 
 export type EvalStatusEvent = { readonly op: string } & Readonly<Record<string, unknown>>;
 
+/** Identity of the runtime executing a kernel: interpreter or JS host. */
+export interface EvalRuntimeInfo {
+	readonly name: string;
+	readonly version: string;
+	readonly path?: string;
+}
+
+export type EvalRuntimes = Readonly<Partial<Record<EvalLanguage, EvalRuntimeInfo>>>;
+
 export type EvalDisplayOutput =
 	| { readonly type: "json"; readonly data: unknown }
 	| { readonly type: "image"; readonly data: string; readonly mimeType: string }
@@ -152,9 +168,12 @@ export type EvalCellResult = {
 	readonly code: string;
 	readonly language: EvalLanguage;
 	readonly output: string;
+	readonly runtime?: EvalRuntimeInfo;
 	readonly status: "pending" | "running" | "detached" | "complete" | "error" | "cancelled";
 	readonly exitCode?: number;
 	readonly durationMs?: number;
+	/** Epoch ms when the cell started; lets renderers tick elapsed time between update events. */
+	readonly startedAt?: number;
 	readonly statusEvents?: readonly EvalStatusEvent[];
 	readonly hasMarkdown?: boolean;
 };
@@ -162,6 +181,7 @@ export type EvalCellResult = {
 export interface EvalToolDetails {
 	readonly language: EvalLanguage;
 	readonly languages?: readonly EvalLanguage[];
+	readonly runtime?: EvalRuntimeInfo;
 	readonly summary?: string;
 	readonly durationMs: number;
 	/** True wall-clock elapsed time since the cell started; `durationMs` stays kernel-reported. */

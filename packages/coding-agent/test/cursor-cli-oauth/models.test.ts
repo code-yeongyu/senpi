@@ -41,22 +41,21 @@ afterEach(async () => {
 });
 
 describe("parseCursorAgentModelsListing", () => {
-	it("parses the committed 204-model listing with contract metadata", async () => {
+	it("parses the committed listing into grouped identities with contract metadata", async () => {
 		const listing = await readFile(FIXTURE_PATH, "utf8");
 		const models = parseCursorAgentModelsListing(listing);
 
 		expect(Buffer.byteLength(listing)).toBeGreaterThan(8 * 1024);
-		expect(models).toHaveLength(204);
-		expect(models.find((model) => model.id === "gemini-3.7-flash-high")).toMatchObject({
-			name: "Gemini 3.7 Flash High (1M context)",
+		expect(models).toHaveLength(93);
+		expect(models.find((model) => model.id === "gemini-3.7-flash")).toMatchObject({
 			reasoning: true,
 			input: ["text"],
-			contextWindow: 1_000_000,
+			contextWindow: 1_048_576,
 			maxTokens: 64_000,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		});
-		expect(models.find((model) => model.id === "claude-opus-5-thinking-high")?.contextWindow).toBe(300_000);
-		expect(models.find((model) => model.id === "gpt-5.6-sol-high")?.contextWindow).toBe(272_000);
+		expect(models.find((model) => model.id === "claude-opus-5-thinking")?.contextWindow).toBe(1_000_000);
+		expect(models.find((model) => model.id === "gpt-5.6-sol")?.contextWindow).toBe(1_000_000);
 		expect(models.find((model) => model.id === "composer-2.5")?.contextWindow).toBe(200_000);
 		expect(models.find((model) => model.id === "composer-2.5-fast")?.reasoning).toBe(false);
 	});
@@ -70,8 +69,8 @@ describe("parseCursorAgentModelsListing", () => {
 			expect.objectContaining({
 				id: "claude-opus-5-thinking-max-fast",
 				name: "Claude Opus 5 Thinking Max Fast (300K context)",
-				reasoning: true,
-				contextWindow: 300_000,
+				reasoning: false,
+				contextWindow: 1_000_000,
 			}),
 		]);
 	});
@@ -114,18 +113,18 @@ describe("resolveCursorCliModelCatalog", () => {
 			"auto",
 			"composer-2.5",
 			"composer-2.5-fast",
-			"gpt-5.6-sol-high",
-			"gpt-5.6-luna-high",
-			"gpt-5.5-high",
+			"gpt-5.6-sol",
+			"gpt-5.6-luna",
+			"gpt-5.5",
 			"gpt-5.3-codex",
 			"gpt-5.2",
-			"claude-opus-5-high",
-			"claude-opus-5-thinking-high",
-			"claude-opus-4-8-thinking-high",
-			"claude-fable-5-thinking-high",
-			"claude-sonnet-5-thinking-high",
-			"gemini-3.7-flash-high",
-			"cursor-grok-4.6-high",
+			"claude-opus-5",
+			"claude-opus-5-thinking",
+			"claude-opus-4-8-thinking",
+			"claude-fable-5-thinking",
+			"claude-sonnet-5-thinking",
+			"gemini-3.7-flash",
+			"cursor-grok-4.6",
 		]);
 	});
 
@@ -145,8 +144,8 @@ describe("resolveCursorCliModelCatalog", () => {
 			deps: { resolveExecutable: () => executable },
 		});
 
-		expect(models).toHaveLength(204);
-		expect(models.at(-1)?.id).toBe("deepseek-v4-thinking-max");
+		expect(models).toHaveLength(93);
+		expect(models.at(-1)?.id).toBe("deepseek-v4-max-fast");
 	});
 
 	it("falls back on failed or misleading probes without poisoning an existing cache", async () => {

@@ -91,11 +91,20 @@ describe("SubprocessKernel interrupt", () => {
 });
 
 function createKernel(spawn: () => InterruptibleFakeProcess): SubprocessKernel {
-	return new SubprocessKernel({
+	let initial: InterruptibleFakeProcess | undefined;
+	const readySpawn = (): InterruptibleFakeProcess => {
+		const child = spawn();
+		if (!initial) initial = child;
+		else queueMicrotask(() => child.emitMessage({ type: "ready" }));
+		return child;
+	};
+	const kernel = new SubprocessKernel({
 		command: "ruby",
 		args: ["runner.rb"],
-		spawn,
+		spawn: readySpawn,
 		sessionId: "subprocess-interrupt",
 		connection: { port: 39_001, token: "mock-token" },
 	});
+	initial?.emitMessage({ type: "ready" });
+	return kernel;
 }

@@ -23,5 +23,5 @@ export function didTerminalProviderErrorEndTurn(event: AgentEndEvent): boolean {
 	if (event.willRetry !== false) return false;
 	const message = lastAssistantMessage(event.messages);
 	if (isSdkOauthAccountExhaustion(message)) return true;
-	return message?.stopReason === "error" || (message?.stopReason === "aborted" && event.abortSource === undefined);
+	return message?.stopReason === "error" || (message?.stopReason === "aborted" && event.abortSource !== "user");
 }

@@ -1,4 +1,82 @@
+# changes
+
+## 2026-09-09 - GPT Image 2.5 generation and reference-image editing
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/params.ts` owns the tool schema, result details, and structured failures. Model selection defaults to GPT Image 2.5 Sunburst, with Flare and legacy GPT Image 2 available; quality adds xhigh/max and size accepts validated custom dimensions.
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/reference-images.ts` resolves 1-5 local reference files, checks regular-file status, the 50 MB limit, and PNG/JPEG/WEBP signatures, and encodes them for the existing images provider.
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/tool.ts` validates sizes through pi-ai, passes references after the text input, and reports the selected model on success and failure. Auth, native bypass, and exclusive PNG output writes remain unchanged.
+- `skill/SKILL.md` retains the prompt-crafting guide and adds model, quality, size, and end-state editing guidance. `test/imagegen-tool-2-5.test.ts` exercises provider dispatch and local validation; existing test fixture boilerplate is reduced to meet the 250-line cap without removing coverage.
+
+### Why
+
+- GPT Image 2.5 exposes higher quality tiers, custom resolutions, and reference-guided editing that the old fixed-model, text-only tool could not request.
+
+### Why an extension could not handle it
+
+- This is the owning builtin extension: its schema, input validation, model synthesis, and bundled skill must change together. The pi-ai provider already owns endpoint selection and the pinned SDK compatibility widening.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/extensions/builtin/imagegen/tool.ts` schema extraction and execute path.
+- LOW: new `params.ts` and `reference-images.ts`, the bundled skill, and focused imagegen tests.
+
+## Placeholder credentials no longer hijack image-generation auth (2026-09-04)
+
+### What changed
+
+- `auth.ts` treats a `SK-SENTINEL-DO-NOT-LOG*` value as absent rather than as a credential, in both the stored-`openai` branch (`credentialParts`) and the `OPENAI_API_KEY` env branch. Resolution falls through to the gateway chain, and with no gateway the tool reports "not configured" instead of pinning `api.openai.com`.
+
+### Why
+
+- `~/.omo/agent/auth.json` on Jobdori carries seeded placeholders `SK-SENTINEL-DO-NOT-LOG-1/-2`. The `-2` entry sits under provider `openai`, so step 1 of the chain accepted it, pinned `https://api.openai.com/v1`, and every `gpt-image-2` request answered 401 `Incorrect API key provided: SK-SENTI***OG-2` while a healthy Quotio gateway (`openai-quotio`, verified 200 + real PNG) sat unused. Reported twice on 2026-09-04; the same symptom was "fixed" on 2026-08-21 by deleting the entry, and it came back.
+- Deleting the entry is not a fix: a placeholder is not a credential, and the resolver is the only place that can tell the difference before a request is sent.
+
+### Why this cannot be expressed externally
+
+- The chain runs inside the builtin extension before any request; a caller cannot distinguish "stored openai key" from "stored placeholder" without duplicating the resolver.
+
 # imagegen builtin — changes
+
+## Bun-compiled skill asset (2026-08-27)
+
+### What changed
+
+- Bun-compiled binaries now resolve the bundled skill through a file-asset import, while Node continues using the copied adjacent skill file.
+
+### Why
+
+- The skill is copied into `dist` for Node execution but was not embedded in the Bun compile graph, leaving compiled binaries without imagegen guidance.
+
+### Why an extension could not handle it
+
+- The skill path is resolved inside the builtin's resource-discovery handler, so no downstream extension can restore an asset absent from the compiled module graph.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` asset resolution branch.
+
+
+## RPC-safe missing-skill diagnostics (2026-08-27)
+
+### What changed
+
+- Missing bundled-skill diagnostics now route to stderr instead of stdout.
+- Added regression coverage proving the notice is emitted once without writing to stdout.
+
+### Why
+
+- Bun-compiled RPC binaries can legitimately lack the optional skill file at the module URL. Writing that diagnostic to stdout corrupts the NDJSON RPC wire.
+
+### Why an extension could not handle it
+
+- The diagnostic is emitted inside the builtin extension's resource-discovery path before any downstream extension can redirect the stream.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` missing-skill branch and `test/imagegen-skill-gating.test.ts` diagnostic assertions.
+
 
 ## 2026-08-13 - Materialize nullable headers only at image requests
 

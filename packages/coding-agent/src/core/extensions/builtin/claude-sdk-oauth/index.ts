@@ -8,12 +8,14 @@ import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
 import type { ClaudeSdkOauthCredential } from "./accounts.ts";
 import { createOAuthConfig } from "./oauth-login.ts";
 import { registerSessionRegistry } from "./session-registry-wiring.ts";
-import { loadClaudeSdkOauthProviderSettingsFromDisk } from "./settings.ts";
+import { type ClaudeSdkOauthProviderSettings, loadClaudeSdkOauthProviderSettingsFromDisk } from "./settings.ts";
 import { streamClaudeSdkOauth } from "./stream.ts";
 
 export { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
 export type ClaudeSdkOauthExtensionDeps = {
 	readAmbientAuthStatus?: () => Promise<boolean>;
+	/** Overrides the on-disk provider settings the auth predicate consults. */
+	readSettings?: () => ClaudeSdkOauthProviderSettings;
 };
 
 const MODELS = getModels("anthropic").map((model) => ({
@@ -49,12 +51,28 @@ export function registerClaudeSdkOauthExtension(pi: ExtensionAPI, deps: ClaudeSd
 		api: CLAUDE_SDK_OAUTH_PROVIDER_ID,
 		models: MODELS,
 		streamSimple: streamClaudeSdkOauth,
+		// A verbatim `enabled: false` is the kill switch: the lane cannot serve, so
+		// it must not consume an implicit fallback-expansion slot. An absent flag
+		// stays eligible - an explicit senpi-side login keeps the lane usable.
+		fallbackEligible: () => {
+			try {
+				const settings = deps.readSettings
+					? deps.readSettings()
+					: loadClaudeSdkOauthProviderSettingsFromDisk(process.cwd());
+				return settings.enabled !== false;
+			} catch {
+				return true;
+			}
+		},
 		oauth: createOAuthConfig({
 			readCurrent: async () => readStoredCredential(CLAUDE_SDK_OAUTH_PROVIDER_ID),
 			readAmbientAuthStatus: deps.readAmbientAuthStatus,
 			readSettings: () => {
 				try {
-					return { tokenInjection: loadClaudeSdkOauthProviderSettingsFromDisk(process.cwd()).tokenInjection };
+					const settings = deps.readSettings
+						? deps.readSettings()
+						: loadClaudeSdkOauthProviderSettingsFromDisk(process.cwd());
+					return { tokenInjection: settings.tokenInjection, enabled: settings.enabled };
 				} catch {
 					return undefined;
 				}

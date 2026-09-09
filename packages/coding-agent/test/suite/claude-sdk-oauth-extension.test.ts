@@ -6,6 +6,7 @@ import {
 	CLAUDE_SDK_OAUTH_PROVIDER_ID,
 	registerClaudeSdkOauthExtension,
 } from "../../src/core/extensions/builtin/claude-sdk-oauth/index.ts";
+import type { ClaudeSdkOauthProviderSettings } from "../../src/core/extensions/builtin/claude-sdk-oauth/settings.ts";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { ModelRuntime } from "../../src/core/model-runtime.ts";
@@ -13,7 +14,15 @@ import type { ProviderConfigInput } from "../../src/core/provider-composer.ts";
 
 type Registration = { name: string; config: ProviderConfigInput };
 
-function captureRegistration(readAmbientAuthStatus: () => Promise<boolean> = async () => false): {
+/**
+ * `settings` defaults to an empty block - never `{ enabled: true }` - so the ambient
+ * opt-in gate stays visible to every case that does not ask for it, and so the suite
+ * never reads the developer's real on-disk provider settings.
+ */
+function captureRegistration(
+	readAmbientAuthStatus: () => Promise<boolean> = async () => false,
+	settings: ClaudeSdkOauthProviderSettings = {},
+): {
 	registration: Registration;
 } {
 	let captured: Registration | undefined;
@@ -26,7 +35,7 @@ function captureRegistration(readAmbientAuthStatus: () => Promise<boolean> = asy
 		getFlag: () => undefined,
 		on: (..._args: unknown[]) => {},
 	} as unknown as ExtensionAPI;
-	registerClaudeSdkOauthExtension(pi, { readAmbientAuthStatus });
+	registerClaudeSdkOauthExtension(pi, { readAmbientAuthStatus, readSettings: () => settings });
 	if (!captured) throw new Error("extension did not register a provider");
 	return { registration: captured };
 }
@@ -113,8 +122,15 @@ describe("claude-sdk-oauth builtin provider", () => {
 		expect(await runtime.getAvailable(CLAUDE_SDK_OAUTH_PROVIDER_ID)).not.toEqual([]);
 	});
 
-	it("keeps claude-sdk-oauth available with an authenticated ambient CLI", async () => {
+	it("hides claude-sdk-oauth from an authenticated ambient CLI while the opt-in is unset", async () => {
 		const { registration } = captureRegistration(async () => true);
+		const runtime = await createRuntimeWithProvider(registration.config);
+		expect(runtime.hasConfiguredAuth(CLAUDE_SDK_OAUTH_PROVIDER_ID)).toBe(false);
+		expect(await runtime.getAvailable(CLAUDE_SDK_OAUTH_PROVIDER_ID)).toEqual([]);
+	});
+
+	it("keeps claude-sdk-oauth available with an authenticated ambient CLI once opted in", async () => {
+		const { registration } = captureRegistration(async () => true, { enabled: true });
 		const runtime = await createRuntimeWithProvider(registration.config);
 		expect(runtime.hasConfiguredAuth(CLAUDE_SDK_OAUTH_PROVIDER_ID)).toBe(true);
 		expect(await runtime.getAvailable(CLAUDE_SDK_OAUTH_PROVIDER_ID)).not.toEqual([]);

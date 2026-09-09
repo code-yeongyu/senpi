@@ -4,6 +4,9 @@ import {
 	type CompactionLoggerEvent,
 	createCompactionLogger,
 } from "../../src/core/extensions/builtin/compaction/log.ts";
+import { createTempAgentDir } from "../support/temp-agent-dir.ts";
+
+const LOG_DIR = createTempAgentDir("senpi-compaction-decision-log-");
 
 const EVENTS = [
 	"speculative_started",
@@ -17,6 +20,8 @@ const EVENTS = [
 	"skip_breaker",
 	"threshold_trigger",
 	"hard_limit_trigger",
+	"grace_deferred",
+	"breaker_deterministic_fallback",
 	"emergency_prune",
 	"ineffective_counted",
 	"summary_failed",
@@ -24,7 +29,7 @@ const EVENTS = [
 
 describe("compaction decision log", () => {
 	it("Given the event union When counting Then the test cases match exactly", () => {
-		expect(EVENTS).toHaveLength(14);
+		expect(EVENTS).toHaveLength(16);
 	});
 
 	it.each([
@@ -57,6 +62,11 @@ describe("compaction decision log", () => {
 			"hard_limit_trigger",
 			{ origin: "blocking", requestId: "req-11", threshold: 0.95, tokens: 9500, contextWindow: 10000 },
 		],
+		["grace_deferred", { origin: "speculative", requestId: "req-11a", threshold: 9000, tokens: 9100 }],
+		[
+			"breaker_deterministic_fallback",
+			{ origin: "blocking", requestId: "req-11b", route: "context-event", tokens: 9500 },
+		],
 		[
 			"emergency_prune",
 			{ origin: "blocking", requestId: "req-12", route: "emergency", tokensBefore: 12000, tokens: 9000 },
@@ -68,7 +78,7 @@ describe("compaction decision log", () => {
 		["summary_failed", { origin: "speculative", requestId: "req-14", reason: "transient", durationMs: 77 }],
 	] as const)("Given %s When logging Then it emits allowlisted fields only", (event, data) => {
 		const sink: string[] = [];
-		const logger = createCompactionLogger("/tmp/senpi-compaction-decision-log", {
+		const logger = createCompactionLogger(LOG_DIR, {
 			sink: (line) => sink.push(line),
 			mirrorToStderr: false,
 		});
@@ -109,7 +119,7 @@ describe("compaction decision log", () => {
 
 	it("Given injected sink When logging Then it preserves the allowlisted payload", () => {
 		const sink: string[] = [];
-		const logger = createCompactionLogger("/tmp/senpi-compaction-decision-log-sink", {
+		const logger = createCompactionLogger(LOG_DIR, {
 			sink: (line) => sink.push(line),
 			mirrorToStderr: false,
 		});

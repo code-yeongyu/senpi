@@ -18,7 +18,7 @@ import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
 function renderLastLine(container: Container, width = 120): string {
@@ -963,7 +963,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 			) => (InteractiveMode as any).prototype.getCompactNonPackageExtensionLabel.call(fakeThis, p, index, allPaths),
 			getCompactExtensionLabels: (extensions: ExtensionFixture[]) =>
 				(InteractiveMode as any).prototype.getCompactExtensionLabels.call(fakeThis, extensions),
-			formatDiagnostics: () => "diagnostics",
+			formatDiagnostics: () => [{ text: "diagnostics", tone: "warning" }],
 			getBuiltInCommandConflictDiagnostics: () => [],
 		};
 
@@ -1626,7 +1626,8 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		const output = renderAll(fakeThis.loadedResourcesContainer);
-		expect(output).toContain("[Skill conflicts]");
+		expect(output).toContain("Skill conflicts");
+		expect(output).toContain(theme.getBgAnsi("customMessageBg"));
 		expect(output).not.toContain("[Skills]");
 	});
 

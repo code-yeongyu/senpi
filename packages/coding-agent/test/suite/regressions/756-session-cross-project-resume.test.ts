@@ -5,6 +5,9 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
+import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-prerequisite.ts";
+
+assertWorkspaceBuildPrerequisite(import.meta.url);
 
 /**
  * Issue #756 - a cross-project `--session` resume must never open the fork

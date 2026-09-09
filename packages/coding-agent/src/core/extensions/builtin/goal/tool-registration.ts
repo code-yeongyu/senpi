@@ -1,13 +1,14 @@
 import { Type } from "typebox";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { formatGoalToolResponse } from "./format.ts";
+import { formatGoalToolResponse, type GoalToolRenderDetails, goalToolRenderDetails } from "./format.ts";
+import { renderGoalToolCall, renderGoalToolResult } from "./renderers.ts";
 import { createGoal, objectiveFullTextFileName, readGoal, updateGoal } from "./store.ts";
 import { openTodoCompletionError, openTodoTaskContents } from "./todo-gate.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
 import { MODEL_SETTABLE_GOAL_STATUS_VALUES } from "./types.ts";
 import { objectiveTruncationNotice, validateObjective } from "./validation.ts";
 
-type GoalToolResult = AgentToolResult<Record<string, never>>;
+type GoalToolResult = AgentToolResult<GoalToolRenderDetails>;
 
 export type GoalToolRegistrationDeps = {
 	readonly goalStoreRef: (ctx: ExtensionContext) => GoalStoreRef;
@@ -45,20 +46,20 @@ export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDe
 			const goal = await createGoal(ref, params.objective);
 			deps.beginAgentGoalAccounting(goal);
 			deps.refreshGoalUi(ctx, goal);
-			return toolText(
-				formatGoalToolResponse(
-					goal,
-					validatedObjective.truncated ? objectiveTruncationNotice(objectiveFullTextFileName(ref)) : undefined,
-				),
-			);
+			const notice = validatedObjective.truncated
+				? objectiveTruncationNotice(objectiveFullTextFileName(ref))
+				: undefined;
+			return toolText(formatGoalToolResponse(goal, notice), goalToolRenderDetails(goal, notice));
 		},
+		renderCall: (args, theme) => renderGoalToolCall("create_goal", args, theme),
+		renderResult: (result, options, theme) => renderGoalToolResult(result, options, theme),
 	});
 
 	pi.registerTool({
 		name: "update_goal",
 		label: "Update Goal",
 		description:
-			"Update the existing goal.\nSet status to `complete` only when the completion audit proves the objective has actually been achieved and no required work remains. Completion is rejected while the todo list has open tasks: finish or drop them first. When the audit passes, call this tool in that same turn instead of repeating that the work is done. Do not mark a goal complete merely because you are stopping work.\nSet status to `blocked` only at a true impasse: first confirm no live monitor, subscription, background task, or other resumption channel can still deliver the change the goal is waiting on (a wait on such a channel is not an impasse - end the turn and let it wake the goal instead of blocking), the blocking condition is unmistakably clear, and it has recurred for at least 3 consecutive goal turns. If the user resumes a blocked goal, start a fresh blocked audit after resume. Never mark a goal blocked merely because the work is hard, slow, or uncertain.\nA non-empty reason is required when blocking; reason must not be provided when completing.\nYou cannot use this tool to pause or resume a goal; those status changes are controlled by the user or system.\nWhen marking the goal achieved with status `complete`, report the final elapsed time and token usage from the tool result to the user.",
+			"Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`); a user resume starts a fresh blocked audit.\nPausing and resuming are user or system actions, not this tool.",
 		parameters: Type.Object(
 			{
 				status: Type.Union(
@@ -94,8 +95,10 @@ export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDe
 			if (goal.status === "blocked") deps.markGoalBlockedThisTurn(goal);
 			else deps.markGoalCompletedThisTurn(goal);
 			deps.refreshGoalUi(ctx, goal);
-			return toolText(formatGoalToolResponse(goal));
+			return toolText(formatGoalToolResponse(goal), goalToolRenderDetails(goal));
 		},
+		renderCall: (args, theme) => renderGoalToolCall("update_goal", args, theme),
+		renderResult: (result, options, theme) => renderGoalToolResult(result, options, theme),
 	});
 
 	pi.registerTool({
@@ -106,11 +109,13 @@ export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDe
 		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
 			const goal = await deps.accountCurrentAgentTurn(ctx, "active");
 			deps.refreshGoalUi(ctx, goal);
-			return toolText(formatGoalToolResponse(goal));
+			return toolText(formatGoalToolResponse(goal), goalToolRenderDetails(goal));
 		},
+		renderCall: (args, theme) => renderGoalToolCall("get_goal", args, theme),
+		renderResult: (result, options, theme) => renderGoalToolResult(result, options, theme),
 	});
 }
 
-function toolText(text: string): GoalToolResult {
-	return { content: [{ type: "text" as const, text }], details: {} };
+function toolText(text: string, details: GoalToolRenderDetails): GoalToolResult {
+	return { content: [{ type: "text" as const, text }], details };
 }

@@ -1,7 +1,224 @@
 # changes — senpi-monorepo root
 
+## Root scripts reach workspaces only through scripts/run-workspaces.mjs (2026-09-07)
+
+### What changed
+
+- `package.json`: `test`, `clean`, `eval`, `dev`, `dev:tsc`, `generate:models`, `generate:model-catalog`, `hydrate:model-data`, and `check:model-data` delegate into workspaces through `node scripts/run-workspaces.mjs [--if-present] [--workspace <path>] <script>` instead of `npm run --workspaces --if-present <script>`, `npm --workspace=<name> run`, `npm --prefix <dir> run`, or `cd <dir> && npm run` lanes inside concurrently. `dev` keeps only the `packages/ai` and `packages/coding-agent` lanes, the two workspaces that define a `dev` script. `version:*` keep `npm version --workspaces` (npm's version bookkeeping, not a script delegation); `refresh-lock`, `publish*`, and `release*` are untouched.
+
+### Why
+
+- Under bun the old shapes worked only where bun happened to rewrite `npm run` to `bun run`, and bun's `--workspaces` fans out in parallel while npm runs sequentially; `--prefix`, `--workspace=`, and `cd <dir> && npm run` never reach bun or pnpm and always execute real npm, against the `scripts/AGENTS.md` rule of not hardcoding the child package manager. The runner executes every workspace script with the manager that launched the root script, sequentially and in path order, with one PASS / SKIP / FAIL summary, so `bun run test`, `npm run test`, and `pnpm run test` behave identically. The `packages/agent` and `packages/tui` dev lanes pointed at scripts that do not exist.
+
+### Why an extension could not handle it
+
+- Root manifest scripts run before any Senpi runtime starts; the package manager is the only surface above them.
+
+### Expected merge conflict zones
+
+- LOW: the nine script lines in the root `package.json` `scripts` block. Upstream still spells these in npm's dialect; keep the runner form on sync.
+
+## bun.lock refreshed wherever package-lock.json is refreshed (2026-09-04)
+
+### What changed
+
+- `package.json`: `version:patch`, `version:minor` and `version:major` append `bun install --lockfile-only` after `npm install --package-lock-only --ignore-scripts`.
+- `package.json`: `refresh-lock` does the same, so the manual lockfile-refresh path and the release path agree.
+
+### Why
+
+- `bun install --frozen-lockfile` broke on main twice in one day: release `v2026.9.4-2` (`a79aa2080`) rewrote `package-lock.json` while `bun.lock` kept 2026.9.3 workspace versions, and `d052dbb6b` added the `@anthropic-ai/sdk` override without regenerating it (fixed as a one-off in #1364).
+- Both incidents share one cause: every script that refreshes a lockfile refreshes only the npm one, and CI installs with `npm ci`, so the drift recurs at each bump with nothing observing it. #1364 cleared the symptom; this closes the source.
+
+### Why an extension could not handle it
+
+- These are the repo's own release and lockfile-maintenance scripts; nothing outside `package.json` decides which lockfiles a version bump rewrites.
+
+### Expected merge conflict zones
+
+- `package.json` `scripts` — the `version:*` and `refresh-lock` lines.
+
+
+## @anthropic-ai/sdk 0.123.0 pin for the v0.84.4 upstream sync (2026-09-04)
+
+### What changed
+
+- `package.json` pins `@anthropic-ai/sdk` at 0.123.0 (was 0.120.0), the version the 2026-09-03 upstream sync of badlogic/pi-mono v0.84.4 resolved against.
+- `.npmrc` adds `min-release-age-exclude[]=@anthropic-ai/sdk` next to the existing excludes, with an in-file note to remove it after 2026-09-05.
+
+### Why
+
+- The fork's `min-release-age=2` supply-chain gate refuses packages younger than two days, so the freshly published 0.123.0 pin would fail installs until 2026-09-05. The exclude is time-boxed by its removal note instead of weakening the policy for every package.
+
+### Why an extension could not handle it
+
+- Root manifest pins and npm install policy execute before any package code, let alone an extension, runs.
+
+### Expected merge conflict zones
+
+- LOW: the `package.json` root dependency overrides block and the `.npmrc` exclude list on future upstream syncs and release bumps.
+
+## Root workspace fan-out scripts no longer recurse under bun (2026-09-02)
+
+### What changed
+
+- `package.json`: the three root scripts that fan out to workspaces stop passing workspace flags after the script name. `test` and `clean` move the flags before the script name (`npm run --workspaces --if-present <script>`), and `eval` moves its flag before `run` (`npm --workspace=@code-yeongyu/senpi-evals run eval --`). npm behavior is unchanged in all three cases.
+- `scripts/root-workspace-scripts.test.mjs` (new): parses the root manifest and fails a root script for either recursion-prone shape — a workspace flag after the script name, or a singular `--workspace` on an `npm run` call (which bun ignores, re-entering the root script). Both shipped shapes are covered; a mutation check confirms reverting `eval` to `npm run --workspace=<name> eval` fails the guard.
+
+### Why
+
+- Bun rewrites `npm run <name>` to `bun run <name>` inside script text, and bun appends flags placed after the script name to the script itself instead of parsing them. `npm run test --workspaces --if-present` therefore re-invoked the ROOT script with an ever-growing flag suffix (`bun run test --workspaces --if-present --workspaces --if-present ...`) and spun forever instead of running the workspace suites — it never failed, so it read as a slow suite. `clean` and `eval` had the same defect. Verified in a throwaway fixture: the flag-before form fans out under both npm and bun, while the singular `--workspace=<name>` form still recurses under bun (bun does not recognize it), which is why `eval` needs the flag before `run` so no `npm run` substring remains to rewrite.
+
+### Why an extension could not handle it
+
+- These are root package manifest scripts consumed by the release gate (`scripts/release.mjs`, `scripts/local-release.mjs` run `CI=1 npm test`) and by contributors directly; no extension surface exists above the package manager.
+
+### Expected merge conflict zones
+
+- LOW: the `test`, `clean`, and `eval` lines in the root `package.json` scripts block.
+
+## Shared-host rendering isolation (2026-08-30)
+
+Shared socket clients now register `rendered_components` through additive `set_client_info` capabilities. Factory-rendered component records are filtered per connection, including capability-aware snapshot replay. Capabilities remain connection-wide across sessions and are cleared only on socket release; explicit close removes only the closing width. Shared bindings retain factories while disposing live renderers and footer providers when no capable connection remains, recreating them for later capable joiners.
+
 Root tracker for repository-level divergence from upstream `badlogic/pi-mono`.
 Owns every audited production path whose nearest tracker is the repository root.
+
+## CodeGraph reference cleanup (2026-09-02)
+
+### What changed
+
+- `biome.json` drops the `!!**/.codegraph` ignore entry.
+
+### Why
+
+- The omo product removed its CodeGraph integration, so nothing writes a `.codegraph` directory anymore. An ignore entry for a directory that is never created is dead configuration that implies the integration still exists.
+- The matching `EXCLUDED_ROOT_PATHS` change in `packages/coding-agent/src/beta/omo-local-update-fingerprint.ts` is recorded in `packages/coding-agent/src/changes.md`, that path's nearest ancestor tracker.
+
+### Why this lives in the fork
+
+- The biome ignore list is fork-owned: it is an omo-specific surface that upstream `badlogic/pi-mono` does not carry.
+
+### Expected merge conflict zones
+
+- LOW: `biome.json` ignore list ordering during upstream syncs.
+
+## @anthropic-ai/sdk peer alignment (2026-08-26)
+
+### What changed
+
+- `package.json` bumps the pinned `@anthropic-ai/sdk` from `0.91.1` to `0.120.0` so the pin satisfies `@anthropic-ai/claude-agent-sdk@0.3.241`'s `>=0.93.0` peer range.
+
+### Why
+
+- Every bun install printed `warn: incorrect peer dependency "@anthropic-ai/sdk@0.91.1"`; the SDK floor moved to 0.93.0 when the agent SDK gained its credentials subsystem.
+
+### Why this lives in the fork
+
+- The root pin set is fork-owned dependency policy; upstream does not pin these packages together.
+
+### Expected merge conflict zones
+
+- LOW: `package.json` root dependency pins during upstream syncs.
+
+## Root config and package identities re-diverge from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `biome.json` keeps the fork lint surface: schema `2.5.10`, `preset: "recommended"` syntax, and the
+  `**/api/cursor-agent/gen` and `**/.codegraph` exclusions.
+- `packages/agent/package.json` keeps the senpi calver (`2026.8.24`), `tsc` build (upstream uses
+  `tsgo`), and the fork dependency set (`diff` 9, `typebox` 1.3.18, calver workspace ranges).
+- `packages/session-backends/sqlite-node/package.json` keeps the fork package name
+  `@earendil-works/pi-storage-sqlite-node`, `tsc` build, and vitest `4.1.11`.
+- `packages/telemetry/package.json` keeps calver, `@types/node` 26, vitest `4.1.11`, and `private: true`.
+- `packages/tui/package.json` keeps calver, `tsc` build, the `--import tsx` + multiplexer-env test
+  loader, node `>=24`, `marked` 18.0.10, and the `bench:frame-cost` script.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- Version/name/scripts blocks of every listed `package.json` on each upstream release bump; `biome.json`
+  whenever upstream migrates Biome versions.
+
+## Vitest source alias for ai auth subpaths (2026-08-25)
+
+### What changed
+
+- `vitest.base.ts`: added a resolve alias mapping `@earendil-works/pi-ai/auth/*` to `packages/ai/src/auth/*.ts` so vitest resolves the new `auth/pool/slots` subpath to source during tests.
+
+### Why
+
+- Workspace tests import `@earendil-works/pi-ai/auth/pool/slots`; without a source alias vitest resolves to the built `dist`, which does not exist for the new module, breaking test runs.
+
+### Why an extension could not handle it
+
+- Test runner aliasing is repository-level tooling configuration.
+
+### Expected merge conflict zones
+
+- LOW: single additive alias line in `vitest.base.ts`.
+
+## Release dependency refresh (2026-08-24)
+
+### What changed
+
+- `package.json`: `@biomejs/biome` 2.5.9 -> 2.5.10.
+- `packages/agent/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/ai/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/coding-agent/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/protocol/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/senpi-codemode/package.json`: `typebox` 1.3.16 -> 1.3.18.
+- `packages/{ai,coding-agent}/package.json`: `@aws-sdk/client-bedrock-runtime` 3.1115.0 -> 3.1116.0.
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.238 -> 0.3.241.
+- Root and generated release locks were regenerated from those exact pins.
+
+### Why
+
+- These are the repository-audited patch-level or same-line upgrades available for the 2026.8.24 release. TypeBox must remain single-instanced across the shared protocol/runtime packages, and the Bedrock pin must remain identical in `ai` and `coding-agent`. The Claude Agent SDK update also requires regenerating its platform lock and the published/install dependency closures.
+- `@anthropic-ai/sdk` remains at 0.91.1 because the minimum peer-compatible 0.93.0 still introduces browser-breaking credential-chain imports, while 0.120.0 is likewise unsafe. Deliberate breaking holds remain unchanged for `openai` 6.26.0 and `signal-exit` 3.0.7.
+
+### Why an extension could not handle it
+
+- Dependency resolution, exact pins, generated release locks, and platform-package selection happen before the runtime and extension system load.
+
+### Expected merge conflict zones
+
+- HIGH: root and coding-agent dependency blocks and generated lock artifacts.
+- MEDIUM: the shared TypeBox pins across five package manifests.
+
+## Dependency pin refresh, unused-dependency removal, and lock regeneration (2026-08-20)
+
+### What changed
+
+- `package.json`: root devDependencies bumped `esbuild` 0.28.1 -> 0.28.2 and `tsx` 4.23.1 -> 4.23.12; declared `concurrently` 10.0.5 (the root `dev` script invoked it while it was undeclared and absent from the lock); dropped the unused `@anthropic-ai/sandbox-runtime` and `jiti` devDependencies and the unused `get-east-asian-width` dependency. Overrides bumped `@hono/node-server` 2.0.10 -> 2.1.1, `postcss` 8.5.18 -> 8.5.26, `brace-expansion` 5.0.8 -> 5.0.9, `esbuild` 0.28.1 -> 0.28.2, `rimraf` 6.1.2 -> 6.1.3 (including the nested `gaxios.rimraf` pin), `shell-quote` 1.9.0 -> 1.10.0, `vite` 8.0.16 -> 8.2.2, and `ws` 8.21.1 -> 8.21.3, while `fast-uri` stays on 3.x and `protobufjs` on 7.x and `@anthropic-ai/sdk` stays pinned at 0.91.1.
+- `.npmrc`: rewrote the `min-release-age` exemption list as package-name patterns (`@hono/node-server`, `@anthropic-ai/claude-agent-sdk`, `@aws-sdk/*`, `@google/genai`, `@smithy/*`, `typebox`, `vite`) so the freshly published target versions resolve under the repository's two-day supply-chain window.
+- `packages/agent/package.json`, `packages/protocol/package.json`: `typebox` moved to 1.3.16 (from 1.3.8 and from the inconsistent 1.3.7).
+- `packages/telemetry/package.json`: `@types/node` 24.12.4 -> 26.2.0, matching the rest of the repository.
+- `packages/tui/package.json`: `marked` 18.0.7 -> 18.0.10.
+- `crates/senpi-pty/Cargo.toml`, `crates/senpi-pty/package.json`, and the workspace `Cargo.toml` pins: `libc` =0.2.174 -> =0.2.189, `napi` =3.10.3 -> =3.12.1, `napi-derive` =3.5.9 -> =3.6.3, `napi-build` =2.3.2 -> =2.4.1, `@napi-rs/cli` 3.7.2 -> 3.8.6.
+- `scripts/rolldown-platform-lock.test.mjs`: the asserted Rolldown binding version tracks 1.0.3 -> 1.2.4, which is what `vite` 8.2.2 resolves.
+
+### Why
+
+- These pins had drifted behind their current releases while the repository enforces exact pins through `npm run check:pinned-deps`, so refreshing them in one pass keeps every workspace on one resolved version and keeps the shared `typebox` identity single-instanced. The removals delete manifest entries with zero source references, and declaring `concurrently` makes the root manifest truthful about what `npm run dev` actually needs. `@anthropic-ai/sdk` is deliberately held at 0.91.1 because 0.120.0 adds credential-chain modules whose `node:fs` and `node:path` imports break the browser-bundle invariant enforced by `scripts/check-browser-smoke.mjs`. The `.npmrc` rewrite fixes an exemption list that could never match: npm compares these patterns against the package name only, so the previous `name@version` string was inert.
+
+### Why an extension could not handle it
+
+- Dependency resolution, override pinning, the supply-chain age gate, and Cargo pin selection are all performed by the package managers before any runtime exists, so no extension can influence which versions get installed or locked.
+
+### Expected merge conflict zones
+
+- HIGH: the `overrides` and `devDependencies` blocks in `package.json`, which upstream edits on nearly every release.
+- MEDIUM: the per-package `typebox`/`@types/node` pins and the workspace `Cargo.toml` dependency table.
+- LOW: `.npmrc` and the Rolldown binding version constant.
 
 ## Repository-wide upstream divergence audit (2026-08-17)
 
@@ -22,6 +239,9 @@ Every remaining audited production path with no nearer tracker than the root:
   `build:npm`/`build:bun`/`build:pnpm` entry points, root `check` swapped `tsgo --noEmit` for
   `tsc --noEmit` and added `check:claude-sdk-platform-lock` plus script-based browser smoke, and
   fork-only `verify:pms` orchestration was added.
+- `pnpm-workspace.yaml`: mirrors the root npm workspace's nested
+  `packages/session-backends/*` glob so the pnpm parity build installs and links the sqlite
+  session backend's workspace dependencies before `scripts/build-all.mjs` builds it.
 - `tsconfig.base.json`: `target`/`lib` raised from `ES2022` to `ES2024`.
 - `tsconfig.json`: reformatted to the fork's biome multi-line layout; workspace path mappings are
   semantically unchanged.
@@ -37,7 +257,8 @@ Every remaining audited production path with no nearer tracker than the root:
 - `packages/session-backends/sqlite-node/package.json`: renamed
   `@earendil-works/pi-session-backend-sqlite-node` ->
   `@earendil-works/pi-storage-sqlite-node`, made private and independently versioned at
-  `0.83.0`, `tsgo` -> `tsc`, and workspace deps switched to `file:` references.
+  `0.83.0`, `tsgo` -> `tsc`, and keeps its runtime `pi-agent-core` / `pi-ai` dependencies on
+  lockstep semver ranges so npm, Bun, and pnpm all link the live workspace packages.
 - `packages/session-backends/sqlite-node/src/sqlite/repo.ts`: optional-chaining refactor of the
   message-target guard.
 - `packages/telemetry/package.json`: private CalVer `2026.8.16`.
@@ -118,3 +339,34 @@ Every remaining audited production path with no nearer tracker than the root:
 - Builtin registration and widget internals under
   `packages/coding-agent/src/core/extensions/builtin/` if upstream reworks extension loading
   or adds overlapping notices.
+
+## Pnpm parity for the nested SQLite session backend (2026-08-19)
+
+### What changed
+
+- `pnpm-workspace.yaml` now includes `packages/session-backends/*`, matching the root npm
+  workspace and the package set explicitly built by `scripts/build-all.mjs`.
+- `packages/session-backends/sqlite-node/package.json` declares its shipped
+  `pi-agent-core` / `pi-ai` imports as lockstep runtime dependencies instead of packed
+  `file:` dev dependencies.
+- `scripts/sync-versions.js` keeps the backend's own `0.83.0` version independent while
+  synchronizing those lockstep dependency ranges during Senpi releases.
+
+### Why
+
+- The release pre-commit gate verifies npm, Bun, and pnpm. Pnpm previously excluded the
+  nested backend from its workspace and then, once included, packed its `file:` dependencies
+  before their declarations were built. The ordered build therefore reached the backend with
+  unresolved `pi-agent-core` / `pi-ai` types even though npm and Bun passed.
+
+### Why an extension could not handle it
+
+- This is package-manager workspace topology and release-version synchronization. Runtime
+  extensions load only after packages install and build, so they cannot repair missing
+  workspace membership, dependency links, or manifest pins.
+
+### Expected merge conflict zones
+
+- Upstream changes to the SQLite backend's dependency placement or independent-version policy.
+- Future workspace additions under nested `packages/*/*` paths, which must remain aligned
+  across root npm workspaces, `pnpm-workspace.yaml`, and `scripts/build-all.mjs`.

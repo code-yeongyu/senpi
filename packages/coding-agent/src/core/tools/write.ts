@@ -6,7 +6,12 @@ import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";
 import { getExperimentalToolSampling } from "../experimental.ts";
-import type { FilesystemPolicyChecker, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import type {
+	ExtensionContext,
+	FilesystemPolicyChecker,
+	ToolDefinition,
+	ToolRenderResultOptions,
+} from "../extensions/types.ts";
 import { renderToolDiff } from "./diff-render.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
@@ -221,9 +226,9 @@ export function createWriteToolDefinition(
 			{ path, content }: { path: string; content: string },
 			signal?: AbortSignal,
 			_onUpdate?,
-			_ctx?,
+			ctx?: ExtensionContext,
 		) {
-			const absolutePath = resolveToCwd(path, cwd);
+			const absolutePath = resolveToCwd(path, ctx?.cwd || cwd);
 			const dir = dirname(absolutePath);
 			return withFileMutationQueue(absolutePath, async () => {
 				// Do not reject from an abort event listener here: that would release the
@@ -255,7 +260,7 @@ export function createWriteToolDefinition(
 				throwIfAborted();
 
 				return {
-					content: [{ type: "text", text: `Successfully wrote ${content.length} bytes to ${path}` }],
+					content: [{ type: "text", text: `Successfully wrote to ${path}` }],
 					details: createWriteDetails(path, content, baseline),
 				};
 			});

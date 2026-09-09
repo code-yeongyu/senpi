@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
 
 const SESSION_ID = "fake-session-001";
 const REQUEST_ID = "fake-request-001";
@@ -271,7 +271,12 @@ async function main() {
 			if (!grandchild.pid) {
 				throw new Error("Failed to spawn fake cursor-agent grandchild");
 			}
-			writeFileSync(pidFile, `${grandchild.pid}\n`, "utf8");
+			// Atomic publish: writeFileSync creates the path first and fills it second, so a
+			// watcher waking on creation can read an empty file. rename(2) makes the pid file
+			// appear only once it already holds the complete pid.
+			const pendingPidFile = `${pidFile}.pending`;
+			writeFileSync(pendingPidFile, `${grandchild.pid}\n`, "utf8");
+			renameSync(pendingPidFile, pidFile);
 			grandchild.unref();
 			emitHappy();
 			break;
