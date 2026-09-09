@@ -33,6 +33,7 @@ import { execCommand } from "../exec.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
+import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import type {
 	EntryRenderer,
@@ -486,6 +487,13 @@ function createExtensionAPI(
 			assertActive();
 			extension.entryRenderers ??= new Map();
 			extension.entryRenderers.set(customType, renderer as EntryRenderer);
+		},
+
+		registerReadClassifier(classifier: ReadClassifier): () => void {
+			assertActive();
+			const unregister = runtime.trackEventBusSubscription(registerReadClassifier(classifier));
+			if (state === "loading") loadingUnsubscribers.push(unregister);
+			return unregister;
 		},
 
 		registerMcpServer(name: string, config: RegisteredMcpServerDeclaration["config"]): void {

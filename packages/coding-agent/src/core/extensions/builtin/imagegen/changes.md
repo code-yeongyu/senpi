@@ -1,5 +1,27 @@
 # changes
 
+## 2026-09-09 - GPT Image 2.5 generation and reference-image editing
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/params.ts` owns the tool schema, result details, and structured failures. Model selection defaults to GPT Image 2.5 Sunburst, with Flare and legacy GPT Image 2 available; quality adds xhigh/max and size accepts validated custom dimensions.
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/reference-images.ts` resolves 1-5 local reference files, checks regular-file status, the 50 MB limit, and PNG/JPEG/WEBP signatures, and encodes them for the existing images provider.
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/tool.ts` validates sizes through pi-ai, passes references after the text input, and reports the selected model on success and failure. Auth, native bypass, and exclusive PNG output writes remain unchanged.
+- `skill/SKILL.md` retains the prompt-crafting guide and adds model, quality, size, and end-state editing guidance. `test/imagegen-tool-2-5.test.ts` exercises provider dispatch and local validation; existing test fixture boilerplate is reduced to meet the 250-line cap without removing coverage.
+
+### Why
+
+- GPT Image 2.5 exposes higher quality tiers, custom resolutions, and reference-guided editing that the old fixed-model, text-only tool could not request.
+
+### Why an extension could not handle it
+
+- This is the owning builtin extension: its schema, input validation, model synthesis, and bundled skill must change together. The pi-ai provider already owns endpoint selection and the pinned SDK compatibility widening.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/extensions/builtin/imagegen/tool.ts` schema extraction and execute path.
+- LOW: new `params.ts` and `reference-images.ts`, the bundled skill, and focused imagegen tests.
+
 ## Placeholder credentials no longer hijack image-generation auth (2026-09-04)
 
 ### What changed

@@ -1,5 +1,23 @@
 # mcp Extension Changes
 
+## Discarded candidates release only their own MCP subscriptions (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: shutdown of an unattached candidate removes its factory-time inventory request and wire-status subscriptions without invoking shutdown on the service attached to the live runtime. Attached-session switch, reload and quit behavior is unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: repeated cancelled or budget-rejected resumes otherwise retain candidate APIs and listeners on the process-global MCP service; disposing that singleton instead would break the active session.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: this builtin owns the subscriptions and knows whether its instance attached the shared service. Core must emit candidate shutdown before invalidating its runner.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: session shutdown ownership and inventory bridge cleanup.
+
 ## Explicit pgrep match-all pattern for process-tree collection (2026-08-12)
 
 ### What changed

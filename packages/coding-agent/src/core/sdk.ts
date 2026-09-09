@@ -548,7 +548,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			hasExistingSession ? { includeSpeculationLead: false, admission: "resume" } : { admission: "start" },
 		);
 	} catch (error) {
-		session.dispose({ releaseProviderResources: false });
+		await session.disposeCandidate();
 		throw error;
 	}
 	sessionRef.current = session;

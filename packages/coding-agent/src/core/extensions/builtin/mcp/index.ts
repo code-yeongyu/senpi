@@ -167,6 +167,12 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			wrapAsync(
 				"mcp.session_shutdown",
 				async (event) => {
+					// An unstarted candidate owns only its factory-time subscriptions, not
+					// the shared service currently attached to the live runtime.
+					if (!attachPromise) {
+						disposeControlInventory();
+						return;
+					}
 					if (event.reason === "reload" && !sessionOwned) return;
 					disposeControlInventory();
 					await service.handleSessionShutdown(event);

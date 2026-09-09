@@ -5,13 +5,43 @@ import type { ImagesApi, ImagesModel } from "./types.ts";
 
 export const IMAGE_MODELS = {
 	openai: {
+		"gpt-image-2.5-sunburst": {
+			id: "gpt-image-2.5-sunburst",
+			name: "GPT Image 2.5 Sunburst",
+			api: "openai-images",
+			provider: "openai",
+			baseUrl: "https://api.openai.com/v1",
+			input: ["text", "image"],
+			output: ["image"],
+			cost: {
+				input: 5,
+				output: 30,
+				cacheRead: 1.25,
+				cacheWrite: 0,
+			},
+		} satisfies ImagesModel<"openai-images">,
+		"gpt-image-2.5-flare": {
+			id: "gpt-image-2.5-flare",
+			name: "GPT Image 2.5 Flare",
+			api: "openai-images",
+			provider: "openai",
+			baseUrl: "https://api.openai.com/v1",
+			input: ["text", "image"],
+			output: ["image"],
+			cost: {
+				input: 5,
+				output: 30,
+				cacheRead: 1.25,
+				cacheWrite: 0,
+			},
+		} satisfies ImagesModel<"openai-images">,
 		"gpt-image-2": {
 			id: "gpt-image-2",
 			name: "GPT Image 2",
 			api: "openai-images",
 			provider: "openai",
 			baseUrl: "https://api.openai.com/v1",
-			input: ["text"],
+			input: ["text", "image"],
 			output: ["image"],
 			cost: {
 				input: 5,
@@ -430,6 +460,36 @@ export const IMAGE_MODELS = {
 		"openai/gpt-image-2": {
 			id: "openai/gpt-image-2",
 			name: "OpenAI: GPT Image 2",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+			output: ["image"],
+			cost: {
+				input: 8,
+				output: 8,
+				cacheRead: 2,
+				cacheWrite: 0,
+			},
+		} satisfies ImagesModel<"openrouter-images">,
+		"openai/gpt-image-2.5-flare": {
+			id: "openai/gpt-image-2.5-flare",
+			name: "OpenAI: GPT Image 2.5 Flare",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+			output: ["image"],
+			cost: {
+				input: 8,
+				output: 8,
+				cacheRead: 2,
+				cacheWrite: 0,
+			},
+		} satisfies ImagesModel<"openrouter-images">,
+		"openai/gpt-image-2.5-sunburst": {
+			id: "openai/gpt-image-2.5-sunburst",
+			name: "OpenAI: GPT Image 2.5 Sunburst",
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",

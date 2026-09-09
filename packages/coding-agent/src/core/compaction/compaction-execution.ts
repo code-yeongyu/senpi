@@ -115,6 +115,7 @@ export async function compact(
 					sourceContext: cacheFriendly?.sourceContext,
 					requestOptions: cacheFriendly?.requestOptions,
 				},
+				settings.summarizationMaxDurationMs,
 			);
 			historyText = historyResult.text;
 			historyUsage = historyResult.usage;
@@ -138,6 +139,7 @@ export async function compact(
 				sourceContext: cacheFriendly?.turnPrefixSourceContext,
 				requestOptions: cacheFriendly?.requestOptions,
 			},
+			settings.summarizationMaxDurationMs,
 		);
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
@@ -165,6 +167,7 @@ export async function compact(
 				sourceContext: cacheFriendly?.sourceContext,
 				requestOptions: cacheFriendly?.requestOptions,
 			},
+			settings.summarizationMaxDurationMs,
 		);
 		summary = result.text;
 		summaryUsage = result.usage;
@@ -206,6 +209,7 @@ async function generateTurnPrefixSummary(
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
 	cacheFriendly?: Pick<CacheFriendlySummaryOptions, "sourceContext" | "requestOptions">,
+	summarizationMaxDurationMs?: number,
 ): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
@@ -251,6 +255,7 @@ async function generateTurnPrefixSummary(
 		streamFn,
 		retry,
 		callbacks,
+		summarizationMaxDurationMs,
 	);
 
 	const failure = getSummarizationFailure(response, "Turn prefix summarization");

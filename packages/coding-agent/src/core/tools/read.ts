@@ -20,6 +20,7 @@ import type {
 } from "../extensions/types.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
 import { resolveReadPathAsync, resolveToCwd } from "./path-utils.ts";
+import { type CompactReadClassification, classifyRead } from "./read-classifiers.ts";
 import { getTextOutput, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
@@ -41,9 +42,8 @@ export interface ReadToolDetails {
 	truncation?: TruncationResult;
 }
 
-interface CompactReadClassification {
-	kind: "docs" | "resource" | "skill";
-	label: string;
+interface ReadRenderState {
+	classifications?: Map<string | null, CompactReadClassification | undefined>;
 }
 
 const COMPACT_RESOURCE_FILE_NAMES = new Set(["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
@@ -144,6 +144,9 @@ function getCompactReadClassification(
 		return { kind: "skill", label: basename(dirname(absolutePath)) || fileName };
 	}
 
+	const registeredClassification = classifyRead({ absolutePath, cwd });
+	if (registeredClassification) return registeredClassification;
+
 	const docsClassification = getPiDocsClassification(absolutePath);
 	if (docsClassification) return docsClassification;
 
@@ -163,6 +166,16 @@ function formatCompactReadCall(
 	if (classification.kind === "skill") {
 		return (
 			theme.fg("customMessageLabel", `\x1b[1m[skill]\x1b[22m `) +
+			theme.fg("customMessageText", classification.label) +
+			formatReadLineRange(args, theme) +
+			expandHint
+		);
+	}
+
+	if (classification.kind === "memory") {
+		return (
+			theme.fg("accent", `\x1b[1m✦ ${classification.headline ?? "Recalled"}\x1b[22m`) +
+			" " +
 			theme.fg("customMessageText", classification.label) +
 			formatReadLineRange(args, theme) +
 			expandHint
@@ -220,7 +233,7 @@ function formatReadResult(
 export function createReadToolDefinition(
 	cwd: string,
 	options?: ReadToolOptions,
-): ToolDefinition<typeof readSchema, ReadToolDetails | undefined> {
+): ToolDefinition<typeof readSchema, ReadToolDetails | undefined, ReadRenderState> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
 	const ops = options?.operations ?? defaultReadOperations;
 	const filesystemPolicy = options?.filesystemPolicy;
@@ -357,9 +370,18 @@ export function createReadToolDefinition(
 				},
 			);
 		},
-		renderCall(args, theme, context) {
+		renderCall(args: ReadRenderArgs, theme, context) {
 			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			const classification = !context.expanded ? getCompactReadClassification(args, context.cwd) : undefined;
+			let classification: CompactReadClassification | undefined;
+			if (!context.expanded) {
+				const rawPath = str(args?.file_path ?? args?.path);
+				context.state.classifications ??= new Map();
+				const classifications = context.state.classifications;
+				if (!classifications.has(rawPath)) {
+					classifications.set(rawPath, getCompactReadClassification(args, context.cwd));
+				}
+				classification = classifications.get(rawPath);
+			}
 			text.setText(
 				classification
 					? formatCompactReadCall(classification, args, theme)

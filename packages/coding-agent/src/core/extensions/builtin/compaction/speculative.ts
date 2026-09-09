@@ -15,9 +15,14 @@ import {
 	type CompactionResult,
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
+	estimateTokens,
 	prepareCompaction,
 } from "../../../compaction/index.ts";
-import { StreamDurationBudgetError, StreamIdleTimeoutError } from "../../../compaction/stream-watchdog.ts";
+import {
+	StreamDurationBudgetError,
+	StreamIdleTimeoutError,
+	summarizationMaxDurationMs,
+} from "../../../compaction/stream-watchdog.ts";
 import {
 	createWarmAnchorSnapshot,
 	isWarmSummaryAnchorValid,
@@ -284,6 +289,14 @@ export async function runExtensionCompaction(
 		// inheritable so the next blocking route degrades on it instead of paying
 		// for a second request.
 		const retryEligible = snapshot.origin === "core-route" || snapshot.origin === "blocking";
+		// The attempt budget and the retry gate share one input-size-scaled number,
+		// so a large session gets both a proportional attempt deadline and room to
+		// retry transient failures without the 120s-era retry budget disqualifying
+		// every slow attempt (#1068).
+		const attemptBudgetMs = summarizationMaxDurationMs(
+			messages.reduce((total, message) => total + estimateTokens(message), 0),
+			snapshot.preparation.settings.summarizationMaxDurationMs,
+		);
 		try {
 			// The provider `error` stop is raised INSIDE the retried producer so a
 			// transient summarization failure spends the shared retry budget. The
@@ -294,6 +307,7 @@ export async function runExtensionCompaction(
 					const attempt = await generateSummaryMessage({
 						context,
 						forbidToolCalls: toolUseRetrySpent,
+						maxDurationMs: attemptBudgetMs,
 						messages: currentMessages,
 						onProgress,
 						prompt,
@@ -322,7 +336,7 @@ export async function runExtensionCompaction(
 				},
 				(error) =>
 					retryEligible &&
-					allowSummarizationRetry(Date.now() - retryStartedMs) &&
+					allowSummarizationRetry(Date.now() - retryStartedMs, attemptBudgetMs) &&
 					isRetryableSummaryAttempt(error),
 				DEFAULT_SUMMARIZATION_RETRY_POLICY,
 				signal,

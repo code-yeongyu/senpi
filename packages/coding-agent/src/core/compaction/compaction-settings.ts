@@ -13,6 +13,8 @@ export interface CompactionSettings extends IdealCompactionSettings {
 	restorationMaxTotalTokens?: number;
 	restorationContextRatio?: number;
 	idleCompactionEnabled?: boolean;
+	/** Optional per-attempt wall-clock budget override for summarization (adaptive default). */
+	summarizationMaxDurationMs?: number;
 }
 
 export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {

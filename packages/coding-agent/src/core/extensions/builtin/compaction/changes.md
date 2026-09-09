@@ -1,5 +1,46 @@
 # changes.md — builtin compaction policy
 
+## Allow compaction-eligible restored transcripts during resumed-session admission (2026-09-09)
+
+### What changed
+
+- `projectModelUsabilityBudget`: on `admission: "resume"`, when compaction is enabled and speculation lead is omitted, transcripts whose uncompacted tokens would exceed the target window due to full output generation reserves are now admitted if the uncompacted context fits within the model's summarization capacity (`liveContextTokens + compactionReserveTokens + safetyMarginTokens <= contextWindow`) and the post-compaction context fits for execution (`effectiveKeepRecentTokens + baseRequiredTokens <= contextWindow`).
+- `test/suite/model-usability-budget.test.ts`: added tests covering resume admission for uncompacted transcripts requiring compaction (such as 346k tokens on a 400k model with 128k output reserve) and confirming rejection when compaction is disabled.
+
+### Why
+
+- Resuming a session with a high-context model (e.g. `gpt-6-astra` with a 400,000 window and 128,000 maxTokens output reserve) charged the full output generation reserve (128,000) against the uncompacted transcript (e.g. 346,286 tokens) on startup admission.
+- The resulting 520,291-token requirement threw `ModelUsabilityBudgetError` before the session could open, preventing the compaction extension from running its automatic `before_agent_start` compaction and permanently locking the session.
+
+### Why an extension could not handle it
+
+- `createAgentSession` evaluates model usability during session construction before extension event hooks are wired.
+
+### Expected merge conflict zones
+
+- `model-usability-budget.ts` projection calculation; `test/suite/model-usability-budget.test.ts`.
+
+## Scale the speculative attempt budget and retry allowance with the input size (2026-09-08)
+
+### What changed
+
+- `speculative-summary.ts`: `generateSummaryMessage` applies `summarizationMaxDurationMs()` to the summarization stream (the size-adaptive default, or the resolved budget passed by the caller) instead of the fixed 120s default.
+- `speculative.ts`: computes one per-attempt budget from the summarization input and `compaction.summarizationMaxDurationMs`, passes it into `generateSummaryMessage`, and feeds the same value to the retry gate.
+- `summarization-retry.ts`: `allowSummarizationRetry()` now takes the attempt budget and keeps the "half of one attempt" total allowance (`summarizationRetryTotalBudgetMs()`), so large sessions keep proportional retry room instead of being disqualified after 60s of elapsed time.
+
+### Why
+
+- #1068: with a fixed 120s attempt budget, large sessions lose every summarization attempt to the wall-clock watchdog; the extension route's fixed 60s retry allowance compounds the deadlock by refusing retries after one slow attempt.
+
+### Why an extension could not handle it
+
+- The watchdog constants live in core; the extension route owns the attempt loop, so both sides must share one budget number.
+
+### Expected merge conflict zones
+
+- LOW: `speculative-summary.ts` options and stream consumption.
+- LOW: `speculative.ts` retry-loop budget computation.
+
 ## Recover fitting retained suffixes with consistent token accounting (2026-09-08)
 
 ### What changed

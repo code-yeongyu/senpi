@@ -12,7 +12,7 @@ How to write image prompts that come back right the first time, and how to fix t
 When image generation tooling is present in your tool set, pick the surface that actually exists right now:
 
 - If a native `image_generation` server tool is available, use it. The provider runs generation server-side and returns the image in the response stream.
-- Otherwise, call the `generate_image` tool. It sends your prompt to the configured OpenAI-compatible endpoint and saves the result to a file.
+- Otherwise, call the `generate_image` tool. It sends your prompt and optional reference images to the configured OpenAI-compatible endpoint and saves the result as PNG files. Its default model is `gpt-image-2.5-sunburst`; choose `gpt-image-2.5-flare` for speed or `gpt-image-2` for the previous generation. These model and parameter controls apply to `generate_image`, not the native server tool.
 
 Check your current tool set before choosing. Skill visibility refreshes on reload, but tool state can change mid-session (model switch, credential change), so trust the tools you can see over what this page said at startup. If both surfaces ever appear, prefer the native server tool.
 
@@ -53,11 +53,54 @@ Both surfaces can return a `revised_prompt`: the prompt the model actually used 
 2. Fold the delta into your next prompt explicitly. If the rewrite dropped "overcast sky", put "overcast sky, no direct sunlight" back with more weight. If it added something you dislike, name the exclusion ("no lens flare").
 3. Regenerate. Treat each round as a conversation with the rewriter, not a fresh roll of the dice.
 
-## Editing and masks
+## Model selection
 
-v1 has no editing surface. The `generate_image` tool is text-only: it accepts a prompt and returns new images. There is no image input, no mask, no inpainting, no variation mode. The native `image_generation` server tool may perform provider-side edits on its own (action=auto), but no edit controls are exposed here.
+- `gpt-image-2.5-sunburst` (default): most capable; choose it for precise edits, difficult compositions, and fidelity to references.
+- `gpt-image-2.5-flare`: fastest; choose it for everyday generation and quick iterations.
+- `gpt-image-2`: legacy, previous-generation option.
 
-Don't build workflows around editing. If the user asks to change an existing image, say that v1 generates from text only, then offer the closest text-only path: describe the desired end state as a full new prompt. Editing, masks, and image input are planned for a future version.
+## Quality tiers
+
+`quality` accepts `low`, `medium`, `high`, `xhigh`, `max`, or `auto` (default). Start with `auto` or a lower tier while exploring, then increase quality for the final image. `xhigh` and `max` are available only on GPT Image 2.5 and incur higher latency and cost. Do not request them with `gpt-image-2`; the API rejects unsupported model/tier combinations.
+
+## Image sizes
+
+`size` defaults to `auto`. Choose a preset or an arbitrary `WIDTHxHEIGHT` for GPT Image 2 / 2.5. Custom dimensions must satisfy all of these constraints:
+
+- Both width and height are divisible by 16.
+- Aspect ratio is between 1:3 and 3:1, inclusive.
+- Neither edge exceeds 3840 pixels.
+- Total pixels are between 655,360 and 8,294,400, inclusive (the upper limit is 3840x2160 or 2160x3840, not 3840x3840).
+
+| Size | Typical use |
+| --- | --- |
+| `auto` | Let the model choose |
+| `1024x1024` | Square preset |
+| `1536x1024` | Landscape preset |
+| `1024x1536` | Portrait preset |
+| `2048x2048` | Larger square |
+| `2048x1152` | 16:9 landscape |
+| `3840x2160` | Maximum-pixel 16:9 landscape |
+| `2160x3840` | Maximum-pixel 9:16 portrait |
+
+## Editing with reference images
+
+Pass `reference_image_paths` to edit an existing image or use images as visual references. Supply 1-5 local PNG, JPEG, or WEBP files, each at most 50 MB. Paths may be absolute or relative to the current working directory. With references the tool sends an image-edit request; without them it generates from text.
+
+Describe the desired END STATE in the prompt, not just a terse change instruction. State what must remain unchanged and what the finished image should contain. When passing multiple references, identify their roles in the same order as the paths.
+
+```json
+{
+  "prompt": "The same red fox from the reference, now wearing a knitted blue scarf, in an eye-level wildlife photograph. Preserve its face, fur markings, pose, and forest background. Soft overcast light, muted woodland colors, shallow depth of field; only the scarf is new.",
+  "model": "gpt-image-2.5-sunburst",
+  "reference_image_paths": ["art/fox.png"],
+  "quality": "high",
+  "size": "2048x1152",
+  "output_path": "art/fox-with-scarf.png"
+}
+```
+
+Read any returned `revised_prompt` after an edit, just as after generation. The client tool includes these in its result text and `details.revisedPrompts`. Compare the rewrite and saved image against the desired end state before another edit, and use a new `output_path` to preserve the source image.
 
 ## Iteration workflow
 

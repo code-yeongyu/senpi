@@ -260,14 +260,24 @@ export class AgentSessionRuntime {
 			projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
 			launchProfile: this._launchProfile,
 		});
+		let acceptance: ReturnType<typeof prepared.beginCommit> | undefined;
 		try {
+			// A denied writer grant must not run destructive before-switch handlers.
+			// The acceptance grant is reversible until this candidate becomes current.
+			acceptance = prepared.beginCommit();
 			const beforeResult = await this.emitBeforeSwitch("resume", sessionPath);
 			if (beforeResult.cancelled) return beforeResult;
-			prepared.commit();
+			acceptance.commit();
 			await this.teardownCurrent("resume", sessionManager.getSessionFile());
 			await this.apply(result);
 		} finally {
-			if (this.session !== result.session) result.session.dispose({ releaseProviderResources: false });
+			if (this.session !== result.session) {
+				try {
+					await result.session.disposeCandidate();
+				} finally {
+					acceptance?.rollback();
+				}
+			}
 		}
 		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };

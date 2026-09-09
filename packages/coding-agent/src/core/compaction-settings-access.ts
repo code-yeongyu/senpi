@@ -13,6 +13,12 @@ export interface CompactionSettings extends IdealCompactionSettings {
 	restorationMaxTotalTokens?: number; // default: 50000
 	restorationContextRatio?: number; // default: 0.15
 	idleCompactionEnabled?: boolean; // default: true
+	/**
+	 * Optional override for one summarization attempt's wall-clock budget.
+	 * Default: size-adaptive (120s floor, 2ms per estimated input token, 30min
+	 * cap); see `core/compaction/stream-watchdog.ts`.
+	 */
+	summarizationMaxDurationMs?: number;
 }
 
 export function compactionEnabled(settings?: CompactionSettings): boolean {

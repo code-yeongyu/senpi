@@ -11,10 +11,11 @@ import {
 	type TextContent,
 } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/compat";
+import { estimateTokens } from "../../../compaction/compaction.ts";
 import {
 	consumeStreamWithIdleTimeout,
 	DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
-	DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
+	summarizationMaxDurationMs,
 } from "../../../compaction/stream-watchdog.ts";
 import { convertToLlm } from "../../../messages.ts";
 import type { buildPrompt } from "./prompts.ts";
@@ -95,6 +96,8 @@ function summarizationStream(
 export async function generateSummaryMessage(options: {
 	context: SpeculativeCompactionContext;
 	forbidToolCalls?: boolean;
+	/** Resolved per-attempt duration budget; falls back to the size-adaptive default. */
+	maxDurationMs?: number;
 	messages: AgentMessage[];
 	onProgress?: CompactionProgressCallback;
 	prompt: ReturnType<typeof buildPrompt>;
@@ -129,6 +132,9 @@ export async function generateSummaryMessage(options: {
 				timestamp: Date.now(),
 			},
 		];
+		const maxDurationMs =
+			options.maxDurationMs ??
+			summarizationMaxDurationMs(requestMessages.reduce((total, message) => total + estimateTokens(message), 0));
 		const providerRequest = await options.context.prepareProviderRequest?.(requestMessages);
 		const requestContext = {
 			systemPrompt: options.snapshot.systemPrompt ?? options.prompt.system,
@@ -155,7 +161,7 @@ export async function generateSummaryMessage(options: {
 		});
 		await consumeStreamWithIdleTimeout(responseStream, {
 			idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
-			maxDurationMs: DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
+			maxDurationMs,
 			abort: () => requestController.abort(),
 			signal: options.signal,
 			onEvent: (event) => {

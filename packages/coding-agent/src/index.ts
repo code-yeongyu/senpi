@@ -347,6 +347,12 @@ export {
 	withFileMutationQueue,
 } from "./core/tools/index.ts";
 export {
+	type CompactReadClassification,
+	classifyRead,
+	type ReadClassifier,
+	registerReadClassifier,
+} from "./core/tools/read-classifiers.ts";
+export {
 	hasTrustRequiringProjectResources,
 	type ProjectTrustDecision,
 	ProjectTrustStore,

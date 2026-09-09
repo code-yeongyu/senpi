@@ -1,5 +1,26 @@
 # changes
 
+## Roll back unaccepted candidate writer grants (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts` and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: internal reservation acknowledgments distinguish new grants from already-owned paths. Failed/cancelled candidate acceptance can synchronously release only its newly acquired canonical grant. Accepted and previously owned writer reservations retain the existing worker-exit lifetime.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts` and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: a cancelled resume must not block other clients from opening its unused target, and cancelling a resume of the live session must not release its existing writer ownership.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts` and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: the transport host owns canonical grants across worker isolates; extension events cannot release that private registry state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: internal release message.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: reservation acknowledgment and release dispatch.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: synchronous grant/rollback exchange.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: grant ownership and release callback.
+
 ## Budget rejection keeps its typed identity across the RPC boundary (2026-09-08)
 
 ### What changed

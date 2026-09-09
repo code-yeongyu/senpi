@@ -333,6 +333,68 @@ describe("model usability budget", () => {
 		resumed.session.dispose();
 	});
 
+	it("resumes a restored transcript whose uncompacted context requires compaction to hold output reserves", async () => {
+		// given
+		const harness = await createHarness({
+			models: [{ id: "astra-shaped", contextWindow: 400_000, maxTokens: 128_000 }],
+		});
+		harnesses.push(harness);
+		const model = harness.getModel();
+		const sessionManager = SessionManager.inMemory(harness.tempDir);
+		const liveTokens = 346_286;
+		sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "! ".repeat(liveTokens * 2) }],
+			timestamp: Date.now(),
+		});
+
+		// when
+		const resumed = await createAgentSession({
+			cwd: harness.tempDir,
+			agentDir: join(harness.tempDir, "astra-resume"),
+			model,
+			sessionManager,
+		});
+
+		// then
+		expect(resumed.session.agent.state.messages).toHaveLength(1);
+		resumed.session.dispose();
+	});
+
+	it("rejects an uncompacted transcript on resume when compaction is disabled", async () => {
+		// given
+		const harness = await createHarness({
+			models: [{ id: "astra-shaped", contextWindow: 400_000, maxTokens: 128_000 }],
+			settings: { compaction: { enabled: false } },
+		});
+		harnesses.push(harness);
+		const model = harness.getModel();
+		const sessionManager = SessionManager.inMemory(harness.tempDir);
+		const liveTokens = 346_286;
+		sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "! ".repeat(liveTokens * 2) }],
+			timestamp: Date.now(),
+		});
+
+		// when / then
+		await expect(
+			createAgentSession({
+				cwd: harness.tempDir,
+				agentDir: join(harness.tempDir, "astra-disabled-resume"),
+				model,
+				sessionManager,
+				settingsManager: harness.settingsManager,
+			}),
+		).rejects.toMatchObject({
+			name: "ModelUsabilityBudgetError",
+			projection: {
+				usable: false,
+				admission: "resume",
+			},
+		});
+	});
+
 	it("keeps fresh and fitting resumed sessions accepted", async () => {
 		// given
 		const harness = await createHarness({

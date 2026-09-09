@@ -1,5 +1,26 @@
 # core/tools changes
 
+## Compact memory read classifications with stable headlines (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: consults registered classifiers after the SKILL.md check and before pi docs and AGENTS/CLAUDE resource classification. Memory reads render an accent headline and label with the existing line range and expand hint; docs/resource/skill formatting is unchanged.
+- `packages/coding-agent/src/core/tools/read.ts`: caches classifications, including unclaimed paths, by raw path in each tool call's renderer state so redraws and expand/collapse do not choose another headline.
+- `packages/coding-agent/src/core/tools/read-classifiers.ts` (new, fork-only): defines the shared classification types and a first-claim registry with idempotent unregister functions. Throwing classifiers are reported and skipped.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/read.ts` needs to recognize extension-owned memory paths without hardcoding memory storage layouts, while keeping SKILL.md precedence and stable transcript headlines.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/read.ts` owns built-in compact classification and per-call rendering state. An extension could replace the whole read renderer, but could not previously contribute a classification while retaining the host's existing formats and expansion behavior.
+
+### Expected merge conflict zones
+
+- MEDIUM: imports, `ReadRenderState`, `getCompactReadClassification`, `formatCompactReadCall`, and `createReadToolDefinition` in `packages/coding-agent/src/core/tools/read.ts`. Preserve classifier priority and per-call memoization when taking upstream renderer changes.
+- LOW: `packages/coding-agent/src/core/tools/read-classifiers.ts` is a new fork-only module.
+
 ## Canonical identity is resolved, not guessed (2026-09-07)
 
 ### What changed

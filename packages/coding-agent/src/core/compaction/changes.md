@@ -615,3 +615,26 @@ If upstream changes branch summary preparation or adds new branch summary data s
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/compaction/compaction.ts` settings type re-export near the module imports.
+
+## 2026-09-08 - Scale the summarization duration budget with the input size
+
+### What changed
+
+- `stream-watchdog.ts`: new `summarizationMaxDurationMs()` computes the per-attempt wall-clock budget as the larger of the 120s floor and 2ms per estimated input token, clamped to a 30-minute cap, with an optional explicit override.
+- `compaction.ts`: `completeSummarization()` estimates the context being summarized and applies the scaled budget instead of the fixed `DEFAULT_SUMMARIZATION_MAX_DURATION_MS`; `generateSummary()` and `generateSummaryWithUsage()` accept an optional override that flows from the resolved compaction settings.
+- `compaction-execution.ts`: `compact()` forwards `settings.summarizationMaxDurationMs` to history and turn-prefix summaries.
+- `compaction-settings.ts`: the resolved settings contract gains the optional `summarizationMaxDurationMs` override.
+- `compaction-settings-access.ts` / `compaction-settings-resolver.ts`: new optional `compaction.summarizationMaxDurationMs` setting; non-positive and non-finite values fall back to the adaptive default.
+
+### Why
+
+- #1068: a 257k-token session summarization on a slower provider exceeds the hardcoded 120s budget while still streaming, so every compaction attempt is rejected and the session cannot drop below its compaction threshold. At a 1M context window the automatic threshold fires only when the summarizable input is already hundreds of thousands of tokens, so the fixed 120s budget guarantees failure exactly when compaction becomes mandatory.
+
+### Why an extension could not handle it
+
+- `completeSummarization()` is the shared core choke point for every summarization stream; the extension policy layer reaches it only through this function's options, and the budget must apply per attempt inside the core watchdog.
+
+### Expected merge conflict zones
+
+- LOW: `compaction.ts` around `completeSummarization` and the `generateSummary*` signatures.
+- LOW: `compaction-settings.ts`, `compaction-settings-access.ts`, and `compaction-settings-resolver.ts` settings contracts.

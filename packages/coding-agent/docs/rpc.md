@@ -212,8 +212,11 @@ and only then constructs its session writer and runtime. A conflicting alias att
 explicitly before opening another writer.
 
 SessionManager writes, switches, forks, new sessions and imports obtain the same grant before writer creation or
-append-side normalization. Acquired paths are conservatively retained for that worker's entire lifetime, including
-superseded paths after a switch. Each worker may reserve at most 64 paths; an exhausted reservation budget fails
+append-side normalization. Resume candidate preparation acquires no writer reservation. After exact admission,
+acceptance obtains a reversible grant and revalidates the destination before switch handlers; cancellation or failure
+releases only a newly acquired candidate grant, leaving existing live ownership intact. Accepted writer paths are
+conservatively retained for that worker's entire lifetime, including superseded paths after a switch.
+Each worker may reserve at most 64 paths; an exhausted reservation budget fails
 explicitly. Close or an opening deadline requests worker termination, but does not release reservations or worker
 capacity until the actual exit event. A syscall that cannot yet be interrupted can therefore keep an entry
 internally quarantined after the routing handle has closed. `list_sessions` continues to publish `closing`, not a

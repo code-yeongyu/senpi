@@ -1,22 +1,28 @@
 import OpenAI from "openai";
-import type { Image, ImageGenerateParamsNonStreaming } from "openai/resources/images.js";
+import type { Image, ImageEditParamsNonStreaming, ImageGenerateParamsNonStreaming } from "openai/resources/images.js";
 import type {
 	AssistantImages,
 	ImageContent,
 	ImagesContext,
 	ImagesFunction,
 	ImagesModel,
-	ImagesOptions,
 	ProviderHeaders,
 	TextContent,
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
-import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
+import { buildEditParams } from "./openai-images-edit.ts";
+import { buildParams, isImageParams, type OpenAIImagesOptions } from "./openai-images-params.ts";
 
-const MAX_PROMPT_CHARS = 32_000;
+export {
+	type OpenAIImageQuality,
+	type OpenAIImageSize,
+	type OpenAIImagesOptions,
+	parseOpenAIImageSize,
+} from "./openai-images-params.ts";
+
 const MAX_IMAGE_BYTES = 24 * 1024 * 1024;
 const ENDPOINT_SUFFIXES = ["/chat/completions", "/responses", "/models"] as const;
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47] as const;
@@ -24,12 +30,6 @@ const JPEG_MAGIC = [0xff, 0xd8, 0xff] as const;
 const WEBP_MAGIC = [0x52, 0x49, 0x46, 0x46, 0x57, 0x45, 0x42, 0x50] as const;
 
 type SupportedImageMime = "image/png" | "image/jpeg" | "image/webp";
-
-export interface OpenAIImagesOptions extends ImagesOptions {
-	size?: "auto" | "1024x1024" | "1024x1536" | "1536x1024";
-	quality?: "auto" | "low" | "medium" | "high";
-	n?: number;
-}
 
 export const generateImages: ImagesFunction<"openai-images", OpenAIImagesOptions> = async (
 	model: ImagesModel<"openai-images">,
@@ -47,9 +47,12 @@ export const generateImages: ImagesFunction<"openai-images", OpenAIImagesOptions
 
 	try {
 		let params = buildParams(model, context, options);
+		const images = context.input.filter((item): item is ImageContent => item.type === "image");
+		const method = images.length > 0 ? "edit" : "generate";
+		if (method === "edit") params = await buildEditParams(params, images);
 		const nextParams = await options?.onPayload?.(params, model);
 		if (nextParams !== undefined) {
-			if (!isGenerateParams(nextParams)) throw new Error("onPayload returned an invalid image generation payload");
+			if (!isImageParams(nextParams)) throw new Error("onPayload returned an invalid image generation payload");
 			params = nextParams;
 		}
 
@@ -68,7 +71,15 @@ export const generateImages: ImagesFunction<"openai-images", OpenAIImagesOptions
 			maxRetries: 0,
 		};
 		const { data: response, response: rawResponse } = await retryProviderRequest(
-			() => client.images.generate(params, requestOptions).withResponse(),
+			() => {
+				// openai SDK pinned at 6.26.0 predates gpt-image-2.5 quality tiers
+				const sdkParams = params as ImageGenerateParamsNonStreaming & ImageEditParamsNonStreaming;
+				return (
+					method === "edit"
+						? client.images.edit(sdkParams, requestOptions)
+						: client.images.generate(sdkParams, requestOptions)
+				).withResponse();
+			},
 			{
 				maxRetries: options?.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs,
@@ -95,39 +106,6 @@ export const generateImages: ImagesFunction<"openai-images", OpenAIImagesOptions
 		return output;
 	}
 };
-
-function buildParams(
-	model: ImagesModel<"openai-images">,
-	context: ImagesContext,
-	options?: OpenAIImagesOptions,
-): ImageGenerateParamsNonStreaming {
-	const promptParts: string[] = [];
-	for (const item of context.input) {
-		if (item.type === "image") {
-			throw new Error("generations does not accept image input; use the images edit endpoint");
-		}
-		const text = sanitizeSurrogates(item.text);
-		if (text.trim()) promptParts.push(text);
-	}
-	const prompt = promptParts.join("\n\n");
-	if (!prompt.trim()) throw new Error("Image generation requires a non-empty text prompt");
-	if (prompt.length > MAX_PROMPT_CHARS) {
-		throw new Error(`Image generation prompt exceeds ${MAX_PROMPT_CHARS} characters`);
-	}
-	return {
-		model: model.id,
-		prompt,
-		size: options?.size ?? "auto",
-		quality: options?.quality ?? "auto",
-		n: options?.n ?? 1,
-		output_format: "png",
-		stream: false,
-	};
-}
-
-function isGenerateParams(value: unknown): value is ImageGenerateParamsNonStreaming {
-	return typeof value === "object" && value !== null && "prompt" in value && typeof value.prompt === "string";
-}
 
 function normalizeBaseUrl(baseUrl: string): string {
 	let url: URL;

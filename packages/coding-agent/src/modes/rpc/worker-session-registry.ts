@@ -51,6 +51,9 @@ export class WorkerSessionRegistry {
 		};
 		const worker = new SessionWorkerClient({
 			reserve: (path) => this.reserve(handle, path),
+			release: (path) => {
+				if (this.reservations.get(path) === handle) this.reservations.delete(path);
+			},
 			exit: () => {
 				if (this.entries.get(handle) !== entry) return;
 				entry.state = "closed";
@@ -191,7 +194,7 @@ export class WorkerSessionRegistry {
 		return { ...result, attached: true };
 	}
 
-	private reserve(handle: string, path: string): boolean {
+	private reserve(handle: string, path: string): boolean | "acquired" {
 		const entry = this.entries.get(handle);
 		if (!entry) return false;
 		const owner = this.reservations.get(path);
@@ -201,7 +204,7 @@ export class WorkerSessionRegistry {
 		for (const current of this.reservations.values()) if (current === handle) count++;
 		if (count >= SESSION_WORKER_LIMITS.reservations) return false;
 		this.reservations.set(path, handle);
-		return true;
+		return "acquired";
 	}
 
 	private openResult(handle: string, entry: RpcSessionEntry): OpenRpcSession {

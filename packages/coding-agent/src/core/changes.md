@@ -1,3 +1,28 @@
+## Cancellation-safe candidate ownership (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: all prepared-manager writer entry points defer reservations, including open, set/reload, new, branch and write paths. Acceptance acquires the actual destination grant and revalidates its bytes before switch handlers; persistence remains deferred until the veto passes.
+- `packages/coding-agent/src/core/session-write-reservation.ts`: a newly acquired grant returns a rollback callback; an already-owned live grant does not.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: cancelled or failed acceptance rolls back new ownership after candidate cleanup; reservation denial precedes destructive switch handlers and live teardown.
+- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: discarded candidates run their own `session_shutdown` handlers with the resume reason before invalidation, including budget-admission failure, without releasing provider resources belonging to the live session.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/session-write-reservation.ts` and `packages/coding-agent/src/core/agent-session-runtime.ts`: a cancelled shared-host resume retained a destination reservation until worker exit, preventing another client from opening the target. Snapshot revalidation prevents committing admission based on changed destination bytes.
+- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: ordinary disposal skipped extension shutdown, retaining candidate MCP subscriptions on the live singleton.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/session-write-reservation.ts`, `packages/coding-agent/src/core/agent-session-runtime.ts`, `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: prepared writer ownership and pre-start candidate disposal are core lifecycle responsibilities before extension startup.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: deferred persistence, reservation entry points and `prepareOpen` acceptance.
+- `packages/coding-agent/src/core/session-write-reservation.ts`: host grant callback.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` acceptance and discard finally block.
+- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: candidate shutdown and failed model admission.
+
 ## Resume admission uses the prepared destination runtime (2026-09-08)
 
 ### What changed
@@ -24,6 +49,24 @@
 - `packages/coding-agent/src/core/session-manager.ts`: constructor, persistence guards and `open`/`prepareOpen`.
 - `packages/coding-agent/src/core/sdk.ts`: authoritative post-construction budget check.
 - `packages/coding-agent/src/core/agent-session.ts`: optional provider-resource release in `dispose`.
+
+## Size-adaptive summarization duration budget setting (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction-settings.ts`, `compaction-settings-access.ts`, and `compaction-settings-resolver.ts`: new optional `compaction.summarizationMaxDurationMs` setting resolving to a positive finite number or `undefined` (adaptive default).
+
+### Why
+
+- Large sessions deadlock on compaction when the fixed 120s summarization watchdog outlives slow providers (#1068); the setting is the user-facing escape hatch over the size-adaptive default.
+
+### Why an extension could not handle it
+
+- The settings contract is consumed by core compaction execution before extension hooks run.
+
+### Expected merge conflict zones
+
+- LOW: the three settings files' `CompactionSettings` / `ResolvedCompactionSettings` shapes.
 
 ## Same-model recovery for a native tool-search 400 (2026-09-08)
 

@@ -43,6 +43,7 @@ export type SessionWorkerToHost =
 	| { type: "ready"; request: number; snapshot: WorkerSnapshot }
 	| { type: "result"; request: number; error?: string }
 	| { type: "reserve"; path: string; signal: SharedArrayBuffer }
+	| { type: "release_reservation"; path: string; signal: SharedArrayBuffer }
 	| { type: "snapshot"; snapshot: WorkerSnapshot; signal: SharedArrayBuffer; settled?: boolean }
 	| { type: "control_done"; control: "display" | "cancel_ui" }
 	| {

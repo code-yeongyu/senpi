@@ -829,7 +829,11 @@ export class SessionManager {
 	private sessionDir: string;
 	private cwd: string;
 	private persist: boolean;
-	private deferredPersistence?: { rewrite: boolean; entries: SessionEntry[] };
+	private deferredPersistence?: {
+		rewrite: boolean;
+		entries: SessionEntry[];
+		snapshots: Map<string, Buffer | undefined>;
+	};
 	private flushed: boolean = false;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
@@ -876,7 +880,9 @@ export class SessionManager {
 		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePath(sessionDir);
 		this.persist = persist;
-		this.deferredPersistence = deferredPersistence ? { rewrite: false, entries: [] } : undefined;
+		this.deferredPersistence = deferredPersistence
+			? { rewrite: false, entries: [], snapshots: new Map() }
+			: undefined;
 		if (persist && !deferredPersistence && this.sessionDir && !existsSync(this.sessionDir)) {
 			mkdirSync(this.sessionDir, { recursive: true });
 		}
@@ -910,8 +916,18 @@ export class SessionManager {
 		this._setSessionFile(sessionFile);
 	}
 
+	private _reserveWrite(path: string): void {
+		if (this.deferredPersistence) {
+			if (!this.deferredPersistence.snapshots.has(path)) {
+				this.deferredPersistence.snapshots.set(path, existsSync(path) ? readFileSync(path) : undefined);
+			}
+			return;
+		}
+		reserveSessionWrite(path);
+	}
+
 	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
-		if (this.persist) reserveSessionWrite(resolvePath(sessionFile));
+		if (this.persist) this._reserveWrite(resolvePath(sessionFile));
 		this.sessionFile = resolvePath(sessionFile);
 		this.mirrorTrimmed = false;
 		this.residentStore.clear();
@@ -988,7 +1004,7 @@ export class SessionManager {
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
-			reserveSessionWrite(path);
+			this._reserveWrite(path);
 			this.sessionFile = path;
 		}
 		return this.sessionFile;
@@ -1792,7 +1808,7 @@ export class SessionManager {
 				parentId = labelEntry.id;
 			}
 
-			reserveSessionWrite(newSessionFile);
+			this._reserveWrite(newSessionFile);
 			this.residentStore.clear();
 			this.mirrorTrimmed = false;
 			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
@@ -1871,25 +1887,44 @@ export class SessionManager {
 		cwdOverride?: string,
 	): {
 		sessionManager: SessionManager;
-		commit: () => void;
+		beginCommit: () => { commit: () => void; rollback: () => void };
 	} {
 		const sessionManager = SessionManager._open(path, sessionDir, cwdOverride, true);
 		const pending = sessionManager.deferredPersistence;
 		return {
 			sessionManager,
-			commit: () => {
-				sessionManager.deferredPersistence = undefined;
-				mkdirSync(sessionManager.sessionDir, { recursive: true });
-				if (pending?.rewrite) {
-					sessionManager._rewriteFile();
-				} else {
-					const file = sessionManager.getSessionFile();
-					if (file && existsSync(file)) {
-						const content = readFileSync(file);
-						if (content.length > 0 && content[content.length - 1] !== 10) appendFileSync(file, "\n");
+			beginCommit: () => {
+				const file = sessionManager.getSessionFile();
+				if (!file) throw new Error("Prepared session is missing its destination file");
+				// Admission ran on a read-only snapshot. Revalidate the actual destination
+				// under its canonical host grant before any destructive switch handler.
+				const release = reserveSessionWrite(file);
+				try {
+					const expected = pending?.snapshots.get(file);
+					const current = existsSync(file) ? readFileSync(file) : undefined;
+					if (expected === undefined ? current !== undefined : !current?.equals(expected)) {
+						throw new Error(`Session file changed while preparing resume: ${file}`);
 					}
-					for (const entry of pending?.entries ?? []) sessionManager._persist(entry);
+				} catch (error) {
+					release?.();
+					throw error;
 				}
+				return {
+					rollback: () => release?.(),
+					commit: () => {
+						sessionManager.deferredPersistence = undefined;
+						mkdirSync(sessionManager.sessionDir, { recursive: true });
+						if (pending?.rewrite) {
+							sessionManager._rewriteFile();
+						} else {
+							if (existsSync(file)) {
+								const content = readFileSync(file);
+								if (content.length > 0 && content[content.length - 1] !== 10) appendFileSync(file, "\n");
+							}
+							for (const entry of pending?.entries ?? []) sessionManager._persist(entry);
+						}
+					},
+				};
 			},
 		};
 	}
@@ -1901,7 +1936,7 @@ export class SessionManager {
 		deferredPersistence: boolean,
 	): SessionManager {
 		const resolvedPath = resolvePath(path);
-		reserveSessionWrite(resolvedPath);
+		if (!deferredPersistence) reserveSessionWrite(resolvedPath);
 		let header: SessionHeader | null = null;
 		let preloadedFileEntries: FileEntry[] | undefined;
 		if (cwdOverride === undefined && existsSync(resolvedPath)) {

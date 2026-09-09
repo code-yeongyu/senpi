@@ -1,7 +1,8 @@
 import { type Api, estimateContextTokens, type Model, type Tool } from "@earendil-works/pi-ai";
-import type { CompactionPreparation } from "../../../compaction/index.ts";
+import { type CompactionPreparation, DEFAULT_COMPACTION_SETTINGS } from "../../../compaction/index.ts";
 import { getPromptContextWindow } from "./extension-wiring.ts";
 import { resolveCompactionGeometry } from "./orchestration.ts";
+import { baseThresholdRatioForWindow, computeEffectiveKeepRecentTokens } from "./policy.ts";
 
 interface ModelSafetyMarginProfile {
 	readonly id: string;
@@ -90,16 +91,44 @@ export function projectModelUsabilityBudget<TApi extends Api>(
 			? geometry.leadTokens
 			: 0;
 	const safetyMargin = resolveSafetyMarginProfile(input.model);
-	const requiredTokens =
-		liveContextTokens +
+	const baseRequiredTokens =
 		systemPromptTokens +
 		activeToolSchemaTokens +
 		outputReserveTokens +
 		compactionReserveTokens +
 		speculationLeadTokens +
 		safetyMargin.tokens;
-	const shortfallTokens = Math.max(0, requiredTokens - input.model.contextWindow);
+	const uncompactedRequiredTokens = liveContextTokens + baseRequiredTokens;
 	const admission = input.admission ?? (liveContextTokens > 0 ? "switch" : "start");
+
+	let requiredTokens = uncompactedRequiredTokens;
+	let shortfallTokens = Math.max(0, requiredTokens - input.model.contextWindow);
+	let usable = shortfallTokens === 0;
+
+	if (!usable && admission === "resume" && input.compaction.enabled && !includeSpeculationLead) {
+		const compactionRequiredTokens =
+			liveContextTokens +
+			systemPromptTokens +
+			activeToolSchemaTokens +
+			compactionReserveTokens +
+			safetyMargin.tokens;
+		const keepRecentSetting = input.compaction.keepRecentTokens ?? DEFAULT_COMPACTION_SETTINGS.keepRecentTokens;
+		const effectiveKeepRecentTokens = computeEffectiveKeepRecentTokens(
+			keepRecentSetting,
+			input.model.contextWindow,
+			baseThresholdRatioForWindow(input.model.contextWindow),
+		);
+		const postCompactionRequiredTokens = effectiveKeepRecentTokens + baseRequiredTokens;
+
+		if (
+			compactionRequiredTokens <= input.model.contextWindow &&
+			postCompactionRequiredTokens <= input.model.contextWindow
+		) {
+			requiredTokens = Math.max(compactionRequiredTokens, postCompactionRequiredTokens);
+			shortfallTokens = 0;
+			usable = true;
+		}
+	}
 
 	return {
 		model: `${input.model.provider}/${input.model.id}`,

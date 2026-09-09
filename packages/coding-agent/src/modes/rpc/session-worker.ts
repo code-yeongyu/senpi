@@ -53,9 +53,13 @@ function exchange(
 	if (result !== 1) failWorker("session_worker_credit_timeout");
 }
 
-installSessionWriteReservation((path) =>
-	exchange((signal) => ({ type: "reserve", path: canonicalPath(path), signal }), "session_path_in_use"),
-);
+installSessionWriteReservation((path) => {
+	const canonical = canonicalPath(path);
+	const signal = new SharedArrayBuffer(8);
+	exchange((signal) => ({ type: "reserve", path: canonical, signal }), "session_path_in_use", signal);
+	if (Atomics.load(new Int32Array(signal), 1) !== 1) return undefined;
+	return () => exchange((signal) => ({ type: "release_reservation", path: canonical, signal }));
+});
 
 class WorkerEventWriter extends SessionEventWriter {
 	constructor() {

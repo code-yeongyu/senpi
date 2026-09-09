@@ -24,3 +24,22 @@ describe("compaction model override setting", () => {
 		expect(sm.getCompactionSettings().model).toBe("deepseek/deepseek-chat");
 	});
 });
+
+describe("compaction summarizationMaxDurationMs setting", () => {
+	it("defaults to undefined so the size-adaptive budget applies", () => {
+		const sm = SettingsManager.inMemory();
+		expect(sm.getCompactionSettings().summarizationMaxDurationMs).toBeUndefined();
+	});
+
+	it("passes through a configured positive override", () => {
+		const sm = SettingsManager.inMemory({ compaction: { summarizationMaxDurationMs: 600_000 } });
+		expect(sm.getCompactionSettings().summarizationMaxDurationMs).toBe(600_000);
+	});
+
+	it("ignores non-positive and non-finite values", () => {
+		for (const value of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+			const sm = SettingsManager.inMemory({ compaction: { summarizationMaxDurationMs: value } });
+			expect(sm.getCompactionSettings().summarizationMaxDurationMs).toBeUndefined();
+		}
+	});
+});

@@ -18,6 +18,8 @@ export interface ResolvedCompactionSettings {
 	reminderEnabled: boolean;
 	reserveScalingEnabled: boolean;
 	speculativeLeadTokens?: number;
+	/** Positive finite number, or undefined for the size-adaptive default. */
+	summarizationMaxDurationMs?: number;
 }
 
 const DEFAULTS = {
@@ -70,6 +72,12 @@ export function resolveCompactionSettings(settings?: CompactionSettings): Resolv
 		speculativeLeadTokens:
 			typeof raw?.speculativeLeadTokens === "number" && Number.isFinite(raw.speculativeLeadTokens)
 				? Math.max(0, raw.speculativeLeadTokens)
+				: undefined,
+		summarizationMaxDurationMs:
+			typeof raw?.summarizationMaxDurationMs === "number" &&
+			Number.isFinite(raw.summarizationMaxDurationMs) &&
+			raw.summarizationMaxDurationMs > 0
+				? raw.summarizationMaxDurationMs
 				: undefined,
 	};
 }

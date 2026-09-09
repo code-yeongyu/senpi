@@ -8,7 +8,7 @@ import {
 	registerSessionResourceCleanup,
 } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionFromServices,
@@ -18,6 +18,7 @@ import {
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { estimateTokens } from "../../src/core/compaction/compaction.ts";
 import { ModelUsabilityBudgetError } from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
+import { getMcpService } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type {
 	AgentToolResult,
@@ -705,13 +706,15 @@ describe("AgentSessionRuntime characterization", () => {
 		{ forced: "faux-1", stored: "faux-medium", rejected: false },
 	])("admits the factory's $forced model rather than stored $stored", async ({ forced, stored, rejected }) => {
 		const events: RecordedSessionEvent[] = [];
+		const shutdownSessions: string[] = [];
 		const { runtime, faux, tempDir } = await createRuntimeForTest(
 			(pi) => {
 				pi.on("session_before_switch", (event) => {
 					events.push(event);
 				});
-				pi.on("session_shutdown", (event) => {
+				pi.on("session_shutdown", (event, ctx) => {
 					events.push(event);
+					shutdownSessions.push(ctx.sessionManager.getSessionId());
 				});
 			},
 			{ bootstrapModelId: forced },
@@ -728,7 +731,9 @@ describe("AgentSessionRuntime characterization", () => {
 			await expect(runtime.switchSession(path)).rejects.toMatchObject({
 				projection: { model: `${faux.getModel().provider}/${forced}`, admission: "resume" },
 			});
-			expect(events).toEqual([]);
+			expect(events).toEqual([{ type: "session_shutdown", reason: "resume" }]);
+			expect(shutdownSessions).toEqual([target.getSessionId()]);
+			expect(shutdownSessions).not.toContain(original.sessionId);
 			expect(readFileSync(path)).toEqual(bytes);
 			expect(runtime.session).toBe(original);
 			await expect(original.prompt("still usable")).resolves.toBeUndefined();
@@ -768,6 +773,79 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(runtime.session).toBe(original);
 		await expect(original.prompt("still usable")).resolves.toBeUndefined();
 	});
+
+	// PR #1473: factory-time MCP subscriptions belong to each candidate, not the singleton owner.
+	it.each(["cancelled", "rejected"])(
+		"shuts down %s candidates without retaining listeners or disposing live MCP",
+		async (outcome) => {
+			const service = getMcpService();
+			const listeners = new Set<Parameters<typeof service.onWireStatusChanged>[0]>();
+			const subscribe = service.onWireStatusChanged.bind(service);
+			const observation = vi.spyOn(service, "onWireStatusChanged").mockImplementation((listener) => {
+				listeners.add(listener);
+				const unsubscribe = subscribe(listener);
+				return () => {
+					listeners.delete(listener);
+					unsubscribe();
+				};
+			});
+			const shutdowns: number[] = [];
+			let factories = 0;
+			try {
+				const { runtime, tempDir } = await createRuntimeForTest(
+					(pi) => {
+						const candidate = factories++;
+						pi.on("session_before_switch", () => ({ cancel: true }));
+						pi.on("session_shutdown", () => {
+							shutdowns.push(candidate);
+						});
+					},
+					outcome === "rejected" ? { destinationSystemPrompt: "p".repeat(400_000) } : undefined,
+				);
+				const live = runtime.session;
+				const baseline = new Set(listeners);
+				expect(baseline.size).toBe(1);
+				const target = join(tempDir, "mcp-cancelled.jsonl");
+				writeFileSync(
+					target,
+					JSON.stringify({
+						type: "session",
+						version: 3,
+						id: "mcp-candidate",
+						timestamp: new Date(0).toISOString(),
+						cwd: tempDir,
+					}),
+				);
+				const bytes = readFileSync(target);
+				for (let attempt = 1; attempt <= 3; attempt++) {
+					if (outcome === "rejected") {
+						await expect(runtime.switchSession(target)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
+					} else {
+						expect(await runtime.switchSession(target)).toEqual({ cancelled: true });
+					}
+					expect(shutdowns).toEqual(Array.from({ length: attempt }, (_, index) => index + 1));
+					expect(listeners).toEqual(baseline);
+					expect(service.getSnapshot()).toMatchObject({
+						disposed: false,
+						sessionStartCount: 1,
+						lastSessionStartReason: "startup",
+						hasSessionContext: true,
+					});
+					expect(getMcpService()).toBe(service);
+					expect(runtime.session).toBe(live);
+					expect(readFileSync(target)).toEqual(bytes);
+				}
+				const errors: unknown[] = [];
+				live.extensionRunner.onError((error) => errors.push(error));
+				await expect(live.prompt("still usable after cancelled resumes")).resolves.toBeUndefined();
+				await expect(service.refreshWireStatusSnapshot(live.sessionId)).resolves.toMatchObject({ servers: [] });
+				expect(errors).toEqual([]);
+				expect(listeners).toEqual(baseline);
+			} finally {
+				observation.mockRestore();
+			}
+		},
+	);
 
 	// PR #1473: cancellation must not repair, initialize, or migrate the target.
 	it("keeps live provider resources when a resume of the same session is cancelled", async () => {

@@ -2121,11 +2121,21 @@ function buildParams(
 		}
 	}
 
-	// Anthropic rejects a thinking-enabled request whose final assistant turn
-	// contains tool_use but does not begin with a thinking block. Cross-model
-	// histories lose their signed thinking blocks (demoted to text or dropped),
-	// so degrade thinking for this request instead of failing every turn.
-	if (params.thinking && params.thinking.type !== "disabled" && finalAssistantTurnStartsWithToolUse(params.messages))
+	// A budget-thinking request whose final assistant turn came from another API
+	// and starts with tool_use (its thinking demoted to text or dropped) is the
+	// history shape Anthropic has rejected with "final assistant message must
+	// start with a thinking block", so that request degrades thinking instead of
+	// failing every turn. Nothing else degrades: adaptive families accept a
+	// tool_use-first final turn (verified live 2026-09-09 on claude-opus-5,
+	// claude-opus-4-6 and claude-fable-5), the model itself skips thinking before
+	// trivial tool calls, and every change to `thinking` re-keys the prompt
+	// cache - degrading here re-wrote the whole cached prefix on each tool
+	// continuation (the "cache misses every second prompt" report).
+	if (
+		params.thinking?.type === "enabled" &&
+		finalAssistantTurnIsForeign(context.messages) &&
+		finalAssistantTurnStartsWithToolUse(params.messages)
+	)
 		disableThinkingForRequest(params, model, compat);
 
 	if (options?.metadata) {
@@ -2175,6 +2185,16 @@ type AnthropicMessageParam = MessageCreateParamsStreaming["messages"][number];
  * thinking/redacted_thinking block. Anthropic requires thinking-enabled
  * requests to start that turn with a thinking block.
  */
+/** True when the last assistant message was produced through a different wire API. */
+function finalAssistantTurnIsForeign(messages: Message[]): boolean {
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index];
+		if (message.role !== "assistant") continue;
+		return message.api !== "anthropic-messages";
+	}
+	return false;
+}
+
 function finalAssistantTurnStartsWithToolUse(messages: AnthropicMessageParam[]): boolean {
 	for (let index = messages.length - 1; index >= 0; index--) {
 		const message = messages[index];
