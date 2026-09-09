@@ -77,9 +77,9 @@ function extractUserMessageText(content: string | Array<{ type: string; text?: s
 /**
  * Owns the current AgentSession plus its cwd-bound services.
  *
- * Session replacement methods tear down the current runtime first, then create
- * and apply the next runtime. If creation fails, the error is propagated to the
- * caller. The caller is responsible for user-facing error handling.
+ * Resume checks the outgoing veto, then prepares and admits the destination
+ * before tearing down the live runtime. Other replacements create their next
+ * runtime after teardown. Callers handle propagated errors on their UI surface.
  */
 export class AgentSessionRuntime {
 	private rebindSession?: (session: AgentSession) => Promise<void>;
@@ -252,11 +252,16 @@ export class AgentSessionRuntime {
 			canonicalizePath(resolvePath(sessionPath)) === canonicalizePath(resolvePath(previousSessionFile));
 		// Settling active work would append to this same file after taking the candidate snapshot.
 		if (isSelfResume && this.session.isSessionBusy) return { cancelled: true };
+		// This is a cancellable check, not cleanup: veto before destination reads,
+		// trust prompts or factories. Writes completed by the veto belong in the snapshot.
+		const beforeResult = await this.emitBeforeSwitch("resume", sessionPath);
+		if (beforeResult.cancelled) return beforeResult;
+		if (isSelfResume && this.session.isSessionBusy) return { cancelled: true };
 		const prepared = SessionManager.prepareOpen(sessionPath, undefined, options?.cwdOverride);
 		const { sessionManager } = prepared;
 		assertSessionCwdExists(sessionManager, this.cwd);
 		// Build and admit the actual destination, including its model selection,
-		// settings, prompt and tools. Persistence and switch lifecycle stay deferred.
+		// settings, prompt and tools. Persistence and destructive shutdown stay deferred.
 		const result = await this.createRuntime({
 			cwd: sessionManager.getCwd(),
 			agentDir: this.services.agentDir,
@@ -267,13 +272,10 @@ export class AgentSessionRuntime {
 		});
 		let acceptance: ReturnType<typeof prepared.beginCommit> | undefined;
 		try {
-			// A denied writer grant must not run destructive before-switch handlers.
-			// The acceptance grant is reversible until this candidate becomes current.
-			acceptance = prepared.beginCommit();
-			const beforeResult = await this.emitBeforeSwitch("resume", sessionPath);
-			if (beforeResult.cancelled) return beforeResult;
-			// Preparation and veto handlers can yield while a new turn starts on the live session.
+			// Preparation can yield while a new turn starts on the live session.
 			if (isSelfResume && this.session.isSessionBusy) return { cancelled: true };
+			// The grant is reversible; final revalidation and persistence do not yield.
+			acceptance = prepared.beginCommit();
 			acceptance.commit();
 			await this.teardownCurrent("resume", sessionManager.getSessionFile());
 			await this.apply(result);

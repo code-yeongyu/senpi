@@ -13,9 +13,13 @@ it.each([
 	{ name: "disabled compaction", size: 60_000, enabled: false, accepted: false },
 ])("PR1473 upstream: preserves admission for $name", async ({ size, enabled, accepted }) => {
 	let vetoes = 0;
+	let shutdowns = 0;
 	const host = await resumeRuntime((pi) => {
 		pi.on("session_before_switch", () => {
 			vetoes++;
+		});
+		pi.on("session_shutdown", () => {
+			shutdowns++;
 		});
 	}, 65_536);
 	try {
@@ -42,10 +46,12 @@ it.each([
 				}),
 			);
 			expect(vetoes).toBe(1);
+			expect(shutdowns).toBe(1);
 		} else {
 			await expect(host.runtime.switchSession(path)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
 			expect(host.runtime.session).toBe(original);
-			expect(vetoes).toBe(0);
+			expect(vetoes).toBe(1);
+			expect(shutdowns).toBe(0);
 			expect(readFileSync(path)).toEqual(before);
 		}
 	} finally {

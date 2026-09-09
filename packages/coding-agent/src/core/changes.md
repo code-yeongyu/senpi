@@ -1,3 +1,27 @@
+## Approved veto-first resume lifecycle (2026-09-10)
+
+This approved order supersedes the historical admission-before-veto and no-before-switch-on-rejection statements below. The five staged-data, identity, conflict, ownership and MCP fixes remain intact.
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: after normalized busy-self rejection, await the cancellable before-switch check before the target snapshot, trust context and actual factory. Recheck busy self-resume after both awaited veto and preparation; retain exact SDK admission (including upstream mandatory compaction), candidate-only disposal, writer rollback and synchronous final revalidation/persistence before outgoing shutdown.
+- `packages/coding-agent/src/core/session-manager.ts`: update acceptance comments to distinguish writer validation from the earlier cancellable veto; persistence and materialized retention are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: cancellation previously prompted/persisted destination trust and executed factories; the old snapshot also rejected writes completed by an awaited veto. Before-switch is a check, never a cleanup commitment. Missing-cwd, budget and conflict rejection may follow it without outgoing shutdown.
+- `packages/coding-agent/src/core/session-manager.ts`: callers must not interpret the grant as preceding the public veto; writes during factory preparation still conflict, and the final synchronous check protects direct prepared-writer callers too.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: only the replacement owner can place the veto before destination trust/factory execution while preserving authoritative SDK admission and live-session ownership.
+- `packages/coding-agent/src/core/session-manager.ts`: prepared writer ordering is an internal persistence contract.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` veto, busy guards, preparation and acceptance block. Fork behavior is unchanged.
+- `packages/coding-agent/src/core/session-manager.ts`: `prepareOpen` acceptance comments only.
+
 ## Preserve upstream resume-compaction admission (2026-09-09)
 
 ### What changed

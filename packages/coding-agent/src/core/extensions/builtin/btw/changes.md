@@ -1,5 +1,23 @@
 # changes — btw
 
+## Preserve side queries through resume checks (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`: remove the redundant `session_before_switch` dismiss. The existing `session_shutdown` handler remains the cleanup point for an accepted replacement; fork handling is unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`: before-switch is a cancellable check that now precedes exact destination admission, not a commitment to replace the session. Cancelled and truly budget-rejected resumes must leave the active side query running. This supersedes the historical before-switch abort statement below.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`: another extension cannot reverse this builtin's private AbortController or restore its dismissed widget.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`: lifecycle handler registration only; no new public event.
+
 ## 2026-08-13 - Preserve provider-header deletion markers
 
 ### What changed

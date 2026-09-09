@@ -1908,7 +1908,7 @@ export class SessionManager {
 				const file = sessionManager.getSessionFile();
 				if (!file) throw new Error("Prepared session is missing its destination file");
 				// Admission ran on a read-only snapshot. Revalidate the actual destination
-				// under its canonical host grant before any destructive switch handler.
+				// under its canonical host grant before destructive session shutdown.
 				let release = reserveSessionWrite(file);
 				const rollback = () => {
 					release?.();
@@ -1930,7 +1930,7 @@ export class SessionManager {
 				return {
 					rollback,
 					commit: () => {
-						// Veto handlers awaited since beginCommit may have changed the file.
+						// A prepared-writer caller may have changed the file since beginCommit.
 						// Keep this final check and persistence synchronous, before live teardown.
 						revalidate();
 						sessionManager.deferredPersistence = undefined;

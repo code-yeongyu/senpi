@@ -38,17 +38,18 @@ function resumeSurface(runtimeHost: unknown, cwd: string) {
 	return { resume: (path: string) => handle.call(ctx, path), errors, fatals: () => fatals, retries: () => retries };
 }
 
-// PR #1473 ghN2K/ghN2H: real candidate + awaited veto mutation, not a mocked switch rejection.
+// PR #1473 ghN2K/ghN2H: mutate during actual factory preparation, AFTER the accepted veto/snapshot.
 it.each(["direct", "cwd retry"])("PR1473 ghN2K: %s resume conflict remains recoverable", async (route) => {
 	const retry = route === "cwd retry";
 	let target = "";
 	const entered = Promise.withResolvers<void>();
 	const release = Promise.withResolvers<void>();
-	const host = await resumeRuntime((pi) => {
-		pi.on("session_before_switch", async () => {
+	let factories = 0;
+	const host = await resumeRuntime(async () => {
+		if (factories++ > 0) {
 			entered.resolve();
 			await release.promise;
-		});
+		}
 	});
 	let attempt: Promise<{ cancelled: boolean }> | undefined;
 	try {
@@ -96,15 +97,19 @@ it("PR1473 ghN2K: shared-host conflict retains typed identity", async () => {
 	const fauxModule = fileURLToPath(new URL("../../../../ai/src/providers/faux.ts", import.meta.url));
 	const host = await startWorkerHost(
 		String.raw`
- import { appendFileSync } from "node:fs";
+ import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
  import { fauxProvider, fauxAssistantMessage } from ${JSON.stringify(fauxModule)};
  export default function(pi) {
+  if (existsSync("conflict-target")) {
+   const target = readFileSync("conflict-target", "utf8");
+   unlinkSync("conflict-target");
+   appendFileSync(target, "\n");
+  }
   const faux = fauxProvider({ provider: "pr1473", models: [{ id: "pr1473-faux" }] });
   faux.setResponses([fauxAssistantMessage("PR1473_FOLLOWUP")]);
   pi.registerProvider(faux.provider);
-  pi.on("session_before_switch", async (event) => {
-   await Promise.resolve();
-   appendFileSync(event.targetSessionFile, "\n");
+  pi.on("session_before_switch", (event) => {
+   writeFileSync("conflict-target", event.targetSessionFile);
   });
  }
  `,

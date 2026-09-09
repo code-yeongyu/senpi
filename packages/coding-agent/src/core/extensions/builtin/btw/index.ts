@@ -26,10 +26,6 @@ export default function btwExtension(pi: ExtensionAPI) {
 		if (current.panel) ctx.ui.setWidget(WIDGET_KEY, undefined);
 	}
 
-	pi.on("session_before_switch", (_event, ctx) => {
-		dismiss(ctx, { abort: true });
-	});
-
 	pi.on("session_before_fork", (_event, ctx) => {
 		dismiss(ctx, { abort: true });
 	});

@@ -72,7 +72,7 @@ it.each(["unterminated", "legacy", "empty", "missing"])(
 
 // A factory mutates the target only to deterministically exercise the real acceptance failure path.
 it.each(["owned", "changed"])(
-	"rejects an %s acceptance before destructive switch handlers",
+	"rejects an %s acceptance after veto without destructive shutdown",
 	async (failure) => {
 		const host = await startWorkerHost(`
 		import { appendFileSync, existsSync, unlinkSync, writeFileSync } from "node:fs";
@@ -82,6 +82,7 @@ it.each(["owned", "changed"])(
 				appendFileSync("target.jsonl", "\\n");
 			}
 			pi.on("session_before_switch", () => { writeFileSync("switch-fired", "1"); });
+			pi.on("session_shutdown", () => { writeFileSync("shutdown-fired", "1"); });
 		}
 	`);
 		try {
@@ -120,7 +121,8 @@ it.each(["owned", "changed"])(
 					success: true,
 				});
 			}
-			await expect(readFile(join(host.cwd, "switch-fired"))).rejects.toMatchObject({ code: "ENOENT" });
+			expect(await readFile(join(host.cwd, "switch-fired"), "utf8")).toBe("1");
+			await expect(readFile(join(host.cwd, "shutdown-fired"))).rejects.toMatchObject({ code: "ENOENT" });
 			expect(await host.request({ type: "get_state", sessionId: live.data?.sessionId })).toMatchObject({
 				success: true,
 				data: { sessionId: live.data?.state?.sessionId },

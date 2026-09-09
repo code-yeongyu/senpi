@@ -800,7 +800,7 @@ describe("AgentSessionRuntime characterization", () => {
 			await expect(runtime.switchSession(path)).rejects.toMatchObject({
 				projection: { model: `${faux.getModel().provider}/${forced}`, admission: "resume" },
 			});
-			expect(events).toEqual([]);
+			expect(events).toEqual([{ type: "session_before_switch", reason: "resume", targetSessionFile: path }]);
 			expect(shutdownSessions).toEqual([]);
 			expect(shutdownSessions).not.toContain(original.sessionId);
 			expect(readFileSync(path)).toEqual(bytes);
@@ -857,7 +857,7 @@ describe("AgentSessionRuntime characterization", () => {
 			return;
 		}
 		await expect(runtime.switchSession(path)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
-		expect(events).toEqual([]);
+		expect(events).toEqual([{ type: "session_before_switch", reason: "resume", targetSessionFile: path }]);
 		expect(runtime.session).toBe(original);
 		await expect(original.prompt("still usable")).resolves.toBeUndefined();
 	});
@@ -884,7 +884,7 @@ describe("AgentSessionRuntime characterization", () => {
 				const { runtime, tempDir } = await createRuntimeForTest(
 					(pi) => {
 						const candidate = factories++;
-						pi.on("session_before_switch", () => ({ cancel: true }));
+						pi.on("session_before_switch", () => ({ cancel: outcome === "cancelled" }));
 						pi.on("session_shutdown", () => {
 							shutdowns.push(candidate);
 						});
@@ -920,7 +920,7 @@ describe("AgentSessionRuntime characterization", () => {
 					expect(killAll).not.toHaveBeenCalled();
 					expect(isNativeBypass()).toBe(true);
 					expect(shutdowns).toEqual([]);
-					expect(factories).toBe(attempt + 1);
+					expect(factories).toBe(outcome === "cancelled" ? 1 : attempt + 1);
 					expect(listeners).toEqual(baseline);
 					expect(service.getSnapshot()).toMatchObject({
 						disposed: false,
@@ -1115,9 +1115,10 @@ describe("AgentSessionRuntime characterization", () => {
 
 		await expect(runtime.switchSession(targetSessionFile!)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
 
-		// Non-mutating preflight ran before the switch lifecycle event, so a rejected
-		// resume is a true no-op: no session_before_switch was ever emitted.
-		expect(emittedBeforeSwitch).toEqual([]);
+		// The approved veto-first contract permits a cancellable check, never live teardown.
+		expect(emittedBeforeSwitch).toEqual([
+			{ type: "session_before_switch", reason: "resume", targetSessionFile: targetSessionFile },
+		]);
 		expect(runtime.session).toBe(originalSession);
 		expect(runtime.session.sessionFile).toBe(originalSessionFile);
 		expect(runtime.session.extensionRunner.isActive).toBe(true);

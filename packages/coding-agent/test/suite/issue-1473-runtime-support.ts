@@ -11,7 +11,10 @@ import {
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 
-export async function resumeRuntime(extension: (pi: ExtensionAPI) => void = () => {}, contextWindow?: number) {
+export async function resumeRuntime(
+	extension: (pi: ExtensionAPI) => void | Promise<void> = () => {},
+	contextWindow?: number,
+) {
 	const cwd = mkdtempSync(join(tmpdir(), "pr1473-runtime-"));
 	const faux = registerFauxProvider(
 		contextWindow ? { models: [{ id: "large", contextWindow, maxTokens: 1024 }] } : {},
@@ -28,7 +31,7 @@ export async function resumeRuntime(extension: (pi: ExtensionAPI) => void = () =
 				noPromptTemplates: true,
 				noThemes: true,
 				extensionFactories: [
-					(pi) => {
+					async (pi) => {
 						const model = faux.getModel();
 						pi.registerProvider(model.provider, {
 							baseUrl: model.baseUrl,
@@ -45,7 +48,7 @@ export async function resumeRuntime(extension: (pi: ExtensionAPI) => void = () =
 								maxTokens: m.maxTokens,
 							})),
 						});
-						extension(pi);
+						await extension(pi);
 					},
 				],
 			},

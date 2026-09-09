@@ -462,6 +462,10 @@ pi.on("session_info_changed", async (event, ctx) => {
 
 Fired before starting a new session (`/new`) or switching sessions (`/resume`).
 
+This is a cancellable check, not a cleanup event. For `/resume`, it runs before reading the destination snapshot, resolving destination project trust, or constructing its runtime. Returning `{ cancel: true }` prevents all of that destination preparation. Writes completed by an awaited handler are included in the subsequent snapshot.
+
+After the veto accepts, senpi checks the actual destination model, settings, prompt and tools against SDK admission (including mandatory resume compaction when eligible), then acquires the writer grant and synchronously revalidates and persists the candidate. A later admission, missing-cwd, or conflict rejection can therefore follow this event without any replacement. Do not abort side work or release live resources here; `session_shutdown` runs only when an accepted replacement tears down the outgoing session.
+
 ```typescript
 pi.on("session_before_switch", async (event, ctx) => {
   // event.reason - "new" or "resume"

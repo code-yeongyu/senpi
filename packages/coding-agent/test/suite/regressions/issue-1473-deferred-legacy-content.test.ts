@@ -107,11 +107,15 @@ it.each(cases)(
 );
 
 // Actual SDK admission must reject the full large context; markers used to undercount it.
-it("PR1473 ghN2N: legacy budget rejection emits no switch event and preserves bytes", async () => {
+it("PR1473 ghN2N: legacy budget rejection emits veto without shutdown and preserves bytes", async () => {
 	let vetoes = 0;
+	let shutdowns = 0;
 	const host = await resumeRuntime((pi) => {
 		pi.on("session_before_switch", () => {
 			vetoes++;
+		});
+		pi.on("session_shutdown", () => {
+			shutdowns++;
 		});
 	});
 	try {
@@ -120,7 +124,8 @@ it("PR1473 ghN2N: legacy budget rejection emits no switch event and preserves by
 		const before = hash(readFileSync(path));
 		const live = host.runtime.session;
 		await expect(host.runtime.switchSession(path)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
-		expect(vetoes).toBe(0);
+		expect(vetoes).toBe(1);
+		expect(shutdowns).toBe(0);
 		expect(host.runtime.session).toBe(live);
 		expect(hash(readFileSync(path))).toBe(before);
 	} finally {
