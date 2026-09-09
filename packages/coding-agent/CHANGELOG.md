@@ -11,6 +11,7 @@
 ### Fixed
 
 - Resume preflight checks the actual destination runtime's model budget before switch handlers or teardown, preserving the live session on rejection, including cwd-override retries and shared-host RPC. Cancelled candidates leave target files unchanged, release tentative writer reservations, and run their own MCP listener cleanup without shutting down the live service.
+- Staged resumes preserve large legacy transcript content through migration, keep the active MCP native-search setting until attachment, and recognize file-URL and tilde aliases for busy self-resumes. Concurrent destination changes are revalidated before persistence and reported as recoverable errors in the TUI and RPC ([#1473](https://github.com/code-yeongyu/senpi/pull/1473) by [@Tinycute00](https://github.com/Tinycute00)).
 
 ### Removed
 

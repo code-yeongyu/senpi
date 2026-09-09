@@ -1,3 +1,21 @@
+## Install native search ownership only on attachment (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: native tool-search gate registration moves from the extension factory to actual attachment, alongside the deferred wire listener.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: constructing a false/unconfigured candidate replaced a true live gate in both async-local and independent process-fallback contexts. Discarding the candidate could not undo this global mutation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: this builtin owns registration; attaching the accepted service is the correct ownership boundary, not candidate construction or cleanup.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: factory and attach closure. Single-flight attachment and candidate-only cleanup are unchanged.
+
 # mcp Extension Changes
 
 ## Discarded candidates release only their own MCP subscriptions (2026-09-09)

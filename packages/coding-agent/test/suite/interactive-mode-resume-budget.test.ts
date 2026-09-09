@@ -17,7 +17,7 @@ interface ResumeContext {
 	handleFatalRuntimeError: (prefix: string, error: unknown) => Promise<never>;
 	promptForMissingSessionCwd: (error: MissingSessionCwdError) => Promise<string | undefined>;
 	createProjectTrustContext: (cwd: string) => unknown;
-	cancelResumeWithBudgetError: (error: ModelUsabilityBudgetError) => { cancelled: boolean };
+	cancelResumeWithRecoverableError: (error: ModelUsabilityBudgetError) => { cancelled: boolean };
 }
 
 function getHandleResumeSession(): HandleResumeSession {
@@ -48,9 +48,9 @@ function makeBudgetError(): ModelUsabilityBudgetError {
 }
 
 function makeContext(overrides: Partial<ResumeContext>): ResumeContext {
-	const cancelResumeWithBudgetError = Object.getOwnPropertyDescriptor(
+	const cancelResumeWithRecoverableError = Object.getOwnPropertyDescriptor(
 		InteractiveMode.prototype,
-		"cancelResumeWithBudgetError",
+		"cancelResumeWithRecoverableError",
 	)?.value as (this: ResumeContext, error: ModelUsabilityBudgetError) => { cancelled: boolean };
 	const base: ResumeContext = {
 		clearStatusIndicator: vi.fn(),
@@ -62,8 +62,8 @@ function makeContext(overrides: Partial<ResumeContext>): ResumeContext {
 		}) as unknown as (prefix: string, error: unknown) => Promise<never>,
 		promptForMissingSessionCwd: vi.fn(async () => "/tmp/override-cwd"),
 		createProjectTrustContext: vi.fn(() => ({})),
-		cancelResumeWithBudgetError: vi.fn(function (this: ResumeContext, error: ModelUsabilityBudgetError) {
-			return cancelResumeWithBudgetError.call(this, error);
+		cancelResumeWithRecoverableError: vi.fn(function (this: ResumeContext, error: ModelUsabilityBudgetError) {
+			return cancelResumeWithRecoverableError.call(this, error);
 		}),
 		...overrides,
 	};

@@ -55,6 +55,7 @@ import type {
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { FooterDataProvider } from "../../core/footer-data-provider.ts";
+import { SessionResumeConflictError } from "../../core/session-resume-conflict.ts";
 import { getSupportedThinkingLevels } from "../../core/thinking-levels.ts";
 import { ProjectTrustStore } from "../../core/trust-manager.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
@@ -1677,12 +1678,21 @@ export function createRpcConnectionHandler(
 			// its instanceof check (and the TUI's recoverable handling) still works,
 			// rather than seeing a plain Error and exiting.
 			const budgetError = commandError instanceof ModelUsabilityBudgetError ? commandError : undefined;
-			const errorCode = missingCwd ? "missing_session_cwd" : budgetError ? "model_usability_budget" : undefined;
+			const conflict = commandError instanceof SessionResumeConflictError ? commandError : undefined;
+			const errorCode = missingCwd
+				? "missing_session_cwd"
+				: budgetError
+					? "model_usability_budget"
+					: conflict
+						? "session_resume_conflict"
+						: undefined;
 			const errorData = missingCwd
 				? (commandError as { issue: unknown }).issue
 				: budgetError
 					? budgetError.projection
-					: undefined;
+					: conflict
+						? { sessionFile: conflict.sessionFile }
+						: undefined;
 			output(
 				error(
 					command.id,

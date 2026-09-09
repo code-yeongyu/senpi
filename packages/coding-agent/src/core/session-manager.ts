@@ -20,6 +20,7 @@ import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { listSessionInfos, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
+import { SessionResumeConflictError } from "./session-resume-conflict.ts";
 import { reserveSessionWrite } from "./session-write-reservation.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
@@ -955,7 +956,9 @@ export class SessionManager {
 				this._rewriteFile();
 			}
 
-			this.fileEntries = this.fileEntries.map((entry) => this.residentStore.externalize(entry));
+			this.fileEntries = this.fileEntries.map((entry) =>
+				this.deferredPersistence ? this.residentStore.materialize(entry) : this.residentStore.externalize(entry),
+			);
 			this._buildIndex();
 			this.mutationCount++;
 			this.flushed = true;
@@ -1129,7 +1132,9 @@ export class SessionManager {
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
-		const residentEntry = this.residentStore.externalize(entry);
+		const residentEntry = this.deferredPersistence
+			? this.residentStore.materialize(entry)
+			: this.residentStore.externalize(entry);
 		this.fileEntries.push(residentEntry);
 		this.byId.set(residentEntry.id, residentEntry);
 		this.entryOrdersById.set(residentEntry.id, this.fileEntries.length - 1);
@@ -1319,7 +1324,8 @@ export class SessionManager {
 	}
 
 	private _trimMirrorAfterCompaction(compaction: CompactionEntry): void {
-		if (!this.persist) return;
+		// Prepared history is not durable yet; trimming would discard rewrite input.
+		if (!this.persist || this.deferredPersistence) return;
 		const firstKeptIndex = this.fileEntries.findIndex((entry) => entry.id === compaction.firstKeptEntryId);
 		const compactionIndex = this.fileEntries.findIndex((entry) => entry.id === compaction.id);
 		if (firstKeptIndex < 0 || compactionIndex < firstKeptIndex) return;
@@ -1613,16 +1619,21 @@ export class SessionManager {
 				return undefined;
 			});
 		}
-		if (missingEntryIds.size > 0 && this.sessionFile) {
-			const persistedById = new Map(this._loadFullHistoryEntries().map((entry) => [entry.id, entry]));
-			for (let index = 0; index < entries.length; index++) {
-				const entry = entries[index]!;
-				if (!missingEntryIds.has(entry.id)) continue;
-				const persisted = persistedById.get(entry.id);
-				if (persisted) entries[index] = this.residentStore.externalize(persisted) as SessionEntry;
-			}
-		}
-		const materialized = entries.map((entry) => this.residentStore.materialize(entry) as SessionEntry);
+		const persistedById =
+			missingEntryIds.size > 0 && this.sessionFile
+				? new Map(
+						this._loadFullHistoryEntries()
+							.filter((entry): entry is SessionEntry => entry.type !== "session")
+							.map((entry) => [entry.id, entry]),
+					)
+				: undefined;
+		// Materialize disk fallbacks directly into this read, not back into the bounded
+		// cache: one 65MiB string (or the aggregate) would immediately evict itself again.
+		const materialized = entries.map(
+			(entry) =>
+				(missingEntryIds.has(entry.id) ? persistedById?.get(entry.id) : undefined) ??
+				this.residentStore.materialize(entry),
+		);
 		for (const entry of materialized) {
 			if (entry.type !== "message") continue;
 			const order = this.entryOrdersById.get(entry.id);
@@ -1812,7 +1823,7 @@ export class SessionManager {
 			this.residentStore.clear();
 			this.mirrorTrimmed = false;
 			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
-				this.residentStore.externalize(entry),
+				this.deferredPersistence ? this.residentStore.materialize(entry) : this.residentStore.externalize(entry),
 			);
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
@@ -1898,20 +1909,30 @@ export class SessionManager {
 				if (!file) throw new Error("Prepared session is missing its destination file");
 				// Admission ran on a read-only snapshot. Revalidate the actual destination
 				// under its canonical host grant before any destructive switch handler.
-				const release = reserveSessionWrite(file);
-				try {
-					const expected = pending?.snapshots.get(file);
-					const current = existsSync(file) ? readFileSync(file) : undefined;
-					if (expected === undefined ? current !== undefined : !current?.equals(expected)) {
-						throw new Error(`Session file changed while preparing resume: ${file}`);
-					}
-				} catch (error) {
+				let release = reserveSessionWrite(file);
+				const rollback = () => {
 					release?.();
-					throw error;
-				}
+					release = undefined;
+				};
+				const revalidate = () => {
+					try {
+						const expected = pending?.snapshots.get(file);
+						const current = existsSync(file) ? readFileSync(file) : undefined;
+						if (expected === undefined ? current !== undefined : !current?.equals(expected)) {
+							throw new SessionResumeConflictError(file);
+						}
+					} catch (error) {
+						rollback();
+						throw error;
+					}
+				};
+				revalidate();
 				return {
-					rollback: () => release?.(),
+					rollback,
 					commit: () => {
+						// Veto handlers awaited since beginCommit may have changed the file.
+						// Keep this final check and persistence synchronous, before live teardown.
+						revalidate();
 						sessionManager.deferredPersistence = undefined;
 						mkdirSync(sessionManager.sessionDir, { recursive: true });
 						if (pending?.rewrite) {
@@ -1923,6 +1944,22 @@ export class SessionManager {
 							}
 							for (const entry of pending?.entries ?? []) sessionManager._persist(entry);
 						}
+						// Only durable entries may use an evictable cache. Admission and any
+						// legacy rewrite above consumed the full materialized staged history.
+						if (sessionManager.flushed) {
+							const leafId = sessionManager.leafId;
+							sessionManager.fileEntries = sessionManager.fileEntries.map((entry) =>
+								sessionManager.residentStore.externalize(entry),
+							);
+							sessionManager._buildIndex();
+							sessionManager.leafId = leafId;
+							sessionManager.mutationCount++;
+							sessionManager.entriesCache = null;
+							sessionManager.branchCache = null;
+							sessionManager.compactEntriesCache = null;
+						}
+						pending?.entries.splice(0);
+						pending?.snapshots.clear();
 					},
 				};
 			},

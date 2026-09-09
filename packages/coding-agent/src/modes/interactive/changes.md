@@ -1,3 +1,21 @@
+## Recoverable resume conflicts (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: handle SessionResumeConflictError recoverably for both direct and cwd-override retry resume, sharing the existing budget error rendering helper.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a changed target is a rejected candidate, not a fatal error in the still-live session. Error identity must survive transport without parsing message text.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: core transport and interactive exception routing own these boundaries, outside extension error handling.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: imports and typed resume error handling. Existing budget rejection behavior is retained.
+
 
 ## 2026-09-08 - Over-budget resume shows an error instead of exiting the process
 

@@ -1,3 +1,59 @@
+## Preserve materialized staged history until persistence (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: prepared managers keep full materialized loaded and appended entries, including branch replacements, and defer mirror trimming. Successful durable acceptance restores the existing bounded resident cache and releases full staged snapshots/read caches. Compaction-aware reads materialize evicted persisted entries directly instead of re-evicting them during the same read.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`: v1/v2 migration is deferred, so old disk IDs cannot recover content evicted before rewrite; a single 65MiB string or aggregate over 64MiB otherwise undercounts admission and permanently serializes resident markers. Re-externalizing disk fallbacks also loses over-budget strings on post-persistence reads.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts`: migration, snapshot admission, persistence and cache ownership are internal manager responsibilities. No cache limits are raised, and no recovery relies on migrated old IDs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: loaded/appended/branched resident forms, deferred mirror trim, prepareOpen commit, and _getCompactEntries materialization.
+
+## Revalidate prepared resume at persistence (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: acceptance revalidates destination bytes synchronously again inside commit, immediately before persistence. Both checks release newly acquired grants on conflict; rollback is idempotent.
+- `packages/coding-agent/src/core/session-resume-conflict.ts`: typed recoverable SessionResumeConflictError carries the destination sessionFile.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts` and `packages/coding-agent/src/core/session-resume-conflict.ts`: asynchronous veto handlers can invalidate the admitted snapshot, including legacy rewrites and empty/missing destinations, without making the live runtime unusable.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts` and `packages/coding-agent/src/core/session-resume-conflict.ts`: only the prepared writer can validate the snapshot adjacent to synchronous persistence and roll back its grant. The pre-veto check and admission ordering remain intact.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: prepareOpen acceptance closure.
+- `packages/coding-agent/src/core/session-resume-conflict.ts`: new typed error.
+
+## Compatible staged-resume safety (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: busy self-resume identity uses SessionManager resolvePath normalization before canonicalization, including file URLs and tilde paths.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: lexical node:path resolution missed accepted input aliases and allowed teardown to overtake a completing tool.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the guard must run before candidate construction. Exact admission still precedes before-switch; the separate lifecycle decision is unresolved.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: switchSession identity guard.
+
 ## Contained resume lifecycle corrections (2026-09-09)
 
 ### What changed

@@ -109,6 +109,7 @@ import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { createSessionLogger, type SessionLogger } from "../../core/session-log.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
+import { SessionResumeConflictError } from "../../core/session-resume-conflict.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
@@ -7579,24 +7580,29 @@ export class InteractiveMode {
 					this.showStatus("Resumed session in current cwd");
 					return result;
 				} catch (overrideError: unknown) {
-					// The cwd-override retry can also be rejected by the model usability
-					// budget; give it the same recoverable treatment as the first attempt
+					// The cwd-override retry can also be rejected by admission or a
+					// changed target; give it the same recoverable treatment as the first attempt
 					// instead of letting it escape as an unhandled rejection.
-					if (overrideError instanceof ModelUsabilityBudgetError) {
-						return this.cancelResumeWithBudgetError(overrideError);
+					if (
+						overrideError instanceof ModelUsabilityBudgetError ||
+						overrideError instanceof SessionResumeConflictError
+					) {
+						return this.cancelResumeWithRecoverableError(overrideError);
 					}
 					return this.handleFatalRuntimeError("Failed to resume session", overrideError);
 				}
 			}
-			if (error instanceof ModelUsabilityBudgetError) {
-				return this.cancelResumeWithBudgetError(error);
+			if (error instanceof ModelUsabilityBudgetError || error instanceof SessionResumeConflictError) {
+				return this.cancelResumeWithRecoverableError(error);
 			}
 			return this.handleFatalRuntimeError("Failed to resume session", error);
 		}
 	}
 
-	/** Render an over-budget resume rejection and keep the live session running. */
-	private cancelResumeWithBudgetError(error: ModelUsabilityBudgetError): { cancelled: boolean } {
+	/** Render a recoverable resume rejection and keep the live session running. */
+	private cancelResumeWithRecoverableError(error: ModelUsabilityBudgetError | SessionResumeConflictError): {
+		cancelled: boolean;
+	} {
 		this.showError(`Failed to resume session: ${error.message}`);
 		return { cancelled: true };
 	}

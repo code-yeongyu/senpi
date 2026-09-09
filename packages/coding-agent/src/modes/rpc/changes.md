@@ -1,3 +1,21 @@
+## Recoverable resume conflicts (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: serialize session_resume_conflict with sessionFile and reconstruct SessionResumeConflictError through the real worker/connection/socket/client path.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: a changed target is a rejected candidate, not a fatal error in the still-live session. Error identity must survive transport without parsing message text.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: core transport and interactive exception routing own these boundaries, outside extension error handling.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: imports and typed resume error handling. Existing budget rejection behavior is retained.
+
 # changes
 
 ## Roll back unaccepted candidate writer grants (2026-09-09)

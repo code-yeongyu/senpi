@@ -249,7 +249,7 @@ export class AgentSessionRuntime {
 		const previousSessionFile = this.session.sessionFile;
 		const isSelfResume =
 			previousSessionFile !== undefined &&
-			canonicalizePath(resolve(sessionPath)) === canonicalizePath(resolve(previousSessionFile));
+			canonicalizePath(resolvePath(sessionPath)) === canonicalizePath(resolvePath(previousSessionFile));
 		// Settling active work would append to this same file after taking the candidate snapshot.
 		if (isSelfResume && this.session.isSessionBusy) return { cancelled: true };
 		const prepared = SessionManager.prepareOpen(sessionPath, undefined, options?.cwdOverride);

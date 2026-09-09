@@ -52,10 +52,6 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 
 		registerMcpCommands(pi, service);
 
-		installMcpNativeToolSearchGate(() => {
-			const setting = service.getNativeToolSearchSetting();
-			return setting === true || setting === "auto";
-		});
 		// skills-carry-MCP (todo 37): skills declaring MCP servers (mcp.json
 		// sidecar or SKILL.md frontmatter) register lazily with tools hidden;
 		// loading a skill — /skill:<name> input or the model reading its SKILL.md —
@@ -108,6 +104,11 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 		// the first turn's payload deterministically carries the MCP tool set.
 		// session_start always starts a fresh attach (reloads must re-sync config).
 		const attach = (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
+			// Candidate factories must not replace the active async-context or process fallback gate.
+			installMcpNativeToolSearchGate(() => {
+				const setting = service.getNativeToolSearchSetting();
+				return setting === true || setting === "auto";
+			});
 			attachedSessionId = ctx.sessionManager?.getSessionId?.();
 			// Unstarted candidates must not retain APIs on the live singleton. Unlike
 			// pi.events subscriptions, this direct listener is not tracked by runner invalidation.

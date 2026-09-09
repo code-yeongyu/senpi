@@ -1066,9 +1066,10 @@ A rejected switch answers with `success: false` plus a typed `errorCode` and str
 | `errorCode` | Meaning | `errorData` |
 |---|---|---|
 | `missing_session_cwd` | The session's stored cwd no longer exists. Retry the command with `cwdOverride`. | `{"sessionFile", "sessionCwd", "fallbackCwd"}` |
+| `session_resume_conflict` | The target changed after the resume snapshot was read. Retry to admit the current bytes. | `{"sessionFile"}` |
 | `model_usability_budget` | The stored transcript does not fit the context budget of the model the switch would run on. | The full budget projection |
 
-Both rejections are decided before the switch lifecycle event and live-session teardown, so the current session stays usable. A cancelled or rejected switch does not write to the target session file. Clients can pick a different session or change the destination configuration and retry. Changing the live model with `set_model` does not override a destination's stored model or a model forced by CLI `--model` / the launch profile; change that startup selection when retrying with a larger model.
+Missing-cwd and budget rejections are decided before the switch lifecycle event and live-session teardown, so the current session stays usable. Resume conflicts are checked both before the switch lifecycle event and again after its awaited handlers, immediately before persistence. A conflict preserves the live session and any intervening target writes; the rejected candidate does not persist. A cancelled or rejected switch does not itself write to the target session file. Clients can pick a different session or change the destination configuration and retry. Changing the live model with `set_model` does not override a destination's stored model or a model forced by CLI `--model` / the launch profile; change that startup selection when retrying with a larger model.
 
 ```json
 {

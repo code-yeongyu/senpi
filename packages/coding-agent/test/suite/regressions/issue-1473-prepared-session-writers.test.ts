@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { afterEach, expect, it, vi } from "vitest";
 import { SessionManager } from "../../../src/core/session-manager.ts";
+import { SessionResumeConflictError } from "../../../src/core/session-resume-conflict.ts";
 import * as reservations from "../../../src/core/session-write-reservation.ts";
 
 const cleanups: Array<() => void> = [];
@@ -89,3 +90,33 @@ it("releases the acceptance grant on cancellation without writing the target", (
 	expect(release).toHaveBeenCalledOnce();
 	expect(readFileSync(path, "utf8")).toBe(bytes);
 });
+
+// PR #1473 ghN2H: awaited veto handlers can change the destination after the first grant check.
+it.each(["normal", "legacy", "empty", "missing"])(
+	"PR1473 ghN2H: commit rejects a target changed after beginCommit (%s)",
+	(kind) => {
+		const { path, bytes } = fixture();
+		if (kind === "legacy") writeFileSync(path, bytes.replace('"version":3', '"version":1'));
+		if (kind === "empty") writeFileSync(path, "");
+		if (kind === "missing") rmSync(path);
+		const prepared = SessionManager.prepareOpen(path);
+		prepared.sessionManager.appendMessage(fauxAssistantMessage("candidate-only"));
+		const release = vi.fn();
+		vi.spyOn(reservations, "reserveSessionWrite").mockReturnValue(release);
+		const acceptance = prepared.beginCommit();
+		const changed = `${bytes}\n${JSON.stringify({ type: "session_info", id: "external", parentId: null, timestamp: new Date(0).toISOString(), name: "external-write" })}\n`;
+		writeFileSync(path, changed);
+		let failure: unknown;
+		try {
+			acceptance.commit();
+		} catch (error) {
+			failure = error;
+		}
+		expect(failure).toBeInstanceOf(SessionResumeConflictError);
+		expect(failure).toMatchObject({ sessionFile: path });
+		expect(readFileSync(path, "utf8")).toBe(changed);
+		expect(release).toHaveBeenCalledOnce();
+		acceptance.rollback();
+		expect(release).toHaveBeenCalledOnce();
+	},
+);
