@@ -26,12 +26,19 @@ export async function reservationPhase<T>(name: string, signal: Promise<T>): Pro
 }
 
 /** Real workers and production routing; only the observation sink is in memory. */
-export function reservationHost(cwd: string, agentDir: string) {
+export function reservationHost(cwd: string, agentDir: string, extension?: string) {
 	const records: unknown[] = [];
 	const writer = new SessionEventWriter(() => {});
 	const registry = new WorkerSessionRegistry({
 		configuration: {
-			parsed: parseArgs(["--mode", "rpc", "--no-extensions", "--no-skills", "--no-context-files"]),
+			parsed: parseArgs([
+				"--mode",
+				"rpc",
+				"--no-extensions",
+				"--no-skills",
+				"--no-context-files",
+				...(extension ? ["--extension", extension] : []),
+			]),
 			cwd,
 			agentDir,
 			appMode: "rpc",

@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-09 - Forward shared-host policy to extension loading
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` supplies the shared-host policy when constructing CLI runtime resources.
+
+### Why
+
+- `packages/coding-agent/src/main.ts` knows the application mode and branded environment used by the shared-host decision.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts` owns CLI mode selection and runtime service creation before extension factories execute.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` resource-loader configuration.
+
 ## 2026-09-09 - Upgrade generate_image to GPT Image 2.5
 
 ### What changed

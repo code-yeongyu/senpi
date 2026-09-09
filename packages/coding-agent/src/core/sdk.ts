@@ -10,6 +10,7 @@ import { AuthStorage } from "./auth-storage.ts";
 import { estimateTokens } from "./compaction/compaction.ts";
 import { createSessionCursorExecBridge } from "./cursor-exec-bridge-session.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import { ModelUsabilityBudgetError } from "./extensions/builtin/compaction/model-usability-budget.ts";
 import { type ServiceTier, supportsServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { convertToLlmForTransport, TRANSPORT_IMAGE_BUDGET_BYTES } from "./messages.ts";
@@ -548,8 +549,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			hasExistingSession ? { includeSpeculationLead: false, admission: "resume" } : { admission: "start" },
 		);
 	} catch (error) {
-		await session.disposeCandidate();
-		throw error;
+		if (
+			!hasExistingSession ||
+			!(error instanceof ModelUsabilityBudgetError) ||
+			!session.settingsManager.getCompactionEnabled() ||
+			error.projection.liveContextTokens > error.projection.contextWindow
+		) {
+			await session.disposeCandidate();
+			throw error;
+		}
+		session.admitResumeCompactionRequired(error.projection);
 	}
 	sessionRef.current = session;
 	const extensionsResult = resourceLoader.getExtensions();

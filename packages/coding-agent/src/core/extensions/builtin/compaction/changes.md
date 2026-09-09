@@ -1,5 +1,26 @@
 # changes.md — builtin compaction policy
 
+## Resume oversized sessions into required compaction (2026-09-09)
+
+### What changed
+
+- Resume admission now retains an unusable model-budget projection instead of throwing when compaction is enabled. The session emits the projection and a bounded notice through the existing session event stream, then forces the existing pre-provider compaction route before its first prompt.
+- Fresh startup and live model switches continue to reject unusable projections. `--no-tools` remains an explicit manual escape hatch.
+
+### Why
+
+- Restored context is projected with tool schemas and output reserves before extensions bind. That constructor-time projection can reject a session that the existing required-compaction path could reduce, leaving no way to reach `/compact` without disabling tools first.
+
+### Why an extension could not handle it
+
+- `createAgentSession` performs the resume projection before extension hooks are wired. Only core can retain the projection and defer provider admission until the existing compaction gate runs.
+
+### Expected merge conflict zones
+
+- MEDIUM: `sdk.ts` resume assertion and `agent-session.ts` required-compaction admission/event seams.
+- LOW: `resume-admission.ts`, the regression suite, and interactive event rendering.
+
+
 ## Allow compaction-eligible restored transcripts during resumed-session admission (2026-09-09)
 
 ### What changed

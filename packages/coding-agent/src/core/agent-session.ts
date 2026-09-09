@@ -112,6 +112,7 @@ import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
 	type ModelUsabilityAdmission,
 	ModelUsabilityBudgetError,
+	type ModelUsabilityBudgetProjection,
 	projectModelUsabilityBudget,
 } from "./extensions/builtin/compaction/model-usability-budget.ts";
 import {
@@ -119,6 +120,10 @@ import {
 	resolveReserveTokens,
 	shouldTriggerCompaction,
 } from "./extensions/builtin/compaction/policy.ts";
+import {
+	createResumeCompactionRequirement,
+	type ResumeCompactionRequirement,
+} from "./extensions/builtin/compaction/resume-admission.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "./extensions/builtin/monitor-state-event.ts";
 import { CODEX_RESPONSES_API, type ServiceTier } from "./extensions/builtin/service-tier.ts";
 import { deriveExtensionRegistrationId } from "./extensions/builtin/tool-search/engine/marker.ts";
@@ -413,6 +418,11 @@ export type AgentSessionEvent =
 	| { type: "agent_settled" }
 	| { type: "agent_idle" }
 	| { type: "session_abort" }
+	| {
+			type: "resume_compaction_required";
+			projection: ModelUsabilityBudgetProjection;
+			notice: string;
+	  }
 	| { type: "continuation_error"; errorMessage: string }
 	| {
 			type: "skill_invocation";
@@ -1080,6 +1090,7 @@ export class AgentSession {
 	// into an assistant error message. Matching provider text alone is not proof
 	// that AgentSession initiated required-compaction recovery.
 	private _requiredCompactionTurnError: RequiredCompactionError | undefined;
+	private _resumeCompactionRequirement: ResumeCompactionRequirement | undefined;
 	// A retry continuation immediately follows an accepted compaction. Its first
 	// response must not retrigger threshold compaction from stale provider usage.
 	private _skipNextPostRetryCompactionCheck = false;
@@ -2873,6 +2884,13 @@ export class AgentSession {
 	 */
 	subscribe(listener: AgentSessionEventListener): () => void {
 		this._eventListeners.push(listener);
+		if (this._resumeCompactionRequirement !== undefined) {
+			listener({
+				type: "resume_compaction_required",
+				projection: this._resumeCompactionRequirement.projection,
+				notice: this._resumeCompactionRequirement.notice,
+			});
+		}
 		for (const source of this.settingsManager.getSelectedSettingsSources()) {
 			listener({ type: "settings_source_selected", ...source });
 		}
@@ -4725,6 +4743,11 @@ export class AgentSession {
 		if (!projection.usable) throw new ModelUsabilityBudgetError(projection);
 	}
 
+	/** Admit an oversized restored transcript so the normal pre-provider compaction can run. */
+	admitResumeCompactionRequired(projection: ModelUsabilityBudgetProjection): void {
+		this._resumeCompactionRequirement = createResumeCompactionRequirement(projection);
+	}
+
 	private _getDownswitchLiveContextTokens(model: Model<Api>): number {
 		const currentModel = this.model;
 		if (!currentModel) return 0;
@@ -6142,6 +6165,26 @@ export class AgentSession {
 
 		const settings = this._getCompactionSettings();
 		const model = this.model;
+		if (this._resumeCompactionRequirement !== undefined) {
+			if (!model) throw new RequiredCompactionError();
+			const compacted = await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, inlineReason);
+			if (!compacted) throw new RequiredCompactionError();
+			const currentContext = estimateContextTokens(
+				filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
+			).tokens;
+			const remainingProjection = projectModelUsabilityBudget({
+				model,
+				systemPrompt: this.agent.state.systemPrompt,
+				tools: this.agent.state.tools,
+				liveContextTokens: currentContext,
+				compaction: settings,
+				includeSpeculationLead: false,
+				admission: "resume",
+			});
+			if (!remainingProjection.usable) throw new RequiredCompactionError();
+			this._resumeCompactionRequirement = undefined;
+			return true;
+		}
 		const contextTokens = estimateContextTokens(
 			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
 		).tokens;

@@ -774,6 +774,10 @@ export function createCliRuntimeFactory(
 					}
 				: undefined,
 			resourceLoaderOptions: {
+				sharedHostEnabled: shouldJoinSharedHost(appMode, {
+					enableEnv: isTruthyEnvFlag(envValue("ENABLE_SHARED_HOST")),
+					settingEnabled: runtimeSettingsManager.getExperimentalSharedHost(),
+				}),
 				additionalExtensionPaths: resolvedExtensionPaths,
 				additionalSkillPaths: resolvedSkillPaths,
 				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,

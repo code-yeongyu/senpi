@@ -1644,6 +1644,8 @@ export interface ExtensionAPI {
 
 	/** Absolute cwd of the session this extension instance was loaded for. */
 	readonly cwd: string;
+	/** Effective shared-host capability for registration-time extension decisions. */
+	readonly sharedHostEnabled: boolean;
 
 	// =========================================================================
 	// Event Subscription

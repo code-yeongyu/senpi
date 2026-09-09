@@ -1,3 +1,21 @@
+## Preserve upstream resume-compaction admission (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/sdk.ts`: retain upstream's mandatory-compaction admission for restored contexts that fit the raw model window, and dispose candidate resources only when admission genuinely rejects.
+
+### Why
+
+- `packages/coding-agent/src/core/sdk.ts`: unconditional candidate cleanup would destroy a runtime that upstream now intentionally admits for pre-first-turn compaction.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/sdk.ts`: SDK admission owns the candidate before extension lifecycle startup.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/sdk.ts`: model-usability catch and resume-compaction requirement.
+
 ## Preserve materialized staged history until persistence (2026-09-09)
 
 ### What changed
@@ -128,6 +146,42 @@
 - `packages/coding-agent/src/core/session-manager.ts`: constructor, persistence guards and `open`/`prepareOpen`.
 - `packages/coding-agent/src/core/sdk.ts`: authoritative post-construction budget check.
 - `packages/coding-agent/src/core/agent-session.ts`: optional provider-resource release in `dispose`.
+
+## Registration-time shared-host capability (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts` forwards the shared-host policy through extension-loading options.
+
+### Why
+
+- `packages/coding-agent/src/core/resource-loader.ts` owns the effective settings and extension discovery lifecycle needed for capability-gated tool registration.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/resource-loader.ts` loads factories before extensions can access bound session actions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/resource-loader.ts`: resource-loader options, constructor, and extension-set assembly.
+
+## Resume oversized sessions into required compaction (2026-09-09)
+
+### What changed
+
+- `sdk.ts` admits only restored sessions whose projection remains unusable after the compaction-eligible resume branch, when compaction is enabled; `agent-session.ts` publishes that projection through the existing session event stream and forces compaction before the first provider prompt. Startup and model-switch assertions are unchanged.
+
+### Why
+
+- A restored transcript can fit the raw context window while system prompt, tool schemas, and output reserve make the first provider request fail. Deferring that admission lets the existing required-compaction route reduce the transcript instead of crashing the constructor.
+
+### Why an extension could not handle it
+
+- The projection is evaluated before extensions are wired, so only core can retain the shortfall and defer provider admission.
+
+### Expected merge conflict zones
+
+- MEDIUM in `sdk.ts` startup admission and `agent-session.ts` pre-provider compaction gate; LOW in the interactive event switch.
 
 ## Size-adaptive summarization duration budget setting (2026-09-08)
 

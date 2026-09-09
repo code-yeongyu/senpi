@@ -34,6 +34,25 @@
 ### Expected merge conflict zones
 
 - LOW: the new `ModelUsabilityBudgetError` branch in `handleResumeSession` and the added import line.
+
+## 2026-09-09 - Surface required compaction after oversized resume
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: renders the existing session event notice when resume admission defers an unusable restored projection to required compaction.
+
+### Why
+
+- Users must be told that the first prompt will compact instead of seeing a constructor-time model budget refusal.
+
+### Why an extension could not handle it
+
+- The notice originates in core before extension hooks bind; interactive mode is the existing session-event presentation surface.
+
+### Expected merge conflict zones
+
+- LOW: the `handleEvent` switch beside other model and session notices.
+
 ## 2026-09-08 - Shortcut context exposes the effective service tier
 
 ### What changed

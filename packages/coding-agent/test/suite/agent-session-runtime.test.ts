@@ -56,6 +56,7 @@ describe("AgentSessionRuntime characterization", () => {
 			bootstrapThinkingLevel?: boolean;
 			destinationDefaultModel?: string;
 			destinationReserveTokens?: number;
+			destinationCompactionEnabled?: boolean;
 			destinationSystemPrompt?: string;
 			destinationToolDescription?: string;
 		},
@@ -124,8 +125,18 @@ describe("AgentSessionRuntime characterization", () => {
 					...(options?.destinationDefaultModel
 						? { defaultProvider: faux.getModel().provider, defaultModel: options.destinationDefaultModel }
 						: {}),
-					...(options?.destinationReserveTokens
-						? { compaction: { reserveTokens: options.destinationReserveTokens } }
+					...(options?.destinationReserveTokens !== undefined ||
+					options?.destinationCompactionEnabled !== undefined
+						? {
+								compaction: {
+									...(options.destinationReserveTokens !== undefined
+										? { reserveTokens: options.destinationReserveTokens }
+										: {}),
+									...(options.destinationCompactionEnabled !== undefined
+										? { enabled: options.destinationCompactionEnabled }
+										: {}),
+								},
+							}
 						: {}),
 				});
 			}
@@ -778,7 +789,8 @@ describe("AgentSessionRuntime characterization", () => {
 		);
 		const target = SessionManager.create(tempDir, join(tempDir, "targets"));
 		target.appendModelChange(faux.getModel().provider, stored);
-		target.appendMessage({ role: "user", content: "x".repeat(60_000), timestamp: 1 });
+		// Beyond the smaller model's window, not merely eligible for upstream resume compaction.
+		target.appendMessage({ role: "user", content: "x".repeat(70_000), timestamp: 1 });
 		target.appendMessage({ ...fauxAssistantMessage("stored"), provider: faux.getModel().provider, model: stored });
 		const path = target.getSessionFile();
 		if (!path) throw new Error("missing target file");
@@ -807,13 +819,17 @@ describe("AgentSessionRuntime characterization", () => {
 		{ name: "compaction settings", destinationReserveTokens: 100_000 },
 		{ name: "system prompt", destinationSystemPrompt: "p".repeat(400_000) },
 		{ name: "tool schemas", destinationToolDescription: "t".repeat(400_000) },
-	])("rejects using destination $name before lifecycle effects", async (options) => {
+	])("uses destination $name for resume admission", async (options) => {
 		const events: RecordedSessionEvent[] = [];
-		const { runtime, tempDir } = await createRuntimeForTest((pi) => {
-			pi.on("session_before_switch", (event) => {
-				events.push(event);
-			});
-		}, options);
+		const requiresCompaction = "destinationReserveTokens" in options;
+		const { runtime, tempDir } = await createRuntimeForTest(
+			(pi) => {
+				pi.on("session_before_switch", (event) => {
+					events.push(event);
+				});
+			},
+			{ ...options, destinationCompactionEnabled: requiresCompaction },
+		);
 		const target = SessionManager.create(tempDir, join(tempDir, "targets"));
 		target.appendModelChange("missing-provider", "missing-model");
 		target.appendMessage({ role: "user", content: "x".repeat(60_000), timestamp: 1 });
@@ -825,6 +841,21 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(() =>
 			original.assertModelUsable(original.model, tokens, { includeSpeculationLead: false, admission: "resume" }),
 		).not.toThrow();
+		if (requiresCompaction) {
+			// Upstream now admits this shortfall for mandatory compaction; retain the exact destination budget.
+			expect(await runtime.switchSession(path)).toEqual({ cancelled: false });
+			const notices: unknown[] = [];
+			const unsubscribe = runtime.session.subscribe((event) => notices.push(event));
+			unsubscribe();
+			expect(notices).toContainEqual(
+				expect.objectContaining({
+					type: "resume_compaction_required",
+					projection: expect.objectContaining({ compactionReserveTokens: 100_000, usable: false }),
+				}),
+			);
+			expect(events).toEqual([{ type: "session_before_switch", reason: "resume", targetSessionFile: path }]);
+			return;
+		}
 		await expect(runtime.switchSession(path)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
 		expect(events).toEqual([]);
 		expect(runtime.session).toBe(original);

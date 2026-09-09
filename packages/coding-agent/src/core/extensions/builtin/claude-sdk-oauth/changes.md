@@ -1,5 +1,24 @@
 # claude-sdk-oauth
 
+## 2026-09-09 - Classify multi-message cold starts as bootstrap
+
+### What changed
+
+- `session-stream.ts`: `createResidentAttempt` now identifies a first turn by the absence of any prior assistant message in `input.context.messages`, while retaining the no-resident-entry and no-persisted-binding checks. A fresh context can therefore bootstrap even when injected context and the actual prompt produce multiple transmitted user messages; a cold start after an assistant turn remains `flatten` with `registry_miss`.
+- `claude-sdk-oauth-bootstrap-classification.test.ts` covers both observations through the resident session-stream fake SDK boundary.
+
+### Why
+
+- A multi-message first turn was incorrectly shown as `Session continuity lost - resent the full conversation (registry_miss)` even though no SDK session existed and nothing could have been lost. This was reported on Discord by samaronejr on 2026-09-09 while opening a second concurrent OmO session.
+
+### Why an extension could not handle it
+
+- The `firstTurn` predicate is private to the builtin resident admission path, before any extension-facing stream result or continuity observation is emitted.
+
+### Expected merge conflict zones
+
+- LOW: `session-stream.ts` next to the `createResidentAttempt` `firstTurn` predicate and the focused bootstrap classification test.
+
 ## 2026-09-08 - `/claude-account add` relays login prompts through the shared account-command interaction
 
 ### What changed

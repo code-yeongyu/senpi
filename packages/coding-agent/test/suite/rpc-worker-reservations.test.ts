@@ -15,16 +15,30 @@ it.each(["close", "deadline"])(
 		const agentDir = join(scratch, "agent");
 		await mkdir(cwd);
 		await mkdir(agentDir);
-		const fifo = join(scratch, "blocked.jsonl");
+		const sessionFile = join(scratch, "blocked.jsonl");
+		const fifo = join(scratch, "native-gate");
+		const armed = join(scratch, "block-next-open");
+		const extension = join(scratch, "native-gate.mjs");
 		const alias = join(scratch, "alias.jsonl");
 		const siblingFile = join(scratch, "sibling.jsonl");
 		const header = (id: string) =>
 			`${JSON.stringify({ type: "session", version: 3, id, timestamp: new Date(0).toISOString(), cwd })}\n`;
-		await symlink(fifo, alias);
+		await writeFile(sessionFile, header("blocked-durable"));
+		await symlink(sessionFile, alias);
 		await writeFile(siblingFile, header("sibling-durable"));
+		await writeFile(
+			extension,
+			`import { execFileSync } from "node:child_process";
+import { existsSync, unlinkSync } from "node:fs";
+export default function () {
+	if (!existsSync(${JSON.stringify(armed)})) return;
+	unlinkSync(${JSON.stringify(armed)});
+	execFileSync(process.execPath, ["-e", "require('node:fs').readFileSync(process.argv[1])", ${JSON.stringify(fifo)}], { stdio: "ignore" });
+}`,
+		);
 		vi.stubEnv("PATH", "/usr/bin:/bin");
 		vi.stubEnv("SENPI_OFFLINE", "1");
-		const host = reservationHost(cwd, agentDir);
+		const host = reservationHost(cwd, agentDir, extension);
 		const epochs = [host];
 		host.connect("sibling");
 		host.connect("control");
@@ -35,7 +49,8 @@ it.each(["close", "deadline"])(
 			for (let round = 0; round < 3; round++) {
 				if (round > 0) await unlink(fifo);
 				execFileSync("mkfifo", [fifo]);
-				const canonical = await realpath(fifo);
+				await writeFile(armed, "");
+				const canonical = await realpath(sessionFile);
 				const durable = `retry-${action}-${round}`;
 				let gate: Awaited<ReturnType<typeof open>> | undefined;
 				let releasing: Promise<void> | undefined;
@@ -47,6 +62,7 @@ it.each(["close", "deadline"])(
 						try {
 							await unlink(fifo);
 							await writeFile(fifo, header(durable));
+							await writeFile(sessionFile, header(durable));
 							await rescue.write(header(durable));
 						} finally {
 							await Promise.all([gate?.close(), rescue.close()]);
@@ -56,8 +72,13 @@ it.each(["close", "deadline"])(
 				const oldPeer = `opening-${round}`;
 				host.connect(oldPeer);
 				if (action === "deadline") vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-				const opening = host.send(oldPeer, { id: oldPeer, type: "open_session", cwd, sessionPath: fifo });
-				gate = await waitForFifoReader(fifo);
+				// A worker's own FIFO open is not a stable native gate: writer-open
+				// releases open(2), so termination can win before read(2). Here the
+				// child's FIFO entry proves the worker is already in execFileSync;
+				// it cannot leave that native call until we release the child.
+				const reader = waitForFifoReader(fifo);
+				const opening = host.send(oldPeer, { id: oldPeer, type: "open_session", cwd, sessionPath: sessionFile });
+				gate = await reader;
 				const handle = host.registry.list().find((entry) => entry.sessionPath === canonical)?.sessionId;
 				if (!handle) throw new Error("Blocked worker is missing");
 				firstHandle ??= handle;
@@ -88,7 +109,9 @@ it.each(["close", "deadline"])(
 				const allocated = host.workers.size;
 				for (let attempt = 0; attempt < 4; attempt++) {
 					await phase("repeat-cancel", host.registry.close(handle));
-					expect(await host.send("control", { type: "open_session", cwd, sessionPath: fifo })).toMatchObject({
+					expect(
+						await host.send("control", { type: "open_session", cwd, sessionPath: sessionFile }),
+					).toMatchObject({
 						success: false,
 						error: expect.stringContaining("session_path_in_use"),
 					});
@@ -178,7 +201,7 @@ it.each(["close", "deadline"])(
 			epochs.push(next);
 			next.connect("replacement-0");
 			next.connect("epoch-survivor");
-			await next.send("replacement-0", { type: "open_session", cwd, sessionPath: fifo });
+			await next.send("replacement-0", { type: "open_session", cwd, sessionPath: sessionFile });
 			const replacement = next.registry.list()[0];
 			expect(replacement.sessionId).toBe(firstHandle);
 			await next.send("epoch-survivor", { type: "open_session", cwd, sessionPath: replacement.sessionPath });

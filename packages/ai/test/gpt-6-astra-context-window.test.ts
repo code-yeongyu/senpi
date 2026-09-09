@@ -53,6 +53,7 @@ describe("GPT-6 Astra series catalog context window", () => {
 	it("keeps every provider catalog that ships Astra covered", () => {
 		const files = [...new Set(collectAstraEntries().map((entry) => entry.file))].sort();
 		expect(files).toEqual([
+			"amazon-bedrock.json",
 			"azure-openai-responses.json",
 			"github-copilot.json",
 			"openai-codex.json",
