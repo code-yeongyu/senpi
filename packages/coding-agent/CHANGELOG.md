@@ -13,6 +13,7 @@
 - Extensions can inspect the effective shared-host capability during registration, allowing RPC-dependent tools to stay absent when shared-host support is disabled and available when it is enabled.
 
 - Oversized resumed sessions now open in a required-compaction state and compact before the first prompt instead of failing constructor-time model-budget admission ([#1511](https://github.com/code-yeongyu/senpi/issues/1511)).
+- `/thinking` and `/thinking <level>` now open the thinking-level selector or set the session level instead of being sent to the model as a user message; the interactive dispatch dropped by the upstream sync merge is restored with argument completions ([#1437](https://github.com/code-yeongyu/senpi/issues/1437)).
 - Fresh `claude-sdk-oauth` sessions with injected context and multiple first-turn user messages now report continuity `bootstrap` instead of a false `registry_miss` loss; sessions that have a prior assistant message still flatten on a genuine registry miss.
 
 ### Removed

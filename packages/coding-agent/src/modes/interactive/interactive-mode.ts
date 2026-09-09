@@ -188,6 +188,7 @@ import {
 	type StatusIndicator,
 	WorkingStatusIndicator,
 } from "./components/status-indicator.ts";
+import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
@@ -1231,6 +1232,20 @@ export class InteractiveMode {
 					label: provider.id,
 					description: formatLoginProviderCompletionDescription(provider),
 				}));
+			};
+		}
+
+		const thinkingCommand = slashCommands.find((command) => command.name === "thinking");
+		if (thinkingCommand) {
+			thinkingCommand.getArgumentCompletions = async (prefix: string): Promise<AutocompleteItem[] | null> => {
+				// Awaited at the boundary: the shared-host proxy answers this over RPC.
+				const levels = await this.session.getAvailableThinkingLevels();
+				return createFuzzyAutocompleteItems(
+					levels,
+					prefix,
+					(level) => level,
+					(level) => ({ value: level, label: level }),
+				);
 			};
 		}
 
@@ -4212,6 +4227,12 @@ export class InteractiveMode {
 					await this.handleModelCommand(searchTerm);
 					return;
 				}
+				if (text === "/thinking" || text.startsWith("/thinking ")) {
+					const searchTerm = text.startsWith("/thinking ") ? text.slice(10).trim() : undefined;
+					this.editor.setText("");
+					await this.handleThinkingCommand(searchTerm);
+					return;
+				}
 				if (text === "/export" || text.startsWith("/export ")) {
 					await this.handleExportCommand(text);
 					this.editor.setText("");
@@ -6878,6 +6899,63 @@ export class InteractiveMode {
 				},
 			);
 			return { component: selector, focus: selector.getSettingsList() };
+		});
+	}
+
+	private async handleThinkingCommand(searchTerm?: string): Promise<void> {
+		if (!searchTerm) {
+			await this.showThinkingSelector();
+			return;
+		}
+
+		// Awaited at the boundary: the shared-host proxy answers this over RPC.
+		const availableLevels = await this.session.getAvailableThinkingLevels();
+		const normalized = searchTerm.trim().toLowerCase();
+		const level = availableLevels.find((candidate) => candidate.toLowerCase() === normalized);
+		if (!level) {
+			this.showError(`Unknown thinking level "${searchTerm}". Available levels: ${availableLevels.join(", ")}.`);
+			return;
+		}
+
+		this.selectThinkingLevel(level, false);
+	}
+
+	/**
+	 * `persist: false` scopes the level to this session; `persist: true` also
+	 * records it as the model's remembered level (the Ctrl+S path of the selector).
+	 */
+	private selectThinkingLevel(level: ThinkingLevel, persist: boolean): void {
+		try {
+			if (persist) this.session.setThinkingLevel(level);
+			else this.session.setSessionThinkingLevel(level);
+			this.footer.invalidate();
+			this.updateEditorBorderColor();
+			this.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	private async showThinkingSelector(): Promise<void> {
+		// Awaited at the boundary: the shared-host proxy answers this over RPC.
+		const availableLevels = await this.session.getAvailableThinkingLevels();
+		this.showSelector((done) => {
+			const selectLevel = (level: ThinkingLevel, persist: boolean) => {
+				this.selectThinkingLevel(level, persist);
+				done();
+			};
+			const selector = new ThinkingSelectorComponent(
+				this.session.thinkingLevel,
+				availableLevels,
+				(level) => selectLevel(level, false),
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+				(level) => selectLevel(level, true),
+				this.settingsManager.getDefaultThinkingLevel(),
+			);
+			return { component: selector, focus: selector };
 		});
 	}
 
