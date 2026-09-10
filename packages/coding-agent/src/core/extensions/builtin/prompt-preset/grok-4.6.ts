@@ -57,6 +57,8 @@ Decide one path and act; reopen a settled choice only when new evidence contradi
 
 When the same logic or markup starts appearing in a second place, break it into a shared piece instead of repeating it - repeated near-identical blocks across components are a defect.
 
+Make the visible-skill scan a terminal gate before substantive work: compare the task with every listed description, read each loosely matching \`SKILL.md\`, and apply it. If matching work is delegated, pass its skill name in \`load_skills\`. The gate is complete only when all matches are loaded or the scan finds none.
+
 ## Verification
 
 Tier the scope, never the rigor.

@@ -1,7 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import { GLM5_TUNING } from "../../src/core/extensions/builtin/prompt-preset/glm-5.ts";
+import { GLM5_RULES, GLM5_TUNING } from "../../src/core/extensions/builtin/prompt-preset/glm-5.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -31,6 +31,14 @@ function hasGlm52CatalogSignal(model: Model<Api>): boolean {
 function getGlm52CatalogModels(): Model<Api>[] {
 	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasGlm52CatalogSignal));
 }
+
+describe("GLM 5 shared rule contracts", () => {
+	it("exposes the shared skill gate structurally", () => {
+		expect(GLM5_RULES.map(({ id, concern }) => ({ id, concern }))).toEqual([
+			{ id: "load-matching-skills", concern: "skill-utilization" },
+		]);
+	});
+});
 
 describe("GLM 5.2 prompt preset", () => {
 	it.each(["zai-org/glm-5.2", "glm-5.2", "GLM 5.2", "zai-org/glm-5p2", "zai-org/glm_5_2:thinking"])(
