@@ -1,6 +1,6 @@
 # packages/pty
 
-`@earendil-works/pi-pty` is the TypeScript PTY facade: native loader, sessions, detached registry, headless screen, and non-PTY pipe fallback.
+`@earendil-works/pi-pty` is the TypeScript PTY facade: native loader, Bun terminal adapter, sessions, detached registry, headless screen, and non-PTY pipe fallback. Score 14: distinct terminal lifecycle domain; Node `>=24.0.0`.
 
 ## STRUCTURE
 
@@ -9,10 +9,11 @@ src/index.ts                     Public barrel; ".", "./screen", "./registry", "
 src/loader.ts, native-loader.ts  Native prebuild discovery and ABI checks
 src/session.ts                   Public session lifecycle
 src/session-native.ts            Native backend adapter
+src/session-bun.ts               Opt-in Bun.spawn terminal backend
 src/pipe-fallback.ts             child_process fallback when native is absent
 src/session-exit.ts              Exit settlement helpers
 src/registry*.ts                 Session registry and detached ownership
-src/screen.ts                    Headless terminal screen state
+src/screen.ts                    Headless screen; screen-operations.ts queue, screen-text.ts helpers
 src/quarantine.ts                macOS quarantine detection for prebuilds
 native/prebuilds/                Shipped platform binaries
 native/check-prebuild-fresh.mjs  Prebuild freshness gate
@@ -23,7 +24,8 @@ test/fixtures/*.mjs              Native-addon child processes for callback/worke
 
 - The native ABI constant is intentionally independent of package CalVer. Keep it aligned with `crates/senpi-pty` exports.
 - macOS quarantine is probed via `xattr -p` before loading a prebuild. Detection must never clear the attribute; an unreadable attribute is non-rejecting.
-- Unsupported or missing native bindings select the pipe fallback with a diagnostic; fallback behavior must never be presented as a real PTY.
+- Under Bun, `SENPI_BUN_TERMINAL=1` opts into `Bun.spawn` terminal before native selection; it is off by default and ignored under Node.
+- Otherwise unsupported or missing native bindings select the pipe fallback with a diagnostic; fallback behavior must never be presented as a real PTY.
 - Exit notification settles exactly once across native exit, child exit, startup failure, kill, and disposal races.
 - `kill()` is idempotent and detached-child cleanup owns the full process tree.
 - Bound retained raw output/tails; persistent sessions must not grow memory without limit.
@@ -36,6 +38,7 @@ test/fixtures/*.mjs              Native-addon child processes for callback/worke
 | Public API / subpath exports | `src/index.ts` |
 | Native loading/ABI | `src/loader.ts`, `src/native-loader.ts` |
 | Session lifecycle | `src/session.ts`, `src/session-exit.ts` |
+| Bun terminal selection, I/O, resize | `src/session-bun.ts` |
 | Fallback process behavior | `src/pipe-fallback.ts` |
 | Detached sessions | `src/registry.ts`, `src/registry-detached.ts` |
 | Screen parsing | `src/screen.ts` |

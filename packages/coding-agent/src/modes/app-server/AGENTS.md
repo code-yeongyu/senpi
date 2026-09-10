@@ -1,6 +1,6 @@
 # packages/coding-agent/src/modes/app-server
 
-Codex-compatible app-server mode. It exposes Senpi threads and turns over JSON-RPC-shaped stdio, Unix-socket, and authenticated WebSocket transports. Unqualified paths below are relative to this directory; `packages/...` paths are repository-relative.
+Codex-compatible app-server domain (score 13). It exposes Senpi threads and turns over JSON-RPC-shaped stdio, Unix-socket, and authenticated WebSocket transports. Unqualified paths below are relative to this directory; `packages/...` paths are repository-relative.
 
 ## STRUCTURE
 
@@ -23,7 +23,7 @@ transports/           stdio, Unix socket, WebSocket auth/backpressure
 protocol/             App-facing facade (account.ts, config.ts, thread.ts, turn.ts,
                       collaboration-mode.ts, fuzzy-search.ts, terminal.ts, …) plus
                       pinned generated Codex evidence; generated/v2/ is the
-                      second-generation tree (~527 files)
+                      second-generation tree (see protocol/AGENTS.md)
 turn-adapter.ts       Agent/session events to app-server turn events
 ```
 
@@ -34,7 +34,7 @@ turn-adapter.ts       Agent/session events to app-server turn events
 - WebSocket listeners bind IP literals. Bearer auth is required unless explicitly disabled for loopback, and `Origin` requests remain rejected.
 - Keep connection subscriptions, thread ownership, archive/unload, and turn cancellation consistent across disconnect and daemon shutdown. Unarchive restores storage only; it must not resume or attach the thread.
 - Preserve the TurnLog for the process lifetime, including idle unload/resume. After a process restart, history reconstruction is intentionally user-message-only; do not present it as complete persisted turn history.
-- Every outbound notification must carry `emittedAtMs`. Preserve response-before-notification ordering for unarchive, goal, and settings mutations; do not emit `thread/compacted` because Codex HEAD does not emit it.
+- Every outbound notification must carry `emittedAtMs`. Preserve response-before-notification ordering for unarchive, goal, and settings mutations; do not emit `thread/compacted` because the pinned Codex compatibility surface does not emit it.
 - Keep `turn/diff/updated` thread-scoped and cumulative over projected file-change diffs. Keep `thread/settings/update` limited to session-scoped model and effort, and keep account reads honest rather than emulating Codex account state.
 - Approval payloads and diagnostics can contain sensitive material. Keep token-file permissions restricted, do not assume diagnostics are redacted, and add explicit redaction before exposing them beyond the local process.
 - Generated files under `protocol/generated/` are protocol evidence and compile-time type inputs, not runtime implementations. Never edit them directly. Prefer the non-generated facade; keep direct type-only imports isolated until the facade covers them.
@@ -45,10 +45,10 @@ turn-adapter.ts       Agent/session events to app-server turn events
 |---|---|
 | Add a method | `rpc/registry.ts` and the matching handler |
 | Change connection lifecycle | `server/connection.ts`, `server/server-core.ts` |
-| Change thread/session projection | `threads/` |
+| Change thread/session projection | `threads/AGENTS.md`, then the matching lifecycle/projection module |
 | Change transport behavior | `transports/` |
 | Change approvals | `server/approval-*.ts`, `server/approvals.ts` |
-| Change wire types | `protocol/` and `packages/coding-agent/docs/app-server.md` |
+| Change wire types | `protocol/AGENTS.md` and `packages/coding-agent/docs/app-server.md` |
 
 ## GENERATED PROTOCOL
 

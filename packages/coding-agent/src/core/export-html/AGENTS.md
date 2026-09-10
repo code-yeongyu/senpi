@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/export-html
 
-Self-contained HTML session export (`/export`): renders a session JSONL file plus its system prompt and tool metadata into one styled HTML document. Isolated from the agent loop — `agent-session.ts` calls in through `exportSessionToHtml` only.
+Self-contained HTML session export (`/export`): renders a session JSONL file plus its system prompt and tool metadata into one styled HTML document. Isolated from the agent loop — `agent-session.ts` calls in through `exportSessionToHtml` only. Existing offline-viewer guide retained (score 4: barrel and viewer symbol density).
 
 ## FILES
 
@@ -19,7 +19,7 @@ Self-contained HTML session export (`/export`): renders a session JSONL file plu
 | Change export output/wiring | `index.ts` |
 | Change terminal-output rendering fidelity | `ansi-to-html.ts` |
 | Change how extension tools appear | `tool-renderer.ts` + the `ToolHtmlRenderer` implementation in `agent-session.ts` |
-| Change viewer styling/behavior | `template.*` (assets, not TS) |
+| Change viewer styling/behavior | `template.*` (maintained source assets, not vendored or generated) |
 
 ## CONVENTIONS
 

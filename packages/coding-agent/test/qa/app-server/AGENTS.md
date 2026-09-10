@@ -1,13 +1,13 @@
 # test/qa/app-server
 
-Real-surface app-server QA drivers. 47 files + `differential/`. Score 14 — distinct domain: these are **standalone executable scenarios**, not Vitest suites, and they are excluded from the default correctness gate.
+Real-surface app-server QA drivers. 47 direct files + `differential/`. Score 9 — distinct domain: task scenarios are **standalone executables**; `task8-thread-search-support.test.ts` is the Vitest exception.
 
 ## STRUCTURE
 
 ```text
 task<N>-<behavior>.ts      standalone scenario programs, exit via process.exit
 task8-thread-search-support.test.ts   the one Vitest wrapper in this tree
-differential/*.mjs         Node ESM scenarios driven by scripts/qa-app-server/differential/
+differential/*.mjs         Node ESM scenarios using the package's scripts/qa-app-server/ harness
 differential/expected-gaps.json, capability-manifest.json   pinned expectations
 ```
 
@@ -42,8 +42,8 @@ differential/expected-gaps.json, capability-manifest.json   pinned expectations
 
 ```bash
 bunx tsx packages/coding-agent/test/qa/app-server/task<N>-<behavior>.ts
-bun run --cwd packages/coding-agent test --run test/qa/app-server/task8-thread-search-support.test.ts
-bun run qa:app-server        # packaged handshake / multiclient / approval / real-client probes
+bun run --cwd packages/coding-agent test test/qa/app-server/task8-thread-search-support.test.ts
+bun run --cwd packages/coding-agent qa:app-server  # includes real-client-sweep
 ```
 
-Differential scenarios run through the repository's differential harness (`scripts/qa-app-server/differential/driver.mjs`), never as individual node invocations.
+Differential scenarios use `packages/coding-agent/scripts/qa-app-server/`; its `differential/driver.mjs` is a transport library, not a standalone CLI. Preserve harness-owned endpoint setup and teardown.

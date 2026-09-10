@@ -1,14 +1,13 @@
 # scripts/
 
-Build, validation, release, publish, lockfile, and environment tooling for the senpi monorepo.
+Build, validation, release, publish, lockfile, and environment tooling for the senpi monorepo (score 9: distinct tooling domain).
 
 ## Script anatomy
 
-All `.mjs` files carry `#!/usr/bin/env node` and run as ES modules; `devenv-setup.sh`/
-`.ps1` locate Node and delegate to `devenv-setup.mjs` (they own no logic). Colocated
-`*.test.mjs` run via root `bun run test:scripts` (shared fixtures live in `*.test-support.mjs`,
-outside that glob); root `preinstall` runs `create-bin-stubs.mjs`. `scripts/qa/` render assertions go through `xterm-render.mjs`'s
-cell grid. Prefixes encode role:
+Node ESM helpers and CLIs use `.mjs`; shebangs are not universal. `devenv-setup.sh`/
+`.ps1` locate Node and delegate to `devenv-setup.mjs`. Root `bun run test:scripts` runs
+`node --test scripts/*.test.mjs`; `*.test-support.mjs`, `*.test.ts`, and `qa/` are outside
+that glob. Root `preinstall` runs `create-bin-stubs.mjs`. Prefixes encode role:
 
 | Prefix | Role |
 |--------|------|
@@ -22,67 +21,60 @@ cell grid. Prefixes encode role:
   the `npm_execpath` basename), pnpm-only `npm_config_*` scrubbing, execpath-aware spawning that
   forwards SIGINT/SIGTERM/SIGHUP to the child, and per-manager forwarded-argument shaping.
 - `build-all.mjs`: PM-agnostic build orchestrator in dependency phases, built on `package-manager.mjs`.
-- `run-workspaces.mjs`: root -> workspace script runner
-  (`node scripts/run-workspaces.mjs [--if-present] [--workspace <name|path>]... <script> [-- <args>]`):
-  resolves the root `workspaces` field, runs `<pm> run <script>` per workspace sequentially in path
-  order with the invoking manager, never re-enters the root, and prints a PASS / SKIP / FAIL summary.
-  Every root `package.json` delegation into a workspace goes through it (`root-workspace-scripts.test.mjs`).
-- `release.mjs`: CalVer release composing `calver.mjs` and
-  `release-{packages,artifacts,changelog,git,test-gate}.mjs`. Preflight: on `main`, clean tree
-  (dry-run warns), valid CalVer; `--dry-run` previews every command and file write.
-- `publish.mjs`: publishes seven fork-owned packages (`senpi-ai`, `senpi-agent-core`, `senpi-tui`,
-  `senpi-pty`, `senpi-telemetry`, `senpi-codemode`, `senpi`); sources stay `private`, copied to
-  temporary public manifests under the fork scope (`@code-yeongyu/senpi-server` stays excluded).
-  Provenance requires GitHub Actions (`publish-command.mjs` throws outside it);
-  `local-release.mjs` smoke-tests a release to a temp dir without pushing tags.
-  `build-binaries.sh` mirrors `.github/workflows/build-binaries.yml` locally;
-  `prepare-bun-compile-assets.mjs` + `smoke-standalone-binary.mjs` cover standalone binaries.
-- Lock plumbing: `generate-coding-agent-{shrinkwrap,install-lock}.mjs`,
-  `generate-claude-agent-sdk-platform-lock.mjs`, `hydrate-lock-registry-metadata.mjs`,
-  `materialize-publish-runtime.mjs`, `npm-pack-json.mjs`, helpers in `install-lock-*.mjs`;
-  root `bun run refresh-lock` chains them.
-- Gates/catalog: `check-pr-changelog.mjs`, `check-upstream-release.mjs`, `check-pinned-deps.mjs`,
-  `check-ts-relative-imports.mjs`, `check-browser-smoke.mjs`, `diff-model-catalog.mjs`,
-  `publish-model-catalog.mjs`, `generate-thinking-capabilities.mjs` — `bun run check` chains them.
+- `run-workspaces.mjs`: `node scripts/run-workspaces.mjs [--if-present] [--workspace <name|path>]... <script> [-- <args>]`.
+  Resolves root `workspaces`; runs sequentially in path order with the invoking manager;
+  never re-enters root; prints PASS / SKIP / FAIL (`root-workspace-scripts.test.mjs` guards delegation).
+- `release.mjs`: CalVer release composing `calver.mjs` and `release-{packages,artifacts,changelog,git,test-gate}.mjs`.
+  Preflight: on `main`, clean tree (dry-run warns), valid CalVer; `--dry-run` previews commands and writes.
+- `publish.mjs`: seven fork-owned packages from `registry-packages.mjs`: `senpi-ai`,
+  `senpi-agent-core`, `senpi-tui`, `senpi-pty`, `senpi-telemetry`, `senpi-codemode`, `senpi`.
+  Sources stay private; temporary public manifests use the fork scope; server stays excluded.
+  `publish-command.mjs` requires GitHub Actions provenance; `local-release.mjs` uses a temp release without pushing tags.
+  `build-binaries.sh` mirrors the binary workflow; `prepare-bun-compile-assets.mjs` + `smoke-standalone-binary.mjs` check standalone binaries.
+- Lock plumbing: `bun run refresh-lock` refreshes npm/Bun locks, hydrates registry metadata,
+  then runs `generate-coding-agent-{shrinkwrap,install-lock}.mjs`; the Claude SDK platform
+  lock generator is separate. `materialize-publish-runtime.mjs`, `npm-pack-json.mjs`, `install-lock-*.mjs` support staging/validation.
+- `bun run check`: Biome, pinned-deps, TS imports, publish/install/Claude SDK locks, tsc, browser smoke.
+  `check-pr-changelog.mjs`, `check-upstream-release.mjs`, `diff-model-catalog.mjs`,
+  `publish-model-catalog.mjs`, and `generate-thinking-capabilities.mjs` are separate gates/tools.
+- `qa/xterm-render.mjs`: CLI for render/assert/replay/raw-assert/verify-manifest/self-test;
+  importing it also starts its CLI. Use `node scripts/qa/xterm-render.mjs self-test` for its fixture checks.
+  Visual claims require `.ans`/`.html`/`.json` triplets and parsed-cell assertions; raw-assert checks protocol only.
 
 ## changes.md tracker
 
-`scripts/changes.md` is the hand-written change tracker feeding CHANGELOG gates.
-`changes-md-policy.mjs` owns policy: canonical sections, path classification, coverage audit,
-and the added-line restrictor — a PR only gets credit for tracker bullets its diff added.
-`changes-md-git.mjs` owns git/filesystem collection (skips symlinked trackers, rejects option-like
-`--base` revisions). `audit-changes-md.mjs` audits coverage; `check-pr-changelog.mjs` gates PRs
-via `CHANGELOG_GATE_LABELS` / `CHANGELOG_GATE_BASE` env vars, never shell interpolation; entries
-parse `## YYYY-MM-DD` and `## Title (YYYY-MM-DD)` dialects.
+`scripts/changes.md` feeds CHANGELOG gates. `changes-md-policy.mjs` owns path classification,
+canonical sections, coverage audit, and added-line-only tracker credit. `changes-md-git.mjs`
+collects git/filesystem facts, skips symlinked trackers, and rejects option-like `--base` revisions.
+`audit-changes-md.mjs` audits coverage; `check-pr-changelog.mjs` uses `CHANGELOG_GATE_LABELS` /
+`CHANGELOG_GATE_BASE`, never shell interpolation. Entries accept `## YYYY-MM-DD` and `## Title (YYYY-MM-DD)`.
 
 ## prepare-senpi-bundled-workspaces.mjs
 
-Embeds workspace packages in the published `@code-yeongyu/senpi` tarball. `sourceOnly: false`
-ships `dist/index.js` (build before staging); `sourceOnly: true` ships `src/` (only
-`senpi-codemode`). Every `requiredFiles` entry is validated; `@earendil-works/pi-pty` also
-requires `native/index.js` and a platform prebuild. The tarball is fully self-contained: `copyPublishDependencies` stages the ENTIRE runtime
-closure from `publish-deps.lock.json` into `packages/coding-agent/node_modules`, and
-`stagePublishManifest` rewrites `bundleDependencies` to every platform-portable staged
-package while original `dependencies` keys stay intact, pointing through npm aliases to
-fork-owned `@code-yeongyu/senpi-*` packages (npm packs original import paths; Bun resolves
-the alias; the old partial bundle made arborist abort reify with ERR_MODULE_NOT_FOUND).
-Staging dirties `packages/coding-agent/package.json`; restore with `git checkout --` after it.
+Embeds built workspace `dist/` in the `@code-yeongyu/senpi` tarball; only `senpi-codemode`
+ships `src/`; its Python prelude and nested `node_modules/@babel/parser` must also ship.
+PTY loader files (`dist/index.js`, `native/index.js`) are required; missing native prebuilds warn and allow pipe fallback.
+`copyPublishDependencies` stages the registry runtime closure from `publish-deps.lock.json`.
+Client/protocol are instead copied from their builds into `packages/coding-agent/vendor/pi-{client,protocol}`;
+JS/declaration imports become relative, with no resolver-visible client/protocol package under `node_modules`.
+`stagePublishManifest` lives in `prepare-senpi-publish-manifest.mjs` (re-exported here):
+removes client/protocol dependency edges, bundles portable staged packages, preserves other import keys
+through owned npm aliases, and promotes platform optional families to root optional dependencies.
+Pack gates reject `npm-shrinkwrap.json`, missing runtime bundles, and missing codemode Babel parser.
+Staging changes `packages/coding-agent/package.json` AND emitted imports; use a disposable release checkout,
+or restore the checked manifest and rebuild coding-agent before returning to development.
 
 ## Anti-patterns
 
-- Don't hardcode `npm` as the child process manager. Use the detected PM from `package-manager.mjs`,
-  and reach workspaces from root scripts only through `run-workspaces.mjs` — never
-  `npm run --workspaces`, `npm --workspace=<name> run`, `npm --prefix <dir> run`, or `cd <dir> && npm run`.
-- Never hand-edit `publish-deps.lock.json` or `coding-agent-install-lock.json`; regenerate
-  with the `generate-*` scripts.
-- Never run `bun scripts/publish.mjs` without a prior build; it checks `dist/` exists, not
-  freshness. Never commit `.env` files or print credentials in build logs.
-- Lock generators refuse unreviewed install scripts; the allowlist is keyed by exact
-  `name@version` — bump the allowlist entry together with the dependency.
-- Never bundle packages declaring `os`/`cpu`/`libc` into `bundleDependencies`
-  (`isPlatformConstrainedPackage`): npm republishes the bundled set as required deps, so one
-  cross-platform artifact fails installs with EBADPLATFORM elsewhere; keep them optional
-  registry deps resolved per install target.
+- Use `package-manager.mjs` for manager-neutral child processes and `run-workspaces.mjs` for root delegation;
+  the runner tests reject npm workspace/prefix flags and shell `cd` delegation (see root guide).
+- Regenerate publish/install locks with `generate-*`; never hand-edit them.
+- `publish.mjs` checks `dist/` existence, not freshness: build first. Never commit `.env` or log credentials.
+- Install-script allowlists use exact `name@version`; update the reviewed entry with dependency bumps.
+- Never bundle packages declaring `os`/`cpu`/`libc`: npm republishes bundles as required deps,
+  causing EBADPLATFORM on other hosts. Keep them optional registry deps resolved per target.
+- QA visual assertions never inspect raw escape strings; replay must retain positive scrollback,
+  and clear/replay protocol tokens must belong to one complete DECSET 2026 frame.
 
 ---
-Generated: 2026-08-24 | Commit `baf15a54d`
+Generated: 2026-09-10 | Commit `2d0fa41c5`

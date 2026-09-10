@@ -1,19 +1,23 @@
 # packages/coding-agent/src/core
 
-Session runtime, model/provider stack, session persistence, settings, resources. 72 flat `.ts` files (~28.8k LOC) plus six subtrees with their own AGENTS.md (`tools/`, `extensions/`, `dynamic-prompt/`, `compaction/`, `export-html/`, `retry-fallback/`). Reach for the extension API before adding anything here.
+Session runtime, model/provider stack, session persistence, settings, resources. 85 flat `.ts` files (~31.6k LOC) plus seven subtrees, including the shared `credential-pool/`. Score 11: large code-heavy domain with dense symbols/exports and seven module subtrees. Reach for the extension API before adding anything here.
 
 ## HOTSPOTS (flat files >500 LOC)
 
 | File | LOC | Owns |
 |---|---|---|
-| `agent-session.ts` | 8007 | `AgentSession`: prompt/steer/follow-up, tool registry, compaction admission/recovery, retry/fallback, abort provenance, navigation, extension binding |
-| `package-manager.ts` | 2760 | `DefaultPackageManager`: install/update/remove, source parsing, git/npm, resource precedence |
-| `settings-manager.ts` | 2022 | Layered global/project settings, JSONC, locking, queued writes, migrations |
-| `session-manager.ts` | 1818 | Append-only JSONL entry stream, version-3 migrations, branching, labels, bounded header scans |
-| `resource-loader.ts` | 1609 | `DefaultResourceLoader`: extension/hook/prompt/skill/theme discovery, precedence, generated shims |
-| `model-resolver.ts` | 1054 | Scope parsing, minimatch narrowing, Cursor legacy aliases, ambiguity diagnostics, CLI/initial/session selection |
-| `model-runtime.ts` | 931 | `ModelRuntime`: provider catalog composition, auth, refresh, availability snapshots, streaming |
-| `auth-storage.ts` | 724 | `AuthStorage` + file/read-only/in-memory backends; lock-backed JSON, 0600 credentials |
+| `agent-session.ts` | 9031 | `AgentSession`: prompt/steer/follow-up, tool registry, compaction admission/recovery, retry/fallback, abort provenance, navigation, extension binding |
+| `package-manager.ts` | 2777 | `DefaultPackageManager`: install/update/remove, source parsing, git/npm, resource precedence |
+| `settings-manager.ts` | 2086 | Layered global/project settings, JSONC, locking, queued writes, migrations |
+| `session-manager.ts` | 2035 | Append-only JSONL entry stream, version-3 migrations, branching, labels, bounded header scans |
+| `resource-loader.ts` | 1576 | `DefaultResourceLoader`: extension/hook/prompt/skill/theme discovery, precedence, generated shims |
+| `model-resolver.ts` | 1056 | Scope parsing, minimatch narrowing, Cursor legacy aliases, ambiguity diagnostics, CLI/initial/session selection |
+| `model-runtime.ts` | 1094 | `ModelRuntime`: provider catalog composition, auth, refresh, availability snapshots, streaming |
+| `auth-storage.ts` | 766 | `AuthStorage` + file/read-only/in-memory backends; lock-backed JSON, 0600 credentials |
+| `provider-composer.ts` | 606 | Provider auth composition and availability |
+| `model-config.ts` | 578 | Model validation and config resolution |
+| `sdk.ts` | 570 | Session factories and runtime wiring |
+| `skills.ts` | 529 | Skill discovery and invocation formatting |
 
 `ModelRegistry` (`model-registry.ts`) is a synchronous compatibility facade over `ModelRuntime` — not a second implementation.
 
@@ -26,7 +30,9 @@ Session runtime, model/provider stack, session persistence, settings, resources.
 | Wire services into a session | `agent-session-services.ts` |
 | Model selection / scope resolution | `model-resolver.ts` |
 | Provider auth composition | `provider-composer.ts`, `provider-api-key-auth.ts`, `provider-header-auth.ts` |
-| Credential storage | `auth-storage.ts` |
+| Credential storage / account listing | `auth-storage.ts`, `credential-accounts.ts` |
+| Shared credential rotation / health | `credential-pool/{rotation-stream,state-store,classify,failover,env-slots}.ts` |
+| Pending-work coordination / write ownership | `session-work-barrier.ts`, `session-write-reservation.ts` |
 | Session persistence / branching | `session-manager.ts` |
 | Settings read/write | `settings-manager.ts` |
 | Bash execution (local or injected remote ops) | `bash-executor.ts` |
@@ -47,13 +53,13 @@ Session runtime, model/provider stack, session persistence, settings, resources.
 ## ANTI-PATTERNS
 
 - Implementing an extension-capable feature here instead of `extensions/builtin/`.
-- Mutating credentials through `ReadOnlyAuthStorage` (mutators throw by design) or bypassing lock/revision handling in the file backend.
+- Mutating credentials through `ReadOnlyAuthStorage` (mutators throw by design) or bypassing lock/revision handling in the file backend. `credential-pool/state-store.ts` is a health-only sidecar: never persist credential material there; env slots use installation-local HMAC revisions.
 - Assuming a session operation owns terminal state during compaction/retry/abort — ownership, deferred queues, epochs, and provenance exist to prevent duplicate transitions.
 - Relying on `provider-composer.ts`'s `@deprecated` field for authentication; it is retained only for extension-source compatibility.
 - Dropping legacy Cursor model aliases or model compatibility flags when touching resolution paths.
 
 ## NOTES
 
-- `core/changes.md` (3.5k lines) is the fork ledger for this directory — read the relevant dated section before touching a hotspot.
+- `core/changes.md` is the fork ledger for this directory — read the relevant dated section before touching a hotspot.
 - `output-guard.ts` holds process-global mutable stdio state with retry/backpressure timing; treat it as a process-wide singleton, not a helper.
 - `session-summary-lru.ts` / `session-summary-cache.ts` enforce byte budgets; summary regeneration is not free.

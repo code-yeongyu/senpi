@@ -1,6 +1,8 @@
 # packages/tui
 
-Commit: `baf15a54d` (2026-08-24)
+Commit: `2d0fa41c5` (2026-09-10)
+
+Score: 13 (package config, code-heavy subtree, dense exports/references); distinct terminal-library boundary.
 
 `@earendil-works/pi-tui` is the standalone terminal renderer/editor library used by Senpi interactive mode. Rendering uses synchronized, differential frames and must preserve terminal ownership boundaries.
 
@@ -13,11 +15,9 @@ src/tui-alt-screen.ts       Alt-screen TUI: layout frames, scroll routing, flash
 src/layout.ts               Layout frame rendering, rects, clipping, scrollbar geometry
 src/layout-node.ts          Per-component layout node attachment
 src/terminal.ts             Terminal capabilities and lifecycle
-src/editor-component.ts     Multiline editor primitive
+src/editor-component.ts     Custom editor interface; implementation in components/editor.ts
 src/components/             Text, markdown, loader, selectors, image components
-src/components/stack.ts     Stack size allocation shared by v-stack/h-stack
-src/components/v-stack.ts   VStack; h-stack.ts HStack; spacer.ts Spacer
-src/components/scroll-view.ts  ScrollView with scrollbar options
+src/components/stack.ts     Shared VStack/HStack sizing; scroll-view.ts owns scrolling
 src/keybindings.ts          Configurable default bindings
 src/keys.ts                 Key parsing and matching
 src/utils.ts                Width, wrapping, ANSI segmentation, output normalization
@@ -27,7 +27,7 @@ src/dollar-invocation-autocomplete.ts  $-invocation suggestions for the editor
 src/changes.md              Fork render behavior
 test/*.test.ts              Node test-runner coverage
 bench/                      frame-cost, editor-layout, markdown-render benchmarks
-native/                     Optional Darwin/Win32 modifier binaries (prebuilt, lazy-loaded)
+native/                     Optional modifiers + Win32 console mode (prebuilt, lazy-loaded)
 ```
 
 ## RENDERING CONTRACT
@@ -45,7 +45,7 @@ native/                     Optional Darwin/Win32 modifier binaries (prebuilt, l
 | Task | File |
 |---|---|
 | Flicker, cursor, viewport (`isViewportTUI`, `VIEWPORT_TUI`) | `src/tui.ts` |
-| Alt-screen rendering, scroll wheel/keys routing | `src/tui-alt-screen.ts` |
+| Alt-screen rendering, scroll routing, transcript search | `src/tui-alt-screen.ts`, `src/alt-screen-search.ts` |
 | Layout rects, clipping, scrollbar geometry | `src/layout.ts`, `src/layout-node.ts` |
 | Stack sizing, scrollable regions | `src/components/stack.ts`, `src/components/scroll-view.ts` |
 | Terminal lifecycle/title, child process terminal | `src/terminal.ts` (`ProcessTerminal`) |
@@ -71,9 +71,10 @@ native/                     Optional Darwin/Win32 modifier binaries (prebuilt, l
 
 ## VALIDATION
 
-- Tests use `node --test --import tsx`, not Vitest; the test script also imports `test/setup-multiplexer-env.mjs`. Run `bun run test` from this package.
+- Package runtime requires Node >=24. Tests use `node --test --import tsx`, not Vitest; `bun run test` also imports `test/setup-multiplexer-env.mjs`.
+- From this package: `bun run build` uses `tsc -p tsconfig.build.json`; `bun run bench:frame-cost -- --n 10000 --stable-components` emits frame-cost JSON.
 - Alt-screen/layout changes: see `test/tui-alt-screen.test.ts`, `test/layout.test.ts`, `test/viewport-render.test.ts`.
 - Rendering changes must include focused headless-terminal assertions and preserve flicker budgets.
 - Runtime changes require root `bun run check`, `senpi-qa` TUI smoke evidence, and visual terminal QA.
 - Read `src/changes.md` before altering renderer or loader behavior.
-- Native modifier binaries: `bun run build:native:darwin`; `bun run build:native:win32` (toolchain via `PI_TUI_WIN32_TOOLCHAIN=msvc|mingw`).
+- Native binaries: `bun run build:native:darwin` needs a macOS SDK/CoreGraphics; `bun run build:native:win32` selects `PI_TUI_WIN32_TOOLCHAIN=msvc|mingw`. Both emit arm64/x64 prebuilds.

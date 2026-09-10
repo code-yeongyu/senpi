@@ -1,15 +1,16 @@
 # packages/ai/scripts
 
-Generated: 2026-08-24. Commit `baf15a54d`.
+Generated: 2026-09-10. Commit `2d0fa41c5`.
 
-Networked generators that produce the committed model catalogs (`src/providers/data/*.json`, `src/models.generated.ts`, `src/image-models.generated.ts`) plus their validators. Scored 7 but kept: this is the only place the generation contract (flags, staging/rename, manifest hashing) is written down, and the parent file states only the outcome.
+Networked generators that produce the committed model catalogs (`src/providers/data/*.json`, `src/models.generated.ts`, `src/image-models.generated.ts`) plus their validators. Score 6; retained in update mode: this is the only place the generation contract (flags, staging/rename, manifest hashing) is written down, and the parent file states only the outcome.
 
 ## FILE MAP
 
 ```text
-generate-models.ts             3.4k LOC orchestrator; all four model scripts are flag variants of it
+generate-models.ts             3.6k LOC orchestrator; full, hydration, and JSON-catalog modes
 generate-models-opengateway.ts fetchOpenGatewayModels + OpenGatewayReasoningRecorder (enrichment source)
 models-dev-reasoning-options.ts getEffortThinkingLevelMap — models.dev effort -> thinkingLevelMap
+openrouter-reasoning-options.ts getOpenRouterThinkingLevelMap — OpenRouter reasoning metadata
 model-data.ts                  Shared manifest/schema layer: MODEL_DATA_SCHEMA_VERSION=3,
                                createModelDataManifest, validateGeneratedModelData, assertExactModelIds
 check-model-data.ts            Thin CLI over validateGeneratedModelData
@@ -22,27 +23,27 @@ transform-cursor-agent-proto.mjs Rewrites protoc-gen-es enums to const objects f
 
 | Invocation | Flags | Effect |
 |---|---|---|
-| `bun run generate-models` | `--strict` | Full: `data/` JSON + `models.generated.ts` |
+| `bun run generate-models` | `--strict` | Full: `data/` JSON + provider `*.models.ts` shards + `models.generated.ts` |
 | `bun run hydrate-model-data` | `--strict --data-only` | `data/` JSON only; rejects any JSON-catalog flag |
 | `bun run generate-model-catalog` | `--strict --json-only --json-output <dir>` | Publishable catalog to `.artifacts/model-catalog`; `--json-only` requires `--json-output` |
 | `bun run check:model-data` | — | Validates manifest hashes; fails with "run `bun run hydrate:model-data` from the repository root" |
 
-`--strict` turns per-provider fetch failures into a thrown error instead of a skip. Without it a network hiccup silently ships a shrunken catalog — always keep it on for committed regeneration.
+`--strict` turns per-provider fetch failures into a thrown error instead of a skip. Without it a failed source can be skipped — keep it on for committed regeneration; `prepublishOnly` currently invokes both generators without the flag.
 
 ## CONVENTIONS
 
 - `data/` writes are staged, not in-place: a `.model-generation-*` temp dir under `src/providers/`, then rename-swap with the previous dir kept for rollback. Never write `data/` file-by-file.
-- Every provider fetch skips records with `status === "deprecated"` (five separate call sites) — deprecated upstream models must not enter the catalog.
+- Deprecated-status filtering appears in five fetch paths in `generate-models.ts`; preserve it when changing the corresponding upstream loader.
 - `model-data.ts` is the single schema authority: the manifest carries a sha256 per file plus a `structureHash`, so a hand-edit of any JSON fails `check:model-data`.
 - Scripts run under `tsx` (see package scripts), use explicit `.ts` import suffixes, and import repo types from `../src/types.ts` — they are type-checked against runtime contracts, not standalone.
-- These are the only files in the package that legitimately use bare `fs`/`path` imports rather than `node:`-prefixed ones; leave the style alone unless converting the whole file.
+- The main generator uses bare `fs`/`path` imports; the protobuf transform uses `node:fs`. Do not infer a package-wide import convention from these scripts.
 
 ## ANTI-PATTERNS
 
 - Hand-editing `src/providers/data/*.json`, `src/models.generated.ts`, or `src/image-models.generated.ts` instead of rerunning the generator — the manifest will catch it, but only at `check:model-data` time.
 - Running generation without `--strict` and committing the diff.
 - Adding a provider fetcher that does not honor the deprecated-status skip or the staging/rename path.
-- Editing `src/api/cursor-agent/gen/agent_pb.ts` by hand: regenerate via `buf generate` on `proto/cursor/agent.proto`, then `bun scripts/transform-cursor-agent-proto.mjs <in> <out>` (the exact `buf` invocation is in that file's header comment).
+- Editing `src/api/cursor-agent/gen/agent_pb.ts` by hand: regenerate via `buf generate` on `proto/cursor/agent.proto`, then `bun scripts/transform-cursor-agent-proto.mjs <in> <out>` (the exact `buf` invocation is in the transform script's header comment).
 
 ## VALIDATION
 

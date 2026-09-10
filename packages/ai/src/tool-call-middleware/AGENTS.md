@@ -2,9 +2,9 @@
 
 Text-format tool-call protocols for providers that don't support native function calling. Wraps `openai-completions` streams and parses `<tool_call>` / XML / delimiter formats back into pi's canonical `toolCall` events. Fork-modified — see `changes.md`.
 
-Generated: 2026-08-24. Commit `baf15a54d`.
+Generated: 2026-09-10. Commit `2d0fa41c5`.
 
-Size: 21 files here + 9 under `protocols/` (~5.4k LOC). Complexity sits in `morph-xml.ts` (1.2k), `json-mix.ts` (854), `gemma4.ts` (809).
+Score 14: 54 TS files across wrapper/recovery and protocol domains (~8.4k LOC). `protocols/AGENTS.md` covers parser internals; this file owns activation and stream integration.
 
 ## FILES
 
@@ -42,38 +42,37 @@ tool-call-middleware/
 
 | Task | File |
 |------|------|
-| Add a new text-tool protocol | `protocols/<name>.ts` + register in `index.ts` + extend the `ToolCallFormat` union/whitelist (see ADD A PROTOCOL step 4) |
+| Add a new text-tool protocol | `protocols/`, `context-transformer.ts` registry, `types.ts` union, `index.ts` whitelist |
 | Fix a parser bug | `protocols/<name>.ts` (parse step) |
 | Fix streaming partial-arg bug | `protocols/<name>.ts` (stream step) + `stream-wrapper.ts` |
 | System-prompt format for tools | `context-transformer.ts` (per-protocol prompt injector) |
 | Cross-provider stream error fallback | `stream-wrapper.ts` — preserves reconstructed outer text+toolCalls on transport error |
+| Leaked text-tool recovery activation | `index.ts`: Claude/Kimi defaults, explicit `recoverTextToolCalls`, Cursor excluded by default |
 
 ## ADD A PROTOCOL (5 steps)
 
-1. Implement `Protocol` interface in `protocols/<name>.ts` or `protocols/<name>/index.ts` plus focused helpers (parse, format, stream).
-2. Add system-prompt rendering for tools to `context-transformer.ts`.
-3. Export from `index.ts` and register in the protocol registry.
-4. Add "<name>" to the ToolCallFormat union in types.ts (this dir) and to the literal whitelist in getToolCallFormat() in index.ts. models.json accepts toolCallFormat as a free string (packages/coding-agent/src/core/model-config.ts:104, Type.String() by design), so the getToolCallFormat() whitelist is the ONLY enforcement point — a format missing there silently deactivates the middleware.
+1. Implement `ToolCallProtocol` in `protocols/<name>.ts` or `protocols/<name>/index.ts` plus focused helpers (parse, format, stream).
+2. Supply tool-system-prompt, call, and result formatters alongside batch and stream parsers.
+3. Wire the implementation into `protocolRegistry` in `context-transformer.ts`; `index.ts` re-exports that dispatcher, not the protocol implementations.
+4. Add the format to `ToolCallFormat` in `types.ts` and the `getToolCallFormat()` whitelist in `index.ts`. The whitelist applies only to `openai-completions`; a missing format silently deactivates explicit middleware.
 5. Add manual test command to `TESTING.md` and an automated test under `packages/ai/test/tool-call-middleware/<name>*.test.ts`.
 
 ## CONVENTIONS
 
 - **Stream-error preservation** (2026-04-11): when a provider stream errors AFTER complete tool-call blocks were reconstructed, finish the turn as `toolUse` so the agent still executes those tools. Do NOT fall back to the raw provider message.
-- **Strict parsing**: reject malformed XML/JSON instead of coercing into invalid strings (precedent: `morph-xml` array<object> handling).
-- **Delegate to `json-mix.ts`** for any new JSON-inside-delimiters protocol — minimizes drift across Hermes-family parsers.
-- **`xml-tool-tag-scanner.ts`** is the canonical streaming boundary detector; reuse it for any XML-tag-based protocol.
+- **Validation after repair**: parser-specific coercion may repair input (ANTML), but invalid arguments never become executable calls. Shared parser choices are documented in `protocols/AGENTS.md`.
+- **Recovery selection**: explicit text-tool format disables automatic invoke recovery. Kimi thinking cleanup runs before the tool-recovery gate, even with no tools.
 - **Non-mutating context transform**: `context-transformer.ts` strips `tools`, injects the protocol prompt, serializes assistant tool calls, and rewrites tool results as user text — it returns new structures.
 - **Recovery replays sanitized calls only**: raw truncated markup never re-enters context; incomplete calls come back as canonical calls paired with error results.
 
 ## ANTI-PATTERNS
 
-- Coercing malformed input into a "best-effort" string — produces invalid downstream `tool_call.arguments`. Reject instead.
-- Duplicating Hermes-style parsing in a new file — extract a shared helper in `json-mix.ts`.
+- Letting repaired or incomplete arguments bypass validation or lose their paired error result.
+- Dropping symbol-keyed metadata (including Cursor exec-resolution markers) while projecting recovered messages.
 - Forgetting to inject the protocol-specific system-prompt block in `context-transformer.ts` — model never emits tool calls.
-- Writing tests against live OpenRouter without `describe.skipIf(!process.env.OPENROUTER_API_KEY)` gating.
+- Activating live tests from credential presence alone; require the opt-in gate from `test/live-api-gates.ts`.
 
 ## NOTES
 
 - `TESTING.md` documents the canonical live-API test commands per protocol (Qwen for Hermes, Gemini for MorphXML, Gemma 4 for delimiter, and Anthropic XML). Update it when adding new protocols.
-- This package's middleware is fork-modified — see `changes.md` for the architectural rewrite toward `minpeter/ai-sdk-tool-call-middleware` style.
 - `compat.toolCallFormat` on a custom model in `~/.senpi/agent/models.json` is what activates middleware for that model.

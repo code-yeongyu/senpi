@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/extensions/builtin
 
-39 in-tree extensions plus 4 global defaults. Each is the canonical answer to "can senpi do X without core changes?". Registration order matters.
+41 in-tree extensions plus 4 global defaults. Each is the canonical answer to "can senpi do X without core changes?". Score 13: dense registry and distinct extension subdomains. Registration order matters; `index.ts` is the authority, not prose numbering.
 
 ## INVENTORY (registration order from `builtin/index.ts`)
 
@@ -40,11 +40,13 @@
 | 32 | `cache-keepalive` | `cache-keepalive/` | Warms the provider prompt cache between turns (`warmPromptCache`, Anthropic-aware TTL) and renders a `cache-keepalive` notice entry |
 | 33 | `ttsr` | `ttsr/` | Stream-rule detection (collapse + control-token-leak) with abort→remediate→retry; ported from oh-my-pi — see `ttsr/changes.md` |
 | 34 | `btw` | `btw/` | `/btw` side-question command that queries in parallel without touching the main session |
-| 35 | `claude-sdk-oauth` | `claude-sdk-oauth/` | Claude SDK OAuth provider: multi-account OAuth, resume-first session continuity, stream-safe failover — see `claude-sdk-oauth/AGENTS.md` + `changes.md` |
-| 36 | `cursor-cli-oauth` | `cursor-cli-oauth/` | Cursor CLI OAuth provider lane: multi-account OAuth, spawn/stream parsing, failover; registers unconditionally and reports executable/auth state through its oauth check — see `cursor-cli-oauth/AGENTS.md` |
-| 37 | `config-reload` | `config-reload/` | Hash-gated watcher for trusted global/project config surfaces that defers a full session reload until idle and exposes the `config-watch:*` event protocol; registered after settings-dependent builtins so a reload rebuilds their resolved settings, and before final MCP observation |
-| 38 | `tool-search` | `tool-search/` | Shared tool catalog + `tool_search` exposure tool; loads before MCP, which feeds its tools into the same catalog |
-| 39 | `mcp` | `mcp/` | Built-in MCP client: `mcpServers` config, stdio/http transports, `/mcp` commands, tool exposure policy — kept last so its provider-payload tap observes all co-resident builtin mutations; see `mcp/changes.md` |
+| 35 | `account` | `account/` | Provider-neutral account listing through `core/credential-accounts.ts`; registered before provider-specific account commands |
+| 36 | `gpt-account` | `gpt-account.ts` | OpenAI Codex account management via the shared account-change notification seam |
+| 37 | `claude-sdk-oauth` | `claude-sdk-oauth/` | Claude SDK OAuth provider: multi-account OAuth, resume-first session continuity, stream-safe failover — see `claude-sdk-oauth/AGENTS.md` + `changes.md` |
+| 38 | `cursor-cli-oauth` | `cursor-cli-oauth/` | Cursor CLI OAuth provider lane: multi-account OAuth, spawn/stream parsing, failover; registers unconditionally and reports executable/auth state through its oauth check — see `cursor-cli-oauth/AGENTS.md` |
+| 39 | `config-reload` | `config-reload/` | Hash-gated watcher for trusted global/project config surfaces that defers a full session reload until idle and exposes the `config-watch:*` event protocol; registered after settings-dependent builtins so a reload rebuilds their resolved settings, and before final MCP observation |
+| 40 | `tool-search` | `tool-search/` | Shared tool catalog + `tool_search` exposure tool; loads before MCP, which feeds its tools into the same catalog |
+| 41 | `mcp` | `mcp/` | Built-in MCP client: `mcpServers` config, stdio/http transports, `/mcp` commands, tool exposure policy — kept last so its provider-payload tap observes all co-resident builtin mutations; see `mcp/changes.md` |
 
 Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by resource-loader.ts) and 4 **global default extensions** (resolved fast-path): `diff`, `files`, `prompt-url-widget`, `tps` (in `globalDefaultExtensionFactories`). Shared non-factory modules: `rule-activation/` (appendRuleActivation + renderer, consumed by `rules/` and `ttsr/`) and `monitor-state-event.ts` (consumed by `goal/` and `terminal/`).
 
@@ -68,13 +70,11 @@ Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by
 
 - Reordering `builtinExtensions` for cosmetic reasons — registration order is load-bearing for tools and permission hooks.
 - Expecting context inside the factory body — `ExtensionContext` only arrives as the `ctx` parameter of event handlers. Do side effects inside `pi.on("session_start", …)`.
-- Importing from `core/` directly — extensions must use the public `pi.*` API.
+- Adding ad-hoc core coupling instead of public `pi.*` APIs; existing account, compaction, and provider adapters use deliberate shared core seams, not a general exemption.
 - Splitting an existing single-file extension into a folder "for symmetry" — only split when there's actual code to split.
 
 ## NOTES
 
 - MCP search exposure tool is `tool_search`, owned by the registered `tool-search` builtin (`builtin/tool-search/tool.ts`). Do not reintroduce `mcp_search` references anywhere.
-- Sub-directory detail lives in per-extension `AGENTS.md` files (compaction, mcp, goal, loop, terminal, permission-system, prompt-preset, gpt-apply-patch, claude-sdk-oauth, cursor-cli-oauth).
-
----
-Generated: 2026-08-22 | Commit: `a5eed4453`
+- Sub-directory detail lives in per-extension `AGENTS.md` files (compaction, config-reload, mcp, goal, loop, terminal, permission-system, prompt-preset, gpt-apply-patch, claude-sdk-oauth, cursor-cli-oauth).
+Refreshed: 2026-09-10 | Commit: `2d0fa41c5`

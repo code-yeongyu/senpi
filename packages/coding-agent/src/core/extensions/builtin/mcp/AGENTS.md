@@ -1,11 +1,11 @@
 # packages/coding-agent/src/core/extensions/builtin/mcp
 
-Fork-native builtin MCP client. Registration #39 in `builtin/index.ts` — kept last so its provider-payload tap observes all co-resident builtin mutations. Entry: `index.ts` exports `default function mcpExtension(pi: ExtensionAPI): void`. `changes.md` is the active fork ledger; every divergence from upstream MCP SDK behavior goes there.
+Fork-native MCP client domain (score 11). Kept last in `builtin/index.ts` so its provider-payload tap observes all co-resident builtin mutations; do not encode its ordinal here. Entry: `index.ts` exports `default function mcpExtension(pi: ExtensionAPI): void`. `changes.md` is the active fork ledger; every divergence from upstream MCP SDK behavior goes there.
 
 ## SUBTREES
 
 - `auth/` OAuth 2.1: discovery, PKCE S256, RFC 8707 resource binding, loopback callback or paste flow. Token store in `auth/token-store.ts`: `<agentDir>/mcp-auth/<sha256(serverUrl)>/tokens.json`, dir 0700, files 0600, cross-process lock via `proper-lockfile`.
-- `expose/` Tool naming (`naming.ts`), exposure policy (`policy.ts`), pagination, BM25 search, proxy gateway, schema compat. Tool names: `mcp_<server>_<tool>`, sanitized, 64-char hard cap (`MCP_TOOL_NAME_MAX_LENGTH = 64`), hash suffix on collision.
+- `expose/` Tool naming (`naming.ts`), exposure policy (`policy.ts`), pagination, proxy gateway, schema compat. BM25 catalog search is owned by sibling `tool-search/engine/`. Tool names: `mcp_<server>_<tool>`, sanitized, 64-char hard cap (`MCP_TOOL_NAME_MAX_LENGTH = 64`), hash suffix on collision.
 - `guard/output-guard.ts` Output size limits + spill file creation.
 
 ## CONFIG
@@ -45,4 +45,4 @@ Docs: `packages/coding-agent/docs/mcp.md` — keep prose aligned with `config-sc
 - No raw secrets in config values; use `${ENV_VAR}` references.
 - Proxy mode is never selected automatically; opt-in only via `exposure: "proxy"`.
 - New tools from `list_changed` are never active by default; only `directTools` entries become active immediately.
-- Never import from `core/` directly; use `pi.*` API only.
+- Do not create a second search catalog here: MCP entries join the provider-scoped `ToolSearchService` owned by sibling `tool-search/`.

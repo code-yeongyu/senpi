@@ -1,6 +1,6 @@
 # packages/coding-agent
 
-`@code-yeongyu/senpi` is the user-facing CLI and the highest-conflict upstream fork surface. Use the extension API before editing `src/core/`.
+`@code-yeongyu/senpi` is the user-facing CLI and the highest-conflict upstream fork surface (score 12: package boundary, dense runtime and test domains). Use the extension API before editing `src/core/`.
 
 ## STRUCTURE
 
@@ -20,13 +20,13 @@ src/core/model-config.ts           Per-model config resolution
 src/core/models-store.ts           Persisted model store
 src/core/provider-composer.ts      Provider payload composition
 src/core/remote-catalog-provider.ts Remote model-catalog fetch
-src/core/runtime-credentials.ts    Credential resolution and refresh
-src/core/auth-providers.ts         Provider auth registration
+src/core/runtime-credentials.ts, auth-providers.ts  Credential resolution + provider auth registration
+src/core/credential-pool/          Shared slot health, leases, rotation and failover
 src/core/provider-timeout-retry.ts Provider timeout/retry policy
 src/core/retry-fallback/           Model fallback chains + billing classification
 src/core/project-trust.ts, trust-manager.ts  Project trust decisions
 src/core/resource-loader.ts        Bundled extension/resource resolution
-src/core/session-resident-store.ts Session-resident state store
+src/core/session-resident-store.ts, session-work-barrier.ts  Resident state + pending-work coordination
 src/core/session-discovery.ts, session-record.ts, session-summary*.ts  Session listing, record shape, summary cache/LRU
 src/core/extensions/               Public extension API and loader
 src/core/extensions/builtin/       In-tree fork extensions; bundled extensions (e.g. codemode) resolved via resource-loader.ts
@@ -38,7 +38,7 @@ src/modes/app-server/              App-server transport and RPC registry; runtim
 src/modes/rpc/                     JSONL RPC mode/client/types, shared Unix-socket multi-session host,
                                    ensureHost handshake, lifecycle supervisor/watchdog, and the ordered command
                                    surface (get_commands / commands_changed)
-src/modes/print-mode.ts            One-shot mode
+src/modes/print-mode.ts            One-shot mode; src/client/ owns the ./client RemoteSession facade
 test/suite/harness.ts              Preferred faux-provider harness
 test/                              Test domains, fixtures, QA, integration gates
 examples/                          Extension and SDK examples
@@ -55,7 +55,7 @@ src/changes.md                     Root fork-change record
 | Change model/provider/catalog/auth runtime | `src/core/model-runtime.ts` + related `model-*/provider-*` modules |
 | Change keybinding | `src/core/keybindings.ts` |
 | Change interactive UI | `src/modes/interactive/` |
-| Change RPC/app-server | matching directory under `src/modes/` |
+| Change RPC/app-server or remote facade | matching directory under `src/modes/`; `src/client/` for `RemoteSession` over `pi-client` (not JSONL RPC) |
 | Add regression | `test/suite/regressions/` |
 | Add or update an example | `examples/` and the matching public docs |
 
@@ -89,4 +89,4 @@ src/changes.md                     Root fork-change record
 - Keep `src/changes.md`, nested `changes.md`, public docs, and examples aligned with fork behavior.
 
 ---
-Generated: 2026-08-22 | Commit: `a5eed4453`
+Refreshed: 2026-09-10 | Commit: `2d0fa41c5`

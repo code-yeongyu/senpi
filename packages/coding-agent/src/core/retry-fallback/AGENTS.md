@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/retry-fallback
 
-Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pure/injectable modules only — every clock, timer, and registry probe is injected; `core/agent-session.ts` owns the single impure wiring. No local `changes.md`: fork changes track in `src/changes.md` / `core/changes.md`.
+Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`; retained policy boundary (score 6). Pure/injectable modules only — every clock, timer, and registry probe is injected; `core/agent-session.ts` owns the single impure wiring. No local `changes.md`: fork changes track in `src/changes.md` / `core/changes.md`.
 
 ## FILES
 
@@ -35,7 +35,7 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 - Billing-class errors pin the fallback candidate as the session model and NEVER release; refusal pins release when a senpi-owned compaction successfully applies (context changed => one fresh primary attempt); `transient`/`hard-error` fallbacks revert per `fallbackRevertPolicy` (`cooldown-expiry` | `never`).
 - `canonicalizeFallbackChains` is memoized on chains content — provider-error handling calls it several times per error.
 - `fallback.log` scrubs by construction: blocked keys (`headers`, `env`, `authorization`, …), allowlisted data keys only, bearer/api-key text patterns truncated.
-- Consumers: `agent-session.ts` (controller wiring), `settings-manager.ts` (resolution), `builtin/model-fallback/` (validate + canonicalize for `/model-fallback`), `builtin/cursor-cli-oauth/settings.ts` (`isFallbackEligible` probe).
+- Consumers: `agent-session.ts` (controller wiring), `settings-manager.ts` (resolution), `builtin/model-fallback/` (validate + canonicalize for `/fallback`), `builtin/cursor-cli-oauth/settings.ts` (`isFallbackEligible` probe).
 
 ## ANTI-PATTERNS
 
@@ -47,5 +47,5 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 
 ## NOTES
 
-- Tests: `test/suite/retry-fallback-*.test.ts` (20 files) — engine, chains, expansion eligibility, cooldown, hint tiers, probe scheduler, billing swap, revert, validate, log.
+- Tests: `test/suite/retry-fallback-*.test.ts` — engine, chains, expansion eligibility, cooldown, hint tiers, probe scheduler, billing swap, revert, validate, log.
 - `streamRetryTimeoutMs` reconciles to `max(cap, streamStartTimeoutMs)` so a granted stream-start budget is never cut short; `0` disables.

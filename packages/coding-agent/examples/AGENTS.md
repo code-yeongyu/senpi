@@ -1,6 +1,6 @@
 # packages/coding-agent/examples
 
-Runnable examples for the public Senpi SDK and extension API. Examples are documentation-quality code and must reflect shipped APIs, not private core internals. Unqualified paths below are relative to this directory; `packages/...` paths are repository-relative.
+Runnable examples for the public Senpi SDK and extension API (score 9: code-heavy catalog with dense symbols/exports). Examples are documentation-quality code and must reflect shipped APIs, not private core internals. Unqualified paths below are relative to this directory; `packages/...` paths are repository-relative.
 
 ## STRUCTURE
 
@@ -35,7 +35,7 @@ Largest examples carry real complexity, not toy scope: `extensions/overlay-qa-te
 - Deferred-tool examples preserve the Kimi flow: expose search first, activate via `pi.setActiveTools()`, and register lifecycle work in `session_start`.
 - Stateful examples persist reconstructable state in session entries or tool-result details so fork/resume behavior remains valid.
 - Nested example packages are private workspaces with exact-pinned dependencies. Treat their manifests and lock impact as production dependency changes.
-- Kebab-case filenames and slash-command names; camelCase named exports; one example per file default-exporting its extension factory.
+- Extension examples default-export their factory; numbered SDK programs and `rpc-extension-ui.ts` are standalone programs, not `senpi -e` entry points. Keep kebab-case filenames and slash-command names.
 - UI examples guard on `ctx.hasUI` and clean up timers/child processes on `session_shutdown`; stateful atomic tools (games, questionnaires) set `executionMode: "sequential"`.
 - Tool schemas use TypeBox; handlers follow the `(toolCallId, params, signal, onUpdate, ctx)` shape.
 

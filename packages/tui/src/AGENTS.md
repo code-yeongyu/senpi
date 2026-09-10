@@ -1,6 +1,6 @@
 # packages/tui/src
 
-Score: 34 (33 files, barrel at `index.ts`, highest reference centrality in the package).
+Score: 14 (32 direct TypeScript modules, barrel at `index.ts`, dense symbols/exports and >20 import references); distinct renderer/protocol domain.
 
 Rendering engine, input/terminal protocol modules, and the fork-delta ledger. The package-level rendering contract and ownership rules live in `../AGENTS.md`; this file covers module-level operations.
 
@@ -12,14 +12,19 @@ Rendering engine, input/terminal protocol modules, and the fork-delta ledger. Th
 | Key protocol parsing/matching (Kitty keyboard, legacy sequences, modifyOtherKeys) | `keys.ts` |
 | Namespaced default bindings | `keybindings.ts` |
 | Stdin framing, bracketed paste | `stdin-buffer.ts` |
+| Alt-screen search, whitespace-normalized matches and cell spans | `alt-screen-search.ts` |
 | Kitty/iTerm2/tmux image paths | `terminal-image.ts`, `tmux-image-capability.ts`, `tmux-image-probe.ts` |
+| Safe image labels, home-relative image paths | `terminal-text.ts` |
+| Installed/bundled/standalone native-addon discovery | `native-module-path.ts` (`getNativeModuleCandidates`) |
 | Autocomplete provider contracts, `$`/`/` mixing | `autocomplete.ts` (`CombinedAutocompleteProvider`) |
 | Image/paste marker registries, canonicalization | `image-markers.ts`, `paste-markers.ts` |
 | Editor primitives shared with the component `Editor` | `kill-ring.ts`, `undo-stack.ts`, `word-navigation.ts` |
+| Custom editor API and paired marker/attachment state transfer | `editor-component.ts` (`EditorComponent`) |
 | Public API surface | `index.ts` — barrel; the coupling point for `coding-agent` and `senpi-codemode` |
 | Fork render-behavior history | `changes.md` |
 
-Public exports include `VStack`, `HStack`, `ScrollView`, `Spacer`, `TuiAltScreen`, `TuiMainScreen`, `Container`, `CURSOR_MARKER`, `isViewportTUI`, and `ViewportTUI`.
+Public exports include `VStack`, `HStack`, `ScrollView`, `Spacer`, `TUI`, `TuiAltScreen`, `TuiMainScreen`, `Container`, `CURSOR_MARKER`, `isViewportTUI`, and `ViewportTUI`.
+`AltScreenSearchComponent`, `getGraphemeSegmenter`, and `getWordSegmenter` also ship through `index.ts`; `TuiBase` and the low-level layout helpers do not.
 
 Design doc for the alternate-screen layout system (landed 2026-07-31): root `tui-plan.md`.
 
@@ -28,7 +33,7 @@ Design doc for the alternate-screen layout system (landed 2026-07-31): root `tui
 - Keybinding IDs are namespaced (`tui.editor.*`, `tui.input.*`, `tui.select.*`, `tui.altScreen.*`) and centrally managed via `KeybindingsManager`; components consume them, never define them.
 - Markers (paste, image) are atomic, registry-backed, and canonicalized/renumbered on every mutation; they transfer through the paired optional state APIs.
 - Terminal protocols are modeled explicitly: Kitty keyboard, legacy sequences, modifyOtherKeys level detection, tmux focus/passthrough, OSC color queries (`terminal-capabilities.ts`, `native-modifiers.ts`, `tmux-focus.ts`).
-- Native capabilities load lazily and degrade to `undefined`; never a hard dependency.
+- Native lookup tries the resolved package, source/dist or bundled module-relative paths, then executable-adjacent paths; preserve candidate order and deduplication.
 - All width/wrap/segment math goes through `utils.ts` primitives (`visibleWidth`, `wrapTextWithAnsi`, `sliceByColumn`, `extractSegments`) — never hand-rolled string slicing.
 - `utils.ts` uses a bounded/rotating width cache and a pooled ANSI style tracker; `__widthCacheStats()` exposes cache diagnostics for tests.
 

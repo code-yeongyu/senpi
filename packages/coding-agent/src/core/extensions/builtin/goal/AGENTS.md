@@ -1,26 +1,27 @@
 # builtin/goal
 
-Builtin extension #30. Persistent per-thread **goal** tracking, ported from standalone
+Builtin goal extension (score 11: code-heavy multi-module domain with dense exports). Persistent per-thread **goal** tracking, ported from standalone
 `pi-goal` with **zero dependency on it** and **budget-driven behavior fully removed**.
 Registers codex-aligned `create_goal` / `update_goal` / `get_goal` plus `/goal`, persists one
-goal per thread, re-engages the agent via hidden continuation prompts. 34 `.ts` files, flat;
+goal per thread, re-engages the agent via hidden continuation prompts. 35 `.ts` files, flat;
 `changes.md` is the fork tracker.
 
 ## FILES (by cluster)
 
-- **Entry/registration**: `index.ts` (441 LOC; lifecycle, accounting, UI),
+- **Entry/registration**: `index.ts` (437 LOC; lifecycle, accounting, UI),
   `tool-registration.ts`, `command-registration.ts`, `command.ts`.
 - **Domain/persistence**: `types.ts` (Goal, statuses, inert `tokenBudget`), `store.ts`
   (serialized mutations), `persistence.ts` (atomic writes, legacy migration),
-  `validation.ts`, `errors.ts`.
-- **Continuation**: `monitor-continuation.ts` (603 LOC — timers, wake sources, direct-input
+  `validation.ts`, `errors.ts`, `transitions.ts`, `store-ref.ts`, `store-changed-event.ts`.
+- **Continuation**: `monitor-continuation.ts` (673 LOC — timers, wake sources, direct-input
   holds, cache-warm scheduling, admission, recovery, disposal) plus `continuation.ts`,
   `lifecycle-helpers.ts`, `direct-input-lifecycle.ts`, `agent-end-continuation.ts`,
-  `continuation-recovery.ts`, `reload-reengagement.ts`.
+  `continuation-recovery.ts`, `reload-reengagement.ts`, `channel-state-subscriptions.ts`, `stale-context.ts`.
 - **Prompt/format**: `prompt.ts` (untrusted-objective + completion audit), `format.ts`,
   `todo-gate.ts`, `last-assistant-message.ts`, `terminal-provider-error.ts`.
 - **UI/tickers**: `ui.ts` (footer segment), `elapsed-ticker.ts`, `wait-ticker.ts`,
-  `wait-progress.ts`, `cache-warm.ts`, `cache-warm-renderer.ts`.
+  `wait-progress.ts`, `cache-warm.ts`, `cache-warm-renderer.ts`, `renderers.ts`.
+- **Usage accounting**: `turn-usage.ts` checkpoints streamed usage without double counting at `agent_end`.
 
 ## NO BUDGET-DRIVEN BEHAVIOR
 

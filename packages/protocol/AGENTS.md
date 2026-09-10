@@ -1,6 +1,6 @@
 # packages/protocol
 
-`@earendil-works/pi-protocol` — transport-neutral CBOR wire protocol for remote pi sessions: TypeBox schemas, message codec, byte-stream framing. Consumed by `packages/server` and `packages/client`. Node `>=22.19.0`; only dependency is `typebox`.
+`@earendil-works/pi-protocol` — transport-neutral CBOR wire protocol for remote pi sessions: TypeBox schemas, message codec, byte-stream framing. Consumed by `packages/server` and `packages/client`. Node `>=22.19.0`; only dependency is `typebox`. Score 9: distinct remote-session wire contract.
 
 ## STRUCTURE
 

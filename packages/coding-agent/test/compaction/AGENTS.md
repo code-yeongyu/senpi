@@ -1,6 +1,6 @@
 # test/compaction
 
-Compaction mechanics and policy: blocking, speculative, idle/warm, pruning, routing, retry/degradation, tool-pair repair, and OpenAI remote compaction. 57 files / ~13,100 LOC, ~612 test call sites. Score 15 — distinct policy domain with numeric constants pinned as contracts.
+Compaction mechanics and policy: blocking, speculative, idle/warm, pruning, routing, retry/degradation, tool-pair repair, and OpenAI remote compaction. 71 TypeScript files / ~16,900 LOC. Score 7 — existing focused policy guide retained in UPDATE mode; numeric constants are pinned as contracts.
 
 ## WHERE TO LOOK
 
@@ -9,9 +9,11 @@ Compaction mechanics and policy: blocking, speculative, idle/warm, pruning, rout
 | Extension wiring / handlers | `*-characterization.test.ts`, tests importing `src/core/extensions/builtin/compaction/index.ts` |
 | Speculative warm-start | `speculative-compaction.test.ts` (848 LOC), `speculative-budget-handoff.test.ts`, `stale-context-idle-warmup.test.ts`, `stale-warm-blocking-repro.test.ts` |
 | OpenAI remote route | `openai-remote-compaction.test.ts` (1,160 LOC), `openai-remote-abort-standdown.test.ts`, shared fixtures in `openai-remote-test-models.ts` |
-| Checkpoint provenance | `canonical-routes.test.ts` (1,017 LOC) |
+| Checkpoint provenance | `canonical-routes.test.ts`, `agent-checkpoint.test.ts` |
 | Deterministic degradation | `required-compaction-deterministic-fallback.test.ts`, `summarization-body-too-large.test.ts` |
-| Thresholds / budgets | `adaptive-threshold.test.ts`, `context-reduction.test.ts`, `hard-limit-emergency.test.ts`, `idle-compaction.test.ts` |
+| Thresholds / budgets | `adaptive-threshold.test.ts`, `speculation-lead.test.ts`, `large-window-tiers.test.ts`, `threshold-clamp-bounds.test.ts` |
+| Admission / lane ownership | `tool-admission.test.ts`, `lane-policy.test.ts`, `external-owner-breaker-isolation.test.ts` |
+| Required-compaction failures | `before-compact-error-surfacing.test.ts`, `compaction-reason-surfacing.test.ts`, `blocking-compaction-route-guards.test.ts` |
 | Tool-call pairing | `tool-pair-repair.test.ts`, `todo-preservation.test.ts` |
 | Restoration bookkeeping | `restoration-tracker.test.ts` |
 
@@ -22,7 +24,7 @@ Compaction mechanics and policy: blocking, speculative, idle/warm, pruning, rout
 - File names encode route, failure mode, boundary, or incident (`blocking-*`, `stale-*`, `summarization-*`, `openai-remote-*`, `*-characterization`) — deliberately not one-file-per-source-module.
 - Session-manager entries are constructed explicitly (`type`, `id`, `parentId`, `timestamp`, payload), often as complete OpenAI-native branches, to verify replay and provenance.
 - Compaction is exercised through extension harnesses and event callbacks (`beforeAgentStart`, `sessionBeforeCompact`, `agentEnd`, context hooks), not by calling pure functions alone. Provider request/header/context hooks are installed to validate the final pipeline plus redaction.
-- Assertions inspect machine values: route/transport, payload input, persisted details, revisions, reasons, emitted events. Numeric policy constants (37.5% speculative threshold, adaptive ratios, context windows, retry bounds, hard caps) are literal contracts — changing a constant means changing these tests deliberately.
+- Assertions inspect machine values: route/transport, payload input, persisted details, revisions, reasons, emitted events. Numeric policy constants (adaptive ratios, speculation lead, context windows, retry bounds, hard caps) are literal contracts — changing a constant means changing these tests deliberately.
 - Remote OpenAI coverage distinguishes the direct compact endpoint from the Responses WebSocket route and validates provenance against endpoint, stable headers, auth tenant, hook-filtered prefixes, and model identity.
 
 ## ANTI-PATTERNS
@@ -37,6 +39,6 @@ Compaction mechanics and policy: blocking, speculative, idle/warm, pruning, rout
 ## COMMANDS
 
 ```bash
-bun run --cwd packages/coding-agent test --run test/compaction/<file>.test.ts
-bun run --cwd packages/coding-agent test --run test/compaction
+bun run --cwd packages/coding-agent test test/compaction/<file>.test.ts
+bun run --cwd packages/coding-agent test test/compaction
 ```

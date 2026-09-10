@@ -3,7 +3,8 @@
 `@earendil-works/pi-telemetry` (private). Vendor-neutral telemetry contracts and typed
 schema utilities: explicit context/span types, a NOOP context, an in-memory reference
 adapter, and compile-time schema inference. No exporter, backend, or global state.
-Score 11: distinct domain — dense type-level API with strict lifecycle invariants.
+Retained at score 7: distinct type-level API and adapter lifecycle boundary;
+whole-workspace reference centrality is unmeasured.
 
 ## STRUCTURE
 
@@ -54,4 +55,4 @@ test/               telemetry + conformance Vitest files
 - Repository-wide `bun run check` from root after changes.
 
 ---
-Generated: 2026-08-24 | Commit `baf15a54d`
+Updated: 2026-09-10 | Commit `2d0fa41c5`

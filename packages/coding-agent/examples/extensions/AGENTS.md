@@ -1,6 +1,6 @@
 # packages/coding-agent/examples/extensions
 
-Flat catalog of executable extension examples plus multi-file extension packages. Own file because it is the densest `pi.*` registration surface in the repo (score 14: 110+ files, 10 subdirs, heavy symbol/export density). Load any single file with `senpi -e <path>.ts`; per-example docs live in `README.md`.
+Flat catalog of executable extension examples plus multi-file extension packages. Own file for the dense `pi.*` registration surface (score 11: 70 direct TypeScript examples, 10 subdirs, heavy symbol/export density). Load an extension file with `senpi -e <path>.ts`; per-example docs live in `README.md`.
 
 ## STRUCTURE
 
@@ -41,8 +41,8 @@ doom-overlay/               WASM Doom rendered as live overlay; doom/build/ is g
 ## ANTI-PATTERNS
 
 - Custom tools MUST truncate output (`truncated-tool.ts` demonstrates ripgrep wrapping with 50KB/2000-line caps).
-- Games never expose the user's cursor and never split a tool-call sequence across responses.
-- Never leave timers or child processes alive past `session_shutdown`.
+- Game examples never expose the user's cursor and never split a tool-call sequence across responses.
+- Stateful examples must not leave timers or child processes alive past `session_shutdown`; stateless providers need no artificial lifecycle scaffolding.
 - Shell/process-delegating examples (`ssh.ts`, `interactive-shell.ts`, `inline-bash.ts`, `auto-commit-on-exit.ts`, `git-merge-and-resolve.ts`) cross trust boundaries; adopt deliberately, never as boilerplate.
 
 ---
