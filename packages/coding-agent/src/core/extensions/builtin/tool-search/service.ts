@@ -226,7 +226,7 @@ export function installLocalToolSearchService(value: ToolSearchService): void {
 	service = value;
 }
 
-/** Make a session-owned service visible to later builtins loaded in the same provider scope. */
+/** Publish the accepted session's catalog in the current async provider scope. */
 export function installScopedToolSearchService(value: ToolSearchService): void {
 	scopedService.enterWith(value);
 }

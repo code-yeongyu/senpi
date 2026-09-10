@@ -1,5 +1,24 @@
 # Tool Search Builtin Changes
 
+## 2026-09-10 - Keep discarded candidates out of scoped tool-search state
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts`: publish provider-scoped catalogs on `session_start`, matching local catalog installation.
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/service.ts`: document the accepted-session installation boundary.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts`: candidate construction previously replaced the current async tool-search store before acceptance. Invalidating a rejected candidate left live lazy-tool activation and native diagnostics pointing at that candidate.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts`: the builtin owns scoped catalog installation before another extension can recover the live store.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts`: factory installation and session-start registration order.
+
 ## 2026-09-08 - Keep rejected resume candidates out of the live catalog (PR #1473)
 
 ### What changed

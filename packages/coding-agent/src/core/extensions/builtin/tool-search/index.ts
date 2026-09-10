@@ -70,10 +70,10 @@ export default function toolSearchExtension(pi: ExtensionAPI): void | Promise<vo
 		setActiveTools: (names: readonly string[]) => pi.setActiveTools([...names]),
 	};
 	const sessionOwned = hasProviderScope();
-	// A prepared resume is not the active local runtime yet. Its callbacks must
+	// A prepared resume is not the active runtime yet. Its callbacks must
 	// never rebind the live catalog to an extension generation that may be rejected.
 	const service = new ToolSearchService(runtime);
-	if (sessionOwned) installScopedToolSearchService(service);
+	if (sessionOwned) pi.on("session_start", () => installScopedToolSearchService(service));
 	else pi.on("session_start", () => installLocalToolSearchService(service));
 	return createToolSearchExtension(service)(pi);
 }
