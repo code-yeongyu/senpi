@@ -1,5 +1,25 @@
 # Tool Search Builtin Changes
 
+## 2026-09-10 - Retain the unbound SDK session's tool-search owner (PR #1473)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/service.ts`: privately associate each catalog with its lazy activator using weak keys, so AgentSession can retain the service delivered through its existing registration wiring.
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts`: register that associated activator. Global and provider-scoped publication still occurs only at `session_start`.
+
+### Why
+
+- Direct `createAgentSession()` callers need not call `bindExtensions()`. Their provider hooks can inject deferred tools before `session_start`, while global catalog lookup previously rejected those calls or consumed another session's native-injection diagnostic.
+
+### Why an extension could not handle it
+
+- The builtin owns the service captured by its provider hooks and lazy activator; core needs that same owner before resolving an unknown tool or consuming a native-injection failure. The existing callback registration carries this internal association without a public lifecycle change.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/service.ts`: ownership helpers beside local/scoped installation.
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts`: lazy activator registration and service imports.
+
 ## 2026-09-10 - Keep discarded candidates out of scoped tool-search state
 
 ### What changed

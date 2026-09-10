@@ -1,3 +1,21 @@
+## Session-local SDK tool-search ownership (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: retain the tool-search owner associated with the session's existing lazy activator registration, clear it during runtime reconstruction, and prefer it for unknown-tool resolution and native-injection diagnostics.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: documented direct SDK callers need not bind extensions or emit `session_start`. Their captured provider hooks can inject deferred tools while global lookup is absent or belongs to another accepted session.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: core owns unknown-tool dispatch and native-error recovery. Internal callback ownership connects those consumers to the same service without changing public extension APIs or prematurely publishing a resume candidate.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: lazy registration binding, runtime reconstruction, unknown-tool resolution and native-injection failure consumption.
+
 ## Bounded prepared-resume content fingerprints (2026-09-10)
 
 ### What changed

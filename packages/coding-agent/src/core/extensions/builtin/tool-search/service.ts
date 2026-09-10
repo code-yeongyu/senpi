@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { basename, extname } from "node:path";
-import type { ExtensionAPI, ToolInfo } from "../../types.ts";
+import type { ExtensionAPI, LazyToolActivator, ToolInfo } from "../../types.ts";
 import { type Bm25Result, type Bm25SearchOptions, buildBm25Index } from "./engine/bm25.ts";
 import type { ToolSearchDocument, ToolSearchSource } from "./engine/document.ts";
 import { deriveExtensionRegistrationId, rehydrate } from "./engine/marker.ts";
@@ -216,6 +216,20 @@ function extensionOwnerLabel(tool: ToolInfo): string {
 
 function isValidDocument(doc: ToolSearchDocument, source: ToolSearchSource): boolean {
 	return doc.source === source && doc.name.length > 0 && doc.registrationId.length > 0;
+}
+
+// bindCore transfers this callback to its owning session even before session_start.
+// Weak keys keep discarded extension generations out of the shared active catalog.
+const activatorServices = new WeakMap<LazyToolActivator, ToolSearchService>();
+
+export function createToolSearchActivator(value: ToolSearchService): LazyToolActivator {
+	const activate: LazyToolActivator = (name) => value.activateTool(name);
+	activatorServices.set(activate, value);
+	return activate;
+}
+
+export function getToolSearchServiceForActivator(activate: LazyToolActivator): ToolSearchService | undefined {
+	return activatorServices.get(activate);
 }
 
 const scopedService = new AsyncLocalStorage<ToolSearchService>();

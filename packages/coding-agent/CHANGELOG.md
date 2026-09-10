@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- Keep provider-scoped tool-search catalogs bound to the active session until a resumed session starts, preserving lazy-tool activation and native-request diagnostics after discarded candidates ([#1473](https://github.com/code-yeongyu/senpi/pull/1473) by [@Tinycute00](https://github.com/Tinycute00)).
+- Keep provider-scoped tool-search catalogs bound to the active session until a resumed session starts, preserving lazy-tool activation and native-request diagnostics after discarded candidates. Direct SDK sessions retain their own catalog and diagnostics without requiring extension startup or taking another session's global ownership ([#1473](https://github.com/code-yeongyu/senpi/pull/1473) by [@Tinycute00](https://github.com/Tinycute00)).
 - Resume runs the cancellable before-switch check before destination trust, snapshot and factory preparation, then checks the exact destination SDK budget before outgoing shutdown. Vetoed resumes construct no candidates; cancelled and rejected resumes preserve active `/btw` work and the live session, including cwd-override retries and shared-host RPC. Rejected candidates leave target files unchanged and release their own registrations and tentative writer reservations without shutting down the live service.
 - Staged resumes preserve large legacy transcript content through migration, keep the active MCP native-search setting until attachment, and recognize file-URL and tilde aliases for busy self-resumes. Concurrent destination changes are revalidated with bounded content fingerprints before persistence and reported as recoverable errors in the TUI and RPC ([#1473](https://github.com/code-yeongyu/senpi/pull/1473) by [@Tinycute00](https://github.com/Tinycute00)).
 

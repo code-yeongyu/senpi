@@ -127,7 +127,11 @@ import {
 import { WAKE_SOURCE_STATE_EVENT } from "./extensions/builtin/monitor-state-event.ts";
 import { CODEX_RESPONSES_API, type ServiceTier } from "./extensions/builtin/service-tier.ts";
 import { deriveExtensionRegistrationId } from "./extensions/builtin/tool-search/engine/marker.ts";
-import { getToolSearchService } from "./extensions/builtin/tool-search/service.ts";
+import {
+	getToolSearchService,
+	getToolSearchServiceForActivator,
+	type ToolSearchService,
+} from "./extensions/builtin/tool-search/service.ts";
 import {
 	type ContextUsage,
 	ExecuteToolError,
@@ -1195,6 +1199,7 @@ export class AgentSession {
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
 	private _lazyToolActivators: LazyToolActivator[] = [];
+	private _toolSearchService: ToolSearchService | undefined;
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
@@ -1452,7 +1457,7 @@ export class AgentSession {
 		this.agent.resolveUnknownToolCall = (toolName) => {
 			let service: ReturnType<typeof getToolSearchService>;
 			try {
-				service = getToolSearchService();
+				service = this._toolSearchService ?? getToolSearchService();
 			} catch {
 				return undefined;
 			}
@@ -7151,6 +7156,7 @@ export class AgentSession {
 				},
 				registerLazyToolActivator: (activator) => {
 					this._lazyToolActivators.push(activator);
+					this._toolSearchService = getToolSearchServiceForActivator(activator) ?? this._toolSearchService;
 				},
 				getCommands,
 				setModel: async (model) => {
@@ -7500,6 +7506,7 @@ export class AgentSession {
 		previousActiveToolRegistrationIds?: ReadonlyMap<string, string>;
 	}): void {
 		this._delegatedCompactionKey = undefined;
+		this._toolSearchService = undefined;
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
@@ -7744,7 +7751,7 @@ export class AgentSession {
 
 	private _takeNativeToolSearchInjectionFailure(): string | null {
 		try {
-			return getToolSearchService().takeNativeInjectionFailure();
+			return (this._toolSearchService ?? getToolSearchService()).takeNativeInjectionFailure();
 		} catch {
 			return null;
 		}

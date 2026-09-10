@@ -1,7 +1,12 @@
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { ExtensionAPI, ExtensionFactory } from "../../types.ts";
 import { AnthropicNativeToolSearchAdapter, isMcpNativeToolSearchEnabled } from "./native-search.ts";
-import { installLocalToolSearchService, installScopedToolSearchService, ToolSearchService } from "./service.ts";
+import {
+	createToolSearchActivator,
+	installLocalToolSearchService,
+	installScopedToolSearchService,
+	ToolSearchService,
+} from "./service.ts";
 import { createToolSearchTool, TOOL_SEARCH_TOOL_NAME } from "./tool.ts";
 
 export function createToolSearchExtension(service: ToolSearchService): ExtensionFactory {
@@ -15,7 +20,7 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 		pi.on("context", (event) => {
 			service.maybeRehydrateFromHistory(event.messages);
 		});
-		pi.registerLazyToolActivator((toolName) => service.activateTool(toolName));
+		pi.registerLazyToolActivator(createToolSearchActivator(service));
 		let toolRegistered = false;
 		service.bindToolRegistrar(() => {
 			if (toolRegistered) return;
