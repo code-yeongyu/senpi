@@ -112,12 +112,15 @@ describe("OAuth refresh keeps sibling slots", () => {
 		api: "openai-responses" as never,
 	});
 
-	test("resolveProviderAuth refreshes the matching slot and leaves siblings byte-identical", async () => {
+	test("resolveProviderAuth refreshes an explicitly selected default slot and leaves siblings byte-identical", async () => {
+		// given
 		const store = new InMemoryCredentialStore();
 		await store.modify("pooloauth", async () => pooledOAuthEntry());
 
-		const resolved = await resolveProviderAuth(oauthProvider, store, authContext);
+		// when
+		const resolved = await resolveProviderAuth(oauthProvider, store, authContext, { slotName: "default" });
 
+		// then
 		expect(resolved?.auth.apiKey).toBe("refreshed-r1");
 		const stored = (await store.read("pooloauth")) as PooledCredential;
 		expect(listSlots(stored).find((slot) => slot.name === "work")).toMatchObject({

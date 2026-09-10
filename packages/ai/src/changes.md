@@ -1,3 +1,21 @@
+## 2026-09-10 - Honor pinned accounts during direct auth resolution
+
+### What changed
+
+- `packages/ai/src/auth/resolve.ts`: resolve an explicit slot first, otherwise the stored pinned slot, before using the flat credential. Explicit request API keys retain precedence. Missing pinned slots do not fall back to another identity, and OAuth refresh targets the selected slot.
+
+### Why
+
+- Compaction resolves auth directly rather than through the ordinary request pool. It used the flat default account even when another usable account was pinned, so an exhausted default account blocked compaction while ordinary conversation succeeded.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/resolve.ts` owns the shared credential resolution below `ModelRegistry.getApiKeyAndHeaders()` and the text/image model collections. An extension cannot correct this account choice for every direct caller.
+
+### Expected merge conflict zones
+
+- LOW: the pooled-credential import and slot selection in `packages/ai/src/auth/resolve.ts`.
+
 ## 2026-09-10 - Map ask_user_question to Claude Code's AskUserQuestion wire name
 
 ### What changed

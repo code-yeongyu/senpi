@@ -7,7 +7,7 @@ import {
 	projectOAuthSlot,
 	refreshOAuthCredential,
 } from "./oauth-refresh.ts";
-import { projectSlot } from "./pool/slots.ts";
+import { type PooledCredential, projectSlot } from "./pool/slots.ts";
 import type {
 	ApiKeyAuth,
 	ApiKeyCredential,
@@ -98,8 +98,8 @@ async function resolveProviderAuthWithSignal(
 		);
 	}
 
-	const stored = await readCredential(credentials, provider.id, signal);
-	const slotName = overrides?.slotName;
+	const stored: PooledCredential | undefined = await readCredential(credentials, provider.id, signal);
+	const slotName = overrides?.slotName ?? stored?.pinned;
 	if (slotName !== undefined) {
 		const projected = stored === undefined ? undefined : projectSlot(stored, slotName);
 		if (!projected) return undefined;

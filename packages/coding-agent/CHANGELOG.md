@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Context compaction now uses the pinned account instead of the flat default credential, preventing an exhausted default account from blocking compaction while ordinary conversation uses another account.
+
 - A bare `.` submitted on a session that already has messages no longer renders as a user message in the TUI. It stays the manual-continue shortcut the session delivers as a hidden continuation, so nothing is painted for it while idle or while steering an active turn; a `.` on an empty session and a `.` carrying image attachments remain ordinary user input ([#1569](https://github.com/code-yeongyu/senpi/issues/1569))
 
 - A model switch the session refuses is now recorded instead of vanishing: every

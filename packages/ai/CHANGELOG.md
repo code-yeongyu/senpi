@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Direct authentication resolution now honors the stored pinned account when no slot is explicitly requested. Explicit request keys and slots retain precedence, and OAuth refresh updates only the selected slot.
+
 ### Removed
 
 ## [2026.9.10] - 2026-09-10
