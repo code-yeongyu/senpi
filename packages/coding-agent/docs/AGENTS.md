@@ -1,14 +1,14 @@
 # packages/coding-agent/docs/
 
 Public documentation for `@code-yeongyu/senpi`. Shipped inside the npm package: `package.json`
-`files` array includes `"docs"`, so every file here lands in the published tarball.
+`files` array includes `"docs"`, so every file here lands in the published tarball. Existing guide retained for the navigation/spec domain (score 4: file count + manifest).
 
 ## Navigation manifest
 
 `docs.json` has two top-level keys: `navigation` (ordered section and page list) and `redirects`.
 Sections are `{ "title", "items": [{ "title", "path" }] }`; page paths are relative to this directory.
 
-- Every new `.md` file needs an entry in `docs.json` under `navigation`.
+- Every new public guide page needs an entry in `docs.json` under `navigation`; this contributor guide is not a navigation page.
 - Renamed or moved pages need a `redirects` entry to avoid broken links.
 - Navigation-only stubs without real content belong in `redirects`, not `navigation`.
 
@@ -61,7 +61,7 @@ Consistent names: CLI binary is `senpi`, config directory is `.senpi`, npm packa
 
 ## Anti-patterns
 
-- No new `.md` file without a `docs.json` entry.
+- No new public guide page without a `docs.json` entry.
 - Don't edit protocol page prose without checking whether `task20-doc-example-check.ts` would break.
 - Don't copy claims from upstream Pi docs without verifying they apply to the senpi fork.
 - Don't embed bearer tokens, session IDs, or raw API keys in example output.

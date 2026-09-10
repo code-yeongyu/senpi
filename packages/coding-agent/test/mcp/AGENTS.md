@@ -1,6 +1,6 @@
 # test/mcp
 
-MCP transport, lifecycle, OAuth, exposure, and configuration coverage plus the fixture servers/workers that back it. 48 top-level files + `fixtures/` (15 modules, 2 schema JSON). Score 16 — the only test subtree that ships its own runnable MCP servers and fault-injection harness.
+MCP transport, lifecycle, OAuth, exposure, and configuration coverage plus the fixture servers/workers that back it. 48 top-level files + `fixtures/` (15 modules, 2 schema JSON). Score 12 — distinct protocol-fixture domain with highly reused runnable servers and fault-injection helpers.
 
 ## STRUCTURE
 
@@ -29,7 +29,7 @@ fixtures/schema/       nasty-input.schema.json + nasty-input.typebox.golden.json
 
 - Every test creates an isolated temporary root/config and resets the singleton MCP service between cases (`getMcpService` / `resetMcpServiceForTests`). Skipping the reset leaks connections into the next file.
 - Fixture servers expose capabilities deliberately (tools, resources, prompts, logging, list-changed, subscriptions) and take argv flags for crashes, wedges, delays, expiry, counters, bearer tokens, huge output/schema, and list changes. Add new failure modes as flags in `fixtures/options.ts`, not as new servers.
-- Async waits go through named helpers (`waitForCondition`, `awaitMcpToolRegistration`, service/session attach helpers) — never inline timers.
+- `waitForCondition` and `awaitMcpConnected` currently poll every 25ms; they are legacy synchronization debt, not templates. New async coverage registers exact connection/registration/fixture signals before the action and awaits them with a bounded timeout.
 - The harness does **not** emit `session_start` automatically; attach and await the lifecycle signal before asserting.
 - Test names/comments carry numbered TODO tracks (todo 27, 29-42); coverage is split one file per concern.
 - JSON schema fixtures live beside their golden typebox output; regenerate both together.
@@ -46,6 +46,6 @@ fixtures/schema/       nasty-input.schema.json + nasty-input.typebox.golden.json
 ## COMMANDS
 
 ```bash
-bun run --cwd packages/coding-agent test --run test/mcp/<file>.test.ts
-CI=1 bun run --cwd packages/coding-agent test --run test/mcp   # subprocess-heavy: one fork
+bun run --cwd packages/coding-agent test test/mcp/<file>.test.ts
+CI=1 bun run --cwd packages/coding-agent test test/mcp
 ```

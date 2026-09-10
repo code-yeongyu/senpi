@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/dynamic-prompt
 
-Fork-introduced system-prompt assembler. Replaces upstream's static `buildSystemPrompt()` with a layered builder: identity → intent gate → working-task → verification → tool reference → policies → style → optional per-model tuning. Every preset under `extensions/builtin/prompt-preset/` ultimately calls into this builder. See `changes.md` for the full evolution.
+Fork-introduced system-prompt assembler. Replaces upstream's static `buildSystemPrompt()` with a layered builder: identity → intent gate → working-task → verification → tool reference → policies → style → optional per-model tuning. Every preset under `extensions/builtin/prompt-preset/` ultimately calls into this builder. Existing prompt-domain guide retained (score 6: code ratio, barrel, exports); see `changes.md` for the full evolution.
 
 ## FILES
 
@@ -17,6 +17,7 @@ dynamic-prompt/
 ├── tool-section.ts         # CATEGORY_ORDER + CATEGORY_LABELS for rendering
 ├── policies.ts             # Hard blocks injected into every prompt
 ├── style.ts                # buildStyleSection() — output formatting + length norms
+├── workstation.ts          # Cached host facts + default/claude/codex/kimi execution-context dialects
 └── changes.md              # Dense fork tracker (dated sections)
 ```
 
@@ -29,6 +30,7 @@ dynamic-prompt/
 | Change parallel-tool/exploration guidance | `working-task.ts` |
 | Add new "Don't do X" rule | `policies.ts` |
 | Tune verification tier definitions | `verification.ts` |
+| Host execution facts / dialect | `workstation.ts`; caller passes `workstationDialect` |
 | Add/remove a tool category | `types.ts` (`AvailableTool["category"]`) + `tool-categorization.ts` + `tool-section.ts` |
 | Per-model addendum to the prompt | callers pass `tuningSection` (see `extensions/builtin/prompt-preset/`) |
 | Full per-model core rewrite | callers pass `corePrompt` (see `prompt-preset/gpt-5.5.ts`) — replaces identity→style, keeps tool section/context/skills/date/cwd assembly |
@@ -42,16 +44,17 @@ dynamic-prompt/
 5. **Tool reference** — categorized snippets + guidelines from registered tools
 6. **Policies** — hard blocks
 7. **Style** — execution stance + output formatting
-8. **Optional `tuningSection`** — per-model preset addendum (appended last)
+8. **Optional `tuningSection`** — per-model preset addendum after the core sections
+9. **Context files, skills, workstation, date/cwd** — shared trailing assembly
 
-When `corePrompt` is set, sections 1–7 are replaced by the override's output (the rendered tool section is handed to it via `DynamicPromptCoreContext`); tuning, context files, skills, and date/cwd assembly are unchanged.
+When `corePrompt` is set, sections 1–7 are replaced by the override's output (the rendered tool section is handed to it via `DynamicPromptCoreContext`); tuning and the shared trailing assembly are unchanged.
 
 ## CONVENTIONS
 
 - **Forced verbalization** (2026-04-30): every prompt mandates a `I read this as [intent] - [plan].` line. Do NOT silently revert to "internal-only" routing — the 2026-04-30 entry reversed that experiment.
 - **Anti-leakage guard preserved**: the prompt forbids narrating "Step 0", "Thinking level", or XML tool-call examples in user-visible output. Keep this even if routing is verbalized.
 - **No coding-specific language in the default** (2026-04-11): identity is domain-agnostic. Coding-specific tuning belongs in a preset, not here.
-- **Section builders are pure functions** taking only the data they need from `BuildDynamicSystemPromptOptions` — easy to test in isolation and reuse from presets.
+- **Core text-section builders take only their inputs**. The full assembler reads the current date; `workstation.ts` caches process host facts and supports a `facts` override. Do not claim the complete prompt is input-only or time-independent.
 - **Tool categories are fork-narrowed to 4** (search/session/command/other). LSP and AST categories were removed (2026-04-11).
 
 ## ANTI-PATTERNS

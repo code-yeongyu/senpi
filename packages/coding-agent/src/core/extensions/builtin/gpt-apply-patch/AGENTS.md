@@ -1,6 +1,6 @@
 # builtin/gpt-apply-patch
 
-Builtin extension #4. For `gpt-*` models on Responses-family APIs, swaps `write` / `edit` for a freeform Codex-style `apply_patch` tool with a Lark-style grammar; for `gpt-*` models on `openai-completions`, exposes `apply_patch` as a plain JSON function tool instead. Applies multi-file patches (add / update / delete / move). Keeps standard edit tools for all other models and APIs. Largest single builtin (18 files).
+Codex patch domain (score 11). For `gpt-*` models on Responses-family APIs, swaps `write` / `edit` for a freeform Codex-style `apply_patch` tool with a Lark-style grammar; for `gpt-*` models on `openai-completions`, exposes `apply_patch` as a plain JSON function tool instead. Applies multi-file patches (add / update / delete / move). Keeps standard edit tools for all other models and APIs. `builtin/index.ts` owns registration order.
 
 ## FILES
 
@@ -18,6 +18,7 @@ gpt-apply-patch/
 ├── patch-replace.ts    # Replace algorithms (anchor matching, seek fallback)
 ├── seek-sequence.ts    # Strict context-line seek with N-line tolerance
 ├── apply.ts            # Apply parsed patch to workspace
+├── recovery.ts         # Partial-failure disclosure; reread only context-mismatch files
 ├── workspace.ts        # File I/O + path normalization for patches
 ├── preview.ts          # Preview before apply (used by permission-system parser)
 ├── preview-format.ts   # Render preview as TUI nodes (opencode-style diff)
@@ -34,6 +35,7 @@ gpt-apply-patch/
 | Fix a parse error from a real GPT output | `parser.ts` — add a regression test in `test/suite/gpt-apply-patch-extension.test.ts` |
 | Improve strict-seek tolerance | `seek-sequence.ts` |
 | Change render | `preview-format.ts` + `streaming-render.ts` |
+| Change partial-failure recovery | `recovery.ts` + `types.ts`; applied actions are not rolled back |
 | Add a new file op (e.g. `*** Rename File:`) | `types.ts` + `parser.ts` + `apply.ts` |
 | Adjust which models opt in | `extension.ts` — `APPLY_PATCH_FREEFORM_APIS` + `gpt-` id prefix in `isOpenAIGptModel()` |
 
@@ -43,7 +45,7 @@ gpt-apply-patch/
 - **Strict context lines**: `seek-sequence.ts` requires exact context-line match (with bounded fuzz). Bypassing strict mode masks real grammar bugs.
 - **Mirror upstream Codex grammar** in `parser.ts` — the canonical reference is `openai/codex` `apply_patch` source. The schema golden (`test/goldens/codex-apply-patch-schema.json`) is extracted from there via the repo-root `scripts/extract-codex-apply-patch-golden.mjs`.
 - **Permission-system integration**: `parsers.ts` in `permission-system/` extracts file paths from patch bodies for per-file approval (see `permission-system/changes.md` 2026-04-13).
-- **Render diffs like opencode** (recent commit f1d24c2f): the preview UI mirrors opencode's diff formatting.
+- **Render diffs like opencode**: the preview UI mirrors opencode's diff formatting.
 
 ## ANTI-PATTERNS
 

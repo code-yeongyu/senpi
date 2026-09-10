@@ -1,14 +1,14 @@
 # packages/server
 
-Commit: `baf15a54d` (2026-08-24)
+Commit: `2d0fa41c5` (2026-09-10)
 
-`@code-yeongyu/senpi-server` is an experimental private package. It is a composable, transport-neutral protocol server built on `@earendil-works/pi-protocol`. The old daemon/IPC/Radius stack under `src/legacy/` and the `server` CLI bin were removed upstream in v0.84.1; applications supply their own `PiServerService`. Node `>=22.19.0`.
+`@code-yeongyu/senpi-server` is an experimental private package. It is a composable, transport-neutral protocol server built on `@earendil-works/pi-protocol`. The old daemon/IPC/Radius stack under `src/legacy/` and the `server` CLI bin were removed upstream in v0.84.1; applications supply their own `PiServerService`. Node `>=22.19.0`. Score 14: distinct protocol-host and transport lifecycle domain.
 
 ## STRUCTURE
 
 ```text
 src/index.ts             Re-exports errors, listener, protocol, server, types
-src/server.ts            PiServer: handshake, auth token hash, message dispatch
+src/server.ts            PiServer: handshake, protocol-version validation, message dispatch
 src/protocol.ts          pi-ai <-> pi-protocol type bridging and transcript mapping
 src/listener.ts          PiServerListener interface (start/close, accept)
 src/connection.ts        ByteConnection, handler, ConnectionState stages
@@ -38,7 +38,7 @@ Package exports: `.` (core), `./testing`, `./unix`.
 
 | Task | Path |
 |---|---|
-| Handshake, auth, dispatch | `src/server.ts` |
+| Handshake, version validation, dispatch | `src/server.ts` |
 | Session runtime lifecycle | `src/sessions.ts`, `src/types.ts` |
 | Server snapshot fanout | `src/snapshots.ts` |
 | Add a transport | `src/listener.ts`, `src/connection.ts`, `src/transports/unix/` as template |
@@ -48,9 +48,10 @@ Package exports: `.` (core), `./testing`, `./unix`.
 
 ## VALIDATION
 
-- `bun run test` (Vitest) from this package; root `bun run check` after code changes.
+- `bun run test` (Vitest), `bun run typecheck` (test config), and `bun run build`
+  (build config) from this package; root `bun run check` after code changes.
 - Add lifecycle tests for handshake timeout, disconnect mid-operation, duplicate close, and stale-socket takeover.
 - Inspect logs and fixtures for secret safety before committing.
 
 ---
-Updated: 2026-08-24 | Commit `baf15a54d` (was `4f26b8282`)
+Updated: 2026-09-10 | Commit `2d0fa41c5`

@@ -1,6 +1,6 @@
 # builtin/loop
 
-Fork-only builtin extension porting Claude Code's `/loop`: recurring (fixed-interval) and
+Scheduling domain (score 8), porting Claude Code's `/loop`: recurring (fixed-interval) and
 self-paced (dynamic) scheduled prompts inside one session. A loop re-delivers a prompt or a
 loop-file sentinel on a cadence; dynamic loops pick their own next delay through the
 `schedule_wakeup` tool.
@@ -9,7 +9,7 @@ loop-file sentinel on a cadence; dynamic loops pick their own next delay through
 
 - **Impure**: `index.ts` (extension entry: timers, store wiring, tick dispatch, lifecycle),
   `store.ts` (atomic versioned sidecar, fail closed), `command.ts` (/loop → scheduler),
-  `tools.ts` (`schedule_wakeup`, flat TypeBox schema).
+  `command-registration.ts` (command/completion wiring), `tools.ts` (`schedule_wakeup`).
 - **Pure**: `scheduler.ts` (state machine: arm/fire/settle/pause/resume/stop/suspend/restore),
   `parse.ts` (/loop argument grammar), `cron-planner.ts` (normalizeInterval/describeCron/
   computeNextFireAt), `tick-prompt.ts` (sentinel expansion, full-vs-reminder), `status.ts`

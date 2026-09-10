@@ -1,8 +1,8 @@
 # packages/evals
 
 `@code-yeongyu/senpi-evals` — behavioral, model-backed eval suites over a real
-`AgentSession`, adapted to `vitest-evals`. Earned by distinct domain: the only
-token-spending eval surface in the repo.
+`AgentSession`, adapted to `vitest-evals`. Retained at score 7 for its distinct
+live-model domain; ordinary unit tests here do not spend tokens.
 
 ## WHERE TO LOOK
 
@@ -29,11 +29,21 @@ token-spending eval surface in the repo.
   `expect.soft` is not a scoring mechanism.
 - The harness snapshots native session JSONL before deleting its temp
   workspace; an eval-only `afterEach` registers it against the test task.
+- Session creation uses `createAgentSessionServices` then
+  `createAgentSessionFromServices`; transformed system prompts take effect via reload.
+- Cleanup failures join the original run error in an `AggregateError`; preserve
+  both causes rather than hiding the failed eval behind teardown.
 - Evals run against workspace source via vitest alias config, not built
   artifacts.
 - Each invocation writes an ignored `.eval/<timestamp>_<uuid>/` dir: `runs.jsonl`
   indexing harness runs plus `sessions/` JSONL attachments. Artifacts may
   contain prompts, responses, source, and tool output — treat as sensitive.
+
+## ANTI-PATTERNS
+
+- Never select only a provider or only a model: `resolveModelSelection` requires
+  both, supplied by the harness options or `PI_PROVIDER` + `PI_MODEL`.
+- Do not use comparative score thresholds as hard suite pass/fail assertions.
 
 ## COMMANDS
 

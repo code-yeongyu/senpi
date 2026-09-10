@@ -1,6 +1,6 @@
 # test/cursor-cli-oauth
 
-Provider-lane coverage for the Cursor CLI OAuth extension: accounts, settings, executable resolution, spawn args, stream parsing, session routing, failover, guardrails, shutdown. 27 tests / ~7,000 LOC + committed CLI captures. Score 12 — distinct provider domain with a replay-fixture contract nothing else in `test/` uses.
+Provider-lane coverage for the Cursor CLI OAuth extension: accounts, settings, executable resolution, spawn args, stream parsing, session routing, failover, guardrails, shutdown. 27 test files / ~6,400 TypeScript LOC + committed CLI captures. Score 7 — existing provider/replay-fixture guide retained in UPDATE mode.
 
 ## STRUCTURE
 
@@ -16,15 +16,17 @@ fixtures/cursor-agent-models.txt   model-listing capture
 
 | Task | Location |
 |------|----------|
-| Account slots, pinning, failover | `account-command.test.ts` (463 LOC), `accounts.test.ts`, `affinity.test.ts` |
-| Stream event mapping | `stream.test.ts` (627 LOC) — usage isolation, tool rendering, failover, guardrails |
-| Resume / fresh-chat / recap | `session-router.test.ts` (423 LOC) |
-| Token/context ownership | `context-ownership.test.ts` (450 LOC) |
+| Account slots, pinning, failover | `account-command.test.ts`, `accounts.test.ts`, `affinity.test.ts` |
+| Stream event mapping | `stream.test.ts` — usage isolation, tool rendering, failover, guardrails |
+| Resume / fresh-chat / recap | `session-router.test.ts` |
+| Token/context ownership | `context-ownership.test.ts` |
 | Executable probe + bootstrap | `executable.test.ts`, `native-bootstrap.test.ts` |
-| Login and ambient opt-in | `oauth-login.test.ts`, `ambient-optin.test.ts`, `nonthrowing-checks.test.ts` |
-| Process lifecycle | `transport.test.ts`, `shutdown.test.ts`, `fixture-process.test.ts` |
+| Login and ambient opt-in | `oauth-login.test.ts`, `ambient-opt-in.test.ts`, `check-nonthrowing.test.ts` |
+| Process lifecycle | `transport.test.ts`, `shutdown.test.ts`, `fixture.test.ts` |
+| Model/reasoning resolution | `models.test.ts`, `reasoning-catalog.test.ts`, `reasoning-model-string.test.ts` |
+| Spawn serialization / settings cache | `spawn-args.test.ts`, `settings-cache.test.ts` |
 
-Highest production fan-in: `accounts.ts` (11 test files), `settings.ts` (8), `index.ts` (5), `executable.ts` (5), `oauth-login.ts` (4).
+Production seams live in `src/core/extensions/builtin/cursor-cli-oauth/`; account/settings modules feed multiple lifecycle and routing tests.
 
 ## CONVENTIONS
 
@@ -41,11 +43,12 @@ Highest production fan-in: `accounts.ts` (11 test files), `settings.ts` (8), `in
 - Never spawn when the lane is disabled, no account is bound, or force acknowledgement is missing.
 - Malformed/unknown stream frames and zero-output "success" are failures, not empty successes.
 - Fresh-chat retry is bounded; transcript text must not persist beyond the recap window; CLI-reported usage must never land in assistant usage fields.
-- `shutdown.test.ts` / `transport.test.ts` use interval-and-timeout PID death observation — that is process-lifecycle synchronization at a real OS boundary, not a pattern to copy into ordinary async tests.
+- `shutdown.test.ts` / `transport.test.ts` contain legacy PID polling; do not copy it. New lifecycle tests subscribe to child exit/close or explicit fixture acknowledgements before triggering shutdown.
+- `buildCursorCliArgs` serializes the supplied `force` even in plan mode; force policy belongs to the caller, not this argv builder.
 
 ## COMMANDS
 
 ```bash
-bun run --cwd packages/coding-agent test --run test/cursor-cli-oauth/<file>.test.ts
-CI=1 bun run --cwd packages/coding-agent test --run test/cursor-cli-oauth
+bun run --cwd packages/coding-agent test test/cursor-cli-oauth/<file>.test.ts
+CI=1 bun run --cwd packages/coding-agent test test/cursor-cli-oauth
 ```

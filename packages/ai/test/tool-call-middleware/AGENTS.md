@@ -1,12 +1,12 @@
 # packages/ai/test/tool-call-middleware
 
-Generated: 2026-08-24. Commit `baf15a54d`.
+Generated: 2026-09-10. Commit `2d0fa41c5`. Score 9: protocol/recovery integration fixtures.
 
-58 files / ~12.5k LOC covering `src/tool-call-middleware`: text-tool protocol parsers, the stream wrapper, and the leaked-invoke recovery state machine. Distinct domain — the only suite in this package built on registration-module fixtures rather than self-contained `.test.ts` files.
+58 TS files / ~12.5k LOC covering `src/tool-call-middleware`: text-tool protocol parsers, the stream wrapper, and the leaked-invoke recovery state machine. Distinct domain: registration-module fixtures compose the larger recovery/wrapper suites alongside self-contained parser tests.
 
 ## FIXTURE / CASE SPLIT
 
-16 non-`.test.ts` modules. A thin `*.test.ts` aggregator calls `register*Cases(...)` from `.ts` case modules; the cases import shared fixtures. Look for the behavior in the case module, not the test file.
+Shared non-`.test.ts` modules carry fixtures and case registrations. A thin `*.test.ts` aggregator calls `register*Cases(...)` from `.ts` case modules; the cases import shared fixtures. Look for the behavior in the case module, not the test file.
 
 | Module | Role |
 |---|---|
@@ -20,10 +20,11 @@ Generated: 2026-08-24. Commit `baf15a54d`.
 ## CONVENTIONS
 
 - Per-protocol coverage is split by concern, not bundled: `<proto>-format`, `-parser`, `-stream`, edge/resource, recovery, then `e2e.test.ts` against the faux provider.
-- Stream tests feed input at exhaustive and randomized chunk boundaries and assert the full event sequence, terminal flush, metadata identity, and content indices — never just the final text.
+- Stream tests feed input at exhaustive and fixed-seed randomized chunk boundaries and assert the full event sequence, terminal flush, metadata identity, and content indices — never just the final text.
 - Recovery tests drive synthetic `AssistantMessageEventStream` harnesses for both native and text event paths; source ordering and content index preservation are part of the contract.
 - Tool schemas use `typebox` `Type`; one export-purity check runs `spawnSync(process.execPath, ["--input-type=module", "--eval", ...])` to prove imports are side-effect free.
 - Adding a protocol means adding `<name>*.test.ts` here (step 5 of ADD A PROTOCOL in `src/tool-call-middleware/AGENTS.md`).
+- ANTML coercion/repair tests distinguish schema-validated tolerance from strict Anthropic XML. Kimi activation, marker-leak, thinking-recovery, and tool-recovery tests exercise separate paths.
 
 ## ANTI-PATTERNS
 

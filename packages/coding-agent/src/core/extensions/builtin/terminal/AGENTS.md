@@ -1,6 +1,6 @@
 # builtin/terminal
 
-Builtin extension #18. Replaces one-shot bash with a **PTY-backed persistent session** model: `bash` plus companion tools `bash_output`, `bash_input`, `bash_resize`, `kill_bash`, and `monitor`. Registered after `bash-timeout` (so the resolved default timeout reaches PTY bash) and after `anthropic-bash` (so a native Anthropic bash tool makes terminal step aside).
+Persistent-terminal domain (score 11). Replaces one-shot bash with a **PTY-backed persistent session** model: `bash` plus companion tools `bash_output`, `bash_input`, `bash_resize`, `kill_bash`, and `monitor`. Registered after `bash-timeout` (so the resolved default timeout reaches PTY bash) and after `anthropic-bash` (so a native Anthropic bash tool makes terminal step aside).
 
 ## FILES
 
@@ -12,7 +12,7 @@ terminal/
 ├── runtime-session.ts   # TerminalRuntimeSession: one live PTY
 ├── session-bundle.ts    # TerminalSessionBundle: reload parking/claiming across extension generations
 ├── monitor-registry.ts  # MonitorRegistry: registered watches over session output
-├── monitor-notify.ts    # Event → notification delivery (283 LOC, largest non-tool file)
+├── monitor-notify.ts    # Event → notification delivery; monitor-registry.ts owns watch state
 ├── monitor-status*.ts   # Footer status text + 1s unref'd ticker
 ├── notify.ts            # TerminalNotifier
 ├── output-format.ts     # Output shaping/sanitization

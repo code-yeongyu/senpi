@@ -1,6 +1,6 @@
 # packages/agent
 
-`@earendil-works/pi-agent-core` provides the stateful agent loop and a publicly exported optional harness for compaction, sessions, skills, prompts, and execution environments.
+`@earendil-works/pi-agent-core` provides the stateful agent loop and optional harness libraries for compaction, sessions, skills, prompts, and execution environments. Package boundary earns this file (score 10: file count, code ratio, own configs, symbol/export density).
 
 ## STRUCTURE
 
@@ -13,9 +13,9 @@ src/stream-fn.ts             Injectable stream function abstraction
 src/types.ts                 App messages, events, state, conversion boundary
 src/proxy.ts                 Remote stream proxy
 src/index.ts                 Browser-safe public exports
-src/node.ts                  Node harness public exports
+src/node.ts                  NodeExecutionEnv plus the main public exports
 src/search/                  Scanning session search over readable storage
-src/harness/                 AgentHarness: lanes, sessions (own AGENTS.md),
+src/harness/                 Public AgentHarness scaffold; sessions (own AGENTS.md),
                              tools (own AGENTS.md), compaction, skills, prompt
                              templates, env adapters
 src/harness/reducer.ts       Record-log validation and lane state reduction
@@ -35,7 +35,7 @@ scripts/generate-telemetry-docs.ts  Regenerates docs/telemetry-schema.md
 | Tool scheduling or terminal states | `src/agent-loop.ts` |
 | Agent lifecycle or abort | `src/agent.ts` |
 | Public message/event contract | `src/types.ts` |
-| Harness orchestration | `src/harness/agent-harness.ts` |
+| Harness scaffold and configuration | `src/harness/agent-harness.ts`; see its AGENTS.md for unimplemented lifecycle operations |
 | Node process and filesystem behavior | `src/harness/env/nodejs.ts` |
 | Session persistence | `src/harness/session/` (`session.ts`, `state.ts`, `context.ts`, `types.ts`, `jsonl/`, `memory.ts`; own AGENTS.md) |
 | Session search | `src/search/scanning.ts`, contracts in `src/search/index.ts`; see `docs/search.md` |
@@ -61,7 +61,7 @@ scripts/generate-telemetry-docs.ts  Regenerates docs/telemetry-schema.md
 
 ## VALIDATION
 
-- Run `bun run test` from this package for agent-loop coverage.
+- Run `bun run test` from this package for the full Vitest suite, including core-loop and harness tests.
 - Run `bun run test:harness` for harness/session/env changes.
 - Telemetry schema changes: `bun run generate-telemetry-docs` to rewrite `docs/telemetry-schema.md`, then `bun run check:telemetry-docs`; the generated file must never be edited by hand.
 - Runtime changes also require root `bun run check` and the root QA evidence gate.
@@ -69,8 +69,8 @@ scripts/generate-telemetry-docs.ts  Regenerates docs/telemetry-schema.md
 
 ## NOTES
 
-- Session storage: `SessionStorage` implementations (`jsonl/` `JsonlSessionStorage`/`JsonlSessionRepo`, `memory.ts` `InMemorySessionStorage`/`InMemorySessionRepo`) behind `Session` tree semantics in `session.ts`; SQLite backend in `packages/session-backends/sqlite-node`. New backends must pass `createSessionBackendConformance`, published as the `@earendil-works/pi-agent-core/session/testing` subpath.
+- Public storage surface: `SessionStorage`, `Session`, `JsonlSessionRepo`, `InMemorySessionStorage`, and `InMemorySessionRepo`; `JsonlSessionStorage` stays internal to `jsonl/storage.ts`. Backend conformance is published separately as `@earendil-works/pi-agent-core/session/testing`.
 - Cursor exec bridging: `execHandlers`/`onToolResult` are installed only when `config.cursorExecHandlers` is set. Assistant `toolCall` blocks stamped `kCursorExecResolved` (`packages/ai/src/utils/block-symbols.ts`) were executed server-side and are never re-run locally; their buffered `toolResult`s are appended right after the assistant message, including on error/abort paths. Local exec work re-arms the idle watchdog via `AssistantMessageEventStream.trackLocalWork`.
 
 ---
-Generated: 2026-08-24 | Commit `baf15a54d`
+Generated: 2026-09-10 | Commit `2d0fa41c5`

@@ -1,6 +1,6 @@
 # builtin/permission-system
 
-Builtin extension #3. Full port of opencode's permission flow. Loads preset/rule policy from CLI (`--permission-preset`, `--permission tool=action`), settings (`permissionPreset`, `permission`), and per-session approvals. Defaults to the `full-access` preset, persists "always allow" decisions, blocks denied calls with a structured error, and supports parser-aware patterns (bash command prefixes, file path globs for read/write/edit/apply_patch). **JSONL storage shape is a contract — migration required to change it.**
+Permission-policy domain (score 8). Full port of opencode's permission flow. Loads preset/rule policy from CLI (`--permission-preset`, `--permission tool=action`), settings (`permissionPreset`, `permission`), and per-session approvals. Defaults to the `full-access` preset, persists "always allow" decisions, blocks denied calls with a structured error, and supports parser-aware patterns (bash command prefixes, file path globs for read/write/edit/apply_patch). **JSONL storage shape is a contract — migration required to change it.**
 
 ## FILES
 
@@ -56,7 +56,7 @@ Pattern syntax: tool name + optional arg pattern, e.g. `bash:rm *`, `write:/etc/
 ## CONVENTIONS
 
 - **JSONL storage is the contract**: `storage.ts` writes append-only newline-delimited JSON. Schema changes require a migration. Other tools (audit, replay) parse this format.
-- **Parsers are tool-aware**: `parsers.ts` extracts the *meaningful* arg per tool — file path for read/write/edit, command prefix for bash, file paths for `apply_patch` body (2026-04-13).
+- **Parsers are tool-aware**: `parsers.ts` extracts file paths for read/write/edit and `apply_patch`, command prefixes for shell execution. `bash_input.input` and `monitor.command` are command execution too; do not treat them as passive terminal operations.
 - **`external-dir.ts` emits an extra permission** when target path is outside repo root. `workspace` and `read-only` ask for that permission unless a later explicit rule allows it.
 
 ## ANTI-PATTERNS

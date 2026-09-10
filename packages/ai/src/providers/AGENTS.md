@@ -1,18 +1,18 @@
 # packages/ai/src/providers
 
-Generated: 2026-08-24. Commit `baf15a54d`.
+Generated: 2026-09-10. Commit `2d0fa41c5`. Score 9: provider assembly and generated catalog boundary.
 
-This directory owns provider factories, catalogs, provider metadata, and the faux test provider. API wire implementations, option translation, and message transforms live in sibling `../api/`. 41 provider factories, 41 matching `*.models.ts` catalogs, 41 `data/` JSONs — the three counts move together or generation is broken.
+This directory owns provider factories, catalogs, provider metadata, and the faux test provider. API wire implementations, option translation, and message transforms live in sibling `../api/`. 41 generated `*.models.ts` catalogs match 41 provider JSONs plus `data/.manifest.json`. Runtime factories also include dynamic Cursor/Radius/Ollama and image/test surfaces; factory counts are not a generation invariant.
 
 ## FILE MAP
 
 ```text
 register-builtins.ts     One line: `import "../compat.ts"` — that is the whole contract
 all.ts                   Builtin provider/model aggregation: builtinProviders, builtinModels,
-                         builtinImagesProviders, builtinImagesModels, getBuiltinProvider(s)/Model(s);
+                         builtinImagesProviders, builtinImagesModels, getBuiltinProviders/Model(s);
                          also re-exports the data/.manifest.json generation timestamp
 faux.ts                  Deterministic public test provider
-*-models.ts              Provider model/catalog helpers where present
+*.models.ts              Generated catalog shards over matching data/ JSON
 images/register-builtins.ts  Image API registration; holds its own lazy module promises per images
                          provider and returns a lazy-load-error AssistantImages instead of throwing
 radius.ts                Dynamic Radius provider with persisted model refresh
@@ -47,9 +47,9 @@ Newer providers on disk (each `<name>.ts` + `<name>.models.ts`): ant-ling, kimi-
 - Keep provider-specific quirks local; shared behavior belongs in clearly named shared modules.
 - Every API stream must preserve tool calls, thinking blocks, usage accounting, stop reasons, setup errors, and abort semantics.
 - Default tests run with zero credentials. Use the faux provider for deterministic event sequences.
-- Keep image providers structurally separate under `images/`.
+- Image factories are `openai-images.ts` / `openrouter-images.ts`; shared lazy API registration lives in `images/register-builtins.ts`.
 - `data/` is committed generated source; never hand-edit. Regenerate with `bun run hydrate-model-data`, validate with `bun run check:model-data` (contract in `packages/ai/scripts/AGENTS.md`).
-- Every `*.models.ts` opens with "Do not edit manually - run `bun run generate-models` to update" and flattens its JSON through `../model-catalog.ts`.
+- Every `*.models.ts` has an auto-generation header and flattens its JSON through `../model-catalog.ts`; the emitted header currently names `npm run generate-models`.
 
 ## ANTI-PATTERNS
 

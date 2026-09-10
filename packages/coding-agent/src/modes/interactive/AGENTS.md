@@ -1,11 +1,13 @@
 # packages/coding-agent/src/modes/interactive
 
-Interactive mode orchestrates the `senpi` TUI. `interactive-mode.ts` owns startup, session events, key dispatch, overlays, status, and command UI; `components/` owns rendering units.
+Interactive orchestration domain (score 9) for the `senpi` TUI. `interactive-mode.ts` owns startup, session events, key dispatch, overlays, status, and command UI; `components/` owns rendering units.
 
 ## STRUCTURE
 
 ```text
 interactive-mode.ts     Main lifecycle and event-to-UI coordinator
+interactive-host-runtime.ts Shared-host RPC runtime, remote session proxy, reconnect/rebind
+help-content.ts         Help markdown consumed by the builtin help overlay
 startup-tools.ts        Non-blocking fd/rg capability probe
 working-status.ts       Animated working text/frames
 session-info-format.ts  Session/cost/token summaries
@@ -25,6 +27,8 @@ changes.md              Fork-specific interactive behavior
 | Task | File |
 |---|---|
 | Startup and shutdown | `interactive-mode.ts` |
+| Shared-host connection, fallback, session replacement | `interactive-host-runtime.ts` |
+| Help / keybindings overlay content | `help-content.ts` + builtin `help/` |
 | Streaming assistant render | `components/assistant-message.ts` |
 | Streaming tool render | `components/tool-execution.ts` |
 | Working animation | `working-status.ts` and `interactive-mode.ts` |

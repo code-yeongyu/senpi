@@ -1,15 +1,15 @@
 # packages/coding-agent/src/utils
 
-Cross-cutting utilities used by `core/`, `cli/`, `modes/`, and `extensions/`. No domain logic — only deterministic helpers. 29 source files, all leaf-level.
+Cross-cutting platform, parsing, image, and management-I/O helpers used by `core/`, `cli/`, `modes/`, and `extensions/`. 34 implementation files + one TypeScript declaration, all leaf-level. Score 12 — shared utility boundary with high import fan-in.
 
 ## FILES (grouped by concern)
 
 ```
 utils/
-├── git.ts                       # git CLI wrapper (status, diff, stash, commit, current branch)
-├── shell.ts                     # Spawn + capture; safe arg quoting
-├── child-process.ts             # Lower-level spawn helpers used by shell.ts
-├── paths.ts                     # Resolve repo root, home expansion, glob helpers
+├── git.ts                       # Parse package Git sources, refs, and safe host/repository paths
+├── shell.ts                     # Shell selection/env, output sanitization, process-tree termination
+├── child-process.ts             # cross-spawn wrappers + abort-aware child completion
+├── paths.ts                     # Canonicalization, open-free symlink resolution, path normalization
 ├── fs-watch.ts                  # File watcher (used by reload + extension HMR)
 ├── open-browser.ts              # Open URL/file via platform handler; never goes through a shell
 ├── mime.ts                      # File extension → MIME type
@@ -20,18 +20,25 @@ utils/
 ├── image-resize-core.ts         # Photon resize implementation shared by main thread + worker
 ├── image-resize-worker.ts       # worker_threads entry wrapping image-resize-core
 ├── image-convert.ts             # Image format conversion
+├── image-process.ts             # Shared conversion/resize pipeline
+├── tool-result-images.ts        # Normalize tool-result image blocks
 ├── exif-orientation.ts          # EXIF rotation correction
-├── photon.ts                    # @cf/photon WASM bootstrap
+├── photon.ts                    # @silvia-odwyer/photon-node WASM bootstrap
 ├── ansi.ts                      # ANSI escape regex + stripAnsi (vendored from ansi-regex/strip-ansi)
 ├── html.ts                      # HTML entity decoding
 ├── json.ts                      # stripJsonComments — strip // comments + trailing commas
 ├── syntax-highlight.ts          # highlight.js wrapper → themed terminal formatting
+├── highlight-js.d.ts            # highlight.js language-module declarations
 ├── frontmatter.ts               # YAML frontmatter parser (skills, prompt templates)
 ├── sleep.ts                     # Promise-returning timer with abort
+├── abort.ts                     # Operation signals + abort races
+├── text.ts                      # Leading UTF-8 BOM normalization
+├── duration.ts                  # Human-readable duration formatting
 ├── deprecation.ts               # One-shot deprecation warnings (deduped by message)
 ├── tools-manager.ts             # Probe + cache fd/rg presence for startup-tools
 ├── changelog.ts                 # Parse + render the senpi CHANGELOG.md
 ├── version-check.ts             # Senpi latest-version fetch (queries senpi npm, NOT pi.dev)
+├── management-http.ts           # Bounded retries for idempotent management requests
 ├── pi-user-agent.ts             # UA string for update checks; uses runtime app name
 ├── windows-self-update.ts       # Quarantines locked native files so Windows self-update can replace them
 └── changes.md                   # Fork tracker (version-check + pi-user-agent rebrand)
@@ -41,8 +48,8 @@ utils/
 
 | Task | File |
 |------|------|
-| Run a shell command from senpi internals | `shell.ts` — uses `child-process.ts` under the hood |
-| Resolve a path safely | `paths.ts` |
+| Select a shell / spawn a child | `shell.ts` for configuration; `child-process.ts` for spawn/wait |
+| Resolve a path safely | `paths.ts` — strict variants for trust/containment; open-free variants avoid automounts |
 | Detect fd/rg at startup | `tools-manager.ts` (cached, non-blocking; see `modes/interactive/startup-tools.ts`) |
 | Parse a skill / prompt template | `frontmatter.ts` |
 | Image-related work (paste, attachment) | `image-resize.ts`, `image-convert.ts`, `exif-orientation.ts` |
@@ -66,4 +73,6 @@ utils/
 
 - `photon.ts` is a WASM module; first call has a small init cost (cached). Don't move it into the streaming hot path.
 - `tools-manager.ts` powers the fork's non-blocking startup probe (vs. upstream's awaited fd/rg download). See `modes/interactive/changes.md`.
-- `frontmatter.ts` is shared by skill discovery (in `core/resource-loader.ts`) and prompt-template loading; keep its YAML subset deterministic.
+- `frontmatter.ts` uses `yaml.parse`, strips a leading BOM, and is shared by skills and prompt templates.
+- `management-http.ts` retries idempotent version/catalog/download requests, never model operations; caller abort and the overall timeout are terminal.
+- `realpathWithoutOpen` tolerates resolution errors; `realpathWithoutOpenStrict` tolerates missing components only. Do not use an approximate path as proof of containment.

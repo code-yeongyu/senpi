@@ -1,8 +1,8 @@
 # src/kernels
 
 Persistent kernels for four runtimes plus shared subprocess lifecycle. Earned
-by score 13 — distinct multi-runtime domain (31 files, TS hosts plus embedded
-runner/prelude assets).
+by score 9 — distinct multi-runtime domain (38 source files, TS hosts plus
+embedded runner/prelude assets; workspace reference centrality unmeasured).
 
 ## WHERE TO LOOK
 
@@ -11,6 +11,8 @@ runner/prelude assets).
 | JavaScript host API | `js/context-manager.ts` (`JavaScriptKernel`), `js/worker-host.ts` |
 | JS worker runtime, entries | `js/worker-runtime.js`, `js/worker-entry.js`, `js/inline-worker-entry.js`, `js/inline-worker.ts`, `js/worker-core.js` (+ `worker-core.d.ts`) |
 | JS import rewriting, queueing | `js/rewrite-imports.ts`, `js/run-queue.ts`, `js/prelude.ts`, `js/local-module-loader.ts` |
+| JS declaration persistence / last-expression capture | `js/worker-indirect-eval.js` |
+| Shell output capture and child tracking | `js/worker-shell-capture.js`, `js/worker-runtime.js` |
 | Python kernel | `py/kernel.ts`, `py/transport.ts`, `py/process.ts`, `py/prelude.py` |
 | Ruby kernel | `rb/kernel.ts` + `rb/prelude.rb`, `rb/runner.rb` |
 | Julia kernel | `jl/kernel.ts` + `jl/prelude.jl`, `jl/runner.jl` |
@@ -20,12 +22,15 @@ runner/prelude assets).
 ## CONVENTIONS
 
 - Each language dir pairs a typed TS host/controller with an embedded runner or
-  prelude asset; `shared/runtime-asset.ts` ships them.
+  prelude asset; `shared/runtime-asset.ts` resolves local files or the packaged
+  sidecar beside the executable (`node_modules/@code-yeongyu/senpi-codemode/src/`).
 - Transport messages are discriminated by string `type` (`ready`, `result`,
   `tool-call`, `closed`, `init-failed`, ...) exchanged as framed bridge
   messages, one JSON line per frame.
 - JS persistent cell bindings are rewritten onto `globalThis`; imports are
   AST-parsed (Babel) and rewritten to bridge-compatible dynamic imports.
+  `worker-indirect-eval.js` separately scans declarations, literals, comments,
+  and regex tokens to preserve bindings and capture the final expression.
 - JS runs on worker threads with an inline-worker fallback; py/rb/jl run as
   framed subprocesses through `shared/`.
 - Subprocess retirement/restart, worker recovery, timeout, and interrupt
@@ -43,5 +48,7 @@ runner/prelude assets).
   validation.
 - Never rewrite imports by filename/regex — `rewrite-imports.ts` applies
   source-position edits from the parsed program.
-- An optional interpreter being absent (py/rb/jl not installed) is a capability
-  gap, not an installation failure or error path.
+- Do not resolve required runner files to Bun virtual filesystem paths:
+  `requireCodemodeRuntimeAsset` rejects those and requires a readable sidecar.
+- `py/prelude.py` and `js/worker-indirect-eval.js` exceed 500 lines; exercise
+  the language lifecycle/persistence contracts when changing either runtime.

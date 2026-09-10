@@ -2,7 +2,7 @@
 
 The native Cursor provider (`cursor`, the api2.cursor.sh protobuf transport shipped in v2026.8.16) is the first-party, primary way to use Cursor from senpi. This extension is the documented FALLBACK lane: reach for it when the native path does not work well (protocol drift, transport failures) or when Cursor's own agent harness - running turns through the official `cursor-agent` CLI in print mode - is explicitly wanted. It never replaces or modifies the native provider, and `/cursor-account status` recommends the native provider whenever both are configured.
 
-Generated: 2026-08-17
+Refreshed: 2026-09-10 | Score 8: provider entry boundary with dense symbols/exports.
 
 ## FILE ROLES
 
@@ -15,7 +15,7 @@ Generated: 2026-08-17
 | `affinity.ts` | HRW (rendezvous) account selection keyed by senpi session id (sha256 `BigUInt64BE` score), pinned account wins unless blocked, expired `rate_limit` blocks cleared while `auth_error` blocks persist, `AllCursorAccountsBlockedError` carrying the soonest unblock time |
 | `errors.ts` | Closed ten-kind error union and `classifyCursorCliError`: exact-line matchers on probe-observed stderr wording plus typed `binary_missing`/`malformed_stream` kinds, retryability flags, rate-limit block durations (server hint else 60 s, capped at 48 h); the `context_overflow` wordings list is currently empty (the ceiling probe recorded no verbatim wording), so that kind is defined but unmatched |
 | `executable.ts` | `cursor-agent` resolution chain: `SENPI_CURSOR_CLI_OAUTH_EXECUTABLE`, then `CURSOR_AGENT_EXECUTABLE`, then settings `executablePath`, then explicit PATH probing, then the newest `~/.local/share/cursor-agent/versions/*`; typed `CursorAgentNotInstalledError` naming the install command; `probeCursorAgentVersion` under a 10 s deadline |
-| `spawn-args.ts` | Pure argv serializer for one print-mode invocation (`-p`, `--output-format stream-json`, `--stream-partial-output`, `--trust`, optional `--model`/`--resume`/`--force`/`--mode plan`/`--sandbox`); applies no execution policy |
+| `spawn-args.ts`, `spawn-model.ts` | Pure argv serializer plus `renderCursorCliModelString` reasoning-model encoding for one print-mode invocation (`-p`, `--output-format stream-json`, `--stream-partial-output`, `--trust`, optional `--model`/`--resume`/`--force`/`--mode plan`/`--sandbox`); applies no execution policy |
 | `stream-parser.ts` | Incremental NDJSON parser for the stream-json dialect: typed init/thinking/assistant/tool_call/result events, split-line tolerance, a bounded pending buffer (1 MiB) with `line_overflow` handling, unknown events counted, non-JSON noise routed to a bounded diagnostic ring, `malformed_stream` events instead of throws |
 | `transport.ts` | Spawns the resolved executable detached in its own process group with an explicit env allowlist (`HOME` = the account home, `AGENT_CLI_CREDENTIAL_STORE=file`, `PATH`/`TERM`/`LANG`/`LC_ALL`/`FORCE_COLOR`); rejects prompts over 130 KB pre-spawn; abort sends SIGTERM to the group then SIGKILL after 5 s; exposes the pid, parsed events, bounded stderr, and a settled outcome |
 | `home-store.ts` | Durable per-account HOMEs under `<agentDir>/cursor-cli-oauth/accounts/<slot>/home`: rewrites `.cursor/auth.json` (`accessToken`/`refreshToken`/`apiKey: null`/`bedrockCredentials: null`) at mode 0600 inside 0700 directories immediately before each run, reads back rotated refresh tokens after; logs byte lengths only; traversal-checked paths; never deletes a HOME |
@@ -43,7 +43,7 @@ Generated: 2026-08-17
 
 ## TESTS
 
-`packages/coding-agent/test/cursor-cli-oauth/*.test.ts` (20 suites) plus the hermetic `test/fixtures/fake-cursor-agent.mjs`; every unit/integration test points `SENPI_CURSOR_AGENT_EXECUTABLE` at the fixture, so no test needs the real binary, the network, or credentials. Real-CLI probes are opt-in behind `SENPI_CURSOR_CLI_LIVE=1` under `.agents/skills/senpi-qa/scripts/probes/cursor-cli/`.
+`packages/coding-agent/test/cursor-cli-oauth/*.test.ts` (27 suites) plus the hermetic `test/fixtures/fake-cursor-agent.mjs`; spawn tests use injected fixtures or `SENPI_CURSOR_CLI_OAUTH_EXECUTABLE`, not a real binary, network, or credentials. Real-CLI probes are opt-in behind `SENPI_CURSOR_CLI_LIVE=1` under `.agents/skills/senpi-qa/scripts/probes/cursor-cli/`.
 
 ## MERGE RISK
 

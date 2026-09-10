@@ -1,8 +1,8 @@
 # Senpi Repository Guide
 
-Generated: 2026-08-24
-Commit: `baf15a54d`
-Branch: `initdeep-refresh-20260824`
+**Generated:** 2026-08-24 · refreshed 2026-09-10 (init-deep update)
+**Commit:** 2d0fa41c5
+**Branch:** main
 
 Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve upstream mergeability, and read the nearest `AGENTS.md` plus every applicable `changes.md` before editing.
 
@@ -35,15 +35,15 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | Area | Purpose |
 |---|---|
 | `packages/ai/` | Provider-neutral streaming, models, auth, API implementations |
-| `packages/agent/` | Browser-safe agent loop plus optional Node harness |
-| `packages/coding-agent/` | `senpi` CLI, sessions, extensions, RPC, interactive mode |
-| `packages/tui/` | Differential terminal renderer and editor primitives |
-| `packages/protocol/`, `packages/server/`, `packages/client/` | Framed-CBOR wire protocol plus its server and client for remote sessions |
+| `packages/agent/` | Browser-safe loop and harness libraries; optional Node execution adapter |
+| `packages/coding-agent/` | `senpi` CLI, sessions, extensions, RPC workers, interactive/remote hosting |
+| `packages/tui/` | Differential renderer, editors, transcript search, optional platform addons |
+| `packages/protocol/`, `packages/server/`, `packages/client/` | Framed-CBOR remote-session leases; runtime-neutral cores, separate Unix transports |
 | `packages/telemetry/` | Vendor-neutral telemetry contracts and typed schema utilities |
 | `packages/session-backends/` | Session backend adapters; `sqlite-node/` Node sqlite session store |
 | `packages/evals/` | Model-backed eval suites over real `AgentSession`; spends tokens by design |
-| `packages/pty/` | TypeScript PTY loader, sessions, registry, vendored prebuilds, pipe fallback |
-| `packages/senpi-codemode/` | Source-only persistent-kernel `eval` extension (js/py/rb/jl kernels) |
+| `packages/pty/` | Native loader/registry, opt-in Bun terminal, non-PTY pipe fallback |
+| `packages/senpi-codemode/` | Source-only persistent `eval` kernels (js/py/rb/jl), authenticated bridge, detached cells |
 | `crates/senpi-pty/` | Rust/N-API native PTY implementation and ABI owner |
 | `scripts/` | Build, validation, release, lock and environment tooling |
 | `bench/` | Benchmark baselines and improvement ledger (data only; run via `scripts/run-pr530-benchmarks.mjs`) |
@@ -55,48 +55,48 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 
 | Task | Start here |
 |---|---|
-| Add a feature to the CLI | `packages/coding-agent/src/core/extensions/builtin/` |
-| Change provider/API behavior | `packages/ai/src/api/` then `packages/ai/src/providers/` |
-| Change Cursor transport or exec bridging | `packages/ai/src/api/cursor-agent/`, `packages/coding-agent/src/core/cursor-exec-bridge.ts` |
+| Change CLI extensions or local models | `packages/coding-agent/src/core/extensions/builtin/` (`tool-search/` owns deferred tools); hidden llama manager in `packages/coding-agent/src/extensions/llama/` |
+| Change provider APIs or retry policy | `packages/ai/src/{api,providers,utils/retry-profile}/`; injected turn strategy in `packages/coding-agent/src/core/retry-fallback/` |
+| Change Cursor selection, transport or exec bridging | `packages/ai/src/cursor/`, `packages/ai/src/api/cursor-agent/`, `packages/coding-agent/src/core/cursor-exec-bridge.ts` |
 | Change agent-loop semantics or the harness | `packages/agent/src/agent-loop.ts`, `packages/agent/src/harness/` |
-| Change interactive rendering | `packages/coding-agent/src/modes/interactive/` and `packages/tui/src/` |
-| Change app-server/RPC | `packages/coding-agent/src/modes/app-server/` or `.../modes/rpc/` |
+| Change interactive rendering or reconnect | `packages/coding-agent/src/modes/interactive/` (including `interactive-host-runtime.ts`), `packages/tui/src/{components,alt-screen-search.ts}` |
+| Change Codex app-server or JSONL/socket RPC | `packages/coding-agent/src/modes/app-server/` or `.../modes/rpc/`; these are separate transports |
 | Add or change coding-agent tests or examples | `packages/coding-agent/test/`, `packages/coding-agent/examples/` |
-| Change PTY behavior | `packages/pty/` and, for native behavior, `crates/senpi-pty/` |
-| Change model/provider runtime or docs | `packages/ai/src/{models.ts,auth,providers}`, `packages/coding-agent/docs/providers.md` |
-| Change compaction | mechanics in `packages/coding-agent/src/core/compaction/`; policy in `.../extensions/builtin/compaction/` |
-| Change wire protocol or remote sessions | `packages/protocol/`, then consumers `packages/server/` and `packages/client/` |
-| Change eval prompt/rendering | `packages/senpi-codemode/src/{prompt,tool,kernels}/` |
+| Change PTY behavior | `packages/pty/src/{loader.ts,session-bun.ts}`; native threads/ABI in `crates/senpi-pty/` |
+| Change models, auth or account rotation | `packages/ai/src/{models.ts,auth,providers}`, `packages/coding-agent/src/core/credential-pool/`, `packages/coding-agent/docs/providers.md` |
+| Change compaction or oversized-resume admission | mechanics in `packages/coding-agent/src/core/compaction/`; policy in `.../extensions/builtin/compaction/` |
+| Change wire protocol or remote sessions | `packages/{protocol,server,client}/`; CLI facade is `packages/coding-agent/src/client/remote-session.ts`, not a pi-client re-export |
+| Change eval prompt, bridge or detached execution | `packages/senpi-codemode/src/{prompt,bridge,tool,kernels}/`; goal wake-state snapshots cross the package boundary |
 | Audit changelogs or prepare a release | `.github/agent/commands/cl.md`, `scripts/release.mjs`, `scripts/release-packages.mjs` |
 
 ## CODE MAP
 
-Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop.ts`, driven by `coding-agent/src/core` into interactive | print | RPC | app-server; `tui` renders, `pty` -> `crates/senpi-pty` runs terminals, `protocol` (framed CBOR) links `server` and `client`.
+Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop.ts`, driven by `coding-agent/src/core` into interactive | print | JSONL RPC | Codex app-server. `tui` renders; `pty` selects native/Bun/pipe execution. The separate framed-CBOR `protocol` links `PiServer` and `PiClient`; transports/applications own authentication.
 
 | Symbol / file | Role | Notes |
 |---|---|---|
-| `coding-agent/src/core/agent-session.ts` | Session runtime core | 8k LOC; highest-risk file in the repo |
-| `coding-agent/src/modes/interactive/interactive-mode.ts` | Interactive loop | 8.5k LOC; components under `interactive/components/` |
-| `agent/src/agent-loop.ts` | Browser-safe agent loop | Reached via `coding-agent/src/core/sdk.ts` |
-| `coding-agent/src/core/extensions/builtin/index.ts` | `builtinExtensions` order | 39 entries, `mcp` last; the only authority on numbering |
-| `ai/src/api/cursor-agent/gen/agent_pb.ts` | Generated protobuf-es | 19.6k LOC; regenerate, never hand-edit |
-| `tui/src/index.ts` | Renderer barrel | Consumer coupling point for coding-agent and senpi-codemode |
+| `coding-agent/src/core/agent-session.ts` | Session runtime core | 9,031 lines; shared credential rotation/health lives in `core/credential-pool/` |
+| `coding-agent/src/modes/interactive/interactive-mode.ts` | Interactive loop | Components/theme are separate; `interactive-host-runtime.ts` owns reconnect/rebind |
+| `agent/src/agent-loop.ts` | Browser-safe agent loop | Separate `AgentHarness` remains an incomplete scaffold, not a durable execution coordinator |
+| `coding-agent/src/core/extensions/builtin/index.ts` | `builtinExtensions` order | 41 entries, including `account` and `gpt-account`; `mcp` last; source owns order |
+| `client/src/index.ts` | `PiClient` / `SessionLease` API | Runtime-neutral core; Node-only Unix transport is the `./unix` export |
+| `tui/src/index.ts` | Renderer barrel | Exports `TUI`, `TuiMainScreen`, `TuiAltScreen`; not `TuiBase` or low-level layout helpers |
 
 ## COMMANDS
 
-- Install dependencies: `bun install --ignore-scripts`. After an approved dependency change, `bun run refresh-lock` (lockfile + registry metadata + shrinkwrap + install-lock).
-- Full static validation after code changes: `bun run check` (biome, pinned-deps/ts-imports/shrinkwrap/install-lock checks, `check:claude-sdk-platform-lock`, `tsc --noEmit`, browser-smoke). It runs no tests; CI runs the same commands, so keep them in sync. Broad validation: `bun run test` runs `test:scripts`, then `scripts/run-workspaces.mjs` runs every workspace `test` script sequentially in path order with the package manager you invoked, so `bun run test`, `npm run test`, and `pnpm run test` run the same suites the same way.
-- Narrow tests run from the package root using that package's test command (`bun run --cwd packages/<pkg> test -- <args>`), or from the repository root through the runner (`bun run test --workspace packages/<pkg> -- <args>`, which runs the scripts tests first). Runners differ: Vitest for `ai`, `coding-agent`, `senpi-codemode`, `server`, `session-backends`, `telemetry`; `node --test --import tsx` for `tui`; `node --test` for `scripts/` (`bun run test:scripts`) and `.agents/skills/senpi-qa/scripts/lib/`.
-- App-server transport QA is its own channel: `bun run qa:app-server` (`packages/coding-agent/scripts/qa-app-server/`), not part of `bun run test`. Model catalog data: `bun run hydrate:model-data`, verified by `check:model-data`, from the repository root.
+- Install: `bun install --ignore-scripts`. Approved dependency changes: `bun run refresh-lock` refreshes npm/Bun locks, registry metadata and coding-agent publish/install locks; Claude SDK platform-lock generation/materialization is separate.
+- Static validation: `bun run check` runs Biome, pinned-deps/TS-import/publish/install/Claude SDK lock checks, tsc and browser smoke — not tests, changelog/upstream audits or catalog/thinking generation. `bun run test` runs `test:scripts`, then `scripts/run-workspaces.mjs` runs workspace tests sequentially in path order using the invoking package manager; npm/pnpm use the same runner.
+- Narrow tests: `bun run --cwd packages/<pkg> test -- <args>`; root runner: `bun run test --workspace packages/<pkg> -- <args>` (scripts tests first). Vitest: `ai`, `agent`, `client`, `coding-agent`, `senpi-codemode`, `server`, `session-backends/sqlite-node`, `telemetry`; TUI: `node --test --import tsx` via its package script. `test:scripts` covers only `scripts/*.test.mjs`; QA helper units need `node --test .agents/skills/senpi-qa/scripts/lib/*.test.mjs`. CI's explicit workspace list omits client: run `bun run --cwd packages/client test` directly.
+- App-server QA: `bun run qa:app-server` (`packages/coding-agent/scripts/qa-app-server/`, source-driven, includes real-client-sweep), outside workspace tests; socket probes live separately in `packages/coding-agent/scripts/qa-rpc-socket/`. Model data: root `bun run hydrate:model-data`, then `bun run check:model-data`; ordinary AI builds copy committed catalogs offline.
 - Never run `bun run dev` in this repository.
 
 ## CONVENTIONS
 
 - Read files in full before broad edits; prefer existing patterns and public extension APIs over new core behavior.
 - TypeScript under `packages/*/src`, `packages/*/test`, and `packages/coding-agent/examples` must use erasable syntax. Avoid `any` and verify external types in `node_modules`.
-- Imports are top-level by default. Inline or dynamic imports are forbidden except existing documented lazy/browser-safe boundaries such as `packages/ai/src/api/*.lazy.ts` and credential probes.
+- Imports are top-level by default. Inline/dynamic imports are forbidden except documented lazy/browser-safe boundaries such as `packages/ai/src/api/*.lazy.ts` and credential probes. AI's browser-safe root exports factories/utilities but must not load builtin catalogs or compat registration.
 - Do not hardcode TUI keys; add defaults to `packages/tui/src/keybindings.ts` or `packages/coding-agent/src/core/keybindings.ts`.
-- Never hand-edit generated sources: `packages/ai/src/{models,image-models}.generated.ts` and `src/providers/data/*.json` (regenerate via `packages/ai/scripts/generate-models.ts`), `packages/ai/src/api/cursor-agent/gen/agent_pb.ts` (`buf generate` + `scripts/transform-cursor-agent-proto.mjs`), `crates/senpi-pty/index.{js,d.ts}` (napi-rs), `packages/coding-agent/install-lock/*`, and `packages/coding-agent/src/modes/app-server/protocol/generated/`. Builtin extension registration order is authoritative only in `builtin/index.ts` — never quote a registration number from prose.
+- Never hand-edit generated sources: AI model/image catalogs and `packages/ai/src/providers/data/*.json` (`packages/ai/scripts/generate-models.ts`; 41 provider shards, not 41 runtime factories), `packages/ai/src/api/cursor-agent/gen/agent_pb.ts` (`buf generate` + `scripts/transform-cursor-agent-proto.mjs`), `crates/senpi-pty/index.{js,d.ts}` (napi-rs), `packages/coding-agent/install-lock/*`, and `packages/coding-agent/src/modes/app-server/protocol/generated/`. Only `builtin/index.ts` defines extension order — never take registration numbers from prose.
 - Root `package.json` scripts reach workspaces only through `node scripts/run-workspaces.mjs`; never `npm run --workspaces`, `npm --workspace=<name> run`, `npm --prefix <dir> run`, or `cd <dir> && npm run` (`scripts/root-workspace-scripts.test.mjs` fails the manifest). Those shapes hardcode npm, and under bun the flag-after-name form re-entered the root script forever.
 - Ask before removing intentional functionality; backward compatibility is opt-in, not automatic.
 - Changing fork-specific source behavior means reading the nearest `changes.md` first and updating it in the same verified increment, not in a follow-up. Merges resolve tracker files to `ours`, so a stale entry misleads the next upstream sync.
@@ -113,13 +113,13 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 
 ## QUALITY GATES
 
-- Any runtime change under `packages/{ai,agent,coding-agent,tui,pty,senpi-codemode}` (the release-managed set) plus `crates/senpi-pty` requires scoped tests, `bun run check`, and real CLI QA through `.agents/skills/senpi-qa/`.
+- Any runtime change under `packages/{ai,agent,coding-agent,tui,pty,senpi-codemode}` (the real-CLI QA set) plus `crates/senpi-pty` requires scoped tests, `bun run check`, and real CLI QA through `.agents/skills/senpi-qa/`.
 - Save QA receipts under `local-ignore/qa-evidence/<YYYYMMDD>-<slug>/`; no evidence means no commit or push. Evidence, logs, comments, and PR bodies must never contain tokens, credentials, auth headers, cookies, or raw environment dumps.
 - Default/unit tests must not spend tokens or require real credentials; coding-agent tests use the faux provider and `packages/coding-agent/test/suite/harness.ts` (the legacy `test/test-harness.ts` must not be extended).
 - Tests added or changed run directly until green. New coding-agent lifecycle tests go in `test/suite/`; when a regression test fixes a GitHub issue, add a comment with the issue number next to the test; the flat `test/*.test.ts` root cluster is legacy placement and must not grow.
-- Test quarantine is a safety boundary: `test/setup.ts` forces `SENPI_CODING_AGENT_DIR` into a temp dir and always wins over an inherited value. Never reintroduce an `if (!process.env.SENPI_CODING_AGENT_DIR)` short-circuit — that once deleted a real user agent dir.
+- Test quarantine is a safety boundary: `test/setup.ts` scrubs `SENPI_BRAND`, every `*_CODING_AGENT_DIR` and `*_PACKAGE_DIR`, then forces a temp agent dir. Never restore `if (!process.env.SENPI_CODING_AGENT_DIR)` — that once deleted a real user dir. Provider-key blanking is separate; QA `makeSandbox` alone is not credential isolation.
 - Live/credentialed surfaces are opt-in only: `packages/ai/test/live-api-gates.ts` (`PI_ENABLE_*`), `packages/coding-agent/test/integration/` (`PI_RUN_INTEGRATION=1`), `packages/evals` (`bun run eval --provider X --model Y`). `packages/evals/.eval/` artifacts hold prompts and responses — treat as sensitive.
-- Async tests subscribe before triggering, with bounded deadlines or fake timers; fixed sleeps survive only at genuine OS boundaries and must not be copied from legacy tests.
+- Async tests subscribe before triggering, with bounded deadlines or fake timers; legacy sleeps/polling are reliability debt, not patterns to copy. TUI `VirtualTerminal.waitForRender()` contains a fixed sleep; `flush()` only acknowledges queued xterm writes.
 - Documentation-only changes use focused validators and `git diff --check`, not runtime QA — but `packages/coding-agent/docs/` ships in the tarball and is test-asserted, so doc edits there can fail CI.
 
 ## DEPENDENCIES AND INFRA
@@ -128,7 +128,7 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 - Keep shared environment surfaces synchronized: dependency, Node, provider/env, QA-channel, build-command, and forwarded-port changes must update `scripts/devenv-setup.mjs`, `.devcontainer/devcontainer.json`, and related references together, keeping root `package.json` workspaces and `pnpm-workspace.yaml` aligned with any workspace-package move or rename.
 - Regenerate `packages/coding-agent/publish-deps.lock.json` with `bun scripts/generate-coding-agent-shrinkwrap.mjs`; never replace it with `npm-shrinkwrap.json`. Regenerate `packages/coding-agent/install-lock/` with `bun run install-lock:coding-agent`.
 - External registry entries in root, publish, and installer locks must preserve both npm tarball `resolved` URLs and `integrity` hashes; incomplete merge results are invalid even when dependency topology still resolves.
-- `@earendil-works/pi-telemetry` is a runtime dependency and must stay in Senpi's owned CalVer alias, publish, and bundle sets. `@earendil-works/pi-storage-sqlite-node` remains private and independently versioned because it is not reachable from the shipped coding-agent runtime.
+- `@earendil-works/pi-telemetry` remains in owned CalVer/publish/bundle sets; `@earendil-works/pi-storage-sqlite-node` stays private and independently versioned, outside the shipped CLI runtime. Client/protocol stay workspace/release-versioned but ship under `packages/coding-agent/vendor/pi-{client,protocol}` with relative imports, never as resolver-visible published `node_modules` packages.
 - Dependencies with lifecycle scripts require package/version review and an explicit justified generator allowlist entry; never add one silently to pass the gate.
 
 ## GIT AND DELIVERY
@@ -140,15 +140,15 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 
 ## RELEASE NOTES
 
-- Releases use CalVer and lockstep-version the packages in `scripts/release-packages.mjs`; the pipeline runs `.github/agent/` drivers -> `scripts/release.mjs` -> `publish-npm.yml` -> `build-binaries.yml` / `native-prebuilds.yml`.
+- CalVer covers ten workspaces in `scripts/release-packages.mjs`; seven registry packages are defined by `scripts/registry-packages.mjs`. Pipeline: `.github/agent/` drivers -> `scripts/release.mjs` -> `publish-npm.yml` -> `build-binaries.yml` / `native-prebuilds.yml`.
 - Release only from clean `main` after changelog audit and release smoke tests; `scripts/release.mjs` owns versioning, generated artifacts, checks, commits, tag, and push.
-- Never rerun the release script after its tag is pushed; failed publishing is retried from the existing tag workflow. Publishing is fork-scoped: `scripts/publish.mjs` rewrites private `@earendil-works/pi-*` packages into public `@code-yeongyu/senpi-*` manifests, and upstream names never appear on npm.
+- Never rerun release after its tag is pushed; retry publishing from the existing tag workflow. `scripts/publish.mjs` publishes fork-scoped `@code-yeongyu/senpi-*` manifests, never upstream names. Staging rewrites emitted imports too: restoring only package.json is insufficient; rebuild coding-agent or use disposable release checkouts.
 
 ## NOTES
 
-- Deep guidance lives in ~60 nested `AGENTS.md` files holding the file-level maps this root omits; read the nearest one before editing. `packages/coding-agent` is by far the largest package (~105k LOC with tests).
-- `packages/ai` tests alias `@earendil-works/pi-telemetry` to telemetry source, so telemetry breakage fails AI tests. Node floors differ: packages require >=22.19.0, root and CI use Node 24.
-- `packages/tui` uses tabs in source and its own `node --test` runner — do not apply coding-agent test habits there. `packages/coding-agent/bin/senpi` is only a symlink to built output; launcher logic lives in `src/cli.ts` / `src/bun-runtime.ts`.
+- Nested `AGENTS.md` files own file-level maps, including new retry-profile, tool-search, remote-client, QA-helper and codemode-bridge domains; read the nearest guide. Child Node/tsx tests need fresh dist despite Vitest source aliases: repair prerequisites with root `npm run build`; protocol must build before client.
+- Use Node 24 for repository work; agent, PTY, TUI and the QA island require it. AI tests alias telemetry source, so telemetry breakage fails AI tests. `SENPI_BUN_TERMINAL=1` opts into Bun PTY only under Bun; codemode's Bun 1.4 skill follows the JS kernel runtime, not PATH.
+- TUI uses tabs and its own Node test bootstrap, which clears multiplexer env. `packages/coding-agent/bin/senpi` is a built-output symlink; launcher logic is in `src/cli.ts` / `src/bun-runtime.ts`. QA drivers differ in runtime/live gating; never assume every executable has `--self-test`.
 
 ## Review claim labels (merge-gating)
 

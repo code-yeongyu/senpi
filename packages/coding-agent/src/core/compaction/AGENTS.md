@@ -1,14 +1,17 @@
 # packages/coding-agent/src/core/compaction
 
-Core compaction **mechanics** — token estimation, cut-point selection, summary generation, branch summarization, stream watchdogs. Distinct from `extensions/builtin/compaction/`, which owns compaction **policy** (speculative, circuit breaker, restoration, remote route). Core is what the extension calls; the extension is what decides when.
+Core compaction **mechanics** — token estimation, cut-point selection, summary generation, branch summarization, stream watchdogs. Distinct from `extensions/builtin/compaction/`, which owns compaction **policy** (speculative, circuit breaker, restoration, remote route). Core is what the extension calls; the extension is what decides when. Score 8: distinct mechanics boundary with dense symbols/exports.
 
 ## FILES
 
 ```
 compaction/
 ├── index.ts                  # Selective barrel: branch-summarization, compaction, utils ONLY
-├── compaction.ts             # 1367 LOC — token estimation, threshold decisions, cut-point selection,
-│                             # generateSummary, prepareCompaction, compact orchestration
+├── compaction.ts             # Token estimation, cut-point selection, summary generation/preparation
+├── compaction-execution.ts   # AgentSession compaction execution adapter
+├── compaction-settings.ts    # Base CompactionSettings + DEFAULT_COMPACTION_SETTINGS
+├── ideal-compaction-settings.ts # Adaptive threshold/reserve defaults
+├── stuck-overflow.ts         # Distinguish truly stuck overflow from completed answers
 ├── branch-summarization.ts   # Branch collection/preparation/generation for forked sessions
 ├── utils.ts                  # Conversation serialization + file-operation tracking
 ├── lifecycle.ts              # Compaction lifecycle state/coordinator (imported directly, not via barrel)
@@ -21,8 +24,8 @@ compaction/
 | Task | File |
 |---|---|
 | Change token estimation or cut-point math | `compaction.ts` |
-| Change the summarization system prompt | `compaction.ts` (`SUMMARIZATION_SYSTEM_PROMPT`) |
-| Change default thresholds | `compaction.ts` (`DEFAULT_COMPACTION_SETTINGS`) |
+| Change the summarization system prompt | `utils.ts` (`SUMMARIZATION_SYSTEM_PROMPT`) |
+| Change default thresholds | `compaction-settings.ts`, `ideal-compaction-settings.ts` (re-exported through `compaction.ts`) |
 | Fork/branch summary behavior | `branch-summarization.ts` |
 | Detect a stalled summary stream | `stream-watchdog.ts` |
 | Serialize conversation for a summary request | `utils.ts` |
@@ -39,10 +42,10 @@ compaction/
 ## ANTI-PATTERNS
 
 - Adding policy (when to compact, retry, circuit-break) here instead of in the builtin extension — this directory answers "how", not "whether".
-- Pinning summarization prose in tests. The prompt contains deliberate "Do NOT" directives that are machine-consumed prompt contracts; assert parsed structure, not sentences.
+- Pinning summarization prose in tests. Assert parsed structure or machine-consumed sentinels, not ordinary prompt sentences.
 - Regenerating summaries without checking `warm-anchor.ts` staleness — a stale warm result applied after context moved silently drops turns.
 
 ## NOTES
 
-- `compaction.ts` is the highest-behavioral-risk file in `core/`; changes here reach every provider path.
+- `compaction.ts` remains the token/cut-point hotspot; execution is split into `compaction-execution.ts`. Changes to shared mechanics reach every provider path.
 - Overflow detection lives outside this directory: `core/agent-session.ts` calls `isContextOverflow` from `packages/ai/src/utils/overflow.ts`, then drives blocking compaction through the extension.

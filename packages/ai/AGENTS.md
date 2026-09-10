@@ -1,6 +1,6 @@
 # packages/ai
 
-Generated: 2026-08-24. Commit `baf15a54d`.
+Generated: 2026-09-10. Commit `2d0fa41c5`. Score 13: package boundary, generated-data contract, cross-package API.
 
 `@earendil-works/pi-ai` is the provider-neutral streaming, model, auth, tool-call, and image API used across the monorepo. Its root surface must remain browser-safe. ESM, Node `>=24`, built with `tsc -p tsconfig.build.json` (`src/**/*.ts` -> `dist`).
 
@@ -16,11 +16,11 @@ src/models-store.ts             Persisted dynamic-model store
 src/api/                        Wire/API implementations and lazy wrappers
 src/api/cursor-agent/           Cursor Connect-RPC client (Node-only, reached via api/cursor-agent.lazy.ts);
                                 gen/agent_pb.ts is generated protobuf-es output — never hand-edit
-src/cursor-agent-provider.ts    Static cursor-agent module bundle for the Bun binary override
-src/cursor/                     Cursor catalog grouping, model capabilities, selection descriptors,
-                                variant aliases (cursor-variant-aliases.json), store migration
+src/cursor-agent-provider.ts    Static Cursor transport bundle for the Bun binary override; browser-safe history measurement lives in api/cursor-agent/measure.ts
+src/cursor/                     Cursor catalog grouping, shared transport selection, Composer prompt,
+                                variant aliases and store migration (own AGENTS.md)
 proto/cursor/agent.proto        Vendored Cursor agent protocol schema (source for gen/)
-src/providers/                  Provider factories, catalogs, shared transforms
+src/providers/                  Provider factories, catalogs, shared provider configuration
 src/providers/data/             COMMITTED generated per-provider model JSON (see below)
 src/auth/                       Credential stores, contexts, auth helpers/types
 src/node/provider-scope.ts      Node-only subpath (provider scoping); not root-reachable
@@ -38,10 +38,10 @@ src/images.ts                   Image generation API (+ images-api-registry.ts, 
 src/env-api-keys.ts             Browser-safe credential detection boundary
 src/wire-identity.ts            Product token/originator carried on outbound requests
 src/tool-call-middleware/       Text-encoded tool protocols
-src/utils/                      ~33 files; key: retry.ts, provider-retry.ts, retry-hint.ts, prompt-cache-ttl.ts, stop-details.ts, tool-call-id.ts, tool-schema-compat.ts
+src/utils/                      42 TS files including retry-profile/; retry, cache, schema, stream utilities
 scripts/generate-models.ts      Model catalog source of truth
 scripts/generate-image-models.ts Image catalog source of truth
-test/                           Faux-first + opt-in live tests, ~53k LOC flat (own AGENTS.md; ditto test/tool-call-middleware/)
+test/                           268 top-level TS files, ~60k LOC; faux-first + opt-in live tests (own AGENTS.md; ditto tool-call-middleware/)
 bench/                          event-stream + model-registry micro-benchmarks
 ```
 
@@ -57,7 +57,7 @@ bench/                          event-stream + model-registry micro-benchmarks
 - Provider factories and model catalogs live in `src/providers/`; wire protocol implementations live in `src/api/`.
 - `src/api/lazy.ts` exposes `lazyApi()`. API-specific `*.lazy.ts` wrappers are the documented dynamic-import boundary.
 - `src/providers/register-builtins.ts` registers compatibility behavior and currently imports only `src/compat.ts`; do not restore the old provider-loader architecture there.
-- Public subpaths in `package.json`: `.`, `./compat`, `./oauth`, wildcard `./providers/*`, `./api/*`, `./utils/*`, plus `./node/provider-scope`, `./bedrock-provider` (root shim re-exporting `dist/`), `./bun-oauth`. Keep root exports browser-safe.
+- Public subpaths in `package.json`: `.`, `./compat`, `./oauth`, wildcard `./providers/*`, `./api/*`, `./utils/*`, plus `./auth/pool/*`, `./node/provider-scope`, `./bedrock-provider`, `./bun-oauth`. Keep root exports browser-safe.
 - `sideEffects` is non-empty by design: `dist/compat.js`, `dist/images.js`, `dist/providers/images/register-builtins.js` register on import.
 - Message transforms return new structures; never mutate shared input messages.
 
@@ -79,8 +79,8 @@ bench/                          event-stream + model-registry micro-benchmarks
 
 ## INVARIANTS
 
-- Dynamic imports are limited to lazy API and browser-safe credential/OAuth boundaries; ordinary source uses top-level imports.
-- Generated model files are never hand-edited. Regenerate and commit intentional catalog changes. `src/api/cursor-agent/gen/agent_pb.ts` is likewise generated: run `buf generate` against `proto/cursor/agent.proto`, then `bun scripts/transform-cursor-agent-proto.mjs <in> <out>` to rewrite enums for `erasableSyntaxOnly`.
+- Lazy API wrappers, image registration, and credential/OAuth loading are deliberate dynamic-import boundaries; ordinary source uses top-level imports.
+- Generated model files are never hand-edited. Regenerate and commit intentional catalog changes. `src/api/cursor-agent/gen/agent_pb.ts` is likewise generated: run `buf generate` against `proto/cursor/agent.proto`, then the enum transform in `scripts/transform-cursor-agent-proto.mjs` for `erasableSyntaxOnly` (exact commands in that script's header).
 - Unit tests use `src/providers/faux.ts`; live APIs require explicit key/feature gating and must not be part of default success.
 - Keep `extraBody`, tool definitions, reasoning options, usage, stop reasons, errors, and abort behavior consistent across APIs.
 - Inspect installed SDK types before changing external request/response shapes.

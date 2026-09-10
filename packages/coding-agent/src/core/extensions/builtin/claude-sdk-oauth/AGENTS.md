@@ -1,8 +1,8 @@
 # claude-sdk-oauth
 
-Claude SDK OAuth provider extension. Registers a builtin provider that runs turns through the `@anthropic-ai/claude-agent-sdk` subprocess with native multi-account OAuth, HRW session affinity, stream-safe account failover, and resume-first session continuity. Renamed from `claude-agent-sdk` on 2026-07-31; old persisted identities are intentionally not aliased.
+Claude SDK OAuth provider extension (score 11: 52 TypeScript modules, barrel, dense symbols/exports). Registers a builtin provider that runs turns through the `@anthropic-ai/claude-agent-sdk` subprocess with native multi-account OAuth, HRW session affinity, stream-safe account failover, and resume-first session continuity. Renamed from `claude-agent-sdk` on 2026-07-31; old persisted identities are intentionally not aliased.
 
-Generated: 2026-08-07 | Commit: `4f26b8282`
+Refreshed: 2026-09-10 | Commit: `2d0fa41c5`
 
 ## FILE ROLES (verified subset)
 
@@ -24,7 +24,7 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 | `system-prompt.ts` | `systemPromptMode` handling (`full` default, `preset-append` deprecated, `override` from file); no array-splitting, the CLI joins arrays |
 | `prompt-directive-dedupe.ts` | `dedupeUltraworkBlocks`: collapses repeated `<ultrawork-mode>` spans in flatten output; never mutates `context.messages` |
 | `custom-tools.ts` | Senpi tools exposed as an SDK MCP server; execution denied SDK-side (`denyCustomToolExecution`), executed by senpi |
-| `sdk-boundary.ts` | Single import boundary over `@anthropic-ai/claude-agent-sdk` (`query`, `createSdkMcpServer`, types) |
+| `sdk-boundary.ts`, `sdk-boundary.lazy.ts` | Injectable SDK boundary and its lazy runtime import over `@anthropic-ai/claude-agent-sdk` |
 | `options.ts` | `buildClaudeSdkOauthQueryOptions`: settings + `SENPI_CLAUDE_SDK_OAUTH_*` env resolution, append assembly |
 | `executable.ts` | Claude Code executable resolution |
 | `changes.md` | Fork-change record; read before touching anything here |
@@ -48,7 +48,7 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 
 ## TESTS
 
-Flat cluster at `test/claude-sdk-oauth-*.test.ts` (51 files): accounts, affinity, auth-lane, binding, continuity decisions, failover, custom-tools schema, guidance, login, model switch, observability, and more. Keep edited test files below the 250-pure-LOC ceiling (see 2026-07-31 rename entry).
+Existing flat cluster at `test/claude-sdk-oauth-*.test.ts` (57 files; new lifecycle regressions belong in `test/suite/`): accounts, affinity, auth-lane, binding, continuity decisions, failover, custom-tools schema, guidance, login, model switch, observability, and more. Keep edited test files below the 250-pure-LOC ceiling (see 2026-07-31 rename entry).
 
 ## MERGE RISK
 
