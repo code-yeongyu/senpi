@@ -11,6 +11,10 @@ import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 
 export { RENDERED_COMPONENT_RECORD, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 
+/** Await every actor's drain; a failed actor is a cut peer, not a writer failure. */
+const settleActors = (actors: readonly SocketEventSinkActor[]): Promise<void> =>
+	Promise.all(actors.map((actor) => actor.flush().catch(() => undefined))).then(() => undefined);
+
 type RawWriter = (chunk: string) => void;
 type BackpressureWaiter = () => Promise<void>;
 type FlushScheduler = (flush: () => Promise<void>) => void;
@@ -147,7 +151,7 @@ export class SessionEventWriter {
 	registerConnection(
 		id: string,
 		connection: SessionEventWriterConnection,
-		options: { readonly maxQueueBytes?: number } = {},
+		options: { readonly maxQueueBytes?: number; readonly stallMs?: number } = {},
 	): void {
 		this.fanout.registerConnection(id, connection, options);
 	}
@@ -250,16 +254,24 @@ export class SessionEventWriter {
 		return true;
 	}
 
-	/** Return worker credit only after this session's destinations consumed their queues. */
+	/**
+	 * Return worker credit only after this session's destinations consumed their
+	 * queues. A destination that failed (byte overflow or stall) was already cut
+	 * and closed by the fanout's onFailure; it must not withhold the session's
+	 * credit, or one bad peer kills the producing worker (session_worker_credit_timeout).
+	 */
 	waitForSessionBackpressure(sessionId: string): Promise<void> {
 		if (this.fanout.isEmpty()) return this.flush();
 		const targets = new Set([
 			...this.fanout.targets(sessionId, this.currentConnection(), false, false, undefined),
 			this.currentConnection(),
 		]);
-		return Promise.all(
-			[...targets].map((target) => (target === undefined ? undefined : this.fanout.get(target)?.actor.flush())),
-		).then(() => undefined);
+		return settleActors(
+			[...targets].flatMap((target) => {
+				const registered = target === undefined ? undefined : this.fanout.get(target);
+				return registered ? [registered.actor] : [];
+			}),
+		);
 	}
 
 	/** Queue one untagged host-control response for the current connection. */
@@ -397,8 +409,7 @@ export class SessionEventWriter {
 		if (this.failure !== undefined) return Promise.reject(this.failure);
 		this.flushScheduled = false;
 		if (this.drainPromise) return this.drainPromise;
-		if (this.readyQueues.length === 0)
-			return Promise.all([...this.fanout.values()].map(({ actor }) => actor.flush())).then(() => undefined);
+		if (this.readyQueues.length === 0) return settleActors([...this.fanout.values()].map(({ actor }) => actor));
 		let resolveDrain!: () => void;
 		let rejectDrain!: (cause: unknown) => void;
 		const drain = new Promise<void>((resolve, reject) => {
@@ -424,7 +435,9 @@ export class SessionEventWriter {
 		do {
 			await this.drainReadyQueues();
 		} while (this.readyQueues.length > 0);
-		await Promise.all([...this.fanout.values()].map(({ actor }) => actor.flush()));
+		// Per-connection failures are handled by the fanout (cut + close); only the
+		// shared stdio lane may fail this writer.
+		await settleActors([...this.fanout.values()].map(({ actor }) => actor));
 		this.controlOverflowReported = false;
 		if (this.reservedCloseRecords === 0) this.closeOverflowReported = false;
 	}

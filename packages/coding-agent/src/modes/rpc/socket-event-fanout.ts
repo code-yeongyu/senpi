@@ -22,6 +22,30 @@ type QueueEntry = {
 // above any single burst a normal session produces.
 const DEFAULT_QUEUE_BYTES = 64 * 1024 * 1024;
 
+// A session worker returns its output credit only after every destination of
+// that session has drained (session-event-writer.ts, waitForSessionBackpressure),
+// and it fails itself when the host has not answered within
+// SESSION_WORKER_LIMITS.controlMs (session-worker.ts, session_worker_credit_timeout).
+// A peer that stops reading its socket therefore used to kill the producing
+// session after 5 s (observed live 2026-09-09/10: a desktop client stalled on
+// its own ack pacing, the kernel buffer filled, and the worker was quarantined
+// mid-turn). Treat a write that cannot complete within this budget exactly like
+// a byte overflow: fail-closed disconnect of THAT peer, who must resync, while
+// the session keeps its credit. Must stay below controlMs; a test pins that.
+export const DEFAULT_STALL_MS = 4_000;
+
+export class SocketEventQueueStallError extends Error {
+	readonly pendingBytes: number;
+	readonly stallMs: number;
+
+	constructor(pendingBytes: number, stallMs: number) {
+		super(`socket event queue stalled: peer did not drain ${pendingBytes} queued bytes within ${stallMs}ms`);
+		this.name = "SocketEventQueueStallError";
+		this.pendingBytes = pendingBytes;
+		this.stallMs = stallMs;
+	}
+}
+
 export class SocketEventQueueOverflowError extends Error {
 	readonly queuedBytes: number;
 	readonly incomingBytes: number;
@@ -51,11 +75,18 @@ export class SocketEventSinkActor {
 	private readonly sink: SocketSink;
 	private readonly onFailure: (cause: unknown) => void;
 	private readonly maxQueueBytes: number;
+	private readonly stallMs: number;
 
-	constructor(sink: SocketSink, onFailure: (cause: unknown) => void, maxQueueBytes = DEFAULT_QUEUE_BYTES) {
+	constructor(
+		sink: SocketSink,
+		onFailure: (cause: unknown) => void,
+		maxQueueBytes = DEFAULT_QUEUE_BYTES,
+		stallMs = DEFAULT_STALL_MS,
+	) {
 		this.sink = sink;
 		this.onFailure = onFailure;
 		this.maxQueueBytes = maxQueueBytes;
+		this.stallMs = stallMs;
 	}
 
 	enqueue(line: string, key?: string, onWritten?: () => void, demotedLine?: string): void {
@@ -113,6 +144,35 @@ export class SocketEventSinkActor {
 		this.queuedBytes = 0;
 	}
 
+	/**
+	 * Resolve when the sink accepted the write, or throw SocketEventQueueStallError
+	 * once the peer has held the transport full for stallMs. The notice is best
+	 * effort: the socket is already not draining, so writeRaw may only buffer it.
+	 */
+	private waitForDrainOrStall(writtenBytes: number): Promise<void> {
+		return new Promise<void>((resolve, reject) => {
+			const timer = setTimeout(() => {
+				const stall = new SocketEventQueueStallError(this.queuedBytes + writtenBytes, this.stallMs);
+				try {
+					this.sink.writeRaw(`${JSON.stringify({ type: "overflow", error: "stalled, resync required" })}\n`);
+				} catch {
+					// The peer is unreachable either way; the failure below closes it.
+				}
+				reject(stall);
+			}, this.stallMs);
+			this.sink.waitForBackpressure().then(
+				() => {
+					clearTimeout(timer);
+					resolve();
+				},
+				(cause) => {
+					clearTimeout(timer);
+					reject(cause);
+				},
+			);
+		});
+	}
+
 	private drain(): Promise<void> {
 		if (this.draining) return this.draining;
 		this.draining = (async () => {
@@ -121,7 +181,7 @@ export class SocketEventSinkActor {
 					const entry = this.queue.shift()!;
 					this.queuedBytes -= entry.bytes;
 					this.sink.writeRaw(entry.line);
-					await this.sink.waitForBackpressure();
+					await this.waitForDrainOrStall(entry.bytes);
 					entry.onWritten?.();
 				}
 			} catch (cause) {

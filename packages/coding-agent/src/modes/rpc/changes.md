@@ -58,6 +58,27 @@
 
 - LOW: the classification block in `connection-handler.ts`'s command catch, its new import, and the added branch + import in `rpc-client.ts`'s `getData`.
 
+## Cut stalled socket peers before they consume the session worker credit (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts`: `SocketEventSinkActor` bounds each write's drain wait with `stallMs` (`DEFAULT_STALL_MS` = 4000, pinned below `SESSION_WORKER_LIMITS.controlMs`). A peer that has not accepted the write in time fails the actor exactly like a byte overflow: one best-effort `{"type":"overflow","error":"stalled, resync required"}` notice, actor closed, `onFailure(SocketEventQueueStallError)` (the fanout removes the connection and closes its socket).
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `waitForSessionBackpressure`, `flush` and `drainUntilEmpty` settle socket actors through `settleActors`, which treats a rejected actor flush as a cut peer. Previously any actor rejection (byte overflow, now also stall) propagated into `Promise.all`, rejected the writer-wide drain and called `fail()` on the shared host writer, or reached the session worker client which then killed the worker.
+- `registerConnection` accepts `stallMs` (tests use a short budget); `packages/coding-agent/docs/rpc.md` documents the stall cut and that a cut connection never withholds session credit.
+
+### Why
+
+- Live on mengmotaHost 2026-09-09 17:17 and 2026-09-10 11:07 (two runtimes): a desktop client stalled on its own downstream ack pacing, the kernel socket buffer filled during a large `eval` tool result, `waitForSessionBackpressure` never resolved, and the session worker failed itself with `session_worker_credit_timeout` after 5 s — the user's running turn was truncated (`session_closed` with no final assistant message) although the session and every other peer were healthy. One slow consumer must not kill the producer; the writer already had fail-closed overflow semantics for slow peers, they were just byte-only.
+- `test/suite/rpc-socket-stall.test.ts`: stall budget < worker deadline; a stalled actor is cut with the notice while a sibling drains; the writer returns session credit and closes only the stalled connection; the writer and its stdio lane survive a stalled peer (this last case failed the whole writer before the fix).
+
+### Why an extension could not handle it
+
+- Transport credit, socket drain and worker liveness are host infrastructure below the extension boundary.
+
+### Expected merge conflict zones
+
+- LOW: `SocketEventSinkActor.drain` and the three actor-flush aggregation sites in `session-event-writer.ts`. Upstream has no socket fanout.
+
 ## Bound quarantined and joined close reply admission (2026-09-08)
 
 ### What changed

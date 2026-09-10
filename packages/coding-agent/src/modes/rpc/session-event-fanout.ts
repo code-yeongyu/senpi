@@ -68,7 +68,7 @@ export class SessionEventFanout {
 	registerConnection(
 		id: string,
 		connection: SessionEventWriterConnection,
-		options: { readonly maxQueueBytes?: number } = {},
+		options: { readonly maxQueueBytes?: number; readonly stallMs?: number } = {},
 	): void {
 		const actor = new SocketEventSinkActor(
 			connection,
@@ -85,6 +85,7 @@ export class SessionEventFanout {
 				connection.close?.();
 			},
 			options.maxQueueBytes,
+			options.stallMs,
 		);
 		this.connections.set(id, { connection, actor });
 		this.connectionCapabilities.set(id, new Set());

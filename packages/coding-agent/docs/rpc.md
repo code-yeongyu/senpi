@@ -234,7 +234,12 @@ Display updates coalesce to one pending update and one latest value; UI cancella
 messages. IPC output and snapshots are limited to 16 MiB per record, with one acknowledged record at a time. Credit
 returns after the session's destinations consume their output, not merely on IPC receipt. A five-second credit
 failure closes that session visibly (`session_error` followed by `session_closed`), rather than retaining an
-unbounded queue. Socket queues retain their existing independent overflow/disconnect behavior. The default stdio
+unbounded queue. Socket queues retain their existing independent overflow/disconnect behavior, and a socket peer that
+stops reading is cut before it can consume that credit budget: a write the peer has not accepted within 4 seconds
+(`DEFAULT_STALL_MS`, below the 5-second worker deadline) is treated like a byte overflow — that connection receives one
+`overflow` record with `error: "stalled, resync required"`, is closed, and must reconnect and resynchronize — while the
+session keeps running and its other destinations keep receiving output. A failed or cut connection never withholds a
+session's credit and never fails the shared host writer; only the stdio lane can. The default stdio
 queue is bounded at 64 MiB or 4096 records, with reserved terminal-failure records and one control-overflow notice.
 Close admission counts both queued output and pending close replies (including their serialized bytes) before
 releasing an attachment or waiting for teardown. An admitted first closer reserves its lifecycle and terminal reply;
