@@ -212,8 +212,9 @@ and only then constructs its session writer and runtime. A conflicting alias att
 explicitly before opening another writer.
 
 SessionManager writes, switches, forks, new sessions and imports obtain the same grant before writer creation or
-append-side normalization. Resume candidate preparation acquires no writer reservation. After exact admission,
-acceptance obtains a reversible grant and revalidates the destination before switch handlers; cancellation or failure
+append-side normalization. Resume runs cancellable `session_before_switch` handlers before opening the destination
+snapshot and preparing the candidate, which acquires no writer reservation. After exact admission, acceptance obtains
+a reversible grant and revalidates the destination before outgoing shutdown; cancellation or failure
 releases only a newly acquired candidate grant, leaving existing live ownership intact. Accepted writer paths are
 conservatively retained for that worker's entire lifetime, including superseded paths after a switch.
 Each worker may reserve at most 64 paths; an exhausted reservation budget fails
