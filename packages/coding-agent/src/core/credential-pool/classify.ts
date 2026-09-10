@@ -1,3 +1,4 @@
+import { PROVIDER_NOT_CONFIGURED_PREFIX } from "@earendil-works/pi-ai";
 import { DEFAULT_SLOT_BLOCK_MS, MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
 import { normalizeProviderError } from "@earendil-works/pi-ai/utils/error-body";
 import { getOverflowPatterns } from "@earendil-works/pi-ai/utils/overflow";
@@ -76,6 +77,13 @@ export function classifyCredentialFailure(
 	const failureCount = context.failureCount ?? 0;
 
 	if (isAbort(error, text)) return { kind: "fail_request" };
+	// A slot whose material no longer resolves to usable auth is a per-credential
+	// fault, not a provider-wide one: failing the request here would let ONE bad
+	// slot dead-end a pool whose siblings are healthy. The block is permanent
+	// because only a re-login or a repaired entry can change that answer.
+	if (text.includes(PROVIDER_NOT_CONFIGURED_PREFIX)) {
+		return { kind: "failover", block: { reason: "auth_error" } };
+	}
 	if (status === 401 || INVALID_KEY_TEXT.test(text)) {
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}

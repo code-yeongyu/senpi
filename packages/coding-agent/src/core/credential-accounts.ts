@@ -1,6 +1,13 @@
 import { dirname, join } from "node:path";
 import type { Credential } from "@earendil-works/pi-ai";
-import { listSlots, type PooledCredential, pinSlot, removeSlot } from "@earendil-works/pi-ai/auth/pool/slots";
+import {
+	accountDisplayName,
+	listSlots,
+	type PooledCredential,
+	pinSlot,
+	removeSlot,
+	renameSlotDisplayName,
+} from "@earendil-works/pi-ai/auth/pool/slots";
 import type { AuthStorage } from "./auth-storage.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
 import { CredentialSlotRepository, type CredentialSlotState, slotHealth } from "./credential-pool/state-store.ts";
@@ -12,6 +19,7 @@ export type CredentialAccountSource = "login" | "import" | "env";
 /** Account metadata safe to surface: names and health only, never key material. */
 export type CredentialAccountSummary = {
 	readonly name: string;
+	readonly displayName?: string;
 	readonly source: CredentialAccountSource;
 	readonly blocked: boolean;
 	readonly pinned: boolean;
@@ -101,8 +109,10 @@ export async function summarizeCredentialAccounts(
 					: []
 				: listSlots(credential);
 		for (const slot of storedAccounts) {
+			const displayName = accountDisplayName(slot.displayName);
 			summaries.push({
 				name: slot.name,
+				...(displayName === undefined ? {} : { displayName }),
 				source: slot.source ?? "login",
 				blocked: slotBlocked(slot, state[slot.name], now),
 				pinned: pinned === slot.name,
@@ -125,6 +135,30 @@ export async function summarizeCredentialAccounts(
 		});
 	}
 	return summaries;
+}
+
+/** Atomically rename/clear stored metadata without changing identity, health or environment state. */
+export async function renameCredentialAccount(
+	storage: AuthStorage,
+	provider: string,
+	name: string,
+	displayName: string | null,
+): Promise<void> {
+	await storage.modify(provider, async (current) => {
+		if (!current) throw new Error(`No stored credential for provider: ${provider}`);
+		// Provider-managed OAuth sentinels without an accounts array are not legacy flat accounts.
+		// Key this on the credential shape, not one provider id, so sibling managed lanes cannot be promoted.
+		if (
+			current.type === "oauth" &&
+			!Array.isArray((current as { accounts?: unknown }).accounts) &&
+			current.access === current.refresh &&
+			current.access.endsWith("-managed")
+		) {
+			throw new Error(`Stored provider account not found: ${name}`);
+		}
+		return renameSlotDisplayName(current, name, displayName);
+	});
+	emitProviderAccountsChanged(provider);
 }
 
 /** Pins one slot, or clears the pin when `name` is null. */

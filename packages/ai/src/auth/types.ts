@@ -147,6 +147,13 @@ export type AuthEvent =
 	  }
 	| { type: "progress"; message: string };
 
+/** Secret-free receipt emitted only after the account write succeeds. */
+export interface AccountLoginReceipt {
+	readonly providerId: string;
+	readonly name: string;
+	readonly origin: "generated" | "provider";
+}
+
 /**
  * Login interaction callbacks serving both api-key and OAuth flows.
  *
@@ -156,13 +163,15 @@ export type AuthEvent =
  */
 export interface AuthInteraction {
 	signal?: AbortSignal;
+	/** Absent for provider-owned envelopes without one unambiguous new slot ID. */
+	onAccountCommitted?(receipt: AccountLoginReceipt): void;
 
 	prompt(prompt: AuthPrompt): Promise<string>;
 	notify(event: AuthEvent): void;
 }
 
 /** Normalized interaction passed to provider login implementations. */
-export type ProviderAuthInteraction = AuthInteraction & { signal: AbortSignal };
+export type ProviderAuthInteraction = Omit<AuthInteraction, "onAccountCommitted"> & { signal: AbortSignal };
 
 /**
  * Api-key auth: stored key/provider env plus ambient sources (env vars, AWS

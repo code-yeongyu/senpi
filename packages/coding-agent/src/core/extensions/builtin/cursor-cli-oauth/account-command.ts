@@ -1,4 +1,5 @@
 import type { Credential } from "@earendil-works/pi-ai";
+import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { emitProviderAccountsChanged } from "../claude-sdk-oauth/account-events.ts";
 import {
@@ -172,13 +173,16 @@ function showAccounts(
 	const lines = ["Cursor CLI (OAuth) accounts:"];
 	if (accounts.length === 0) lines.push("  (none)");
 	for (const account of accounts) {
-		const states = [account.name, account.source, slotStatus(account, now())];
+		const states = [accountLabel(account), account.source, slotStatus(account, now())];
 		if (account.name === pinned) states.push("pinned");
 		if (account.name === affinityPick) states.push("affinity pick");
 		lines.push(`  ${states.join(" | ")}`);
 	}
-	lines.push(`Pinned account: ${pinned === undefined ? "none" : `${pinned} (${pinSource})`}`);
-	lines.push(`Affinity pick: ${affinityPick ?? (affinityError ? `unavailable - ${affinityError}` : "none")}`);
+	const labelFor = (name: string) => accountLabel(accounts.find((account) => account.name === name) ?? { name });
+	lines.push(`Pinned account: ${pinned === undefined ? "none" : `${labelFor(pinned)} (${pinSource})`}`);
+	lines.push(
+		`Affinity pick: ${affinityPick === undefined ? (affinityError ? `unavailable - ${affinityError}` : "none") : labelFor(affinityPick)}`,
+	);
 	generation.runFencedSync(ctx, () => ctx.ui.notify(lines.join("\n"), "info"));
 }
 

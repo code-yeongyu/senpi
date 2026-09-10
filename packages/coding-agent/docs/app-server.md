@@ -50,6 +50,12 @@ All server notifications use the current Codex envelope and include `emittedAtMs
 before, between, and after correlated responses, except where a method explicitly guarantees response-before-notification
 ordering below.
 
+## Provider account display names
+
+`account/providerAccounts/read` returns secret-free account descriptors with `name`, `source`, `blocked`, `pinned`, and optional `displayName`. Clients should render `displayName (name)` when present and the ID alone otherwise. Pins, removal, and comparisons must continue using immutable `name`, not the display label. Rename/clear operations are available through Senpi's account slash commands; no new app-server mutation method is introduced.
+
+`displayName` is stored NFC-normalized with internal whitespace collapsed and is at most 32 terminal columns wide, so a client can render it inline without measuring; it is unique per provider under a fold of case, Unicode compatibility forms, invisible code points, and Cyrillic lookalikes.
+
 ## Protocol Provenance
 
 The raw TypeScript fixture is pinned to Codex git

@@ -1,5 +1,25 @@
 # goal Extension Changes
 
+## 2026-09-09 - Stop automatic goal recovery after terminal policy rejection (#1520)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: distinguish terminal classifier refusals/sensitive stops and the Codex safety-block error diagnostic from infrastructure failures, only after the explicit retry owner reports `willRetry: false`. The unstructured Codex diagnostic carries no policy code, so it is trusted only on `api === "openai-codex-responses"`; another provider or gateway emitting the same sentence keeps the existing provider/system recovery path. Structured classifier refusals stay provider-independent because they carry their own policy details.
+- `packages/coding-agent/src/core/extensions/builtin/goal/agent-end-continuation.ts`: persist the active goal as blocked before recovery routing and synchronize the monitor to clear staged recoveries and armed timers. The goal identity/objective survive; no continuation is delivered or counted. This is not a mechanical block that unrelated input automatically resumes.
+- `packages/coding-agent/test/suite/goal-policy-rejection.test.ts`: the identity gate is a literal copy of an id owned by `packages/ai`, so the suite drives the same lifecycle once per api id in the shipped Codex catalog (`OPENAI_CODEX_MODELS`). Renaming that api fails the suite instead of silently disarming the guard while the hardcoded cases stay green.
+
+### Why
+
+- `db6069f83` intentionally kept goals active after infrastructure retry exhaustion. Policy rejection was missing from that distinction, so settlement queued up to eight hidden follow-ups to an already rejected request. Non-policy provider/system recovery and explicit retry ownership remain unchanged.
+
+### Why an extension could not handle it
+
+- The builtin owns goal recovery routing, persistence, timers, and settlement admission. An external extension cannot veto its queued continuation.
+
+### Expected merge conflict zones
+
+- LOW: `agent-end-continuation.ts` routing/imports and `terminal-provider-error.ts` predicates.
+
 ## 2026-09-10 - Route user-only blockers through the question tool
 
 ### What changed
@@ -1155,7 +1175,6 @@ surface; no core extension API change is required.
 
 - LOW in `prompt.ts` if the standalone goal continuation wording changes.
 
-
 ## Overview
 Persistent per-thread goal tracking as an in-tree builtin. Ports the standalone
 `pi-goal` extension into senpi with no dependency on it, file-based persistence,
@@ -1429,7 +1448,6 @@ codex-aligned tool naming, and budget-driven behavior removed. An optional
   recovery while upstream owns the lifecycle persistence semantics.
 - MEDIUM: `index.ts`, `tool-registration.ts`, and `ui.ts` retain senpi's split
   registration, elapsed ticker, and core abort-event integration.
-
 
 ## Reload no longer auto-starts a stopped goal; gap-abort blocks active goal (2026-07-27)
 

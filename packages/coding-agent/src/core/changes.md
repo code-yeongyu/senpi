@@ -1,3 +1,84 @@
+# changes
+
+## 2026-09-10 - Atomic account display-name metadata with shape-keyed sentinel guard (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: adds `renameCredentialAccount` with a serialized latest-credential update, optional safe `displayName` in descriptors, and unchanged name-based health/pin reads. Rejected input writes nothing and emits no event; successful rename/clear emits the existing accounts-changed event. The guard that refuses to read a provider-managed sentinel as a legacy flat account is keyed on the credential shape (an OAuth credential with no `accounts` array whose identical `access`/`refresh` are a `*-managed` sentinel), not on the literal provider id `claude-sdk-oauth`, so every managed lane with that envelope is covered. Environment slots are never materialized as saved accounts.
+
+### Why
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: shared CLI/status/RPC/app-server descriptors need human-readable labels without exposing tokens or changing operational IDs; duplicate claims must be validated under the storage lock; and `cursor-cli-oauth` defines the identical sentinel envelope, so a provider-id-keyed guard would let a cosmetic rename fabricate a `default` login slot whose tokens are the literal sentinel strings.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/credential-accounts.ts` is the shared storage and descriptor seam used by commands and transports; an extension-local mutation would bypass its concurrency and non-secret projection contracts.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/credential-accounts.ts` summary projection and the rename operation beside pin/remove.
+
+## 2026-09-10 - Review fixes for PR #1304: scoped remint/auth-miss, pool merge, sentinel repair
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_isClaudeSdkSameModelRemintError` matches ONLY the Claude SDK lane's session-lock and bare `invalid_request` quirks (`this.model?.provider === CLAUDE_SDK_OAUTH_PROVIDER_ID`); the provider-agnostic stream-stall watchdog class is no longer swallowed, so a stall for ANY provider consumes the ordinary shared same-model budget and escalates to the fallback chain exactly as before. The auth-miss exclusion is `_isClaudeSdkAuthMissError`, an exact-message, Claude-lane-scoped check built on the shared `providerNotConfiguredMessage()` helper, so another provider's auth miss still hops the configured fallback chain. Supersedes the 2026-09-02 "Keep Claude SDK stalls and invalid_request on the same model" entry above.
+- `packages/ai/src/auth/resolve.ts` + `packages/ai/src/models.ts`: `PROVIDER_NOT_CONFIGURED_PREFIX` / `providerNotConfiguredMessage()` export the exact auth-miss wording; `packages/coding-agent/src/core/model-runtime.ts` throws through the helper instead of its own literal, so the session-layer guard can never drift from the throw sites (the `TURN_RETRY_SUPPRESSION_PREFIX` pattern).
+- `packages/coding-agent/src/core/auth-storage.ts`: every auth.json parse drops pool slots whose `access`/`refresh` equal the provider's `<providerId>-managed` sentinel and clears a pin naming one; the mutable store writes the repair back once inside its existing lock. `packages/coding-agent/src/core/credential-pool/classify.ts` classifies that auth miss as `failover`/`auth_error` so one bad slot can never dead-end a pool. `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/accounts.ts` never lists a sentinel-material slot as an account.
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` MERGES a provider-owned pool onto the value read under the credential lock (stored slots and their block state win; only genuinely new names are appended) instead of whole-writing a snapshot read before the browser round trip; `managedSentinelMaterial` / `isManagedSentinelSlot` / `repairManagedSentinelSlots` implement the repair algebra. A flat `current` keeps the whole-write shape because the provider's accounts already carry this login.
+- `packages/coding-agent/src/modes/interactive/components/login-dialog.ts`: every `(to cancel)` / `(to close)` hint row routes through one tracked live hint, so `showWaiting` / `showInfo` replace a previous hint instead of painting beside it, and content-clearing paths reset the tracked hint.
+- Tests: `test/suite/retry-fallback-hard-error.test.ts` (Claude-lane tests run under a `claude-sdk-oauth` faux provider, plus new guards proving a non-Claude `invalid_request` and a non-Claude auth miss still hop the chain), `test/auth-storage.test.ts`, `test/credential-error-taxonomy.test.ts`, `test/model-runtime-credential-rotation.test.ts`, `test/claude-sdk-oauth-accounts.test.ts`, `packages/ai/test/credential-pool-mutations.test.ts`, `test/suite/regressions/5433-extension-oauth-prompt-input.test.ts` (the bare-`>` line was a tautology; it now asserts exactly one live `>` row and one live hint row).
+
+### Why
+
+- PR #1304 review (pullrequestreview-5167950734): the remint predicate ORed the provider-agnostic stall class in, so stalls never reached the fallback chain and the exhaustion event's attempt counter drifted by one - three suites that pass at the merge base failed at the branch head. The `Provider is not configured:` exclusion and the `invalid_request` remint were global, reclassifying every provider's failures. `appendLoginSlot`'s early return turned login into a blind overwrite with the pre-browser-flow snapshot, rolling a sibling account's rotated refresh token back to the consumed value and erasing its rate-limit block. Nothing repaired the sentinel `login-N` entries the already-shipped bug wrote, so those pools dead-ended deterministically. `forkBindingOrFlatten` was dropped during the rebase onto main in favor of main's `crossAccountResumeSupported` wiring, which already flattens account drift on the config-dir lane (`cross_root_unsupported`) exactly as `verifyRestoredTranscript` declares.
+
+### Why an extension could not handle it
+
+- Hard-error vs same-model retry eligibility, the auth.json parse/repair, the rotation classification, and the shared credential-pool write path all live below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `_isClaudeSdkSameModelRemintError` / `_isClaudeSdkAuthMissError` / `_isHardErrorFallbackEligible` in `agent-session.ts`; `repairPoisonedPoolSlots` and `parseStorageContent` in `auth-storage.ts`; `appendLoginSlot` and the sentinel helpers in `packages/ai/src/auth/pool/slots.ts`; the prefix helpers in `auth/resolve.ts`; the prefix branch in `credential-pool/classify.ts`; `storedSlots` filtering in `accounts.ts`; `setLiveHint` in `login-dialog.ts`.
+
+## 2026-09-02 - Keep Claude SDK stalls and invalid_request on the same model
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `Provider stream start timed out after Nms` and a bare `invalid_request` remint the same model. They are not hard-error provider hops.
+- `packages/coding-agent/test/suite/retry-fallback-hard-error.test.ts`: both recover on faux-1 and never apply a fallback chain.
+
+### Why
+
+- After a 1.7MB flatten the SDK timed out, then returned `invalid_request`. Hard-error fallback switched onto `opengateway/anthropic/claude-opus-4-8` which has no key and 401-looped until the goal continuation cap fired.
+
+### Why an extension could not handle it
+
+- Hard-error vs same-model retry is decided in `AgentSession` before extension failover runs.
+
+### Expected merge conflict zones
+
+- LOW: `_isHardErrorFallbackEligible` and the `agent_end` remint branch in `agent-session.ts`.
+
+## 2026-09-02 - Retry Claude SDK session locks on the same model
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `Lock file is already being held` is same-model remint, not hard-error provider fallback.
+- `packages/coding-agent/test/suite/retry-fallback-hard-error.test.ts`: lock recovers on the original model and never hops after budget exhaustion.
+
+### Why
+
+- A held Claude Agent SDK session lock cannot be released by switching to OpenGateway or another provider. Immediate hard-error fallback produced 401 storms and `resume_initialization_aborted` resends.
+
+### Why an extension could not handle it
+
+- Hard-error vs same-model retry is decided in `AgentSession` before extension failover runs.
+
+### Expected merge conflict zones
+
+- LOW: `_isHardErrorFallbackEligible` and the `agent_end` retry branch in `agent-session.ts`.
+
 ## Shared manual-continue submission predicate (2026-09-10)
 
 ### What changed
@@ -39,6 +120,25 @@
 
 - `packages/coding-agent/src/core/agent-session.ts`: the `AgentSessionEvent` union, the `_setModel` guard block, and the `_cycleFavoriteModel` commit block.
 - `packages/coding-agent/src/core/session-manager.ts`: the `SessionEntry` union and the append helpers near `appendModelChange`.
+
+## 2026-09-02 - Do not hard-fallback a provider-not-configured auth miss
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_isHardErrorFallbackEligible` no longer treats `Provider is not configured:` as a model hard-error that ejects onto another provider.
+- `packages/coding-agent/test/suite/retry-fallback-hard-error.test.ts`: a configured fallback chain stays unused when the current model fails with that auth miss.
+
+### Why
+
+- Auth wiring failures were classified as hard-error and immediately switched `claude-sdk-oauth/claude-opus-5` onto a different provider (for example `opengateway/anthropic/claude-opus-5`) instead of staying on Claude SDK OAuth or its sibling accounts.
+
+### Why an extension could not handle it
+
+- Hard-error fallback eligibility is decided in `AgentSession` before extension failover runs.
+
+### Expected merge conflict zones
+
+- LOW: `_isHardErrorFallbackEligible` in `agent-session.ts`.
 
 ## Leaf token and typed errors for assistant edits (2026-09-10)
 

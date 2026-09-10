@@ -6,11 +6,30 @@
 
 ### Added
 
+- Pooled OAuth credential slots now retain optional human-readable display names while preserving immutable slot identities for selection, affinity, refresh, and failover.
+
+### Changed
+
+### Fixed
+- Direct authentication resolution now honors the stored pinned account when no slot is explicitly requested. Explicit request keys and slots retain precedence, and OAuth refresh updates only the selected slot.
+
+- A provider-owned OAuth account pool is merged onto the stored pool at commit time instead of overwriting it with the pre-login snapshot, so a sibling account that rotated its refresh token or earned a rate-limit block during an interactive login is never rewound; pool slots carrying the provider's managed sentinel marker are recognized and dropped so they can never dead-end a request.
+- The auth-miss wording `Provider is not configured: <id>` is now a shared exported helper used by every throw site, so consumers keying recovery decisions off it cannot drift from the generators.
+- Claude Agent SDK `Lock file is already being held` is classified as a transient retryable error instead of an unknown/terminal failure.
+
+### Removed
+
+## [2026.9.10-2] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
 ### Changed
 
 ### Fixed
 
-- Direct authentication resolution now honors the stored pinned account when no slot is explicitly requested. Explicit request keys and slots retain precedence, and OAuth refresh updates only the selected slot.
+- Kimi For Coding sessions now identify themselves as a Kimi client. `api.kimi.com/coding` recognizes its clients by a product `User-Agent` plus a six-header `X-Msh-*` device set (platform, version, device name, device model, OS version, per-install device id), which the official Kimi Code client sends on device authorization, token poll, token refresh, and every managed request; senpi sent none of them, so a subscription session presented itself as an anonymous Anthropic-protocol client holding a Kimi bearer token. The OAuth subscription path now sends the full set on all four request paths. Header values are printable-ASCII sanitized (the endpoint answers 520 on raw non-ASCII bytes) and the device id persists under the agent dir, falling back to a per-process id when that directory is unwritable instead of throwing. The api-key path is unchanged and stays header-free, because it authenticates with a platform key rather than a client session ([#1504](https://github.com/code-yeongyu/senpi/issues/1504))
 
 ### Removed
 

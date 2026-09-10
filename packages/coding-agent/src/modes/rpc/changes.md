@@ -1,5 +1,44 @@
 # changes
 
+## 2026-09-10 - Optional display-name account descriptor (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcProviderAccount` gains optional `displayName`, matching the safe shared descriptor returned by `get_provider_accounts`. `name` remains the immutable selector ID; credentials never enter this projection.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: clients need human-readable labels without changing their pin/remove selectors or existing legacy payloads.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` defines the host-owned typed response contract, not an extension-local message.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts` account descriptor interface.
+
+## win32 supervisor bootstraps its own internal directory and public secret (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the win32 branch of `createInternalSocketPath()` now creates `<baseDir>/internal-<uuid>` with `recursive: true` instead of `recursive: false`. The function is exported and takes an injectable `platform`, mirroring `spawnableChildLaunch(launch, platform)` in the same module, so the win32 bootstrap is coverable from any host. The posix branch is unchanged. `runHostSupervisor()` now provisions the public socket secret through the new `ensurePublicSocketSecret()` helper (`ensureSocketSecret` instead of `readSocketSecret`) before it allocates the internal hop or spawns the child, so the direct launch route owns the secret its own listener authenticates with; a provisioning failure is rethrown naming the bootstrap step and the secret path.
+- `packages/coding-agent/docs/rpc.md`: the shared-host lifecycle section records that the win32 internal hop directory is created recursively and that the supervisor self-provisions `<publicSocket>.secret`, reusing an existing valid secret.
+- `packages/coding-agent/test/suite/regressions/1370-rpc-internal-socket-mkdir.test.ts`: a subprocess regression drives the real `--internal-rpc-host-supervisor` CLI route on a fresh profile through readiness, connection and a `get_protocol_info` response; two cases drive `runHostSupervisor()` itself with `process.platform` stubbed to win32 to prove a missing secret is created and an existing one preserved; the `createInternalSocketPath()` cases remain as supplemental unit coverage.
+
+### Why
+
+- `runHostSupervisor()` passes `paths.dir` (`<agentDir>/rpc-host-daemon`) as the base directory. `ensureHost()` creates that parent before spawning, but the hidden `--internal-rpc-host-supervisor` launch route does not, so on a fresh Windows profile the supervisor died during bootstrap with `ENOENT: no such file or directory, mkdir '<agentDir>\rpc-host-daemon\internal-<uuid>'` (#1370). The posix branch never hit this because it roots the directory in `tmpdir()`, which always exists.
+- The same fresh profile then died on the second failure reported in #1370: `readSocketSecret()` requires `<publicSocket>.secret`, which only `ensureHost()` wrote, so the direct route never reached `listen()`. Reuse (not rotation) is mandatory because `resolveSocketTransportAddress()` derives the win32 pipe name from the socket path AND the secret, so a fresh secret would move the endpoint away from the one the caller published.
+
+### Why an extension could not handle it
+
+- The failure happens inside the supervisor's own bootstrap, before any session, runtime, or extension surface exists.
+
+### Expected merge conflict zones
+
+- LOW: the `createInternalSocketPath` signature and its win32 `mkdir` call, the secret provisioning at the top of `runHostSupervisor` and the `ensurePublicSocketSecret` helper in `host-lifecycle.ts`, and the internal launch route paragraph in `docs/rpc.md`.
+
 ## The refused-switch entry crosses the RPC seam and stays bookkeeping (2026-09-10)
 
 ### What changed

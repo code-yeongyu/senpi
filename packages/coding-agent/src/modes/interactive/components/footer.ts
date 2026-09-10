@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Credential } from "@earendil-works/pi-ai";
 import { rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
-import { listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
-import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { accountLabel, listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
+import { type Component, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import type { InteractiveSession } from "../interactive-host-runtime.ts";
 import { theme } from "../theme/theme.ts";
@@ -48,11 +48,23 @@ export function accountFooterSuffix(credential: Credential | undefined, sessionI
 	const slots = listSlots(credential);
 	if (slots.length < 2) return "";
 	const pinned = Object.entries(credential ?? {}).find(([key]) => key === "pinned")?.[1];
-	if (typeof pinned === "string" && slots.some((slot) => slot.name === pinned)) return `@${pinned}`;
+	const pinnedSlot = slots.find((slot) => slot.name === pinned);
+	if (pinnedSlot) return `@${footerAccountLabel(pinnedSlot)}`;
 	const winner = rendezvousOrder(sessionId, slots, (input) =>
 		createHash("sha256").update(input).digest().readBigUInt64BE(0),
 	)[0];
-	return winner === undefined ? "" : `@${winner.name}`;
+	return winner === undefined ? "" : `@${footerAccountLabel(winner)}`;
+}
+
+/**
+ * Widest account label the provider segment carries. A label wider than this
+ * is truncated with an ellipsis here rather than pushing the whole provider
+ * segment past the layout budget, which would drop the account indicator.
+ */
+const ACCOUNT_FOOTER_MAX_COLUMNS = 24;
+
+function footerAccountLabel(slot: { name: string; displayName?: string }): string {
+	return truncateToWidth(accountLabel(slot), ACCOUNT_FOOTER_MAX_COLUMNS, "…");
 }
 
 /** Format with up to 1 decimal place, dropping trailing `.0`. */
@@ -75,20 +87,35 @@ export function formatCwdForFooter(cwd: string, home: string | undefined): strin
 	return relativeToHome === "" ? "~" : `~${sep}${relativeToHome}`;
 }
 
+/** One coloured run of the right side, in render order. */
+type RightSideRun = { readonly text: string; readonly color: "muted" | "warning" | "accent" | "dim" };
+
 /**
  * Color the right side of the footer: (provider) muted, model accent, :thinking dim.
- * The text is the plain (uncolored) right-aligned segment from the layout pass.
+ *
+ * The runs come from the values that produced the text, never from re-parsing
+ * the rendered string: an account display name may legally contain `)` or `:`,
+ * and a regex over the rendered segment would then colour the provider prefix
+ * as the model, or cut the model id into a "thinking level".
+ *
+ * `plain` is the rendered segment, which the layout pass may have truncated at
+ * the tail (and whose truncation can append reset sequences); each run is
+ * clipped to the visible text that survived, so a run boundary can never cut
+ * an escape sequence in half.
  */
-function colorRightSide(text: string): string {
+function colorRightSide(runs: readonly RightSideRun[], plain: string): string {
+	const text = stripTerminalSequences(plain);
 	if (!text) return "";
-	const providerMatch = text.match(/^\(([^)]+)\) (.*)$/);
-	const afterProvider = providerMatch ? providerMatch[2] : text;
-	const providerPrefix = providerMatch ? theme.fg("muted", `(${providerMatch[1]}) `) : "";
-	const fastPrefix = afterProvider.startsWith(FAST_MODE_INDICATOR) ? theme.fg("warning", FAST_MODE_INDICATOR) : "";
-	const body = fastPrefix ? afterProvider.slice(FAST_MODE_INDICATOR.length) : afterProvider;
-	const thinkingMatch = body.match(/^(.+):([^:]+)$/);
-	if (!thinkingMatch) return providerPrefix + fastPrefix + theme.fg("accent", body);
-	return `${providerPrefix}${fastPrefix}${theme.fg("accent", thinkingMatch[1])}${theme.fg("dim", `:${thinkingMatch[2]}`)}`;
+	let offset = 0;
+	let colored = "";
+	for (const run of runs) {
+		if (offset >= text.length) break;
+		const visible = text.slice(offset, offset + run.text.length);
+		if (visible.length === 0) break;
+		colored += theme.fg(run.color, visible);
+		offset += visible.length;
+	}
+	return colored;
 }
 
 /**
@@ -224,7 +251,13 @@ export class FooterComponent implements Component {
 			const thinkingLevel = state.thinkingLevel || "off";
 			minimalRight = thinkingLevel === "off" ? `${minimalRight}:off` : `${minimalRight}:${thinkingLevel}`;
 		}
-		const minimal: FooterSegment = { plain: minimalRight, colored: colorRightSide(minimalRight) };
+		const thinkingSuffix = state.model?.reasoning ? `:${state.thinkingLevel || "off"}` : "";
+		const modelRuns: RightSideRun[] = [
+			...(fastIndicator ? [{ text: fastIndicator, color: "warning" as const }] : []),
+			{ text: modelName, color: "accent" as const },
+			...(thinkingSuffix ? [{ text: thinkingSuffix, color: "dim" as const }] : []),
+		];
+		const minimal: FooterSegment = { plain: minimalRight, colored: colorRightSide(modelRuns, minimalRight) };
 		let accountSuffix = "";
 		if (state.model) {
 			try {
@@ -241,7 +274,13 @@ export class FooterComponent implements Component {
 				? `(${state.model.provider}${accountSuffix}) `
 				: "";
 		const full: FooterSegment | undefined = providerPrefix
-			? { plain: `${providerPrefix}${minimalRight}`, colored: colorRightSide(`${providerPrefix}${minimalRight}`) }
+			? {
+					plain: `${providerPrefix}${minimalRight}`,
+					colored: colorRightSide(
+						[{ text: providerPrefix, color: "muted" }, ...modelRuns],
+						`${providerPrefix}${minimalRight}`,
+					),
+				}
 			: undefined;
 
 		const marker: FooterSegment = { plain: "…", colored: theme.fg("dim", "…") };
@@ -302,7 +341,7 @@ export class FooterComponent implements Component {
 			left = { colored: theme.fg("muted", plan.leftPlain), width: visibleWidth(plan.leftPlain) };
 		} else {
 			left = { colored: "", width: 0 };
-			right = { plain: plan.rightPlain, colored: colorRightSide(plan.rightPlain) };
+			right = { plain: plan.rightPlain, colored: colorRightSide(modelRuns, plan.rightPlain) };
 		}
 
 		const rightWidth = visibleWidth(right.plain);

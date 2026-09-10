@@ -16,6 +16,96 @@
 
 - LOW: the pooled-credential import and slot selection in `packages/ai/src/auth/resolve.ts`.
 
+## PR #1304 review fixes: shared auth-miss prefix, login merge, sentinel repair (2026-09-10)
+
+### What changed
+
+- `packages/ai/src/auth/resolve.ts`: `PROVIDER_NOT_CONFIGURED_PREFIX` / `providerNotConfiguredMessage()` export the exact auth-miss wording every resolution site throws; `packages/ai/src/models.ts` re-exports both and throws through the helper. Consumers keying recovery decisions off that message (the coding-agent session layer and the credential-pool classifier) can never drift from the throw sites.
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` MERGES a provider-owned pool onto the value read under the credential lock - stored slots and their block state win for names that already exist, only genuinely new names are appended - instead of whole-writing a snapshot the provider built before the interactive browser round trip. `managedSentinelMaterial` / `isManagedSentinelSlot` / `repairManagedSentinelSlots` recognize and drop pool slots whose `access` and `refresh` both equal the provider's `<providerId>-managed` marker (clearing a pin that pointed at one), reporting whether a repair happened so callers rewrite storage only when bytes change.
+- `packages/ai/test/credential-pool-mutations.test.ts`: a pre-login snapshot never rewinds a sibling that rotated or earned a block; a provider-owned pool onto a flat current keeps the whole-write shape; sentinel slots are recognized, dropped, un-pinned, and a clean pool is a no-op.
+
+### Why
+
+- The provider builds its returned pool from a snapshot read BEFORE the browser flow, tens of seconds before the commit under the lock: writing it verbatim rolled a sibling's rotated refresh token back to the consumed value (a forced re-login, since Anthropic rotates refresh tokens on use) and erased its rate-limit block. Separately, a shipped build stored the provider pool's flat sentinel as a generated `login-N` slot; such a slot can never authenticate and dead-ends every request whose affinity picks it, so the coding-agent store now heals those entries on load.
+
+### Why an extension could not handle it
+
+- Both the merge and the repair algebra run inside the shared credential-pool read/write path the runtime owns; providers cannot intercept what the runtime stores after login returns or what every reader parses from auth.json.
+
+### Expected merge conflict zones
+
+- LOW: `appendLoginSlot` and the sentinel helpers in `auth/pool/slots.ts`; the prefix helpers in `auth/resolve.ts` and their re-export in `models.ts`.
+
+## Classify Claude SDK session lock contention as retryable (2026-09-02)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `RETRYABLE_PROVIDER_ERROR_PATTERN` matches `Lock file is already being held`.
+- `packages/ai/test/retry.test.ts`: pins that wording as a retryable assistant error.
+
+### Why
+
+- Claude Agent SDK session resume/stream hits proper-lockfile while a previous subprocess still holds `session.json`. The failure is local and transient; treating it as unknown/terminal made the coding-agent hard-error fallback hop providers.
+
+### Why an extension could not handle it
+
+- Retry classification lives in the shared `pi-ai` regexes used by every caller of `isRetryableAssistantError`.
+
+### Expected merge conflict zones
+
+- LOW: `RETRYABLE_PROVIDER_ERROR_PATTERN` in `retry.ts`.
+
+## Preserve provider-owned credential pools during login (2026-09-02)
+## 2026-09-10 - Kimi Code client identity headers on the subscription path (#1504)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/kimi-identity.ts` (new): `kimiCodeIdentityHeaders()` returns `User-Agent: KimiCLI/<version>` plus `X-Msh-Platform`, `X-Msh-Version`, `X-Msh-Device-Name`, `X-Msh-Device-Model`, `X-Msh-Os-Version`, and `X-Msh-Device-Id`. Every value is printable-ASCII sanitized. The device id is read from (or minted into) `<agent dir>/kimi-device-id` (`SENPI_CODING_AGENT_DIR` / `CODING_AGENT_DIR`, else `~/.senpi/agent`), memoized per process, and degrades to an ephemeral id when that directory cannot be written; `resetKimiDeviceIdForTests()` clears the memo.
+- `packages/ai/src/auth/oauth/kimi-coding.ts`: sends that header set on device authorization, device-code token polling, and token refresh, and returns it from `toAuth` so `resolveProviderAuth` merges it into every chat request the model runtime issues for the provider. The api-key auth path is untouched and stays header-free.
+
+### Why
+
+- `api.kimi.com/coding` recognizes its clients by a product `User-Agent` plus the six-header `X-Msh-*` device set; the official Kimi Code client attaches it to every OAuth and managed-API call. `X-Msh` existed nowhere in this package, so a Kimi For Coding subscription session presented itself as an anonymous Anthropic-protocol client holding a Kimi bearer token (#1504).
+- It is the only divergence from the reference clients that fits the timeline: the kimi-coding request shape had not changed when the endpoint began rejecting fresh sessions, so a server-side tightening around client identification explains it where a payload regression does not.
+- ASCII sanitization and best-effort device-id persistence are ported deliberately: raw non-ASCII header bytes draw a CDN 520 on this host, and an `ENOENT` on a fresh install must not break header construction for every request.
+
+### Why an extension could not handle it
+
+- The headers must ride the provider's own OAuth requests (device authorization, polling, refresh) inside `kimi-coding.ts` and the credential-derived request auth that `resolveProviderAuth` produces from `toAuth`. Both run below any extension hook, and an extension cannot see the device-code exchange at all.
+
+### Expected merge conflict zones
+
+- LOW: new file `packages/ai/src/auth/oauth/kimi-identity.ts`.
+- LOW: the three `fetch` call sites and `toAuth` in `packages/ai/src/auth/oauth/kimi-coding.ts`.
+
+## 2026-09-10 - Map ask_user_question to Claude Code's AskUserQuestion wire name
+
+## 2026-09-08 - Immutable account IDs with optional display metadata (senpi#1495)
+
+## 2026-09-10 - Immutable account IDs with column-bounded, render-unique display metadata (senpi#1495)
+
+
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: adds optional `displayName`, safe single-line labels, and pure rename/clear validation. A label is stored NFC-normalized with internal whitespace runs collapsed, must contain at least one visibly advancing character, may not begin with a combining mark, and is bounded at 32 terminal columns measured per grapheme cluster (`displayNameColumns`) rather than in UTF-16 code units. Provider-local uniqueness compares a fold of case, Unicode compatibility forms (NFKC), invisible code points and Cyrillic lookalikes, so two labels that render identically cannot coexist. Slot IDs and credential material remain unchanged. Login allocation reports the allocated ID together with its origin (`generated` for an ID Senpi chose, `provider` for one a provider envelope carried); provider-owned envelopes still require exactly one new ID compared with the locked current pool, never token matching or array ordering.
+- `packages/ai/src/auth/types.ts`: adds secret-free `AccountLoginReceipt` with `providerId`, `name` and `origin`, plus optional `AuthInteraction.onAccountCommitted`; the callback is excluded from provider interactions.
+- `packages/ai/src/models.ts`: captures the allocated ID and its origin inside the serialized login write and emits the receipt only after persistence succeeds. Ambiguous provider envelopes do not produce a receipt. Existing credential return values remain compatible.
+
+### Why
+
+- `packages/ai/src/auth/pool/slots.ts`: account labels must not remap pins, refresh, health, failover, or HRW affinity, and a documented "unique per provider" / bounded-length guarantee must hold for real Unicode input: `trim`/`toLowerCase`/`String.length` accepted double-spaced, NFC/NFD and homoglyph duplicates and let a 170-column label through while rejecting 41 emoji.
+- `packages/ai/src/auth/types.ts`: callers need a supported, secret-free committed-slot identity, including whether the ID was machine-generated, to avoid prompting for a name a provider flow already asked for.
+- `packages/ai/src/models.ts`: only the login write knows which ID was actually committed and who chose it; callers must not infer it from credentials or list order.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/pool/slots.ts`, `packages/ai/src/auth/types.ts` and `packages/ai/src/models.ts` own shared credential metadata and the locked login boundary below the extension API. The user-facing commands remain extensions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/auth/pool/slots.ts` slot type, display-name validation block and append function; `packages/ai/src/auth/types.ts` interaction types; `packages/ai/src/models.ts` login mutation and return boundary.
+
 ## 2026-09-10 - Map ask_user_question to Claude Code's AskUserQuestion wire name
 
 ### What changed

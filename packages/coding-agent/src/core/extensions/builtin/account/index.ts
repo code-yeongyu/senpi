@@ -1,3 +1,4 @@
+import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
 import {
 	type CredentialAccountSummary,
 	getCredentialAccounts,
@@ -5,17 +6,21 @@ import {
 	removeCredentialAccount,
 } from "../../../credential-accounts.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
+import { accountDisplayNameCommand } from "../account-display-name.ts";
 
 function parseArgs(rawArgs: string): string[] {
 	return rawArgs.trim().split(/\s+/).filter(Boolean);
 }
 
 function usage(ctx: ExtensionCommandContext): void {
-	ctx.ui.notify("Usage: /account <provider> [list | pin <name> | unpin | remove <name>]", "error");
+	ctx.ui.notify(
+		"Usage: /account <provider> [list | pin <id> | unpin | remove <id> | rename <id> <display name...> | clear-name <id>]",
+		"error",
+	);
 }
 
 function statusOf(account: CredentialAccountSummary): string {
-	const states = [account.name, account.source, account.blocked ? "blocked" : "available"];
+	const states = [accountLabel(account), account.source, account.blocked ? "blocked" : "available"];
 	if (account.pinned) states.push("pinned");
 	return states.join(" | ");
 }
@@ -37,7 +42,8 @@ async function showAccounts(ctx: ExtensionCommandContext, provider: string): Pro
 export default function accountExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("account", {
 		description: "List and manage credential accounts for any provider.",
-		argumentHint: "<provider> [list | pin <name> | unpin | remove <name>]",
+		argumentHint:
+			"<provider> [list | pin <id> | unpin | remove <id> | rename <id> <display name...> | clear-name <id>]",
 		handler: async (rawArgs, ctx) => {
 			const args = parseArgs(rawArgs);
 			const provider = args[0];
@@ -45,6 +51,7 @@ export default function accountExtension(pi: ExtensionAPI): void {
 				usage(ctx);
 				return;
 			}
+			if (await accountDisplayNameCommand(ctx, provider, rawArgs.trim().replace(/^\S+\s*/, ""))) return;
 			const action = args[1] ?? "list";
 			try {
 				if (action === "list") {

@@ -60,6 +60,15 @@ describe("credential error taxonomy", () => {
 		expect(classifyCredentialFailure(error).kind).toBe("fail_request");
 	});
 
+	test("an unconfigured-slot auth miss fails over instead of dead-ending the pool", () => {
+		// `Provider is not configured: <provider>` is what prepareRequest throws
+		// when the slot the rotation picked carries no usable auth (the sentinel
+		// slots a shipped bug wrote). One such slot must block ITSELF and let the
+		// pool try the healthy siblings, not fail the request.
+		const action = classifyCredentialFailure(new Error("Provider is not configured: claude-sdk-oauth"));
+		expect(action).toEqual({ kind: "failover", block: { reason: "auth_error" } });
+	});
+
 	test("the server retry hint is a floor, not an override", () => {
 		// A hint shorter than the earned backoff must not shorten the cooldown.
 		expect(rateLimitCooldown(3, 1_000).cooldownMs).toBe(COOLDOWN_BASE_MS * 8);

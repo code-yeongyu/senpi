@@ -1,5 +1,24 @@
 # Builtin extensions changes
 
+## 2026-09-10 - Account display-name commands and generated-ID-only post-login naming (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/account-display-name.ts`: shared `rename <id> <display name...>` / `clear-name <id>` command handling plus optional naming after a committed-account receipt. Naming is offered only when the receipt reports `origin: "generated"`, so a provider flow that already prompted for the slot ID (Claude) does not produce a second name prompt. Blank or cancelled naming leaves login usable; invalid naming is reported separately from login success.
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts` and `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: expose the new actions and render safe `displayName (name)` labels while pin/remove remain ID-based. OpenAI add captures the login receipt rather than inspecting credentials or account ordering.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/account-display-name.ts`, `packages/coding-agent/src/core/extensions/builtin/account/index.ts` and `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: multi-account users need readable labels without changing the identifiers responsible for routing and continuity, and must not be asked to name the same account twice in one login.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/account-display-name.ts`, `packages/coding-agent/src/core/extensions/builtin/account/index.ts` and `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts` ARE the extension implementation over shared core storage and receipt APIs; no new core command registry behavior was added.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/account-display-name.ts` is new; command argument hints, list formatting and add/login handling in `packages/coding-agent/src/core/extensions/builtin/account/index.ts` and `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`.
+
 ## 2026-09-10 - A settled question aborts its dialog with the resolved status
 
 ### What changed

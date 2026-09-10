@@ -2,6 +2,7 @@ import type { Credential, CredentialStore, OAuthCredential } from "@earendil-wor
 
 export type CursorCliAccountSlot = {
 	name: string;
+	displayName?: string;
 	access: string;
 	refresh: string;
 	expires: number;

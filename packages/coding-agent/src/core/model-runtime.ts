@@ -33,6 +33,7 @@ import {
 	type Provider,
 	type ProviderHeaders,
 	type ProviderRequestOptions,
+	providerNotConfiguredMessage,
 	type SimpleStreamOptions,
 	type StreamOptions,
 	setWireIdentity,
@@ -708,7 +709,7 @@ export class ModelRuntime implements Models {
 			signal: options?.signal,
 			...(slotAuth?.slotName === undefined ? {} : { slotName: slotAuth.slotName }),
 		});
-		if (!resolution) throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
+		if (!resolution) throw new ModelsError("auth", providerNotConfiguredMessage(model.provider));
 
 		const { transformHeaders, ...rawProviderOptions } = options ?? {};
 		const providerOptions = rawProviderOptions as Omit<TOptions, "transformHeaders"> &

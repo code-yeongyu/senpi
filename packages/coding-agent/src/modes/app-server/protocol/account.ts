@@ -26,7 +26,9 @@ export type AccountReadResponse = {
 /** Additive Senpi provider-account surface; desktop consumers update separately. */
 export type ProviderAccountSource = "login" | "import" | "env";
 export type ProviderAccount = {
+	/** Immutable selector ID; render displayName (name) when metadata is present. */
 	readonly name: string;
+	readonly displayName?: string;
 	readonly source: ProviderAccountSource;
 	readonly blocked: boolean;
 	readonly pinned: boolean;

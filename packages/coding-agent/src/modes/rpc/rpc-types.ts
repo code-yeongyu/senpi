@@ -252,7 +252,9 @@ export interface RpcAuthStatus {
 
 /** Account-slot metadata safe to send to desktop clients. */
 export interface RpcProviderAccount {
+	/** Immutable selector ID; render displayName (name) when metadata is present. */
 	name: string;
+	displayName?: string;
 	source: "login" | "import" | "env";
 	blocked: boolean;
 	pinned: boolean;

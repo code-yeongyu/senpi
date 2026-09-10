@@ -1,3 +1,22 @@
+## 2026-09-10 - Safe account labels in footer and English help (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: displays `@displayName (name)` for named accounts while pin matching and HRW winner selection still use only immutable `name`; legacy name-only output is unchanged. The right-side colouring no longer re-parses the rendered segment with `^\(([^)]+)\) (.*)$` / `^(.+):([^:]+)$`: `colorRightSide` now receives the provider, fast-mode, model and thinking runs that produced the string and clips each run to what the layout kept, so a label containing `)` or `:` cannot mute the wrong span or turn the model id into a thinking level. The account label is truncated with an ellipsis at 24 columns, so a wide label narrows the provider segment instead of pushing the layout onto `right.minimal`, which dropped the account indicator entirely.
+- `packages/coding-agent/src/modes/interactive/help-content.ts`: documents account rename/clear commands, the normalization/column/uniqueness rules, immutable IDs, environment restrictions and optional post-login naming cancellation.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts` needs readable labels without selecting a different account and without letting a legal label corrupt footer colouring; `packages/coding-agent/src/modes/interactive/help-content.ts` makes the display/identity distinction and new commands discoverable.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts` owns the host footer's account segment and `packages/coding-agent/src/modes/interactive/help-content.ts` owns the shared English help body; extensions provide the commands, not these presentation surfaces.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/modes/interactive/components/footer.ts` account suffix helper and the `colorRightSide` signature (upstream still colours by regex over the rendered string); LOW: `packages/coding-agent/src/modes/interactive/help-content.ts` final help section assembly.
+
 ## 2026-09-10 - The "." manual-continue shortcut paints no user echo
 
 ### What changed
@@ -35,6 +54,28 @@
 - LOW: the `isSettingsEntry` predicate, `entrySearchText`, and the entry render switch.
 
 ## 2026-09-10 - /tree edits carry the leaf token and reach shared hosts
+# changes
+
+## 2026-09-02 - Do not paint two live login inputs
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/login-dialog.ts`: `showManualInput` and `showPrompt` remount the single Input widget instead of adding it twice, so a browser-callback login no longer shows two stacked `>` prompts. Every `(to cancel)` / `(to close)` hint row is routed through one tracked live hint (`setLiveHint`), so `showWaiting` and `showInfo(showCloseHint)` REPLACE a previous hint instead of painting beside it, and every content-clearing path resets the tracked hint.
+- `packages/coding-agent/test/suite/regressions/5433-extension-oauth-prompt-input.test.ts`: covers an unsubmitted paste-code prompt followed by the account-name prompt - asserting exactly one live `>` row - plus an interleaved waiting step that must leave exactly one live hint row.
+
+### Why
+
+- Anthropic OAuth completes via localhost callback while the paste-code input is still mounted. The name prompt then added the same Input child again, and the TUI painted two live `>` rows.
+
+### Why an extension could not handle it
+
+- Login chrome is the interactive LoginDialogComponent, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `showManualInput` / `showPrompt` in `login-dialog.ts`.
+
+## 2026-09-01 - Never swallow an interactive quit request
 
 ### What changed
 

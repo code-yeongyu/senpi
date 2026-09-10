@@ -1,5 +1,7 @@
-import type { Credential } from "@earendil-works/pi-ai";
+import type { AccountLoginReceipt, Credential } from "@earendil-works/pi-ai";
+import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
+import { accountDisplayNameCommand, promptAccountDisplayName } from "../account-display-name.ts";
 import { createExtensionLoginInteraction, LOGIN_CANCELLED_MESSAGE } from "../oauth-login-interaction.ts";
 import { emitProviderAccountsChanged } from "./account-events.ts";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID, pinProviderAccount, removeProviderAccount } from "./account-management.ts";
@@ -86,8 +88,9 @@ export function registerClaudeAccountCommand(pi: ExtensionAPI, deps: ClaudeAccou
 	});
 	pi.registerCommand("claude-account", {
 		description: "List and manage Claude SDK OAuth accounts.",
-		argumentHint: "[add | remove <name> | pin <name> | unpin]",
+		argumentHint: "[add | remove <id> | pin <id> | unpin | rename <id> <display name...> | clear-name <id>]",
 		handler: async (rawArgs, ctx) => {
+			if (await accountDisplayNameCommand(ctx, CLAUDE_SDK_OAUTH_PROVIDER_ID, rawArgs)) return;
 			const args = parseArgs(rawArgs);
 			const action = args[0] ?? "list";
 			if (action === "list") {
@@ -110,7 +113,10 @@ export function registerClaudeAccountCommand(pi: ExtensionAPI, deps: ClaudeAccou
 				await unpinAccount(ctx);
 				return;
 			}
-			ctx.ui.notify("Usage: /claude-account [add | remove <name> | pin <name> | unpin]", "error");
+			ctx.ui.notify(
+				"Usage: /claude-account [add | remove <id> | pin <id> | unpin | rename <id> <display name...> | clear-name <id>]",
+				"error",
+			);
 		},
 	});
 }
@@ -139,13 +145,16 @@ function showAccounts(
 	const lines = ["Claude SDK OAuth accounts:"];
 	if (accounts.length === 0) lines.push("  (none)");
 	for (const account of accounts) {
-		const states = [account.name, account.source, slotStatus(account)];
+		const states = [accountLabel(account), account.source, slotStatus(account)];
 		if (account.name === pinned) states.push("pinned");
 		if (account.name === affinityPick) states.push("affinity pick");
 		lines.push(`  ${states.join(" | ")}`);
 	}
-	lines.push(`Pinned account: ${pinned === undefined ? "none" : `${pinned} (${pinSource.toLowerCase()})`}`);
-	lines.push(`Affinity pick: ${affinityPick ?? (affinityError ? `unavailable - ${affinityError}` : "none")}`);
+	const labelFor = (name: string) => accountLabel(accounts.find((account) => account.name === name) ?? { name });
+	lines.push(`Pinned account: ${pinned === undefined ? "none" : `${labelFor(pinned)} (${pinSource.toLowerCase()})`}`);
+	lines.push(
+		`Affinity pick: ${affinityPick === undefined ? (affinityError ? `unavailable - ${affinityError}` : "none") : labelFor(affinityPick)}`,
+	);
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
@@ -155,16 +164,19 @@ async function addAccount(ctx: ExtensionCommandContext, deps: ClaudeAccountComma
 		return;
 	}
 	try {
-		await ctx.modelRegistry.modelRuntime.login(
-			CLAUDE_SDK_OAUTH_PROVIDER_ID,
-			"oauth",
-			createExtensionLoginInteraction(ctx, {
+		let receipt: AccountLoginReceipt | undefined;
+		await ctx.modelRegistry.modelRuntime.login(CLAUDE_SDK_OAUTH_PROVIDER_ID, "oauth", {
+			...createExtensionLoginInteraction(ctx, {
 				providerLabel: CLAUDE_SDK_OAUTH_PROVIDER_LABEL,
 				openBrowser: deps.openBrowser,
 			}),
-		);
+			onAccountCommitted: (committed) => {
+				receipt = committed;
+			},
+		});
 		emitProviderAccountsChanged(CLAUDE_SDK_OAUTH_PROVIDER_ID);
 		ctx.ui.notify("Claude SDK OAuth account added.", "info");
+		await promptAccountDisplayName(ctx, receipt);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		if (message !== LOGIN_CANCELLED_MESSAGE) {

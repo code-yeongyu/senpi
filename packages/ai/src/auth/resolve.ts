@@ -36,6 +36,18 @@ export interface AuthResolutionOverrides {
 	signal?: AbortSignal;
 }
 
+/**
+ * Prefix of the auth-miss every resolution site raises when a provider has no
+ * usable credential. Consumers key recovery decisions off this exact wording,
+ * so it is a shared constant instead of a literal repeated at each throw site:
+ * rewording one copy would silently disable the other's behavior.
+ */
+export const PROVIDER_NOT_CONFIGURED_PREFIX = "Provider is not configured: ";
+
+export function providerNotConfiguredMessage(providerId: string): string {
+	return `${PROVIDER_NOT_CONFIGURED_PREFIX}${providerId}`;
+}
+
 export class ModelsError extends Error {
 	readonly code: ModelsErrorCode;
 

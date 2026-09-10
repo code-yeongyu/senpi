@@ -1,5 +1,44 @@
 # claude-sdk-oauth
 
+## 2026-09-10 - Optional Claude account display names (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/accounts.ts`: `AccountSlot` carries optional `displayName`; immutable `name` remains the operational identity.
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/account-management.ts`: explicitly projects safe display metadata alongside existing secret-free account descriptors.
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/account-command.ts`: adds rename/clear-name and renders display labels for listings, the pinned-account line and the affinity pick. Post-login naming is delegated to the shared helper, which offers it only for a machine-generated slot ID, so the lane's own "Name for this account" prompt is never followed by a second name prompt. Existing slot creation names, sentinel envelope, refresh, failover, affinity and session continuity are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/accounts.ts`, `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/account-management.ts` and `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/account-command.ts`: readable labels must not change the account IDs responsible for Claude credentials, config roots and SDK session bindings.
+
+### Why an extension could not handle it
+
+- These three paths are the provider extension's own types and command surfaces. The shared locked metadata operation and login receipt are implemented below this extension.
+
+### Expected merge conflict zones
+
+- LOW: slot shape in `accounts.ts`; descriptor mapper in `account-management.ts`; imports, command hints and list/add handlers in `account-command.ts`.
+
+## 2026-09-10 - Never list a sentinel-material stored slot as an account
+
+### What changed
+
+- `accounts.ts`: `isSentinelSlot` recognizes a stored account whose `access` and `refresh` are both the managed sentinel, and `listAccounts` filters those out.
+- `test/claude-sdk-oauth-accounts.test.ts`: a pool holding a real account plus a generated `login-2` sentinel slot lists only the real one.
+
+### Why
+
+- A shipped build stored this credential's own flat sentinel projection as a generated `login-N` slot. Selecting it fails the provider's auth check and dead-ends the request. The coding-agent auth store heals the stored entry on load (see the core tracker); this filter covers the extension's own direct reads (`readStoredCredential`) so a poisoned entry can never be selected even before that repair runs.
+
+### Why an extension could not handle it
+
+- The account listing is this provider's own pool surface.
+
+### Expected merge conflict zones
+
+- LOW: `storedSlots` filtering in `accounts.ts`.
+
 ## Recording a refused model switch keeps the stored binding (2026-09-10)
 
 ### What changed

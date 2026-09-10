@@ -36,6 +36,7 @@ import { ProviderRetryWatchdogAbortError, prepareAgentToolCall } from "@earendil
 import {
 	contentText,
 	measureCursorHistorySerializedBytes,
+	providerNotConfiguredMessage,
 	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
 	type ThinkingSelection,
 } from "@earendil-works/pi-ai";
@@ -116,6 +117,7 @@ import {
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./extensions/builtin/claude-sdk-oauth/account-management.ts";
 import {
 	type ModelUsabilityAdmission,
 	ModelUsabilityBudgetError,
@@ -2555,10 +2557,15 @@ export class AgentSession {
 			const hardErrorFallbackEligible = this._isHardErrorFallbackEligible(msg);
 			const cursorZeroTokenRe = isCursorZeroTokenResourceExhausted(msg);
 			const cursorQuotaRe = isCursorQuotaResourceExhausted(msg, this.model?.contextWindow ?? 0);
+			const claudeSdkSameModelRemint = this._isClaudeSdkSameModelRemintError(msg);
 			const retryCanAdmitProvider =
 				!userAbortSuppressedQueuedContinuation &&
 				this.settingsManager.getRetrySettings().enabled &&
-				(retryableError || hardErrorFallbackEligible || cursorZeroTokenRe || cursorQuotaRe);
+				(retryableError ||
+					hardErrorFallbackEligible ||
+					cursorZeroTokenRe ||
+					cursorQuotaRe ||
+					claudeSdkSameModelRemint);
 			let compactedBeforeRetry = false;
 			if (
 				retryCanAdmitProvider &&
@@ -2582,6 +2589,8 @@ export class AgentSession {
 					// failed assistant before provider fallback so replay stays valid.
 					this._retireFailedRetryAssistant(msg);
 					retryOutcome = await this._handleRetryableError(msg, { hardErrorFallback: true });
+				} else if (claudeSdkSameModelRemint) {
+					retryOutcome = await this._handleRetryableError(msg, { sameModelRemint: true });
 				} else if (retryableError) {
 					retryOutcome = await this._handleRetryableError(msg);
 				} else if (hardErrorFallbackEligible) {
@@ -7884,9 +7893,48 @@ export class AgentSession {
 		return true;
 	}
 
+	private _isClaudeSdkSessionLockError(message: AssistantMessage): boolean {
+		return (message.errorMessage ?? "").includes("Lock file is already being held");
+	}
+
+	private _isClaudeSdkInvalidRequestError(message: AssistantMessage): boolean {
+		return message.errorMessage === "invalid_request";
+	}
+
+	/**
+	 * Claude-SDK-only quirks that a provider hop cannot fix: the session.json
+	 * lock is held by this session's own subprocess, and a bare `invalid_request`
+	 * from the SDK boundary carries no provider-neutral meaning. Both are scoped
+	 * to the Claude SDK lane, because the SAME wording from another provider is
+	 * an ordinary failure whose classification (transient retry, or hard-error
+	 * fallback) must not change. Provider-agnostic classes - the stream-stall
+	 * watchdog above all - stay out of this predicate: they already consume the
+	 * shared same-model budget through `isRetryableAssistantError` and must still
+	 * escalate to the fallback chain when that budget runs out.
+	 */
+	private _isClaudeSdkSameModelRemintError(message: AssistantMessage): boolean {
+		if (this.model?.provider !== CLAUDE_SDK_OAUTH_PROVIDER_ID) return false;
+		return this._isClaudeSdkSessionLockError(message) || this._isClaudeSdkInvalidRequestError(message);
+	}
+
+	/**
+	 * The Claude SDK lane owns its own account pool: an auth miss there is
+	 * repaired or failed over inside the pool, so hopping to another provider
+	 * would abandon the user's Claude subscription on a recoverable miss. Every
+	 * other provider keeps the configured fallback-chain hop.
+	 */
+	private _isClaudeSdkAuthMissError(message: AssistantMessage): boolean {
+		return (
+			this.model?.provider === CLAUDE_SDK_OAUTH_PROVIDER_ID &&
+			message.errorMessage === providerNotConfiguredMessage(CLAUDE_SDK_OAUTH_PROVIDER_ID)
+		);
+	}
+
 	private _isHardErrorFallbackEligible(message: AssistantMessage): boolean {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
+			!this._isClaudeSdkAuthMissError(message) &&
+			!this._isClaudeSdkSameModelRemintError(message) &&
 			message.stopReason === "error" &&
 			!isContextOverflow(message, this.model?.contextWindow ?? 0) &&
 			!this._isCursorPayloadOverflow(message) &&

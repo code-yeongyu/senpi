@@ -170,6 +170,26 @@ describe("/cursor-account", () => {
 		expect(output).not.toContain("eyJhbGciOiJIUzI1NiJ9");
 	});
 
+	// senpi#1495 review finding 5: `/account <provider> rename` accepts every
+	// provider, so a label the generic command writes must be rendered here too.
+	it("renders display names the generic rename command can write", async () => {
+		const storage = AuthStorage.inMemory({
+			[PROVIDER_ID]: credential(slot("alpha", { displayName: "Work: main (client)" }), slot("bravo")),
+		});
+		const { ctx, notices } = createContext(storage);
+		const harness = createHarness({
+			loadSettings: () => defaultSettings({ pinnedAccount: "alpha" }),
+			now: () => FIXED_NOW,
+		});
+
+		await command(harness).handler("list", ctx);
+
+		const output = lastNotice(notices);
+		expect(output).toContain("Work: main (client) (alpha) | login | available | pinned");
+		expect(output).toContain("Pinned account: Work: main (client) (alpha) (settings)");
+		expect(output).toContain("Affinity pick: Work: main (client) (alpha)");
+	});
+
 	it("re-reads the store on every invocation instead of memoizing the account list", async () => {
 		const storage = AuthStorage.inMemory({ [PROVIDER_ID]: credential(slot("alpha")) });
 		const { ctx, notices } = createContext(storage);

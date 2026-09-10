@@ -6,11 +6,34 @@
 
 ### Added
 
+- Saved OpenAI Codex and Claude SDK OAuth accounts can receive optional display names during login or through account rename commands; account IDs remain unchanged and safe account status surfaces render `displayName (id)`.
+
 ### Changed
 
 ### Fixed
 
 - Context compaction now uses the pinned account instead of the flat default credential, preventing an exhausted default account from blocking compaction while ordinary conversation uses another account.
+
+- The Windows RPC host supervisor now creates its internal socket directory recursively and provisions a missing public socket secret while reusing an existing valid one, so launching `--internal-rpc-host-supervisor` directly on a fresh profile reaches its listener instead of crashing with `ENOENT ... mkdir '<agentDir>\rpc-host-daemon\internal-<uuid>'` and then `ENOENT ... open '<publicSocket>.secret'` ([#1370](https://github.com/code-yeongyu/senpi/issues/1370))
+
+- A pool slot holding a provider's managed sentinel (`claude-sdk-oauth-managed`) is healed the moment auth.json is read and the repair is written back once, so a second login on an affected build no longer leaves a dead `login-N` entry that hard-errors every request whose affinity picks it; the rotation classifier also treats an unconfigured-slot auth miss as a per-credential failure, so a single bad slot can never dead-end a healthy multi-account pool.
+- A provider-owned login pool is merged onto the stored pool at commit time instead of overwriting it with the pre-browser-flow snapshot, so a sibling account's rotated refresh token and rate-limit block survive another account's interactive login.
+- The Claude SDK lane's session-lock and bare `invalid_request` remint, and its `Provider is not configured:` fallback exclusion, are scoped to that provider: provider-agnostic stream stalls keep consuming the shared same-model retry budget and still escalate to the configured fallback chain, and another provider's auth miss or `invalid_request` still hops the chain.
+- OAuth login no longer paints two live `>` prompts when the browser callback finishes before the paste-code field is submitted, and an interleaved waiting or info step replaces (never duplicates) the live `(to cancel)`/`(to close)` hint row.
+
+### Removed
+
+## [2026.9.10-2] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A provider-agnostic "Provider is not configured" style refusal no longer ends a goal as a Codex policy rejection. The gate now requires the Codex responses api id, so another provider or gateway emitting the same sentence keeps provider and system recovery instead of blocking the goal; the api id is pinned against the shipped model catalog so renaming it there cannot silently disarm the guard ([#1520](https://github.com/code-yeongyu/senpi/issues/1520))
 
 - A bare `.` submitted on a session that already has messages no longer renders as a user message in the TUI. It stays the manual-continue shortcut the session delivers as a hidden continuation, so nothing is painted for it while idle or while steering an active turn; a `.` on an empty session and a `.` carrying image attachments remain ordinary user input ([#1569](https://github.com/code-yeongyu/senpi/issues/1569))
 

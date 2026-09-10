@@ -5,9 +5,12 @@ import {
 	appendLoginSlot,
 	type Credential,
 	type CredentialSlot,
+	isManagedSentinelSlot,
 	listSlots,
+	managedSentinelMaterial,
 	type PooledCredential,
 	removeSlot,
+	repairManagedSentinelSlots,
 	upsertSlot,
 } from "../src/auth/pool/slots.ts";
 import { resolveProviderAuth } from "../src/auth/resolve.ts";
@@ -174,6 +177,56 @@ describe("credential pool slot algebra", () => {
 		expect(listSlots(next).at(-1)?.access).toBe("real-b");
 	});
 
+	test("a provider-owned pool never rewinds a sibling the browser round trip left behind", () => {
+		// The provider builds its pool from a snapshot read BEFORE the interactive
+		// login; the value under the credential lock at commit time may have moved
+		// on since (a sibling rotated its token, or earned a rate-limit block).
+		type BlockableSlot = CredentialSlot & { blockedUntil?: number; blockReason?: string };
+		const snapshot = sentinelPool();
+		const rotated: BlockableSlot = {
+			name: "default",
+			source: "login",
+			access: "rotated-access",
+			refresh: "rotated-refresh",
+			expires: 4_102_444_800_000,
+			blockedUntil: 4_102_444_800_000,
+			blockReason: "rate_limit",
+		};
+		const authoritative: PooledCredential = {
+			...snapshot,
+			pinned: "default",
+			accounts: [rotated],
+		};
+		const providerLoginResult: PooledCredential = {
+			...snapshot,
+			accounts: [
+				...(snapshot.accounts ?? []),
+				{ name: "account-2", source: "login", access: "real-b", refresh: "refresh-b", expires: 999 },
+			],
+		};
+
+		const next = appendLoginSlot(authoritative, providerLoginResult) as PooledCredential;
+
+		expect(names(next)).toEqual(["default", "account-2"]);
+		const stored = next.accounts?.find((slot) => slot.name === "default");
+		expect(stored).toEqual(authoritative.accounts?.[0]);
+	});
+
+	test("a provider-owned pool onto a flat current keeps the whole-write shape", () => {
+		const flat: PooledCredential = { type: "oauth", access: "legacy-a", refresh: "legacy-r", expires: 999 };
+		const providerLoginResult: PooledCredential = {
+			type: "oauth",
+			access: "legacy-a",
+			refresh: "legacy-r",
+			expires: 999,
+			accounts: [{ name: "default", source: "login", access: "fresh-a", refresh: "fresh-r", expires: 999 }],
+		};
+
+		const next = appendLoginSlot(flat, providerLoginResult);
+
+		expect(next).toEqual(providerLoginResult);
+	});
+
 	test("appendLoginSlot still appends an unnamed flat oauth credential as login-2", () => {
 		const flat: Credential = { type: "oauth", access: "fresh-access", refresh: "fresh-refresh", expires: 999 };
 
@@ -245,5 +298,52 @@ describe("ordinary auth resolution after removing a promoted account", () => {
 		const resolved = await resolveProviderAuth(provider, store, authContext);
 
 		expect(resolved?.auth.apiKey).toBe("legacy-access");
+	});
+});
+
+describe("provider-managed sentinel slot repair", () => {
+	const sentinel = managedSentinelMaterial("claude-sdk-oauth");
+
+	function poisoned(): PooledCredential {
+		return {
+			type: "oauth",
+			access: sentinel,
+			refresh: sentinel,
+			expires: 4_102_444_800_000,
+			pinned: "default",
+			accounts: [
+				{ name: "default", access: "real-access", refresh: "real-refresh", expires: 999, source: "login" },
+				{ name: "login-2", access: sentinel, refresh: sentinel, expires: 4_102_444_800_000, source: "login" },
+			],
+		};
+	}
+
+	test("recognizes a slot carrying the provider's managed sentinel in both fields", () => {
+		expect(isManagedSentinelSlot("claude-sdk-oauth", { name: "login-2", access: sentinel, refresh: sentinel })).toBe(
+			true,
+		);
+		expect(
+			isManagedSentinelSlot("claude-sdk-oauth", { name: "default", access: "real-access", refresh: sentinel }),
+		).toBe(false);
+		expect(isManagedSentinelSlot("other-provider", { name: "default", access: sentinel, refresh: sentinel })).toBe(
+			false,
+		);
+	});
+
+	test("repair drops a poisoned slot and clears a pin that pointed at one", () => {
+		const poisonedPinnedAtJunk: PooledCredential = { ...poisoned(), pinned: "login-2" };
+		const repaired = repairManagedSentinelSlots("claude-sdk-oauth", poisonedPinnedAtJunk);
+		expect(repaired).toBeDefined();
+		expect(listSlots(repaired).map((slot) => slot.name)).toEqual(["default"]);
+		expect(repaired?.pinned).toBeUndefined();
+		expect(repairManagedSentinelSlots("claude-sdk-oauth", poisoned())?.pinned).toBe("default");
+	});
+
+	test("a clean pool or flat credential is a no-op so no storage is rewritten", () => {
+		const clean = removeSlot(poisoned(), "login-2") as PooledCredential;
+		expect(repairManagedSentinelSlots("claude-sdk-oauth", clean)).toBeUndefined();
+		expect(
+			repairManagedSentinelSlots("claude-sdk-oauth", { type: "oauth", access: "a", refresh: "r", expires: 1 }),
+		).toBe(undefined);
 	});
 });

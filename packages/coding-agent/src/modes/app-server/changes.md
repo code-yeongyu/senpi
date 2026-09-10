@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-10 - Optional display-name account descriptor (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/protocol/account.ts`: `ProviderAccount` gains optional `displayName`, matching the shared secret-free account read response. `name` remains the immutable selector ID. Generated protocol evidence is untouched.
+
+### Why
+
+- `packages/coding-agent/src/modes/app-server/protocol/account.ts`: clients can render `displayName (name)` without changing pin/remove behavior or legacy unnamed account payloads.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/app-server/protocol/account.ts` is the host-owned facade for account responses and must describe the actual shared projection.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/app-server/protocol/account.ts` provider account descriptor.
+
 ## Ask-user question transport (2026-09-10)
 
 ### What changed

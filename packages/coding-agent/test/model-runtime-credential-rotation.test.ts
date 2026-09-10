@@ -164,6 +164,60 @@ describe("credential rotation over a pooled provider", () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 
+	test("a pool holding a poisoned sentinel slot never attempts it and serves the healthy account", async () => {
+		const sentinelDir = mkdtempSync(join(tmpdir(), "sentinel-pool-rotation-"));
+		const sentinelRepository = new CredentialSlotRepository(join(sentinelDir, "credential-pool-state.json"));
+		// The pool exactly as the shipped double-store bug left it: real accounts
+		// plus a generated `login-2` slot carrying the provider-managed sentinel
+		// in place of tokens.
+		const poisoned: PooledCredential = {
+			type: "oauth",
+			access: "key-default",
+			refresh: "r-default",
+			pinned: "login-2",
+			expires: NOW + 3_600_000,
+			accounts: [
+				{ name: "default", access: "key-default", refresh: "r-default", expires: NOW + 3_600_000, source: "login" },
+				{
+					name: "login-2",
+					access: "claude-sdk-oauth-managed",
+					refresh: "claude-sdk-oauth-managed",
+					expires: NOW + 3_600_000,
+					source: "login",
+				},
+				{ name: "work", access: "key-work", refresh: "r-work", expires: NOW + 3_600_000, source: "login" },
+			],
+		};
+		// The store parse heals the pool before rotation ever lists it.
+		const store = AuthStorage.inMemory({ "claude-sdk-oauth": poisoned });
+		const healed = (await store.read("claude-sdk-oauth")) as PooledCredential;
+		const sources = {
+			providerId: "claude-sdk-oauth",
+			credential: healed,
+			env: () => undefined,
+			repository: sentinelRepository,
+			now: () => NOW,
+		};
+		const slots = await listRotationSlots(sources);
+		expect(slots.map((slot) => slot.name)).toEqual(["default", "work"]);
+
+		const attempted: string[] = [];
+		const events = await collect(
+			streamWithCredentialRotation({
+				sources,
+				affinityKey: "sentinel-pool",
+				runAttempt: (slot) => {
+					attempted.push(slot.name);
+					return stream(startEvent(), textEvent("healthy-account-ok"));
+				},
+			}),
+		);
+		expect(attempted).toHaveLength(1);
+		expect(attempted[0]).not.toBe("login-2");
+		expect(events.some((event) => event.type === "text_delta")).toBe(true);
+		rmSync(sentinelDir, { recursive: true, force: true });
+	});
+
 	test("runtime admits one canonical env slot plus one policy slot", async () => {
 		const configDir = mkdtempSync(join(tmpdir(), "combined-runtime-"));
 		const faux = fauxProvider({ provider: "anthropic" });

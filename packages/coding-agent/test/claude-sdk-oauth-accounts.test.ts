@@ -6,6 +6,7 @@ import {
 	type ClaudeSdkOauthCredential,
 	emptyCredential,
 	envSlots,
+	isSentinelSlot,
 	listAccounts,
 	pinAccount,
 	refreshSlot,
@@ -138,5 +139,29 @@ describe("account slots", () => {
 		gate?.();
 		await Promise.all([first, second]);
 		expect(calls).toBe(1);
+	});
+
+	it("never lists a stored slot whose material is the managed sentinel", () => {
+		// The exact shape a shipped bug wrote: a real account plus a generated
+		// `login-N` slot holding the flat sentinel projection.
+		const poisoned: ClaudeSdkOauthCredential = {
+			...emptyCredential(),
+			accounts: [
+				{ ...slotA, name: "default" },
+				{
+					name: "login-2",
+					access: SENTINEL_OAUTH_FIELDS.access,
+					refresh: SENTINEL_OAUTH_FIELDS.refresh,
+					expires: SENTINEL_OAUTH_FIELDS.expires,
+					source: "login",
+				},
+			],
+			pinned: "login-2",
+		};
+		expect(isSentinelSlot({ access: SENTINEL_OAUTH_FIELDS.access, refresh: SENTINEL_OAUTH_FIELDS.refresh })).toBe(
+			true,
+		);
+		expect(isSentinelSlot({ access: "aA", refresh: "rA" })).toBe(false);
+		expect(listAccounts(poisoned).map((account) => account.name)).toEqual(["default"]);
 	});
 });

@@ -145,6 +145,7 @@ describe("app-server account reads", () => {
 						access: "sk-ant-test-personal",
 						refresh: "refresh-personal",
 						expires: 4_102_444_800_000,
+						displayName: "Personal (work: dev)",
 					},
 					{
 						name: "work",
@@ -180,7 +181,13 @@ describe("app-server account reads", () => {
 			expect(resultOf(fixture.sent[1], 2)).toEqual({
 				provider: "claude-sdk-oauth",
 				accounts: [
-					{ name: "personal", source: "login", blocked: false, pinned: false },
+					{
+						name: "personal",
+						displayName: "Personal (work: dev)",
+						source: "login",
+						blocked: false,
+						pinned: false,
+					},
 					{ name: "work", source: "import", blocked: true, pinned: true },
 				],
 			});

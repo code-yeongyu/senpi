@@ -3,7 +3,12 @@ import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context
 import { InMemoryCredentialStore } from "./auth/credential-store.ts";
 import { appendLoginSlot, removeSlot } from "./auth/pool/slots.ts";
 import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
-import { type AuthResolutionOverrides, ModelsError, resolveProviderAuth } from "./auth/resolve.ts";
+import {
+	type AuthResolutionOverrides,
+	ModelsError,
+	providerNotConfiguredMessage,
+	resolveProviderAuth,
+} from "./auth/resolve.ts";
 import type {
 	AuthCheck,
 	AuthContext,
@@ -38,7 +43,12 @@ import type {
 import { operationSignal, raceWithAbortSignal } from "./utils/abort.ts";
 import type { RetryPolicyProfile } from "./utils/retry-profile/types.ts";
 
-export { ModelsError, type ModelsErrorCode } from "./auth/resolve.ts";
+export {
+	ModelsError,
+	type ModelsErrorCode,
+	PROVIDER_NOT_CONFIGURED_PREFIX,
+	providerNotConfiguredMessage,
+} from "./auth/resolve.ts";
 
 export interface ModelsPublication {
 	/** Provider-selected persisted catalog. Omit to leave storage unchanged; null deletes it. */
@@ -569,8 +579,11 @@ class ModelsImpl implements MutableModels {
 		if (!method?.login) {
 			throw new ModelsError("auth", `${provider.name} does not support ${type} login`);
 		}
-		const loginOperation: Promise<Credential> = method.login({ ...interaction, signal });
+		const { onAccountCommitted, ...providerInteraction } = interaction;
+		const loginOperation: Promise<Credential> = method.login({ ...providerInteraction, signal });
 		const credential = await raceWithAbortSignal(loginOperation, signal);
+		let committedName: string | undefined;
+		let committedOrigin: "generated" | "provider" | undefined;
 		let mutationStarted = false;
 		let markMutationStarted: (() => void) | undefined;
 		const started = new Promise<void>((resolve) => {
@@ -581,7 +594,10 @@ class ModelsImpl implements MutableModels {
 			async (current) => {
 				mutationStarted = true;
 				markMutationStarted?.();
-				return appendLoginSlot(current, credential);
+				return appendLoginSlot(current, credential, (name, origin) => {
+					committedName = name;
+					committedOrigin = origin;
+				});
 			},
 			{ signal },
 		);
@@ -608,6 +624,9 @@ class ModelsImpl implements MutableModels {
 		} catch (error) {
 			signal.throwIfAborted();
 			throw new ModelsError("auth", `Credential store modify failed for ${providerId}`, { cause: error });
+		}
+		if (committedName !== undefined && committedOrigin !== undefined) {
+			onAccountCommitted?.({ providerId, name: committedName, origin: committedOrigin });
 		}
 		return credential;
 	}
@@ -655,7 +674,7 @@ class ModelsImpl implements MutableModels {
 			signal: options?.signal,
 		});
 		if (!resolution) {
-			throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
+			throw new ModelsError("auth", providerNotConfiguredMessage(model.provider));
 		}
 		const auth = resolution.auth;
 

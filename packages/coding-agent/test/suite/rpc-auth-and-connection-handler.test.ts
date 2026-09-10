@@ -55,6 +55,9 @@ describe("RPC auth and connection handler contracts", () => {
 							access: "sk-ant-scripted-access",
 							refresh: "scripted-refresh",
 							expires: 4_102_444_800_000,
+							// senpi#1495 review finding 7: the wire projection must carry
+							// displayName for named accounts, with `)`/`:` in the label.
+							displayName: "Work: main (client)",
 						},
 					],
 				};
@@ -95,7 +98,9 @@ describe("RPC auth and connection handler contracts", () => {
 			command: "get_provider_accounts",
 			success: true,
 			data: {
-				accounts: [{ name: "default", source: "login", blocked: false, pinned: false }],
+				accounts: [
+					{ name: "default", displayName: "Work: main (client)", source: "login", blocked: false, pinned: false },
+				],
 			},
 		});
 		expect(JSON.stringify(collected.messages())).not.toMatch(/sk-ant/);
