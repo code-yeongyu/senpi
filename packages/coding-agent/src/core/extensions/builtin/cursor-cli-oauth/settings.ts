@@ -31,6 +31,7 @@ export interface CursorCliOauthProviderSettings {
 	readonly resumeMode: CursorCliOauthResumeMode;
 	readonly pinnedAccount: string | undefined;
 	readonly contextRecapOnModelSwitch: boolean;
+	readonly contextRecapOnProviderSwitch: boolean;
 	readonly modelCatalogTtlHours: number;
 	readonly sandboxMode: string | undefined;
 	/** Exact full commands the spawned CLI must refuse; globs are not supported. */
@@ -54,6 +55,7 @@ const DEFAULT_SETTINGS: CursorCliOauthProviderSettings = {
 	resumeMode: "auto",
 	pinnedAccount: undefined,
 	contextRecapOnModelSwitch: true,
+	contextRecapOnProviderSwitch: true,
 	modelCatalogTtlHours: 24,
 	sandboxMode: undefined,
 	denyCommands: [],
@@ -138,6 +140,7 @@ function parseProviderSettings(value: unknown): ParsedSettings {
 	const resumeMode = parseResumeMode(value.resumeMode);
 	const pinnedAccount = parseNonEmptyString(value.pinnedAccount);
 	const contextRecapOnModelSwitch = parseBoolean(value.contextRecapOnModelSwitch);
+	const contextRecapOnProviderSwitch = parseBoolean(value.contextRecapOnProviderSwitch);
 	const modelCatalogTtlHours = parsePositiveFiniteNumber(value.modelCatalogTtlHours);
 	const sandboxMode = parseNonEmptyString(value.sandboxMode);
 	const denyCommands = parseDenyCommands(value.denyCommands);
@@ -150,6 +153,7 @@ function parseProviderSettings(value: unknown): ParsedSettings {
 		...(resumeMode !== undefined ? { resumeMode } : {}),
 		...(pinnedAccount !== undefined ? { pinnedAccount } : {}),
 		...(contextRecapOnModelSwitch !== undefined ? { contextRecapOnModelSwitch } : {}),
+		...(contextRecapOnProviderSwitch !== undefined ? { contextRecapOnProviderSwitch } : {}),
 		...(modelCatalogTtlHours !== undefined ? { modelCatalogTtlHours } : {}),
 		...(sandboxMode !== undefined ? { sandboxMode } : {}),
 		...(denyCommands !== undefined ? { denyCommands } : {}),
@@ -166,6 +170,7 @@ function parseEnvironmentSettings(environment: Environment): ParsedSettings {
 	const resumeMode = parseResumeMode(environment.SENPI_CURSOR_CLI_OAUTH_RESUME);
 	const pinnedAccount = parseNonEmptyString(environment.SENPI_CURSOR_CLI_OAUTH_PINNED_ACCOUNT);
 	const contextRecapOnModelSwitch = parseEnvironmentBoolean(environment.SENPI_CURSOR_CLI_OAUTH_RECAP);
+	const contextRecapOnProviderSwitch = parseEnvironmentBoolean(environment.SENPI_CURSOR_CLI_OAUTH_PROVIDER_RECAP);
 	const modelCatalogTtlHours = parseEnvironmentPositiveFiniteNumber(
 		environment.SENPI_CURSOR_CLI_OAUTH_MODEL_CATALOG_TTL_HOURS,
 	);
@@ -179,6 +184,7 @@ function parseEnvironmentSettings(environment: Environment): ParsedSettings {
 		...(resumeMode !== undefined ? { resumeMode } : {}),
 		...(pinnedAccount !== undefined ? { pinnedAccount } : {}),
 		...(contextRecapOnModelSwitch !== undefined ? { contextRecapOnModelSwitch } : {}),
+		...(contextRecapOnProviderSwitch !== undefined ? { contextRecapOnProviderSwitch } : {}),
 		...(modelCatalogTtlHours !== undefined ? { modelCatalogTtlHours } : {}),
 		...(sandboxMode !== undefined ? { sandboxMode } : {}),
 		...(denyCommands !== undefined ? { denyCommands } : {}),

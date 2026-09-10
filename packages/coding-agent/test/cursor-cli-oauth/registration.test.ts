@@ -58,6 +58,7 @@ function enabledSettings(): CursorCliOauthProviderSettings {
 		resumeMode: "auto",
 		pinnedAccount: undefined,
 		contextRecapOnModelSwitch: true,
+		contextRecapOnProviderSwitch: true,
 		modelCatalogTtlHours: 24,
 		sandboxMode: undefined,
 	};
