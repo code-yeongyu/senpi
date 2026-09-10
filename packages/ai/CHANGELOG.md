@@ -11,6 +11,8 @@
 ### Changed
 
 ### Fixed
+- Direct authentication resolution now honors the stored pinned account when no slot is explicitly requested. Explicit request keys and slots retain precedence, and OAuth refresh updates only the selected slot.
+
 - A provider-owned OAuth account pool is merged onto the stored pool at commit time instead of overwriting it with the pre-login snapshot, so a sibling account that rotated its refresh token or earned a rate-limit block during an interactive login is never rewound; pool slots carrying the provider's managed sentinel marker are recognized and dropped so they can never dead-end a request.
 - The auth-miss wording `Provider is not configured: <id>` is now a shared exported helper used by every throw site, so consumers keying recovery decisions off it cannot drift from the generators.
 - Claude Agent SDK `Lock file is already being held` is classified as a transient retryable error instead of an unknown/terminal failure.
