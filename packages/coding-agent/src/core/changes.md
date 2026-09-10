@@ -1,3 +1,21 @@
+## Bounded prepared-resume content fingerprints (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: retain streamed SHA256 fingerprints rather than full-file buffers for prepared-writer conflict checks. Preparation and both synchronous acceptance checks use bounded scratch space; absent files remain distinct from empty files.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`: retaining a second complete transcript during destination construction defeats bounded resident storage. Content fingerprints still detect same-size edits with unchanged timestamps and permit metadata-only changes.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts`: deferred snapshots, writer grants and final content validation belong to the internal persistence boundary.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: deferred snapshot values, `_reserveWrite`, and `prepareOpen` revalidation. Materialized history, migration, grant rollback and persistence ordering are unchanged.
+
 ## Approved veto-first resume lifecycle (2026-09-10)
 
 This approved order supersedes the historical admission-before-veto and no-before-switch-on-rejection statements below. The five staged-data, identity, conflict, ownership and MCP fixes remain intact.

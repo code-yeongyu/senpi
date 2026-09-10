@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Message, TextContent, ThinkingSelection, Usage } from "@earendil-works/pi-ai";
-import { randomBytes, randomUUID } from "crypto";
+import { createHash, randomBytes, randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
@@ -824,6 +824,24 @@ export function setSessionEntryLoaderForTesting(loader: typeof loadEntriesFromFi
 	};
 }
 
+/** Fingerprint exact file bytes without retaining another transcript-sized buffer. */
+function readSessionFingerprint(path: string): string | undefined {
+	if (!existsSync(path)) return undefined;
+	const fd = openSync(path, "r");
+	try {
+		const hash = createHash("sha256");
+		const buffer = Buffer.allocUnsafe(64 * 1024);
+		while (true) {
+			const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+			if (bytesRead === 0) break;
+			hash.update(buffer.subarray(0, bytesRead));
+		}
+		return hash.digest("hex");
+	} finally {
+		closeSync(fd);
+	}
+}
+
 export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
@@ -833,7 +851,7 @@ export class SessionManager {
 	private deferredPersistence?: {
 		rewrite: boolean;
 		entries: SessionEntry[];
-		snapshots: Map<string, Buffer | undefined>;
+		snapshots: Map<string, string | undefined>;
 	};
 	private flushed: boolean = false;
 	private fileEntries: FileEntry[] = [];
@@ -920,7 +938,7 @@ export class SessionManager {
 	private _reserveWrite(path: string): void {
 		if (this.deferredPersistence) {
 			if (!this.deferredPersistence.snapshots.has(path)) {
-				this.deferredPersistence.snapshots.set(path, existsSync(path) ? readFileSync(path) : undefined);
+				this.deferredPersistence.snapshots.set(path, readSessionFingerprint(path));
 			}
 			return;
 		}
@@ -1917,8 +1935,8 @@ export class SessionManager {
 				const revalidate = () => {
 					try {
 						const expected = pending?.snapshots.get(file);
-						const current = existsSync(file) ? readFileSync(file) : undefined;
-						if (expected === undefined ? current !== undefined : !current?.equals(expected)) {
+						const current = readSessionFingerprint(file);
+						if (current !== expected) {
 							throw new SessionResumeConflictError(file);
 						}
 					} catch (error) {
