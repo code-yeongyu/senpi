@@ -1,9 +1,14 @@
-import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
-import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
+import {
+	fauxAssistantMessage,
+	fauxToolCall,
+	registerFauxProvider,
+	registerSessionResourceCleanup,
+} from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionFromServices,
@@ -11,6 +16,11 @@ import {
 	createAgentSessionServices,
 } from "../../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import { estimateTokens } from "../../src/core/compaction/compaction.ts";
+import { ModelUsabilityBudgetError } from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
+import { cursorCliChildRegistry } from "../../src/core/extensions/builtin/cursor-cli-oauth/diagnostics.ts";
+import { isNativeBypass, setNativeBypass } from "../../src/core/extensions/builtin/imagegen/state.ts";
+import { getMcpService } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type {
 	AgentToolResult,
@@ -39,7 +49,17 @@ describe("AgentSessionRuntime characterization", () => {
 
 	async function createRuntimeForTest(
 		extensionFactory: ExtensionFactory,
-		options?: { cwd?: string; bootstrapModel?: boolean; bootstrapThinkingLevel?: boolean },
+		options?: {
+			cwd?: string;
+			bootstrapModel?: boolean;
+			bootstrapModelId?: string;
+			bootstrapThinkingLevel?: boolean;
+			destinationDefaultModel?: string;
+			destinationReserveTokens?: number;
+			destinationCompactionEnabled?: boolean;
+			destinationSystemPrompt?: string;
+			destinationToolDescription?: string;
+		},
 	) {
 		const tempDir =
 			options?.cwd ?? join(tmpdir(), `pi-runtime-suite-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -49,6 +69,10 @@ describe("AgentSessionRuntime characterization", () => {
 			models: [
 				{ id: "faux-1", reasoning: true },
 				{ id: "faux-2", reasoning: false },
+				{ id: "faux-medium", reasoning: false, contextWindow: 65536, maxTokens: 2048 },
+				// A deliberately tiny context window so a transcript that fits the default
+				// 128000-token model is over budget once resumed against this model.
+				{ id: "faux-small", reasoning: false, contextWindow: 8192, maxTokens: 2048 },
 			],
 		});
 		faux.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two"), fauxAssistantMessage("three")]);
@@ -59,7 +83,7 @@ describe("AgentSessionRuntime characterization", () => {
 		const runtimeOptions = {
 			agentDir: tempDir,
 			authStorage,
-			model: options?.bootstrapModel === false ? undefined : faux.getModel(),
+			model: options?.bootstrapModel === false ? undefined : faux.getModel(options?.bootstrapModelId ?? "faux-1"),
 			thinkingLevel: options?.bootstrapThinkingLevel === false ? undefined : undefined,
 			resourceLoaderOptions: {
 				extensionFactories: [
@@ -91,7 +115,31 @@ describe("AgentSessionRuntime characterization", () => {
 			const services = await createAgentSessionServices({
 				...runtimeOptions,
 				cwd,
+				resourceLoaderOptions: {
+					...runtimeOptions.resourceLoaderOptions,
+					systemPrompt: sessionStartEvent?.reason === "resume" ? options?.destinationSystemPrompt : undefined,
+				},
 			});
+			if (sessionStartEvent?.reason === "resume") {
+				services.settingsManager.applyOverrides({
+					...(options?.destinationDefaultModel
+						? { defaultProvider: faux.getModel().provider, defaultModel: options.destinationDefaultModel }
+						: {}),
+					...(options?.destinationReserveTokens !== undefined ||
+					options?.destinationCompactionEnabled !== undefined
+						? {
+								compaction: {
+									...(options.destinationReserveTokens !== undefined
+										? { reserveTokens: options.destinationReserveTokens }
+										: {}),
+									...(options.destinationCompactionEnabled !== undefined
+										? { enabled: options.destinationCompactionEnabled }
+										: {}),
+								},
+							}
+						: {}),
+				});
+			}
 			return {
 				...(await createAgentSessionFromServices({
 					services,
@@ -99,6 +147,18 @@ describe("AgentSessionRuntime characterization", () => {
 					sessionStartEvent,
 					model: runtimeOptions.model,
 					thinkingLevel: runtimeOptions.thinkingLevel,
+					customTools:
+						sessionStartEvent?.reason === "resume" && options?.destinationToolDescription
+							? [
+									{
+										name: "destination_tool",
+										label: "Destination tool",
+										description: options.destinationToolDescription,
+										parameters: Type.Object({}),
+										execute: async () => ({ content: [], details: {} }),
+									},
+								]
+							: undefined,
 				})),
 				services,
 				diagnostics: services.diagnostics,
@@ -206,6 +266,61 @@ describe("AgentSessionRuntime characterization", () => {
 			.filter((entry) => entry.type === "message");
 		expect(outgoingEntries.map((entry) => entry.message.role)).toEqual(["user", "assistant", "toolResult"]);
 	});
+
+	// PR #1473: a busy self-resume must not replace the live context with a pre-tool snapshot.
+	it("cancels a busy self-resume and retains the completing tool result", async () => {
+		const started = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const aborted = vi.fn();
+		let factories = 0;
+		const { runtime, faux } = await createRuntimeForTest((pi) => {
+			factories++;
+			pi.registerTool({
+				name: "block",
+				label: "Block",
+				description: "Waits for explicit release",
+				parameters: Type.Object({}),
+				execute: async (_id, _params, signal) => {
+					const onAbort = () => {
+						aborted();
+						release.resolve();
+					};
+					signal?.addEventListener("abort", onAbort, { once: true });
+					started.resolve();
+					try {
+						await release.promise;
+						return { content: [{ type: "text" as const, text: "released" }], details: {} };
+					} finally {
+						signal?.removeEventListener("abort", onAbort);
+					}
+				},
+			});
+		});
+		await runtime.session.prompt("persist source");
+		const live = runtime.session;
+		const path = live.sessionFile;
+		if (!path) throw new Error("missing session file");
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall("block", {}, { id: "self-resume-tool" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("complete"),
+		]);
+		const prompt = live.prompt("start blocked tool");
+		try {
+			await started.promise;
+			expect(live.isSessionBusy).toBe(true);
+			expect(await runtime.switchSession(path)).toEqual({ cancelled: true });
+			expect(runtime.session).toBe(live);
+			expect(factories).toBe(1);
+			expect(aborted).not.toHaveBeenCalled();
+		} finally {
+			release.resolve();
+			await prompt;
+		}
+		expect(runtime.session.messages).toEqual(SessionManager.open(path).buildSessionContext().messages);
+		expect(runtime.session.messages.filter((message) => message.role === "toolResult")).toMatchObject([
+			{ toolCallId: "self-resume-tool", isError: false },
+		]);
+	}, 15_000);
 
 	it("emits session_before_switch and session_start for new and resume flows", async () => {
 		const events: RecordedSessionEvent[] = [];
@@ -651,5 +766,362 @@ describe("AgentSessionRuntime characterization", () => {
 
 		expect(runtime.session.model?.id).toBe("faux-2");
 		expect(runtime.session.thinkingLevel).toBe("off");
+	});
+
+	// PR #1473: explicit factory choices take precedence over stored models.
+	it.each([
+		{ forced: "faux-medium", stored: "faux-1", rejected: true },
+		{ forced: "faux-1", stored: "faux-medium", rejected: false },
+	])("admits the factory's $forced model rather than stored $stored", async ({ forced, stored, rejected }) => {
+		const events: RecordedSessionEvent[] = [];
+		const shutdownSessions: string[] = [];
+		const { runtime, faux, tempDir } = await createRuntimeForTest(
+			(pi) => {
+				pi.on("session_before_switch", (event) => {
+					events.push(event);
+				});
+				pi.on("session_shutdown", (event, ctx) => {
+					events.push(event);
+					shutdownSessions.push(ctx.sessionManager.getSessionId());
+				});
+			},
+			{ bootstrapModelId: forced },
+		);
+		const target = SessionManager.create(tempDir, join(tempDir, "targets"));
+		target.appendModelChange(faux.getModel().provider, stored);
+		// Beyond the smaller model's window, not merely eligible for upstream resume compaction.
+		target.appendMessage({ role: "user", content: "x".repeat(70_000), timestamp: 1 });
+		target.appendMessage({ ...fauxAssistantMessage("stored"), provider: faux.getModel().provider, model: stored });
+		const path = target.getSessionFile();
+		if (!path) throw new Error("missing target file");
+		const bytes = readFileSync(path);
+		const original = runtime.session;
+		if (rejected) {
+			await expect(runtime.switchSession(path)).rejects.toMatchObject({
+				projection: { model: `${faux.getModel().provider}/${forced}`, admission: "resume" },
+			});
+			expect(events).toEqual([{ type: "session_before_switch", reason: "resume", targetSessionFile: path }]);
+			expect(shutdownSessions).toEqual([]);
+			expect(shutdownSessions).not.toContain(original.sessionId);
+			expect(readFileSync(path)).toEqual(bytes);
+			expect(runtime.session).toBe(original);
+			await expect(original.prompt("still usable")).resolves.toBeUndefined();
+		} else {
+			expect(await runtime.switchSession(path)).toEqual({ cancelled: false });
+			expect(runtime.session.model?.id).toBe(forced);
+			expect(SessionManager.open(path).buildSessionContext().messages).toEqual(runtime.session.messages);
+		}
+	});
+
+	// PR #1473: destination services, not the live session, determine the whole budget.
+	it.each([
+		{ name: "stored-model fallback", bootstrapModel: false, destinationDefaultModel: "faux-medium" },
+		{ name: "compaction settings", destinationReserveTokens: 100_000 },
+		{ name: "system prompt", destinationSystemPrompt: "p".repeat(400_000) },
+		{ name: "tool schemas", destinationToolDescription: "t".repeat(400_000) },
+	])("uses destination $name for resume admission", async (options) => {
+		const events: RecordedSessionEvent[] = [];
+		const requiresCompaction = "destinationReserveTokens" in options;
+		const { runtime, tempDir } = await createRuntimeForTest(
+			(pi) => {
+				pi.on("session_before_switch", (event) => {
+					events.push(event);
+				});
+			},
+			{ ...options, destinationCompactionEnabled: requiresCompaction },
+		);
+		const target = SessionManager.create(tempDir, join(tempDir, "targets"));
+		target.appendModelChange("missing-provider", "missing-model");
+		target.appendMessage({ role: "user", content: "x".repeat(60_000), timestamp: 1 });
+		target.appendMessage({ ...fauxAssistantMessage("stored"), provider: "missing-provider", model: "missing-model" });
+		const path = target.getSessionFile();
+		if (!path) throw new Error("missing target file");
+		const original = runtime.session;
+		const tokens = target.buildSessionContext().messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+		expect(() =>
+			original.assertModelUsable(original.model, tokens, { includeSpeculationLead: false, admission: "resume" }),
+		).not.toThrow();
+		if (requiresCompaction) {
+			// Upstream now admits this shortfall for mandatory compaction; retain the exact destination budget.
+			expect(await runtime.switchSession(path)).toEqual({ cancelled: false });
+			const notices: unknown[] = [];
+			const unsubscribe = runtime.session.subscribe((event) => notices.push(event));
+			unsubscribe();
+			expect(notices).toContainEqual(
+				expect.objectContaining({
+					type: "resume_compaction_required",
+					projection: expect.objectContaining({ compactionReserveTokens: 100_000, usable: false }),
+				}),
+			);
+			expect(events).toEqual([{ type: "session_before_switch", reason: "resume", targetSessionFile: path }]);
+			return;
+		}
+		await expect(runtime.switchSession(path)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
+		expect(events).toEqual([{ type: "session_before_switch", reason: "resume", targetSessionFile: path }]);
+		expect(runtime.session).toBe(original);
+		await expect(original.prompt("still usable")).resolves.toBeUndefined();
+	});
+
+	// PR #1473: candidate cleanup must not invoke process-global shutdown hooks.
+	it.each(["cancelled", "rejected"])(
+		"discards %s candidates without retaining listeners or disturbing live globals",
+		async (outcome) => {
+			const service = getMcpService();
+			const listeners = new Set<Parameters<typeof service.onWireStatusChanged>[0]>();
+			const subscribe = service.onWireStatusChanged.bind(service);
+			const observation = vi.spyOn(service, "onWireStatusChanged").mockImplementation((listener) => {
+				listeners.add(listener);
+				const unsubscribe = subscribe(listener);
+				return () => {
+					listeners.delete(listener);
+					unsubscribe();
+				};
+			});
+			const killAll = vi.spyOn(cursorCliChildRegistry, "killAll");
+			const shutdowns: number[] = [];
+			let factories = 0;
+			try {
+				const { runtime, tempDir } = await createRuntimeForTest(
+					(pi) => {
+						const candidate = factories++;
+						pi.on("session_before_switch", () => ({ cancel: outcome === "cancelled" }));
+						pi.on("session_shutdown", () => {
+							shutdowns.push(candidate);
+						});
+					},
+					outcome === "rejected" ? { destinationSystemPrompt: "p".repeat(400_000) } : undefined,
+				);
+				const live = runtime.session;
+				expect(live.extensionRunner.getExtensionIdentities().map((extension) => extension.path)).toEqual(
+					expect.arrayContaining(["<builtin:cursor-cli-oauth>", "<builtin:openai-image-gen>", "<builtin:mcp>"]),
+				);
+				// Model the still-live native image lane without replacing its real shutdown handler.
+				setNativeBypass(true);
+				const baseline = new Set(listeners);
+				expect(baseline.size).toBe(1);
+				const target = join(tempDir, "mcp-cancelled.jsonl");
+				writeFileSync(
+					target,
+					JSON.stringify({
+						type: "session",
+						version: 3,
+						id: "mcp-candidate",
+						timestamp: new Date(0).toISOString(),
+						cwd: tempDir,
+					}),
+				);
+				const bytes = readFileSync(target);
+				for (let attempt = 1; attempt <= 3; attempt++) {
+					if (outcome === "rejected") {
+						await expect(runtime.switchSession(target)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
+					} else {
+						expect(await runtime.switchSession(target)).toEqual({ cancelled: true });
+					}
+					expect(killAll).not.toHaveBeenCalled();
+					expect(isNativeBypass()).toBe(true);
+					expect(shutdowns).toEqual([]);
+					expect(factories).toBe(outcome === "cancelled" ? 1 : attempt + 1);
+					expect(listeners).toEqual(baseline);
+					expect(service.getSnapshot()).toMatchObject({
+						disposed: false,
+						sessionStartCount: 1,
+						lastSessionStartReason: "startup",
+						hasSessionContext: true,
+					});
+					expect(getMcpService()).toBe(service);
+					expect(runtime.session).toBe(live);
+					expect(readFileSync(target)).toEqual(bytes);
+				}
+				const errors: unknown[] = [];
+				live.extensionRunner.onError((error) => errors.push(error));
+				await expect(live.prompt("still usable after cancelled resumes")).resolves.toBeUndefined();
+				await expect(service.refreshWireStatusSnapshot(live.sessionId)).resolves.toMatchObject({ servers: [] });
+				expect(errors).toEqual([]);
+				expect(listeners).toEqual(baseline);
+			} finally {
+				observation.mockRestore();
+				killAll.mockRestore();
+				setNativeBypass(false);
+			}
+		},
+	);
+
+	// PR #1473: cancellation must not repair, initialize, or migrate the target.
+	it("keeps live provider resources when a resume of the same session is cancelled", async () => {
+		const { runtime } = await createRuntimeForTest((pi) => {
+			pi.on("session_before_switch", () => ({ cancel: true }));
+		});
+		await runtime.session.prompt("persist source");
+		const path = runtime.session.sessionFile;
+		if (!path) throw new Error("missing session file");
+		const released: Array<string | undefined> = [];
+		const unregister = registerSessionResourceCleanup((id) => released.push(id));
+		try {
+			expect(await runtime.switchSession(path)).toEqual({ cancelled: true });
+			expect(released).toEqual([]);
+		} finally {
+			unregister();
+		}
+	});
+
+	// PR #1473: cancellation must not repair, initialize, or migrate the target.
+	it.each(["unterminated", "legacy", "empty"])("leaves a cancelled %s target byte-identical", async (kind) => {
+		const { runtime, tempDir } = await createRuntimeForTest((pi) => {
+			pi.on("session_before_switch", () => ({ cancel: true }));
+		});
+		const target = join(tempDir, "cancelled.jsonl");
+		const header = {
+			type: "session",
+			version: kind === "legacy" ? 1 : 3,
+			id: "cancelled",
+			timestamp: "2026-09-08T00:00:00.000Z",
+			cwd: tempDir,
+		};
+		const bytes = kind === "empty" ? "" : JSON.stringify(header);
+		writeFileSync(target, bytes);
+		const original = runtime.session;
+		expect(await runtime.switchSession(target)).toEqual({ cancelled: true });
+		expect(readFileSync(target, "utf8")).toBe(bytes);
+		expect(runtime.session).toBe(original);
+		expect(original.extensionRunner.isActive).toBe(true);
+	});
+
+	// Regression: a resume rejected by the model usability budget must run its
+	// admission check BEFORE teardown, so the live session the user is still in is
+	// never disposed/invalidated by a resume that will fail anyway.
+	it("rejects an over-budget resume without invalidating the live session", async () => {
+		const { runtime } = await createRuntimeForTest(() => {});
+		await runtime.session.prompt("hello");
+		const originalSession = runtime.session;
+		const originalSessionFile = runtime.session.sessionFile;
+
+		// Seed a target session whose restored transcript far exceeds the current
+		// model's context window (faux default contextWindow is 128000 tokens).
+		const targetDir = join(tmpdir(), `pi-runtime-overbudget-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(targetDir, { recursive: true });
+		const targetSession = SessionManager.create(targetDir);
+		const targetModel = runtime.session.model!;
+		targetSession.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "x".repeat(4_000_000) }],
+			timestamp: Date.now() - 1,
+		});
+		// A trailing assistant message flushes the buffered transcript to disk so the
+		// re-opened session manager actually reports the over-budget live context.
+		targetSession.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "ok" }],
+			api: targetModel.api,
+			provider: targetModel.provider,
+			model: targetModel.id,
+			stopReason: "stop",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			timestamp: Date.now(),
+		});
+		const targetSessionFile = targetSession.getSessionFile();
+		cleanups.push(() => rmSync(targetDir, { recursive: true, force: true }));
+
+		// PR #1473: a successful faux reply must not hide stale builtin callbacks.
+		const extensionErrors: unknown[] = [];
+		runtime.session.extensionRunner.onError((error) => extensionErrors.push(error));
+		await expect(runtime.switchSession(targetSessionFile!)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
+
+		// The live session object and its file are unchanged...
+		expect(runtime.session).toBe(originalSession);
+		expect(runtime.session.sessionFile).toBe(originalSessionFile);
+		// ...and it is still usable: teardown never disposed it, so its extension
+		// runner was never invalidated (pre-fix, teardown ran first and the next
+		// input crashed with the stale-context error).
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+		await expect(runtime.session.prompt("still here")).resolves.toBeUndefined();
+		expect(extensionErrors).toEqual([]);
+	});
+
+	// Regression: the admission check must run against the model the resume will
+	// actually restore (the destination session's stored model), not the live
+	// session's model. When the active model has a bigger window than the restored
+	// one, checking the active model passes preflight, tears down the live session,
+	// then re-throws from the post-teardown check - the destructive failure.
+	it("rejects a resume over the restored model's budget even when the active model would fit", async () => {
+		const emittedBeforeSwitch: RecordedSessionEvent[] = [];
+		// No explicit factory model, so the destination's stored model is what the
+		// resume restores - the case this admission check has to judge.
+		const { runtime, faux } = await createRuntimeForTest(
+			(pi: ExtensionAPI) => {
+				pi.on("session_before_switch", (event) => {
+					emittedBeforeSwitch.push(event);
+				});
+			},
+			{ bootstrapModel: false },
+		);
+		// Active session runs on the default 128000-token model.
+		await runtime.session.prompt("hello");
+		const originalSession = runtime.session;
+		const originalSessionFile = runtime.session.sessionFile;
+
+		// The destination session stores the tiny 8192-token model. Its transcript is
+		// ~60000 tokens: comfortably inside the active model's window, far past the
+		// restored model's. The user + assistant model entry make faux-small the
+		// restored model on resume.
+		const smallModel = faux.getModel("faux-small")!;
+		const targetDir = join(
+			tmpdir(),
+			`pi-runtime-restored-model-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		);
+		mkdirSync(targetDir, { recursive: true });
+		const targetSession = SessionManager.create(targetDir);
+		targetSession.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "x".repeat(60_000) }],
+			timestamp: Date.now() - 1,
+		});
+		targetSession.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "ok" }],
+			api: smallModel.api,
+			provider: smallModel.provider,
+			model: smallModel.id,
+			stopReason: "stop",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			timestamp: Date.now(),
+		});
+		const targetSessionFile = targetSession.getSessionFile();
+		cleanups.push(() => rmSync(targetDir, { recursive: true, force: true }));
+
+		// Confirm the transcript fits the active model: checking it would pass.
+		const activeTokens = SessionManager.open(targetSessionFile!)
+			.buildSessionContext()
+			.messages.reduce((total, message) => total + estimateTokens(message), 0);
+		expect(() =>
+			originalSession.assertModelUsable(originalSession.model, activeTokens, {
+				includeSpeculationLead: false,
+				admission: "resume",
+			}),
+		).not.toThrow();
+
+		await expect(runtime.switchSession(targetSessionFile!)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
+
+		// The approved veto-first contract permits a cancellable check, never live teardown.
+		expect(emittedBeforeSwitch).toEqual([
+			{ type: "session_before_switch", reason: "resume", targetSessionFile: targetSessionFile },
+		]);
+		expect(runtime.session).toBe(originalSession);
+		expect(runtime.session.sessionFile).toBe(originalSessionFile);
+		expect(runtime.session.extensionRunner.isActive).toBe(true);
+		await expect(runtime.session.prompt("still here")).resolves.toBeUndefined();
 	});
 });

@@ -1,4 +1,40 @@
+## Install native search ownership only on attachment (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: native tool-search gate registration moves from the extension factory to actual attachment, alongside the deferred wire listener.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: constructing a false/unconfigured candidate replaced a true live gate in both async-local and independent process-fallback contexts. Discarding the candidate could not undo this global mutation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: this builtin owns registration; attaching the accepted service is the correct ownership boundary, not candidate construction or cleanup.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: factory and attach closure. Single-flight attachment and candidate-only cleanup are unchanged.
+
 # mcp Extension Changes
+
+## Discarded candidates release only their own MCP subscriptions (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: direct wire-status subscription is deferred until attachment, before inventory can be emitted, so an unstarted candidate never retains an API on the live service. Its factory-time `pi.events` inventory-request subscription is removed by existing runner invalidation, without normal shutdown dispatch. Attached-session switch, reload and quit behavior is unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: repeated cancelled or budget-rejected resumes otherwise retain candidate APIs and listeners on the process-global MCP service; disposing that singleton instead would break the active session.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the fix is implemented in this builtin: only attachment needs the direct service listener. Existing runner invalidation cleans up candidate-owned event-bus registrations; core must not emit normal shutdown for unstarted candidates because other builtins mutate live process-global state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: attachment-time wire subscription, session shutdown ownership and inventory bridge cleanup.
 
 ## Explicit pgrep match-all pattern for process-tree collection (2026-08-12)
 

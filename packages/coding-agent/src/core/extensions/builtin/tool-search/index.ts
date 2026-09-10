@@ -1,7 +1,7 @@
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { ExtensionAPI, ExtensionFactory } from "../../types.ts";
 import { AnthropicNativeToolSearchAdapter, isMcpNativeToolSearchEnabled } from "./native-search.ts";
-import { getToolSearchService, installScopedToolSearchService, ToolSearchService } from "./service.ts";
+import { installLocalToolSearchService, installScopedToolSearchService, ToolSearchService } from "./service.ts";
 import { createToolSearchTool, TOOL_SEARCH_TOOL_NAME } from "./tool.ts";
 
 export function createToolSearchExtension(service: ToolSearchService): ExtensionFactory {
@@ -70,8 +70,11 @@ export default function toolSearchExtension(pi: ExtensionAPI): void | Promise<vo
 		setActiveTools: (names: readonly string[]) => pi.setActiveTools([...names]),
 	};
 	const sessionOwned = hasProviderScope();
-	const service = sessionOwned ? new ToolSearchService(runtime) : getToolSearchService(runtime);
-	if (sessionOwned) installScopedToolSearchService(service);
+	// A prepared resume is not the active runtime yet. Its callbacks must
+	// never rebind the live catalog to an extension generation that may be rejected.
+	const service = new ToolSearchService(runtime);
+	if (sessionOwned) pi.on("session_start", () => installScopedToolSearchService(service));
+	else pi.on("session_start", () => installLocalToolSearchService(service));
 	return createToolSearchExtension(service)(pi);
 }
 

@@ -1,3 +1,176 @@
+## Approved veto-first resume lifecycle (2026-09-10)
+
+This approved order supersedes the historical admission-before-veto and no-before-switch-on-rejection statements below. The five staged-data, identity, conflict, ownership and MCP fixes remain intact.
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: after normalized busy-self rejection, await the cancellable before-switch check before the target snapshot, trust context and actual factory. Recheck busy self-resume after both awaited veto and preparation; retain exact SDK admission (including upstream mandatory compaction), candidate-only disposal, writer rollback and synchronous final revalidation/persistence before outgoing shutdown.
+- `packages/coding-agent/src/core/session-manager.ts`: update acceptance comments to distinguish writer validation from the earlier cancellable veto; persistence and materialized retention are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: cancellation previously prompted/persisted destination trust and executed factories; the old snapshot also rejected writes completed by an awaited veto. Before-switch is a check, never a cleanup commitment. Missing-cwd, budget and conflict rejection may follow it without outgoing shutdown.
+- `packages/coding-agent/src/core/session-manager.ts`: callers must not interpret the grant as preceding the public veto; writes during factory preparation still conflict, and the final synchronous check protects direct prepared-writer callers too.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: only the replacement owner can place the veto before destination trust/factory execution while preserving authoritative SDK admission and live-session ownership.
+- `packages/coding-agent/src/core/session-manager.ts`: prepared writer ordering is an internal persistence contract.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` veto, busy guards, preparation and acceptance block. Fork behavior is unchanged.
+- `packages/coding-agent/src/core/session-manager.ts`: `prepareOpen` acceptance comments only.
+
+## Preserve upstream resume-compaction admission (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/sdk.ts`: retain upstream's mandatory-compaction admission for restored contexts that fit the raw model window, and dispose candidate resources only when admission genuinely rejects.
+
+### Why
+
+- `packages/coding-agent/src/core/sdk.ts`: unconditional candidate cleanup would destroy a runtime that upstream now intentionally admits for pre-first-turn compaction.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/sdk.ts`: SDK admission owns the candidate before extension lifecycle startup.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/sdk.ts`: model-usability catch and resume-compaction requirement.
+
+## Preserve materialized staged history until persistence (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: prepared managers keep full materialized loaded and appended entries, including branch replacements, and defer mirror trimming. Successful durable acceptance restores the existing bounded resident cache and releases full staged snapshots/read caches. Compaction-aware reads materialize evicted persisted entries directly instead of re-evicting them during the same read.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`: v1/v2 migration is deferred, so old disk IDs cannot recover content evicted before rewrite; a single 65MiB string or aggregate over 64MiB otherwise undercounts admission and permanently serializes resident markers. Re-externalizing disk fallbacks also loses over-budget strings on post-persistence reads.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts`: migration, snapshot admission, persistence and cache ownership are internal manager responsibilities. No cache limits are raised, and no recovery relies on migrated old IDs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: loaded/appended/branched resident forms, deferred mirror trim, prepareOpen commit, and _getCompactEntries materialization.
+
+## Revalidate prepared resume at persistence (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: acceptance revalidates destination bytes synchronously again inside commit, immediately before persistence. Both checks release newly acquired grants on conflict; rollback is idempotent.
+- `packages/coding-agent/src/core/session-resume-conflict.ts`: typed recoverable SessionResumeConflictError carries the destination sessionFile.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts` and `packages/coding-agent/src/core/session-resume-conflict.ts`: asynchronous veto handlers can invalidate the admitted snapshot, including legacy rewrites and empty/missing destinations, without making the live runtime unusable.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts` and `packages/coding-agent/src/core/session-resume-conflict.ts`: only the prepared writer can validate the snapshot adjacent to synchronous persistence and roll back its grant. The pre-veto check and admission ordering remain intact.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: prepareOpen acceptance closure.
+- `packages/coding-agent/src/core/session-resume-conflict.ts`: new typed error.
+
+## Compatible staged-resume safety (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: busy self-resume identity uses SessionManager resolvePath normalization before canonicalization, including file URLs and tilde paths.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: lexical node:path resolution missed accepted input aliases and allowed teardown to overtake a completing tool.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the guard must run before candidate construction. Exact admission still precedes before-switch; the separate lifecycle decision is unresolved.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: switchSession identity guard.
+
+## Contained resume lifecycle corrections (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: discarded unstarted candidates invalidate only their own tracked registrations, without broadcasting `session_shutdown` or releasing live provider resources. MCP defers its direct service listener until attachment.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: busy self-resumes return cancellation before preparation; canonical path comparison covers aliases, and activity is rechecked after asynchronous preparation/veto handling before acceptance.
+- Regression filenames now use `issue-1473-` rather than a bare PR-number prefix. Deterministic runtime coverage asserts untouched Cursor/image globals, MCP listener baseline, and complete tool-result context after a cancelled busy self-resume.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: broadcasting shutdown from a candidate called process-global Cursor `killAll` and reset native-image bypass owned by the still-live session.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: aborting busy self-resumes persisted final entries after the candidate snapshot, leaving the replacement context stale.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: candidate invalidation is a core ownership boundary; it must not dispatch destructive live-session lifecycle handlers.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: only the runtime can reject before snapshot construction and before teardown persists to the same file. The separate trust/admission lifecycle-contract question is unchanged.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `disposeCandidate`.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` admission and acceptance guards.
+
+## Cancellation-safe candidate ownership (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: all prepared-manager writer entry points defer reservations, including open, set/reload, new, branch and write paths. Acceptance acquires the actual destination grant and revalidates its bytes before switch handlers; persistence remains deferred until the veto passes.
+- `packages/coding-agent/src/core/session-write-reservation.ts`: a newly acquired grant returns a rollback callback; an already-owned live grant does not.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: cancelled or failed acceptance rolls back new ownership after candidate cleanup; reservation denial precedes destructive switch handlers and live teardown.
+- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: discarded candidates use candidate-only invalidation, including budget-admission failure, without normal shutdown dispatch or releasing provider resources belonging to the live session.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/session-write-reservation.ts` and `packages/coding-agent/src/core/agent-session-runtime.ts`: a cancelled shared-host resume retained a destination reservation until worker exit, preventing another client from opening the target. Snapshot revalidation prevents committing admission based on changed destination bytes.
+- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: candidate cleanup must release tracked registrations without destructive global shutdown; the MCP builtin now defers its untracked singleton listener until attachment.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/session-write-reservation.ts`, `packages/coding-agent/src/core/agent-session-runtime.ts`, `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: prepared writer ownership and pre-start candidate disposal are core lifecycle responsibilities before extension startup.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: deferred persistence, reservation entry points and `prepareOpen` acceptance.
+- `packages/coding-agent/src/core/session-write-reservation.ts`: host grant callback.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` acceptance and discard finally block.
+- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: candidate-only invalidation and failed model admission.
+
+## Resume admission uses the prepared destination runtime (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` prepares the actual factory result before `session_before_switch` and teardown, then applies that same result after cancellation succeeds. It no longer approximates SDK model selection with the live runtime, settings, prompt or tools. Cancelled prepared sessions are disposed without starting them.
+- `packages/coding-agent/src/core/session-manager.ts`: `prepareOpen` defers newline repair, migration/empty-file rewrites and initialization appends until an admitted switch is accepted. Normal `open` behavior is unchanged; an ordinary accepted resume appends pending entries without rewriting existing transcript bytes.
+- `packages/coding-agent/src/core/sdk.ts`: dispose the newly constructed destination if its authoritative model-budget admission throws, releasing its subscriptions rather than leaking a rejected session.
+- `packages/coding-agent/src/core/agent-session.ts`: unstarted candidates can dispose subscriptions without releasing provider resources by persisted session ID; those resources may still belong to a live runtime of the same session.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: CLI/launch-profile model choices outrank stored models, and unavailable stored models fall back through destination settings. Admission must also use destination tool schemas, system prompt and compaction settings. Rejection must not emit the switch event, abort side work or invalidate the live session.
+- `packages/coding-agent/src/core/session-manager.ts`: opening a target was not a read-only operation; cancelled resumes could repair or rewrite it. Deferred persistence preserves byte identity on cancellation and rejection.
+- `packages/coding-agent/src/core/sdk.ts`: moving construction before teardown requires cleaning up rejected construction without disposing the outgoing runtime.
+- `packages/coding-agent/src/core/agent-session.ts`: cancelling a resume of the current session must not close the live session's provider connections.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`, `packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/sdk.ts`, and `packages/coding-agent/src/core/agent-session.ts`: destination construction, budget admission, persistence and provider-resource ownership precede extension lifecycle startup and are owned by the core replacement state machine.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` ordering and removal of the duplicate admission/model resolver.
+- `packages/coding-agent/src/core/session-manager.ts`: constructor, persistence guards and `open`/`prepareOpen`.
+- `packages/coding-agent/src/core/sdk.ts`: authoritative post-construction budget check.
+- `packages/coding-agent/src/core/agent-session.ts`: optional provider-resource release in `dispose`.
+
 ## Registration-time shared-host capability (2026-09-09)
 
 ### What changed
@@ -33,6 +206,7 @@
 ### Expected merge conflict zones
 
 - MEDIUM in `sdk.ts` startup admission and `agent-session.ts` pre-provider compaction gate; LOW in the interactive event switch.
+
 ## Size-adaptive summarization duration budget setting (2026-09-08)
 
 ### What changed

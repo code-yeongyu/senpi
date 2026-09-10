@@ -212,8 +212,12 @@ and only then constructs its session writer and runtime. A conflicting alias att
 explicitly before opening another writer.
 
 SessionManager writes, switches, forks, new sessions and imports obtain the same grant before writer creation or
-append-side normalization. Acquired paths are conservatively retained for that worker's entire lifetime, including
-superseded paths after a switch. Each worker may reserve at most 64 paths; an exhausted reservation budget fails
+append-side normalization. Resume runs cancellable `session_before_switch` handlers before opening the destination
+snapshot and preparing the candidate, which acquires no writer reservation. After exact admission, acceptance obtains
+a reversible grant and revalidates the destination before outgoing shutdown; cancellation or failure
+releases only a newly acquired candidate grant, leaving existing live ownership intact. Accepted writer paths are
+conservatively retained for that worker's entire lifetime, including superseded paths after a switch.
+Each worker may reserve at most 64 paths; an exhausted reservation budget fails
 explicitly. Close or an opening deadline requests worker termination, but does not release reservations or worker
 capacity until the actual exit event. A syscall that cannot yet be interrupted can therefore keep an entry
 internally quarantined after the routing handle has closed. `list_sessions` continues to publish `closing`, not a
@@ -1057,6 +1061,48 @@ If an extension cancelled the switch:
 ```json
 {"type": "response", "command": "switch_session", "success": true, "data": {"cancelled": true}}
 ```
+
+A rejected switch answers with `success: false` plus a typed `errorCode` and structured `errorData`:
+
+| `errorCode` | Meaning | `errorData` |
+|---|---|---|
+| `missing_session_cwd` | The session's stored cwd no longer exists. Retry the command with `cwdOverride`. | `{"sessionFile", "sessionCwd", "fallbackCwd"}` |
+| `session_resume_conflict` | The target changed after the resume snapshot was read. Retry to admit the current bytes. | `{"sessionFile"}` |
+| `model_usability_budget` | The stored transcript cannot be admitted by the destination model's resume/compaction policy. | The full budget projection |
+
+When compaction is enabled and the restored context fits the raw model window, a budget shortfall can instead be admitted with `resume_compaction_required`. The first prompt must complete the required compaction and satisfy the remaining budget before a normal provider turn.
+
+The order is: cancellable `session_before_switch` check, destination snapshot and trust/factory preparation, exact SDK budget admission, writer grant with synchronous final revalidation/persistence, then outgoing `session_shutdown` and replacement. A veto prevents destination trust prompts, trust persistence and factory execution. Writes completed by an awaited veto are included in the snapshot; writes during later factory preparation produce a recoverable conflict.
+
+Missing-cwd, budget and conflict rejections may follow the cancellable check, but never cause outgoing shutdown or invalidate the current session. Cleanup belongs in `session_shutdown`, not `session_before_switch`; active `/btw` work survives cancelled and rejected resumes. A conflict preserves any intervening target writes, and a cancelled or rejected switch does not itself write to the target session file. Clients can pick a different session or change the destination configuration and retry. Changing the live model with `set_model` does not override a destination's stored model or a model forced by CLI `--model` / the launch profile; change that startup selection when retrying with a larger model.
+
+```json
+{
+  "type": "response",
+  "command": "switch_session",
+  "success": false,
+  "error": "Model anthropic/claude-opus-4-5 cannot host this session ...",
+  "errorCode": "model_usability_budget",
+  "errorData": {
+    "model": "anthropic/claude-opus-4-5",
+    "contextWindow": 200000,
+    "liveContextTokens": 260000,
+    "systemPromptTokens": 3748,
+    "activeToolSchemaTokens": 4538,
+    "outputReserveTokens": 32000,
+    "compactionReserveTokens": 1024,
+    "speculationLeadTokens": 0,
+    "safetyMarginTokens": 16384,
+    "safetyMarginProfile": "anthropic",
+    "requiredTokens": 317694,
+    "shortfallTokens": 117694,
+    "usable": false,
+    "admission": "resume"
+  }
+}
+```
+
+For a non-empty `switch_session` target, `admission` is `resume` and `speculationLeadTokens` is zero. The shared projection also supports `start` (including empty targets) and `switch` (model changes). `requiredTokens` is the sum of `liveContextTokens`, `systemPromptTokens`, `activeToolSchemaTokens`, `outputReserveTokens`, `compactionReserveTokens`, `speculationLeadTokens`, and `safetyMarginTokens`. `shortfallTokens = max(0, requiredTokens - contextWindow)`; `usable` is true exactly when that shortfall is zero. `model` and `safetyMarginProfile` identify the selection and margin policy; they are not token components. Clients should branch on `errorCode`, not parse the human-readable `error` text.
 
 #### fork
 

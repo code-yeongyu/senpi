@@ -48,12 +48,13 @@ export class SessionWorkerClient {
 	private latestDisplay?: Extract<HostToSessionWorker, { type: "display" }>;
 
 	private readonly callbacks: {
-		reserve: (path: string) => boolean;
+		reserve: (path: string) => boolean | "acquired";
+		release: (path: string) => void;
 		exit: () => void;
 		failure: (error: string) => void;
 	};
 
-	constructor(callbacks: { reserve: (path: string) => boolean; exit: () => void; failure: (error: string) => void }) {
+	constructor(callbacks: SessionWorkerClient["callbacks"]) {
 		this.callbacks = callbacks;
 		this.exited = new Promise((resolve) => {
 			this.worker.once("exit", () => {
@@ -186,8 +187,15 @@ export class SessionWorkerClient {
 				this.requests.receive(message);
 				return;
 			}
-			case "reserve":
-				this.acknowledge(message.signal, !this.stopped && this.callbacks.reserve(message.path));
+			case "reserve": {
+				const grant = this.callbacks.reserve(message.path);
+				Atomics.store(new Int32Array(message.signal), 1, grant === "acquired" ? 1 : 0);
+				this.acknowledge(message.signal, grant !== false);
+				return;
+			}
+			case "release_reservation":
+				this.callbacks.release(message.path);
+				this.acknowledge(message.signal, true);
 				return;
 			case "snapshot":
 				this.snapshot = message.snapshot;

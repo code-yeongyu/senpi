@@ -555,6 +555,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			!session.settingsManager.getCompactionEnabled() ||
 			error.projection.liveContextTokens > error.projection.contextWindow
 		) {
+			await session.disposeCandidate();
 			throw error;
 		}
 		session.admitResumeCompactionRequired(error.projection);

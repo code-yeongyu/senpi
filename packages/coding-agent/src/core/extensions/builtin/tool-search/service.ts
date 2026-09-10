@@ -221,7 +221,12 @@ function isValidDocument(doc: ToolSearchDocument, source: ToolSearchSource): boo
 const scopedService = new AsyncLocalStorage<ToolSearchService>();
 let service: ToolSearchService | null = null;
 
-/** Make a session-owned service visible to later builtins loaded in the same provider scope. */
+/** Publish the local runtime's catalog only once its session has been accepted. */
+export function installLocalToolSearchService(value: ToolSearchService): void {
+	service = value;
+}
+
+/** Publish the accepted session's catalog in the current async provider scope. */
 export function installScopedToolSearchService(value: ToolSearchService): void {
 	scopedService.enterWith(value);
 }

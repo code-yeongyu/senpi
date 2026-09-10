@@ -1,4 +1,62 @@
+## Recoverable resume conflicts (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: serialize session_resume_conflict with sessionFile and reconstruct SessionResumeConflictError through the real worker/connection/socket/client path.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: a changed target is a rejected candidate, not a fatal error in the still-live session. Error identity must survive transport without parsing message text.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: core transport and interactive exception routing own these boundaries, outside extension error handling.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: imports and typed resume error handling. Existing budget rejection behavior is retained.
+
 # changes
+
+## Roll back unaccepted candidate writer grants (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts` and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: internal reservation acknowledgments distinguish new grants from already-owned paths. Failed/cancelled candidate acceptance can synchronously release only its newly acquired canonical grant. Accepted and previously owned writer reservations retain the existing worker-exit lifetime.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts` and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: a cancelled resume must not block other clients from opening its unused target, and cancelling a resume of the live session must not release its existing writer ownership.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts` and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: the transport host owns canonical grants across worker isolates; extension events cannot release that private registry state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: internal release message.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: reservation acknowledgment and release dispatch.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: synchronous grant/rollback exchange.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: grant ownership and release callback.
+
+## Budget rejection keeps its typed identity across the RPC boundary (2026-09-08)
+
+### What changed
+
+- `connection-handler.ts`: the command error path now classifies `ModelUsabilityBudgetError` (imported from `../../core/extensions/builtin/compaction/model-usability-budget.ts`) alongside `MissingSessionCwdError`, emitting `errorCode: "model_usability_budget"` with the error's `projection` as `errorData` on the wire.
+- `rpc-client.ts`: `getData` reconstructs `ModelUsabilityBudgetError` from that typed code + projection before falling back to a plain `Error`, mirroring the existing `missing_session_cwd` reconstruction.
+
+### Why
+
+- With `experimental.sharedHost`, `switchSession` runs on the host and its result crosses the RPC seam. `getData` rebuilt any non-missing-cwd failure as a plain `Error`, so the interactive resume handler's `instanceof ModelUsabilityBudgetError` check failed client-side and the TUI still routed an over-budget `/resume` to `process.exit(1)`. Classifying on a typed error code (never a message substring) preserves the identity so the client shows the error and keeps the live session, matching the in-process path.
+
+### Why an extension could not handle it
+
+- Error serialization/deserialization across the RPC transport is core host/client plumbing with no extension hook; only the connection handler and client can preserve a typed error's identity over the wire.
+
+### Expected merge conflict zones
+
+- LOW: the classification block in `connection-handler.ts`'s command catch, its new import, and the added branch + import in `rpc-client.ts`'s `getData`.
 
 ## Bound quarantined and joined close reply admission (2026-09-08)
 

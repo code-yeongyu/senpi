@@ -414,6 +414,7 @@ describe("native 400 pending recovery signal", () => {
 			],
 		});
 		try {
+			await harness.getExtensionRunner().emit({ type: "session_start", reason: "startup" });
 			const service = getToolSearchService();
 			service.feed(
 				"mcp",
@@ -432,7 +433,6 @@ describe("native 400 pending recovery signal", () => {
 				],
 				{ activate: () => {} },
 			);
-			await harness.getExtensionRunner().emit({ type: "session_start", reason: "startup" });
 			const payload = { model: "claude-fable-5-1", tools: [] as unknown[], messages: [] };
 			const injected = await harness.getExtensionRunner().emitBeforeProviderRequest(payload, undefined, {
 				model: getModel("anthropic", "claude-fable-5-1"),

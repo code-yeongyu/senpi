@@ -20,6 +20,7 @@ import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { listSessionInfos, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
+import { SessionResumeConflictError } from "./session-resume-conflict.ts";
 import { reserveSessionWrite } from "./session-write-reservation.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
@@ -829,6 +830,11 @@ export class SessionManager {
 	private sessionDir: string;
 	private cwd: string;
 	private persist: boolean;
+	private deferredPersistence?: {
+		rewrite: boolean;
+		entries: SessionEntry[];
+		snapshots: Map<string, Buffer | undefined>;
+	};
 	private flushed: boolean = false;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
@@ -870,11 +876,15 @@ export class SessionManager {
 		persist: boolean,
 		newSessionOptions?: NewSessionOptions,
 		preloadedFileEntries?: FileEntry[],
+		deferredPersistence = false,
 	) {
 		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePath(sessionDir);
 		this.persist = persist;
-		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
+		this.deferredPersistence = deferredPersistence
+			? { rewrite: false, entries: [], snapshots: new Map() }
+			: undefined;
+		if (persist && !deferredPersistence && this.sessionDir && !existsSync(this.sessionDir)) {
 			mkdirSync(this.sessionDir, { recursive: true });
 		}
 
@@ -907,8 +917,18 @@ export class SessionManager {
 		this._setSessionFile(sessionFile);
 	}
 
+	private _reserveWrite(path: string): void {
+		if (this.deferredPersistence) {
+			if (!this.deferredPersistence.snapshots.has(path)) {
+				this.deferredPersistence.snapshots.set(path, existsSync(path) ? readFileSync(path) : undefined);
+			}
+			return;
+		}
+		reserveSessionWrite(path);
+	}
+
 	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
-		if (this.persist) reserveSessionWrite(resolvePath(sessionFile));
+		if (this.persist) this._reserveWrite(resolvePath(sessionFile));
 		this.sessionFile = resolvePath(sessionFile);
 		this.mirrorTrimmed = false;
 		this.residentStore.clear();
@@ -936,7 +956,9 @@ export class SessionManager {
 				this._rewriteFile();
 			}
 
-			this.fileEntries = this.fileEntries.map((entry) => this.residentStore.externalize(entry));
+			this.fileEntries = this.fileEntries.map((entry) =>
+				this.deferredPersistence ? this.residentStore.materialize(entry) : this.residentStore.externalize(entry),
+			);
 			this._buildIndex();
 			this.mutationCount++;
 			this.flushed = true;
@@ -985,7 +1007,7 @@ export class SessionManager {
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
-			reserveSessionWrite(path);
+			this._reserveWrite(path);
 			this.sessionFile = path;
 		}
 		return this.sessionFile;
@@ -1031,6 +1053,10 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
+		if (this.deferredPersistence) {
+			this.deferredPersistence.rewrite = true;
+			return;
+		}
 		reserveSessionWrite(this.sessionFile);
 		const fd = openSync(this.sessionFile, "w");
 		try {
@@ -1072,6 +1098,10 @@ export class SessionManager {
 
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
+		if (this.deferredPersistence) {
+			this.deferredPersistence.entries.push(entry);
+			return;
+		}
 		reserveSessionWrite(this.sessionFile);
 		const persistedEntry = this.residentStore.materialize(entry);
 
@@ -1102,7 +1132,9 @@ export class SessionManager {
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
-		const residentEntry = this.residentStore.externalize(entry);
+		const residentEntry = this.deferredPersistence
+			? this.residentStore.materialize(entry)
+			: this.residentStore.externalize(entry);
 		this.fileEntries.push(residentEntry);
 		this.byId.set(residentEntry.id, residentEntry);
 		this.entryOrdersById.set(residentEntry.id, this.fileEntries.length - 1);
@@ -1292,7 +1324,8 @@ export class SessionManager {
 	}
 
 	private _trimMirrorAfterCompaction(compaction: CompactionEntry): void {
-		if (!this.persist) return;
+		// Prepared history is not durable yet; trimming would discard rewrite input.
+		if (!this.persist || this.deferredPersistence) return;
 		const firstKeptIndex = this.fileEntries.findIndex((entry) => entry.id === compaction.firstKeptEntryId);
 		const compactionIndex = this.fileEntries.findIndex((entry) => entry.id === compaction.id);
 		if (firstKeptIndex < 0 || compactionIndex < firstKeptIndex) return;
@@ -1586,16 +1619,21 @@ export class SessionManager {
 				return undefined;
 			});
 		}
-		if (missingEntryIds.size > 0 && this.sessionFile) {
-			const persistedById = new Map(this._loadFullHistoryEntries().map((entry) => [entry.id, entry]));
-			for (let index = 0; index < entries.length; index++) {
-				const entry = entries[index]!;
-				if (!missingEntryIds.has(entry.id)) continue;
-				const persisted = persistedById.get(entry.id);
-				if (persisted) entries[index] = this.residentStore.externalize(persisted) as SessionEntry;
-			}
-		}
-		const materialized = entries.map((entry) => this.residentStore.materialize(entry) as SessionEntry);
+		const persistedById =
+			missingEntryIds.size > 0 && this.sessionFile
+				? new Map(
+						this._loadFullHistoryEntries()
+							.filter((entry): entry is SessionEntry => entry.type !== "session")
+							.map((entry) => [entry.id, entry]),
+					)
+				: undefined;
+		// Materialize disk fallbacks directly into this read, not back into the bounded
+		// cache: one 65MiB string (or the aggregate) would immediately evict itself again.
+		const materialized = entries.map(
+			(entry) =>
+				(missingEntryIds.has(entry.id) ? persistedById?.get(entry.id) : undefined) ??
+				this.residentStore.materialize(entry),
+		);
 		for (const entry of materialized) {
 			if (entry.type !== "message") continue;
 			const order = this.entryOrdersById.get(entry.id);
@@ -1781,11 +1819,11 @@ export class SessionManager {
 				parentId = labelEntry.id;
 			}
 
-			reserveSessionWrite(newSessionFile);
+			this._reserveWrite(newSessionFile);
 			this.residentStore.clear();
 			this.mirrorTrimmed = false;
 			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
-				this.residentStore.externalize(entry),
+				this.deferredPersistence ? this.residentStore.materialize(entry) : this.residentStore.externalize(entry),
 			);
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
@@ -1850,8 +1888,92 @@ export class SessionManager {
 	 * @param cwdOverride Optional cwd override instead of the session header cwd.
 	 */
 	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
+		return SessionManager._open(path, sessionDir, cwdOverride, false);
+	}
+
+	/** Prepare a resume without repairing, migrating or appending to its file until admitted. */
+	static prepareOpen(
+		path: string,
+		sessionDir?: string,
+		cwdOverride?: string,
+	): {
+		sessionManager: SessionManager;
+		beginCommit: () => { commit: () => void; rollback: () => void };
+	} {
+		const sessionManager = SessionManager._open(path, sessionDir, cwdOverride, true);
+		const pending = sessionManager.deferredPersistence;
+		return {
+			sessionManager,
+			beginCommit: () => {
+				const file = sessionManager.getSessionFile();
+				if (!file) throw new Error("Prepared session is missing its destination file");
+				// Admission ran on a read-only snapshot. Revalidate the actual destination
+				// under its canonical host grant before destructive session shutdown.
+				let release = reserveSessionWrite(file);
+				const rollback = () => {
+					release?.();
+					release = undefined;
+				};
+				const revalidate = () => {
+					try {
+						const expected = pending?.snapshots.get(file);
+						const current = existsSync(file) ? readFileSync(file) : undefined;
+						if (expected === undefined ? current !== undefined : !current?.equals(expected)) {
+							throw new SessionResumeConflictError(file);
+						}
+					} catch (error) {
+						rollback();
+						throw error;
+					}
+				};
+				revalidate();
+				return {
+					rollback,
+					commit: () => {
+						// A prepared-writer caller may have changed the file since beginCommit.
+						// Keep this final check and persistence synchronous, before live teardown.
+						revalidate();
+						sessionManager.deferredPersistence = undefined;
+						mkdirSync(sessionManager.sessionDir, { recursive: true });
+						if (pending?.rewrite) {
+							sessionManager._rewriteFile();
+						} else {
+							if (existsSync(file)) {
+								const content = readFileSync(file);
+								if (content.length > 0 && content[content.length - 1] !== 10) appendFileSync(file, "\n");
+							}
+							for (const entry of pending?.entries ?? []) sessionManager._persist(entry);
+						}
+						// Only durable entries may use an evictable cache. Admission and any
+						// legacy rewrite above consumed the full materialized staged history.
+						if (sessionManager.flushed) {
+							const leafId = sessionManager.leafId;
+							sessionManager.fileEntries = sessionManager.fileEntries.map((entry) =>
+								sessionManager.residentStore.externalize(entry),
+							);
+							sessionManager._buildIndex();
+							sessionManager.leafId = leafId;
+							sessionManager.mutationCount++;
+							sessionManager.entriesCache = null;
+							sessionManager.branchCache = null;
+							sessionManager.compactEntriesCache = null;
+						}
+						pending?.entries.splice(0);
+						pending?.snapshots.clear();
+					},
+				};
+			},
+		};
+	}
+
+	private static _open(
+		path: string,
+		sessionDir: string | undefined,
+		cwdOverride: string | undefined,
+		deferredPersistence: boolean,
+	): SessionManager {
 		const resolvedPath = resolvePath(path);
-		reserveSessionWrite(resolvedPath);
+		if (!deferredPersistence) reserveSessionWrite(resolvedPath);
 		let header: SessionHeader | null = null;
 		let preloadedFileEntries: FileEntry[] | undefined;
 		if (cwdOverride === undefined && existsSync(resolvedPath)) {
@@ -1868,14 +1990,14 @@ export class SessionManager {
 		}
 		// This process opens the session for append; normalize a final unterminated
 		// JSONL entry here, never from read-only loadEntriesFromFile callers.
-		if (existsSync(resolvedPath)) {
+		if (!deferredPersistence && existsSync(resolvedPath)) {
 			const content = readFileSync(resolvedPath);
 			if (content.length > 0 && content[content.length - 1] !== 10) appendFileSync(resolvedPath, "\n");
 		}
 		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory
 		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
-		return new SessionManager(cwd, dir, resolvedPath, true, undefined, preloadedFileEntries);
+		return new SessionManager(cwd, dir, resolvedPath, true, undefined, preloadedFileEntries, deferredPersistence);
 	}
 
 	/**

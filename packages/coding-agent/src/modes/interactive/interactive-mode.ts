@@ -74,6 +74,7 @@ import {
 	computeCacheWaste,
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
+import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -108,6 +109,7 @@ import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { createSessionLogger, type SessionLogger } from "../../core/session-log.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
+import { SessionResumeConflictError } from "../../core/session-resume-conflict.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
@@ -7570,19 +7572,43 @@ export class InteractiveMode {
 					this.showStatus("Resume cancelled");
 					return { cancelled: true };
 				}
-				const result = await this.runtimeHost.switchSession(sessionPath, {
-					cwdOverride: selectedCwd,
-					withSession: options?.withSession,
-					projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
-				});
-				if (result.cancelled) {
+				try {
+					const result = await this.runtimeHost.switchSession(sessionPath, {
+						cwdOverride: selectedCwd,
+						withSession: options?.withSession,
+						projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
+					});
+					if (result.cancelled) {
+						return result;
+					}
+					this.showStatus("Resumed session in current cwd");
 					return result;
+				} catch (overrideError: unknown) {
+					// The cwd-override retry can also be rejected by admission or a
+					// changed target; give it the same recoverable treatment as the first attempt
+					// instead of letting it escape as an unhandled rejection.
+					if (
+						overrideError instanceof ModelUsabilityBudgetError ||
+						overrideError instanceof SessionResumeConflictError
+					) {
+						return this.cancelResumeWithRecoverableError(overrideError);
+					}
+					return this.handleFatalRuntimeError("Failed to resume session", overrideError);
 				}
-				this.showStatus("Resumed session in current cwd");
-				return result;
+			}
+			if (error instanceof ModelUsabilityBudgetError || error instanceof SessionResumeConflictError) {
+				return this.cancelResumeWithRecoverableError(error);
 			}
 			return this.handleFatalRuntimeError("Failed to resume session", error);
 		}
+	}
+
+	/** Render a recoverable resume rejection and keep the live session running. */
+	private cancelResumeWithRecoverableError(error: ModelUsabilityBudgetError | SessionResumeConflictError): {
+		cancelled: boolean;
+	} {
+		this.showError(`Failed to resume session: ${error.message}`);
+		return { cancelled: true };
 	}
 
 	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {

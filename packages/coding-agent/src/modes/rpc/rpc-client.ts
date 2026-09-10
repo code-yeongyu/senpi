@@ -11,9 +11,11 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import { SessionResumeConflictError } from "../../core/session-resume-conflict.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
@@ -1108,6 +1110,14 @@ export class RpcClient {
 				throw new MissingSessionCwdError(
 					errorResponse.errorData as ConstructorParameters<typeof MissingSessionCwdError>[0],
 				);
+			}
+			if (errorResponse.errorCode === "model_usability_budget" && errorResponse.errorData) {
+				throw new ModelUsabilityBudgetError(
+					errorResponse.errorData as ConstructorParameters<typeof ModelUsabilityBudgetError>[0],
+				);
+			}
+			if (errorResponse.errorCode === "session_resume_conflict" && errorResponse.errorData) {
+				throw new SessionResumeConflictError((errorResponse.errorData as { sessionFile: string }).sessionFile);
 			}
 			throw new Error(errorResponse.error);
 		}

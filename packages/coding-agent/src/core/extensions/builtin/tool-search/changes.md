@@ -1,5 +1,45 @@
 # Tool Search Builtin Changes
 
+## 2026-09-10 - Keep discarded candidates out of scoped tool-search state
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts`: publish provider-scoped catalogs on `session_start`, matching local catalog installation.
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/service.ts`: document the accepted-session installation boundary.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts`: candidate construction previously replaced the current async tool-search store before acceptance. Invalidating a rejected candidate left live lazy-tool activation and native diagnostics pointing at that candidate.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts`: the builtin owns scoped catalog installation before another extension can recover the live store.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts`: factory installation and session-start registration order.
+
+## 2026-09-08 - Keep rejected resume candidates out of the live catalog (PR #1473)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts` creates a separate service for each local extension generation and publishes it only at `session_start`.
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/service.ts` provides the local installation seam; provider-scoped installation remains unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts` previously rebound the global service during destination loading. Rejecting and disposing that candidate left the live session's context and provider-request hooks pointing at a stale extension API.
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/service.ts` must keep the accepted catalog available to MCP and core consumers while another candidate is prepared.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts` and `packages/coding-agent/src/core/extensions/builtin/tool-search/service.ts` own this builtin's factory-time shared state; another extension cannot undo captured runtime bindings reliably.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts`: default factory and service import.
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/service.ts`: local/scoped service ownership helpers.
+
 ## 2026-09-08 - Wire the native 400 fallback into a session recovery signal (senpi #1481/#1482)
 
 ### What changed
