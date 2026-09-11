@@ -1,5 +1,23 @@
 # changes.md — builtin compaction policy
 
+## Read checkpoint history once per capture (2026-09-11)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/checkpoint-state.ts`: `deriveAgentName()` takes one `getEntries()` snapshot before scanning newest-first. Agent field precedence and full-history selection are unchanged.
+
+### Why
+
+- After persisted-session compaction trims the resident mirror, each `getEntries()` call reloads the complete history synchronously. Calling it on every scan iteration made checkpoint capture repeatedly parse the same transcript, including when no agent marker exists.
+
+### Why an extension could not handle it
+
+- The repeated reads occur inside this builtin's private checkpoint capture helper; the fix belongs at that call site, not in session persistence or another extension.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/compaction/checkpoint-state.ts` around the reverse scan in `deriveAgentName()`.
+
 ## Deterministic resume slice for an over-window restored context (2026-09-10)
 
 ### What changed

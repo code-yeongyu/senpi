@@ -46,8 +46,9 @@ function isExtensionAPI(value: ExtensionAPI | LegacyCaptureInput): value is Exte
 }
 
 function deriveAgentName(ctx: ExtensionContext): string | null {
-	for (let index = ctx.sessionManager.getEntries().length - 1; index >= 0; index--) {
-		const entry = ctx.sessionManager.getEntries()[index];
+	const entries = ctx.sessionManager.getEntries();
+	for (let index = entries.length - 1; index >= 0; index--) {
+		const entry = entries[index];
 		if (entry.type !== "custom") continue;
 		const data = entry.data;
 		if (isRecord(data) && typeof data.agentName === "string") {
