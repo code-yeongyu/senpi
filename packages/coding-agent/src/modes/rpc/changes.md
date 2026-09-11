@@ -9,6 +9,8 @@
   healthy shared host even when the platform probe is temporarily unavailable.
 - `packages/coding-agent/test/rpc-host-identity-regression.test.ts` records the live-PID
   observation-gap and compatible-endpoint reuse contracts.
+- The regression diagnostics distinguish compatible reuse from ownership probing, and retain the
+  original readiness/cleanup evidence instead of replacing it with a termination side effect.
 
 ### Why
 
