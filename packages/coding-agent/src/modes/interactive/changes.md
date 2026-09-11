@@ -541,6 +541,24 @@
 
 - LOW: `AgentSessionEvent` model event union and `_cycleFavoriteModel`.
 - LOW: the interactive `handleEvent` switch.
+
+## Bound omitted render-signature hashing (2026-08-10)
+
+### What changed
+
+- `components/render-signature.ts` now hashes omitted array items and sorted object entries with an iterative FNV-1a
+  accumulator instead of recursively summarizing sliced tails. This prevents omitted sibling counts in wide arrays and
+  objects from increasing call-stack depth while preserving cache invalidation and the existing nested-tail depth budget.
+
+### Why this cannot be expressed externally
+
+- Assistant-message and tool-execution render signatures are private built-in TUI cache keys; extensions cannot replace
+  their hashing or invalidation behavior.
+
+### Expected merge conflict zones
+
+- LOW: the omitted array/object branches in `components/render-signature.ts` and
+  `test/render-signature.test.ts`.
 # 2026-09-05 - Ctrl+P skips models without context room
 
 ### What changed
