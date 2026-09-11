@@ -1,5 +1,36 @@
 # changes
 
+## 2026-09-12 - Keep a live host whose identity probe is starved
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts` registers a spawned host whose process
+  identity stayed unreadable with a guard-less pidfile (`processStartTime: null`) instead of
+  throwing and terminating the child, and the unhurried second read now honors the injected test
+  probe so the starved-probe path is reachable without a Windows runner.
+- `matchesPidFileOrUnknown` maps `ProcessIdentityUnreadableError` to "not ours" for the reuse
+  decision, so an observation gap starts a fresh host instead of failing the whole ensure.
+- `packages/coding-agent/test/rpc-host-ensure.test.ts` pins the registration, the guard-less
+  reuse path, and the restart from a guard-less pidfile.
+
+### Why
+
+- Every win32 identity attempt spawns `powershell.exe` with `Get-CimInstance` under a 1s timeout.
+  On a loaded runner all attempts time out, so a healthy host that had already bound its pipe was
+  refused and killed with `started but its process identity stayed unreadable`. The comment above
+  that throw already stated the intended behavior - keep the healthy host - while the code did the
+  opposite; this is the CI failure observed on the `RPC named pipes (Windows)` job.
+
+### Why an extension could not handle it
+
+- Host registration and ownership probing run inside the RPC supervisor before any extension is
+  loaded.
+
+### Expected merge conflict zones
+
+- LOW around the `startHost` identity block and `ensureHostLocked`'s ownership call in
+  `host-ensure.ts`.
+
 ## 2026-09-11 - Preserve shared hosts across transient empty identity probes
 
 ### What changed

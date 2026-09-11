@@ -24,6 +24,8 @@
 
 - Image-heavy `/resume` sessions no longer reparse the complete JSONL once per evicted resident string; one ordered materialization pass performs one authoritative history load while preserving transcript contents and branch state ([#1407](https://github.com/code-yeongyu/senpi/issues/1407))
 
+- A shared RPC host is no longer torn down because its own process-identity probe was starved. A host we spawned that is alive and answering its socket is registered with a guard-less pidfile, and a record without an identity guard reads as unknown ownership everywhere, so it can neither claim a host nor authorize a signal; a later ensure that cannot verify it simply starts a fresh host. On a loaded Windows machine, where every `Get-CimInstance` attempt can exceed its timeout, session start no longer fails with `started but its process identity stayed unreadable`.
+
 - Windows RPC host ownership checks no longer treat a temporarily empty process-identity probe
   for a live PID as evidence that the shared host is dead. Compatible endpoints are reused before
   ownership probing, preventing concurrent callers from replacing a healthy named-pipe host
