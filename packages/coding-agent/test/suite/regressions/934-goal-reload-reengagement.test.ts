@@ -128,7 +128,10 @@ describe("goal reload re-engagement (issue #934)", () => {
 	it("does not re-engage a blocked goal on reload", async () => {
 		const { tools, handlers, events, sent } = createGoalHarness();
 		const notices: string[] = [];
-		const ctx = await makeGoalContext(notices, "thread-934-blocked-reload");
+		const ctx = withBranchEntries(
+			await makeGoalContext(notices, "thread-934-blocked-reload"),
+			goalContinuationEntries(2),
+		);
 		await tools.get("create_goal")?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx);
 		await tools
 			.get("update_goal")

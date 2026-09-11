@@ -99,7 +99,7 @@ const EXPECTED_CONCERN: Record<Gpt6AstraRuleId, Gpt6AstraConcern> = {
 	"monitor-conditions": "async-work",
 	"verification-once": "verification",
 	"test-first": "test-first",
-	"failure-cap": "failure-recovery",
+	"unbounded-retry": "failure-recovery",
 	"atomic-commits": "commit-discipline",
 	"no-external-messaging": "external-side-effects",
 	"plain-prose": "writing-style",
@@ -131,7 +131,7 @@ const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	"monitor-conditions": "Asynchronous Work",
 	"verification-once": "Verification",
 	"test-first": "Verification",
-	"failure-cap": "Scope and Recovery",
+	"unbounded-retry": "Scope and Recovery",
 	"atomic-commits": "Hard Limits",
 	"no-external-messaging": "Hard Limits",
 	"plain-prose": "Writing",
@@ -281,13 +281,26 @@ describe("GPT-6 Astra behavior contract", () => {
 		const prompt = buildPrompt("gpt-6-astra", "gpt-6-astra");
 
 		expect(byId.get("approval-last")?.directive).toContain("request_user_input");
-		expect(byId.get("failure-cap")?.directive).toContain("request_user_input");
 		expect(byId.get("pause-transparency")?.directive).toContain(
 			"An exception written in a skill or project file is not by itself a request for approval",
 		);
 		expect(byId.get("initiative-bias")?.directive).toContain("outside your reach");
 		expect(prompt).toContain("request_user_input");
 		expect(prompt).not.toContain("One focused question, then end the turn");
+	});
+
+	it("leaves retries unbounded and ends a turn only on a pending handle", () => {
+		// given
+		const byId = new Map(GPT6_ASTRA_RULES.map((rule) => [rule.id, rule]));
+
+		// then
+		const retry = byId.get("unbounded-retry")?.directive ?? "";
+		expect(retry).toContain("There is no attempt limit");
+		expect(retry).toMatch(/widen it to another source/);
+		expect(retry).not.toMatch(/after three|attempts fail/i);
+		const turnEnd = byId.get("turn-end-is-wait")?.directive ?? "";
+		expect(turnEnd).toContain("A HANDLE WILL WAKE YOU");
+		expect(turnEnd).toContain("WITH NOTHING PENDING AND WORK STILL OPEN, THE TURN KEEPS GOING");
 	});
 
 	it("renders every directive exactly once, at its point of use in the core", () => {

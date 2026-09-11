@@ -1,5 +1,25 @@
 # prompt-preset Extension Changes
 
+## GPT-6 Astra: unbounded retries, a turn that ends only on a handle (2026-09-11)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts`: `failure-cap` is deleted and replaced by `unbounded-retry` (same `failure-recovery` concern, same `Scope and Recovery` home): no attempt limit, a material change per attempt, an empty or thin lookup widens to another source before absence is a fact, files are restored to the last known-good state before a fresh approach, and the user is brought in only for a decision that is theirs. `turn-end-is-wait` keeps its emphasis but now states the condition: the turn ends when a pending handle will wake the session, and with nothing pending and work still open it keeps going. `approval-last` asks only for an answer the session cannot supply, carries the cost of stopping, and defaults `wait_for_answer` to false (true only for an irreversible next step). The Reporting sentence requires the named next step to be taken in the same turn and rejects a plan, hypothesis, status report, or offer to continue as a substitute for the work.
+- Tests: `packages/coding-agent/test/suite/prompt-presets-gpt-6-astra.test.ts` renames the rule id in both pinned tables and adds a contract case for the unbounded-retry and turn-end rules. The Reporting change is prose with no rule seam, so it ships with QA-by-read on the rendered prompt instead of a pinned sentence.
+
+### Why
+
+- A survey of the same 703 sessions found Astra ending 14.9% of its human-facing turns on a named next step it never took (claude-fable 3.0%, claude-opus 3.7%, kimi 3.1%), and 12.2% of them with open todos and no goal. Three rules produced that: `turn-end-is-wait` was the loudest rule in the file and made ending the turn unconditional; the Reporting sentence let announcing the next step stand in for taking it; and `failure-cap` capped attempts at three and terminated in a question, which for the model the Astra guide already describes as asking more and stopping earlier reads as permission to stop. Codex's own Astra template takes the opposite line ("Do not stop at acknowledging capability, proposing a plan, or offering to continue") and makes `request_user_input` non-blocking outside Plan mode, with Default mode telling the model to prefer reasonable assumptions and continue with best judgment.
+- Token cost (o200k via gpt-tokenizer; eval, read, bash, monitor, task, todo, request_user_input, ask_user_question selected): gpt-6-astra 3584 -> 3628 (+44). The first draft measured +107; the turn-end rule had re-listed the handles `async-default` already names, and `stay-direct-exceptions` carried its own do-not-trust-absence clause beside the new retry rule, so both were folded into one home. The remaining growth is the same-turn clause in Reporting, the cost-of-stopping sentence in `approval-last`, and the widen-the-source clause in `unbounded-retry`, each of which names a failure the survey measured. Rule count unchanged at 28.
+
+### Why an extension could not handle it
+
+- Content-only change inside a builtin preset's rule data; the behavior it corrects is the preset's own wording.
+
+### Expected merge conflict zones
+
+- MEDIUM: `gpt-6-astra.ts` TURN_END_IS_WAIT / APPROVAL_LAST / the failure-recovery rule and the Reporting paragraph are edited often; the rule id rename touches both pinned tables in the preset suite.
+
 ## DeepSeek V4.1 Flash preset (2026-09-11)
 
 ### What changed
@@ -25,6 +45,7 @@
 
 - LOW: `presets.ts` matcher block and `resolvePresetName` order; `settings.ts` union.
 
+||||||| parent of 4002847aa (fix(goal): earn the blocked status, and let Astra retry without a cap)
 ## Route user questions through the question tool (2026-09-10)
 
 ### What changed

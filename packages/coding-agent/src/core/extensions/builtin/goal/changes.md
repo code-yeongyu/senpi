@@ -1,5 +1,29 @@
 # goal Extension Changes
 
+## Blocked is earned, not asserted: live-channel and goal-turn guards (2026-09-11)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/blocked-audit.ts` (new): `GOAL_BLOCKED_MIN_GOAL_TURNS = 3`, `goalTurnsSinceActivation(entries, goal)` (the calling turn plus every goal-continuation entry delivered since `lastStartedAt`, restarting at the last real user message), and the two rejection messages the model reads.
+- `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`: `update_goal` with status `blocked` now runs `assertBlockedAuditIsEarned` before the transition. It throws while any live resumption channel can still deliver (naming the channels) and while the goal has spent fewer than three goal turns on the blocker. `complete` is untouched. The `update_goal` description states both rejections and that retries themselves are unbounded; the `create_goal` description replaces "only when explicitly requested ... do not infer goals from ordinary tasks" with the decision rule the harness already nudges through `staleGoalTodoReminder` (register a goal for work that outlives the turn: it waits on external state, or the requested outcome needs more than one verify-and-fix round).
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: `liveWakeSources()` exposes the live channel kinds the private snapshot already tracked; `packages/coding-agent/src/core/extensions/builtin/goal/index.ts` passes it to `registerGoalTools`.
+- `packages/coding-agent/src/core/extensions/builtin/goal/prompt.ts`: the blocked audit is restructured as codex's no-progress check plus a three-condition audit. New: progress is defined against status restatements, plans, hypotheses, and untaken next steps; retries are declared unbounded with a widen-the-source rule; the pre-threshold ending is stated positively (say the blocker once, take the next available action, leave the goal active). The recurrence bullet now names the goal-turn floor the tool enforces instead of self-counted "materially different attempts". The completion audit gains the scope-match rule ("a narrow check never supports a broad claim") and "the audit has to prove completion; failing to find remaining work is not proof", each replacing the weaker line in place.
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-gate.ts`: the open-todo rejection no longer says "finish each task and mark it done"; it asks for the remaining work or an honest drop and names closing an unfinished task as a false completion.
+- Tests: `packages/coding-agent/test/suite/goal-blocked-guards.test.ts` (new: turn counting, both rejections, the accepted block, the user-message restart, and completion staying ungated), `goal-prompt-question-routing.test.ts` and `prompt-single-home.test.ts` updated. RED captured on the test-only commit `47e808925` (3 failed / 5 passed, each failure "promise resolved instead of rejecting"); GREEN after the guards.
+
+### Why
+
+- Blocked was the only stop the model could declare unilaterally, and it was certified in prose. Across 703 sessions since 2026-09-04 (16,688 turns) GPT-6 Astra called `update_goal(blocked)` 24 times against 3 for claude-fable and 5 for claude-opus. In one session both blocked calls landed on the second goal turn of a run, each claiming three exhausted paths, while the data called missing sat in a KV namespace the model had not read; the same session had already reported a completion verified by one probe of a different model than the user's. The two conditions a harness can check - a channel that can still deliver, and turns actually spent on this blocker - move that judgment out of prose. Codex states the same three-turn rule in `ext/goal/templates/goals/continuation.md` and its `update_goal` schema but enforces neither; senpi can, because continuations are session entries.
+- The floor is a floor, never a cap: nothing here limits attempts, and both messages say so. This matches the owner's standing instruction that a goal is not to be terminated as blocked while any executable path remains.
+
+### Why an extension could not handle it
+
+- The builtin owns the goal tools, the wake-source registry, and the continuation prompt. Only it can reject its own status transition or count the continuations it delivered.
+
+### Expected merge conflict zones
+
+- MEDIUM: `prompt.ts` audits and `tool-registration.ts` descriptions are edited often; `index.ts` `registerGoalTools` dependency object gains one field.
+
 ## 2026-09-09 - Stop automatic goal recovery after terminal policy rejection (#1520)
 
 ### What changed

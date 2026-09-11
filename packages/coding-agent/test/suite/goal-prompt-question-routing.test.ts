@@ -16,7 +16,8 @@ describe("goal question routing", () => {
 		} satisfies Goal);
 		expect(prompt).toContain("five ways");
 		expect(prompt).toContain("question tool (request_user_input / ask_user_question)");
-		expect(prompt).toContain("materially different attempts");
+		expect(prompt).toContain("three goal turns since this goal became active or the user last spoke");
+		expect(prompt).toContain("Retries are unbounded");
 		expect(prompt).not.toContain("four ways");
 	});
 

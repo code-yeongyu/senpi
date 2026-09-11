@@ -43,7 +43,7 @@ describe("prompt surfaces render each stance in exactly one home", () => {
 		expect(surfacesContaining(surfaces, /^## Anatomy/m)).toEqual(["toolDescription"]);
 	});
 
-	it("the goal audits live in the continuation prompt; update_goal only points at them", () => {
+	it("the goal audits live in the continuation prompt; update_goal states only what it enforces", () => {
 		// given
 		const continuation = buildContinuationPrompt({
 			objective: "x",
@@ -56,8 +56,13 @@ describe("prompt surfaces render each stance in exactly one home", () => {
 
 		// then
 		expect(updateGoal.toLowerCase()).toContain("audit");
-		expect(surfacesContaining(surfaces, /materially different/)).toEqual(["continuation"]);
-		expect(surfacesContaining(surfaces, /resumption channel/)).toEqual(["continuation"]);
+		expect(surfacesContaining(surfaces, /automatic wake-ups spent waiting are not attempts/)).toEqual([
+			"continuation",
+		]);
+		expect(surfacesContaining(surfaces, /let it wake the goal/)).toEqual(["continuation"]);
+		expect(surfacesContaining(surfaces, /Never block because the work is hard/)).toEqual(["continuation"]);
+		expect(surfacesContaining(surfaces, /resumption channel/)).toEqual(["continuation", "updateGoal"]);
+		expect(surfacesContaining(surfaces, /three goal turns/)).toEqual(["continuation", "updateGoal"]);
 	});
 
 	it("the waiting doctrine lives in the terminal section; the timeout policy covers timeouts only", () => {
