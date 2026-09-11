@@ -7,22 +7,43 @@ import { describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
 import { ProcessIdentityUnreadableError, processMatchesPidFile } from "../src/modes/app-server/daemon/process.ts";
 import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
-import { authenticateSocket, createSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "../src/modes/rpc/socket-transport.ts";
+import {
+	authenticateSocket,
+	createSocketSecret,
+	resolveSocketTransportAddress,
+	socketSecretPath,
+} from "../src/modes/rpc/socket-transport.ts";
 
 describe("RPC ownership observation", () => {
 	it("does not classify an absent identity on a live pid as gone", async () => {
-		await expect(processMatchesPidFile(
-			{ pid: process.pid, processStartTime: "identity" },
-			async () => undefined,
-			() => true,
-			{ attempts: 1 },
-		)).rejects.toBeInstanceOf(ProcessIdentityUnreadableError);
+		await expect(
+			processMatchesPidFile(
+				{ pid: process.pid, processStartTime: "identity" },
+				async () => undefined,
+				() => true,
+				{ attempts: 1 },
+			),
+		).rejects.toBeInstanceOf(ProcessIdentityUnreadableError);
 	});
 
 	it("still recognizes confirmed absence and a different process identity", async () => {
 		const recorded = { pid: process.pid, processStartTime: "identity" };
-		expect(await processMatchesPidFile(recorded, async () => undefined, () => false, { attempts: 1 })).toBe(false);
-		expect(await processMatchesPidFile(recorded, async () => "replacement", () => true, { attempts: 1 })).toBe(false);
+		expect(
+			await processMatchesPidFile(
+				recorded,
+				async () => undefined,
+				() => false,
+				{ attempts: 1 },
+			),
+		).toBe(false);
+		expect(
+			await processMatchesPidFile(
+				recorded,
+				async () => "replacement",
+				() => true,
+				{ attempts: 1 },
+			),
+		).toBe(false);
 	});
 
 	it("concurrent callers reuse a compatible endpoint without consulting an unavailable ownership probe", async () => {
@@ -42,7 +63,9 @@ describe("RPC ownership observation", () => {
 					if (!buffer.includes("\n")) return;
 					const request = JSON.parse(buffer.slice(0, buffer.indexOf("\n")));
 					replies += 1;
-					socket.end(`${JSON.stringify({ id: request.id, success: true, data: { serverVersion: VERSION, capabilities: ["multi_session", "extension_events"] } })}\n`);
+					socket.end(
+						`${JSON.stringify({ id: request.id, success: true, data: { serverVersion: VERSION, capabilities: ["multi_session", "extension_events"] } })}\n`,
+					);
 				});
 			};
 			if (secret) authenticateSocket(socket, secret, serve);
@@ -59,19 +82,29 @@ describe("RPC ownership observation", () => {
 				await writeFile(paths.pidFile, JSON.stringify({ pid: process.pid, processStartTime: "unavailable" }));
 				await writeFile(paths.settingsFile, "preserved");
 			}
-			const results = await Promise.allSettled(agentDirs.map((agentDir) => ensureHost({
-				agentDir,
-				socket: socketPath,
-				_test: { readProcessStartTime: async () => { probes += 1; throw new Error("identity query unavailable"); } },
-			})));
+			const results = await Promise.allSettled(
+				agentDirs.map((agentDir) =>
+					ensureHost({
+						agentDir,
+						socket: socketPath,
+						_test: {
+							readProcessStartTime: async () => {
+								probes += 1;
+								throw new Error("identity query unavailable");
+							},
+						},
+					}),
+				),
+			);
 			expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
 			for (const result of results) if (result.status === "fulfilled") expect(result.value.reused).toBe(true);
 			expect(replies).toBe(2);
 			expect(probes).toBe(0);
-			for (const agentDir of agentDirs) expect(await readFile(createHostDaemonPaths(agentDir).settingsFile, "utf8")).toBe("preserved");
+			for (const agentDir of agentDirs)
+				expect(await readFile(createHostDaemonPaths(agentDir).settingsFile, "utf8")).toBe("preserved");
 		} finally {
 			for (const socket of connections) socket.destroy();
-			await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 			await rm(root, { recursive: true, force: true });
 		}
 	});
