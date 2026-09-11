@@ -35,7 +35,9 @@ import type {
 import { ProviderRetryWatchdogAbortError, prepareAgentToolCall } from "@earendil-works/pi-agent-core";
 import {
 	contentText,
+	getCursorConversationContextLimit,
 	measureCursorHistorySerializedBytes,
+	measureCursorModelInputSerializedBytes,
 	providerNotConfiguredMessage,
 	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
 	type ThinkingSelection,
@@ -948,6 +950,26 @@ export const MAX_SKILL_EXPANSIONS_PER_PROMPT = 5;
 /** Cursor ingest rejects large verbatim tool payloads. The bound is UTF-8 bytes. */
 export const CURSOR_TOOL_RESULT_MAX_CHARS = 2000;
 export const CURSOR_TOOL_RESULT_MAX_BYTES = 50_000;
+
+/**
+ * Cursor's `GetUsableModels` carries no context-window field, so `model.contextWindow` is a static
+ * guess: for `kimi-k3` it claims 1048576 while the server reports 200000 on every live checkpoint.
+ * Sizing admission from that guess would hand Cursor more history than it accepts, so the budget
+ * follows the server-reported limit and falls back to {@link CURSOR_TOOL_RESULT_MAX_BYTES} until a
+ * checkpoint reports one (the first checkpoint of a conversation always reports 0).
+ *
+ * The reported limit is tokens; admission measures serialized bytes. The conversion reuses the
+ * repo-wide estimate of 4 characters per token (see `compaction/compaction.ts` `estimateTokens`).
+ */
+const CURSOR_BYTES_PER_TOKEN = 4;
+
+export function resolveCursorAdmissionMaxBytes(reportedContextTokens: number | undefined): number {
+	if (reportedContextTokens === undefined || !Number.isFinite(reportedContextTokens)) {
+		return CURSOR_TOOL_RESULT_MAX_BYTES;
+	}
+	if (reportedContextTokens <= 0) return CURSOR_TOOL_RESULT_MAX_BYTES;
+	return Math.max(CURSOR_TOOL_RESULT_MAX_BYTES, reportedContextTokens * CURSOR_BYTES_PER_TOKEN);
+}
 const CURSOR_TRUNCATION_MARKER = "\n...[truncated]";
 
 export function truncateToolResultBodies(
@@ -1032,6 +1054,22 @@ export function truncateToolResultBodies(
 
 	// If metadata alone exceeds the cap, discard the oldest complete turns. This
 	// search is also monotonic and avoids quadratic whole-history reserialization.
+	// The fixed legacy cap is the bootstrap every conversation starts at, so it
+	// keeps its wire-level gate unchanged (#1043). A larger budget can only come
+	// from the server-reported context window, and that one is a model-input
+	// budget: Cursor builds its prompt from rootPromptMessagesJson while turns[]
+	// is UI/display metadata, so display copies must not cost whole turns (#1603).
+	const measureModelInput = (candidate: AgentMessage[] = result): number => {
+		const converted = convert(candidate);
+		const activeUserMessageIndex = converted.at(-1)?.role === "user" ? converted.length - 1 : -1;
+		return measureCursorModelInputSerializedBytes(converted, activeUserMessageIndex);
+	};
+	const modelInputBudget = maxBytes > CURSOR_TOOL_RESULT_MAX_BYTES;
+	const measureAggregate = modelInputBudget ? measureModelInput : measure;
+	const aggregateFits = (candidate: AgentMessage[] = result) => measureAggregate(candidate) <= maxBytes;
+	// The legacy path already knows the full wire does not fit (checked after the
+	// blanking pass); only a model-input budget can now overturn that verdict.
+	if (modelInputBudget && aggregateFits()) return { messages: changed ? result : messages, changed };
 	const turnRanges: Array<[number, number]> = [];
 	const isConvertedUser = (message: AgentMessage): boolean => convert([message])[0]?.role === "user";
 	for (let index = 0; index < result.length; index++) {
@@ -1049,7 +1087,7 @@ export function truncateToolResultBodies(
 	high = turnRanges.length;
 	while (low < high) {
 		const middle = Math.floor((low + high) / 2);
-		if (fits(withoutTurns(middle + 1))) high = middle;
+		if (aggregateFits(withoutTurns(middle + 1))) high = middle;
 		else low = middle + 1;
 	}
 	const turnCount = Math.min(low + 1, turnRanges.length);
@@ -1617,12 +1655,20 @@ export class AgentSession {
 		this.agent.transformContext = async (messages, signal) => {
 			const transformed = previousTransformContext ? await previousTransformContext(messages, signal) : messages;
 			if (this.model?.provider === "cursor" || this.model?.provider === "cursor-cli-oauth") {
+				// The provider derives the conversation it runs on as
+				// `options.conversationId ?? options.sessionId`; this host never overrides
+				// `conversationId`, so that is the agent's session id. Passing it makes a
+				// replacement conversation bootstrap at the legacy cap instead of
+				// inheriting the previous conversation's reported limit.
+				const cursorSessionId = this.agent.sessionId ?? this.sessionManager.getSessionId();
 				return (
 					(
 						await truncateToolResultBodies(
 							transformed,
 							CURSOR_TOOL_RESULT_MAX_CHARS,
-							CURSOR_TOOL_RESULT_MAX_BYTES,
+							resolveCursorAdmissionMaxBytes(
+								getCursorConversationContextLimit(cursorSessionId, cursorSessionId),
+							),
 							(candidate) => this.agent.convertToLlm(candidate) as Message[],
 						)
 					).messages ?? transformed

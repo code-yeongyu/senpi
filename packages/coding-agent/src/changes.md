@@ -1,5 +1,29 @@
 # changes
 
+## 2026-09-12 - Size Cursor admission from the server-reported context limit (senpi#1603)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` gains `resolveCursorAdmissionMaxBytes(reportedContextTokens)` and uses it at the Cursor `transformContext` call site instead of passing `CURSOR_TOOL_RESULT_MAX_BYTES` directly. The reported limit is read with the conversation-scoped `getCursorConversationContextLimit(sessionId, sessionId)`, where the session id mirrors the provider's own `options.conversationId ?? options.sessionId` derivation (this host does not override `conversationId`, so the conversation a request runs on is the agent's session id). A replacement conversation then bootstraps at the legacy cap until its own checkpoint reports. Tokens are converted to the serialized byte budget admission measures using the repo-wide 4-characters-per-token estimate, and the result never drops below `CURSOR_TOOL_RESULT_MAX_BYTES`.
+- `truncateToolResultBodies`' aggregate turn-dropping pass no longer compares only against the full-wire measurement. When the budget exceeds the fixed legacy cap - which can only happen with a server-reported limit - the drop gate uses `measureCursorModelInputSerializedBytes` (the `rootPromptMessagesJson` blobs Cursor builds the model prompt from). The fixed 50,000-byte bootstrap cap keeps its existing wire-level gate, and the per-result character cap and tool-body blanking pass are unchanged, so issue #1043's envelope bounds still hold.
+- `packages/coding-agent/test/suite/regressions/1603-cursor-history-budget.test.ts`: a tool-free Cursor conversation whose first turn alone exceeds the legacy 50,000-byte cap keeps that turn; the reviewer's 410,000-character counter-case (model input inside the 800,000-byte reported budget, full wire outside it) keeps its sentinel and drops no turn; a replacement conversation under a session whose other conversation reported 200,000 admits at exactly 50,000, and the session's own conversation scales to 800,000 only after it reports.
+
+### Why
+
+- The aggregate cap was a fixed 50,000 serialized bytes regardless of model. Its third pass discards the oldest complete turns, so it deleted conversation history that no later stage can recover: a 551-message transcript collapsed to 4 messages, and a tool-free conversation lost a 30 KB first turn outright even though it contained no `toolResult` for the cap to bound. The repo's own fixtures show the cap is exhausted by envelope overhead alone at 98 paired tool turns whose results are 10 characters each, so any long session hit it irrespective of payload size.
+- Cursor reports the real ceiling per conversation, and it does not match the static catalog window (200000 reported for `kimi-k3` against a recorded 1048576). Sizing admission from the reported limit keeps the bound that issue #1043 asked for while removing the unrelated history destruction.
+- `measureCursorHistorySerializedBytes` sums the `rootPromptMessagesJson` blobs and the `buildConversationTurns` display copies, but Cursor's server builds the model prompt from the former and treats `turns[]` as UI/display metadata (the `buildRootPromptMessagesJson` doc comment). Counting both doubles large histories: 410,000 characters of ordinary English is ~102,500 tokens and serialized to ~820,000 bytes across the two copies, so admission dropped whole turns against the 800,000-byte reported budget even though the model input (~410,000 bytes) fit. Gating the drop on the model-input measurement removes that failure; the fixed bootstrap cap intentionally keeps the wire-level gate so the #1043 envelope bounds are preserved.
+- The recorded limit belongs to a conversation, not a session: the previous lookup asked only for the session's active conversation, so a conversation B opened under a session whose conversation A reported 200000 entered its first request with an 800,000-byte budget (bootstrap reported 0 and could not reset the session-wide value). Passing the conversation being admitted makes the reader return `undefined` for B until B's own checkpoint reports, which `resolveCursorAdmissionMaxBytes` maps to exactly 50,000.
+- The bootstrap path is deliberately unchanged: the first checkpoint of a conversation reports `maxTokens` 0, so the first request of every conversation still admits against exactly 50,000 bytes.
+
+### Why an extension could not handle it
+
+- The admission transform is installed on `this.agent.transformContext` inside `AgentSession`; no extension hook runs between context assembly and provider admission.
+
+### Expected merge conflict zones
+
+- LOW: the Cursor admission constants and the `transformContext` closure in `agent-session.ts`.
+
 ## 2026-09-11 - Support brand-owned changelog sources (senpi#1583)
 
 ### What changed
