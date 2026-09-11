@@ -21,6 +21,10 @@ import * as http2 from "node:http2";
 import { create, fromBinary, fromJson, type JsonValue as PbJsonValue, toBinary, toJson } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { CURSOR_COMPOSER_PROMPT, isCursorComposerModel } from "../cursor/composer-prompt.ts";
+import {
+	forgetCursorConversationContextLimit,
+	recordCursorConversationContextLimit,
+} from "../cursor/conversation-context-limit.ts";
 import { calculateCost } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
@@ -606,6 +610,7 @@ function releaseConversationCacheForSession(sessionId?: string): void {
 
 registerSessionResourceCleanup((sessionId?: string) => {
 	releaseConversationCacheForSession(sessionId);
+	forgetCursorConversationContextLimit(sessionId);
 });
 
 /** Size telemetry for the conversation caches (#1024 verification seam). */
@@ -941,6 +946,11 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 				const onConversationCheckpoint = (checkpoint: ConversationStateStructure) => {
 					attemptSawCheckpoint = true;
 					conversationStateCache.set(conversationId!, checkpoint);
+					recordCursorConversationContextLimit(
+						options?.sessionId,
+						conversationId,
+						checkpoint.tokenDetails?.maxTokens ?? 0,
+					);
 				};
 				const healthFailThresholdMs =
 					options?.streamHealthFailThresholdMs ?? CURSOR_STREAM_HEALTH_FAIL_THRESHOLD_MS;

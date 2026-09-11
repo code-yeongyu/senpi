@@ -67,6 +67,7 @@ export {
 	getContextProvenance,
 } from "./context-provenance.ts";
 export * from "./cursor/catalog-grouping.ts";
+export { getCursorConversationContextLimit } from "./cursor/conversation-context-limit.ts";
 export {
 	CURSOR_MODEL_CAPABILITIES,
 	type CursorCapabilityEvidence,

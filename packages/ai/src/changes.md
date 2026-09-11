@@ -1,3 +1,27 @@
+## Expose Cursor's server-reported conversation context limit (2026-09-12)
+
+### What changed
+
+- `packages/ai/src/cursor/conversation-context-limit.ts`: a conversation-scoped record of the context limit Cursor reports for the live conversation, with `recordCursorConversationContextLimit(sessionId, conversationId, maxTokens)`, `getCursorConversationContextLimit(sessionId, conversationId?)` and `forgetCursorConversationContextLimit(sessionId?)`. Each session keeps the conversation that most recently reported, with the server-reported limit alongside it, and the session id scopes teardown. A reported limit of `0` is never recorded, and a checkpoint for a different conversation replaces the entry outright, so the new conversation can never inherit the previous one's value.
+- `packages/ai/src/api/cursor-agent.ts`: the existing `onConversationCheckpoint` callback now records `checkpoint.tokenDetails.maxTokens` against the live wire `conversationId` (the session is kept only as the teardown scope), and the existing `registerSessionResourceCleanup` hook forgets it on session teardown alongside the conversation caches.
+- `packages/ai/src/api/cursor-agent/measure.ts`: new `measureCursorModelInputSerializedBytes`, which counts only the `rootPromptMessagesJson` blobs Cursor builds the model prompt from and excludes the `buildConversationTurns` display copies that `measureCursorHistorySerializedBytes` also counts. The full-wire measurement is unchanged and still bounds what goes on the wire (#1043).
+- `packages/ai/src/index.ts`: exports the reader and `measureCursorModelInputSerializedBytes`, next to `measureCursorHistorySerializedBytes`.
+
+### Why
+
+- `GetUsableModels` carries no context-window field, so `Model.contextWindow` for a Cursor model is a static guess from `cursor/model-capabilities.ts`. For `kimi-k3` that guess is 1048576 while every live checkpoint reports 200000, and `claude-opus-4-7` is recorded as 1000000 against a reported 300000. Admission and compaction sized from the guess therefore aim at a ceiling Cursor does not honour.
+- `ConversationTokenDetails.maxTokens` is the only authority for the real ceiling: its sibling `breakdown` is input-side and its categories sum exactly to `usedTokens`, and Cursor's own CLI republishes the value as `context_window_size`. The value was already received here and used only for usage accounting.
+- The limit belongs to the conversation, not the session: a session-keyed record leaked conversation A's 200000-token ceiling into conversation B opened under the same session, whose first request must admit against the 50000-byte bootstrap, and B's zero-valued first checkpoint could not reset the session-wide value. Keying on the live conversation id and letting the admission reader pass the conversation being admitted (falling back to the active one when it passes only a session) makes the switch observable and confines the reported budget to the conversation that reported it.
+- Admission sized from that reported limit must not count `turns[]`: Cursor builds the model prompt from `rootPromptMessagesJson` while `turns[]` is UI/display metadata (see the `buildRootPromptMessagesJson` doc comment), so measuring root-plus-turns double-counts large histories and rejects input that fits. A 410,000-character transcript that serialized to ~820,000 bytes across both copies lost whole turns against an 800,000-byte budget even though the model input was only ~410,000 bytes (issue #1603).
+
+### Why an extension could not handle it
+
+- The checkpoint frame is decoded inside the provider's stream loop; no extension hook observes `ConversationStateStructure`, and the coding-agent admission transform needs the value before the next request is built.
+
+### Expected merge conflict zones
+
+- LOW: the `onConversationCheckpoint` closure and the `registerSessionResourceCleanup` call in `api/cursor-agent.ts`; the export list in `index.ts`.
+
 ## Devin Cascade model transport (2026-09-12)
 
 ### What changed
