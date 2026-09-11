@@ -504,3 +504,24 @@ export function buildCursorHistoryWireBytesForTest(
 	buildConversationTurns(messages, blobStore, activeUserMessageIndex);
 	return [...blobStore.values()];
 }
+
+/**
+ * Serialized size of the blobs Cursor uses to build the actual model prompt:
+ * the `rootPromptMessagesJson` blobs only.
+ *
+ * `buildRootPromptMessagesJson` above documents that Cursor's server builds
+ * the model prompt from `rootPromptMessagesJson` and treats `turns[]` as
+ * UI/display metadata. `measureCursorHistorySerializedBytes` counts both, so
+ * it overstates the model input by the whole display envelope; budgeting the
+ * model input against that number can drop whole turns whose content fits.
+ * Model-input admission must use this measurement; the full-wire one stays
+ * for bounding what goes on the wire (#1043).
+ */
+export function measureCursorModelInputSerializedBytes(
+	messages: Message[],
+	activeUserMessageIndex = findLastUserMessageIndex(messages),
+): number {
+	const blobStore = new Map<string, Uint8Array>();
+	buildRootPromptMessagesJson(messages, [], blobStore, activeUserMessageIndex);
+	return [...blobStore.values()].reduce((total, bytes) => total + bytes.byteLength, 0);
+}

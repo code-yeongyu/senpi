@@ -9,7 +9,10 @@ export type { AnthropicEffort, AnthropicOptions, AnthropicThinkingDisplay } from
 export { sanitizeAnthropicToolPairs } from "./api/anthropic-tool-pairs.ts";
 export type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 export type { BedrockOptions, BedrockThinkingDisplay } from "./api/bedrock-converse-stream.ts";
-export { measureCursorHistorySerializedBytes } from "./api/cursor-agent/measure.ts";
+export {
+	measureCursorHistorySerializedBytes,
+	measureCursorModelInputSerializedBytes,
+} from "./api/cursor-agent/measure.ts";
 export {
 	composeShellCommand as composeCursorShellCommand,
 	omitUndefinedArgs as omitUndefinedCursorArgs,
