@@ -18,7 +18,7 @@
 
 ### Fixed
 
-- Resuming a GPT-6 Astra session restores a supported surviving configuration effort when missing ancestry makes the original thinking selection unreachable, instead of replacing it with remembered startup defaults. Explicit overrides and later thinking selections still win, and the resumed inline configuration agrees with the selected effort.
+- Resuming a GPT-6 Astra session restores a supported surviving configuration effort when missing ancestry makes the original thinking selection unreachable, instead of replacing it with remembered startup defaults. Explicit overrides and later thinking selections still win, and the resumed inline configuration agrees with the selected effort ([#1596](https://github.com/code-yeongyu/senpi/pull/1596) by [@rlaope](https://github.com/rlaope)).
 
 - The ask-user overlay now uses plain Enter to confirm and advance through question tabs, keeps multi-select choices intact when confirming, provides an explicit Submit tab for optional comments and partial answers, prevents editor focus traps, and reports partial answers without requiring a comment ([#1573](https://github.com/code-yeongyu/senpi/issues/1573))
 
