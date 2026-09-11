@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-11 - Preserve OpenCode session attribution for direct compaction summaries
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-attribution.ts`: exports the existing OpenCode session-header predicate as `getOpenCodeSessionHeaders()` so non-AgentSession request paths can reuse the provider/host test without duplicating it. `mergeProviderAttributionHeaders()` continues to apply the same generated defaults and caller override order.
+
+### Why
+
+- Builtin compaction dispatches its summary directly through `ModelRuntime.stream()` and therefore cannot reuse the AgentSession wrapper that normally attaches `x-opencode-session`; exposing the narrow helper lets that alternate request boundary preserve the same routing identity.
+
+### Why an extension could not handle it
+
+- The session-attribution predicate is core provider request policy used before or beneath extension header transforms; duplicating it in an extension would allow the provider/host rules to drift from normal AgentSession traffic.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/provider-attribution.ts` around the OpenCode session-header helper and `mergeProviderAttributionHeaders()`.
+
 ## 2026-09-10 - Atomic account display-name metadata with shape-keyed sentinel guard (senpi#1495)
 
 ### What changed

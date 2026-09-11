@@ -1,5 +1,24 @@
 # changes.md — builtin compaction policy
 
+## 2026-09-11 - Preserve OpenCode session routing on builtin summary requests
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: seeds the current `SessionManager` id through `getOpenCodeSessionHeaders()` before resolved auth/configured headers and the existing provider-request header transform.
+- `packages/coding-agent/test/suite/regressions/issue-1523-opencode-session-attribution.test.ts`: pins provider-id and host routing, configured-header precedence, extension-transform precedence, and non-OpenCode neutrality.
+
+### Why
+
+- Issue #1523: the compaction summarizer bypasses `sdk.ts`'s normal AgentSession stream wrapper, so OpenCode Go requests could omit `x-opencode-session` and fail with `400 MissingSessionID` while ordinary turns succeeded.
+
+### Why an extension could not handle it
+
+- The omission occurs at the builtin compaction request-construction boundary before `ModelRuntime.stream()`. The fix must seed the normal routing defaults before the already-supported provider header transform, which remains authoritative.
+
+### Expected merge conflict zones
+
+- LOW: `speculative-summary.ts` at request-header construction immediately before `summarizationStream()`.
+
 ## Deterministic resume slice for an over-window restored context (2026-09-10)
 
 ### What changed
