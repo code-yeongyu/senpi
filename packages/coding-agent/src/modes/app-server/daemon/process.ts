@@ -70,7 +70,10 @@ export async function processMatchesPidFile(
 	for (let attempt = 1; attempt <= attempts; attempt++) {
 		try {
 			const current = await readStartTime(pidFile.pid);
-			return current === pidFile.processStartTime;
+			if (current !== undefined) return current === pidFile.processStartTime;
+			if (!isLive(pidFile.pid)) return false;
+			lastError = new Error("process identity probe returned no identity for a live process");
+			if (attempt < attempts) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 		} catch (error: unknown) {
 			if (!isLive(pidFile.pid)) return false;
 			lastError = error;
