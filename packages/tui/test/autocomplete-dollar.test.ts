@@ -90,6 +90,28 @@ describe("CombinedAutocompleteProvider dollar invocation suggestions", () => {
 		});
 	});
 
+	it("offers skills on a later logical editor line", async () => {
+		const provider = new CombinedAutocompleteProvider(
+			[{ name: "skill:debugging", description: "Debug runtime failures" }],
+			"/tmp",
+		);
+		const lines = ["first line", "text $"];
+		const result = await provider.getSuggestions(lines, 1, lines[1].length, {
+			signal: new AbortController().signal,
+		});
+
+		assert.deepStrictEqual(
+			result?.items.map((item) => item.value),
+			["$debugging"],
+		);
+		assert.strictEqual(result?.prefix, "$");
+		assert.deepStrictEqual(provider.applyCompletion(lines, 1, lines[1].length, result!.items[0]!, result!.prefix), {
+			lines: ["first line", "text $debugging "],
+			cursorLine: 1,
+			cursorCol: "text $debugging ".length,
+		});
+	});
+
 	it("offers partial skills after ordinary prompt text", async () => {
 		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
 
