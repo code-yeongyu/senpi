@@ -1,3 +1,24 @@
+## 2026-09-12 - Fork-owned model catalog shards survive generation
+
+### What changed
+
+- `packages/ai/scripts/model-shards.ts` (new) owns shard ownership: `FORK_OWNED_MODEL_SHARDS` lists the `*.models.ts` catalogs the fork maintains by hand (currently `devin.models.ts`), and `isPrunableModelShard` decides deletion.
+- `packages/ai/scripts/generate-models.ts` prunes through that predicate instead of deleting every shard the current run did not write.
+- `packages/ai/scripts/model-data.ts` excludes fork-owned shards when it compares the shard directory against the aggregator's provider imports.
+- `packages/ai/test/model-shards.test.ts` derives the expected fork-owned set from the tree - the shards providers import minus the shards `src/models.generated.ts` imports - so a new hand-authored provider fails this test instead of the release.
+
+### Why
+
+- models.dev has no `devin` provider, so `devin.models.ts` is hand-authored and the aggregator never imports it. The release job regenerates the catalog before typechecking, so generation deleted the shard and `tsc` failed with `Cannot find module './devin.models.ts'` (run 34621164006), and `check:model-data` already failed on the committed tree for the same reason. Ordinary CI typechecks the committed catalog, so neither failure is visible outside the release path.
+
+### Why an extension could not handle it
+
+- Catalog generation and its validation are build-time scripts that run long before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the shard prune loop in `generate-models.ts` and the shard comparison in `readModelDataStructure`.
+
 ## 2026-09-10 - Venice AI catalog generation
 
 ### What changed

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { FORK_OWNED_MODEL_SHARDS, MODEL_SHARD_SUFFIX } from "./model-shards.ts";
 
 export const MODEL_DATA_SCHEMA_VERSION = 3;
 export const MODEL_DATA_MANIFEST_FILE = ".manifest.json";
@@ -99,7 +100,7 @@ export function readModelDataStructure(packageRoot: string): ModelDataStructure 
 	const providerIds = readModelDataProviderIds(packageRoot);
 	const expectedShards = providerIds.map((providerId) => `${providerId}.models.ts`).sort();
 	const actualShards = readdirSync(providersDir)
-		.filter((entry) => entry.endsWith(".models.ts"))
+		.filter((entry) => entry.endsWith(MODEL_SHARD_SUFFIX) && !FORK_OWNED_MODEL_SHARDS.has(entry))
 		.sort();
 	if (!sameStrings(expectedShards, actualShards)) {
 		throw new Error(
