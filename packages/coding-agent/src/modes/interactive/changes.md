@@ -1,3 +1,21 @@
+## 2026-09-11 - The resume hint prints the command on its own line
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the interactive quit path writes the resume hint as two lines - the dimmed `To resume this session:` label, then the resume command on the following line - instead of one line separated by a space. The hint is still emitted only for the non-signal shutdown path and is still gated on `formatResumeCommand` returning a command, so nothing changes about when it appears.
+
+### Why
+
+- The command is meant to be copied. On one line the dimmed label shares the line with the command, so a double-click or triple-click selection picks up the label prefix and the user has to trim it before pasting. Putting the command alone on the second line makes line-wise selection copy exactly the runnable command.
+
+### Why an extension could not handle it
+
+- The hint is written with `process.stdout.write` from `InteractiveMode.shutdown()` after the TUI has already been torn down and the runtime host disposed. No extension hook runs at that point, and extensions must not write to stdout around the terminal owner.
+
+### Expected merge conflict zones
+
+- LOW: the single `process.stdout.write` resume-hint call in `InteractiveMode.shutdown()` and the matching expectation in `packages/coding-agent/test/suite/regressions/5080-signal-shutdown-extension-cleanup.test.ts`.
+
 ## 2026-09-10 - Safe account labels in footer and English help (senpi#1495)
 
 ### What changed
